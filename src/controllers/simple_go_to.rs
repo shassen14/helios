@@ -1,5 +1,8 @@
 // src/controllers/simple_go_to.rs
-use crate::simulation::traits::{Control, Controller, Dynamics, Goal, State};
+use crate::simulation::{
+    components::CurrentPath,
+    traits::{Control, Controller, Dynamics, Goal, State},
+};
 use nalgebra::Vector2;
 use std::f64::consts::PI;
 
@@ -18,6 +21,7 @@ impl Controller for SimpleGoToController {
         current_state: &State,           // Expected: [x, y, theta, v]
         goal: &Goal,                     // We only use goal.state's position [x, y]
         dynamics: Option<&dyn Dynamics>, // For getting control dims/limits potentially
+        _path: Option<&mut CurrentPath>,
         _t: f64,
     ) -> Control {
         let state_dim = dynamics.map_or(4, |d| d.get_state_dim()); // Default to 4 if no dynamics

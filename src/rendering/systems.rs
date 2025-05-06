@@ -127,25 +127,29 @@ pub fn draw_estimated_state_system(
 // == Path Visualization ==
 // =========================================================================
 pub fn draw_path_system(
-    query: Query<(&CurrentPath, &Transform, &DrawPathViz)>,
+    query: Query<(Entity, &CurrentPath, &DrawPathViz)>, // No longer need Transform here
     mut gizmos: Gizmos,
+    // config_query: Query<&CarConfig>, // If needed for specific Y offset per car
 ) {
-    for (path, transform, viz_toggle) in query.iter() {
+    let wheel_radius = 0.35; // TODO: Get from component
+    let draw_height_offset = 0.1; // Draw slightly above ground
+
+    for (entity, path, viz_toggle) in query.iter() {
         if !viz_toggle.0 || path.0.len() < 2 {
             continue;
         }
 
         let points: Vec<Vec3> = path
-            .0
+            .0 // Vec<State> where State is [sim_x, sim_z, sim_yaw, sim_v]
             .iter()
             .filter_map(|state_vec| {
                 if state_vec.len() >= 2 {
-                    let z_coord = if state_vec.len() >= 3 {
-                        state_vec[2] as f32
-                    } else {
-                        transform.translation.z
-                    };
-                    Some(Vec3::new(state_vec[0] as f32, state_vec[1] as f32, z_coord))
+                    // Convert Sim pos to Bevy pos using helper
+                    Some(sim_pos_to_bevy_pos(
+                        state_vec[0],                      // sim_x
+                        state_vec[1],                      // sim_z
+                        wheel_radius + draw_height_offset, // Desired Bevy Y for drawing
+                    ))
                 } else {
                     None
                 }
@@ -153,7 +157,8 @@ pub fn draw_path_system(
             .collect();
 
         if points.len() >= 2 {
-            gizmos.linestrip(points, Color::srgb(0.0, 1.0, 1.0)); // Cyan path
+            // println!("Entity {:?}: Drawing path with {} Bevy points. First: {:?}", entity, points.len(), points.first()); // Optional Log
+            gizmos.linestrip(points, Color::srgb(0.0, 1.0, 1.0));
         }
     }
 }
@@ -324,31 +329,35 @@ pub fn draw_obstacle_system(
 // == Goal Visualization ==
 // =========================================================================
 pub fn draw_goal_system(
-    query: Query<(&GoalComponent, &Transform, &DrawGoalViz)>,
+    query: Query<(&GoalComponent, &DrawGoalViz)>, // No longer need Transform here
     mut gizmos: Gizmos,
+    // config_query: Query<&CarConfig>, // If needed for specific Y offset per car
 ) {
-    for (goal_comp, transform, viz_toggle) in query.iter() {
+    let wheel_radius = 0.35; // TODO: Get from component
+    let goal_marker_height = 0.5; // How high to draw goal gizmo
+
+    for (goal_comp, viz_toggle) in query.iter() {
         if !viz_toggle.0 {
             continue;
         }
-        let goal_state = &goal_comp.0.state;
+        let goal_state = &goal_comp.0.state; // [sim_x, sim_z, ...]
 
         if goal_state.len() >= 2 {
-            let goal_pos = Vec3::new(
-                goal_state[0] as f32,
-                goal_state[1] as f32,
-                if goal_state.len() >= 3 {
-                    goal_state[2] as f32
-                } else {
-                    transform.translation.z
-                },
+            // Convert Sim pos to Bevy pos
+            let goal_pos_bevy = sim_pos_to_bevy_pos(
+                goal_state[0], // sim_x
+                goal_state[1], // sim_z
+                wheel_radius,  // Base height
             );
+
             // Create Isometry for sphere (position only)
-            let goal_isometry = transform_to_isometry3d(&Transform::from_translation(goal_pos));
+            let goal_isometry =
+                transform_to_isometry3d(&Transform::from_translation(goal_pos_bevy));
             gizmos.sphere(goal_isometry, 0.4, Color::srgb(1.0, 0.4, 0.0)); // OrangeRed
+            // Draw vertical line marker
             gizmos.line(
-                goal_pos + Vec3::Y * 0.5,
-                goal_pos - Vec3::Y * 0.5,
+                goal_pos_bevy + Vec3::Y * goal_marker_height,
+                goal_pos_bevy - Vec3::Y * goal_marker_height,
                 Color::srgb(1.0, 0.4, 0.0),
             );
         }

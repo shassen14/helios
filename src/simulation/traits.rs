@@ -1,10 +1,14 @@
 // src/simulation/traits.rs
 
-use crate::integrators::Integrator; // Assuming integrators.rs is in src or crate root
+use crate::integrators::Integrator;
+use crate::path_planning::error::PlanningError;
+use crate::path_planning::grid_utils::{GridConfig, ObstacleGrid}; // Assuming integrators.rs is in src or crate root
 use nalgebra::{DMatrix, DVector, Isometry3, Point3, Vector3};
 use std::any::Any; // We might need this for flexible sensor data handling
 use std::fmt::Debug;
 use std::sync::Arc;
+
+use super::components::CurrentPath;
 
 // --- Core Type Aliases ---
 // Using f64 for simulation precision, but could be generic if needed later.
@@ -265,6 +269,7 @@ pub trait Controller: Debug + Send + Sync {
         current_state: &State,
         goal: &Goal,
         dynamics: Option<&dyn Dynamics>, // Provide access to the model
+        path: Option<&mut CurrentPath>,
         t: f64,
     ) -> Control;
 }
@@ -274,29 +279,16 @@ pub trait Controller: Debug + Send + Sync {
 /// Represents the logic for finding a sequence of states (a path) from a start to a goal,
 /// usually avoiding obstacles.
 pub trait Planner: Debug + Send + Sync {
-    /// Plans a path based on the provided start, goal, and environment information.
-    ///
-    /// # Arguments
-    /// * `start`: The starting state (`State`) for the path.
-    /// * `goal`: The target goal (`Goal`) for the path. The planner might only use the `goal.state`.
-    /// * `obstacles`: A slice of `Obstacle` objects representing the static or dynamic
-    ///   environment constraints.
-    /// * `dynamics`: (Optional) Sometimes planners need dynamics info for kinodynamic planning.
-    /// * `t`: Current simulation time (`Time`), useful if obstacles are dynamic.
-    ///
-    /// # Returns
-    /// * `Some(Vec<State>)`: A sequence of states representing the path from start towards the goal.
-    ///   The path might not reach the goal exactly. The first state might be `start` itself,
-    ///   and the last state should be near `goal.state`.
-    /// * `None`: If no path could be found.
     fn plan_path(
         &self,
         start: &State,
         goal: &Goal,
         obstacles: &[Obstacle],
-        dynamics: Option<&dyn Dynamics>, // For kinodynamic planning
+        dynamics: Option<&dyn Dynamics>,
+        grid_config: &GridConfig,
+        obstacle_grid: &ObstacleGrid,
         t: f64,
-    ) -> Option<Vec<State>>;
+    ) -> Result<Vec<State>, PlanningError>; // <-- Changed to Result
 }
 
 /// # Sensor Trait

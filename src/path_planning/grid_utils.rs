@@ -30,18 +30,19 @@ impl PartialEq for GridCoord {
 /// Configuration for the planning grid.
 #[derive(Resource, Clone, Debug)] // Make it a Resource for easy access
 pub struct GridConfig {
-    pub resolution: f32,    // World units per grid cell (e.g., 0.5 meters)
-    pub width: usize,       // Number of cells in world X direction
-    pub height: usize,      // Number of cells in world Z direction
+    pub resolution: f32, // World units per grid cell (e.g., 0.5 meters)
+    pub width: usize,    // Number of cells in world X direction
+    pub height: usize,   // Number of cells in world Z direction
+    // World coordinate (Sim X=Right, Sim Z=Forward) of grid cell (0, 0)
     pub world_origin: Vec2, // World coordinate (X, Z) of grid cell (0, 0)
 }
 
 impl GridConfig {
     /// Converts a world position (X, Z) to grid coordinates.
     pub fn world_to_grid(&self, world_pos: Vec2) -> Option<GridCoord> {
-        let relative_pos = world_pos - self.world_origin;
+        let relative_pos = world_pos - self.world_origin; // world_pos = (sim_x, sim_z)
         let grid_x = (relative_pos.x / self.resolution).floor() as isize;
-        let grid_y = (relative_pos.y / self.resolution).floor() as isize; // World Z is grid Y
+        let grid_y = (relative_pos.y / self.resolution).floor() as isize; // Grid Y maps to Sim Z
 
         if grid_x >= 0
             && grid_x < self.width as isize
@@ -53,7 +54,7 @@ impl GridConfig {
                 y: grid_y,
             })
         } else {
-            None // Position is outside the grid bounds
+            None
         }
     }
 
@@ -61,8 +62,8 @@ impl GridConfig {
     pub fn grid_to_world_center(&self, grid_coord: GridCoord) -> Vec2 {
         self.world_origin
             + Vec2::new(
-                (grid_coord.x as f32 + 0.5) * self.resolution,
-                (grid_coord.y as f32 + 0.5) * self.resolution, // Grid Y is world Z
+                (grid_coord.x as f32 + 0.5) * self.resolution, // Sim X
+                (grid_coord.y as f32 + 0.5) * self.resolution, // Sim Z
             )
     }
 

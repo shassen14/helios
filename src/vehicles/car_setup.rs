@@ -1,9 +1,13 @@
 // src/vehicles/car_setup.rs
 
+use crate::controllers::path_follower::PathFollowerController;
 use crate::controllers::simple_go_to::SimpleGoToController;
-use crate::models::bicycle_kinematic::BicycleKinematicModel; // Assuming model is public
+use crate::models::bicycle_kinematic::BicycleKinematicModel;
+use crate::path_planning::grid_planner::GridPlanner;
+// Assuming model is public
 use crate::simulation::components::*;
-use crate::simulation::traits::Goal; // Import simulation components
+use crate::simulation::traits::Goal;
+use crate::simulation::utils::bevy_transform_to_sim_pose; // Import simulation components
 use bevy::prelude::*;
 use std::f32::consts::PI;
 
@@ -81,7 +85,8 @@ pub fn spawn_car(
     add_keyboard_controller: bool,
     add_follow_target: bool,
     add_autonomous_agent: bool,
-    initial_goal_position: Option<Vec2>,
+    initial_goal_bevy_pos: Option<Vec2>,
+    add_planner: bool, // NEW flag for planner
 ) -> Entity {
     // Return the Entity ID of the spawned root
 
@@ -106,26 +111,27 @@ pub fn spawn_car(
 
     // --- Initial State ---
     // Use transform from config, but ensure initial state vector matches
-    let initial_state = StateVector::from_vec(vec![
-        config.initial_transform.translation.x as f64, // World X
-        config.initial_transform.translation.z as f64, // World Z (maps to state Y) -> Correction: state y should map to world Z based on dynamics
-        config.initial_transform.rotation.to_euler(EulerRot::YXZ).0 as f64, // World Y rotation (theta)
-        config.initial_velocity,                                            // Initial velocity v
+    let initial_sim_pose = bevy_transform_to_sim_pose(&config.initial_transform);
+    let initial_state_sim = StateVector::from_vec(vec![
+        initial_sim_pose.translation.x,             // sim_x
+        initial_sim_pose.translation.z,             // sim_z
+        initial_sim_pose.rotation.euler_angles().1, // sim_yaw (around Y) - Extract from Isometry rotation
+        config.initial_velocity,                    // sim_v
     ]);
 
     // --- Spawn Parent Entity ---
     let mut parent_entity_commands = commands.spawn((
         // Add essential non-optional components first
-        config.initial_transform,
+        config.initial_transform, // Use the Bevy transform for visual placement
         Name::new(config.name.clone()),
-        // Simulation Components
-        TrueState(initial_state.clone()),
+        // Simulation Components use Simulation Frame data
+        TrueState(initial_state_sim.clone()), // Store initial Sim state
         DynamicsModel(Box::new(bicycle_model)),
-        ControlInput::default(),
-        DrawTrueStateViz(true),
-        Visibility::default(),
-        // InheritedVisibility::default(),
-        // ViewVisibility::default(),
+        ControlInput::default(), // Control input [delta, a] doesn't need conversion itself
+        DrawTrueStateViz(true),  // Controls gizmo visibility
+        Visibility::default(),   // Controls mesh visibility
+                                 // InheritedVisibility::default(),
+                                 // ViewVisibility::default(),
     ));
 
     // --- Conditionally Insert Optional Components ---
@@ -140,25 +146,46 @@ pub fn spawn_car(
         parent_entity_commands.insert(AutonomousAgent);
 
         // Default controller
-        let controller = Box::new(SimpleGoToController {
-            target_velocity: 5.0, // Target 5 m/s
-            lookahead_distance: 5.0,
-            kp_velocity: 10.0,
-            kp_steering: 10.0,
+        let controller = Box::new(PathFollowerController {
+            target_velocity: 5.0,
+            lookahead_distance: 3.0,
+            kp_velocity: 1.0,
+            kp_steering: 1.5,
+            waypoint_reached_threshold: 1.0, // Reached if within 1m
         });
         parent_entity_commands.insert(ControllerLogic(controller));
 
-        // Default goal (or use provided)
-        let goal_pos = initial_goal_position.unwrap_or_else(|| Vec2::new(10.0, 10.0)); // Default goal if none provided
         // Create Goal struct - need full state dimension even if only pos used
         // Pad with zeros or use current state for non-position elements
-        let mut goal_state_vec = initial_state.clone(); // Start with initial state
-        goal_state_vec[0] = goal_pos.x as f64;
-        goal_state_vec[1] = goal_pos.y as f64; // Goal Y maps to state Z
+        let goal_state_sim = if let Some(bevy_goal) = initial_goal_bevy_pos {
+            let sim_x = bevy_goal.x as f64;
+            let sim_z = -bevy_goal.y as f64; // Bevy Vec2 Z component maps to -Sim Z
+            // Create Sim goal state [sim_x, sim_z, target_yaw=0, target_v=0]
+            // Could use current yaw/v if needed, but 0 is often fine for planner goal point
+            StateVector::from_vec(vec![sim_x, sim_z, 0.0, 0.0])
+        } else {
+            // Default goal if none provided (in Sim coords)
+            let mut default_goal = initial_state_sim.clone();
+            default_goal[1] += 20.0; // Move 20m forward (increase sim_z)
+            default_goal
+        };
+
         parent_entity_commands.insert(GoalComponent(Goal {
-            state: goal_state_vec,
+            state: goal_state_sim, // Store Simulation goal state
             derivative: None,
         }));
+
+        // --- Conditionally Insert PLANNER Components ---
+        if add_planner {
+            let planner = Box::new(GridPlanner {});
+            parent_entity_commands.insert(PathPlannerLogic(planner));
+            parent_entity_commands.insert(CurrentPath::default());
+            parent_entity_commands.insert(DrawPathViz(true));
+        } else {
+            parent_entity_commands.insert(CurrentPath::default());
+            parent_entity_commands.insert(DrawPathViz(false));
+            // Maybe add DrawPathViz(false) or omit if default is false
+        }
     }
 
     // --- Add Children ---

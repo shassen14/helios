@@ -1,6 +1,8 @@
 // src/simulation/systems.rs
 
-use crate::integrators::RK4; // Or your preferred default integrator
+use crate::integrators::RK4;
+use crate::path_planning::grid_utils::{GridConfig, ObstacleGrid};
+// Or your preferred default integrator
 use crate::simulation::{
     components::*, // Import all components
     traits::*,     // Import all traits
@@ -23,98 +25,91 @@ pub const DYNAMICS_HZ: f64 = 100.0; // Simulation physics loop rate
 
 /// System responsible for running path planners for autonomous agents.
 pub fn planner_system(
-    mut commands: Commands, // To potentially add/remove components (e.g., ReplanRequest)
+    mut commands: Commands,
+    grid_config: Res<GridConfig>,
+    obstacle_grid: Res<ObstacleGrid>,
+    // Query for world obstacles to pass to the planner trait
+    obstacle_query: Query<(&GlobalTransform, &ObstacleComponent)>, // Use GlobalTransform for world pose
     mut agent_query: Query<
         (
             Entity,
             &mut CurrentPath,
             &PathPlannerLogic,
             &GoalComponent,
-            &EstimatedState, // Planners typically use the estimated state
+            &TrueState,
             Option<&DynamicsModel>,
-            Option<&PlannerRateHz>, // Optional per-entity rate control
         ),
-        With<AutonomousAgent>,
+        (
+            With<AutonomousAgent>,
+            Or<(Added<GoalComponent>, Added<CurrentPath>)>,
+        ),
     >,
-    obstacle_query: Query<(Entity, &GlobalTransform, &ObstacleComponent)>, // Query obstacles
-    time: Res<Time>, // For timing checks if using per-entity rates
-                     // Add a Resource for global planner rate if not using FixedTimestep?
-                     // Consider adding Query<&Parent> if obstacles are hierarchical
+    time: Res<Time>,
 ) {
-    // --- Obstacle Collection ---
-    // Collect obstacle data once for all agents in this system run.
-    // TODO: Optimize this - potentially use a spatial partitioning structure (e.g., grid, tree)
-    //       updated less frequently if obstacles are mostly static.
-    let obstacles: Vec<Obstacle> = obstacle_query
+    if obstacle_grid.width == 0 || obstacle_grid.height == 0 {
+        return;
+    }
+
+    // --- Collect Obstacles ONCE per system run ---
+    // This is still potentially inefficient if many agents plan, but better
+    // than querying inside the loop. Consider passing query directly if feasible.
+    let obstacles_vec: Vec<Obstacle> = obstacle_query
         .iter()
-        .map(|(_entity, transform, obs_comp)| {
-            // Create the Obstacle struct needed by the Planner trait
+        .map(|(transform, obs_comp)| {
+            // Create the Obstacle struct matching the trait definition
             Obstacle {
-                id: obs_comp.0.id,
-                // NOTE: Assumes obstacle component's pose is relative to its GlobalTransform
-                // If ObstacleComponent pose is local, need parent transform query.
-                // Using GlobalTransform directly here assumes it's the world pose.
-                pose: bevy_global_transform_to_nalgebra_isometry(transform), // Convert Bevy Transform to nalgebra Isometry3
+                id: obs_comp.0.id, // Assuming ObstacleComponent holds an Obstacle struct
+                pose: bevy_global_transform_to_nalgebra_isometry(transform), // Convert Bevy transform
                 shape: obs_comp.0.shape.clone(),
                 is_static: obs_comp.0.is_static,
             }
         })
         .collect();
+    // --- End Obstacle Collection ---
 
-    // --- Planning Logic ---
-    for (
-        entity,
-        mut current_path,
-        planner_logic,
-        goal,
-        estimated_state,
-        dynamics_model_opt,
-        _planner_rate_opt, // TODO: Use this rate if implementing per-entity timers
-    ) in agent_query.iter_mut()
+    for (entity, mut current_path, planner_logic, goal, true_state, dynamics_model_opt) in
+        agent_query.iter_mut()
     {
-        // --- Replanning Trigger Logic ---
-        // TODO: Implement more sophisticated replanning triggers:
-        // 1. If CurrentPath is empty and Goal exists.
-        // 2. If the Goal changes significantly.
-        // 3. If the estimated state deviates too far from the current path.
-        // 4. If dynamic obstacles appear near the path.
-        // 5. Periodic replanning timer.
-        // For now, we replan if the path is empty.
-        let should_replan = current_path.0.is_empty(); // Simplistic trigger
+        if !current_path.0.is_empty() {
+            continue;
+        }
+        println!("Entity {:?}: Planning path...", entity);
 
-        if should_replan {
-            // Get the planner trait object
-            let planner = &planner_logic.0;
+        let planner = &planner_logic.0;
+        let dynamics_opt = dynamics_model_opt.map(|dm| dm.0.as_ref());
 
-            // Get optional dynamics trait object reference
-            let dynamics_opt: Option<&dyn Dynamics> = dynamics_model_opt.map(|dm| dm.0.as_ref());
+        // Call plan_path with all arguments required by the trait
+        let maybe_path_result = planner.plan_path(
+            // Renamed to clarify it's a Result
+            &true_state.0,
+            &goal.0,
+            &obstacles_vec, // <-- Pass the collected obstacles slice
+            dynamics_opt,
+            &grid_config,
+            &obstacle_grid, // Pass the grid resource directly (it's already a ref)
+            time.elapsed().as_secs_f64(),
+        );
 
-            // Call the planner
-            let maybe_path = planner.plan_path(
-                &estimated_state.state,       // Start from current estimate
-                &goal.0,                      // Target goal
-                &obstacles,                   // Provide collected obstacles
-                dynamics_opt,                 // Provide dynamics if planner needs it
-                time.elapsed().as_secs_f64(), // Provide current time
-            );
-
-            // Update the path component
-            if let Some(new_path) = maybe_path {
+        // Match the Result
+        match maybe_path_result {
+            Ok(new_path) => {
                 if !new_path.is_empty() {
                     println!(
-                        "Entity {:?}: Planned new path ({} waypoints)",
+                        "Entity {:?}: Path found ({} waypoints).",
                         entity,
                         new_path.len()
                     );
                     current_path.0 = new_path;
-                    // TODO: Potentially smooth or process the path here.
                 } else {
+                    // Planner succeeded but returned an empty path (might be valid if start=goal)
                     println!("Entity {:?}: Planner returned empty path.", entity);
-                    current_path.0.clear(); // Ensure path is empty if planner fails
+                    current_path.0.clear();
                 }
-            } else {
-                println!("Entity {:?}: Path planning failed.", entity);
-                current_path.0.clear(); // Ensure path is empty if planner fails
+            }
+            Err(e) => {
+                // Handle planning errors
+                println!("Entity {:?}: Path planning failed: {}", entity, e); // Use Display impl of error
+                current_path.0.clear(); // Clear path on failure
             }
         }
     }
@@ -127,124 +122,38 @@ pub fn autonomous_controller_system(
         (
             Entity,
             &mut ControlInput,
-            &mut ControllerLogic, // Controller might have state
-            &GoalComponent,
-            &TrueState, // Use TrueState for autonomous control (simplification)
-            // Or &EstimatedState if implementing estimation
-            Option<&DynamicsModel>, // Pass dynamics for model-based control
+            &mut ControllerLogic,
+            &GoalComponent, // Keep goal for context, even if follower uses path
+            &TrueState,     // Ideal: EstimatedState
+            Option<&mut CurrentPath>, // Path is primary input for follower
+            Option<&DynamicsModel>,
         ),
         With<AutonomousAgent>,
     >,
     time: Res<Time>,
 ) {
-    // println!("Running autonomous controller");
     for (
         _entity,
         mut control_input,
-        mut controller_logic, // Mutable access
-        goal_component,
-        true_state, // Use true state directly for now
-        dynamics_model_opt,
-    ) in agent_query.iter_mut()
-    {
-        let controller = &mut controller_logic.0; // Get mutable access to Box<dyn Controller>
-        let dynamics_opt: Option<&dyn Dynamics> = dynamics_model_opt.map(|dm| dm.0.as_ref());
-
-        // Calculate control using the assigned controller logic
-        let u = controller.calculate_control(
-            &true_state.0,                // Current state
-            &goal_component.0,            // Current goal
-            dynamics_opt,                 // Optional dynamics model
-            time.elapsed().as_secs_f64(), // Current time
-        );
-
-        // println!("Agent {:?} calculated control: {:?}", _entity, u.clone());
-        // println!(
-        //     "goal: {:?}, state: {:?}, u: {:?}",
-        //     goal_component.0, true_state.0, u
-        // );
-
-        control_input.0 = u; // Update the control input
-    }
-}
-
-// =========================================================================
-// == Control System ==
-// =========================================================================
-
-/// System responsible for calculating control inputs for autonomous agents based on their path and state.
-pub fn controller_system(
-    mut agent_query: Query<
-        (
-            Entity,
-            &mut ControlInput,
-            &mut ControllerLogic, // Mutable if controller has internal state (PID integral)
-            &mut CurrentPath,     // Mutable to potentially remove reached waypoints
-            &EstimatedState,
-            Option<&DynamicsModel>,
-            Option<&ControllerRateHz>, // Optional per-entity rate control
-        ),
-        With<AutonomousAgent>,
-    >,
-    time: Res<Time>,
-) {
-    for (
-        entity,
-        mut control_input,
         mut controller_logic,
-        mut current_path,
-        estimated_state,
+        goal_component, // Use this goal if path is empty?
+        true_state,
+        mut path_opt, // Note: this is Option<&mut CurrentPath>
         dynamics_model_opt,
-        _controller_rate_opt, // TODO: Use this rate if implementing per-entity timers
     ) in agent_query.iter_mut()
     {
-        if current_path.0.is_empty() {
-            // No path, maybe apply brakes or hover? Output zero control for now.
-            // Need dynamics info to know the size of the control vector.
-            if let Some(dynamics_model) = dynamics_model_opt {
-                control_input.0 = ControlVector::zeros(dynamics_model.0.get_control_dim());
-            } // Else: Cannot determine control size, leave as is or log error.
-            continue;
-        }
-
-        // --- Path Following Logic ---
-        // Determine the immediate target state based on the current path.
-        // This is a placeholder - proper path following needs more sophisticated logic
-        // (e.g., Pure Pursuit, Stanley method, MPC lookahead).
-        // Simplistic: Target the *next* waypoint in the path.
-        let immediate_target_state = current_path.0[0].clone();
-
-        // TODO: Check distance to immediate_target_state. If close enough,
-        //       remove it from current_path.0 and target the *new* first waypoint.
-        // let distance_to_target = ... calculate distance based on state definition ...;
-        // if distance_to_target < WAYPOINT_REACHED_THRESHOLD {
-        //     current_path.0.remove(0);
-        //     if current_path.0.is_empty() { continue; } // Reached end of path
-        //     immediate_target_state = current_path.0[0].clone();
-        // }
-
-        // Create a Goal struct for the controller's immediate target
-        // TODO: Extract target velocity/derivatives from the path profile if available/needed.
-        let immediate_goal = Goal {
-            state: immediate_target_state,
-            derivative: None, // Assuming simple waypoint following for now
-        };
-
-        // Get controller trait object
-        let controller = &mut controller_logic.0; // Get mutable access
-
-        // Get optional dynamics trait object reference
+        let controller = &mut controller_logic.0;
         let dynamics_opt: Option<&dyn Dynamics> = dynamics_model_opt.map(|dm| dm.0.as_ref());
 
-        // Calculate control
+        // Pass path_opt directly to the controller
         let u = controller.calculate_control(
-            &estimated_state.state,
-            &immediate_goal,
+            &true_state.0,
+            &goal_component.0,
             dynamics_opt,
+            path_opt.as_deref_mut(), // Pass the Option<&mut CurrentPath>
             time.elapsed().as_secs_f64(),
         );
 
-        // Update the control input component
         control_input.0 = u;
     }
 }

@@ -1,3 +1,5 @@
+// src/integrators.rs
+
 use nalgebra::DVector;
 
 pub trait Integrator<T> {

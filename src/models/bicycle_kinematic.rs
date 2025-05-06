@@ -3,7 +3,6 @@
 use crate::simulation::components::{ControlVector, StateVector}; // Use StateVector alias if preferred
 use crate::simulation::traits::{Control, Dynamics, State};
 use nalgebra::{DMatrix, DVector};
-use std::f64::consts::PI; // Use f64 PI
 
 /// Kinematic Bicycle Model for car-like vehicles.
 /// Assumes rear-wheel drive, steering on front wheels.
@@ -52,27 +51,21 @@ impl Dynamics for BicycleKinematicModel {
             return StateVector::zeros(Self::STATE_DIM);
         }
 
-        let theta = x[2]; // Heading angle
-        let v = x[3]; // Longitudinal velocity
-
-        // Clamp steering angle
+        let sim_yaw = x[2];
+        let v = x[3];
         let delta = u[0].clamp(-self.max_steer_angle, self.max_steer_angle);
-        let a = u[1]; // Acceleration
+        let a = u[1];
 
-        // --- Calculate Derivatives ---
-        let x_dot = v * theta.cos();
-        let y_dot = v * theta.sin();
-        // Angular velocity: v * tan(delta) / L
-        // Handle potential division by zero if wheelbase is zero (already asserted in new)
-        // Handle tan(delta) potentially becoming very large near +/- PI/2 (max_steer_angle should prevent this)
-        let theta_dot = if self.wheelbase.abs() < 1e-6 {
+        let x_dot = v * sim_yaw.sin(); // Component along X_sim (Right)
+        let z_dot = v * sim_yaw.cos(); // Component along Z_sim (Forward)
+        let yaw_dot = if self.wheelbase.abs() < 1e-6 {
             0.0
         } else {
             (v * delta.tan()) / self.wheelbase
         };
-        let v_dot = a; // Acceleration directly controls velocity change rate
+        let v_dot = a;
 
-        StateVector::from_vec(vec![x_dot, y_dot, theta_dot, v_dot])
+        StateVector::from_vec(vec![x_dot, z_dot, yaw_dot, v_dot])
     }
 
     /// Calculates Jacobians A = df/dx, B = df/du (Optional but useful for EKF/LQR)
@@ -89,36 +82,34 @@ impl Dynamics for BicycleKinematicModel {
             );
         }
 
-        let theta = x[2];
+        let sim_yaw = x[2];
         let v = x[3];
         let delta = u[0].clamp(-self.max_steer_angle, self.max_steer_angle);
         let l = self.wheelbase;
 
-        // A = df/dx = [ [df1/dx, df1/dy, df1/dtheta, df1/dv],
-        //               [df2/dx, df2/dy, df2/dtheta, df2/dv],
-        //               [df3/dx, df3/dy, df3/dtheta, df3/dv],
-        //               [df4/dx, df4/dy, df4/dtheta, df4/dv] ]
-        // f1 = v*cos(theta) -> df1/dtheta = -v*sin(theta), df1/dv = cos(theta)
-        // f2 = v*sin(theta) -> df2/dtheta =  v*cos(theta), df2/dv = sin(theta)
+        // A = df/dx = [ [df1/dx, df1/dz, df1/dyaw, df1/dv],
+        //               [df2/dx, df2/dz, df2/dyaw, df2/dv],
+        //               [df3/dx, df3/dz, df3/dyaw, df3/dv],
+        //               [df4/dx, df4/dz, df4/dyaw, df4/dv] ]
+        // f1 = v*sin(yaw) -> df1/dyaw = v*cos(yaw), df1/dv = sin(yaw)
+        // f2 = v*cos(yaw) -> df2/dyaw = -v*sin(yaw), df2/dv = cos(yaw)
         // f3 = v*tan(delta)/L -> df3/dv = tan(delta)/L
-        // f4 = a -> df4/dx = df4/dy = df4/dtheta = df4/dv = 0
+        // f4 = a -> all zero partials w.r.t state
 
         let mut a_mat = DMatrix::<f64>::zeros(Self::STATE_DIM, Self::STATE_DIM);
-        a_mat[(0, 2)] = -v * theta.sin();
-        a_mat[(0, 3)] = theta.cos();
-        a_mat[(1, 2)] = v * theta.cos();
-        a_mat[(1, 3)] = theta.sin();
-        a_mat[(2, 3)] = if l.abs() < 1e-6 { 0.0 } else { delta.tan() / l };
-        // Row 3 (index 3) is all zeros as df4/dx_i = 0
+        a_mat[(0, 2)] = v * sim_yaw.cos(); // df1/dyaw
+        a_mat[(0, 3)] = sim_yaw.sin(); // df1/dv
+        a_mat[(1, 2)] = -v * sim_yaw.sin(); // df2/dyaw
+        a_mat[(1, 3)] = sim_yaw.cos(); // df2/dv
+        a_mat[(2, 3)] = if l.abs() < 1e-6 { 0.0 } else { delta.tan() / l }; // df3/dv
 
         // B = df/du = [ [df1/ddelta, df1/da],
         //               [df2/ddelta, df2/da],
         //               [df3/ddelta, df3/da],
         //               [df4/ddelta, df4/da] ]
-        // f1 = v*cos(theta) -> df1/ddelta = 0, df1/da = 0
-        // f2 = v*sin(theta) -> df2/ddelta = 0, df2/da = 0
-        // f3 = v*tan(delta)/L -> df3/ddelta = v * sec(delta)^2 / L = v / (L * cos(delta)^2), df3/da = 0
-        // f4 = a -> df4/ddelta = 0, df4/da = 1
+        // f1, f2 partials w.r.t u are 0
+        // f3 = v*tan(delta)/L -> df3/ddelta = v / (L * cos(delta)^2)
+        // f4 = a -> df4/da = 1
 
         let mut b_mat = DMatrix::<f64>::zeros(Self::STATE_DIM, Self::CONTROL_DIM);
         let cos_delta_sq = delta.cos().powi(2);
@@ -126,8 +117,8 @@ impl Dynamics for BicycleKinematicModel {
             0.0
         } else {
             v / (l * cos_delta_sq)
-        };
-        b_mat[(3, 1)] = 1.0;
+        }; // df3/ddelta
+        b_mat[(3, 1)] = 1.0; // df4/da
 
         (a_mat, b_mat)
     }
@@ -153,32 +144,24 @@ impl Dynamics for BicycleKinematicModel {
         // Desired acceleration 'a' is directly given by desired v_dot
         let a_ff = x_dot_desired[3];
 
-        // Desired angular velocity theta_dot_d = v * tan(delta) / L
-        // Solve for delta: tan(delta) = theta_dot_d * L / v
-        // delta = atan(theta_dot_d * L / v)
-        let theta_dot_d = x_dot_desired[2];
+        // Desired angular velocity yaw_dot_d = v * tan(delta) / L
+        // Solve for delta: delta = atan(yaw_dot_d * L / v)
+        let yaw_dot_d = x_dot_desired[2];
         let delta_ff = if v.abs() < 1e-3 {
-            // If velocity is near zero, steering has no effect on theta_dot.
-            // Cannot determine feedforward delta. Return None or 0? Let's return None.
-            // Or, if theta_dot_d is also near zero, any delta is fine, return 0.
-            if theta_dot_d.abs() < 1e-3 {
+            if yaw_dot_d.abs() < 1e-3 {
                 0.0
             } else {
                 return None;
             }
         } else {
-            (theta_dot_d * self.wheelbase / v).atan()
+            (yaw_dot_d * self.wheelbase / v).atan()
         };
-
-        // Clamp the calculated feedforward steering angle
         let delta_ff_clamped = delta_ff.clamp(-self.max_steer_angle, self.max_steer_angle);
 
-        // Consistency Check (Optional but good):
-        // Do the calculated ff controls produce the desired x_dot and y_dot?
-        // x_dot_check = v * x[2].cos()
-        // y_dot_check = v * x[2].sin()
-        // If abs(x_dot_check - x_dot_desired[0]) > tolerance or abs(y_dot_check - x_dot_desired[1]) > tolerance -> return None?
-        // This indicates the desired x_dot/y_dot are inconsistent with the achievable rates given v and theta_dot_d.
+        // Optional Consistency Check: Do a_ff and delta_ff_clamped produce desired x_dot/z_dot?
+        // x_dot_check = v * x[2].sin() // Check if this matches x_dot_desired[0] approximately
+        // z_dot_check = v * x[2].cos() // Check if this matches x_dot_desired[1] approximately
+        // If not, the desired derivatives might be kinematically inconsistent.
 
         Some(ControlVector::from_vec(vec![delta_ff_clamped, a_ff]))
     }
