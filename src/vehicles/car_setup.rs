@@ -7,7 +7,7 @@ use crate::path_planning::grid_planner::GridPlanner;
 // Assuming model is public
 use crate::simulation::components::*;
 use crate::simulation::traits::Goal;
-use crate::simulation::utils::bevy_transform_to_sim_pose; // Import simulation components
+use crate::simulation::utils::{bevy_transform_to_enu_iso, enu_iso_to_bevy_transform}; // Import simulation components
 use bevy::prelude::*;
 use std::f32::consts::PI;
 
@@ -53,13 +53,8 @@ impl Default for CarConfig {
         let wheel_radius = 0.35;
         let car_body_height = 0.8;
         let initial_state_vec = vec![0.0, 0.0, 0.0, 0.0]; // x, y, theta, v
-        let initial_transform = Transform::from_xyz(
-            initial_state_vec[0] as f32,
-            wheel_radius, // Place root Y at wheel center height initially
-            initial_state_vec[1] as f32,
-        )
-        .with_rotation(Quat::from_rotation_y(initial_state_vec[2] as f32));
-
+        let initial_transform =
+            Transform::from_xyz(0.0, wheel_radius, 0.0).with_rotation(Quat::IDENTITY); // No initial rotation in Bevy frame
         Self {
             body_color: Color::srgb(0.8, 0.1, 0.1),  // Red
             wheel_color: Color::srgb(0.1, 0.1, 0.1), // Dark grey
@@ -69,7 +64,7 @@ impl Default for CarConfig {
             wheelbase,
             max_steer_angle_deg: 35.0,
             initial_transform,
-            initial_velocity: initial_state_vec[3],
+            initial_velocity: 0.0,
             name: "Car".to_string(),
         }
     }
@@ -111,7 +106,7 @@ pub fn spawn_car(
 
     // --- Initial State ---
     // Use transform from config, but ensure initial state vector matches
-    let initial_sim_pose = bevy_transform_to_sim_pose(&config.initial_transform);
+    let initial_sim_pose = bevy_transform_to_enu_iso(&config.initial_transform);
     let initial_state_sim = StateVector::from_vec(vec![
         initial_sim_pose.translation.x,             // sim_x
         initial_sim_pose.translation.z,             // sim_z

@@ -4,6 +4,11 @@ use crate::simulation::components::*;
 use crate::simulation::traits::{SensorOutputData, Shape};
 use crate::simulation::utils::*;
 use bevy::prelude::*;
+use bevy::prelude::{
+    GlobalTransform, Quat as BevyQuat, Transform as BevyTransform, Vec3 as BevyVec3,
+};
+
+use nalgebra::{Isometry3, Point3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use std::f32::consts::PI; // For cuboid rotation if needed
 
 // =========================================================================
@@ -127,29 +132,28 @@ pub fn draw_estimated_state_system(
 // == Path Visualization ==
 // =========================================================================
 pub fn draw_path_system(
-    query: Query<(Entity, &CurrentPath, &DrawPathViz)>, // No longer need Transform here
+    query: Query<(&CurrentPath, &BevyTransform, &DrawPathViz)>,
     mut gizmos: Gizmos,
-    // config_query: Query<&CarConfig>, // If needed for specific Y offset per car
 ) {
-    let wheel_radius = 0.35; // TODO: Get from component
-    let draw_height_offset = 0.1; // Draw slightly above ground
-
-    for (entity, path, viz_toggle) in query.iter() {
+    for (path, bevy_transform_ref, viz_toggle) in query.iter() {
+        // Use bevy_transform_ref for clarity
         if !viz_toggle.0 || path.0.len() < 2 {
             continue;
         }
 
-        let points: Vec<Vec3> = path
-            .0 // Vec<State> where State is [sim_x, sim_z, sim_yaw, sim_v]
+        let points: Vec<BevyVec3> = path
+            .0
             .iter()
             .filter_map(|state_vec| {
+                // Assuming path waypoints store [x_e, y_n]
                 if state_vec.len() >= 2 {
-                    // Convert Sim pos to Bevy pos using helper
-                    Some(sim_pos_to_bevy_pos(
-                        state_vec[0],                      // sim_x
-                        state_vec[1],                      // sim_z
-                        wheel_radius + draw_height_offset, // Desired Bevy Y for drawing
-                    ))
+                    // Construct ENU translation vector for the waypoint (assuming Z_up=0)
+                    let enu_waypoint_vector = Vector3::new(state_vec[0], state_vec[1], 0.0);
+                    let mut bevy_point_coords = enu_vector_as_bevy_point(&enu_waypoint_vector);
+
+                    // Adjust height for visualization relative to car's current Bevy Y
+                    bevy_point_coords.y = bevy_transform_ref.translation.y + 0.1;
+                    Some(bevy_point_coords)
                 } else {
                     None
                 }
@@ -157,13 +161,10 @@ pub fn draw_path_system(
             .collect();
 
         if points.len() >= 2 {
-            // println!("Entity {:?}: Drawing path with {} Bevy points. First: {:?}", entity, points.len(), points.first()); // Optional Log
             gizmos.linestrip(points, Color::srgb(0.0, 1.0, 1.0));
         }
     }
-}
-
-// =========================================================================
+} // =========================================================================
 // == Sensor Data Visualization ==
 // =========================================================================
 pub fn draw_sensor_data_system(
@@ -344,11 +345,9 @@ pub fn draw_goal_system(
 
         if goal_state.len() >= 2 {
             // Convert Sim pos to Bevy pos
-            let goal_pos_bevy = sim_pos_to_bevy_pos(
-                goal_state[0], // sim_x
-                goal_state[1], // sim_z
-                wheel_radius,  // Base height
-            );
+            let enu_goal_vec = Vector3::new(goal_state[0], goal_state[1], wheel_radius);
+
+            let goal_pos_bevy = enu_vector_as_bevy_point(&enu_goal_vec);
 
             // Create Isometry for sphere (position only)
             let goal_isometry =

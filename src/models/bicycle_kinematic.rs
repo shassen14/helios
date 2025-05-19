@@ -39,7 +39,7 @@ impl Dynamics for BicycleKinematicModel {
     }
 
     /// Calculates x_dot = f(x, u, t)
-    /// x = [x, y, theta, v]
+    /// x = [x, y, theta, v_x]
     /// u = [delta, a]
     /// x_dot = [v*cos(theta), v*sin(theta), v*tan(delta)/L, a]
     fn get_derivatives(&self, x: &State, u: &Control, _t: f64) -> State {
@@ -56,8 +56,8 @@ impl Dynamics for BicycleKinematicModel {
         let delta = u[0].clamp(-self.max_steer_angle, self.max_steer_angle);
         let a = u[1];
 
-        let x_dot = v * sim_yaw.sin(); // Component along X_sim (Right)
-        let z_dot = v * sim_yaw.cos(); // Component along Z_sim (Forward)
+        let x_dot = v * sim_yaw.cos(); // Component along x_sim (Forward)
+        let y_dot = v * sim_yaw.sin(); // Component along y_sim (Left)
         let yaw_dot = if self.wheelbase.abs() < 1e-6 {
             0.0
         } else {
@@ -65,7 +65,7 @@ impl Dynamics for BicycleKinematicModel {
         };
         let v_dot = a;
 
-        StateVector::from_vec(vec![x_dot, z_dot, yaw_dot, v_dot])
+        StateVector::from_vec(vec![x_dot, y_dot, yaw_dot, v_dot])
     }
 
     /// Calculates Jacobians A = df/dx, B = df/du (Optional but useful for EKF/LQR)

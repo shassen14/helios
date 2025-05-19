@@ -2,13 +2,11 @@
 
 use bevy::prelude::*;
 use bevy::time::Time;
-use rust_robotics::simulation::traits::{Obstacle, Shape};
-use rust_robotics::simulation::utils::{
-    bevy_transform_to_nalgebra_isometry,
-    bevy_transform_to_sim_pose, // Import NEW helper
-    sim_pos_to_bevy_pos,        // Import NEW helper
-    sim_pose_to_bevy_transform, // Import NEW helper
+use nalgebra::{
+    Isometry3, Rotation, Rotation3, Translation, Translation3, UnitQuaternion, Vector3,
 };
+use rust_robotics::simulation::traits::{Obstacle, Shape};
+use rust_robotics::simulation::utils::*;
 use std::f32::consts::PI;
 
 // Import local modules
@@ -94,6 +92,7 @@ fn main() {
                 draw_path_system,
                 draw_goal_system,
                 draw_obstacle_system,
+                draw_world_axes_system,
             )
                 .chain(), // Apply ordering constraints within Update
         )
@@ -311,7 +310,8 @@ fn setup_scene(
     // --- Spawn the Player Car using the Spawner ---
     let player_car_config = CarConfig {
         name: "PlayerCar".to_string(),
-        initial_transform: Transform::from_xyz(0.0, 0.35, 0.0),
+        initial_transform: Transform::from_xyz(0.0, 0.35, 0.0)
+            .with_rotation(Quat::from_rotation_y(-std::f32::consts::PI / 2.0)), // 90-degree yaw in Bevy
         body_color: Color::srgb(0.8, 0.1, 0.1), // Ensure player is red
         ..Default::default()
     };
@@ -365,7 +365,7 @@ fn setup_scene(
     // but store Simulation pose in ObstacleComponent.
     let obstacle_bevy_transform = Transform::from_xyz(5.0, 1.0, -10.0); // Bevy pose: Z=-10 means 10m forward
     // Convert Bevy transform to Simulation pose
-    let obstacle_sim_pose = bevy_transform_to_sim_pose(&obstacle_bevy_transform);
+    let obstacle_sim_pose = bevy_transform_to_enu_iso(&obstacle_bevy_transform);
     // Define shape dimensions in Simulation frame
     let obstacle_shape_sim = Shape::Box {
         half_extents: nalgebra::Vector3::new(0.5, 1.0, 2.5),
@@ -388,7 +388,7 @@ fn setup_scene(
 
     // Example Sphere Obstacle
     let sphere_bevy_transform = Transform::from_xyz(-5.0, 1.5, -8.0); // Bevy pose
-    let sphere_sim_pose = bevy_transform_to_sim_pose(&sphere_bevy_transform);
+    let sphere_sim_pose = bevy_transform_to_enu_iso(&sphere_bevy_transform);
     let sphere_shape_sim = Shape::Sphere { radius: 1.5 };
 
     commands.spawn((
@@ -449,13 +449,27 @@ fn update_car_transform_from_state(
     for (true_state, mut transform) in query.iter_mut() {
         let state = &true_state.0; // State is now [sim_x, sim_z, sim_yaw, sim_v]
         if state.len() >= 3 {
-            // Use the conversion helper
-            *transform = sim_pose_to_bevy_transform(
-                state[0],     // sim_x
-                state[1],     // sim_z
-                state[2],     // sim_yaw
-                wheel_radius, // Desired Bevy Y offset
-            );
+            // Construct the pose in the ENU frame
+            // Assuming ground vehicle, so Z_up (ENU) is 0.0 for translation
+            // If your vehicle can move vertically in ENU, state should include enu_z.
+            let enu_translation_vector = Vector3::new(state[0], state[1], wheel_radius);
+            let enu_rotation = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), state[2]); // Yaw around ENU Z-axis
+            let enu_pose =
+                Isometry3::from_parts(Translation3::from(enu_translation_vector), enu_rotation);
+
+            // Convert the full ENU pose to Bevy Transform
+            let new_bevy_transform = enu_iso_to_bevy_transform(&enu_pose);
+
+            // Update Bevy component (only pose, keep scale etc.)
+            transform.translation = new_bevy_transform.translation;
+            transform.rotation = new_bevy_transform.rotation;
+            // Note: bevy_transform.translation.y will be set by enu_iso_to_bevy_transform
+            // based on enu_translation_vector.z (which is 0.0 here).
+            // If you need the car to be at a specific Bevy Y height (e.g. wheel_radius),
+            // you either:
+            // 1. Make enu_translation_vector.z be wheel_radius_in_enu_units.
+            // 2. OR, after calling enu_iso_to_bevy_transform, explicitly set:
+            //    bevy_transform.translation.y = desired_bevy_y_height;}
         }
     }
 }
@@ -517,4 +531,63 @@ fn wheel_steering_system(
             wheel_transform.rotation = steer_rotation * base_axle_rotation; // Apply steer yaw, then tilt axle. Check visually.
         }
     }
+}
+
+fn draw_world_axes_system(mut gizmos: Gizmos) {
+    // Define the length of the axis lines
+    let axis_length = 3.0; // Adjust length as needed for visibility
+
+    // --- Draw X-Axis (Red) ---
+    // From origin (0,0,0) along positive X
+    //    gizmos.line(
+    //        Vec3::ZERO,                 // Start point
+    //        Vec3::X * axis_length,      // End point (+X direction)
+    //        Color::srgb(1.0, 0.2, 0.2), // Red color (slightly desaturated)
+    //    );
+    //
+    //    // --- Draw Y-Axis (Green) ---
+    //    // From origin (0,0,0) along positive Y (UP in Bevy)
+    //    gizmos.line(
+    //        Vec3::ZERO,                 // Start point
+    //        Vec3::Y * axis_length,      // End point (+Y direction)
+    //        Color::srgb(0.2, 1.0, 0.2), // Green color
+    //    );
+    //
+    //    // --- Draw Z-Axis (Blue) ---
+    //    // From origin (0,0,0) along positive Z (BACKWARDS/Towards Camera in Bevy)
+    //    gizmos.line(
+    //        Vec3::ZERO,                 // Start point
+    //        Vec3::Z * axis_length,      // End point (+Z direction)
+    //        Color::srgb(0.2, 0.2, 1.0), // Blue color
+    //    );
+
+    // --- Optional: Draw Negative Axes (e.g., with darker colors or dashed lines) ---
+    // gizmos.line(Vec3::ZERO, Vec3::NEG_X * axis_length, Color::srgb(0.5, 0.1, 0.1));
+    // gizmos.line(Vec3::ZERO, Vec3::NEG_Y * axis_length, Color::srgb(0.1, 0.5, 0.1));
+    // gizmos.line(Vec3::ZERO, Vec3::NEG_Z * axis_length, Color::srgb(0.1, 0.1, 0.5));
+
+    // --- Optional: Make axes thicker using cuboids (lines can be thin) ---
+
+    let thickness = 0.05;
+    gizmos.cuboid(
+        Transform::from_xyz(axis_length / 2.0, 0.0, 0.0) // Centered on axis
+            .with_scale(Vec3::new(axis_length, thickness, thickness)),
+        Color::srgb(1.0, 0.2, 0.2),
+    );
+    gizmos.cuboid(
+        Transform::from_xyz(0.0, axis_length / 2.0, 0.0).with_scale(Vec3::new(
+            thickness,
+            axis_length,
+            thickness,
+        )),
+        Color::srgb(0.2, 1.0, 0.2),
+    );
+    gizmos.cuboid(
+        Transform::from_xyz(0.0, 0.0, axis_length / 2.0).with_scale(Vec3::new(
+            thickness,
+            thickness,
+            axis_length,
+        )),
+        Color::srgb(0.2, 0.2, 1.0),
+    );
 }
