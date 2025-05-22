@@ -311,7 +311,7 @@ fn setup_scene(
     let player_translation = Vec3::new(5.0, 0.0, 0.0);
 
     // Define a rotation quaternion (e.g., 90 degrees around the Y axis)
-    let player_rotation = Quat::from_rotation_y(1.0 * std::f32::consts::FRAC_PI_2);
+    let player_rotation = Quat::from_rotation_y(0.5 * std::f32::consts::FRAC_PI_2);
 
     // Create a Transform with the specified translation and rotation
     let player_transform = Transform {
@@ -426,9 +426,9 @@ fn camera_follow_system(
     if let Ok(target_transform) = target_query.single() {
         if let Ok((mut camera_transform, follow_settings)) = camera_query.single_mut() {
             let target_pos = target_transform.translation;
-            // Target's forward direction (assuming Y is up, Z is forward locally after Y rotation)
+            // Target's forward direction (assuming Y is up, +X is forward locally after Y rotation)
             // This depends on how dynamics_system updates the transform rotation
-            let target_forward = target_transform.forward(); // Bevy's forward is -Z
+            let target_forward = target_transform.local_x(); // Bevy's forward is +X
 
             // Calculate desired camera position: offset behind and above the target
             // Use target's forward direction (negated) to position behind
