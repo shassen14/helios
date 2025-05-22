@@ -108,9 +108,9 @@ pub fn spawn_car(
     // Use transform from config, but ensure initial state vector matches
     let initial_sim_pose = bevy_transform_to_enu_iso(&config.initial_transform);
     let initial_state_sim = StateVector::from_vec(vec![
-        initial_sim_pose.translation.x,             // sim_x
-        initial_sim_pose.translation.z,             // sim_z
-        initial_sim_pose.rotation.euler_angles().1, // sim_yaw (around Y) - Extract from Isometry rotation
+        initial_sim_pose.translation.x,             // enu_x
+        initial_sim_pose.translation.y,             // enu_z
+        initial_sim_pose.rotation.euler_angles().2, // enu_yaw (around Z) - Extract from Isometry rotation
         config.initial_velocity,                    // sim_v
     ]);
 
@@ -145,7 +145,7 @@ pub fn spawn_car(
             target_velocity: 5.0,
             lookahead_distance: 3.0,
             kp_velocity: 1.0,
-            kp_steering: 1.5,
+            kp_steering: 1.0,
             waypoint_reached_threshold: 1.0, // Reached if within 1m
         });
         parent_entity_commands.insert(ControllerLogic(controller));

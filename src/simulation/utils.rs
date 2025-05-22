@@ -51,7 +51,7 @@ pub fn global_transform_to_isometry3d(transform: &GlobalTransform) -> Isometry3d
 // This is -90 degrees around the X axis.
 thread_local! {
     // Define only one fundamental frame rotation quaternion
-    pub static Q_BEVY_FRAME_FROM_ENU_FRAME: UnitQuaternion<f64> =
+    pub static Q_ENU_FRAME_TO_BEVY_FRAME: UnitQuaternion<f64> =
         UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -FRAC_PI_2);
 }
 // --- Vector Transformations ---
@@ -95,9 +95,8 @@ pub fn bevy_point_as_enu_vector(bevy_point: &BevyVec3) -> Vector3<f64> {
 
 /// Converts an orientation (quaternion) from ENU frame to Bevy world frame.
 pub fn enu_quat_to_bevy_quat(enu_quat: &UnitQuaternion<f64>) -> BevyQuat {
-    let final_rot_f64 = Q_BEVY_FRAME_FROM_ENU_FRAME.with(|q_bf_ef| {
-        let q_ef_bf = q_bf_ef.inverse(); // This is T_ENU_from_Bevy
-        *q_bf_ef * enu_quat * q_ef_bf // T_B_E * q_E * T_E_B
+    let final_rot_f64 = Q_ENU_FRAME_TO_BEVY_FRAME.with(|q_ef_bf| {
+        q_ef_bf * enu_quat * q_ef_bf.inverse() // T_E->B * q_E * T_B->E
     });
 
     BevyQuat::from_xyzw(
@@ -117,9 +116,8 @@ pub fn bevy_quat_to_enu_quat(bevy_quat: &BevyQuat) -> UnitQuaternion<f64> {
         bevy_quat.z as f64,
     ));
 
-    let final_rot_f64 = Q_BEVY_FRAME_FROM_ENU_FRAME.with(|q_bf_ef| {
-        let q_ef_bf = q_bf_ef.inverse(); // This is T_ENU_from_Bevy
-        q_ef_bf * bevy_q_f64 * *q_bf_ef // T_E_B * q_B * T_B_E
+    let final_rot_f64 = Q_ENU_FRAME_TO_BEVY_FRAME.with(|q_ef_bf| {
+        q_ef_bf.inverse() * bevy_q_f64 * *q_ef_bf // T_B->E * q_B * T_E->B
     });
     final_rot_f64
 }

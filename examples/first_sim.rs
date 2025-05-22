@@ -307,11 +307,23 @@ fn setup_scene(
         Name::new("Ground"),
     ));
 
+    // Define a translation vector
+    let player_translation = Vec3::new(5.0, 0.0, 0.0);
+
+    // Define a rotation quaternion (e.g., 90 degrees around the Y axis)
+    let player_rotation = Quat::from_rotation_y(1.0 * std::f32::consts::FRAC_PI_2);
+
+    // Create a Transform with the specified translation and rotation
+    let player_transform = Transform {
+        translation: player_translation,
+        rotation: player_rotation,
+        ..Default::default() // Keep the scale as default (Vec3::ONE)
+    };
+
     // --- Spawn the Player Car using the Spawner ---
     let player_car_config = CarConfig {
         name: "PlayerCar".to_string(),
-        initial_transform: Transform::from_xyz(0.0, 0.35, 0.0)
-            .with_rotation(Quat::from_rotation_y(-std::f32::consts::PI / 2.0)), // 90-degree yaw in Bevy
+        initial_transform: player_transform,
         body_color: Color::srgb(0.8, 0.1, 0.1), // Ensure player is red
         ..Default::default()
     };
@@ -330,16 +342,16 @@ fn setup_scene(
     // Autonomous Cars
     // Make sure initial transform and goal pos use Bevy coordinates,
     // but the underlying components (TrueState, GoalComponent) will use Sim coords.
-    for i in 0..3 {
+    for i in 0..1 {
         // Define start/goal in Bevy coordinates for clarity in scene setup
         let start_pos_bevy = Vec3::new(-10.0 + i as f32 * 7.0, 0.35, -10.0); // Start 10m forward (-Z)
-        let goal_pos_bevy = Vec2::new(start_pos_bevy.x + 5.0, 15.0); // Goal 15m backward (+Z)
+        let goal_pos_bevy = Vec2::new(start_pos_bevy.x, 10.0); // Goal 15m backward (+Z)
 
         let config = CarConfig {
             name: format!("AutonomousCar_{}", i),
             body_color: Color::srgb(0.2, 0.3, 0.9),
-            initial_transform: Transform::from_translation(start_pos_bevy), // Bevy transform for visuals
-            // .with_rotation(Quat::from_rotation_y(PI)), // Rotate visual to face +Z (Backward) initially if needed
+            initial_transform: Transform::from_translation(start_pos_bevy)
+                .with_rotation(Quat::from_rotation_y(-PI)), // Rotate visual to face +Z (Backward) initially if needed
             initial_velocity: 0.0,
             // *** IMPORTANT: car_setup needs to be updated to set TrueState and GoalComponent
             // *** using SIMULATION coordinates derived from these Bevy inputs.
