@@ -29,6 +29,9 @@ use rust_robotics::vehicles::car_setup::{
     spawn_car,
 }; // Import new system
 
+use bevy_egui::EguiPlugin;
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
+
 // Constants for scheduling (Hz)
 // const DYNAMICS_HZ: f64 = 100.0; // Not explicitly used for scheduling in this version
 
@@ -44,6 +47,10 @@ fn main() {
             exit_condition: bevy::window::ExitCondition::OnPrimaryClosed,
             ..default()
         }))
+        .add_plugins(EguiPlugin {
+            enable_multipass_for_primary_context: true,
+        })
+        .add_plugins(WorldInspectorPlugin::new())
         .insert_resource(ClearColor(Color::srgb(0.7, 0.85, 1.0)))
         .insert_resource(GridConfig {
             // Configure your grid
@@ -308,7 +315,7 @@ fn setup_scene(
     ));
 
     // Define a translation vector
-    let player_translation = Vec3::new(5.0, 0.0, 0.0);
+    let player_translation = Vec3::new(5.0, 0.0, 5.0);
 
     // Define a rotation quaternion (e.g., 90 degrees around the Y axis)
     let player_rotation = Quat::from_rotation_y(0.5 * std::f32::consts::FRAC_PI_2);
@@ -401,6 +408,7 @@ fn setup_scene(
     // Example Sphere Obstacle
     let sphere_bevy_transform = Transform::from_xyz(-5.0, 1.5, -8.0); // Bevy pose
     let sphere_sim_pose = bevy_transform_to_enu_iso(&sphere_bevy_transform);
+
     let sphere_shape_sim = Shape::Sphere { radius: 1.5 };
 
     commands.spawn((

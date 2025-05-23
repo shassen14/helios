@@ -5,7 +5,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.16.0"
+# remove "dynamic_linking" before release, its for development only
+bevy = { version = "0.16", features = ["file_watcher"] }
+bevy-inspector-egui = "0.31.0"
+bevy_egui = "0.34.1"
 nalgebra = "0.33.2"
 num-traits = "0.2.19"
 serde = { version = "1.0.219", features = ["derive"] }
@@ -13,3 +16,12 @@ toml = "0.8.21"
 
 [dev-dependencies]
 approx = "0.5.1"
+bevy = { version = "0.16", features = ["dynamic_linking", "file_watcher"] }
+
+# Enable a small amount of optimization in debug mode
+[profile.dev]
+opt-level = 3 # using cranelift: 3 instead of 1 here, better runtime perf, same compiletimes
+
+# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
