@@ -109,7 +109,7 @@ pub fn spawn_car(
     let initial_sim_pose = bevy_transform_to_enu_iso(&config.initial_transform);
     let initial_state_sim = StateVector::from_vec(vec![
         initial_sim_pose.translation.x,             // enu_x
-        initial_sim_pose.translation.y,             // enu_z
+        initial_sim_pose.translation.y,             // enu_y
         initial_sim_pose.rotation.euler_angles().2, // enu_yaw (around Z) - Extract from Isometry rotation
         config.initial_velocity,                    // sim_v
     ]);
