@@ -89,8 +89,9 @@ fn main() {
                 //    (Dynamics runs in FixedUpdate, so this uses the latest integrated state)
                 update_car_transform_from_state,
                 // 5. Visual Updates & Camera (depend on Transform)
-                wheel_steering_system, // Uses ControlInput
-                wheel_rolling_system,  // Uses TrueState
+                wheel_steering_system_for_player, // Uses ControlInput
+                autonomous_wheel_steering_system,
+                wheel_rolling_system, // Uses TrueState
                 camera_follow_system.after(update_car_transform_from_state),
                 update_control_display_text, // Reads ControlInput/TrueState
                 // 6. Rendering Gizmos (can run fairly late)
@@ -530,25 +531,71 @@ fn wheel_rolling_system(
 }
 
 // --- Update Wheel Steering System (Ensure correct rotation axis) ---
-fn wheel_steering_system(
-    parent_query: Query<&ControlInput, With<KeyboardControlled>>, // Could also query AutonomousAgent eventually
-    mut wheel_query: Query<&mut Transform, With<SteeringWheel>>,
+fn wheel_steering_system_for_player(
+    // Renamed for clarity
+    // Query for the parent entity that is keyboard controlled and has children
+    player_car_query: Query<(&ControlInput, &Children), With<KeyboardControlled>>,
+    // Query to get the Transform of entities that are SteeringWheels
+    // This query will be filtered down using the parent's children list
+    mut steering_wheel_transforms_query: Query<&mut Transform, With<SteeringWheel>>,
 ) {
-    if let Ok(parent_control_input) = parent_query.single() {
-        let steering_angle = parent_control_input.0.get(0).cloned().unwrap_or(0.0) as f32; // Sim delta angle
+    // Iterate over player-controlled cars (should usually be one, but handles multiple if ever needed)
+    for (control_input, children) in player_car_query.iter() {
+        let player_steering_angle = control_input.0.get(0).cloned().unwrap_or(0.0) as f32;
 
-        // Assuming wheels are children of the main car body.
-        // Base rotation aligns wheel axle with Bevy X/Z plane.
-        // Steering rotation should be around the local UP axis (Bevy Y).
-        // Need initial wheel orientation from car_setup. Let's assume it was Quat::from_rotation_x(PI/2.0)
-        let base_axle_rotation = Quat::from_rotation_x(PI / 2.0); // Initial orientation in setup
-        let steer_rotation = Quat::from_rotation_y(steering_angle); // Yaw around Bevy Y
+        // Base rotation to make cylinder wheel lie flat, axle along its local Y
+        // (assuming cylinder created with height along Y, radius in XZ)
+        // After this, wheel's local Y IS its axle. Steering rotates around parent's Y.
+        // Rolling rotates around wheel's local Y.
+        let base_wheel_orientation = Quat::from_rotation_x(PI / 2.0); // Align cylinder to be a wheel
 
-        // Apply steering ON TOP of base orientation
-        for mut wheel_transform in wheel_query.iter_mut() {
-            // Reset rotation first? Or combine? Combine: Steer first, then align axle.
-            // wheel_transform.rotation = base_axle_rotation * steer_rotation; // Order matters! Try swapping if wrong.
-            wheel_transform.rotation = steer_rotation * base_axle_rotation; // Apply steer yaw, then tilt axle. Check visually.
+        // Additional rotation for steering (around parent's Y-axis, which is wheel's X after base_orientation)
+        // No, steering is rotation of the wheel around its steering pivot, which is effectively an axis aligned with parent's Y.
+        // The wheel itself, after base_orientation, has its faces in parent's YZ plane, axle along parent X.
+        // This isn't right.
+
+        // Let's re-think wheel alignment in spawn_car and here:
+        // In spawn_car, wheel_align_rotation = Quat::from_rotation_x(PI_F32 / 2.0);
+        // This makes the Cylinder's original Y-axis (its axle) point along the parent's LOCAL Z-axis (sideways).
+        // The wheel's "face" is now in the parent's local XY plane.
+        // Steering means rotating this wheel around an axis parallel to the parent's LOCAL Y-axis (up).
+
+        let steering_rotation = Quat::from_rotation_y(player_steering_angle);
+
+        // Combine: first align the cylinder to be a wheel, then apply steering rotation
+        let final_wheel_rotation = steering_rotation * base_wheel_orientation;
+
+        // Iterate through the children of the player-controlled car
+        for child_entity in children.iter() {
+            // Try to get the Transform of the child if it's also a SteeringWheel
+            if let Ok(mut wheel_transform) = steering_wheel_transforms_query.get_mut(child_entity) {
+                wheel_transform.rotation = final_wheel_rotation;
+            }
+        }
+    }
+}
+
+fn autonomous_wheel_steering_system(
+    // Query for autonomous parent entities that have ControlInput and Children
+    // Exclude KeyboardControlled to avoid conflict with the player system
+    autonomous_car_query: Query<
+        (&ControlInput, &Children),
+        (With<AutonomousAgent>, Without<KeyboardControlled>),
+    >,
+    mut steering_wheel_transforms_query: Query<&mut Transform, With<SteeringWheel>>,
+) {
+    for (control_input, children) in autonomous_car_query.iter() {
+        // This is the autonomous car's own calculated steering angle
+        let autonomous_steering_angle = control_input.0.get(0).cloned().unwrap_or(0.0) as f32;
+
+        let base_wheel_orientation = Quat::from_rotation_x(PI / 2.0);
+        let steering_rotation_around_parent_y = Quat::from_rotation_y(autonomous_steering_angle);
+        let final_wheel_rotation = steering_rotation_around_parent_y * base_wheel_orientation;
+
+        for child_entity in children.iter() {
+            if let Ok(mut wheel_transform) = steering_wheel_transforms_query.get_mut(child_entity) {
+                wheel_transform.rotation = final_wheel_rotation;
+            }
         }
     }
 }
