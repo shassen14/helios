@@ -142,11 +142,11 @@ pub fn spawn_car(
 
         // Default controller
         let controller = Box::new(PathFollowerController {
-            target_velocity: 5.0,
-            lookahead_distance: 3.0,
+            target_velocity: 4.0,
+            lookahead_distance: 5.0,
             kp_velocity: 1.0,
             kp_steering: 1.0,
-            waypoint_reached_threshold: 1.0, // Reached if within 1m
+            waypoint_reached_threshold: 2.0, // Reached if within 1m
         });
         parent_entity_commands.insert(ControllerLogic(controller));
 

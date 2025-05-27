@@ -47,19 +47,19 @@ fn main() {
             exit_condition: bevy::window::ExitCondition::OnPrimaryClosed,
             ..default()
         }))
-        .add_plugins(EguiPlugin {
-            enable_multipass_for_primary_context: true,
-        })
-        .add_plugins(WorldInspectorPlugin::new())
+        // .add_plugins(EguiPlugin {
+        //     enable_multipass_for_primary_context: true,
+        // })
+        // .add_plugins(WorldInspectorPlugin::new())
         .insert_resource(ClearColor(Color::srgb(0.7, 0.85, 1.0)))
         .insert_resource(GridConfig {
             // Configure your grid
-            resolution: 0.5,                       // e.g., 0.5 meters per cell
-            width: 100,                            // Corresponds to 50m world width
-            height: 100,                           // Corresponds to 50m world height
-            world_origin: Vec2::new(-25.0, -25.0), // Center grid at world origin
+            resolution: 0.5,                         // e.g., 0.5 meters per cell
+            width: 1000,                             // Corresponds to 50m world width
+            height: 1000,                            // Corresponds to 50m world height
+            world_origin: Vec2::new(-250.0, -250.0), // Center grid at world origin
         })
-        .insert_resource(ObstacleGrid::new(100, 100)) // Create empty grid matching config
+        .insert_resource(ObstacleGrid::new(1000, 1000)) // Create empty grid matching config
         .add_event::<SensorOutputEvent>()
         .add_systems(Startup, (setup_scene, setup_ui))
         .add_systems(
@@ -302,7 +302,7 @@ fn setup_scene(
     ));
 
     // --- Ground Plane ---
-    let ground_mesh_handle = meshes.add(Plane3d::default().mesh().size(50.0, 50.0));
+    let ground_mesh_handle = meshes.add(Plane3d::default().mesh().size(500.0, 500.0));
     let ground_material_handle = materials.add(StandardMaterial {
         base_color: Color::srgb(0.3, 0.5, 0.3),
         ..default()
@@ -315,10 +315,10 @@ fn setup_scene(
     ));
 
     // Define a translation vector
-    let player_translation = Vec3::new(5.0, 0.0, 5.0);
+    let player_translation = Vec3::new(0.0, 0.0, 15.0);
 
     // Define a rotation quaternion (e.g., 90 degrees around the Y axis)
-    let player_rotation = Quat::from_rotation_y(0.5 * std::f32::consts::FRAC_PI_2);
+    let player_rotation = Quat::from_rotation_y(1.0 * std::f32::consts::FRAC_PI_2);
 
     // Create a Transform with the specified translation and rotation
     let player_transform = Transform {
@@ -349,16 +349,16 @@ fn setup_scene(
     // Autonomous Cars
     // Make sure initial transform and goal pos use Bevy coordinates,
     // but the underlying components (TrueState, GoalComponent) will use Sim coords.
-    for i in 0..1 {
+    for i in 0..5 {
         // Define start/goal in Bevy coordinates for clarity in scene setup
         let start_pos_bevy = Vec3::new(-10.0 + i as f32 * 7.0, 0.35, -10.0); // Start 10m forward (-Z)
-        let goal_pos_bevy = Vec2::new(start_pos_bevy.x, 10.0); // Goal 15m backward (+Z)
+        let goal_pos_bevy = Vec2::new(start_pos_bevy.x + 50.0, 50.0); // Goal 15m backward (+Z)
 
         let config = CarConfig {
             name: format!("AutonomousCar_{}", i),
             body_color: Color::srgb(0.2, 0.3, 0.9),
             initial_transform: Transform::from_translation(start_pos_bevy)
-                .with_rotation(Quat::from_rotation_y(-PI)), // Rotate visual to face +Z (Backward) initially if needed
+                .with_rotation(Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2)), // Rotate visual to face +Z (Backward) initially if needed
             initial_velocity: 0.0,
             // *** IMPORTANT: car_setup needs to be updated to set TrueState and GoalComponent
             // *** using SIMULATION coordinates derived from these Bevy inputs.
