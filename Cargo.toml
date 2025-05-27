@@ -16,7 +16,7 @@ toml = "0.8.21"
 
 [dev-dependencies]
 approx = "0.5.1"
-bevy = { version = "0.16", features = ["dynamic_linking", "file_watcher"] }
+# bevy = { version = "0.16", features = ["dynamic_linking", "file_watcher"] }
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]
