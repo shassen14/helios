@@ -241,6 +241,12 @@ pub trait Dynamics: Debug + Send + Sync {
         // Default implementation: Feedforward calculation is not supported by default.
         None
     }
+
+    /// Returns this trait object as a reference to `Any`.
+    fn as_any(&self) -> &dyn Any;
+
+    /// Returns this trait object as a mutable reference to `Any`.
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 /// # Controller Trait

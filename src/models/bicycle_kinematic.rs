@@ -1,8 +1,11 @@
 // src/models/bicycle_kinematic.rs
 
-use crate::simulation::components::{ControlVector, StateVector}; // Use StateVector alias if preferred
+use crate::simulation::components::{ControlInput, ControlVector, StateVector}; // Use StateVector alias if preferred
 use crate::simulation::traits::{Control, Dynamics, State};
+use avian3d::prelude::{AngularVelocity, LinearVelocity};
+use bevy::prelude::{GlobalTransform, Quat, Vec3 as BevyVec3};
 use nalgebra::{DMatrix, DVector};
+use std::any::Any;
 
 /// Kinematic Bicycle Model for car-like vehicles.
 /// Assumes rear-wheel drive, steering on front wheels.
@@ -27,6 +30,123 @@ impl BicycleKinematicModel {
 
     const STATE_DIM: usize = 4;
     const CONTROL_DIM: usize = 2;
+
+    //     pub fn calculate_forces_and_torques(
+    //         &self,
+    //         current_bevy_transform: &GlobalTransform, // Current pose in Bevy world
+    //         current_bevy_linear_velocity: &LinearVelocity, // Current velocity in Bevy world
+    //         current_bevy_angular_velocity: &AngularVelocity,
+    //         control_input: &ControlInput, // [delta_enu, accel_enu]
+    //         car_mass: f32,
+    //     ) -> (BevyVec3, BevyVec3) {
+    //         // (world_force, world_torque)
+    //
+    //         let desired_steering_angle_enu = control_input.0[0] as f32; // Assuming this is now ENU steering
+    //         let desired_longitudinal_accel_enu = control_input.0[1] as f32;
+    //
+    //         // --- Calculate Target Thrust Force (in vehicle's Bevy forward direction) ---
+    //         let thrust_magnitude = desired_longitudinal_accel_enu * car_mass;
+    //         let bevy_forward_vector = current_bevy_transform.forward(); // Bevy's -Z local is forward
+    //         let world_thrust_force = bevy_forward_vector * thrust_magnitude * 10.0;
+    //
+    //         // --- Calculate Torque for Steering ---
+    //         // This is a simplification. Real steering applies forces at wheels, creating torque.
+    //         // For a simple model, we can apply a torque to make the car yaw.
+    //         // Proportional controller for yaw rate based on steering angle.
+    //         let current_bevy_yaw_rate = current_bevy_angular_velocity.y; // Assuming angular.y is yaw rate in Bevy
+    //
+    //         // --- Simple Steering Torque ---
+    //         // This part is still highly simplified and needs a proper control law (e.g., PID on yaw or yaw rate)
+    //         // For a basic proportional control on yaw rate towards a target yaw rate implied by steering:
+    //         let target_yaw_rate_gain = 2.0; // Tune this: how fast should it try to achieve steering
+    //         let desired_bevy_yaw_rate = -desired_steering_angle_enu * target_yaw_rate_gain; // Negative because positive ENU steer (left) is positive Bevy Y rot,
+    //         // but a direct map to yaw rate might need inversion depending on convention.
+    //         // This needs careful thought: if desired_steering_angle_enu is + (left turn),
+    //         // you want a positive torque around Bevy Y.
+    //
+    //         let yaw_rate_error = desired_bevy_yaw_rate - current_bevy_yaw_rate;
+    //         let steering_torque_gain = 2000.0; // Tune this: N*m / (rad/s)
+    //         let max_yaw_torque = 5000.0;
+    //
+    //         // A positive ENU steering angle (turn left, CCW from above) should result in
+    //         // a positive torque around Bevy's Y-axis (up).
+    //         // Let's directly map steering angle to torque for simplicity first, then refine.
+    //         let simple_steering_torque_y = desired_steering_angle_enu * steering_torque_gain * 5.0; // Increased gain
+    //         // The sign here determines if left steer = left turn.
+    //         // If +ENU steer means turn left (CCW from top),
+    //         // and +Bevy Y rotation is CCW from top, then sign is positive.
+    //
+    //         let world_steering_torque = BevyVec3::new(
+    //             0.0,
+    //             simple_steering_torque_y.clamp(-max_yaw_torque, max_yaw_torque),
+    //             0.0,
+    //         );
+    //
+    //         // println!("Calc Forces: Thrust Mag={:.2}, Steer Angle={:.2}rad -> TorqueY={:.2}, CurrentYawRate={:.2}",
+    //         //    thrust_magnitude, desired_steering_angle_enu, world_steering_torque.y, current_bevy_yaw_rate);
+    //
+    //         (world_thrust_force, world_steering_torque)
+    //     }
+    // }
+
+    pub fn calculate_world_forces_and_torques(
+        &self,
+        current_bevy_transform: &GlobalTransform, // Used to get current world orientation
+        _current_bevy_linear_velocity: &LinearVelocity, // May be used for drag, speed-dependent effects
+        _current_bevy_angular_velocity: &AngularVelocity, // May be used for damping, stability
+        control_input: &ControlInput,
+        car_mass: f32,
+        // Pass model-specific parameters if not part of `self` or if they vary
+        _wheelbase: f32, // May be used for more advanced steering force distribution
+        steering_torque_gain: f32,
+        max_yaw_torque: f32,
+    ) -> (BevyVec3, BevyVec3) {
+        // (world_force_to_apply, world_torque_to_apply)
+
+        let desired_longitudinal_accel_input =
+            control_input.0.get(1).cloned().unwrap_or(0.0) as f32;
+        let desired_steering_input_enu = control_input.0.get(0).cloned().unwrap_or(0.0) as f32; // ENU steering angle
+
+        // --- Calculate World Thrust Force ---
+        // 1. Define local forward direction for the car model (e.g., -Z if using Bevy's convention for meshes)
+        let local_forward_direction = BevyVec3::X; // Car's "nose" points along its local -Z
+
+        // 2. Get current world orientation of the car
+        let car_world_rotation: Quat = current_bevy_transform.compute_transform().rotation; // Or global_transform.rotation() if GlobalTransform is deref to Transform
+
+        // 3. Transform local forward direction to world space
+        let world_forward_direction = car_world_rotation * local_forward_direction;
+
+        // 4. Calculate thrust magnitude and the world force vector
+        let thrust_magnitude = desired_longitudinal_accel_input * car_mass;
+        let world_thrust_force = world_forward_direction * thrust_magnitude;
+
+        // --- Calculate World Steering Torque ---
+        // We want to apply a torque that rotates the car around its local Y-axis (up).
+        // 1. Define local up direction (axis of yaw rotation for the car model)
+        let local_up_direction = BevyVec3::Y;
+
+        // 2. Transform local up direction to world space (this gives the world axis to rotate around)
+        let world_up_axis_for_steering = car_world_rotation * local_up_direction;
+
+        // 3. Calculate torque magnitude
+        // Positive ENU steering (turn left, CCW from ENU Z-up) should correspond to
+        // positive torque around Bevy local Y (up), which then translates to a world torque.
+        // If desired_steering_input_enu > 0 means "steer left", and a positive torque around
+        // the car's local Y-axis causes a "left turn" visually.
+        let torque_magnitude_around_local_y = desired_steering_input_enu * steering_torque_gain;
+        let clamped_torque_magnitude =
+            torque_magnitude_around_local_y.clamp(-max_yaw_torque, max_yaw_torque);
+
+        // 4. The world torque vector
+        let world_steering_torque = world_up_axis_for_steering * clamped_torque_magnitude;
+
+        // println!("Calc World Forces: WorldThrust={:?}, WorldTorque={:?}", world_thrust_force, world_steering_torque);
+        // println!("  LocalFwd={:?}, WorldFwd={:?}, CarRot={:?}", local_forward_direction, world_forward_direction, car_world_rotation);
+        // println!("  LocalUp={:?}, WorldUpAxisSteer={:?}, SteerInput={:.2}, TorqueMag={:.2}", local_up_direction, world_up_axis_for_steering, desired_steering_input_enu, clamped_torque_magnitude);
+
+        (world_thrust_force, world_steering_torque)
+    }
 }
 
 impl Dynamics for BicycleKinematicModel {
@@ -164,5 +284,13 @@ impl Dynamics for BicycleKinematicModel {
         // If not, the desired derivatives might be kinematically inconsistent.
 
         Some(ControlVector::from_vec(vec![delta_ff_clamped, a_ff]))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self // `self` (which is &BicycleKinematicModel) can be coerced to &dyn Any
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self // `self` (which is &mut BicycleKinematicModel) can be coerced to &mut dyn Any
     }
 }

@@ -5,6 +5,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+avian3d = "0.3.0"
 # remove "dynamic_linking" before release, its for development only
 bevy = { version = "0.16", features = ["file_watcher"] }
 bevy-inspector-egui = "0.31.0"

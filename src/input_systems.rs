@@ -38,6 +38,10 @@ pub fn keyboard_control_system(
 
         let current_steering = control_input.0[0];
         let current_acceleration = control_input.0[1];
+        // println!(
+        //     "Player ControlInput: Steer={:.2}, Accel={:.2}",
+        //     control_input.0[0], control_input.0[1]
+        // );
 
         let mut target_steering_direction = 0.0; // -1 for right, 0 for center, 1 for left
         let mut target_acceleration_direction = 0.0; // -1 for brake/reverse, 0 for coast, 1 for accelerate

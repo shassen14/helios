@@ -2,13 +2,18 @@
 
 use crate::controllers::path_follower::PathFollowerController;
 use crate::controllers::simple_go_to::SimpleGoToController;
-use crate::models::bicycle_kinematic::BicycleKinematicModel;
+use crate::models::ackermann_vehicle_model::AckermannVehicleModel;
 use crate::path_planning::grid_planner::GridPlanner;
+use crate::simulation::collision_groups::Layer;
+use crate::vehicles::vehicle_params::{CarConfig, VehiclePhysicalParams};
 // Assuming model is public
 use crate::simulation::components::*;
-use crate::simulation::traits::Goal;
-use crate::simulation::utils::{bevy_transform_to_enu_iso, enu_iso_to_bevy_transform}; // Import simulation components
+use crate::simulation::traits::{Dynamics, Goal};
+use crate::simulation::utils::{bevy_transform_to_enu_iso, enu_iso_to_bevy_transform};
+use avian3d::prelude::*;
+// Import simulation components
 use bevy::prelude::*;
+use nalgebra as na;
 use std::f32::consts::PI;
 
 // Marker components defined here for clarity, even if used elsewhere
@@ -16,59 +21,6 @@ use std::f32::consts::PI;
 pub struct SteeringWheel;
 #[derive(Component)]
 pub struct RollingWheel;
-
-/// Configuration struct holding parameters to define and spawn a car.
-#[derive(Clone, Debug)] // Allow cloning for multiple spawns
-pub struct CarConfig {
-    // --- Visuals ---
-    pub body_color: Color,
-    pub wheel_color: Color,
-    pub body_size: Vec3, // length, height, width
-    pub wheel_radius: f32,
-    pub wheel_width: f32,
-
-    // --- Dynamics / Kinematics ---
-    pub wheelbase: f64,
-    pub max_steer_angle_deg: f64, // Max steering angle in degrees
-
-    // --- Control Limits/Parameters (Optional - could be separate component) ---
-    // These are currently hardcoded in input_system, but could be moved here
-    // pub max_acceleration: f64,
-    // pub max_braking: f64,
-    // pub steering_rate_rad_per_sec: f64,
-    // pub accel_rate_m_per_s3: f64,
-
-    // --- Initial State ---
-    pub initial_transform: Transform, // Initial position and orientation of the root
-    pub initial_velocity: f64,        // Initial longitudinal velocity
-
-    // --- Entity Info ---
-    pub name: String,
-}
-
-impl Default for CarConfig {
-    /// Default car configuration matching the original example.
-    fn default() -> Self {
-        let wheelbase = 2.7;
-        let wheel_radius = 0.35;
-        let car_body_height = 0.8;
-        let initial_state_vec = vec![0.0, 0.0, 0.0, 0.0]; // x, y, theta, v
-        let initial_transform =
-            Transform::from_xyz(0.0, wheel_radius, 0.0).with_rotation(Quat::IDENTITY); // No initial rotation in Bevy frame
-        Self {
-            body_color: Color::srgb(0.8, 0.1, 0.1),  // Red
-            wheel_color: Color::srgb(0.1, 0.1, 0.1), // Dark grey
-            body_size: Vec3::new(3.0, 0.8, 1.5),     // length, height, width
-            wheel_radius,
-            wheel_width: 0.2,
-            wheelbase,
-            max_steer_angle_deg: 35.0,
-            initial_transform,
-            initial_velocity: 0.0,
-            name: "Car".to_string(),
-        }
-    }
-}
 
 /// Spawns a complete car entity hierarchy based on the provided configuration.
 pub fn spawn_car(
@@ -101,17 +53,26 @@ pub fn spawn_car(
         config.body_size.z,
     ));
 
+    // --- Physics Properties ---
+    let car_mass = 1000.0; // kg - make this part of CarConfig
+    let car_collider_shape_bevy = Collider::cuboid(
+        config.body_size.x, // Bevy X extent
+        config.body_size.y, // Bevy Y extent (height)
+        config.body_size.z, // Bevy Z extent (width)
+    );
+
     // --- Dynamics Model ---
-    let bicycle_model = BicycleKinematicModel::new(config.wheelbase, config.max_steer_angle_deg);
+    let ackerman_model = AckermannVehicleModel::new();
+    let control_dim = ackerman_model.get_control_dim();
 
     // --- Initial State ---
     // Use transform from config, but ensure initial state vector matches
-    let initial_sim_pose = bevy_transform_to_enu_iso(&config.initial_transform);
-    let initial_state_sim = StateVector::from_vec(vec![
-        initial_sim_pose.translation.x,             // enu_x
-        initial_sim_pose.translation.y,             // enu_y
-        initial_sim_pose.rotation.euler_angles().2, // enu_yaw (around Z) - Extract from Isometry rotation
-        config.initial_velocity,                    // sim_v
+    let initial_enu_pose = bevy_transform_to_enu_iso(&config.initial_transform);
+    let initial_state_enu = StateVector::from_vec(vec![
+        initial_enu_pose.translation.x,             // enu_x
+        initial_enu_pose.translation.y,             // enu_y
+        initial_enu_pose.rotation.euler_angles().2, // enu_yaw (around Z) - Extract from Isometry rotation
+        0.0,                                        // sim_v
     ]);
 
     // --- Spawn Parent Entity ---
@@ -119,14 +80,36 @@ pub fn spawn_car(
         // Add essential non-optional components first
         config.initial_transform, // Use the Bevy transform for visual placement
         Name::new(config.name.clone()),
+        // Avian Physics Components
+        RigidBody::Dynamic,      // Makes it a movable physics body
+        car_collider_shape_bevy, // Attach the collider
+        CollisionLayers::new(
+            Layer::GroundVehicle,
+            Layer::WorldStatic.to_bits() | Layer::GroundVehicle.to_bits(),
+        ),
+        Mass(car_mass),
         // Simulation Components use Simulation Frame data
-        TrueState(initial_state_sim.clone()), // Store initial Sim state
-        DynamicsModel(Box::new(bicycle_model)),
-        ControlInput::default(), // Control input [delta, a] doesn't need conversion itself
-        DrawTrueStateViz(true),  // Controls gizmo visibility
-        Visibility::default(),   // Controls mesh visibility
-                                 // InheritedVisibility::default(),
-                                 // ViewVisibility::default(),
+        TrueState(initial_state_enu.clone()), // Store initial Sim state
+        DynamicsModel(Box::new(ackerman_model)),
+        ControlInput(na::DVector::zeros(control_dim)), // Control input [delta, a] doesn't need conversion itself
+        DrawTrueStateViz(true),                        // Controls gizmo visibility
+        Visibility::default(),                         // Controls mesh visibility
+        // InheritedVisibility::default(),
+        // ViewVisibility::default(),
+        VehiclePhysicalParams {
+            wheelbase: config.wheelbase,
+            max_steer_angle_rad: config.max_steer_angle_deg.to_radians(),
+            wheel_radius: config.wheel_radius,
+            front_axle_offset_from_center: config.cg_to_front_axle,
+            front_tire_cornering_stiffness: config.front_tire_stiffness,
+            mass: config.mass,
+            max_grip_force_longitudinal: config.max_long_force,
+            rear_axle_offset_from_center: config.cg_to_rear_axle,
+            rear_tire_cornering_stiffness: config.rear_tire_stiffness,
+            rolling_resistance_coefficient: config.rolling_resistance,
+            track_width_front: config.track_width,
+            track_width_rear: config.track_width,
+        },
     ));
 
     // --- Conditionally Insert Optional Components ---
@@ -152,7 +135,7 @@ pub fn spawn_car(
 
         // Create Goal struct - need full state dimension even if only pos used
         // Pad with zeros or use current state for non-position elements
-        let goal_state_sim = if let Some(bevy_goal) = initial_goal_bevy_pos {
+        let goal_state_enu = if let Some(bevy_goal) = initial_goal_bevy_pos {
             let sim_x = bevy_goal.x as f64;
             let sim_z = -bevy_goal.y as f64; // Bevy Vec2 Z component maps to -Sim Z
             // Create Sim goal state [sim_x, sim_z, target_yaw=0, target_v=0]
@@ -160,13 +143,13 @@ pub fn spawn_car(
             StateVector::from_vec(vec![sim_x, sim_z, 0.0, 0.0])
         } else {
             // Default goal if none provided (in Sim coords)
-            let mut default_goal = initial_state_sim.clone();
+            let mut default_goal = initial_state_enu.clone();
             default_goal[1] += 20.0; // Move 20m forward (increase sim_z)
             default_goal
         };
 
         parent_entity_commands.insert(GoalComponent(Goal {
-            state: goal_state_sim, // Store Simulation goal state
+            state: goal_state_enu, // Store Simulation goal state
             derivative: None,
         }));
 

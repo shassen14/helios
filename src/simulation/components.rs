@@ -65,6 +65,15 @@ pub struct EstimatedState {
 #[derive(Component, Debug, Clone, Default)]
 pub struct ControlInput(pub ControlVector);
 
+#[derive(Component, Debug, Default, Clone)]
+pub struct CommandedForces {
+    // Forces and torques are typically applied in the body's local frame for vehicles
+    // or in the world frame (Avian supports both with different components/methods)
+    // Let's assume world frame forces/torques for simplicity first, or local if easier for vehicle model
+    pub force_world: Vec3,  // Total force to apply in Bevy world coordinates
+    pub torque_world: Vec3, // Total torque to apply in Bevy world coordinates (around world axes)
+}
+
 /// # GoalComponent
 /// Represents the current objective or target for an autonomous agent.
 /// Wraps the `Goal` struct from `traits.rs`.

@@ -24,12 +24,11 @@
   * also gotta worry about moving grids/maps for local planning, etc
   * local planning vs global planning
 
-* UI things to take care of
+* UI things to take care of (Helpful for testing probably?)
   * Free view mode where I can move the camera around
   * Spawn obstacles and write to a file of the last saved obstacle course, and delete? 
   * Spawn anything tbh aka cars, planes, etc.
   * Plot certain conditions (ie. true state vs estimated state, control inputs, desired state vs estimated state, etc)
-  * 
 
 * Sensors
   * Inertial Sensors
@@ -38,3 +37,7 @@
     * Cameras, Radar, Lidar
     * ^ different types, stereo, mono, long ranger, FOV, 2D lidar, 3D lidar 
   * Add different types of noise, resolution, etc.
+
+* Build algorithms for each system (sensor, sensor_suite, localization, mapping, global planner, local planner, controls, modeling) to test the pipeline "works"
+
+* Multithread building each entity for faster loading since it takes a bit of time for single thread to build every entity

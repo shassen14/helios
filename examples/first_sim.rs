@@ -1,12 +1,17 @@
 // examples/first_sim.rs
 
+use avian3d::prelude::RigidBody;
 use bevy::prelude::*;
 use bevy::time::Time;
 use nalgebra::{
     Isometry3, Rotation, Rotation3, Translation, Translation3, UnitQuaternion, Vector3,
 };
-use rust_robotics::simulation::traits::{Obstacle, Shape};
+use rust_robotics::models::ackermann_vehicle_model::AckermannVehicleModel;
+use rust_robotics::models::bicycle_kinematic::BicycleKinematicModel;
+use rust_robotics::simulation::collision_groups::Layer;
+use rust_robotics::simulation::traits::{Dynamics, Obstacle, Shape};
 use rust_robotics::simulation::utils::*;
+use std::any::Any;
 use std::f32::consts::PI;
 
 // Import local modules
@@ -22,13 +27,10 @@ use rust_robotics::controllers::simple_go_to::SimpleGoToController; // Controlle
 use rust_robotics::path_planning::grid_utils::{GridConfig, GridCoord, ObstacleGrid};
 use rust_robotics::simulation::components::{AutonomousAgent, GoalComponent}; // Import new components
 
-use rust_robotics::vehicles::car_setup::{
-    CarConfig,
-    RollingWheel, // Import markers from here
-    SteeringWheel,
-    spawn_car,
-}; // Import new system
+use rust_robotics::vehicles::car_setup::{RollingWheel, SteeringWheel, spawn_car}; // Import new system
+use rust_robotics::vehicles::vehicle_params::{CarConfig, VehiclePhysicalParams};
 
+use avian3d::prelude::*;
 use bevy_egui::EguiPlugin;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 
@@ -51,6 +53,9 @@ fn main() {
         //     enable_multipass_for_primary_context: true,
         // })
         // .add_plugins(WorldInspectorPlugin::new())
+        .add_plugins(PhysicsPlugins::default()) // Adds required physics systems and resources
+        // Optional: For debugging colliders, rigid bodies, etc.
+        // .add_plugins(PhysicsDebugPlugin::default())
         .insert_resource(ClearColor(Color::srgb(0.7, 0.85, 1.0)))
         .insert_resource(GridConfig {
             // Configure your grid
@@ -60,51 +65,73 @@ fn main() {
             world_origin: Vec2::new(-250.0, -250.0), // Center grid at world origin
         })
         .insert_resource(ObstacleGrid::new(1000, 1000)) // Create empty grid matching config
+        .insert_resource(Gravity(Vec3::NEG_Y * 9.81)) // Explicitly set gravity if needed
         .add_event::<SensorOutputEvent>()
         .add_systems(Startup, (setup_scene, setup_ui))
-        .add_systems(
-            FixedUpdate,
-            (
-                sim_systems::dynamics_system,
-                // Note: Controllers might ideally run at a slightly lower rate
-                // than dynamics, but running them here ensures they use the
-                // state *before* the dynamics step that uses their output.
-                // Alternatively, run controllers in Update *before* FixedUpdate stage flushes.
-            )
-                .chain(),
-        )
+        // --- Systems that determine control intent (can run in Update) ---
         .add_systems(
             Update,
             (
-                // 1. Update environment representation
-                update_obstacle_grid_system,
-                // 2. Input & Planning (can run in parallel with grid update if careful)
-                keyboard_control_system, // Handles player input directly
-                sim_systems::planner_system // Plans for autonomous agents
-                    .after(update_obstacle_grid_system), // Ensure grid is updated first
-                // 3. Autonomous Control (depends on planner output)
-                autonomous_controller_system // Calculates control for autonomous agents
-                    .after(sim_systems::planner_system), // Ensure path is available
-                // 4. Update simulation state visuals based on TrueState
-                //    (Dynamics runs in FixedUpdate, so this uses the latest integrated state)
-                update_car_transform_from_state,
-                // 5. Visual Updates & Camera (depend on Transform)
-                wheel_steering_system_for_player, // Uses ControlInput
-                autonomous_wheel_steering_system,
-                wheel_rolling_system, // Uses TrueState
-                camera_follow_system.after(update_car_transform_from_state),
-                update_control_display_text, // Reads ControlInput/TrueState
-                // 6. Rendering Gizmos (can run fairly late)
+                keyboard_control_system,
+                (
+                    // Planning and autonomous control can be grouped
+                    update_obstacle_grid_system,
+                    sim_systems::planner_system.after(update_obstacle_grid_system),
+                    autonomous_controller_system.after(sim_systems::planner_system),
+                )
+                    .chain(), // Ensure this chain completes before apply_vehicle_forces
+            )
+                .chain(), // Ensure keyboard and auto controllers run before force application
+        )
+        // --- Systems that run in FixedUpdate, interacting with Physics ---
+        // By default, systems added to FixedUpdate run before PhysicsSteps::Simulate in Avian
+        .add_systems(
+            FixedUpdate,
+            (
+                // 1. Apply forces/torques based on ControlInput.
+                //    This MUST run before Avian's main simulation step.
+                //    Avian's PreUpdate stage or just before PhysicsSteps::Simulate.
+                apply_vehicle_forces_system
+                    .after(keyboard_control_system) // Ensure ControlInput is up-to-date from player
+                    .after(autonomous_controller_system), // And from AI
+
+                                                          // 2. Update our custom TrueState from physics results.
+                                                          //    This MUST run after Avian has updated Bevy components (Transform, Velocity).
+                                                          //    Avian does this by PhysicsSteps::Writeback which is late in FixedUpdate.
+                                                          //    So, this system should be ordered after that if possible, or run late in FixedUpdate.
+                                                          //    For simplicity, if ordering sets aren't exposed as easily in Avian 0.1's main plugin,
+                                                          //    we can run it in a stage known to be after physics or just ensure it's late.
+                                                          //    Let's assume default FixedUpdate ordering places it after Avian's writeback
+                                                          //    if Avian's systems are also in FixedUpdate. If not, PostUpdate is safer for this.
+                                                          // update_true_state_from_physics, // Moved to PostUpdate for safety
+            )
+                .chain(), // Apply ordering within FixedUpdate
+        )
+        // PostUpdate is guaranteed to run after all FixedUpdates for the frame have completed.
+        // This is a safe place to read the final physics state for the frame.
+        .add_systems(PostUpdate, update_true_state_from_physics)
+        // --- Visual/Rendering Systems (typically in Update, after physics has potentially updated Transforms) ---
+        .add_systems(
+            Update,
+            (
+                // Visual wheel animations - depend on ControlInput (for steering) or TrueState/Velocity (for rolling)
+                // Run these after the systems that populate ControlInput and TrueState.
+                wheel_steering_system_for_player.after(keyboard_control_system),
+                autonomous_wheel_steering_system.after(autonomous_controller_system),
+                wheel_rolling_system.after(update_true_state_from_physics), // Depends on TrueState (which reflects physics velocity)
+                camera_follow_system, // Uses Bevy Transform directly updated by physics
+                update_control_display_text, // Reads ControlInput & TrueState
+                // Gizmo drawing
                 draw_true_state_system,
                 draw_estimated_state_system,
                 draw_path_system,
                 draw_goal_system,
                 draw_obstacle_system,
                 draw_world_axes_system,
+                draw_sensor_data_system, // draw_sensor_data_system was in PostUpdate, can be here.
             )
-                .chain(), // Apply ordering constraints within Update
+                .chain(), // Order visual updates
         )
-        .add_systems(PostUpdate, draw_sensor_data_system)
         .run();
 }
 
@@ -303,7 +330,9 @@ fn setup_scene(
     ));
 
     // --- Ground Plane ---
-    let ground_mesh_handle = meshes.add(Plane3d::default().mesh().size(500.0, 500.0));
+    let (ground_length, ground_width) = (500.0, 500.0);
+    let ground_mesh_handle =
+        meshes.add(Plane3d::default().mesh().size(ground_length, ground_width));
     let ground_material_handle = materials.add(StandardMaterial {
         base_color: Color::srgb(0.3, 0.5, 0.3),
         ..default()
@@ -312,11 +341,18 @@ fn setup_scene(
         Mesh3d(ground_mesh_handle),
         MeshMaterial3d(ground_material_handle),
         Transform::from_xyz(0.0, 0.0, 0.0),
+        RigidBody::Static,
+        CollisionLayers::new(
+            Layer::WorldStatic,
+            Layer::Character.to_bits() | Layer::GroundVehicle.to_bits(),
+        ),
+        Collider::cuboid(ground_length, 0.01, ground_width),
+        // CollisionLayers::new(Group::ENVIRONMENT, GROUP::ALL), // Define collision groups (optional but good practice)
         Name::new("Ground"),
     ));
 
     // Define a translation vector
-    let player_translation = Vec3::new(0.0, 0.0, 15.0);
+    let player_translation = Vec3::new(-10.0, 0.0, -10.0);
 
     // Define a rotation quaternion (e.g., 90 degrees around the Y axis)
     let player_rotation = Quat::from_rotation_y(1.0 * std::f32::consts::FRAC_PI_2);
@@ -350,9 +386,9 @@ fn setup_scene(
     // Autonomous Cars
     // Make sure initial transform and goal pos use Bevy coordinates,
     // but the underlying components (TrueState, GoalComponent) will use Sim coords.
-    for i in 0..5 {
+    for i in 0..0 {
         // Define start/goal in Bevy coordinates for clarity in scene setup
-        let start_pos_bevy = Vec3::new(-10.0 + i as f32 * 7.0, 0.35, -10.0); // Start 10m forward (-Z)
+        let start_pos_bevy = Vec3::new(-10.0 + i as f32 * 7.0, 10.35, -10.0); // Start 10m forward (-Z)
         let goal_pos_bevy = Vec2::new(start_pos_bevy.x + 50.0, 50.0); // Goal 15m backward (+Z)
 
         let config = CarConfig {
@@ -360,7 +396,6 @@ fn setup_scene(
             body_color: Color::srgb(0.2, 0.3, 0.9),
             initial_transform: Transform::from_translation(start_pos_bevy)
                 .with_rotation(Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2)), // Rotate visual to face +Z (Backward) initially if needed
-            initial_velocity: 0.0,
             // *** IMPORTANT: car_setup needs to be updated to set TrueState and GoalComponent
             // *** using SIMULATION coordinates derived from these Bevy inputs.
             // *** We'll modify spawn_car next.
@@ -385,45 +420,117 @@ fn setup_scene(
     // but store Simulation pose in ObstacleComponent.
     let obstacle_bevy_transform = Transform::from_xyz(5.0, 1.0, -10.0); // Bevy pose: Z=-10 means 10m forward
     // Convert Bevy transform to Simulation pose
-    let obstacle_sim_pose = bevy_transform_to_enu_iso(&obstacle_bevy_transform);
+    let obstacle_enu_pose = bevy_transform_to_enu_iso(&obstacle_bevy_transform);
     // Define shape dimensions in Simulation frame
-    let obstacle_shape_sim = Shape::Box {
+    let obstacle_shape_enu = Shape::Box {
         half_extents: nalgebra::Vector3::new(0.5, 1.0, 2.5),
     }; // (Right, Up, Forward)
+    // --- Correct way to access data within the Shape enum ---
+    let (bevy_collider_width_x, bevy_collider_height_y, bevy_collider_depth_z, avian_collider) =
+        match obstacle_shape_enu {
+            Shape::Box { half_extents } => {
+                // half_extents is nalgebra::Vector3<f64> (dx_e, dy_n, dz_u)
+                // Avian Collider::cuboid(full_x_bevy, full_y_bevy, full_z_bevy)
+                let width_x = (half_extents.x * 2.0) as f32; // ENU East -> Bevy X
+                let height_y = (half_extents.z * 2.0) as f32; // ENU Up -> Bevy Y
+                let depth_z = (half_extents.y * 2.0) as f32; // ENU North -> Bevy Z
+                (
+                    width_x,
+                    height_y,
+                    depth_z,
+                    Collider::cuboid(width_x, height_y, depth_z),
+                )
+            }
+            Shape::Sphere { radius } => {
+                // Avian Collider::ball(radius_bevy)
+                // Radius is scalar, no coordinate conversion needed for the value itself.
+                let r = radius as f32;
+                // For the dimensions tuple, we can represent it as a bounding box for consistency if needed,
+                // or just use radius for all if that's how you want to treat spheres elsewhere.
+                (r * 2.0, r * 2.0, r * 2.0, Collider::sphere(r))
+            }
+            Shape::Cylinder {
+                half_height,
+                radius,
+            } => {
+                // Avian Collider::cylinder(height_bevy_y, radius_bevy_xz)
+                // Your Shape::Cylinder is ENU: half_height along ENU Z (Up), radius in ENU XY plane.
+                // Bevy Cylinder collider: height along Bevy Y, radius in Bevy XZ plane.
+                let height_bevy_y = (half_height * 2.0) as f32; // ENU Up -> Bevy Y
+                let radius_bevy_xz = radius as f32;
+                (
+                    radius_bevy_xz * 2.0,
+                    height_bevy_y,
+                    radius_bevy_xz * 2.0,
+                    Collider::cylinder(height_bevy_y, radius_bevy_xz),
+                )
+            }
+            Shape::Capsule {
+                half_height,
+                radius,
+            } => {
+                // Avian Collider::capsule(height_of_cylinder_part_bevy_y, radius_bevy_xz)
+                // Your Shape::Capsule is ENU: half_height of cylinder part along ENU Z (Up), radius in ENU XY.
+                let segment_height_bevy_y = (half_height * 2.0) as f32; // ENU Up -> Bevy Y
+                let radius_bevy_xz = radius as f32;
+                (
+                    radius_bevy_xz * 2.0,
+                    segment_height_bevy_y + 2.0 * radius_bevy_xz,
+                    radius_bevy_xz * 2.0,
+                    Collider::capsule(segment_height_bevy_y, radius_bevy_xz),
+                )
+            }
+            Shape::Mesh { placeholder: _ } => {
+                // For meshes, you'd ideally use Collider::trimesh_from_mesh(&bevy_mesh_asset)
+                // or Collider::convex_hull_from_mesh(&bevy_mesh_asset)
+                // For now, a default placeholder (e.g., a small box)
+                eprintln!(
+                    "WARN: Mesh collider not fully implemented for Avian, using default box."
+                );
+                let s = 1.0f32; // Default size
+                (s, s, s, Collider::cuboid(s, s, s))
+            }
+        };
 
     commands.spawn((
         // Visuals use Bevy Transform
         Mesh3d(meshes.add(Cuboid::from_size(Vec3::new(1.0, 2.0, 5.0)))), // Size matches shape (X=1, Y=2, Z=5)
         MeshMaterial3d(materials.add(Color::srgb(0.4, 0.4, 0.5))),
         obstacle_bevy_transform, // Use Bevy transform for positioning mesh
+        RigidBody::Static,
+        avian_collider,
+        CollisionLayers::new(
+            Layer::WorldStatic,
+            Layer::Character.to_bits() | Layer::GroundVehicle.to_bits(),
+        ),
         // Simulation uses Sim Pose & Shape
         ObstacleComponent(Obstacle {
             id: 1,
-            pose: obstacle_sim_pose,   // Store Simulation pose
-            shape: obstacle_shape_sim, // Store Simulation shape
+            pose: obstacle_enu_pose,   // Store Simulation pose
+            shape: obstacle_shape_enu, // Store Simulation shape
             is_static: true,
         }),
         Name::new("ObstacleBox"),
     ));
 
     // Example Sphere Obstacle
-    let sphere_bevy_transform = Transform::from_xyz(-5.0, 1.5, -8.0); // Bevy pose
-    let sphere_sim_pose = bevy_transform_to_enu_iso(&sphere_bevy_transform);
-
-    let sphere_shape_sim = Shape::Sphere { radius: 1.5 };
-
-    commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(1.5))),
-        MeshMaterial3d(materials.add(Color::srgb(0.4, 0.4, 0.5))),
-        sphere_bevy_transform,
-        ObstacleComponent(Obstacle {
-            id: 2,
-            pose: sphere_sim_pose,
-            shape: sphere_shape_sim,
-            is_static: true,
-        }),
-        Name::new("ObstacleSphere"),
-    ));
+    // let sphere_bevy_transform = Transform::from_xyz(-5.0, 1.5, -8.0); // Bevy pose
+    // let sphere_sim_pose = bevy_transform_to_enu_iso(&sphere_bevy_transform);
+    //
+    // let sphere_shape_sim = Shape::Sphere { radius: 1.5 };
+    //
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Sphere::new(1.5))),
+    //     MeshMaterial3d(materials.add(Color::srgb(0.4, 0.4, 0.5))),
+    //     sphere_bevy_transform,
+    //     ObstacleComponent(Obstacle {
+    //         id: 2,
+    //         pose: sphere_sim_pose,
+    //         shape: sphere_shape_sim,
+    //         is_static: true,
+    //     }),
+    //     Name::new("ObstacleSphere"),
+    // ));
 }
 
 fn camera_follow_system(
@@ -455,6 +562,137 @@ fn camera_follow_system(
             // Use look_at for smooth orientation change
             camera_transform.look_at(target_pos, Vec3::Y); // Look at target, keep Y axis up
         }
+    }
+}
+
+fn apply_vehicle_forces_system(
+    mut car_query: Query<
+        (
+            &GlobalTransform,
+            &LinearVelocity,
+            &AngularVelocity,
+            &ControlInput,
+            &DynamicsModel, // This is the component holding Box<dyn Dynamics>
+            &Mass,
+            &VehiclePhysicalParams,
+            Entity,
+        ),
+        With<RigidBody>,
+    >,
+    mut commands: Commands,
+) {
+    for (
+        global_transform,
+        linear_velocity,
+        angular_velocity,
+        control_input,
+        dynamics_model_comp, // This is &DynamicsModel
+        mass,
+        vehicle_params,
+        entity,
+    ) in car_query.iter_mut()
+    {
+        // 1. Get a reference to the trait object (&dyn Dynamics) from the Box:
+        let dynamics_trait_object: &dyn Dynamics = &*dynamics_model_comp.0;
+        // Or, if you needed to modify the model (not in this case for calculate_forces):
+        // let dynamics_trait_object_mut: &mut dyn Dynamics = &mut *dynamics_model_comp.0;
+
+        // 2. Call as_any() on the trait object reference:
+        let any_ref: &dyn Any = dynamics_trait_object.as_any();
+
+        // 3. Attempt the downcast:
+        if let Some(bicycle_model) = any_ref.downcast_ref::<BicycleKinematicModel>() {
+            // Get parameters. These should ideally be part of CarConfig or accessible via Dynamics trait
+            let wheelbase_f32 = vehicle_params.wheelbase as f32; // Example
+            let steering_torque_gain = 15000.0; // Needs tuning!
+            let max_yaw_torque = 21000.0; // Needs tuning!
+
+            let (world_force, world_torque) = bicycle_model.calculate_world_forces_and_torques(
+                global_transform,
+                linear_velocity,
+                angular_velocity,
+                control_input,
+                mass.0, // mass.0 is the f32 value
+                wheelbase_f32,
+                steering_torque_gain,
+                max_yaw_torque,
+            );
+
+            // ExternalForce and ExternalTorque take WORLD SPACE vectors
+            commands.entity(entity).insert((
+                ExternalForce::new(world_force).with_persistence(false),
+                ExternalTorque::new(world_torque).with_persistence(false),
+            ));
+        }
+        if let Some(ackermann_model) = any_ref.downcast_ref::<AckermannVehicleModel>() {
+            let (world_force, world_torque) = ackermann_model
+                .calculate_world_forces_and_torques_from_wheels(
+                    vehicle_params, // Pass the VehiclePhysicalParams component
+                    global_transform,
+                    linear_velocity,
+                    angular_velocity,
+                    control_input,
+                    // Note: car_mass is inside vehicle_params now.
+                    // The method signature for calculate_world_forces_and_torques_from_wheels
+                    // might not need car_mass separately if it can get it from vehicle_params.
+                    // For now, let's assume the method uses vehicle_params.mass
+                );
+            commands.entity(entity).insert((
+                ExternalForce::new(world_force).with_persistence(false),
+                ExternalTorque::new(world_torque).with_persistence(false),
+            ));
+        } else {
+            // Handle cases where it's not a BicycleKinematicModel, if necessary
+            // e.g., if you have other types of DynamicsModels for other vehicles.
+            println!("WARN: DynamicsModel is unkown for entity {:?}", entity);
+        }
+    }
+}
+
+fn update_true_state_from_physics(
+    // Query entities with physics results and our TrueState component
+    mut query: Query<(
+        &GlobalTransform, // Updated by Avian
+        &LinearVelocity,  // Updated by Avian
+        &AngularVelocity, // Updated by Avian
+        &mut TrueState,
+    )>,
+) {
+    for (global_transform_bevy, linear_velocity_bevy, angular_velocity_bevy, mut true_state_enu) in
+        query.iter_mut()
+    {
+        // 1. Convert Bevy Pose to ENU Pose
+        let current_enu_pose =
+            bevy_transform_to_enu_iso(&global_transform_bevy.compute_transform());
+
+        // 2. Convert Bevy Linear Velocity to ENU Linear Velocity
+        // Linear velocity vector needs to be rotated by the frame rotation
+        let enu_linear_velocity_vec = bevy_vector_to_enu_vector(&linear_velocity_bevy);
+
+        // For a 2D bicycle model, we care about forward speed in its ENU heading.
+        // Vehicle's ENU forward direction:
+        let enu_vehicle_forward = current_enu_pose.rotation * Vector3::x();
+        let enu_forward_speed = enu_linear_velocity_vec.dot(&enu_vehicle_forward);
+
+        // 3. Extract ENU Yaw from ENU Pose
+        let enu_vehicle_x_axis = current_enu_pose.rotation * Vector3::x();
+        let enu_yaw = enu_vehicle_x_axis.y.atan2(enu_vehicle_x_axis.x);
+
+        // 4. Update TrueState (ENU)
+        // Assuming TrueState is [x_e, y_n, yaw_enu, forward_speed_enu]
+        true_state_enu.0[0] = current_enu_pose.translation.vector.x;
+        true_state_enu.0[1] = current_enu_pose.translation.vector.y;
+        true_state_enu.0[2] = enu_yaw;
+        true_state_enu.0[3] = enu_forward_speed;
+
+        // If TrueState needs ENU Z_up (it's currently 0 in state vector):
+        // true_state_enu.0[some_idx_for_z_up] = current_enu_pose.translation.vector.z;
+        // If TrueState needs ENU angular velocity around Z_up:
+        // angular_velocity_bevy.0 is Vec3. Bevy Y is Up. ENU Z is Up.
+        // So, angular_velocity_bevy.0.y is roughly ENU yaw rate.
+        // (More accurately, rotate the angular velocity vector too)
+        // let enu_angular_velocity_vec = ROT_ENU_FROM_BEVY.with(|r| r * angular_velocity_bevy.0.as_dvec3());
+        // true_state_enu.0[some_idx_for_yaw_rate] = enu_angular_velocity_vec.z;
     }
 }
 
