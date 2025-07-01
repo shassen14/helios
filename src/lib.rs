@@ -4,12 +4,9 @@ pub mod integrators;
 pub mod models {
     pub mod bicycle_kinematic;
 }
-pub mod rendering {
-    pub mod systems;
-}
 pub mod simulation {
     pub mod components;
-    pub mod systems;
+    pub mod topics;
     pub mod traits;
     pub mod utils;
 }
