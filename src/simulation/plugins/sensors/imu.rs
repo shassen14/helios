@@ -105,45 +105,85 @@ pub struct Imu {
     pub timer: Timer,
 }
 
+// This is the SINGLE component added to an agent. It manages ALL IMUs for that agent.
+#[derive(Component, Default)]
+pub struct ImuSuite {
+    pub imus: Vec<Imu>,
+}
+
 // --- Systems ---
 
-fn tick_imu_timers(mut query: Query<&mut Imu>, time: Res<Time<Fixed>>) {
-    for mut imu in query.iter_mut() {
-        imu.timer.tick(time.delta());
+// This system ticks ALL IMU timers within ALL suites.
+fn tick_imu_timers(mut query: Query<&mut ImuSuite>, time: Res<Time<Fixed>>) {
+    for mut suite in query.iter_mut() {
+        for imu in &mut suite.imus {
+            imu.timer.tick(time.delta());
+        }
     }
 }
 
-fn should_run_imu_system(query: Query<&Imu>) -> bool {
-    query.iter().any(|imu| imu.timer.just_finished())
+// This run condition checks if ANY IMU in ANY suite is ready.
+fn should_run_imu_system(query: Query<&ImuSuite>) -> bool {
+    query
+        .iter()
+        .any(|suite| suite.imus.iter().any(|imu| imu.timer.just_finished()))
 }
 
+// The main system iterates through the suites and their IMUs.
 fn imu_sensor_system(
-    agent_query: Query<(Entity, &Imu, &GroundTruthState)>,
-    mut topic_bus: ResMut<TopicBus>, // Get mutable access to the bus
+    agent_query: Query<(Entity, &ImuSuite, &GroundTruthState)>,
+    mut topic_bus: ResMut<TopicBus>,
     time: Res<Time>,
 ) {
-    for (entity, imu, ground_truth) in agent_query.iter() {
-        if imu.timer.just_finished() {
-            println!(
-                "[SENSOR] IMU '{}' firing to topic '{}'.",
-                imu.name, imu.topic_to_publish
-            );
-
-            let data = ImuData {
-                entity,
-                sensor_name: imu.name.clone(),
-                timestamp: time.elapsed_secs_f64(),
-                acceleration: ground_truth.linear_velocity,
-                angular_velocity: ground_truth.angular_velocity,
-            };
-
-            // Publish to the specific topic name associated with this sensor.
-            if !topic_bus.publish(&imu.topic_to_publish, data) {
-                eprintln!(
-                    "WARN: Failed to publish to topic '{}'. Does it exist?",
-                    imu.topic_to_publish
+    for (entity, suite, ground_truth) in agent_query.iter() {
+        // Loop through each IMU spec in the suite.
+        for imu in &suite.imus {
+            // Check if THIS specific IMU is ready.
+            if imu.timer.just_finished() {
+                println!(
+                    "[SENSOR] IMU '{}' firing to topic '{}'.",
+                    imu.name, imu.topic_to_publish
                 );
+                let data = ImuData {
+                    entity,
+                    sensor_name: imu.name.clone(),
+                    timestamp: time.elapsed_secs_f64(),
+                    acceleration: ground_truth.linear_velocity,
+                    angular_velocity: ground_truth.angular_velocity,
+                };
+                topic_bus.publish(&imu.topic_to_publish, data);
             }
         }
     }
 }
+
+// fn imu_sensor_system(
+//     agent_query: Query<(Entity, &Imu, &GroundTruthState)>,
+//     mut topic_bus: ResMut<TopicBus>, // Get mutable access to the bus
+//     time: Res<Time>,
+// ) {
+//     for (entity, imu, ground_truth) in agent_query.iter() {
+//         if imu.timer.just_finished() {
+//             println!(
+//                 "[SENSOR] IMU '{}' firing to topic '{}'.",
+//                 imu.name, imu.topic_to_publish
+//             );
+
+//             let data = ImuData {
+//                 entity,
+//                 sensor_name: imu.name.clone(),
+//                 timestamp: time.elapsed_secs_f64(),
+//                 acceleration: ground_truth.linear_velocity,
+//                 angular_velocity: ground_truth.angular_velocity,
+//             };
+
+//             // Publish to the specific topic name associated with this sensor.
+//             if !topic_bus.publish(&imu.topic_to_publish, data) {
+//                 eprintln!(
+//                     "WARN: Failed to publish to topic '{}'. Does it exist?",
+//                     imu.topic_to_publish
+//                 );
+//             }
+//         }
+//     }
+// }

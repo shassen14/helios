@@ -1,6 +1,12 @@
 use bevy::prelude::*;
 use nalgebra::{DMatrix, Isometry3, Translation3, UnitQuaternion, Vector3};
-use rust_robotics::{prelude::*, simulation::plugins::sensors::imu::Imu}; // Use our library's prelude for easy access
+use rust_robotics::{
+    prelude::*,
+    simulation::plugins::{
+        estimation::ekf::ImuSubscriptions,
+        sensors::imu::{Imu, ImuSuite},
+    },
+}; // Use our library's prelude for easy access
 use std::{fs, time::Duration};
 
 fn main() {
@@ -68,6 +74,8 @@ fn spawn_agents_from_config(
     topic_bus: Res<TopicBus>, // Read-only access to find topics
 ) {
     for agent_config in &config.agents {
+        println!("[SETUP] Spawning agent: {}", agent_config.name);
+
         let start_pos = agent_config.starting_pose.position;
         let start_rot_deg = agent_config.starting_pose.orientation_deg;
         let start_isometry = Isometry3::from_parts(
@@ -83,99 +91,89 @@ fn spawn_agents_from_config(
             ),
         );
 
-        let mut agent_entity_commands = commands.spawn((
-            Name::new(agent_config.name.clone()),
-            GroundTruthState {
-                pose: start_isometry,
-                linear_velocity: Vector3::zeros(),
-                angular_velocity: Vector3::new(0.0, 0.2, 0.0), // Give it a slight spin for testing
-            },
-            EstimatedPose {
-                pose: start_isometry,
-                timestamp: 0.0,
-                covariance: DMatrix::zeros(6, 6),
-            },
-            // DynamicsModel(Box::new(SimpleCarDynamics)),
-        ));
+        let agent_entity_id = commands
+            .spawn((
+                Name::new(agent_config.name.clone()),
+                GroundTruthState {
+                    pose: start_isometry,
+                    linear_velocity: Vector3::zeros(),
+                    angular_velocity: Vector3::new(0.0, 0.2, 0.0),
+                },
+                // DynamicsModel(Box::new(SimpleCarDynamics)),
+                // We can add the EkfState here since every EKF will need one.
+                EkfState::default(),
+            ))
+            .id();
 
-        // --- Attach Sensor Components ---
+        let mut imu_suite = ImuSuite::default();
         for (name, imu_config) in &agent_config.sensors.imu {
-            // --- THE FIX IS HERE: Use a `match` statement ---
-            // This is robust. If you later add another IMU type to the enum
-            // (e.g., a simple 6-DOF one), the compiler will force you to handle it here.
+            // Use a match statement to handle different IMU types from the config.
             match imu_config {
                 ImuConfig::NineDof {
                     rate,
                     noise_stddev: _,
                     frame_id: _,
                 } => {
-                    println!("    + Attaching EKF at {} Hz", rate);
-
                     let topic_name = format!("/agents/{}/imu/{}", agent_config.name, name);
+                    println!(
+                        "    + Attaching IMU: '{}' to publish to {}",
+                        name, topic_name
+                    );
 
-                    // The component now has the publisher topic name
-                    agent_entity_commands.insert(Imu {
+                    // Create an ImuSpec and push it into our suite's vector.
+                    imu_suite.imus.push(Imu {
                         name: name.clone(),
                         topic_to_publish: topic_name,
                         timer: Timer::new(
                             Duration::from_secs_f32(1.0 / *rate),
                             TimerMode::Repeating,
                         ),
-                        // You can use the other config values here
-                        // noise_stddev_accel: noise_stddev[0] as f64,
-                        // noise_stddev_gyro: noise_stddev[1] as f64,
+                        // You would use noise_stddev here to configure the sensor model
                     });
-                } // If you had other IMU types, you'd handle them here:
-                  // ImuConfig::OtherType { ... } => { /* logic for other type */ }
+                }
             }
         }
-        // --- Attach Autonomy Stack & Configure Subscriptions ---
-        if let EstimatorConfig::Ekf { rate } = &agent_config.autonomy_stack.estimator {
-            // First, add the core EKF components
-            let ekf_entity_id = agent_entity_commands
-                .insert((
-                    EKF {
-                        timer: Timer::new(
-                            Duration::from_secs_f32(1.0 / rate),
-                            TimerMode::Repeating,
-                        ),
-                    },
-                    EkfState::default(),
-                ))
-                .id();
-            match &agent_config.autonomy_stack.estimator {
-                EstimatorConfig::Ekf { rate } => {
-                    println!("    + Attaching EKF at {} Hz", rate);
-                    // The `insert` call is now inside the match arm.
-                    agent_entity_commands.insert((
-                        EKF {
-                            timer: Timer::new(
-                                Duration::from_secs_f32(1.0 / *rate),
-                                TimerMode::Repeating,
-                            ),
-                        },
-                        EkfState::default(),
-                    ));
-                } // If you were to add another estimator to your config enum, like:
-                  // Ukf { rate: f32 },
-                  // The compiler would give you an error right here until you add a new arm:
-                  // EstimatorConfig::Ukf { rate } => {
-                  //     println!("    + Attaching UKF at {} Hz", rate);
-                  //     // ... insert UKF components ...
-                  // }
-            }
+        // Insert the single, fully-populated ImuSuite component onto the agent.
+        commands.entity(agent_entity_id).insert(imu_suite);
 
-            // Now, discover and add the reader components to that same entity.
-            let imu_topic_names = topic_bus.find_topics_by_tag(TopicTag::Imu, &agent_config.name);
-            for topic_name in imu_topic_names {
-                println!(
-                    "[SETUP] EKF for {} subscribing to {}",
-                    agent_config.name, topic_name
-                );
-                commands
-                    .entity(ekf_entity_id)
-                    .insert(TopicReader::<ImuData>::new(&topic_name));
-            }
+        // ... (You would repeat the suite pattern for GPS, Lidar, etc.) ...
+
+        // --- Attach Autonomy Stack Components & Configure Subscriptions ---
+
+        // Use a match statement to handle different estimator types.
+        match &agent_config.autonomy_stack.estimator {
+            EstimatorConfig::Ekf { rate } => {
+                println!("    + Attaching EKF at {} Hz", rate);
+
+                // Add the core EKF component.
+                commands.entity(agent_entity_id).insert(EKF {
+                    timer: Timer::new(Duration::from_secs_f32(1.0 / *rate), TimerMode::Repeating),
+                    // In a real system, you would populate these from the config.
+                    // process_noise_covariance: DMatrix::identity(6, 6) * 0.01,
+                    // measurement_noise_map: HashMap::new(), // This would be populated based on sensor configs
+                });
+
+                // --- DYNAMIC SUBSCRIPTION for IMU ---
+                let mut imu_subscriptions = ImuSubscriptions::default();
+                let imu_topic_names =
+                    topic_bus.find_topics_by_tag(TopicTag::Imu, &agent_config.name);
+                for topic_name in imu_topic_names {
+                    println!("    -> EKF subscribing to IMU topic: {}", topic_name);
+                    imu_subscriptions
+                        .readers
+                        .push(TopicReader::<ImuData>::new(&topic_name));
+                }
+                commands.entity(agent_entity_id).insert(imu_subscriptions);
+
+                // --- DYNAMIC SUBSCRIPTION for GPS (Example) ---
+                // let mut gps_subscriptions = GpsSubscriptions::default();
+                // let gps_topic_names = topic_bus.find_topics_by_tag(TopicTag::Gps, &agent_config.name);
+                // for topic_name in gps_topic_names {
+                //     gps_subscriptions.readers.push(TopicReader::<GpsData>::new(&topic_name));
+                // }
+                // commands.entity(agent_entity_id).insert(gps_subscriptions);
+            } // Add other estimator types here in the future
+              // EstimatorConfig::OtherFilter { .. } => { /* ... */ }
         }
     }
 }

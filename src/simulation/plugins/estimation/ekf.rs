@@ -162,6 +162,20 @@ impl Plugin for EkfPlugin {
 }
 
 // --- Components ---
+
+// This component holds ALL IMU subscriptions for one EKF instance.
+#[derive(Component, Default)]
+pub struct ImuSubscriptions {
+    // It's just a vector of the generic TopicReaders.
+    pub readers: Vec<TopicReader<ImuData>>,
+}
+
+// You would have another one for GPS:
+// #[derive(Component, Default)]
+// pub struct GpsSubscriptions {
+//     pub readers: Vec<TopicReader<GpsData>>,
+// }
+
 #[derive(Component)]
 pub struct EKF {
     pub timer: Timer,
@@ -171,51 +185,56 @@ pub struct EkfState {/* ... */}
 
 // --- Systems ---
 
+/// System 1: Tick all EKF timers.
 fn tick_ekf_timers(mut query: Query<&mut EKF>, time: Res<Time<Fixed>>) {
     for mut ekf in query.iter_mut() {
         ekf.timer.tick(time.delta());
     }
 }
 
+/// System 2: Read-only run condition.
 fn should_run_ekf_system(query: Query<&EKF>) -> bool {
-    query.iter().any(|ekf| ekf.timer.just_finished())
+    let should_run = query.iter().any(|ekf| ekf.timer.just_finished());
+    if should_run {
+        // This print statement is the most important debug tool here.
+        // If you never see this, the timers are not being ticked correctly.
+        println!("[SCHEDULER] EKF SystemSet should run this frame.");
+    }
+    should_run
 }
 
+/// System 3a: PREDICT step.
+/// It no longer needs to check the timer, as the run condition already did.
 fn ekf_predict_system(mut query: Query<(&mut EkfState, &DynamicsModel, &EKF)>) {
+    println!("[ESTIMATOR] EKF Predict running...");
     for (mut _ekf_state, _dynamics, ekf) in query.iter_mut() {
+        // We can optionally check again if we want to only predict for the *specific*
+        // EKF that is ready, in a multi-agent scenario with different rates.
         if ekf.timer.just_finished() {
             // Predict logic...
         }
     }
 }
 
-/// This system specifically handles updates from all IMU topics.
+/// System 3b: UPDATE step. This runs every time the set runs.
 fn ekf_update_from_imu(
     topic_bus: Res<TopicBus>,
-    mut query: Query<(&mut EkfState, &mut TopicReader<ImuData>)>,
+    mut query: Query<(&mut EkfState, &mut ImuSubscriptions)>,
 ) {
-    for (mut _ekf_state, mut reader) in query.iter_mut() {
-        // --- THE FIX IS HERE ---
-        // 1. Get an immutable borrow of the topic_name *before* the loop.
-        //    We clone it into a local variable. This is cheap since String is small.
-        let topic_name = reader.topic_name.clone();
-
-        // 2. Find the topic buffer using the cloned name.
-        if let Some(topic) = topic_bus.get_topic::<ImuData>(&topic_name) {
-            // 3. Now, start the loop that mutably borrows `reader`.
-            //    The immutable borrow of `reader.topic_name` is no longer active.
-            let messages = reader.read(topic);
-            println!("EKF is consuming {} imu messages", messages.count());
-
-            // for stamped_message in reader.read(topic) {
-            // We can now safely use our `topic_name` variable from step 1.
-            // println!(
-            //     "EKF received IMU message ID {} from topic '{}'",
-            //     stamped_message.id,
-            //     topic_name // Use the cloned variable
-            // );
-            // ... process the message ...
-            // }
+    println!("[ESTIMATOR] EKF Update running...");
+    for (mut _ekf_state, mut subscriptions) in query.iter_mut() {
+        for reader in &mut subscriptions.readers {
+            let topic_name = reader.topic_name.clone();
+            if let Some(topic) = topic_bus.get_topic::<ImuData>(&topic_name) {
+                let messages: Vec<_> = reader.read(topic).collect();
+                if !messages.is_empty() {
+                    println!(
+                        "EKF consumed {} IMU messages from topic '{}'",
+                        messages.len(),
+                        topic_name
+                    );
+                }
+            }
         }
     }
 }

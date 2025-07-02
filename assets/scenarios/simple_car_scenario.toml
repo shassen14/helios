@@ -9,40 +9,58 @@ gravity = [0.0, -9.81, 0.0]
 
 [[agents]]
 name = "RoboCar-01"
-starting_pose = { position = [0.0, 0.5, 0.0], orientation_deg = [0.0, 0.0, 0.0] }
+starting_pose = { position = [
+  0.0,
+  0.5,
+  0.0,
+], orientation_deg = [
+  0.0,
+  0.0,
+  0.0,
+] }
 goal_pose = { position = [50.0, 0.5, 0.0] }
 
-  [agents.vehicle]
-  type = "Ackermann"
-  wheelbase = 2.5
-  max_steering_angle = 35.0 # deg
-  max_steering_rate = 140.0 # deg/sec
+[agents.vehicle]
+type = "Ackermann"
+wheelbase = 2.5
+max_steering_angle = 35.0 # deg
+max_steering_rate = 140.0 # deg/sec
 
-  [agents.sensors]
-    [agents.sensors.imu]
-      [agents.sensors.imu.primary_imu]
-      type = "NineDof"
-      rate = 200.0 # High-rate IMU
-      noise_stddev = [0.01, 0.01, 0.01]
+[agents.sensors]
+[agents.sensors.imu]
+[agents.sensors.imu.primary_imu]
+type = "NineDof"
+rate = 20.0                       # High-rate IMU
+noise_stddev = [0.01, 0.01, 0.01]
+[agents.sensors.imu.secondary_imu]
+type = "NineDof"
+rate = 5.0                        # High-rate IMU
+noise_stddev = [0.01, 0.01, 0.01]
 
-  [agents.autonomy_stack]
-    [agents.autonomy_stack.estimator]
-    type = "Ekf"
-    rate = 10.0 # EKF runs at a lower rate than the IMU
-    
-    # Placeholders for future modules
-    [agents.autonomy_stack.mapper]
-    type = "OccupancyGrid2D"
-    rate = 5.0
-    resolution = 0.1
-    
-    [agents.autonomy_stack.planner]
-    type = "AStar"
-    rate = 2.0
-    
-    [agents.autonomy_stack.controller]
-    type = "Pid"
-    rate = 50.0
-    kp = 1.0
-    ki = 0.1
-    kd = 0.2
+[agents.sensors.imu.another_imu]
+type = "NineDof"
+rate = 50.0                       # High-rate IMU
+noise_stddev = [0.01, 0.01, 0.01]
+
+
+[agents.autonomy_stack]
+[agents.autonomy_stack.estimator]
+type = "Ekf"
+rate = 1.0   # EKF runs at a lower rate than the IMU
+
+# Placeholders for future modules
+[agents.autonomy_stack.mapper]
+type = "OccupancyGrid2D"
+rate = 5.0
+resolution = 0.1
+
+[agents.autonomy_stack.planner]
+type = "AStar"
+rate = 2.0
+
+[agents.autonomy_stack.controller]
+type = "Pid"
+rate = 50.0
+kp = 1.0
+ki = 0.1
+kd = 0.2
