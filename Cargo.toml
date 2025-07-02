@@ -7,8 +7,9 @@ edition = "2024"
 [dependencies]
 # remove "dynamic_linking" before release, its for development only
 bevy = { version = "0.16", features = ["file_watcher"] }
-bevy-inspector-egui = "0.31.0"
-bevy_egui = "0.34.1"
+# bevy-inspector-egui = "0.31.0"
+# bevy_egui = "0.34.1"
+downcast-rs = "2.0.1"
 nalgebra = "0.33.2"
 num-traits = "0.2.19"
 serde = { version = "1.0.219", features = ["derive"] }
