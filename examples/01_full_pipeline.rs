@@ -33,13 +33,15 @@ fn main() {
     let mut app = App::new();
 
     // --- 2. Add Core Plugins & Resources ---
-    app.add_plugins(MinimalPlugins)
+    app.add_plugins(DefaultPlugins)
         .insert_resource(Time::<Fixed>::from_hz(200.0))
         // Initialize the TopicBus resource
         .init_resource::<TopicBus>()
         .insert_resource(config)
-        .add_plugins((ImuPlugin, EkfPlugin))
-        // Pass 1: Create topics. Pass 2: Spawn entities.
+        // .add_plugins((ImuPlugin, EkfPlugin))
+        .add_plugins(
+            WorldSpawnerPlugin, // <-- ADD YOUR NEW PLUGIN HERE
+        )
         .add_systems(
             Startup,
             (create_topics_from_config, spawn_agents_from_config).chain(),
@@ -49,6 +51,9 @@ fn main() {
     // --- 3. Run the app ---
     app.run();
 }
+
+#[derive(Component)]
+struct NeedsCollider;
 
 /// STARTUP PASS 1: Read the config and create all necessary topics on the bus.
 fn create_topics_from_config(config: Res<SimulationConfig>, mut topic_bus: ResMut<TopicBus>) {
@@ -202,100 +207,6 @@ fn spawn_agents_from_config(
         }
     }
 }
-
-/// This system runs ONCE at startup to build the scene from the configuration.
-// fn setup_scene(mut commands: Commands, config: Res<SimulationConfig>) {
-//     println!("[SETUP] Spawning agents from configuration...");
-
-//     for (i, agent_config) in config.agents.iter().enumerate() {
-//         println!("  -> Spawning agent: {}", agent_config.name);
-
-//         // --- Calculate Initial Pose ---
-//         let start_pos = agent_config.starting_pose.position;
-//         let start_rot_deg = agent_config.starting_pose.orientation_deg;
-//         let start_isometry = Isometry3::from_parts(
-//             Translation3::new(
-//                 start_pos[0] as f64,
-//                 start_pos[1] as f64,
-//                 start_pos[2] as f64,
-//             ),
-//             UnitQuaternion::from_euler_angles(
-//                 start_rot_deg[0].to_radians() as f64, // Roll
-//                 start_rot_deg[1].to_radians() as f64, // Pitch
-//                 start_rot_deg[2].to_radians() as f64, // Yaw
-//             ),
-//         );
-
-//         // --- Start building the entity with commands ---
-//         let mut agent_entity_commands = commands.spawn((
-//             Name::new(agent_config.name.clone()),
-//             // --- Ground Truth & Estimated State ---
-//             GroundTruthState {
-//                 pose: start_isometry,
-//                 // These will be updated by the dynamics system.
-//                 linear_velocity: Vector3::zeros(),
-//                 angular_velocity: Vector3::new(0.0, 0.2, 0.0), // Give it a slight spin for testing
-//             },
-//             EstimatedPose {
-//                 pose: start_isometry,
-//                 timestamp: 0.0,
-//                 covariance: DMatrix::zeros(6, 6),
-//             },
-//             // --- Vehicle Dynamics Model ---
-//             // This part will become more complex as you read the `vehicle` type from config.
-//             // DynamicsModel(Box::new(SimpleCarDynamics)),
-//         ));
-
-//         // --- Add Sensor Compone7nts from Config ---
-//         // Iterate over named IMUs in the config for this agent
-//         for (name, imu_config) in &agent_config.sensors.imu {
-//             // Use a `match` statement to handle all possible variants of ImuConfig.
-//             match imu_config {
-//                 // This is the arm for the NineDof variant.
-//                 ImuConfig::NineDof {
-//                     rate, noise_stddev, ..
-//                 } => {
-//                     println!("    + Attaching IMU: '{}' at {} Hz", name, rate);
-//                     // The `insert` call is now inside the match arm.
-//                     agent_entity_commands.insert(Imu {
-//                         name: name.clone(),
-//                         noise_stddev_accel: noise_stddev[0] as f64,
-//                         noise_stddev_gyro: noise_stddev[1] as f64,
-//                         timer: Timer::new(
-//                             Duration::from_secs_f32(1.0 / *rate),
-//                             TimerMode::Repeating,
-//                         ),
-//                     });
-//                 } // If you add another variant to ImuConfig, like `ImuConfig::OtherType`,
-//                   // the compiler will force you to add a new arm here:
-//                   // ImuConfig::OtherType { ... } => { /* handle it */ }
-//             }
-//         }
-
-//         // Use a `match` statement to handle the estimator configuration.
-//         match &agent_config.autonomy_stack.estimator {
-//             EstimatorConfig::Ekf { rate } => {
-//                 println!("    + Attaching EKF at {} Hz", rate);
-//                 // The `insert` call is now inside the match arm.
-//                 agent_entity_commands.insert((
-//                     EKF {
-//                         timer: Timer::new(
-//                             Duration::from_secs_f32(1.0 / *rate),
-//                             TimerMode::Repeating,
-//                         ),
-//                     },
-//                     EkfState::default(),
-//                 ));
-//             } // If you were to add another estimator to your config enum, like:
-//               // Ukf { rate: f32 },
-//               // The compiler would give you an error right here until you add a new arm:
-//               // EstimatorConfig::Ukf { rate } => {
-//               //     println!("    + Attaching UKF at {} Hz", rate);
-//               //     // ... insert UKF components ...
-//               // }
-//         }
-//     }
-// }
 
 /// A simple system to move the ground truth state, simulating vehicle motion.
 /// This will eventually be replaced by a proper physics/dynamics system.

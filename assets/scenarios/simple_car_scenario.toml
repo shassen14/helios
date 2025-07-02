@@ -4,7 +4,7 @@
 duration_seconds = 120.0
 
 [world]
-map_file = "assets/maps/my_world.gltf"
+map_file = "maps/starter_world.glb"
 gravity = [0.0, -9.81, 0.0]
 
 [[agents]]

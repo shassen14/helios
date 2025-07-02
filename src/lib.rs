@@ -9,6 +9,7 @@ pub mod prelude {
     // Re-export the entire plugin structs so they can be easily added.
     pub use crate::simulation::plugins::estimation::ekf::EkfPlugin;
     pub use crate::simulation::plugins::sensors::imu::ImuPlugin;
+    pub use crate::simulation::plugins::world::spawner::WorldSpawnerPlugin;
     // ... pub use crate::simulation::plugins::planning::astar::AStarPlugin;
 
     // Re-export the components that are needed to build a scene.
