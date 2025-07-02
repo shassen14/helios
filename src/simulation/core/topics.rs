@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use downcast_rs::{Downcast, impl_downcast};
 use nalgebra::{DMatrix, Isometry3, Vector3};
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
 

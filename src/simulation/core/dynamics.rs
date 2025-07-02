@@ -97,6 +97,9 @@ pub trait Dynamics: Debug + Send + Sync {
     /// # Returns
     /// A tuple `(A, B)` where `A` is an NxN matrix and `B` is an NxM matrix (N=state dim, M=control dim).
     fn calculate_jacobian(&self, x: &State, u: &Control, t: f64) -> (DMatrix<f64>, DMatrix<f64>) {
+        let _ = t;
+        let _ = u;
+        let _ = x;
         // Default implementation: Indicate that Jacobians are not implemented for this model.
         // Consider returning Option<(...)> or Result<(...), Error> in a production setting.
         unimplemented!("Jacobian calculation not implemented for this dynamics model.");
@@ -122,6 +125,9 @@ pub trait Dynamics: Debug + Send + Sync {
         x_dot_desired: &State,
         t: f64,
     ) -> Option<Control> {
+        let _ = t;
+        let _ = x_dot_desired;
+        let _ = x;
         // Default implementation: Feedforward calculation is not supported by default.
         None
     }
@@ -129,3 +135,24 @@ pub trait Dynamics: Debug + Send + Sync {
 
 #[derive(Component)]
 pub struct DynamicsModel(pub Box<dyn Dynamics>);
+
+// TODO: Delete later
+/// A simple placeholder implementation for testing.
+#[derive(Debug)]
+pub struct SimpleCarDynamics;
+
+impl Dynamics for SimpleCarDynamics {
+    fn get_state_dim(&self) -> usize {
+        9 // e.g., pos(3), vel(3), orientation(3)
+    }
+
+    fn get_control_dim(&self) -> usize {
+        2 // e.g., throttle, steering_angle
+    }
+
+    /// This function would contain the actual physics equations.
+    /// For now, it just returns a zero vector.
+    fn get_derivatives(&self, _x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
+        DVector::zeros(self.get_state_dim())
+    }
+}

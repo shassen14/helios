@@ -1,248 +1,272 @@
-// use crate::simulation::core::dynamics::DynamicsModel;
-// use crate::simulation::core::topics::{EstimatedPose, ImuData};
-// use bevy::prelude::*;
-// use std::collections::HashMap;
-
-// // You will need to define DebugCounter in your example and add it to your prelude,
-// // or define it in a core file. For this example, we assume it's findable.
-// use crate::prelude::DebugCounter; // Assuming it's in the prelude
-
-// --- Public SystemSet for external coordination ---
-// #[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
-// pub enum EkfSystems {
-//     Tick,
-//     Main,
-// }
-
-// // --- Plugin Definition ---
-// pub struct EkfPlugin;
-
-// impl Plugin for EkfPlugin {
-//     fn build(&self, app: &mut App) {
-//         app
-//             // 1. Add the ticking system to its own set.
-//             .add_systems(FixedUpdate, tick_ekf_timers.in_set(EkfSystems::Tick))
-//             // 2. Add the main EKF logic systems to another set.
-//             .add_systems(
-//                 FixedUpdate,
-//                 (
-//                     ekf_predict_system,
-//                     ekf_update_from_imu.after(ekf_predict_system),
-//                     ekf_write_output.after(ekf_update_from_imu),
-//                 )
-//                     .in_set(EkfSystems::Main)
-//                     // The entire block is gated by this single run condition.
-//                     .run_if(should_run_ekf_system),
-//             )
-//             // 3. Explicitly state that the Main set must run after the Tick set.
-//             .configure_sets(FixedUpdate, EkfSystems::Main.after(EkfSystems::Tick));
-//     }
-// }
-
-// // --- Components ---
-// #[derive(Component)]
-// pub struct EKF {
-//     pub timer: Timer,
-// }
-
-// #[derive(Component, Default)]
-// pub struct EkfState {
-//     // In a real EKF, this would hold your state vector and covariance matrix.
-//     // DVector<f64>, DMatrix<f64>, etc.
-// }
-
-// // --- Systems ---
-
-// /// Ticks all EKF timers. This system has write access and runs every `FixedUpdate`.
-// fn tick_ekf_timers(mut query: Query<&mut EKF>, time: Res<Time>) {
-//     for mut ekf in query.iter_mut() {
-//         ekf.timer.tick(time.delta());
-//     }
-// }
-
-// /// The READ-ONLY run condition. Returns true if *any* EKF timer has finished.
-// fn should_run_ekf_system(query: Query<&EKF>) -> bool {
-//     query.iter().any(|ekf| ekf.timer.just_finished())
-// }
-
-// /// PREDICT step. Runs only when the `should_run_ekf_system` gate is open.
-// fn ekf_predict_system(mut query: Query<(Entity, &mut EkfState, &DynamicsModel, &EKF)>) {
-//     for (entity, mut _ekf_state, _dynamics, ekf) in query.iter_mut() {
-//         // We check the timer here to ensure we only predict for the
-//         // specific instances that are ready on this tick.
-//         if ekf.timer.just_finished() {
-//             println!("[ESTIMATOR] PREDICT step for entity {:?}", entity);
-//             // Predict logic would go here...
-//         }
-//     }
-// }
-
-// /// UPDATE step. This system also only runs when the gate is open, ensuring
-// /// it processes a full batch of accumulated events.
-// fn ekf_update_from_imu(
-//     mut agent_query: Query<(Entity, &mut EkfState)>,
-//     mut imu_reader: EventReader<ImuData>,
-//     // Use the new debug counter resource.
-//     mut debug_counter: ResMut<DebugCounter>,
-// ) {
-//     let events_in_queue: Vec<_> = imu_reader.read().collect();
-//     if events_in_queue.is_empty() {
-//         return;
-//     }
-
-//     // This is our new, reliable debug print.
-//     println!(
-//         "[DEBUG] EKF Update sees {} events in queue.",
-//         events_in_queue.len()
-//     );
-
-//     // Batch events by the entity they belong to.
-//     let mut events_by_entity: HashMap<Entity, Vec<&&ImuData>> = HashMap::new();
-//     for imu_event in &events_in_queue {
-//         events_by_entity
-//             .entry(imu_event.entity)
-//             .or_default()
-//             .push(imu_event);
-//     }
-
-//     // Iterate over agents with an EKF component.
-//     for (agent_entity, mut _ekf_state) in agent_query.iter_mut() {
-//         if let Some(events_for_this_agent) = events_by_entity.get(&agent_entity) {
-//             let consumed_count = events_for_this_agent.len();
-//             debug_counter.imu_consumed_this_tick += consumed_count;
-
-//             println!(
-//                 "[ESTIMATOR] UPDATE step for entity {:?}: processing batch of {} messages.",
-//                 agent_entity, consumed_count
-//             );
-
-//             // Loop through the batch and apply updates...
-//             // for imu_event in events_for_this_agent {
-//             //     // ... update logic for each message ...
-//             // }
-//         }
-//     }
-// }
-
-// /// OUTPUT step. Runs only when the gate is open.
-// fn ekf_write_output(mut query: Query<(Entity, &mut EstimatedPose, &EkfState, &EKF)>) {
-//     for (entity, mut _est_pose, _ekf_state, ekf) in query.iter_mut() {
-//         if ekf.timer.just_finished() {
-//             println!("[ESTIMATOR] OUTPUT step for entity {:?}", entity);
-//             // Write output logic here...
-//         }
-//     }
-// }
-
-use crate::simulation::core::dynamics::DynamicsModel;
-use crate::simulation::core::topics::{EstimatedPose, ImuData, TopicBus, TopicReader};
+use crate::prelude::StampedMessage;
+use crate::simulation::core::dynamics::{Dynamics, DynamicsModel};
+use crate::simulation::core::topics::{ImuData, TopicBus, TopicReader};
 use bevy::prelude::*;
+use nalgebra::{DMatrix, DVector, Matrix3, Vector3};
+use std::collections::HashMap;
 
-// --- Plugin Definition ---
+// --- Helper Functions (The Reusable Logic) ---
+
+/// Performs the EKF prediction step.
+/// This is a plain Rust function, not a Bevy system.
+fn do_ekf_prediction(
+    ekf_state: &mut EkfState,
+    dynamics: &dyn Dynamics,
+    process_noise_q: &DMatrix<f64>,
+    dt: f64,
+) {
+    // In a real EKF, you would get the control input `u` that was applied during `dt`.
+    // For now, we'll assume a zero control input.
+    let u = DVector::zeros(dynamics.get_control_dim());
+
+    // F = Jacobian of dynamics w.r.t. state
+    // In a real implementation, you'd linearize around the current state.
+    // Here we use a simplified placeholder matrix.
+    let f_jacobian = DMatrix::<f64>::identity(
+        ekf_state.state_vector.nrows(),
+        ekf_state.state_vector.nrows(),
+    ); // Placeholder
+
+    // Predict state forward: x_pred = x + f(x, u) * dt
+    let x_dot = dynamics.get_derivatives(&ekf_state.state_vector, &u, 0.0); // Assuming time t=0 for simplicity
+    ekf_state.state_vector += x_dot * dt;
+
+    // Predict covariance forward: P_pred = F * P * F^T + Q
+    ekf_state.covariance =
+        &f_jacobian * &ekf_state.covariance * f_jacobian.transpose() + process_noise_q * dt;
+}
+
+/// Performs the EKF update step using an IMU measurement.
+/// This is also a plain Rust function.
+fn do_ekf_imu_update(
+    ekf_state: &mut EkfState,
+    imu_data: &ImuData,
+    measurement_noise_r: &DMatrix<f64>,
+) {
+    // Simplified example for updating with angular velocity.
+    // A real update would use the full measurement model `z = h(x)`.
+    let state_dim = ekf_state.state_vector.nrows();
+
+    // H = Jacobian of measurement model w.r.t. state.
+    // This matrix maps the state space to the measurement space.
+    // For this example, let's assume we are measuring 3D angular velocity
+    // and it corresponds to states 6, 7, and 8 in our state vector.
+    let mut h_jacobian = DMatrix::<f64>::zeros(3, state_dim);
+    if state_dim >= 9 {
+        h_jacobian
+            .fixed_view_mut::<3, 3>(0, 6)
+            .copy_from(&Matrix3::identity());
+    }
+
+    // z = The actual measurement from the sensor.
+    let z = imu_data.angular_velocity;
+
+    // z_pred = The predicted measurement from our current state estimate.
+    let z_pred = Vector3::new(
+        ekf_state.state_vector.get(6).cloned().unwrap_or(0.0),
+        ekf_state.state_vector.get(7).cloned().unwrap_or(0.0),
+        ekf_state.state_vector.get(8).cloned().unwrap_or(0.0),
+    );
+
+    // y = Innovation (the difference between actual and predicted measurement).
+    let y = z - z_pred;
+
+    // S = Innovation Covariance: S = H * P * H^T + R
+    let s = &h_jacobian * &ekf_state.covariance * h_jacobian.transpose() + measurement_noise_r;
+
+    // K = Kalman Gain: K = P * H^T * S^-1
+    if let Some(s_inv) = s.try_inverse() {
+        let k = &ekf_state.covariance * h_jacobian.transpose() * s_inv;
+
+        // Update state: x_new = x_pred + K * y
+        ekf_state.state_vector += &k * y;
+
+        // Update covariance: P_new = (I - K * H) * P_pred
+        let i_kh = DMatrix::<f64>::identity(state_dim, state_dim) - &k * &h_jacobian;
+        ekf_state.covariance = i_kh * &ekf_state.covariance;
+    }
+}
+
+// --- Plugin and Bevy Constructs ---
 pub struct EkfPlugin;
-
-#[derive(SystemSet, Debug, Hash, PartialEq, Eq, Clone)]
-pub struct EkfSystemSet;
 
 impl Plugin for EkfPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(FixedUpdate, tick_ekf_timers).add_systems(
-            FixedUpdate,
-            (
-                ekf_predict_system,
-                // We now have a separate update system for each data type.
-                ekf_update_from_imu.after(ekf_predict_system),
-                ekf_write_output.after(ekf_update_from_imu),
-            )
-                .in_set(EkfSystemSet)
-                .after(tick_ekf_timers)
-                .run_if(should_run_ekf_system),
-        );
+        // Just one system, running at high frequency in FixedUpdate.
+        app.add_systems(FixedUpdate, ekf_main_system);
     }
 }
 
 // --- Components ---
 
-// This component holds ALL IMU subscriptions for one EKF instance.
+#[derive(Component)]
+pub struct EKF {
+    /// The Process Noise Covariance matrix (Q).
+    pub process_noise_covariance: DMatrix<f64>,
+    /// Map from a topic name to its Measurement Noise Covariance matrix (R).
+    pub measurement_noise_map: HashMap<String, DMatrix<f64>>,
+}
+
 #[derive(Component, Default)]
 pub struct ImuSubscriptions {
-    // It's just a vector of the generic TopicReaders.
     pub readers: Vec<TopicReader<ImuData>>,
 }
 
-// You would have another one for GPS:
-// #[derive(Component, Default)]
-// pub struct GpsSubscriptions {
-//     pub readers: Vec<TopicReader<GpsData>>,
-// }
-
-#[derive(Component)]
-pub struct EKF {
-    pub timer: Timer,
-}
-#[derive(Component, Default)]
-pub struct EkfState {/* ... */}
-
-// --- Systems ---
-
-/// System 1: Tick all EKF timers.
-fn tick_ekf_timers(mut query: Query<&mut EKF>, time: Res<Time<Fixed>>) {
-    for mut ekf in query.iter_mut() {
-        ekf.timer.tick(time.delta());
-    }
+#[derive(Component, Debug)]
+pub struct EkfState {
+    pub state_vector: DVector<f64>,
+    pub covariance: DMatrix<f64>,
+    /// Timestamp of the last filter update.
+    pub last_update_timestamp: f64,
 }
 
-/// System 2: Read-only run condition.
-fn should_run_ekf_system(query: Query<&EKF>) -> bool {
-    let should_run = query.iter().any(|ekf| ekf.timer.just_finished());
-    if should_run {
-        // This print statement is the most important debug tool here.
-        // If you never see this, the timers are not being ticked correctly.
-        println!("[SCHEDULER] EKF SystemSet should run this frame.");
-    }
-    should_run
-}
-
-/// System 3a: PREDICT step.
-/// It no longer needs to check the timer, as the run condition already did.
-fn ekf_predict_system(mut query: Query<(&mut EkfState, &DynamicsModel, &EKF)>) {
-    println!("[ESTIMATOR] EKF Predict running...");
-    for (mut _ekf_state, _dynamics, ekf) in query.iter_mut() {
-        // We can optionally check again if we want to only predict for the *specific*
-        // EKF that is ready, in a multi-agent scenario with different rates.
-        if ekf.timer.just_finished() {
-            // Predict logic...
+impl Default for EkfState {
+    fn default() -> Self {
+        let state_dim = 9; // e.g., pos, vel, orientation_rads
+        Self {
+            state_vector: DVector::zeros(state_dim),
+            covariance: DMatrix::identity(state_dim, state_dim) * 1.0,
+            last_update_timestamp: -1.0, // Start at -1 to ensure first run
         }
     }
 }
 
-/// System 3b: UPDATE step. This runs every time the set runs.
-fn ekf_update_from_imu(
+// --- The Main Orchestrator System ---
+
+/// This single system performs the entire EKF logic in the correct sequence.
+pub fn ekf_main_system(
     topic_bus: Res<TopicBus>,
-    mut query: Query<(&mut EkfState, &mut ImuSubscriptions)>,
+    time: Res<Time>,
+    mut query: Query<(
+        Entity,
+        &mut EkfState,
+        &mut ImuSubscriptions,
+        &EKF,
+        &DynamicsModel,
+    )>,
 ) {
-    println!("[ESTIMATOR] EKF Update running...");
-    for (mut _ekf_state, mut subscriptions) in query.iter_mut() {
-        for reader in &mut subscriptions.readers {
+    // DEBUG 1: Does the system run at all?
+    // This should print every FixedUpdate frame.
+    // If it doesn't, the system is not being added to the schedule correctly in main.rs.
+    println!("[DEBUG] ekf_main_system running...");
+    for (entity, mut ekf_state, mut imu_subscriptions, ekf_config, dynamics_model) in
+        query.iter_mut()
+    {
+        // DEBUG 2: Is it finding our EKF entity?
+        println!("[DEBUG] Processing EKF for entity {:?}", entity);
+
+        // Initialize timestamp on the very first run.
+        if ekf_state.last_update_timestamp < 0.0 {
+            ekf_state.last_update_timestamp = time.elapsed_secs_f64();
+            println!(
+                "[DEBUG] Initialized EKF timestamp to {}",
+                ekf_state.last_update_timestamp
+            );
+        }
+
+        // --- 1. Gather all new measurements into a unified, sortable list ---
+        #[derive(Clone)]
+        enum Measurement {
+            Imu(StampedMessage<ImuData>, String),
+        }
+        let mut all_new_measurements: Vec<(f64, Measurement)> = Vec::new();
+
+        for reader in &mut imu_subscriptions.readers {
             let topic_name = reader.topic_name.clone();
             if let Some(topic) = topic_bus.get_topic::<ImuData>(&topic_name) {
-                let messages: Vec<_> = reader.read(topic).collect();
-                if !messages.is_empty() {
+                // The most likely point of failure is here.
+                // The `read` method advances the cursor. If we read into a temporary
+                // variable and then don't use it, the messages are "consumed" but never processed.
+                let messages_for_this_reader: Vec<_> = reader.read(topic).cloned().collect();
+
+                // DEBUG 3: Are we finding any new messages for each reader?
+                if !messages_for_this_reader.is_empty() {
                     println!(
-                        "EKF consumed {} IMU messages from topic '{}'",
-                        messages.len(),
+                        "[DEBUG] Found {} new messages on topic '{}'",
+                        messages_for_this_reader.len(),
                         topic_name
                     );
                 }
+
+                for stamped_msg in messages_for_this_reader {
+                    // `stamped_msg` is now owned
+                    all_new_measurements.push((
+                        stamped_msg.message.timestamp,
+                        Measurement::Imu(stamped_msg, topic_name.clone()),
+                    ));
+                }
+            } else {
+                // DEBUG 4: Is the topic name correct?
+                println!(
+                    "[DEBUG] WARN: Could not find topic '{}' on the bus.",
+                    topic_name
+                );
             }
         }
-    }
-}
+        // ... gather GPS, etc. here ...
 
-fn ekf_write_output(mut query: Query<(&mut EstimatedPose, &EkfState, &EKF)>) {
-    for (mut _public_pose, _private_state, ekf) in query.iter_mut() {
-        if ekf.timer.just_finished() {
-            // Write output logic...
+        // --- 2. If no new data, predict to current time and exit ---
+        if all_new_measurements.is_empty() {
+            // DEBUG 5: This is the most likely reason the system is silent.
+            // It runs, finds no new messages, and exits here.
+            println!(
+                "[DEBUG] No new measurements found for EKF on entity {:?}. Predicting and exiting.",
+                entity
+            );
+
+            let dt = time.elapsed_secs_f64() - ekf_state.last_update_timestamp;
+            if dt > 0.001 {
+                do_ekf_prediction(
+                    &mut ekf_state,
+                    &*dynamics_model.0,
+                    &ekf_config.process_noise_covariance,
+                    dt,
+                );
+                ekf_state.last_update_timestamp = time.elapsed_secs_f64();
+            }
+            continue; // Go to the next EKF entity
         }
+
+        // --- 3. Sort all measurements by timestamp ---
+        println!(
+            "[DEBUG] Found a total of {} new measurements. Sorting...",
+            all_new_measurements.len()
+        );
+        all_new_measurements.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        // --- 4. Process all new measurements in the correct sequential loop ---
+        println!("[DEBUG] Processing sorted measurements...");
+        for (timestamp, measurement) in all_new_measurements {
+            // a. PREDICT from our last known time to this measurement's time
+            let dt = timestamp - ekf_state.last_update_timestamp;
+            if dt > 0.0001 {
+                // Avoid tiny, meaningless predictions
+                do_ekf_prediction(
+                    &mut ekf_state,
+                    &*dynamics_model.0,
+                    &ekf_config.process_noise_covariance,
+                    dt,
+                );
+            }
+
+            // b. UPDATE with the measurement data
+            match measurement {
+                Measurement::Imu(imu_msg, topic_name) => {
+                    println!("noise map len: {}", ekf_config.measurement_noise_map.len());
+                    // Get the correct noise matrix for this specific sensor topic
+                    if let Some(noise_r) = ekf_config.measurement_noise_map.get(&topic_name) {
+                        do_ekf_imu_update(&mut ekf_state, &imu_msg.message, noise_r);
+                    } else {
+                        eprintln!(
+                            "WARN: EKF has no measurement noise config for topic '{}'",
+                            topic_name
+                        );
+                    }
+                }
+            }
+            // c. Update our "internal clock"
+            ekf_state.last_update_timestamp = timestamp;
+        }
+        // TODO: This is where you would publish the final state to the FullStateData topic.
     }
 }

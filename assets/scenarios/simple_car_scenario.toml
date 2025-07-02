@@ -30,17 +30,17 @@ max_steering_rate = 140.0 # deg/sec
 [agents.sensors.imu]
 [agents.sensors.imu.primary_imu]
 type = "NineDof"
-rate = 20.0                       # High-rate IMU
+rate = 100.0                      # High-rate IMU
 noise_stddev = [0.01, 0.01, 0.01]
 [agents.sensors.imu.secondary_imu]
 type = "NineDof"
-rate = 5.0                        # High-rate IMU
-noise_stddev = [0.01, 0.01, 0.01]
-
-[agents.sensors.imu.another_imu]
-type = "NineDof"
 rate = 50.0                       # High-rate IMU
 noise_stddev = [0.01, 0.01, 0.01]
+
+# [agents.sensors.imu.another_imu]
+# type = "NineDof"
+# rate = 50.0                       # High-rate IMU
+# noise_stddev = [0.01, 0.01, 0.01]
 
 
 [agents.autonomy_stack]
