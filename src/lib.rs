@@ -1,25 +1,21 @@
 // src/lib.rs
-pub mod input_systems;
-pub mod integrators;
-pub mod models {
-    pub mod bicycle_kinematic;
-}
-pub mod simulation {
-    pub mod components;
-    pub mod topics;
-    pub mod traits;
-    pub mod utils;
-}
-pub mod vehicles {
-    pub mod car_setup;
-}
-pub mod controllers {
-    pub mod path_follower;
-    pub mod simple_go_to;
-}
-pub mod path_planning {
-    pub mod dijkstra;
-    pub mod error;
-    pub mod grid_planner;
-    pub mod grid_utils;
+
+// This defines the top-level module of our library.
+pub mod simulation;
+
+/// The prelude module provides convenient access to the most common types.
+/// Users can `use my_robotics_lib::prelude::*;` to get started quickly.
+pub mod prelude {
+    // Re-export the entire plugin structs so they can be easily added.
+    pub use crate::simulation::plugins::estimation::ekf::EkfPlugin;
+    pub use crate::simulation::plugins::sensors::imu::ImuPlugin;
+    // ... pub use crate::simulation::plugins::planning::astar::AStarPlugin;
+
+    // Re-export the components that are needed to build a scene.
+    // pub use crate::simulation::core::dynamics::{Dynamics, DynamicsModel, SimpleCarDynamics}; // Example
+    pub use crate::simulation::core::config::*;
+    pub use crate::simulation::core::topics::*;
+    pub use crate::simulation::core::topics::{EstimatedPose, GroundTruthState};
+    pub use crate::simulation::plugins::estimation::ekf::{EKF, EkfState};
+    // pub use crate::simulation::plugins::sensors::imu::Imu;
 }
