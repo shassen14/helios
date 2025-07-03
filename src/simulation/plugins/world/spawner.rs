@@ -1,6 +1,6 @@
 use crate::simulation::core::config::SimulationConfig;
 use avian3d::prelude::*;
-use bevy::prelude::*;
+use bevy::{prelude::*, scene::SceneInstance};
 
 pub struct WorldSpawnerPlugin;
 
@@ -21,7 +21,7 @@ fn spawn_world(
     // mut materials: ResMut<Assets<StandardMaterial>>, // For the visual
     config: Res<SimulationConfig>,
 ) {
-    println!(
+    info!(
         "[SETUP] Commanding world mesh to load from '{}'...",
         config.world.map_file.display()
     );
@@ -53,14 +53,17 @@ fn on_mesh_load_add_collider(
     // Query for all entities that are waiting for a collider.
     query: Query<(Entity, &CreateColliderFromMesh)>,
 ) {
+    info!("[WORLD] Starting on_mesh_load_add_collider");
     for ev in ev_asset.read() {
         // We only care about the event that signals a mesh has fully loaded.
+        info!("[WORLD] inside ev for loop");
+
         if let AssetEvent::LoadedWithDependencies { id } = ev {
             // Check if the loaded mesh is one we're waiting for.
             for (entity, marker) in &query {
                 // `marker.0` is our Handle<Mesh>
                 if marker.0.id() == *id {
-                    println!(
+                    info!(
                         "[WORLD] Mesh asset {:?} is loaded. Creating collider...",
                         id
                     );
@@ -75,7 +78,7 @@ fn on_mesh_load_add_collider(
                                 .insert(collider)
                                 .remove::<CreateColliderFromMesh>();
 
-                            println!(
+                            info!(
                                 "[WORLD] Successfully attached collider to entity {:?}",
                                 entity
                             );

@@ -1,3 +1,4 @@
+use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
 use rust_robotics::{
@@ -20,11 +21,11 @@ fn main() {
     // Attempt to load from file, otherwise use a default config for easy testing.
     let config: SimulationConfig = match fs::read_to_string(scenario_path) {
         Ok(toml_string) => {
-            println!("Successfully loaded scenario from '{}'", scenario_path);
+            info!("Successfully loaded scenario from '{}'", scenario_path);
             toml::from_str(&toml_string).expect("Failed to parse scenario.toml!")
         }
         Err(_) => {
-            println!("Could not find scenario file, using default configuration.");
+            error!("Could not find scenario file, using default configuration.");
             SimulationConfig::default()
         }
     };
@@ -33,20 +34,31 @@ fn main() {
     let mut app = App::new();
 
     // --- 2. Add Core Plugins & Resources ---
-    app.add_plugins(DefaultPlugins)
-        .insert_resource(Time::<Fixed>::from_hz(200.0))
-        // Initialize the TopicBus resource
-        .init_resource::<TopicBus>()
-        .insert_resource(config)
-        // .add_plugins((ImuPlugin, EkfPlugin))
-        .add_plugins(
-            WorldSpawnerPlugin, // <-- ADD YOUR NEW PLUGIN HERE
-        )
-        .add_systems(
-            Startup,
-            (create_topics_from_config, spawn_agents_from_config).chain(),
-        )
-        .add_systems(FixedUpdate, move_ground_truth_system);
+    app.add_plugins(DefaultPlugins.set(LogPlugin {
+        // This is the minimum level of log that will be processed.
+        // `Info` is a good default.
+        level: bevy::log::Level::INFO,
+
+        // This is a powerful filter string.
+        // It says: "Default to info level, but for our crate `rust_robotics`,
+        // show me `debug` level messages and higher. Also, quiet down the noisy
+        // `wgpu` rendering logs to only show errors."
+        filter: "info,rust_robotics=debug,wgpu_core=error,wgpu_hal=error".to_string(),
+        ..Default::default()
+    }))
+    .insert_resource(Time::<Fixed>::from_hz(200.0))
+    // Initialize the TopicBus resource
+    .init_resource::<TopicBus>()
+    .insert_resource(config)
+    // .add_plugins((ImuPlugin, EkfPlugin))
+    .add_plugins(
+        WorldSpawnerPlugin, // <-- ADD YOUR NEW PLUGIN HERE
+    )
+    .add_systems(
+        Startup,
+        (create_topics_from_config, spawn_agents_from_config).chain(),
+    )
+    .add_systems(FixedUpdate, move_ground_truth_system);
 
     // --- 3. Run the app ---
     app.run();
@@ -61,7 +73,7 @@ fn create_topics_from_config(config: Res<SimulationConfig>, mut topic_bus: ResMu
         // Create topics for IMUs
         for name in agent_config.sensors.imu.keys() {
             let topic_name = format!("/agents/{}/imu/{}", agent_config.name, name);
-            println!("[SETUP] Creating topic: {}", topic_name);
+            info!("[SETUP] Creating topic: {}", topic_name);
             topic_bus.create_topic::<ImuData>(
                 &topic_name,
                 1000,
@@ -81,7 +93,7 @@ fn spawn_agents_from_config(
     topic_bus: Res<TopicBus>, // Read-only access to find topics
 ) {
     for agent_config in &config.agents {
-        println!("[SETUP] Spawning agent: {}", agent_config.name);
+        info!("[SETUP] Spawning agent: {}", agent_config.name);
 
         let start_pos = agent_config.starting_pose.position;
         let start_rot_deg = agent_config.starting_pose.orientation_deg;
@@ -122,7 +134,7 @@ fn spawn_agents_from_config(
                     frame_id: _,
                 } => {
                     let topic_name = format!("/agents/{}/imu/{}", agent_config.name, name);
-                    println!(
+                    info!(
                         "    + Attaching IMU: '{}' to publish to {}",
                         name, topic_name
                     );
@@ -150,7 +162,7 @@ fn spawn_agents_from_config(
         // Use a match statement to handle different estimator types.
         match &agent_config.autonomy_stack.estimator {
             EstimatorConfig::Ekf { rate } => {
-                println!("    + Attaching EKF at {} Hz", rate);
+                info!("    + Attaching EKF at {} Hz", rate);
                 // 1. Create the HashMap for measurement noise.
                 let mut measurement_noise_map = HashMap::new();
 
@@ -188,7 +200,7 @@ fn spawn_agents_from_config(
                 let imu_topic_names =
                     topic_bus.find_topics_by_tag(TopicTag::Imu, &agent_config.name);
                 for topic_name in imu_topic_names {
-                    println!("    -> EKF subscribing to IMU topic: {}", topic_name);
+                    info!("    -> EKF subscribing to IMU topic: {}", topic_name);
                     imu_subscriptions
                         .readers
                         .push(TopicReader::<ImuData>::new(&topic_name));
