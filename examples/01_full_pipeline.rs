@@ -1,6 +1,8 @@
+use avian3d::{PhysicsPlugins, prelude::PhysicsDebugPlugin};
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
+// use rust_robotics::simulation::plugins::world::test_environment::TestEnvironmentPlugin;
 use rust_robotics::{
     prelude::*,
     simulation::{
@@ -8,6 +10,7 @@ use rust_robotics::{
         plugins::{
             estimation::ekf::ImuSubscriptions,
             sensors::imu::{Imu, ImuSuite},
+            vehicles::ackermann::{AckermannCarPlugin, AckermannConfig, VehicleControllerInput},
         },
     },
 }; // Use our library's prelude for easy access
@@ -37,7 +40,7 @@ fn main() {
     app.add_plugins(DefaultPlugins.set(LogPlugin {
         // This is the minimum level of log that will be processed.
         // `Info` is a good default.
-        level: bevy::log::Level::INFO,
+        level: bevy::log::Level::DEBUG,
 
         // This is a powerful filter string.
         // It says: "Default to info level, but for our crate `rust_robotics`,
@@ -46,19 +49,22 @@ fn main() {
         filter: "info,rust_robotics=debug,wgpu_core=error,wgpu_hal=error".to_string(),
         ..Default::default()
     }))
+    .add_plugins(PhysicsPlugins::default()) // Adds required physics systems and resources
     .insert_resource(Time::<Fixed>::from_hz(200.0))
     // Initialize the TopicBus resource
     .init_resource::<TopicBus>()
     .insert_resource(config)
     // .add_plugins((ImuPlugin, EkfPlugin))
-    .add_plugins(
-        WorldSpawnerPlugin, // <-- ADD YOUR NEW PLUGIN HERE
-    )
+    .add_plugins(PhysicsDebugPlugin::default())
+    .add_plugins((WorldSpawnerPlugin, AckermannCarPlugin))
     .add_systems(
         Startup,
         (create_topics_from_config, spawn_agents_from_config).chain(),
     )
-    .add_systems(FixedUpdate, move_ground_truth_system);
+    .add_systems(FixedUpdate, move_ground_truth_system)
+    .add_systems(Update, keyboard_controller)
+    // .add_systems(Update, count_matching_vehicles)
+    .add_systems(Update, log_vehicle_transform);
 
     // --- 3. Run the app ---
     app.run();
@@ -230,6 +236,79 @@ fn move_ground_truth_system(mut query: Query<&mut GroundTruthState>, time: Res<T
             * UnitQuaternion::from_axis_angle(&Vector3::y_axis(), state.angular_velocity.y * dt);
         state.pose.rotation = rotation;
     }
+}
+
+/// A simple system for testing. Press arrow keys to drive the car.
+fn keyboard_controller(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut query: Query<&mut VehicleControllerInput>,
+) {
+    for mut controller in query.iter_mut() {
+        // Reset inputs
+        controller.throttle = 0.0;
+        controller.steering_angle = 0.0;
+
+        if keyboard_input.pressed(KeyCode::ArrowUp) {
+            // Use info! to log a significant event.
+            info!("Up arrow pressed!");
+            controller.throttle = 1.0;
+        }
+        if keyboard_input.pressed(KeyCode::ArrowDown) {
+            info!("Down arrow pressed!");
+            controller.throttle = -1.0;
+        }
+        if keyboard_input.pressed(KeyCode::ArrowLeft) {
+            info!("Left arrow pressed!");
+            controller.steering_angle = 0.7; // Increased for more visible turning
+        }
+        if keyboard_input.pressed(KeyCode::ArrowRight) {
+            info!("Right arrow pressed!");
+            controller.steering_angle = -0.7; // Increased for more visible turning
+        }
+    }
+}
+
+/// A debug system that prints the Transform of any entity with a VehicleControllerInput.
+fn log_vehicle_transform(
+    // We query for the vehicle's Transform and its controller input,
+    // so we can see if the position changes when we press keys.
+    query: Query<(&Transform, &VehicleControllerInput), With<AckermannConfig>>,
+    // We use a local timer to only print every quarter of a second, to avoid spam.
+) {
+    let (transform, controller) = query
+        .single()
+        .expect("Query for vehicle failed, but counter found one!");
+
+    // Check if there is any active input from the keyboard.
+    if controller.throttle != 0.0 || controller.steering_angle != 0.0 {
+        // This log should now appear every frame that you are holding down an arrow key.
+        info!(
+            "VEHICLE MOVING (theoretically): Transform={:?}, Throttle={}, Steering={}",
+            transform.translation, controller.throttle, controller.steering_angle
+        );
+    }
+}
+
+/// A temporary debug system to diagnose why a query is failing.
+fn count_matching_vehicles(
+    // Use the EXACT same query as the system that is failing.
+    query: Query<
+        Entity,
+        (
+            With<Transform>,
+            With<VehicleControllerInput>,
+            With<AckermannConfig>,
+        ),
+    >,
+) {
+    // .iter().count() is a simple way to see how many entities match.
+    let count = query.iter().count();
+
+    // We will use a prominent WARN log so it's easy to see.
+    warn!(
+        "Found EXACTLY {} entities matching the log_vehicle_transform query.",
+        count
+    );
 }
 
 // /// A simple debug system to show the final estimated pose.

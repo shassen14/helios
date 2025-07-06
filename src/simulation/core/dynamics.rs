@@ -1,10 +1,57 @@
 use crate::simulation::utils::integrators::Integrator;
-use bevy::prelude::*;
+use bevy::prelude::Component;
 use nalgebra::{DMatrix, DVector};
 use std::fmt::Debug;
 
 pub type State = DVector<f64>;
 pub type Control = DVector<f64>;
+
+// --- State Definition ---
+
+/// An enum representing all possible variables that can be part of a state vector.
+/// This acts as a "dictionary" for state variables.
+/// `#[repr(usize)]` is not strictly needed with our new `get_state_layout` method,
+/// but it can be useful for debugging.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StateVariable {
+    // --- Cartesian Position (World Frame) ---
+    Px, // East or World X
+    Py, // North or World Y
+    Pz, // Up or World Z
+
+    // --- Linear Velocity (World Frame) ---
+    Vx,
+    Vy,
+    Vz,
+
+    // --- Linear Acceleration (World Frame) ---
+    Ax,
+    Ay,
+    Az,
+
+    // --- Orientation (as Euler angles for simplicity in some models) ---
+    Roll,  // Rotation around body's forward axis
+    Pitch, // Rotation around body's side-to-side axis
+    Yaw,   // Rotation around body's vertical axis
+
+    // --- Orientation (as a Quaternion for robust 3D rotation) ---
+    // Note: A 4-element quaternion is needed to represent 3D orientation.
+    // The EKF would typically normalize this to ensure it remains a unit quaternion.
+    Qx,
+    Qy,
+    Qz,
+    Qw,
+
+    // --- Angular Velocity (Body Frame) ---
+    Wx, // Roll rate
+    Wy, // Pitch rate
+    Wz, // Yaw rate
+
+    // --- Angular Acceleration (Body Frame) ---
+    AlphaX, // Roll acceleration
+    AlphaY, // Pitch acceleration
+    AlphaZ, // Yaw acceleration
+}
 
 /// # Dynamics Trait
 ///
@@ -12,8 +59,16 @@ pub type Control = DVector<f64>;
 /// Defines how the entity's state evolves over time based on control inputs.
 /// Implementations should be `Send + Sync` to be safely used across threads by Bevy.
 pub trait Dynamics: Debug + Send + Sync {
-    /// Returns the number of dimensions in the state vector `x`.
-    fn get_state_dim(&self) -> usize;
+    /// Returns the complete layout of the state vector for this specific model.
+    /// The order of this Vec defines the indices for the state vector `x`.
+    /// For example: `vec![StateVariable::Px, StateVariable::Py, StateVariable::Yaw]`
+    fn get_state_layout(&self) -> Vec<StateVariable>;
+
+    /// Returns the total number of states (the length of the state vector `x`).
+    /// This is provided as a convenience.
+    fn get_state_dim(&self) -> usize {
+        self.get_state_layout().len()
+    }
 
     /// Returns the number of dimensions in the control input vector `u`.
     fn get_control_dim(&self) -> usize;
@@ -142,8 +197,18 @@ pub struct DynamicsModel(pub Box<dyn Dynamics>);
 pub struct SimpleCarDynamics;
 
 impl Dynamics for SimpleCarDynamics {
-    fn get_state_dim(&self) -> usize {
-        9 // e.g., pos(3), vel(3), orientation(3)
+    fn get_state_layout(&self) -> Vec<StateVariable> {
+        vec![
+            StateVariable::Px,
+            StateVariable::Py,
+            StateVariable::Pz,
+            StateVariable::Vx,
+            StateVariable::Vy,
+            StateVariable::Vz,
+            StateVariable::Yaw,
+            StateVariable::Pitch,
+            StateVariable::Roll,
+        ]
     }
 
     fn get_control_dim(&self) -> usize {
