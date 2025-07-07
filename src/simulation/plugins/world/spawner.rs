@@ -1,13 +1,56 @@
+use crate::simulation::core::app_state::AppState;
 use crate::simulation::core::config::SimulationConfig;
 use avian3d::prelude::*;
+use bevy::asset::LoadState;
 use bevy::{gltf::GltfMesh, prelude::*};
 
 pub struct WorldSpawnerPlugin;
 
 impl Plugin for WorldSpawnerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, (spawn_world, spawn_lighting_and_camera))
-            .add_systems(Update, spawn_colliders_from_all_meshes);
+        app.add_systems(
+            OnEnter(AppState::SceneBuilding),
+            (spawn_world, spawn_lighting_and_camera),
+        )
+        .add_systems(
+            Update,
+            spawn_colliders_from_all_meshes
+                .run_if(in_state(AppState::SceneBuilding).or(in_state(AppState::Running))),
+        );
+    }
+}
+
+/// Runs during `AssetLoading`. Checks if the primary world scene asset is loaded.
+/// If it is, it transitions the app to the `SceneBuilding` state.
+pub fn check_for_asset_load(
+    mut next_state: ResMut<NextState<AppState>>,
+    asset_server: Res<AssetServer>,
+    config: Res<SimulationConfig>,
+) {
+    // let world_handle: Handle<Scene> = asset_server
+    //     .get_handle(config.world.map_file.clone())
+    //     .expect("Unable to get world handle");
+
+    let world_handle: Handle<Scene> =
+        asset_server.load(GltfAssetLabel::Scene(0).from_asset(config.world.map_file.clone()));
+
+    // get_load_state is the modern way to check an asset's status.
+    match asset_server.get_load_state(&world_handle) {
+        Some(LoadState::Loaded) => {
+            info!("World asset loaded. Transitioning to SceneBuilding state.");
+            // We've finished loading, so we command the state machine to change.
+            next_state.set(AppState::SceneBuilding);
+        }
+        Some(LoadState::Failed(..)) => {
+            error!(
+                "World asset failed to load! Check path: {}",
+                config.world.map_file.display()
+            );
+            // You might want to panic or exit here in a real app.
+        }
+        _ => {
+            // Still loading, do nothing and check again next frame.
+        }
     }
 }
 

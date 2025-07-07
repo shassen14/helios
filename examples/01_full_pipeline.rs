@@ -3,6 +3,8 @@ use bevy::log::LogPlugin;
 use bevy::prelude::*;
 use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
 // use rust_robotics::simulation::plugins::world::test_environment::TestEnvironmentPlugin;
+use rust_robotics::simulation::core::app_state::AppState;
+use rust_robotics::simulation::plugins::world::spawner::check_for_asset_load;
 use rust_robotics::{
     prelude::*,
     simulation::{
@@ -13,7 +15,8 @@ use rust_robotics::{
             vehicles::ackermann::{AckermannCarPlugin, AckermannConfig, VehicleControllerInput},
         },
     },
-}; // Use our library's prelude for easy access
+}; // Use our library's prelude for easy access // Import our new state
+
 use std::{collections::HashMap, fs, time::Duration};
 
 fn main() {
@@ -40,7 +43,7 @@ fn main() {
     app.add_plugins(DefaultPlugins.set(LogPlugin {
         // This is the minimum level of log that will be processed.
         // `Info` is a good default.
-        level: bevy::log::Level::DEBUG,
+        level: bevy::log::Level::WARN,
 
         // This is a powerful filter string.
         // It says: "Default to info level, but for our crate `rust_robotics`,
@@ -50,23 +53,51 @@ fn main() {
         ..Default::default()
     }))
     .add_plugins(PhysicsPlugins::default()) // Adds required physics systems and resources
+    .add_plugins(PhysicsDebugPlugin::default())
     .insert_resource(Time::<Fixed>::from_hz(200.0))
     // Initialize the TopicBus resource
     .init_resource::<TopicBus>()
-    .insert_resource(config)
-    // .add_plugins((ImuPlugin, EkfPlugin))
-    .add_plugins(PhysicsDebugPlugin::default())
-    .add_plugins((WorldSpawnerPlugin, AckermannCarPlugin))
-    .add_systems(
-        Startup,
-        (create_topics_from_config, spawn_agents_from_config).chain(),
-    )
-    .add_systems(FixedUpdate, move_ground_truth_system)
-    .add_systems(Update, keyboard_controller)
-    // .add_systems(Update, count_matching_vehicles)
-    .add_systems(Update, log_vehicle_transform);
+    .insert_resource(config);
 
-    // --- 3. Run the app ---
+    // --- 3. SETUP THE STATE MACHINE ---
+    // Add the state to the app.
+    app.init_state::<AppState>();
+
+    // --- 4. Add Simulation Plugins ---
+    // Your plugins no longer add systems to `Startup` or `Update` directly.
+    // They will now be configured below to run in specific states.
+    app.add_plugins((WorldSpawnerPlugin, AckermannCarPlugin, ImuPlugin, EkfPlugin));
+
+    // --- 5. SCHEDULE ALL SYSTEMS INTO STATES ---
+    // This is where we orchestrate the entire loading and simulation flow.
+
+    // --- Loading Phase ---
+    // This system runs on the Update schedule, but ONLY IF the app is in the
+    // AssetLoading state. This is the modern replacement for `OnUpdate`.
+    app.add_systems(
+        Update,
+        check_for_asset_load.run_if(in_state(AppState::AssetLoading)),
+    );
+
+    // --- Scene Building Phase ---
+    // These systems run ONCE when we transition INTO the SceneBuilding state.
+    app.add_systems(
+        OnEnter(AppState::SceneBuilding),
+        (
+            create_topics_from_config,
+            spawn_agents_from_config,
+            // A new system to transition us to the final state
+            transition_to_running_state,
+        )
+            .chain(), // Run these startup systems in a defined order.
+    );
+
+    app.add_systems(FixedUpdate, move_ground_truth_system)
+        .add_systems(Update, keyboard_controller);
+    // .add_systems(Update, count_matching_vehicles)
+    // .add_systems(Update, log_vehicle_transform);
+
+    // --- 6. Run the app ---
     app.run();
 }
 
@@ -90,6 +121,13 @@ fn create_topics_from_config(config: Res<SimulationConfig>, mut topic_bus: ResMu
 
         // ... create topics for GPS, Lidar, etc. here ...
     }
+}
+
+/// This simple system runs once at the end of the `OnEnter(SceneBuilding)` chain.
+/// Its only job is to move the app into the main `Running` state.
+fn transition_to_running_state(mut next_state: ResMut<NextState<AppState>>) {
+    info!("Scene building complete. Transitioning to Running state.");
+    next_state.set(AppState::Running);
 }
 
 /// STARTUP PASS 2: Spawn entities and configure them to use the topics.
@@ -250,19 +288,19 @@ fn keyboard_controller(
 
         if keyboard_input.pressed(KeyCode::ArrowUp) {
             // Use info! to log a significant event.
-            info!("Up arrow pressed!");
+            // info!("Up arrow pressed!");
             controller.throttle = 1.0;
         }
         if keyboard_input.pressed(KeyCode::ArrowDown) {
-            info!("Down arrow pressed!");
+            // info!("Down arrow pressed!");
             controller.throttle = -1.0;
         }
         if keyboard_input.pressed(KeyCode::ArrowLeft) {
-            info!("Left arrow pressed!");
+            // info!("Left arrow pressed!");
             controller.steering_angle = 0.7; // Increased for more visible turning
         }
         if keyboard_input.pressed(KeyCode::ArrowRight) {
-            info!("Right arrow pressed!");
+            // info!("Right arrow pressed!");
             controller.steering_angle = -0.7; // Increased for more visible turning
         }
     }
@@ -282,10 +320,10 @@ fn log_vehicle_transform(
     // Check if there is any active input from the keyboard.
     if controller.throttle != 0.0 || controller.steering_angle != 0.0 {
         // This log should now appear every frame that you are holding down an arrow key.
-        info!(
-            "VEHICLE MOVING (theoretically): Transform={:?}, Throttle={}, Steering={}",
-            transform.translation, controller.throttle, controller.steering_angle
-        );
+        // info!(
+        //     "VEHICLE MOVING (theoretically): Transform={:?}, Throttle={}, Steering={}",
+        //     transform.translation, controller.throttle, controller.steering_angle
+        // );
     }
 }
 

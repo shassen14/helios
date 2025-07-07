@@ -1,4 +1,4 @@
-use crate::prelude::StampedMessage;
+use crate::prelude::{AppState, StampedMessage};
 use crate::simulation::core::dynamics::{Dynamics, DynamicsModel};
 use crate::simulation::core::topics::{ImuData, TopicBus, TopicReader};
 use bevy::prelude::*;
@@ -93,7 +93,10 @@ pub struct EkfPlugin;
 impl Plugin for EkfPlugin {
     fn build(&self, app: &mut App) {
         // Just one system, running at high frequency in FixedUpdate.
-        app.add_systems(FixedUpdate, ekf_main_system);
+        app.add_systems(
+            FixedUpdate,
+            ekf_main_system.run_if(in_state(AppState::Running)),
+        );
     }
 }
 
@@ -148,12 +151,12 @@ pub fn ekf_main_system(
     // DEBUG 1: Does the system run at all?
     // This should print every FixedUpdate frame.
     // If it doesn't, the system is not being added to the schedule correctly in main.rs.
-    debug!("[DEBUG] ekf_main_system running...");
+    // debug!("[DEBUG] ekf_main_system running...");
     for (entity, mut ekf_state, mut imu_subscriptions, ekf_config, dynamics_model) in
         query.iter_mut()
     {
         // DEBUG 2: Is it finding our EKF entity?
-        debug!("[DEBUG] Processing EKF for entity {:?}", entity);
+        // debug!("[DEBUG] Processing EKF for entity {:?}", entity);
 
         // Initialize timestamp on the very first run.
         if ekf_state.last_update_timestamp < 0.0 {
@@ -177,11 +180,11 @@ pub fn ekf_main_system(
 
                 // DEBUG 3: Are we finding any new messages for each reader?
                 if !messages_for_this_reader.is_empty() {
-                    debug!(
-                        "[DEBUG] Found {} new messages on topic '{}'",
-                        messages_for_this_reader.len(),
-                        topic_name
-                    );
+                    // debug!(
+                    //     "[DEBUG] Found {} new messages on topic '{}'",
+                    //     messages_for_this_reader.len(),
+                    //     topic_name
+                    // );
                 }
 
                 for stamped_msg in messages_for_this_reader {
@@ -193,10 +196,7 @@ pub fn ekf_main_system(
                 }
             } else {
                 // DEBUG 4: Is the topic name correct?
-                warn!(
-                    "[DEBUG] WARN: Could not find topic '{}' on the bus.",
-                    topic_name
-                );
+                warn!("WARN: Could not find topic '{}' on the bus.", topic_name);
             }
         }
         // ... gather GPS, etc. here ...
@@ -205,10 +205,10 @@ pub fn ekf_main_system(
         if all_new_measurements.is_empty() {
             // DEBUG 5: This is the most likely reason the system is silent.
             // It runs, finds no new messages, and exits here.
-            debug!(
-                "[DEBUG] No new measurements found for EKF on entity {:?}. Predicting and exiting.",
-                entity
-            );
+            // debug!(
+            //     "[DEBUG] No new measurements found for EKF on entity {:?}. Predicting and exiting.",
+            //     entity
+            // );
 
             let dt = time.elapsed_secs_f64() - ekf_state.last_update_timestamp;
             if dt > 0.001 {
@@ -224,14 +224,14 @@ pub fn ekf_main_system(
         }
 
         // --- 3. Sort all measurements by timestamp ---
-        debug!(
-            "[DEBUG] Found a total of {} new measurements. Sorting...",
-            all_new_measurements.len()
-        );
+        // debug!(
+        //     "[DEBUG] Found a total of {} new measurements. Sorting...",
+        //     all_new_measurements.len()
+        // );
         all_new_measurements.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
         // --- 4. Process all new measurements in the correct sequential loop ---
-        debug!("[DEBUG] Processing sorted measurements...");
+        // debug!("[DEBUG] Processing sorted measurements...");
         for (timestamp, measurement) in all_new_measurements {
             // a. PREDICT from our last known time to this measurement's time
             let dt = timestamp - ekf_state.last_update_timestamp;

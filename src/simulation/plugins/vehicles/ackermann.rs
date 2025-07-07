@@ -1,5 +1,6 @@
 // src/simulation/plugins/vehicles/ackermann.rs
 
+use crate::prelude::AppState;
 use crate::simulation::core::config::{SimulationConfig, Vehicle};
 use crate::simulation::core::dynamics::DynamicsModel;
 use crate::simulation::models::ackermann::AckermannKinematics;
@@ -11,9 +12,12 @@ pub struct AckermannCarPlugin;
 
 impl Plugin for AckermannCarPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_ackermann_cars)
+        app.add_systems(OnEnter(AppState::SceneBuilding), spawn_ackermann_cars)
             // This single system now contains all the logic for driving.
-            .add_systems(FixedUpdate, drive_ackermann_cars_by_velocity);
+            .add_systems(
+                FixedUpdate,
+                drive_ackermann_cars_by_velocity.run_if(in_state(AppState::Running)),
+            );
     }
 }
 

@@ -59,10 +59,10 @@ fn imu_sensor_system(
         for imu in &suite.imus {
             // Check if THIS specific IMU is ready.
             if imu.timer.just_finished() {
-                debug!(
-                    "[SENSOR] IMU '{}' firing to topic '{}'.",
-                    imu.name, imu.topic_to_publish
-                );
+                // debug!(
+                //     "[SENSOR] IMU '{}' firing to topic '{}'.",
+                //     imu.name, imu.topic_to_publish
+                // );
                 let data = ImuData {
                     entity,
                     sensor_name: imu.name.clone(),
