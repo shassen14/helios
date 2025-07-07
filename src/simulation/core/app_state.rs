@@ -1,3 +1,5 @@
+// src/simulation/core/app_state.rs
+
 use bevy::prelude::States;
 
 /// Defines the major phases of the application's lifecycle.

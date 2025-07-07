@@ -1,4 +1,4 @@
-// src/integrators.rs
+// src/utils/integrators.rs
 
 use nalgebra::DVector;
 

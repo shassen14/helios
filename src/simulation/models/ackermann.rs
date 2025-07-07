@@ -1,4 +1,4 @@
-// In a new file: src/simulation/models/ackermann.rs
+// src/simulation/models/ackermann.rs
 
 use crate::simulation::core::dynamics::{Dynamics, StateVariable};
 use nalgebra::DVector;

@@ -1,3 +1,5 @@
+// src/simulation/core/dynamics.rs
+
 use crate::simulation::utils::integrators::Integrator;
 use bevy::prelude::Component;
 use nalgebra::{DMatrix, DVector};

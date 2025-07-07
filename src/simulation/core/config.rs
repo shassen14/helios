@@ -1,3 +1,5 @@
+// src/simulation/core/config.rs
+
 use bevy::prelude::Resource;
 use serde::Deserialize;
 use std::collections::HashMap;

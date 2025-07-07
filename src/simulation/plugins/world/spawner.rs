@@ -1,3 +1,5 @@
+// src/simulation/plugins/world/spawner.rs
+
 use crate::simulation::core::app_state::AppState;
 use crate::simulation::core::config::SimulationConfig;
 use avian3d::prelude::*;

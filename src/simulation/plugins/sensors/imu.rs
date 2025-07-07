@@ -1,3 +1,5 @@
+// src/simulation/plugins/sensors/imu.rs
+
 use crate::simulation::core::topics::{GroundTruthState, ImuData, TopicBus};
 use bevy::prelude::*;
 
