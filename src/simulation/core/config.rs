@@ -80,6 +80,7 @@ pub struct AgentConfig {
     pub vehicle: Vehicle,
     #[serde(default)] // The whole sensors section can be optional
     pub sensors: SensorSuiteConfig,
+    #[serde(default)]
     pub autonomy_stack: AutonomyStack,
 }
 
@@ -125,21 +126,31 @@ pub struct SensorSuiteConfig {
     pub lidar: HashMap<String, LidarConfig>,
 }
 
-// The individual sensor configs remain largely the same, but we might
-// add a `frame_id` to specify where it's attached.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 #[serde(tag = "type")]
 pub enum ImuConfig {
+    SixDof {
+        // Changed from "NineDof" to "SixDof" for clarity
+        rate: f32,
+        // Be explicit about what the noise values mean
+        #[serde(default)]
+        accel_noise_stddev: [f32; 3], // [x, y, z]
+        #[serde(default)]
+        gyro_noise_stddev: [f32; 3], // [roll, pitch, yaw]
+        frame_id: Option<String>,
+    },
     NineDof {
         rate: f32,
         #[serde(default)]
-        noise_stddev: [f32; 3],
-        // Optional: specify the TF frame it's attached to.
+        accel_noise_stddev: [f32; 3],
+        #[serde(default)]
+        gyro_noise_stddev: [f32; 3],
+        #[serde(default)]
+        mag_noise_stddev: [f32; 3], // The new field
         frame_id: Option<String>,
     },
 }
-
 #[derive(Debug, Deserialize)]
 pub struct GpsConfig {
     pub rate: f32,
@@ -163,13 +174,20 @@ pub enum LidarConfig {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct AutonomyStack {
-    pub estimator: EstimatorConfig,
-    pub mapper: MapperConfig,
-    pub planner: PlannerConfig,
-    pub controller: ControllerConfig,
+    #[serde(default)]
+    pub estimator: Option<EstimatorConfig>,
+
+    #[serde(default)]
+    pub mapper: Option<MapperConfig>,
+
+    #[serde(default)]
+    pub planner: Option<PlannerConfig>,
+
+    #[serde(default)]
+    pub controller: Option<ControllerConfig>,
 }
 
 #[derive(Debug, Deserialize)]

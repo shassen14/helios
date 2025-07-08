@@ -1,23 +1,21 @@
+// examples/01_full_pipeline.rs
+
+use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use avian3d::{PhysicsPlugins, prelude::PhysicsDebugPlugin};
 use bevy::log::LogPlugin;
 use bevy::prelude::*;
-use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
+use nalgebra::Vector3;
 // use rust_robotics::simulation::plugins::world::test_environment::TestEnvironmentPlugin;
 use rust_robotics::simulation::core::app_state::AppState;
+use rust_robotics::simulation::core::simulation_setup::SimulationSetupPlugin;
 use rust_robotics::simulation::plugins::world::spawner::check_for_asset_load;
+use rust_robotics::simulation::utils::transforms::bevy_transform_to_nalgebra_isometry;
 use rust_robotics::{
     prelude::*,
-    simulation::{
-        core::dynamics::{DynamicsModel, SimpleCarDynamics},
-        plugins::{
-            estimation::ekf::ImuSubscriptions,
-            sensors::imu::{Imu, ImuSuite},
-            vehicles::ackermann::{AckermannCarPlugin, AckermannConfig, VehicleControllerInput},
-        },
-    },
+    simulation::plugins::vehicles::ackermann::{AckermannCarPlugin, VehicleControllerInput},
 }; // Use our library's prelude for easy access // Import our new state
 
-use std::{collections::HashMap, fs, time::Duration};
+use std::fs;
 
 fn main() {
     // --- 1. Load Configuration ---
@@ -55,20 +53,22 @@ fn main() {
     .add_plugins(PhysicsPlugins::default()) // Adds required physics systems and resources
     .add_plugins(PhysicsDebugPlugin::default())
     .insert_resource(Time::<Fixed>::from_hz(200.0))
-    // Initialize the TopicBus resource
+    .insert_resource(config)
     .init_resource::<TopicBus>()
-    .insert_resource(config);
+    .init_state::<AppState>();
 
-    // --- 3. SETUP THE STATE MACHINE ---
-    // Add the state to the app.
-    app.init_state::<AppState>();
-
-    // --- 4. Add Simulation Plugins ---
+    // --- 3. Add Simulation Plugins ---
     // Your plugins no longer add systems to `Startup` or `Update` directly.
     // They will now be configured below to run in specific states.
-    app.add_plugins((WorldSpawnerPlugin, AckermannCarPlugin, ImuPlugin, EkfPlugin));
+    app.add_plugins((
+        SimulationSetupPlugin,
+        WorldSpawnerPlugin,
+        AckermannCarPlugin,
+        ImuPlugin,
+        EkfPlugin,
+    ));
 
-    // --- 5. SCHEDULE ALL SYSTEMS INTO STATES ---
+    // --- 4. SCHEDULE ALL SYSTEMS INTO STATES ---
     // This is where we orchestrate the entire loading and simulation flow.
 
     // --- Loading Phase ---
@@ -77,19 +77,6 @@ fn main() {
     app.add_systems(
         Update,
         check_for_asset_load.run_if(in_state(AppState::AssetLoading)),
-    );
-
-    // --- Scene Building Phase ---
-    // These systems run ONCE when we transition INTO the SceneBuilding state.
-    app.add_systems(
-        OnEnter(AppState::SceneBuilding),
-        (
-            create_topics_from_config,
-            spawn_agents_from_config,
-            // A new system to transition us to the final state
-            transition_to_running_state,
-        )
-            .chain(), // Run these startup systems in a defined order.
     );
 
     app.add_systems(FixedUpdate, move_ground_truth_system)
@@ -101,178 +88,51 @@ fn main() {
     app.run();
 }
 
-#[derive(Component)]
-struct NeedsCollider;
-
-/// STARTUP PASS 1: Read the config and create all necessary topics on the bus.
-fn create_topics_from_config(config: Res<SimulationConfig>, mut topic_bus: ResMut<TopicBus>) {
-    for agent_config in &config.agents {
-        // Create topics for IMUs
-        for name in agent_config.sensors.imu.keys() {
-            let topic_name = format!("/agents/{}/imu/{}", agent_config.name, name);
-            info!("[SETUP] Creating topic: {}", topic_name);
-            topic_bus.create_topic::<ImuData>(
-                &topic_name,
-                1000,
-                TopicTag::Imu,
-                agent_config.name.clone(),
-            );
-        }
-
-        // ... create topics for GPS, Lidar, etc. here ...
-    }
-}
-
-/// This simple system runs once at the end of the `OnEnter(SceneBuilding)` chain.
-/// Its only job is to move the app into the main `Running` state.
-fn transition_to_running_state(mut next_state: ResMut<NextState<AppState>>) {
-    info!("Scene building complete. Transitioning to Running state.");
-    next_state.set(AppState::Running);
-}
-
-/// STARTUP PASS 2: Spawn entities and configure them to use the topics.
-fn spawn_agents_from_config(
-    mut commands: Commands,
-    config: Res<SimulationConfig>,
-    topic_bus: Res<TopicBus>, // Read-only access to find topics
+/// This system runs every fixed physics step to synchronize our custom `GroundTruthState`
+/// component with the "source of truth" state from the Avian physics engine.
+/// It also calculates derived values like linear acceleration.
+pub fn move_ground_truth_system(
+    // Query for all entities that have a ground truth state and the relevant physics components.
+    mut query: Query<(
+        &mut GroundTruthState,
+        &Transform,
+        &LinearVelocity,
+        &AngularVelocity,
+    )>,
+    // The Fixed time resource is crucial for correct derivative calculations.
+    time: Res<Time<Fixed>>,
 ) {
-    for agent_config in &config.agents {
-        info!("[SETUP] Spawning agent: {}", agent_config.name);
-
-        let start_pos = agent_config.starting_pose.position;
-        let start_rot_deg = agent_config.starting_pose.orientation_deg;
-        let start_isometry = Isometry3::from_parts(
-            Translation3::new(
-                start_pos[0] as f64,
-                start_pos[1] as f64,
-                start_pos[2] as f64,
-            ),
-            UnitQuaternion::from_euler_angles(
-                start_rot_deg[0].to_radians() as f64, // Roll
-                start_rot_deg[1].to_radians() as f64, // Pitch
-                start_rot_deg[2].to_radians() as f64, // Yaw
-            ),
-        );
-
-        let agent_entity_id = commands
-            .spawn((
-                Name::new(agent_config.name.clone()),
-                GroundTruthState {
-                    pose: start_isometry,
-                    linear_velocity: Vector3::zeros(),
-                    angular_velocity: Vector3::new(0.0, 0.2, 0.0),
-                },
-                DynamicsModel(Box::new(SimpleCarDynamics)),
-                // We can add the EkfState here since every EKF will need one.
-                EkfState::default(),
-            ))
-            .id();
-
-        let mut imu_suite = ImuSuite::default();
-        for (name, imu_config) in &agent_config.sensors.imu {
-            // Use a match statement to handle different IMU types from the config.
-            match imu_config {
-                ImuConfig::NineDof {
-                    rate,
-                    noise_stddev: _,
-                    frame_id: _,
-                } => {
-                    let topic_name = format!("/agents/{}/imu/{}", agent_config.name, name);
-                    info!(
-                        "    + Attaching IMU: '{}' to publish to {}",
-                        name, topic_name
-                    );
-
-                    // Create an ImuSpec and push it into our suite's vector.
-                    imu_suite.imus.push(Imu {
-                        name: name.clone(),
-                        topic_to_publish: topic_name,
-                        timer: Timer::new(
-                            Duration::from_secs_f32(1.0 / *rate),
-                            TimerMode::Repeating,
-                        ),
-                        // You would use noise_stddev here to configure the sensor model
-                    });
-                }
-            }
-        }
-        // Insert the single, fully-populated ImuSuite component onto the agent.
-        commands.entity(agent_entity_id).insert(imu_suite);
-
-        // ... (You would repeat the suite pattern for GPS, Lidar, etc.) ...
-
-        // --- Attach Autonomy Stack Components & Configure Subscriptions ---
-
-        // Use a match statement to handle different estimator types.
-        match &agent_config.autonomy_stack.estimator {
-            EstimatorConfig::Ekf { rate } => {
-                info!("    + Attaching EKF at {} Hz", rate);
-                // 1. Create the HashMap for measurement noise.
-                let mut measurement_noise_map = HashMap::new();
-
-                // 2. Iterate through the configured IMU sensors for this agent.
-                for (name, imu_config) in &agent_config.sensors.imu {
-                    match imu_config {
-                        ImuConfig::NineDof { noise_stddev, .. } => {
-                            // 3. Construct the topic name, just like we do for the publisher.
-                            let topic_name = format!("/agents/{}/imu/{}", agent_config.name, name);
-
-                            // 4. Create the noise matrix (R) for this specific sensor.
-                            //    Assuming the measurement is 3D angular velocity.
-                            let r_matrix = DMatrix::from_diagonal(&DVector::from_row_slice(&[
-                                noise_stddev[0].powi(2) as f64, // Variance is stddev^2
-                                noise_stddev[1].powi(2) as f64,
-                                noise_stddev[2].powi(2) as f64,
-                            ]));
-
-                            // 5. Insert it into the map.
-                            measurement_noise_map.insert(topic_name, r_matrix);
-                        }
-                    }
-                }
-
-                // Add the core EKF component.
-                commands.entity(agent_entity_id).insert(EKF {
-                    // timer: Timer::new(Duration::from_secs_f32(1.0 / *rate), TimerMode::Repeating),
-                    // In a real system, you would populate these from the config.
-                    process_noise_covariance: DMatrix::identity(9, 9) * 0.01,
-                    measurement_noise_map: measurement_noise_map, // This would be populated based on sensor configs
-                });
-
-                // --- DYNAMIC SUBSCRIPTION for IMU ---
-                let mut imu_subscriptions = ImuSubscriptions::default();
-                let imu_topic_names =
-                    topic_bus.find_topics_by_tag(TopicTag::Imu, &agent_config.name);
-                for topic_name in imu_topic_names {
-                    info!("    -> EKF subscribing to IMU topic: {}", topic_name);
-                    imu_subscriptions
-                        .readers
-                        .push(TopicReader::<ImuData>::new(&topic_name));
-                }
-                commands.entity(agent_entity_id).insert(imu_subscriptions);
-
-                // --- DYNAMIC SUBSCRIPTION for GPS (Example) ---
-                // let mut gps_subscriptions = GpsSubscriptions::default();
-                // let gps_topic_names = topic_bus.find_topics_by_tag(TopicTag::Gps, &agent_config.name);
-                // for topic_name in gps_topic_names {
-                //     gps_subscriptions.readers.push(TopicReader::<GpsData>::new(&topic_name));
-                // }
-                // commands.entity(agent_entity_id).insert(gps_subscriptions);
-            } // Add other estimator types here in the future
-              // EstimatorConfig::OtherFilter { .. } => { /* ... */ }
-        }
-    }
-}
-
-/// A simple system to move the ground truth state, simulating vehicle motion.
-/// This will eventually be replaced by a proper physics/dynamics system.
-fn move_ground_truth_system(mut query: Query<&mut GroundTruthState>, time: Res<Time<Fixed>>) {
     let dt = time.delta_secs_f64();
-    for mut state in query.iter_mut() {
-        // Simple Euler integration for demonstration
-        let rotation = state.pose.rotation
-            * UnitQuaternion::from_axis_angle(&Vector3::y_axis(), state.angular_velocity.y * dt);
-        state.pose.rotation = rotation;
+    // A guard to prevent division by zero if the simulation is paused or on the first frame.
+    if dt == 0.0 {
+        return;
+    }
+
+    for (mut state, transform, lin_vel, ang_vel) in query.iter_mut() {
+        // --- 1. Synchronize Pose ---
+        // Convert the Bevy Transform to a nalgebra Isometry3 for use in our math/logic code.
+        // This is the most direct way to mirror the entity's position and orientation.
+        state.pose = bevy_transform_to_nalgebra_isometry(transform);
+
+        // --- 2. Synchronize Velocities ---
+        // Copy the velocities directly from the physics components, casting f32 to f64.
+        let current_linear_velocity =
+            Vector3::new(lin_vel.x as f64, lin_vel.y as f64, lin_vel.z as f64);
+        state.linear_velocity = current_linear_velocity;
+        state.angular_velocity = Vector3::new(ang_vel.x as f64, ang_vel.y as f64, ang_vel.z as f64);
+
+        // --- 3. Calculate Linear Acceleration ---
+        // Use the finite difference formula: a = (v_current - v_previous) / dt
+        // This gives us the average acceleration over the last time step.
+        state.linear_acceleration = (current_linear_velocity - state.last_linear_velocity) / dt;
+
+        // --- 4. Update internal state for the next frame ---
+        // This is CRITICAL. The current velocity becomes the next frame's previous velocity.
+        state.last_linear_velocity = current_linear_velocity;
+
+        if state.linear_acceleration.norm() > 2.0 {
+            println!("state: {:?}", state);
+        }
     }
 }
 
@@ -305,64 +165,3 @@ fn keyboard_controller(
         }
     }
 }
-
-/// A debug system that prints the Transform of any entity with a VehicleControllerInput.
-fn log_vehicle_transform(
-    // We query for the vehicle's Transform and its controller input,
-    // so we can see if the position changes when we press keys.
-    query: Query<(&Transform, &VehicleControllerInput), With<AckermannConfig>>,
-    // We use a local timer to only print every quarter of a second, to avoid spam.
-) {
-    let (transform, controller) = query
-        .single()
-        .expect("Query for vehicle failed, but counter found one!");
-
-    // Check if there is any active input from the keyboard.
-    if controller.throttle != 0.0 || controller.steering_angle != 0.0 {
-        // This log should now appear every frame that you are holding down an arrow key.
-        // info!(
-        //     "VEHICLE MOVING (theoretically): Transform={:?}, Throttle={}, Steering={}",
-        //     transform.translation, controller.throttle, controller.steering_angle
-        // );
-    }
-}
-
-/// A temporary debug system to diagnose why a query is failing.
-fn count_matching_vehicles(
-    // Use the EXACT same query as the system that is failing.
-    query: Query<
-        Entity,
-        (
-            With<Transform>,
-            With<VehicleControllerInput>,
-            With<AckermannConfig>,
-        ),
-    >,
-) {
-    // .iter().count() is a simple way to see how many entities match.
-    let count = query.iter().count();
-
-    // We will use a prominent WARN log so it's easy to see.
-    warn!(
-        "Found EXACTLY {} entities matching the log_vehicle_transform query.",
-        count
-    );
-}
-
-// /// A simple debug system to show the final estimated pose.
-// fn print_estimated_pose_system(query: Query<(&Name, &EstimatedPose)>, time: Res<Time>) {
-//     // Use a local timer to only print every second to avoid spamming the console.
-//     let mut timer = Timer::from_seconds(1.0, TimerMode::Repeating);
-//     if timer.tick(time.delta()).just_finished() {
-//         for (name, pose) in query.iter() {
-//             let t = pose.pose.translation.vector;
-//             println!(
-//                 "[OUTPUT] Agent: '{}', Estimated Pos: ({:.2}, {:.2}, {:.2})",
-//                 name.as_str(),
-//                 t.x,
-//                 t.y,
-//                 t.z
-//             );
-//         }
-//     }
-// }

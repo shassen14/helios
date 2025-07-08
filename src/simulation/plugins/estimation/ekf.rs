@@ -3,6 +3,7 @@
 use crate::prelude::{AppState, StampedMessage};
 use crate::simulation::core::dynamics::{Dynamics, DynamicsModel};
 use crate::simulation::core::topics::{ImuData, TopicBus, TopicReader};
+use crate::simulation::utils::integrators::RK4;
 use bevy::prelude::*;
 use nalgebra::{DMatrix, DVector, Matrix3, Vector3};
 use std::collections::HashMap;
@@ -20,22 +21,27 @@ fn do_ekf_prediction(
     // In a real EKF, you would get the control input `u` that was applied during `dt`.
     // For now, we'll assume a zero control input.
     let u = DVector::zeros(dynamics.get_control_dim());
+    let current_time = 0.0; // simplicity
 
-    // F = Jacobian of dynamics w.r.t. state
-    // In a real implementation, you'd linearize around the current state.
-    // Here we use a simplified placeholder matrix.
-    let f_jacobian = DMatrix::<f64>::identity(
-        ekf_state.state_vector.nrows(),
-        ekf_state.state_vector.nrows(),
-    ); // Placeholder
+    // --- 1. State Prediction (using the full nonlinear model with a good integrator) ---
+    // This is more accurate than Euler integration.
+    let integrator = RK4::default();
+    let predicted_state =
+        dynamics.propagate(&ekf_state.state_vector, &u, current_time, dt, &integrator);
 
-    // Predict state forward: x_pred = x + f(x, u) * dt
-    let x_dot = dynamics.get_derivatives(&ekf_state.state_vector, &u, 0.0); // Assuming time t=0 for simplicity
-    ekf_state.state_vector += x_dot * dt;
+    // --- 2. Covariance Prediction (using the linearized model via the Jacobian) ---
+    // Get the Jacobian F = ∂f/∂x, evaluated at the *current* state (before prediction).
+    let (f_jacobian, _b_jacobian) =
+        dynamics.calculate_jacobian(&ekf_state.state_vector, &u, current_time);
 
-    // Predict covariance forward: P_pred = F * P * F^T + Q
-    ekf_state.covariance =
-        &f_jacobian * &ekf_state.covariance * f_jacobian.transpose() + process_noise_q * dt;
+    // Now use the standard linear covariance update formula with the *real* Jacobian.
+    let predicted_covariance =
+        &f_jacobian * &ekf_state.covariance * f_jacobian.transpose() + process_noise_q;
+    // Note: Q is often scaled by dt or dt^2 depending on the noise model
+
+    // --- 3. Update the EKF's state ---
+    ekf_state.state_vector = predicted_state;
+    ekf_state.covariance = predicted_covariance;
 }
 
 /// Performs the EKF update step using an IMU measurement.
@@ -127,7 +133,7 @@ pub struct EkfState {
 
 impl Default for EkfState {
     fn default() -> Self {
-        let state_dim = 9; // e.g., pos, vel, orientation_rads
+        let state_dim = 3; // e.g., pos, vel, orientation_rads
         Self {
             state_vector: DVector::zeros(state_dim),
             covariance: DMatrix::identity(state_dim, state_dim) * 1.0,

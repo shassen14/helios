@@ -3941,6 +3941,9 @@ dependencies = [
  "downcast-rs 2.0.1",
  "nalgebra",
  "num-traits",
+ "rand",
+ "rand_chacha",
+ "rand_distr",
  "serde",
  "toml",
 ]

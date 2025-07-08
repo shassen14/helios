@@ -8,13 +8,16 @@ edition = "2024"
 # remove "dynamic_linking" before release, its for development only
 avian3d = "0.3.0"
 bevy = { version = "0.16", features = ["file_watcher"] }
-# bevy-inspector-egui = "0.31.0"
-# bevy_egui = "0.34.1"
 downcast-rs = "2.0.1"
 nalgebra = "0.33.2"
 num-traits = "0.2.19"
+rand = "0.8.5" # match bevy
+rand_chacha = "0.3.1" # match bevy
+rand_distr = "0.4.3" # match bevy
 serde = { version = "1.0.219", features = ["derive"] }
 toml = "0.8.21"
+# bevy-inspector-egui = "0.31.0"
+# bevy_egui = "0.34.1"
 
 [dev-dependencies]
 approx = "0.5.1"
@@ -27,3 +30,7 @@ opt-level = 3 # using cranelift: 3 instead of 1 here, better runtime perf, same 
 # Enable high optimizations for dependencies (incl. Bevy), but not for our code:
 [profile.dev.package."*"]
 opt-level = 3
+
+
+# [patch.crates-io]
+# rand_core = "0.6.4" # match what Bevy or your deps use

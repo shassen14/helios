@@ -210,5 +210,6 @@ pub struct GroundTruthState {
     pub pose: Isometry3<f64>,
     pub linear_velocity: Vector3<f64>,
     pub angular_velocity: Vector3<f64>,
-    // Add acceleration if needed by dynamics
+    pub linear_acceleration: Vector3<f64>, // The value we will calculate
+    pub last_linear_velocity: Vector3<f64>, // To help us calculate it
 }
