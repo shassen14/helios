@@ -1,7 +1,10 @@
 pub mod app_state;
 pub mod config;
 pub mod dynamics;
+// pub mod frames;
+// pub mod measurement;
 pub mod prng;
+pub mod registries;
 pub mod simulation_setup;
 pub mod spawn_requests;
 pub mod topics;
