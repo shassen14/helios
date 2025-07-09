@@ -63,6 +63,7 @@ fn main() {
     app.add_plugins((
         SimulationSetupPlugin,
         WorldSpawnerPlugin,
+        // TestEnvironmentPlugin,
         AckermannCarPlugin,
         ImuPlugin,
         EkfPlugin,
@@ -140,26 +141,21 @@ fn keyboard_controller(
     mut query: Query<&mut VehicleControllerInput>,
 ) {
     for mut controller in query.iter_mut() {
-        // Reset inputs
-        controller.throttle = 0.0;
+        controller.linear_acceleration = 0.0;
         controller.steering_angle = 0.0;
 
         if keyboard_input.pressed(KeyCode::ArrowUp) {
-            // Use info! to log a significant event.
-            // info!("Up arrow pressed!");
-            controller.throttle = 1.0;
+            controller.linear_acceleration = 5.0; // Apply 5 m/s^2 acceleration
         }
         if keyboard_input.pressed(KeyCode::ArrowDown) {
-            // info!("Down arrow pressed!");
-            controller.throttle = -1.0;
+            controller.linear_acceleration = -5.0; // Apply -5 m/s^2 acceleration
         }
         if keyboard_input.pressed(KeyCode::ArrowLeft) {
-            // info!("Left arrow pressed!");
-            controller.steering_angle = 0.7; // Increased for more visible turning
+            controller.steering_angle = 0.7; // Radians
         }
         if keyboard_input.pressed(KeyCode::ArrowRight) {
-            // info!("Right arrow pressed!");
-            controller.steering_angle = -0.7; // Increased for more visible turning
+            controller.steering_angle = -0.7; // Radians
         }
+        // println!("controller: {:?}", controller);
     }
 }

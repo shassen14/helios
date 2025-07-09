@@ -23,14 +23,33 @@ pub enum AppState {
 /// System sets to control the order of execution during the SceneBuilding state.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SceneBuildSet {
-    /// Pass 1: Create agent shells and attach request components.
+    /// Pass 1: Create agent shells and attach the main request component.
     CreateRequests,
-    /// Pass 2: Systems from plugins read requests and add logical components.
-    ProcessRequests,
-    /// Pass 3: Systems attach physical bodies (RigidBody, Collider) and visuals.
+
+    /// Pass 2: Process basic vehicle logic and add the DynamicsModel.
+    ProcessVehicle,
+
+    /// Pass 3: Process all sensor requests and create sensor child entities.
+    ProcessSensors,
+
+    /// Pass 4: Process "base" autonomy modules that have no other autonomy dependencies.
+    /// (Estimators, Mappers, SLAM modules).
+    ProcessBaseAutonomy,
+
+    /// Pass 5: Process modules that depend on the base autonomy layer.
+    /// (Planners, Trackers).
+    ProcessDependentAutonomy,
+
+    /// Pass 6: Process modules that depend on the planners.
+    /// (Controllers).
+    ProcessControllers,
+
+    /// Pass 7: Attach all physical bodies (RigidBody, Collider).
     Physics,
-    /// Pass 4: Systems that validate the fully-spawned agent pipelines.
+
+    /// Pass 8: Final validation checks.
     Validation,
-    /// Pass 5: Remove all temporary request components.
+
+    /// Pass 9: Remove all temporary request components.
     Cleanup,
 }

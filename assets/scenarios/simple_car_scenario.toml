@@ -37,10 +37,11 @@ transform = { translation = [0.1, 0.0, 0.0] } # Example relative transform
 
 [agents.autonomy_stack]
 [[agents.autonomy_stack.estimators]]
+name = "ekf_main"
 type = "Ekf"
-name = "basic_ekf"
-rate = 1.0          # EKF runs at a lower rate than the IMU
-process_noise = 0.1
+rate = 100.0
+process_noise = 0.01
+dynamics = "AckermannKinematics"
 
 # Placeholders for future modules
 [[agents.autonomy_stack.mappers]]

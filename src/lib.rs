@@ -24,7 +24,7 @@ pub mod prelude {
 
     // Re-export the components that are needed to build a scene.
     // pub use crate::simulation::core::dynamics::{Dynamics, DynamicsModel, SimpleCarDynamics}; // Example
-    pub use crate::simulation::plugins::estimation::ekf::{EKF, EkfState};
+    pub use crate::simulation::plugins::estimation::ekf::EKF;
     // pub use crate::simulation::plugins::sensors::imu::Imu;
 
     pub struct RoboticsSuitePlugin;

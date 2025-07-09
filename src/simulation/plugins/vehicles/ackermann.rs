@@ -1,11 +1,9 @@
 // src/simulation/plugins/vehicles/ackermann.rs
 
 use crate::prelude::{AppState, GroundTruthState, Vehicle};
+use crate::simulation::core::abstractions::DynamicsModel;
 use crate::simulation::core::app_state::SceneBuildSet;
-use crate::simulation::core::dynamics::DynamicsModel;
-use crate::simulation::core::registries::VehicleRegistry;
-use crate::simulation::core::simulation_setup::SpawnRequestVehicle;
-// use crate::simulation::core::spawn_requests::SpawnRequestAckermann;
+use crate::simulation::core::simulation_setup::SpawnAgentConfigRequest;
 use crate::simulation::models::ackermann::AckermannKinematics;
 use crate::simulation::utils::transforms::enu_iso_to_bevy_transform;
 use avian3d::prelude::*;
@@ -16,21 +14,15 @@ pub struct AckermannCarPlugin;
 
 impl Plugin for AckermannCarPlugin {
     fn build(&self, app: &mut App) {
-        // We will keep the registry for the LOGICAL part of the spawner
-        app.init_resource::<VehicleRegistry>()
-            .add_systems(PreStartup, register_ackermann_vehicle);
-
         // This plugin adds three systems to the OnEnter(SceneBuilding) schedule
+        app.add_systems(OnEnter(AppState::SceneBuilding), setup_ackermann_assets);
+
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
+            // We now have TWO systems that process the request.
+            // One for logic, one for physics. Scheduled in order.
             (
-                // A) Load shared assets once.
-                setup_ackermann_assets,
-                // B) Process the request to add LOGICAL components.
-                // This system MUST be in the Logic set.
-                process_ackermann_requests.in_set(SceneBuildSet::ProcessRequests),
-                // C) Attach the PHYSICAL body after the logic is in place.
-                // This system MUST be in the Physics set, which runs after Logic.
+                process_ackermann_logic.in_set(SceneBuildSet::ProcessVehicle),
                 attach_ackermann_physics.in_set(SceneBuildSet::Physics),
             ),
         );
@@ -67,80 +59,42 @@ pub struct AckermannParameters {
 /// and the vehicle's driving system will read from it.
 #[derive(Component, Default, Debug)]
 pub struct VehicleControllerInput {
-    /// The desired throttle, from -1.0 (full reverse) to 1.0 (full forward).
-    pub throttle: f32,
-    /// The desired steering angle, from -1.0 (full left) to 1.0 (full right).
-    /// This will be mapped to the `max_steering_angle` by the driving system.
+    /// The desired linear acceleration, from -MAX to +MAX (m/s^2).
+    pub linear_acceleration: f32,
+    /// The desired steering angle, from -max_angle to +max_angle (radians).
     pub steering_angle: f32,
 }
 
 // --- Systems ---
 
-fn register_ackermann_vehicle(mut registry: ResMut<VehicleRegistry>) {
-    let key = "Ackermann".to_string();
-    let spawner = Box::new(
-        |entity_commands: &mut EntityCommands, vehicle_config: &Vehicle| {
-            if let Vehicle::Ackermann {
-                wheelbase,
-                max_steering_angle,
-                ..
-            } = vehicle_config
-            {
-                entity_commands.insert((
-                    AckermannParameters {
-                        wheelbase: *wheelbase as f64,
-                        max_steering_angle: max_steering_angle.to_radians(),
-                        max_force: 10000.0,
-                        max_torque: 5000.0,
-                    },
-                    DynamicsModel(Box::new(AckermannKinematics {
-                        wheelbase: *wheelbase as f64,
-                    })),
-                    VehicleControllerInput::default(),
-                ));
-            }
-        },
-    );
-    registry.0.insert(key, spawner);
-}
-
-fn process_ackermann_requests(
+fn process_ackermann_logic(
     mut commands: Commands,
-    // It queries for entities that have a vehicle request.
-    request_query: Query<(Entity, &SpawnRequestVehicle)>,
-    // AND it gets the registry to look up the logic!
-    registry: Res<VehicleRegistry>,
+    request_query: Query<(Entity, &SpawnAgentConfigRequest)>,
 ) {
-    println!("Hello I'm in process_ackermann");
     for (entity, request) in &request_query {
-        println!("Hello I'm in process_ackermann for loop");
-        let vehicle_config = &request.0;
-        // let type_str = vehicle_config.get_type_str();
-
-        if let Some(spawner) = registry.0.get(vehicle_config.get_type_str()) {
-            info!(
-                "  -> Fulfilling Ackermann vehicle request for entity {:?}",
-                entity
-            );
-            spawner(&mut commands.entity(entity), vehicle_config);
+        if let Vehicle::Ackermann {
+            wheelbase,
+            max_steering_angle,
+            ..
+        } = &request.0.vehicle
+        {
+            let dynamics_model = AckermannKinematics {
+                wheelbase: *wheelbase as f64,
+                agent_entity: entity,
+            };
+            commands.entity(entity).insert((
+                AckermannParameters {
+                    wheelbase: *wheelbase as f64,
+                    max_steering_angle: max_steering_angle.to_radians(),
+                    max_force: 10000.0,
+                    max_torque: 5000.0,
+                },
+                DynamicsModel(Box::new(dynamics_model)),
+                VehicleControllerInput::default(),
+            ));
         }
     }
 }
-
-// Check if the request is for an "Ackermann" vehicle
-// if type_str == "Ackermann" {
-//     info!(
-//         "  -> Fulfilling Ackermann vehicle request for entity {:?}",
-//         entity
-//     );
-//     // Look up the spawner logic in the registry.
-//     if let Some(spawner) = registry.0.get(type_str) {
-//         let mut entity_commands = commands.entity(entity);
-//         // Call the spawner to attach all the logical components
-//         // (AckermannParameters, DynamicsModel, VehicleControllerInput)
-//         spawner(&mut entity_commands, vehicle_config);
-//     }
-// }
 
 fn attach_ackermann_physics(
     mut commands: Commands,
@@ -213,34 +167,100 @@ fn attach_ackermann_physics(
     }
 }
 
+// fn drive_ackermann_cars_by_velocity(
+//     mut query: Query<(
+//         &mut LinearVelocity,
+//         &mut AngularVelocity,
+//         &Transform, // To get current orientation
+//         &AckermannParameters,
+//         &VehicleControllerInput,
+//     )>,
+//     time: Res<Time<Fixed>>, // For time-based changes
+// ) {
+//     for (mut lin_vel, mut ang_vel, transform, config, controller) in query.iter_mut() {
+//         // --- Linear Acceleration (directly apply) ---
+//         // This is a direct application of the commanded acceleration.
+//         // In a more complex model, you'd integrate the acceleration into velocity.
+//         // Here, we're assuming the physics engine will handle the integration.
+//         // If you were *not* using a physics engine, you'd update lin_vel directly.
+
+//         // For a physics engine, you typically apply ExternalForce/ExternalTorque.
+//         // Let's refine this to generate forces from the acceleration command.
+
+//         // Convert commanded linear_acceleration to force (F=ma)
+//         // This assumes a fixed mass for simplicity or queries for Mass component.
+//         // For a robust system, you'd get Mass(m) component: let mass = Mass.0;
+//         let mass = 1500.0; // Example mass
+//         let world_forward_direction = transform.forward();
+//         let force_vector = world_forward_direction * controller.linear_acceleration * mass;
+
+//         // Apply force. This requires ExternalForce component.
+//         // commands.entity(entity).insert(ExternalForce::new(force_vector));
+
+//         // Let's simplify for now to directly set velocities for initial testing
+//         // but mark this as a point for future physics-based force application.
+
+//         let current_speed = lin_vel.length();
+//         let target_speed = current_speed + controller.linear_acceleration * time.delta_secs();
+//         let max_speed_cap = 20.0; // Arbitrary cap
+//         let min_speed_cap = -5.0; // Arbitrary cap for reverse
+//         let clamped_target_speed = target_speed.clamp(min_speed_cap, max_speed_cap);
+
+//         let desired_lin_vel = transform.forward() * clamped_target_speed;
+//         lin_vel.x = desired_lin_vel.x;
+//         lin_vel.z = desired_lin_vel.z;
+//         // lin_vel.y is left to gravity/physics
+
+//         // --- Steering (Angular Velocity) ---
+//         let current_speed_for_steering = lin_vel.length();
+//         let desired_yaw_rate = (current_speed_for_steering / config.wheelbase as f32)
+//             * controller.steering_angle.tan();
+//         ang_vel.y = desired_yaw_rate;
+
+//         println!("lin_vel: {:?}, ang_vel: {:?}", lin_vel, ang_vel);
+//     }
+// }
+
 fn drive_ackermann_cars_by_velocity(
-    mut query: Query<(
+    // QUERY 1: Find all parent agents that have an Ackermann controller input.
+    parent_query: Query<(&VehicleControllerInput, &Children)>,
+
+    // QUERY 2: Find all the physics bodies that have Ackermann parameters.
+    // This assumes the physics body is on a child. If it's on the parent,
+    // the query would be different, but this pattern is more robust.
+    // We will assume `attach_ackermann_physics` puts the RigidBody on the parent for now.
+
+    // Let's go with the simpler pattern where the RigidBody is on the parent.
+    mut vehicle_query: Query<(
         &mut LinearVelocity,
         &mut AngularVelocity,
         &Transform,
         &AckermannParameters,
-        &VehicleControllerInput,
+        &VehicleControllerInput, // Get the controller input directly
     )>,
+    time: Res<Time<Fixed>>,
 ) {
-    for (mut lin_vel, mut ang_vel, transform, config, controller) in query.iter_mut() {
-        // --- Steering ---
-        // Calculate the desired turning speed (yaw rate).
-        // If throttle is zero, turning speed should also be zero.
-        let speed = lin_vel.length(); // Use current speed for more stable turning
-        let turning_speed = (speed / config.wheelbase as f32) * controller.steering_angle.tan();
-        ang_vel.y = turning_speed;
+    // The query is now direct and simple.
+    for (mut lin_vel, mut ang_vel, transform, config, controller) in &mut vehicle_query {
+        // This logic is now correct because the query provides all necessary components.
 
-        // --- Throttle ---
-        // Apply velocity in the direction the car is currently facing.
-        let forward_vector = transform.forward();
-        let target_velocity = forward_vector * controller.throttle * 20.0; // 20.0 is max speed
+        let current_speed = lin_vel.length();
+        // Use controller.linear_acceleration (from your previous definition)
+        let target_speed = current_speed + controller.linear_acceleration; // * time.delta_secs();
+        let max_speed_cap = 20.0; // Arbitrary cap
+        let min_speed_cap = -5.0; // Arbitrary cap for reverse
+        let clamped_target_speed = target_speed.clamp(min_speed_cap, max_speed_cap);
 
-        // We only update the X and Z components of velocity to allow gravity to work on Y.
-        lin_vel.x = target_velocity.x;
-        lin_vel.z = target_velocity.z;
+        let desired_lin_vel = transform.forward() * clamped_target_speed;
+        lin_vel.x = desired_lin_vel.x;
+        lin_vel.z = desired_lin_vel.z;
+
+        let current_speed_for_steering = lin_vel.length();
+        let desired_yaw_rate = (current_speed_for_steering / config.wheelbase as f32)
+            * controller.steering_angle.tan();
+        ang_vel.y = desired_yaw_rate;
     }
 }
-
 #[derive(Resource)]
 struct AckermannAssets {
     body_mesh: Handle<Mesh>,

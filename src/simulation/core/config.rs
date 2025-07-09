@@ -322,11 +322,18 @@ impl EstimatorConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct EkfConfig {
-    // The unique name for this instance (e.g., "fast_ekf", "quality_ekf")
     pub name: String,
     pub rate: f32,
-    // Add other EKF-specific parameters here
     pub process_noise: f64,
+    // --- NEW FIELD ---
+    // The user specifies which dynamics model the filter should use.
+    // Defaults to "VehicleDefault" if not provided.
+    #[serde(default = "default_dynamics_model")]
+    pub dynamics: String,
+}
+
+fn default_dynamics_model() -> String {
+    "VehicleDefault".to_string()
 }
 
 // Example for a future UKF config
