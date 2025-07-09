@@ -81,8 +81,6 @@ fn main() {
 
     app.add_systems(FixedUpdate, move_ground_truth_system)
         .add_systems(Update, keyboard_controller);
-    // .add_systems(Update, count_matching_vehicles)
-    // .add_systems(Update, log_vehicle_transform);
 
     // --- 6. Run the app ---
     app.run();
@@ -130,9 +128,9 @@ pub fn move_ground_truth_system(
         // This is CRITICAL. The current velocity becomes the next frame's previous velocity.
         state.last_linear_velocity = current_linear_velocity;
 
-        if state.linear_acceleration.norm() > 2.0 {
-            println!("state: {:?}", state);
-        }
+        // if state.linear_acceleration.norm() > 2.0 {
+        //     println!("state: {:?}", state.pose);
+        // }
     }
 }
 

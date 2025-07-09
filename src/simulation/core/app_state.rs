@@ -23,10 +23,14 @@ pub enum AppState {
 /// System sets to control the order of execution during the SceneBuilding state.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SceneBuildSet {
-    /// Pass 1: Spawns logical entities and attaches spawn requests.
-    Logic,
-    /// Pass 2: Systems that fulfill spawn requests by attaching physical components.
+    /// Pass 1: Create agent shells and attach request components.
+    CreateRequests,
+    /// Pass 2: Systems from plugins read requests and add logical components.
+    ProcessRequests,
+    /// Pass 3: Systems attach physical bodies (RigidBody, Collider) and visuals.
     Physics,
-    /// Pass 3: Systems that validate the fully-spawned agent pipelines.
+    /// Pass 4: Systems that validate the fully-spawned agent pipelines.
     Validation,
+    /// Pass 5: Remove all temporary request components.
+    Cleanup,
 }

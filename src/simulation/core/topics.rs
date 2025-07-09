@@ -213,3 +213,15 @@ pub struct GroundTruthState {
     pub linear_acceleration: Vector3<f64>, // The value we will calculate
     pub last_linear_velocity: Vector3<f64>, // To help us calculate it
 }
+
+impl Default for GroundTruthState {
+    fn default() -> Self {
+        Self {
+            pose: Isometry3::identity(),
+            linear_velocity: Vector3::zeros(),
+            angular_velocity: Vector3::zeros(),
+            linear_acceleration: Vector3::zeros(),
+            last_linear_velocity: Vector3::zeros(),
+        }
+    }
+}

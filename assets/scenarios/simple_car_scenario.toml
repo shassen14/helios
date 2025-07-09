@@ -9,15 +9,7 @@ gravity = [0.0, -9.81, 0.0]
 
 [[agents]]
 name = "RoboCar-01"
-starting_pose = { position = [
-  0.0,
-  0.0,
-  5.0,
-], orientation_deg = [
-  0.0,
-  0.0,
-  0.0,
-] }
+starting_pose = { translation = [0.0, 5.0, 3.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose = { position = [50.0, 0.5, 0.0] }
 
 [agents.vehicle]
@@ -26,65 +18,67 @@ wheelbase = 2.5
 max_steering_angle = 35.0 # deg
 max_steering_rate = 140.0 # deg/sec
 
-[agents.sensors]
-[agents.sensors.imu.primary_imu]
-type = "NineDof"
-rate = 10.0                       # High-rate IMU
-noise_stddev = [0.01, 0.01, 0.01]
-# [agents.sensors.imu.secondary_imu]
-# type = "NineDof"
-# rate = 10.0                       # High-rate IMU
-# noise_stddev = [0.01, 0.01, 0.01]
+[[agents.sensors]]
+kind = "Imu"
+type = "SixDof"
+name = "primary_imu"
+rate = 100.0
+accel_noise_stddev = [0.01, 0.01, 0.01]
+gyro_noise_stddev = [0.01, 0.01, 0.01]
+transform = { translation = [0.1, 0.0, 0.0] } # Example relative transform
 
-# [agents.sensors.imu.another_imu]
-# type = "NineDof"
-# rate = 50.0                       # High-rate IMU
-# noise_stddev = [0.01, 0.01, 0.01]
-
+# [[agents.sensors]]
+# kind = "Imu"                            # The top-level kind for the SensorRegistry
+# type = "NineDof"                        # The specific type for the IMU spawner to handle
+# name = "secondary_imu"
+# rate = 10.0
+# accel_noise_stddev = [1.01, 1.01, 1.01]
+# gyro_noise_stddev = [1.01, 1.01, 1.01]
 
 [agents.autonomy_stack]
-# [agents.autonomy_stack.estimator]
-# type = "Ekf"
-# rate = 1.0   # EKF runs at a lower rate than the IMU
+[[agents.autonomy_stack.estimators]]
+type = "Ekf"
+name = "basic_ekf"
+rate = 1.0          # EKF runs at a lower rate than the IMU
+process_noise = 0.1
 
 # Placeholders for future modules
-[agents.autonomy_stack.mapper]
+[[agents.autonomy_stack.mappers]]
 type = "OccupancyGrid2D"
 rate = 5.0
 resolution = 0.1
 
-[agents.autonomy_stack.planner]
+[[agents.autonomy_stack.planners]]
 type = "AStar"
 rate = 2.0
 
-[agents.autonomy_stack.controller]
+[[agents.autonomy_stack.controllers]]
 type = "Pid"
 rate = 50.0
 kp = 1.0
 ki = 0.1
 kd = 0.2
 
-[[agents]]
-name = "RoboCar-02"
-starting_pose = { position = [
-  0.0,
-  10.0,
-  5.0,
-], orientation_deg = [
-  0.0,
-  0.0,
-  0.0,
-] }
-goal_pose = { position = [50.0, 0.5, 0.0] }
+# [[agents]]
+# name = "RoboCar-02"
+# starting_pose = { position = [
+#   0.0,
+#   10.0,
+#   5.0,
+# ], orientation_deg = [
+#   0.0,
+#   0.0,
+#   0.0,
+# ] }
+# goal_pose = { position = [50.0, 0.5, 0.0] }
 
-[agents.vehicle]
-type = "Ackermann"
-wheelbase = 2.5
-max_steering_angle = 35.0 # deg
-max_steering_rate = 140.0 # deg/sec
+# [agents.vehicle]
+# type = "Ackermann"
+# wheelbase = 2.5
+# max_steering_angle = 35.0 # deg
+# max_steering_rate = 140.0 # deg/sec
 
-[agents.sensors]
-[agents.sensors.imu.primary_imu]
-type = "NineDof"
-rate = 10.0                       # High-rate IMU
-noise_stddev = [0.01, 0.01, 0.01]
+# [agents.sensors]
+# type = "NineDof"
+# rate = 10.0                       # High-rate IMU
+# noise_stddev = [0.01, 0.01, 0.01]
