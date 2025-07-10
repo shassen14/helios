@@ -1,0 +1,24 @@
+# helios_core/Cargo.toml
+
+[package]
+name = "helios_core"
+# These fields are inherited from the [workspace.package] section
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# Add this section to define optional features
+[features]
+# The 'bevy' feature will enable the 'bevy/bevy_ecs' dependency,
+# which is needed for the `Entity` type.
+bevy = ["dep:bevy_ecs"]
+
+[dependencies]
+# These dependencies use the versions defined in the root Cargo.toml
+nalgebra = { workspace = true }
+num-traits = "0.2.19"
+serde = { workspace = true }
+thiserror = { workspace = true } # Optional, but highly recommended for error handling
+
+bevy_ecs = { package = "bevy_ecs", version = "0.16.0", optional = true }
