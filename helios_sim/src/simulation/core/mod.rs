@@ -4,6 +4,7 @@ pub mod app_state;
 pub mod components;
 pub mod config;
 pub mod events;
+pub mod prng;
 pub mod simulation_setup;
 pub mod spawn_requests;
 pub mod topics;

@@ -1,9 +1,14 @@
 // helios_bevy_sim/src/simulation/core/simulation_setup.rs
 
+use rand::rngs::OsRng;
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
+
 use crate::prelude::*;
 use crate::simulation::core::app_state::SimulationSet;
 use crate::simulation::core::config::SimulationConfig;
 use crate::simulation::core::events::BevyMeasurementEvent;
+use crate::simulation::core::prng::SimulationRng;
 // Import the Bevy-specific types this plugin manages
 use super::topics::{GroundTruthState, TopicBus};
 use super::transforms::{tf_tree_builder_system, TfTree};
@@ -12,6 +17,19 @@ pub struct SimulationSetupPlugin;
 
 impl Plugin for SimulationSetupPlugin {
     fn build(&self, app: &mut App) {
+        // This plugin's job is to read the config and add resources and startup systems.
+        let config = app
+            .world()
+            .get_resource::<SimulationConfig>()
+            .expect("SimulationConfig not found!");
+
+        // --- 1. Add the Deterministic PRNG Resource ---
+        let rng = match config.simulation.seed {
+            Some(seed) => ChaCha8Rng::seed_from_u64(seed),
+            None => ChaCha8Rng::from_rng(&mut OsRng).expect("OS RNG failed"),
+        };
+        app.insert_resource(SimulationRng(rng));
+
         // --- INITIALIZE RESOURCES & EVENTS ---
         app
             // This resource is the central message bus for the simulation.

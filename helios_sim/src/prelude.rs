@@ -18,6 +18,6 @@ pub use crate::simulation::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::simulation::core::transforms::{TfTree, TrackedFrame};
 
 // Re-export the Bevy components that wrap the pure traits.
-// pub use crate::simulation::plugins::estimation::ekf::{EkfCore, FilterState};
-// pub use crate::simulation::plugins::sensors::imu::{Imu, MeasurementModel};
-// pub use crate::simulation::plugins::vehicles::ackermann::DynamicsModel;
+pub use crate::simulation::plugins::estimation::ekf::{EkfCore, FilterState};
+pub use crate::simulation::plugins::sensors::imu::ImuPlugin;
+pub use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;

@@ -3159,6 +3159,7 @@ dependencies = [
  "nalgebra",
  "rand",
  "rand_chacha",
+ "rand_distr",
  "serde",
  "toml",
 ]
