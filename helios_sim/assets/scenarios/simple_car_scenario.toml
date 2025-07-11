@@ -22,7 +22,7 @@ max_steering_rate = 140.0 # deg/sec
 kind = "Imu"
 type = "SixDof"
 name = "primary_imu"
-rate = 100.0
+rate = 200.0
 accel_noise_stddev = [0.01, 0.01, 0.01]
 gyro_noise_stddev = [0.01, 0.01, 0.01]
 transform = { translation = [0.1, 0.0, 0.0] } # Example relative transform
@@ -41,7 +41,7 @@ name = "ekf_main"
 type = "Ekf"
 rate = 100.0
 process_noise = 0.01
-dynamics = "AckermannKinematics"
+dynamics = "ConstantAcceleration"
 
 # Placeholders for future modules
 [[agents.autonomy_stack.mappers]]
