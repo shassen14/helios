@@ -5,6 +5,8 @@ use bevy::{
     gltf::{Gltf, GltfMesh},
 };
 
+use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
+
 // --- Resources to track loading state ---
 
 // Resource to hold the handle for the VISUAL scene GLB
@@ -17,27 +19,10 @@ struct ColliderWorldHandle(Handle<Gltf>);
 
 pub struct WorldSpawnerPlugin;
 
-// impl Plugin for WorldSpawnerPlugin {
-//     fn build(&self, app: &mut App) {
-//         app.add_systems(
-//             Update,
-//             (start_world_gltf_loading, check_gltf_load_completion)
-//                 .chain()
-//                 .run_if(in_state(AppState::AssetLoading)),
-//         )
-//         .add_systems(
-//             OnEnter(AppState::SceneBuilding),
-//             (
-//                 spawn_lighting_and_camera,
-//                 // This one system will now spawn BOTH the visuals and the colliders.
-//                 spawn_world_from_gltf.in_set(SceneBuildSet::Physics),
-//             ),
-//         );
-//     }
-// }
-
 impl Plugin for WorldSpawnerPlugin {
     fn build(&self, app: &mut App) {
+        app.add_plugins(FlyCameraPlugin);
+
         app
             // --- STAGE 1: ASSET LOADING ---
             // This system kicks off the loading for BOTH files.
@@ -108,18 +93,6 @@ fn check_for_world_load_completion(
     visual_handle: Res<VisualWorldHandle>,
     collider_handle: Res<ColliderWorldHandle>,
 ) {
-    println!(
-        "asset_server.get_load_state(&visual_handle.0): {:?}",
-        asset_server.get_load_state(&visual_handle.0),
-    );
-
-    println!(
-        "asset_server.get_load_state(&collider_handle.0): {:?}",
-        asset_server.get_load_state(&collider_handle.0),
-    );
-    // --- THE FIX: Use `matches!` macro for a clean, boolean check ---
-    // The `matches!` macro is perfect for checking if an enum is a specific variant
-    // without a full `match` block. It returns true or false.
     let visual_loaded = matches!(
         asset_server.get_load_state(&visual_handle.0),
         Some(LoadState::Loaded)
@@ -130,29 +103,8 @@ fn check_for_world_load_completion(
     );
 
     if visual_loaded && collider_loaded {
-        println!("We out here");
         next_state.set(AppState::SceneBuilding);
     }
-}
-
-/// Spawns lights and a camera. (This is fine from before).
-fn spawn_lighting_and_camera(mut commands: Commands) {
-    // --- Spawn Lighting ---
-    commands.spawn(DirectionalLight {
-        shadows_enabled: true,
-        illuminance: 15_000.0,
-        ..default()
-    });
-
-    // --- Spawn Camera ---
-    // You would add a flycam or other camera controller here.
-    // For now, a static camera.
-    let camera_transform = Transform::from_xyz(-30.0, 25.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
-    commands.spawn((
-        Camera3d::default(),
-        camera_transform,
-        GlobalTransform::default(), // Usually added automatically, but good to be explicit
-    ));
 }
 
 /// Spawns the visual-only scene into the world.
@@ -208,8 +160,9 @@ fn spawn_colliders_from_gltf(
         // 3. Now use this Handle<Mesh> to get the actual mesh data.
         if let Some(mesh) = meshes.get(&mesh_handle) {
             info!("✅ Creating collider for '{}'", name);
-            let collider = Collider::trimesh_from_mesh(mesh)
-                .expect(&format!("Could not create collider from mesh '{}'", name));
+            let collider =
+                Collider::trimesh_from_mesh_with_config(mesh, TrimeshFlags::FIX_INTERNAL_EDGES)
+                    .expect(&format!("Could not create collider from mesh '{}'", name));
 
             commands.spawn((
                 collider,
@@ -223,4 +176,32 @@ fn spawn_colliders_from_gltf(
 
     // ✅ Done — remove marker so we don't run again
     commands.remove_resource::<ColliderWorldHandle>();
+}
+
+/// Spawns lights and a camera. (This is fine from before).
+fn spawn_lighting_and_camera(mut commands: Commands) {
+    // --- Spawn Lighting ---
+    commands.spawn(DirectionalLight {
+        shadows_enabled: true,
+        illuminance: 15_000.0,
+        ..default()
+    });
+
+    // --- Spawn Camera ---
+    // You would add a flycam or other camera controller here.
+    // For now, a static camera.
+    let camera_transform: Transform =
+        Transform::from_xyz(-30.0, 25.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
+    let bob = camera_transform.rotation.to_euler(EulerRot::YZX);
+    commands
+        .spawn((
+            Camera3d::default(),
+            camera_transform,
+            GlobalTransform::default(), // Usually added automatically, but good to be explicit
+        ))
+        .insert(FlyCamera {
+            pitch: bob.2,
+            yaw: bob.0,
+            ..Default::default()
+        });
 }

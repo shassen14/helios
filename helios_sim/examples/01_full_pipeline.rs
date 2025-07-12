@@ -1,3 +1,5 @@
+// helios_sim/examples/01_full_pipeline.rs
+
 //! A full end-to-end simulation example for the Helios robotics platform.
 //!
 //! This example demonstrates how to:
@@ -106,9 +108,4 @@ fn keyboard_controller(
             controller.steering_angle = -0.7; // Steer right (radians)
         }
     }
-}
-
-fn check_initial_state(app_state: Res<State<AppState>>) {
-    // This will print the state the app is in on the very first frame.
-    info!("Application started in state: {:?}", app_state.get());
 }

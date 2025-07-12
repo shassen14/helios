@@ -2,7 +2,7 @@
 
 use crate::abstractions::{Measurement, TfProvider};
 use crate::frames::{FrameAwareState, FrameHandle, FrameId, StateVariable};
-use nalgebra::{DMatrix, DVector, Rotation3, Vector3};
+use nalgebra::{DMatrix, DVector};
 
 // --- Concrete Model for a 6-DOF IMU ---
 #[derive(Debug)]
@@ -83,8 +83,6 @@ impl Measurement for Imu6DofModel {
             .get_transform(body_handle, self.sensor_handle)
             .map(|t| t.rotation)
         {
-            // --- THE FIX ---
-            // Convert the `Rotation3` type into a standard `Matrix3`.
             let rot_matrix = *rot_sensor_from_body.to_rotation_matrix().matrix();
 
             // Find the corresponding states in the EKF layout and insert the rotation matrix.
