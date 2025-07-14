@@ -4,10 +4,11 @@ use bevy::prelude::*;
 
 // Import the plugins defined within the simulation crate.
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
-use crate::simulation::plugins::estimation::ekf::EkfPlugin;
+// use crate::simulation::plugins::estimation::ekf::EkfPlugin;
 use crate::simulation::plugins::sensors::imu::ImuPlugin;
 use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;
 use crate::simulation::plugins::world::spawner::WorldSpawnerPlugin;
+use crate::simulation::plugins::world_model::WorldModelPlugin;
 
 // This prelude is for convenience for other files WITHIN the helios_sim crate.
 pub mod prelude;
@@ -31,7 +32,8 @@ impl Plugin for HeliosSimulationPlugin {
             // Adds the IMU sensor logic.
             ImuPlugin,
             // Adds the EKF estimation logic.
-            EkfPlugin,
+            WorldModelPlugin,
+            // EkfPlugin,
             // When you add new plugins (Lidar, Planners), you will add them here.
         ));
     }

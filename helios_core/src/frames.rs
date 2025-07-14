@@ -1,26 +1,8 @@
 // helios_core/src/frames.rs
 
-use nalgebra::{DMatrix, DVector};
+use crate::types::FrameHandle;
+use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 use std::hash::Hash;
-
-// --- A generic, framework-agnostic identifier ---
-// It can be a simple integer. On a real robot, this might be a hardware ID.
-// In the Bevy sim, we will use the bits of the Entity ID.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct FrameHandle(pub u64);
-
-impl FrameHandle {
-    // A convenience method for use in the Bevy adapter crate.
-    #[cfg(feature = "bevy")] // This will only compile if the "bevy" feature is enabled
-    pub fn from_entity(entity: bevy_ecs::prelude::Entity) -> Self {
-        Self(entity.to_bits())
-    }
-
-    #[cfg(feature = "bevy")]
-    pub fn to_entity(self) -> bevy_ecs::prelude::Entity {
-        bevy_ecs::prelude::Entity::from_bits(self.0)
-    }
-}
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -122,18 +104,99 @@ impl FrameAwareState {
     pub fn find_idx(&self, var: &StateVariable) -> Option<usize> {
         self.layout.iter().position(|v| v == var)
     }
-}
 
-/// The generic event that all sensors will publish.
-/// It is framework-agnostic.
-#[derive(Clone, Debug)]
-pub struct MeasurementEvent {
-    /// The handle of the agent this measurement belongs to.
-    pub agent_handle: FrameHandle,
-    /// The handle of the sensor that produced this measurement.
-    pub sensor_handle: FrameHandle,
-    /// The raw measurement vector `z`.
-    pub z: DVector<f64>,
-    /// The timestamp of the measurement.
-    pub timestamp: f64,
+    /// Extracts a 3D vector from the state vector based on a starting `StateVariable`.
+    ///
+    /// For example, providing `StateVariable::Px(frame_id)` will attempt to find `Px`, `Py`,
+    /// and `Pz` for that frame and return them as a `Vector3`.
+    ///
+    /// # Arguments
+    /// * `start_variable`: The `StateVariable` representing the X-component of the desired vector.
+    ///
+    /// # Returns
+    /// * `Some(Vector3<f64>)` if all three components (X, Y, Z) are found contiguously.
+    /// * `None` if any of the components are missing or not in order.
+    pub fn get_vector3(&self, start_variable: &StateVariable) -> Option<Vector3<f64>> {
+        // Determine the expected Y and Z variables based on the provided X variable.
+        let (expected_y, expected_z) = match start_variable {
+            StateVariable::Px(id) => (StateVariable::Py(id.clone()), StateVariable::Pz(id.clone())),
+            StateVariable::Vx(id) => (StateVariable::Vy(id.clone()), StateVariable::Vz(id.clone())),
+            StateVariable::Ax(id) => (StateVariable::Ay(id.clone()), StateVariable::Az(id.clone())),
+            StateVariable::Wx(id) => (StateVariable::Wy(id.clone()), StateVariable::Wz(id.clone())),
+            StateVariable::Alphax(id) => (
+                StateVariable::Alphay(id.clone()),
+                StateVariable::Alphaz(id.clone()),
+            ),
+            StateVariable::MagX(id) => (
+                StateVariable::MagY(id.clone()),
+                StateVariable::MagZ(id.clone()),
+            ),
+            _ => return None, // Not a valid start of a 3D vector
+        };
+
+        // Find the starting index.
+        let start_idx = self.find_idx(start_variable)?;
+
+        // Check if the next two elements match the expected Y and Z variables.
+        // Also ensures we don't read past the end of the layout vector.
+        if self.layout.get(start_idx + 1) == Some(&expected_y)
+            && self.layout.get(start_idx + 2) == Some(&expected_z)
+        {
+            // If they match, we can safely slice the state vector.
+            // `fixed_rows` provides a view into the DVector without copying.
+            let vec_slice = self.vector.fixed_rows::<3>(start_idx);
+            Some(vec_slice.into()) // Convert the slice into an owned Vector3
+        } else {
+            None // The state layout is not as expected.
+        }
+    }
+
+    /// Extracts the orientation quaternion from the state vector.
+    ///
+    /// It searches for the `Qw` component and assumes that `Qx`, `Qy`, and `Qz`
+    /// precede it in the state layout.
+    ///
+    /// # Returns
+    /// * `Some(UnitQuaternion<f64>)` if a valid quaternion is found.
+    /// * `None` if the quaternion components are not found contiguously.
+    pub fn get_orientation(&self) -> Option<UnitQuaternion<f64>> {
+        // We can find any of the quaternion components to start, but searching for
+        // Qw is often convenient as it's the last one.
+        let mut qx_idx = None;
+        let mut qy_idx = None;
+        let mut qz_idx = None;
+        let mut qw_idx = None;
+
+        // Find the indices of all four components.
+        for (i, var) in self.layout.iter().enumerate() {
+            match var {
+                StateVariable::Qx(_, _) => qx_idx = Some(i),
+                StateVariable::Qy(_, _) => qy_idx = Some(i),
+                StateVariable::Qz(_, _) => qz_idx = Some(i),
+                StateVariable::Qw(_, _) => qw_idx = Some(i),
+                _ => {}
+            }
+        }
+
+        // Ensure all four were found.
+        let (qx_idx, qy_idx, qz_idx, qw_idx) = (qx_idx?, qy_idx?, qz_idx?, qw_idx?);
+
+        // A robust check to ensure they are contiguous (e.g., [..., Qx, Qy, Qz, Qw, ...])
+        // This makes the layout more flexible than assuming a fixed order.
+        if qy_idx == qx_idx + 1 && qz_idx == qy_idx + 1 && qw_idx == qz_idx + 1 {
+            // All components are contiguous, extract them.
+            // Note: nalgebra's `Quaternion` constructor is `(w, i, j, k)`.
+            // The `UnitQuaternion` constructor from a `Quaternion` handles normalization.
+            let quat = UnitQuaternion::from_quaternion(Quaternion::new(
+                self.vector[qw_idx], // w
+                self.vector[qx_idx], // x
+                self.vector[qy_idx], // y
+                self.vector[qz_idx], // z
+            ));
+            Some(quat)
+        } else {
+            // The quaternion components in the state layout are not contiguous.
+            None
+        }
+    }
 }

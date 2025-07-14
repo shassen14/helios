@@ -284,10 +284,7 @@ pub enum LidarConfig {
 #[serde(deny_unknown_fields)]
 pub struct AutonomyStack {
     #[serde(default)]
-    pub estimators: Vec<EstimatorConfig>,
-
-    #[serde(default)]
-    pub mappers: Vec<MapperConfig>,
+    pub world_model: WorldModelConfig,
 
     #[serde(default)]
     pub planners: Vec<PlannerConfig>,
@@ -296,8 +293,33 @@ pub struct AutonomyStack {
     pub controllers: Vec<ControllerConfig>,
 }
 
+// --- The WorldModelConfig Enum ---
+// This enum defines the mutually exclusive ways to configure the world model.
 #[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type")] // The "type" field in TOML determines the variant
+#[serde(untagged)] // We keep untagged to choose between Separate and Combined
+pub enum WorldModelConfig {
+    CombinedSlam {
+        slam: SlamConfig,
+    },
+    Separate {
+        estimator: Option<EstimatorConfig>,
+        mapper: Option<MapperConfig>,
+    },
+}
+
+// Default to the separate configuration with no modules active.
+impl Default for WorldModelConfig {
+    fn default() -> Self {
+        WorldModelConfig::Separate {
+            estimator: None,
+            mapper: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "kind")]
+// The "type" field in TOML determines the variant
 #[serde(rename_all = "PascalCase")]
 pub enum EstimatorConfig {
     Ekf(EkfConfig), // We wrap a specific struct for clarity
@@ -305,12 +327,12 @@ pub enum EstimatorConfig {
 }
 
 impl EstimatorConfig {
-    pub fn get_name(&self) -> &str {
-        match self {
-            EstimatorConfig::Ekf(c) => &c.name,
-            EstimatorConfig::Ukf(c) => &c.name,
-        }
-    }
+    // pub fn get_name(&self) -> &str {
+    //     match self {
+    //         EstimatorConfig::Ekf(c) => &c.name,
+    //         EstimatorConfig::Ukf(c) => &c.name,
+    //     }
+    // }
 
     pub fn get_type_str(&self) -> &str {
         match self {
@@ -322,11 +344,9 @@ impl EstimatorConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct EkfConfig {
-    pub name: String,
-    pub rate: f32,
+    // pub name: String,
+    // pub rate: f32,
     pub process_noise: f64,
-    // --- NEW FIELD ---
-    // The user specifies which dynamics model the filter should use.
     // Defaults to "VehicleDefault" if not provided.
     #[serde(default = "default_dynamics_model")]
     pub dynamics: String,
@@ -347,11 +367,27 @@ pub struct UkfConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type")]
+#[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum MapperConfig {
-    OccupancyGrid2D { rate: f32, resolution: f32 },
+    None, // An explicit option for no mapper
+    OccupancyGrid2D { resolution: f32 },
 }
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "kind")]
+#[serde(rename_all = "PascalCase")]
+pub enum SlamConfig {
+    EkfSlam(EkfSlamConfig),
+    FactorGraphSlam(FactorGraphSlamConfig),
+}
+
+// Define config structs for each SLAM type
+#[derive(Debug, Deserialize, Clone)]
+pub struct EkfSlamConfig {/* TODO: ... params for EKF-SLAM ... */}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FactorGraphSlamConfig {/* TODO: ... params for FG-SLAM ... */}
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "type")]

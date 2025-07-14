@@ -1,7 +1,10 @@
-// helios_core/src/models/generic.rs
+// helios_core/src/models/impl_dynamics/generic.rs
 
-use crate::abstractions::Dynamics;
-use crate::frames::{FrameHandle, FrameId, StateVariable};
+use crate::{
+    frames::{FrameId, StateVariable},
+    models::dynamics::Dynamics,
+    types::FrameHandle,
+};
 use nalgebra::{DMatrix, DVector};
 
 // --- Constant Acceleration Model ---

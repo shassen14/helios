@@ -47,10 +47,13 @@ pub enum SceneBuildSet {
     /// Pass 7: Attach all physical bodies (RigidBody, Collider).
     Physics,
 
-    /// Pass 8: Final validation checks.
+    /// Pass 8: TODO:
+    Finalize,
+
+    /// Pass 9: Final validation checks.
     Validation,
 
-    /// Pass 9: Remove all temporary request components.
+    /// Pass 10: Remove all temporary request components.
     Cleanup,
 }
 
@@ -92,4 +95,8 @@ pub enum SimulationSet {
     // --- Phase 6: Finalization ---
     /// Systems that convert control commands into physical forces. Runs last.
     Actuation,
+
+    // --- Phase 7: Synchronization ---
+    /// Systems that sync the ground truth state
+    StateSync,
 }

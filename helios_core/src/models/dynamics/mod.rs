@@ -1,15 +1,10 @@
-// helios_core/src/abstractions.rs
+// helios_core/src/models/dynamics/mod.rs
 
-use nalgebra::{DMatrix, DVector, Isometry3};
+use crate::frames::StateVariable;
+use crate::types::{Control, State};
+use crate::utils::integrators::Integrator;
+use nalgebra::DMatrix;
 use std::fmt::Debug;
-
-use crate::{
-    frames::{FrameAwareState, FrameHandle, StateVariable},
-    utils::integrators::Integrator,
-};
-
-pub type State = DVector<f64>;
-pub type Control = DVector<f64>;
 
 // --- DYNAMICS MODEL TRAIT ---
 // Represents the physics/kinematic model of an agent. `x_dot = f(x, u)`
@@ -150,37 +145,5 @@ pub trait Dynamics: Debug + Send + Sync {
     }
 }
 
-// --- MEASUREMENT MODEL TRAIT ---
-// Represents the mathematical model of a sensor. `z = h(x) + v`
-pub trait Measurement: Debug + Send + Sync {
-    /// Describes the layout of the measurement vector `z` in the SENSOR'S NATIVE FRAME.
-    fn get_measurement_layout(&self) -> Vec<StateVariable>;
-
-    /// Returns the measurement noise covariance matrix `R`.
-    fn get_r(&self) -> &DMatrix<f64>;
-
-    /// Predicts the ideal measurement `z_pred = h(x)` from the full filter state.
-    fn predict_measurement(
-        &self,
-        filter_state: &FrameAwareState,
-        context: &dyn TfProvider,
-    ) -> DVector<f64>;
-
-    /// Calculates the measurement Jacobian `H = ∂h/∂x`.
-    fn calculate_jacobian(
-        &self,
-        filter_state: &FrameAwareState,
-        context: &dyn TfProvider,
-    ) -> DMatrix<f64>;
-}
-
-// This is the contract for any object that can provide transform information.
-// The Bevy `TfTree` will implement this, as will a mock for testing.
-pub trait TfProvider {
-    /// Gets the transform FROM `from_frame` TO `to_frame`.
-    fn get_transform(
-        &self,
-        from_frame: FrameHandle,
-        to_frame: FrameHandle,
-    ) -> Option<Isometry3<f64>>;
-}
+pub mod ackermann;
+pub mod generic;

@@ -7,6 +7,7 @@ use helios_core::prelude::{FrameHandle, TfProvider}; // Use the pure types from 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use std::collections::HashMap;
 use std::f64::consts::FRAC_PI_2;
+use std::sync::Arc;
 
 // =========================================================================
 // == TF Tree Infrastructure (The "Service") ==
@@ -19,8 +20,40 @@ pub struct TrackedFrame;
 /// The Bevy resource that holds the complete transform graph for a single frame.
 #[derive(Resource, Default, Debug)]
 pub struct TfTree {
-    /// Stores the WORLD pose (in nalgebra's Isometry3 format) of every tracked entity.
+    // For fast, internal lookups using the entity ID.
+    // This is what the TfProvider trait will use internally.
     transforms_to_world: HashMap<Entity, Isometry3<f64>>,
+
+    // For user-facing API calls, configuration, and debugging.
+    // This map is populated once when agents/sensors are spawned.
+    name_to_entity: HashMap<Arc<str>, Entity>,
+
+    /// Maps a Bevy Entity ID back to its human-readable name for debugging/logging.
+    entity_to_name: HashMap<Entity, Arc<str>>,
+}
+
+impl TfTree {
+    /// Looks up the world pose of a frame by its name.
+    pub fn lookup_by_name(&self, frame_name: &str) -> Option<Isometry3<f64>> {
+        let entity = self.name_to_entity.get(frame_name)?;
+        self.transforms_to_world.get(entity).copied()
+    }
+
+    /// Looks up the world pose of a frame by its Entity ID.
+    pub fn lookup_by_entity(&self, entity: Entity) -> Option<Isometry3<f64>> {
+        self.transforms_to_world.get(&entity).copied()
+    }
+
+    pub fn get_transform_by_name(
+        &self,
+        from_frame: &str,
+        to_frame: &str,
+    ) -> Option<Isometry3<f64>> {
+        let pose_from_world = self.lookup_by_name(from_frame)?;
+        let pose_to_world = self.lookup_by_name(to_frame)?;
+
+        Some(pose_from_world.inverse() * pose_to_world)
+    }
 }
 
 // We implement the pure `TfProvider` trait for our Bevy-specific `TfTree`.
@@ -37,22 +70,44 @@ impl TfProvider for TfTree {
         let pose_from_world = self.transforms_to_world.get(&from_entity)?;
         let pose_to_world = self.transforms_to_world.get(&to_entity)?;
 
-        // The math remains the same: T_B_A = (T_W_A)^-1 * T_W_B
+        // T_B_A = (T_W_A)^-1 * T_W_B
         Some(pose_from_world.inverse() * pose_to_world)
     }
 }
 
 /// The Bevy system that runs once per frame to build the TfTree resource.
+/// This system now populates the physical poses AND the name mappings.
 pub fn tf_tree_builder_system(
     mut tf_tree: ResMut<TfTree>,
+    // --- The Query is Modified Here ---
+    // We now ask for the Name component as well.
+    // Bevy will only give us entities that have a GlobalTransform, a Name, AND the TrackedFrame marker.
     query: Query<(Entity, &GlobalTransform), With<TrackedFrame>>,
 ) {
+    // Clear all maps at the start of the frame to ensure no stale data.
     tf_tree.transforms_to_world.clear();
+    tf_tree.transforms_to_world.reserve(query.iter().len());
+
     for (entity, transform) in &query {
-        // Use the helper function below to convert from Bevy's GlobalTransform
-        // to our robotics-standard nalgebra Isometry3.
+        // --- Part 1: Physical Pose (your existing code) ---
         let iso = bevy_global_transform_to_nalgebra_isometry(transform);
         tf_tree.transforms_to_world.insert(entity, iso);
+    }
+}
+
+/// System that runs ONCE to build the static name-to-entity mappings.
+pub fn build_static_tf_maps(
+    mut tf_tree: ResMut<TfTree>,
+    query: Query<(Entity, &Name), With<TrackedFrame>>,
+) {
+    info!("Building static TF name maps...");
+    tf_tree.name_to_entity.clear();
+    tf_tree.entity_to_name.clear();
+
+    for (entity, name) in &query {
+        let frame_name: Arc<str> = Arc::from(name.as_str());
+        tf_tree.name_to_entity.insert(frame_name.clone(), entity);
+        tf_tree.entity_to_name.insert(entity, frame_name);
     }
 }
 

@@ -4,9 +4,7 @@ use crate::{
     prelude::*,
     simulation::core::{app_state::SimulationSet, events::BevyMeasurementEvent},
 };
-use helios_core::estimation::ekf::{
-    ekf_predict, ekf_update, EkfMeasurementParams, EkfUpdateParams,
-};
+
 use nalgebra::DMatrix;
 use std::collections::HashMap;
 
@@ -94,7 +92,7 @@ fn spawn_ekf_instances(
 
             // Insert the components directly onto the main agent entity.
             commands.entity(agent_entity).insert((
-                Name::new(format!("Estimator: {}", ekf_config.name)),
+                // Name::new(format!("Estimator: {}", ekf_config.name)),
                 EkfCore {
                     dynamics: dynamics_model,
                     process_noise_q: q_matrix,

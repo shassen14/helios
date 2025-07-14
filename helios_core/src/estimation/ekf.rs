@@ -1,8 +1,9 @@
 // helios_core/src/estimation/ekf.rs
 
-use crate::abstractions::{Dynamics, Measurement, TfProvider};
-use crate::frames::FrameAwareState;
+use crate::prelude::Measurement;
+use crate::types::TfProvider;
 use crate::utils::integrators::RK4;
+use crate::{frames::FrameAwareState, prelude::Dynamics};
 use nalgebra::{DMatrix, DVector}; // Assuming RK4 is in helios_core::utils
 
 /// A container for parameters needed by the EKF prediction step.

@@ -1,7 +1,10 @@
-// helios_core/src/models/ackermann.rs
+// helios_core/src/models/impl_dynamics/ackermann.rs
 
-use crate::abstractions::Dynamics;
-use crate::frames::{FrameHandle, FrameId, StateVariable};
+use crate::{
+    frames::{FrameId, StateVariable},
+    models::dynamics::Dynamics,
+    types::FrameHandle,
+};
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 
 #[derive(Debug, Clone)]

@@ -1,5 +1,6 @@
-// helios_bevy_sim/src/simulation/core/simulation_setup.rs
+// helios_sim/src/simulation/core/simulation_setup.rs
 
+use avian3d::prelude::PhysicsSet;
 use rand::rngs::OsRng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -7,8 +8,10 @@ use rand_chacha::ChaCha8Rng;
 use crate::prelude::*;
 use crate::simulation::core::app_state::SimulationSet;
 use crate::simulation::core::config::SimulationConfig;
-use crate::simulation::core::events::BevyMeasurementEvent;
+use crate::simulation::core::events::BevyMeasurementMessage;
+use crate::simulation::core::ground_truth_sync_system;
 use crate::simulation::core::prng::SimulationRng;
+use crate::simulation::core::transforms::build_static_tf_maps;
 // Import the Bevy-specific types this plugin manages
 use super::topics::{GroundTruthState, TopicBus};
 use super::transforms::{tf_tree_builder_system, TfTree};
@@ -37,7 +40,7 @@ impl Plugin for SimulationSetupPlugin {
             // This resource will be populated each frame with the latest transforms.
             .init_resource::<TfTree>()
             // This is CRITICAL. It registers the pure MeasurementEvent with Bevy's event system.
-            .add_event::<BevyMeasurementEvent>();
+            .add_event::<BevyMeasurementMessage>();
 
         // --- CONFIGURE THE SPAWNING PIPELINE ---
         // This chain of SystemSets guarantees the correct spawning order.
@@ -51,6 +54,7 @@ impl Plugin for SimulationSetupPlugin {
                 SceneBuildSet::ProcessDependentAutonomy,
                 SceneBuildSet::ProcessControllers,
                 SceneBuildSet::Physics,
+                SceneBuildSet::Finalize,
                 SceneBuildSet::Validation,
                 SceneBuildSet::Cleanup,
             )
@@ -63,6 +67,7 @@ impl Plugin for SimulationSetupPlugin {
             (
                 // This system reads the config and creates entities with "request" components.
                 spawn_agent_shells.in_set(SceneBuildSet::CreateRequests),
+                build_static_tf_maps.in_set(SceneBuildSet::Finalize),
                 // This system removes the temporary request components after all processing is done.
                 cleanup_spawn_requests.in_set(SceneBuildSet::Cleanup),
                 // This system transitions to the main simulation loop after building is complete.
@@ -87,6 +92,15 @@ impl Plugin for SimulationSetupPlugin {
                 SimulationSet::Control,
                 // Phase 6
                 SimulationSet::Actuation,
+                // Phase 7
+                (
+                    // Avian's internal set where it prepares bodies.
+                    PhysicsSet::Prepare,
+                    // The main physics simulation step.
+                    PhysicsSet::StepSimulation,
+                    // Our system runs IMMEDIATELY AFTER the simulation.
+                    SimulationSet::StateSync,
+                ),
             )
                 .chain(), // .chain() enforces the order of the tuples/sets
         );
@@ -118,9 +132,12 @@ impl Plugin for SimulationSetupPlugin {
         // It must run before any system that needs to query for transforms, like the EKF.
         app.add_systems(
             FixedUpdate,
-            tf_tree_builder_system
-                .in_set(SimulationSet::Precomputation)
-                .run_if(in_state(AppState::Running)),
+            (
+                tf_tree_builder_system
+                    .in_set(SimulationSet::Precomputation)
+                    .run_if(in_state(AppState::Running)),
+                ground_truth_sync_system.in_set(SimulationSet::StateSync),
+            ),
         );
     }
 }
