@@ -1,4 +1,4 @@
-# assets/scenarios/simple_car_scenario.toml
+# helios_sim/assets/scenarios/simple_car_scenario.toml
 
 [simulation]
 duration_seconds = 120.0
@@ -9,7 +9,7 @@ gravity = [0.0, -9.81, 0.0]
 
 [[agents]]
 name = "RoboCar-01"
-starting_pose = { translation = [0.0, 5.0, 3.0], rotation = [0.0, 0.0, 0.0] }
+starting_pose = { translation = [0.0, 2.0, 3.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose = { position = [50.0, 0.5, 0.0] }
 
 [agents.vehicle]
@@ -35,19 +35,31 @@ transform = { translation = [0.1, 0.0, 0.0] } # Example relative transform
 # accel_noise_stddev = [1.01, 1.01, 1.01]
 # gyro_noise_stddev = [1.01, 1.01, 1.01]
 
-[agents.autonomy_stack]
-[[agents.autonomy_stack.estimators]]
-name = "ekf_main"
-type = "Ekf"
-rate = 100.0
+[agents.autonomy_stack.world_model]
+# Inside this table, we place the estimator and mapper configs.
+# Serde will see these fields and correctly choose the `Separate` variant
+# of the `WorldModelConfig` enum.
+
+[agents.autonomy_stack.world_model.estimator]
+kind = "Ekf"
 process_noise = 0.01
 dynamics = "ConstantAcceleration"
 
+[agents.autonomy_stack.world_model.mapper]
+kind = "None"
+
+# [agents.autonomy_stack.estimator]
+# # name = "ekf_main"
+# kind = "Ekf"
+# rate = 100.0
+# process_noise = 0.01
+# dynamics = "ConstantAcceleration"
+
 # Placeholders for future modules
-[[agents.autonomy_stack.mappers]]
-type = "OccupancyGrid2D"
-rate = 5.0
-resolution = 0.1
+# [[agents.autonomy_stack.mappers]]
+# type = "OccupancyGrid2D"
+# rate = 5.0
+# resolution = 0.1
 
 [[agents.autonomy_stack.planners]]
 type = "AStar"
@@ -59,27 +71,3 @@ rate = 50.0
 kp = 1.0
 ki = 0.1
 kd = 0.2
-
-# [[agents]]
-# name = "RoboCar-02"
-# starting_pose = { position = [
-#   0.0,
-#   10.0,
-#   5.0,
-# ], orientation_deg = [
-#   0.0,
-#   0.0,
-#   0.0,
-# ] }
-# goal_pose = { position = [50.0, 0.5, 0.0] }
-
-# [agents.vehicle]
-# type = "Ackermann"
-# wheelbase = 2.5
-# max_steering_angle = 35.0 # deg
-# max_steering_rate = 140.0 # deg/sec
-
-# [agents.sensors]
-# type = "NineDof"
-# rate = 10.0                       # High-rate IMU
-# noise_stddev = [0.01, 0.01, 0.01]
