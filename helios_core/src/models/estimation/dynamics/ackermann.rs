@@ -14,7 +14,7 @@ pub struct AckermannKinematics {
     pub agent_handle: FrameHandle,
 }
 
-impl Dynamics for AckermannKinematics {
+impl EstiDynamics for AckermannKinematics {
     fn get_state_layout(&self) -> Vec<StateVariable> {
         let body = FrameId::Body(self.agent_handle);
         vec![

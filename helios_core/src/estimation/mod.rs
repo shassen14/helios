@@ -2,7 +2,8 @@
 
 use crate::frames::FrameAwareState;
 use crate::messages::ModuleInput;
-use crate::types::TfProvider;
+use crate::prelude::{EstimationDynamics, MeasurementMessage};
+use crate::types::{Control, TfProvider};
 use std::any::Any;
 
 /// Provides the necessary world-context for an estimator to perform its work.
@@ -16,15 +17,19 @@ pub struct FilterContext<'a> {
 /// The contract for any algorithm that performs the "State Estimator" role.
 /// Its sole responsibility is to estimate the state of an agent.
 pub trait StateEstimator: Send + Sync {
-    /// The single, unified method for processing all types of input data.
-    /// The implementation is responsible for interpreting the `ModuleInput`.
-    fn process(&mut self, input: &ModuleInput, context: &FilterContext);
+    /// Predicts the state forward using a driving control input `u`.
+    fn predict(&mut self, dt: f64, u: &Control, context: &FilterContext);
+
+    /// Updates the state with an aiding measurement message.
+    fn update(&mut self, message: &MeasurementMessage, context: &FilterContext);
 
     /// Returns a reference to the current best estimate of the state.
     fn get_state(&self) -> &FrameAwareState;
 
     /// Allows for dynamic downcasting to access algorithm-specific methods if needed.
     fn as_any_mut(&mut self) -> &mut dyn Any;
+
+    fn get_dynamics_model(&self) -> &dyn EstimationDynamics;
 }
 
 pub mod filters;

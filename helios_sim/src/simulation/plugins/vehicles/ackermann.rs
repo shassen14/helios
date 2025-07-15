@@ -99,10 +99,10 @@ fn process_ackermann_logic(
         } = &request.0.vehicle
         {
             // Create the pure dynamics model from the core library.
-            let dynamics_model = AckermannKinematics {
-                wheelbase: *wheelbase as f64,
-                agent_handle: FrameHandle::from_entity(entity),
-            };
+            // let dynamics_model = AckermannKinematics {
+            //     wheelbase: *wheelbase as f64,
+            //     agent_handle: FrameHandle::from_entity(entity),
+            // };
 
             // Insert all the logical components onto the main agent entity.
             commands.entity(entity).insert((
@@ -113,7 +113,7 @@ fn process_ackermann_logic(
                     max_torque: 2500.0, // Tuning parameter
                 },
                 // The pure dynamics model, wrapped in the Bevy component.
-                DynamicsModel(Box::new(dynamics_model)),
+                // DynamicsModel(Box::new(dynamics_model)),
                 // The controller input "mailbox".
                 VehicleControllerInput::default(),
                 // Add the TrackedFrame component so the TfTree will see this entity.

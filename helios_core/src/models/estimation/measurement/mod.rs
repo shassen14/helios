@@ -1,9 +1,11 @@
 // helios_core/src/models/measurement/mod.rs
 
 use crate::frames::{FrameAwareState, StateVariable};
+use crate::prelude::MeasurementMessage;
 use crate::types::TfProvider;
 use dyn_clone::DynClone;
 use nalgebra::{DMatrix, DVector};
+use std::any::Any;
 use std::fmt::Debug;
 
 // --- MEASUREMENT MODEL TRAIT ---
@@ -15,12 +17,17 @@ pub trait Measurement: DynClone + Debug + Send + Sync {
     /// Returns the measurement noise covariance matrix `R`.
     fn get_r(&self) -> &DMatrix<f64>;
 
-    /// Predicts the ideal measurement `z_pred = h(x)` from the full filter state.
+    /// **Predicts the ideal measurement `z_pred = h(x)` from the filter's state.**
+    ///
+    /// This is the key change. If this model can process the data in the
+    /// provided message, it returns `Some(DVector)`. If it cannot or should
+    //  ignore it, it returns `None`.
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,
-        context: &dyn TfProvider,
-    ) -> DVector<f64>;
+        message: &MeasurementMessage,
+        tf: &dyn TfProvider,
+    ) -> Option<DVector<f64>>;
 
     /// Calculates the measurement Jacobian `H = ∂h/∂x`.
     fn calculate_jacobian(
@@ -28,6 +35,8 @@ pub trait Measurement: DynClone + Debug + Send + Sync {
         filter_state: &FrameAwareState,
         context: &dyn TfProvider,
     ) -> DMatrix<f64>;
+
+    fn as_any(&self) -> &dyn Any;
 }
 
 // This macro automatically generates the implementation of `Clone` for `Box<dyn Measurement>`.

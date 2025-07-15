@@ -15,7 +15,7 @@ use crate::simulation::core::{
 // --- Core Library Imports ---
 use helios_core::{
     messages::{MeasurementData, MeasurementMessage},
-    models::measurement::imu::Imu6DofModel, // Import our new core model
+    models::estimation::measurement::imu::Imu6DofModel, // Import our new core model
     types::FrameHandle,
 };
 

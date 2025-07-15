@@ -9,7 +9,7 @@ gravity = [0.0, -9.81, 0.0]
 
 [[agents]]
 name = "RoboCar-01"
-starting_pose = { translation = [0.0, 2.0, 3.0], rotation = [0.0, 0.0, 0.0] }
+starting_pose = { translation = [0.0, 10.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose = { position = [50.0, 0.5, 0.0] }
 
 [agents.vehicle]
@@ -22,7 +22,7 @@ max_steering_rate = 140.0 # deg/sec
 kind = "Imu"
 type = "SixDof"
 name = "primary_imu"
-rate = 10.0
+rate = 100.0
 accel_noise_stddev = [0.01, 0.01, 0.01]
 gyro_noise_stddev = [0.01, 0.01, 0.01]
 transform = { translation = [0.1, 0.0, 0.0] } # Example relative transform
@@ -43,7 +43,7 @@ transform = { translation = [0.1, 0.0, 0.0] } # Example relative transform
 [agents.autonomy_stack.world_model.estimator]
 kind = "Ekf"
 process_noise = 0.01
-dynamics = "ConstantAcceleration"
+dynamics = "IntegratedImu"
 
 [agents.autonomy_stack.world_model.mapper]
 kind = "None"

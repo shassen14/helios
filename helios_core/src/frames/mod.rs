@@ -1,4 +1,4 @@
-// helios_core/src/frames.rs
+// helios_core/src/frames/mod.rs
 
 use crate::types::FrameHandle;
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
@@ -200,3 +200,5 @@ impl FrameAwareState {
         }
     }
 }
+
+pub mod layout;

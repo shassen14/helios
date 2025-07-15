@@ -1,5 +1,7 @@
 // helios_sim/src/simulation/core/simulation_setup.rs
 
+use std::time::Duration;
+
 use avian3d::prelude::PhysicsSet;
 use rand::rngs::OsRng;
 use rand::SeedableRng;
@@ -41,6 +43,17 @@ impl Plugin for SimulationSetupPlugin {
             .init_resource::<TfTree>()
             // This is CRITICAL. It registers the pure MeasurementEvent with Bevy's event system.
             .add_event::<BevyMeasurementMessage>();
+
+        let simulation_frequency = 200.0; // The desired frequency in Hz
+        let fixed_update_timestep = 1.0 / simulation_frequency;
+
+        app.insert_resource(
+            // The resource is of type Time<Fixed>.
+            Time::<Fixed>::from_duration(
+                // We create a Duration from the calculated timestep.
+                Duration::from_secs_f64(fixed_update_timestep),
+            ),
+        );
 
         // --- CONFIGURE THE SPAWNING PIPELINE ---
         // This chain of SystemSets guarantees the correct spawning order.

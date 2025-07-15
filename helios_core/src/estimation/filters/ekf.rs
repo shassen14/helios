@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use crate::estimation::{FilterContext, StateEstimator};
 use crate::frames::FrameAwareState;
 use crate::messages::{MeasurementData, ModuleInput};
-use crate::models::measurement::Measurement;
-use crate::prelude::{Dynamics, MeasurementMessage};
+use crate::models::estimation::measurement::Measurement;
+use crate::prelude::{EstimationDynamics, MeasurementMessage};
 // The helper trait for sensors
 use crate::types::{Control, FrameHandle};
 use crate::utils::integrators::RK4;
@@ -19,13 +19,10 @@ pub struct ExtendedKalmanFilter {
     state: FrameAwareState,
     /// The process noise covariance matrix (Q), modeling uncertainty in the dynamics.
     process_noise_q: DMatrix<f64>,
-
-    dynamics: Box<dyn Dynamics>,
-
-    // A map from a sensor's handle to its specific measurement model.
-    // This allows the EKF to know how to handle data from different sensors.
-    // This map is populated at initialization.
-    measurement_models: std::collections::HashMap<crate::types::FrameHandle, Box<dyn Measurement>>,
+    /// The specific dynamics model this filter will use for prediction.
+    dynamics_model: Box<dyn EstimationDynamics>,
+    /// Maps a sensor's handle to the model that describes its physics.
+    measurement_models: HashMap<FrameHandle, Box<dyn Measurement>>,
 }
 
 impl ExtendedKalmanFilter {
@@ -33,7 +30,7 @@ impl ExtendedKalmanFilter {
     pub fn new(
         initial_state: FrameAwareState,
         process_noise_q: DMatrix<f64>,
-        dynamics: Box<dyn Dynamics>,
+        dynamics_model: Box<dyn EstimationDynamics>,
         measurement_models: HashMap<FrameHandle, Box<dyn Measurement>>,
     ) -> Self {
         // Ensure Q has the correct dimensions.
@@ -43,127 +40,111 @@ impl ExtendedKalmanFilter {
         Self {
             state: initial_state,
             process_noise_q,
-            dynamics,
+            dynamics_model,
             measurement_models,
         }
-    }
-
-    // --- Private Helper Methods for the EKF Algorithm ---
-
-    /// The internal "predict" step. Advances the state in time.
-    fn predict(&mut self, dt: f64, _context: &FilterContext) {
-        if dt <= 0.0 {
-            return;
-        }
-
-        // We need a dynamics model to predict.
-        let dynamics = &self.dynamics;
-
-        let x = &self.state.vector;
-        let p = &self.state.covariance;
-        let t = self.state.last_update_timestamp;
-
-        // A zero-vector control input, as the EKF doesn't use it directly for prediction
-        // in this simplified model. A more advanced one might.
-        let u = Control::zeros(dynamics.get_control_dim());
-
-        // 1. Predict the state vector using the dynamics model and an integrator.
-        let x_pred = dynamics.propagate(x, &u, t, dt, &RK4);
-
-        // 2. Linearize the dynamics by calculating the Jacobian F.
-        let (f_jac, _b_jac) = dynamics.calculate_jacobian(x, &u, t);
-
-        // 3. Predict the covariance matrix: P_k+1 = F * P_k * F^T + Q
-        let p_pred = &f_jac * p * f_jac.transpose() + &self.process_noise_q * dt; // Scale Q by dt
-
-        // 4. Update the internal state.
-        self.state.vector = x_pred;
-        self.state.covariance = p_pred;
-        self.state.last_update_timestamp += dt;
-    }
-
-    /// The internal "update" step. Fuses a measurement.
-    fn update(&mut self, event: &MeasurementMessage, context: &FilterContext) {
-        // Look up the correct measurement model for the sensor that sent this event.
-        let model = match self.measurement_models.get(&event.sensor_handle) {
-            Some(m) => m,
-            None => {
-                // We don't have a model for this sensor, so we ignore its data.
-                return;
-            }
-        };
-
-        // Get the actual measurement vector `z` from the event data.
-        let z: DVector<f64> = match &event.data {
-            // This is where we convert from the specific static type to a generic DVector.
-            MeasurementData::Imu6Dof(v) => DVector::from_row_slice(v.as_slice()),
-            MeasurementData::Gps(v) => DVector::from_row_slice(v.as_slice()),
-            // The EKF can choose to ignore data types it doesn't understand.
-            _ => return,
-        };
-
-        // --- Standard EKF Update Equations ---
-
-        // 1. Predict the measurement from our current state: z_hat = h(x)
-        let z_pred = model.predict_measurement(&self.state, context.tf.unwrap());
-
-        println!("z: {}", z.transpose());
-        println!("z_pred: {}", z_pred.transpose());
-
-        // 2. Calculate the measurement Jacobian H.
-        let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
-
-        // 3. Get the measurement noise covariance R.
-        let r_mat = model.get_r();
-
-        // 4. Calculate the innovation (y), innovation covariance (S), and Kalman gain (K).
-        let y = z - z_pred;
-        let s = &h_jac * &self.state.covariance * h_jac.transpose() + r_mat;
-
-        if let Some(s_inv) = s.try_inverse() {
-            let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
-
-            // 5. Update the state vector and covariance matrix.
-            self.state.vector += &k_gain * y;
-            let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
-            self.state.covariance = (i - k_gain * h_jac) * &self.state.covariance;
-        }
-        // If S is not invertible, the measurement is likely redundant or problematic.
-        // We skip the update to maintain filter stability.
     }
 }
 
 // --- The Public Trait Implementation ---
 impl StateEstimator for ExtendedKalmanFilter {
-    fn process(&mut self, input: &ModuleInput, context: &FilterContext) {
-        match input {
-            ModuleInput::Measurement { message } => {
-                // A measurement arrived. We must handle the Predict -> Update sequence.
-
-                // 1. Calculate the time delta since our last update.
-                let dt = message.timestamp - self.state.last_update_timestamp;
-
-                // 2. PREDICT: Advance the state to the exact time of the measurement.
-                self.predict(dt, context);
-
-                // 3. UPDATE: Now that we're at the correct time, fuse the measurement.
-                self.update(message, context);
-            }
-            ModuleInput::TimeStep { dt, current_time } => {
-                // This is a "heartbeat" input. If no measurements arrived,
-                // we still need to predict forward to keep the state current.
-                // We calculate how much time has passed since our last known update.
-                let time_since_last_update = current_time - self.state.last_update_timestamp;
-                if time_since_last_update > *dt {
-                    // We seem to have missed a measurement, but we predict with what we have
-                    self.predict(*dt, context);
-                }
-                // If a measurement already advanced us past this timestep, do nothing.
-            }
-            // EKF doesn't use these, but a different estimator might.
-            ModuleInput::Control { .. } => {}
-            ModuleInput::PoseUpdate { .. } => {}
+    /// Predicts the state forward by `dt` using the provided control input `u`.
+    fn predict(&mut self, dt: f64, u: &Control, _context: &FilterContext) {
+        if dt <= 0.0 {
+            return;
         }
+
+        // --- 1. Get current state and dynamics model ---
+        let dynamics = &self.dynamics_model;
+        let x = &self.state.vector;
+        let p = &self.state.covariance;
+        let t = self.state.last_update_timestamp;
+
+        // Ensure control input `u` has the correct dimension for the dynamics model.
+        let u_sized = if u.nrows() == dynamics.get_control_dim() {
+            u
+        } else {
+            // This case can happen if the control input cache wasn't updated.
+            // We fall back to a zero vector to prevent a panic.
+            // warn!("Control input dimension mismatch in EKF predict. Using zeros.");
+            // A more robust solution might use a thread_local static as before.
+            &DVector::zeros(dynamics.get_control_dim())
+        };
+
+        // --- 2. Predict the next state vector using numerical integration ---
+        // x_pred = f(x, u, t)
+        let x_pred = dynamics.propagate(x, u_sized, t, dt, &RK4);
+
+        // --- 3. Linearize the dynamics by calculating the state transition matrix (Jacobian F) ---
+        // For an EKF with a discrete time step, we often use an approximation:
+        // F_k ≈ I + A * dt
+        // But a more accurate way is to use the full matrix exponential if possible,
+        // or just the calculated Jacobian `A` from the continuous model. We will use `A`.
+        let (a_jac, _b_jac) = dynamics.calculate_jacobian(x, u_sized, t);
+
+        // Discretize the state transition matrix: F ≈ I + A*dt
+        let f_k = DMatrix::<f64>::identity(self.state.dim(), self.state.dim()) + a_jac * dt;
+
+        // --- 4. Predict the next covariance matrix ---
+        // P_k+1|k = F_k * P_k|k * F_k^T + Q_d
+        // We can approximate the discrete process noise Q_d as Q * dt
+        let p_pred = &f_k * p * f_k.transpose() + &self.process_noise_q * dt;
+
+        // --- 5. Update the filter's internal state ---
+        self.state.vector = x_pred;
+        self.state.covariance = p_pred;
+        self.state.last_update_timestamp += dt;
+    }
+
+    /// Updates the state by fusing an aiding measurement.
+    fn update(&mut self, message: &MeasurementMessage, context: &FilterContext) {
+        // --- 1. Find the correct measurement model for this sensor ---
+        let model = match self.measurement_models.get(&message.sensor_handle) {
+            Some(m) => m,
+            None => return, // This EKF is not configured to use this sensor.
+        };
+
+        // --- 2. Ask the model to predict a measurement based on this message ---
+        // `predict_measurement` now returns an Option. If it's `None`, this model
+        // cannot handle this message type, and we do nothing.
+        let z_pred_option = model.predict_measurement(&self.state, message, context.tf.unwrap());
+
+        if let Some(z_pred) = z_pred_option {
+            // --- We have a valid prediction! Now we can proceed. ---
+
+            // First, get the actual measurement vector `z` from the message data.
+            // This is safe to unwrap because if predict_measurement succeeded, the data
+            // type must be one it understands. A helper function would be cleaner here.
+            if let Some(z_slice) = message.data.as_primary_slice() {
+                let z = DVector::from_row_slice(z_slice);
+
+                // Dimension safety check
+                if z.nrows() != z_pred.nrows() {
+                    // In core, we can't log. A good practice is to just return and do nothing.
+                    // The filter remains stable, just without the update.
+                    return;
+                }
+
+                // --- 3. Perform the standard EKF update equations ---
+                let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
+                let r_mat = model.get_r();
+
+                let y = z - z_pred; // Innovation
+                let s = &h_jac * &self.state.covariance * h_jac.transpose() + r_mat; // Innovation covariance
+
+                if let Some(s_inv) = s.try_inverse() {
+                    let k_gain = &self.state.covariance * h_jac.transpose() * s_inv; // Kalman Gain
+
+                    self.state.vector += &k_gain * y;
+                    let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
+                    self.state.covariance = (i - k_gain * &h_jac) * &self.state.covariance;
+
+                    // The timestamp is updated to the measurement's time.
+                    self.state.last_update_timestamp = message.timestamp;
+                }
+            }
+        }
+        // If predict_measurement returned None, we simply do nothing.
     }
 
     fn get_state(&self) -> &FrameAwareState {
@@ -172,5 +153,9 @@ impl StateEstimator for ExtendedKalmanFilter {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn get_dynamics_model(&self) -> &dyn EstimationDynamics {
+        &*self.dynamics_model
     }
 }

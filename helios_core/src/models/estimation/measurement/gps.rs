@@ -1,7 +1,10 @@
 // helios_core/src/models/measurement/gps.rs
 
+use std::any::Any;
+
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
-use crate::models::measurement::Measurement;
+use crate::models::estimation::measurement::Measurement;
+use crate::prelude::{MeasurementData, MeasurementMessage};
 use crate::types::TfProvider;
 use nalgebra::{DMatrix, DVector};
 
@@ -23,25 +26,22 @@ impl Measurement for GpsModel {
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,
+        message: &MeasurementMessage,
         _tf: &dyn TfProvider,
-    ) -> DVector<f64> {
-        // --- THIS IS THE CRITICAL LOGIC ---
-        // We need to build a 3x1 vector `z_pred` from the 9x1 `filter_state`.
-
-        let mut z_pred = DVector::zeros(3); // We are predicting a 3-element measurement.
-
-        // Find the indices of Px, Py, Pz in the filter's state layout.
-        if let Some(px_idx) = filter_state.find_idx(&StateVariable::Px(FrameId::World)) {
-            z_pred[0] = filter_state.vector[px_idx];
+    ) -> Option<DVector<f64>> {
+        // This model only cares about GPS data.
+        if let MeasurementData::GpsPosition(_) = &message.data {
+            // It's the right data type, so we proceed.
+            // Predict the position from the state vector.
+            if let Some(pos_vec) = filter_state.get_vector3(&StateVariable::Px(FrameId::World)) {
+                Some(DVector::from_row_slice(pos_vec.as_slice()))
+            } else {
+                None // The state vector doesn't have position, can't predict.
+            }
+        } else {
+            // It's not GPS data, so this model ignores it.
+            None
         }
-        if let Some(py_idx) = filter_state.find_idx(&StateVariable::Py(FrameId::World)) {
-            z_pred[1] = filter_state.vector[py_idx];
-        }
-        if let Some(pz_idx) = filter_state.find_idx(&StateVariable::Pz(FrameId::World)) {
-            z_pred[2] = filter_state.vector[pz_idx];
-        }
-
-        z_pred // Return the 3x1 predicted measurement.
     }
 
     fn calculate_jacobian(
@@ -70,5 +70,9 @@ impl Measurement for GpsModel {
 
     fn get_r(&self) -> &DMatrix<f64> {
         &self.noise_covariance
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

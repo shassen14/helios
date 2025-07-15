@@ -371,7 +371,7 @@ pub struct UkfConfig {
 #[serde(rename_all = "PascalCase")]
 pub enum MapperConfig {
     None, // An explicit option for no mapper
-    OccupancyGrid2D { resolution: f32 },
+    OccupancyGrid2D { rate: f32, resolution: f32 },
 }
 
 #[derive(Debug, Deserialize, Clone)]
