@@ -71,10 +71,10 @@ impl EstimationDynamics for IntegratedImuModel {
             .fixed_rows_mut::<3>(3)
             .copy_from(&(accel_world + gravity_world));
 
-        println!("raw_accel_measurement: {:?}", raw_accel_measurement);
-        println!("corrected_accel_body: {:?}", corrected_accel_body);
-        println!("accel_world: {:?}", accel_world);
-        println!("gravity_world: {:?}", gravity_world);
+        // println!("raw_accel_measurement: {:?}", raw_accel_measurement);
+        // println!("corrected_accel_body: {:?}", corrected_accel_body);
+        // println!("accel_world: {:?}", accel_world);
+        // println!("gravity_world: {:?}", gravity_world);
 
         // --- 4. Orientation Derivative ---
         // Create the pure quaternion for the angular velocity.

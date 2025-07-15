@@ -180,8 +180,6 @@ pub enum ImuConfig {
     SixDof {
         name: String,
         rate: f32,
-        #[serde(default = "default_base_link")]
-        parent_frame: String,
         #[serde(default)]
         transform: Pose,
         // Be explicit about what the noise values mean
@@ -193,8 +191,6 @@ pub enum ImuConfig {
     NineDof {
         name: String,
         rate: f32,
-        #[serde(default = "default_base_link")]
-        parent_frame: String,
         #[serde(default)]
         transform: Pose,
         #[serde(default)]
@@ -240,18 +236,34 @@ impl ImuConfig {
         }
     }
 }
+/// Configuration parameters for a simulated GPS sensor.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GpsConfig {
+    /// A unique name for this sensor instance (e.g., "primary_gps").
     pub name: String,
+
+    /// The rate at which the GPS produces measurements, in Hz.
     pub rate: f32,
-    #[serde(default = "default_base_link")]
-    pub parent_frame: String,
+
+    /// The static transform (position and orientation) of the GPS antenna
+    /// relative to its parent frame.
     #[serde(default)]
-    transform: Pose,
+    pub transform: Pose,
+
+    /// The standard deviation of the noise to be added to the measurement,
+    /// in meters, for the [East, North, Up] axes respectively.
     #[serde(default)]
     pub noise_stddev: [f32; 3],
 }
 
+// We add helper methods for convenient and consistent access.
+impl GpsConfig {
+    /// Returns the relative pose of the GPS antenna.
+    pub fn get_relative_pose(&self) -> Pose {
+        self.transform
+    }
+}
 // --- LiDAR ---
 // LidarConfig is also an enum to handle different LiDAR types.
 #[derive(Debug, Clone, Deserialize)]
@@ -261,8 +273,6 @@ pub enum LidarConfig {
     Lidar2D {
         name: String,
         rate: f32,
-        #[serde(default = "default_base_link")]
-        parent_frame: String,
         #[serde(default)]
         transform: Pose,
         range: f32,
@@ -271,8 +281,6 @@ pub enum LidarConfig {
     Lidar3D {
         name: String,
         rate: f32,
-        #[serde(default = "default_base_link")]
-        parent_frame: String,
         #[serde(default)]
         transform: Pose,
         vertical_fov: f32,

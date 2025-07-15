@@ -299,7 +299,6 @@ pub fn world_model_event_processor(
             if let WorldModelComponent::Separate { estimator, .. } = &mut *module {
                 // --- Predict-to-Update using the LAST known control input ---
                 let dt = message.timestamp - estimator.get_state().last_update_timestamp;
-                println!("cache.u: {}", cache.u);
                 if dt > 1e-9 {
                     estimator.predict(dt, &cache.u, &context);
                 }

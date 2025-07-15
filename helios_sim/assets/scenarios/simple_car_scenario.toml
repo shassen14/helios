@@ -9,7 +9,7 @@ gravity = [0.0, -9.81, 0.0]
 
 [[agents]]
 name = "RoboCar-01"
-starting_pose = { translation = [0.0, 10.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose = { position = [50.0, 0.5, 0.0] }
 
 [agents.vehicle]
@@ -27,13 +27,20 @@ accel_noise_stddev = [0.01, 0.01, 0.01]
 gyro_noise_stddev = [0.01, 0.01, 0.01]
 transform = { translation = [0.1, 0.0, 0.0] } # Example relative transform
 
-# [[agents.sensors]]
-# kind = "Imu"                            # The top-level kind for the SensorRegistry
-# type = "NineDof"                        # The specific type for the IMU spawner to handle
-# name = "secondary_imu"
-# rate = 10.0
-# accel_noise_stddev = [1.01, 1.01, 1.01]
-# gyro_noise_stddev = [1.01, 1.01, 1.01]
+[[agents.sensors]]
+kind = "Gps"
+name = "primary_gps"
+rate = 5.0
+# Place the antenna on the roof, slightly forward.
+# This is a good, realistic spot for clear sky view.
+# [x, y, z] in the body frame: Forward, Left, Up.
+transform = { translation = [0.5, 0.0, 1.5], rotation = [0, 0, 0] }
+# --- Noise Characteristics (The Most Important Part) ---
+# Standard deviation in meters [East, North, Up].
+# This simulates real-world GPS performance in open sky.
+# Horizontal accuracy is usually better than vertical accuracy.
+noise_stddev = [0.5, 0.5, 0.5] # [x, y, z] in ENU
+
 
 [agents.autonomy_stack.world_model]
 # Inside this table, we place the estimator and mapper configs.
@@ -48,12 +55,6 @@ dynamics = "IntegratedImu"
 [agents.autonomy_stack.world_model.mapper]
 kind = "None"
 
-# [agents.autonomy_stack.estimator]
-# # name = "ekf_main"
-# kind = "Ekf"
-# rate = 100.0
-# process_noise = 0.01
-# dynamics = "ConstantAcceleration"
 
 # Placeholders for future modules
 # [[agents.autonomy_stack.mappers]]

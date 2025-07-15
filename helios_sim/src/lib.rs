@@ -4,6 +4,7 @@ use bevy::prelude::*;
 
 // Import the plugins defined within the simulation crate.
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
+use crate::simulation::plugins::sensors::gps::GpsPlugin;
 // use crate::simulation::plugins::estimation::ekf::EkfPlugin;
 use crate::simulation::plugins::sensors::imu::ImuPlugin;
 use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;
@@ -31,6 +32,8 @@ impl Plugin for HeliosSimulationPlugin {
             AckermannCarPlugin,
             // Adds the IMU sensor logic.
             ImuPlugin,
+            // Adds the GPS sensor logic.
+            GpsPlugin,
             // Adds the EKF estimation logic.
             WorldModelPlugin,
             // EkfPlugin,
