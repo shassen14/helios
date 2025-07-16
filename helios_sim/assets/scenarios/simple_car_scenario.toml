@@ -25,21 +25,21 @@ name = "primary_imu"
 rate = 100.0
 accel_noise_stddev = [0.01, 0.01, 0.01]
 gyro_noise_stddev = [0.01, 0.01, 0.01]
-transform = { translation = [0.1, 0.0, 0.0] } # Example relative transform
+transform = { translation = [0.0, 0.0, 0.0] } # Example relative transform
 
 [[agents.sensors]]
 kind = "Gps"
 name = "primary_gps"
-rate = 5.0
+rate = 50.0
 # Place the antenna on the roof, slightly forward.
 # This is a good, realistic spot for clear sky view.
 # [x, y, z] in the body frame: Forward, Left, Up.
-transform = { translation = [0.5, 0.0, 1.5], rotation = [0, 0, 0] }
+transform = { translation = [0.0, 0.0, 0.0], rotation = [0, 0, 0] }
 # --- Noise Characteristics (The Most Important Part) ---
 # Standard deviation in meters [East, North, Up].
 # This simulates real-world GPS performance in open sky.
 # Horizontal accuracy is usually better than vertical accuracy.
-noise_stddev = [0.5, 0.5, 0.5] # [x, y, z] in ENU
+noise_stddev = [1.5, 1.5, 2.25] # [x, y, z] in ENU
 
 
 [agents.autonomy_stack.world_model]
@@ -49,8 +49,13 @@ noise_stddev = [0.5, 0.5, 0.5] # [x, y, z] in ENU
 
 [agents.autonomy_stack.world_model.estimator]
 kind = "Ekf"
-process_noise = 0.01
+process_noise = 0.5
 dynamics = "IntegratedImu"
+# These are good, aggressive starting values for tuning.
+# They tell the filter not to be overconfident in its model.
+unmodeled_accel_stddev = 0.8 # m/s^2
+accel_bias_instability = 0.1 # m/s^2 / sqrt(Hz)
+gyro_bias_instability = 0.02 # rad/s / sqrt(Hz)
 
 [agents.autonomy_stack.world_model.mapper]
 kind = "None"

@@ -358,10 +358,37 @@ pub struct EkfConfig {
     // Defaults to "VehicleDefault" if not provided.
     #[serde(default = "default_dynamics_model")]
     pub dynamics: String,
+
+    /// Standard deviation representing the instability of the accelerometer bias.
+    /// Higher values mean the filter trusts its bias estimate less and adapts more quickly.
+    /// Units: m/s^2 / sqrt(Hz)
+    #[serde(default = "default_accel_bias_instability")]
+    pub accel_bias_instability: f64,
+
+    /// Standard deviation representing the instability of the gyroscope bias.
+    /// Units: rad/s / sqrt(Hz)
+    #[serde(default = "default_gyro_bias_instability")]
+    pub gyro_bias_instability: f64,
+
+    /// Standard deviation representing unmodeled coordinate accelerations (e.g., from
+    /// drag, friction, bumps). This adds uncertainty directly to the velocity prediction.
+    /// Units: m/s^2
+    #[serde(default = "default_unmodeled_accel_stddev")]
+    pub unmodeled_accel_stddev: f64,
 }
 
 fn default_dynamics_model() -> String {
     "VehicleDefault".to_string()
+}
+
+fn default_accel_bias_instability() -> f64 {
+    0.05
+}
+fn default_gyro_bias_instability() -> f64 {
+    0.005
+}
+fn default_unmodeled_accel_stddev() -> f64 {
+    0.3
 }
 
 // Example for a future UKF config

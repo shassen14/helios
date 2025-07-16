@@ -99,10 +99,43 @@ pub fn spawn_world_model_modules(
 
                             let state_layout = standard_ins_state_layout(agent_handle);
                             let initial_state = FrameAwareState::new(state_layout, 1.0, 0.0);
-                            let mut q_matrix = DMatrix::zeros(16, 16);
-                            for i in 10..16 {
-                                q_matrix[(i, i)] = ekf_config.process_noise.powi(2);
-                            }
+
+                            // --- 3. Construct the Physically Meaningful Process Noise Matrix (Q) ---
+                            let state_dim = 16;
+                            let mut q_matrix = DMatrix::<f64>::zeros(state_dim, state_dim);
+
+                            // Get the standard deviation values from the config.
+                            let unmodeled_accel_std = ekf_config.unmodeled_accel_stddev;
+                            let accel_bias_instability = ekf_config.accel_bias_instability;
+                            let gyro_bias_instability = ekf_config.gyro_bias_instability;
+
+                            // Convert standard deviations to variances (sigma^2).
+                            let accel_variance = unmodeled_accel_std.powi(2);
+                            let accel_bias_variance = accel_bias_instability.powi(2);
+                            let gyro_bias_variance = gyro_bias_instability.powi(2);
+
+                            // --- Inject noise into the appropriate states ---
+
+                            // A. Unmodeled "shake" or external forces (e.g., drag, bumps).
+                            // This adds uncertainty directly to the velocity states.
+                            // This is a simplified model. A more formal approach involves the input matrix B,
+                            // but this is a very effective and common practical implementation.
+                            q_matrix[(3, 3)] = accel_variance; // Vx
+                            q_matrix[(4, 4)] = accel_variance; // Vy
+                            q_matrix[(5, 5)] = accel_variance; // Vz
+
+                            // B. Random walk of the accelerometer biases.
+                            // This models the slow drift of the sensor's zero-point.
+                            // Indices 10, 11, 12 are for b_ax, b_ay, b_az.
+                            q_matrix[(10, 10)] = accel_bias_variance;
+                            q_matrix[(11, 11)] = accel_bias_variance;
+                            q_matrix[(12, 12)] = accel_bias_variance;
+
+                            // C. Random walk of the gyroscope biases.
+                            // Indices 13, 14, 15 are for b_wx, b_wy, b_wz.
+                            q_matrix[(13, 13)] = gyro_bias_variance;
+                            q_matrix[(14, 14)] = gyro_bias_variance;
+                            q_matrix[(15, 15)] = gyro_bias_variance;
 
                             let ekf = ExtendedKalmanFilter::new(
                                 initial_state,

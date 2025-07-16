@@ -56,9 +56,9 @@ impl StateEstimator for ExtendedKalmanFilter {
 
         // --- 1. Get current state and dynamics model ---
         let dynamics = &self.dynamics_model;
-        let x = &self.state.vector;
-        let p = &self.state.covariance;
-        let t = self.state.last_update_timestamp;
+        let x_old = &self.state.vector;
+        let p_old = &self.state.covariance;
+        let t_old = self.state.last_update_timestamp;
 
         // Ensure control input `u` has the correct dimension for the dynamics model.
         let u_sized = if u.nrows() == dynamics.get_control_dim() {
@@ -73,27 +73,37 @@ impl StateEstimator for ExtendedKalmanFilter {
 
         // --- 2. Predict the next state vector using numerical integration ---
         // x_pred = f(x, u, t)
-        let x_pred = dynamics.propagate(x, u_sized, t, dt, &RK4);
+        let x_new = dynamics.propagate(x_old, u_sized, t_old, dt, &RK4);
 
         // --- 3. Linearize the dynamics by calculating the state transition matrix (Jacobian F) ---
         // For an EKF with a discrete time step, we often use an approximation:
         // F_k ≈ I + A * dt
         // But a more accurate way is to use the full matrix exponential if possible,
         // or just the calculated Jacobian `A` from the continuous model. We will use `A`.
-        let (a_jac, _b_jac) = dynamics.calculate_jacobian(x, u_sized, t);
+        // --- 2. Calculate State Transition and Noise Input Matrices ---
+        // A = ∂f/∂x, B = ∂f/∂u
+        let (a_jac, b_jac) = dynamics.calculate_jacobian(x_old, u, t_old);
 
         // Discretize the state transition matrix: F ≈ I + A*dt
-        let f_k = DMatrix::<f64>::identity(self.state.dim(), self.state.dim()) + a_jac * dt;
+        let f_k = DMatrix::<f64>::identity(self.state.dim(), self.state.dim()) + &a_jac * dt;
 
         // --- 4. Predict the next covariance matrix ---
-        // P_k+1|k = F_k * P_k|k * F_k^T + Q_d
-        // We can approximate the discrete process noise Q_d as Q * dt
-        let p_pred = &f_k * p * f_k.transpose() + &self.process_noise_q * dt;
+        // The correct approach is to apply the process noise `Q` *before* the main propagation.
+        // This represents adding uncertainty to the model itself before you predict.
+        let p_with_noise = p_old + &self.process_noise_q * dt;
+
+        // Now, propagate this "noisier" covariance forward using the state transition matrix.
+        // P_new = F * (P_old + Q*dt) * F^T
+        let p_new = &f_k * p_with_noise * f_k.transpose();
 
         // --- 5. Update the filter's internal state ---
-        self.state.vector = x_pred;
-        self.state.covariance = p_pred;
+        self.state.vector = x_new;
+        self.state.covariance = p_new;
         self.state.last_update_timestamp += dt;
+
+        // --- 5. (Optional but Recommended) Symmetrize Covariance ---
+        // Tiny numerical errors can make P slightly non-symmetric. This forces it.
+        self.state.covariance = (&self.state.covariance + self.state.covariance.transpose()) * 0.5;
     }
 
     /// Updates the state by fusing an aiding measurement.
@@ -129,11 +139,56 @@ impl StateEstimator for ExtendedKalmanFilter {
                 let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
                 let r_mat = model.get_r();
 
-                let y = z - z_pred; // Innovation
+                let y = z.clone() - &z_pred; // Innovation
+                                             // Only print for a specific sensor type to avoid log spam.
+                if matches!(
+                    &message.data,
+                    crate::messages::MeasurementData::GpsPosition(_)
+                ) {
+                    println!(
+                        "------------------- EKF GPS UPDATE (t={:.3}) -------------------",
+                        message.timestamp
+                    );
+
+                    // 1. WHAT THE FILTER THOUGHT (Prediction)
+                    // Transpose for easier reading in the console.
+                    println!("Predicted Measurement (z_pred): {}", z_pred.transpose());
+
+                    // 2. WHAT THE SENSOR SAW (Measurement)
+                    println!("Actual Measurement (z):         {}", z.transpose());
+
+                    // 3. THE SURPRISE (Innovation) - This is the most important value.
+                    // Is the filter consistently over/under-estimating?
+                    println!("Innovation (y = z - z_pred):    {}", y.transpose());
+
+                    // 4. THE UNCERTAINTY
+                    // Get the diagonal of the covariance matrix, which represents the variance
+                    // of each state. The sqrt gives the standard deviation (1-sigma).
+                    let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
+
+                    // Let's look at the uncertainty of the position states.
+                    println!(
+                        "State Sigma (Position):         [x: {:.3}, y: {:.3}, z: {:.3}]",
+                        p_diag_sqrt[0], p_diag_sqrt[1], p_diag_sqrt[2]
+                    );
+
+                    // And the uncertainty of the bias estimates.
+                    println!(
+                        "State Sigma (Accel Bias):       [x: {:.4}, y: {:.4}, z: {:.4}]",
+                        p_diag_sqrt[10], p_diag_sqrt[11], p_diag_sqrt[12]
+                    );
+                    println!(
+                        "State Sigma (Gyro Bias):        [x: {:.4}, y: {:.4}, z: {:.4}]",
+                        p_diag_sqrt[13], p_diag_sqrt[14], p_diag_sqrt[15]
+                    );
+                }
+
                 let s = &h_jac * &self.state.covariance * h_jac.transpose() + r_mat; // Innovation covariance
 
                 if let Some(s_inv) = s.try_inverse() {
                     let k_gain = &self.state.covariance * h_jac.transpose() * s_inv; // Kalman Gain
+
+                    let correction = &k_gain * &y;
 
                     self.state.vector += &k_gain * y;
                     let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
@@ -141,7 +196,14 @@ impl StateEstimator for ExtendedKalmanFilter {
 
                     // The timestamp is updated to the measurement's time.
                     self.state.last_update_timestamp = message.timestamp;
+
+                    // What correction is being applied to the biases?
+                    println!(
+                        "Bias Correction (Accel):        {}",
+                        correction.fixed_rows::<3>(10).transpose()
+                    );
                 }
+                println!("-----------------------------------------------------------------");
             }
         }
         // If predict_measurement returned None, we simply do nothing.

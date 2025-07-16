@@ -1,7 +1,9 @@
 // helios_core/src/frames/mod.rs
 
 use crate::types::FrameHandle;
-use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
+use nalgebra::{
+    DMatrix, DVector, Isometry3, Matrix3, Quaternion, Translation3, UnitQuaternion, Vector3,
+};
 use std::hash::Hash;
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
@@ -15,6 +17,12 @@ pub enum FrameId {
     /// The specific origin of a sensor component.
     /// Identified by the sensor's own unique FrameHandle.
     Sensor(FrameHandle),
+}
+
+impl Default for FrameId {
+    fn default() -> Self {
+        FrameId::World
+    }
 }
 
 /// An enum that defines every possible variable that can exist in a state vector.
@@ -196,6 +204,62 @@ impl FrameAwareState {
             Some(quat)
         } else {
             // The quaternion components in the state layout are not contiguous.
+            None
+        }
+    }
+
+    /// Extracts the full 6-DOF pose (position and orientation) from the state vector.
+    ///
+    /// This method composes the results of `get_vector3` for position and
+    /// `get_orientation` for the quaternion into a single `nalgebra::Isometry3`.
+    ///
+    /// # Returns
+    /// * `Some(Isometry3<f64>)` if both the world-frame position and the orientation
+    ///   quaternion are found in the state vector.
+    /// * `None` if either the position or orientation components are missing.
+    pub fn get_pose_isometry(&self) -> Option<Isometry3<f64>> {
+        // 1. Get the position vector from the state.
+        // We specifically look for position in the World frame.
+        let position = self.get_vector3(&StateVariable::Px(FrameId::World))?;
+
+        // 2. Get the orientation quaternion from the state.
+        let orientation = self.get_orientation()?;
+
+        // 3. If both were successful, combine them into an Isometry3.
+        // The `?` operator above will cause the function to return `None`
+        // automatically if either `get_vector3` or `get_orientation` fail.
+        Some(Isometry3::from_parts(
+            Translation3::from(position),
+            orientation,
+        ))
+    }
+
+    pub fn get_sub_covariance_3x3(&self, start_variable: &StateVariable) -> Option<Matrix3<f64>> {
+        // This logic is very similar to get_vector3, but for the covariance matrix.
+        let (expected_y, expected_z) = match start_variable {
+            StateVariable::Px(_) => (
+                StateVariable::Py(Default::default()),
+                StateVariable::Pz(Default::default()),
+            ),
+            // ... other cases if needed ...
+            _ => return None,
+        };
+
+        let start_idx = self.find_idx(start_variable)?;
+
+        // Check for contiguity (simplified check for brevity)
+        if self.layout.get(start_idx + 1).map_or(false, |v| {
+            std::mem::discriminant(v) == std::mem::discriminant(&expected_y)
+        }) && self.layout.get(start_idx + 2).map_or(false, |v| {
+            std::mem::discriminant(v) == std::mem::discriminant(&expected_z)
+        }) {
+            // Extract the 3x3 block from the top-left of the covariance matrix.
+            Some(
+                self.covariance
+                    .fixed_view::<3, 3>(start_idx, start_idx)
+                    .into(),
+            )
+        } else {
             None
         }
     }
