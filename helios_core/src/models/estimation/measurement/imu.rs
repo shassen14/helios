@@ -101,7 +101,7 @@ impl Measurement for Imu6DofModel {
         // This numerical implementation is robust and works well here.
         let state_dim = filter_state.dim();
         let mut h_jac = DMatrix::zeros(6, state_dim);
-        let epsilon = 1e-7;
+        let epsilon = 1e-8;
 
         // We need a dummy message to pass to predict_measurement.
         // The data variant just needs to be the one this model accepts.

@@ -30,7 +30,7 @@ transform = { translation = [0.0, 0.0, 0.0] } # Example relative transform
 [[agents.sensors]]
 kind = "Gps"
 name = "primary_gps"
-rate = 50.0
+rate = 5.0
 # Place the antenna on the roof, slightly forward.
 # This is a good, realistic spot for clear sky view.
 # [x, y, z] in the body frame: Forward, Left, Up.
@@ -41,6 +41,15 @@ transform = { translation = [0.0, 0.0, 0.0], rotation = [0, 0, 0] }
 # Horizontal accuracy is usually better than vertical accuracy.
 noise_stddev = [1.5, 1.5, 2.25] # [x, y, z] in ENU
 
+
+[[agents.sensors]]
+kind = "Magnetometer"
+name = "primary_mag"
+rate = 50.0           # Magnetometers are often fast
+# Usually co-located with the IMU
+transform = { translation = [0.1, 0.0, 0.0] }
+# Noise is usually given in micro-Teslas, but here it's an arbitrary unit.
+noise_stddev = [0.05, 0.05, 0.05]
 
 [agents.autonomy_stack.world_model]
 # Inside this table, we place the estimator and mapper configs.

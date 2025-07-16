@@ -158,6 +158,7 @@ pub enum SensorConfig {
     Imu(ImuConfig), // This variant holds the existing ImuConfig struct
     Gps(GpsConfig),
     Lidar(LidarConfig),
+    Magnetometer(MagnetometerConfig),
     // When you add a camera, you'll add a new variant here:
     // Camera(CameraConfig),
 }
@@ -169,6 +170,7 @@ impl SensorConfig {
             SensorConfig::Imu(_) => "Imu",
             SensorConfig::Gps(_) => "Gps",
             SensorConfig::Lidar(_) => "Lidar",
+            SensorConfig::Magnetometer(_) => "Magnetometer",
         }
     }
 }
@@ -264,6 +266,35 @@ impl GpsConfig {
         self.transform
     }
 }
+
+/// Configuration parameters for a simulated 3-axis magnetometer.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MagnetometerConfig {
+    /// A unique name for this sensor instance.
+    pub name: String,
+
+    /// The rate at which the magnetometer produces measurements, in Hz.
+    pub rate: f32,
+
+    /// The static transform (position and orientation) of the sensor
+    /// relative to its parent frame (the agent's body).
+    #[serde(default)]
+    pub transform: Pose,
+
+    /// The standard deviation of the noise to be added to the measurement,
+    /// in micro-teslas (uT) or other unit, for the [X, Y, Z] body axes.
+    #[serde(default)]
+    pub noise_stddev: [f32; 3],
+}
+
+// Add helper methods for consistency
+impl MagnetometerConfig {
+    pub fn get_relative_pose(&self) -> Pose {
+        self.transform
+    }
+}
+
 // --- LiDAR ---
 // LidarConfig is also an enum to handle different LiDAR types.
 #[derive(Debug, Clone, Deserialize)]

@@ -120,20 +120,26 @@ impl StateEstimator for ExtendedKalmanFilter {
         let z_pred_option = model.predict_measurement(&self.state, message, context.tf.unwrap());
 
         if let Some(z_pred) = z_pred_option {
-            // --- We have a valid prediction! Now we can proceed. ---
-
-            // First, get the actual measurement vector `z` from the message data.
-            // This is safe to unwrap because if predict_measurement succeeded, the data
-            // type must be one it understands. A helper function would be cleaner here.
             if let Some(z_slice) = message.data.as_primary_slice() {
                 let z = DVector::from_row_slice(z_slice);
-
-                // Dimension safety check
                 if z.nrows() != z_pred.nrows() {
-                    // In core, we can't log. A good practice is to just return and do nothing.
-                    // The filter remains stable, just without the update.
                     return;
                 }
+
+                let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
+                let r_mat = model.get_r();
+                let y = z.clone() - &z_pred;
+
+                // --- Calculate the full Kalman update values once ---
+                let s = &h_jac * &self.state.covariance * h_jac.transpose() + r_mat;
+                let s_inv_option = s.try_inverse();
+
+                if s_inv_option.is_none() {
+                    return; // Can't proceed if S is not invertible.
+                }
+                let s_inv = s_inv_option.unwrap();
+                let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
+                let correction = &k_gain * &y;
 
                 // --- 3. Perform the standard EKF update equations ---
                 let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
@@ -141,69 +147,62 @@ impl StateEstimator for ExtendedKalmanFilter {
 
                 let y = z.clone() - &z_pred; // Innovation
                                              // Only print for a specific sensor type to avoid log spam.
-                if matches!(
-                    &message.data,
-                    crate::messages::MeasurementData::GpsPosition(_)
-                ) {
-                    println!(
-                        "------------------- EKF GPS UPDATE (t={:.3}) -------------------",
-                        message.timestamp
-                    );
+                match &message.data {
+                    crate::messages::MeasurementData::GpsPosition(_) => {
+                        println!(
+                            "------------------- EKF GPS UPDATE (t={:.3}) -------------------",
+                            message.timestamp
+                        );
+                        println!("Predicted Pos (z_pred): {}", z_pred.transpose());
+                        println!("Actual Pos (z):         {}", z.transpose());
+                        println!("Innovation (y):         {}", y.transpose());
 
-                    // 1. WHAT THE FILTER THOUGHT (Prediction)
-                    // Transpose for easier reading in the console.
-                    println!("Predicted Measurement (z_pred): {}", z_pred.transpose());
+                        let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
+                        println!(
+                            "State Sigma (Position):   [x: {:.3}, y: {:.3}, z: {:.3}]",
+                            p_diag_sqrt[0], p_diag_sqrt[1], p_diag_sqrt[2]
+                        );
 
-                    // 2. WHAT THE SENSOR SAW (Measurement)
-                    println!("Actual Measurement (z):         {}", z.transpose());
+                        // Log the corrections relevant to a GPS update
+                        println!(
+                            "Bias Correction (Accel):  {}",
+                            correction.fixed_rows::<3>(10).transpose()
+                        );
+                        println!(
+                            "-----------------------------------------------------------------"
+                        );
+                    }
+                    crate::messages::MeasurementData::Magnetometer(_) => {
+                        println!(
+                            "------------------- EKF MAG UPDATE (t={:.3}) -------------------",
+                            message.timestamp
+                        );
+                        println!("Predicted Mag (z_pred): {}", z_pred.transpose());
+                        println!("Actual Mag (z):         {}", z.transpose());
+                        println!("Innovation (y):         {}", y.transpose());
 
-                    // 3. THE SURPRISE (Innovation) - This is the most important value.
-                    // Is the filter consistently over/under-estimating?
-                    println!("Innovation (y = z - z_pred):    {}", y.transpose());
+                        let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
+                        println!(
+                            "State Sigma (Quaternion): [x: {:.4}, y: {:.4}, z: {:.4}, w: {:.4}]",
+                            p_diag_sqrt[6], p_diag_sqrt[7], p_diag_sqrt[8], p_diag_sqrt[9]
+                        );
 
-                    // 4. THE UNCERTAINTY
-                    // Get the diagonal of the covariance matrix, which represents the variance
-                    // of each state. The sqrt gives the standard deviation (1-sigma).
-                    let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
-
-                    // Let's look at the uncertainty of the position states.
-                    println!(
-                        "State Sigma (Position):         [x: {:.3}, y: {:.3}, z: {:.3}]",
-                        p_diag_sqrt[0], p_diag_sqrt[1], p_diag_sqrt[2]
-                    );
-
-                    // And the uncertainty of the bias estimates.
-                    println!(
-                        "State Sigma (Accel Bias):       [x: {:.4}, y: {:.4}, z: {:.4}]",
-                        p_diag_sqrt[10], p_diag_sqrt[11], p_diag_sqrt[12]
-                    );
-                    println!(
-                        "State Sigma (Gyro Bias):        [x: {:.4}, y: {:.4}, z: {:.4}]",
-                        p_diag_sqrt[13], p_diag_sqrt[14], p_diag_sqrt[15]
-                    );
+                        // Log the corrections relevant to a Magnetometer update
+                        println!(
+                            "Correction (Quaternion):  {}",
+                            correction.fixed_rows::<4>(6).transpose()
+                        );
+                        println!(
+                            "-----------------------------------------------------------------"
+                        );
+                    }
+                    _ => {} // No logging for other types
                 }
 
-                let s = &h_jac * &self.state.covariance * h_jac.transpose() + r_mat; // Innovation covariance
-
-                if let Some(s_inv) = s.try_inverse() {
-                    let k_gain = &self.state.covariance * h_jac.transpose() * s_inv; // Kalman Gain
-
-                    let correction = &k_gain * &y;
-
-                    self.state.vector += &k_gain * y;
-                    let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
-                    self.state.covariance = (i - k_gain * &h_jac) * &self.state.covariance;
-
-                    // The timestamp is updated to the measurement's time.
-                    self.state.last_update_timestamp = message.timestamp;
-
-                    // What correction is being applied to the biases?
-                    println!(
-                        "Bias Correction (Accel):        {}",
-                        correction.fixed_rows::<3>(10).transpose()
-                    );
-                }
-                println!("-----------------------------------------------------------------");
+                self.state.vector += correction;
+                let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
+                self.state.covariance = (i - k_gain * &h_jac) * &self.state.covariance;
+                self.state.last_update_timestamp = message.timestamp;
             }
         }
         // If predict_measurement returned None, we simply do nothing.

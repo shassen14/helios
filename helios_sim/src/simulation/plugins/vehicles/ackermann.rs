@@ -78,7 +78,7 @@ fn setup_ackermann_assets(
 ) {
     commands.insert_resource(AckermannAssets {
         body_mesh: meshes.add(Cuboid::new(1.8, 0.8, 4.0)),
-        body_material: materials.add(Color::srgb(0.7, 0.2, 0.2)),
+        body_material: materials.add(Color::srgba(0.7, 0.2, 0.2, 0.2)),
         wheel_mesh: meshes.add(Cylinder::new(0.3, 0.2)),
         wheel_material: materials.add(Color::srgb(0.1, 0.1, 0.1)),
     });

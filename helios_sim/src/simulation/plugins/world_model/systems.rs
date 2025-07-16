@@ -439,7 +439,7 @@ pub fn world_model_output_publisher(
             WorldModelComponent::Separate { estimator, mapper } => {
                 // Publish the estimated state
                 let state = estimator.get_state();
-                info!("state: {}", state.vector);
+                // info!("state: {}", state.vector);
                 topic_bus.publish("/state/estimated", state.clone());
 
                 // Publish the map

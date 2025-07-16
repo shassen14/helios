@@ -8,6 +8,7 @@ use crate::simulation::plugins::debugging::gimbal::DebugGimbalPlugin;
 use crate::simulation::plugins::sensors::gps::GpsPlugin;
 // use crate::simulation::plugins::estimation::ekf::EkfPlugin;
 use crate::simulation::plugins::sensors::imu::ImuPlugin;
+use crate::simulation::plugins::sensors::magnetometer::MagnetometerPlugin;
 use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;
 use crate::simulation::plugins::world::spawner::WorldSpawnerPlugin;
 use crate::simulation::plugins::world_model::WorldModelPlugin;
@@ -31,11 +32,11 @@ impl Plugin for HeliosSimulationPlugin {
             WorldSpawnerPlugin,
             // Adds the Ackermann vehicle logic.
             AckermannCarPlugin,
-            // Adds the IMU sensor logic.
+            // Add Sensors
             ImuPlugin,
-            // Adds the GPS sensor logic.
             GpsPlugin,
-            // Adds the EKF estimation logic.
+            MagnetometerPlugin,
+            // Add World Modeling / estimator and modeling
             WorldModelPlugin,
             DebugGimbalPlugin,
             // When you add new plugins (Lidar, Planners), you will add them here.

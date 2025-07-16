@@ -12,7 +12,7 @@ pub enum MeasurementData {
         magnetic_field: Vector3<f64>,
     },
     GpsPosition(Vector3<f64>),
-    // ...
+    Magnetometer(Vector3<f64>),
 }
 
 impl MeasurementData {
@@ -27,6 +27,7 @@ impl MeasurementData {
             MeasurementData::Imu6Dof(v) => Some(v.as_slice()),
             MeasurementData::Imu9Dof { base_data, .. } => Some(base_data.as_slice()),
             MeasurementData::GpsPosition(v) => Some(v.as_slice()),
+            MeasurementData::Magnetometer(v) => Some(v.as_slice()),
             // MeasurementData::GpsPositionVelocity(v) => Some(v.as_slice()),
             // Add other cases here as you add new variants.
         }

@@ -44,3 +44,4 @@ dyn_clone::clone_trait_object!(Measurement);
 
 pub mod gps;
 pub mod imu;
+pub mod magnetometer;
