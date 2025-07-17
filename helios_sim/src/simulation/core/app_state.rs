@@ -99,4 +99,6 @@ pub enum SimulationSet {
     // --- Phase 7: Synchronization ---
     /// Systems that sync the ground truth state
     StateSync,
+
+    Validation,
 }

@@ -5,6 +5,7 @@ use bevy::prelude::*;
 // Import the plugins defined within the simulation crate.
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
 use crate::simulation::plugins::debugging::gimbal::DebugGimbalPlugin;
+use crate::simulation::plugins::debugging::state_error::StateErrorDebugPlugin;
 use crate::simulation::plugins::sensors::gps::GpsPlugin;
 // use crate::simulation::plugins::estimation::ekf::EkfPlugin;
 use crate::simulation::plugins::sensors::imu::ImuPlugin;
@@ -39,6 +40,7 @@ impl Plugin for HeliosSimulationPlugin {
             // Add World Modeling / estimator and modeling
             WorldModelPlugin,
             DebugGimbalPlugin,
+            StateErrorDebugPlugin,
             // When you add new plugins (Lidar, Planners), you will add them here.
         ));
     }

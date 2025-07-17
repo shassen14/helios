@@ -27,9 +27,8 @@ use helios_core::{
 #[derive(Component)]
 pub struct Imu {
     pub timer: Timer,
-    // We could add noise parameters here if we want them to be configurable per-sensor at runtime
-    // pub accel_noise: Normal<f64>,
-    // pub gyro_noise: Normal<f64>,
+    accel_noise: [Normal<f64>; 3], // X, Y, Z
+    gyro_noise: [Normal<f64>; 3],  // X, Y, Z
 }
 
 pub struct ImuPlugin;
@@ -105,6 +104,16 @@ fn spawn_imu_sensors(
                             Duration::from_secs_f32(1.0 / imu_config.get_rate()),
                             TimerMode::Repeating,
                         ),
+                        accel_noise: [
+                            Normal::new(0.0, accel_std[0] as f64).unwrap(),
+                            Normal::new(0.0, accel_std[1] as f64).unwrap(),
+                            Normal::new(0.0, accel_std[2] as f64).unwrap(),
+                        ],
+                        gyro_noise: [
+                            Normal::new(0.0, gyro_std[0] as f64).unwrap(),
+                            Normal::new(0.0, gyro_std[1] as f64).unwrap(),
+                            Normal::new(0.0, gyro_std[2] as f64).unwrap(),
+                        ],
                     },
                     // The pure `helios_core` model, wrapped for use in Bevy.
                     MeasurementModel(Box::new(final_core_model)),
@@ -176,21 +185,39 @@ fn imu_sensor_system(
                 let perfect_gyro_sensor_frame = q_sensor_from_world * ground_truth.angular_velocity;
 
                 // --- 4. Create the Final Measurement Vector ---
-                let z = Vector6::new(
-                    perfect_accel_sensor_frame.x,
-                    perfect_accel_sensor_frame.y,
-                    perfect_accel_sensor_frame.z,
-                    perfect_gyro_sensor_frame.x,
-                    perfect_gyro_sensor_frame.y,
-                    perfect_gyro_sensor_frame.z,
+
+                let noisy_accel = Vector3::new(
+                    perfect_accel_sensor_frame.x + imu.accel_noise[0].sample(&mut rng.0),
+                    perfect_accel_sensor_frame.y + imu.accel_noise[1].sample(&mut rng.0),
+                    perfect_accel_sensor_frame.z + imu.accel_noise[2].sample(&mut rng.0),
                 );
+                let noisy_gyro = Vector3::new(
+                    perfect_gyro_sensor_frame.x + imu.gyro_noise[0].sample(&mut rng.0),
+                    perfect_gyro_sensor_frame.y + imu.gyro_noise[1].sample(&mut rng.0),
+                    perfect_gyro_sensor_frame.z + imu.gyro_noise[2].sample(&mut rng.0),
+                );
+
+                // Create the final 6D vector from the NOISY data.
+                let noisy_measurement = Vector6::new(
+                    noisy_accel.x,
+                    noisy_accel.y,
+                    noisy_accel.z,
+                    noisy_gyro.x,
+                    noisy_gyro.y,
+                    noisy_gyro.z,
+                );
+
+                // println!("coord_accel_world_enu: {}", coord_accel_world_enu);
+                // println!("gravity_world_enu: {}", gravity_world_enu);
+                // println!("proper_accel_world_enu: {}", proper_accel_world_enu);
+                // println!("IMU: {}", z);
 
                 // --- 5. Create and Send the Message ---
                 let pure_message = MeasurementMessage {
                     agent_handle: FrameHandle::from_entity(agent_entity),
                     sensor_handle: FrameHandle::from_entity(sensor_entity),
                     timestamp: time.elapsed_secs_f64(),
-                    data: MeasurementData::Imu6Dof(z), // Add noise here later
+                    data: MeasurementData::Imu6Dof(noisy_measurement),
                 };
 
                 measurement_writer.write(BevyMeasurementMessage(pure_message));

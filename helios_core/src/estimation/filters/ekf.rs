@@ -141,63 +141,58 @@ impl StateEstimator for ExtendedKalmanFilter {
                 let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
                 let correction = &k_gain * &y;
 
-                // --- 3. Perform the standard EKF update equations ---
-                let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
-                let r_mat = model.get_r();
+                // Only print for a specific sensor type to avoid log spam.
+                // match &message.data {
+                //     crate::messages::MeasurementData::GpsPosition(_) => {
+                //         println!(
+                //             "------------------- EKF GPS UPDATE (t={:.3}) -------------------",
+                //             message.timestamp
+                //         );
+                //         println!("Predicted Pos (z_pred): {}", z_pred.transpose());
+                //         println!("Actual Pos (z):         {}", z.transpose());
+                //         println!("Innovation (y):         {}", y.transpose());
 
-                let y = z.clone() - &z_pred; // Innovation
-                                             // Only print for a specific sensor type to avoid log spam.
-                match &message.data {
-                    crate::messages::MeasurementData::GpsPosition(_) => {
-                        println!(
-                            "------------------- EKF GPS UPDATE (t={:.3}) -------------------",
-                            message.timestamp
-                        );
-                        println!("Predicted Pos (z_pred): {}", z_pred.transpose());
-                        println!("Actual Pos (z):         {}", z.transpose());
-                        println!("Innovation (y):         {}", y.transpose());
+                //         let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
+                //         println!(
+                //             "State Sigma (Position):   [x: {:.3}, y: {:.3}, z: {:.3}]",
+                //             p_diag_sqrt[0], p_diag_sqrt[1], p_diag_sqrt[2]
+                //         );
 
-                        let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
-                        println!(
-                            "State Sigma (Position):   [x: {:.3}, y: {:.3}, z: {:.3}]",
-                            p_diag_sqrt[0], p_diag_sqrt[1], p_diag_sqrt[2]
-                        );
+                //         // Log the corrections relevant to a GPS update
+                //         println!(
+                //             "Bias Correction (Accel):  {}",
+                //             correction.fixed_rows::<3>(10).transpose()
+                //         );
+                //         println!(
+                //             "-----------------------------------------------------------------"
+                //         );
+                //     }
+                //     crate::messages::MeasurementData::Magnetometer(_) => {
+                //         println!(
+                //             "------------------- EKF MAG UPDATE (t={:.3}) -------------------",
+                //             message.timestamp
+                //         );
+                //         println!("Predicted Mag (z_pred): {}", z_pred.transpose());
+                //         println!("Actual Mag (z):         {}", z.transpose());
+                //         println!("Innovation (y):         {}", y.transpose());
 
-                        // Log the corrections relevant to a GPS update
-                        println!(
-                            "Bias Correction (Accel):  {}",
-                            correction.fixed_rows::<3>(10).transpose()
-                        );
-                        println!(
-                            "-----------------------------------------------------------------"
-                        );
-                    }
-                    crate::messages::MeasurementData::Magnetometer(_) => {
-                        println!(
-                            "------------------- EKF MAG UPDATE (t={:.3}) -------------------",
-                            message.timestamp
-                        );
-                        println!("Predicted Mag (z_pred): {}", z_pred.transpose());
-                        println!("Actual Mag (z):         {}", z.transpose());
-                        println!("Innovation (y):         {}", y.transpose());
+                //         let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
+                //         println!(
+                //             "State Sigma (Quaternion): [x: {:.4}, y: {:.4}, z: {:.4}, w: {:.4}]",
+                //             p_diag_sqrt[6], p_diag_sqrt[7], p_diag_sqrt[8], p_diag_sqrt[9]
+                //         );
 
-                        let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
-                        println!(
-                            "State Sigma (Quaternion): [x: {:.4}, y: {:.4}, z: {:.4}, w: {:.4}]",
-                            p_diag_sqrt[6], p_diag_sqrt[7], p_diag_sqrt[8], p_diag_sqrt[9]
-                        );
-
-                        // Log the corrections relevant to a Magnetometer update
-                        println!(
-                            "Correction (Quaternion):  {}",
-                            correction.fixed_rows::<4>(6).transpose()
-                        );
-                        println!(
-                            "-----------------------------------------------------------------"
-                        );
-                    }
-                    _ => {} // No logging for other types
-                }
+                //         // Log the corrections relevant to a Magnetometer update
+                //         println!(
+                //             "Correction (Quaternion):  {}",
+                //             correction.fixed_rows::<4>(6).transpose()
+                //         );
+                //         println!(
+                //             "-----------------------------------------------------------------"
+                //         );
+                //     }
+                //     _ => {} // No logging for other types
+                // }
 
                 self.state.vector += correction;
                 let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());

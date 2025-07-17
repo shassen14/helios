@@ -114,6 +114,7 @@ impl Plugin for SimulationSetupPlugin {
                     // Our system runs IMMEDIATELY AFTER the simulation.
                     SimulationSet::StateSync,
                 ),
+                SimulationSet::Validation,
             )
                 .chain(), // .chain() enforces the order of the tuples/sets
         );

@@ -165,7 +165,7 @@ fn gps_sensor_system(
                     data: MeasurementData::GpsPosition(noisy_position_enu),
                 };
 
-                println!("Gps message: {:?}", pure_message.data);
+                // println!("Gps message: {:?}", pure_message.data);
 
                 // 5. Wrap it in the Bevy event and send it.
                 measurement_writer.write(BevyMeasurementMessage(pure_message));

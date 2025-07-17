@@ -5,18 +5,6 @@ use crate::{
 use bevy::prelude::*;
 use nalgebra::{Isometry3, SymmetricEigen, Translation3, UnitQuaternion, Vector3};
 
-// =========================================================================
-// == Components & Plugin ==
-// =========================================================================
-
-/// A marker component for the gimbal representing the GROUND TRUTH pose.
-#[derive(Component)]
-pub struct GroundTruthGimbal;
-
-/// A marker component for the gimbal representing the ESTIMATED pose.
-#[derive(Component)]
-pub struct EstimatedPoseGimbal;
-
 /// A resource to hold the shared meshes and materials for the gimbals.
 #[derive(Resource)]
 struct GimbalAssets {
@@ -40,9 +28,9 @@ impl Plugin for DebugGimbalPlugin {
             .add_systems(
                 Update,
                 (
-                    draw_ground_truth_gimbal,
-                    draw_estimated_pose_gimbal,
-                    draw_covariance_ellipsoid,
+                    draw_ground_truth_gimbals,
+                    draw_estimated_pose_gimbals,
+                    // draw_covariance_ellipsoids,
                 )
                     .run_if(in_state(AppState::Running)),
             );
@@ -53,102 +41,75 @@ impl Plugin for DebugGimbalPlugin {
 // =========================================================================
 
 /// Draws a gimbal (a set of 3 colored axes) at the agent's ground truth pose.
-fn draw_ground_truth_gimbal(
+fn draw_ground_truth_gimbals(
     mut gizmos: Gizmos,
     // We query for the agent's GlobalTransform directly.
-    agent_query: Query<&GlobalTransform, With<GroundTruthState>>,
+    agent_query: Query<(Entity, &GlobalTransform), With<GroundTruthState>>,
 ) {
-    if let Ok(agent_transform) = agent_query.single() {
+    for (entity, agent_transform) in &agent_query {
         let length = 1.5;
-        let thickness = 4.0; // Gizmo lines use pixel thickness, not world units
 
-        // The `gizmos.axes()` function is a convenient way to draw a full coordinate frame.
-        // It takes a GlobalTransform and a length.
-        // It automatically handles drawing the three colored lines (X=red, Y=green, Z=blue).
+        // The `gizmos.axes` function is the simplest way to draw a coordinate frame.
+        // It draws three lines: Red for X, Green for Y, Blue for Z.
         gizmos.axes(*agent_transform, length);
 
-        // Alternatively, for thicker lines, we can use your original cuboid approach,
-        // but adapted for the `gizmos` API. Let's use `gizmos.line` for this.
-        let start = agent_transform.translation();
-        // X-Axis
-        gizmos.line(
-            start,
-            start + agent_transform.right() * length,
-            Color::srgb(1.0, 0.2, 0.2),
-        );
-        // .with_stroke_width(thickness);
-        // Y-Axis
-        gizmos.line(
-            start,
-            start + agent_transform.up() * length,
-            Color::srgb(0.2, 1.0, 0.2),
-        );
-        // .with_stroke_width(thickness);
-        // Z-Axis
-        gizmos.line(
-            start,
-            start + agent_transform.back() * length,
-            Color::srgb(0.2, 0.2, 1.0),
-        ) // Bevy is -Z forward
-          // .with_stroke_width(thickness);
+        // Optional: Add a text label to identify the ground truth gimbal.
+        // We draw it slightly above the agent's origin.
+        // let label_position = agent_transform.translation() + agent_transform.up() * (length + 0.3);
+        // gizmos.text(label_position, format!("GT: {:?}", entity), Color::WHITE);
     }
 }
 
 /// Draws a gimbal at the pose estimated by the WorldModelComponent.
-fn draw_estimated_pose_gimbal(mut gizmos: Gizmos, module_query: Query<&WorldModelComponent>) {
-    if let Ok(module) = module_query.get_single() {
+fn draw_estimated_pose_gimbals(
+    mut gizmos: Gizmos,
+    module_query: Query<(Entity, &WorldModelComponent)>,
+) {
+    for (entity, module) in &module_query {
         if let WorldModelComponent::Separate { estimator, .. } = module {
-            let estimated_state = estimator.get_state();
-
-            if let Some(estimated_pose_enu) = estimated_state.get_pose_isometry() {
-                // 1. Convert our core ENU pose to a Bevy Transform.
+            if let Some(estimated_pose_enu) = estimator.get_state().get_pose_isometry() {
                 let bevy_transform = crate::simulation::core::transforms::enu_iso_to_bevy_transform(
                     &estimated_pose_enu,
                 );
-                // 2. Convert the Bevy Transform to a GlobalTransform for the gizmo.
                 let global_transform = GlobalTransform::from(bevy_transform);
 
-                let length = 1.2; // Make it slightly smaller to distinguish it
-                let thickness = 4.0;
+                let length = 1.2; // Smaller for the estimate
 
-                // Use the same line drawing logic as the ground truth gimbal.
+                // We can use `gizmos.axes` again for the estimated pose.
+                // To distinguish it, we can either make it smaller or use different colors
+                // by drawing the lines manually. Let's draw manually for variety.
+
                 let start = global_transform.translation();
-                // X-Axis
+
+                // X-Axis (Cyan to distinguish from GT's red)
                 gizmos.line(
                     start,
                     start + global_transform.right() * length,
                     Color::srgb(1.0, 0.2, 0.2),
                 );
-                // .with_stroke_width(thickness);
-                // Y-Axis
+                // Y-Axis (Yellow to distinguish from GT's green)
                 gizmos.line(
                     start,
                     start + global_transform.up() * length,
                     Color::srgb(0.2, 1.0, 0.2),
                 );
-                // .with_stroke_width(thickness);
-                // Z-Axis
+                // Z-Axis (Magenta to distinguish from GT's blue)
                 gizmos.line(
                     start,
                     start + global_transform.back() * length,
                     Color::srgb(0.2, 0.2, 1.0),
                 );
-                // .with_stroke_width(thickness);
 
-                // You can also add a label to make it even clearer
-                // gizmos.
-                // gizmos.text(
-                //     start + global_transform.up() * (length + 0.2),
-                //     "EKF",
-                //     Color::WHITE,
-                // );
+                // Add a text label
+                // let label_position = start + global_transform.up() * (length + 0.3);
+                // gizmos.text(label_position, format!("Est: {:?}", entity), Color::WHITE);
             }
         }
     }
 }
 
 /// Draws the 3D position covariance from the estimator as a semi-transparent ellipsoid.
-fn draw_covariance_ellipsoid(mut gizmos: Gizmos, module_query: Query<&WorldModelComponent>) {
+fn draw_covariance_ellipsoids(mut gizmos: Gizmos, module_query: Query<&WorldModelComponent>) {
     // Use get_single() to avoid panicking if there are zero or multiple agents.
     if let Ok(module) = module_query.single() {
         if let WorldModelComponent::Separate { estimator, .. } = module {
