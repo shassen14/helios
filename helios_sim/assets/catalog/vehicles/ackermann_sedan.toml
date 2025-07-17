@@ -1,0 +1,4 @@
+type = "Ackermann"
+wheelbase = 2.5
+max_steering_angle = 35.0 # deg
+max_steering_rate = 140.0 # deg/sec
