@@ -1,4 +1,5 @@
+// helios_sim/src/simulation/mod.rs
+
 pub mod core;
-pub mod models;
 pub mod plugins;
 pub mod utils;

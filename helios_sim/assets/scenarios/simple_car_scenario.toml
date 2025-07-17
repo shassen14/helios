@@ -1,0 +1,451 @@
+# helios_sim/assets/scenarios/simple_car_scenario.toml
+
+[simulation]
+duration_seconds = 120.0
+
+[world]
+map_file = "maps/starter_world.glb"
+gravity = [0.0, -9.81, 0.0]
+
+[[agents]]
+name = "RoboCar-01"
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { position = [50.0, 0.5, 0.0] }
+
+[agents.vehicle]
+type = "Ackermann"
+wheelbase = 2.5
+max_steering_angle = 35.0 # deg
+max_steering_rate = 140.0 # deg/sec
+
+# [[agents.sensors]]
+# kind = "Imu"
+# type = "SixDof"
+# name = "primary_imu"
+# rate = 100.0
+# accel_noise_stddev = [0.01, 0.01, 0.01]
+# gyro_noise_stddev = [0.01, 0.01, 0.01]
+# transform = { translation = [0.0, 0.0, 0.0] } # Example relative transform
+
+[[agents.sensors]]
+kind = "Imu"
+type = "SixDof"
+name = "high_fidelity_imu"
+rate = 200.0               # Higher-grade IMUs are often faster.
+# Noise values are significantly smaller.
+accel_noise_stddev = [0.001, 0.001, 0.001]
+gyro_noise_stddev = [0.001, 0.001, 0.001]
+
+# [[agents.sensors]]
+# kind = "Gps"
+# name = "primary_gps"
+# rate = 5.0
+# # Place the antenna on the roof, slightly forward.
+# # This is a good, realistic spot for clear sky view.
+# # [x, y, z] in the body frame: Forward, Left, Up.
+# transform = { translation = [0.0, 0.0, 0.0], rotation = [0, 0, 0] }
+# # --- Noise Characteristics (The Most Important Part) ---
+# # Standard deviation in meters [East, North, Up].
+# # This simulates real-world GPS performance in open sky.
+# # Horizontal accuracy is usually better than vertical accuracy.
+# noise_stddev = [1.5, 1.5, 2.25] # [x, y, z] in ENU
+
+[[agents.sensors]]
+kind = "Gps"
+name = "rtk_gps"
+rate = 10.0      # RTK systems often provide updates faster, 10-20Hz is common.
+# --- THE KEY CHANGE ---
+# Standard deviation is now in centimeters, not meters.
+noise_stddev = [0.02, 0.02, 0.05] # 2cm horizontal, 5cm vertical sigma
+
+
+# [[agents.sensors]]
+# kind = "Magnetometer"
+# name = "primary_mag"
+# rate = 50.0           # Magnetometers are often fast
+# # Usually co-located with the IMU
+# transform = { translation = [0.1, 0.0, 0.0] }
+# # Noise is usually given in micro-Teslas, but here it's an arbitrary unit.
+# noise_stddev = [0.05, 0.05, 0.05]
+
+[[agents.sensors]]
+kind = "Magnetometer"
+name = "fluxgate_mag"
+rate = 100.0          # Often faster
+# --- THE KEY CHANGE: Lower noise ---
+# The noise floor of the sensor is much lower.
+noise_stddev = [0.005, 0.005, 0.005] # 10x more precise
+
+[agents.autonomy_stack.world_model]
+# Inside this table, we place the estimator and mapper configs.
+# Serde will see these fields and correctly choose the `Separate` variant
+# of the `WorldModelConfig` enum.
+
+[agents.autonomy_stack.world_model.estimator]
+kind = "Ekf"
+process_noise = 0.5
+dynamics = "IntegratedImu"
+# These are good, aggressive starting values for tuning.
+# They tell the filter not to be overconfident in its model.
+# unmodeled_accel_stddev = 0.8 # m/s^2
+# accel_bias_instability = 0.1 # m/s^2 / sqrt(Hz)
+# gyro_bias_instability = 0.02 # rad/s / sqrt(Hz)
+unmodeled_accel_stddev = 0.1   # Much lower unmodeled forces
+accel_bias_instability = 0.005 # Bias is very stable
+gyro_bias_instability = 0.001  # Bias is very stable
+
+[agents.autonomy_stack.world_model.mapper]
+kind = "None"
+
+
+# Placeholders for future modules
+# [[agents.autonomy_stack.mappers]]
+# type = "OccupancyGrid2D"
+# rate = 5.0
+# resolution = 0.1
+
+[[agents.autonomy_stack.planners]]
+type = "AStar"
+rate = 2.0
+
+[[agents.autonomy_stack.controllers]]
+type = "Pid"
+rate = 50.0
+kp = 1.0
+ki = 0.1
+kd = 0.2
+
+
+[[agents]]
+name = "RoboCar-02"
+starting_pose = { translation = [
+    -10.0,
+    -10.0,
+    1.0,
+], rotation = [
+    0.0,
+    0.0,
+    0.0,
+] }
+goal_pose = { position = [50.0, 0.5, 0.0] }
+
+[agents.vehicle]
+type = "Ackermann"
+wheelbase = 2.5
+max_steering_angle = 35.0 # deg
+max_steering_rate = 140.0 # deg/sec
+
+# [[agents.sensors]]
+# kind = "Imu"
+# type = "SixDof"
+# name = "primary_imu"
+# rate = 100.0
+# accel_noise_stddev = [0.01, 0.01, 0.01]
+# gyro_noise_stddev = [0.01, 0.01, 0.01]
+# transform = { translation = [0.0, 0.0, 0.0] } # Example relative transform
+
+[[agents.sensors]]
+kind = "Imu"
+type = "SixDof"
+name = "high_fidelity_imu"
+rate = 200.0               # Higher-grade IMUs are often faster.
+# Noise values are significantly smaller.
+accel_noise_stddev = [0.001, 0.001, 0.001]
+gyro_noise_stddev = [0.001, 0.001, 0.001]
+
+# [[agents.sensors]]
+# kind = "Gps"
+# name = "primary_gps"
+# rate = 5.0
+# # Place the antenna on the roof, slightly forward.
+# # This is a good, realistic spot for clear sky view.
+# # [x, y, z] in the body frame: Forward, Left, Up.
+# transform = { translation = [0.0, 0.0, 0.0], rotation = [0, 0, 0] }
+# # --- Noise Characteristics (The Most Important Part) ---
+# # Standard deviation in meters [East, North, Up].
+# # This simulates real-world GPS performance in open sky.
+# # Horizontal accuracy is usually better than vertical accuracy.
+# noise_stddev = [1.5, 1.5, 2.25] # [x, y, z] in ENU
+
+[[agents.sensors]]
+kind = "Gps"
+name = "rtk_gps"
+rate = 10.0      # RTK systems often provide updates faster, 10-20Hz is common.
+# --- THE KEY CHANGE ---
+# Standard deviation is now in centimeters, not meters.
+noise_stddev = [0.02, 0.02, 0.05] # 2cm horizontal, 5cm vertical sigma
+
+
+# [[agents.sensors]]
+# kind = "Magnetometer"
+# name = "primary_mag"
+# rate = 50.0           # Magnetometers are often fast
+# # Usually co-located with the IMU
+# transform = { translation = [0.1, 0.0, 0.0] }
+# # Noise is usually given in micro-Teslas, but here it's an arbitrary unit.
+# noise_stddev = [0.05, 0.05, 0.05]
+
+[[agents.sensors]]
+kind = "Magnetometer"
+name = "fluxgate_mag"
+rate = 100.0          # Often faster
+# --- THE KEY CHANGE: Lower noise ---
+# The noise floor of the sensor is much lower.
+noise_stddev = [0.005, 0.005, 0.005] # 10x more precise
+
+[agents.autonomy_stack.world_model]
+# Inside this table, we place the estimator and mapper configs.
+# Serde will see these fields and correctly choose the `Separate` variant
+# of the `WorldModelConfig` enum.
+
+[agents.autonomy_stack.world_model.estimator]
+kind = "Ekf"
+process_noise = 0.5
+dynamics = "IntegratedImu"
+# These are good, aggressive starting values for tuning.
+# They tell the filter not to be overconfident in its model.
+# unmodeled_accel_stddev = 0.8 # m/s^2
+# accel_bias_instability = 0.1 # m/s^2 / sqrt(Hz)
+# gyro_bias_instability = 0.02 # rad/s / sqrt(Hz)
+unmodeled_accel_stddev = 0.1   # Much lower unmodeled forces
+accel_bias_instability = 0.005 # Bias is very stable
+gyro_bias_instability = 0.001  # Bias is very stable
+
+[agents.autonomy_stack.world_model.mapper]
+kind = "None"
+
+
+# Placeholders for future modules
+# [[agents.autonomy_stack.mappers]]
+# type = "OccupancyGrid2D"
+# rate = 5.0
+# resolution = 0.1
+
+[[agents.autonomy_stack.planners]]
+type = "AStar"
+rate = 2.0
+
+[[agents.autonomy_stack.controllers]]
+type = "Pid"
+rate = 50.0
+kp = 1.0
+ki = 0.1
+kd = 0.2
+
+
+[[agents]]
+name = "RoboCar-03"
+starting_pose = { translation = [10.0, 10.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { position = [50.0, 0.5, 0.0] }
+
+[agents.vehicle]
+type = "Ackermann"
+wheelbase = 2.5
+max_steering_angle = 35.0 # deg
+max_steering_rate = 140.0 # deg/sec
+
+[[agents.sensors]]
+kind = "Imu"
+type = "SixDof"
+name = "primary_imu"
+rate = 100.0
+accel_noise_stddev = [0.01, 0.01, 0.01]
+gyro_noise_stddev = [0.01, 0.01, 0.01]
+transform = { translation = [0.0, 0.0, 0.0] } # Example relative transform
+
+# [[agents.sensors]]
+# kind = "Imu"
+# type = "SixDof"
+# name = "high_fidelity_imu"
+# rate = 200.0               # Higher-grade IMUs are often faster.
+# # Noise values are significantly smaller.
+# accel_noise_stddev = [0.001, 0.001, 0.001]
+# gyro_noise_stddev = [0.001, 0.001, 0.001]
+
+[[agents.sensors]]
+kind = "Gps"
+name = "primary_gps"
+rate = 5.0
+# Place the antenna on the roof, slightly forward.
+# This is a good, realistic spot for clear sky view.
+# [x, y, z] in the body frame: Forward, Left, Up.
+transform = { translation = [0.0, 0.0, 0.0], rotation = [0, 0, 0] }
+# --- Noise Characteristics (The Most Important Part) ---
+# Standard deviation in meters [East, North, Up].
+# This simulates real-world GPS performance in open sky.
+# Horizontal accuracy is usually better than vertical accuracy.
+noise_stddev = [1.5, 1.5, 2.25] # [x, y, z] in ENU
+
+# [[agents.sensors]]
+# kind = "Gps"
+# name = "rtk_gps"
+# rate = 10.0      # RTK systems often provide updates faster, 10-20Hz is common.
+# # --- THE KEY CHANGE ---
+# # Standard deviation is now in centimeters, not meters.
+# noise_stddev = [0.02, 0.02, 0.05] # 2cm horizontal, 5cm vertical sigma
+
+
+[[agents.sensors]]
+kind = "Magnetometer"
+name = "primary_mag"
+rate = 50.0           # Magnetometers are often fast
+# Usually co-located with the IMU
+transform = { translation = [0.1, 0.0, 0.0] }
+# Noise is usually given in micro-Teslas, but here it's an arbitrary unit.
+noise_stddev = [0.05, 0.05, 0.05]
+
+# [[agents.sensors]]
+# kind = "Magnetometer"
+# name = "fluxgate_mag"
+# rate = 100.0          # Often faster
+# # --- THE KEY CHANGE: Lower noise ---
+# # The noise floor of the sensor is much lower.
+# noise_stddev = [0.005, 0.005, 0.005] # 10x more precise
+
+[agents.autonomy_stack.world_model]
+# Inside this table, we place the estimator and mapper configs.
+# Serde will see these fields and correctly choose the `Separate` variant
+# of the `WorldModelConfig` enum.
+
+[agents.autonomy_stack.world_model.estimator]
+kind = "Ekf"
+process_noise = 0.5
+dynamics = "IntegratedImu"
+# These are good, aggressive starting values for tuning.
+# They tell the filter not to be overconfident in its model.
+# unmodeled_accel_stddev = 0.8 # m/s^2
+# accel_bias_instability = 0.1 # m/s^2 / sqrt(Hz)
+# gyro_bias_instability = 0.02 # rad/s / sqrt(Hz)
+unmodeled_accel_stddev = 0.1   # Much lower unmodeled forces
+accel_bias_instability = 0.005 # Bias is very stable
+gyro_bias_instability = 0.001  # Bias is very stable
+
+[agents.autonomy_stack.world_model.mapper]
+kind = "None"
+
+
+# Placeholders for future modules
+# [[agents.autonomy_stack.mappers]]
+# type = "OccupancyGrid2D"
+# rate = 5.0
+# resolution = 0.1
+
+[[agents.autonomy_stack.planners]]
+type = "AStar"
+rate = 2.0
+
+[[agents.autonomy_stack.controllers]]
+type = "Pid"
+rate = 50.0
+kp = 1.0
+ki = 0.1
+kd = 0.2
+
+
+[[agents]]
+name = "RoboCar-04"
+starting_pose = { translation = [-10.0, 5.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { position = [50.0, 0.5, 0.0] }
+
+[agents.vehicle]
+type = "Ackermann"
+wheelbase = 2.5
+max_steering_angle = 35.0 # deg
+max_steering_rate = 140.0 # deg/sec
+
+# [[agents.sensors]]
+# kind = "Imu"
+# type = "SixDof"
+# name = "primary_imu"
+# rate = 100.0
+# accel_noise_stddev = [0.01, 0.01, 0.01]
+# gyro_noise_stddev = [0.01, 0.01, 0.01]
+# transform = { translation = [0.0, 0.0, 0.0] } # Example relative transform
+
+[[agents.sensors]]
+kind = "Imu"
+type = "SixDof"
+name = "high_fidelity_imu"
+rate = 200.0               # Higher-grade IMUs are often faster.
+# Noise values are significantly smaller.
+accel_noise_stddev = [0.001, 0.001, 0.001]
+gyro_noise_stddev = [0.001, 0.001, 0.001]
+
+# [[agents.sensors]]
+# kind = "Gps"
+# name = "primary_gps"
+# rate = 5.0
+# # Place the antenna on the roof, slightly forward.
+# # This is a good, realistic spot for clear sky view.
+# # [x, y, z] in the body frame: Forward, Left, Up.
+# transform = { translation = [0.0, 0.0, 0.0], rotation = [0, 0, 0] }
+# # --- Noise Characteristics (The Most Important Part) ---
+# # Standard deviation in meters [East, North, Up].
+# # This simulates real-world GPS performance in open sky.
+# # Horizontal accuracy is usually better than vertical accuracy.
+# noise_stddev = [1.5, 1.5, 2.25] # [x, y, z] in ENU
+
+[[agents.sensors]]
+kind = "Gps"
+name = "rtk_gps"
+rate = 10.0      # RTK systems often provide updates faster, 10-20Hz is common.
+# --- THE KEY CHANGE ---
+# Standard deviation is now in centimeters, not meters.
+noise_stddev = [0.02, 0.02, 0.05] # 2cm horizontal, 5cm vertical sigma
+
+
+# [[agents.sensors]]
+# kind = "Magnetometer"
+# name = "primary_mag"
+# rate = 50.0           # Magnetometers are often fast
+# # Usually co-located with the IMU
+# transform = { translation = [0.1, 0.0, 0.0] }
+# # Noise is usually given in micro-Teslas, but here it's an arbitrary unit.
+# noise_stddev = [0.05, 0.05, 0.05]
+
+[[agents.sensors]]
+kind = "Magnetometer"
+name = "fluxgate_mag"
+rate = 100.0          # Often faster
+# --- THE KEY CHANGE: Lower noise ---
+# The noise floor of the sensor is much lower.
+noise_stddev = [0.005, 0.005, 0.005] # 10x more precise
+
+[agents.autonomy_stack.world_model]
+# Inside this table, we place the estimator and mapper configs.
+# Serde will see these fields and correctly choose the `Separate` variant
+# of the `WorldModelConfig` enum.
+
+[agents.autonomy_stack.world_model.estimator]
+kind = "Ekf"
+process_noise = 0.5
+dynamics = "IntegratedImu"
+# These are good, aggressive starting values for tuning.
+# They tell the filter not to be overconfident in its model.
+# unmodeled_accel_stddev = 0.8 # m/s^2
+# accel_bias_instability = 0.1 # m/s^2 / sqrt(Hz)
+# gyro_bias_instability = 0.02 # rad/s / sqrt(Hz)
+unmodeled_accel_stddev = 0.1   # Much lower unmodeled forces
+accel_bias_instability = 0.005 # Bias is very stable
+gyro_bias_instability = 0.001  # Bias is very stable
+
+[agents.autonomy_stack.world_model.mapper]
+kind = "None"
+
+
+# Placeholders for future modules
+# [[agents.autonomy_stack.mappers]]
+# type = "OccupancyGrid2D"
+# rate = 5.0
+# resolution = 0.1
+
+[[agents.autonomy_stack.planners]]
+type = "AStar"
+rate = 2.0
+
+[[agents.autonomy_stack.controllers]]
+type = "Pid"
+rate = 50.0
+kp = 1.0
+ki = 0.1
+kd = 0.2
