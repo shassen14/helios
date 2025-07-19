@@ -56,7 +56,7 @@ impl Plugin for WorldSpawnerPlugin {
 fn start_world_asset_loading(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    config: Res<SimulationConfig>,
+    config: Res<ScenarioConfig>,
 ) {
     // --- Load Visual Scene ---
     let visual_scene_path = config.world.map_file.clone();

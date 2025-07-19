@@ -15,13 +15,14 @@
 use avian3d::prelude::*;
 use bevy::{log::LogPlugin, prelude::*};
 use helios_sim::prelude::AppState;
+use helios_sim::simulation::config::ConfigPlugin;
 use std::fs;
 
 // --- Project-Specific Imports ---
 // Import the main plugin from our simulation library crate.
 use helios_sim::HeliosSimulationPlugin;
 // Import the config struct to parse the TOML file.
-use helios_sim::simulation::core::config::SimulationConfig;
+use helios_sim::simulation::config::structs::ScenarioConfig;
 // Import the controller input component so our keyboard controller can use it.
 use helios_sim::simulation::plugins::vehicles::ackermann::VehicleControllerInput;
 
@@ -31,7 +32,7 @@ fn main() {
     let scenario_path = "assets/scenarios/simple_car_scenario.toml";
     println!("Loading scenario from: {}", scenario_path);
 
-    let config: SimulationConfig = match fs::read_to_string(scenario_path) {
+    let config: ScenarioConfig = match fs::read_to_string(scenario_path) {
         Ok(toml_string) => toml::from_str(&toml_string).unwrap_or_else(|err| {
             panic!("Failed to parse scenario.toml: {}", err);
         }),
@@ -65,6 +66,8 @@ fn main() {
         .insert_resource(config);
 
     app.init_state::<AppState>();
+
+    app.add_plugins(ConfigPlugin);
 
     // --- 3. Add the Main Helios Simulation Plugin ---
     // This single line brings in our entire simulation architecture:

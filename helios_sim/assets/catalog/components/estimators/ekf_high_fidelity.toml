@@ -1,5 +1,0 @@
-kind = "Ekf"
-dynamics = "IntegratedImu"
-unmodeled_accel_stddev = 0.1
-accel_bias_instability = 0.005
-gyro_bias_instability = 0.001

@@ -40,7 +40,7 @@ impl Plugin for HeliosSimulationPlugin {
             // Add World Modeling / estimator and modeling
             WorldModelPlugin,
             DebugGimbalPlugin,
-            // StateErrorDebugPlugin,
+            StateErrorDebugPlugin,
             // When you add new plugins (Lidar, Planners), you will add them here.
         ));
     }

@@ -1,0 +1,3 @@
+# Defines the "AStar" variant of the PlannerConfig enum.
+kind = "AStar"
+rate = 2.0

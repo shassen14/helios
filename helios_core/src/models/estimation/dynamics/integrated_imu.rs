@@ -1,10 +1,11 @@
+use crate::frames::layout::STANDARD_INS_STATE_DIM;
 use crate::models::estimation::dynamics::EstimationDynamics;
 use crate::prelude::MeasurementData;
 use crate::types::{Control, FrameHandle, State};
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 
 /// A dynamics model that integrates raw IMU measurements (as control inputs)
-/// to propagate a 15-state inertial navigation system (INS) state vector.
+/// to propagate a 156-state inertial navigation system (INS) state vector.
 ///
 /// This model correctly handles 3D rotations and estimates IMU biases.
 #[derive(Debug, Clone)]
@@ -45,7 +46,7 @@ impl EstimationDynamics for IntegratedImuModel {
     }
 
     fn get_derivatives(&self, x: &State, u: &Control, _t: f64) -> State {
-        let mut x_dot = DVector::zeros(16);
+        let mut x_dot = DVector::zeros(STANDARD_INS_STATE_DIM);
 
         // --- 1. Extract state variables and inputs  ---
         let velocity_world = x.fixed_rows::<3>(3);
@@ -103,10 +104,9 @@ impl EstimationDynamics for IntegratedImuModel {
     fn calculate_jacobian(&self, x: &State, u: &Control, t: f64) -> (DMatrix<f64>, DMatrix<f64>) {
         // --- Numerical Differentiation for the Dynamics Jacobians A and B ---
 
-        let state_dim = 16;
         let control_dim = self.get_control_dim();
-        let mut a_jac = DMatrix::zeros(state_dim, state_dim);
-        let mut b_jac = DMatrix::zeros(state_dim, control_dim);
+        let mut a_jac = DMatrix::zeros(STANDARD_INS_STATE_DIM, STANDARD_INS_STATE_DIM);
+        let mut b_jac = DMatrix::zeros(STANDARD_INS_STATE_DIM, control_dim);
 
         let epsilon = 1e-7; // A small perturbation value
 
@@ -114,7 +114,7 @@ impl EstimationDynamics for IntegratedImuModel {
         let x_dot_base = self.get_derivatives(x, u, t);
 
         // --- 2. Calculate Jacobian A (w.r.t. state x) ---
-        for j in 0..state_dim {
+        for j in 0..STANDARD_INS_STATE_DIM {
             // Create a copy of the state vector to perturb.
             let mut x_perturbed = x.clone();
             x_perturbed[j] += epsilon;

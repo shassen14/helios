@@ -1,0 +1,33 @@
+# helios_sim/assets/catalog/agents/ackermann_car.toml
+
+# This prefab defines a complete, spawnable car agent.
+# It acts as a template that brings together different components.
+
+# Default properties for this agent prefab.
+# These can be overridden by the scenario file.
+name = "DefaultCar"
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 180.0] }
+goal_pose = { position = [50.0, 0.0, 0.0] }
+
+# Use the 'from' keyword to pull in the vehicle definition
+# from our granular component file.
+vehicle = { from = "vehicles.ackermann_base" }
+
+# IMPORTANT: Even though we aren't using them, our `AgentConfig` struct
+# in Rust expects these fields. We provide empty defaults here to
+# satisfy the deserializer. Your `#[serde(default)]` attributes will handle this.
+sensors = { from = "sensor_suites.ins_basic" }
+
+[autonomy_stack]
+# The 'world_model' table groups the estimator and mapper.
+[autonomy_stack.world_model]
+type = "Separate"
+
+estimator = { from = "components.estimators.ekf_pro" }
+mapper = { from = "components.mappers.none" }
+
+# [autonomy_stack.planners]
+# a_star_global = { from = "components.planners.a_star" }
+
+# [autonomy_stack.controllers]
+# path_follower = { from = "components.controllers.pid_path_follower" }

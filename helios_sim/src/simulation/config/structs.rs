@@ -1,9 +1,10 @@
-// src/simulation/core/config.rs
+// helios_sim/src/simulation/config/structs.rs
 
 use bevy::prelude::{Resource, Transform};
+use figment::value::Value;
 use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::simulation::utils::serde_helpers;
 
@@ -16,7 +17,7 @@ use crate::simulation::utils::serde_helpers;
 /// This struct is the root of the data parsed from a `scenario.toml` file.
 #[derive(Resource, Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)] // Fail if the TOML has fields not in our struct
-pub struct SimulationConfig {
+pub struct ScenarioConfig {
     #[serde(default)] // Use default if the [simulation] section is missing
     pub simulation: Simulation,
 
@@ -25,7 +26,7 @@ pub struct SimulationConfig {
 
     // The TOML has `[[agents]]`, which becomes a Vec of AgentConfig structs.
     #[serde(default)]
-    pub agents: Vec<AgentConfig>,
+    pub agents: Vec<Value>,
 }
 
 // =========================================================================
@@ -81,7 +82,7 @@ pub struct AgentConfig {
     pub goal_pose: Pose,
     pub vehicle: Vehicle,
     #[serde(default)]
-    pub sensors: Vec<SensorConfig>,
+    pub sensors: HashMap<String, SensorConfig>,
     #[serde(default)]
     pub autonomy_stack: AutonomyStack,
 }
@@ -115,12 +116,8 @@ impl Pose {
     }
 }
 
-fn default_base_link() -> String {
-    "base_link".to_string()
-}
-
 #[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type")] // This tells serde to use the "type" field to decide which enum variant to parse
+#[serde(tag = "kind")] // This tells serde to use the "kind" field to decide which enum variant to parse
 #[serde(rename_all = "PascalCase")] // e.g., "Ackermann" in TOML maps to `Ackermann` variant
 pub enum Vehicle {
     Ackermann {
@@ -136,7 +133,7 @@ pub enum Vehicle {
 }
 
 impl Vehicle {
-    pub fn get_type_str(&self) -> &str {
+    pub fn get_kind_str(&self) -> &str {
         match self {
             Vehicle::Ackermann { .. } => "Ackermann",
             Vehicle::Quadcopter { .. } => "Quadcopter",
@@ -149,7 +146,7 @@ impl Vehicle {
 // =========================================================================
 
 // This enum can represent ANY sensor that might appear in the config list.
-// The `tag = "type"` tells Serde to look for a `type = "..."` field in the TOML
+// The `tag = "kind"` tells Serde to look for a `kind = "..."` field in the TOML
 // to decide which variant to parse.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind")]
@@ -296,9 +293,9 @@ impl MagnetometerConfig {
 }
 
 // --- LiDAR ---
-// LidarConfig is also an enum to handle different LiDAR types.
+// LidarConfig is also an enum to handle different LiDAR kinds.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum LidarConfig {
     Lidar2D {
@@ -323,19 +320,20 @@ pub enum LidarConfig {
 #[serde(deny_unknown_fields)]
 pub struct AutonomyStack {
     #[serde(default)]
-    pub world_model: WorldModelConfig,
+    pub world_model: Option<WorldModelConfig>,
 
     #[serde(default)]
-    pub planners: Vec<PlannerConfig>,
+    pub planners: HashMap<String, PlannerConfig>,
 
     #[serde(default)]
-    pub controllers: Vec<ControllerConfig>,
+    pub controllers: HashMap<String, ControllerConfig>,
 }
 
 // --- The WorldModelConfig Enum ---
 // This enum defines the mutually exclusive ways to configure the world model.
 #[derive(Debug, Deserialize, Clone)]
-#[serde(untagged)] // We keep untagged to choose between Separate and Combined
+#[serde(tag = "type")] // Look for a field named "type".
+#[serde(rename_all = "PascalCase")] // "Separate" in TOML maps to this.
 pub enum WorldModelConfig {
     CombinedSlam {
         slam: SlamConfig,
@@ -357,8 +355,8 @@ impl Default for WorldModelConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "kind")]
-// The "type" field in TOML determines the variant
+#[serde(tag = "kind", content = "config")]
+// The "kind" field in TOML determines the variant
 #[serde(rename_all = "PascalCase")]
 pub enum EstimatorConfig {
     Ekf(EkfConfig), // We wrap a specific struct for clarity
@@ -366,14 +364,7 @@ pub enum EstimatorConfig {
 }
 
 impl EstimatorConfig {
-    // pub fn get_name(&self) -> &str {
-    //     match self {
-    //         EstimatorConfig::Ekf(c) => &c.name,
-    //         EstimatorConfig::Ukf(c) => &c.name,
-    //     }
-    // }
-
-    pub fn get_type_str(&self) -> &str {
+    pub fn get_kind_str(&self) -> &str {
         match self {
             EstimatorConfig::Ekf(_) => "Ekf",
             EstimatorConfig::Ukf(_) => "Ukf",
@@ -383,43 +374,59 @@ impl EstimatorConfig {
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct EkfConfig {
-    // pub name: String,
-    // pub rate: f32,
-    pub process_noise: f64,
-    // Defaults to "VehicleDefault" if not provided.
-    #[serde(default = "default_dynamics_model")]
-    pub dynamics: String,
+    // This field now becomes an enum that bundles the model type
+    // with its specific tuning parameters.
+    pub dynamics: EkfDynamicsConfig,
+}
 
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type")] // Use the 'type' field in TOML to select the variant.
+#[serde(rename_all = "PascalCase")]
+pub enum EkfDynamicsConfig {
+    // This variant is for your existing IMU-based model.
+    IntegratedImu(ImuProcessNoiseConfig),
+
+    // This variant is for a future Ackermann odometry model.
+    AckermannOdometry(AckermannProcessNoiseConfig),
+
+    // This variant is for a future quadcopter model.
+    Quadcopter(QuadcopterProcessNoiseConfig),
+}
+
+// A struct holding only the process noise parameters for the IMU model.
+#[derive(Debug, Deserialize, Clone)]
+pub struct ImuProcessNoiseConfig {
+    /// Velocity Random Walk (N): The standard deviation of the white noise on the accelerometer.
+    /// This is your accel_noise_stddev from the sensor config. Units: m/s² / sqrt(Hz).
+    pub accel_noise_stddev: f64,
+    /// Angle Random Walk (N_g): The standard deviation of the white noise on the gyroscope.
+    /// This is your gyro_noise_stddev. Units: rad/s / sqrt(Hz).
+    pub gyro_noise_stddev: f64,
     /// Standard deviation representing the instability of the accelerometer bias.
     /// Higher values mean the filter trusts its bias estimate less and adapts more quickly.
     /// Units: m/s^2 / sqrt(Hz)
-    #[serde(default = "default_accel_bias_instability")]
     pub accel_bias_instability: f64,
-
     /// Standard deviation representing the instability of the gyroscope bias.
     /// Units: rad/s / sqrt(Hz)
-    #[serde(default = "default_gyro_bias_instability")]
     pub gyro_bias_instability: f64,
-
-    /// Standard deviation representing unmodeled coordinate accelerations (e.g., from
-    /// drag, friction, bumps). This adds uncertainty directly to the velocity prediction.
-    /// Units: m/s^2
-    #[serde(default = "default_unmodeled_accel_stddev")]
-    pub unmodeled_accel_stddev: f64,
 }
 
-fn default_dynamics_model() -> String {
-    "VehicleDefault".to_string()
+// A struct holding only the process noise parameters for an Ackermann model.
+#[derive(Debug, Deserialize, Clone)]
+pub struct AckermannProcessNoiseConfig {
+    // Uncertainty in forward velocity, e.g., from wheel slip.
+    pub velocity_stddev: f64,
+    // Uncertainty in how much the robot turns, e.g., from wheel slip during turns.
+    pub yaw_rate_stddev: f64,
 }
 
-fn default_accel_bias_instability() -> f64 {
-    0.05
-}
-fn default_gyro_bias_instability() -> f64 {
-    0.005
-}
-fn default_unmodeled_accel_stddev() -> f64 {
-    0.3
+// A struct holding only the process noise parameters for a quadcopter model.
+#[derive(Debug, Deserialize, Clone)]
+pub struct QuadcopterProcessNoiseConfig {
+    // Uncertainty in forces acting on the drone.
+    pub force_stddev: f64,
+    // Uncertainty in torques acting on the drone.
+    pub torque_stddev: f64,
 }
 
 // Example for a future UKF config
@@ -448,7 +455,7 @@ pub enum SlamConfig {
     FactorGraphSlam(FactorGraphSlamConfig),
 }
 
-// Define config structs for each SLAM type
+// Define config structs for each SLAM kind
 #[derive(Debug, Deserialize, Clone)]
 pub struct EkfSlamConfig {/* TODO: ... params for EKF-SLAM ... */}
 
@@ -456,7 +463,7 @@ pub struct EkfSlamConfig {/* TODO: ... params for EKF-SLAM ... */}
 pub struct FactorGraphSlamConfig {/* TODO: ... params for FG-SLAM ... */}
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type")]
+#[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum PlannerConfig {
     AStar { rate: f32 },
@@ -464,7 +471,7 @@ pub enum PlannerConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type")]
+#[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum ControllerConfig {
     Pid {

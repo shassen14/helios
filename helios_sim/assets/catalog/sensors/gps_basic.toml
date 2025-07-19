@@ -1,0 +1,15 @@
+# helios_sim/assets/catalog/sensors/gps_basic.toml
+# Corresponds to the `SensorConfig::Gps` enum variant.
+kind = "Gps"
+name = "gps_basic"
+rate = 1.0
+# --- Noise Characteristics ---
+# Standard deviation in meters [East, North, Up].
+# This simulates real-world GPS performance in open sky.
+# Horizontal accuracy is usually better than vertical accuracy.
+# 2.5m horizontal, 4m vertical sigma
+noise_stddev = [2.5, 2.5, 4.0]
+# Place the antenna on the roof, slightly forward.
+# This is a good, realistic spot for clear sky view.
+# [x, y, z] in the body frame: Forward, Left, Up.
+transform = { translation = [0.0, 0.0, 0.0], rotation = [0, 0, 0] }

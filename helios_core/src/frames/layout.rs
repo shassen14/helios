@@ -1,7 +1,11 @@
+// helios_core/src/frames/layout.rs
 use crate::frames::{FrameId, StateVariable};
 use crate::types::FrameHandle;
 
-/// Returns the standard 15-dimensional state vector layout used for high-fidelity
+/// The standard dimension of the 16-state INS state vector.
+pub const STANDARD_INS_STATE_DIM: usize = 16;
+
+/// Returns the standard 16-dimensional state vector layout used for high-fidelity
 /// inertial navigation system (INS) filters.
 ///
 /// The state is composed of:

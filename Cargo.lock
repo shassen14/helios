@@ -2065,6 +2065,7 @@ checksum = "8cb01cd46b0cf372153850f4c6c272d9cbea2da513e07538405148f95bd789f3"
 dependencies = [
  "atomic",
  "serde",
+ "toml",
  "uncased",
  "version_check",
 ]
@@ -2489,6 +2490,7 @@ dependencies = [
  "rand_distr",
  "serde",
  "toml",
+ "walkdir",
 ]
 
 [[package]]

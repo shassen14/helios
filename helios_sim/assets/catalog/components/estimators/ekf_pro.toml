@@ -1,0 +1,20 @@
+# helios_sim/assets/catalog/components/estimators/ekf_pro.toml
+# This defines a pro, well-behaved Extended Kalman Filter configuration.
+# The `kind` key tells serde to use the `EstimatorConfig::Ekf` variant.
+kind = "Ekf"
+
+# The `config` table holds the parameters for the `EkfConfig` struct.
+[config]
+# The 'dynamics' table. The 'type' field selects the enum variant.
+[config.dynamics]
+type = "IntegratedImu"
+
+# An industrial-grade IMU has much lower noise.
+# Decrease by roughly an order of magnitude.
+accel_noise_stddev = 0.2
+gyro_noise_stddev = 0.01
+
+# The biases are much more stable.
+# Decrease by an order of magnitude.
+accel_bias_instability = 0.05
+gyro_bias_instability = 0.005

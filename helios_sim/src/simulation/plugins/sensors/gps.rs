@@ -54,11 +54,11 @@ fn spawn_gps_sensors(
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
 ) {
     for (agent_entity, agent_name, request) in &request_query {
-        for sensor_config in &request.0.sensors {
+        for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Gps(gps_config) = sensor_config {
                 info!(
                     "  -> Spawning GPS '{}' as child of agent '{}'",
-                    &gps_config.name,
+                    &sensor_name,
                     agent_name.as_str()
                 );
 

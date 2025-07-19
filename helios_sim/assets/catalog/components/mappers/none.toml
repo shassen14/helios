@@ -1,0 +1,3 @@
+# Defines the "None" variant of the MapperConfig enum.
+# For unit variants like this, only the `kind` tag is needed.
+kind = "None"

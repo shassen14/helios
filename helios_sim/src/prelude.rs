@@ -8,12 +8,9 @@ pub use bevy::prelude::*;
 pub use helios_core::prelude::*;
 
 // Re-export common simulation-specific types for easy access in other plugins.
+pub use crate::simulation::config::structs::*;
 pub use crate::simulation::core::app_state::{AppState, SceneBuildSet, SimulationSet};
 pub use crate::simulation::core::components::{EstimationDynamicsModel, MeasurementModel};
-pub use crate::simulation::core::config::{
-    AgentConfig, AutonomyStack, EkfConfig, EstimatorConfig, ImuConfig, Pose, SensorConfig,
-    SimulationConfig, Vehicle,
-};
 pub use crate::simulation::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::simulation::core::transforms::{TfTree, TrackedFrame};
 

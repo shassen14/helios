@@ -1,0 +1,13 @@
+# helios_sim/assets/catalog/sensors/imu_advanced.toml
+# Corresponds to the `SensorConfig::Imu` enum variant.
+kind = "Imu"
+# Corresponds to the `ImuConfig::SixDof` variant.
+type = "SixDof"
+name = "imu_advanced"
+# currently the max rate (Hz). 
+# Simulation time runs at 400 Hz so any higher will not actually run at that rate
+rate = 400.0
+transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+
+accel_noise_stddev = [0.001, 0.001, 0.001]
+gyro_noise_stddev = [0.0001, 0.0001, 0.0001]
