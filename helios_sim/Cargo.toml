@@ -23,6 +23,7 @@ rand = "0.8"
 rand_chacha = "0.3.1"                                          # match bevy
 rand_distr = "0.4.3"                                           # match bevy
 walkdir = "2.5.0"
+clap = { version = "4.5", features = ["derive"] }
 
 [dev-dependencies]
 approx = "0.5.1"

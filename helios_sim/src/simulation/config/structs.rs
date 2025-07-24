@@ -26,6 +26,18 @@ pub struct ScenarioConfig {
 
     // The TOML has `[[agents]]`, which becomes a Vec of AgentConfig structs.
     #[serde(default)]
+    pub agents: Vec<AgentConfig>,
+}
+
+// Temporary, helper struct for the initial file loading step,
+// because the `agents` field in the TOML is a list of raw Values.
+#[derive(Deserialize)]
+pub struct RawScenarioConfig {
+    #[serde(default)]
+    pub simulation: Simulation,
+    #[serde(default)]
+    pub world: World,
+    #[serde(default)]
     pub agents: Vec<Value>,
 }
 

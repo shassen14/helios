@@ -8,8 +8,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::prelude::*;
-use crate::simulation::config::ResolvedAgents;
-use crate::simulation::core::app_state::SimulationSet;
+use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::ground_truth_sync_system;
 use crate::simulation::core::prng::SimulationRng;
@@ -53,6 +52,11 @@ impl Plugin for SimulationSetupPlugin {
                 // We create a Duration from the calculated timestep.
                 Duration::from_secs_f64(fixed_update_timestep),
             ),
+        );
+
+        app.configure_sets(
+            OnEnter(AppState::AssetLoading),
+            (AssetLoadSet::Config, AssetLoadSet::Kickoff).chain(), // .chain() guarantees Config runs before Kickoff
         );
 
         // --- CONFIGURE THE SPAWNING PIPELINE ---
@@ -158,14 +162,10 @@ impl Plugin for SimulationSetupPlugin {
     }
 }
 
-fn spawn_agent_shells(
-    mut commands: Commands,
-    // The system now depends on the `ResolvedAgents` resource.
-    resolved_agents: Res<ResolvedAgents>,
-) {
+fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
     // The resolution and deserialization logic has been moved to the config module.
     // We can now simply iterate over the final, concrete `AgentConfig` structs.
-    for agent_config in &resolved_agents.0 {
+    for agent_config in &config.agents {
         info!(
             "[SPAWN] Posting spawn request for resolved agent: {}",
             &agent_config.name
@@ -190,55 +190,6 @@ fn spawn_agent_shells(
         ));
     }
 }
-
-// fn spawn_agent_shells(
-//     mut commands: Commands,
-//     config: Res<ScenarioConfig>,
-//     catalog: Res<PrefabCatalog>,
-// ) {
-//     for agent_value in &config.agents {
-//         info!("[SPAWN] Resolving agent configuration...");
-//         let resolved_agent_value = match resolve_value(agent_value, &catalog) {
-//             Ok(val) => val,
-//             Err(e) => {
-//                 error!("Failed to resolve agent config: {}", e);
-//                 continue;
-//             }
-//         };
-
-//         let agent_config: AgentConfig = match Value::deserialize(&resolved_agent_value) {
-//             Ok(cfg) => cfg,
-//             Err(e) => {
-//                 // This error is super helpful for debugging bad TOML files.
-//                 // It will tell you if a field is missing, has the wrong type, etc.
-//                 error!(
-//                     "Failed to deserialize resolved agent config into AgentConfig: {}",
-//                     e
-//                 );
-//                 continue;
-//             }
-//         };
-
-//         info!(
-//             "[SPAWN] Posting spawn request for resolved agent: {}",
-//             &agent_config.name
-//         );
-
-//         let starting_pose = &agent_config.starting_pose;
-//         let start_isometry = starting_pose.to_isometry();
-//         let start_transform = starting_pose.to_bevy_transform();
-
-//         commands.spawn((
-//             Name::new(agent_config.name.clone()),
-//             GroundTruthState {
-//                 pose: start_isometry,
-//                 ..default()
-//             },
-//             start_transform,
-//             SpawnAgentConfigRequest(agent_config),
-//         ));
-//     }
-// }
 
 fn cleanup_spawn_requests(
     mut commands: Commands,

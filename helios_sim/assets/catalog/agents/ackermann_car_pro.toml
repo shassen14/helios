@@ -1,0 +1,25 @@
+# =========================================================================
+# == Agent Prefab: Professional Ackermann Car ==
+# =========================================================================
+# This prefab defines a complete agent with a "professional" grade
+# hardware and software configuration.
+
+# --- Default Properties ---
+name = "ProCar"
+starting_pose = { translation = [0.0, 0.5, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { translation = [0.0, 0.5, 0.0] }
+
+# --- Hardware Configuration ---
+vehicle = { from = "vehicles.ackermann_base" }
+# Uses the sensor suite composed of all `_pro` sensor components.
+sensors = { from = "sensor_suites.ins_pro" }
+
+# --- Software (Autonomy) Configuration ---
+# Uses the autonomy stack tuned for higher-quality sensors.
+[autonomy_stack]
+# The 'world_model' table groups the estimator and mapper.
+[autonomy_stack.world_model]
+type = "Separate"
+
+estimator = { from = "components.estimators.ekf_pro" }
+# mapper = { from = "components.mappers.none" }

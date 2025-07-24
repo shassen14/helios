@@ -10,46 +10,36 @@
 //!
 //! To run this example:
 //! `cargo run --example 01_full_pipeline`
+//! `cargo run --example 01_full_pipeline -- --scenario assets/scenarios/simple_car_scenario.toml --headless`
+
+use clap::Parser;
+use helios_sim::cli::Cli;
 
 // --- Bevy Imports ---
 use avian3d::prelude::*;
 use bevy::{log::LogPlugin, prelude::*};
 use helios_sim::prelude::AppState;
 use helios_sim::simulation::config::ConfigPlugin;
-use std::fs;
 
 // --- Project-Specific Imports ---
 // Import the main plugin from our simulation library crate.
 use helios_sim::HeliosSimulationPlugin;
-// Import the config struct to parse the TOML file.
-use helios_sim::simulation::config::structs::ScenarioConfig;
 // Import the controller input component so our keyboard controller can use it.
 use helios_sim::simulation::plugins::vehicles::ackermann::VehicleControllerInput;
 
 fn main() {
-    // --- 1. Load Simulation Configuration ---
-    // In a real application, this path might come from a command-line argument.
-    let scenario_path = "assets/scenarios/simple_car_scenario.toml";
-    println!("Loading scenario from: {}", scenario_path);
-
-    let config: ScenarioConfig = match fs::read_to_string(scenario_path) {
-        Ok(toml_string) => toml::from_str(&toml_string).unwrap_or_else(|err| {
-            panic!("Failed to parse scenario.toml: {}", err);
-        }),
-        Err(e) => {
-            panic!(
-                "Could not find or read scenario file at '{}'. Error: {}",
-                scenario_path, e
-            );
-        }
-    };
+    // --- 1. Obtain Simulation Configuration ---
+    let cli = Cli::parse();
 
     let mut app = App::new();
 
-    // --- 2. Add Core Bevy Plugins & Resources ---
-    app
-        // Bevy's default plugins provide the core engine functionality (rendering, windowing, etc.).
-        .add_plugins(
+    if cli.headless {
+        // Run in headless mode: only add the core plugins needed for logic and physics.
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()));
+        info!("Running in headless mode.");
+    } else {
+        // Run in graphical mode: add the default plugins for rendering, windowing, etc.
+        app.add_plugins(
             DefaultPlugins.set(LogPlugin {
                 level: bevy::log::Level::INFO,
                 // A good filter for focusing on our crate's logs during development.
@@ -57,13 +47,17 @@ fn main() {
                     .to_string(),
                 ..default()
             }),
-        )
+        );
+    }
+    // --- 2. Add Core Bevy Plugins & Resources ---
+    app
+        // Bevy's default plugins provide the core engine functionality (rendering, windowing, etc.).
         // The Avian3D physics plugins.
         .add_plugins(PhysicsPlugins::default())
         // An Avian3D plugin to visualize colliders for debugging.
         .add_plugins(PhysicsDebugPlugin::default())
         // Insert the loaded configuration as a Bevy resource so all systems can access it.
-        .insert_resource(config);
+        .insert_resource(cli.clone());
 
     app.init_state::<AppState>();
 

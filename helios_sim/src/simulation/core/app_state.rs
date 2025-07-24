@@ -20,6 +20,18 @@ pub enum AppState {
     Paused,
 }
 
+/// System sets to control the order of execution during the AssetLoading state.
+/// This ensures configuration is loaded before assets that depend on it are requested.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AssetLoadSet {
+    /// Stage 1: Load and resolve all TOML configuration files from disk.
+    Config,
+    /// Stage 2: Kick off the loading of assets (like GLTFs) that are specified in the config.
+    Kickoff,
+    /// Stage 3: Systems that run on `Update` to check for asset load completion.
+    Check,
+}
+
 /// System sets to control the order of execution during the SceneBuilding state.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SceneBuildSet {

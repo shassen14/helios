@@ -16,18 +16,16 @@ use figment::{
 };
 
 // Re-export public types
-use crate::prelude::AppState;
+use crate::{cli::Cli, prelude::AppState, simulation::core::app_state::AssetLoadSet};
 use catalog::load_catalog_from_disk;
 pub use catalog::PrefabCatalog;
-pub use structs::{AgentConfig, ScenarioConfig};
+pub use structs::{AgentConfig, RawScenarioConfig, ScenarioConfig};
 
 pub struct ConfigPlugin;
 
 impl Plugin for ConfigPlugin {
     fn build(&self, app: &mut App) {
         app
-            // A resource to hold the final, resolved agent configurations.
-            .init_resource::<ResolvedAgents>()
             // The resource for the raw, unresolved catalog data.
             .init_resource::<PrefabCatalog>()
             // The resource for the top-level scenario config.
@@ -35,69 +33,51 @@ impl Plugin for ConfigPlugin {
             // Add all the systems that run at startup to load and process config.
             .add_systems(
                 OnEnter(AppState::AssetLoading),
-                (
-                    load_catalog_from_disk,
-                    load_and_resolve_scenario,
-                    transition_to_scene_building,
-                )
-                    .chain(),
+                (load_catalog_from_disk, load_and_resolve_scenario)
+                    .chain()
+                    .in_set(AssetLoadSet::Config),
             );
     }
 }
 
-#[derive(Resource, Default, Debug)]
-pub struct ResolvedAgents(pub Vec<AgentConfig>);
+fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res<PrefabCatalog>) {
+    let scenario_path = &cli.scenario;
+    info!("Loading scenario from: {:?}", scenario_path);
 
-fn load_and_resolve_scenario(
-    mut scenario_config: ResMut<ScenarioConfig>, // <-- We now mutate the main config resource
-    catalog: Res<PrefabCatalog>,
-    mut resolved_agents: ResMut<ResolvedAgents>,
-) {
-    // FIX 2: Use a hardcoded path for now instead of a CLI resource.
-    let scenario_path = "assets/scenarios/simple_car_scenario.toml";
-    info!("Loading scenario from: {}", scenario_path);
-
-    // Load the entire scenario file into our main ScenarioConfig resource.
-    let loaded_config: ScenarioConfig =
+    // 1. Load the file into the temporary `RawScenarioConfig`.
+    let raw_config: RawScenarioConfig =
         match Figment::new().merge(Toml::file(scenario_path)).extract() {
             Ok(s) => s,
-            Err(e) => {
-                panic!(
-                    "Failed to load or parse scenario file at {}: {}",
-                    scenario_path, e
-                );
-            }
+            Err(e) => panic!("Failed to load or parse scenario file: {}", e),
         };
 
-    // FIX 1: Instead of inserting separate resources, just populate the fields
-    // of the main ScenarioConfig resource.
-    scenario_config.simulation = loaded_config.simulation;
-    scenario_config.world = loaded_config.world;
-
-    // --- Resolve each agent against the catalog ---
-    for agent_value in &loaded_config.agents {
+    // 2. Resolve the raw agent values into a Vec<AgentConfig>.
+    let mut resolved_agents: Vec<AgentConfig> = Vec::new();
+    for agent_value in &raw_config.agents {
         match resolver::resolve_agent_value(agent_value, &catalog) {
-            Ok(resolved_value) => {
-                // FIX 3: Use `Value::deserialize` to convert the resolved Value to AgentConfig.
-                match Value::deserialize(&resolved_value) {
-                    Ok(agent_config) => {
-                        let agent_config: AgentConfig = agent_config; // Ensure type annotation
-                        info!(
-                            "Successfully resolved and deserialized agent: '{}'",
-                            &agent_config.name
-                        );
-                        resolved_agents.0.push(agent_config);
-                    }
-                    Err(e) => {
-                        error!("Failed to deserialize resolved agent config: {}. Value was: {:?}. Skipping agent.", e, resolved_value);
-                    }
+            Ok(resolved_value) => match Value::deserialize::<AgentConfig>(&resolved_value) {
+                Ok(agent_config) => {
+                    info!("Successfully resolved agent: '{}'", &agent_config.name);
+                    resolved_agents.push(agent_config);
                 }
-            }
-            Err(e) => {
-                error!("Failed to resolve agent config: {}. Skipping agent.", e);
-            }
+                Err(e) => error!(
+                    "Failed to deserialize resolved agent: {}. Value was: {:?}",
+                    e, resolved_value
+                ),
+            },
+            Err(e) => error!("Failed to resolve agent: {}", e),
         }
     }
+
+    // 3. Assemble the final, complete `ScenarioConfig` resource.
+    let final_config = ScenarioConfig {
+        simulation: raw_config.simulation,
+        world: raw_config.world,
+        agents: resolved_agents,
+    };
+
+    // 4. Insert the single, unified config as a resource.
+    commands.insert_resource(final_config);
 }
 
 fn transition_to_scene_building(mut next_state: ResMut<NextState<AppState>>) {
