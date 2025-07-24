@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{prelude::*, simulation::core::app_state::AssetLoadSet};
 use avian3d::prelude::*;
 use bevy::{
     asset::LoadState,
@@ -10,11 +10,11 @@ use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 // --- Resources to track loading state ---
 
 // Resource to hold the handle for the VISUAL scene GLB
-#[derive(Resource)]
+#[derive(Resource, Default)]
 struct VisualWorldHandle(Handle<Scene>);
 
 // Resource to hold the handle for the COLLIDER mesh GLB
-#[derive(Resource)]
+#[derive(Resource, Default)]
 struct ColliderWorldHandle(Handle<Gltf>);
 
 pub struct WorldSpawnerPlugin;
@@ -23,15 +23,23 @@ impl Plugin for WorldSpawnerPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(FlyCameraPlugin);
 
+        app.init_resource::<VisualWorldHandle>()
+            .init_resource::<ColliderWorldHandle>();
+
         app
             // --- STAGE 1: ASSET LOADING ---
-            // This system kicks off the loading for BOTH files.
-            .add_systems(OnEnter(AppState::AssetLoading), start_world_asset_loading)
-            // This system runs on Update, waiting for BOTH assets to be loaded
-            // before transitioning to the next state.
+            .add_systems(
+                OnEnter(AppState::AssetLoading),
+                start_world_asset_loading.in_set(AssetLoadSet::Kickoff),
+            )
+            // --- THE FIX ---
+            // This system sets the state, so it should only run IN the AssetLoading state.
+            // It should NOT run in subsequent states like SceneBuilding.
             .add_systems(
                 Update,
-                check_for_world_load_completion.run_if(in_state(AppState::AssetLoading)),
+                check_for_world_load_completion
+                    .in_set(AssetLoadSet::Check)
+                    .run_if(in_state(AppState::AssetLoading)), // <-- Add this run condition
             )
             // --- STAGE 2: SCENE BUILDING ---
             // These systems run once we enter the SceneBuilding state.
@@ -56,7 +64,7 @@ impl Plugin for WorldSpawnerPlugin {
 fn start_world_asset_loading(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
-    config: Res<SimulationConfig>,
+    config: Res<ScenarioConfig>,
 ) {
     // --- Load Visual Scene ---
     let visual_scene_path = config.world.map_file.clone();
@@ -87,12 +95,46 @@ fn start_world_asset_loading(
 }
 
 /// Checks if BOTH assets are finished loading before changing the state.
+// fn check_for_world_load_completion(
+//     mut next_state: ResMut<NextState<AppState>>,
+//     asset_server: Res<AssetServer>,
+//     visual_handle: Res<VisualWorldHandle>,
+//     collider_handle: Res<ColliderWorldHandle>,
+// ) {
+//     let visual_loaded = matches!(
+//         asset_server.get_load_state(&visual_handle.0),
+//         Some(LoadState::Loaded)
+//     );
+//     let collider_loaded = matches!(
+//         asset_server.get_load_state(&collider_handle.0),
+//         Some(LoadState::Loaded)
+//     );
+
+//     if visual_loaded && collider_loaded {
+//         next_state.set(AppState::SceneBuilding);
+//     }
+// }
+
+/// Checks if BOTH assets are finished loading before changing the state.
 fn check_for_world_load_completion(
     mut next_state: ResMut<NextState<AppState>>,
     asset_server: Res<AssetServer>,
     visual_handle: Res<VisualWorldHandle>,
     collider_handle: Res<ColliderWorldHandle>,
 ) {
+    println!("hello");
+    // The correct way to check if a handle is the default/uninitialized one
+    // is to compare it to the default value.
+    let default_scene_handle = Handle::<Scene>::default();
+    let default_gltf_handle = Handle::<Gltf>::default();
+
+    if visual_handle.0 == default_scene_handle || collider_handle.0 == default_gltf_handle {
+        // The real handles haven't been inserted by `start_world_asset_loading` yet.
+        // We are still in the first frame of the `AssetLoading` state, so we just wait.
+        return;
+    }
+
+    // This logic is now safe because we know the handles are valid.
     let visual_loaded = matches!(
         asset_server.get_load_state(&visual_handle.0),
         Some(LoadState::Loaded)
@@ -103,6 +145,7 @@ fn check_for_world_load_completion(
     );
 
     if visual_loaded && collider_loaded {
+        info!("[ASSETS] World visual and collider assets loaded successfully.");
         next_state.set(AppState::SceneBuilding);
     }
 }

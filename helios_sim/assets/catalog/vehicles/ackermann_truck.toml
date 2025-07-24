@@ -1,0 +1,5 @@
+# A heavier-duty vehicle model
+kind = "Ackermann"
+wheelbase = 3.5
+max_steering_angle = 30.0
+max_steering_rate = 120.0

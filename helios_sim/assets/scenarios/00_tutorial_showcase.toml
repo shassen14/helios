@@ -1,0 +1,126 @@
+# =========================================================================
+# == Helios Simulation: Tutorial Showcase Scenario ==
+# =========================================================================
+# This file demonstrates all the features of the Helios prefab and
+# override system. It is designed to be a comprehensive example for
+# creating custom simulations.
+#
+# --- Core Concepts ---
+# 1. Catalog & Prefabs: Reusable components (`.toml` files) are defined
+#    in the `assets/catalog/` directory. These are the building blocks.
+# 2. Inheritance (`from`): An object can inherit all its properties from a
+#    prefab in the catalog. This is the primary way to create agents.
+# 3. Overrides (Deep Merging): Any property inherited from a prefab can be
+#    overridden. Tables (like `sensors`) are deep-merged, allowing you
+#    to add, modify, or replace individual items.
+#
+# --- Units & Coordinate Systems ---
+# - All user-facing values are in SI units (meters, seconds) and DEGREES for angles.
+#   The simulator converts degrees to radians internally for calculations.
+#
+# - Vehicle Body Frame ("FLU"): A right-handed coordinate system attached to the agent.
+#     +X: Forward
+#     +Y: Left
+#     +Z: Up
+#
+# - World Navigation Frame ("ENU"): A right-handed coordinate system for global navigation.
+#     +X: East
+#     +Y: North
+#     +Z: Up
+#
+# - Component Transforms: Transforms for sensors and other components define the pose
+#   of the CHILD frame (e.g., the sensor) relative to the PARENT frame (e.g., the vehicle body).
+#   This `parent -> child` transform answers the question:
+#   "Where is the component located and oriented relative to its parent?"
+# =========================================================================
+
+[simulation]
+duration_seconds = 180.0
+seed = 2024
+
+[world]
+map_file = "maps/starter_world.glb"
+gravity = [0.0, -9.81, 0.0]         # Bevy World Frame [x, y, z]
+
+# =========================================================================
+# == Agent 1: The Baseline Vehicle ==
+# =========================================================================
+# This agent demonstrates the simplest use case: instantiating a complete
+# agent prefab with only minimal, instance-specific overrides.
+
+[[agents]]
+# Inherit all properties from the `ackermann_car_pro` prefab. This prefab
+# defines the vehicle type, a professional-grade sensor suite, and a
+# matching EKF tune.
+from = "agents.ackermann_car_pro"
+
+# Any key at this level is a direct override of the prefab's top-level keys.
+name = "ProCar-Baseline"
+# The agent's starting pose in the world (ENU) frame.
+# `rotation` is [roll, pitch, yaw] in degrees. 90 deg yaw is North.
+starting_pose = { translation = [0.0, 0.5, 1.0], rotation = [0.0, 0.0, 90.0] }
+goal_pose = { translation = [100.0, 50.0, 0.5] }
+
+
+# =========================================================================
+# == Agent 2: The Custom Research Vehicle ==
+# =========================================================================
+# This agent demonstrates the full power of the override system. We will
+# start with a basic car and upgrade it piece by piece.
+
+[[agents]]
+# Start with the most basic car prefab.
+from = "agents.ackermann_car_basic"
+
+name = "ResearchCar-Custom"
+starting_pose = { translation = [-10.0, 0.5, 1.0], rotation = [0.0, 0.0, 90.0] }
+goal_pose = { translation = [100.0, 50.0, 0.5] }
+
+# 1. REPLACEMENT: Replace the entire vehicle model with the 'truck' version.
+# The `from` key in the `vehicle` table here replaces the one from the base prefab.
+vehicle = { from = "vehicles.ackermann_truck" }
+
+
+# 2. DEEP MERGE: Modify and add to the sensor suite.
+# The `[agents.sensors]` header initiates a deep merge with the `sensors`
+# table inherited from the `ackermann_car_basic` prefab.
+
+# 2a. ADDING a new sensor:
+# The base suite has no LiDAR. We add one by defining a new key.
+# This new key, "front_lidar", is its unique instance name on this agent.
+[agents.sensors.secondary_gps]
+from = "sensors.gps_pro"
+# Override the transform to place the LiDAR.
+# Pose is in the Vehicle Body (FLU) frame [x, y, z].
+# This is 1.5m forward, 0.8m up from the vehicle's origin.
+transform = { translation = [1.5, 0.0, 0.8] }
+
+# 2b. MODIFYING an inherited sensor (including its transform):
+# The base suite has a sensor with the key `imu_basic`. We target that key.
+[agents.sensors.imu_basic]
+# Let's say this IMU is mounted tilted forward for better pitch observation.
+# We override both translation and rotation. `rotation` is [roll, pitch, yaw] in degrees.
+transform = { translation = [0.1, 0.0, 0.4], rotation = [0.0, -15.0, 0.0] }
+# We also override other properties. The deep merge preserves any properties
+# we don't mention (like `kind`, `type`, `noise`, etc.) from the base.
+name = "tilted_advanced_imu"
+rate = 500.0
+
+# 2c. REPLACING an inherited sensor component entirely:
+# The base suite has `gps_basic`. We want to swap it for an RTK-grade unit.
+[agents.sensors.gps_basic]
+# We override the 'from' key to point to a different component template.
+from = "sensors.gps_advanced"
+# And we can still override properties for this new component instance.
+transform = { translation = [0.0, 0.0, 1.3] } # Place it on the truck's roof.
+
+
+# 3. DEEP MERGE: Tuning the Autonomy Stack
+# We will use the `ekf_basic` tune from the base prefab, but we want to
+# adjust one of its parameters for this specific experiment.
+
+# The dot-key syntax navigates the nested tables.
+# This will find `[autonomy_stack.world_model.estimator.dynamics]` and
+# merge our change into it, preserving all other values.
+[agents.autonomy_stack.world_model.estimator.dynamics]
+gyro_bias_instability = 0.02 # Tighter tuning for this experiment.

@@ -1,16 +1,14 @@
 use avian3d::prelude::Gravity;
 use bevy::prelude::*;
 use helios_core::estimation::StateEstimator;
+use helios_core::frames::layout::STANDARD_INS_STATE_DIM;
 use helios_core::mapping::Mapper;
 use nalgebra::{DMatrix, DVector};
 use std::collections::HashMap;
 
-// Import from our own plugin's modules
-use super::types::FrameInputs;
-
 // Import from the rest of the simulation crate
 use crate::prelude::*;
-use crate::simulation::core::config::{EstimatorConfig, MapperConfig, WorldModelConfig};
+use crate::simulation::config::structs::{EstimatorConfig, MapperConfig, WorldModelConfig};
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::topics::TopicBus;
 use crate::simulation::plugins::world_model::components::{ControlInputCache, ModuleTimer};
@@ -18,12 +16,9 @@ use crate::simulation::plugins::world_model::WorldModelComponent;
 
 // Import from the core library
 use helios_core::{
-    estimation::filters::ekf::ExtendedKalmanFilter,
-    estimation::FilterContext,
-    frames::layout::standard_ins_state_layout,
-    mapping::NoneMapper,
-    models::estimation::{dynamics::integrated_imu::IntegratedImuModel, measurement::Measurement},
-    types::FrameHandle,
+    estimation::filters::ekf::ExtendedKalmanFilter, estimation::FilterContext,
+    frames::layout::standard_ins_state_layout, mapping::NoneMapper,
+    models::estimation::dynamics::integrated_imu::IntegratedImuModel, types::FrameHandle,
 };
 
 // =========================================================================
@@ -44,10 +39,10 @@ pub fn spawn_world_model_modules(
         let mut entity_commands = commands.entity(agent_entity);
 
         match world_model_config {
-            WorldModelConfig::Separate {
+            Some(WorldModelConfig::Separate {
                 estimator: est_config,
                 mapper: map_config,
-            } => {
+            }) => {
                 // --- Block 1: Create the Estimator (if configured) ---
                 // We create the `estimator` variable in this outer scope, initialized to None.
                 let estimator: Option<Box<dyn StateEstimator>> = if let Some(config) = est_config {
@@ -59,93 +54,103 @@ pub fn spawn_world_model_modules(
                                 &request.0.name
                             );
 
+                            let state_dim = STANDARD_INS_STATE_DIM;
                             let agent_handle = FrameHandle::from_entity(agent_entity);
+                            let mut dynamics_model: Option<Box<dyn EstimationDynamics>> = None;
+                            let mut q_matrix = DMatrix::<f64>::zeros(state_dim, state_dim);
 
-                            let dynamics_model: Box<dyn EstimationDynamics> = match ekf_config
-                                .dynamics
-                                .as_str()
-                            {
-                                "IntegratedImu" => Box::new(IntegratedImuModel {
-                                    agent_handle,
-                                    gravity_magnitude: gravity.0.length() as f64,
-                                }),
-                                _ => panic!("Unsupported dynamics model: {}", ekf_config.dynamics),
-                            };
+                            match &ekf_config.dynamics {
+                                EkfDynamicsConfig::IntegratedImu(noise_conf) => {
+                                    info!(
+                                        "  -> EKF for '{}' using IntegratedImu dynamics",
+                                        request.0.name
+                                    );
 
-                            if dynamics_model.get_control_dim() > 0 {
-                                entity_commands.insert(ControlInputCache {
-                                    u: DVector::zeros(dynamics_model.get_control_dim()),
-                                });
-                            }
+                                    // A. Instantiate the correct dynamics model.
+                                    dynamics_model = Some(Box::new(IntegratedImuModel {
+                                        agent_handle,
+                                        gravity_magnitude: gravity.0.length() as f64,
+                                    }));
 
-                            let mut measurement_models = HashMap::new();
-                            for child_entity in children.iter() {
-                                if let Ok(model_component) =
-                                    measurement_model_query.get(child_entity)
-                                {
-                                    let should_add = if ekf_config.dynamics == "IntegratedImu" {
-                                        !model_component.0.as_any().is::<Imu6DofModel>()
-                                    } else {
-                                        true
-                                    };
-                                    if should_add {
-                                        measurement_models.insert(
-                                            FrameHandle::from_entity(child_entity),
-                                            model_component.0.clone(),
-                                        );
-                                    }
+                                    // B. Build the Q matrix using the parameters from the `noise_conf` struct.
+                                    let an_var = noise_conf.accel_noise_stddev.powi(2);
+                                    let gn_var = noise_conf.gyro_noise_stddev.powi(2);
+                                    let ab_var = noise_conf.accel_bias_instability.powi(2);
+                                    let gb_var = noise_conf.gyro_bias_instability.powi(2);
+
+                                    // Velocity noise
+                                    q_matrix[(3, 3)] = an_var;
+                                    q_matrix[(4, 4)] = an_var;
+                                    q_matrix[(5, 5)] = an_var;
+                                    // Orientation noise (from gyro noise)
+                                    // TODO: technically not correct to define directly to quaternion
+                                    // but it's practically acceptable approximation for small dt
+                                    q_matrix[(6, 6)] = gn_var;
+                                    q_matrix[(7, 7)] = gn_var;
+                                    q_matrix[(8, 8)] = gn_var;
+                                    // Accel bias noise
+                                    q_matrix[(10, 10)] = ab_var;
+                                    q_matrix[(11, 11)] = ab_var;
+                                    q_matrix[(12, 12)] = ab_var;
+                                    // Gyro bias noise
+                                    q_matrix[(13, 13)] = gb_var;
+                                    q_matrix[(14, 14)] = gb_var;
+                                    q_matrix[(15, 15)] = gb_var;
+                                }
+                                EkfDynamicsConfig::AckermannOdometry(noise_conf) => {
+                                    warn!("AckermannOdometry dynamics model not yet implemented.");
+                                    // When you implement it, the logic would be here.
+                                }
+                                EkfDynamicsConfig::Quadcopter(_) => {
+                                    warn!("Quadcopter dynamics model not yet implemented.");
                                 }
                             }
 
-                            let state_layout = standard_ins_state_layout(agent_handle);
-                            let initial_state = FrameAwareState::new(state_layout, 1.0, 0.0);
+                            // If we successfully created a dynamics model...
+                            if let Some(dynamics) = dynamics_model {
+                                if dynamics.get_control_dim() > 0 {
+                                    entity_commands.insert(ControlInputCache {
+                                        u: DVector::zeros(dynamics.get_control_dim()),
+                                    });
+                                }
 
-                            // --- 3. Construct the Physically Meaningful Process Noise Matrix (Q) ---
-                            let state_dim = 16;
-                            let mut q_matrix = DMatrix::<f64>::zeros(state_dim, state_dim);
+                                // --- 2. Build Measurement Model Map ---
+                                let mut measurement_models = HashMap::new();
+                                for child_entity in children.iter() {
+                                    if let Ok(model_component) =
+                                        measurement_model_query.get(child_entity)
+                                    {
+                                        let should_add = match &ekf_config.dynamics {
+                                            EkfDynamicsConfig::IntegratedImu(_) => {
+                                                !model_component.0.as_any().is::<Imu6DofModel>()
+                                            }
+                                            _ => true,
+                                        };
+                                        if should_add {
+                                            measurement_models.insert(
+                                                FrameHandle::from_entity(child_entity),
+                                                model_component.0.clone(),
+                                            );
+                                        }
+                                    }
+                                }
 
-                            // Get the standard deviation values from the config.
-                            let unmodeled_accel_std = ekf_config.unmodeled_accel_stddev;
-                            let accel_bias_instability = ekf_config.accel_bias_instability;
-                            let gyro_bias_instability = ekf_config.gyro_bias_instability;
+                                // --- 3. Compose and Insert the Final Component ---
+                                let state_layout = standard_ins_state_layout(agent_handle);
+                                let initial_state = FrameAwareState::new(state_layout, 1.0, 0.0);
 
-                            // Convert standard deviations to variances (sigma^2).
-                            let accel_variance = unmodeled_accel_std.powi(2);
-                            let accel_bias_variance = accel_bias_instability.powi(2);
-                            let gyro_bias_variance = gyro_bias_instability.powi(2);
-
-                            // --- Inject noise into the appropriate states ---
-
-                            // A. Unmodeled "shake" or external forces (e.g., drag, bumps).
-                            // This adds uncertainty directly to the velocity states.
-                            // This is a simplified model. A more formal approach involves the input matrix B,
-                            // but this is a very effective and common practical implementation.
-                            q_matrix[(3, 3)] = accel_variance; // Vx
-                            q_matrix[(4, 4)] = accel_variance; // Vy
-                            q_matrix[(5, 5)] = accel_variance; // Vz
-
-                            // B. Random walk of the accelerometer biases.
-                            // This models the slow drift of the sensor's zero-point.
-                            // Indices 10, 11, 12 are for b_ax, b_ay, b_az.
-                            q_matrix[(10, 10)] = accel_bias_variance;
-                            q_matrix[(11, 11)] = accel_bias_variance;
-                            q_matrix[(12, 12)] = accel_bias_variance;
-
-                            // C. Random walk of the gyroscope biases.
-                            // Indices 13, 14, 15 are for b_wx, b_wy, b_wz.
-                            q_matrix[(13, 13)] = gyro_bias_variance;
-                            q_matrix[(14, 14)] = gyro_bias_variance;
-                            q_matrix[(15, 15)] = gyro_bias_variance;
-
-                            let ekf = ExtendedKalmanFilter::new(
-                                initial_state,
-                                q_matrix,
-                                dynamics_model,
-                                measurement_models,
-                            );
-
-                            // The result of this whole block is `Some(Box<dyn StateEstimator>)`
-                            Some(Box::new(ekf))
+                                let ekf = ExtendedKalmanFilter::new(
+                                    initial_state,
+                                    q_matrix,
+                                    dynamics,
+                                    measurement_models,
+                                );
+                                // The result of this whole block is `Some(Box<dyn StateEstimator>)`
+                                Some(Box::new(ekf))
+                            } else {
+                                warn!("EKF not created due to some error.");
+                                None
+                            }
                         }
                         EstimatorConfig::Ukf(_) => {
                             warn!("UKF not yet implemented.");
@@ -182,132 +187,16 @@ pub fn spawn_world_model_modules(
                     });
                 }
             }
-            WorldModelConfig::CombinedSlam { .. } => {
+            Some(WorldModelConfig::CombinedSlam { .. }) => {
                 warn!("SLAM systems not yet implemented.");
+            }
+            None => {
+                warn!("Separate estimator and mapper are none.")
             }
         }
     }
 }
-// pub fn spawn_world_model_modules(
-//     mut commands: Commands,
-//     agent_query: Query<(Entity, &SpawnAgentConfigRequest, &Children)>,
-//     // This query is now more complex. We need the entity's config and its children's configs.
-//     // This allows us to find all sensors attached to an agent.
-//     measurement_model_query: Query<&MeasurementModel>,
-//     gravity: Res<Gravity>,
-// ) {
-//     for (agent_entity, request, children) in &agent_query {
-//         if let WorldModelConfig::Separate {
-//             estimator: Some(est_config),
-//             ..
-//         } = &request.0.autonomy_stack.world_model
-//         {
-//             if let EstimatorConfig::Ekf(ekf_config) = est_config {
-//                 let agent_handle = FrameHandle::from_entity(agent_entity);
 
-//                 // --- 1. Compose the Dynamics Model based on config ---
-//                 let dynamics_model: Box<dyn EstimationDynamics> = match ekf_config.dynamics.as_str()
-//                 {
-//                     "IntegratedImu" => {
-//                         info!(
-//                             "  -> EKF for '{}' using IntegratedImu dynamics",
-//                             request.0.name
-//                         );
-//                         Box::new(IntegratedImuModel {
-//                             agent_handle,
-//                             gravity_magnitude: gravity.0.length() as f64,
-//                         })
-//                     }
-//                     // "ConstantAcceleration" => {
-//                     //     info!(
-//                     //         "  -> EKF for '{}' using ConstantAcceleration dynamics",
-//                     //         request.0.name
-//                     //     );
-//                     //     Box::new(ConstantAccelerationModel {
-//                     //         agent_handle,
-//                     //         damping: 0.5,
-//                     //     })
-//                     // }
-//                     _ => panic!("Unsupported dynamics model: {}", ekf_config.dynamics),
-//                 };
-
-//                 // --- 2. Compose the Measurement Models for Aiding Sensors ---
-//                 let mut measurement_models = HashMap::new();
-//                 for child_entity in children.iter() {
-//                     if let Ok(model_component) = measurement_model_query.get(child_entity) {
-//                         let sensor_handle = FrameHandle::from_entity(child_entity);
-//                         let model_clone = model_component.0.clone();
-
-//                         // --- The intelligent filtering logic ---
-//                         // This logic is based on the *estimator's* needs, not the sensor's type.
-//                         let mut should_add = true;
-//                         if ekf_config.dynamics == "IntegratedImu" {
-//                             // If using the advanced INS model, we have a special rule:
-//                             // Do not use the IMU as an aiding measurement.
-//                             if model_clone.as_any().is::<Imu6DofModel>()
-//                             // || model_clone.as_any().is::<Imu9DofModel>()
-//                             {
-//                                 should_add = false;
-//                             }
-//                         }
-
-//                         if should_add {
-//                             info!(
-//                                 "  -> Adding measurement model from sensor {:?} to EKF.",
-//                                 child_entity
-//                             );
-//                             measurement_models.insert(sensor_handle, model_clone);
-//                         }
-//                     }
-//                 }
-
-//                 // --- 3. Compose the Final Estimator ---
-//                 let state_layout = standard_ins_state_layout(agent_handle);
-//                 let initial_state = FrameAwareState::new(state_layout, 1.0, 0.0);
-//                 let mut q_matrix = DMatrix::zeros(16, 16);
-//                 for i in 10..16 {
-//                     q_matrix[(i, i)] = ekf_config.process_noise.powi(2);
-//                 }
-
-//                 let ekf = ExtendedKalmanFilter::new(
-//                     initial_state,
-//                     q_matrix,
-//                     dynamics_model,
-//                     measurement_models,
-//                 );
-
-//                 commands
-//                     .entity(agent_entity)
-//                     .insert(WorldModelComponent::Separate {
-//                         estimator: Box::new(ekf),
-//                         mapper: Box::new(NoneMapper),
-//                     });
-//             }
-//         }
-//     }
-// }
-
-// =========================================================================
-// == RUNTIME SYSTEMS (THE PIPELINE) ==
-// =========================================================================
-
-// --- SYSTEM 1: Input Gatherer ---
-pub fn world_model_input_gatherer(
-    mut frame_inputs: ResMut<FrameInputs>,
-    mut measurement_events: EventReader<BevyMeasurementMessage>,
-) {
-    frame_inputs.0.clear();
-    frame_inputs
-        .0
-        .extend(measurement_events.read().map(|e| e.0.clone()));
-    if frame_inputs.0.len() > 1 {
-        frame_inputs
-            .0
-            .sort_by(|a, b| a.timestamp.partial_cmp(&b.timestamp).unwrap());
-    }
-}
-
-// --- SYSTEM 2: Module Processor ---
 pub fn world_model_event_processor(
     mut agent_query: Query<(Entity, &mut WorldModelComponent, &mut ControlInputCache)>,
     mut measurement_events: EventReader<BevyMeasurementMessage>,
@@ -347,50 +236,6 @@ pub fn world_model_event_processor(
         }
     }
 }
-
-// pub fn world_model_processor(
-//     mut agent_query: Query<(Entity, &mut WorldModelComponent)>,
-//     frame_inputs: Res<FrameInputs>,
-//     time: Res<Time>,
-//     tf_tree: Res<TfTree>,
-// ) {
-//     let dt = time.delta_secs_f64();
-//     if dt <= 0.0 {
-//         return;
-//     }
-//     let context = FilterContext {
-//         tf: Some(&*tf_tree),
-//     };
-
-//     for (agent_entity, mut module) in &mut agent_query {
-//         if let WorldModelComponent::Separate { estimator, .. } = &mut *module {
-//             let dynamics = estimator.get_dynamics_model();
-//             let mut u = DVector::zeros(dynamics.get_control_dim());
-
-//             // Find the latest message that the dynamics model claims as a control input.
-//             for message in frame_inputs.0.iter().rev() {
-//                 if message.agent_handle == FrameHandle::from_entity(agent_entity) {
-//                     if let Some(control_vec) = dynamics.get_control_from_measurement(&message.data)
-//                     {
-//                         u = control_vec;
-//                         println!("u: {}", u);
-//                         break;
-//                     }
-//                 }
-//             }
-
-//             // PREDICT step is always run.
-//             estimator.predict(dt, &u, &context);
-
-//             // UPDATE step is run for all messages.
-//             for message in &frame_inputs.0 {
-//                 if message.agent_handle == FrameHandle::from_entity(agent_entity) {
-//                     estimator.update(message, &context);
-//                 }
-//             }
-//         }
-//     }
-// }
 
 /// A separate system for a slow mapping process, gated by a timer.
 pub fn world_model_mapping_system(

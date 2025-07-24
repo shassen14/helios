@@ -1,0 +1,24 @@
+# helios_sim/assets/catalog/components/estimators/ekf_basic.toml
+# This defines a standard, well-behaved Extended Kalman Filter configuration.
+# The `kind` key tells serde to use the `EstimatorConfig::Ekf` variant.
+kind = "Ekf"
+
+# The `config` table holds the parameters for the `EkfConfig` struct.
+[config]
+# The 'dynamics' table. The 'type' field selects the enum variant.
+[config.dynamics]
+type = "IntegratedImu"
+
+# This models the noise of the IMU itself, which directly impacts the
+# certainty of our state prediction. For a basic IMU, assume high noise.
+# Units: m/s^2
+accel_noise_stddev = 0.8
+# Units: rad/s
+gyro_noise_stddev = 0.08
+
+# Assume the sensor biases are highly unstable and wander a lot.
+# This forces the filter to constantly re-estimate them.
+# Units: m/s^2 per second (or per sqrt(Hz) in datasheets)
+accel_bias_instability = 0.1
+# Units: rad/s per second
+gyro_bias_instability = 0.01

@@ -1,0 +1,7 @@
+# helios_sim/assets/catalog/sensors/magnetometer_pro.toml
+kind = "Magnetometer"
+name = "magnetometer_pro"
+rate = 100.0
+transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+# Noise is significantly lower.
+noise_stddev = [0.005, 0.005, 0.005]

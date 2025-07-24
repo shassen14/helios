@@ -18,6 +18,7 @@ use crate::simulation::plugins::world_model::WorldModelPlugin;
 pub mod prelude;
 
 // This module contains all the simulation-specific logic.
+pub mod cli;
 pub mod simulation;
 
 /// The main plugin that brings together all the simulation parts.

@@ -8,8 +8,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::prelude::*;
-use crate::simulation::core::app_state::SimulationSet;
-use crate::simulation::core::config::SimulationConfig;
+use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::ground_truth_sync_system;
 use crate::simulation::core::prng::SimulationRng;
@@ -25,7 +24,7 @@ impl Plugin for SimulationSetupPlugin {
         // This plugin's job is to read the config and add resources and startup systems.
         let config = app
             .world()
-            .get_resource::<SimulationConfig>()
+            .get_resource::<ScenarioConfig>()
             .expect("SimulationConfig not found!");
 
         // --- 1. Add the Deterministic PRNG Resource ---
@@ -44,7 +43,7 @@ impl Plugin for SimulationSetupPlugin {
             // This is CRITICAL. It registers the pure MeasurementEvent with Bevy's event system.
             .add_event::<BevyMeasurementMessage>();
 
-        let simulation_frequency = 200.0; // The desired frequency in Hz
+        let simulation_frequency = 400.0; // The desired frequency in Hz
         let fixed_update_timestep = 1.0 / simulation_frequency;
 
         app.insert_resource(
@@ -53,6 +52,11 @@ impl Plugin for SimulationSetupPlugin {
                 // We create a Duration from the calculated timestep.
                 Duration::from_secs_f64(fixed_update_timestep),
             ),
+        );
+
+        app.configure_sets(
+            OnEnter(AppState::AssetLoading),
+            (AssetLoadSet::Config, AssetLoadSet::Kickoff).chain(), // .chain() guarantees Config runs before Kickoff
         );
 
         // --- CONFIGURE THE SPAWNING PIPELINE ---
@@ -84,7 +88,9 @@ impl Plugin for SimulationSetupPlugin {
                 // This system removes the temporary request components after all processing is done.
                 cleanup_spawn_requests.in_set(SceneBuildSet::Cleanup),
                 // This system transitions to the main simulation loop after building is complete.
-                transition_to_running_state.after(SceneBuildSet::Cleanup),
+                transition_to_running
+                    .in_set(SceneBuildSet::Cleanup)
+                    .after(cleanup_spawn_requests),
             ),
         );
 
@@ -156,34 +162,35 @@ impl Plugin for SimulationSetupPlugin {
     }
 }
 
-fn spawn_agent_shells(mut commands: Commands, config: Res<SimulationConfig>) {
+fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
+    // The resolution and deserialization logic has been moved to the config module.
+    // We can now simply iterate over the final, concrete `AgentConfig` structs.
     for agent_config in &config.agents {
         info!(
-            "[SPAWN] Posting full spawn request for agent: {}",
+            "[SPAWN] Posting spawn request for resolved agent: {}",
             &agent_config.name
         );
 
-        // Convert the starting pose to both the logical Isometry and the Bevy Transform.
+        // This part of your logic remains the same.
         let starting_pose = &agent_config.starting_pose;
         let start_isometry = starting_pose.to_isometry();
-        let start_transform = starting_pose.to_bevy_transform(); // The Bevy Transform
+        let start_transform = starting_pose.to_bevy_transform();
 
-        // Spawn the shell with its core state AND its initial transform.
         commands.spawn((
             Name::new(agent_config.name.clone()),
             GroundTruthState {
                 pose: start_isometry,
                 ..default()
             },
-            // --- THE FIX for B0004 ---
-            // Add the transform here. This ensures the parent always has a transform
-            // before any children are added in later systems.
             start_transform,
-            // The single request component
+            // We clone the agent_config to move ownership into the component.
+            // This is necessary because multiple systems in your spawning pipeline
+            // (for sensors, estimators, etc.) will need to read from it.
             SpawnAgentConfigRequest(agent_config.clone()),
         ));
     }
 }
+
 fn cleanup_spawn_requests(
     mut commands: Commands,
     query: Query<Entity, Or<(With<SpawnAgentConfigRequest>,)>>,
@@ -196,7 +203,7 @@ fn cleanup_spawn_requests(
 
 /// This simple system runs once at the end of the `OnEnter(SceneBuilding)` chain.
 /// Its only job is to move the app into the main `Running` state.
-fn transition_to_running_state(mut next_state: ResMut<NextState<AppState>>) {
+fn transition_to_running(mut next_state: ResMut<NextState<AppState>>) {
     info!("Scene building complete. Transitioning to Running state.");
     next_state.set(AppState::Running);
 }

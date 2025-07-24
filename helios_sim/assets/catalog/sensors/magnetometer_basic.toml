@@ -1,0 +1,7 @@
+# helios_sim/assets/catalog/sensors/magnetometer_basic.toml
+kind = "Magnetometer"
+name = "magnetometer_basic"
+rate = 50.0
+transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+# Noise is usually given in micro-Teslas, but here it's an arbitrary unit.
+noise_stddev = [5.0, 5.0, 5.0]

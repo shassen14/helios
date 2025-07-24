@@ -1,0 +1,18 @@
+# helios_sim/assets/catalog/sensor_suites/ins_pro.toml
+
+# This file defines a reusable table of sensor instances.
+# The structure of this file matches the `sensors` field in AgentConfig.
+
+# The key "imu_pro" will be the key in the HashMap.
+[imu_pro]
+# The value is a dictionary that references our granular component.
+from = "sensors.imu_pro"
+
+# The key "gps_pro" is the second key in the HashMap.
+[gps_pro]
+from = "sensors.gps_pro"
+# We can provide an override directly here to modify the `gps_standard` template.
+# transform = { translation = [0.0, 0.0, 0.0] }
+
+[magnetometer_pro]
+from = "sensors.magnetometer_pro"

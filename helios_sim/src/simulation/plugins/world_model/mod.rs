@@ -1,24 +1,16 @@
 // helios_sim/src/plugins/world_model/mod.rs
 
-use crate::{
-    prelude::*,
-    simulation::{
-        core::events::BevyMeasurementMessage,
-        plugins::world_model::systems::world_model_mapping_system,
-    },
-};
-use bevy::prelude::*;
+use crate::{prelude::*, simulation::core::events::BevyMeasurementMessage};
 
 // --- Sub-modules for organization ---
 mod components;
 mod systems;
-mod types;
 
 // Re-export the public-facing components for easy use elsewhere.
 pub use components::WorldModelComponent;
 
 use systems::{
-    spawn_world_model_modules, world_model_event_processor, world_model_input_gatherer,
+    spawn_world_model_modules, world_model_event_processor, world_model_mapping_system,
     world_model_output_publisher,
 };
 

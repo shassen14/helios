@@ -1,0 +1,5 @@
+kind = "Pid"
+rate = 100.0
+kp = 2.5
+ki = 0.3
+kd = 0.5

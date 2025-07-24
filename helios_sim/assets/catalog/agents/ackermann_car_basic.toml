@@ -1,0 +1,29 @@
+# =========================================================================
+# == Agent Prefab: Basic Ackermann Car ==
+# =========================================================================
+# This prefab defines a complete agent with a "basic" or "low-cost"
+# hardware and software configuration. It is intended to be a performance
+# baseline.
+
+# --- Default Properties ---
+name = "BasicCar"
+# Provide sensible default poses. These will almost always be overridden
+# by the scenario file.
+starting_pose = { translation = [0.0, 0.5, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { translation = [0.0, 0.5, 0.0] }
+
+# --- Hardware Configuration ---
+# Uses the standard Ackermann vehicle base.
+vehicle = { from = "vehicles.ackermann_base" }
+# Uses the sensor suite composed of all `_basic` sensor components.
+sensors = { from = "sensor_suites.ins_basic" }
+
+# --- Software (Autonomy) Configuration ---
+# Uses the autonomy stack tuned specifically for low-quality sensors.
+[autonomy_stack]
+# The 'world_model' table groups the estimator and mapper.
+[autonomy_stack.world_model]
+type = "Separate"
+
+estimator = { from = "components.estimators.ekf_basic" }
+# mapper = { from = "components.mappers.none" }

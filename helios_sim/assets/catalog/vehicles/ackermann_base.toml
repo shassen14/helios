@@ -1,0 +1,6 @@
+# helios_sim/assets/catalog/vehicles/ackermann_base.toml
+
+kind = "Ackermann"
+wheelbase = 2.5
+max_steering_angle = 35.0
+max_steering_rate = 140.0

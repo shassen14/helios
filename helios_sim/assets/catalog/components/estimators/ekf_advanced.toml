@@ -1,0 +1,18 @@
+# helios_sim/assets/catalog/components/estimators/ekf_advanced.toml
+kind = "Ekf"
+
+# The `config` table holds the parameters for the `EkfConfig` struct.
+[config]
+# The 'dynamics' table. The 'type' field selects the enum variant.
+[config.dynamics]
+type = "IntegratedImu"
+
+# Noise is exceptionally low.
+# Decrease by another order of magnitude.
+accel_noise_stddev = 0.02
+gyro_noise_stddev = 0.001
+
+# Biases are extremely stable, close to a fixed offset.
+# Decrease by another order of magnitude.
+accel_bias_instability = 0.005
+gyro_bias_instability = 0.0005

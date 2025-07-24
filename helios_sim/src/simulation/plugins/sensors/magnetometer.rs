@@ -55,11 +55,11 @@ fn spawn_magnetometer_sensors(
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
 ) {
     for (agent_entity, agent_name, request) in &request_query {
-        for sensor_config in &request.0.sensors {
+        for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Magnetometer(mag_config) = sensor_config {
                 info!(
                     "  -> Spawning Magnetometer '{}' as child of agent '{}'",
-                    &mag_config.name,
+                    sensor_name,
                     agent_name.as_str()
                 );
 
