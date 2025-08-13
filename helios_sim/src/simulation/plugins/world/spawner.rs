@@ -122,7 +122,6 @@ fn check_for_world_load_completion(
     visual_handle: Res<VisualWorldHandle>,
     collider_handle: Res<ColliderWorldHandle>,
 ) {
-    println!("hello");
     // The correct way to check if a handle is the default/uninitialized one
     // is to compare it to the default value.
     let default_scene_handle = Handle::<Scene>::default();
