@@ -5,7 +5,6 @@ use std::collections::HashMap;
 
 use crate::estimation::{FilterContext, StateEstimator};
 use crate::frames::FrameAwareState;
-use crate::messages::{MeasurementData, ModuleInput};
 use crate::models::estimation::measurement::Measurement;
 use crate::prelude::{EstimationDynamics, MeasurementMessage};
 // The helper trait for sensors
@@ -101,7 +100,7 @@ impl StateEstimator for ExtendedKalmanFilter {
         self.state.covariance = p_new;
         self.state.last_update_timestamp += dt;
 
-        // --- 5. (Optional but Recommended) Symmetrize Covariance ---
+        // --- 6. (Optional but Recommended) Symmetrize Covariance ---
         // Tiny numerical errors can make P slightly non-symmetric. This forces it.
         self.state.covariance = (&self.state.covariance + self.state.covariance.transpose()) * 0.5;
     }
@@ -126,6 +125,7 @@ impl StateEstimator for ExtendedKalmanFilter {
                     return;
                 }
 
+                let p_priori = &self.state.covariance;
                 let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
                 let r_mat = model.get_r();
                 let y = z.clone() - &z_pred;
@@ -196,7 +196,26 @@ impl StateEstimator for ExtendedKalmanFilter {
 
                 self.state.vector += correction;
                 let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
-                self.state.covariance = (i - k_gain * &h_jac) * &self.state.covariance;
+                // Joseph form is used for numerically stable solution
+                let i_kh = &i - &k_gain * &h_jac;
+                // P_post = (I - KH)P(I - KH)^T + KRK^T
+                let p_post =
+                    &i_kh * p_priori * i_kh.transpose() + &k_gain * r_mat * k_gain.transpose();
+                self.state.covariance = p_post;
+                // --- Enforce Symmetry ---
+                // P = 0.5 * (P + P^T)
+                self.state.covariance =
+                    (&self.state.covariance + self.state.covariance.transpose()) * 0.5;
+
+                // for positivity
+                for i in 0..self.state.dim() {
+                    if self.state.covariance[(i, i)] < 0.0 {
+                        // A variance has become negative, which is physically impossible.
+                        // This is a sign of severe filter divergence.
+                        // The safest thing to do is reset it to a small positive number.
+                        self.state.covariance[(i, i)] = 1e-9;
+                    }
+                }
                 self.state.last_update_timestamp = message.timestamp;
             }
         }
