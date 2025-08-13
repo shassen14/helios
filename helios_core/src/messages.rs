@@ -1,7 +1,7 @@
 // helios_core/src/messages.rs
 
 use crate::types::FrameHandle;
-use nalgebra::{Isometry3, Matrix6, Vector3, Vector6}; // Example static vectors
+use nalgebra::{Isometry3, Matrix6, Point3, Vector3, Vector6}; // Example static vectors
 
 /// A rich, self-describing container for sensor data.
 #[derive(Clone, Debug)]
@@ -13,6 +13,7 @@ pub enum MeasurementData {
     },
     GpsPosition(Vector3<f64>),
     Magnetometer(Vector3<f64>),
+    // PointCloud(Vec<Point3<f64>>),
 }
 
 impl MeasurementData {
@@ -28,6 +29,7 @@ impl MeasurementData {
             MeasurementData::Imu9Dof { base_data, .. } => Some(base_data.as_slice()),
             MeasurementData::GpsPosition(v) => Some(v.as_slice()),
             MeasurementData::Magnetometer(v) => Some(v.as_slice()),
+            // MeasurementData::PointCloud(v) => Some(v.as_slice()),
             // MeasurementData::GpsPositionVelocity(v) => Some(v.as_slice()),
             // Add other cases here as you add new variants.
         }
