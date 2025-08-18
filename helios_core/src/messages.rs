@@ -1,43 +1,57 @@
-// helios_core/src/messages.rs
+use crate::frames::FrameAwareState;
+use crate::types::{Control, FrameHandle};
+use nalgebra::{Isometry3, Matrix6, Point3, Vector3, Vector6};
 
-use crate::types::FrameHandle;
-use nalgebra::{Isometry3, Matrix6, Point3, Vector3, Vector6}; // Example static vectors
+// =========================================================================
+// == Perception-Specific Data Structures ==
+// =========================================================================
 
-/// A rich, self-describing container for sensor data.
+/// Represents a single point from a sensor like a LiDAR.
+#[derive(Debug, Clone, Copy)]
+pub struct Point {
+    /// The 3D position of the point in the SENSOR's local coordinate frame.
+    pub position: Point3<f64>,
+    /// Optional: The intensity of the laser return for this point.
+    pub intensity: Option<f32>,
+}
+
+/// A structured representation of a point cloud from a sensor.
+#[derive(Clone, Debug)]
+pub struct PointCloud {
+    /// The handle of the sensor that generated this point cloud.
+    pub sensor_handle: FrameHandle,
+    /// The timestamp of when the scan was captured.
+    pub timestamp: f64,
+    /// The collection of points that make up the scan.
+    pub points: Vec<Point>,
+}
+
+// =========================================================================
+// == Core Message and Data Enums ==
+// =========================================================================
+
+/// A rich, self-describing container for all sensor data.
 #[derive(Clone, Debug)]
 pub enum MeasurementData {
     Imu6Dof(Vector6<f64>),
     Imu9Dof {
-        base_data: Vector6<f64>,
-        magnetic_field: Vector3<f64>,
+        accel_gyro: Vector6<f64>,
+        mag: Vector3<f64>,
     },
     GpsPosition(Vector3<f64>),
     Magnetometer(Vector3<f64>),
-    // PointCloud(Vec<Point3<f64>>),
+
+    // The variant now holds our new, descriptive PointCloud struct.
+    PointCloud(PointCloud),
+    // You can add more variants here as needed, like `GpsPositionVelocity`.
 }
 
-impl MeasurementData {
-    /// Returns a view of the primary data vector as a slice, if applicable.
-    ///
-    /// This is useful for generic algorithms that need to convert the measurement
-    /// into a `DVector` without knowing the specific type.
-    /// Note: For composite types like `Imu9Dof`, this only returns the primary
-    /// motion data (accel/gyro).
-    pub fn as_primary_slice(&self) -> Option<&[f64]> {
-        match self {
-            MeasurementData::Imu6Dof(v) => Some(v.as_slice()),
-            MeasurementData::Imu9Dof { base_data, .. } => Some(base_data.as_slice()),
-            MeasurementData::GpsPosition(v) => Some(v.as_slice()),
-            MeasurementData::Magnetometer(v) => Some(v.as_slice()),
-            // MeasurementData::PointCloud(v) => Some(v.as_slice()),
-            // MeasurementData::GpsPositionVelocity(v) => Some(v.as_slice()),
-            // Add other cases here as you add new variants.
-        }
-    }
-}
+// NOTE: We REMOVE the `impl MeasurementData` block with `as_primary_slice`.
+// This logic was brittle and is no longer needed. The decision of how to
+// convert data to a DVector now correctly lives inside each `MeasurementModel`'s
+// `predict_measurement` function, which is much safer.
 
-/// The generic event carrying measurement data.
-/// This replaces the old MeasurementEvent.
+/// The generic message that carries all sensor data through the system.
 #[derive(Clone, Debug)]
 pub struct MeasurementMessage {
     pub agent_handle: FrameHandle,
@@ -46,35 +60,29 @@ pub struct MeasurementMessage {
     pub data: MeasurementData,
 }
 
-// And our universal input packet also fits perfectly here.
-use crate::frames::FrameAwareState;
-use crate::types::Control;
-
+/// The universal input packet for all `StateEstimator` implementations.
 pub enum ModuleInput<'a> {
     TimeStep { dt: f64, current_time: f64 },
+    // Control and PoseUpdate are currently not used in our final `predict`/`update`
+    // design, but we can keep them for future flexibility or for other module types.
     Control { u: &'a Control },
     Measurement { message: &'a MeasurementMessage },
     PoseUpdate { pose: &'a FrameAwareState },
 }
 
+// =========================================================================
+// == Public API Messages (Topic Data) ==
+// =========================================================================
+
 /// The primary output of the estimator. Represents the robot's full dynamic state.
-#[derive(Clone, Debug)]
+/// This is the standardized message that planners and controllers will consume.
+#[derive(Clone, Debug, Default)]
 pub struct Odometry {
     pub timestamp: f64,
-    /// The agent's estimated pose (position and orientation) in the world frame.
     pub pose: Isometry3<f64>,
-    /// The agent's estimated linear and angular velocities in its own body frame.
-    pub velocity_body: Vector6<f64>, // [vx, vy, vz, wx, wy, wz]
-
-    /// The agent's estimated linear acceleration in its own body frame.
-    /// This is the "true" coordinate acceleration (IMU reading with bias and gravity removed).
+    pub velocity_body: Vector6<f64>,
     pub linear_acceleration_body: Vector3<f64>,
-
-    /// The agent's estimated angular acceleration in its own body frame.
     pub angular_acceleration_body: Vector3<f64>,
-
-    // --- Covariances ---
     pub pose_covariance: Matrix6<f64>,
     pub velocity_covariance: Matrix6<f64>,
-    // You could also add covariances for acceleration if the filter calculates them.
 }

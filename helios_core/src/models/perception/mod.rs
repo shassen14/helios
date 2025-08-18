@@ -3,7 +3,7 @@
 pub mod lidar_2d;
 pub mod lidar_3d;
 
-use crate::messages::MeasurementData;
+use crate::{messages::MeasurementData, types::FrameHandle};
 use dyn_clone::DynClone;
 use nalgebra::Vector3;
 use std::fmt::Debug;
@@ -49,7 +49,12 @@ pub trait RaycastingSensorModel: Send + Sync + DynClone + Debug {
     ///
     /// # Returns
     /// The processed `MeasurementData` (e.g., a PointCloud).
-    fn process_hits(&self, hits: &[RayHit]) -> MeasurementData;
+    fn process_hits(
+        &self,
+        hits: &[RayHit],
+        sensor_handle: FrameHandle,
+        timestamp: f64,
+    ) -> MeasurementData;
 
     /// Returns the maximum effective range of the sensor in meters.
     fn get_max_range(&self) -> f32;

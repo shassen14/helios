@@ -32,6 +32,14 @@ impl Measurement for Imu6DofModel {
         ]
     }
 
+    fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
+        if let MeasurementData::Imu6Dof(vec) = data {
+            Some(DVector::from_row_slice(vec.as_slice()))
+        } else {
+            None
+        }
+    }
+
     /// Predicts the 6-element measurement vector [ax, ay, az, wx, wy, wz].
     /// It returns `Some` only if the input message contains `Imu6Dof` data.
     fn predict_measurement(

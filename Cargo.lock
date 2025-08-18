@@ -2565,6 +2565,9 @@ dependencies = [
  "dyn-clone",
  "nalgebra",
  "num-traits",
+ "rand",
+ "rand_chacha",
+ "rand_distr",
  "serde",
  "thiserror 1.0.69",
 ]

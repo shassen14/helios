@@ -1,7 +1,8 @@
 // heios_core/src/models/perception/lidar_2d.rs
 
-use crate::messages::MeasurementData;
+use crate::messages::{MeasurementData, Point, PointCloud};
 use crate::models::perception::{RayHit, RaycastingSensorModel, SensorRay};
+use crate::types::FrameHandle;
 use nalgebra::{Point3, UnitQuaternion, Vector3};
 use rand_distr::{Distribution, Normal};
 
@@ -18,7 +19,7 @@ pub struct Lidar2DModel {
 impl RaycastingSensorModel for Lidar2DModel {
     fn generate_rays(&self) -> Vec<SensorRay> {
         let mut rays = Vec::with_capacity(self.horizontal_beams as usize);
-        let fov_rad = self.horizontal_fov_deg.to_radians();
+        let fov_rad = self.horizontal_fov_deg.to_radians() as f64;
         let start_angle = -fov_rad / 2.0;
         let angle_increment = fov_rad / (self.horizontal_beams - 1) as f64;
 
@@ -32,12 +33,17 @@ impl RaycastingSensorModel for Lidar2DModel {
         rays
     }
 
-    fn process_hits(&self, hits: &[RayHit]) -> MeasurementData {
+    fn process_hits(
+        &self,
+        hits: &[RayHit],
+        sensor_handle: FrameHandle,
+        timestamp: f64,
+    ) -> MeasurementData {
         // Use a simple RNG for noise. A real implementation would take a `&mut dyn RngCore`.
         let mut rng = rand::thread_rng();
         let range_noise_dist = Normal::new(0.0, self.range_noise_stddev as f64).unwrap();
 
-        let points: Vec<Point3<f64>> = hits
+        let points: Vec<Point> = hits
             .iter()
             .map(|hit| {
                 // 1. Add noise to the measured distance.
@@ -45,7 +51,7 @@ impl RaycastingSensorModel for Lidar2DModel {
 
                 // 2. Find the original "perfect" direction vector for this ray.
                 // (A more optimized version would pass the original rays into this function).
-                let fov_rad = self.horizontal_fov_deg.to_radians();
+                let fov_rad = self.horizontal_fov_deg.to_radians() as f64;
                 let start_angle = -fov_rad / 2.0;
                 let angle_increment = fov_rad / (self.horizontal_beams - 1) as f64;
                 let perfect_angle = start_angle + (hit.ray_id as f64) * angle_increment;
@@ -57,11 +63,23 @@ impl RaycastingSensorModel for Lidar2DModel {
 
                 // 4. Create the final point from the noisy angle and distance.
                 let direction = Vector3::new(noisy_angle.cos(), noisy_angle.sin(), 0.0);
-                Point3::from(direction * noisy_distance)
+                // Create the new Point struct
+                Point {
+                    position: Point3::from(direction * noisy_distance),
+                    intensity: None, // We don't simulate intensity yet
+                }
             })
             .collect();
 
-        MeasurementData::PointCloud { points }
+        // Construct the final PointCloud struct
+        let point_cloud = PointCloud {
+            sensor_handle,
+            timestamp,
+            points,
+        };
+
+        // Wrap it in the MeasurementData enum variant
+        MeasurementData::PointCloud(point_cloud)
     }
 
     fn get_max_range(&self) -> f32 {

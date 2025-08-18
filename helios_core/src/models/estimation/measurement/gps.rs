@@ -36,6 +36,14 @@ impl Measurement for GpsPositionModel {
         ]
     }
 
+    fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
+        if let MeasurementData::GpsPosition(vec) = data {
+            Some(DVector::from_row_slice(vec.as_slice()))
+        } else {
+            None // I am a GPS model, I only handle GpsPosition data.
+        }
+    }
+
     /// Predicts the ideal measurement `z_pred` from the filter's state.
     /// It returns `Some` only if the input message contains `GpsPosition` data.
     fn predict_measurement(

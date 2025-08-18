@@ -107,20 +107,17 @@ impl StateEstimator for ExtendedKalmanFilter {
 
     /// Updates the state by fusing an aiding measurement.
     fn update(&mut self, message: &MeasurementMessage, context: &FilterContext) {
-        // --- 1. Find the correct measurement model for this sensor ---
-        let model = match self.measurement_models.get(&message.sensor_handle) {
-            Some(m) => m,
-            None => return, // This EKF is not configured to use this sensor.
-        };
+        // Iterate through all configured measurement models.
+        for model in self.measurement_models.values() {
+            // We call the new `get_measurement_vector` method. If it returns `Some`,
+            // it means this is the right model and we have our `z` vector.
+            if let Some(z) = model.get_measurement_vector(&message.data) {
+                // We can now safely unwrap `predict_measurement` because if the model
+                // gave us a `z`, it must also be able to give us a `z_pred`.
+                let z_pred = model
+                    .predict_measurement(&self.state, message, context.tf.unwrap())
+                    .expect("Model that provided a `z` vector failed to provide a prediction.");
 
-        // --- 2. Ask the model to predict a measurement based on this message ---
-        // `predict_measurement` now returns an Option. If it's `None`, this model
-        // cannot handle this message type, and we do nothing.
-        let z_pred_option = model.predict_measurement(&self.state, message, context.tf.unwrap());
-
-        if let Some(z_pred) = z_pred_option {
-            if let Some(z_slice) = message.data.as_primary_slice() {
-                let z = DVector::from_row_slice(z_slice);
                 if z.nrows() != z_pred.nrows() {
                     return;
                 }
@@ -134,65 +131,14 @@ impl StateEstimator for ExtendedKalmanFilter {
                 let s = &h_jac * &self.state.covariance * h_jac.transpose() + r_mat;
                 let s_inv_option = s.try_inverse();
 
+                // Can't proceed if S is not invertible.
                 if s_inv_option.is_none() {
-                    return; // Can't proceed if S is not invertible.
+                    return;
                 }
+
                 let s_inv = s_inv_option.unwrap();
                 let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
                 let correction = &k_gain * &y;
-
-                // Only print for a specific sensor type to avoid log spam.
-                // match &message.data {
-                //     crate::messages::MeasurementData::GpsPosition(_) => {
-                //         println!(
-                //             "------------------- EKF GPS UPDATE (t={:.3}) -------------------",
-                //             message.timestamp
-                //         );
-                //         println!("Predicted Pos (z_pred): {}", z_pred.transpose());
-                //         println!("Actual Pos (z):         {}", z.transpose());
-                //         println!("Innovation (y):         {}", y.transpose());
-
-                //         let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
-                //         println!(
-                //             "State Sigma (Position):   [x: {:.3}, y: {:.3}, z: {:.3}]",
-                //             p_diag_sqrt[0], p_diag_sqrt[1], p_diag_sqrt[2]
-                //         );
-
-                //         // Log the corrections relevant to a GPS update
-                //         println!(
-                //             "Bias Correction (Accel):  {}",
-                //             correction.fixed_rows::<3>(10).transpose()
-                //         );
-                //         println!(
-                //             "-----------------------------------------------------------------"
-                //         );
-                //     }
-                //     crate::messages::MeasurementData::Magnetometer(_) => {
-                //         println!(
-                //             "------------------- EKF MAG UPDATE (t={:.3}) -------------------",
-                //             message.timestamp
-                //         );
-                //         println!("Predicted Mag (z_pred): {}", z_pred.transpose());
-                //         println!("Actual Mag (z):         {}", z.transpose());
-                //         println!("Innovation (y):         {}", y.transpose());
-
-                //         let p_diag_sqrt = self.state.covariance.diagonal().map(|v| v.sqrt());
-                //         println!(
-                //             "State Sigma (Quaternion): [x: {:.4}, y: {:.4}, z: {:.4}, w: {:.4}]",
-                //             p_diag_sqrt[6], p_diag_sqrt[7], p_diag_sqrt[8], p_diag_sqrt[9]
-                //         );
-
-                //         // Log the corrections relevant to a Magnetometer update
-                //         println!(
-                //             "Correction (Quaternion):  {}",
-                //             correction.fixed_rows::<4>(6).transpose()
-                //         );
-                //         println!(
-                //             "-----------------------------------------------------------------"
-                //         );
-                //     }
-                //     _ => {} // No logging for other types
-                // }
 
                 self.state.vector += correction;
                 let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());

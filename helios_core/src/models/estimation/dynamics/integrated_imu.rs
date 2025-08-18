@@ -32,12 +32,9 @@ impl EstimationDynamics for IntegratedImuModel {
                 Some(DVector::from_row_slice(imu_vector.as_slice()))
             }
             // Case 2: The data is from a 9-DOF IMU. We only want the accel/gyro part.
-            MeasurementData::Imu9Dof {
-                base_data,
-                magnetic_field: _,
-            } => {
+            MeasurementData::Imu9Dof { accel_gyro, mag: _ } => {
                 // We explicitly ignore the `mag` field and only use the 6-DOF part.
-                Some(DVector::from_row_slice(base_data.as_slice()))
+                Some(DVector::from_row_slice(accel_gyro.as_slice()))
             }
             // Case 3: The data is anything else (GPS, etc.). This model does not
             // use it as a control input, so we return None.

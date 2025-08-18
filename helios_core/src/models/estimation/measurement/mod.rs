@@ -1,7 +1,7 @@
 // helios_core/src/models/measurement/mod.rs
 
 use crate::frames::{FrameAwareState, StateVariable};
-use crate::prelude::MeasurementMessage;
+use crate::prelude::{MeasurementData, MeasurementMessage};
 use crate::types::TfProvider;
 use dyn_clone::DynClone;
 use nalgebra::{DMatrix, DVector};
@@ -13,6 +13,15 @@ use std::fmt::Debug;
 pub trait Measurement: DynClone + Debug + Send + Sync {
     /// Describes the layout of the measurement vector `z` in the SENSOR'S NATIVE FRAME.
     fn get_measurement_layout(&self) -> Vec<StateVariable>;
+
+    /// Attempts to convert a generic `MeasurementData` enum into a specific
+    /// measurement vector `z` that this model understands.
+    /// This is the primary way a model declares which data it processes.
+    ///
+    /// # Returns
+    /// * `Some(DVector<f64>)` if this model can process this data type.
+    /// * `None` if this model should ignore this data type.
+    fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>>;
 
     /// Returns the measurement noise covariance matrix `R`.
     fn get_r(&self) -> &DMatrix<f64>;
