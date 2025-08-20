@@ -43,6 +43,30 @@ impl ExtendedKalmanFilter {
             measurement_models,
         }
     }
+    /// Enforces physical properties on the covariance matrix to prevent divergence.
+    /// This should be called at the end of every predict and update step.
+    fn ensure_covariance_health(&mut self) {
+        let dim = self.state.dim();
+        let p = &mut self.state.covariance;
+        let min_variance = 1e-9; // A small positive number
+
+        // 1. Enforce Symmetry (already in your update, good to have in predict too)
+        *p = (p.clone() + p.transpose()) * 0.5;
+
+        // 2. Enforce Positive Diagonal (Prevent Negative Variance)
+        for i in 0..dim {
+            if p[(i, i)] < min_variance {
+                p[(i, i)] = min_variance;
+            }
+        }
+
+        // 3. (Optional but powerful) Regularization - Add a tiny identity matrix.
+        // This adds a tiny amount of uncertainty to all states, preventing the filter
+        // from becoming absolutely certain (and thus "closed-minded") about any state.
+        // It helps prevent "filter incest" and improves numerical stability.
+        let regularization = DMatrix::<f64>::identity(dim, dim) * 1e-12;
+        *p += regularization;
+    }
 }
 
 // --- The Public Trait Implementation ---
@@ -79,9 +103,9 @@ impl StateEstimator for ExtendedKalmanFilter {
         // F_k ≈ I + A * dt
         // But a more accurate way is to use the full matrix exponential if possible,
         // or just the calculated Jacobian `A` from the continuous model. We will use `A`.
-        // --- 2. Calculate State Transition and Noise Input Matrices ---
+        // --- 2. Calculate State Transition and Noise Input Matrices--
         // A = ∂f/∂x, B = ∂f/∂u
-        let (a_jac, b_jac) = dynamics.calculate_jacobian(x_old, u, t_old);
+        let (a_jac, _b_jac) = dynamics.calculate_jacobian(x_old, u, t_old);
 
         // Discretize the state transition matrix: F ≈ I + A*dt
         let f_k = DMatrix::<f64>::identity(self.state.dim(), self.state.dim()) + &a_jac * dt;
@@ -100,9 +124,8 @@ impl StateEstimator for ExtendedKalmanFilter {
         self.state.covariance = p_new;
         self.state.last_update_timestamp += dt;
 
-        // --- 6. (Optional but Recommended) Symmetrize Covariance ---
-        // Tiny numerical errors can make P slightly non-symmetric. This forces it.
-        self.state.covariance = (&self.state.covariance + self.state.covariance.transpose()) * 0.5;
+        // Force Symmetry and Positivity
+        self.ensure_covariance_health();
     }
 
     /// Updates the state by fusing an aiding measurement.
@@ -114,55 +137,47 @@ impl StateEstimator for ExtendedKalmanFilter {
             if let Some(z) = model.get_measurement_vector(&message.data) {
                 // We can now safely unwrap `predict_measurement` because if the model
                 // gave us a `z`, it must also be able to give us a `z_pred`.
-                let z_pred = model
-                    .predict_measurement(&self.state, message, context.tf.unwrap())
-                    .expect("Model that provided a `z` vector failed to provide a prediction.");
-
-                if z.nrows() != z_pred.nrows() {
-                    return;
-                }
-
-                let p_priori = &self.state.covariance;
-                let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
-                let r_mat = model.get_r();
-                let y = z.clone() - &z_pred;
-
-                // --- Calculate the full Kalman update values once ---
-                let s = &h_jac * &self.state.covariance * h_jac.transpose() + r_mat;
-                let s_inv_option = s.try_inverse();
-
-                // Can't proceed if S is not invertible.
-                if s_inv_option.is_none() {
-                    return;
-                }
-
-                let s_inv = s_inv_option.unwrap();
-                let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
-                let correction = &k_gain * &y;
-
-                self.state.vector += correction;
-                let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
-                // Joseph form is used for numerically stable solution
-                let i_kh = &i - &k_gain * &h_jac;
-                // P_post = (I - KH)P(I - KH)^T + KRK^T
-                let p_post =
-                    &i_kh * p_priori * i_kh.transpose() + &k_gain * r_mat * k_gain.transpose();
-                self.state.covariance = p_post;
-                // --- Enforce Symmetry ---
-                // P = 0.5 * (P + P^T)
-                self.state.covariance =
-                    (&self.state.covariance + self.state.covariance.transpose()) * 0.5;
-
-                // for positivity
-                for i in 0..self.state.dim() {
-                    if self.state.covariance[(i, i)] < 0.0 {
-                        // A variance has become negative, which is physically impossible.
-                        // This is a sign of severe filter divergence.
-                        // The safest thing to do is reset it to a small positive number.
-                        self.state.covariance[(i, i)] = 1e-9;
+                if let Some(z_pred) =
+                    model.predict_measurement(&self.state, message, context.tf.unwrap())
+                {
+                    if z.nrows() != z_pred.nrows() {
+                        return;
                     }
+
+                    let p_priori = &self.state.covariance;
+                    let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
+                    let r_mat = model.get_r();
+                    let y = z.clone() - &z_pred;
+
+                    // --- Calculate the full Kalman update values once ---
+                    let s = &h_jac * p_priori * h_jac.transpose() + r_mat;
+                    let s_inv_option = s.try_inverse();
+
+                    // Can't proceed if S is not invertible.
+                    if s_inv_option.is_none() {
+                        return;
+                    }
+
+                    let s_inv = s_inv_option.unwrap();
+                    let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
+                    let correction = &k_gain * &y;
+
+                    self.state.vector += correction;
+                    let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
+                    // Joseph form is used for numerically stable solution
+                    let i_kh = &i - &k_gain * &h_jac;
+                    // P_post = (I - KH)P(I - KH)^T + KRK^T
+                    let p_post =
+                        &i_kh * p_priori * i_kh.transpose() + &k_gain * r_mat * k_gain.transpose();
+                    self.state.covariance = p_post;
+
+                    // Enforce Symmetry and Positvity
+                    self.ensure_covariance_health();
+
+                    self.state.last_update_timestamp = message.timestamp;
+
+                    return;
                 }
-                self.state.last_update_timestamp = message.timestamp;
             }
         }
         // If predict_measurement returned None, we simply do nothing.
