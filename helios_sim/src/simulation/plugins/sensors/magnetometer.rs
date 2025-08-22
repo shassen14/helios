@@ -58,9 +58,10 @@ fn spawn_magnetometer_sensors(
         for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Magnetometer(mag_config) = sensor_config {
                 info!(
-                    "  -> Spawning Magnetometer '{}' as child of agent '{}'",
+                    "  -> Spawning Magnetometer '{}' as child of agent '{}' with rate of {:.1} Hz",
                     sensor_name,
-                    agent_name.as_str()
+                    agent_name.as_str(),
+                    mag_config.get_rate()
                 );
 
                 // --- 1. Create the `helios_core` Measurement Model ---

@@ -1,3 +1,4 @@
+// helios_sim/src/simulation/plugins/sensors/imu.rs
 use avian3d::prelude::Gravity;
 use bevy::prelude::*;
 use nalgebra::{DMatrix, Vector3, Vector6};
@@ -226,64 +227,4 @@ fn imu_sensor_system(
             }
         }
     }
-
-    // Iterate over each parent agent that has children.
-    // for (agent_entity, ground_truth, children) in &parent_query {
-    //     // Iterate through the list of child entities for this specific agent.
-    //     for &child_entity in children {
-    //         // Use `get_mut` to check if this child is an IMU sensor we need to process.
-    //         if let Ok((sensor_entity, mut imu, sensor_global_transform)) =
-    //             sensor_query.get_mut(child_entity)
-    //         {
-    //             // Tick the sensor's timer.
-    //             imu.timer.tick(dt);
-    //             if !imu.timer.just_finished() {
-    //                 continue; // Not time to publish yet.
-    //             }
-
-    //             // --- Simulate IMU Physics ---
-
-    //             // 1. Get the sensor's true orientation in the ENU world frame.
-    //             let sensor_pose_enu = bevy_global_transform_to_enu_iso(sensor_global_transform);
-    //             let q_sensor_from_world = sensor_pose_enu.rotation.inverse();
-
-    //             // 2. Calculate the "proper acceleration" that an IMU measures.
-    //             // Proper_Accel = Coordinate_Accel - Gravity_Vector
-    //             // All vectors here are in the ENU world frame.
-    //             let gravity_enu = Vector3::new(0.0, 0.0, gravity.0.y as f64);
-    //             let proper_accel_world = ground_truth.linear_acceleration - gravity_enu;
-
-    //             // 3. Rotate world-frame vectors into the sensor's local frame.
-    //             let perfect_accel = q_sensor_from_world * proper_accel_world;
-    //             let perfect_gyro = q_sensor_from_world * ground_truth.angular_velocity;
-
-    //             // 4. Combine into a 6D vector and add optional noise.
-    //             let perfect_measurement = Vector6::new(
-    //                 perfect_accel.x,
-    //                 perfect_accel.y,
-    //                 perfect_accel.z,
-    //                 perfect_gyro.x,
-    //                 perfect_gyro.y,
-    //                 perfect_gyro.z,
-    //             );
-    //             // TODO: Add noise from a Normal distribution using `rng`.
-    //             let noisy_measurement = perfect_measurement;
-
-    //             // 5. Create the pure `MeasurementMessage` from `helios_core`.
-    //             let pure_message = MeasurementMessage {
-    //                 agent_handle: FrameHandle::from_entity(agent_entity),
-    //                 sensor_handle: FrameHandle::from_entity(sensor_entity),
-    //                 timestamp: time.elapsed_secs_f64(),
-    //                 data: MeasurementData::Imu6Dof(noisy_measurement),
-    //             };
-
-    //             info!(
-    //                 "IMU {:?} published measurement {:?}",
-    //                 sensor_entity, &pure_message.data
-    //             );
-    //             // 6. Wrap it in the Bevy event and send it.
-    //             measurement_writer.write(BevyMeasurementMessage(pure_message));
-    //         }
-    //     }
-    // }
 }

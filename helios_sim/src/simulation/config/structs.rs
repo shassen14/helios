@@ -302,32 +302,84 @@ impl MagnetometerConfig {
     pub fn get_relative_pose(&self) -> Pose {
         self.transform
     }
+    pub fn get_rate(&self) -> f32 {
+        self.rate
+    }
 }
 
 // --- LiDAR ---
-// LidarConfig is also an enum to handle different LiDAR kinds.
+// This enum handles different LiDAR kinds (2D, 3D).
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "type")] // The field `type = "Lidar2D"` in TOML selects the variant.
 #[serde(rename_all = "PascalCase")]
 pub enum LidarConfig {
     Lidar2D {
-        name: String,
+        // The `name` is now the key in the HashMap, so we don't need it inside.
+        // We will get it from the iteration.
+        /// The rate at which the sensor produces scans, in Hz.
         rate: f32,
+        /// The static transform of the sensor relative to its parent (the agent).
         #[serde(default)]
         transform: Pose,
-        range: f32,
-        // ... other 2D-specific params ...
+
+        /// Maximum effective range of the laser beams in meters.
+        max_range: f32,
+        /// The horizontal field of view in degrees (e.g., 360.0 for a full circle).
+        horizontal_fov: f32,
+        /// The total number of laser beams (rays) to simulate in the scan.
+        horizontal_beams: u32,
+        /// Standard deviation of the noise on the range measurement, in meters.
+        #[serde(default)]
+        range_noise_stddev: f32,
+
+        #[serde(default)]
+        debug_visuals: bool,
     },
     Lidar3D {
-        name: String,
         rate: f32,
         #[serde(default)]
         transform: Pose,
+
+        max_range: f32,
+        horizontal_fov: f32,
+        horizontal_beams: u32,
+        /// The vertical field of view in degrees (e.g., 30.0 for Velodyne VLP-16).
         vertical_fov: f32,
-        num_channels: u32,
-        // ... other 3D-specific params ...
+        /// The number of vertical channels or layers (e.g., 16 for VLP-16).
+        vertical_beams: u32,
+        #[serde(default)]
+        range_noise_stddev: f32,
+
+        #[serde(default)]
+        debug_visuals: bool,
     },
 }
+
+// Helper methods to get common properties from any variant.
+impl LidarConfig {
+    pub fn get_rate(&self) -> f32 {
+        match self {
+            LidarConfig::Lidar2D { rate, .. } => *rate,
+            LidarConfig::Lidar3D { rate, .. } => *rate,
+        }
+    }
+
+    pub fn get_relative_pose(&self) -> Pose {
+        match self {
+            LidarConfig::Lidar2D { transform, .. } => *transform,
+            LidarConfig::Lidar3D { transform, .. } => *transform,
+        }
+    }
+
+    /// Returns the value of the `debug_visuals` flag for any variant.
+    pub fn get_debug_visuals_flag(&self) -> bool {
+        match self {
+            LidarConfig::Lidar2D { debug_visuals, .. } => *debug_visuals,
+            LidarConfig::Lidar3D { debug_visuals, .. } => *debug_visuals,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AutonomyStack {

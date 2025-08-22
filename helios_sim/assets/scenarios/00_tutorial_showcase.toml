@@ -115,6 +115,10 @@ from = "sensors.gps_advanced"
 transform = { translation = [0.0, 0.0, 1.3] } # Place it on the truck's roof.
 
 
+# adding lidar 
+[agents.sensors.lidar]
+from = "sensors.lidar2d"
+
 # 3. DEEP MERGE: Tuning the Autonomy Stack
 # We will use the `ekf_basic` tune from the base prefab, but we want to
 # adjust one of its parameters for this specific experiment.
