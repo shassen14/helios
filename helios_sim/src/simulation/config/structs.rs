@@ -130,6 +130,11 @@ impl Pose {
     pub fn to_bevy_transform(&self) -> Transform {
         crate::simulation::core::transforms::enu_iso_to_bevy_transform(&self.to_isometry())
     }
+
+    /// For body-relative sensor placement (FLU frame).
+    pub fn to_bevy_local_transform(&self) -> Transform {
+        crate::simulation::core::transforms::flu_iso_to_bevy_local_transform(&self.to_isometry())
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

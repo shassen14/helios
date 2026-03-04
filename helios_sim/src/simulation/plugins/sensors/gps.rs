@@ -108,7 +108,7 @@ fn spawn_gps_sensors(
                     MeasurementModel(Box::new(core_model)),
                     TrackedFrame, // Mark it for the TF system
                     // Its local transform relative to the parent (the agent).
-                    gps_config.get_relative_pose().to_bevy_transform(),
+                    gps_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 
                 // --- 3. Add the sensor as a child of the agent ---

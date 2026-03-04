@@ -116,7 +116,7 @@ fn spawn_raycasting_sensors(
                         last_scan: Vec::new(),
                     },
                     TrackedFrame,
-                    lidar_config.get_relative_pose().to_bevy_transform(),
+                    lidar_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 
                 if lidar_config.get_debug_visuals_flag() {
@@ -170,10 +170,10 @@ fn raycasting_sensor_system(
                 let filter = SpatialQueryFilter::from_excluded_entities([agent_entity]);
 
                 for ray in local_rays {
-                    // 1. Convert ray direction from sensor FLU (same convention as ENU) to Bevy
-                    //    sensor-local frame before applying the sensor's Bevy rotation.
+                    // 1. Convert ray direction from sensor FLU frame to Bevy local frame.
+                    //    FLU +X (Forward) → Bevy -Z, FLU +Y (Left) → Bevy -X, FLU +Z (Up) → Bevy +Y
                     let bevy_sensor_local_dir =
-                        crate::simulation::core::transforms::enu_vector_to_bevy_vector(
+                        crate::simulation::core::transforms::flu_vector_to_bevy_local_vector(
                             &nalgebra::Vector3::new(
                                 ray.direction.x,
                                 ray.direction.y,

@@ -107,7 +107,7 @@ fn spawn_magnetometer_sensors(
                     },
                     MeasurementModel(Box::new(core_model)),
                     TrackedFrame,
-                    mag_config.get_relative_pose().to_bevy_transform(),
+                    mag_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 
                 commands.entity(agent_entity).add_child(sensor_entity);

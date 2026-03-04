@@ -129,7 +129,7 @@ fn spawn_imu_sensors(
                     // Marker so the TF system can find it.
                     TrackedFrame,
                     // Its local transform relative to the parent (the agent).
-                    imu_config.get_relative_pose().to_bevy_transform(),
+                    imu_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 
                 // --- 4. Add the sensor as a child of the agent ---

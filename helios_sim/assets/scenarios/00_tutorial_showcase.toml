@@ -28,10 +28,10 @@
 #     +Y: North
 #     +Z: Up
 #
-# - Component Transforms: Transforms for sensors and other components define the pose
-#   of the CHILD frame (e.g., the sensor) relative to the PARENT frame (e.g., the vehicle body).
-#   This `parent -> child` transform answers the question:
-#   "Where is the component located and oriented relative to its parent?"
+# - Component Transforms: Transforms for sensors define the pose of the sensor
+#   relative to the vehicle body, expressed in the Vehicle Body (FLU) frame.
+#   `translation = [x, y, z]` means [forward, left, up] in meters from the vehicle origin.
+#   `rotation = [roll, pitch, yaw]` in degrees, applied in FLU body frame convention.
 # =========================================================================
 
 [simulation]
@@ -58,7 +58,7 @@ from = "agents.ackermann_car_pro"
 name = "ProCar-Baseline"
 # The agent's starting pose in the world (ENU) frame.
 # `rotation` is [roll, pitch, yaw] in degrees. 90 deg yaw is North.
-starting_pose = { translation = [0.0, 0.5, 1.0], rotation = [0.0, 0.0, 90.0] }
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 90.0] }
 goal_pose = { translation = [100.0, 50.0, 0.5] }
 
 
@@ -73,7 +73,7 @@ goal_pose = { translation = [100.0, 50.0, 0.5] }
 from = "agents.ackermann_car_basic"
 
 name = "ResearchCar-Custom"
-starting_pose = { translation = [-10.0, 0.5, 1.0], rotation = [0.0, 0.0, 90.0] }
+starting_pose = { translation = [-20.0, 0.0, 1.0], rotation = [0.0, 0.0, 90.0] }
 goal_pose = { translation = [100.0, 50.0, 0.5] }
 
 # 1. REPLACEMENT: Replace the entire vehicle model with the 'truck' version.
@@ -90,9 +90,9 @@ vehicle = { from = "vehicles.ackermann_truck" }
 # This new key, "front_lidar", is its unique instance name on this agent.
 [agents.sensors.secondary_gps]
 from = "sensors.gps_pro"
-# Override the transform to place the LiDAR.
-# Pose is in the Vehicle Body (FLU) frame [x, y, z].
-# This is 1.5m forward, 0.8m up from the vehicle's origin.
+# Override the transform to place this GPS antenna.
+# Pose is in the Vehicle Body (FLU) frame: [forward, left, up] in meters.
+# This places the antenna 1.5m forward and 0.8m up from the vehicle's origin.
 transform = { translation = [1.5, 0.0, 0.8] }
 
 # 2b. MODIFYING an inherited sensor (including its transform):
@@ -112,7 +112,9 @@ rate = 500.0
 # We override the 'from' key to point to a different component template.
 from = "sensors.gps_advanced"
 # And we can still override properties for this new component instance.
-transform = { translation = [0.0, 0.0, 1.3] } # Place it on the truck's roof.
+# Pose is in the Vehicle Body (FLU) frame: [forward, left, up] in meters.
+# 0m forward, 0m left, 1.3m up — mounts it on the truck's roof.
+transform = { translation = [0.0, 0.0, 1.3] }
 
 
 # adding lidar 

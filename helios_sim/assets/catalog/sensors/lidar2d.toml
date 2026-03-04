@@ -2,7 +2,7 @@
 kind = "Lidar"                                # <-- Matches SensorConfig::Lidar
 type = "Lidar2D"                              # <-- This is the `tag` for the inner LidarConfig enum
 rate = 10.0
-transform = { translation = [1.5, 0.0, 0.5] } # Mounted on the front bumper
+transform = { translation = [1.5, 0.0, 0.5], rotation = [0.0, 0.0, 0.0]} # 1.5m forward, 0.5m up (FLU frame)
 max_range = 50.0
 horizontal_fov = 180.0                        # A forward-facing scanner
 horizontal_beams = 360
