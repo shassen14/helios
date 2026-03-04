@@ -35,6 +35,10 @@ pub struct RaycastingSensor {
     pub model: Box<dyn RaycastingSensorModel>,
     /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
     pub topic_name: String,
+    /// Cached result of the last scan: (world_direction, draw_length).
+    /// draw_length is the hit distance, or max_range if no hit.
+    /// Used by the debug gizmo system so rays shorten to their hit points.
+    pub last_scan: Vec<(Vec3, f32)>,
 }
 
 pub struct RaycastingSensorPlugin;
@@ -109,6 +113,7 @@ fn spawn_raycasting_sensors(
                             agent_name.as_str(),
                             sensor_name
                         ),
+                        last_scan: Vec::new(),
                     },
                     TrackedFrame,
                     lidar_config.get_relative_pose().to_bevy_transform(),
@@ -156,39 +161,49 @@ fn raycasting_sensor_system(
 
                 let local_rays = sensor.model.generate_rays();
                 let mut hits: Vec<RayHit> = Vec::with_capacity(local_rays.len());
+                let mut scan_cache: Vec<(Vec3, f32)> = Vec::with_capacity(local_rays.len());
                 let sensor_origin = sensor_transform.translation();
                 let sensor_rotation = sensor_transform.rotation();
+                let max_toi = sensor.model.get_max_range();
 
                 // We create a filter that excludes the sensor's own parent agent.
                 let filter = SpatialQueryFilter::from_excluded_entities([agent_entity]);
 
                 for ray in local_rays {
-                    // 1. Manually construct the Bevy Vec3 from the nalgebra f64 vector.
-                    let local_direction_bevy = Vec3::new(
-                        ray.direction.x as f32,
-                        ray.direction.y as f32,
-                        ray.direction.z as f32,
-                    );
+                    // 1. Convert ray direction from sensor FLU (same convention as ENU) to Bevy
+                    //    sensor-local frame before applying the sensor's Bevy rotation.
+                    let bevy_sensor_local_dir =
+                        crate::simulation::core::transforms::enu_vector_to_bevy_vector(
+                            &nalgebra::Vector3::new(
+                                ray.direction.x,
+                                ray.direction.y,
+                                ray.direction.z,
+                            ),
+                        );
                     // 2. Then, rotate it.
-                    let world_direction: Vec3 = sensor_rotation * local_direction_bevy;
-                    let max_toi = sensor.model.get_max_range();
+                    let world_direction: Vec3 = sensor_rotation * bevy_sensor_local_dir;
 
                     // Convert it to `Dir3` for the raycast.
                     if let Ok(dir) = Dir3::new(world_direction) {
-                        if let Some(hit) = spatial_query.cast_ray(
+                        let draw_length = if let Some(hit) = spatial_query.cast_ray(
                             sensor_origin,
                             dir,
                             max_toi,
                             true,
-                            &filter, // Pass the filter here
+                            &filter,
                         ) {
                             hits.push(RayHit {
                                 ray_id: ray.id,
                                 distance: hit.distance,
                             });
-                        }
+                            hit.distance
+                        } else {
+                            max_toi
+                        };
+                        scan_cache.push((world_direction, draw_length));
                     }
                 }
+                sensor.last_scan = scan_cache;
 
                 let agent_handle = FrameHandle::from_entity(agent_entity);
                 let sensor_handle = FrameHandle::from_entity(sensor_entity);

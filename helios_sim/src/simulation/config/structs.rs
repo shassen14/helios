@@ -128,11 +128,7 @@ impl Pose {
     }
 
     pub fn to_bevy_transform(&self) -> Transform {
-        let t = self.translation;
-        let r = self.rotation.coords;
-        Transform::from_xyz(t.x as f32, t.y as f32, t.z as f32).with_rotation(
-            bevy::prelude::Quat::from_xyzw(r.x as f32, r.y as f32, r.z as f32, r.w as f32),
-        )
+        crate::simulation::core::transforms::enu_iso_to_bevy_transform(&self.to_isometry())
     }
 }
 

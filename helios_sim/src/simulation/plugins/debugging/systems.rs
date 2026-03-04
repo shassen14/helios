@@ -74,19 +74,11 @@ pub fn draw_lidar_rays(
     sensor_query: Query<(&RaycastingSensor, &GlobalTransform), With<ShowDebugGizmos>>,
 ) {
     for (sensor, transform) in &sensor_query {
-        let local_rays = sensor.model.generate_rays();
-        for ray in local_rays {
-            let world_direction = transform.rotation()
-                * Vec3::new(
-                    ray.direction.x as f32,
-                    ray.direction.y as f32,
-                    ray.direction.z as f32,
-                );
-            let end_point =
-                transform.translation() + world_direction * sensor.model.get_max_range();
+        let origin = transform.translation();
+        for &(world_direction, draw_length) in &sensor.last_scan {
             gizmos.line(
-                transform.translation(),
-                end_point,
+                origin,
+                origin + world_direction * draw_length,
                 Color::srgba(1.0, 0.5, 0.0, 0.1),
             );
         }
