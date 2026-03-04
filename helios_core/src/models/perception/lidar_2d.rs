@@ -3,7 +3,7 @@
 use crate::messages::{MeasurementData, Point, PointCloud};
 use crate::models::perception::{RayHit, RaycastingSensorModel, SensorRay};
 use crate::types::FrameHandle;
-use nalgebra::{Point3, UnitQuaternion, Vector3};
+use nalgebra::{Point3, Vector3};
 use rand_distr::{Distribution, Normal};
 
 /// A model for a single-plane, 2D LiDAR sensor.

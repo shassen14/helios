@@ -95,7 +95,7 @@ fn process_ackermann_logic(
         if let Vehicle::Ackermann {
             wheelbase,
             max_steering_angle,
-            max_steering_rate,
+            max_steering_rate: _,
             ..
         } = &request.0.vehicle
         {
@@ -132,7 +132,7 @@ fn attach_ackermann_physics(
     query: Query<(Entity, &Name, &GroundTruthState, &AckermannParameters), Without<RigidBody>>,
     assets: Res<AckermannAssets>,
 ) {
-    for (entity, name, ground_truth, params) in &query {
+    for (entity, name, ground_truth, _params) in &query {
         let start_transform_bevy = enu_iso_to_bevy_transform(&ground_truth.pose);
 
         let mut entity_commands = commands.entity(entity);

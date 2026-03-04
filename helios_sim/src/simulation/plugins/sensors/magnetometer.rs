@@ -124,7 +124,7 @@ fn magnetometer_sensor_system(
     // Re-use the world magnetic field definition.
     let world_magnetic_field_enu = Vector3::new(0.0, 1.0, 0.0).normalize();
 
-    for (agent_entity, ground_truth, children) in &parent_query {
+    for (agent_entity, _ground_truth, children) in &parent_query {
         for &child_entity in children {
             if let Ok((sensor_entity, mut mag, sensor_global_transform)) =
                 sensor_query.get_mut(child_entity)

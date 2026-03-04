@@ -127,7 +127,7 @@ fn gps_sensor_system(
 ) {
     let dt = time.delta();
 
-    for (agent_entity, agent_transform, children) in &parent_query {
+    for (agent_entity, _agent_transform, children) in &parent_query {
         for &child_entity in children {
             // Check if this child is a GPS sensor we need to process.
             if let Ok((sensor_entity, mut gps, sensor_global_transform)) =

@@ -2,10 +2,10 @@
 
 use crate::simulation::core::{
     components::GroundTruthState,
-    transforms::{bevy_global_transform_to_enu_iso, bevy_transform_to_enu_iso},
+    transforms::bevy_global_transform_to_enu_iso,
 };
 use avian3d::prelude::{
-    AngularVelocity, ExternalForce, ExternalTorque, Gravity, LinearVelocity, Mass,
+    AngularVelocity, LinearVelocity,
 };
 use bevy::prelude::*;
 use nalgebra::Vector3;

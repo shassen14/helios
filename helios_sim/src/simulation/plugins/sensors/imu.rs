@@ -63,7 +63,7 @@ fn spawn_imu_sensors(
 ) {
     for (agent_entity, agent_name, request) in &request_query {
         // Find any IMU configurations for this agent.
-        for (sensor_name, sensor_config) in &request.0.sensors {
+        for (_sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Imu(imu_config) = sensor_config {
                 info!(
                     "  -> Spawning IMU '{}' as child of agent '{}' with rate of {:.1} Hz",

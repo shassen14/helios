@@ -7,7 +7,7 @@ use nalgebra::DVector;
 use std::collections::HashMap;
 
 use crate::prelude::*;
-use crate::simulation::config::structs::{MapperConfig, WorldModelConfig};
+use crate::simulation::config::structs::WorldModelConfig;
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::topics::TopicBus;
 use crate::simulation::plugins::world_model::components::{ControlInputCache, ModuleTimer};

@@ -50,7 +50,7 @@ pub fn toggle_pose_gimbals(
 ) {
     if keyboard.just_pressed(KeyCode::F1) {
         let are_any_on = query.iter().any(|(_, gizmo_opt)| gizmo_opt.is_some());
-        for (entity, gizmo_opt) in &query {
+        for (entity, _gizmo_opt) in &query {
             if are_any_on {
                 commands.entity(entity).remove::<ShowDebugGizmos>();
             } else {
