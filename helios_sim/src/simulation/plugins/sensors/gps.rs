@@ -7,6 +7,7 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::{
     app_state::SimulationSet, events::BevyMeasurementMessage, prng::SimulationRng,
+    topics::TopicBus,
 };
 
 // --- Core Library Imports ---
@@ -26,6 +27,8 @@ pub struct Gps {
     pub timer: Timer,
     // Store the noise distribution for efficiency
     noise_dist: Normal<f64>,
+    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
+    pub topic_name: String,
 }
 
 pub struct GpsPlugin;
@@ -94,6 +97,11 @@ fn spawn_gps_sensors(
                         // We could create separate noise distributions for each axis if needed.
                         // For simplicity, we'll just use the first standard deviation value.
                         noise_dist: Normal::new(0.0, gps_config.noise_stddev[0] as f64).unwrap(),
+                        topic_name: format!(
+                            "/{}/sensors/{}",
+                            agent_name.as_str(),
+                            sensor_name
+                        ),
                     },
                     // The crucial part: The wrapped `helios_core` model.
                     // This is what the world model spawner will look for.
@@ -117,6 +125,7 @@ fn spawn_gps_sensors(
 /// Runs every frame to simulate GPS physics and publish measurement messages.
 fn gps_sensor_system(
     mut measurement_writer: EventWriter<BevyMeasurementMessage>,
+    mut topic_bus: ResMut<TopicBus>,
     time: Res<Time>,
     mut rng: ResMut<SimulationRng>,
 
@@ -166,7 +175,9 @@ fn gps_sensor_system(
 
                 // println!("Gps message: {:?}", pure_message.data);
 
-                // 5. Wrap it in the Bevy event and send it.
+                // External path: TopicBus for bridge consumers.
+                topic_bus.publish(&gps.topic_name, pure_message.clone());
+                // Internal path: Bevy event for the EKF control loop.
                 measurement_writer.write(BevyMeasurementMessage(pure_message));
             }
         }

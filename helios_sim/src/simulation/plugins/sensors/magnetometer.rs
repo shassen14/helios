@@ -8,7 +8,7 @@ use crate::prelude::*;
 use crate::simulation::core::transforms::bevy_global_transform_to_enu_iso;
 use crate::simulation::core::{
     app_state::SimulationSet, components::GroundTruthState, events::BevyMeasurementMessage,
-    prng::SimulationRng,
+    prng::SimulationRng, topics::TopicBus,
 };
 
 // --- Core Library Imports ---
@@ -29,6 +29,8 @@ pub struct Magnetometer {
     noise_dist_x: Normal<f64>,
     noise_dist_y: Normal<f64>,
     noise_dist_z: Normal<f64>,
+    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
+    pub topic_name: String,
 }
 
 pub struct MagnetometerPlugin;
@@ -97,6 +99,11 @@ fn spawn_magnetometer_sensors(
                         noise_dist_x: Normal::new(0.0, mag_config.noise_stddev[0] as f64).unwrap(),
                         noise_dist_y: Normal::new(0.0, mag_config.noise_stddev[1] as f64).unwrap(),
                         noise_dist_z: Normal::new(0.0, mag_config.noise_stddev[2] as f64).unwrap(),
+                        topic_name: format!(
+                            "/{}/sensors/{}",
+                            agent_name.as_str(),
+                            sensor_name
+                        ),
                     },
                     MeasurementModel(Box::new(core_model)),
                     TrackedFrame,
@@ -115,6 +122,7 @@ fn spawn_magnetometer_sensors(
 
 fn magnetometer_sensor_system(
     mut measurement_writer: EventWriter<BevyMeasurementMessage>,
+    mut topic_bus: ResMut<TopicBus>,
     time: Res<Time>,
     mut rng: ResMut<SimulationRng>,
     parent_query: Query<(Entity, &GroundTruthState, &Children)>,
@@ -155,6 +163,9 @@ fn magnetometer_sensor_system(
                     timestamp: time.elapsed_secs_f64(),
                     data: MeasurementData::Magnetometer(noisy_mag_reading),
                 };
+                // External path: TopicBus for bridge consumers.
+                topic_bus.publish(&mag.topic_name, pure_message.clone());
+                // Internal path: Bevy event for the EKF control loop.
                 measurement_writer.write(BevyMeasurementMessage(pure_message));
             }
         }

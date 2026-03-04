@@ -10,7 +10,7 @@ use crate::prelude::*;
 use crate::simulation::core::transforms::bevy_global_transform_to_enu_iso;
 use crate::simulation::core::{
     app_state::SimulationSet, components::GroundTruthState, events::BevyMeasurementMessage,
-    prng::SimulationRng,
+    prng::SimulationRng, topics::TopicBus,
 };
 
 // --- Core Library Imports ---
@@ -30,6 +30,8 @@ pub struct Imu {
     pub timer: Timer,
     accel_noise: [Normal<f64>; 3], // X, Y, Z
     gyro_noise: [Normal<f64>; 3],  // X, Y, Z
+    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
+    pub topic_name: String,
 }
 
 pub struct ImuPlugin;
@@ -116,6 +118,11 @@ fn spawn_imu_sensors(
                             Normal::new(0.0, gyro_std[1] as f64).unwrap(),
                             Normal::new(0.0, gyro_std[2] as f64).unwrap(),
                         ],
+                        topic_name: format!(
+                            "/{}/sensors/{}",
+                            agent_name.as_str(),
+                            imu_config.get_name()
+                        ),
                     },
                     // The pure `helios_core` model, wrapped for use in Bevy.
                     MeasurementModel(Box::new(final_core_model)),
@@ -139,6 +146,7 @@ fn spawn_imu_sensors(
 /// Runs every frame to simulate IMU physics and publish measurement messages.
 fn imu_sensor_system(
     mut measurement_writer: EventWriter<BevyMeasurementMessage>,
+    mut topic_bus: ResMut<TopicBus>,
     time: Res<Time>,
     mut rng: ResMut<SimulationRng>,
     gravity: Res<Gravity>, // The "true" gravity from the physics engine.
@@ -222,6 +230,9 @@ fn imu_sensor_system(
                     data: MeasurementData::Imu6Dof(noisy_measurement),
                 };
 
+                // External path: publish to TopicBus for bridge consumers (Foxglove, loggers).
+                topic_bus.publish(&imu.topic_name, pure_message.clone());
+                // Internal path: Bevy event for the high-frequency EKF control loop.
                 measurement_writer.write(BevyMeasurementMessage(pure_message));
                 // info!("IMU {:?} published measurement.", sensor_entity);
             }

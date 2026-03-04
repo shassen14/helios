@@ -59,3 +59,5 @@ pub mod simulation_setup;
 pub mod spawn_requests;
 pub mod topics;
 pub mod transforms;
+
+pub use topics::TopicBusPlugin;

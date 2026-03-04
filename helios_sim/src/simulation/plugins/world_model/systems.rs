@@ -228,18 +228,24 @@ pub fn world_model_mapping_system(
 }
 
 pub fn world_model_output_publisher(
-    query: Query<&WorldModelComponent>,
+    query: Query<(&WorldModelComponent, &Name)>,
     mut topic_bus: ResMut<TopicBus>,
 ) {
-    for module in &query {
+    for (module, name) in &query {
         match &*module {
             WorldModelComponent::Separate { estimator, mapper } => {
                 let state = estimator.get_state();
-                topic_bus.publish("/state/estimated", state.clone());
+                topic_bus.publish(
+                    &format!("/{}/odometry/estimated", name.as_str()),
+                    state.clone(),
+                );
 
                 let map = mapper.get_map();
                 if !matches!(map, helios_core::mapping::MapData::None) {
-                    topic_bus.publish("/map", map.clone());
+                    topic_bus.publish(
+                        &format!("/{}/map", name.as_str()),
+                        map.clone(),
+                    );
                 }
             }
             WorldModelComponent::CombinedSlam { system } => {

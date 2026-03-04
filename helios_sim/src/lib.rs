@@ -4,6 +4,7 @@ use bevy::prelude::*;
 
 // Import the plugins defined within the simulation crate.
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
+use crate::simulation::core::TopicBusPlugin;
 use crate::simulation::plugins::debugging::DebuggingPlugin;
 use crate::simulation::plugins::sensors::gps::GpsPlugin;
 use crate::simulation::plugins::sensors::imu::ImuPlugin;
@@ -28,6 +29,8 @@ pub struct HeliosSimulationPlugin;
 impl Plugin for HeliosSimulationPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
+            // Registers TopicBus resource — must be first so all sensors can publish to it.
+            TopicBusPlugin,
             // Core setup (spawns agents, sets up stages, etc.)
             SimulationSetupPlugin,
             // Algorithm factories — must come before WorldModelPlugin so the registry
