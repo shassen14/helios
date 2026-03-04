@@ -3,7 +3,8 @@
 use crate::{
     prelude::*,
     simulation::core::{
-        app_state::SimulationSet, topics::GroundTruthState, transforms::enu_iso_to_bevy_transform,
+        app_state::SimulationSet, components::GroundTruthState,
+        transforms::enu_iso_to_bevy_transform,
     },
 }; // Use the internal prelude of the helios_sim crate
 use avian3d::prelude::*;

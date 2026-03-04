@@ -2,7 +2,6 @@
 
 use bevy::prelude::*;
 use downcast_rs::{impl_downcast, Downcast};
-use nalgebra::{DMatrix, Isometry3, Vector3};
 use std::any::TypeId;
 use std::collections::{HashMap, VecDeque};
 use std::marker::PhantomData;
@@ -98,7 +97,7 @@ pub enum TopicTag {
     Imu,
     Gps,
     Lidar,
-    // Add more tags as needed
+    Magnetometer,
 }
 
 /// A struct holding all information about a single topic on the bus.
@@ -169,59 +168,3 @@ impl TopicBus {
     }
 }
 
-// --- Example Data Structures (replacing the old Event-based ones) ---
-
-/// Topic: /sensor/imu/data
-#[derive(Clone, Debug)]
-pub struct ImuData {
-    pub entity: Entity, // Keep the entity to know who this reading is for
-    pub sensor_name: String,
-    pub timestamp: f64,
-    pub acceleration: Vector3<f64>,
-    pub angular_velocity: Vector3<f64>,
-}
-
-// --- Events (Transient Messages) ---
-
-/// Topic: /control/applied
-/// The actual control input applied after actuator limits.
-#[derive(Clone, Debug)]
-pub struct AppliedControl {
-    pub entity: Entity,
-    pub timestamp: f64,
-    pub control_vector: nalgebra::DVector<f64>,
-}
-
-// --- Components (Latched/Stateful Topics) ---
-
-/// Topic: /state/estimated
-/// The public, estimated pose of an agent.
-#[derive(Component, Clone, Debug)]
-pub struct EstimatedPose {
-    pub timestamp: f64,
-    pub pose: Isometry3<f64>,
-    pub covariance: DMatrix<f64>,
-}
-
-/// Topic: /state/ground_truth
-/// The perfect, ground truth state. Only for sensors and logging.
-#[derive(Component, Clone, Debug)]
-pub struct GroundTruthState {
-    pub pose: Isometry3<f64>,
-    pub linear_velocity: Vector3<f64>,
-    pub angular_velocity: Vector3<f64>,
-    pub linear_acceleration: Vector3<f64>, // The value we will calculate
-    pub last_linear_velocity: Vector3<f64>, // To help us calculate it
-}
-
-impl Default for GroundTruthState {
-    fn default() -> Self {
-        Self {
-            pose: Isometry3::identity(),
-            linear_velocity: Vector3::zeros(),
-            angular_velocity: Vector3::zeros(),
-            linear_acceleration: Vector3::zeros(),
-            last_linear_velocity: Vector3::zeros(),
-        }
-    }
-}

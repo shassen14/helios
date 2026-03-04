@@ -1,7 +1,7 @@
 // helios_sim/src/simulation/core/mod.rs
 
 use crate::simulation::core::{
-    topics::GroundTruthState,
+    components::GroundTruthState,
     transforms::{bevy_global_transform_to_enu_iso, bevy_transform_to_enu_iso},
 };
 use avian3d::prelude::{

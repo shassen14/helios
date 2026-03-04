@@ -79,8 +79,3 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
     // 4. Insert the single, unified config as a resource.
     commands.insert_resource(final_config);
 }
-
-fn transition_to_scene_building(mut next_state: ResMut<NextState<AppState>>) {
-    info!("Configuration loading and resolution complete. Transitioning to SceneBuilding state.");
-    next_state.set(AppState::SceneBuilding);
-}

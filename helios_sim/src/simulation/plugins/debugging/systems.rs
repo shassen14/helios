@@ -4,7 +4,7 @@ use nalgebra::{Isometry3, SymmetricEigen, Translation3, UnitQuaternion, Vector3}
 use super::components::ShowDebugGizmos;
 use crate::prelude::*;
 use crate::simulation::{
-    core::topics::GroundTruthState,
+    core::components::GroundTruthState,
     plugins::{sensors::raycasting::RaycastingSensor, world_model::WorldModelComponent},
 };
 

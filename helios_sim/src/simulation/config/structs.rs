@@ -53,6 +53,9 @@ pub struct Simulation {
     pub seed: Option<u64>,
     /// Duration of the simulation in seconds.
     pub duration_seconds: f32,
+    /// Fixed-update frequency in Hz. Physics, sensors, and estimation all tick at this rate.
+    #[serde(default = "default_frequency_hz")]
+    pub frequency_hz: f64,
     /// A list of topic names to log at the end of the run.
     #[serde(default)]
     pub log_topics: Vec<String>,
@@ -63,9 +66,14 @@ impl Default for Simulation {
         Self {
             seed: None,
             duration_seconds: 60.0,
+            frequency_hz: 400.0,
             log_topics: Vec::new(),
         }
     }
+}
+
+fn default_frequency_hz() -> f64 {
+    400.0
 }
 
 #[derive(Debug, Deserialize)]
@@ -436,6 +444,16 @@ impl EstimatorConfig {
     }
 }
 
+impl EkfDynamicsConfig {
+    pub fn get_kind_str(&self) -> &str {
+        match self {
+            EkfDynamicsConfig::IntegratedImu(_) => "IntegratedImu",
+            EkfDynamicsConfig::AckermannOdometry(_) => "AckermannOdometry",
+            EkfDynamicsConfig::Quadcopter(_) => "Quadcopter",
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct EkfConfig {
     // This field now becomes an enum that bundles the model type
@@ -511,12 +529,38 @@ pub enum MapperConfig {
     OccupancyGrid2D { rate: f32, resolution: f32 },
 }
 
+impl MapperConfig {
+    pub fn get_kind_str(&self) -> &str {
+        match self {
+            MapperConfig::None => "None",
+            MapperConfig::OccupancyGrid2D { .. } => "OccupancyGrid2D",
+        }
+    }
+
+    /// Returns the update rate for mappers that need a `ModuleTimer`, None otherwise.
+    pub fn get_timer_rate(&self) -> Option<f32> {
+        match self {
+            MapperConfig::OccupancyGrid2D { rate, .. } => Some(*rate),
+            MapperConfig::None => None,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum SlamConfig {
     EkfSlam(EkfSlamConfig),
     FactorGraphSlam(FactorGraphSlamConfig),
+}
+
+impl SlamConfig {
+    pub fn get_kind_str(&self) -> &str {
+        match self {
+            SlamConfig::EkfSlam(_) => "EkfSlam",
+            SlamConfig::FactorGraphSlam(_) => "FactorGraphSlam",
+        }
+    }
 }
 
 // Define config structs for each SLAM kind

@@ -6,13 +6,13 @@ use bevy::prelude::*;
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
 use crate::simulation::plugins::debugging::DebuggingPlugin;
 use crate::simulation::plugins::sensors::gps::GpsPlugin;
-// use crate::simulation::plugins::estimation::ekf::EkfPlugin;
 use crate::simulation::plugins::sensors::imu::ImuPlugin;
 use crate::simulation::plugins::sensors::magnetometer::MagnetometerPlugin;
 use crate::simulation::plugins::sensors::raycasting::RaycastingSensorPlugin;
 use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;
 use crate::simulation::plugins::world::spawner::WorldSpawnerPlugin;
 use crate::simulation::plugins::world_model::WorldModelPlugin;
+use crate::simulation::registry::plugin::AutonomyRegistryPlugin;
 
 // This prelude is for convenience for other files WITHIN the helios_sim crate.
 pub mod prelude;
@@ -30,6 +30,9 @@ impl Plugin for HeliosSimulationPlugin {
         app.add_plugins((
             // Core setup (spawns agents, sets up stages, etc.)
             SimulationSetupPlugin,
+            // Algorithm factories — must come before WorldModelPlugin so the registry
+            // is fully populated before any spawning system runs.
+            AutonomyRegistryPlugin,
             // Spawns the world mesh, lighting, camera.
             WorldSpawnerPlugin,
             // Adds the Ackermann vehicle logic.

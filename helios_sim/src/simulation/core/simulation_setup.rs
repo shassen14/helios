@@ -14,21 +14,25 @@ use crate::simulation::core::ground_truth_sync_system;
 use crate::simulation::core::prng::SimulationRng;
 use crate::simulation::core::transforms::build_static_tf_maps;
 // Import the Bevy-specific types this plugin manages
-use super::topics::{GroundTruthState, TopicBus};
+use super::components::GroundTruthState;
+use super::topics::TopicBus;
 use super::transforms::{tf_tree_builder_system, TfTree};
 
 pub struct SimulationSetupPlugin;
 
 impl Plugin for SimulationSetupPlugin {
     fn build(&self, app: &mut App) {
-        // This plugin's job is to read the config and add resources and startup systems.
-        let config = app
-            .world()
-            .get_resource::<ScenarioConfig>()
-            .expect("SimulationConfig not found!");
+        // Extract config values before mutably borrowing app.
+        let (seed, frequency_hz) = {
+            let config = app
+                .world()
+                .get_resource::<ScenarioConfig>()
+                .expect("SimulationConfig not found!");
+            (config.simulation.seed, config.simulation.frequency_hz)
+        };
 
         // --- 1. Add the Deterministic PRNG Resource ---
-        let rng = match config.simulation.seed {
+        let rng = match seed {
             Some(seed) => ChaCha8Rng::seed_from_u64(seed),
             None => ChaCha8Rng::from_rng(&mut OsRng).expect("OS RNG failed"),
         };
@@ -36,15 +40,11 @@ impl Plugin for SimulationSetupPlugin {
 
         // --- INITIALIZE RESOURCES & EVENTS ---
         app
-            // This resource is the central message bus for the simulation.
             .init_resource::<TopicBus>()
-            // This resource will be populated each frame with the latest transforms.
             .init_resource::<TfTree>()
-            // This is CRITICAL. It registers the pure MeasurementEvent with Bevy's event system.
             .add_event::<BevyMeasurementMessage>();
 
-        let simulation_frequency = 400.0; // The desired frequency in Hz
-        let fixed_update_timestep = 1.0 / simulation_frequency;
+        let fixed_update_timestep = 1.0 / frequency_hz;
 
         app.insert_resource(
             // The resource is of type Time<Fixed>.

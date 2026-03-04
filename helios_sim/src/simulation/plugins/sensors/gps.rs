@@ -7,13 +7,12 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::{
     app_state::SimulationSet, events::BevyMeasurementMessage, prng::SimulationRng,
-    topics::GroundTruthState,
 };
 
 // --- Core Library Imports ---
 use helios_core::{
     messages::{MeasurementData, MeasurementMessage},
-    models::estimation::measurement::{gps::GpsPositionModel, Measurement},
+    models::estimation::measurement::{gps::GpsPositionModel},
     types::FrameHandle,
 };
 
