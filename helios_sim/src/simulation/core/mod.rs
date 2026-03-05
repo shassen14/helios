@@ -2,11 +2,10 @@
 
 use crate::simulation::core::{
     components::GroundTruthState,
+    topics::TopicBus,
     transforms::bevy_global_transform_to_enu_iso,
 };
-use avian3d::prelude::{
-    AngularVelocity, LinearVelocity,
-};
+use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
 use nalgebra::Vector3;
 
@@ -48,6 +47,21 @@ fn ground_truth_sync_system(
 
         // --- 4. CRITICAL STEP: Store the current velocity for the NEXT frame's calculation ---
         ground_truth.last_linear_velocity = current_linear_velocity_enu;
+    }
+}
+
+/// Publishes each agent's GroundTruthState to the TopicBus under
+/// `/{agent_name}/ground_truth`. Runs in SimulationSet::Validation,
+/// after ground_truth_sync_system has written the latest physics values.
+pub fn ground_truth_publish_system(
+    query: Query<(&Name, &GroundTruthState)>,
+    mut topic_bus: ResMut<TopicBus>,
+) {
+    for (name, gt) in &query {
+        topic_bus.publish(
+            &format!("/{}/ground_truth", name.as_str()),
+            gt.clone(),
+        );
     }
 }
 

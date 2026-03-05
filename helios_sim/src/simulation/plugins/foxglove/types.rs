@@ -7,7 +7,7 @@
 // None of this touches the core types — it is presentation-only.
 
 use helios_core::frames::{FrameAwareState, StateVariable};
-use helios_core::messages::{MeasurementData, MeasurementMessage, PointCloud};
+use helios_core::messages::{MeasurementData, MeasurementMessage /*, PointCloud*/};
 use serde_json::{json, Map, Value};
 
 use crate::simulation::core::components::GroundTruthState;
@@ -122,26 +122,5 @@ pub fn measurement_to_json(msg: &MeasurementMessage) -> Value {
     Value::Object(out)
 }
 
-// ---------------------------------------------------------------------------
-// PointCloud
-// ---------------------------------------------------------------------------
-
-pub fn point_cloud_to_json(pc: &PointCloud) -> Value {
-    let points: Vec<Value> = pc
-        .points
-        .iter()
-        .map(|p| {
-            json!({
-                "x": p.position.x,
-                "y": p.position.y,
-                "z": p.position.z,
-                "intensity": p.intensity,
-            })
-        })
-        .collect();
-    json!({
-        "timestamp": pc.timestamp,
-        "num_points": pc.points.len(),
-        "points": points,
-    })
-}
+// PointCloud serializer commented out — no Foxglove 3D panel; belongs in MCAP logger when implemented.
+// pub fn point_cloud_to_json(pc: &PointCloud) -> Value { ... }

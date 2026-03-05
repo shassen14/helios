@@ -10,7 +10,7 @@ use rand_chacha::ChaCha8Rng;
 use crate::prelude::*;
 use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::simulation::core::events::BevyMeasurementMessage;
-use crate::simulation::core::ground_truth_sync_system;
+use crate::simulation::core::{ground_truth_publish_system, ground_truth_sync_system};
 use crate::simulation::core::prng::SimulationRng;
 use crate::simulation::core::transforms::build_static_tf_maps;
 // Import the Bevy-specific types this plugin manages
@@ -157,6 +157,9 @@ impl Plugin for SimulationSetupPlugin {
                     .in_set(SimulationSet::Precomputation)
                     .run_if(in_state(AppState::Running)),
                 ground_truth_sync_system.in_set(SimulationSet::StateSync),
+                ground_truth_publish_system
+                    .in_set(SimulationSet::Validation)
+                    .run_if(in_state(AppState::Running)),
             ),
         );
     }

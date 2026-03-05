@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use bevy::prelude::*;
-use helios_core::messages::PointCloud;
+// use helios_core::messages::PointCloud; // commented out — PointCloud not streamed to Foxglove
 use helios_core::prelude::{FrameAwareState, MeasurementMessage};
 use std::sync::Arc;
 
@@ -17,10 +17,12 @@ use crate::simulation::plugins::foxglove::protocol::{
     BridgeMessage, ChannelAdvertisement, ServerControl,
 };
 use crate::simulation::plugins::foxglove::serializers::{
-    FRAME_AWARE_STATE_SCHEMA, GROUND_TRUTH_SCHEMA, MEASUREMENT_MESSAGE_SCHEMA, POINT_CLOUD_SCHEMA,
+    FRAME_AWARE_STATE_SCHEMA, GROUND_TRUTH_SCHEMA, MEASUREMENT_MESSAGE_SCHEMA,
+    // POINT_CLOUD_SCHEMA,  // commented out — PointCloud not streamed to Foxglove
 };
 use crate::simulation::plugins::foxglove::types::{
-    frame_aware_state_to_json, ground_truth_to_json, measurement_to_json, point_cloud_to_json,
+    frame_aware_state_to_json, ground_truth_to_json, measurement_to_json,
+    // point_cloud_to_json,  // commented out — PointCloud not streamed to Foxglove
 };
 
 // ---------------------------------------------------------------------------
@@ -59,7 +61,7 @@ impl ChannelRegistry {
 #[derive(Resource, Default)]
 pub struct FoxgloveTopicReaders {
     pub measurement: HashMap<String, TopicReader<MeasurementMessage>>,
-    pub point_cloud: HashMap<String, TopicReader<Arc<PointCloud>>>,
+    // pub point_cloud: HashMap<String, TopicReader<Arc<PointCloud>>>,  // no Foxglove 3D panel
     pub ground_truth: HashMap<String, TopicReader<GroundTruthState>>,
     pub frame_aware_state: HashMap<String, TopicReader<FrameAwareState>>,
 }
@@ -94,8 +96,8 @@ fn type_to_advertisement(
 ) -> Option<ChannelAdvertisement> {
     let (schema_name, schema) = if type_id == TypeId::of::<MeasurementMessage>() {
         ("MeasurementMessage", MEASUREMENT_MESSAGE_SCHEMA)
-    } else if type_id == TypeId::of::<Arc<PointCloud>>() {
-        ("PointCloud", POINT_CLOUD_SCHEMA)
+    // } else if type_id == TypeId::of::<Arc<PointCloud>>() {
+    //     ("PointCloud", POINT_CLOUD_SCHEMA)
     } else if type_id == TypeId::of::<GroundTruthState>() {
         ("GroundTruthState", GROUND_TRUTH_SCHEMA)
     } else if type_id == TypeId::of::<FrameAwareState>() {
@@ -164,11 +166,8 @@ pub fn foxglove_bridge_system(
                         .measurement
                         .entry(topic_name.clone())
                         .or_insert_with(|| TopicReader::new(&topic_name));
-                } else if type_id == TypeId::of::<Arc<PointCloud>>() {
-                    readers
-                        .point_cloud
-                        .entry(topic_name.clone())
-                        .or_insert_with(|| TopicReader::new(&topic_name));
+                // } else if type_id == TypeId::of::<Arc<PointCloud>>() {
+                //     readers.point_cloud.entry(topic_name.clone()).or_insert_with(|| TopicReader::new(&topic_name));
                 } else if type_id == TypeId::of::<GroundTruthState>() {
                     readers
                         .ground_truth
@@ -239,25 +238,8 @@ pub fn foxglove_bridge_system(
                     }
                 }
             }
-        } else if type_id == TypeId::of::<Arc<PointCloud>>() {
-            if let Some(reader) = readers.point_cloud.get_mut(&topic_name) {
-                if let Some(topic) = topic_bus.get_topic::<Arc<PointCloud>>(&topic_name) {
-                    let payloads: Vec<_> = reader
-                        .read(topic)
-                        .filter_map(|s| serde_json::to_vec(&point_cloud_to_json(&s.message)).ok())
-                        .collect();
-                    for payload in payloads {
-                        send_data(
-                            &bridge.data_tx,
-                            channel_id,
-                            timestamp_ns,
-                            payload,
-                            elapsed,
-                            &mut bridge.last_warn_secs,
-                        );
-                    }
-                }
-            }
+        // Arc<PointCloud> branch commented out — no Foxglove 3D panel; belongs in MCAP logger.
+        // } else if type_id == TypeId::of::<Arc<PointCloud>>() { ... }
         } else if type_id == TypeId::of::<GroundTruthState>() {
             if let Some(reader) = readers.ground_truth.get_mut(&topic_name) {
                 if let Some(topic) = topic_bus.get_topic::<GroundTruthState>(&topic_name) {

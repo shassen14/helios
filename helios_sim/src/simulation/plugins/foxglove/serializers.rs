@@ -26,26 +26,27 @@ pub static MEASUREMENT_MESSAGE_SCHEMA: &str = r#"{
   }
 }"#;
 
-pub static POINT_CLOUD_SCHEMA: &str = r#"{
-  "type": "object",
-  "title": "PointCloud",
-  "properties": {
-    "timestamp":  { "type": "number" },
-    "num_points": { "type": "integer" },
-    "points": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "x":         { "type": "number" },
-          "y":         { "type": "number" },
-          "z":         { "type": "number" },
-          "intensity": { "type": ["number", "null"] }
-        }
-      }
-    }
-  }
-}"#;
+// PointCloud schema commented out — no Foxglove 3D panel; publish to MCAP logger when implemented.
+// pub static POINT_CLOUD_SCHEMA: &str = r#"{
+//   "type": "object",
+//   "title": "PointCloud",
+//   "properties": {
+//     "timestamp":  { "type": "number" },
+//     "num_points": { "type": "integer" },
+//     "points": {
+//       "type": "array",
+//       "items": {
+//         "type": "object",
+//         "properties": {
+//           "x":         { "type": "number" },
+//           "y":         { "type": "number" },
+//           "z":         { "type": "number" },
+//           "intensity": { "type": ["number", "null"] }
+//         }
+//       }
+//     }
+//   }
+// }"#;
 
 pub static GROUND_TRUTH_SCHEMA: &str = r#"{
   "type": "object",
