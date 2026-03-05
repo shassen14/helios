@@ -132,6 +132,109 @@ when building the estimator's measurement model map — no registry change neede
 
 ---
 
+## Open Problem: Downstream Consumers in Chained Pipelines
+
+The registry builds algorithm objects cleanly in isolation, but breaks down when a downstream
+consumer (controller, planner) needs to read estimated state produced by an upstream algorithm
+it doesn't own.
+
+**Concrete example:** A controller needs a pose to compute a steering command. Which estimate
+does it use?
+
+```
+EKF estimator ──┐
+                ├── WorldModelComponent  ←─?─  Controller
+SLAM system   ──┘
+```
+
+In `WorldModelComponent::Separate`, the EKF is the answer. In `WorldModelComponent::CombinedSlam`,
+the SLAM system is. If both are eventually possible simultaneously (e.g., EKF for velocity,
+SLAM for global position), the question has no clean answer at the type level, and the controller
+factory has no way to express which it needs. **This is unsolved.** The approaches below are
+candidates, not decisions.
+
+---
+
+### Candidate Approaches
+
+#### 1. TopicBus as the contract boundary (most Helios-native)
+
+World model systems already publish to `/{agent}/odometry/estimated`. Controllers subscribe
+from TopicBus using the agent name as the key. No direct ownership coupling between algorithms.
+
+The "which estimate wins" question is answered by world model systems: whichever system writes
+to the canonical topic is authoritative. If both EKF and SLAM are active, only one writes to
+`/odometry/estimated`; the other writes to a secondary topic.
+
+**Upside:** Zero shared ownership. Controller factories don't need to know what's upstream.
+**Downside:** TopicBus is one-frame-stale by design (publish → next frame read). A controller
+running in the same `FixedUpdate` tick as estimation would always see the previous frame's state.
+Tight latency budgets break here.
+
+---
+
+#### 2. `CurrentBestEstimate` ECS component
+
+Add a `CurrentBestEstimate(FrameAwareState)` component, written every frame by the world model
+system after its update, read by the controller system. No ownership transfer. One writer per
+agent, many readers.
+
+```
+WorldModelSystem  →  CurrentBestEstimate  →  ControllerSystem
+```
+
+The `WorldModelSet` runs before `ControllerSet`, so the component is always fresh within a tick.
+
+**Upside:** Same-tick reads. Simple ECS pattern. Controller factories need no knowledge of
+which estimator is upstream.
+**Downside:** Adds a staging component. The world model system must decide what "best" means
+when multiple estimates are available (which is the whole unsolved question — just moved).
+
+---
+
+#### 3. Typed estimate consumers in `ControllerBuildContext`
+
+Give the controller factory an `estimate_source: EstimateSource` enum in its build context,
+configured from TOML. The enum selects which component/topic to poll.
+
+```rust
+pub enum EstimateSource { Estimator, Slam, TopicBus(String) }
+```
+
+The controller closure captures this and knows where to look at runtime.
+
+**Upside:** Explicit, config-driven. No implicit "which one wins" logic.
+**Downside:** Requires the controller trait to express this preference, which pulls topology
+knowledge into algorithm code. Also requires the controller to handle the case where its
+preferred source doesn't exist on the agent.
+
+---
+
+#### 4. Enforce a single authoritative estimate per agent
+
+Constrain the architecture: exactly one algorithm per agent produces the "navigation estimate"
+used by all downstream consumers. SLAM replaces the estimator when `CombinedSlam` is active.
+The controller always reads from one place, regardless of which algorithm produced it.
+
+The `CurrentBestEstimate` component (option 2) is the natural expression of this constraint —
+the world model system is responsible for populating it correctly for its variant.
+
+**Upside:** Eliminates the ambiguity at the design level rather than routing around it.
+**Downside:** Precludes legitimate multi-estimate use cases (e.g., EKF velocity + SLAM position
+fused in the controller). This is probably too restrictive for a research sim.
+
+---
+
+### Notes
+
+- The current code has no controller trait yet — this problem is theoretical until `ControllerFactory`
+  is added to the registry. The time to resolve it is before that PR, not during.
+- Options 2 and 4 (staging component + single authoritative source) are compatible and together
+  form a coherent design: one `CurrentBestEstimate` writer per agent, determined by world model
+  variant, consumed uniformly by all downstream systems.
+
+---
+
 ## Build Contexts
 
 Each factory receives an owned context with everything it needs:
