@@ -260,6 +260,7 @@ pub fn draw_covariance_ellipsoids(
     }
 }
 
+#[allow(unused)]
 /// Logs the state estimation error for all agents. (Does not depend on gizmos).
 /// Calculates and logs the error between the ground truth and estimated state.
 pub fn log_state_estimation_error(

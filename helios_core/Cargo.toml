@@ -16,7 +16,7 @@ bevy = ["dep:bevy_ecs"]
 
 [dependencies]
 # These dependencies use the versions defined in the root Cargo.toml
-nalgebra = { workspace = true }
+nalgebra = { workspace = true, features = ["serde-serialize"] }
 num-traits = "0.2.19"
 serde = { workspace = true }
 thiserror = { workspace = true } # Optional, but highly recommended for error handling

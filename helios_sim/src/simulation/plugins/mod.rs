@@ -1,6 +1,7 @@
 // helios_sim/src/simulation/plugins/mod.rs
 
 pub mod debugging;
+pub mod foxglove;
 pub mod sensors;
 pub mod vehicles;
 pub mod world;

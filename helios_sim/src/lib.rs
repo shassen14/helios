@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
 use crate::simulation::core::TopicBusPlugin;
 use crate::simulation::plugins::debugging::DebuggingPlugin;
+use crate::simulation::plugins::foxglove::FoxgloveWebSocketPlugin;
 use crate::simulation::plugins::sensors::gps::GpsPlugin;
 use crate::simulation::plugins::sensors::imu::ImuPlugin;
 use crate::simulation::plugins::sensors::magnetometer::MagnetometerPlugin;
@@ -48,6 +49,8 @@ impl Plugin for HeliosSimulationPlugin {
             // Add World Modeling / estimator and modeling
             WorldModelPlugin,
             DebuggingPlugin,
+            // Foxglove WebSocket bridge — must be last so all topics are registered first.
+            FoxgloveWebSocketPlugin::default(),
             // When you add new plugins (Lidar, Planners), you will add them here.
         ));
     }

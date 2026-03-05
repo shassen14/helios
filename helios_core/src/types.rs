@@ -1,13 +1,14 @@
 // helios_core/src/types.rs
 
 use nalgebra::{DVector, Isometry3};
+use serde::{Deserialize, Serialize};
 
 // --- Core Type Aliases ---
 pub type State = DVector<f64>;
 pub type Control = DVector<f64>;
 
 // --- Core Identifier ---
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct FrameHandle(pub u64);
 
 impl FrameHandle {

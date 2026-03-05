@@ -198,6 +198,20 @@ impl TopicBus {
             .and_then(|info| info.buffer.downcast_ref::<Topic<T>>())
     }
 
+    pub fn list_topics(&self) -> Vec<(String, TopicTag, String, TypeId)> {
+        self.topics
+            .iter()
+            .map(|(name, info)| {
+                (
+                    name.clone(),
+                    info.tag,
+                    info.owner_agent_name.clone(),
+                    info.topic_type,
+                )
+            })
+            .collect()
+    }
+
     pub fn find_topics_by_tag(&self, target_tag: TopicTag, target_agent_name: &str) -> Vec<String> {
         self.topics
             .iter()

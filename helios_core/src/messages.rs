@@ -1,13 +1,14 @@
 use crate::frames::FrameAwareState;
 use crate::types::{Control, FrameHandle};
 use nalgebra::{Isometry3, Matrix6, Point3, Vector3, Vector6};
+use serde::Serialize;
 
 // =========================================================================
 // == Perception-Specific Data Structures ==
 // =========================================================================
 
 /// Represents a single point from a sensor like a LiDAR.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 pub struct Point {
     /// The 3D position of the point in the SENSOR's local coordinate frame.
     pub position: Point3<f64>,
@@ -16,7 +17,7 @@ pub struct Point {
 }
 
 /// A structured representation of a point cloud from a sensor.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct PointCloud {
     /// The handle of the sensor that generated this point cloud.
     pub sensor_handle: FrameHandle,
@@ -31,7 +32,7 @@ pub struct PointCloud {
 // =========================================================================
 
 /// A rich, self-describing container for all sensor data.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum MeasurementData {
     Imu6Dof(Vector6<f64>),
     Imu9Dof {
@@ -52,7 +53,7 @@ pub enum MeasurementData {
 // `predict_measurement` function, which is much safer.
 
 /// The generic message that carries all sensor data through the system.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct MeasurementMessage {
     pub agent_handle: FrameHandle,
     pub sensor_handle: FrameHandle,
@@ -76,7 +77,7 @@ pub enum ModuleInput<'a> {
 
 /// The primary output of the estimator. Represents the robot's full dynamic state.
 /// This is the standardized message that planners and controllers will consume.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Odometry {
     pub timestamp: f64,
     pub pose: Isometry3<f64>,

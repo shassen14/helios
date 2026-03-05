@@ -7,7 +7,7 @@ mod systems;
 // Re-export the public component for use in other plugins (like sensor spawners).
 pub use components::ShowDebugGizmos;
 
-use crate::prelude::{AppState, SimulationSet};
+use crate::prelude::{AppState};
 
 /// A top-level plugin that brings in all debugging visualization tools.
 pub struct DebuggingPlugin;
@@ -29,13 +29,13 @@ impl Plugin for DebuggingPlugin {
                     systems::draw_covariance_ellipsoids,
                 )
                     .run_if(in_state(AppState::Running)),
-            )
-            // The state error logger can remain in FixedUpdate for consistent output.
-            .add_systems(
-                FixedUpdate,
-                systems::log_state_estimation_error
-                    .in_set(SimulationSet::Validation)
-                    .run_if(in_state(AppState::Running)),
             );
+            // The state error logger can remain in FixedUpdate for consistent output.
+            // .add_systems(
+            //     FixedUpdate,
+            //     systems::log_state_estimation_error
+            //         .in_set(SimulationSet::Validation)
+            //         .run_if(in_state(AppState::Running)),
+            // );
     }
 }

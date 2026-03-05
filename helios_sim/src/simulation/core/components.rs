@@ -3,6 +3,7 @@
 use bevy::prelude::*;
 use helios_core::prelude::{EstimationDynamics, Measurement};
 use nalgebra::{Isometry3, Vector3};
+use serde::Serialize;
 
 // --- Wrapper Components for Core Traits ---
 
@@ -18,7 +19,7 @@ pub struct MeasurementModel(pub Box<dyn Measurement>);
 
 /// The perfect, physics-driven ground truth state of an agent.
 /// Written by the StateSync system; read by sensors and debugging.
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize)]
 pub struct GroundTruthState {
     pub pose: Isometry3<f64>,
     pub linear_velocity: Vector3<f64>,
