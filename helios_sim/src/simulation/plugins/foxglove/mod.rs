@@ -7,6 +7,7 @@ pub mod bridge;
 pub mod protocol;
 pub mod serializers;
 pub mod server;
+pub mod types;
 
 use bevy::prelude::*;
 use std::sync::{Arc, Mutex, RwLock};

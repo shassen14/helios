@@ -19,6 +19,9 @@ use crate::simulation::plugins::foxglove::protocol::{
 use crate::simulation::plugins::foxglove::serializers::{
     FRAME_AWARE_STATE_SCHEMA, GROUND_TRUTH_SCHEMA, MEASUREMENT_MESSAGE_SCHEMA, POINT_CLOUD_SCHEMA,
 };
+use crate::simulation::plugins::foxglove::types::{
+    frame_aware_state_to_json, ground_truth_to_json, measurement_to_json, point_cloud_to_json,
+};
 
 // ---------------------------------------------------------------------------
 // Channel registry
@@ -222,7 +225,7 @@ pub fn foxglove_bridge_system(
                 if let Some(topic) = topic_bus.get_topic::<MeasurementMessage>(&topic_name) {
                     let payloads: Vec<_> = reader
                         .read(topic)
-                        .filter_map(|s| serde_json::to_vec(&s.message).ok())
+                        .filter_map(|s| serde_json::to_vec(&measurement_to_json(&s.message)).ok())
                         .collect();
                     for payload in payloads {
                         send_data(
@@ -241,7 +244,7 @@ pub fn foxglove_bridge_system(
                 if let Some(topic) = topic_bus.get_topic::<Arc<PointCloud>>(&topic_name) {
                     let payloads: Vec<_> = reader
                         .read(topic)
-                        .filter_map(|s| serde_json::to_vec(s.message.as_ref()).ok())
+                        .filter_map(|s| serde_json::to_vec(&point_cloud_to_json(&s.message)).ok())
                         .collect();
                     for payload in payloads {
                         send_data(
@@ -260,7 +263,7 @@ pub fn foxglove_bridge_system(
                 if let Some(topic) = topic_bus.get_topic::<GroundTruthState>(&topic_name) {
                     let payloads: Vec<_> = reader
                         .read(topic)
-                        .filter_map(|s| serde_json::to_vec(&s.message).ok())
+                        .filter_map(|s| serde_json::to_vec(&ground_truth_to_json(&s.message)).ok())
                         .collect();
                     for payload in payloads {
                         send_data(
@@ -279,7 +282,9 @@ pub fn foxglove_bridge_system(
                 if let Some(topic) = topic_bus.get_topic::<FrameAwareState>(&topic_name) {
                     let payloads: Vec<_> = reader
                         .read(topic)
-                        .filter_map(|s| serde_json::to_vec(&s.message).ok())
+                        .filter_map(|s| {
+                            serde_json::to_vec(&frame_aware_state_to_json(&s.message)).ok()
+                        })
                         .collect();
                     for payload in payloads {
                         send_data(

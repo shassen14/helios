@@ -1,16 +1,28 @@
 // helios_sim/src/simulation/plugins/foxglove/serializers.rs
 //
-// JSON Schema strings for each type published through the Foxglove bridge.
-// Schemas are intentionally minimal — enough for Foxglove to display fields.
+// JSON Schema strings matching the flat output produced by foxglove/types.rs.
+// These are sent to Foxglove Studio in the `advertise` message so it knows
+// every field type — enabling plots and Raw Messages panels.
 
 pub static MEASUREMENT_MESSAGE_SCHEMA: &str = r#"{
   "type": "object",
   "title": "MeasurementMessage",
   "properties": {
-    "agent_handle": { "type": "integer", "description": "Agent entity ID" },
-    "sensor_handle": { "type": "integer", "description": "Sensor entity ID" },
-    "timestamp": { "type": "number", "description": "Seconds since sim start" },
-    "data": { "type": "object", "description": "Sensor-specific measurement payload" }
+    "timestamp":  { "type": "number" },
+    "type":       { "type": "string" },
+    "acc_x":      { "type": "number" },
+    "acc_y":      { "type": "number" },
+    "acc_z":      { "type": "number" },
+    "gyro_x":     { "type": "number" },
+    "gyro_y":     { "type": "number" },
+    "gyro_z":     { "type": "number" },
+    "mag_x":      { "type": "number" },
+    "mag_y":      { "type": "number" },
+    "mag_z":      { "type": "number" },
+    "pos_x":      { "type": "number" },
+    "pos_y":      { "type": "number" },
+    "pos_z":      { "type": "number" },
+    "num_points": { "type": "integer" }
   }
 }"#;
 
@@ -18,17 +30,16 @@ pub static POINT_CLOUD_SCHEMA: &str = r#"{
   "type": "object",
   "title": "PointCloud",
   "properties": {
-    "sensor_handle": { "type": "integer" },
-    "timestamp": { "type": "number" },
+    "timestamp":  { "type": "number" },
+    "num_points": { "type": "integer" },
     "points": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "position": {
-            "type": "object",
-            "description": "nalgebra Point3 — coords.data contains [[x,y,z]]"
-          },
+          "x":         { "type": "number" },
+          "y":         { "type": "number" },
+          "z":         { "type": "number" },
           "intensity": { "type": ["number", "null"] }
         }
       }
@@ -40,38 +51,47 @@ pub static GROUND_TRUTH_SCHEMA: &str = r#"{
   "type": "object",
   "title": "GroundTruthState",
   "properties": {
-    "pose": { "type": "object", "description": "Isometry3 (translation + rotation)" },
-    "linear_velocity": { "type": "object", "description": "ENU m/s" },
-    "angular_velocity": { "type": "object", "description": "ENU rad/s" },
-    "linear_acceleration": { "type": "object", "description": "ENU m/s²" },
-    "last_linear_velocity": { "type": "object" }
+    "pos_x":     { "type": "number", "description": "ENU position X (m)" },
+    "pos_y":     { "type": "number", "description": "ENU position Y (m)" },
+    "pos_z":     { "type": "number", "description": "ENU position Z (m)" },
+    "quat_x":    { "type": "number" },
+    "quat_y":    { "type": "number" },
+    "quat_z":    { "type": "number" },
+    "quat_w":    { "type": "number" },
+    "vel_x":     { "type": "number", "description": "ENU velocity X (m/s)" },
+    "vel_y":     { "type": "number", "description": "ENU velocity Y (m/s)" },
+    "vel_z":     { "type": "number", "description": "ENU velocity Z (m/s)" },
+    "ang_vel_x": { "type": "number", "description": "Angular velocity X (rad/s)" },
+    "ang_vel_y": { "type": "number" },
+    "ang_vel_z": { "type": "number" },
+    "acc_x":     { "type": "number", "description": "Linear acceleration X (m/s²)" },
+    "acc_y":     { "type": "number" },
+    "acc_z":     { "type": "number" }
   }
 }"#;
 
 pub static FRAME_AWARE_STATE_SCHEMA: &str = r#"{
   "type": "object",
   "title": "FrameAwareState",
-  "properties": {
-    "layout": {
-      "type": "array",
-      "items": { "type": "object", "description": "StateVariable enum variant" }
-    },
-    "vector": { "type": "object", "description": "DVector state values" },
-    "covariance": { "type": "object", "description": "DMatrix covariance" },
-    "last_update_timestamp": { "type": "number" }
-  }
-}"#;
-
-pub static ODOMETRY_SCHEMA: &str = r#"{
-  "type": "object",
-  "title": "Odometry",
+  "description": "Estimator state — keys are named after StateVariable layout (pos_x, vel_y, …)",
   "properties": {
     "timestamp": { "type": "number" },
-    "pose": { "type": "object", "description": "Isometry3 (translation + rotation)" },
-    "velocity_body": { "type": "object", "description": "Body-frame 6-DOF velocity" },
-    "linear_acceleration_body": { "type": "object" },
-    "angular_acceleration_body": { "type": "object" },
-    "pose_covariance": { "type": "object" },
-    "velocity_covariance": { "type": "object" }
-  }
+    "pos_x":     { "type": "number" },
+    "pos_y":     { "type": "number" },
+    "pos_z":     { "type": "number" },
+    "vel_x":     { "type": "number" },
+    "vel_y":     { "type": "number" },
+    "vel_z":     { "type": "number" },
+    "acc_x":     { "type": "number" },
+    "acc_y":     { "type": "number" },
+    "acc_z":     { "type": "number" },
+    "quat_x":    { "type": "number" },
+    "quat_y":    { "type": "number" },
+    "quat_z":    { "type": "number" },
+    "quat_w":    { "type": "number" },
+    "ang_vel_x": { "type": "number" },
+    "ang_vel_y": { "type": "number" },
+    "ang_vel_z": { "type": "number" }
+  },
+  "additionalProperties": { "type": "number" }
 }"#;
