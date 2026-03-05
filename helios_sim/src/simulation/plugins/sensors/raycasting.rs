@@ -9,7 +9,7 @@ use crate::simulation::config::structs::{LidarConfig, SensorConfig};
 use crate::simulation::core::{
     app_state::SimulationSet, events::BevyMeasurementMessage, topics::TopicBus,
 };
-use crate::simulation::plugins::debugging::ShowDebugGizmos;
+
 use std::sync::Arc;
 
 // --- Core Library Imports ---
@@ -35,10 +35,7 @@ pub struct RaycastingSensor {
     pub model: Box<dyn RaycastingSensorModel>,
     /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
     pub topic_name: String,
-    /// Cached result of the last scan: (world_direction, draw_length).
-    /// draw_length is the hit distance, or max_range if no hit.
-    /// Used by the debug gizmo system so rays shorten to their hit points.
-    pub last_scan: Vec<(Vec3, f32)>,
+
 }
 
 pub struct RaycastingSensorPlugin;
@@ -113,15 +110,10 @@ fn spawn_raycasting_sensors(
                             agent_name.as_str(),
                             sensor_name
                         ),
-                        last_scan: Vec::new(),
                     },
                     TrackedFrame,
                     lidar_config.get_relative_pose().to_bevy_local_transform(),
                 ));
-
-                if lidar_config.get_debug_visuals_flag() {
-                    sensor_entity_commands.insert(ShowDebugGizmos {});
-                }
 
                 commands.entity(agent_entity).add_child(sensor_entity);
             }
@@ -161,7 +153,6 @@ fn raycasting_sensor_system(
 
                 let local_rays = sensor.model.generate_rays();
                 let mut hits: Vec<RayHit> = Vec::with_capacity(local_rays.len());
-                let mut scan_cache: Vec<(Vec3, f32)> = Vec::with_capacity(local_rays.len());
                 let sensor_origin = sensor_transform.translation();
                 let sensor_rotation = sensor_transform.rotation();
                 let max_toi = sensor.model.get_max_range();
@@ -185,7 +176,7 @@ fn raycasting_sensor_system(
 
                     // Convert it to `Dir3` for the raycast.
                     if let Ok(dir) = Dir3::new(world_direction) {
-                        let draw_length = if let Some(hit) = spatial_query.cast_ray(
+                        if let Some(hit) = spatial_query.cast_ray(
                             sensor_origin,
                             dir,
                             max_toi,
@@ -196,14 +187,9 @@ fn raycasting_sensor_system(
                                 ray_id: ray.id,
                                 distance: hit.distance,
                             });
-                            hit.distance
-                        } else {
-                            max_toi
-                        };
-                        scan_cache.push((world_direction, draw_length));
+                        }
                     }
                 }
-                sensor.last_scan = scan_cache;
 
                 let agent_handle = FrameHandle::from_entity(agent_entity);
                 let sensor_handle = FrameHandle::from_entity(sensor_entity);

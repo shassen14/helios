@@ -1,8 +1,33 @@
-use bevy::prelude::Component;
+use std::collections::{HashMap, VecDeque};
 
-/// A marker component that enables debug visualizations for the entity it's attached to.
-///
-/// Systems like `draw_lidar_rays` will query for entities with this component
-/// to decide whether to draw their gizmos.
+use bevy::prelude::*;
+
+/// Global resource controlling all debug visualization toggles.
+#[derive(Resource, Default)]
+pub struct DebugVisualizationConfig {
+    pub show_pose_gimbals: bool, // F1
+    pub show_covariance: bool,   // F2
+    pub show_point_cloud: bool,  // F3
+    pub show_velocity: bool,     // F4
+    pub show_error_line: bool,   // F5
+    pub show_path_trail: bool,   // F6
+    pub show_legend: bool,       // H
+}
+
+/// Caches the most recent world-space point cloud per sensor entity.
+/// Populated by `cache_sensor_data`; read by `draw_point_cloud`.
+#[derive(Resource, Default)]
+pub struct DebugSensorCache {
+    pub point_clouds: HashMap<Entity, Vec<Vec3>>,
+}
+
+/// Marker component for the legend UI entity.
 #[derive(Component)]
-pub struct ShowDebugGizmos;
+pub struct DebugLegendNode;
+
+/// Ring buffer of recent GT positions for the path trail gizmo.
+#[derive(Component)]
+pub struct PathTrail {
+    pub positions: VecDeque<Vec3>,
+    pub max_len: usize,
+}

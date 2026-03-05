@@ -75,7 +75,7 @@ The `SimulationSet` enum defines the main data flow loop for each timestep.
 5.  **`StateSync`:** The `ground_truth_sync_system` reads the new physics state and updates the `GroundTruthState` component. **The world state is now consistent for the current time.**
 6.  **`Sensors` & `Perception`:** Sensor plugins read the fresh `GroundTruthState` and generate new measurements for the current time.
 7.  **`Estimation` (`WorldModelPlugin`):** The estimator consumes the new sensor data to produce a new state estimate for the current time.
-8.  **`Validation`:** Debugging systems run to log errors between the new ground truth and the new estimate.
+8.  **`Validation`:** Ground truth is published to `TopicBus`; `update_path_trail` appends the latest position to each agent's trail buffer.
 
 This explicit ordering prevents "one-frame lag" errors and ensures a logical, causal flow of information through the entire simulation.
 
