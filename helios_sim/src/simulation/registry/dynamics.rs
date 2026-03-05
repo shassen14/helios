@@ -6,7 +6,7 @@
 //   2. Add a register_dynamics call below.
 //   Zero other files change.
 
-use bevy::prelude::*;
+use bevy::prelude::{App, Plugin};
 use helios_core::{
     models::estimation::dynamics::{EstimationDynamics, integrated_imu::IntegratedImuModel},
     types::FrameHandle,
@@ -26,19 +26,19 @@ impl Plugin for DefaultDynamicsPlugin {
     }
 }
 
-fn build_integrated_imu(ctx: DynamicsBuildContext) -> Option<Box<dyn EstimationDynamics>> {
-    Some(Box::new(IntegratedImuModel {
+fn build_integrated_imu(ctx: DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String> {
+    Ok(Box::new(IntegratedImuModel {
         agent_handle: FrameHandle::from_entity(ctx.agent_entity),
         gravity_magnitude: ctx.gravity_magnitude,
     }))
 }
 
-fn build_ackermann_odometry(_ctx: DynamicsBuildContext) -> Option<Box<dyn EstimationDynamics>> {
-    warn!("AutonomyRegistry: AckermannOdometry dynamics not yet implemented.");
-    None
+fn build_ackermann_odometry(
+    _ctx: DynamicsBuildContext,
+) -> Result<Box<dyn EstimationDynamics>, String> {
+    Err("AckermannOdometry dynamics not yet implemented".to_string())
 }
 
-fn build_quadcopter(_ctx: DynamicsBuildContext) -> Option<Box<dyn EstimationDynamics>> {
-    warn!("AutonomyRegistry: Quadcopter dynamics not yet implemented.");
-    None
+fn build_quadcopter(_ctx: DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String> {
+    Err("Quadcopter dynamics not yet implemented".to_string())
 }

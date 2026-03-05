@@ -36,16 +36,16 @@ use crate::simulation::config::structs::{AgentConfig, EstimatorConfig, MapperCon
 // =========================================================================
 
 pub type DynamicsFactory =
-    Arc<dyn Fn(DynamicsBuildContext) -> Option<Box<dyn EstimationDynamics>> + Send + Sync>;
+    Arc<dyn Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String> + Send + Sync>;
 
 pub type EstimatorFactory =
-    Arc<dyn Fn(EstimatorBuildContext) -> Option<Box<dyn StateEstimator>> + Send + Sync>;
+    Arc<dyn Fn(EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, String> + Send + Sync>;
 
 pub type MapperFactory =
-    Arc<dyn Fn(MapperBuildContext) -> Option<Box<dyn Mapper>> + Send + Sync>;
+    Arc<dyn Fn(MapperBuildContext) -> Result<Box<dyn Mapper>, String> + Send + Sync>;
 
 pub type SlamFactory =
-    Arc<dyn Fn(SlamBuildContext) -> Option<Box<dyn SlamSystem>> + Send + Sync>;
+    Arc<dyn Fn(SlamBuildContext) -> Result<Box<dyn SlamSystem>, String> + Send + Sync>;
 
 // =========================================================================
 // == Build Contexts ==
@@ -113,7 +113,10 @@ impl AutonomyRegistry {
 
     pub fn register_estimator<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
-        F: Fn(EstimatorBuildContext) -> Option<Box<dyn StateEstimator>> + Send + Sync + 'static,
+        F: Fn(EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, String>
+            + Send
+            + Sync
+            + 'static,
     {
         self.estimators.insert(key.to_string(), Arc::new(factory));
         self
@@ -121,7 +124,10 @@ impl AutonomyRegistry {
 
     pub fn register_dynamics<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
-        F: Fn(DynamicsBuildContext) -> Option<Box<dyn EstimationDynamics>> + Send + Sync + 'static,
+        F: Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String>
+            + Send
+            + Sync
+            + 'static,
     {
         self.dynamics.insert(key.to_string(), Arc::new(factory));
         self
@@ -129,7 +135,7 @@ impl AutonomyRegistry {
 
     pub fn register_mapper<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
-        F: Fn(MapperBuildContext) -> Option<Box<dyn Mapper>> + Send + Sync + 'static,
+        F: Fn(MapperBuildContext) -> Result<Box<dyn Mapper>, String> + Send + Sync + 'static,
     {
         self.mappers.insert(key.to_string(), Arc::new(factory));
         self
@@ -137,7 +143,7 @@ impl AutonomyRegistry {
 
     pub fn register_slam<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
-        F: Fn(SlamBuildContext) -> Option<Box<dyn SlamSystem>> + Send + Sync + 'static,
+        F: Fn(SlamBuildContext) -> Result<Box<dyn SlamSystem>, String> + Send + Sync + 'static,
     {
         self.slam.insert(key.to_string(), Arc::new(factory));
         self
@@ -149,8 +155,11 @@ impl AutonomyRegistry {
         &self,
         key: &str,
         ctx: EstimatorBuildContext,
-    ) -> Option<Box<dyn StateEstimator>> {
-        let factory = self.estimators.get(key)?;
+    ) -> Result<Box<dyn StateEstimator>, String> {
+        let factory = self
+            .estimators
+            .get(key)
+            .ok_or_else(|| format!("No estimator registered for '{key}'. Call register_estimator()."))?;
         factory(ctx)
     }
 
@@ -158,18 +167,35 @@ impl AutonomyRegistry {
         &self,
         key: &str,
         ctx: DynamicsBuildContext,
-    ) -> Option<Box<dyn EstimationDynamics>> {
-        let factory = self.dynamics.get(key)?;
+    ) -> Result<Box<dyn EstimationDynamics>, String> {
+        let factory = self
+            .dynamics
+            .get(key)
+            .ok_or_else(|| format!("No dynamics registered for '{key}'. Call register_dynamics()."))?;
         factory(ctx)
     }
 
-    pub fn build_mapper(&self, key: &str, ctx: MapperBuildContext) -> Option<Box<dyn Mapper>> {
-        let factory = self.mappers.get(key)?;
+    pub fn build_mapper(
+        &self,
+        key: &str,
+        ctx: MapperBuildContext,
+    ) -> Result<Box<dyn Mapper>, String> {
+        let factory = self
+            .mappers
+            .get(key)
+            .ok_or_else(|| format!("No mapper registered for '{key}'. Call register_mapper()."))?;
         factory(ctx)
     }
 
-    pub fn build_slam(&self, key: &str, ctx: SlamBuildContext) -> Option<Box<dyn SlamSystem>> {
-        let factory = self.slam.get(key)?;
+    pub fn build_slam(
+        &self,
+        key: &str,
+        ctx: SlamBuildContext,
+    ) -> Result<Box<dyn SlamSystem>, String> {
+        let factory = self
+            .slam
+            .get(key)
+            .ok_or_else(|| format!("No SLAM system registered for '{key}'. Call register_slam()."))?;
         factory(ctx)
     }
 

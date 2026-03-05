@@ -6,7 +6,7 @@
 //   2. Add a register_mapper call below with the factory closure.
 //   Zero spawning systems change.
 
-use bevy::prelude::*;
+use bevy::prelude::{App, Plugin};
 use helios_core::{mapping::{Mapper, NoneMapper}};
 
 use super::{AutonomyRegistry, MapperBuildContext};
@@ -22,11 +22,10 @@ impl Plugin for DefaultMappersPlugin {
     }
 }
 
-fn build_none_mapper(_ctx: MapperBuildContext) -> Option<Box<dyn Mapper>> {
-    Some(Box::new(NoneMapper))
+fn build_none_mapper(_ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String> {
+    Ok(Box::new(NoneMapper))
 }
 
-fn build_occupancy_grid_mapper(_ctx: MapperBuildContext) -> Option<Box<dyn Mapper>> {
-    warn!("AutonomyRegistry: OccupancyGrid2D mapper not yet implemented. Using NoneMapper.");
-    Some(Box::new(NoneMapper))
+fn build_occupancy_grid_mapper(_ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String> {
+    Err("OccupancyGrid2D mapper not yet implemented".to_string())
 }

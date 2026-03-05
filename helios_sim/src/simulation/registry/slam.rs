@@ -9,7 +9,7 @@
 //   2. Add register_slam("LioSam", build_lio_sam) below.
 //   Zero spawning systems change.
 
-use bevy::prelude::*;
+use bevy::prelude::{App, Plugin};
 use helios_core::slam::SlamSystem;
 
 use super::{AutonomyRegistry, SlamBuildContext};
@@ -25,12 +25,10 @@ impl Plugin for DefaultSlamPlugin {
     }
 }
 
-fn build_ekf_slam(_ctx: SlamBuildContext) -> Option<Box<dyn SlamSystem>> {
-    warn!("AutonomyRegistry: EKF-SLAM not yet implemented.");
-    None
+fn build_ekf_slam(_ctx: SlamBuildContext) -> Result<Box<dyn SlamSystem>, String> {
+    Err("EkfSlam not yet implemented".to_string())
 }
 
-fn build_factor_graph_slam(_ctx: SlamBuildContext) -> Option<Box<dyn SlamSystem>> {
-    warn!("AutonomyRegistry: Factor Graph SLAM not yet implemented.");
-    None
+fn build_factor_graph_slam(_ctx: SlamBuildContext) -> Result<Box<dyn SlamSystem>, String> {
+    Err("FactorGraphSlam not yet implemented".to_string())
 }

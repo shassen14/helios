@@ -32,9 +32,9 @@ impl Plugin for DefaultEstimatorsPlugin {
     }
 }
 
-fn build_ekf(ctx: EstimatorBuildContext) -> Option<Box<dyn StateEstimator>> {
+fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, String> {
     let EstimatorConfig::Ekf(ekf_config) = ctx.estimator_cfg else {
-        return None;
+        return Err("build_ekf received non-Ekf config".to_string());
     };
 
     let state_dim = STANDARD_INS_STATE_DIM;
@@ -93,26 +93,16 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Option<Box<dyn StateEstimator>> {
         gravity_magnitude: ctx.gravity_magnitude,
     };
 
-    let dynamics = match ctx.dynamics_factories.get(dynamics_key) {
-        Some(factory) => match factory(dynamics_ctx) {
-            Some(d) => d,
-            None => {
-                warn!(
-                    "AutonomyRegistry: dynamics factory '{}' returned None for EKF.",
-                    dynamics_key
-                );
-                return None;
-            }
-        },
-        None => {
-            warn!(
-                "AutonomyRegistry: no dynamics factory registered for '{}'. \
-                 Register one via AutonomyRegistry::register_dynamics().",
-                dynamics_key
-            );
-            return None;
-        }
-    };
+    let dynamics = ctx
+        .dynamics_factories
+        .get(dynamics_key)
+        .ok_or_else(|| {
+            format!(
+                "No dynamics factory registered for '{dynamics_key}'. \
+                 Register one via AutonomyRegistry::register_dynamics()."
+            )
+        })
+        .and_then(|f| f(dynamics_ctx))?;
 
     // --- 3. Filter measurement models ---
     // IntegratedImu dynamics uses IMU data as control input (u), not as an aiding measurement.
@@ -136,7 +126,7 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Option<Box<dyn StateEstimator>> {
         dynamics_key, agent_entity
     );
 
-    Some(Box::new(ExtendedKalmanFilter::new(
+    Ok(Box::new(ExtendedKalmanFilter::new(
         initial_state,
         q_matrix,
         dynamics,
@@ -144,7 +134,6 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Option<Box<dyn StateEstimator>> {
     )))
 }
 
-fn build_ukf(_ctx: EstimatorBuildContext) -> Option<Box<dyn StateEstimator>> {
-    warn!("AutonomyRegistry: UKF not yet implemented.");
-    None
+fn build_ukf(_ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, String> {
+    Err("UKF not yet implemented".to_string())
 }

@@ -59,28 +59,28 @@ pub fn spawn_world_model_modules(
                 mapper: map_cfg,
             }) => {
                 // --- Build the estimator via registry ---
-                let estimator: Option<Box<dyn StateEstimator>> =
-                    if let Some(cfg) = est_cfg {
-                        let ctx = EstimatorBuildContext {
-                            agent_entity,
-                            estimator_cfg: cfg.clone(),
-                            agent_config: agent_config.clone(),
-                            gravity_magnitude,
-                            measurement_models,
-                            dynamics_factories: dynamics_factories.clone(),
-                        };
-                        let result = registry.build_estimator(cfg.get_kind_str(), ctx);
-                        if result.is_none() {
-                            warn!(
-                                "AutonomyRegistry: estimator '{}' returned None for agent '{}'.",
-                                cfg.get_kind_str(),
-                                &agent_config.name
-                            );
-                        }
-                        result
-                    } else {
-                        None
+                let estimator: Option<Box<dyn StateEstimator>> = if let Some(cfg) = est_cfg {
+                    let ctx = EstimatorBuildContext {
+                        agent_entity,
+                        estimator_cfg: cfg.clone(),
+                        agent_config: agent_config.clone(),
+                        gravity_magnitude,
+                        measurement_models,
+                        dynamics_factories: dynamics_factories.clone(),
                     };
+                    match registry.build_estimator(cfg.get_kind_str(), ctx) {
+                        Ok(est) => Some(est),
+                        Err(e) => {
+                            error!(
+                                "Cannot build world model for agent '{}': {}",
+                                agent_config.name, e
+                            );
+                            continue;
+                        }
+                    }
+                } else {
+                    None
+                };
 
                 // --- Build the mapper via registry ---
                 let mapper: Box<dyn Mapper> = if let Some(cfg) = map_cfg {
@@ -88,21 +88,22 @@ pub fn spawn_world_model_modules(
                     if let Some(rate) = cfg.get_timer_rate() {
                         entity_commands.insert(ModuleTimer::from_hz(rate));
                     }
-                    registry
-                        .build_mapper(
-                            cfg.get_kind_str(),
-                            MapperBuildContext {
-                                agent_entity,
-                                mapper_cfg: cfg.clone(),
-                            },
-                        )
-                        .unwrap_or_else(|| {
-                            warn!(
-                                "AutonomyRegistry: mapper '{}' unknown, defaulting to NoneMapper.",
-                                cfg.get_kind_str()
+                    match registry.build_mapper(
+                        cfg.get_kind_str(),
+                        MapperBuildContext {
+                            agent_entity,
+                            mapper_cfg: cfg.clone(),
+                        },
+                    ) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            error!(
+                                "Mapper build failed for '{}': {}. Falling back to NoneMapper.",
+                                agent_config.name, e
                             );
                             Box::new(NoneMapper)
-                        })
+                        }
+                    }
                 } else {
                     Box::new(NoneMapper)
                 };
@@ -130,14 +131,13 @@ pub fn spawn_world_model_modules(
                     dynamics_factories: dynamics_factories.clone(),
                 };
                 match registry.build_slam(slam_cfg.get_kind_str(), ctx) {
-                    Some(system) => {
+                    Ok(system) => {
                         entity_commands.insert(WorldModelComponent::CombinedSlam { system });
                     }
-                    None => {
-                        warn!(
-                            "AutonomyRegistry: SLAM '{}' not yet implemented for agent '{}'.",
-                            slam_cfg.get_kind_str(),
-                            &agent_config.name
+                    Err(e) => {
+                        error!(
+                            "Cannot build SLAM for agent '{}': {}",
+                            agent_config.name, e
                         );
                     }
                 }
