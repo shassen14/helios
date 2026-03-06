@@ -1,5 +1,21 @@
-# A heavier-duty vehicle model
+# helios_sim/assets/catalog/vehicles/ackermann_truck.toml
+# A heavier-duty vehicle model.
+
 kind = "Ackermann"
 wheelbase = 3.5
-max_steering_angle = 30.0
-max_steering_rate = 120.0
+max_steering_angle = 30.0  # degrees
+max_steering_rate  = 120.0 # degrees/sec
+
+[physics]
+mass             = 8000.0  # kg (heavy truck)
+friction         = 0.7
+linear_damping   = 0.8   # heavier vehicle, more drag
+angular_damping  = 1.7   # slower yaw response for a truck
+
+[actuator]
+max_force  = 100000.0 # N  (higher mass, more friction to overcome)
+max_torque = 30000.0  # N·m
+max_speed  = 15.0     # m/s
+
+[adapter]
+kind = "Default"

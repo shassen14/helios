@@ -2,5 +2,45 @@
 
 kind = "Ackermann"
 wheelbase = 2.5
-max_steering_angle = 35.0
-max_steering_rate = 140.0
+max_steering_angle = 35.0  # degrees
+max_steering_rate  = 140.0 # degrees/sec
+
+# Rigid-body physics applied to the Avian3D RigidBody.
+# max_force must exceed static friction: mass * 9.81 * friction ≈ 10,300 N for defaults.
+# Tune linear_damping / angular_damping for passive deceleration behaviour.
+[physics]
+mass             = 1500.0  # kg
+friction         = 0.7
+linear_damping   = 0.5   # light drag; provides passive deceleration when throttle is released
+angular_damping  = 1.5   # gentle yaw decay; prevents spin-out without killing turns
+
+# Actuator saturation limits. These are physical force/torque maximums, not gains.
+[actuator]
+max_force  = 25000.0  # N
+max_torque = 10000.0  # N·m
+max_speed  = 20.0     # m/s
+
+# Output adapter: translates ControlOutput → AckermannCommand.
+# kind = "Default"     → open-loop, no feedback (good for teleop / Raw outputs)
+# kind = "DualSisoPid" → closed-loop speed + yaw-rate PIDs (good for BodyVelocity outputs)
+# Default: open-loop passthrough. Use DualSisoPid when pairing with a BodyVelocity controller.
+# See catalog/components/controllers/ for controller configs that benefit from DualSisoPid.
+#
+# Example DualSisoPid config (paste and replace kind = "Default" to activate):
+#
+# [adapter]
+# kind = "DualSisoPid"
+#
+# [adapter.longitudinal]   # gains in N / (m/s)
+# kp             = 5000.0
+# ki             = 100.0
+# kd             = 200.0
+# integral_clamp = 0.5
+#
+# [adapter.lateral]        # gains in N·m / (rad/s)
+# kp             = 5000.0
+# ki             = 0.0
+# kd             = 500.0
+# integral_clamp = 0.5
+[adapter]
+kind = "Default"

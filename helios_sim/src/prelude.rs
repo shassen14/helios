@@ -19,4 +19,6 @@ pub use crate::simulation::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::simulation::core::transforms::{TfTree, TrackedFrame};
 
 pub use crate::simulation::plugins::sensors::imu::ImuPlugin;
-pub use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;
+pub use crate::simulation::plugins::vehicles::ackermann::{
+    AckermannAdapterComponent, AckermannCarPlugin, AckermannOutputAdapter,
+};

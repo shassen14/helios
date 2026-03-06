@@ -1,6 +1,7 @@
 // helios_sim/src/simulation/registry/mod.rs
 //
 // Submodules
+pub mod adapters;
 pub mod controllers;
 pub mod dynamics;
 pub mod estimators;
@@ -13,8 +14,8 @@ pub mod slam;
 // registry.build_*(key, ctx) and receive a Box<dyn Trait>.
 //
 // Adding a new algorithm:
-//   1. Implement the trait in helios_core.
-//   2. Add a registration call in the appropriate Default*Plugin (e.g., DefaultEstimatorsPlugin).
+//   1. Implement the trait in helios_core (or helios_sim for vehicle-specific adapters).
+//   2. Add a registration call in the appropriate Default*Plugin.
 //   3. Done. No spawning systems change.
 
 use std::collections::HashMap;
@@ -30,7 +31,11 @@ use helios_core::{
     types::FrameHandle,
 };
 
-use crate::simulation::config::structs::{AgentConfig, ControllerConfig, EstimatorConfig, MapperConfig, SlamConfig};
+use crate::simulation::config::structs::{
+    AckermannAdapterConfig, AgentConfig, ControllerConfig, EstimatorConfig, MapperConfig,
+    SlamConfig,
+};
+use crate::simulation::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
 
 // =========================================================================
 // == Factory Type Aliases ==
@@ -51,6 +56,10 @@ pub type SlamFactory =
 
 pub type ControllerFactory =
     Arc<dyn Fn(ControllerBuildContext) -> Result<Box<dyn Controller>, String> + Send + Sync>;
+
+pub type AdapterFactory = Arc<
+    dyn Fn(AdapterBuildContext) -> Result<Box<dyn AckermannOutputAdapter>, String> + Send + Sync,
+>;
 
 // =========================================================================
 // == Build Contexts ==
@@ -108,6 +117,12 @@ pub struct SlamBuildContext {
     pub dynamics_factories: HashMap<String, DynamicsFactory>,
 }
 
+/// Context for constructing an Ackermann output adapter.
+pub struct AdapterBuildContext {
+    pub agent_entity: Entity,
+    pub adapter_cfg: AckermannAdapterConfig,
+}
+
 // =========================================================================
 // == AutonomyRegistry ==
 // =========================================================================
@@ -119,6 +134,7 @@ pub struct AutonomyRegistry {
     pub mappers: HashMap<String, MapperFactory>,
     pub slam: HashMap<String, SlamFactory>,
     pub controllers: HashMap<String, ControllerFactory>,
+    pub adapters: HashMap<String, AdapterFactory>,
 }
 
 impl AutonomyRegistry {
@@ -170,6 +186,17 @@ impl AutonomyRegistry {
             + 'static,
     {
         self.controllers.insert(key.to_string(), Arc::new(factory));
+        self
+    }
+
+    pub fn register_adapter<F>(&mut self, key: &str, factory: F) -> &mut Self
+    where
+        F: Fn(AdapterBuildContext) -> Result<Box<dyn AckermannOutputAdapter>, String>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.adapters.insert(key.to_string(), Arc::new(factory));
         self
     }
 
@@ -230,6 +257,17 @@ impl AutonomyRegistry {
     ) -> Result<Box<dyn Controller>, String> {
         let factory = self.controllers.get(key).ok_or_else(|| {
             format!("No controller registered for '{key}'. Call register_controller().")
+        })?;
+        factory(ctx)
+    }
+
+    pub fn build_adapter(
+        &self,
+        key: &str,
+        ctx: AdapterBuildContext,
+    ) -> Result<Box<dyn AckermannOutputAdapter>, String> {
+        let factory = self.adapters.get(key).ok_or_else(|| {
+            format!("No adapter registered for '{key}'. Call register_adapter().")
         })?;
         factory(ctx)
     }

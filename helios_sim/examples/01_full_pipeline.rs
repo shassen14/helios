@@ -80,7 +80,7 @@ fn keyboard_controller(
         throttle = -1.0;
     }
     if keyboard_input.pressed(KeyCode::ArrowLeft) {
-        steering = 0.7; // radians, positive = left (FLU convention)
+        steering = 0.7; // normalised torque demand [-1, 1], positive = left (FLU convention)
     }
     if keyboard_input.pressed(KeyCode::ArrowRight) {
         steering = -0.7;
