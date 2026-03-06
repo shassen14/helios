@@ -11,6 +11,7 @@ use crate::simulation::plugins::sensors::gps::GpsPlugin;
 use crate::simulation::plugins::sensors::imu::ImuPlugin;
 use crate::simulation::plugins::sensors::magnetometer::MagnetometerPlugin;
 use crate::simulation::plugins::sensors::raycasting::RaycastingSensorPlugin;
+use crate::simulation::plugins::control::ControlPlugin;
 use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;
 use crate::simulation::plugins::world::spawner::WorldSpawnerPlugin;
 use crate::simulation::plugins::world_model::WorldModelPlugin;
@@ -48,6 +49,8 @@ impl Plugin for HeliosSimulationPlugin {
             RaycastingSensorPlugin,
             // Add World Modeling / estimator and modeling
             WorldModelPlugin,
+            // Add Control layer — must come after WorldModelPlugin (needs state estimates).
+            ControlPlugin,
             DebuggingPlugin,
             // Foxglove WebSocket bridge — must be last so all topics are registered first.
             FoxgloveWebSocketPlugin::default(),

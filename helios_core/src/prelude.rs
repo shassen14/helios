@@ -10,6 +10,10 @@ pub use crate::types::{FrameHandle, TfProvider};
 // pub use crate::context::KinematicContext;
 pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
+// --- Control Abstractions ---
+pub use crate::control::{ControlContext, ControlOutput, Controller, TrajectoryPoint};
+pub use crate::models::controls::ControlDynamics;
+
 // --- Estimation Algorithms ---
 // pub use crate::estimation::ekf::{ekf_predict, ekf_update, EkfMeasurementParams, EkfUpdateParams};
 

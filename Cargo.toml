@@ -15,7 +15,8 @@ license = "MIT"
 [workspace.dependencies]
 nalgebra = "0.33"
 serde = { version = "1.0", features = ["derive"] }
-thiserror = "1.0" #
+thiserror = "1.0"
+approx = "0.5"
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

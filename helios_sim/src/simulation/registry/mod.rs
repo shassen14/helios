@@ -1,6 +1,7 @@
 // helios_sim/src/simulation/registry/mod.rs
 //
 // Submodules
+pub mod controllers;
 pub mod dynamics;
 pub mod estimators;
 pub mod mappers;
@@ -21,6 +22,7 @@ use std::sync::Arc;
 
 use bevy::prelude::{Entity, Resource};
 use helios_core::{
+    control::Controller,
     estimation::StateEstimator,
     mapping::Mapper,
     models::estimation::{dynamics::EstimationDynamics, measurement::Measurement},
@@ -28,7 +30,7 @@ use helios_core::{
     types::FrameHandle,
 };
 
-use crate::simulation::config::structs::{AgentConfig, EstimatorConfig, MapperConfig, SlamConfig};
+use crate::simulation::config::structs::{AgentConfig, ControllerConfig, EstimatorConfig, MapperConfig, SlamConfig};
 
 // =========================================================================
 // == Factory Type Aliases ==
@@ -46,6 +48,9 @@ pub type MapperFactory =
 
 pub type SlamFactory =
     Arc<dyn Fn(SlamBuildContext) -> Result<Box<dyn SlamSystem>, String> + Send + Sync>;
+
+pub type ControllerFactory =
+    Arc<dyn Fn(ControllerBuildContext) -> Result<Box<dyn Controller>, String> + Send + Sync>;
 
 // =========================================================================
 // == Build Contexts ==
@@ -84,6 +89,15 @@ pub struct MapperBuildContext {
     pub mapper_cfg: MapperConfig,
 }
 
+/// Context for constructing a controller (e.g., Pid, Lqr, FeedforwardPid).
+pub struct ControllerBuildContext {
+    pub agent_entity: Entity,
+    pub controller_cfg: ControllerConfig,
+    pub agent_config: AgentConfig,
+    /// FeedforwardPid factories can look up a ControlDynamics model by key here.
+    pub dynamics_factories: Arc<HashMap<String, DynamicsFactory>>,
+}
+
 /// Context for constructing a unified SLAM system (e.g., EkfSlam).
 pub struct SlamBuildContext {
     pub agent_entity: Entity,
@@ -104,8 +118,7 @@ pub struct AutonomyRegistry {
     pub dynamics: HashMap<String, DynamicsFactory>,
     pub mappers: HashMap<String, MapperFactory>,
     pub slam: HashMap<String, SlamFactory>,
-    // controllers: HashMap<String, ControllerFactory>
-    //   — slot reserved, add when Controller trait is defined in helios_core
+    pub controllers: HashMap<String, ControllerFactory>,
 }
 
 impl AutonomyRegistry {
@@ -146,6 +159,17 @@ impl AutonomyRegistry {
         F: Fn(SlamBuildContext) -> Result<Box<dyn SlamSystem>, String> + Send + Sync + 'static,
     {
         self.slam.insert(key.to_string(), Arc::new(factory));
+        self
+    }
+
+    pub fn register_controller<F>(&mut self, key: &str, factory: F) -> &mut Self
+    where
+        F: Fn(ControllerBuildContext) -> Result<Box<dyn Controller>, String>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.controllers.insert(key.to_string(), Arc::new(factory));
         self
     }
 
@@ -199,9 +223,25 @@ impl AutonomyRegistry {
         factory(ctx)
     }
 
+    pub fn build_controller(
+        &self,
+        key: &str,
+        ctx: ControllerBuildContext,
+    ) -> Result<Box<dyn Controller>, String> {
+        let factory = self.controllers.get(key).ok_or_else(|| {
+            format!("No controller registered for '{key}'. Call register_controller().")
+        })?;
+        factory(ctx)
+    }
+
     /// Returns a cheap clone of the dynamics factory map for embedding in EstimatorBuildContext.
     /// Arc internals make this O(n) in key count, not in factory size.
     pub fn clone_dynamics(&self) -> HashMap<String, DynamicsFactory> {
         self.dynamics.clone()
+    }
+
+    /// Returns a cheap clone of the dynamics factory map wrapped in Arc for ControllerBuildContext.
+    pub fn clone_dynamics_arc(&self) -> Arc<HashMap<String, DynamicsFactory>> {
+        Arc::new(self.dynamics.clone())
     }
 }

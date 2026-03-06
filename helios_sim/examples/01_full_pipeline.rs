@@ -22,87 +22,73 @@ use helios_sim::prelude::AppState;
 use helios_sim::simulation::config::ConfigPlugin;
 
 // --- Project-Specific Imports ---
-// Import the main plugin from our simulation library crate.
 use helios_sim::HeliosSimulationPlugin;
-// Import the controller input component so our keyboard controller can use it.
-use helios_sim::simulation::plugins::vehicles::ackermann::VehicleControllerInput;
+// ControlOutputComponent + ControlOutput let the keyboard write typed intent.
+use helios_core::control::ControlOutput;
+use helios_sim::simulation::core::components::ControlOutputComponent;
+// AckermannActuator is the marker that this entity is keyboard-drivable.
+use helios_sim::simulation::plugins::vehicles::ackermann::AckermannActuator;
 
 fn main() {
-    // --- 1. Obtain Simulation Configuration ---
     let cli = Cli::parse();
 
     let mut app = App::new();
 
     if cli.headless {
-        // Run in headless mode: only add the core plugins needed for logic and physics.
         app.add_plugins((MinimalPlugins, AssetPlugin::default()));
         info!("Running in headless mode.");
     } else {
-        // Run in graphical mode: add the default plugins for rendering, windowing, etc.
         app.add_plugins(
             DefaultPlugins.set(LogPlugin {
                 level: bevy::log::Level::INFO,
-                // A good filter for focusing on our crate's logs during development.
                 filter: "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug"
                     .to_string(),
                 ..default()
             }),
         );
     }
-    // --- 2. Add Core Bevy Plugins & Resources ---
     app
-        // Bevy's default plugins provide the core engine functionality (rendering, windowing, etc.).
-        // The Avian3D physics plugins.
         .add_plugins(PhysicsPlugins::default())
-        // An Avian3D plugin to visualize colliders for debugging.
         .add_plugins(PhysicsDebugPlugin::default())
-        // Insert the loaded configuration as a Bevy resource so all systems can access it.
         .insert_resource(cli.clone());
 
     app.init_state::<AppState>();
-
     app.add_plugins(ConfigPlugin);
-
-    // --- 3. Add the Main Helios Simulation Plugin ---
-    // This single line brings in our entire simulation architecture:
-    // core setup, all vehicle/sensor/estimator plugins, and their systems.
     app.add_plugins(HeliosSimulationPlugin);
 
-    // --- 4. Add Example-Specific Systems & Setup ---
-    // These are helpers for this specific example, not part of the core library.
-    app.add_systems(Update, keyboard_controller); // A system to drive the car with arrow keys
+    // Keyboard controller writes RawActuators — no coupling to vehicle-specific types.
+    app.add_systems(Update, keyboard_controller);
 
-    // --- 5. Run the App ---
     println!("Starting Helios Simulation...");
     app.run();
 }
 
-/// A simple system that reads keyboard input and populates the `VehicleControllerInput`
-/// component on any controllable vehicle.
+/// Reads keyboard input and writes `ControlOutputComponent(RawActuators([throttle, steering]))`.
+/// The Ackermann actuator system converts this to forces; no vehicle-specific logic here.
 fn keyboard_controller(
+    mut commands: Commands,
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut query: Query<&mut VehicleControllerInput>,
+    query: Query<Entity, With<AckermannActuator>>,
 ) {
-    // This will apply the same input to ALL entities that have a VehicleControllerInput.
-    for mut controller in &mut query {
-        // Reset inputs from the previous frame.
-        controller.throttle = 0.0;
-        controller.steering_angle = 0.0;
+    let mut throttle = 0.0_f64;
+    let mut steering = 0.0_f64;
 
-        // Set throttle based on up/down arrow keys.
-        if keyboard_input.pressed(KeyCode::ArrowUp) {
-            controller.throttle = 1.0; // Full throttle forward
-        }
-        if keyboard_input.pressed(KeyCode::ArrowDown) {
-            controller.throttle = -1.0; // Full throttle reverse
-        }
+    if keyboard_input.pressed(KeyCode::ArrowUp) {
+        throttle = 1.0;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowDown) {
+        throttle = -1.0;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowLeft) {
+        steering = 0.7; // radians, positive = left (FLU convention)
+    }
+    if keyboard_input.pressed(KeyCode::ArrowRight) {
+        steering = -0.7;
+    }
 
-        // Set steering based on left/right arrow keys.
-        if keyboard_input.pressed(KeyCode::ArrowLeft) {
-            controller.steering_angle = 0.7; // Steer left (radians)
-        }
-        if keyboard_input.pressed(KeyCode::ArrowRight) {
-            controller.steering_angle = -0.7; // Steer right (radians)
-        }
+    for entity in &query {
+        commands.entity(entity).insert(ControlOutputComponent(
+            ControlOutput::RawActuators(vec![throttle, steering]),
+        ));
     }
 }

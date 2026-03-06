@@ -137,6 +137,36 @@ impl Pose {
     }
 }
 
+/// Actuator physics parameters for an Ackermann vehicle.
+/// All fields have defaults matching the previously hardcoded values, so existing
+/// scenario files without an `[actuator]` section continue to work unchanged.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct AckermannActuatorConfig {
+    #[serde(default = "AckermannActuatorConfig::default_max_force")]
+    pub max_force: f32,  // N
+    #[serde(default = "AckermannActuatorConfig::default_max_torque")]
+    pub max_torque: f32, // N·m
+    #[serde(default = "AckermannActuatorConfig::default_max_speed")]
+    pub max_speed: f32,  // m/s
+}
+
+impl AckermannActuatorConfig {
+    fn default_max_force() -> f32 { 5000.0 }
+    fn default_max_torque() -> f32 { 2500.0 }
+    fn default_max_speed() -> f32 { 20.0 }
+}
+
+impl Default for AckermannActuatorConfig {
+    fn default() -> Self {
+        Self {
+            max_force: Self::default_max_force(),
+            max_torque: Self::default_max_torque(),
+            max_speed: Self::default_max_speed(),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")] // This tells serde to use the "kind" field to decide which enum variant to parse
 #[serde(rename_all = "PascalCase")] // e.g., "Ackermann" in TOML maps to `Ackermann` variant
@@ -145,6 +175,8 @@ pub enum Vehicle {
         wheelbase: f32,
         max_steering_angle: f32, // in degrees
         max_steering_rate: f32,  // in deg/sec
+        #[serde(default)]
+        actuator: AckermannActuatorConfig,
     },
     Quadcopter {
         // Parameters specific to a quadcopter
@@ -589,5 +621,28 @@ pub enum ControllerConfig {
         ki: f32,
         kd: f32,
     },
-    // Mpc { rate: f32, horizon: u32 },
+    Lqr {
+        /// Flat, row-major K matrix (control_dim × state_dim elements).
+        gain_matrix: Vec<f64>,
+        state_dim: usize,
+        control_dim: usize,
+        #[serde(default)]
+        u_min: Vec<f64>,
+        #[serde(default)]
+        u_max: Vec<f64>,
+    },
+    FeedforwardPid {
+        /// Key into `dynamics_factories` — must match a registered ControlDynamics name.
+        dynamics_key: String,
+        kp: Vec<f64>,
+        ki: Vec<f64>,
+        kd: Vec<f64>,
+        #[serde(default)]
+        u_min: Vec<f64>,
+        #[serde(default)]
+        u_max: Vec<f64>,
+        /// Indices of state vector components that each PID channel tracks.
+        #[serde(default)]
+        controlled_indices: Vec<usize>,
+    },
 }

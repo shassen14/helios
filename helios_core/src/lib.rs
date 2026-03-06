@@ -2,6 +2,7 @@
 
 // This file defines the public modules of your library.
 // pub mod context;
+pub mod control;
 pub mod estimation;
 pub mod frames;
 pub mod mapping;
