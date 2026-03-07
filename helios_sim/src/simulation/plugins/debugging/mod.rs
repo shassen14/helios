@@ -6,7 +6,23 @@ mod systems;
 pub use components::{DebugLegendNode, DebugSensorCache, DebugVisualizationConfig, PathTrail};
 
 use crate::prelude::AppState;
+use crate::simulation::config::ScenarioConfig;
 use crate::simulation::core::app_state::SimulationSet;
+
+fn apply_debug_config(
+    scenario: Res<ScenarioConfig>,
+    mut viz: ResMut<DebugVisualizationConfig>,
+) {
+    let d = &scenario.debug;
+    viz.show_pose_gimbals   = d.show_pose_gimbals;
+    viz.show_covariance     = d.show_covariance;
+    viz.show_point_cloud    = d.show_point_cloud;
+    viz.show_velocity       = d.show_velocity;
+    viz.show_error_line     = d.show_error_line;
+    viz.show_path_trail     = d.show_path_trail;
+    viz.show_occupancy_grid = d.show_occupancy_grid;
+    viz.show_legend         = d.show_legend;
+}
 
 /// Top-level plugin that provides all debug visualization tooling.
 pub struct DebuggingPlugin;
@@ -17,7 +33,7 @@ impl Plugin for DebuggingPlugin {
             .init_resource::<DebugSensorCache>()
             .add_systems(
                 OnEnter(AppState::Running),
-                systems::spawn_debug_legend,
+                (apply_debug_config, systems::spawn_debug_legend).chain(),
             )
             .add_systems(
                 Update,
@@ -32,6 +48,7 @@ impl Plugin for DebuggingPlugin {
                     systems::draw_velocity_vector,
                     systems::draw_estimation_error_line,
                     systems::draw_path_trail,
+                    systems::draw_occupancy_grid,
                 )
                     .run_if(in_state(AppState::Running)),
             )

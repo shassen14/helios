@@ -199,10 +199,10 @@ pub fn world_model_mapping_system(
     time: Res<Time>,
     tf_tree: Res<TfTree>,
 ) {
-    let all_new_messages: Vec<_> = measurement_events.read().collect();
-    if all_new_messages.is_empty() {
-        return;
-    }
+    // Collect only this tick's messages. Bevy events expire after ~2 Update frames
+    // (~33 ms at 60 fps), so we must process them immediately rather than waiting
+    // for the mapper's slower output timer.
+    let all_new_messages: Vec<_> = measurement_events.read().map(|e| e.0.clone()).collect();
 
     let context = FilterContext {
         tf: Some(&*tf_tree),
@@ -211,17 +211,20 @@ pub fn world_model_mapping_system(
     for (mut module, mut timer) in &mut module_query {
         timer.0.tick(time.delta());
 
-        if timer.0.just_finished() {
-            if let WorldModelComponent::Separate { estimator, mapper } = &mut *module {
-                let pose_update = ModuleInput::PoseUpdate {
-                    pose: estimator.get_state(),
-                };
-                mapper.process(&pose_update, &context);
+        if let WorldModelComponent::Separate { estimator, mapper } = &mut *module {
+            // Always forward sensor data to the mapper as it arrives.
+            // The mapper's log-odds update is cheap; cache rebuild is not.
+            for message in &all_new_messages {
+                mapper.process(&ModuleInput::Measurement { message }, &context);
+            }
 
-                for event in &all_new_messages {
-                    let sensor_update = ModuleInput::Measurement { message: &event.0 };
-                    mapper.process(&sensor_update, &context);
-                }
+            // On timer fire: update pose and rebuild the output cache.
+            // PoseUpdate triggers recenter + rebuild_cache inside the mapper.
+            if timer.0.just_finished() {
+                mapper.process(
+                    &ModuleInput::PoseUpdate { pose: estimator.get_state() },
+                    &context,
+                );
             }
         }
     }

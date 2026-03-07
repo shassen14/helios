@@ -17,6 +17,34 @@ use std::sync::Arc;
 #[derive(Component)]
 pub struct TrackedFrame;
 
+/// A single named frame's pose snapshot, published to TopicBus after each
+/// physics step so Foxglove can plot any frame's trajectory over time.
+#[derive(Clone, Debug)]
+pub struct TfFramePose {
+    /// Elapsed simulation time (seconds) when this snapshot was taken.
+    pub sim_time: f64,
+    /// Name of this frame (e.g. "truck/imu").
+    pub frame_name: Arc<str>,
+    /// Name of the parent frame; "world" if this is a root frame.
+    pub parent_frame: Arc<str>,
+    // World pose in ENU
+    pub pos_x: f64,
+    pub pos_y: f64,
+    pub pos_z: f64,
+    pub quat_x: f64,
+    pub quat_y: f64,
+    pub quat_z: f64,
+    pub quat_w: f64,
+    // Parent-relative pose (ENU for root frames, FLU for body-mounted sensors)
+    pub local_pos_x: f64,
+    pub local_pos_y: f64,
+    pub local_pos_z: f64,
+    pub local_quat_x: f64,
+    pub local_quat_y: f64,
+    pub local_quat_z: f64,
+    pub local_quat_w: f64,
+}
+
 /// The Bevy resource that holds the complete transform graph for a single frame.
 #[derive(Resource, Default, Debug)]
 pub struct TfTree {
@@ -24,12 +52,23 @@ pub struct TfTree {
     // This is what the TfProvider trait will use internally.
     transforms_to_world: HashMap<Entity, Isometry3<f64>>,
 
+    // Parent-relative poses in ENU (FLU for sensor children).
+    // Computed in a second pass after all world poses are known.
+    local_transforms: HashMap<Entity, Isometry3<f64>>,
+
+    // Parent entity for each tracked frame; None = world root.
+    parent_map: HashMap<Entity, Option<Entity>>,
+
     // For user-facing API calls, configuration, and debugging.
     // This map is populated once when agents/sensors are spawned.
     name_to_entity: HashMap<Arc<str>, Entity>,
 
     /// Maps a Bevy Entity ID back to its human-readable name for debugging/logging.
-    entity_to_name: HashMap<Entity, Arc<str>>,
+    pub entity_to_name: HashMap<Entity, Arc<str>>,
+
+    /// Elapsed simulation time at the last rebuild. Consumers can compare this
+    /// against `Time::elapsed_secs_f64()` to detect a stale tree.
+    pub sim_time: f64,
 }
 
 impl TfTree {
@@ -42,6 +81,22 @@ impl TfTree {
     /// Looks up the world pose of a frame by its Entity ID.
     pub fn lookup_by_entity(&self, entity: Entity) -> Option<Isometry3<f64>> {
         self.transforms_to_world.get(&entity).copied()
+    }
+
+    /// Looks up the parent-relative pose of a frame by its Entity ID.
+    pub fn lookup_local_by_entity(&self, entity: Entity) -> Option<Isometry3<f64>> {
+        self.local_transforms.get(&entity).copied()
+    }
+
+    /// Returns an iterator over all tracked frames: `(entity, world_iso, local_iso, parent_entity)`.
+    pub fn iter_frames(
+        &self,
+    ) -> impl Iterator<Item = (Entity, Isometry3<f64>, Isometry3<f64>, Option<Entity>)> + '_ {
+        self.transforms_to_world.iter().map(|(&entity, &world_iso)| {
+            let local_iso = self.local_transforms.get(&entity).copied().unwrap_or(world_iso);
+            let parent = self.parent_map.get(&entity).copied().flatten();
+            (entity, world_iso, local_iso, parent)
+        })
     }
 
     pub fn get_transform_by_name(
@@ -89,8 +144,9 @@ pub fn tf_tree_builder_system(
     tf_tree.transforms_to_world.reserve(query.iter().len());
 
     for (entity, transform) in &query {
-        // --- Part 1: Physical Pose (your existing code) ---
-        let iso = bevy_global_transform_to_nalgebra_isometry(transform);
+        // Store each frame's world pose in ENU so that get_transform(a, b)
+        // returns T_{a_flu←b_flu}, which is what all helios_core algorithms expect.
+        let iso = bevy_global_transform_to_enu_iso(transform);
         tf_tree.transforms_to_world.insert(entity, iso);
     }
 }

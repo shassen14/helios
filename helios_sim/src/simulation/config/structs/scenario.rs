@@ -16,9 +16,28 @@ pub struct ScenarioConfig {
     #[serde(default)]
     pub world: World,
 
+    #[serde(default)]
+    pub debug: DebugConfig,
+
     /// `[[agents]]` in TOML becomes a Vec of resolved `AgentConfig` structs.
     #[serde(default)]
     pub agents: Vec<AgentConfig>,
+}
+
+/// Optional `[debug]` table in the scenario TOML.
+/// Every field defaults to `false`, so the whole section can be omitted.
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+#[serde(default)]
+pub struct DebugConfig {
+    pub show_pose_gimbals: bool,
+    pub show_covariance: bool,
+    pub show_point_cloud: bool,
+    pub show_velocity: bool,
+    pub show_error_line: bool,
+    pub show_path_trail: bool,
+    pub show_occupancy_grid: bool,
+    pub show_legend: bool,
 }
 
 /// Temporary helper for the initial file-loading step before agent prefab resolution.
@@ -28,6 +47,8 @@ pub struct RawScenarioConfig {
     pub simulation: Simulation,
     #[serde(default)]
     pub world: World,
+    #[serde(default)]
+    pub debug: DebugConfig,
     #[serde(default)]
     pub agents: Vec<Value>,
 }

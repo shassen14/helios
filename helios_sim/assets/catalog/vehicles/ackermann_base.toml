@@ -16,7 +16,7 @@ angular_damping  = 1.5   # gentle yaw decay; prevents spin-out without killing t
 
 # Actuator saturation limits. These are physical force/torque maximums, not gains.
 [actuator]
-max_force  = 25000.0  # N
+max_force  = 22000.0  # N
 max_torque = 10000.0  # N·m
 max_speed  = 20.0     # m/s
 

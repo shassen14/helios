@@ -42,24 +42,35 @@ seed = 2024
 map_file = "maps/starter_world2.glb"
 gravity = [0.0, -9.81, 0.0]         # Bevy World Frame [x, y, z]
 
+# Debug visualization defaults. All toggleable at runtime via F1–F7 and H.
+[debug]
+show_pose_gimbals   = true
+show_covariance     = false
+show_point_cloud    = false
+show_velocity       = false
+show_error_line     = false
+show_path_trail     = true
+show_occupancy_grid = true
+show_legend         = true
+
 # =========================================================================
 # == Agent 1: The Baseline Vehicle ==
 # =========================================================================
 # This agent demonstrates the simplest use case: instantiating a complete
 # agent prefab with only minimal, instance-specific overrides.
 
-[[agents]]
-# Inherit all properties from the `ackermann_car_pro` prefab. This prefab
-# defines the vehicle type, a professional-grade sensor suite, and a
-# matching EKF tune.
-from = "agents.ackermann_car_pro"
+# [[agents]]
+# # Inherit all properties from the `ackermann_car_pro` prefab. This prefab
+# # defines the vehicle type, a professional-grade sensor suite, and a
+# # matching EKF tune.
+# from = "agents.ackermann_car_pro"
 
-# Any key at this level is a direct override of the prefab's top-level keys.
-name = "ProCar-Baseline"
-# The agent's starting pose in the world (ENU) frame.
-# `rotation` is [roll, pitch, yaw] in degrees. 90 deg yaw is North.
-starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 90.0] }
-goal_pose = { translation = [100.0, 50.0, 0.5] }
+# # Any key at this level is a direct override of the prefab's top-level keys.
+# name = "ProCar-Baseline"
+# # The agent's starting pose in the world (ENU) frame.
+# # `rotation` is [roll, pitch, yaw] in degrees. 90 deg yaw is North.
+# starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 90.0] }
+# goal_pose = { translation = [100.0, 50.0, 0.5] }
 
 
 # =========================================================================
@@ -122,11 +133,11 @@ transform = { translation = [0.0, 0.0, 1.3] }
 from = "sensors.lidar2d"
 
 # 3. DEEP MERGE: Tuning the Autonomy Stack
-# We will use the `ekf_basic` tune from the base prefab, but we want to
-# adjust one of its parameters for this specific experiment.
 
-# The dot-key syntax navigates the nested tables.
-# This will find `[autonomy_stack.world_model.estimator.dynamics]` and
-# merge our change into it, preserving all other values.
+# 3a. Tune the estimator dynamics.
 [agents.autonomy_stack.world_model.estimator.dynamics]
 gyro_bias_instability = 0.02 # Tighter tuning for this experiment.
+
+# 3b. Enable the occupancy grid mapper (uses the lidar added above).
+[agents.autonomy_stack.world_model.mapper]
+from = "components.mappers.occupancy_grid_2d"
