@@ -31,7 +31,7 @@ fn build_none_mapper(_ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String
 }
 
 fn build_occupancy_grid_mapper(ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String> {
-    let MapperConfig::OccupancyGrid2D { resolution, pose_source, .. } = ctx.mapper_cfg else {
+    let MapperConfig::OccupancyGrid2D { resolution, width_m, height_m, pose_source, .. } = ctx.mapper_cfg else {
         return Err("Expected OccupancyGrid2D config".to_string());
     };
     let agent_handle = FrameHandle::from_entity(ctx.agent_entity);
@@ -39,11 +39,10 @@ fn build_occupancy_grid_mapper(ctx: MapperBuildContext) -> Result<Box<dyn Mapper
         MapperPoseSourceConfig::GroundTruth => MapperPoseSource::GroundTruth,
         MapperPoseSourceConfig::Estimated => MapperPoseSource::Estimated,
     };
-    // TODO: promote width_m and height_m to MapperConfig::OccupancyGrid2D fields.
     Ok(Box::new(OccupancyGridMapper::new(
         resolution as f64,
-        200.0, // hardcoded — see known issues in OccupancyGridMapper
-        200.0,
+        width_m as f64,
+        height_m as f64,
         agent_handle,
         mapper_pose_source,
     )))

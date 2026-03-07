@@ -26,12 +26,6 @@ const L_MAX: f32 = 3.5;
 /// The grid follows the robot: when the robot drifts more than half the half-extent
 /// from the current grid center, the log-odds buffer is shifted and newly exposed
 /// strips are reset to 0 (unknown prior).  All coordinates are ENU (m).
-///
-/// # Known issues (to be fixed)
-///
-/// - **Hardcoded grid dimensions**: width and height are fixed at 200 m × 200 m in the
-///   factory (`build_occupancy_grid_mapper`). They should be promoted to the
-///   `MapperConfig::OccupancyGrid2D` TOML fields.
 pub struct OccupancyGridMapper {
     resolution: f64,
     width: usize,
