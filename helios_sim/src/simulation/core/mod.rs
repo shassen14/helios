@@ -3,11 +3,12 @@
 use crate::simulation::core::{
     components::GroundTruthState,
     topics::TopicBus,
-    transforms::bevy_global_transform_to_enu_iso,
+    transforms::{bevy_global_transform_to_enu_iso, TfFramePose, TfTree},
 };
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
 use nalgebra::Vector3;
+use std::sync::Arc;
 
 fn ground_truth_sync_system(
     mut query: Query<(
@@ -62,6 +63,49 @@ pub fn ground_truth_publish_system(
             &format!("/{}/ground_truth", name.as_str()),
             gt.clone(),
         );
+    }
+}
+
+/// Publishes each tracked TF frame as a `TfFramePose` to `/tf/{frame_name}`.
+///
+/// Runs in `SimulationSet::Validation`, after the post-physics `tf_tree_builder_system`
+/// rebuild in `StateSync`, so every snapshot reflects the latest physics state.
+/// Foxglove discovers these topics lazily and plots world/local pose over time.
+pub fn tf_publish_system(tf_tree: Res<TfTree>, mut topic_bus: ResMut<TopicBus>) {
+    let sim_time = tf_tree.sim_time;
+
+    for (entity, world_iso, local_iso, parent_entity) in tf_tree.iter_frames() {
+        let Some(frame_name) = tf_tree.entity_to_name.get(&entity).cloned() else {
+            continue;
+        };
+        let parent_frame: Arc<str> = parent_entity
+            .and_then(|pe| tf_tree.entity_to_name.get(&pe).cloned())
+            .unwrap_or_else(|| Arc::from("world"));
+
+        let qw = world_iso.rotation.quaternion();
+        let ql = local_iso.rotation.quaternion();
+
+        let pose = TfFramePose {
+            sim_time,
+            frame_name: frame_name.clone(),
+            parent_frame,
+            pos_x: world_iso.translation.x,
+            pos_y: world_iso.translation.y,
+            pos_z: world_iso.translation.z,
+            quat_x: qw.i,
+            quat_y: qw.j,
+            quat_z: qw.k,
+            quat_w: qw.w,
+            local_pos_x: local_iso.translation.x,
+            local_pos_y: local_iso.translation.y,
+            local_pos_z: local_iso.translation.z,
+            local_quat_x: ql.i,
+            local_quat_y: ql.j,
+            local_quat_z: ql.k,
+            local_quat_w: ql.w,
+        };
+
+        topic_bus.publish(&format!("/tf/{}", frame_name.as_ref()), pose);
     }
 }
 

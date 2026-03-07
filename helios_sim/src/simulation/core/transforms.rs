@@ -130,25 +130,54 @@ impl TfProvider for TfTree {
     }
 }
 
-/// The Bevy system that runs once per frame to build the TfTree resource.
-/// This system now populates the physical poses AND the name mappings.
+/// Rebuilds the TfTree from the current ECS state.
+///
+/// Registered **twice** in the schedule:
+/// - `SimulationSet::Precomputation` — runs first so sensors/estimators see
+///   transforms that were fresh after the *previous* tick's physics step.
+///   This is the standard 1-tick latency accepted by all physics-based TF systems.
+/// - `SimulationSet::StateSync` — runs again immediately after Avian3D's physics
+///   step, so `Validation`, publishing, and visualization always see the latest state.
 pub fn tf_tree_builder_system(
     mut tf_tree: ResMut<TfTree>,
-    // --- The Query is Modified Here ---
-    // We now ask for the Name component as well.
-    // Bevy will only give us entities that have a GlobalTransform, a Name, AND the TrackedFrame marker.
-    query: Query<(Entity, &GlobalTransform), With<TrackedFrame>>,
+    query: Query<(Entity, &GlobalTransform, Option<&ChildOf>), With<TrackedFrame>>,
+    all_transforms: Query<&GlobalTransform>,
+    time: Res<Time>,
 ) {
-    // Clear all maps at the start of the frame to ensure no stale data.
+    // Pass 1: insert all world transforms and parent maps.
     tf_tree.transforms_to_world.clear();
-    tf_tree.transforms_to_world.reserve(query.iter().len());
+    tf_tree.local_transforms.clear();
+    tf_tree.parent_map.clear();
 
-    for (entity, transform) in &query {
-        // Store each frame's world pose in ENU so that get_transform(a, b)
-        // returns T_{a_flu←b_flu}, which is what all helios_core algorithms expect.
-        let iso = bevy_global_transform_to_enu_iso(transform);
-        tf_tree.transforms_to_world.insert(entity, iso);
+    for (entity, gt, child_of) in &query {
+        tf_tree.transforms_to_world.insert(entity, bevy_global_transform_to_enu_iso(gt));
+        tf_tree.parent_map.insert(entity, child_of.map(|c| c.parent()));
     }
+
+    // Pass 2: compute parent-relative transforms now that all world poses exist.
+    for (entity, _, child_of) in &query {
+        let world_iso = tf_tree.transforms_to_world[&entity];
+        let local_iso = match child_of.map(|c| c.parent()) {
+            Some(parent_entity) => {
+                // Prefer a tracked parent; fall back to any entity's GlobalTransform.
+                let parent_world = tf_tree
+                    .transforms_to_world
+                    .get(&parent_entity)
+                    .copied()
+                    .or_else(|| {
+                        all_transforms
+                            .get(parent_entity)
+                            .ok()
+                            .map(bevy_global_transform_to_enu_iso)
+                    });
+                parent_world.map(|pw| pw.inverse() * world_iso).unwrap_or(world_iso)
+            }
+            None => world_iso,
+        };
+        tf_tree.local_transforms.insert(entity, local_iso);
+    }
+
+    tf_tree.sim_time = time.elapsed_secs_f64();
 }
 
 /// System that runs ONCE to build the static name-to-entity mappings.

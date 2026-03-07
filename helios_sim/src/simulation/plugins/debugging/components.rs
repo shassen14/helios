@@ -2,6 +2,11 @@ use std::collections::{HashMap, VecDeque};
 
 use bevy::prelude::*;
 
+/// Tracks the set of spawned `Text2d` label entities for TF frames.
+/// Empty when `show_tf_frames` is off.
+#[derive(Resource, Default)]
+pub struct TfLabelEntities(pub HashMap<String, Entity>);
+
 /// Global resource controlling all debug visualization toggles.
 #[derive(Resource, Default)]
 pub struct DebugVisualizationConfig {
@@ -12,6 +17,8 @@ pub struct DebugVisualizationConfig {
     pub show_error_line: bool,      // F5
     pub show_path_trail: bool,      // F6
     pub show_occupancy_grid: bool,  // F7
+    /// Draw RGB coordinate axes for every tracked TF frame and the world ENU origin. // F8
+    pub show_tf_frames: bool,       // F8
     pub show_legend: bool,          // H
 }
 

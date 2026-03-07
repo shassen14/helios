@@ -37,6 +37,8 @@ pub struct DebugConfig {
     pub show_error_line: bool,
     pub show_path_trail: bool,
     pub show_occupancy_grid: bool,
+    /// Draw RGB coordinate-frame axes for every tracked TF frame (F8). Default: false.
+    pub show_tf_frames: bool,
     pub show_legend: bool,
 }
 

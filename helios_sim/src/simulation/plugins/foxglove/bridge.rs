@@ -13,15 +13,17 @@ use std::sync::Arc;
 
 use crate::simulation::core::components::GroundTruthState;
 use crate::simulation::core::topics::{TopicBus, TopicReader};
+use crate::simulation::core::transforms::TfFramePose;
 use crate::simulation::plugins::foxglove::protocol::{
     BridgeMessage, ChannelAdvertisement, ServerControl,
 };
 use crate::simulation::plugins::foxglove::serializers::{
     FRAME_AWARE_STATE_SCHEMA, GROUND_TRUTH_SCHEMA, MEASUREMENT_MESSAGE_SCHEMA,
+    TF_FRAME_POSE_SCHEMA,
     // POINT_CLOUD_SCHEMA,  // commented out — PointCloud not streamed to Foxglove
 };
 use crate::simulation::plugins::foxglove::types::{
-    frame_aware_state_to_json, ground_truth_to_json, measurement_to_json,
+    frame_aware_state_to_json, ground_truth_to_json, measurement_to_json, tf_frame_pose_to_json,
     // point_cloud_to_json,  // commented out — PointCloud not streamed to Foxglove
 };
 
@@ -64,6 +66,7 @@ pub struct FoxgloveTopicReaders {
     // pub point_cloud: HashMap<String, TopicReader<Arc<PointCloud>>>,  // no Foxglove 3D panel
     pub ground_truth: HashMap<String, TopicReader<GroundTruthState>>,
     pub frame_aware_state: HashMap<String, TopicReader<FrameAwareState>>,
+    pub tf_frame_pose: HashMap<String, TopicReader<TfFramePose>>,
 }
 
 /// The main bridge resource held by Bevy.
@@ -102,6 +105,8 @@ fn type_to_advertisement(
         ("GroundTruthState", GROUND_TRUTH_SCHEMA)
     } else if type_id == TypeId::of::<FrameAwareState>() {
         ("FrameAwareState", FRAME_AWARE_STATE_SCHEMA)
+    } else if type_id == TypeId::of::<TfFramePose>() {
+        ("TfFramePose", TF_FRAME_POSE_SCHEMA)
     } else {
         return None; // unsupported type — skip
     };
@@ -176,6 +181,11 @@ pub fn foxglove_bridge_system(
                 } else if type_id == TypeId::of::<FrameAwareState>() {
                     readers
                         .frame_aware_state
+                        .entry(topic_name.clone())
+                        .or_insert_with(|| TopicReader::new(&topic_name));
+                } else if type_id == TypeId::of::<TfFramePose>() {
+                    readers
+                        .tf_frame_pose
                         .entry(topic_name.clone())
                         .or_insert_with(|| TopicReader::new(&topic_name));
                 }
@@ -266,6 +276,27 @@ pub fn foxglove_bridge_system(
                         .read(topic)
                         .filter_map(|s| {
                             serde_json::to_vec(&frame_aware_state_to_json(&s.message)).ok()
+                        })
+                        .collect();
+                    for payload in payloads {
+                        send_data(
+                            &bridge.data_tx,
+                            channel_id,
+                            timestamp_ns,
+                            payload,
+                            elapsed,
+                            &mut bridge.last_warn_secs,
+                        );
+                    }
+                }
+            }
+        } else if type_id == TypeId::of::<TfFramePose>() {
+            if let Some(reader) = readers.tf_frame_pose.get_mut(&topic_name) {
+                if let Some(topic) = topic_bus.get_topic::<TfFramePose>(&topic_name) {
+                    let payloads: Vec<_> = reader
+                        .read(topic)
+                        .filter_map(|s| {
+                            serde_json::to_vec(&tf_frame_pose_to_json(&s.message)).ok()
                         })
                         .collect();
                     for payload in payloads {

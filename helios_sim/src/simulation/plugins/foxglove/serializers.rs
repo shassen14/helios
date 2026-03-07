@@ -96,3 +96,31 @@ pub static FRAME_AWARE_STATE_SCHEMA: &str = r#"{
   },
   "additionalProperties": { "type": "number" }
 }"#;
+
+/// Schema for a single TF frame pose published on `/tf/{frame_name}`.
+/// Contains both the world-ENU pose and the parent-relative pose so you can
+/// plot sensor offsets from the vehicle body directly in Foxglove.
+pub static TF_FRAME_POSE_SCHEMA: &str = r#"{
+  "type": "object",
+  "title": "TfFramePose",
+  "description": "World (ENU) and parent-relative pose for one tracked TF frame.",
+  "properties": {
+    "sim_time":     { "type": "number", "description": "Elapsed simulation time (s)" },
+    "frame_name":   { "type": "string" },
+    "parent_frame": { "type": "string" },
+    "pos_x":        { "type": "number", "description": "World ENU X (m)" },
+    "pos_y":        { "type": "number", "description": "World ENU Y (m)" },
+    "pos_z":        { "type": "number", "description": "World ENU Z (m)" },
+    "quat_x":       { "type": "number" },
+    "quat_y":       { "type": "number" },
+    "quat_z":       { "type": "number" },
+    "quat_w":       { "type": "number" },
+    "local_pos_x":  { "type": "number", "description": "Parent-relative X (m)" },
+    "local_pos_y":  { "type": "number", "description": "Parent-relative Y (m)" },
+    "local_pos_z":  { "type": "number", "description": "Parent-relative Z (m)" },
+    "local_quat_x": { "type": "number" },
+    "local_quat_y": { "type": "number" },
+    "local_quat_z": { "type": "number" },
+    "local_quat_w": { "type": "number" }
+  }
+}"#;

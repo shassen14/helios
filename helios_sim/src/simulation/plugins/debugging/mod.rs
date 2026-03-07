@@ -3,7 +3,9 @@ use bevy::prelude::*;
 mod components;
 mod systems;
 
-pub use components::{DebugLegendNode, DebugSensorCache, DebugVisualizationConfig, PathTrail};
+pub use components::{
+    DebugLegendNode, DebugSensorCache, DebugVisualizationConfig, PathTrail, TfLabelEntities,
+};
 
 use crate::prelude::AppState;
 use crate::simulation::config::ScenarioConfig;
@@ -21,6 +23,7 @@ fn apply_debug_config(
     viz.show_error_line     = d.show_error_line;
     viz.show_path_trail     = d.show_path_trail;
     viz.show_occupancy_grid = d.show_occupancy_grid;
+    viz.show_tf_frames      = d.show_tf_frames;
     viz.show_legend         = d.show_legend;
 }
 
@@ -31,6 +34,7 @@ impl Plugin for DebuggingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<DebugVisualizationConfig>()
             .init_resource::<DebugSensorCache>()
+            .init_resource::<TfLabelEntities>()
             .add_systems(
                 OnEnter(AppState::Running),
                 (apply_debug_config, systems::spawn_debug_legend).chain(),
@@ -49,6 +53,8 @@ impl Plugin for DebuggingPlugin {
                     systems::draw_estimation_error_line,
                     systems::draw_path_trail,
                     systems::draw_occupancy_grid,
+                    systems::draw_tf_frames,
+                    systems::update_tf_labels,
                 )
                     .run_if(in_state(AppState::Running)),
             )

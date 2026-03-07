@@ -11,6 +11,7 @@ use helios_core::messages::{MeasurementData, MeasurementMessage /*, PointCloud*/
 use serde_json::{json, Map, Value};
 
 use crate::simulation::core::components::GroundTruthState;
+use crate::simulation::core::transforms::TfFramePose;
 
 // ---------------------------------------------------------------------------
 // GroundTruthState
@@ -124,3 +125,29 @@ pub fn measurement_to_json(msg: &MeasurementMessage) -> Value {
 
 // PointCloud serializer commented out — no Foxglove 3D panel; belongs in MCAP logger when implemented.
 // pub fn point_cloud_to_json(pc: &PointCloud) -> Value { ... }
+
+// ---------------------------------------------------------------------------
+// TfFramePose
+// ---------------------------------------------------------------------------
+
+pub fn tf_frame_pose_to_json(p: &TfFramePose) -> Value {
+    json!({
+        "sim_time":       p.sim_time,
+        "frame_name":     p.frame_name.as_ref(),
+        "parent_frame":   p.parent_frame.as_ref(),
+        "pos_x":          p.pos_x,
+        "pos_y":          p.pos_y,
+        "pos_z":          p.pos_z,
+        "quat_x":         p.quat_x,
+        "quat_y":         p.quat_y,
+        "quat_z":         p.quat_z,
+        "quat_w":         p.quat_w,
+        "local_pos_x":    p.local_pos_x,
+        "local_pos_y":    p.local_pos_y,
+        "local_pos_z":    p.local_pos_z,
+        "local_quat_x":   p.local_quat_x,
+        "local_quat_y":   p.local_quat_y,
+        "local_quat_z":   p.local_quat_z,
+        "local_quat_w":   p.local_quat_w,
+    })
+}
