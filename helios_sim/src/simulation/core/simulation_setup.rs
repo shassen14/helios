@@ -191,7 +191,8 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
         let start_transform = starting_pose.to_bevy_transform();
 
         commands.spawn((
-            Name::new(agent_config.name.clone()),
+            Name::new(format!("{}/base_link", agent_config.name)),
+            TrackedFrame,
             GroundTruthState {
                 pose: start_isometry,
                 ..default()

@@ -101,7 +101,7 @@ fn spawn_imu_sensors(
 
                 // --- 3. Add all components to the new sensor entity ---
                 sensor_entity_commands.insert((
-                    Name::new(imu_config.get_name().to_string()),
+                    Name::new(format!("{}/{}", agent_name.as_str(), imu_config.get_name())),
                     // The Bevy component with runtime state.
                     Imu {
                         timer: Timer::new(

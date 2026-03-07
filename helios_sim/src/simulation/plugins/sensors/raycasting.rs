@@ -98,7 +98,7 @@ fn spawn_raycasting_sensors(
                 let sensor_entity = sensor_entity_commands.id();
 
                 sensor_entity_commands.insert((
-                    Name::new(sensor_name.clone()),
+                    Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
                     RaycastingSensor {
                         timer: Timer::new(
                             Duration::from_secs_f32(1.0 / lidar_config.get_rate()),

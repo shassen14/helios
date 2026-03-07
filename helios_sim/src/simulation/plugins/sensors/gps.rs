@@ -87,7 +87,7 @@ fn spawn_gps_sensors(
                 let sensor_entity = sensor_entity_commands.id();
 
                 sensor_entity_commands.insert((
-                    Name::new(gps_config.name.clone()),
+                    Name::new(format!("{}/{}", agent_name.as_str(), gps_config.name)),
                     // The Bevy component with the runtime timer.
                     Gps {
                         timer: Timer::new(

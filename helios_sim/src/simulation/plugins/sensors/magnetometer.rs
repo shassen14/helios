@@ -90,7 +90,7 @@ fn spawn_magnetometer_sensors(
                 core_model.sensor_handle = FrameHandle::from_entity(sensor_entity);
 
                 sensor_entity_commands.insert((
-                    Name::new(mag_config.name.clone()),
+                    Name::new(format!("{}/{}", agent_name.as_str(), mag_config.name)),
                     Magnetometer {
                         timer: Timer::new(
                             Duration::from_secs_f32(1.0 / mag_config.rate),
