@@ -100,8 +100,8 @@ impl OccupancyGridMapper {
 
         for row in 0..h {
             for col in 0..w {
-                let src_col = col - dcol;
-                let src_row = row - drow;
+                let src_col = col + dcol;
+                let src_row = row + drow;
                 if src_col >= 0 && src_col < w && src_row >= 0 && src_row < h {
                     shifted[(row as usize) * self.width + (col as usize)] =
                         self.log_odds[(src_row as usize) * self.width + (src_col as usize)];
