@@ -7,6 +7,5 @@ type = "SixDof"
 name = "imu_basic"
 rate = 100.0
 transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
-
 accel_noise_stddev = [0.1, 0.1, 0.1]
 gyro_noise_stddev = [0.01, 0.01, 0.01]

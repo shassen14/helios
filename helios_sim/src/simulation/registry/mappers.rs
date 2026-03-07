@@ -8,11 +8,11 @@
 
 use bevy::prelude::{App, Plugin};
 use helios_core::{
-    mapping::{Mapper, NoneMapper, OccupancyGridMapper},
+    mapping::{Mapper, MapperPoseSource, NoneMapper, OccupancyGridMapper},
     types::FrameHandle,
 };
 
-use crate::simulation::config::structs::MapperConfig;
+use crate::simulation::config::structs::{MapperConfig, MapperPoseSourceConfig};
 use super::{AutonomyRegistry, MapperBuildContext};
 
 pub struct DefaultMappersPlugin;
@@ -31,15 +31,20 @@ fn build_none_mapper(_ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String
 }
 
 fn build_occupancy_grid_mapper(ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String> {
-    let MapperConfig::OccupancyGrid2D { resolution, .. } = ctx.mapper_cfg else {
+    let MapperConfig::OccupancyGrid2D { resolution, pose_source, .. } = ctx.mapper_cfg else {
         return Err("Expected OccupancyGrid2D config".to_string());
     };
     let agent_handle = FrameHandle::from_entity(ctx.agent_entity);
+    let mapper_pose_source = match pose_source {
+        MapperPoseSourceConfig::GroundTruth => MapperPoseSource::GroundTruth,
+        MapperPoseSourceConfig::Estimated => MapperPoseSource::Estimated,
+    };
     // TODO: promote width_m and height_m to MapperConfig::OccupancyGrid2D fields.
     Ok(Box::new(OccupancyGridMapper::new(
         resolution as f64,
         200.0, // hardcoded — see known issues in OccupancyGridMapper
         200.0,
         agent_handle,
+        mapper_pose_source,
     )))
 }

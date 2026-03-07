@@ -1,9 +1,19 @@
 use nalgebra::{DMatrix, Isometry3, Translation3, UnitQuaternion};
 
 use crate::estimation::FilterContext;
+use crate::frames::conventions::sensor_pose_flu_to_world;
 use crate::mapping::{MapData, Mapper};
 use crate::messages::{MeasurementData, ModuleInput};
 use crate::types::FrameHandle;
+
+/// Selects how the mapper obtains the sensor's world pose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapperPoseSource {
+    /// Physics ground-truth from TfTree. Decoupled from estimation.
+    GroundTruth,
+    /// EKF/odom estimate. Map lives in the odom frame.
+    Estimated,
+}
 
 // Log-odds update constants
 const L_FREE: f32 = -0.4;
@@ -18,11 +28,6 @@ const L_MAX: f32 = 3.5;
 /// strips are reset to 0 (unknown prior).  All coordinates are ENU (m).
 ///
 /// # Known issues (to be fixed)
-///
-/// - **Coordinate frame bug**: hit points are currently transformed using the EKF
-///   estimated pose rather than the physics ground-truth sensor pose from the TfTree.
-///   This causes a ~90° rotation of the mapped obstacles relative to reality and
-///   causes occupied cells to drift/smear as the EKF estimate evolves.
 ///
 /// - **Hardcoded grid dimensions**: width and height are fixed at 200 m × 200 m in the
 ///   factory (`build_occupancy_grid_mapper`). They should be promoted to the
@@ -39,11 +44,18 @@ pub struct OccupancyGridMapper {
     log_odds: Vec<f32>,
     robot_pose: Option<Isometry3<f64>>,
     agent_handle: FrameHandle,
+    pose_source: MapperPoseSource,
     cached_map: MapData,
 }
 
 impl OccupancyGridMapper {
-    pub fn new(resolution: f64, width_m: f64, height_m: f64, agent_handle: FrameHandle) -> Self {
+    pub fn new(
+        resolution: f64,
+        width_m: f64,
+        height_m: f64,
+        agent_handle: FrameHandle,
+        pose_source: MapperPoseSource,
+    ) -> Self {
         let width = (width_m / resolution).ceil() as usize;
         let height = (height_m / resolution).ceil() as usize;
         Self {
@@ -55,6 +67,7 @@ impl OccupancyGridMapper {
             log_odds: vec![0.0_f32; width * height],
             robot_pose: None,
             agent_handle,
+            pose_source,
             cached_map: MapData::None,
         }
     }
@@ -167,37 +180,52 @@ impl Mapper for OccupancyGridMapper {
     fn process(&mut self, input: &ModuleInput, context: &FilterContext) {
         match input {
             ModuleInput::PoseUpdate { pose } => {
-                if let Some(iso) = pose.get_pose_isometry() {
-                    self.recenter_on(iso.translation.x, iso.translation.y);
-                    self.robot_pose = Some(iso);
-                    self.rebuild_cache();
-                }
+                self.recenter_on(pose.translation.x, pose.translation.y);
+                self.robot_pose = Some(*pose);
+                self.rebuild_cache();
             }
             ModuleInput::Measurement { message } => {
                 let MeasurementData::PointCloud(ref cloud) = message.data else {
                     return;
                 };
-                let robot_pose = match self.robot_pose {
-                    Some(p) => p,
-                    None => return,
-                };
                 let tf = match context.tf {
                     Some(tf) => tf,
                     None => return,
                 };
-                // T_{body←sensor}: transforms a sensor-frame point into body frame.
-                let body_from_sensor =
-                    match tf.get_transform(self.agent_handle, message.sensor_handle) {
-                        Some(t) => t,
-                        None => return,
-                    };
 
-                let t_world_sensor = robot_pose * body_from_sensor;
-                let robot_wx = robot_pose.translation.x;
-                let robot_wy = robot_pose.translation.y;
+                let (sensor_world_pose, robot_wx, robot_wy) = match self.pose_source {
+                    MapperPoseSource::GroundTruth => {
+                        let robot_pose = match tf.world_pose(self.agent_handle) {
+                            Some(p) => p,
+                            None => return,
+                        };
+                        let sensor_pose = match tf.world_pose(message.sensor_handle) {
+                            Some(p) => p,
+                            None => return,
+                        };
+                        (sensor_pose, robot_pose.translation.x, robot_pose.translation.y)
+                    }
+                    MapperPoseSource::Estimated => {
+                        let robot_pose = match self.robot_pose {
+                            Some(p) => p,
+                            None => return,
+                        };
+                        let body_from_sensor =
+                            match tf.get_transform(self.agent_handle, message.sensor_handle) {
+                                Some(t) => t,
+                                None => return,
+                            };
+                        let sensor_pose = robot_pose * body_from_sensor;
+                        (sensor_pose, robot_pose.translation.x, robot_pose.translation.y)
+                    }
+                };
+
+                // points are in FLU; compose the FLU→ENU correction so we
+                // can project directly into the ENU world frame.
+                let t_world_from_flu = sensor_pose_flu_to_world(sensor_world_pose);
 
                 for point in &cloud.points {
-                    let p_world = t_world_sensor * point.position;
+                    let p_world = t_world_from_flu * point.position;
                     self.raycast(robot_wx, robot_wy, p_world.x, p_world.y);
                 }
                 // Cache is rebuilt on the next PoseUpdate (timer-gated).

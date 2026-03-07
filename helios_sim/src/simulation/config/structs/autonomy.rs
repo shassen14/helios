@@ -114,12 +114,25 @@ pub struct UkfConfig {
     pub kappa: f64,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MapperPoseSourceConfig {
+    #[default]
+    GroundTruth,
+    Estimated,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum MapperConfig {
     None,
-    OccupancyGrid2D { rate: f32, resolution: f32 },
+    OccupancyGrid2D {
+        rate: f32,
+        resolution: f32,
+        #[serde(default)]
+        pose_source: MapperPoseSourceConfig,
+    },
 }
 
 impl MapperConfig {

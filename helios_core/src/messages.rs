@@ -1,4 +1,3 @@
-use crate::frames::FrameAwareState;
 use crate::types::{Control, FrameHandle};
 use nalgebra::{Isometry3, Matrix6, Point3, Vector3, Vector6};
 use serde::Serialize;
@@ -64,11 +63,11 @@ pub struct MeasurementMessage {
 /// The universal input packet for all `StateEstimator` implementations.
 pub enum ModuleInput<'a> {
     TimeStep { dt: f64, current_time: f64 },
-    // Control and PoseUpdate are currently not used in our final `predict`/`update`
-    // design, but we can keep them for future flexibility or for other module types.
     Control { u: &'a Control },
     Measurement { message: &'a MeasurementMessage },
-    PoseUpdate { pose: &'a FrameAwareState },
+    /// Carries the robot's current ENU pose (e.g. from the odom TF frame).
+    /// Mappers use this to recenter the grid; it is decoupled from any specific estimator.
+    PoseUpdate { pose: Isometry3<f64> },
 }
 
 // =========================================================================

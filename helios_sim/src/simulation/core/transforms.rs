@@ -128,6 +128,11 @@ impl TfProvider for TfTree {
         // T_B_A = (T_W_A)^-1 * T_W_B
         Some(pose_from_world.inverse() * pose_to_world)
     }
+
+    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>> {
+        let entity = Entity::from_bits(frame.0);
+        self.transforms_to_world.get(&entity).copied()
+    }
 }
 
 /// Rebuilds the TfTree from the current ECS state.

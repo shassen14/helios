@@ -526,7 +526,7 @@ pub fn update_tf_labels(
 /// Render radius around each agent. Only cells within this many metres of
 /// the agent's ground-truth position are drawn — keeps the gizmo count
 /// manageable for a 200 m × 200 m grid.
-const GRID_DRAW_RADIUS_M: f32 = 40.0;
+const GRID_DRAW_RADIUS_M: f32 = 150.0;
 
 /// Draws a bird's-eye view of the occupancy grid for every agent that has
 /// an active `OccupancyGrid2D` mapper.

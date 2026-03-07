@@ -1,7 +1,7 @@
 // helios_sim/src/plugins/world_model/components.rs
 
 use bevy::{
-    prelude::Component,
+    prelude::{Component, Entity},
     time::{Timer, TimerMode},
 };
 use helios_core::{estimation::StateEstimator, mapping::Mapper, slam::SlamSystem, types::Control};
@@ -25,6 +25,18 @@ pub struct ControlInputCache {
     /// This value persists across frames until a new one arrives.
     pub u: Control,
 }
+
+/// Marker on a virtual "odom frame" entity that links it back to its agent.
+///
+/// The odom entity carries `TrackedFrame` + `Transform` + `GlobalTransform`.
+/// Its `Transform` is updated every tick by `update_odom_frames` to match
+/// whatever pose source is active on the agent's `WorldModelComponent`.
+///
+/// Design intent: any pose source (EKF, SLAM, VIO) that writes to
+/// `WorldModelComponent` automatically drives this frame — callers only
+/// need to implement the trait, not touch the TF plumbing.
+#[derive(Component)]
+pub struct OdomFrameOf(pub Entity);
 
 #[derive(Component)]
 pub struct ModuleTimer(pub Timer);

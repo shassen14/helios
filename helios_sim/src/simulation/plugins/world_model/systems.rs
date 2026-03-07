@@ -10,7 +10,10 @@ use crate::prelude::*;
 use crate::simulation::config::structs::WorldModelConfig;
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::topics::TopicBus;
-use crate::simulation::plugins::world_model::components::{ControlInputCache, ModuleTimer};
+use crate::simulation::core::transforms::enu_iso_to_bevy_transform;
+use crate::simulation::plugins::world_model::components::{
+    ControlInputCache, ModuleTimer, OdomFrameOf,
+};
 use crate::simulation::plugins::world_model::WorldModelComponent;
 use crate::simulation::registry::{
     AutonomyRegistry, EstimatorBuildContext, MapperBuildContext, SlamBuildContext,
@@ -194,7 +197,8 @@ pub fn world_model_event_processor(
 }
 
 pub fn world_model_mapping_system(
-    mut module_query: Query<(&mut WorldModelComponent, &mut ModuleTimer)>,
+    mut module_query: Query<(Entity, &mut WorldModelComponent, &mut ModuleTimer)>,
+    odom_query: Query<(&OdomFrameOf, Entity)>,
     mut measurement_events: EventReader<BevyMeasurementMessage>,
     time: Res<Time>,
     tf_tree: Res<TfTree>,
@@ -208,24 +212,100 @@ pub fn world_model_mapping_system(
         tf: Some(&*tf_tree),
     };
 
-    for (mut module, mut timer) in &mut module_query {
+    // Build a map from agent entity → odom world pose (from TfTree).
+    // This decouples the mapper from the estimator: the mapper now tracks the
+    // odom frame rather than directly reading EKF internal state.
+    let agent_to_odom_iso: std::collections::HashMap<Entity, nalgebra::Isometry3<f64>> =
+        odom_query
+            .iter()
+            .filter_map(|(odom_of, odom_entity)| {
+                tf_tree
+                    .lookup_by_entity(odom_entity)
+                    .map(|iso| (odom_of.0, iso))
+            })
+            .collect();
+
+    for (agent_entity, mut module, mut timer) in &mut module_query {
         timer.0.tick(time.delta());
 
-        if let WorldModelComponent::Separate { estimator, mapper } = &mut *module {
+        if let WorldModelComponent::Separate { mapper, .. } = &mut *module {
             // Always forward sensor data to the mapper as it arrives.
             // The mapper's log-odds update is cheap; cache rebuild is not.
             for message in &all_new_messages {
                 mapper.process(&ModuleInput::Measurement { message }, &context);
             }
 
-            // On timer fire: update pose and rebuild the output cache.
-            // PoseUpdate triggers recenter + rebuild_cache inside the mapper.
+            // On timer fire: update pose from the odom TF frame and rebuild the cache.
+            // Using the odom frame (not the estimator) keeps the mapper decoupled.
             if timer.0.just_finished() {
-                mapper.process(
-                    &ModuleInput::PoseUpdate { pose: estimator.get_state() },
-                    &context,
-                );
+                if let Some(&odom_iso) = agent_to_odom_iso.get(&agent_entity) {
+                    mapper.process(&ModuleInput::PoseUpdate { pose: odom_iso }, &context);
+                }
             }
+        }
+    }
+}
+
+// =========================================================================
+// == ODOM FRAME SYSTEMS ==
+// =========================================================================
+
+/// Spawns a virtual "odom frame" entity for each agent that has a world model.
+///
+/// Runs in `SceneBuildSet::Finalize` — after `WorldModelComponent` has been
+/// attached in `ProcessBaseAutonomy`, so we can filter on it.
+/// The odom entity has no physics; its `Transform` is driven each tick
+/// by `update_odom_frames`.
+pub fn spawn_odom_frames(
+    mut commands: Commands,
+    agent_query: Query<(Entity, &SpawnAgentConfigRequest), With<WorldModelComponent>>,
+) {
+    for (agent_entity, request) in &agent_query {
+        let agent_name = &request.0.name;
+        commands.spawn((
+            Name::new(format!("{}/odom", agent_name)),
+            TrackedFrame,
+            Transform::IDENTITY,
+            GlobalTransform::IDENTITY,
+            OdomFrameOf(agent_entity),
+        ));
+        info!("[OdomFrame] Spawned odom frame for '{}'", agent_name);
+    }
+}
+
+/// Writes the latest pose estimate into the odom TF frame every tick.
+///
+/// Runs at the end of `SimulationSet::Estimation`, after the EKF/SLAM has
+/// processed all measurements for this tick.
+///
+/// Any `WorldModelComponent` variant that exposes a pose drives the odom frame:
+/// - `Separate { estimator }` → EKF/UKF output via `get_state().get_pose_isometry()`
+/// - `CombinedSlam { system }` → will use `SlamSystem::get_pose()` once the
+///   trait method is defined (stubbed here until SLAM is implemented).
+///
+/// If the estimator has not yet converged (pose returns `None`), the odom
+/// frame stays at its last known position — it never jumps to the origin.
+pub fn update_odom_frames(
+    agent_query: Query<&WorldModelComponent>,
+    mut odom_query: Query<(&OdomFrameOf, &mut Transform)>,
+) {
+    for (odom_of, mut transform) in &mut odom_query {
+        let Ok(world_model) = agent_query.get(odom_of.0) else {
+            continue;
+        };
+
+        let pose_enu = match world_model {
+            WorldModelComponent::Separate { estimator, .. } => {
+                estimator.get_state().get_pose_isometry()
+            }
+            WorldModelComponent::CombinedSlam { .. } => {
+                // TODO: call system.get_pose() once SlamSystem exposes it.
+                None
+            }
+        };
+
+        if let Some(iso) = pose_enu {
+            *transform = enu_iso_to_bevy_transform(&iso);
         }
     }
 }

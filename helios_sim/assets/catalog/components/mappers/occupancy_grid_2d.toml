@@ -1,3 +1,4 @@
 kind = "OccupancyGrid2D"
 rate = 5.0        # Hz — how often the mapper is ticked
 resolution = 0.5  # meters per cell
+pose_source = "estimated"  # "ground_truth" | "estimated"

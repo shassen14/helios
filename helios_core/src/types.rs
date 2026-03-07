@@ -28,4 +28,8 @@ impl FrameHandle {
 // This is so fundamental it belongs here.
 pub trait TfProvider {
     fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>>;
+
+    /// Returns the world (ENU) pose of a frame directly from physics.
+    /// Use this to bypass the estimator entirely (e.g. ground-truth mapping).
+    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>>;
 }
