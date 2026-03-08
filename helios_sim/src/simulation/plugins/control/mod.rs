@@ -15,7 +15,8 @@ use crate::{
     },
 };
 
-use helios_core::control::ControlContext;
+use helios_core::control::{ControlContext, ControlOutput};
+use nalgebra::Vector3;
 
 pub struct ControlPlugin;
 
@@ -75,7 +76,11 @@ fn spawn_controllers(
             Ok(ctrl) => {
                 commands
                     .entity(entity)
-                    .insert(ControllerComponent(ctrl));
+                    .insert(ControllerComponent(ctrl))
+                    .insert(ControlOutputComponent(ControlOutput::BodyVelocity {
+                        linear: Vector3::zeros(),
+                        angular: Vector3::zeros(),
+                    }));
                 info!(
                     "Spawned controller '{}' (key '{}') on entity {:?}",
                     kind, key, entity
@@ -97,15 +102,18 @@ fn spawn_controllers(
 
 /// Calls `Controller::compute()` each tick for every entity that has both
 /// a `ControllerComponent` and a `WorldModelComponent` (state estimate available).
-/// Inserts `ControlOutputComponent` with the result.
+/// Mutates `ControlOutputComponent` in-place — no deferred commands on the hot path.
 fn controller_compute_system(
-    mut commands: Commands,
     time: Res<Time>,
-    mut query: Query<(Entity, &mut ControllerComponent, Option<&WorldModelComponent>)>,
+    mut query: Query<(
+        &mut ControllerComponent,
+        &mut ControlOutputComponent,
+        Option<&WorldModelComponent>,
+    )>,
 ) {
     let dt = time.delta_secs_f64();
 
-    for (entity, mut ctrl_comp, world_model_opt) in &mut query {
+    for (mut ctrl_comp, mut output_comp, world_model_opt) in &mut query {
         // Require an estimated state — skip if the world model isn't ready yet.
         let Some(world_model) = world_model_opt else {
             continue;
@@ -121,9 +129,6 @@ fn controller_compute_system(
             reference: None,
         };
 
-        let output = ctrl_comp.0.compute(state, dt, &ctx);
-        commands
-            .entity(entity)
-            .insert(ControlOutputComponent(output));
+        output_comp.0 = ctrl_comp.0.compute(state, dt, &ctx);
     }
 }

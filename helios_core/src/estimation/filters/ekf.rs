@@ -130,57 +130,55 @@ impl StateEstimator for ExtendedKalmanFilter {
 
     /// Updates the state by fusing an aiding measurement.
     fn update(&mut self, message: &MeasurementMessage, context: &FilterContext) {
-        // Iterate through all configured measurement models.
-        for model in self.measurement_models.values() {
-            // We call the new `get_measurement_vector` method. If it returns `Some`,
-            // it means this is the right model and we have our `z` vector.
-            if let Some(z) = model.get_measurement_vector(&message.data) {
-                // We can now safely unwrap `predict_measurement` because if the model
-                // gave us a `z`, it must also be able to give us a `z_pred`.
-                if let Some(z_pred) =
-                    model.predict_measurement(&self.state, message, context.tf.unwrap())
-                {
-                    if z.nrows() != z_pred.nrows() {
-                        return;
-                    }
+        // O(1) dispatch: look up the model directly by sensor handle.
+        let Some(model) = self.measurement_models.get(&message.sensor_handle) else {
+            return;
+        };
 
-                    let p_priori = &self.state.covariance;
-                    let h_jac = model.calculate_jacobian(&self.state, context.tf.unwrap());
-                    let r_mat = model.get_r();
-                    let y = z.clone() - &z_pred;
+        let Some(z) = model.get_measurement_vector(&message.data) else {
+            return;
+        };
 
-                    // --- Calculate the full Kalman update values once ---
-                    let s = &h_jac * p_priori * h_jac.transpose() + r_mat;
-                    let s_inv_option = s.try_inverse();
+        // tf is required for measurement prediction; skip update if unavailable.
+        let Some(tf) = context.tf else {
+            return;
+        };
 
-                    // Can't proceed if S is not invertible.
-                    if s_inv_option.is_none() {
-                        return;
-                    }
+        let Some(z_pred) = model.predict_measurement(&self.state, message, tf) else {
+            return;
+        };
 
-                    let s_inv = s_inv_option.unwrap();
-                    let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
-                    let correction = &k_gain * &y;
-
-                    self.state.vector += correction;
-                    let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
-                    // Joseph form is used for numerically stable solution
-                    let i_kh = &i - &k_gain * &h_jac;
-                    // P_post = (I - KH)P(I - KH)^T + KRK^T
-                    let p_post =
-                        &i_kh * p_priori * i_kh.transpose() + &k_gain * r_mat * k_gain.transpose();
-                    self.state.covariance = p_post;
-
-                    // Enforce Symmetry and Positvity
-                    self.ensure_covariance_health();
-
-                    self.state.last_update_timestamp = message.timestamp;
-
-                    return;
-                }
-            }
+        if z.nrows() != z_pred.nrows() {
+            return;
         }
-        // If predict_measurement returned None, we simply do nothing.
+
+        let p_priori = &self.state.covariance;
+        let h_jac = model.calculate_jacobian(&self.state, tf);
+        let r_mat = model.get_r();
+        let y = z - &z_pred;
+
+        // --- Calculate the full Kalman update values once ---
+        let s = &h_jac * p_priori * h_jac.transpose() + r_mat;
+        let Some(s_inv) = s.try_inverse() else {
+            return;
+        };
+
+        let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
+        let correction = &k_gain * &y;
+
+        self.state.vector += correction;
+        let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
+        // Joseph form is used for numerically stable solution
+        let i_kh = &i - &k_gain * &h_jac;
+        // P_post = (I - KH)P(I - KH)^T + KRK^T
+        let p_post =
+            &i_kh * p_priori * i_kh.transpose() + &k_gain * r_mat * k_gain.transpose();
+        self.state.covariance = p_post;
+
+        // Enforce Symmetry and Positivity
+        self.ensure_covariance_health();
+
+        self.state.last_update_timestamp = message.timestamp;
     }
 
     fn get_state(&self) -> &FrameAwareState {

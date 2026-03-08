@@ -602,14 +602,14 @@ FixedUpdate (per tick):
 
 ## Next Steps — Phased Roadmap
 
-### Phase 1: Fix foundations (immediate)
+### Phase 1: Fix foundations ✅ DONE (2026-03-08)
 
 | Item                                                           | Effort | Impact      |
 | -------------------------------------------------------------- | ------ | ----------- |
-| Fix `.unwrap()` in EKF update (crash risk)                     | 30 min | Safety      |
-| Fix manual axis swaps in `ground_truth_sync_system`            | 15 min | Correctness |
-| Route EKF updates by `sensor_handle` O(1) lookup               | 1 hr   | Performance |
-| Use `&mut ControlOutputComponent` instead of `commands.insert` | 30 min | Performance |
+| Fix `.unwrap()` in EKF update (crash risk)                     | 30 min | Safety      ✅ |
+| Fix manual axis swaps in `ground_truth_sync_system`            | 15 min | Correctness ✅ |
+| Route EKF updates by `sensor_handle` O(1) lookup               | 1 hr   | Performance ✅ |
+| Use `&mut ControlOutputComponent` instead of `commands.insert` | 30 min | Performance ✅ |
 
 ### Phase 2: Introduce helios_runtime (next milestone)
 
