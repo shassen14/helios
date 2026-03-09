@@ -40,16 +40,8 @@ pub enum MeasurementData {
     },
     GpsPosition(Vector3<f64>),
     Magnetometer(Vector3<f64>),
-
-    // The variant now holds our new, descriptive PointCloud struct.
     PointCloud(PointCloud),
-    // You can add more variants here as needed, like `GpsPositionVelocity`.
 }
-
-// NOTE: We REMOVE the `impl MeasurementData` block with `as_primary_slice`.
-// This logic was brittle and is no longer needed. The decision of how to
-// convert data to a DVector now correctly lives inside each `MeasurementModel`'s
-// `predict_measurement` function, which is much safer.
 
 /// The generic message that carries all sensor data through the system.
 #[derive(Clone, Debug, Serialize)]

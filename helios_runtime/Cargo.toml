@@ -1,0 +1,10 @@
+[package]
+name = "helios_runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+helios_core = { path = "../helios_core" }
+nalgebra = { workspace = true }

@@ -24,8 +24,11 @@ impl FrameHandle {
     }
 }
 
+/// Monotonically increasing time in seconds (simulation or hardware clock).
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+pub struct MonotonicTime(pub f64);
+
 // --- Core Trait for Transform Lookups ---
-// This is so fundamental it belongs here.
 pub trait TfProvider {
     fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>>;
 

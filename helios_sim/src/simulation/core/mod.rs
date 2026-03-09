@@ -108,6 +108,7 @@ pub fn tf_publish_system(tf_tree: Res<TfTree>, mut topic_bus: ResMut<TopicBus>) 
 }
 
 pub mod app_state;
+pub mod sim_runtime;
 pub mod components;
 pub mod events;
 pub mod prng;

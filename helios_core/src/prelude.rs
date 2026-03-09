@@ -4,20 +4,18 @@
 pub use crate::messages::{MeasurementData, MeasurementMessage, ModuleInput};
 pub use crate::models::estimation::dynamics::EstimationDynamics;
 pub use crate::models::estimation::measurement::Measurement;
-pub use crate::types::{FrameHandle, TfProvider};
+pub use crate::types::{FrameHandle, MonotonicTime, TfProvider};
 
 // --- Core Data Structures (The "nouns" of the library) ---
-// pub use crate::context::KinematicContext;
 pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
 // --- Control Abstractions ---
 pub use crate::control::{ControlContext, ControlOutput, Controller, TrajectoryPoint};
 pub use crate::models::controls::ControlDynamics;
 
-// --- Estimation Algorithms ---
-// pub use crate::estimation::ekf::{ekf_predict, ekf_update, EkfMeasurementParams, EkfUpdateParams};
+// --- Planning & Tracking ---
+pub use crate::planning::Planner;
+pub use crate::tracking::{Track, Tracker};
 
 // --- Concrete Model Implementations (Export common ones for convenience) ---
-// pub use crate::models::dynamics::ackermann::AckermannKinematics;
-// pub use crate::models::dynamics::generic::ConstantAccelerationModel;
 pub use crate::models::estimation::measurement::imu::Imu6DofModel;

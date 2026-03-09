@@ -2647,6 +2647,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "helios_runtime"
+version = "0.1.0"
+dependencies = [
+ "helios_core",
+ "nalgebra",
+]
+
+[[package]]
 name = "helios_sim"
 version = "0.1.0"
 dependencies = [
@@ -2659,6 +2667,7 @@ dependencies = [
  "figment",
  "futures-util",
  "helios_core",
+ "helios_runtime",
  "nalgebra",
  "rand 0.8.5",
  "rand_chacha 0.3.1",

@@ -14,6 +14,7 @@ bevy_fly_camera = "0.16.0" # For the debug camera
 
 # The crucial dependency on our pure core library
 helios_core = { path = "../helios_core", features = ["bevy"] }
+helios_runtime = { path = "../helios_runtime" }
 nalgebra = { workspace = true, features = ["serde-serialize"] }
 tokio = { version = "1.50.0", features = ["rt", "net", "time", "sync", "macros"] }
 tokio-tungstenite = "0.28.0"

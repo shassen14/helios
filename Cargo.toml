@@ -3,6 +3,7 @@
 resolver = "2" # Use the new feature resolver
 members = [
     "helios_core",
+    "helios_runtime",
     "helios_sim",
 ]
 

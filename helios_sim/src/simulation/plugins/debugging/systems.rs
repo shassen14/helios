@@ -16,6 +16,7 @@ use crate::simulation::core::transforms::{
 };
 use crate::simulation::plugins::world_model::WorldModelComponent;
 use helios_core::messages::MeasurementData;
+use helios_runtime::stage::PipelineLevel;
 
 // =========================================================================
 // == Toggle System ==
@@ -181,8 +182,8 @@ pub fn draw_estimated_pose_gimbals(
         return;
     }
     for module in &module_query {
-        if let WorldModelComponent::Separate { estimator, .. } = module {
-            if let Some(estimated_pose_enu) = estimator.get_state().get_pose_isometry() {
+        if let Some(estimated_pose_enu) = module.0.get_state().and_then(|s| s.get_pose_isometry()) {
+            {
                 let bevy_transform = enu_iso_to_bevy_transform(&estimated_pose_enu);
                 let global_transform = GlobalTransform::from(bevy_transform);
                 let start = global_transform.translation();
@@ -206,10 +207,9 @@ pub fn draw_covariance_ellipsoid(
         return;
     }
     for module in &module_query {
-        let WorldModelComponent::Separate { estimator, .. } = module else {
+        let Some(state) = module.0.get_state() else {
             continue;
         };
-        let state = estimator.get_state();
 
         let cov_3x3 = match state.get_sub_covariance_3x3(&StateVariable::Px(FrameId::World)) {
             Some(c) => c,
@@ -331,12 +331,10 @@ pub fn draw_estimation_error_line(
         return;
     }
     for (gt, module) in &query {
-        if let WorldModelComponent::Separate { estimator, .. } = module {
-            if let Some(estimated_pose) = estimator.get_state().get_pose_isometry() {
-                let gt_bevy = enu_iso_to_bevy_transform(&gt.pose).translation;
-                let est_bevy = enu_iso_to_bevy_transform(&estimated_pose).translation;
-                gizmos.line(gt_bevy, est_bevy, Color::srgb(1.0, 0.0, 0.0));
-            }
+        if let Some(estimated_pose) = module.0.get_state().and_then(|s| s.get_pose_isometry()) {
+            let gt_bevy = enu_iso_to_bevy_transform(&gt.pose).translation;
+            let est_bevy = enu_iso_to_bevy_transform(&estimated_pose).translation;
+            gizmos.line(gt_bevy, est_bevy, Color::srgb(1.0, 0.0, 0.0));
         }
     }
 }
@@ -549,12 +547,11 @@ pub fn draw_occupancy_grid(
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
     for (module, gt_transform) in &query {
-        let mapper = match module {
-            WorldModelComponent::Separate { mapper, .. } => mapper,
-            _ => continue,
+        let Some(map) = module.0.get_map(&PipelineLevel::Local) else {
+            continue;
         };
 
-        let MapData::OccupancyGrid2D { origin, resolution, data } = mapper.get_map() else {
+        let MapData::OccupancyGrid2D { origin, resolution, data } = map else {
             continue;
         };
 

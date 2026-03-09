@@ -25,13 +25,16 @@
 ## System Overview
 
 Helios is a modular robotics/autonomy simulation platform built in Rust. It is
-split into two crates with a strict one-way dependency:
+split into three crates with a strict one-way dependency chain:
 
 ```
-helios_core   (pure algorithms, no framework deps)
+helios_core      (pure algorithms, no framework deps)
      ^
      |
-helios_sim    (Bevy 0.16+ / Avian3D simulation host)
+helios_runtime   (autonomy pipeline orchestration, Bevy-free)
+     ^
+     |
+helios_sim       (Bevy 0.16+ / Avian3D simulation host)
 ```
 
 ### helios_core
@@ -112,18 +115,17 @@ Every spawn phase queries the same monolithic blob.
 - After `cleanup_spawn_requests` removes it, nothing enforces that no system
   reads it afterward.
 
-### SW-4: WorldModelComponent enum forces exhaustive matching
+### SW-4: WorldModelComponent enum forces exhaustive matching ✅ FIXED (Phase 2)
+
+The `WorldModelComponent` enum has been replaced with a newtype wrapper over `AutonomyPipeline`:
 
 ```rust
-pub enum WorldModelComponent {
-    Separate { estimator: Box<dyn StateEstimator>, mapper: Box<dyn Mapper> },
-    CombinedSlam { system: Box<dyn SlamSystem> },
-}
+#[derive(Component)]
+pub struct WorldModelComponent(pub AutonomyPipeline);
 ```
 
-Every consumer (`controller_compute_system`, `update_odom_frames`,
-`world_model_output_publisher`, debugging) must `match` both variants.
-Adding a third variant requires modifying every consumer.
+All consumers now use the uniform API: `get_state()`, `get_map()`, `process_measurement()`.
+No match arms. Adding new pipeline stage types requires zero changes to consumers.
 
 ### SW-5: Manual axis swaps outside transforms.rs
 
@@ -215,18 +217,24 @@ This requires a robust MCAP/logging pipeline — currently absent.
 
 ## Module Boundary Problems
 
-### MB-1: FrameHandle encodes Bevy Entity bits
+### MB-1: FrameHandle encodes Bevy Entity bits ✅ RESOLVED (Phase 2)
 
-`FrameHandle(pub u64)` stores `Entity::to_bits()` via `from_entity()`. This
-couples `helios_core` message types to Bevy's entity representation, preventing
-deployment on hardware where no Bevy entities exist.
+`FrameHandle(pub u64)` stores `Entity::to_bits()` via `from_entity()`. A separate
+`SensorId` type was considered to decouple this from Bevy, but rejected: it would be
+structurally identical (`NewType(u64)`) and would add mechanical conversion boilerplate
+with zero semantic benefit.
 
-### MB-2: Autonomy orchestration lives in Bevy systems, not in core
+The actual fix: `from_entity()`/`to_entity()` are behind `#[cfg(feature = "bevy")]` in
+`helios_core`. `helios_runtime` depends on `helios_core` **without** the bevy feature,
+so it has zero Bevy dependency. On hardware, `FrameHandle` bits encode static calibration
+IDs assigned at startup — the type is host-agnostic at the Rust level.
 
-The predict → update → control sequencing is implemented in
-`world_model_event_processor` (a Bevy system), not as a reusable algorithm
-pipeline. Deploying the same stack on hardware requires reimplementing this
-orchestration.
+### MB-2: Autonomy orchestration lives in Bevy systems, not in core ✅ FIXED (Phase 2)
+
+Predict → update sequencing now lives in `AutonomyPipeline` in `helios_runtime`.
+Bevy systems call `wm.0.process_measurement(msg, &runtime)` — they drive timing
+but contain no algorithm logic. The same pipeline runs on hardware with a different
+`AgentRuntime` implementation.
 
 ### MB-3: FilterContext is simulation-shaped
 
@@ -238,15 +246,17 @@ an ECS resource. The calling convention needs to be host-agnostic.
 
 ## Missing Abstractions
 
-### MA-1: Agent Runtime Contract
+### MA-1: Agent Runtime Contract ✅ FIXED (Phase 2)
 
-No formal interface between algorithms and their host. The same autonomy stack
-should run identically in simulation and on hardware. Requires:
+Implemented in `helios_runtime`:
 
-- `SensorId` (host-agnostic, not Bevy `Entity` bits)
-- `MonotonicTime` (clock-source-agnostic)
-- `AgentRuntime` trait (TF lookups, time)
-- `AutonomyPipeline` (self-contained predict → update → plan → control)
+- `MonotonicTime(f64)` in `helios_core/src/types.rs` — clock-source-agnostic timestamp
+- `AgentRuntime` trait in `helios_runtime/src/runtime.rs` — TF lookups + time
+- `AutonomyPipeline` in `helios_runtime/src/pipeline.rs` — self-contained predict → update → map
+- `SimRuntime<'a>` in `helios_sim` implements `AgentRuntime` over `&TfTree + elapsed_secs`
+
+Note: `SensorId` was considered but rejected in favor of keeping `FrameHandle` everywhere.
+See MB-1 for the rationale. The runtime contract is fully host-agnostic without it.
 
 ### MA-2: PoseSource abstraction
 
@@ -368,98 +378,91 @@ fn estimation_system(
 helios_core            pure math, traits, data structures
      ^
      |
-helios_runtime         agent runtime contract (NEW)
+helios_runtime         agent runtime contract (IMPLEMENTED)
      ^            ^
      |            |
-helios_sim        helios_hw
+helios_sim        helios_hw (future)
 (Bevy/Avian3D)    (tokio + HW drivers)
 ```
 
-### helios_runtime — The Key Missing Crate
+### helios_runtime — The Portability Layer (IMPLEMENTED)
 
-A small (~500 lines), load-bearing crate that defines how an algorithm stack
-receives data and produces outputs, independent of the host:
+A small, load-bearing crate that defines how an algorithm stack receives data and
+produces outputs, independent of the host. Uses `FrameHandle` throughout (not a
+separate `SensorId`) — the `bevy` feature gate on `helios_core` keeps it Bevy-free.
 
 ```rust
-// helios_runtime/src/lib.rs
+// helios_runtime/src/runtime.rs
 
-/// Host-agnostic sensor identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SensorId(pub u64);
-
-/// Clock-source-agnostic timestamp.
-#[derive(Debug, Clone, Copy, PartialOrd, PartialEq)]
+/// Clock-source-agnostic timestamp (in helios_core/src/types.rs).
 pub struct MonotonicTime(pub f64);
 
-/// A timestamped sensor reading from any source.
-pub struct SensorReading {
-    pub sensor_id: SensorId,
-    pub timestamp: MonotonicTime,
-    pub data: MeasurementData,
-}
-
 /// The contract any host must fulfill to run an autonomy stack.
-pub trait AgentRuntime {
-    fn get_transform(&self, from: SensorId, to: SensorId) -> Option<Isometry3<f64>>;
+pub trait AgentRuntime: Send + Sync {
+    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>>;
+    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>>;
     fn now(&self) -> MonotonicTime;
 }
 
+// helios_runtime/src/pipeline.rs
+
 /// A self-contained autonomy pipeline. Runs identically in sim and on hardware.
 pub struct AutonomyPipeline {
-    estimator: Option<Box<dyn StateEstimator>>,
-    mapper: Option<Box<dyn Mapper>>,
-    planner: Option<Box<dyn Planner>>,
-    controller: Option<Box<dyn Controller>>,
+    pub trackers:    Vec<Box<dyn Tracker>>,
+    pub estimator:   Option<Box<dyn StateEstimator>>,
+    pub slam:        Option<Box<dyn SlamSystem>>,
+    pub mappers:     Vec<LeveledMapper>,    // sorted by PipelineLevel at build time
+    pub planners:    Vec<LeveledPlanner>,
+    pub controllers: Vec<LeveledController>,
 }
 
 impl AutonomyPipeline {
-    pub fn process_measurement(
-        &mut self,
-        reading: &SensorReading,
-        runtime: &dyn AgentRuntime,
-    ) -> Option<ControlOutput> {
-        // predict -> update -> plan -> control
-    }
+    /// Called on every sensor event. Drives predict + update.
+    pub fn process_measurement(&mut self, msg: &MeasurementMessage, runtime: &dyn AgentRuntime);
+    /// Called every frame. Forwards sensor data to mappers (cheap log-odds update).
+    pub fn process_mapper_messages(&mut self, msgs: &[MeasurementMessage], runtime: &dyn AgentRuntime);
+    /// Called on timer fire. Pushes odom pose so grid can recenter.
+    pub fn process_mapper_pose_update(&mut self, pose: Isometry3<f64>);
+
+    pub fn get_state(&self) -> Option<&FrameAwareState>;
+    pub fn get_map(&self, level: &PipelineLevel) -> Option<&MapData>;
 }
 ```
 
 ### Host implementations
 
-**helios_sim** (Bevy):
+**helios_sim** (`SimRuntime<'a>` in `helios_sim/src/simulation/core/sim_runtime.rs`):
 
 ```rust
-struct SimRuntime<'a> {
-    tf: &'a TfTree,
-    time: &'a Time,
-    sensor_map: &'a SensorIdMap,
+pub struct SimRuntime<'a> {
+    pub tf: &'a TfTree,
+    pub elapsed_secs: f64,
 }
 
 impl AgentRuntime for SimRuntime<'_> {
-    fn get_transform(&self, from: SensorId, to: SensorId) -> Option<Isometry3<f64>> {
-        let from_entity = self.sensor_map.to_entity(from)?;
-        let to_entity = self.sensor_map.to_entity(to)?;
-        self.tf.get_transform_between(from_entity, to_entity)
+    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>> {
+        self.tf.get_transform(from, to)
     }
-    fn now(&self) -> MonotonicTime {
-        MonotonicTime(self.time.elapsed_secs_f64())
+    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>> {
+        self.tf.lookup_by_entity(Entity::from_bits(frame.0))
     }
+    fn now(&self) -> MonotonicTime { MonotonicTime(self.elapsed_secs) }
 }
 ```
 
-**helios_hw** (hardware):
+**helios_hw** (future — hardware will implement `AgentRuntime` using static calibration data
+and system clock; no Bevy entities involved, `FrameHandle` bits encode calibration IDs):
 
 ```rust
-async fn agent_loop(
-    mut pipeline: AutonomyPipeline,
-    mut sensor_rx: mpsc::Receiver<SensorReading>,
-    runtime: HardwareRuntime,
-    actuator_tx: mpsc::Sender<ControlOutput>,
-) {
-    while let Some(reading) = sensor_rx.recv().await {
-        if let Some(output) = pipeline.process_measurement(&reading, &runtime) {
-            actuator_tx.send(output).await.ok();
-        }
+pub struct HardwareRuntime {
+    pub calibration: StaticTfTree,   // loaded from URDF or YAML at startup
+}
+impl AgentRuntime for HardwareRuntime {
+    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>> {
+        self.calibration.get_transform(from, to)
     }
+    fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> { None }
+    fn now(&self) -> MonotonicTime { MonotonicTime(system_clock_secs()) }
 }
 ```
 
@@ -524,12 +527,14 @@ helios_core/
     perception/               Raycasting sensor models
   frames/                     FrameAwareState, StateVariable
   messages.rs                 MeasurementMessage, Odometry, PointCloud
-  types.rs                    SensorId, TfProvider, State, Control
+  types.rs                    FrameHandle, MonotonicTime, TfProvider, State, Control
 
-helios_runtime/
-  lib.rs                      AgentRuntime, AutonomyPipeline
-  sensor.rs                   SensorId, SensorReading, MonotonicTime
-  comms.rs                    AgentMessage, AgentPayload
+helios_runtime/               (IMPLEMENTED)
+  lib.rs                      Declares modules, prelude
+  runtime.rs                  AgentRuntime trait + TfProviderAdapter
+  stage.rs                    PipelineLevel, LeveledMapper/Planner/Controller
+  pipeline.rs                 AutonomyPipeline, PipelineBuilder, PipelineOutputs
+  prelude.rs                  Re-exports
 
 helios_sim/
   config/
@@ -611,14 +616,17 @@ FixedUpdate (per tick):
 | Route EKF updates by `sensor_handle` O(1) lookup               | 1 hr   | Performance ✅ |
 | Use `&mut ControlOutputComponent` instead of `commands.insert` | 30 min | Performance ✅ |
 
-### Phase 2: Introduce helios_runtime (next milestone)
+### Phase 2: Introduce helios_runtime ✅ DONE (2026-03-08)
 
-| Item                                                                           | Effort | Impact       |
-| ------------------------------------------------------------------------------ | ------ | ------------ |
-| Create `helios_runtime` crate with `SensorId`, `MonotonicTime`, `AgentRuntime` | 2 days | Architecture |
-| Define `AutonomyPipeline` — move predict/update/control sequencing out of Bevy | 2 days | Portability  |
-| Migrate `FrameHandle` to `SensorId` in core algorithm interfaces               | 1 day  | Decoupling   |
-| `helios_sim` implements `AgentRuntime` as adapter over `TfTree` + `Time`       | 1 day  | Integration  |
+| Item                                                                                          | Impact       |
+| --------------------------------------------------------------------------------------------- | ------------ |
+| Created `helios_runtime` crate with `MonotonicTime`, `AgentRuntime`, `TfProviderAdapter`      | Architecture ✅ |
+| Defined `AutonomyPipeline` + `PipelineBuilder` — sequencing moved out of Bevy                 | Portability  ✅ |
+| Kept `FrameHandle` (not `SensorId`) — bevy feature gate makes it host-agnostic               | Decoupling   ✅ |
+| `SimRuntime<'a>` in `helios_sim` implements `AgentRuntime` over `&TfTree + elapsed_secs`      | Integration  ✅ |
+| Replaced `WorldModelComponent` enum with `WorldModelComponent(pub AutonomyPipeline)` newtype  | Extensibility ✅ |
+| Added `Planner` and `Tracker` trait stubs to `helios_core` (no concrete impls yet)            | Architecture ✅ |
+| Per-stage rate separation: `process_measurement`, `process_mapper_messages`, `process_mapper_pose_update` | Correctness ✅ |
 
 ### Phase 3: Agent-local data isolation
 

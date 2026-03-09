@@ -1,34 +1,27 @@
 use avian3d::prelude::Gravity;
 use bevy::prelude::*;
-use helios_core::estimation::StateEstimator;
-use helios_core::mapping::{Mapper, NoneMapper};
+use helios_core::mapping::NoneMapper;
 use helios_core::types::FrameHandle;
-use nalgebra::DVector;
+use helios_runtime::pipeline::PipelineBuilder;
+use helios_runtime::stage::PipelineLevel;
 use std::collections::HashMap;
 
 use crate::prelude::*;
 use crate::simulation::config::structs::WorldModelConfig;
 use crate::simulation::core::events::BevyMeasurementMessage;
+use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::topics::TopicBus;
-use crate::simulation::core::transforms::enu_iso_to_bevy_transform;
-use crate::simulation::plugins::world_model::components::{
-    ControlInputCache, ModuleTimer, OdomFrameOf,
-};
+use crate::simulation::core::transforms::{enu_iso_to_bevy_transform, TfTree};
+use crate::simulation::plugins::world_model::components::{ModuleTimer, OdomFrameOf};
 use crate::simulation::plugins::world_model::WorldModelComponent;
 use crate::simulation::registry::{
     AutonomyRegistry, EstimatorBuildContext, MapperBuildContext, SlamBuildContext,
 };
 
-use helios_core::estimation::FilterContext;
-use helios_core::messages::ModuleInput;
-
 // =========================================================================
 // == SPAWNING SYSTEM ==
 // =========================================================================
 
-/// Runs once during scene building. Reads agent configs, queries the
-/// AutonomyRegistry by key, and attaches WorldModelComponent + ControlInputCache.
-/// No concrete algorithm types are named here.
 pub fn spawn_world_model_modules(
     mut commands: Commands,
     agent_query: Query<(Entity, &SpawnAgentConfigRequest, &Children)>,
@@ -36,8 +29,6 @@ pub fn spawn_world_model_modules(
     gravity: Res<Gravity>,
     registry: Res<AutonomyRegistry>,
 ) {
-    // Snapshot the dynamics factory map once. All Plugin::build() calls complete
-    // before OnEnter(SceneBuilding), so every registered dynamics factory is present.
     let dynamics_factories = registry.clone_dynamics();
 
     for (agent_entity, request, children) in &agent_query {
@@ -45,7 +36,7 @@ pub fn spawn_world_model_modules(
         let gravity_magnitude = gravity.0.length() as f64;
         let mut entity_commands = commands.entity(agent_entity);
 
-        // --- Pre-build measurement models from child sensor entities (ECS work stays here) ---
+        // Pre-build measurement models keyed by FrameHandle (from child entity bits).
         let measurement_models: HashMap<FrameHandle, _> = children
             .iter()
             .filter_map(|child| {
@@ -61,8 +52,9 @@ pub fn spawn_world_model_modules(
                 estimator: est_cfg,
                 mapper: map_cfg,
             }) => {
-                // --- Build the estimator via registry ---
-                let estimator: Option<Box<dyn StateEstimator>> = if let Some(cfg) = est_cfg {
+                let mut builder = PipelineBuilder::new();
+
+                if let Some(cfg) = est_cfg {
                     let ctx = EstimatorBuildContext {
                         agent_entity,
                         estimator_cfg: cfg.clone(),
@@ -72,22 +64,20 @@ pub fn spawn_world_model_modules(
                         dynamics_factories: dynamics_factories.clone(),
                     };
                     match registry.build_estimator(cfg.get_kind_str(), ctx) {
-                        Ok(est) => Some(est),
+                        Ok(est) => {
+                            builder = builder.with_estimator(est);
+                        }
                         Err(e) => {
                             error!(
-                                "Cannot build world model for agent '{}': {}",
+                                "Cannot build estimator for agent '{}': {}",
                                 agent_config.name, e
                             );
                             continue;
                         }
                     }
-                } else {
-                    None
-                };
+                }
 
-                // --- Build the mapper via registry ---
-                let mapper: Box<dyn Mapper> = if let Some(cfg) = map_cfg {
-                    // Insert a rate-limited timer if the mapper needs one
+                if let Some(cfg) = map_cfg {
                     if let Some(rate) = cfg.get_timer_rate() {
                         entity_commands.insert(ModuleTimer::from_hz(rate));
                     }
@@ -98,30 +88,20 @@ pub fn spawn_world_model_modules(
                             mapper_cfg: cfg.clone(),
                         },
                     ) {
-                        Ok(m) => m,
+                        Ok(m) => {
+                            builder = builder.with_mapper(PipelineLevel::Local, m);
+                        }
                         Err(e) => {
                             error!(
                                 "Mapper build failed for '{}': {}. Falling back to NoneMapper.",
                                 agent_config.name, e
                             );
-                            Box::new(NoneMapper)
+                            builder = builder.with_mapper(PipelineLevel::Local, Box::new(NoneMapper));
                         }
                     }
-                } else {
-                    Box::new(NoneMapper)
-                };
-
-                // --- Insert the final component ---
-                if let Some(est) = estimator {
-                    let ctrl_dim = est.get_dynamics_model().get_control_dim();
-                    if ctrl_dim > 0 {
-                        entity_commands.insert(ControlInputCache {
-                            u: DVector::zeros(ctrl_dim),
-                        });
-                    }
-                    entity_commands
-                        .insert(WorldModelComponent::Separate { estimator: est, mapper });
                 }
+
+                entity_commands.insert(WorldModelComponent(builder.build()));
             }
 
             Some(WorldModelConfig::CombinedSlam { slam: slam_cfg }) => {
@@ -135,7 +115,8 @@ pub fn spawn_world_model_modules(
                 };
                 match registry.build_slam(slam_cfg.get_kind_str(), ctx) {
                     Ok(system) => {
-                        entity_commands.insert(WorldModelComponent::CombinedSlam { system });
+                        let pipeline = PipelineBuilder::new().with_slam(system).build();
+                        entity_commands.insert(WorldModelComponent(pipeline));
                     }
                     Err(e) => {
                         error!(
@@ -157,13 +138,14 @@ pub fn spawn_world_model_modules(
 }
 
 // =========================================================================
-// == RUNTIME SYSTEMS (unchanged) ==
+// == RUNTIME SYSTEMS ==
 // =========================================================================
 
 pub fn world_model_event_processor(
-    mut agent_query: Query<(Entity, &mut WorldModelComponent, &mut ControlInputCache)>,
+    mut agent_query: Query<(Entity, &mut WorldModelComponent)>,
     mut measurement_events: EventReader<BevyMeasurementMessage>,
     tf_tree: Res<TfTree>,
+    time: Res<Time>,
 ) {
     let mut messages: Vec<_> = measurement_events.read().map(|e| e.0.clone()).collect();
     if messages.is_empty() {
@@ -171,27 +153,14 @@ pub fn world_model_event_processor(
     }
     messages.sort_by(|a, b| a.timestamp.partial_cmp(&b.timestamp).unwrap());
 
-    let context = FilterContext {
-        tf: Some(&*tf_tree),
+    let runtime = SimRuntime {
+        tf: &*tf_tree,
+        elapsed_secs: time.elapsed_secs_f64(),
     };
 
-    for message in messages {
-        if let Ok((_, mut module, mut cache)) =
-            agent_query.get_mut(message.agent_handle.to_entity())
-        {
-            if let WorldModelComponent::Separate { estimator, .. } = &mut *module {
-                let dt = message.timestamp - estimator.get_state().last_update_timestamp;
-                if dt > 1e-9 {
-                    estimator.predict(dt, &cache.u, &context);
-                }
-
-                let dynamics = estimator.get_dynamics_model();
-                if let Some(new_u) = dynamics.get_control_from_measurement(&message.data) {
-                    cache.u = new_u;
-                } else {
-                    estimator.update(&message, &context);
-                }
-            }
+    for message in &messages {
+        if let Ok((_, mut wm)) = agent_query.get_mut(message.agent_handle.to_entity()) {
+            wm.0.process_measurement(message, &runtime);
         }
     }
 }
@@ -203,18 +172,14 @@ pub fn world_model_mapping_system(
     time: Res<Time>,
     tf_tree: Res<TfTree>,
 ) {
-    // Collect only this tick's messages. Bevy events expire after ~2 Update frames
-    // (~33 ms at 60 fps), so we must process them immediately rather than waiting
-    // for the mapper's slower output timer.
     let all_new_messages: Vec<_> = measurement_events.read().map(|e| e.0.clone()).collect();
 
-    let context = FilterContext {
-        tf: Some(&*tf_tree),
+    let runtime = SimRuntime {
+        tf: &*tf_tree,
+        elapsed_secs: time.elapsed_secs_f64(),
     };
 
-    // Build a map from agent entity → odom world pose (from TfTree).
-    // This decouples the mapper from the estimator: the mapper now tracks the
-    // odom frame rather than directly reading EKF internal state.
+    // Agent entity → odom world pose (from TfTree).
     let agent_to_odom_iso: std::collections::HashMap<Entity, nalgebra::Isometry3<f64>> =
         odom_query
             .iter()
@@ -225,22 +190,16 @@ pub fn world_model_mapping_system(
             })
             .collect();
 
-    for (agent_entity, mut module, mut timer) in &mut module_query {
+    for (agent_entity, mut wm, mut timer) in &mut module_query {
         timer.0.tick(time.delta());
 
-        if let WorldModelComponent::Separate { mapper, .. } = &mut *module {
-            // Always forward sensor data to the mapper as it arrives.
-            // The mapper's log-odds update is cheap; cache rebuild is not.
-            for message in &all_new_messages {
-                mapper.process(&ModuleInput::Measurement { message }, &context);
-            }
+        // Forward new sensor data to mappers every frame (cheap log-odds update).
+        wm.0.process_mapper_messages(&all_new_messages, &runtime);
 
-            // On timer fire: update pose from the odom TF frame and rebuild the cache.
-            // Using the odom frame (not the estimator) keeps the mapper decoupled.
-            if timer.0.just_finished() {
-                if let Some(&odom_iso) = agent_to_odom_iso.get(&agent_entity) {
-                    mapper.process(&ModuleInput::PoseUpdate { pose: odom_iso }, &context);
-                }
+        // On timer fire: push odom pose update so the grid can recenter.
+        if timer.0.just_finished() {
+            if let Some(&odom_iso) = agent_to_odom_iso.get(&agent_entity) {
+                wm.0.process_mapper_pose_update(odom_iso);
             }
         }
     }
@@ -250,12 +209,6 @@ pub fn world_model_mapping_system(
 // == ODOM FRAME SYSTEMS ==
 // =========================================================================
 
-/// Spawns a virtual "odom frame" entity for each agent that has a world model.
-///
-/// Runs in `SceneBuildSet::Finalize` — after `WorldModelComponent` has been
-/// attached in `ProcessBaseAutonomy`, so we can filter on it.
-/// The odom entity has no physics; its `Transform` is driven each tick
-/// by `update_odom_frames`.
 pub fn spawn_odom_frames(
     mut commands: Commands,
     agent_query: Query<(Entity, &SpawnAgentConfigRequest), With<WorldModelComponent>>,
@@ -273,18 +226,6 @@ pub fn spawn_odom_frames(
     }
 }
 
-/// Writes the latest pose estimate into the odom TF frame every tick.
-///
-/// Runs at the end of `SimulationSet::Estimation`, after the EKF/SLAM has
-/// processed all measurements for this tick.
-///
-/// Any `WorldModelComponent` variant that exposes a pose drives the odom frame:
-/// - `Separate { estimator }` → EKF/UKF output via `get_state().get_pose_isometry()`
-/// - `CombinedSlam { system }` → will use `SlamSystem::get_pose()` once the
-///   trait method is defined (stubbed here until SLAM is implemented).
-///
-/// If the estimator has not yet converged (pose returns `None`), the odom
-/// frame stays at its last known position — it never jumps to the origin.
 pub fn update_odom_frames(
     agent_query: Query<&WorldModelComponent>,
     mut odom_query: Query<(&OdomFrameOf, &mut Transform)>,
@@ -294,17 +235,7 @@ pub fn update_odom_frames(
             continue;
         };
 
-        let pose_enu = match world_model {
-            WorldModelComponent::Separate { estimator, .. } => {
-                estimator.get_state().get_pose_isometry()
-            }
-            WorldModelComponent::CombinedSlam { .. } => {
-                // TODO: call system.get_pose() once SlamSystem exposes it.
-                None
-            }
-        };
-
-        if let Some(iso) = pose_enu {
+        if let Some(iso) = world_model.0.get_state().and_then(|s| s.get_pose_isometry()) {
             *transform = enu_iso_to_bevy_transform(&iso);
         }
     }
@@ -314,25 +245,17 @@ pub fn world_model_output_publisher(
     query: Query<(&WorldModelComponent, &Name)>,
     mut topic_bus: ResMut<TopicBus>,
 ) {
-    for (module, name) in &query {
-        match &*module {
-            WorldModelComponent::Separate { estimator, mapper } => {
-                let state = estimator.get_state();
-                topic_bus.publish(
-                    &format!("/{}/odometry/estimated", name.as_str()),
-                    state.clone(),
-                );
+    for (wm, name) in &query {
+        if let Some(state) = wm.0.get_state() {
+            topic_bus.publish(
+                &format!("/{}/odometry/estimated", name.as_str()),
+                state.clone(),
+            );
+        }
 
-                let map = mapper.get_map();
-                if !matches!(map, helios_core::mapping::MapData::None) {
-                    topic_bus.publish(
-                        &format!("/{}/map", name.as_str()),
-                        map.clone(),
-                    );
-                }
-            }
-            WorldModelComponent::CombinedSlam { system } => {
-                let _ = system;
+        if let Some(map) = wm.0.get_map(&PipelineLevel::Local) {
+            if !matches!(map, helios_core::mapping::MapData::None) {
+                topic_bus.publish(&format!("/{}/map", name.as_str()), map.clone());
             }
         }
     }

@@ -114,14 +114,12 @@ fn controller_compute_system(
     let dt = time.delta_secs_f64();
 
     for (mut ctrl_comp, mut output_comp, world_model_opt) in &mut query {
-        // Require an estimated state — skip if the world model isn't ready yet.
         let Some(world_model) = world_model_opt else {
             continue;
         };
 
-        let state = match world_model {
-            WorldModelComponent::Separate { estimator, .. } => estimator.get_state(),
-            WorldModelComponent::CombinedSlam { system } => system.get_state(),
+        let Some(state) = world_model.0.get_state() else {
+            continue;
         };
 
         let ctx = ControlContext {
