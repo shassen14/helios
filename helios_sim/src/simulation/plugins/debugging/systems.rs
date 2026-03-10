@@ -14,7 +14,7 @@ use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::transforms::{
     enu_iso_to_bevy_transform, enu_vector_to_bevy_vector, flu_vector_to_bevy_local_vector, TfTree,
 };
-use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
+use crate::simulation::plugins::autonomy::{EstimatorComponent, MapperComponent};
 use helios_core::messages::MeasurementData;
 use helios_runtime::stage::PipelineLevel;
 
@@ -176,13 +176,13 @@ pub fn draw_ground_truth_gimbals(
 pub fn draw_estimated_pose_gimbals(
     config: Res<DebugVisualizationConfig>,
     mut gizmos: Gizmos,
-    module_query: Query<&AutonomyPipelineComponent>,
+    module_query: Query<&EstimatorComponent>,
 ) {
     if !config.show_pose_gimbals {
         return;
     }
     for module in &module_query {
-        if let Some(estimated_pose_enu) = module.0.get_state().and_then(|s| s.get_pose_isometry()) {
+        if let Some(estimated_pose_enu) = module.0.get_state().and_then(|s: &helios_core::frames::FrameAwareState| s.get_pose_isometry()) {
             {
                 let bevy_transform = enu_iso_to_bevy_transform(&estimated_pose_enu);
                 let global_transform = GlobalTransform::from(bevy_transform);
@@ -201,7 +201,7 @@ pub fn draw_estimated_pose_gimbals(
 pub fn draw_covariance_ellipsoid(
     config: Res<DebugVisualizationConfig>,
     mut gizmos: Gizmos,
-    module_query: Query<&AutonomyPipelineComponent>,
+    module_query: Query<&EstimatorComponent>,
 ) {
     if !config.show_covariance {
         return;
@@ -325,13 +325,13 @@ pub fn draw_velocity_vector(
 pub fn draw_estimation_error_line(
     config: Res<DebugVisualizationConfig>,
     mut gizmos: Gizmos,
-    query: Query<(&GroundTruthState, &AutonomyPipelineComponent)>,
+    query: Query<(&GroundTruthState, &EstimatorComponent)>,
 ) {
     if !config.show_error_line {
         return;
     }
     for (gt, module) in &query {
-        if let Some(estimated_pose) = module.0.get_state().and_then(|s| s.get_pose_isometry()) {
+        if let Some(estimated_pose) = module.0.get_state().and_then(|s: &helios_core::frames::FrameAwareState| s.get_pose_isometry()) {
             let gt_bevy = enu_iso_to_bevy_transform(&gt.pose).translation;
             let est_bevy = enu_iso_to_bevy_transform(&estimated_pose).translation;
             gizmos.line(gt_bevy, est_bevy, Color::srgb(1.0, 0.0, 0.0));
@@ -537,7 +537,7 @@ const GRID_DRAW_RADIUS_M: f32 = 150.0;
 pub fn draw_occupancy_grid(
     config: Res<DebugVisualizationConfig>,
     mut gizmos: Gizmos,
-    query: Query<(&AutonomyPipelineComponent, &GlobalTransform), With<GroundTruthState>>,
+    query: Query<(&MapperComponent, &GlobalTransform), With<GroundTruthState>>,
 ) {
     if !config.show_occupancy_grid {
         return;

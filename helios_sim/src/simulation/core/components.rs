@@ -1,6 +1,7 @@
 // helios_sim/src/simulation/core/components.rs
 
 use bevy::prelude::*;
+use helios_core::messages::MeasurementMessage;
 use helios_core::prelude::{ControlOutput, EstimationDynamics, Measurement};
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
@@ -46,3 +47,27 @@ impl Default for GroundTruthState {
         }
     }
 }
+
+// =========================================================================
+// == Sensor mailbox (per-agent, filled each frame by route_sensor_messages) ==
+// =========================================================================
+
+/// One entry in a `SensorMailbox`: the telemetry topic name plus the measurement.
+#[derive(Clone)]
+pub struct MailboxEntry {
+    pub topic_name: String,
+    pub message: MeasurementMessage,
+}
+
+/// Per-agent component that collects sensor measurements for the current frame.
+/// Cleared and refilled each frame by `route_sensor_messages` before
+/// estimation and mapping systems run. Entries are sorted by timestamp (ascending).
+#[derive(Component, Default)]
+pub struct SensorMailbox {
+    pub entries: Vec<MailboxEntry>,
+}
+
+/// A marker component on each sensor entity recording its telemetry topic name.
+/// Read by `route_sensor_messages` to populate `SensorMailbox` entries.
+#[derive(Component)]
+pub struct SensorTopicName(pub String);

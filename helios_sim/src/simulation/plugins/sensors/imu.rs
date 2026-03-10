@@ -9,8 +9,10 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::transforms::bevy_global_transform_to_enu_iso;
 use crate::simulation::core::{
-    app_state::SimulationSet, components::GroundTruthState, events::BevyMeasurementMessage,
-    prng::SimulationRng, topics::TopicBus,
+    app_state::SimulationSet,
+    components::{GroundTruthState, SensorTopicName},
+    events::BevyMeasurementMessage,
+    prng::SimulationRng,
 };
 
 // --- Core Library Imports ---
@@ -100,6 +102,11 @@ fn spawn_imu_sensors(
                 };
 
                 // --- 3. Add all components to the new sensor entity ---
+                let topic_name = format!(
+                    "/{}/sensors/{}",
+                    agent_name.as_str(),
+                    imu_config.get_name()
+                );
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), imu_config.get_name())),
                     // The Bevy component with runtime state.
@@ -118,12 +125,10 @@ fn spawn_imu_sensors(
                             Normal::new(0.0, gyro_std[1] as f64).unwrap(),
                             Normal::new(0.0, gyro_std[2] as f64).unwrap(),
                         ],
-                        topic_name: format!(
-                            "/{}/sensors/{}",
-                            agent_name.as_str(),
-                            imu_config.get_name()
-                        ),
+                        topic_name: topic_name.clone(),
                     },
+                    // Topic name for the cold-path telemetry system.
+                    SensorTopicName(topic_name),
                     // The pure `helios_core` model, wrapped for use in Bevy.
                     MeasurementModel(Box::new(final_core_model)),
                     // Marker so the TF system can find it.
@@ -143,10 +148,10 @@ fn spawn_imu_sensors(
 // == Runtime System ==
 // =========================================================================
 
-/// Runs every frame to simulate IMU physics and publish measurement messages.
+/// Runs every frame to simulate IMU physics and emit `BevyMeasurementMessage` events.
+/// TopicBus publishing is deferred to `sensor_telemetry_system` in the Validation phase.
 fn imu_sensor_system(
     mut measurement_writer: EventWriter<BevyMeasurementMessage>,
-    mut topic_bus: ResMut<TopicBus>,
     time: Res<Time>,
     mut rng: ResMut<SimulationRng>,
     gravity: Res<Gravity>, // The "true" gravity from the physics engine.
@@ -230,9 +235,8 @@ fn imu_sensor_system(
                     data: MeasurementData::Imu6Dof(noisy_measurement),
                 };
 
-                // External path: publish to TopicBus for bridge consumers (Foxglove, loggers).
-                topic_bus.publish(&imu.topic_name, pure_message.clone());
-                // Internal path: Bevy event for the high-frequency EKF control loop.
+                // Emit event — routed to SensorMailbox by route_sensor_messages.
+                // TopicBus publishing is deferred to sensor_telemetry_system (Validation).
                 measurement_writer.write(BevyMeasurementMessage(pure_message));
                 // info!("IMU {:?} published measurement.", sensor_entity);
             }

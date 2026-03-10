@@ -7,8 +7,10 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::transforms::bevy_global_transform_to_enu_iso;
 use crate::simulation::core::{
-    app_state::SimulationSet, components::GroundTruthState, events::BevyMeasurementMessage,
-    prng::SimulationRng, topics::TopicBus,
+    app_state::SimulationSet,
+    components::{GroundTruthState, SensorTopicName},
+    events::BevyMeasurementMessage,
+    prng::SimulationRng,
 };
 
 // --- Core Library Imports ---
@@ -89,6 +91,11 @@ fn spawn_magnetometer_sensors(
 
                 core_model.sensor_handle = FrameHandle::from_entity(sensor_entity);
 
+                let topic_name = format!(
+                    "/{}/sensors/{}",
+                    agent_name.as_str(),
+                    sensor_name
+                );
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), mag_config.name)),
                     Magnetometer {
@@ -99,12 +106,10 @@ fn spawn_magnetometer_sensors(
                         noise_dist_x: Normal::new(0.0, mag_config.noise_stddev[0] as f64).unwrap(),
                         noise_dist_y: Normal::new(0.0, mag_config.noise_stddev[1] as f64).unwrap(),
                         noise_dist_z: Normal::new(0.0, mag_config.noise_stddev[2] as f64).unwrap(),
-                        topic_name: format!(
-                            "/{}/sensors/{}",
-                            agent_name.as_str(),
-                            sensor_name
-                        ),
+                        topic_name: topic_name.clone(),
                     },
+                    // Topic name for the cold-path telemetry system.
+                    SensorTopicName(topic_name),
                     MeasurementModel(Box::new(core_model)),
                     TrackedFrame,
                     mag_config.get_relative_pose().to_bevy_local_transform(),
@@ -122,7 +127,6 @@ fn spawn_magnetometer_sensors(
 
 fn magnetometer_sensor_system(
     mut measurement_writer: EventWriter<BevyMeasurementMessage>,
-    mut topic_bus: ResMut<TopicBus>,
     time: Res<Time>,
     mut rng: ResMut<SimulationRng>,
     parent_query: Query<(Entity, &GroundTruthState, &Children)>,
@@ -163,9 +167,8 @@ fn magnetometer_sensor_system(
                     timestamp: time.elapsed_secs_f64(),
                     data: MeasurementData::Magnetometer(noisy_mag_reading),
                 };
-                // External path: TopicBus for bridge consumers.
-                topic_bus.publish(&mag.topic_name, pure_message.clone());
-                // Internal path: Bevy event for the EKF control loop.
+                // Emit event — routed to SensorMailbox by route_sensor_messages.
+                // TopicBus publishing is deferred to sensor_telemetry_system (Validation).
                 measurement_writer.write(BevyMeasurementMessage(pure_message));
             }
         }

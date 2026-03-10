@@ -1,16 +1,10 @@
 // helios_runtime/src/pipeline.rs
 //
-// AutonomyPipeline: typed stage vector with canonical execution order.
+// Three independent pipeline stages plus AutonomyPipeline (their composite).
 //
-// Each stage has a different rate — the Bevy systems call methods here
-// at the appropriate rate via their own timers. The pipeline does not
-// schedule stages internally; it just exposes methods per stage group.
-//
-// Estimation   → process_measurement()         (per measurement event)
-// Mapping      → process_mapper_messages()     (every frame, mapper buffers data)
-//                process_mapper_pose_update()  (on mapper timer fire)
-// Planning     → future: plan(runtime)         (at planner rate)
-// Control      → future: compute_control(runtime) (every physics tick)
+// helios_sim decomposes AutonomyPipeline into ECS components via into_parts()
+// so Bevy can schedule EstimationCore and MappingCore in parallel.
+// helios_hw uses AutonomyPipeline as a whole unit.
 
 use helios_core::{
     control::{ControlContext, ControlOutput, TrajectoryPoint},
@@ -40,36 +34,25 @@ pub struct PipelineOutputs {
     pub control_output: Option<ControlOutput>,
 }
 
-/// The autonomy pipeline. Constructed via `PipelineBuilder`.
-pub struct AutonomyPipeline {
+// =========================================================================
+// == Three independent pipeline stages ==
+// =========================================================================
+
+/// Estimation stage: trackers + estimator/SLAM + shared control input state.
+/// Owns all logic for predict + update sequencing.
+pub struct EstimationCore {
     pub trackers: Vec<Box<dyn Tracker>>,
     pub estimator: Option<Box<dyn StateEstimator>>,
     pub slam: Option<Box<dyn SlamSystem>>,
-    pub mappers: Vec<LeveledMapper>,
-    pub planners: Vec<LeveledPlanner>,
-    pub controllers: Vec<LeveledController>,
-
-    /// Last known control input used by the predict step.
     pub(crate) last_u: Control,
+    #[allow(dead_code)]
     pub(crate) control_dim: usize,
 }
 
-impl AutonomyPipeline {
-    pub fn builder() -> PipelineBuilder {
-        PipelineBuilder::new()
-    }
-
-    // =========================================================================
-    // == Estimation stage ==
-    // =========================================================================
-
+impl EstimationCore {
     /// Process one incoming sensor measurement through trackers + estimator/SLAM.
-    /// Called once per measurement event by the Bevy estimation system.
-    pub fn process_measurement(
-        &mut self,
-        msg: &MeasurementMessage,
-        runtime: &dyn AgentRuntime,
-    ) -> PipelineOutputs {
+    /// Called once per measurement event.
+    pub fn process_measurement(&mut self, msg: &MeasurementMessage, runtime: &dyn AgentRuntime) {
         let adapter = TfProviderAdapter(runtime);
         let context = FilterContext { tf: Some(&adapter) };
 
@@ -100,52 +83,7 @@ impl AutonomyPipeline {
                 slam.update(msg, &context);
             }
         }
-
-        self.build_outputs()
     }
-
-    // =========================================================================
-    // == Mapping stage ==
-    // =========================================================================
-
-    /// Feed new sensor messages to all mappers.
-    /// Called every frame by the Bevy mapping system so the mapper
-    /// can buffer data between its own timer-controlled pose updates.
-    /// Global mappers are skipped when SLAM is active.
-    pub fn process_mapper_messages(
-        &mut self,
-        inputs: &[MeasurementMessage],
-        runtime: &dyn AgentRuntime,
-    ) {
-        let adapter = TfProviderAdapter(runtime);
-        let context = FilterContext { tf: Some(&adapter) };
-
-        for leveled_mapper in &mut self.mappers {
-            if self.slam.is_some() && leveled_mapper.level == PipelineLevel::Global {
-                continue;
-            }
-            for msg in inputs {
-                leveled_mapper
-                    .mapper
-                    .process(&ModuleInput::Measurement { message: msg }, &context);
-            }
-        }
-    }
-
-    /// Push an odom pose update into all mappers.
-    /// Called by the Bevy mapping system when its `ModuleTimer` fires.
-    pub fn process_mapper_pose_update(&mut self, pose: Isometry3<f64>) {
-        let context = FilterContext { tf: None };
-        for leveled_mapper in &mut self.mappers {
-            leveled_mapper
-                .mapper
-                .process(&ModuleInput::PoseUpdate { pose }, &context);
-        }
-    }
-
-    // =========================================================================
-    // == State accessors ==
-    // =========================================================================
 
     /// Current best estimate of the ego state (from estimator or SLAM).
     pub fn get_state(&self) -> Option<&FrameAwareState> {
@@ -156,36 +94,156 @@ impl AutonomyPipeline {
         }
     }
 
-    /// Current map at the given level. Global level defers to SLAM if present.
-    pub fn get_map(&self, level: &PipelineLevel) -> Option<&MapData> {
-        if *level == PipelineLevel::Global {
-            if let Some(slam) = &self.slam {
-                return Some(slam.get_map());
+    /// SLAM global map, if a SLAM system is active.
+    pub fn get_slam_map(&self) -> Option<&MapData> {
+        self.slam.as_ref().map(|s| s.get_map())
+    }
+}
+
+/// Mapping stage: leveled mappers.
+/// When `slam_active` is true, global-level mappers are skipped (SLAM owns that slot).
+pub struct MappingCore {
+    pub mappers: Vec<LeveledMapper>,
+    pub slam_active: bool,
+}
+
+impl MappingCore {
+    /// Feed new sensor messages to all mappers (cheap log-odds update).
+    pub fn process_messages(&mut self, inputs: &[MeasurementMessage], runtime: &dyn AgentRuntime) {
+        let adapter = TfProviderAdapter(runtime);
+        let context = FilterContext { tf: Some(&adapter) };
+
+        for leveled_mapper in &mut self.mappers {
+            if self.slam_active && leveled_mapper.level == PipelineLevel::Global {
+                continue;
+            }
+            for msg in inputs {
+                leveled_mapper
+                    .mapper
+                    .process(&ModuleInput::Measurement { message: msg }, &context);
             }
         }
+    }
+
+    /// Push an odom pose update into all mappers so the grid can recenter.
+    pub fn process_pose_update(&mut self, pose: Isometry3<f64>) {
+        let context = FilterContext { tf: None };
+        for leveled_mapper in &mut self.mappers {
+            leveled_mapper
+                .mapper
+                .process(&ModuleInput::PoseUpdate { pose }, &context);
+        }
+    }
+
+    /// Current map at the given level.
+    pub fn get_map(&self, level: &PipelineLevel) -> Option<&MapData> {
         self.mappers
             .iter()
             .find(|lm| &lm.level == level)
             .map(|lm| lm.mapper.get_map())
     }
+}
+
+/// Control stage: planners + controllers.
+pub struct ControlCore {
+    pub planners: Vec<LeveledPlanner>,
+    pub controllers: Vec<LeveledController>,
+}
+
+impl ControlCore {
+    /// Run the highest-priority controller given the current ego state.
+    /// State is passed in from EstimationCore to keep stages independent.
+    pub fn step_controllers(
+        &mut self,
+        state: &FrameAwareState,
+        dt: f64,
+        runtime: &dyn AgentRuntime,
+    ) -> Option<ControlOutput> {
+        let adapter = TfProviderAdapter(runtime);
+        let ctx = ControlContext { tf: Some(&adapter), reference: None };
+        self.controllers
+            .first_mut()
+            .map(|lc| lc.controller.compute(state, dt, &ctx))
+    }
+}
+
+// =========================================================================
+// == AutonomyPipeline: composite of all three stages ==
+// =========================================================================
+
+/// The full autonomy pipeline. Constructed via `PipelineBuilder`.
+///
+/// - **helios_hw**: use as a whole unit — call `process_measurement()`, `step_controllers()`, etc.
+/// - **helios_sim**: call `into_parts()` to decompose into three independent ECS components
+///   so Bevy can schedule `EstimationCore` and `MappingCore` systems in parallel.
+pub struct AutonomyPipeline {
+    pub estimation: EstimationCore,
+    pub mapping: MappingCore,
+    pub control: ControlCore,
+}
+
+impl AutonomyPipeline {
+    pub fn builder() -> PipelineBuilder {
+        PipelineBuilder::new()
+    }
+
+    /// Decompose into three independent stage values for ECS component insertion.
+    /// After this call, `self` is consumed. Use `into_parts()` in helios_sim spawn systems.
+    pub fn into_parts(self) -> (EstimationCore, MappingCore, ControlCore) {
+        (self.estimation, self.mapping, self.control)
+    }
 
     // =========================================================================
-    // == Control stage ==
+    // == Delegate methods (for helios_hw convenience) ==
     // =========================================================================
 
-    /// Run the highest-priority controller in the pipeline.
-    /// Returns `None` if no controllers are registered or no state estimate is available.
+    /// Process one incoming sensor measurement. Delegates to `EstimationCore`.
+    pub fn process_measurement(
+        &mut self,
+        msg: &MeasurementMessage,
+        runtime: &dyn AgentRuntime,
+    ) -> PipelineOutputs {
+        self.estimation.process_measurement(msg, runtime);
+        self.build_outputs()
+    }
+
+    /// Feed new sensor messages to all mappers. Delegates to `MappingCore`.
+    pub fn process_mapper_messages(
+        &mut self,
+        inputs: &[MeasurementMessage],
+        runtime: &dyn AgentRuntime,
+    ) {
+        self.mapping.process_messages(inputs, runtime);
+    }
+
+    /// Push an odom pose update into all mappers. Delegates to `MappingCore`.
+    pub fn process_mapper_pose_update(&mut self, pose: Isometry3<f64>) {
+        self.mapping.process_pose_update(pose);
+    }
+
+    /// Current best estimate of the ego state. Delegates to `EstimationCore`.
+    pub fn get_state(&self) -> Option<&FrameAwareState> {
+        self.estimation.get_state()
+    }
+
+    /// Current map at the given level. Global level checks SLAM first.
+    pub fn get_map(&self, level: &PipelineLevel) -> Option<&MapData> {
+        if *level == PipelineLevel::Global {
+            if let Some(map) = self.estimation.get_slam_map() {
+                return Some(map);
+            }
+        }
+        self.mapping.get_map(level)
+    }
+
+    /// Run the highest-priority controller. Delegates to `ControlCore`.
     pub fn step_controllers(
         &mut self,
         dt: f64,
         runtime: &dyn AgentRuntime,
     ) -> Option<ControlOutput> {
-        let state = self.get_state()?.clone();
-        let adapter = TfProviderAdapter(runtime);
-        let ctx = ControlContext { tf: Some(&adapter), reference: None };
-        self.controllers
-            .first_mut()
-            .map(|lc| lc.controller.compute(&state, dt, &ctx))
+        let state = self.estimation.get_state()?.clone();
+        self.control.step_controllers(&state, dt, runtime)
     }
 
     fn build_outputs(&self) -> PipelineOutputs {
@@ -262,15 +320,24 @@ impl PipelineBuilder {
         self.planners.sort_by(|a, b| a.level.cmp(&b.level));
         self.controllers.sort_by(|a, b| a.level.cmp(&b.level));
 
+        let slam_active = self.slam.is_some();
+
         AutonomyPipeline {
-            trackers: self.trackers,
-            estimator: self.estimator,
-            slam: self.slam,
-            mappers: self.mappers,
-            planners: self.planners,
-            controllers: self.controllers,
-            last_u: DVector::zeros(self.control_dim),
-            control_dim: self.control_dim,
+            estimation: EstimationCore {
+                trackers: self.trackers,
+                estimator: self.estimator,
+                slam: self.slam,
+                last_u: DVector::zeros(self.control_dim),
+                control_dim: self.control_dim,
+            },
+            mapping: MappingCore {
+                mappers: self.mappers,
+                slam_active,
+            },
+            control: ControlCore {
+                planners: self.planners,
+                controllers: self.controllers,
+            },
         }
     }
 }

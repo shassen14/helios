@@ -71,38 +71,22 @@ helios_sim       (Bevy 0.16+ / Avian3D simulation host)
 
 ## Structural Weaknesses
 
-### SW-1: TopicBus serializes all parallel systems
+### SW-1: TopicBus serializes all parallel systems ✅ FIXED (Phase 5)
 
-Every sensor, estimator, and debug system takes `ResMut<TopicBus>` or
-`Res<TopicBus>`. In Bevy's scheduler, any `ResMut<T>` prevents all other
-systems touching `T` from running concurrently.
+All four sensor systems (`imu`, `gps`, `magnetometer`, `raycasting`) no longer take
+`ResMut<TopicBus>`. The hot path now has zero `TopicBus` writes. All TopicBus writes
+are isolated to `SimulationSet::Validation` via two cold-path systems:
+`sensor_telemetry_system` and `autonomy_telemetry_system`. The remaining `Validation`
+writers (`ground_truth_publish_system`, `tf_publish_system`) are inherently sequential
+and contend only with each other — never with hot-path estimation or sensor systems.
 
-Affected systems (all serialized against each other):
+### SW-2: Dual messaging path — TopicBus AND Bevy Events ✅ FIXED (Phase 5)
 
-- `imu_sensor_system`
-- `gps_sensor_system`
-- `magnetometer_sensor_system`
-- `ground_truth_publish_system`
-- `tf_publish_system`
-- `world_model_output_publisher`
-- Foxglove bridge system
-
-This is the single biggest scalability wall in the current architecture.
-
-### SW-2: Dual messaging path — TopicBus AND Bevy Events
-
-Sensor systems publish to **both** paths:
-
-```rust
-// In imu_sensor_system:
-topic_bus.publish(&imu.topic_name, pure_message.clone());        // TopicBus path
-measurement_writer.write(BevyMeasurementMessage(pure_message));  // Event path
-```
-
-- The estimator reads from `EventReader<BevyMeasurementMessage>`.
-- Foxglove/debugging reads from `TopicBus`.
-- Two independent data paths that can diverge.
-- Every new sensor must remember to write to both.
+Sensor systems now emit **only** `BevyMeasurementMessage` events.
+`route_sensor_messages` routes those events into per-agent `SensorMailbox` components.
+`sensor_telemetry_system` in `Validation` reads from `SensorMailbox` and publishes to
+`TopicBus`. There is exactly one source of truth. A new sensor needs only to emit an
+event — the cold-path publish is automatic via `SensorTopicName`.
 
 ### SW-3: SpawnAgentConfigRequest is a god component
 
@@ -115,65 +99,52 @@ Every spawn phase queries the same monolithic blob.
 - After `cleanup_spawn_requests` removes it, nothing enforces that no system
   reads it afterward.
 
-### SW-4: WorldModelComponent enum forces exhaustive matching ✅ FIXED (Phase 2+3)
+### SW-4: WorldModelComponent enum forces exhaustive matching ✅ FIXED (Phase 2+3+5)
 
-The `WorldModelComponent` enum was replaced with a newtype wrapper over `AutonomyPipeline` in Phase 2,
-then renamed to `AutonomyPipelineComponent` in Phase 3 to reflect that it holds the full pipeline —
-not just world modeling. The `world_model/` plugin directory was also renamed to `autonomy/`:
+Phase 2 replaced the enum with `AutonomyPipelineComponent(pub AutonomyPipeline)`.
+Phase 3 renamed it and its directory. Phase 5 decomposed it further into three
+independent ECS components — no enum, no match arms anywhere:
 
 ```rust
 // plugins/autonomy/components.rs
-#[derive(Component)]
-pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
+#[derive(Component)] pub struct EstimatorComponent(pub EstimationCore);
+#[derive(Component)] pub struct MapperComponent(pub MappingCore);
+#[derive(Component)] pub struct ControlPipelineComponent(pub ControlCore);
 ```
 
-All consumers use the uniform API: `get_state()`, `get_map()`, `process_measurement()`, `step_controllers()`.
-No match arms. Adding new pipeline stage types requires zero changes to consumers.
+Systems query only the component they need. Adding a mapper-only agent requires
+zero changes to the estimation or control systems.
 
-### SW-5: Manual axis swaps outside transforms.rs
+### SW-5: Manual axis swaps outside transforms.rs ✅ FIXED (Phase 1)
 
-`core/mod.rs` lines 32 and 39:
+`ground_truth_sync_system` now uses `bevy_vector_to_enu_vector()` for both
+`linear_velocity` and `angular_velocity`. No manual axis arithmetic outside
+`transforms.rs`.
 
-```rust
-ground_truth.angular_velocity =
-    Vector3::new(ang_vel.x as f64, -ang_vel.z as f64, ang_vel.y as f64);
-```
+### SW-6: `.unwrap()` in EKF runtime code path ✅ FIXED (Phase 1)
 
-These violate the coordinate-frame law. Should use `bevy_vector_to_enu_vector()`.
-
-### SW-6: `.unwrap()` in EKF runtime code path
-
-`ekf.rs` lines 141 and 148:
-
-```rust
-model.predict_measurement(&self.state, message, context.tf.unwrap())
-```
-
-Violates the no-unwrap rule. A missing TF provider crashes the simulation.
+The EKF update path now uses `if let Some(tf) = context.tf` guards.
+A missing TF provider skips the update gracefully instead of crashing.
 
 ---
 
 ## ECS Anti-Patterns and Issues
 
-### ECS-1: Commands used for per-tick component mutation
+### ECS-1: Commands used for per-tick component mutation ✅ FIXED (Phase 1)
 
-`controller_compute_system` inserts `ControlOutputComponent` via
-`commands.entity(entity).insert(...)` every tick. This queues a deferred command
-instead of mutating in-place. Same issue in `drive_ackermann_cars` with
-`ExternalForce`/`ExternalTorque`.
+`ControlOutputComponent` is inserted once at scene build time by `spawn_control_output`.
+`controller_compute_system` (now `controller_compute_system` reading from
+`ControlPipelineComponent`) mutates `output_comp.0 = out` in-place each tick.
+No deferred commands on the hot path.
 
-**Fix:** Query for `&mut ControlOutputComponent` directly. Insert the component
-once during scene building; mutate it in-place at runtime.
+### ECS-2: No per-agent parallelism ✅ FIXED (Phase 5)
 
-### ECS-2: No per-agent parallelism
-
-`world_model_event_processor` collects all measurement events into a single
-`Vec`, sorts globally by timestamp, then loops over agents. With N agents
-producing M sensors at R Hz, this is N×M×R operations/sec in a single serial
-system.
-
-**Fix:** Group events by agent entity, then process each agent independently.
-Future `par_iter_mut` over agents with zero API changes.
+`route_sensor_messages` routes events into per-agent `SensorMailbox` components,
+each pre-sorted by timestamp. `estimation_system` and `mapping_system` each iterate
+their own agents' mailboxes independently (no global sort, no shared vec).
+Both systems are in a parallel tuple — Bevy schedules them concurrently because they
+access different components (`EstimatorComponent` vs `MapperComponent`).
+`par_iter_mut` over agents requires no API changes when ready.
 
 ### ECS-3: Monolithic debugging plugin
 
@@ -194,16 +165,16 @@ clear/rebuild on structural changes (entity spawn/despawn).
 
 ## Scalability Risks
 
-### SR-1: TopicBus contention (see SW-1)
+### SR-1: TopicBus contention ✅ FIXED (Phase 5, see SW-1)
 
-At 100 agents × 5 sensors × 100 Hz = 50,000 messages/sec, serial TopicBus
-access becomes the dominant bottleneck.
+All sensor hot-path `ResMut<TopicBus>` accesses removed. The remaining TopicBus
+writes in `Validation` are intentionally sequential (cold telemetry path). At scale,
+`sensor_telemetry_system` can be rate-limited via MA-4 without touching sensors.
 
-### SR-2: O(n) measurement model iteration in EKF
+### SR-2: O(n) measurement model iteration in EKF ✅ FIXED (Phase 1)
 
-`ekf.rs` line 134: `for model in self.measurement_models.values()` iterates all
-registered models on every measurement. The message already carries
-`sensor_handle` — should be an O(1) HashMap lookup.
+EKF update dispatches via `self.measurement_models.get(&message.sensor_handle)` —
+O(1) HashMap lookup. Unknown sensor handles are silently skipped.
 
 ### SR-3: SceneBuildSet doesn't scale to 100+ component types
 
@@ -239,11 +210,14 @@ Bevy systems call `wm.0.process_measurement(msg, &runtime)` — they drive timin
 but contain no algorithm logic. The same pipeline runs on hardware with a different
 `AgentRuntime` implementation.
 
-### MB-3: FilterContext is simulation-shaped
+### MB-3: FilterContext is simulation-shaped ✅ FIXED (Phase 2)
 
-`FilterContext { tf: Option<&dyn TfProvider> }` is constructed from Bevy's
-`TfTree`. On hardware, TF data comes from URDF + sensor calibration, not from
-an ECS resource. The calling convention needs to be host-agnostic.
+`FilterContext { tf: Option<&dyn TfProvider> }` is now constructed via
+`TfProviderAdapter(runtime)` where `runtime: &dyn AgentRuntime`. The adapter is
+defined in `helios_runtime` and bridges the host-agnostic `AgentRuntime` trait to
+`TfProvider`. `helios_core` and `helios_runtime` have zero Bevy dependency.
+On hardware, `HardwareRuntime` implements `AgentRuntime` using static calibration data
+— the filter calling convention is identical.
 
 ---
 
@@ -678,14 +652,39 @@ Layer 3  Vehicle plugin        VehicleCommand              → ExternalForce/Tor
 **Key serde constraint discovered:** `#[serde(deny_unknown_fields)]` is incompatible with `#[serde(flatten)]`.
 Removed `deny_unknown_fields` from `AgentConfig` only; all inner structs retain their own guards.
 
-### Phase 5: Agent-local data isolation
+### Phase 5: Agent-local data isolation ✅ DONE (2026-03-10)
 
-| Item                                                                           | Effort | Impact        |
-| ------------------------------------------------------------------------------ | ------ | ------------- |
-| Per-entity `SensorMailbox` replaces `ResMut<TopicBus>` in sensor systems       | 2 days | Scalability   |
-| TopicBus becomes telemetry-only, single `telemetry_flush_system`               | 1 day  | Parallelism   |
-| Split `WorldModelComponent` enum into `EstimatorComponent` + `MapperComponent` | 4 hrs  | Extensibility |
-| Per-agent message batching in estimation system                                | 4 hrs  | Multi-agent   |
+| Item                                                                                              | Impact            |
+| ------------------------------------------------------------------------------------------------- | ----------------- |
+| `SensorMailbox` component on each agent — populated by `route_sensor_messages` each frame        | Scalability ✅    |
+| `TopicBus` removed from all sensor hot paths; all sensor telemetry flows through `sensor_telemetry_system` in `Validation` | Parallelism ✅ |
+| `AutonomyPipelineComponent` split into `EstimatorComponent`, `MapperComponent`, `ControlPipelineComponent` | Extensibility ✅ |
+| `estimation_system` + `mapping_system` run in parallel (different components per entity)         | Multi-agent ✅    |
+| Per-agent message batching: each agent's mailbox pre-sorted by timestamp before estimation runs  | Multi-agent ✅    |
+
+**Stage split (stable interface):**
+
+```
+EstimationCore   → EstimatorComponent   → estimation_system (SimulationSet::Estimation, parallel)
+MappingCore      → MapperComponent      → mapping_system    (SimulationSet::Estimation, parallel)
+ControlCore      → ControlPipelineComponent → controller_compute_system (SimulationSet::Control)
+```
+
+`AutonomyPipeline` in `helios_runtime` remains as a composite (`into_parts()` decomposes it for helios_sim).
+`helios_hw` uses `AutonomyPipeline` as a whole unit — no decomposition needed.
+
+**TopicBus data flow after Phase 5:**
+
+```
+Hot path  →  Sensors emit BevyMeasurementMessage events only
+          →  route_sensor_messages routes to per-agent SensorMailbox
+          →  estimation_system + mapping_system read from SensorMailbox (parallel)
+
+Cold path →  sensor_telemetry_system    (Validation) reads SensorMailbox → TopicBus
+          →  autonomy_telemetry_system  (Validation) reads components → TopicBus
+          →  ground_truth_publish_system (Validation) → TopicBus
+          →  tf_publish_system          (Validation) → TopicBus
+```
 
 ### Phase 6: helios_hw skeleton
 

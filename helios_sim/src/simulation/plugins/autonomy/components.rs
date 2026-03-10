@@ -1,15 +1,25 @@
-// helios_sim/src/simulation/plugins/world_model/components.rs
+// helios_sim/src/simulation/plugins/autonomy/components.rs
 
 use bevy::{
     prelude::{Component, Entity},
     time::{Timer, TimerMode},
 };
-use helios_runtime::pipeline::AutonomyPipeline;
+use helios_runtime::pipeline::{ControlCore, EstimationCore, MappingCore};
 
-/// The single, unified component that holds the autonomy pipeline for an agent.
-/// Wraps an AutonomyPipeline — Bevy-free, hardware-portable core logic.
+/// Holds the estimation stage for an agent: estimator/SLAM + trackers + predict/update logic.
+/// Systems that need estimated state query this component.
 #[derive(Component)]
-pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
+pub struct EstimatorComponent(pub EstimationCore);
+
+/// Holds the mapping stage for an agent: leveled mappers.
+/// Systems that need map data query this component.
+#[derive(Component)]
+pub struct MapperComponent(pub MappingCore);
+
+/// Holds the control stage for an agent: planners + controllers.
+/// `ControlPlugin` calls `step_controllers()` each tick.
+#[derive(Component)]
+pub struct ControlPipelineComponent(pub ControlCore);
 
 /// Marker on a virtual "odom frame" entity that links it back to its agent.
 ///

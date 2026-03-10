@@ -7,14 +7,14 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::config::structs::{LidarConfig, SensorConfig};
 use crate::simulation::core::{
-    app_state::SimulationSet, events::BevyMeasurementMessage, topics::TopicBus,
+    app_state::SimulationSet,
+    components::SensorTopicName,
+    events::BevyMeasurementMessage,
 };
-
-use std::sync::Arc;
 
 // --- Core Library Imports ---
 use helios_core::{
-    messages::{MeasurementData, MeasurementMessage},
+    messages::MeasurementMessage,
     models::perception::{
         lidar_2d::Lidar2DModel, // We'll import our concrete models here
         RayHit,
@@ -97,6 +97,11 @@ fn spawn_raycasting_sensors(
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
+                let topic_name = format!(
+                    "/{}/sensors/{}",
+                    agent_name.as_str(),
+                    sensor_name
+                );
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
                     RaycastingSensor {
@@ -105,12 +110,10 @@ fn spawn_raycasting_sensors(
                             TimerMode::Repeating,
                         ),
                         model: core_model,
-                        topic_name: format!(
-                            "/{}/sensors/{}",
-                            agent_name.as_str(),
-                            sensor_name
-                        ),
+                        topic_name: topic_name.clone(),
                     },
+                    // Topic name for the cold-path telemetry system.
+                    SensorTopicName(topic_name),
                     TrackedFrame,
                     lidar_config.get_relative_pose().to_bevy_local_transform(),
                 ));
@@ -125,14 +128,11 @@ fn spawn_raycasting_sensors(
 // == Runtime System ==
 // =========================================================================
 
-/// Runs every frame to simulate the raycasting sensor and publish data.
-// This function now mirrors the structure of your `imu_sensor_system`.
+/// Runs every frame to simulate raycasting sensors and emit `BevyMeasurementMessage` events.
+/// PointCloud data is not published to TopicBus (see CLAUDE.md: visual data → MCAP, not Foxglove).
 fn raycasting_sensor_system(
     mut measurement_writer: EventWriter<BevyMeasurementMessage>,
-    mut topic_bus: ResMut<TopicBus>,
     time: Res<Time>,
-    // --- CORRECTED SYSTEM PARAMETERS ---
-    // SpatialQuery is requested directly, not as a resource.
     spatial_query: SpatialQuery,
 
     // Use the same parent-child query pattern as the IMU.
@@ -200,12 +200,6 @@ fn raycasting_sensor_system(
                         .model
                         .process_hits(&hits, sensor_handle, time.elapsed_secs_f64());
 
-                // External path: for PointCloud data publish Arc to the bus so bridge
-                // consumers share the allocation without copying the point Vec.
-                if let MeasurementData::PointCloud(ref pc) = measurement_data {
-                    topic_bus.publish_arc(&sensor.topic_name, Arc::new(pc.clone()));
-                }
-
                 let pure_message = MeasurementMessage {
                     agent_handle,
                     sensor_handle,
@@ -213,7 +207,7 @@ fn raycasting_sensor_system(
                     data: measurement_data,
                 };
 
-                // Internal path: Bevy event for the mapping system.
+                // Emit event — routed to SensorMailbox by route_sensor_messages.
                 measurement_writer.write(BevyMeasurementMessage(pure_message));
             }
         }
