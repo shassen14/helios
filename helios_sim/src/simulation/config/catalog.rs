@@ -12,16 +12,19 @@ use figment::{
 use std::{collections::HashMap, path::Path};
 use walkdir::WalkDir;
 
+use crate::cli::Cli;
+
 /// A Bevy resource that holds the entire parsed catalog of prefabs.
 /// The key is a namespace string (e.g., "vehicles.ackermann_sedan") and
 /// the value is the raw, parsed TOML data for that component.
 #[derive(Resource, Default, Debug)]
 pub struct PrefabCatalog(pub HashMap<String, Value>);
 
-/// A startup system that walks the `assets/catalog` directory, parses every
+/// A startup system that walks the `{config_root}/catalog` directory, parses every
 /// `.toml` file, and populates the `PrefabCatalog` resource.
-pub fn load_catalog_from_disk(mut catalog: ResMut<PrefabCatalog>) {
-    let catalog_path = Path::new("assets/catalog");
+pub fn load_catalog_from_disk(mut catalog: ResMut<PrefabCatalog>, cli: Res<Cli>) {
+    let catalog_root = cli.config_root.join("catalog");
+    let catalog_path = Path::new(&catalog_root);
     if !catalog_path.exists() {
         warn!(
             "Catalog directory not found at {:?}, no prefabs will be loaded.",

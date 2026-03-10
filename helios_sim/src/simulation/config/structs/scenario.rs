@@ -1,9 +1,10 @@
 use bevy::prelude::Resource;
 use figment::value::Value;
+use helios_runtime::config::{AgentBaseConfig, AutonomyStack};
 use serde::Deserialize;
 use std::{collections::HashMap, path::PathBuf};
 
-use super::{autonomy::AutonomyStack, pose::Pose, sensors::SensorConfig, vehicle::Vehicle};
+use super::{pose::Pose, sensors::SensorConfig, vehicle::Vehicle};
 
 /// The primary Bevy resource holding all configuration for a simulation run.
 /// This is the root of the data parsed from a `scenario.toml` file.
@@ -96,15 +97,31 @@ impl Default for World {
     }
 }
 
+/// Full agent configuration for helios_sim.
+///
+/// `base` carries the portable fields (`name` + `autonomy_stack`) from
+/// `AgentBaseConfig`. The remaining fields are simulation-specific.
+///
+/// Note: `#[serde(deny_unknown_fields)]` is intentionally omitted here —
+/// it is incompatible with `#[serde(flatten)]`. Inner structs retain their
+/// own `deny_unknown_fields` guards.
 #[derive(Debug, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
 pub struct AgentConfig {
-    pub name: String,
+    #[serde(flatten)]
+    pub base: AgentBaseConfig,
     pub starting_pose: Pose,
     pub goal_pose: Pose,
     pub vehicle: Vehicle,
     #[serde(default)]
     pub sensors: HashMap<String, SensorConfig>,
-    #[serde(default)]
-    pub autonomy_stack: AutonomyStack,
+}
+
+impl AgentConfig {
+    pub fn name(&self) -> &str {
+        &self.base.name
+    }
+
+    pub fn autonomy_stack(&self) -> &AutonomyStack {
+        &self.base.autonomy_stack
+    }
 }

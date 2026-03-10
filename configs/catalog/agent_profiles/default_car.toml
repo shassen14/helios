@@ -1,0 +1,11 @@
+# =========================================================================
+# == Agent Profile: Default Car ==
+# =========================================================================
+# Portable autonomy configuration. No vehicle, sensors, or physics.
+# Root-level keys are the fields of AutonomyStack.
+# Safe to load in helios_hw without helios_sim.
+
+[world_model]
+type = "Separate"
+estimator = { from = "components.estimators.ekf_pro" }
+mapper = { from = "components.mappers.none" }

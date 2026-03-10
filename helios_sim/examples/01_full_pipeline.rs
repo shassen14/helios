@@ -10,7 +10,7 @@
 //!
 //! To run this example:
 //! `cargo run --example 01_full_pipeline`
-//! `cargo run --example 01_full_pipeline -- --scenario assets/scenarios/simple_car_scenario.toml --headless`
+//! `cargo run --example 01_full_pipeline -- --scenario configs/scenarios/simple_car_scenario.toml --headless`
 
 use clap::Parser;
 use helios_sim::cli::Cli;

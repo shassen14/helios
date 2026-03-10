@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 helios_core = { path = "../helios_core" }
 nalgebra = { workspace = true }
+serde = { workspace = true }

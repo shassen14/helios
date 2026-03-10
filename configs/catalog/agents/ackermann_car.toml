@@ -1,0 +1,18 @@
+# =========================================================================
+# == Agent Prefab: Default Ackermann Car ==
+# =========================================================================
+# Sim-specific prefab: vehicle, sensors, and default poses.
+# Autonomy stack is defined in the portable agent profile referenced below.
+
+# --- Default Properties ---
+name = "DefaultCar"
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 180.0] }
+goal_pose     = { position = [50.0, 0.0, 0.0] }
+
+# --- Hardware Configuration ---
+vehicle  = { from = "vehicles.ackermann_base" }
+sensors  = { from = "sensor_suites.ins_basic" }
+
+# --- Software (Autonomy) Configuration ---
+# References the portable agent profile. helios_hw loads this same profile directly.
+autonomy_stack = { from = "agent_profiles.default_car" }

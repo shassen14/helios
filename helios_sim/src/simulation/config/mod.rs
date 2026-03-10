@@ -57,7 +57,7 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
         match resolver::resolve_agent_value(agent_value, &catalog) {
             Ok(resolved_value) => match Value::deserialize::<AgentConfig>(&resolved_value) {
                 Ok(agent_config) => {
-                    info!("Successfully resolved agent: '{}'", &agent_config.name);
+                    info!("Successfully resolved agent: '{}'", agent_config.name());
                     resolved_agents.push(agent_config);
                 }
                 Err(e) => error!(

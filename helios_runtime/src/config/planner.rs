@@ -6,3 +6,11 @@ use serde::Deserialize;
 pub enum PlannerConfig {
     AStar { rate: f32 },
 }
+
+impl PlannerConfig {
+    pub fn get_kind_str(&self) -> &str {
+        match self {
+            PlannerConfig::AStar { .. } => "AStar",
+        }
+    }
+}

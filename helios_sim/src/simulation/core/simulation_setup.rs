@@ -182,7 +182,7 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
     for agent_config in &config.agents {
         info!(
             "[SPAWN] Posting spawn request for resolved agent: {}",
-            &agent_config.name
+            agent_config.name()
         );
 
         // This part of your logic remains the same.
@@ -191,7 +191,7 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
         let start_transform = starting_pose.to_bevy_transform();
 
         commands.spawn((
-            Name::new(format!("{}/base_link", agent_config.name)),
+            Name::new(format!("{}/base_link", agent_config.name())),
             TrackedFrame,
             GroundTruthState {
                 pose: start_isometry,

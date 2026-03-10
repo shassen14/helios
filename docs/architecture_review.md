@@ -538,6 +538,15 @@ helios_runtime/               (IMPLEMENTED)
   stage.rs                    PipelineLevel, LeveledMapper/Planner/Controller
   pipeline.rs                 AutonomyPipeline, PipelineBuilder, PipelineOutputs
   prelude.rs                  Re-exports
+  config/                     Shared autonomy config structs (no Bevy deps)
+    agent.rs                  AgentBaseConfig { name, autonomy_stack }
+    autonomy.rs               AutonomyStack, WorldModelConfig
+    estimator.rs              EstimatorConfig, EkfConfig, EkfDynamicsConfig, noise configs
+    controller.rs             ControllerConfig + get_kind_str()
+    mapper.rs                 MapperConfig, MapperPoseSourceConfig
+    planner.rs                PlannerConfig
+    slam.rs                   SlamConfig, EkfSlamConfig, FactorGraphSlamConfig
+  validation.rs               CapabilitySet, ValidationError, validate_autonomy_config()
 
 helios_sim/
   config/
@@ -652,7 +661,24 @@ Layer 2  Vehicle plugin        VehicleAdapter::adapt()     → VehicleCommand (v
 Layer 3  Vehicle plugin        VehicleCommand              → ExternalForce/Torque (sim) or CAN/PWM (hw)
 ```
 
-### Phase 4: Agent-local data isolation
+### Phase 4: Config portability ✅ DONE (2026-03-09)
+
+| Item                                                                                                         | Impact            |
+| ------------------------------------------------------------------------------------------------------------ | ----------------- |
+| Moved autonomy config structs to `helios_runtime/src/config/` (AutonomyStack, EstimatorConfig, etc.)         | Portability ✅    |
+| Created `AgentBaseConfig { name, autonomy_stack }` in `helios_runtime` — the portable agent identity         | Portability ✅    |
+| `validate_autonomy_config()` + `CapabilitySet` + `ValidationError` in `helios_runtime/src/validation.rs`     | Reliability ✅    |
+| `AutonomyRegistry::capabilities()` snapshots registered keys for validation before any factory runs          | Reliability ✅    |
+| Moved all TOML files out of `helios_sim/assets/` into workspace-level `configs/`                             | Shared config ✅  |
+| Split agent prefabs: `configs/catalog/agent_profiles/` for portable autonomy, `agents/` for sim-specific     | Shared config ✅  |
+| Agent prefabs now use `autonomy_stack = { from = "agent_profiles.xxx" }` — no inline autonomy tables         | Portability ✅    |
+| `helios_sim` `AgentConfig` uses `#[serde(flatten)]` to embed `AgentBaseConfig` + accessor methods            | Architecture ✅   |
+| CLI `--config-root` arg (default `"configs"`) replaces hardcoded `"assets/catalog"` in catalog loader        | Deployability ✅  |
+
+**Key serde constraint discovered:** `#[serde(deny_unknown_fields)]` is incompatible with `#[serde(flatten)]`.
+Removed `deny_unknown_fields` from `AgentConfig` only; all inner structs retain their own guards.
+
+### Phase 5: Agent-local data isolation
 
 | Item                                                                           | Effort | Impact        |
 | ------------------------------------------------------------------------------ | ------ | ------------- |
@@ -661,16 +687,17 @@ Layer 3  Vehicle plugin        VehicleCommand              → ExternalForce/Tor
 | Split `WorldModelComponent` enum into `EstimatorComponent` + `MapperComponent` | 4 hrs  | Extensibility |
 | Per-agent message batching in estimation system                                | 4 hrs  | Multi-agent   |
 
-### Phase 5: helios_hw skeleton
+### Phase 6: helios_hw skeleton
 
 | Item                                                              | Effort | Impact   |
 | ----------------------------------------------------------------- | ------ | -------- |
 | Create `helios_hw` crate with tokio-based agent event loop        | 2 days | Hardware |
 | Implement `HardwareRuntime` (static TF, system clock)             | 1 day  | Hardware |
+| Load `AgentBaseConfig` from `configs/catalog/agent_profiles/`     | 4 hrs  | Hardware |
 | Sensor driver framework (async tasks feeding `SensorReading`)     | 2 days | Hardware |
 | Actuator output framework (async tasks consuming `ControlOutput`) | 1 day  | Hardware |
 
-### Phase 6: Multi-agent and digital twin
+### Phase 7: Multi-agent and digital twin
 
 | Item                                                     | Effort | Impact       |
 | -------------------------------------------------------- | ------ | ------------ |

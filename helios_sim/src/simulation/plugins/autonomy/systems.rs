@@ -6,6 +6,8 @@ use helios_runtime::pipeline::PipelineBuilder;
 use helios_runtime::stage::PipelineLevel;
 use std::collections::HashMap;
 
+use helios_runtime::validation::validate_autonomy_config;
+
 use crate::prelude::*;
 use crate::simulation::config::structs::WorldModelConfig;
 use crate::simulation::core::events::BevyMeasurementMessage;
@@ -31,6 +33,7 @@ pub fn spawn_world_model_modules(
     registry: Res<AutonomyRegistry>,
 ) {
     let dynamics_factories = registry.clone_dynamics();
+    let capabilities = registry.capabilities();
 
     for (agent_entity, request, children) in &agent_query {
         let agent_config = &request.0;
@@ -48,7 +51,19 @@ pub fn spawn_world_model_modules(
             })
             .collect();
 
-        match &agent_config.autonomy_stack.world_model {
+        let validation_errors =
+            validate_autonomy_config(agent_config.autonomy_stack(), &capabilities);
+        if !validation_errors.is_empty() {
+            for err in &validation_errors {
+                error!(
+                    "Config validation failed for agent '{}': {}",
+                    agent_config.name(), err
+                );
+            }
+            continue;
+        }
+
+        match &agent_config.autonomy_stack().world_model {
             Some(WorldModelConfig::Separate {
                 estimator: est_cfg,
                 mapper: map_cfg,
@@ -71,7 +86,7 @@ pub fn spawn_world_model_modules(
                         Err(e) => {
                             error!(
                                 "Cannot build estimator for agent '{}': {}",
-                                agent_config.name, e
+                                agent_config.name(), e
                             );
                             continue;
                         }
@@ -95,19 +110,15 @@ pub fn spawn_world_model_modules(
                         Err(e) => {
                             error!(
                                 "Mapper build failed for '{}': {}. Falling back to NoneMapper.",
-                                agent_config.name, e
+                                agent_config.name(), e
                             );
                             builder = builder.with_mapper(PipelineLevel::Local, Box::new(NoneMapper));
                         }
                     }
                 }
 
-                for (_key, ctrl_cfg) in &agent_config.autonomy_stack.controllers {
-                    let kind = match ctrl_cfg {
-                        crate::simulation::config::structs::ControllerConfig::Pid { .. } => "Pid",
-                        crate::simulation::config::structs::ControllerConfig::Lqr { .. } => "Lqr",
-                        crate::simulation::config::structs::ControllerConfig::FeedforwardPid { .. } => "FeedforwardPid",
-                    };
+                for (_key, ctrl_cfg) in &agent_config.autonomy_stack().controllers {
+                    let kind = ctrl_cfg.get_kind_str();
                     let ctx = ControllerBuildContext {
                         agent_entity,
                         controller_cfg: ctrl_cfg.clone(),
@@ -119,7 +130,7 @@ pub fn spawn_world_model_modules(
                             builder = builder.with_controller(PipelineLevel::Local, ctrl);
                         }
                         Err(e) => {
-                            error!("Failed to build controller '{}' for agent '{}': {}", kind, agent_config.name, e);
+                            error!("Failed to build controller '{}' for agent '{}': {}", kind, agent_config.name(), e);
                         }
                     }
                 }
@@ -144,7 +155,7 @@ pub fn spawn_world_model_modules(
                     Err(e) => {
                         error!(
                             "Cannot build SLAM for agent '{}': {}",
-                            agent_config.name, e
+                            agent_config.name(), e
                         );
                     }
                 }
@@ -153,7 +164,7 @@ pub fn spawn_world_model_modules(
             None => {
                 warn!(
                     "No world model configured for agent '{}'. Skipping.",
-                    &agent_config.name
+                    agent_config.name()
                 );
             }
         }
@@ -237,7 +248,7 @@ pub fn spawn_odom_frames(
     agent_query: Query<(Entity, &SpawnAgentConfigRequest), With<AutonomyPipelineComponent>>,
 ) {
     for (agent_entity, request) in &agent_query {
-        let agent_name = &request.0.name;
+        let agent_name = request.0.name();
         commands.spawn((
             Name::new(format!("{}/odom", agent_name)),
             TrackedFrame,

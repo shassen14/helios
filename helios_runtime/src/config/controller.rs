@@ -35,3 +35,13 @@ pub enum ControllerConfig {
         controlled_indices: Vec<usize>,
     },
 }
+
+impl ControllerConfig {
+    pub fn get_kind_str(&self) -> &str {
+        match self {
+            ControllerConfig::Pid { .. } => "Pid",
+            ControllerConfig::Lqr { .. } => "Lqr",
+            ControllerConfig::FeedforwardPid { .. } => "FeedforwardPid",
+        }
+    }
+}

@@ -18,10 +18,11 @@ pub mod slam;
 //   2. Add a registration call in the appropriate Default*Plugin.
 //   3. Done. No spawning systems change.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy::prelude::{Entity, Resource};
+use helios_runtime::validation::CapabilitySet;
 use helios_core::{
     control::Controller,
     estimation::StateEstimator,
@@ -270,6 +271,18 @@ impl AutonomyRegistry {
             format!("No adapter registered for '{key}'. Call register_adapter().")
         })?;
         factory(ctx)
+    }
+
+    /// Snapshot of all registered algorithm keys, for use with `validate_autonomy_config`.
+    pub fn capabilities(&self) -> CapabilitySet {
+        CapabilitySet {
+            estimators: self.estimators.keys().cloned().collect::<HashSet<_>>(),
+            dynamics: self.dynamics.keys().cloned().collect::<HashSet<_>>(),
+            mappers: self.mappers.keys().cloned().collect::<HashSet<_>>(),
+            slam: self.slam.keys().cloned().collect::<HashSet<_>>(),
+            controllers: self.controllers.keys().cloned().collect::<HashSet<_>>(),
+            planners: HashSet::new(), // no planner registry yet
+        }
     }
 
     /// Returns a cheap clone of the dynamics factory map for embedding in EstimatorBuildContext.
