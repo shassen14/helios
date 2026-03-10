@@ -6,4 +6,4 @@ pub mod foxglove;
 pub mod sensors;
 pub mod vehicles;
 pub mod world;
-pub mod world_model;
+pub mod autonomy;

@@ -1,21 +1,21 @@
 // helios_sim/src/simulation/plugins/control/mod.rs
 //
-// ControlPlugin: spawns ControllerComponent from TOML config, runs controller compute
-// each tick, and writes ControlOutputComponent for the Actuation set to consume.
+// ControlPlugin: initializes ControlOutputComponent at scene build time and calls
+// step_controllers() each tick via the pipeline stored in AutonomyPipelineComponent.
 
 use crate::{
     prelude::*,
     simulation::{
         core::{
             app_state::{AppState, SceneBuildSet, SimulationSet},
-            components::{ControllerComponent, ControlOutputComponent},
+            components::ControlOutputComponent,
+            sim_runtime::SimRuntime,
         },
-        plugins::world_model::WorldModelComponent,
-        registry::{AutonomyRegistry, ControllerBuildContext},
+        plugins::autonomy::AutonomyPipelineComponent,
     },
 };
 
-use helios_core::control::{ControlContext, ControlOutput};
+use helios_core::control::ControlOutput;
 use nalgebra::Vector3;
 
 pub struct ControlPlugin;
@@ -24,7 +24,7 @@ impl Plugin for ControlPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
-            spawn_controllers.in_set(SceneBuildSet::ProcessControllers),
+            spawn_control_output.in_set(SceneBuildSet::ProcessControllers),
         )
         .add_systems(
             FixedUpdate,
@@ -37,62 +37,17 @@ impl Plugin for ControlPlugin {
 // == Spawning System ==
 // =========================================================================
 
-/// Reads each agent's `AutonomyStack.controllers` config and inserts
-/// `ControllerComponent` on the entity using the `AutonomyRegistry`.
-fn spawn_controllers(
+/// Inserts `ControlOutputComponent` on every agent that has an `AutonomyPipelineComponent`.
+/// The pipeline's controllers (if any) will write into this component each tick.
+fn spawn_control_output(
     mut commands: Commands,
-    registry: Res<AutonomyRegistry>,
-    request_query: Query<(Entity, &SpawnAgentConfigRequest)>,
+    agent_query: Query<Entity, With<AutonomyPipelineComponent>>,
 ) {
-    for (entity, request) in &request_query {
-        let cfg = &request.0;
-        let controllers = &cfg.autonomy_stack.controllers;
-
-        if controllers.is_empty() {
-            continue;
-        }
-
-        // For now we pick the first controller. Multi-controller routing can be extended later.
-        let Some((key, ctrl_cfg)) = controllers.iter().next() else {
-            continue;
-        };
-
-        let kind = match ctrl_cfg {
-            crate::simulation::config::structs::ControllerConfig::Pid { .. } => "Pid",
-            crate::simulation::config::structs::ControllerConfig::Lqr { .. } => "Lqr",
-            crate::simulation::config::structs::ControllerConfig::FeedforwardPid { .. } => {
-                "FeedforwardPid"
-            }
-        };
-
-        let ctx = ControllerBuildContext {
-            agent_entity: entity,
-            controller_cfg: ctrl_cfg.clone(),
-            agent_config: cfg.clone(),
-            dynamics_factories: registry.clone_dynamics_arc(),
-        };
-
-        match registry.build_controller(kind, ctx) {
-            Ok(ctrl) => {
-                commands
-                    .entity(entity)
-                    .insert(ControllerComponent(ctrl))
-                    .insert(ControlOutputComponent(ControlOutput::BodyVelocity {
-                        linear: Vector3::zeros(),
-                        angular: Vector3::zeros(),
-                    }));
-                info!(
-                    "Spawned controller '{}' (key '{}') on entity {:?}",
-                    kind, key, entity
-                );
-            }
-            Err(e) => {
-                error!(
-                    "Failed to build controller '{}' for entity {:?}: {}",
-                    kind, entity, e
-                );
-            }
-        }
+    for entity in &agent_query {
+        commands.entity(entity).insert(ControlOutputComponent(ControlOutput::BodyVelocity {
+            linear: Vector3::zeros(),
+            angular: Vector3::zeros(),
+        }));
     }
 }
 
@@ -100,33 +55,23 @@ fn spawn_controllers(
 // == Runtime System ==
 // =========================================================================
 
-/// Calls `Controller::compute()` each tick for every entity that has both
-/// a `ControllerComponent` and a `WorldModelComponent` (state estimate available).
+/// Calls `step_controllers()` each tick for every agent that has both
+/// an `AutonomyPipelineComponent` and a `ControlOutputComponent`.
 /// Mutates `ControlOutputComponent` in-place — no deferred commands on the hot path.
 fn controller_compute_system(
     time: Res<Time>,
-    mut query: Query<(
-        &mut ControllerComponent,
-        &mut ControlOutputComponent,
-        Option<&WorldModelComponent>,
-    )>,
+    tf_tree: Res<crate::simulation::core::transforms::TfTree>,
+    mut query: Query<(&mut AutonomyPipelineComponent, &mut ControlOutputComponent)>,
 ) {
     let dt = time.delta_secs_f64();
+    let runtime = SimRuntime {
+        tf: &*tf_tree,
+        elapsed_secs: time.elapsed_secs_f64(),
+    };
 
-    for (mut ctrl_comp, mut output_comp, world_model_opt) in &mut query {
-        let Some(world_model) = world_model_opt else {
-            continue;
-        };
-
-        let Some(state) = world_model.0.get_state() else {
-            continue;
-        };
-
-        let ctx = ControlContext {
-            tf: None,
-            reference: None,
-        };
-
-        output_comp.0 = ctrl_comp.0.compute(state, dt, &ctx);
+    for (mut pipeline_comp, mut output_comp) in &mut query {
+        if let Some(output) = pipeline_comp.0.step_controllers(dt, &runtime) {
+            output_comp.0 = output;
+        }
     }
 }

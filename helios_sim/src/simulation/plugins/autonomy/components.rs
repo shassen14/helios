@@ -9,7 +9,7 @@ use helios_runtime::pipeline::AutonomyPipeline;
 /// The single, unified component that holds the autonomy pipeline for an agent.
 /// Wraps an AutonomyPipeline — Bevy-free, hardware-portable core logic.
 #[derive(Component)]
-pub struct WorldModelComponent(pub AutonomyPipeline);
+pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
 
 /// Marker on a virtual "odom frame" entity that links it back to its agent.
 ///

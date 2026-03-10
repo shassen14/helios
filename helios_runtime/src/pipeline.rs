@@ -13,7 +13,7 @@
 // Control      → future: compute_control(runtime) (every physics tick)
 
 use helios_core::{
-    control::{ControlOutput, TrajectoryPoint},
+    control::{ControlContext, ControlOutput, TrajectoryPoint},
     estimation::{FilterContext, StateEstimator},
     frames::FrameAwareState,
     mapping::{MapData, Mapper},
@@ -167,6 +167,25 @@ impl AutonomyPipeline {
             .iter()
             .find(|lm| &lm.level == level)
             .map(|lm| lm.mapper.get_map())
+    }
+
+    // =========================================================================
+    // == Control stage ==
+    // =========================================================================
+
+    /// Run the highest-priority controller in the pipeline.
+    /// Returns `None` if no controllers are registered or no state estimate is available.
+    pub fn step_controllers(
+        &mut self,
+        dt: f64,
+        runtime: &dyn AgentRuntime,
+    ) -> Option<ControlOutput> {
+        let state = self.get_state()?.clone();
+        let adapter = TfProviderAdapter(runtime);
+        let ctx = ControlContext { tf: Some(&adapter), reference: None };
+        self.controllers
+            .first_mut()
+            .map(|lc| lc.controller.compute(&state, dt, &ctx))
     }
 
     fn build_outputs(&self) -> PipelineOutputs {

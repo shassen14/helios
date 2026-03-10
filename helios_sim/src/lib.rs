@@ -14,7 +14,7 @@ use crate::simulation::plugins::sensors::raycasting::RaycastingSensorPlugin;
 use crate::simulation::plugins::control::ControlPlugin;
 use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;
 use crate::simulation::plugins::world::spawner::WorldSpawnerPlugin;
-use crate::simulation::plugins::world_model::WorldModelPlugin;
+use crate::simulation::plugins::autonomy::AutonomyPlugin;
 use crate::simulation::registry::plugin::AutonomyRegistryPlugin;
 
 // This prelude is for convenience for other files WITHIN the helios_sim crate.
@@ -47,8 +47,8 @@ impl Plugin for HeliosSimulationPlugin {
             GpsPlugin,
             MagnetometerPlugin,
             RaycastingSensorPlugin,
-            // Add World Modeling / estimator and modeling
-            WorldModelPlugin,
+            // Estimation, mapping, and controller pipeline
+            AutonomyPlugin,
             // Add Control layer — must come after WorldModelPlugin (needs state estimates).
             ControlPlugin,
             DebuggingPlugin,

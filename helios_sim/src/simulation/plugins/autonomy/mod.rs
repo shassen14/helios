@@ -1,4 +1,4 @@
-// helios_sim/src/plugins/world_model/mod.rs
+// helios_sim/src/plugins/autonomy/mod.rs
 
 use crate::prelude::*;
 
@@ -7,16 +7,16 @@ mod components;
 mod systems;
 
 // Re-export the public-facing components for easy use elsewhere.
-pub use components::{OdomFrameOf, WorldModelComponent};
+pub use components::{AutonomyPipelineComponent, OdomFrameOf};
 
 use systems::{
     spawn_odom_frames, spawn_world_model_modules, update_odom_frames,
     world_model_event_processor, world_model_mapping_system, world_model_output_publisher,
 };
 
-pub struct WorldModelPlugin;
+pub struct AutonomyPlugin;
 
-impl Plugin for WorldModelPlugin {
+impl Plugin for AutonomyPlugin {
     fn build(&self, app: &mut App) {
         app
             // --- SPAWNING ---

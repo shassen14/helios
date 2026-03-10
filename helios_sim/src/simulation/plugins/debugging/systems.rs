@@ -14,7 +14,7 @@ use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::transforms::{
     enu_iso_to_bevy_transform, enu_vector_to_bevy_vector, flu_vector_to_bevy_local_vector, TfTree,
 };
-use crate::simulation::plugins::world_model::WorldModelComponent;
+use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
 use helios_core::messages::MeasurementData;
 use helios_runtime::stage::PipelineLevel;
 
@@ -176,7 +176,7 @@ pub fn draw_ground_truth_gimbals(
 pub fn draw_estimated_pose_gimbals(
     config: Res<DebugVisualizationConfig>,
     mut gizmos: Gizmos,
-    module_query: Query<&WorldModelComponent>,
+    module_query: Query<&AutonomyPipelineComponent>,
 ) {
     if !config.show_pose_gimbals {
         return;
@@ -201,7 +201,7 @@ pub fn draw_estimated_pose_gimbals(
 pub fn draw_covariance_ellipsoid(
     config: Res<DebugVisualizationConfig>,
     mut gizmos: Gizmos,
-    module_query: Query<&WorldModelComponent>,
+    module_query: Query<&AutonomyPipelineComponent>,
 ) {
     if !config.show_covariance {
         return;
@@ -325,7 +325,7 @@ pub fn draw_velocity_vector(
 pub fn draw_estimation_error_line(
     config: Res<DebugVisualizationConfig>,
     mut gizmos: Gizmos,
-    query: Query<(&GroundTruthState, &WorldModelComponent)>,
+    query: Query<(&GroundTruthState, &AutonomyPipelineComponent)>,
 ) {
     if !config.show_error_line {
         return;
@@ -537,7 +537,7 @@ const GRID_DRAW_RADIUS_M: f32 = 150.0;
 pub fn draw_occupancy_grid(
     config: Res<DebugVisualizationConfig>,
     mut gizmos: Gizmos,
-    query: Query<(&WorldModelComponent, &GlobalTransform), With<GroundTruthState>>,
+    query: Query<(&AutonomyPipelineComponent, &GlobalTransform), With<GroundTruthState>>,
 ) {
     if !config.show_occupancy_grid {
         return;

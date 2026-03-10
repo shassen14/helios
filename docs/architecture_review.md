@@ -115,16 +115,19 @@ Every spawn phase queries the same monolithic blob.
 - After `cleanup_spawn_requests` removes it, nothing enforces that no system
   reads it afterward.
 
-### SW-4: WorldModelComponent enum forces exhaustive matching ✅ FIXED (Phase 2)
+### SW-4: WorldModelComponent enum forces exhaustive matching ✅ FIXED (Phase 2+3)
 
-The `WorldModelComponent` enum has been replaced with a newtype wrapper over `AutonomyPipeline`:
+The `WorldModelComponent` enum was replaced with a newtype wrapper over `AutonomyPipeline` in Phase 2,
+then renamed to `AutonomyPipelineComponent` in Phase 3 to reflect that it holds the full pipeline —
+not just world modeling. The `world_model/` plugin directory was also renamed to `autonomy/`:
 
 ```rust
+// plugins/autonomy/components.rs
 #[derive(Component)]
-pub struct WorldModelComponent(pub AutonomyPipeline);
+pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
 ```
 
-All consumers now use the uniform API: `get_state()`, `get_map()`, `process_measurement()`.
+All consumers use the uniform API: `get_state()`, `get_map()`, `process_measurement()`, `step_controllers()`.
 No match arms. Adding new pipeline stage types requires zero changes to consumers.
 
 ### SW-5: Manual axis swaps outside transforms.rs
@@ -609,26 +612,47 @@ FixedUpdate (per tick):
 
 ### Phase 1: Fix foundations ✅ DONE (2026-03-08)
 
-| Item                                                           | Effort | Impact      |
-| -------------------------------------------------------------- | ------ | ----------- |
-| Fix `.unwrap()` in EKF update (crash risk)                     | 30 min | Safety      ✅ |
+| Item                                                           | Effort | Impact         |
+| -------------------------------------------------------------- | ------ | -------------- |
+| Fix `.unwrap()` in EKF update (crash risk)                     | 30 min | Safety ✅      |
 | Fix manual axis swaps in `ground_truth_sync_system`            | 15 min | Correctness ✅ |
 | Route EKF updates by `sensor_handle` O(1) lookup               | 1 hr   | Performance ✅ |
 | Use `&mut ControlOutputComponent` instead of `commands.insert` | 30 min | Performance ✅ |
 
 ### Phase 2: Introduce helios_runtime ✅ DONE (2026-03-08)
 
-| Item                                                                                          | Impact       |
-| --------------------------------------------------------------------------------------------- | ------------ |
-| Created `helios_runtime` crate with `MonotonicTime`, `AgentRuntime`, `TfProviderAdapter`      | Architecture ✅ |
-| Defined `AutonomyPipeline` + `PipelineBuilder` — sequencing moved out of Bevy                 | Portability  ✅ |
-| Kept `FrameHandle` (not `SensorId`) — bevy feature gate makes it host-agnostic               | Decoupling   ✅ |
-| `SimRuntime<'a>` in `helios_sim` implements `AgentRuntime` over `&TfTree + elapsed_secs`      | Integration  ✅ |
-| Replaced `WorldModelComponent` enum with `WorldModelComponent(pub AutonomyPipeline)` newtype  | Extensibility ✅ |
-| Added `Planner` and `Tracker` trait stubs to `helios_core` (no concrete impls yet)            | Architecture ✅ |
-| Per-stage rate separation: `process_measurement`, `process_mapper_messages`, `process_mapper_pose_update` | Correctness ✅ |
+| Item                                                                                                      | Impact           |
+| --------------------------------------------------------------------------------------------------------- | ---------------- |
+| Created `helios_runtime` crate with `MonotonicTime`, `AgentRuntime`, `TfProviderAdapter`                  | Architecture ✅  |
+| Defined `AutonomyPipeline` + `PipelineBuilder` — sequencing moved out of Bevy                             | Portability ✅   |
+| Kept `FrameHandle` (not `SensorId`) — bevy feature gate makes it host-agnostic                            | Decoupling ✅    |
+| `SimRuntime<'a>` in `helios_sim` implements `AgentRuntime` over `&TfTree + elapsed_secs`                  | Integration ✅   |
+| Replaced `WorldModelComponent` enum with `WorldModelComponent(pub AutonomyPipeline)` newtype              | Extensibility ✅ |
+| `ControllerComponent` removed — controllers now live inside `AutonomyPipeline.controllers`                | Architecture ✅  |
+| Added `Planner` and `Tracker` trait stubs to `helios_core` (no concrete impls yet)                        | Architecture ✅  |
+| Per-stage rate separation: `process_measurement`, `process_mapper_messages`, `process_mapper_pose_update` | Correctness ✅   |
 
-### Phase 3: Agent-local data isolation
+### Phase 3: Control pipeline consolidation + naming cleanup ✅ DONE (2026-03-08)
+
+| Item                                                                                                   | Impact          |
+| ------------------------------------------------------------------------------------------------------ | --------------- |
+| Added `step_controllers(dt, runtime)` to `AutonomyPipeline` — controller compute inside the pipeline   | Architecture ✅ |
+| Removed `ControllerComponent` — controllers are now `Vec<LeveledController>` inside `AutonomyPipeline` | Consistency ✅  |
+| `ControlPlugin` slimmed to: spawn `ControlOutputComponent` + call `step_controllers()` each tick       | Simplicity ✅   |
+| Renamed `WorldModelComponent` → `AutonomyPipelineComponent` — name now matches its scope               | Clarity ✅      |
+| Renamed `plugins/world_model/` → `plugins/autonomy/` — directory matches contained concerns            | Clarity ✅      |
+| Renamed `WorldModelPlugin` → `AutonomyPlugin`                                                          | Clarity ✅      |
+| Documented 3-layer control split (pipeline → adapter → physics) and `helios_hw` portability path       | Architecture ✅ |
+
+**Control layer boundary (stable interface for `helios_hw`):**
+
+```
+Layer 1  ControlPlugin         pipeline.step_controllers() → ControlOutput  (helios_core type)
+Layer 2  Vehicle plugin        VehicleAdapter::adapt()     → VehicleCommand (vehicle-specific)
+Layer 3  Vehicle plugin        VehicleCommand              → ExternalForce/Torque (sim) or CAN/PWM (hw)
+```
+
+### Phase 4: Agent-local data isolation
 
 | Item                                                                           | Effort | Impact        |
 | ------------------------------------------------------------------------------ | ------ | ------------- |
@@ -637,7 +661,7 @@ FixedUpdate (per tick):
 | Split `WorldModelComponent` enum into `EstimatorComponent` + `MapperComponent` | 4 hrs  | Extensibility |
 | Per-agent message batching in estimation system                                | 4 hrs  | Multi-agent   |
 
-### Phase 4: helios_hw skeleton
+### Phase 5: helios_hw skeleton
 
 | Item                                                              | Effort | Impact   |
 | ----------------------------------------------------------------- | ------ | -------- |
@@ -646,7 +670,7 @@ FixedUpdate (per tick):
 | Sensor driver framework (async tasks feeding `SensorReading`)     | 2 days | Hardware |
 | Actuator output framework (async tasks consuming `ControlOutput`) | 1 day  | Hardware |
 
-### Phase 5: Multi-agent and digital twin
+### Phase 6: Multi-agent and digital twin
 
 | Item                                                     | Effort | Impact       |
 | -------------------------------------------------------- | ------ | ------------ |

@@ -12,10 +12,11 @@ use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::topics::TopicBus;
 use crate::simulation::core::transforms::{enu_iso_to_bevy_transform, TfTree};
-use crate::simulation::plugins::world_model::components::{ModuleTimer, OdomFrameOf};
-use crate::simulation::plugins::world_model::WorldModelComponent;
+use crate::simulation::plugins::autonomy::components::{ModuleTimer, OdomFrameOf};
+use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
 use crate::simulation::registry::{
-    AutonomyRegistry, EstimatorBuildContext, MapperBuildContext, SlamBuildContext,
+    AutonomyRegistry, ControllerBuildContext, EstimatorBuildContext, MapperBuildContext,
+    SlamBuildContext,
 };
 
 // =========================================================================
@@ -101,7 +102,29 @@ pub fn spawn_world_model_modules(
                     }
                 }
 
-                entity_commands.insert(WorldModelComponent(builder.build()));
+                for (_key, ctrl_cfg) in &agent_config.autonomy_stack.controllers {
+                    let kind = match ctrl_cfg {
+                        crate::simulation::config::structs::ControllerConfig::Pid { .. } => "Pid",
+                        crate::simulation::config::structs::ControllerConfig::Lqr { .. } => "Lqr",
+                        crate::simulation::config::structs::ControllerConfig::FeedforwardPid { .. } => "FeedforwardPid",
+                    };
+                    let ctx = ControllerBuildContext {
+                        agent_entity,
+                        controller_cfg: ctrl_cfg.clone(),
+                        agent_config: agent_config.clone(),
+                        dynamics_factories: registry.clone_dynamics_arc(),
+                    };
+                    match registry.build_controller(kind, ctx) {
+                        Ok(ctrl) => {
+                            builder = builder.with_controller(PipelineLevel::Local, ctrl);
+                        }
+                        Err(e) => {
+                            error!("Failed to build controller '{}' for agent '{}': {}", kind, agent_config.name, e);
+                        }
+                    }
+                }
+
+                entity_commands.insert(AutonomyPipelineComponent(builder.build()));
             }
 
             Some(WorldModelConfig::CombinedSlam { slam: slam_cfg }) => {
@@ -116,7 +139,7 @@ pub fn spawn_world_model_modules(
                 match registry.build_slam(slam_cfg.get_kind_str(), ctx) {
                     Ok(system) => {
                         let pipeline = PipelineBuilder::new().with_slam(system).build();
-                        entity_commands.insert(WorldModelComponent(pipeline));
+                        entity_commands.insert(AutonomyPipelineComponent(pipeline));
                     }
                     Err(e) => {
                         error!(
@@ -142,7 +165,7 @@ pub fn spawn_world_model_modules(
 // =========================================================================
 
 pub fn world_model_event_processor(
-    mut agent_query: Query<(Entity, &mut WorldModelComponent)>,
+    mut agent_query: Query<(Entity, &mut AutonomyPipelineComponent)>,
     mut measurement_events: EventReader<BevyMeasurementMessage>,
     tf_tree: Res<TfTree>,
     time: Res<Time>,
@@ -166,7 +189,7 @@ pub fn world_model_event_processor(
 }
 
 pub fn world_model_mapping_system(
-    mut module_query: Query<(Entity, &mut WorldModelComponent, &mut ModuleTimer)>,
+    mut module_query: Query<(Entity, &mut AutonomyPipelineComponent, &mut ModuleTimer)>,
     odom_query: Query<(&OdomFrameOf, Entity)>,
     mut measurement_events: EventReader<BevyMeasurementMessage>,
     time: Res<Time>,
@@ -211,7 +234,7 @@ pub fn world_model_mapping_system(
 
 pub fn spawn_odom_frames(
     mut commands: Commands,
-    agent_query: Query<(Entity, &SpawnAgentConfigRequest), With<WorldModelComponent>>,
+    agent_query: Query<(Entity, &SpawnAgentConfigRequest), With<AutonomyPipelineComponent>>,
 ) {
     for (agent_entity, request) in &agent_query {
         let agent_name = &request.0.name;
@@ -227,7 +250,7 @@ pub fn spawn_odom_frames(
 }
 
 pub fn update_odom_frames(
-    agent_query: Query<&WorldModelComponent>,
+    agent_query: Query<&AutonomyPipelineComponent>,
     mut odom_query: Query<(&OdomFrameOf, &mut Transform)>,
 ) {
     for (odom_of, mut transform) in &mut odom_query {
@@ -242,7 +265,7 @@ pub fn update_odom_frames(
 }
 
 pub fn world_model_output_publisher(
-    query: Query<(&WorldModelComponent, &Name)>,
+    query: Query<(&AutonomyPipelineComponent, &Name)>,
     mut topic_bus: ResMut<TopicBus>,
 ) {
     for (wm, name) in &query {
