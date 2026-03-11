@@ -146,12 +146,30 @@ Both systems are in a parallel tuple — Bevy schedules them concurrently becaus
 access different components (`EstimatorComponent` vs `MapperComponent`).
 `par_iter_mut` over agents requires no API changes when ready.
 
-### ECS-3: Monolithic debugging plugin
+### ECS-3: Monolithic debugging plugin ✅ FIXED (Phase 6A)
 
-`debugging/systems.rs` is 636 lines containing 8+ visualization systems, UI
-code, keybinding handling, and a sensor data cache. Should be split into
-per-concern files (pose gizmos, covariance ellipsoid, trail, occupancy grid,
-TF frames, legend UI).
+`debugging/systems.rs` has been split into per-concern files. The plugin now
+has zero `systems.rs` (tombstoned to a comment index). Structure:
+
+```
+plugins/debugging/
+  mod.rs           DebuggingPlugin — registers all sub-systems
+  components.rs    DebugState, trail/cache component types
+  keybindings.rs   handle_debug_keybindings
+  cache.rs         cache_sensor_data
+  gizmos/
+    mod.rs
+    pose.rs        pose axes gizmo
+    covariance.rs  covariance ellipsoid gizmo
+    point_cloud.rs LiDAR point cloud gizmo
+    velocity.rs    velocity vector gizmo
+    error.rs       estimation error gizmo
+    trail.rs       agent trail gizmo
+    tf_frames.rs   TF frame axes gizmo
+    occupancy.rs   occupancy grid gizmo
+  ui/
+    legend.rs      HUD legend panel
+```
 
 ### ECS-4: TfTree rebuilt from scratch twice per tick
 
@@ -550,7 +568,16 @@ helios_sim/
     visualization/
       gizmos/                 Per-concern: pose.rs, covariance.rs, trail.rs
       ui/                     Legend, HUD
-    world/                    Environment spawning
+    debugging/
+      components.rs           DebugState, trail/cache types
+      keybindings.rs          handle_debug_keybindings
+      cache.rs                cache_sensor_data
+      gizmos/                 pose, covariance, point_cloud, velocity, error, trail, tf_frames, occupancy
+      ui/legend.rs            HUD legend panel
+    world/
+      terrain.rs              TerrainPlugin — multi-tile loading, AssetLoading gate
+      atmosphere.rs           AtmospherePlugin — gravity, sun, fly camera
+      objects.rs              WorldObjectPlugin — prefab spawn, trimesh/primitive colliders, SemanticLabel
   registry/                   AutonomyRegistry (unchanged pattern)
 
 helios_hw/
@@ -686,7 +713,65 @@ Cold path →  sensor_telemetry_system    (Validation) reads SensorMailbox → T
           →  tf_publish_system          (Validation) → TopicBus
 ```
 
-### Phase 6: helios_hw skeleton
+### Phase 6A: Debugging plugin split ✅ DONE (2026-03-11)
+
+| Item                                                                            | Impact         |
+| ------------------------------------------------------------------------------- | -------------- |
+| Split `debugging/systems.rs` (636 lines) into 8 per-concern files              | Maintainability ✅ |
+| `keybindings.rs` — `handle_debug_keybindings` (standalone)                     | Clarity ✅     |
+| `cache.rs` — `cache_sensor_data` (standalone)                                  | Clarity ✅     |
+| `gizmos/` — one file per visualization: pose, covariance, point_cloud, velocity, error, trail, tf_frames, occupancy | File size ✅ |
+| `ui/legend.rs` — HUD legend panel (standalone)                                 | Clarity ✅     |
+| `systems.rs` tombstoned (comment index only, no `mod systems` in mod.rs)       | Hygiene ✅     |
+
+### Phase 6B: World system standardization ✅ DONE (2026-03-11)
+
+| Item                                                                                                | Impact           |
+| --------------------------------------------------------------------------------------------------- | ---------------- |
+| `TerrainPlugin` — asset loading, multi-tile support, AssetLoading→SceneBuilding gate               | Architecture ✅  |
+| `AtmospherePlugin` — gravity, sun transform, fly camera; ENU azimuth→Bevy -Z conversion            | Correctness ✅   |
+| `WorldObjectPlugin` — prefab catalog lookup, trimesh colliders from `_col.glb`, primitive colliders | Architecture ✅  |
+| `read_object_gltf_extras` — walks `ChildOf` chain to attach `SemanticLabel` from Blender extras    | Automation ✅    |
+| TOML label takes precedence over GLTF extras; GLTF serves as self-describing fallback              | Reliability ✅   |
+| `WorldObjectType(String)`, `SemanticLabel { label, class_id }`, `BoundingBox3D`, `TerrainMedium` components | Data model ✅ |
+| `WorldSpawnerPlugin` tombstoned — replaced by three focused plugins                                | Clarity ✅      |
+| `configs/catalog/objects/` prefab TOML: `label`, `class_id`, `visual_mesh`, `collider_mesh`, `[collider]`, `bounding_box` | Config ✅ |
+| `blender_asset_standards.md` created — full guide for Blender export, GLTF extras, collision meshes, class ID registry | Documentation ✅ |
+
+**World struct change (scenario.rs):**
+
+```rust
+// Old
+struct World { map_file, gravity, objects }
+
+// New
+struct World {
+    terrains:   Vec<TerrainConfig>,
+    atmosphere: AtmosphereConfig,
+    objects:    Vec<WorldObjectPlacement>,
+}
+```
+
+**Scenario TOML format:**
+
+```toml
+[[world.terrains]]
+mesh     = "terrain/valley_floor.glb"
+collider = "terrain/valley_floor_col.glb"
+medium   = "air"
+
+[world.atmosphere]
+gravity       = [0.0, -9.81, 0.0]
+sun_elevation = 45.0   # degrees
+sun_azimuth   = 180.0  # 0=North, 90=East, 180=South
+
+[[world.objects]]
+prefab   = "objects.stop_sign"
+position = [10.0, 5.0, 0.0]   # ENU meters
+orientation_degrees = [0.0, 0.0, 0.0]
+```
+
+### Phase 7: helios_hw skeleton
 
 | Item                                                              | Effort | Impact   |
 | ----------------------------------------------------------------- | ------ | -------- |
@@ -696,7 +781,7 @@ Cold path →  sensor_telemetry_system    (Validation) reads SensorMailbox → T
 | Sensor driver framework (async tasks feeding `SensorReading`)     | 2 days | Hardware |
 | Actuator output framework (async tasks consuming `ControlOutput`) | 1 day  | Hardware |
 
-### Phase 7: Multi-agent and digital twin
+### Phase 8: Multi-agent and digital twin
 
 | Item                                                     | Effort | Impact       |
 | -------------------------------------------------------- | ------ | ------------ |
