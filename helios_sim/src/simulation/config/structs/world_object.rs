@@ -24,7 +24,6 @@ fn default_scale() -> [f32; 3] {
 }
 
 /// Object type definition stored in `configs/catalog/objects/<name>.toml`.
-/// Describes geometry, physics, and semantic metadata for an object type.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct WorldObjectPrefab {
@@ -33,14 +32,16 @@ pub struct WorldObjectPrefab {
     /// Integer class ID used by perception algorithms and dataset labelers.
     pub class_id: u32,
     /// Path to the visual GLB/GLTF asset, relative to the Bevy asset root.
-    /// If absent, no visual mesh is spawned (collider-only object).
     #[serde(default)]
     pub visual_mesh: Option<PathBuf>,
-    /// Axis-aligned bounding box in object-local space: [width, height, depth] meters.
-    /// Used for sensor queries and debug visualization. Optional.
+    /// Path to a separate collision GLB. All meshes in this file become
+    /// `Collider::trimesh` bodies. Takes priority over `[collider]` if both are set.
+    #[serde(default)]
+    pub collider_mesh: Option<PathBuf>,
+    /// Axis-aligned bounding box [width, height, depth] meters. Optional.
     #[serde(default)]
     pub bounding_box: Option<[f32; 3]>,
-    /// Physics collider shape. If absent, object has no physics collider.
+    /// Primitive physics collider. Ignored if `collider_mesh` is specified.
     #[serde(default)]
     pub collider: Option<WorldObjectCollider>,
 }

@@ -2,12 +2,17 @@ use bevy::prelude::Resource;
 use figment::value::Value;
 use helios_runtime::config::{AgentBaseConfig, AutonomyStack};
 use serde::Deserialize;
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
 
-use super::{pose::Pose, sensors::SensorConfig, vehicle::Vehicle, world_object::WorldObjectPlacement};
+use super::{
+    pose::Pose,
+    sensors::SensorConfig,
+    terrain::{AtmosphereConfig, TerrainConfig},
+    vehicle::Vehicle,
+    world_object::WorldObjectPlacement,
+};
 
 /// The primary Bevy resource holding all configuration for a simulation run.
-/// This is the root of the data parsed from a `scenario.toml` file.
 #[derive(Resource, Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ScenarioConfig {
@@ -20,13 +25,11 @@ pub struct ScenarioConfig {
     #[serde(default)]
     pub debug: DebugConfig,
 
-    /// `[[agents]]` in TOML becomes a Vec of resolved `AgentConfig` structs.
     #[serde(default)]
     pub agents: Vec<AgentConfig>,
 }
 
 /// Optional `[debug]` table in the scenario TOML.
-/// Every field defaults to `false`, so the whole section can be omitted.
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 #[serde(default)]
@@ -81,35 +84,27 @@ fn default_frequency_hz() -> f64 {
     400.0
 }
 
-#[derive(Debug, Deserialize)]
+/// World-level configuration: terrain tiles, atmosphere, and placed objects.
+#[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct World {
-    pub map_file: PathBuf,
-    pub gravity: [f32; 3],
-    /// Optional list of world object instances to spawn in this scenario.
-    /// Each entry references a prefab by catalog key and provides a pose.
+    /// One or more terrain tiles that compose the physical ground.
+    /// Declared with `[[world.terrains]]` in TOML.
+    #[serde(default)]
+    pub terrains: Vec<TerrainConfig>,
+
+    /// Lighting, gravity, and atmospheric parameters.
+    /// Declared as `[world.atmosphere]` in TOML.
+    #[serde(default)]
+    pub atmosphere: AtmosphereConfig,
+
+    /// Static world objects (signs, buildings, trees, etc.).
+    /// Declared with `[[world.objects]]` in TOML.
     #[serde(default)]
     pub objects: Vec<WorldObjectPlacement>,
 }
 
-impl Default for World {
-    fn default() -> Self {
-        Self {
-            map_file: "assets/maps/default.gltf".into(),
-            gravity: [0.0, -9.81, 0.0],
-            objects: Vec::new(),
-        }
-    }
-}
-
 /// Full agent configuration for helios_sim.
-///
-/// `base` carries the portable fields (`name` + `autonomy_stack`) from
-/// `AgentBaseConfig`. The remaining fields are simulation-specific.
-///
-/// Note: `#[serde(deny_unknown_fields)]` is intentionally omitted here —
-/// it is incompatible with `#[serde(flatten)]`. Inner structs retain their
-/// own `deny_unknown_fields` guards.
 #[derive(Debug, Deserialize, Clone)]
 pub struct AgentConfig {
     #[serde(flatten)]

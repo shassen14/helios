@@ -98,3 +98,11 @@ pub struct BoundingBox3D {
     /// Half-extents [hx, hy, hz] along the object's local X/Y/Z axes.
     pub half_extents: Vec3,
 }
+
+/// Identifies the physics medium represented by a terrain entity.
+/// Agents and sensors can query this to determine applicable physics rules
+/// (drag, buoyancy, sensor propagation) for their current environment.
+///
+/// Recognised values: `"air"`, `"water"`, `"vacuum"`.
+#[derive(Component, Clone, Debug)]
+pub struct TerrainMedium(pub String);

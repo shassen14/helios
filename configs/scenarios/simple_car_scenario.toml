@@ -2,20 +2,19 @@
 duration_seconds = 10.0
 seed = 1337
 
-[world]
-map_file = "maps/starter_world.glb"
+[[world.terrains]]
+mesh     = "maps/starter_world.glb"
+collider = "maps/starter_world_col.glb"
+medium   = "air"
+
+[world.atmosphere]
 gravity = [0.0, -9.81, 0.0]
 
 [[agents]]
-# This agent inherits from the car prefab.
 from = "agents.ackermann_car"
-
-# Any key at this level is a direct override.
 name = "SuperTruck-01"
 starting_pose = { translation = [20.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 vehicle = { from = "vehicles.ackermann_truck" }
-
-# sensors = { from = "sensor_suites.ins_basic" }
 
 [agents.autonomy_stack.controllers]
 path_follower = { from = "components.controllers.pid_aggressive" }

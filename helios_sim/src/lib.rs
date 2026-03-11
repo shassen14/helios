@@ -1,8 +1,5 @@
-// helios_sim/src/lib.rs
-
 use bevy::prelude::*;
 
-// Import the plugins defined within the simulation crate.
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
 use crate::simulation::core::TopicBusPlugin;
 use crate::simulation::plugins::debugging::DebuggingPlugin;
@@ -13,7 +10,8 @@ use crate::simulation::plugins::sensors::magnetometer::MagnetometerPlugin;
 use crate::simulation::plugins::sensors::raycasting::RaycastingSensorPlugin;
 use crate::simulation::plugins::control::ControlPlugin;
 use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;
-use crate::simulation::plugins::world::spawner::WorldSpawnerPlugin;
+use crate::simulation::plugins::world::AtmospherePlugin;
+use crate::simulation::plugins::world::TerrainPlugin;
 use crate::simulation::plugins::world::WorldObjectPlugin;
 use crate::simulation::plugins::autonomy::AutonomyPlugin;
 use crate::simulation::registry::plugin::AutonomyRegistryPlugin;
@@ -26,38 +24,29 @@ pub mod cli;
 pub mod simulation;
 
 /// The main plugin that brings together all the simulation parts.
-/// Your `main.rs` will just add this one plugin to the Bevy App.
 pub struct HeliosSimulationPlugin;
 
 impl Plugin for HeliosSimulationPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
-            // Registers TopicBus resource — must be first so all sensors can publish to it.
             TopicBusPlugin,
-            // Core setup (spawns agents, sets up stages, etc.)
             SimulationSetupPlugin,
-            // Algorithm factories — must come before WorldModelPlugin so the registry
-            // is fully populated before any spawning system runs.
             AutonomyRegistryPlugin,
-            // Spawns the world mesh, lighting, camera.
-            WorldSpawnerPlugin,
-            // Spawns static world objects (signs, buildings, etc.) from catalog prefabs.
+            // World: terrain tiles (owns the AssetLoading→SceneBuilding gate).
+            TerrainPlugin,
+            // World: atmosphere — lighting, gravity, camera.
+            AtmospherePlugin,
+            // World: discrete semantic objects (signs, buildings, trees, etc.).
             WorldObjectPlugin,
-            // Adds the Ackermann vehicle logic.
             AckermannCarPlugin,
-            // Add Sensors
             ImuPlugin,
             GpsPlugin,
             MagnetometerPlugin,
             RaycastingSensorPlugin,
-            // Estimation, mapping, and controller pipeline
             AutonomyPlugin,
-            // Add Control layer — must come after WorldModelPlugin (needs state estimates).
             ControlPlugin,
             DebuggingPlugin,
-            // Foxglove WebSocket bridge — must be last so all topics are registered first.
             FoxgloveWebSocketPlugin::default(),
-            // When you add new plugins (Lidar, Planners), you will add them here.
         ));
     }
 }
