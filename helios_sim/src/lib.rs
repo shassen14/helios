@@ -14,6 +14,7 @@ use crate::simulation::plugins::sensors::raycasting::RaycastingSensorPlugin;
 use crate::simulation::plugins::control::ControlPlugin;
 use crate::simulation::plugins::vehicles::ackermann::AckermannCarPlugin;
 use crate::simulation::plugins::world::spawner::WorldSpawnerPlugin;
+use crate::simulation::plugins::world::WorldObjectPlugin;
 use crate::simulation::plugins::autonomy::AutonomyPlugin;
 use crate::simulation::registry::plugin::AutonomyRegistryPlugin;
 
@@ -40,6 +41,8 @@ impl Plugin for HeliosSimulationPlugin {
             AutonomyRegistryPlugin,
             // Spawns the world mesh, lighting, camera.
             WorldSpawnerPlugin,
+            // Spawns static world objects (signs, buildings, etc.) from catalog prefabs.
+            WorldObjectPlugin,
             // Adds the Ackermann vehicle logic.
             AckermannCarPlugin,
             // Add Sensors

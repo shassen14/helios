@@ -71,3 +71,30 @@ pub struct SensorMailbox {
 /// Read by `route_sensor_messages` to populate `SensorMailbox` entries.
 #[derive(Component)]
 pub struct SensorTopicName(pub String);
+
+// =========================================================================
+// == World Object Components ==
+// =========================================================================
+
+/// Identifies the prefab catalog key for a world object entity (e.g. `"objects.stop_sign"`).
+/// Useful for runtime queries such as "which objects of type X are near the agent?".
+#[derive(Component, Clone, Debug)]
+pub struct WorldObjectType(pub String);
+
+/// Semantic classification attached to every world object entity.
+/// Used by perception systems for ground-truth labeling and by dataset exporters.
+#[derive(Component, Clone, Debug)]
+pub struct SemanticLabel {
+    /// Human-readable class name, e.g. `"stop_sign"`, `"building"`.
+    pub label: String,
+    /// Integer class ID used by perception algorithms and ML dataset formats.
+    pub class_id: u32,
+}
+
+/// Axis-aligned bounding box in object-local space (half-extents, meters).
+/// Used for debug visualization, sensor hit attribution, and dataset annotation.
+#[derive(Component, Clone, Debug)]
+pub struct BoundingBox3D {
+    /// Half-extents [hx, hy, hz] along the object's local X/Y/Z axes.
+    pub half_extents: Vec3,
+}

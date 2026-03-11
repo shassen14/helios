@@ -4,7 +4,7 @@ use helios_runtime::config::{AgentBaseConfig, AutonomyStack};
 use serde::Deserialize;
 use std::{collections::HashMap, path::PathBuf};
 
-use super::{pose::Pose, sensors::SensorConfig, vehicle::Vehicle};
+use super::{pose::Pose, sensors::SensorConfig, vehicle::Vehicle, world_object::WorldObjectPlacement};
 
 /// The primary Bevy resource holding all configuration for a simulation run.
 /// This is the root of the data parsed from a `scenario.toml` file.
@@ -86,6 +86,10 @@ fn default_frequency_hz() -> f64 {
 pub struct World {
     pub map_file: PathBuf,
     pub gravity: [f32; 3],
+    /// Optional list of world object instances to spawn in this scenario.
+    /// Each entry references a prefab by catalog key and provides a pose.
+    #[serde(default)]
+    pub objects: Vec<WorldObjectPlacement>,
 }
 
 impl Default for World {
@@ -93,6 +97,7 @@ impl Default for World {
         Self {
             map_file: "assets/maps/default.gltf".into(),
             gravity: [0.0, -9.81, 0.0],
+            objects: Vec::new(),
         }
     }
 }

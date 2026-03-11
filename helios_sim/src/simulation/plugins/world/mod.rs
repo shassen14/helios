@@ -1,3 +1,4 @@
-// helios_sim/src/simulation/plugins/world/mod.rs
-
+pub mod objects;
 pub mod spawner;
+
+pub use objects::{WorldObjectAssets, WorldObjectPlugin};

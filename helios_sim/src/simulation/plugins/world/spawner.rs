@@ -1,4 +1,5 @@
 use crate::{prelude::*, simulation::core::app_state::AssetLoadSet};
+use crate::simulation::plugins::world::objects::WorldObjectAssets;
 use avian3d::prelude::*;
 use bevy::{
     asset::LoadState,
@@ -115,12 +116,14 @@ fn start_world_asset_loading(
 //     }
 // }
 
-/// Checks if BOTH assets are finished loading before changing the state.
+/// Checks if all assets are finished loading before changing the state.
+/// Gates on: world visual mesh, world collider mesh, and all world object meshes.
 fn check_for_world_load_completion(
     mut next_state: ResMut<NextState<AppState>>,
     asset_server: Res<AssetServer>,
     visual_handle: Res<VisualWorldHandle>,
     collider_handle: Res<ColliderWorldHandle>,
+    world_object_assets: Option<Res<WorldObjectAssets>>,
 ) {
     // The correct way to check if a handle is the default/uninitialized one
     // is to compare it to the default value.
@@ -143,8 +146,12 @@ fn check_for_world_load_completion(
         Some(LoadState::Loaded)
     );
 
-    if visual_loaded && collider_loaded {
-        info!("[ASSETS] World visual and collider assets loaded successfully.");
+    let objects_loaded = world_object_assets
+        .map(|a| a.all_loaded(&asset_server))
+        .unwrap_or(true);
+
+    if visual_loaded && collider_loaded && objects_loaded {
+        info!("[ASSETS] World visual, collider, and object assets loaded successfully.");
         next_state.set(AppState::SceneBuilding);
     }
 }

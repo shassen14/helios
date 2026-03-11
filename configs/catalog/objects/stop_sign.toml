@@ -1,0 +1,14 @@
+label    = "stop_sign"
+class_id = 10
+
+# Path relative to the Bevy asset root (assets/ directory).
+# Export your Blender model as a GLB and place it here.
+visual_mesh = "objects/stop_sign.glb"
+
+# Axis-aligned bounding box in object-local space: [width, height, depth] meters.
+bounding_box = [0.6, 2.6, 0.6]
+
+[collider]
+shape       = "capsule"
+radius      = 0.04
+half_height = 1.0     # half-height of the cylindrical pole section

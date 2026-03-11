@@ -67,6 +67,7 @@ impl Plugin for SimulationSetupPlugin {
             OnEnter(AppState::SceneBuilding),
             (
                 SceneBuildSet::CreateRequests,
+                SceneBuildSet::ProcessWorldObjects,
                 SceneBuildSet::ProcessVehicle,
                 SceneBuildSet::ProcessSensors,
                 SceneBuildSet::ProcessBaseAutonomy,
