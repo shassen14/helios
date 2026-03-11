@@ -171,13 +171,17 @@ plugins/debugging/
     legend.rs      HUD legend panel
 ```
 
-### ECS-4: TfTree rebuilt from scratch twice per tick
+### ECS-4: TfTree rebuilt from scratch twice per tick ✅ FIXED
 
-`tf_tree_builder_system` clears all maps and re-queries every `TrackedFrame`
-entity. Runs in both `Precomputation` and `StateSync`. No change detection.
+`tf_tree_builder_system` has been split into two systems:
 
-**Fix:** Use `Changed<GlobalTransform>` filter for incremental updates. Only
-clear/rebuild on structural changes (entity spawn/despawn).
+- `tf_tree_structural_system` (Precomputation) — runs only on `Added<TrackedFrame>` /
+  `RemovedComponents<TrackedFrame>`. Inserts or removes map entries. No-op on the
+  vast majority of ticks.
+- `tf_tree_incremental_update_system` (Precomputation + StateSync) — uses
+  `Changed<GlobalTransform>` to update only the entries that actually moved.
+  Handles first-tick initialization in Precomputation; captures physics-driven
+  movement in StateSync. No full clear/rebuild on any hot-path tick.
 
 ---
 

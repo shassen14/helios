@@ -66,8 +66,8 @@ pub fn ground_truth_publish_system(
 
 /// Publishes each tracked TF frame as a `TfFramePose` to `/tf/{frame_name}`.
 ///
-/// Runs in `SimulationSet::Validation`, after the post-physics `tf_tree_builder_system`
-/// rebuild in `StateSync`, so every snapshot reflects the latest physics state.
+/// Runs in `SimulationSet::Validation`, after the post-physics `tf_tree_incremental_update_system`
+/// in `StateSync`, so every snapshot reflects the latest physics state.
 /// Foxglove discovers these topics lazily and plots world/local pose over time.
 pub fn tf_publish_system(tf_tree: Res<TfTree>, mut topic_bus: ResMut<TopicBus>) {
     let sim_time = tf_tree.sim_time;

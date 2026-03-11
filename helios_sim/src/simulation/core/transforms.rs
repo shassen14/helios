@@ -135,50 +135,93 @@ impl TfProvider for TfTree {
     }
 }
 
-/// Rebuilds the TfTree from the current ECS state.
+/// Resolves the parent-relative (local) pose for a tracked entity.
 ///
-/// Registered **twice** in the schedule:
-/// - `SimulationSet::Precomputation` — runs first so sensors/estimators see
-///   transforms that were fresh after the *previous* tick's physics step.
-///   This is the standard 1-tick latency accepted by all physics-based TF systems.
-/// - `SimulationSet::StateSync` — runs again immediately after Avian3D's physics
-///   step, so `Validation`, publishing, and visualization always see the latest state.
-pub fn tf_tree_builder_system(
-    mut tf_tree: ResMut<TfTree>,
-    query: Query<(Entity, &GlobalTransform, Option<&ChildOf>), With<TrackedFrame>>,
-    all_transforms: Query<&GlobalTransform>,
-    time: Res<Time>,
-) {
-    // Pass 1: insert all world transforms and parent maps.
-    tf_tree.transforms_to_world.clear();
-    tf_tree.local_transforms.clear();
-    tf_tree.parent_map.clear();
+/// Prefers a tracked parent from `tf_tree`; falls back to any entity's `GlobalTransform`.
+/// Returns `world_iso` unchanged for root frames (no parent).
+fn resolve_local_iso(
+    tf_tree: &TfTree,
+    all_transforms: &Query<&GlobalTransform>,
+    child_of: Option<&ChildOf>,
+    world_iso: Isometry3<f64>,
+) -> Isometry3<f64> {
+    let Some(parent_entity) = child_of.map(|c| c.parent()) else {
+        return world_iso;
+    };
+    let parent_world = tf_tree
+        .transforms_to_world
+        .get(&parent_entity)
+        .copied()
+        .or_else(|| all_transforms.get(parent_entity).ok().map(bevy_global_transform_to_enu_iso));
+    parent_world.map(|pw| pw.inverse() * world_iso).unwrap_or(world_iso)
+}
 
-    for (entity, gt, child_of) in &query {
+/// Handles structural changes to the TF graph: entities gaining or losing `TrackedFrame`.
+///
+/// Runs in `SimulationSet::Precomputation` so freshly spawned frames are available
+/// to sensors and estimators on the same tick. This system is a no-op on most ticks.
+pub fn tf_tree_structural_system(
+    mut tf_tree: ResMut<TfTree>,
+    added_query: Query<(Entity, &GlobalTransform, Option<&ChildOf>), Added<TrackedFrame>>,
+    all_transforms: Query<&GlobalTransform>,
+    mut removed: RemovedComponents<TrackedFrame>,
+) {
+    for entity in removed.read() {
+        tf_tree.transforms_to_world.remove(&entity);
+        tf_tree.local_transforms.remove(&entity);
+        tf_tree.parent_map.remove(&entity);
+    }
+
+    if added_query.is_empty() {
+        return;
+    }
+
+    // Pass 1: world pose + parent link for every newly tracked entity.
+    for (entity, gt, child_of) in &added_query {
         tf_tree.transforms_to_world.insert(entity, bevy_global_transform_to_enu_iso(gt));
         tf_tree.parent_map.insert(entity, child_of.map(|c| c.parent()));
     }
 
-    // Pass 2: compute parent-relative transforms now that all world poses exist.
-    for (entity, _, child_of) in &query {
+    // Pass 2: local pose — requires pass 1 complete so parent world poses are present.
+    for (entity, _, child_of) in &added_query {
         let world_iso = tf_tree.transforms_to_world[&entity];
-        let local_iso = match child_of.map(|c| c.parent()) {
-            Some(parent_entity) => {
-                // Prefer a tracked parent; fall back to any entity's GlobalTransform.
-                let parent_world = tf_tree
-                    .transforms_to_world
-                    .get(&parent_entity)
-                    .copied()
-                    .or_else(|| {
-                        all_transforms
-                            .get(parent_entity)
-                            .ok()
-                            .map(bevy_global_transform_to_enu_iso)
-                    });
-                parent_world.map(|pw| pw.inverse() * world_iso).unwrap_or(world_iso)
-            }
-            None => world_iso,
-        };
+        let local_iso = resolve_local_iso(&tf_tree, &all_transforms, child_of, world_iso);
+        tf_tree.local_transforms.insert(entity, local_iso);
+    }
+}
+
+/// Incrementally updates world and local poses for any `TrackedFrame` whose
+/// `GlobalTransform` changed since this system last ran.
+///
+/// Registered **twice** in the schedule:
+/// - `SimulationSet::Precomputation` — captures first-tick initialization
+///   (Added entities also satisfy `Changed`). A no-op on every subsequent tick
+///   since nothing changes between `StateSync` and the next `Precomputation`.
+/// - `SimulationSet::StateSync` — runs immediately after Avian3D's physics step,
+///   so `Validation`, publishing, and visualization always see the latest state.
+pub fn tf_tree_incremental_update_system(
+    mut tf_tree: ResMut<TfTree>,
+    changed_query: Query<
+        (Entity, &GlobalTransform, Option<&ChildOf>),
+        (With<TrackedFrame>, Changed<GlobalTransform>),
+    >,
+    all_transforms: Query<&GlobalTransform>,
+    time: Res<Time>,
+) {
+    if changed_query.is_empty() {
+        return;
+    }
+
+    // Pass 1: world poses + parent links (also handles reparenting).
+    for (entity, gt, child_of) in &changed_query {
+        tf_tree.transforms_to_world.insert(entity, bevy_global_transform_to_enu_iso(gt));
+        tf_tree.parent_map.insert(entity, child_of.map(|c| c.parent()));
+    }
+
+    // Pass 2: local poses — parent world poses already updated in pass 1.
+    for (entity, _, child_of) in &changed_query {
+        let world_iso = tf_tree.transforms_to_world[&entity];
+        let local_iso = resolve_local_iso(&tf_tree, &all_transforms, child_of, world_iso);
         tf_tree.local_transforms.insert(entity, local_iso);
     }
 

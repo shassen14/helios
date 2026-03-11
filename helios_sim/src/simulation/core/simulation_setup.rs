@@ -18,7 +18,7 @@ use crate::simulation::core::transforms::build_static_tf_maps;
 // Import the Bevy-specific types this plugin manages
 use super::components::GroundTruthState;
 use super::topics::TopicBus;
-use super::transforms::{tf_tree_builder_system, TfTree};
+use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 
 pub struct SimulationSetupPlugin;
 
@@ -151,18 +151,22 @@ impl Plugin for SimulationSetupPlugin {
             ),
         );
 
-        // Add the TF tree builder to the main game loop.
-        // It must run before any system that needs to query for transforms, like the EKF.
-        // A second rebuild runs in StateSync (post-physics) so Validation / visualization
-        // always sees the freshest transforms rather than 1-tick-stale values.
+        // TF tree update strategy:
+        // - Structural system (Precomputation): inserts/removes entries when TrackedFrame is
+        //   added or removed. No-op on the vast majority of ticks.
+        // - Incremental system (Precomputation): updates poses for Changed<GlobalTransform>.
+        //   Handles first-tick initialization; no-op every tick after that until physics runs.
+        // - Incremental system (StateSync): updates poses after Avian3D physics, so
+        //   Validation, publishing, and visualization always see the latest state.
         app.add_systems(
             FixedUpdate,
             (
-                tf_tree_builder_system
+                (tf_tree_structural_system, tf_tree_incremental_update_system)
+                    .chain()
                     .in_set(SimulationSet::Precomputation)
                     .run_if(in_state(AppState::Running)),
                 ground_truth_sync_system.in_set(SimulationSet::StateSync),
-                tf_tree_builder_system
+                tf_tree_incremental_update_system
                     .in_set(SimulationSet::StateSync)
                     .after(ground_truth_sync_system)
                     .run_if(in_state(AppState::Running)),
