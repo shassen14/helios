@@ -1,7 +1,10 @@
 use bevy::prelude::*;
 
+mod cache;
 mod components;
-mod systems;
+mod keybindings;
+pub mod gizmos;
+pub mod ui;
 
 pub use components::{
     DebugLegendNode, DebugSensorCache, DebugVisualizationConfig, PathTrail, TfLabelEntities,
@@ -37,30 +40,30 @@ impl Plugin for DebuggingPlugin {
             .init_resource::<TfLabelEntities>()
             .add_systems(
                 OnEnter(AppState::Running),
-                (apply_debug_config, systems::spawn_debug_legend).chain(),
+                (apply_debug_config, ui::legend::spawn_debug_legend).chain(),
             )
             .add_systems(
                 Update,
                 (
-                    systems::handle_debug_keybindings,
-                    systems::cache_sensor_data,
-                    systems::update_legend_text,
-                    systems::draw_ground_truth_gimbals,
-                    systems::draw_estimated_pose_gimbals,
-                    systems::draw_covariance_ellipsoid,
-                    systems::draw_point_cloud,
-                    systems::draw_velocity_vector,
-                    systems::draw_estimation_error_line,
-                    systems::draw_path_trail,
-                    systems::draw_occupancy_grid,
-                    systems::draw_tf_frames,
-                    systems::update_tf_labels,
+                    keybindings::handle_debug_keybindings,
+                    cache::cache_sensor_data,
+                    ui::legend::update_legend_text,
+                    gizmos::pose::draw_ground_truth_gimbals,
+                    gizmos::pose::draw_estimated_pose_gimbals,
+                    gizmos::covariance::draw_covariance_ellipsoid,
+                    gizmos::point_cloud::draw_point_cloud,
+                    gizmos::velocity::draw_velocity_vector,
+                    gizmos::error::draw_estimation_error_line,
+                    gizmos::trail::draw_path_trail,
+                    gizmos::occupancy::draw_occupancy_grid,
+                    gizmos::tf_frames::draw_tf_frames,
+                    gizmos::tf_frames::update_tf_labels,
                 )
                     .run_if(in_state(AppState::Running)),
             )
             .add_systems(
                 FixedUpdate,
-                systems::update_path_trail
+                gizmos::trail::update_path_trail
                     .in_set(SimulationSet::Validation)
                     .run_if(in_state(AppState::Running)),
             );
