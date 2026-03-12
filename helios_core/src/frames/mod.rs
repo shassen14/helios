@@ -5,9 +5,10 @@ use nalgebra::{
     DMatrix, DVector, Isometry3, Matrix3, Quaternion, Translation3, UnitQuaternion, Vector3,
 };
 use std::hash::Hash;
+use serde::{Deserialize, Serialize};
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FrameId {
     /// The global ENU simulation frame. The ultimate source of truth.
     World,
@@ -27,7 +28,7 @@ impl Default for FrameId {
 
 /// An enum that defines every possible variable that can exist in a state vector.
 /// The FrameId specifies which frame the variable is expressed in.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum StateVariable {
     // --- Cartesian Position ---
     Px(FrameId),
@@ -64,7 +65,7 @@ pub enum StateVariable {
 
 /// The "smart" state object used by filters. It bundles the state vector
 /// with its schema (the layout), covariance, and timestamp.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct FrameAwareState {
     /// The ordered "schema" of the state vector.
     pub layout: Vec<StateVariable>,
@@ -265,4 +266,5 @@ impl FrameAwareState {
     }
 }
 
+pub mod conventions;
 pub mod layout;

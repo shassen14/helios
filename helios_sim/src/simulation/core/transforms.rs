@@ -17,6 +17,34 @@ use std::sync::Arc;
 #[derive(Component)]
 pub struct TrackedFrame;
 
+/// A single named frame's pose snapshot, published to TopicBus after each
+/// physics step so Foxglove can plot any frame's trajectory over time.
+#[derive(Clone, Debug)]
+pub struct TfFramePose {
+    /// Elapsed simulation time (seconds) when this snapshot was taken.
+    pub sim_time: f64,
+    /// Name of this frame (e.g. "truck/imu").
+    pub frame_name: Arc<str>,
+    /// Name of the parent frame; "world" if this is a root frame.
+    pub parent_frame: Arc<str>,
+    // World pose in ENU
+    pub pos_x: f64,
+    pub pos_y: f64,
+    pub pos_z: f64,
+    pub quat_x: f64,
+    pub quat_y: f64,
+    pub quat_z: f64,
+    pub quat_w: f64,
+    // Parent-relative pose (ENU for root frames, FLU for body-mounted sensors)
+    pub local_pos_x: f64,
+    pub local_pos_y: f64,
+    pub local_pos_z: f64,
+    pub local_quat_x: f64,
+    pub local_quat_y: f64,
+    pub local_quat_z: f64,
+    pub local_quat_w: f64,
+}
+
 /// The Bevy resource that holds the complete transform graph for a single frame.
 #[derive(Resource, Default, Debug)]
 pub struct TfTree {
@@ -24,12 +52,23 @@ pub struct TfTree {
     // This is what the TfProvider trait will use internally.
     transforms_to_world: HashMap<Entity, Isometry3<f64>>,
 
+    // Parent-relative poses in ENU (FLU for sensor children).
+    // Computed in a second pass after all world poses are known.
+    local_transforms: HashMap<Entity, Isometry3<f64>>,
+
+    // Parent entity for each tracked frame; None = world root.
+    parent_map: HashMap<Entity, Option<Entity>>,
+
     // For user-facing API calls, configuration, and debugging.
     // This map is populated once when agents/sensors are spawned.
     name_to_entity: HashMap<Arc<str>, Entity>,
 
     /// Maps a Bevy Entity ID back to its human-readable name for debugging/logging.
-    entity_to_name: HashMap<Entity, Arc<str>>,
+    pub entity_to_name: HashMap<Entity, Arc<str>>,
+
+    /// Elapsed simulation time at the last rebuild. Consumers can compare this
+    /// against `Time::elapsed_secs_f64()` to detect a stale tree.
+    pub sim_time: f64,
 }
 
 impl TfTree {
@@ -42,6 +81,22 @@ impl TfTree {
     /// Looks up the world pose of a frame by its Entity ID.
     pub fn lookup_by_entity(&self, entity: Entity) -> Option<Isometry3<f64>> {
         self.transforms_to_world.get(&entity).copied()
+    }
+
+    /// Looks up the parent-relative pose of a frame by its Entity ID.
+    pub fn lookup_local_by_entity(&self, entity: Entity) -> Option<Isometry3<f64>> {
+        self.local_transforms.get(&entity).copied()
+    }
+
+    /// Returns an iterator over all tracked frames: `(entity, world_iso, local_iso, parent_entity)`.
+    pub fn iter_frames(
+        &self,
+    ) -> impl Iterator<Item = (Entity, Isometry3<f64>, Isometry3<f64>, Option<Entity>)> + '_ {
+        self.transforms_to_world.iter().map(|(&entity, &world_iso)| {
+            let local_iso = self.local_transforms.get(&entity).copied().unwrap_or(world_iso);
+            let parent = self.parent_map.get(&entity).copied().flatten();
+            (entity, world_iso, local_iso, parent)
+        })
     }
 
     pub fn get_transform_by_name(
@@ -73,26 +128,104 @@ impl TfProvider for TfTree {
         // T_B_A = (T_W_A)^-1 * T_W_B
         Some(pose_from_world.inverse() * pose_to_world)
     }
+
+    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>> {
+        let entity = Entity::from_bits(frame.0);
+        self.transforms_to_world.get(&entity).copied()
+    }
 }
 
-/// The Bevy system that runs once per frame to build the TfTree resource.
-/// This system now populates the physical poses AND the name mappings.
-pub fn tf_tree_builder_system(
-    mut tf_tree: ResMut<TfTree>,
-    // --- The Query is Modified Here ---
-    // We now ask for the Name component as well.
-    // Bevy will only give us entities that have a GlobalTransform, a Name, AND the TrackedFrame marker.
-    query: Query<(Entity, &GlobalTransform), With<TrackedFrame>>,
-) {
-    // Clear all maps at the start of the frame to ensure no stale data.
-    tf_tree.transforms_to_world.clear();
-    tf_tree.transforms_to_world.reserve(query.iter().len());
+/// Resolves the parent-relative (local) pose for a tracked entity.
+///
+/// Prefers a tracked parent from `tf_tree`; falls back to any entity's `GlobalTransform`.
+/// Returns `world_iso` unchanged for root frames (no parent).
+fn resolve_local_iso(
+    tf_tree: &TfTree,
+    all_transforms: &Query<&GlobalTransform>,
+    child_of: Option<&ChildOf>,
+    world_iso: Isometry3<f64>,
+) -> Isometry3<f64> {
+    let Some(parent_entity) = child_of.map(|c| c.parent()) else {
+        return world_iso;
+    };
+    let parent_world = tf_tree
+        .transforms_to_world
+        .get(&parent_entity)
+        .copied()
+        .or_else(|| all_transforms.get(parent_entity).ok().map(bevy_global_transform_to_enu_iso));
+    parent_world.map(|pw| pw.inverse() * world_iso).unwrap_or(world_iso)
+}
 
-    for (entity, transform) in &query {
-        // --- Part 1: Physical Pose (your existing code) ---
-        let iso = bevy_global_transform_to_nalgebra_isometry(transform);
-        tf_tree.transforms_to_world.insert(entity, iso);
+/// Handles structural changes to the TF graph: entities gaining or losing `TrackedFrame`.
+///
+/// Runs in `SimulationSet::Precomputation` so freshly spawned frames are available
+/// to sensors and estimators on the same tick. This system is a no-op on most ticks.
+pub fn tf_tree_structural_system(
+    mut tf_tree: ResMut<TfTree>,
+    added_query: Query<(Entity, &GlobalTransform, Option<&ChildOf>), Added<TrackedFrame>>,
+    all_transforms: Query<&GlobalTransform>,
+    mut removed: RemovedComponents<TrackedFrame>,
+) {
+    for entity in removed.read() {
+        tf_tree.transforms_to_world.remove(&entity);
+        tf_tree.local_transforms.remove(&entity);
+        tf_tree.parent_map.remove(&entity);
     }
+
+    if added_query.is_empty() {
+        return;
+    }
+
+    // Pass 1: world pose + parent link for every newly tracked entity.
+    for (entity, gt, child_of) in &added_query {
+        tf_tree.transforms_to_world.insert(entity, bevy_global_transform_to_enu_iso(gt));
+        tf_tree.parent_map.insert(entity, child_of.map(|c| c.parent()));
+    }
+
+    // Pass 2: local pose — requires pass 1 complete so parent world poses are present.
+    for (entity, _, child_of) in &added_query {
+        let world_iso = tf_tree.transforms_to_world[&entity];
+        let local_iso = resolve_local_iso(&tf_tree, &all_transforms, child_of, world_iso);
+        tf_tree.local_transforms.insert(entity, local_iso);
+    }
+}
+
+/// Incrementally updates world and local poses for any `TrackedFrame` whose
+/// `GlobalTransform` changed since this system last ran.
+///
+/// Registered **twice** in the schedule:
+/// - `SimulationSet::Precomputation` — captures first-tick initialization
+///   (Added entities also satisfy `Changed`). A no-op on every subsequent tick
+///   since nothing changes between `StateSync` and the next `Precomputation`.
+/// - `SimulationSet::StateSync` — runs immediately after Avian3D's physics step,
+///   so `Validation`, publishing, and visualization always see the latest state.
+pub fn tf_tree_incremental_update_system(
+    mut tf_tree: ResMut<TfTree>,
+    changed_query: Query<
+        (Entity, &GlobalTransform, Option<&ChildOf>),
+        (With<TrackedFrame>, Changed<GlobalTransform>),
+    >,
+    all_transforms: Query<&GlobalTransform>,
+    time: Res<Time>,
+) {
+    if changed_query.is_empty() {
+        return;
+    }
+
+    // Pass 1: world poses + parent links (also handles reparenting).
+    for (entity, gt, child_of) in &changed_query {
+        tf_tree.transforms_to_world.insert(entity, bevy_global_transform_to_enu_iso(gt));
+        tf_tree.parent_map.insert(entity, child_of.map(|c| c.parent()));
+    }
+
+    // Pass 2: local poses — parent world poses already updated in pass 1.
+    for (entity, _, child_of) in &changed_query {
+        let world_iso = tf_tree.transforms_to_world[&entity];
+        let local_iso = resolve_local_iso(&tf_tree, &all_transforms, child_of, world_iso);
+        tf_tree.local_transforms.insert(entity, local_iso);
+    }
+
+    tf_tree.sim_time = time.elapsed_secs_f64();
 }
 
 /// System that runs ONCE to build the static name-to-entity mappings.
@@ -112,7 +245,23 @@ pub fn build_static_tf_maps(
 }
 
 // =========================================================================
-// == Coordinate System Conversion Helpers (Your original code, slightly polished) ==
+// == Coordinate System Conversion Helpers ==
+//
+// Two distinct conversion contexts exist:
+//
+// 1. WORLD FRAME (ENU ↔ Bevy world):
+//    Use for agent starting poses, goal poses — anything expressed in the
+//    global navigation frame. Key functions: enu_iso_to_bevy_transform,
+//    bevy_transform_to_enu_iso, enu_vector_to_bevy_vector, bevy_vector_to_enu_vector.
+//
+// 2. BODY/SENSOR FRAME (FLU ↔ Bevy local):
+//    Use for sensor child transforms relative to the vehicle body, and for
+//    ray directions generated by sensor models. Key functions:
+//    flu_iso_to_bevy_local_transform, flu_vector_to_bevy_local_vector,
+//    bevy_local_vector_to_flu_vector. Used via Pose::to_bevy_local_transform().
+//
+// Never mix these two contexts. Poses from TOML `transform` fields are FLU body-relative;
+// poses from `starting_pose` / `goal_pose` are ENU world-relative.
 // =========================================================================
 
 /// Converts a Bevy `Transform` into a `nalgebra::Isometry3<f64>`.
@@ -228,6 +377,52 @@ pub fn bevy_transform_to_enu_iso(bevy_transform: &BevyTransform) -> Isometry3<f6
 
 pub fn bevy_global_transform_to_enu_iso(bevy_global_transform: &GlobalTransform) -> Isometry3<f64> {
     bevy_transform_to_enu_iso(&bevy_global_transform.compute_transform())
+}
+
+// --- FLU Body Frame <-> Bevy Local Frame Transformations ---
+thread_local! {
+    /// Quaternion from the FLU body frame to Bevy's local coordinate frame.
+    /// FLU: Forward=+X, Left=+Y, Up=+Z
+    /// Bevy local: Forward=-Z, Left=-X, Up=+Y
+    /// Equivalent to: Q_ENU_TO_BEVY * Q_FLU_TO_ENU (rotate FLU→ENU then ENU→Bevy)
+    pub static Q_FLU_BODY_TO_BEVY_LOCAL: UnitQuaternion<f64> = {
+        let q_flu_to_enu = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), FRAC_PI_2);
+        let q_enu_to_bevy = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -FRAC_PI_2);
+        q_enu_to_bevy * q_flu_to_enu
+    };
+}
+
+/// Converts a body-relative direction vector from FLU to Bevy local frame.
+/// Use for: ray directions generated in sensor FLU frame.
+/// FLU +X (Forward) → Bevy -Z, FLU +Y (Left) → Bevy -X, FLU +Z (Up) → Bevy +Y
+pub fn flu_vector_to_bevy_local_vector(flu_vec: &Vector3<f64>) -> BevyVec3 {
+    BevyVec3::new(-flu_vec.y as f32, flu_vec.z as f32, -flu_vec.x as f32)
+}
+
+/// Converts a body-relative direction vector from Bevy local frame back to FLU.
+pub fn bevy_local_vector_to_flu_vector(bevy_vec: &BevyVec3) -> Vector3<f64> {
+    Vector3::new(-bevy_vec.z as f64, -bevy_vec.x as f64, bevy_vec.y as f64)
+}
+
+/// Converts a sensor orientation from FLU body frame to Bevy local frame.
+pub fn flu_quat_to_bevy_local_quat(flu_obj_quat: &UnitQuaternion<f64>) -> BevyQuat {
+    let final_rot_f64 = Q_FLU_BODY_TO_BEVY_LOCAL.with(|q| *q * flu_obj_quat * q.inverse());
+    BevyQuat::from_xyzw(
+        final_rot_f64.coords.x as f32,
+        final_rot_f64.coords.y as f32,
+        final_rot_f64.coords.z as f32,
+        final_rot_f64.coords.w as f32,
+    )
+}
+
+/// Converts a full body-relative sensor pose (FLU) to a Bevy child Transform.
+/// Use this for all sensor local transforms — NOT enu_iso_to_bevy_transform.
+pub fn flu_iso_to_bevy_local_transform(flu_pose: &Isometry3<f64>) -> BevyTransform {
+    BevyTransform {
+        translation: flu_vector_to_bevy_local_vector(&flu_pose.translation.vector),
+        rotation: flu_quat_to_bevy_local_quat(&flu_pose.rotation),
+        scale: BevyVec3::ONE,
+    }
 }
 
 // --- Unit Test Module with Renamed Tests ---
@@ -406,6 +601,55 @@ mod tests {
             &UnitQuaternion::identity(),
             F64_EPSILON,
         );
+    }
+
+    // --- Tests for FLU Body Frame <-> Bevy Local Frame ---
+    #[test]
+    fn test_flu_vector_to_bevy_local_vector_axes() {
+        // FLU +X (Forward) → Bevy -Z
+        assert_bevy_vec3_approx_eq(
+            &flu_vector_to_bevy_local_vector(&Vector3::new(1.0, 0.0, 0.0)),
+            &BevyVec3::new(0.0, 0.0, -1.0),
+            F32_EPSILON,
+        );
+        // FLU +Y (Left) → Bevy -X
+        assert_bevy_vec3_approx_eq(
+            &flu_vector_to_bevy_local_vector(&Vector3::new(0.0, 1.0, 0.0)),
+            &BevyVec3::new(-1.0, 0.0, 0.0),
+            F32_EPSILON,
+        );
+        // FLU +Z (Up) → Bevy +Y
+        assert_bevy_vec3_approx_eq(
+            &flu_vector_to_bevy_local_vector(&Vector3::new(0.0, 0.0, 1.0)),
+            &BevyVec3::new(0.0, 1.0, 0.0),
+            F32_EPSILON,
+        );
+    }
+
+    #[test]
+    fn test_flu_vector_round_trip() {
+        let flu_vec = Vector3::new(1.5, -0.5, 2.0);
+        let bevy_vec = flu_vector_to_bevy_local_vector(&flu_vec);
+        let flu_vec_back = bevy_local_vector_to_flu_vector(&bevy_vec);
+        assert_nalgebra_vector3_approx_eq(&flu_vec_back, &flu_vec, F64_EPSILON);
+    }
+
+    #[test]
+    fn test_flu_iso_to_bevy_local_transform_identity() {
+        let flu_pose = Isometry3::identity();
+        let bevy_tf = flu_iso_to_bevy_local_transform(&flu_pose);
+        assert_bevy_vec3_approx_eq(&bevy_tf.translation, &BevyVec3::ZERO, F32_EPSILON);
+        assert_bevy_quat_approx_eq(&bevy_tf.rotation, &BevyQuat::IDENTITY, F32_EPSILON);
+    }
+
+    #[test]
+    fn test_flu_iso_to_bevy_local_transform_yaw_90() {
+        // FLU yaw +90° (around +Z axis, turning left) → Bevy rotation_y(+90°) (turning left in Y-up)
+        let flu_yaw_90 = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
+        let flu_pose = Isometry3::from_parts(Translation3::identity(), flu_yaw_90);
+        let bevy_tf = flu_iso_to_bevy_local_transform(&flu_pose);
+        let expected_bevy_rot = BevyQuat::from_rotation_y(PI_F32 / 2.0);
+        assert_bevy_quat_approx_eq(&bevy_tf.rotation, &expected_bevy_rot, F32_EPSILON);
     }
 
     #[test]

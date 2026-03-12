@@ -1,0 +1,6 @@
+kind = "OccupancyGrid2D"
+rate = 5.0        # Hz — how often the mapper is ticked
+resolution = 0.5  # meters per cell
+width_m = 100.0   # rolling window width in meters (East axis)
+height_m = 100.0  # rolling window height in meters (North axis)
+pose_source = "ground_truth"  # "ground_truth" | "estimated"

@@ -38,8 +38,8 @@ pub trait Mapper: Send + Sync {
 
 // --- 3. Declare the implementation sub-modules ---
 mod none;
-// mod occupancy_grid; // When you add this later
+mod occupancy_grid;
 
 // --- 4. Re-export the public structs for a clean API ---
 pub use none::NoneMapper;
-// pub use occupancy_grid::OccupancyGridMapper; // When you add this later
+pub use occupancy_grid::{MapperPoseSource, OccupancyGridMapper};

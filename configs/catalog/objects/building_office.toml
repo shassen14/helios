@@ -1,0 +1,10 @@
+label    = "building"
+class_id = 20
+
+visual_mesh = "objects/building_office.glb"
+
+bounding_box = [20.0, 30.0, 15.0]
+
+[collider]
+shape        = "box"
+half_extents = [10.0, 15.0, 7.5]

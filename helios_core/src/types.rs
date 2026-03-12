@@ -1,13 +1,14 @@
 // helios_core/src/types.rs
 
 use nalgebra::{DVector, Isometry3};
+use serde::{Deserialize, Serialize};
 
 // --- Core Type Aliases ---
 pub type State = DVector<f64>;
 pub type Control = DVector<f64>;
 
 // --- Core Identifier ---
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct FrameHandle(pub u64);
 
 impl FrameHandle {
@@ -23,8 +24,15 @@ impl FrameHandle {
     }
 }
 
+/// Monotonically increasing time in seconds (simulation or hardware clock).
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+pub struct MonotonicTime(pub f64);
+
 // --- Core Trait for Transform Lookups ---
-// This is so fundamental it belongs here.
 pub trait TfProvider {
     fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>>;
+
+    /// Returns the world (ENU) pose of a frame directly from physics.
+    /// Use this to bypass the estimator entirely (e.g. ground-truth mapping).
+    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>>;
 }

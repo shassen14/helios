@@ -1,4 +1,7 @@
-// helios_sim/src/simulation/plugins/world/mod.rs
+pub mod atmosphere;
+pub mod objects;
+pub mod terrain;
 
-pub mod spawner;
-pub mod test_environment;
+pub use atmosphere::AtmospherePlugin;
+pub use objects::{WorldObjectAssets, WorldObjectPlugin};
+pub use terrain::{TerrainAssets, TerrainPlugin};

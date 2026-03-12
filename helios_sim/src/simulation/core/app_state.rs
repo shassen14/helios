@@ -38,34 +38,38 @@ pub enum SceneBuildSet {
     /// Pass 1: Create agent shells and attach the main request component.
     CreateRequests,
 
-    /// Pass 2: Process basic vehicle logic and add the DynamicsModel.
+    /// Pass 2: Spawn all static world objects (signs, buildings, terrain features).
+    /// Runs before agent processing so sensors can reference world geometry at setup time.
+    ProcessWorldObjects,
+
+    /// Pass 3: Process basic vehicle logic and add the DynamicsModel.
     ProcessVehicle,
 
-    /// Pass 3: Process all sensor requests and create sensor child entities.
+    /// Pass 4: Process all sensor requests and create sensor child entities.
     ProcessSensors,
 
-    /// Pass 4: Process "base" autonomy modules that have no other autonomy dependencies.
+    /// Pass 5: Process "base" autonomy modules that have no other autonomy dependencies.
     /// (Estimators, Mappers, SLAM modules).
     ProcessBaseAutonomy,
 
-    /// Pass 5: Process modules that depend on the base autonomy layer.
+    /// Pass 6: Process modules that depend on the base autonomy layer.
     /// (Planners, Trackers).
     ProcessDependentAutonomy,
 
-    /// Pass 6: Process modules that depend on the planners.
+    /// Pass 7: Process modules that depend on the planners.
     /// (Controllers).
     ProcessControllers,
 
-    /// Pass 7: Attach all physical bodies (RigidBody, Collider).
+    /// Pass 8: Attach all physical bodies (RigidBody, Collider).
     Physics,
 
-    /// Pass 8: TODO:
+    /// Pass 9: TODO:
     Finalize,
 
-    /// Pass 9: Final validation checks.
+    /// Pass 10: Final validation checks.
     Validation,
 
-    /// Pass 10: Remove all temporary request components.
+    /// Pass 11: Remove all temporary request components.
     Cleanup,
 }
 

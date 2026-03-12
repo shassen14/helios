@@ -1,3 +1,4 @@
+// helios_sim/src/simulation/plugins/sensors/imu.rs
 use avian3d::prelude::Gravity;
 use bevy::prelude::*;
 use nalgebra::{DMatrix, Vector3, Vector6};
@@ -8,8 +9,10 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::transforms::bevy_global_transform_to_enu_iso;
 use crate::simulation::core::{
-    app_state::SimulationSet, events::BevyMeasurementMessage, prng::SimulationRng,
-    topics::GroundTruthState,
+    app_state::SimulationSet,
+    components::{GroundTruthState, SensorTopicName},
+    events::BevyMeasurementMessage,
+    prng::SimulationRng,
 };
 
 // --- Core Library Imports ---
@@ -29,6 +32,8 @@ pub struct Imu {
     pub timer: Timer,
     accel_noise: [Normal<f64>; 3], // X, Y, Z
     gyro_noise: [Normal<f64>; 3],  // X, Y, Z
+    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
+    pub topic_name: String,
 }
 
 pub struct ImuPlugin;
@@ -62,7 +67,7 @@ fn spawn_imu_sensors(
 ) {
     for (agent_entity, agent_name, request) in &request_query {
         // Find any IMU configurations for this agent.
-        for (sensor_name, sensor_config) in &request.0.sensors {
+        for (_sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Imu(imu_config) = sensor_config {
                 info!(
                     "  -> Spawning IMU '{}' as child of agent '{}' with rate of {:.1} Hz",
@@ -97,8 +102,13 @@ fn spawn_imu_sensors(
                 };
 
                 // --- 3. Add all components to the new sensor entity ---
+                let topic_name = format!(
+                    "/{}/sensors/{}",
+                    agent_name.as_str(),
+                    imu_config.get_name()
+                );
                 sensor_entity_commands.insert((
-                    Name::new(imu_config.get_name().to_string()),
+                    Name::new(format!("{}/{}", agent_name.as_str(), imu_config.get_name())),
                     // The Bevy component with runtime state.
                     Imu {
                         timer: Timer::new(
@@ -115,13 +125,16 @@ fn spawn_imu_sensors(
                             Normal::new(0.0, gyro_std[1] as f64).unwrap(),
                             Normal::new(0.0, gyro_std[2] as f64).unwrap(),
                         ],
+                        topic_name: topic_name.clone(),
                     },
+                    // Topic name for the cold-path telemetry system.
+                    SensorTopicName(topic_name),
                     // The pure `helios_core` model, wrapped for use in Bevy.
                     MeasurementModel(Box::new(final_core_model)),
                     // Marker so the TF system can find it.
                     TrackedFrame,
                     // Its local transform relative to the parent (the agent).
-                    imu_config.get_relative_pose().to_bevy_transform(),
+                    imu_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 
                 // --- 4. Add the sensor as a child of the agent ---
@@ -135,7 +148,8 @@ fn spawn_imu_sensors(
 // == Runtime System ==
 // =========================================================================
 
-/// Runs every frame to simulate IMU physics and publish measurement messages.
+/// Runs every frame to simulate IMU physics and emit `BevyMeasurementMessage` events.
+/// TopicBus publishing is deferred to `sensor_telemetry_system` in the Validation phase.
 fn imu_sensor_system(
     mut measurement_writer: EventWriter<BevyMeasurementMessage>,
     time: Res<Time>,
@@ -221,69 +235,11 @@ fn imu_sensor_system(
                     data: MeasurementData::Imu6Dof(noisy_measurement),
                 };
 
+                // Emit event — routed to SensorMailbox by route_sensor_messages.
+                // TopicBus publishing is deferred to sensor_telemetry_system (Validation).
                 measurement_writer.write(BevyMeasurementMessage(pure_message));
                 // info!("IMU {:?} published measurement.", sensor_entity);
             }
         }
     }
-
-    // Iterate over each parent agent that has children.
-    // for (agent_entity, ground_truth, children) in &parent_query {
-    //     // Iterate through the list of child entities for this specific agent.
-    //     for &child_entity in children {
-    //         // Use `get_mut` to check if this child is an IMU sensor we need to process.
-    //         if let Ok((sensor_entity, mut imu, sensor_global_transform)) =
-    //             sensor_query.get_mut(child_entity)
-    //         {
-    //             // Tick the sensor's timer.
-    //             imu.timer.tick(dt);
-    //             if !imu.timer.just_finished() {
-    //                 continue; // Not time to publish yet.
-    //             }
-
-    //             // --- Simulate IMU Physics ---
-
-    //             // 1. Get the sensor's true orientation in the ENU world frame.
-    //             let sensor_pose_enu = bevy_global_transform_to_enu_iso(sensor_global_transform);
-    //             let q_sensor_from_world = sensor_pose_enu.rotation.inverse();
-
-    //             // 2. Calculate the "proper acceleration" that an IMU measures.
-    //             // Proper_Accel = Coordinate_Accel - Gravity_Vector
-    //             // All vectors here are in the ENU world frame.
-    //             let gravity_enu = Vector3::new(0.0, 0.0, gravity.0.y as f64);
-    //             let proper_accel_world = ground_truth.linear_acceleration - gravity_enu;
-
-    //             // 3. Rotate world-frame vectors into the sensor's local frame.
-    //             let perfect_accel = q_sensor_from_world * proper_accel_world;
-    //             let perfect_gyro = q_sensor_from_world * ground_truth.angular_velocity;
-
-    //             // 4. Combine into a 6D vector and add optional noise.
-    //             let perfect_measurement = Vector6::new(
-    //                 perfect_accel.x,
-    //                 perfect_accel.y,
-    //                 perfect_accel.z,
-    //                 perfect_gyro.x,
-    //                 perfect_gyro.y,
-    //                 perfect_gyro.z,
-    //             );
-    //             // TODO: Add noise from a Normal distribution using `rng`.
-    //             let noisy_measurement = perfect_measurement;
-
-    //             // 5. Create the pure `MeasurementMessage` from `helios_core`.
-    //             let pure_message = MeasurementMessage {
-    //                 agent_handle: FrameHandle::from_entity(agent_entity),
-    //                 sensor_handle: FrameHandle::from_entity(sensor_entity),
-    //                 timestamp: time.elapsed_secs_f64(),
-    //                 data: MeasurementData::Imu6Dof(noisy_measurement),
-    //             };
-
-    //             info!(
-    //                 "IMU {:?} published measurement {:?}",
-    //                 sensor_entity, &pure_message.data
-    //             );
-    //             // 6. Wrap it in the Bevy event and send it.
-    //             measurement_writer.write(BevyMeasurementMessage(pure_message));
-    //         }
-    //     }
-    // }
 }

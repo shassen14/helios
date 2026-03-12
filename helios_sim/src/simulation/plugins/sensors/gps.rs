@@ -6,14 +6,16 @@ use std::time::Duration;
 // --- Simulation Crate Imports ---
 use crate::prelude::*;
 use crate::simulation::core::{
-    app_state::SimulationSet, events::BevyMeasurementMessage, prng::SimulationRng,
-    topics::GroundTruthState,
+    app_state::SimulationSet,
+    components::SensorTopicName,
+    events::BevyMeasurementMessage,
+    prng::SimulationRng,
 };
 
 // --- Core Library Imports ---
 use helios_core::{
     messages::{MeasurementData, MeasurementMessage},
-    models::estimation::measurement::{gps::GpsPositionModel, Measurement},
+    models::estimation::measurement::{gps::GpsPositionModel},
     types::FrameHandle,
 };
 
@@ -27,6 +29,8 @@ pub struct Gps {
     pub timer: Timer,
     // Store the noise distribution for efficiency
     noise_dist: Normal<f64>,
+    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
+    pub topic_name: String,
 }
 
 pub struct GpsPlugin;
@@ -84,24 +88,28 @@ fn spawn_gps_sensors(
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
+                let topic_name = format!(
+                    "/{}/sensors/{}",
+                    agent_name.as_str(),
+                    sensor_name
+                );
                 sensor_entity_commands.insert((
-                    Name::new(gps_config.name.clone()),
+                    Name::new(format!("{}/{}", agent_name.as_str(), gps_config.name)),
                     // The Bevy component with the runtime timer.
                     Gps {
                         timer: Timer::new(
                             Duration::from_secs_f32(1.0 / gps_config.rate),
                             TimerMode::Repeating,
                         ),
-                        // We could create separate noise distributions for each axis if needed.
-                        // For simplicity, we'll just use the first standard deviation value.
                         noise_dist: Normal::new(0.0, gps_config.noise_stddev[0] as f64).unwrap(),
+                        topic_name: topic_name.clone(),
                     },
-                    // The crucial part: The wrapped `helios_core` model.
-                    // This is what the world model spawner will look for.
+                    // Topic name for the cold-path telemetry system.
+                    SensorTopicName(topic_name),
+                    // The wrapped `helios_core` model.
                     MeasurementModel(Box::new(core_model)),
-                    TrackedFrame, // Mark it for the TF system
-                    // Its local transform relative to the parent (the agent).
-                    gps_config.get_relative_pose().to_bevy_transform(),
+                    TrackedFrame,
+                    gps_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 
                 // --- 3. Add the sensor as a child of the agent ---
@@ -115,7 +123,8 @@ fn spawn_gps_sensors(
 // == Runtime System ==
 // =========================================================================
 
-/// Runs every frame to simulate GPS physics and publish measurement messages.
+/// Runs every frame to simulate GPS physics and emit `BevyMeasurementMessage` events.
+/// TopicBus publishing is deferred to `sensor_telemetry_system` in the Validation phase.
 fn gps_sensor_system(
     mut measurement_writer: EventWriter<BevyMeasurementMessage>,
     time: Res<Time>,
@@ -128,7 +137,7 @@ fn gps_sensor_system(
 ) {
     let dt = time.delta();
 
-    for (agent_entity, agent_transform, children) in &parent_query {
+    for (agent_entity, _agent_transform, children) in &parent_query {
         for &child_entity in children {
             // Check if this child is a GPS sensor we need to process.
             if let Ok((sensor_entity, mut gps, sensor_global_transform)) =
@@ -165,9 +174,8 @@ fn gps_sensor_system(
                     data: MeasurementData::GpsPosition(noisy_position_enu),
                 };
 
-                // println!("Gps message: {:?}", pure_message.data);
-
-                // 5. Wrap it in the Bevy event and send it.
+                // Emit event — routed to SensorMailbox by route_sensor_messages.
+                // TopicBus publishing is deferred to sensor_telemetry_system (Validation).
                 measurement_writer.write(BevyMeasurementMessage(pure_message));
             }
         }

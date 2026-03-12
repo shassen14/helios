@@ -144,11 +144,10 @@ impl StateEstimator for UnscentedKalmanFilter {
     }
 
     fn update(&mut self, message: &MeasurementMessage, context: &FilterContext) {
-        if let Some(model) = self.measurement_models.get(&message.sensor_handle) {
-            // We use predict_measurement just to check if this model handles this data.
-            // This call signature needs a slight adjustment to not need the message for the UKF.
-            // Let's assume we can get z and a "measurement function" `h`.
-            if let Some(z) = message.data.as_primary_slice().map(DVector::from_row_slice) {
+        for model in self.measurement_models.values() {
+            // We call the new `get_measurement_vector` method. If it returns `Some`,
+            // it means this is the right model and we have our `z` vector.
+            if let Some(z) = model.get_measurement_vector(&message.data) {
                 let n = self.state.dim();
                 let m = z.nrows();
 

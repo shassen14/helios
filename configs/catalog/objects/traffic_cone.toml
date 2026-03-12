@@ -1,0 +1,11 @@
+label    = "traffic_cone"
+class_id = 11
+
+visual_mesh = "objects/traffic_cone.glb"
+
+bounding_box = [0.45, 0.75, 0.45]
+
+[collider]
+shape       = "capsule"
+radius      = 0.15
+half_height = 0.2

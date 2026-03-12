@@ -35,6 +35,14 @@ impl Measurement for MagnetometerModel {
         ]
     }
 
+    fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
+        if let MeasurementData::Magnetometer(vec) = data {
+            Some(DVector::from_row_slice(vec.as_slice()))
+        } else {
+            None
+        }
+    }
+
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,

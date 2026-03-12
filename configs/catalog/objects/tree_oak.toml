@@ -1,0 +1,11 @@
+label    = "tree"
+class_id = 30
+
+visual_mesh = "objects/tree_oak.glb"
+
+bounding_box = [6.0, 12.0, 6.0]
+
+[collider]
+shape       = "cylinder"
+radius      = 0.25
+half_height = 6.0

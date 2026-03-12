@@ -10,25 +10,31 @@ use rand_chacha::ChaCha8Rng;
 use crate::prelude::*;
 use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::simulation::core::events::BevyMeasurementMessage;
-use crate::simulation::core::ground_truth_sync_system;
+use crate::simulation::core::{
+    ground_truth_publish_system, ground_truth_sync_system, tf_publish_system,
+};
 use crate::simulation::core::prng::SimulationRng;
 use crate::simulation::core::transforms::build_static_tf_maps;
 // Import the Bevy-specific types this plugin manages
-use super::topics::{GroundTruthState, TopicBus};
-use super::transforms::{tf_tree_builder_system, TfTree};
+use super::components::GroundTruthState;
+use super::topics::TopicBus;
+use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 
 pub struct SimulationSetupPlugin;
 
 impl Plugin for SimulationSetupPlugin {
     fn build(&self, app: &mut App) {
-        // This plugin's job is to read the config and add resources and startup systems.
-        let config = app
-            .world()
-            .get_resource::<ScenarioConfig>()
-            .expect("SimulationConfig not found!");
+        // Extract config values before mutably borrowing app.
+        let (seed, frequency_hz) = {
+            let config = app
+                .world()
+                .get_resource::<ScenarioConfig>()
+                .expect("SimulationConfig not found!");
+            (config.simulation.seed, config.simulation.frequency_hz)
+        };
 
         // --- 1. Add the Deterministic PRNG Resource ---
-        let rng = match config.simulation.seed {
+        let rng = match seed {
             Some(seed) => ChaCha8Rng::seed_from_u64(seed),
             None => ChaCha8Rng::from_rng(&mut OsRng).expect("OS RNG failed"),
         };
@@ -36,15 +42,11 @@ impl Plugin for SimulationSetupPlugin {
 
         // --- INITIALIZE RESOURCES & EVENTS ---
         app
-            // This resource is the central message bus for the simulation.
             .init_resource::<TopicBus>()
-            // This resource will be populated each frame with the latest transforms.
             .init_resource::<TfTree>()
-            // This is CRITICAL. It registers the pure MeasurementEvent with Bevy's event system.
             .add_event::<BevyMeasurementMessage>();
 
-        let simulation_frequency = 400.0; // The desired frequency in Hz
-        let fixed_update_timestep = 1.0 / simulation_frequency;
+        let fixed_update_timestep = 1.0 / frequency_hz;
 
         app.insert_resource(
             // The resource is of type Time<Fixed>.
@@ -65,6 +67,7 @@ impl Plugin for SimulationSetupPlugin {
             OnEnter(AppState::SceneBuilding),
             (
                 SceneBuildSet::CreateRequests,
+                SceneBuildSet::ProcessWorldObjects,
                 SceneBuildSet::ProcessVehicle,
                 SceneBuildSet::ProcessSensors,
                 SceneBuildSet::ProcessBaseAutonomy,
@@ -148,15 +151,31 @@ impl Plugin for SimulationSetupPlugin {
             ),
         );
 
-        // Add the TF tree builder to the main game loop.
-        // It must run before any system that needs to query for transforms, like the EKF.
+        // TF tree update strategy:
+        // - Structural system (Precomputation): inserts/removes entries when TrackedFrame is
+        //   added or removed. No-op on the vast majority of ticks.
+        // - Incremental system (Precomputation): updates poses for Changed<GlobalTransform>.
+        //   Handles first-tick initialization; no-op every tick after that until physics runs.
+        // - Incremental system (StateSync): updates poses after Avian3D physics, so
+        //   Validation, publishing, and visualization always see the latest state.
         app.add_systems(
             FixedUpdate,
             (
-                tf_tree_builder_system
+                (tf_tree_structural_system, tf_tree_incremental_update_system)
+                    .chain()
                     .in_set(SimulationSet::Precomputation)
                     .run_if(in_state(AppState::Running)),
                 ground_truth_sync_system.in_set(SimulationSet::StateSync),
+                tf_tree_incremental_update_system
+                    .in_set(SimulationSet::StateSync)
+                    .after(ground_truth_sync_system)
+                    .run_if(in_state(AppState::Running)),
+                ground_truth_publish_system
+                    .in_set(SimulationSet::Validation)
+                    .run_if(in_state(AppState::Running)),
+                tf_publish_system
+                    .in_set(SimulationSet::Validation)
+                    .run_if(in_state(AppState::Running)),
             ),
         );
     }
@@ -168,7 +187,7 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
     for agent_config in &config.agents {
         info!(
             "[SPAWN] Posting spawn request for resolved agent: {}",
-            &agent_config.name
+            agent_config.name()
         );
 
         // This part of your logic remains the same.
@@ -177,7 +196,8 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
         let start_transform = starting_pose.to_bevy_transform();
 
         commands.spawn((
-            Name::new(agent_config.name.clone()),
+            Name::new(format!("{}/base_link", agent_config.name())),
+            TrackedFrame,
             GroundTruthState {
                 pose: start_isometry,
                 ..default()

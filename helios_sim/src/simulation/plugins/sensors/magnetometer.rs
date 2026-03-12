@@ -7,14 +7,16 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::transforms::bevy_global_transform_to_enu_iso;
 use crate::simulation::core::{
-    app_state::SimulationSet, events::BevyMeasurementMessage, prng::SimulationRng,
-    topics::GroundTruthState,
+    app_state::SimulationSet,
+    components::{GroundTruthState, SensorTopicName},
+    events::BevyMeasurementMessage,
+    prng::SimulationRng,
 };
 
 // --- Core Library Imports ---
 use helios_core::{
     messages::{MeasurementData, MeasurementMessage},
-    models::estimation::measurement::{magnetometer::MagnetometerModel, Measurement},
+    models::estimation::measurement::{magnetometer::MagnetometerModel},
     types::FrameHandle,
 };
 
@@ -29,6 +31,8 @@ pub struct Magnetometer {
     noise_dist_x: Normal<f64>,
     noise_dist_y: Normal<f64>,
     noise_dist_z: Normal<f64>,
+    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
+    pub topic_name: String,
 }
 
 pub struct MagnetometerPlugin;
@@ -58,9 +62,10 @@ fn spawn_magnetometer_sensors(
         for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Magnetometer(mag_config) = sensor_config {
                 info!(
-                    "  -> Spawning Magnetometer '{}' as child of agent '{}'",
+                    "  -> Spawning Magnetometer '{}' as child of agent '{}' with rate of {:.1} Hz",
                     sensor_name,
-                    agent_name.as_str()
+                    agent_name.as_str(),
+                    mag_config.get_rate()
                 );
 
                 // --- 1. Create the `helios_core` Measurement Model ---
@@ -86,8 +91,13 @@ fn spawn_magnetometer_sensors(
 
                 core_model.sensor_handle = FrameHandle::from_entity(sensor_entity);
 
+                let topic_name = format!(
+                    "/{}/sensors/{}",
+                    agent_name.as_str(),
+                    sensor_name
+                );
                 sensor_entity_commands.insert((
-                    Name::new(mag_config.name.clone()),
+                    Name::new(format!("{}/{}", agent_name.as_str(), mag_config.name)),
                     Magnetometer {
                         timer: Timer::new(
                             Duration::from_secs_f32(1.0 / mag_config.rate),
@@ -96,10 +106,13 @@ fn spawn_magnetometer_sensors(
                         noise_dist_x: Normal::new(0.0, mag_config.noise_stddev[0] as f64).unwrap(),
                         noise_dist_y: Normal::new(0.0, mag_config.noise_stddev[1] as f64).unwrap(),
                         noise_dist_z: Normal::new(0.0, mag_config.noise_stddev[2] as f64).unwrap(),
+                        topic_name: topic_name.clone(),
                     },
+                    // Topic name for the cold-path telemetry system.
+                    SensorTopicName(topic_name),
                     MeasurementModel(Box::new(core_model)),
                     TrackedFrame,
-                    mag_config.get_relative_pose().to_bevy_transform(),
+                    mag_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 
                 commands.entity(agent_entity).add_child(sensor_entity);
@@ -123,7 +136,7 @@ fn magnetometer_sensor_system(
     // Re-use the world magnetic field definition.
     let world_magnetic_field_enu = Vector3::new(0.0, 1.0, 0.0).normalize();
 
-    for (agent_entity, ground_truth, children) in &parent_query {
+    for (agent_entity, _ground_truth, children) in &parent_query {
         for &child_entity in children {
             if let Ok((sensor_entity, mut mag, sensor_global_transform)) =
                 sensor_query.get_mut(child_entity)
@@ -154,6 +167,8 @@ fn magnetometer_sensor_system(
                     timestamp: time.elapsed_secs_f64(),
                     data: MeasurementData::Magnetometer(noisy_mag_reading),
                 };
+                // Emit event — routed to SensorMailbox by route_sensor_messages.
+                // TopicBus publishing is deferred to sensor_telemetry_system (Validation).
                 measurement_writer.write(BevyMeasurementMessage(pure_message));
             }
         }

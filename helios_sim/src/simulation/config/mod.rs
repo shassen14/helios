@@ -57,7 +57,7 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
         match resolver::resolve_agent_value(agent_value, &catalog) {
             Ok(resolved_value) => match Value::deserialize::<AgentConfig>(&resolved_value) {
                 Ok(agent_config) => {
-                    info!("Successfully resolved agent: '{}'", &agent_config.name);
+                    info!("Successfully resolved agent: '{}'", agent_config.name());
                     resolved_agents.push(agent_config);
                 }
                 Err(e) => error!(
@@ -73,14 +73,10 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
     let final_config = ScenarioConfig {
         simulation: raw_config.simulation,
         world: raw_config.world,
+        debug: raw_config.debug,
         agents: resolved_agents,
     };
 
     // 4. Insert the single, unified config as a resource.
     commands.insert_resource(final_config);
-}
-
-fn transition_to_scene_building(mut next_state: ResMut<NextState<AppState>>) {
-    info!("Configuration loading and resolution complete. Transitioning to SceneBuilding state.");
-    next_state.set(AppState::SceneBuilding);
 }
