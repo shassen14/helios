@@ -2,6 +2,7 @@ use avian3d::prelude::Gravity;
 use bevy::prelude::*;
 use helios_core::mapping::NoneMapper;
 use helios_core::types::FrameHandle;
+use helios_runtime::estimation::GroundTruthPassthrough;
 use helios_runtime::pipeline::PipelineBuilder;
 use helios_runtime::stage::PipelineLevel;
 use std::collections::HashMap;
@@ -188,8 +189,8 @@ pub fn spawn_world_model_modules(
 
                 let (estimation, mapping, control) = builder.build().into_parts();
                 entity_commands.insert((
-                    EstimatorComponent(estimation),
-                    MapperComponent(mapping),
+                    EstimatorComponent(Box::new(estimation)),
+                    MapperComponent(Box::new(mapping)),
                     ControlPipelineComponent(control),
                     SensorMailbox::default(),
                 ));
@@ -209,8 +210,8 @@ pub fn spawn_world_model_modules(
                         let (estimation, mapping, control) =
                             PipelineBuilder::new().with_slam(system).build().into_parts();
                         entity_commands.insert((
-                            EstimatorComponent(estimation),
-                            MapperComponent(mapping),
+                            EstimatorComponent(Box::new(estimation)),
+                            MapperComponent(Box::new(mapping)),
                             ControlPipelineComponent(control),
                             SensorMailbox::default(),
                         ));
@@ -223,6 +224,152 @@ pub fn spawn_world_model_modules(
                         );
                     }
                 }
+            }
+
+            None => {
+                warn!(
+                    "No world model configured for agent '{}'. Skipping.",
+                    agent_config.name()
+                );
+            }
+        }
+    }
+}
+
+/// Spawning system for mock-estimator profiles (MappingOnly, PlanningOnly, ControlOnly).
+/// Mirrors the `Separate` path of `spawn_world_model_modules` but skips estimator
+/// construction and inserts `GroundTruthPassthrough` instead.
+pub fn spawn_mock_world_model_modules(
+    mut commands: Commands,
+    agent_query: Query<(Entity, &SpawnAgentConfigRequest)>,
+    gravity: Res<Gravity>,
+    registry: Res<AutonomyRegistry>,
+) {
+    let capabilities = registry.capabilities();
+
+    for (agent_entity, request) in &agent_query {
+        let agent_config = &request.0;
+        let _gravity_magnitude = gravity.0.length() as f64;
+        let mut entity_commands = commands.entity(agent_entity);
+
+        let validation_errors =
+            validate_autonomy_config(agent_config.autonomy_stack(), &capabilities);
+        if !validation_errors.is_empty() {
+            for err in &validation_errors {
+                error!(
+                    "Config validation failed for agent '{}': {}",
+                    agent_config.name(),
+                    err
+                );
+            }
+            continue;
+        }
+
+        match &agent_config.autonomy_stack().world_model {
+            Some(WorldModelConfig::Separate {
+                estimator: _,
+                mapper: map_cfg,
+            }) => {
+                let mut builder = PipelineBuilder::new();
+                // Estimator intentionally skipped — GT passthrough handles state.
+
+                if let Some(cfg) = map_cfg {
+                    if let Some(rate) = cfg.get_timer_rate() {
+                        entity_commands.insert(ModuleTimer::from_hz(rate));
+                    }
+                    match registry.build_mapper(
+                        cfg.get_kind_str(),
+                        MapperBuildContext {
+                            agent_entity,
+                            mapper_cfg: cfg.clone(),
+                        },
+                    ) {
+                        Ok(m) => {
+                            builder = builder.with_mapper(PipelineLevel::Local, m);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Mapper build failed for '{}': {}. Falling back to NoneMapper.",
+                                agent_config.name(),
+                                e
+                            );
+                            builder =
+                                builder.with_mapper(PipelineLevel::Local, Box::new(NoneMapper));
+                        }
+                    }
+                }
+
+                for (_key, ctrl_cfg) in &agent_config.autonomy_stack().controllers {
+                    let kind = ctrl_cfg.get_kind_str();
+                    let ctx = ControllerBuildContext {
+                        agent_entity,
+                        controller_cfg: ctrl_cfg.clone(),
+                        agent_config: agent_config.clone(),
+                        dynamics_factories: registry.clone_dynamics_arc(),
+                    };
+                    match registry.build_controller(kind, ctx) {
+                        Ok(ctrl) => {
+                            builder = builder.with_controller(PipelineLevel::Local, ctrl);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to build controller '{}' for agent '{}': {}",
+                                kind,
+                                agent_config.name(),
+                                e
+                            );
+                        }
+                    }
+                }
+
+                for (_key, plan_cfg) in &agent_config.autonomy_stack().planners {
+                    let kind = plan_cfg.get_kind_str();
+                    let level = level_from_str(plan_cfg.get_level_str());
+                    let ctx = PlannerBuildContext {
+                        agent_entity,
+                        planner_cfg: plan_cfg.clone(),
+                        level: level.clone(),
+                    };
+                    match registry.build_planner(kind, ctx) {
+                        Ok(planner) => {
+                            builder = builder.with_planner(level, planner);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to build planner '{}' for agent '{}': {}",
+                                kind,
+                                agent_config.name(),
+                                e
+                            );
+                        }
+                    }
+                }
+
+                let goal_iso = agent_config.goal_pose.to_isometry();
+                builder = builder.with_goal(PlannerGoal::WorldPose(goal_iso));
+
+                let (_, mapping, control) = builder.build().into_parts();
+                entity_commands.insert((
+                    EstimatorComponent(Box::new(GroundTruthPassthrough::default())),
+                    MapperComponent(Box::new(mapping)),
+                    ControlPipelineComponent(control),
+                    SensorMailbox::default(),
+                ));
+            }
+
+            Some(WorldModelConfig::CombinedSlam { .. }) => {
+                warn!(
+                    "Agent '{}' uses CombinedSlam but mock-estimator profile was requested. \
+                     Inserting GT passthrough with empty mapper/control.",
+                    agent_config.name()
+                );
+                let (_, mapping, control) = PipelineBuilder::new().build().into_parts();
+                entity_commands.insert((
+                    EstimatorComponent(Box::new(GroundTruthPassthrough::default())),
+                    MapperComponent(Box::new(mapping)),
+                    ControlPipelineComponent(control),
+                    SensorMailbox::default(),
+                ));
             }
 
             None => {

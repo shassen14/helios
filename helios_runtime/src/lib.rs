@@ -5,6 +5,8 @@
 // in simulation and on real hardware.
 
 pub mod config;
+pub mod estimation;
+pub mod mapping;
 pub mod pipeline;
 pub mod prelude;
 pub mod runtime;

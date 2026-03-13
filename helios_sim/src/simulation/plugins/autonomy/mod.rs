@@ -54,9 +54,6 @@ fn register_mapping_keys(
 
 /// Handles spawning of all agent pipeline components, sensor routing, EKF/UKF,
 /// odom frame maintenance, and telemetry.
-///
-/// Owns `mapping_system` inside its chain to guarantee route→estimate→map→odom
-/// write/read ordering. `MappingPlugin` is an architectural seam only.
 pub struct EstimationPlugin;
 
 impl Plugin for EstimationPlugin {
@@ -73,15 +70,10 @@ impl Plugin for EstimationPlugin {
                 ),
             )
             // --- RUNTIME: Estimation phase ---
-            // Chain: route fills SensorMailbox → estimation and mapping run in parallel
-            // (different ECS components) → odom frames updated from fresh state.
+            // Chain: route fills SensorMailbox → estimation runs → odom frames updated.
             .add_systems(
                 FixedUpdate,
-                (
-                    route_sensor_messages,
-                    (estimation_system, mapping_system),
-                    update_odom_frames,
-                )
+                (route_sensor_messages, estimation_system, update_odom_frames)
                     .chain()
                     .in_set(SimulationSet::Estimation)
                     .run_if(in_state(AppState::Running)),
@@ -100,19 +92,23 @@ impl Plugin for EstimationPlugin {
 // == MappingPlugin
 // =========================================================================
 
-/// Architectural seam for the mapping subsystem.
+/// Owns the mapping subsystem — `mapping_system` in `SimulationSet::WorldModeling`.
 ///
-/// Currently empty — `EstimationPlugin` owns `mapping_system` inside its chain
-/// for correct write/read ordering with `route_sensor_messages`. This plugin
-/// signals to `ProfiledSimulationPlugin` that mapping is requested; a future
-/// refactor will move the mapping systems here once proper intra-set ordering
-/// is established.
+/// `WorldModeling` runs before `Estimation` in the schedule, so `mapping_system`
+/// reads the mailbox filled by the previous tick's `route_sensor_messages`.
+/// This one-tick latency is standard practice in robotics mapping.
 pub struct MappingPlugin;
 
 impl Plugin for MappingPlugin {
     fn build(&self, app: &mut App) {
-        // Register mapping-specific debug key.
-        app.add_systems(OnEnter(AppState::Running), register_mapping_keys);
+        app
+            .add_systems(OnEnter(AppState::Running), register_mapping_keys)
+            .add_systems(
+                FixedUpdate,
+                mapping_system
+                    .in_set(SimulationSet::WorldModeling)
+                    .run_if(in_state(AppState::Running)),
+            );
     }
 }
 

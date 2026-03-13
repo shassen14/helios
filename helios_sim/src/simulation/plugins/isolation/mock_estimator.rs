@@ -11,7 +11,7 @@ use crate::simulation::core::components::GroundTruthState;
 use crate::simulation::plugins::autonomy::EstimatorComponent;
 use crate::simulation::plugins::autonomy::systems::{
     autonomy_telemetry_system, route_sensor_messages, sensor_telemetry_system,
-    spawn_odom_frames, spawn_world_model_modules, update_odom_frames,
+    spawn_mock_world_model_modules, spawn_odom_frames, update_odom_frames,
 };
 
 pub struct MockGroundTruthEstimatorPlugin;
@@ -19,11 +19,11 @@ pub struct MockGroundTruthEstimatorPlugin;
 impl Plugin for MockGroundTruthEstimatorPlugin {
     fn build(&self, app: &mut App) {
         app
-            // --- SPAWNING (identical to EstimationPlugin) ---
+            // --- SPAWNING: GT passthrough instead of real EKF/UKF ---
             .add_systems(
                 OnEnter(AppState::SceneBuilding),
                 (
-                    spawn_world_model_modules.in_set(SceneBuildSet::ProcessBaseAutonomy),
+                    spawn_mock_world_model_modules.in_set(SceneBuildSet::ProcessBaseAutonomy),
                     spawn_odom_frames.in_set(SceneBuildSet::ProcessDependentAutonomy),
                 ),
             )

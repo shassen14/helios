@@ -4,17 +4,19 @@ use bevy::{
     prelude::{Component, Entity},
     time::{Timer, TimerMode},
 };
-use helios_runtime::pipeline::{ControlCore, EstimationCore, MappingCore};
+use helios_runtime::estimation::EstimationDriver;
+use helios_runtime::mapping::MapDriver;
+use helios_runtime::pipeline::ControlCore;
 
 /// Holds the estimation stage for an agent: estimator/SLAM + trackers + predict/update logic.
 /// Systems that need estimated state query this component.
 #[derive(Component)]
-pub struct EstimatorComponent(pub EstimationCore);
+pub struct EstimatorComponent(pub Box<dyn EstimationDriver>);
 
 /// Holds the mapping stage for an agent: leveled mappers.
 /// Systems that need map data query this component.
 #[derive(Component)]
-pub struct MapperComponent(pub MappingCore);
+pub struct MapperComponent(pub Box<dyn MapDriver>);
 
 /// Holds the control stage for an agent: planners + controllers.
 /// `ControlPlugin` calls `step_controllers()` each tick.
