@@ -20,9 +20,6 @@ use crate::simulation::plugins::autonomy::{
     ControlPipelineComponent, EstimatorComponent, MapperComponent,
 };
 use interaction::{GoalRegistry, SelectedAgent};
-use crate::simulation::config::ScenarioConfig;
-use crate::simulation::plugins::debugging::{register_actions, DebugToggle};
-use crate::simulation::plugins::debugging::key_action_registry::KeyActionRegistry;
 
 pub struct PlanningPlugin;
 
@@ -31,7 +28,6 @@ impl Plugin for PlanningPlugin {
         app.init_resource::<SelectedAgent>()
             .init_resource::<GoalRegistry>()
             .add_event::<GoalCommandEvent>()
-            .add_systems(OnEnter(AppState::Running), register_planning_keys)
             .add_systems(
                 FixedUpdate,
                 planning_system
@@ -54,18 +50,6 @@ impl Plugin for PlanningPlugin {
                     .run_if(in_state(AppState::Running)),
             );
     }
-}
-
-fn register_planning_keys(
-    mut registry: ResMut<KeyActionRegistry>,
-    scenario: Res<ScenarioConfig>,
-) {
-    let overrides = &scenario.debug.keybindings.0;
-    register_actions(
-        &mut registry,
-        overrides,
-        &[("toggle_planned_path", KeyCode::F9, "F9 Planned Path", DebugToggle::PlannedPath)],
-    );
 }
 
 /// Runs all planners for every agent each tick.

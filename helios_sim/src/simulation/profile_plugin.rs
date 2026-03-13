@@ -36,8 +36,9 @@ impl Default for ProfiledSimulationPlugin {
 
 impl Plugin for ProfiledSimulationPlugin {
     fn build(&self, app: &mut App) {
-        // Insert the profile as a resource so systems can query it.
+        let caps = self.profile.capabilities();
         app.insert_resource(self.profile.clone());
+        app.insert_resource(caps.clone());
 
         // Always-present infrastructure.
         app.add_plugins((
@@ -51,32 +52,14 @@ impl Plugin for ProfiledSimulationPlugin {
         ));
 
         // Conditional subsystems.
-        if self.profile.needs_sensors() {
-            app.add_plugins(HeliosSensorsPlugin);
-        }
-        if self.profile.needs_real_estimation() {
-            app.add_plugins(EstimationPlugin);
-        }
-        if self.profile.needs_mock_estimator() {
-            app.add_plugins(MockGroundTruthEstimatorPlugin);
-        }
-        if self.profile.needs_mapping() {
-            app.add_plugins(MappingPlugin);
-        }
-        if self.profile.needs_planning() {
-            app.add_plugins(PlanningPlugin);
-        }
-        if self.profile.needs_control() {
-            app.add_plugins(ControlPlugin);
-        }
-        if self.profile.needs_mock_path() {
-            app.add_plugins(MockPathInjectorPlugin);
-        }
-        if self.profile.needs_mock_map() {
-            app.add_plugins(MockMapInjectorPlugin);
-        }
-        if self.profile.needs_metrics() {
-            app.add_plugins(ControlMetricsPlugin);
-        }
+        if caps.sensors()           { app.add_plugins(HeliosSensorsPlugin); }
+        if caps.real_estimation()   { app.add_plugins(EstimationPlugin); }
+        if caps.mock_estimator()    { app.add_plugins(MockGroundTruthEstimatorPlugin); }
+        if caps.mapping()           { app.add_plugins(MappingPlugin); }
+        if caps.planning()          { app.add_plugins(PlanningPlugin); }
+        if caps.control()           { app.add_plugins(ControlPlugin); }
+        if caps.mock_path()         { app.add_plugins(MockPathInjectorPlugin); }
+        if caps.mock_map()          { app.add_plugins(MockMapInjectorPlugin); }
+        if caps.metrics()           { app.add_plugins(ControlMetricsPlugin); }
     }
 }

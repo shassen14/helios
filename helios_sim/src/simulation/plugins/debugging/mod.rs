@@ -15,6 +15,7 @@ pub use key_action_registry::{DebugToggle, KeyAction, KeyActionRegistry};
 use crate::prelude::AppState;
 use crate::simulation::config::ScenarioConfig;
 use crate::simulation::core::app_state::SimulationSet;
+use crate::simulation::profile::CapabilitySet;
 use key_action_registry::{parse_key_code, KeyAction as KA};
 
 /// Default key assignments that are ALWAYS registered (profile-independent).
@@ -26,14 +27,45 @@ const ALWAYS_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
     ("toggle_tf_frames",  KeyCode::F8,   "F8 TF Frames",       DebugToggle::TfFrames),
 ];
 
-/// Build the registry from `ALWAYS_ACTIONS`, then apply any TOML keybinding overrides.
+const SENSOR_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
+    ("toggle_point_cloud", KeyCode::F3, "F3 Point Cloud", DebugToggle::PointCloud),
+];
+
+const ESTIMATION_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
+    ("toggle_covariance", KeyCode::F2, "F2 Covariance",  DebugToggle::Covariance),
+    ("toggle_error_line", KeyCode::F5, "F5 Est. Error",  DebugToggle::ErrorLine),
+];
+
+const MAPPING_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
+    ("toggle_occupancy_grid", KeyCode::F7, "F7 Occupancy Grid", DebugToggle::OccupancyGrid),
+];
+
+const PLANNING_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
+    ("toggle_planned_path", KeyCode::F9, "F9 Planned Path", DebugToggle::PlannedPath),
+];
+
+/// Build the registry from action tables, gated by `CapabilitySet`.
 /// Runs once on entering Running state (before other startup systems read the registry).
 fn build_key_registry(
     mut registry: ResMut<KeyActionRegistry>,
     scenario: Res<ScenarioConfig>,
+    capabilities: Res<CapabilitySet>,
 ) {
     let overrides = &scenario.debug.keybindings.0;
     register_actions(&mut registry, overrides, ALWAYS_ACTIONS);
+
+    if capabilities.sensors() {
+        register_actions(&mut registry, overrides, SENSOR_ACTIONS);
+    }
+    if capabilities.estimation() {
+        register_actions(&mut registry, overrides, ESTIMATION_ACTIONS);
+    }
+    if capabilities.mapping() {
+        register_actions(&mut registry, overrides, MAPPING_ACTIONS);
+    }
+    if capabilities.planning() {
+        register_actions(&mut registry, overrides, PLANNING_ACTIONS);
+    }
 }
 
 fn apply_debug_config(
@@ -101,15 +133,10 @@ impl Plugin for DebuggingPlugin {
 }
 
 // ---------------------------------------------------------------------------
-// Public helper for capability plugins to register their own actions.
+// Internal key registration helper.
 // ---------------------------------------------------------------------------
 
-/// Append a set of key actions to the `KeyActionRegistry`, applying TOML overrides.
-///
-/// Call from an `OnEnter(AppState::Running)` startup system **after**
-/// `DebuggingPlugin`'s `build_key_registry` runs (ensured by `.chain()` in
-/// `ProfiledSimulationPlugin`).
-pub fn register_actions(
+fn register_actions(
     registry: &mut KeyActionRegistry,
     overrides: &std::collections::HashMap<String, String>,
     actions: &[(&'static str, KeyCode, &'static str, DebugToggle)],
@@ -119,6 +146,13 @@ pub fn register_actions(
             .get(id)
             .and_then(|s| parse_key_code(s))
             .unwrap_or(default_key);
+        if let Some(existing) = registry.0.iter().find(|a| a.bound_key == bound_key) {
+            warn!(
+                "Key conflict: {:?} already bound to '{}', skipping '{}'",
+                bound_key, existing.id, id
+            );
+            continue;
+        }
         registry.0.push(KA { id, bound_key, label, toggle });
     }
 }
