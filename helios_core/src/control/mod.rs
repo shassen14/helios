@@ -27,6 +27,7 @@ use crate::{frames::FrameAwareState, types::TfProvider};
 /// `state_dot` is `None` when the planner cannot or does not provide it
 /// (e.g. a waypoint planner). Feedforward controllers degrade gracefully
 /// to pure feedback and log a diagnostic when `state_dot` is absent.
+#[derive(Clone)]
 pub struct TrajectoryPoint {
     pub state: FrameAwareState,
     /// x_dot_ref = f(x_ref, u_nominal, t). None = feedforward unavailable.

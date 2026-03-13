@@ -8,3 +8,6 @@
 [world_model]
 type = "Separate"
 estimator = { from = "components.estimators.ekf_pro" }
+
+[planners]
+local_path = { from = "components.planners.a_star" }

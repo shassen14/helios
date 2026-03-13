@@ -15,6 +15,8 @@ pub use crate::models::controls::ControlDynamics;
 
 // --- Planning & Tracking ---
 pub use crate::planning::Planner;
+pub use crate::planning::context::PlannerContext;
+pub use crate::planning::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
 pub use crate::tracking::{Track, Tracker};
 
 // --- Concrete Model Implementations (Export common ones for convenience) ---

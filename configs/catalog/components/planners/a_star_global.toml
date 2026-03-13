@@ -1,0 +1,8 @@
+kind = "AStar"
+rate = 1.0
+arrival_tolerance_m = 2.0
+occupancy_threshold = 200
+max_search_depth = 50000
+enable_path_smoothing = true
+replan_on_path_deviation = false
+level = "global"
