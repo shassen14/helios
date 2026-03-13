@@ -31,8 +31,6 @@ pub struct PipelineOutputs {
     pub ego_state: Option<FrameAwareState>,
     pub global_map: Option<MapData>,
     pub local_map: Option<MapData>,
-    pub global_trajectory: Option<TrajectoryPoint>,
-    pub local_trajectory: Option<TrajectoryPoint>,
     pub control_output: Option<ControlOutput>,
 }
 
@@ -193,10 +191,10 @@ impl ControlCore {
                     // Keep last path; stop advancing.
                 }
                 PlannerResult::Unreachable => {
-                    eprintln!("[ControlCore] Planner {:?}: no path found", lp.level);
+                    log::warn!("[ControlCore] Planner {:?}: no path found", lp.level);
                 }
                 PlannerResult::Error(msg) => {
-                    eprintln!("[ControlCore] Planner {:?} error: {}", lp.level, msg);
+                    log::warn!("[ControlCore] Planner {:?} error: {}", lp.level, msg);
                 }
                 PlannerResult::PathStillValid | PlannerResult::NoGoal => {}
             }
@@ -361,8 +359,6 @@ impl AutonomyPipeline {
             ego_state: self.get_state().cloned(),
             global_map: self.get_map(&PipelineLevel::Global).cloned(),
             local_map: self.get_map(&PipelineLevel::Local).cloned(),
-            global_trajectory: None,
-            local_trajectory: None,
             control_output: None,
         }
     }
