@@ -77,8 +77,7 @@ fn inject_mock_path(
     let path_len = path.len();
 
     for mut control in &mut query {
-        control.0.cached_paths.insert(level.clone(), path.clone());
-        control.0.lookahead_indices.insert(level.clone(), 0);
+        control.0.set_path(level.clone(), path.clone());
     }
 
     info!(

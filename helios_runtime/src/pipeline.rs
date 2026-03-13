@@ -245,6 +245,14 @@ impl ControlCore {
         self.cached_paths.get(level)
     }
 
+    /// Inject a path for `level`, resetting the look-ahead index to 0.
+    /// Use this instead of direct field access when setting a path from outside the pipeline
+    /// (e.g. mock path injection, test fixtures).
+    pub fn set_path(&mut self, level: PipelineLevel, path: helios_core::planning::types::Path) {
+        self.lookahead_indices.insert(level.clone(), 0);
+        self.cached_paths.insert(level, path);
+    }
+
     /// Run the highest-priority controller given the current ego state.
     /// Advances look-ahead indices and passes the reference waypoint to the controller.
     /// State is passed in from EstimationCore to keep stages independent.
