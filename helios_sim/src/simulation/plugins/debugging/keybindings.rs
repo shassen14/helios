@@ -38,6 +38,10 @@ pub fn handle_debug_keybindings(
         config.show_tf_frames = !config.show_tf_frames;
         info!("[Debug] TF Frames {}", on_off(config.show_tf_frames));
     }
+    if keyboard.just_pressed(KeyCode::F9) {
+        config.show_planned_path = !config.show_planned_path;
+        info!("[Debug] Planned Path {}", on_off(config.show_planned_path));
+    }
     if keyboard.just_pressed(KeyCode::KeyH) {
         config.show_legend = !config.show_legend;
     }

@@ -9,3 +9,4 @@ license.workspace = true
 helios_core = { path = "../helios_core" }
 nalgebra = { workspace = true }
 serde = { workspace = true }
+log = "0.4"

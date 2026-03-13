@@ -1,3 +1,9 @@
-# Defines the "AStar" variant of the PlannerConfig enum.
 kind = "AStar"
-rate = 2.0
+rate = 5.0
+arrival_tolerance_m = 1.5
+occupancy_threshold = 180
+max_search_depth = 20000
+enable_path_smoothing = true
+replan_on_path_deviation = true
+deviation_tolerance_m = 3.0
+level = "local"

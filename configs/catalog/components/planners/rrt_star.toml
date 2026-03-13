@@ -1,0 +1,5 @@
+kind = "RrtStar"
+rate = 0.5
+max_iterations = 5000
+step_size_m = 0.5
+goal_tolerance_m = 1.0

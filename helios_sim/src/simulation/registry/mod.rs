@@ -6,6 +6,7 @@ pub mod controllers;
 pub mod dynamics;
 pub mod estimators;
 pub mod mappers;
+pub mod planners;
 pub mod plugin;
 pub mod slam;
 //
@@ -28,13 +29,14 @@ use helios_core::{
     estimation::StateEstimator,
     mapping::Mapper,
     models::estimation::{dynamics::EstimationDynamics, measurement::Measurement},
+    planning::Planner,
     slam::SlamSystem,
     types::FrameHandle,
 };
 
 use crate::simulation::config::structs::{
     AckermannAdapterConfig, AgentConfig, ControllerConfig, EstimatorConfig, MapperConfig,
-    SlamConfig,
+    PlannerConfig, SlamConfig,
 };
 use crate::simulation::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
 
@@ -57,6 +59,9 @@ pub type SlamFactory =
 
 pub type ControllerFactory =
     Arc<dyn Fn(ControllerBuildContext) -> Result<Box<dyn Controller>, String> + Send + Sync>;
+
+pub type PlannerFactory =
+    Arc<dyn Fn(PlannerBuildContext) -> Result<Box<dyn Planner>, String> + Send + Sync>;
 
 pub type AdapterFactory = Arc<
     dyn Fn(AdapterBuildContext) -> Result<Box<dyn AckermannOutputAdapter>, String> + Send + Sync,
@@ -118,6 +123,13 @@ pub struct SlamBuildContext {
     pub dynamics_factories: HashMap<String, DynamicsFactory>,
 }
 
+/// Context for constructing a planner (e.g., AStarPlanner, RrtStarPlanner).
+pub struct PlannerBuildContext {
+    pub agent_entity: Entity,
+    pub planner_cfg: PlannerConfig,
+    pub level: helios_runtime::stage::PipelineLevel,
+}
+
 /// Context for constructing an Ackermann output adapter.
 pub struct AdapterBuildContext {
     pub agent_entity: Entity,
@@ -135,6 +147,7 @@ pub struct AutonomyRegistry {
     pub mappers: HashMap<String, MapperFactory>,
     pub slam: HashMap<String, SlamFactory>,
     pub controllers: HashMap<String, ControllerFactory>,
+    pub planners: HashMap<String, PlannerFactory>,
     pub adapters: HashMap<String, AdapterFactory>,
 }
 
@@ -187,6 +200,17 @@ impl AutonomyRegistry {
             + 'static,
     {
         self.controllers.insert(key.to_string(), Arc::new(factory));
+        self
+    }
+
+    pub fn register_planner<F>(&mut self, key: &str, factory: F) -> &mut Self
+    where
+        F: Fn(PlannerBuildContext) -> Result<Box<dyn Planner>, String>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.planners.insert(key.to_string(), Arc::new(factory));
         self
     }
 
@@ -262,6 +286,17 @@ impl AutonomyRegistry {
         factory(ctx)
     }
 
+    pub fn build_planner(
+        &self,
+        key: &str,
+        ctx: PlannerBuildContext,
+    ) -> Result<Box<dyn Planner>, String> {
+        let factory = self.planners.get(key).ok_or_else(|| {
+            format!("No planner registered for '{key}'. Call register_planner().")
+        })?;
+        factory(ctx)
+    }
+
     pub fn build_adapter(
         &self,
         key: &str,
@@ -281,7 +316,7 @@ impl AutonomyRegistry {
             mappers: self.mappers.keys().cloned().collect::<HashSet<_>>(),
             slam: self.slam.keys().cloned().collect::<HashSet<_>>(),
             controllers: self.controllers.keys().cloned().collect::<HashSet<_>>(),
-            planners: HashSet::new(), // no planner registry yet
+            planners: self.planners.keys().cloned().collect::<HashSet<_>>(),
         }
     }
 
