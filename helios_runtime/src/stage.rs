@@ -6,7 +6,7 @@
 use helios_core::{control::Controller, mapping::Mapper, planning::Planner};
 
 /// Execution level for mappers, planners, and controllers.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PipelineLevel {
     Global,
     Local,
