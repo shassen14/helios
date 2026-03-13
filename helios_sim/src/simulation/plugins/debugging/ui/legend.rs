@@ -37,7 +37,7 @@ pub fn update_legend_text(
         };
         if config.show_legend {
             text.0 = format!(
-                "=== Debug (H to hide) ===\nF1  Pose Gimbals    [{}]\nF2  Covariance      [{}]\nF3  Point Cloud     [{}]\nF4  Velocity        [{}]\nF5  Est. Error      [{}]\nF6  Path Trail      [{}]\nF7  Occupancy Grid  [{}]\nF8  TF Frames       [{}]",
+                "=== Debug (H to hide) ===\nF1  Pose Gimbals    [{}]\nF2  Covariance      [{}]\nF3  Point Cloud     [{}]\nF4  Velocity        [{}]\nF5  Est. Error      [{}]\nF6  Path Trail      [{}]\nF7  Occupancy Grid  [{}]\nF8  TF Frames       [{}]\nF9  Planned Path    [{}]",
                 on_off(config.show_pose_gimbals),
                 on_off(config.show_covariance),
                 on_off(config.show_point_cloud),
@@ -46,6 +46,7 @@ pub fn update_legend_text(
                 on_off(config.show_path_trail),
                 on_off(config.show_occupancy_grid),
                 on_off(config.show_tf_frames),
+                on_off(config.show_planned_path),
             );
         }
     }

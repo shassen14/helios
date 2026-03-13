@@ -27,6 +27,7 @@ fn apply_debug_config(
     viz.show_path_trail     = d.show_path_trail;
     viz.show_occupancy_grid = d.show_occupancy_grid;
     viz.show_tf_frames      = d.show_tf_frames;
+    viz.show_planned_path   = d.show_planned_path;
     viz.show_legend         = d.show_legend;
 }
 
@@ -58,6 +59,7 @@ impl Plugin for DebuggingPlugin {
                     gizmos::occupancy::draw_occupancy_grid,
                     gizmos::tf_frames::draw_tf_frames,
                     gizmos::tf_frames::update_tf_labels,
+                    gizmos::planned_path::draw_planned_path,
                 )
                     .run_if(in_state(AppState::Running)),
             )

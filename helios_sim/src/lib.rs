@@ -14,6 +14,7 @@ use crate::simulation::plugins::world::AtmospherePlugin;
 use crate::simulation::plugins::world::TerrainPlugin;
 use crate::simulation::plugins::world::WorldObjectPlugin;
 use crate::simulation::plugins::autonomy::AutonomyPlugin;
+use crate::simulation::plugins::planning::PlanningPlugin;
 use crate::simulation::registry::plugin::AutonomyRegistryPlugin;
 
 // This prelude is for convenience for other files WITHIN the helios_sim crate.
@@ -28,15 +29,13 @@ pub struct HeliosSimulationPlugin;
 
 impl Plugin for HeliosSimulationPlugin {
     fn build(&self, app: &mut App) {
+        // Split into two groups to stay within Bevy's 15-element tuple limit.
         app.add_plugins((
             TopicBusPlugin,
             SimulationSetupPlugin,
             AutonomyRegistryPlugin,
-            // World: terrain tiles (owns the AssetLoading→SceneBuilding gate).
             TerrainPlugin,
-            // World: atmosphere — lighting, gravity, camera.
             AtmospherePlugin,
-            // World: discrete semantic objects (signs, buildings, trees, etc.).
             WorldObjectPlugin,
             AckermannCarPlugin,
             ImuPlugin,
@@ -44,6 +43,9 @@ impl Plugin for HeliosSimulationPlugin {
             MagnetometerPlugin,
             RaycastingSensorPlugin,
             AutonomyPlugin,
+        ))
+        .add_plugins((
+            PlanningPlugin,
             ControlPlugin,
             DebuggingPlugin,
             FoxgloveWebSocketPlugin::default(),

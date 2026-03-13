@@ -18,10 +18,23 @@ use crate::simulation::core::transforms::{enu_iso_to_bevy_transform, TfTree};
 use crate::simulation::plugins::autonomy::components::{
     ControlPipelineComponent, EstimatorComponent, MapperComponent, ModuleTimer, OdomFrameOf,
 };
+use helios_core::planning::types::PlannerGoal;
 use crate::simulation::registry::{
     AutonomyRegistry, ControllerBuildContext, EstimatorBuildContext, MapperBuildContext,
-    SlamBuildContext,
+    PlannerBuildContext, SlamBuildContext,
 };
+
+// =========================================================================
+// == Helpers ==
+// =========================================================================
+
+fn level_from_str(s: &str) -> PipelineLevel {
+    match s {
+        "global" => PipelineLevel::Global,
+        "local" => PipelineLevel::Local,
+        other => PipelineLevel::Custom(other.to_string()),
+    }
+}
 
 // =========================================================================
 // == SPAWNING SYSTEMS ==
@@ -145,6 +158,33 @@ pub fn spawn_world_model_modules(
                         }
                     }
                 }
+
+                for (_key, plan_cfg) in &agent_config.autonomy_stack().planners {
+                    let kind = plan_cfg.get_kind_str();
+                    let level = level_from_str(plan_cfg.get_level_str());
+                    let ctx = PlannerBuildContext {
+                        agent_entity,
+                        planner_cfg: plan_cfg.clone(),
+                        level: level.clone(),
+                    };
+                    match registry.build_planner(kind, ctx) {
+                        Ok(planner) => {
+                            builder = builder.with_planner(level, planner);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to build planner '{}' for agent '{}': {}",
+                                kind,
+                                agent_config.name(),
+                                e
+                            );
+                        }
+                    }
+                }
+
+                // Inject static goal from agent config (ENU world pose).
+                let goal_iso = agent_config.goal_pose.to_isometry();
+                builder = builder.with_goal(PlannerGoal::WorldPose(goal_iso));
 
                 let (estimation, mapping, control) = builder.build().into_parts();
                 entity_commands.insert((
@@ -331,13 +371,24 @@ pub fn update_odom_frames(
 // == TELEMETRY SYSTEMS (cold path — Validation phase) ==
 // =========================================================================
 
-/// Publishes estimated state and maps to TopicBus.
+/// Publishes estimated state, maps, and active planning waypoint to TopicBus.
 /// Runs in `SimulationSet::Validation` (cold telemetry path).
 pub fn autonomy_telemetry_system(
-    query: Query<(&EstimatorComponent, &MapperComponent, &Name)>,
+    query: Query<(&EstimatorComponent, &MapperComponent, &ControlPipelineComponent, &Name)>,
     mut topic_bus: ResMut<TopicBus>,
 ) {
-    for (estimator, mapper, name) in &query {
+    for (estimator, mapper, control, name) in &query {
+        // Active look-ahead waypoint.
+        if let Some(wp) = control
+            .0
+            .get_active_lookahead_waypoint(&PipelineLevel::Local)
+            .or_else(|| control.0.get_active_lookahead_waypoint(&PipelineLevel::Global))
+        {
+            topic_bus.publish(
+                &format!("/{}/planning/active_waypoint", name.as_str()),
+                wp.state.clone(),
+            );
+        }
         if let Some(state) = estimator.0.get_state() {
             topic_bus.publish(
                 &format!("/{}/odometry/estimated", name.as_str()),

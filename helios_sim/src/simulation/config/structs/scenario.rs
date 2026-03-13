@@ -42,6 +42,7 @@ pub struct DebugConfig {
     pub show_path_trail: bool,
     pub show_occupancy_grid: bool,
     pub show_tf_frames: bool,
+    pub show_planned_path: bool,
     pub show_legend: bool,
 }
 
