@@ -24,3 +24,7 @@ pub use crate::simulation::plugins::sensors::imu::ImuPlugin;
 pub use crate::simulation::plugins::vehicles::ackermann::{
     AckermannAdapterComponent, AckermannCarPlugin, AckermannOutputAdapter,
 };
+
+// Profile types for multi-profile binary support.
+pub use crate::simulation::profile::SimulationProfile;
+pub use crate::simulation::profile_plugin::ProfiledSimulationPlugin;

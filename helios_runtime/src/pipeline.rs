@@ -47,6 +47,9 @@ pub struct EstimationCore {
     pub(crate) last_u: Control,
     #[allow(dead_code)]
     pub(crate) control_dim: usize,
+    /// Ground-truth state override. When `Some`, `get_state()` returns this value
+    /// instead of the real estimator output. Used by mock-estimator profiles.
+    pub injected_state: Option<helios_core::frames::FrameAwareState>,
 }
 
 impl EstimationCore {
@@ -86,12 +89,56 @@ impl EstimationCore {
     }
 
     /// Current best estimate of the ego state (from estimator or SLAM).
+    /// If `injected_state` is set (mock-GT profiles), returns that instead.
     pub fn get_state(&self) -> Option<&FrameAwareState> {
+        if let Some(ref s) = self.injected_state {
+            return Some(s);
+        }
         if let Some(est) = &self.estimator {
             Some(est.get_state())
         } else {
             self.slam.as_ref().map(|s| s.get_state())
         }
+    }
+
+    /// Override the estimated state with ground-truth physics data.
+    /// Builds a minimal `FrameAwareState` (position + velocity + orientation) and
+    /// stores it so `get_state()` returns it on the next call.
+    ///
+    /// Used by `MockGroundTruthEstimatorPlugin` — Bevy system calls this; no Bevy types here.
+    pub fn inject_ground_truth(
+        &mut self,
+        pose: &Isometry3<f64>,
+        velocity: nalgebra::Vector3<f64>,
+        timestamp: f64,
+    ) {
+        use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+
+        let layout = vec![
+            StateVariable::Px(FrameId::World),
+            StateVariable::Py(FrameId::World),
+            StateVariable::Pz(FrameId::World),
+            StateVariable::Vx(FrameId::World),
+            StateVariable::Vy(FrameId::World),
+            StateVariable::Vz(FrameId::World),
+            StateVariable::Qx(FrameId::World, FrameId::World),
+            StateVariable::Qy(FrameId::World, FrameId::World),
+            StateVariable::Qz(FrameId::World, FrameId::World),
+            StateVariable::Qw(FrameId::World, FrameId::World),
+        ];
+        let mut state = FrameAwareState::new(layout, 1e-6, timestamp);
+        state.vector[0] = pose.translation.x;
+        state.vector[1] = pose.translation.y;
+        state.vector[2] = pose.translation.z;
+        state.vector[3] = velocity.x;
+        state.vector[4] = velocity.y;
+        state.vector[5] = velocity.z;
+        let q = pose.rotation.quaternion();
+        state.vector[6] = q.i;
+        state.vector[7] = q.j;
+        state.vector[8] = q.k;
+        state.vector[9] = q.w;
+        self.injected_state = Some(state);
     }
 
     /// SLAM global map, if a SLAM system is active.
@@ -449,6 +496,7 @@ impl PipelineBuilder {
                 slam: self.slam,
                 last_u: DVector::zeros(self.control_dim),
                 control_dim: self.control_dim,
+                injected_state: None,
             },
             mapping: MappingCore {
                 mappers: self.mappers,

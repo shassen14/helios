@@ -1,0 +1,39 @@
+# configs/scenarios/isolation/planning_only.toml
+# Profile: PlanningOnly — ground-truth estimator + planner. Static map injected via mock_map.
+# No sensors, no real EKF, no controller.
+# cargo run --example 04_planning_only -- --scenario configs/scenarios/isolation/planning_only.toml
+
+[simulation]
+profile          = "planning_only"
+duration_seconds = 30.0
+seed             = 42
+mock_map         = "configs/fixtures/maps/empty_20x20.toml"
+
+[[world.terrains]]
+mesh     = "maps/starter_world.glb"
+collider = "maps/starter_world_col.glb"
+medium   = "air"
+
+[world.atmosphere]
+gravity = [0.0, -9.81, 0.0]
+
+[debug]
+show_pose_gimbals = true
+show_planned_path = true
+show_legend       = true
+
+[[agents]]
+from          = "agents.ackermann_car_pro"
+name          = "PlanningCar"
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose     = { translation = [10.0, 10.0, 0.5] }
+
+# Ground-truth estimator is injected by MockGroundTruthEstimatorPlugin.
+# Enable A* planner. Map is provided by MockMapInjectorPlugin.
+[agents.autonomy_stack.world_model]
+type      = "Separate"
+estimator = { from = "components.estimators.ekf_pro" }
+mapper    = { from = "components.mappers.none" }
+
+[agents.autonomy_stack.planners]
+local_path = { from = "components.planners.a_star" }

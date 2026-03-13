@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::simulation::plugins::debugging::components::{DebugLegendNode, DebugVisualizationConfig};
+use crate::simulation::plugins::debugging::key_action_registry::{DebugToggle, KeyActionRegistry};
 
 /// Spawns the debug legend UI panel once on entering Running state.
 pub fn spawn_debug_legend(mut commands: Commands) {
@@ -25,8 +26,11 @@ pub fn spawn_debug_legend(mut commands: Commands) {
 }
 
 /// Updates the legend text content and visibility each frame.
+/// Renders only the actions registered in `KeyActionRegistry`, so the legend
+/// automatically matches the active profile.
 pub fn update_legend_text(
     config: Res<DebugVisualizationConfig>,
+    registry: Res<KeyActionRegistry>,
     mut query: Query<(&mut Text, &mut Visibility), With<DebugLegendNode>>,
 ) {
     if let Ok((mut text, mut vis)) = query.single_mut() {
@@ -35,23 +39,33 @@ pub fn update_legend_text(
         } else {
             Visibility::Hidden
         };
+
         if config.show_legend {
-            text.0 = format!(
-                "=== Debug (H to hide) ===\nF1  Pose Gimbals    [{}]\nF2  Covariance      [{}]\nF3  Point Cloud     [{}]\nF4  Velocity        [{}]\nF5  Est. Error      [{}]\nF6  Path Trail      [{}]\nF7  Occupancy Grid  [{}]\nF8  TF Frames       [{}]\nF9  Planned Path    [{}]",
-                on_off(config.show_pose_gimbals),
-                on_off(config.show_covariance),
-                on_off(config.show_point_cloud),
-                on_off(config.show_velocity),
-                on_off(config.show_error_line),
-                on_off(config.show_path_trail),
-                on_off(config.show_occupancy_grid),
-                on_off(config.show_tf_frames),
-                on_off(config.show_planned_path),
-            );
+            let mut lines = vec!["=== Debug (H to hide) ===".to_string()];
+            for action in &registry.0 {
+                if action.toggle == DebugToggle::Legend {
+                    continue; // Skip the "toggle legend" entry itself.
+                }
+                let state = toggle_state(&config, action.toggle);
+                lines.push(format!("{}  [{}]", action.label, state));
+            }
+            text.0 = lines.join("\n");
         }
     }
 }
 
-fn on_off(b: bool) -> &'static str {
-    if b { "ON " } else { "OFF" }
+fn toggle_state(config: &DebugVisualizationConfig, toggle: DebugToggle) -> &'static str {
+    let active = match toggle {
+        DebugToggle::Pose         => config.show_pose_gimbals,
+        DebugToggle::Covariance   => config.show_covariance,
+        DebugToggle::PointCloud   => config.show_point_cloud,
+        DebugToggle::Velocity     => config.show_velocity,
+        DebugToggle::ErrorLine    => config.show_error_line,
+        DebugToggle::PathTrail    => config.show_path_trail,
+        DebugToggle::OccupancyGrid => config.show_occupancy_grid,
+        DebugToggle::TfFrames     => config.show_tf_frames,
+        DebugToggle::PlannedPath  => config.show_planned_path,
+        DebugToggle::Legend       => config.show_legend,
+    };
+    if active { "ON " } else { "OFF" }
 }

@@ -2,17 +2,39 @@ use bevy::prelude::*;
 
 mod cache;
 mod components;
-mod keybindings;
 pub mod gizmos;
+pub mod key_action_registry;
+pub mod keybindings;
 pub mod ui;
 
 pub use components::{
     DebugLegendNode, DebugSensorCache, DebugVisualizationConfig, PathTrail, TfLabelEntities,
 };
+pub use key_action_registry::{DebugToggle, KeyAction, KeyActionRegistry};
 
 use crate::prelude::AppState;
 use crate::simulation::config::ScenarioConfig;
 use crate::simulation::core::app_state::SimulationSet;
+use key_action_registry::{parse_key_code, KeyAction as KA};
+
+/// Default key assignments that are ALWAYS registered (profile-independent).
+const ALWAYS_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
+    ("toggle_legend",     KeyCode::KeyH, "H  Legend",          DebugToggle::Legend),
+    ("toggle_pose",       KeyCode::F1,   "F1 Pose Gimbals",    DebugToggle::Pose),
+    ("toggle_velocity",   KeyCode::F4,   "F4 Velocity",        DebugToggle::Velocity),
+    ("toggle_path_trail", KeyCode::F6,   "F6 Path Trail",      DebugToggle::PathTrail),
+    ("toggle_tf_frames",  KeyCode::F8,   "F8 TF Frames",       DebugToggle::TfFrames),
+];
+
+/// Build the registry from `ALWAYS_ACTIONS`, then apply any TOML keybinding overrides.
+/// Runs once on entering Running state (before other startup systems read the registry).
+fn build_key_registry(
+    mut registry: ResMut<KeyActionRegistry>,
+    scenario: Res<ScenarioConfig>,
+) {
+    let overrides = &scenario.debug.keybindings.0;
+    register_actions(&mut registry, overrides, ALWAYS_ACTIONS);
+}
 
 fn apply_debug_config(
     scenario: Res<ScenarioConfig>,
@@ -39,9 +61,15 @@ impl Plugin for DebuggingPlugin {
         app.init_resource::<DebugVisualizationConfig>()
             .init_resource::<DebugSensorCache>()
             .init_resource::<TfLabelEntities>()
+            .init_resource::<KeyActionRegistry>()
             .add_systems(
                 OnEnter(AppState::Running),
-                (apply_debug_config, ui::legend::spawn_debug_legend).chain(),
+                (
+                    build_key_registry,
+                    apply_debug_config,
+                    ui::legend::spawn_debug_legend,
+                )
+                    .chain(),
             )
             .add_systems(
                 Update,
@@ -69,5 +97,28 @@ impl Plugin for DebuggingPlugin {
                     .in_set(SimulationSet::Validation)
                     .run_if(in_state(AppState::Running)),
             );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public helper for capability plugins to register their own actions.
+// ---------------------------------------------------------------------------
+
+/// Append a set of key actions to the `KeyActionRegistry`, applying TOML overrides.
+///
+/// Call from an `OnEnter(AppState::Running)` startup system **after**
+/// `DebuggingPlugin`'s `build_key_registry` runs (ensured by `.chain()` in
+/// `ProfiledSimulationPlugin`).
+pub fn register_actions(
+    registry: &mut KeyActionRegistry,
+    overrides: &std::collections::HashMap<String, String>,
+    actions: &[(&'static str, KeyCode, &'static str, DebugToggle)],
+) {
+    for &(id, default_key, label, toggle) in actions {
+        let bound_key = overrides
+            .get(id)
+            .and_then(|s| parse_key_code(s))
+            .unwrap_or(default_key);
+        registry.0.push(KA { id, bound_key, label, toggle });
     }
 }

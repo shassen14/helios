@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use super::{
     pose::Pose,
     sensors::SensorConfig,
+    simulation::{KeybindingsConfig, MetricsConfig},
     terrain::{AtmosphereConfig, TerrainConfig},
     vehicle::Vehicle,
     world_object::WorldObjectPlacement,
@@ -26,12 +27,14 @@ pub struct ScenarioConfig {
     pub debug: DebugConfig,
 
     #[serde(default)]
+    pub metrics: MetricsConfig,
+
+    #[serde(default)]
     pub agents: Vec<AgentConfig>,
 }
 
 /// Optional `[debug]` table in the scenario TOML.
 #[derive(Debug, Deserialize, Default, Clone)]
-#[serde(deny_unknown_fields)]
 #[serde(default)]
 pub struct DebugConfig {
     pub show_pose_gimbals: bool,
@@ -44,6 +47,9 @@ pub struct DebugConfig {
     pub show_tf_frames: bool,
     pub show_planned_path: bool,
     pub show_legend: bool,
+    /// Optional key override table, e.g. `toggle_covariance = "F2"`.
+    #[serde(default)]
+    pub keybindings: KeybindingsConfig,
 }
 
 /// Temporary helper for the initial file-loading step before agent prefab resolution.
@@ -55,6 +61,8 @@ pub struct RawScenarioConfig {
     pub world: World,
     #[serde(default)]
     pub debug: DebugConfig,
+    #[serde(default)]
+    pub metrics: MetricsConfig,
     #[serde(default)]
     pub agents: Vec<Value>,
 }
@@ -68,6 +76,12 @@ pub struct Simulation {
     pub frequency_hz: f64,
     #[serde(default)]
     pub log_topics: Vec<String>,
+    /// Optional profile name read from TOML; `--profile` CLI flag overrides this.
+    pub profile: Option<String>,
+    /// Path to a fixture TOML containing a baked path (used by MockPathInjectorPlugin).
+    pub mock_path: Option<String>,
+    /// Path to a fixture TOML containing a baked map (used by MockMapInjectorPlugin).
+    pub mock_map: Option<String>,
 }
 
 impl Default for Simulation {
@@ -77,6 +91,9 @@ impl Default for Simulation {
             duration_seconds: 60.0,
             frequency_hz: default_frequency_hz(),
             log_topics: Vec::new(),
+            profile: None,
+            mock_path: None,
+            mock_map: None,
         }
     }
 }

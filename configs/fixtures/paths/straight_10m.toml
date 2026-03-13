@@ -1,0 +1,24 @@
+# configs/fixtures/paths/straight_10m.toml
+# A straight 10-metre path along ENU +X (East).
+
+level = "local"
+
+[[waypoints]]
+position = [0.0, 0.0, 1.0]
+yaw_deg  = 0.0
+
+[[waypoints]]
+position = [2.5, 0.0, 1.0]
+yaw_deg  = 0.0
+
+[[waypoints]]
+position = [5.0, 0.0, 1.0]
+yaw_deg  = 0.0
+
+[[waypoints]]
+position = [7.5, 0.0, 1.0]
+yaw_deg  = 0.0
+
+[[waypoints]]
+position = [10.0, 0.0, 1.0]
+yaw_deg  = 0.0
