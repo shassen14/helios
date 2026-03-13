@@ -37,6 +37,87 @@ helios_runtime   (autonomy pipeline orchestration, Bevy-free)
 helios_sim       (Bevy 0.16+ / Avian3D simulation host)
 ```
 
+### Data Flow Diagram
+
+```mermaid
+graph TD
+    %% --- THE PHYSICAL WORLD (Simulation) ---
+    subgraph "Physics & Environment (Avian3D)"
+        Physics[Rigid Body Dynamics]
+        Env["Environment (Map & Dynamic Actors)"]
+    end
+
+    %% --- SENSING ---
+    subgraph "Sensor Suite (helios_sim)"
+        IMU[IMU Plugin]
+        GPS[GPS Plugin]
+        LiDAR[LiDAR Plugin]
+        Cam[Camera Plugin]
+    end
+
+    %% --- PERCEPTION ---
+    subgraph "Perception & Tracking Layer"
+        Tracker[Object Tracker]
+        Detector[Object Detector]
+    end
+
+    %% --- THE WORLD MODEL (The "Brain") ---
+    subgraph "World Model (helios_core + helios_runtime)"
+        InputGatherer(Input Gatherer)
+
+        subgraph "Internal Logic (Mutually Exclusive)"
+            direction TB
+            Separate["Strategy A: Separate Modules<br/>(Estimator + Mapper)"]
+            SLAM["Strategy B: Unified System<br/>(SLAM)"]
+        end
+
+        Publisher(Output Publisher)
+    end
+
+    %% --- ACTION ---
+    subgraph "Decision Making"
+        Planner[Motion Planner]
+        Controller[Controller]
+    end
+
+    %% --- DATA FLOW ---
+
+    %% 1. Physics to Sensors
+    Physics -->|Ground Truth State| IMU
+    Physics -->|Ground Truth State| GPS
+    Physics -.->|Raycasting/Rendering| LiDAR
+    Env -.->|Raycasting/Rendering| LiDAR
+    Physics -.->|Rendering| Cam
+    Env -.->|Rendering| Cam
+
+    %% 2. Sensors to Perception & World Model
+    IMU -->|MeasurementMessage| InputGatherer
+    GPS -->|MeasurementMessage| InputGatherer
+    LiDAR -->|MeasurementMessage| InputGatherer
+
+    %% Perception Flow
+    LiDAR -->|Raw Data| Detector
+    Cam -->|Raw Data| Detector
+    Detector -->|Detections| Tracker
+    Tracker -->|MeasurementMessage - TrackedObject| InputGatherer
+    Tracker == "/objects/tracked" ==> Planner
+
+    %% 3. Inside World Model
+    InputGatherer --> Separate
+    InputGatherer --> SLAM
+    Separate --> Publisher
+    SLAM --> Publisher
+
+    %% 4. World Model Outputs (The API)
+    Publisher == "/odometry/estimated" ==> Planner
+    Publisher == "/odometry/estimated" ==> Controller
+    Publisher == "/map" ==> Planner
+
+    %% 5. Planning & Control
+    Planner -->|Path| Controller
+    Controller -->|Forces/Torques| Physics
+```
+
 ### helios_core
 
 - Pure algorithmic library: EKF, UKF, PID, LQR, dynamics models, sensor models,
