@@ -58,11 +58,7 @@ impl Measurement for GpsPositionModel {
         }
 
         // --- 1. Get the filter's current estimate of the BODY's state ---
-        let body_position_world = match filter_state.get_vector3(&StateVariable::Px(FrameId::World))
-        {
-            Some(pos) => pos,
-            None => return None, // Can't predict if state doesn't have position
-        };
+        let body_position_world = filter_state.get_vector3(&StateVariable::Px(FrameId::World))?;
         let body_orientation_world = filter_state.get_orientation().unwrap_or_default();
 
         // --- 2. Calculate the Lever Arm Effect ---

@@ -9,8 +9,10 @@ use std::hash::Hash;
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum FrameId {
     /// The global ENU simulation frame. The ultimate source of truth.
+    #[default]
     World,
     /// The origin of a rigid body, where dynamics are typically calculated.
     /// Identified by the agent's unique FrameHandle.
@@ -20,11 +22,6 @@ pub enum FrameId {
     Sensor(FrameHandle),
 }
 
-impl Default for FrameId {
-    fn default() -> Self {
-        FrameId::World
-    }
-}
 
 /// An enum that defines every possible variable that can exist in a state vector.
 /// The FrameId specifies which frame the variable is expressed in.
@@ -260,9 +257,9 @@ impl FrameAwareState {
         let start_idx = self.find_idx(start_variable)?;
 
         // Check for contiguity (simplified check for brevity)
-        if self.layout.get(start_idx + 1).map_or(false, |v| {
+        if self.layout.get(start_idx + 1).is_some_and(|v| {
             std::mem::discriminant(v) == std::mem::discriminant(&expected_y)
-        }) && self.layout.get(start_idx + 2).map_or(false, |v| {
+        }) && self.layout.get(start_idx + 2).is_some_and(|v| {
             std::mem::discriminant(v) == std::mem::discriminant(&expected_z)
         }) {
             // Extract the 3x3 block from the top-left of the covariance matrix.
