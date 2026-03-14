@@ -23,8 +23,21 @@ fn main() {
     let mut app = App::new();
 
     if cli.headless {
-        app.add_plugins((MinimalPlugins, AssetPlugin::default()));
-        info!("Running in headless mode.");
+        app.add_plugins(
+            DefaultPlugins
+                .set(bevy::window::WindowPlugin {
+                    primary_window: None,
+                    exit_condition: bevy::window::ExitCondition::DontExit,
+                    ..default()
+                })
+                .disable::<bevy::winit::WinitPlugin>()
+                .set(LogPlugin {
+                    level: bevy::log::Level::INFO,
+                    filter: "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug"
+                        .to_string(),
+                    ..default()
+                }),
+        );
     } else {
         app.add_plugins(
             DefaultPlugins.set(LogPlugin {
@@ -36,8 +49,10 @@ fn main() {
         );
     }
     app.add_plugins(PhysicsPlugins::default())
-        .add_plugins(PhysicsDebugPlugin::default())
         .insert_resource(cli.clone());
+    if !cli.headless {
+        app.add_plugins(PhysicsDebugPlugin::default());
+    }
 
     app.init_state::<AppState>();
     app.add_plugins(ConfigPlugin);

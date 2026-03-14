@@ -16,9 +16,7 @@
 //   (opens Firefox Profiler automatically in your browser)
 //
 // DHAT heap profiler:
-//   cargo run --bin helios_research --profile profiling --features dhat-heap -- \
-//     --headless --duration-secs 30 \
-//     --scenario configs/scenarios/00_tutorial_showcase.toml
+//   cargo run --bin helios_research --profile profiling --features dhat-heap --headless --duration-secs 30 --scenario configs/scenarios/00_tutorial_showcase.toml
 //   View output: open dhat-heap.json at https://nnethercote.github.io/dh_view/dh_view.html
 
 #[cfg(feature = "dhat-heap")]
@@ -143,7 +141,21 @@ fn run_single(args: &ResearchCli, _run_index: u32) {
     let mut app = App::new();
 
     if args.headless {
-        app.add_plugins((MinimalPlugins, AssetPlugin::default()));
+        app.add_plugins(
+            DefaultPlugins
+                .set(bevy::window::WindowPlugin {
+                    primary_window: None,
+                    exit_condition: bevy::window::ExitCondition::DontExit,
+                    ..default()
+                })
+                .disable::<bevy::winit::WinitPlugin>()
+                .set(LogPlugin {
+                    level: bevy::log::Level::INFO,
+                    filter: "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug"
+                        .to_string(),
+                    ..default()
+                }),
+        );
     } else {
         app.add_plugins(
             DefaultPlugins.set(LogPlugin {
