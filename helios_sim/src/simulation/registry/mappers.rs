@@ -12,8 +12,8 @@ use helios_core::{
     types::FrameHandle,
 };
 
-use crate::simulation::config::structs::{MapperConfig, MapperPoseSourceConfig};
 use super::{AutonomyRegistry, MapperBuildContext};
+use crate::simulation::config::structs::{MapperConfig, MapperPoseSourceConfig};
 
 pub struct DefaultMappersPlugin;
 
@@ -31,7 +31,14 @@ fn build_none_mapper(_ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String
 }
 
 fn build_occupancy_grid_mapper(ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String> {
-    let MapperConfig::OccupancyGrid2D { resolution, width_m, height_m, pose_source, .. } = ctx.mapper_cfg else {
+    let MapperConfig::OccupancyGrid2D {
+        resolution,
+        width_m,
+        height_m,
+        pose_source,
+        ..
+    } = ctx.mapper_cfg
+    else {
         return Err("Expected OccupancyGrid2D config".to_string());
     };
     let agent_handle = FrameHandle::from_entity(ctx.agent_entity);

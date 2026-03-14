@@ -41,6 +41,5 @@ impl Plugin for DefaultPlannersPlugin {
             };
             Ok(Box::new(AStarPlanner::new(config)))
         });
-
     }
 }

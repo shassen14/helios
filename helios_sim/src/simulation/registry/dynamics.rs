@@ -8,7 +8,7 @@
 
 use bevy::prelude::{App, Plugin};
 use helios_core::{
-    models::estimation::dynamics::{EstimationDynamics, integrated_imu::IntegratedImuModel},
+    models::estimation::dynamics::{integrated_imu::IntegratedImuModel, EstimationDynamics},
     types::FrameHandle,
 };
 

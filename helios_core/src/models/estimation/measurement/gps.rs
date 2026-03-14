@@ -265,11 +265,22 @@ mod tests {
         let model = make_model(Vector3::zeros());
         let state = make_state(3.0, 4.0, 5.0);
         let tf = IdentityTf;
-        let z = model.predict_measurement(&state, &gps_message(0.0, 0.0, 0.0), &tf).unwrap();
+        let z = model
+            .predict_measurement(&state, &gps_message(0.0, 0.0, 0.0), &tf)
+            .unwrap();
 
-        assert!((z[0] - 3.0).abs() < 1e-9, "predicted x should equal body px");
-        assert!((z[1] - 4.0).abs() < 1e-9, "predicted y should equal body py");
-        assert!((z[2] - 5.0).abs() < 1e-9, "predicted z should equal body pz");
+        assert!(
+            (z[0] - 3.0).abs() < 1e-9,
+            "predicted x should equal body px"
+        );
+        assert!(
+            (z[1] - 4.0).abs() < 1e-9,
+            "predicted y should equal body py"
+        );
+        assert!(
+            (z[2] - 5.0).abs() < 1e-9,
+            "predicted z should equal body pz"
+        );
     }
 
     #[test]
@@ -280,10 +291,15 @@ mod tests {
         let model = make_model(offset);
         let state = make_state(1.0, 2.0, 3.0);
         let tf = IdentityTf;
-        let z = model.predict_measurement(&state, &gps_message(0.0, 0.0, 0.0), &tf).unwrap();
+        let z = model
+            .predict_measurement(&state, &gps_message(0.0, 0.0, 0.0), &tf)
+            .unwrap();
 
         assert!((z[0] - 1.5).abs() < 1e-9, "predicted x = px + offset_x");
-        assert!((z[1] - 2.0).abs() < 1e-9, "predicted y = py + offset_y (zero)");
+        assert!(
+            (z[1] - 2.0).abs() < 1e-9,
+            "predicted y = py + offset_y (zero)"
+        );
         assert!((z[2] - 3.1).abs() < 1e-9, "predicted z = pz + offset_z");
     }
 
@@ -299,7 +315,11 @@ mod tests {
         let h = model.calculate_jacobian(&state, &tf);
 
         assert_eq!(h.nrows(), 3, "H has 3 rows (measurement dim)");
-        assert_eq!(h.ncols(), state.dim(), "H has one column per state variable");
+        assert_eq!(
+            h.ncols(),
+            state.dim(),
+            "H has one column per state variable"
+        );
         assert!((h[(0, 0)] - 1.0).abs() < 1e-5, "H(0,0) = ∂z_x/∂Px ≈ 1.0");
         assert!((h[(1, 1)] - 1.0).abs() < 1e-5, "H(1,1) = ∂z_y/∂Py ≈ 1.0");
         assert!((h[(2, 2)] - 1.0).abs() < 1e-5, "H(2,2) = ∂z_z/∂Pz ≈ 1.0");

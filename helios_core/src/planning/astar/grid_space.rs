@@ -58,11 +58,7 @@ impl<'a> OccupancyGridSpace<'a> {
     pub fn world_to_cell(&self, pos: Vector2<f64>) -> Option<(usize, usize)> {
         let col = ((pos.x - self.origin_x) / self.resolution).floor() as isize;
         let row = ((pos.y - self.origin_y) / self.resolution).floor() as isize;
-        if col >= 0
-            && row >= 0
-            && (col as usize) < self.ncols
-            && (row as usize) < self.nrows
-        {
+        if col >= 0 && row >= 0 && (col as usize) < self.ncols && (row as usize) < self.nrows {
             Some((row as usize, col as usize))
         } else {
             None
@@ -277,7 +273,7 @@ mod tests {
         data[(1, 1)] = 127;
         data[(1, 2)] = 128;
         let space = grid(&data, 3, 3, 1.0, 128);
-        assert!(space.is_cell_free(1, 1));  // 127 < 128 → free
+        assert!(space.is_cell_free(1, 1)); // 127 < 128 → free
         assert!(!space.is_cell_free(1, 2)); // 128 >= 128 → occupied
     }
 

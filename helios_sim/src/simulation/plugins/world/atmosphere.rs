@@ -8,11 +8,10 @@ pub struct AtmospherePlugin;
 
 impl Plugin for AtmospherePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(FlyCameraPlugin)
-            .add_systems(
-                OnEnter(AppState::SceneBuilding),
-                (configure_gravity, spawn_sun, spawn_camera),
-            );
+        app.add_plugins(FlyCameraPlugin).add_systems(
+            OnEnter(AppState::SceneBuilding),
+            (configure_gravity, spawn_sun, spawn_camera),
+        );
     }
 }
 
@@ -55,15 +54,11 @@ fn spawn_camera(mut commands: Commands) {
 /// Elevation is degrees above horizon; azimuth is degrees clockwise from North.
 fn sun_transform(elevation_deg: f32, azimuth_deg: f32) -> Transform {
     let elev = elevation_deg.to_radians();
-    let az   = azimuth_deg.to_radians();
+    let az = azimuth_deg.to_radians();
 
     // Sun direction in ENU: east = sin(az)*cos(el), north = cos(az)*cos(el), up = sin(el)
     // Convert ENU → Bevy: east→+X, up→+Y, north→-Z
-    let sun_pos = Vec3::new(
-        az.sin() * elev.cos(),
-        elev.sin(),
-        -(az.cos() * elev.cos()),
-    ) * 100.0;
+    let sun_pos = Vec3::new(az.sin() * elev.cos(), elev.sin(), -(az.cos() * elev.cos())) * 100.0;
 
     Transform::from_translation(sun_pos).looking_at(Vec3::ZERO, Vec3::Y)
 }

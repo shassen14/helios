@@ -229,7 +229,9 @@ mod tests {
         let state = make_orientation_state();
         let tf = IdentityTf;
         assert!(
-            model.predict_measurement(&state, &gps_message(), &tf).is_none(),
+            model
+                .predict_measurement(&state, &gps_message(), &tf)
+                .is_none(),
             "non-magnetometer message must yield None"
         );
     }
@@ -241,11 +243,16 @@ mod tests {
         let model = make_model();
         let state = make_orientation_state();
         let tf = IdentityTf;
-        let z = model.predict_measurement(&state, &mag_message(), &tf).unwrap();
+        let z = model
+            .predict_measurement(&state, &mag_message(), &tf)
+            .unwrap();
 
         // world_magnetic_field = [0, 1, 0]; with identity rotation: z_pred = [0, 1, 0].
         assert!(z[0].abs() < 1e-9, "Bx_body = 0 with identity orientation");
-        assert!((z[1] - 1.0).abs() < 1e-9, "By_body = 1 (world field is North)");
+        assert!(
+            (z[1] - 1.0).abs() < 1e-9,
+            "By_body = 1 (world field is North)"
+        );
         assert!(z[2].abs() < 1e-9, "Bz_body = 0 with identity orientation");
     }
 
@@ -257,10 +264,15 @@ mod tests {
         let mut state = make_orientation_state();
         set_yaw_90_ccw(&mut state);
         let tf = IdentityTf;
-        let z = model.predict_measurement(&state, &mag_message(), &tf).unwrap();
+        let z = model
+            .predict_measurement(&state, &mag_message(), &tf)
+            .unwrap();
 
         assert!((z[0] - 1.0).abs() < 1e-9, "Bx_body ≈ 1 after 90° CCW yaw");
         assert!(z[1].abs() < 1e-9, "By_body ≈ 0 after 90° CCW yaw");
-        assert!(z[2].abs() < 1e-9, "Bz_body ≈ 0 (no vertical field component)");
+        assert!(
+            z[2].abs() < 1e-9,
+            "Bz_body ≈ 0 (no vertical field component)"
+        );
     }
 }

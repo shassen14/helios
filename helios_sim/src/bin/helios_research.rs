@@ -29,13 +29,11 @@ use avian3d::prelude::*;
 use bevy::{log::LogPlugin, prelude::*};
 use clap::Parser;
 use helios_core::control::ControlOutput;
+use helios_sim::cli::Cli as BaseCli;
+use helios_sim::prelude::{AppState, ProfiledSimulationPlugin, SimulationProfile};
 use helios_sim::simulation::config::ConfigPlugin;
 use helios_sim::simulation::core::components::ControlOutputComponent;
 use helios_sim::simulation::plugins::vehicles::ackermann::AckermannActuator;
-use helios_sim::{
-    prelude::{AppState, ProfiledSimulationPlugin, SimulationProfile},
-};
-use helios_sim::cli::Cli as BaseCli;
 use std::path::PathBuf;
 
 // ---------------------------------------------------------------------------
@@ -49,7 +47,11 @@ use std::path::PathBuf;
 )]
 struct ResearchCli {
     /// Path to the scenario TOML file.
-    #[arg(short, long, default_value = "configs/scenarios/00_tutorial_showcase.toml")]
+    #[arg(
+        short,
+        long,
+        default_value = "configs/scenarios/00_tutorial_showcase.toml"
+    )]
     pub scenario: PathBuf,
 
     /// Simulation profile override.
@@ -172,7 +174,10 @@ fn resolve_profile(args: &ResearchCli) -> SimulationProfile {
         if let Some(profile) = SimulationProfile::from_str_opt(p) {
             return profile;
         }
-        eprintln!("[helios_research] Unknown profile '{}', using FullPipeline.", p);
+        eprintln!(
+            "[helios_research] Unknown profile '{}', using FullPipeline.",
+            p
+        );
     }
     SimulationProfile::FullPipeline
 }
@@ -185,14 +190,24 @@ fn keyboard_controller(
     let mut throttle = 0.0_f64;
     let mut steering = 0.0_f64;
 
-    if keyboard_input.pressed(KeyCode::ArrowUp) { throttle = 1.0; }
-    if keyboard_input.pressed(KeyCode::ArrowDown) { throttle = -1.0; }
-    if keyboard_input.pressed(KeyCode::ArrowLeft) { steering = 0.7; }
-    if keyboard_input.pressed(KeyCode::ArrowRight) { steering = -0.7; }
+    if keyboard_input.pressed(KeyCode::ArrowUp) {
+        throttle = 1.0;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowDown) {
+        throttle = -1.0;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowLeft) {
+        steering = 0.7;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowRight) {
+        steering = -0.7;
+    }
 
     for entity in &query {
         commands
             .entity(entity)
-            .insert(ControlOutputComponent(ControlOutput::RawActuators(vec![throttle, steering])));
+            .insert(ControlOutputComponent(ControlOutput::RawActuators(vec![
+                throttle, steering,
+            ])));
     }
 }

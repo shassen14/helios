@@ -50,15 +50,11 @@ pub async fn run_server(
 
     match (&listener_v4, &listener_v6) {
         (Err(e4), Err(e6)) => {
-            bevy::log::error!(
-                "[foxglove] Could not bind on any address — v4: {e4}, v6: {e6}"
-            );
+            bevy::log::error!("[foxglove] Could not bind on any address — v4: {e4}, v6: {e6}");
             return;
         }
         _ => {
-            bevy::log::info!(
-                "[foxglove] WebSocket server listening on ws://localhost:{port}"
-            );
+            bevy::log::info!("[foxglove] WebSocket server listening on ws://localhost:{port}");
         }
     }
 
@@ -296,8 +292,7 @@ fn handle_client_message(
             };
             for sub in subs {
                 let sub_id = sub.get("id").and_then(|i| i.as_u64()).unwrap_or(0) as u32;
-                let channel_id =
-                    sub.get("channelId").and_then(|c| c.as_u64()).unwrap_or(0) as u32;
+                let channel_id = sub.get("channelId").and_then(|c| c.as_u64()).unwrap_or(0) as u32;
                 sub_to_channel.insert(sub_id, channel_id);
                 channel_to_sub.insert(channel_id, sub_id);
                 let _ = ctrl_tx.send(ServerControl::Subscribe { channel_id });

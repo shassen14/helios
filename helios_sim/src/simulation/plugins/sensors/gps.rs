@@ -6,16 +6,14 @@ use std::time::Duration;
 // --- Simulation Crate Imports ---
 use crate::prelude::*;
 use crate::simulation::core::{
-    app_state::SimulationSet,
-    components::SensorTopicName,
-    events::BevyMeasurementMessage,
+    app_state::SimulationSet, components::SensorTopicName, events::BevyMeasurementMessage,
     prng::SimulationRng,
 };
 
 // --- Core Library Imports ---
 use helios_core::{
     messages::{MeasurementData, MeasurementMessage},
-    models::estimation::measurement::{gps::GpsPositionModel},
+    models::estimation::measurement::gps::GpsPositionModel,
     types::FrameHandle,
 };
 
@@ -98,11 +96,7 @@ fn spawn_gps_sensors(
                     continue;
                 }
 
-                let topic_name = format!(
-                    "/{}/sensors/{}",
-                    agent_name.as_str(),
-                    sensor_name
-                );
+                let topic_name = format!("/{}/sensors/{}", agent_name.as_str(), sensor_name);
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), gps_config.name)),
                     // The Bevy component with the runtime timer.

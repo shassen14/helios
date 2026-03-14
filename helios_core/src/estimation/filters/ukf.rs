@@ -186,7 +186,9 @@ impl StateEstimator for UnscentedKalmanFilter {
                 let mut measurement_points = DMatrix::zeros(m, 2 * n + 1);
                 for i in 0..(2 * n + 1) {
                     // Use scratch_state to avoid cloning self.state per sigma point.
-                    self.scratch_state.vector.copy_from(&self.sigma_buf.column(i));
+                    self.scratch_state
+                        .vector
+                        .copy_from(&self.sigma_buf.column(i));
 
                     if let Some(z_point) =
                         model.predict_measurement(&self.scratch_state, &dummy_message, tf)
@@ -225,7 +227,9 @@ impl StateEstimator for UnscentedKalmanFilter {
                     let n = self.state.dim();
                     for i in 0..n {
                         for j in (i + 1)..n {
-                            let avg = (self.state.covariance[(i, j)] + self.state.covariance[(j, i)]) * 0.5;
+                            let avg = (self.state.covariance[(i, j)]
+                                + self.state.covariance[(j, i)])
+                                * 0.5;
                             self.state.covariance[(i, j)] = avg;
                             self.state.covariance[(j, i)] = avg;
                         }
@@ -281,19 +285,11 @@ mod tests {
             0
         }
 
-        fn get_control_from_measurement(
-            &self,
-            _data: &MeasurementData,
-        ) -> Option<DVector<f64>> {
+        fn get_control_from_measurement(&self, _data: &MeasurementData) -> Option<DVector<f64>> {
             None
         }
 
-        fn get_derivatives(
-            &self,
-            x: &DVector<f64>,
-            _u: &DVector<f64>,
-            _t: f64,
-        ) -> DVector<f64> {
+        fn get_derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
             let mut xdot = DVector::zeros(4);
             xdot[0] = x[2];
             xdot[1] = x[3];
@@ -369,7 +365,11 @@ mod tests {
         state.vector[2] = vx;
 
         let q = DMatrix::identity(4, 4) * 0.01;
-        let params = UkfParams { alpha: 1e-3, beta: 2.0, kappa: 0.0 };
+        let params = UkfParams {
+            alpha: 1e-3,
+            beta: 2.0,
+            kappa: 0.0,
+        };
         let r = DMatrix::identity(2, 2) * 0.1;
         let model: Box<dyn Measurement> = Box::new(Position2DMeasurement { r });
         let mut models = HashMap::new();

@@ -28,7 +28,12 @@ pub fn draw_occupancy_grid(
             continue;
         };
 
-        let MapData::OccupancyGrid2D { origin, resolution, data } = map else {
+        let MapData::OccupancyGrid2D {
+            origin,
+            resolution,
+            data,
+        } = map
+        else {
             continue;
         };
 
@@ -91,7 +96,11 @@ pub fn draw_occupancy_grid(
                 }
 
                 let center = Vec3::new(cx_enu, ground_y + 0.02, -cy_enu);
-                gizmos.rect(Isometry3d::new(center, flat), Vec2::splat(res * 0.92), color);
+                gizmos.rect(
+                    Isometry3d::new(center, flat),
+                    Vec2::splat(res * 0.92),
+                    color,
+                );
             }
         }
     }

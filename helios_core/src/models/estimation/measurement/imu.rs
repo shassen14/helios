@@ -242,7 +242,9 @@ mod tests {
         let state = make_ins_state();
         let tf = IdentityTf;
         assert!(
-            model.predict_measurement(&state, &gps_message(), &tf).is_none(),
+            model
+                .predict_measurement(&state, &gps_message(), &tf)
+                .is_none(),
             "non-IMU message must yield None"
         );
     }
@@ -257,12 +259,17 @@ mod tests {
         let model = make_model();
         let state = make_ins_state();
         let tf = IdentityTf;
-        let z = model.predict_measurement(&state, &imu_message(), &tf).unwrap();
+        let z = model
+            .predict_measurement(&state, &imu_message(), &tf)
+            .unwrap();
 
         assert_eq!(z.nrows(), 6, "IMU measurement vector is 6-dimensional");
         assert!(z[0].abs() < 1e-9, "accel_x should be 0");
         assert!(z[1].abs() < 1e-9, "accel_y should be 0");
-        assert!((z[2] - G).abs() < 1e-9, "accel_z should equal gravity ({G})");
+        assert!(
+            (z[2] - G).abs() < 1e-9,
+            "accel_z should equal gravity ({G})"
+        );
         assert!(z[3].abs() < 1e-9, "gyro_x should be 0");
         assert!(z[4].abs() < 1e-9, "gyro_y should be 0");
         assert!(z[5].abs() < 1e-9, "gyro_z should be 0");

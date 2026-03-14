@@ -168,7 +168,10 @@ mod tests {
     const G: f64 = 9.81;
 
     fn make_model() -> IntegratedImuModel {
-        IntegratedImuModel { agent_handle: AGENT, gravity_magnitude: G }
+        IntegratedImuModel {
+            agent_handle: AGENT,
+            gravity_magnitude: G,
+        }
     }
 
     /// Builds a 16-element state vector with the identity quaternion at indices 6-9.
@@ -268,8 +271,14 @@ mod tests {
         let u = gravity_compensating_imu(G);
         let xdot = model.get_derivatives(&x, &u, 0.0);
 
-        assert!(xdot[3].abs() < 1e-9, "vx_dot must be 0 with gravity compensation");
-        assert!(xdot[4].abs() < 1e-9, "vy_dot must be 0 with gravity compensation");
+        assert!(
+            xdot[3].abs() < 1e-9,
+            "vx_dot must be 0 with gravity compensation"
+        );
+        assert!(
+            xdot[4].abs() < 1e-9,
+            "vy_dot must be 0 with gravity compensation"
+        );
         assert!(
             xdot[5].abs() < 1e-9,
             "vz_dot must be 0 with gravity compensation, got {}",

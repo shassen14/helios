@@ -43,10 +43,12 @@ fn spawn_control_output(
     agent_query: Query<Entity, With<EstimatorComponent>>,
 ) {
     for entity in &agent_query {
-        commands.entity(entity).insert(ControlOutputComponent(ControlOutput::BodyVelocity {
-            linear: Vector3::zeros(),
-            angular: Vector3::zeros(),
-        }));
+        commands
+            .entity(entity)
+            .insert(ControlOutputComponent(ControlOutput::BodyVelocity {
+                linear: Vector3::zeros(),
+                angular: Vector3::zeros(),
+            }));
     }
 }
 

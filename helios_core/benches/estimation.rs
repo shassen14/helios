@@ -67,7 +67,10 @@ struct Position2DMeasurement {
 
 impl Measurement for Position2DMeasurement {
     fn get_measurement_layout(&self) -> Vec<StateVariable> {
-        vec![StateVariable::Px(FrameId::World), StateVariable::Py(FrameId::World)]
+        vec![
+            StateVariable::Px(FrameId::World),
+            StateVariable::Py(FrameId::World),
+        ]
     }
 
     fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
@@ -136,7 +139,11 @@ fn make_ukf() -> UnscentedKalmanFilter {
     let r = DMatrix::identity(2, 2) * 0.1;
     let mut models: HashMap<FrameHandle, Box<dyn Measurement>> = HashMap::new();
     models.insert(SENSOR, Box::new(Position2DMeasurement { r }));
-    let params = UkfParams { alpha: 1e-3, beta: 2.0, kappa: 0.0 };
+    let params = UkfParams {
+        alpha: 1e-3,
+        beta: 2.0,
+        kappa: 0.0,
+    };
     UnscentedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D), models, params)
 }
 

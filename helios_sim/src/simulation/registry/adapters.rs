@@ -26,9 +26,14 @@ impl Plugin for DefaultAdaptersPlugin {
         });
 
         registry.register_adapter("DualSisoPid", |ctx: AdapterBuildContext| {
-            let AckermannAdapterConfig::DualSisoPid { longitudinal, lateral } = ctx.adapter_cfg
+            let AckermannAdapterConfig::DualSisoPid {
+                longitudinal,
+                lateral,
+            } = ctx.adapter_cfg
             else {
-                return Err("DualSisoPid factory received wrong AckermannAdapterConfig variant".into());
+                return Err(
+                    "DualSisoPid factory received wrong AckermannAdapterConfig variant".into(),
+                );
             };
             let long_pid = SisoPid::new(longitudinal.kp, longitudinal.ki, longitudinal.kd)
                 .with_integral_clamp(longitudinal.integral_clamp);

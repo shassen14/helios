@@ -56,14 +56,24 @@ fn keyboard_controller(
     let mut throttle = 0.0_f64;
     let mut steering = 0.0_f64;
 
-    if keyboard_input.pressed(KeyCode::ArrowUp) { throttle = 1.0; }
-    if keyboard_input.pressed(KeyCode::ArrowDown) { throttle = -1.0; }
-    if keyboard_input.pressed(KeyCode::ArrowLeft) { steering = 0.7; }
-    if keyboard_input.pressed(KeyCode::ArrowRight) { steering = -0.7; }
+    if keyboard_input.pressed(KeyCode::ArrowUp) {
+        throttle = 1.0;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowDown) {
+        throttle = -1.0;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowLeft) {
+        steering = 0.7;
+    }
+    if keyboard_input.pressed(KeyCode::ArrowRight) {
+        steering = -0.7;
+    }
 
     for entity in &query {
         commands
             .entity(entity)
-            .insert(ControlOutputComponent(ControlOutput::RawActuators(vec![throttle, steering])));
+            .insert(ControlOutputComponent(ControlOutput::RawActuators(vec![
+                throttle, steering,
+            ])));
     }
 }

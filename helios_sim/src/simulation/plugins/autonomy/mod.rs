@@ -67,13 +67,12 @@ pub struct MappingPlugin;
 
 impl Plugin for MappingPlugin {
     fn build(&self, app: &mut App) {
-        app
-            .add_systems(
-                FixedUpdate,
-                mapping_system
-                    .in_set(SimulationSet::WorldModeling)
-                    .run_if(in_state(AppState::Running)),
-            );
+        app.add_systems(
+            FixedUpdate,
+            mapping_system
+                .in_set(SimulationSet::WorldModeling)
+                .run_if(in_state(AppState::Running)),
+        );
     }
 }
 

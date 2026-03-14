@@ -52,14 +52,32 @@ impl Plugin for ProfiledSimulationPlugin {
         ));
 
         // Conditional subsystems.
-        if caps.sensors()           { app.add_plugins(HeliosSensorsPlugin); }
-        if caps.real_estimation()   { app.add_plugins(EstimationPlugin); }
-        if caps.mock_estimator()    { app.add_plugins(MockGroundTruthEstimatorPlugin); }
-        if caps.mapping()           { app.add_plugins(MappingPlugin); }
-        if caps.planning()          { app.add_plugins(PlanningPlugin); }
-        if caps.control()           { app.add_plugins(ControlPlugin); }
-        if caps.mock_path()         { app.add_plugins(MockPathInjectorPlugin); }
-        if caps.mock_map()          { app.add_plugins(MockMapInjectorPlugin); }
-        if caps.metrics()           { app.add_plugins(ControlMetricsPlugin); }
+        if caps.sensors() {
+            app.add_plugins(HeliosSensorsPlugin);
+        }
+        if caps.real_estimation() {
+            app.add_plugins(EstimationPlugin);
+        }
+        if caps.mock_estimator() {
+            app.add_plugins(MockGroundTruthEstimatorPlugin);
+        }
+        if caps.mapping() {
+            app.add_plugins(MappingPlugin);
+        }
+        if caps.planning() {
+            app.add_plugins(PlanningPlugin);
+        }
+        if caps.control() {
+            app.add_plugins(ControlPlugin);
+        }
+        if caps.mock_path() {
+            app.add_plugins(MockPathInjectorPlugin);
+        }
+        if caps.mock_map() {
+            app.add_plugins(MockMapInjectorPlugin);
+        }
+        if caps.metrics() {
+            app.add_plugins(ControlMetricsPlugin);
+        }
     }
 }

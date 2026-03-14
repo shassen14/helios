@@ -4,8 +4,8 @@ use crate::types::FrameHandle;
 use nalgebra::{
     DMatrix, DVector, Isometry3, Matrix3, Quaternion, Translation3, UnitQuaternion, Vector3,
 };
-use std::hash::Hash;
 use serde::{Deserialize, Serialize};
+use std::hash::Hash;
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

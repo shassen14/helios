@@ -172,9 +172,7 @@ impl Planner for AStarPlanner {
         let robot_pos = match state.get_vector3(&StateVariable::Px(FrameId::World)) {
             Some(p) => Vector2::new(p.x, p.y),
             None => {
-                return PlannerResult::Error(
-                    "AStarPlanner: state missing world position".into(),
-                )
+                return PlannerResult::Error("AStarPlanner: state missing world position".into())
             }
         };
 
@@ -193,12 +191,12 @@ impl Planner for AStarPlanner {
 
         // Require an occupancy grid map.
         let (origin, resolution, data) = match map {
-            MapData::OccupancyGrid2D { origin, resolution, data } => (origin, *resolution, data),
-            _ => {
-                return PlannerResult::Error(
-                    "AStarPlanner requires OccupancyGrid2D map".into(),
-                )
-            }
+            MapData::OccupancyGrid2D {
+                origin,
+                resolution,
+                data,
+            } => (origin, *resolution, data),
+            _ => return PlannerResult::Error("AStarPlanner requires OccupancyGrid2D map".into()),
         };
 
         let nrows = data.nrows();
@@ -317,8 +315,11 @@ impl Planner for AStarPlanner {
         }
 
         let elapsed = ctx.now - self.last_plan_time;
-        let period =
-            if self.config.rate_hz > 0.0 { 1.0 / self.config.rate_hz } else { f64::INFINITY };
+        let period = if self.config.rate_hz > 0.0 {
+            1.0 / self.config.rate_hz
+        } else {
+            f64::INFINITY
+        };
 
         // Deviation check (optional).
         if self.config.replan_on_path_deviation {
@@ -537,7 +538,7 @@ mod tests {
         planner.plan(&state, &clear_map(10, 10, 1.0), &ctx(0.0));
 
         assert!(!planner.should_replan(&state, &ctx(0.5))); // half-period: gate closed
-        assert!(planner.should_replan(&state, &ctx(1.0)));  // full period: gate opens
+        assert!(planner.should_replan(&state, &ctx(1.0))); // full period: gate opens
     }
 
     /// With `rate_hz=0.0` (gate disabled) and `replan_on_path_deviation=true`,

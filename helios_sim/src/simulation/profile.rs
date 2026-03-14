@@ -26,18 +26,38 @@ pub struct CapabilitySet {
 }
 
 impl CapabilitySet {
-    pub fn sensors(&self) -> bool { self.sensors }
-    pub fn real_estimation(&self) -> bool { self.real_estimation }
-    pub fn mock_estimator(&self) -> bool { self.mock_estimator }
-    pub fn mapping(&self) -> bool { self.mapping }
-    pub fn planning(&self) -> bool { self.planning }
-    pub fn control(&self) -> bool { self.control }
-    pub fn mock_path(&self) -> bool { self.mock_path }
-    pub fn mock_map(&self) -> bool { self.mock_map }
-    pub fn metrics(&self) -> bool { self.metrics }
+    pub fn sensors(&self) -> bool {
+        self.sensors
+    }
+    pub fn real_estimation(&self) -> bool {
+        self.real_estimation
+    }
+    pub fn mock_estimator(&self) -> bool {
+        self.mock_estimator
+    }
+    pub fn mapping(&self) -> bool {
+        self.mapping
+    }
+    pub fn planning(&self) -> bool {
+        self.planning
+    }
+    pub fn control(&self) -> bool {
+        self.control
+    }
+    pub fn mock_path(&self) -> bool {
+        self.mock_path
+    }
+    pub fn mock_map(&self) -> bool {
+        self.mock_map
+    }
+    pub fn metrics(&self) -> bool {
+        self.metrics
+    }
 
     /// True if any estimator (real or mock ground-truth) is active.
-    pub fn estimation(&self) -> bool { self.real_estimation || self.mock_estimator }
+    pub fn estimation(&self) -> bool {
+        self.real_estimation || self.mock_estimator
+    }
 }
 
 /// Selects which subsystems the simulation runs.
@@ -79,25 +99,44 @@ impl SimulationProfile {
     pub fn capabilities(&self) -> CapabilitySet {
         match self {
             Self::FullPipeline => CapabilitySet {
-                sensors: true, real_estimation: true, mapping: true,
-                planning: true, control: true, ..Default::default()
+                sensors: true,
+                real_estimation: true,
+                mapping: true,
+                planning: true,
+                control: true,
+                ..Default::default()
             },
             Self::EstimationOnly => CapabilitySet {
-                sensors: true, real_estimation: true, ..Default::default()
+                sensors: true,
+                real_estimation: true,
+                ..Default::default()
             },
             Self::MappingOnly => CapabilitySet {
-                sensors: true, mock_estimator: true, mapping: true, ..Default::default()
+                sensors: true,
+                mock_estimator: true,
+                mapping: true,
+                ..Default::default()
             },
             Self::PlanningOnly => CapabilitySet {
-                mock_estimator: true, planning: true, mock_map: true, ..Default::default()
+                mock_estimator: true,
+                planning: true,
+                mock_map: true,
+                ..Default::default()
             },
             Self::ControlOnly => CapabilitySet {
-                mock_estimator: true, control: true, mock_path: true,
-                metrics: true, ..Default::default()
+                mock_estimator: true,
+                control: true,
+                mock_path: true,
+                metrics: true,
+                ..Default::default()
             },
             Self::PathTracking => CapabilitySet {
-                sensors: true, real_estimation: true, control: true,
-                mock_path: true, metrics: true, ..Default::default()
+                sensors: true,
+                real_estimation: true,
+                control: true,
+                mock_path: true,
+                metrics: true,
+                ..Default::default()
             },
         }
     }

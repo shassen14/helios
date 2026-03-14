@@ -23,7 +23,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy::prelude::{Entity, Resource};
-use helios_runtime::validation::CapabilitySet;
 use helios_core::{
     control::Controller,
     estimation::StateEstimator,
@@ -33,6 +32,7 @@ use helios_core::{
     slam::SlamSystem,
     types::FrameHandle,
 };
+use helios_runtime::validation::CapabilitySet;
 
 use crate::simulation::config::structs::{
     AckermannAdapterConfig, AgentConfig, ControllerConfig, EstimatorConfig, MapperConfig,
@@ -205,10 +205,7 @@ impl AutonomyRegistry {
 
     pub fn register_planner<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
-        F: Fn(PlannerBuildContext) -> Result<Box<dyn Planner>, String>
-            + Send
-            + Sync
-            + 'static,
+        F: Fn(PlannerBuildContext) -> Result<Box<dyn Planner>, String> + Send + Sync + 'static,
     {
         self.planners.insert(key.to_string(), Arc::new(factory));
         self
@@ -232,10 +229,9 @@ impl AutonomyRegistry {
         key: &str,
         ctx: EstimatorBuildContext,
     ) -> Result<Box<dyn StateEstimator>, String> {
-        let factory = self
-            .estimators
-            .get(key)
-            .ok_or_else(|| format!("No estimator registered for '{key}'. Call register_estimator()."))?;
+        let factory = self.estimators.get(key).ok_or_else(|| {
+            format!("No estimator registered for '{key}'. Call register_estimator().")
+        })?;
         factory(ctx)
     }
 
@@ -244,10 +240,9 @@ impl AutonomyRegistry {
         key: &str,
         ctx: DynamicsBuildContext,
     ) -> Result<Box<dyn EstimationDynamics>, String> {
-        let factory = self
-            .dynamics
-            .get(key)
-            .ok_or_else(|| format!("No dynamics registered for '{key}'. Call register_dynamics()."))?;
+        let factory = self.dynamics.get(key).ok_or_else(|| {
+            format!("No dynamics registered for '{key}'. Call register_dynamics().")
+        })?;
         factory(ctx)
     }
 
@@ -268,10 +263,9 @@ impl AutonomyRegistry {
         key: &str,
         ctx: SlamBuildContext,
     ) -> Result<Box<dyn SlamSystem>, String> {
-        let factory = self
-            .slam
-            .get(key)
-            .ok_or_else(|| format!("No SLAM system registered for '{key}'. Call register_slam()."))?;
+        let factory = self.slam.get(key).ok_or_else(|| {
+            format!("No SLAM system registered for '{key}'. Call register_slam().")
+        })?;
         factory(ctx)
     }
 

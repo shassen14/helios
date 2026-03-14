@@ -6,9 +6,9 @@
 // the path is already cached when the first control tick runs.
 
 use bevy::prelude::*;
+use helios_core::control::TrajectoryPoint;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::planning::types::Path;
-use helios_core::control::TrajectoryPoint;
 use helios_runtime::stage::PipelineLevel;
 use serde::Deserialize;
 
@@ -87,8 +87,7 @@ fn inject_mock_path(
 }
 
 fn load_fixture(path: &str) -> Result<PathFixture, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("read error: {e}"))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("read error: {e}"))?;
     toml::from_str(&content).map_err(|e| format!("parse error: {e}"))
 }
 
@@ -113,8 +112,8 @@ fn build_path(fixture: &PathFixture, level: &PipelineLevel) -> Path {
             state.vector[2] = wp.position[2];
             // Build orientation from yaw.
             let half_yaw = wp.yaw_deg.to_radians() * 0.5;
-            state.vector[3] = 0.0;          // Qx
-            state.vector[4] = 0.0;          // Qy
+            state.vector[3] = 0.0; // Qx
+            state.vector[4] = 0.0; // Qy
             state.vector[5] = half_yaw.sin(); // Qz
             state.vector[6] = half_yaw.cos(); // Qw
             TrajectoryPoint {
@@ -131,5 +130,9 @@ fn build_path(fixture: &PathFixture, level: &PipelineLevel) -> Path {
         PipelineLevel::Custom(s) => s.clone(),
     };
 
-    Path { waypoints, timestamp: 0.0, level_key }
+    Path {
+        waypoints,
+        timestamp: 0.0,
+        level_key,
+    }
 }

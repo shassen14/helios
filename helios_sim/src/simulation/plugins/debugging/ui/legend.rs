@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 
-use crate::simulation::plugins::debugging::components::{DebugLegendNode, DebugVisualizationConfig};
+use crate::simulation::plugins::debugging::components::{
+    DebugLegendNode, DebugVisualizationConfig,
+};
 use crate::simulation::plugins::debugging::key_action_registry::{DebugToggle, KeyActionRegistry};
 
 /// Spawns the debug legend UI panel once on entering Running state.
@@ -56,16 +58,20 @@ pub fn update_legend_text(
 
 fn toggle_state(config: &DebugVisualizationConfig, toggle: DebugToggle) -> &'static str {
     let active = match toggle {
-        DebugToggle::Pose         => config.show_pose_gimbals,
-        DebugToggle::Covariance   => config.show_covariance,
-        DebugToggle::PointCloud   => config.show_point_cloud,
-        DebugToggle::Velocity     => config.show_velocity,
-        DebugToggle::ErrorLine    => config.show_error_line,
-        DebugToggle::PathTrail    => config.show_path_trail,
+        DebugToggle::Pose => config.show_pose_gimbals,
+        DebugToggle::Covariance => config.show_covariance,
+        DebugToggle::PointCloud => config.show_point_cloud,
+        DebugToggle::Velocity => config.show_velocity,
+        DebugToggle::ErrorLine => config.show_error_line,
+        DebugToggle::PathTrail => config.show_path_trail,
         DebugToggle::OccupancyGrid => config.show_occupancy_grid,
-        DebugToggle::TfFrames     => config.show_tf_frames,
-        DebugToggle::PlannedPath  => config.show_planned_path,
-        DebugToggle::Legend       => config.show_legend,
+        DebugToggle::TfFrames => config.show_tf_frames,
+        DebugToggle::PlannedPath => config.show_planned_path,
+        DebugToggle::Legend => config.show_legend,
     };
-    if active { "ON " } else { "OFF" }
+    if active {
+        "ON "
+    } else {
+        "OFF"
+    }
 }

@@ -20,7 +20,10 @@ pub fn handle_debug_keybindings(
                 }
                 DebugToggle::Covariance => {
                     config.show_covariance = !config.show_covariance;
-                    info!("[Debug] Covariance Ellipsoid {}", on_off(config.show_covariance));
+                    info!(
+                        "[Debug] Covariance Ellipsoid {}",
+                        on_off(config.show_covariance)
+                    );
                 }
                 DebugToggle::PointCloud => {
                     config.show_point_cloud = !config.show_point_cloud;
@@ -32,7 +35,10 @@ pub fn handle_debug_keybindings(
                 }
                 DebugToggle::ErrorLine => {
                     config.show_error_line = !config.show_error_line;
-                    info!("[Debug] Estimation Error Line {}", on_off(config.show_error_line));
+                    info!(
+                        "[Debug] Estimation Error Line {}",
+                        on_off(config.show_error_line)
+                    );
                 }
                 DebugToggle::PathTrail => {
                     config.show_path_trail = !config.show_path_trail;
@@ -40,7 +46,10 @@ pub fn handle_debug_keybindings(
                 }
                 DebugToggle::OccupancyGrid => {
                     config.show_occupancy_grid = !config.show_occupancy_grid;
-                    info!("[Debug] Occupancy Grid {}", on_off(config.show_occupancy_grid));
+                    info!(
+                        "[Debug] Occupancy Grid {}",
+                        on_off(config.show_occupancy_grid)
+                    );
                 }
                 DebugToggle::TfFrames => {
                     config.show_tf_frames = !config.show_tf_frames;
@@ -59,5 +68,9 @@ pub fn handle_debug_keybindings(
 }
 
 pub fn on_off(b: bool) -> &'static str {
-    if b { "ON" } else { "OFF" }
+    if b {
+        "ON"
+    } else {
+        "OFF"
+    }
 }

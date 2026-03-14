@@ -55,7 +55,11 @@ fn obstacle_map_100x100(resolution: f64) -> MapData {
             data[(i, j)] = 255;
         }
     }
-    MapData::OccupancyGrid2D { origin: Isometry3::identity(), resolution, data }
+    MapData::OccupancyGrid2D {
+        origin: Isometry3::identity(),
+        resolution,
+        data,
+    }
 }
 
 fn ctx() -> PlannerContext<'static> {

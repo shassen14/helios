@@ -3,7 +3,9 @@
 use crate::simulation::core::{
     components::GroundTruthState,
     topics::TopicBus,
-    transforms::{bevy_global_transform_to_enu_iso, bevy_vector_to_enu_vector, TfFramePose, TfTree},
+    transforms::{
+        bevy_global_transform_to_enu_iso, bevy_vector_to_enu_vector, TfFramePose, TfTree,
+    },
 };
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
@@ -27,7 +29,8 @@ fn ground_truth_sync_system(
         // --- 1. Pose and Angular Velocity ---
         // This part is correct and remains.
         ground_truth.pose = bevy_global_transform_to_enu_iso(transform);
-        ground_truth.angular_velocity = bevy_vector_to_enu_vector(&Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z));
+        ground_truth.angular_velocity =
+            bevy_vector_to_enu_vector(&Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z));
         // TODO: Calculate angular acceleration here using the same pattern.
 
         // --- 2. Linear Velocity and Acceleration (The Correct Way) ---
@@ -57,10 +60,7 @@ pub fn ground_truth_publish_system(
     mut topic_bus: ResMut<TopicBus>,
 ) {
     for (name, gt) in &query {
-        topic_bus.publish(
-            &format!("/{}/ground_truth", name.as_str()),
-            gt.clone(),
-        );
+        topic_bus.publish(&format!("/{}/ground_truth", name.as_str()), gt.clone());
     }
 }
 
@@ -108,10 +108,10 @@ pub fn tf_publish_system(tf_tree: Res<TfTree>, mut topic_bus: ResMut<TopicBus>) 
 }
 
 pub mod app_state;
-pub mod sim_runtime;
 pub mod components;
 pub mod events;
 pub mod prng;
+pub mod sim_runtime;
 pub mod simulation_setup;
 pub mod spawn_requests;
 pub mod topics;

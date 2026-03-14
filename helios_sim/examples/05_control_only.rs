@@ -24,18 +24,22 @@ fn main() {
     if cli.headless {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()));
     } else {
-        app.add_plugins(DefaultPlugins.set(LogPlugin {
-            level: bevy::log::Level::INFO,
-            filter: "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug"
-                .to_string(),
-            ..default()
-        }));
+        app.add_plugins(
+            DefaultPlugins.set(LogPlugin {
+                level: bevy::log::Level::INFO,
+                filter: "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug"
+                    .to_string(),
+                ..default()
+            }),
+        );
     }
     app.add_plugins(PhysicsPlugins::default())
         .insert_resource(cli);
     app.init_state::<AppState>();
     app.add_plugins(ConfigPlugin);
-    app.add_plugins(ProfiledSimulationPlugin { profile: SimulationProfile::ControlOnly });
+    app.add_plugins(ProfiledSimulationPlugin {
+        profile: SimulationProfile::ControlOnly,
+    });
     println!("Starting Helios Simulation — Control Only");
     app.run();
 }

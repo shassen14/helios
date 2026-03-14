@@ -18,12 +18,17 @@ use crate::simulation::plugins::foxglove::protocol::{
     BridgeMessage, ChannelAdvertisement, ServerControl,
 };
 use crate::simulation::plugins::foxglove::serializers::{
-    FRAME_AWARE_STATE_SCHEMA, GROUND_TRUTH_SCHEMA, MEASUREMENT_MESSAGE_SCHEMA,
+    FRAME_AWARE_STATE_SCHEMA,
+    GROUND_TRUTH_SCHEMA,
+    MEASUREMENT_MESSAGE_SCHEMA,
     TF_FRAME_POSE_SCHEMA,
     // POINT_CLOUD_SCHEMA,  // commented out — PointCloud not streamed to Foxglove
 };
 use crate::simulation::plugins::foxglove::types::{
-    frame_aware_state_to_json, ground_truth_to_json, measurement_to_json, tf_frame_pose_to_json,
+    frame_aware_state_to_json,
+    ground_truth_to_json,
+    measurement_to_json,
+    tf_frame_pose_to_json,
     // point_cloud_to_json,  // commented out — PointCloud not streamed to Foxglove
 };
 
@@ -221,7 +226,12 @@ pub fn foxglove_bridge_system(
             Some(n) => n.clone(),
             None => continue,
         };
-        let type_id = match bridge.channel_registry.channel_type.get(&channel_id).copied() {
+        let type_id = match bridge
+            .channel_registry
+            .channel_type
+            .get(&channel_id)
+            .copied()
+        {
             Some(t) => t,
             None => continue,
         };
@@ -295,9 +305,7 @@ pub fn foxglove_bridge_system(
                 if let Some(topic) = topic_bus.get_topic::<TfFramePose>(&topic_name) {
                     let payloads: Vec<_> = reader
                         .read(topic)
-                        .filter_map(|s| {
-                            serde_json::to_vec(&tf_frame_pose_to_json(&s.message)).ok()
-                        })
+                        .filter_map(|s| serde_json::to_vec(&tf_frame_pose_to_json(&s.message)).ok())
                         .collect();
                     for payload in payloads {
                         send_data(

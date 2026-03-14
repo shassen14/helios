@@ -35,7 +35,9 @@ impl SisoPid {
     pub fn update(&mut self, error: f64, dt: f64) -> f64 {
         self.integral += error * dt;
         if self.integral_clamp > 0.0 {
-            self.integral = self.integral.clamp(-self.integral_clamp, self.integral_clamp);
+            self.integral = self
+                .integral
+                .clamp(-self.integral_clamp, self.integral_clamp);
         }
         let derivative = if dt > 0.0 {
             (error - self.prev_error) / dt

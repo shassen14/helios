@@ -20,29 +20,73 @@ use key_action_registry::{parse_key_code, KeyAction as KA};
 
 /// Default key assignments that are ALWAYS registered (profile-independent).
 const ALWAYS_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
-    ("toggle_legend",     KeyCode::KeyH, "H  Legend",          DebugToggle::Legend),
-    ("toggle_pose",       KeyCode::F1,   "F1 Pose Gimbals",    DebugToggle::Pose),
-    ("toggle_velocity",   KeyCode::F4,   "F4 Velocity",        DebugToggle::Velocity),
-    ("toggle_path_trail", KeyCode::F6,   "F6 Path Trail",      DebugToggle::PathTrail),
-    ("toggle_tf_frames",  KeyCode::F8,   "F8 TF Frames",       DebugToggle::TfFrames),
+    (
+        "toggle_legend",
+        KeyCode::KeyH,
+        "H  Legend",
+        DebugToggle::Legend,
+    ),
+    (
+        "toggle_pose",
+        KeyCode::F1,
+        "F1 Pose Gimbals",
+        DebugToggle::Pose,
+    ),
+    (
+        "toggle_velocity",
+        KeyCode::F4,
+        "F4 Velocity",
+        DebugToggle::Velocity,
+    ),
+    (
+        "toggle_path_trail",
+        KeyCode::F6,
+        "F6 Path Trail",
+        DebugToggle::PathTrail,
+    ),
+    (
+        "toggle_tf_frames",
+        KeyCode::F8,
+        "F8 TF Frames",
+        DebugToggle::TfFrames,
+    ),
 ];
 
-const SENSOR_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
-    ("toggle_point_cloud", KeyCode::F3, "F3 Point Cloud", DebugToggle::PointCloud),
-];
+const SENSOR_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[(
+    "toggle_point_cloud",
+    KeyCode::F3,
+    "F3 Point Cloud",
+    DebugToggle::PointCloud,
+)];
 
 const ESTIMATION_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
-    ("toggle_covariance", KeyCode::F2, "F2 Covariance",  DebugToggle::Covariance),
-    ("toggle_error_line", KeyCode::F5, "F5 Est. Error",  DebugToggle::ErrorLine),
+    (
+        "toggle_covariance",
+        KeyCode::F2,
+        "F2 Covariance",
+        DebugToggle::Covariance,
+    ),
+    (
+        "toggle_error_line",
+        KeyCode::F5,
+        "F5 Est. Error",
+        DebugToggle::ErrorLine,
+    ),
 ];
 
-const MAPPING_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
-    ("toggle_occupancy_grid", KeyCode::F7, "F7 Occupancy Grid", DebugToggle::OccupancyGrid),
-];
+const MAPPING_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[(
+    "toggle_occupancy_grid",
+    KeyCode::F7,
+    "F7 Occupancy Grid",
+    DebugToggle::OccupancyGrid,
+)];
 
-const PLANNING_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
-    ("toggle_planned_path", KeyCode::F9, "F9 Planned Path", DebugToggle::PlannedPath),
-];
+const PLANNING_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[(
+    "toggle_planned_path",
+    KeyCode::F9,
+    "F9 Planned Path",
+    DebugToggle::PlannedPath,
+)];
 
 /// Build the registry from action tables, gated by `CapabilitySet`.
 /// Runs once on entering Running state (before other startup systems read the registry).
@@ -68,21 +112,18 @@ fn build_key_registry(
     }
 }
 
-fn apply_debug_config(
-    scenario: Res<ScenarioConfig>,
-    mut viz: ResMut<DebugVisualizationConfig>,
-) {
+fn apply_debug_config(scenario: Res<ScenarioConfig>, mut viz: ResMut<DebugVisualizationConfig>) {
     let d = &scenario.debug;
-    viz.show_pose_gimbals   = d.show_pose_gimbals;
-    viz.show_covariance     = d.show_covariance;
-    viz.show_point_cloud    = d.show_point_cloud;
-    viz.show_velocity       = d.show_velocity;
-    viz.show_error_line     = d.show_error_line;
-    viz.show_path_trail     = d.show_path_trail;
+    viz.show_pose_gimbals = d.show_pose_gimbals;
+    viz.show_covariance = d.show_covariance;
+    viz.show_point_cloud = d.show_point_cloud;
+    viz.show_velocity = d.show_velocity;
+    viz.show_error_line = d.show_error_line;
+    viz.show_path_trail = d.show_path_trail;
     viz.show_occupancy_grid = d.show_occupancy_grid;
-    viz.show_tf_frames      = d.show_tf_frames;
-    viz.show_planned_path   = d.show_planned_path;
-    viz.show_legend         = d.show_legend;
+    viz.show_tf_frames = d.show_tf_frames;
+    viz.show_planned_path = d.show_planned_path;
+    viz.show_legend = d.show_legend;
 }
 
 /// Top-level plugin that provides all debug visualization tooling.
@@ -153,6 +194,11 @@ fn register_actions(
             );
             continue;
         }
-        registry.0.push(KA { id, bound_key, label, toggle });
+        registry.0.push(KA {
+            id,
+            bound_key,
+            label,
+            toggle,
+        });
     }
 }

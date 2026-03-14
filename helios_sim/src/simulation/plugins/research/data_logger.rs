@@ -81,7 +81,9 @@ fn sample_data(
             })
             .unwrap_or((gt.pose.translation.x, gt.pose.translation.y, gt_yaw));
 
-        let (ctrl_steer, ctrl_speed): (f64, f64) = ctrl_opt.map(|c| extract_actuators(&c.0)).unwrap_or((0.0, 0.0));
+        let (ctrl_steer, ctrl_speed): (f64, f64) = ctrl_opt
+            .map(|c| extract_actuators(&c.0))
+            .unwrap_or((0.0, 0.0));
 
         buffer.rows.push(LogRow {
             timestamp_s: t,
@@ -120,17 +122,21 @@ fn flush_log(buffer: Res<DataLogBuffer>, scenario: Res<ScenarioConfig>) {
         .as_deref()
         .unwrap_or("results/data_log.csv");
 
-    let mut out = String::from(
-        "timestamp_s,gt_x,gt_y,gt_yaw,est_x,est_y,est_yaw,ctrl_steer,ctrl_speed\n",
-    );
+    let mut out =
+        String::from("timestamp_s,gt_x,gt_y,gt_yaw,est_x,est_y,est_yaw,ctrl_steer,ctrl_speed\n");
     for row in &buffer.rows {
         let _ = writeln!(
             out,
             "{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
             row.timestamp_s,
-            row.gt_x, row.gt_y, row.gt_yaw,
-            row.est_x, row.est_y, row.est_yaw,
-            row.ctrl_steer, row.ctrl_speed,
+            row.gt_x,
+            row.gt_y,
+            row.gt_yaw,
+            row.est_x,
+            row.est_y,
+            row.est_yaw,
+            row.ctrl_steer,
+            row.ctrl_speed,
         );
     }
 
@@ -142,6 +148,10 @@ fn flush_log(buffer: Res<DataLogBuffer>, scenario: Res<ScenarioConfig>) {
     if let Err(e) = std::fs::write(path, out) {
         error!("[DataLogger] Failed to write '{}': {}", path, e);
     } else {
-        info!("[DataLogger] {} rows written to '{}'", buffer.rows.len(), path);
+        info!(
+            "[DataLogger] {} rows written to '{}'",
+            buffer.rows.len(),
+            path
+        );
     }
 }

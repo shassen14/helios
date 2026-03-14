@@ -16,7 +16,7 @@ use crate::simulation::core::{
 // --- Core Library Imports ---
 use helios_core::{
     messages::{MeasurementData, MeasurementMessage},
-    models::estimation::measurement::{magnetometer::MagnetometerModel},
+    models::estimation::measurement::magnetometer::MagnetometerModel,
     types::FrameHandle,
 };
 
@@ -112,11 +112,7 @@ fn spawn_magnetometer_sensors(
 
                 core_model.sensor_handle = FrameHandle::from_entity(sensor_entity);
 
-                let topic_name = format!(
-                    "/{}/sensors/{}",
-                    agent_name.as_str(),
-                    sensor_name
-                );
+                let topic_name = format!("/{}/sensors/{}", agent_name.as_str(), sensor_name);
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), mag_config.name)),
                     Magnetometer {

@@ -8,11 +8,11 @@ use bevy::prelude::*;
 use crate::prelude::AppState;
 use crate::simulation::core::app_state::{SceneBuildSet, SimulationSet};
 use crate::simulation::core::components::GroundTruthState;
-use crate::simulation::plugins::autonomy::EstimatorComponent;
 use crate::simulation::plugins::autonomy::systems::{
     autonomy_telemetry_system, route_sensor_messages, sensor_telemetry_system,
     spawn_mock_world_model_modules, spawn_odom_frames, update_odom_frames,
 };
+use crate::simulation::plugins::autonomy::EstimatorComponent;
 
 pub struct MockGroundTruthEstimatorPlugin;
 
@@ -31,11 +31,7 @@ impl Plugin for MockGroundTruthEstimatorPlugin {
             // Chain: route sensor mailbox → inject GT state → update odom frames.
             .add_systems(
                 FixedUpdate,
-                (
-                    route_sensor_messages,
-                    gt_inject_system,
-                    update_odom_frames,
-                )
+                (route_sensor_messages, gt_inject_system, update_odom_frames)
                     .chain()
                     .in_set(SimulationSet::Estimation)
                     .run_if(in_state(AppState::Running)),

@@ -44,7 +44,10 @@ impl ControlCore {
         runtime: &dyn AgentRuntime,
     ) {
         let adapter = TfProviderAdapter(runtime);
-        let ctx = PlannerContext { tf: Some(&adapter), now };
+        let ctx = PlannerContext {
+            tf: Some(&adapter),
+            now,
+        };
 
         for lp in &mut self.planners {
             let map = match maps.get(&lp.level) {
@@ -102,17 +105,17 @@ impl ControlCore {
     }
 
     /// Returns the active look-ahead waypoint for `level`.
-    pub fn get_active_lookahead_waypoint(
-        &self,
-        level: &PipelineLevel,
-    ) -> Option<&TrajectoryPoint> {
+    pub fn get_active_lookahead_waypoint(&self, level: &PipelineLevel) -> Option<&TrajectoryPoint> {
         let path = self.cached_paths.get(level)?;
         let idx = *self.lookahead_indices.get(level).unwrap_or(&0);
         path.waypoints.get(idx)
     }
 
     /// Returns the cached path for `level`.
-    pub fn get_cached_path(&self, level: &PipelineLevel) -> Option<&helios_core::planning::types::Path> {
+    pub fn get_cached_path(
+        &self,
+        level: &PipelineLevel,
+    ) -> Option<&helios_core::planning::types::Path> {
         self.cached_paths.get(level)
     }
 

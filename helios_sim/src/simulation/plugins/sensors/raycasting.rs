@@ -7,9 +7,7 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::config::structs::{LidarConfig, SensorConfig};
 use crate::simulation::core::{
-    app_state::SimulationSet,
-    components::SensorTopicName,
-    events::BevyMeasurementMessage,
+    app_state::SimulationSet, components::SensorTopicName, events::BevyMeasurementMessage,
 };
 
 // --- Core Library Imports ---
@@ -35,7 +33,6 @@ pub struct RaycastingSensor {
     pub model: Box<dyn RaycastingSensorModel>,
     /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
     pub topic_name: String,
-
 }
 
 pub struct RaycastingSensorPlugin;
@@ -114,11 +111,7 @@ fn spawn_raycasting_sensors(
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
-                let topic_name = format!(
-                    "/{}/sensors/{}",
-                    agent_name.as_str(),
-                    sensor_name
-                );
+                let topic_name = format!("/{}/sensors/{}", agent_name.as_str(), sensor_name);
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
                     RaycastingSensor {
@@ -193,13 +186,9 @@ fn raycasting_sensor_system(
 
                     // Convert it to `Dir3` for the raycast.
                     if let Ok(dir) = Dir3::new(world_direction) {
-                        if let Some(hit) = spatial_query.cast_ray(
-                            sensor_origin,
-                            dir,
-                            max_toi,
-                            true,
-                            &filter,
-                        ) {
+                        if let Some(hit) =
+                            spatial_query.cast_ray(sensor_origin, dir, max_toi, true, &filter)
+                        {
                             hits.push(RayHit {
                                 ray_id: ray.id,
                                 distance: hit.distance,

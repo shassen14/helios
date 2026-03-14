@@ -82,7 +82,13 @@ pub(super) fn process_ackermann_logic(
 pub(super) fn attach_ackermann_physics(
     mut commands: Commands,
     query: Query<
-        (Entity, &Name, &GroundTruthState, &AckermannParameters, &SpawnAgentConfigRequest),
+        (
+            Entity,
+            &Name,
+            &GroundTruthState,
+            &AckermannParameters,
+            &SpawnAgentConfigRequest,
+        ),
         Without<RigidBody>,
     >,
     assets: Res<AckermannAssets>,
@@ -159,8 +165,17 @@ pub(super) fn drive_ackermann_cars(
     )>,
 ) {
     let dt = time.delta_secs();
-    for (entity, transform, lin_vel, ang_vel, params, actuator, mass, mut adapter_comp, ctrl_output_opt) in
-        &mut query
+    for (
+        entity,
+        transform,
+        lin_vel,
+        ang_vel,
+        params,
+        actuator,
+        mass,
+        mut adapter_comp,
+        ctrl_output_opt,
+    ) in &mut query
     {
         let Some(ctrl_output) = ctrl_output_opt else {
             continue;
@@ -181,7 +196,11 @@ pub(super) fn drive_ackermann_cars(
         // Layer 3: pure linear map — adapter has already resolved all kinematics.
 
         // Force: throttle_norm * max_force (FLU +X = Forward).
-        let force_flu = NaVec3::new(cmd.throttle_norm as f64 * actuator.max_force as f64, 0.0, 0.0);
+        let force_flu = NaVec3::new(
+            cmd.throttle_norm as f64 * actuator.max_force as f64,
+            0.0,
+            0.0,
+        );
         let force_bevy_local = flu_vector_to_bevy_local_vector(&force_flu);
         let force_world = transform.rotation * force_bevy_local;
 

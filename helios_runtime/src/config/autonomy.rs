@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{EstimatorConfig, MapperConfig, PlannerConfig, SlamConfig, ControllerConfig};
+use super::{ControllerConfig, EstimatorConfig, MapperConfig, PlannerConfig, SlamConfig};
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -21,7 +21,9 @@ pub struct AutonomyStack {
 #[serde(tag = "type")]
 #[serde(rename_all = "PascalCase")]
 pub enum WorldModelConfig {
-    CombinedSlam { slam: SlamConfig },
+    CombinedSlam {
+        slam: SlamConfig,
+    },
     Separate {
         estimator: Option<EstimatorConfig>,
         mapper: Option<MapperConfig>,

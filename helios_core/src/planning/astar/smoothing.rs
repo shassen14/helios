@@ -101,7 +101,11 @@ pub(super) fn make_waypoint(world_x: f64, world_y: f64, time: f64) -> Trajectory
     state.vector[0] = world_x;
     state.vector[1] = world_y;
     state.vector[2] = 0.0;
-    TrajectoryPoint { state, state_dot: None, time }
+    TrajectoryPoint {
+        state,
+        state_dot: None,
+        time,
+    }
 }
 
 // =========================================================================
@@ -110,9 +114,9 @@ pub(super) fn make_waypoint(world_x: f64, world_y: f64, time: f64) -> Trajectory
 
 #[cfg(test)]
 mod tests {
+    use super::super::grid_space::OccupancyGridSpace;
     use super::*;
     use nalgebra::DMatrix;
-    use super::super::grid_space::OccupancyGridSpace;
 
     /// Unit-resolution space anchored at the world origin.
     fn make_space<'a>(data: &'a DMatrix<u8>, nrows: usize, ncols: usize) -> OccupancyGridSpace<'a> {

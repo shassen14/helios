@@ -22,9 +22,7 @@ impl Plugin for DefaultControllersPlugin {
         registry.register_controller("Pid", |ctx: ControllerBuildContext| {
             if let ControllerConfig::Pid { kp, ki, kd, .. } = ctx.controller_cfg {
                 Ok(Box::new(VelocityPidController::new(
-                    kp as f64,
-                    ki as f64,
-                    kd as f64,
+                    kp as f64, ki as f64, kd as f64,
                 )))
             } else {
                 Err("Pid factory received wrong ControllerConfig variant".into())

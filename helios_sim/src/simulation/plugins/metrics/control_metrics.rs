@@ -78,7 +78,11 @@ fn sample_metrics(
         if let Some(wp) = control
             .0
             .get_active_lookahead_waypoint(&PipelineLevel::Local)
-            .or_else(|| control.0.get_active_lookahead_waypoint(&PipelineLevel::Global))
+            .or_else(|| {
+                control
+                    .0
+                    .get_active_lookahead_waypoint(&PipelineLevel::Global)
+            })
         {
             let ref_x = wp.state.vector[0];
             let ref_y = wp.state.vector[1];
@@ -97,10 +101,7 @@ fn sample_metrics(
 }
 
 /// Prints the metrics table on simulation exit.
-fn print_metrics(
-    metrics: Res<ControlMetrics>,
-    scenario: Res<ScenarioConfig>,
-) {
+fn print_metrics(metrics: Res<ControlMetrics>, scenario: Res<ScenarioConfig>) {
     if metrics.speed_history.is_empty() {
         return;
     }
@@ -111,30 +112,31 @@ fn print_metrics(
         .map(|(_, v)| *v)
         .fold(f64::NEG_INFINITY, f64::max);
 
-    let rt  = core_metrics::rise_time(&metrics.speed_history, target_speed);
-    let st  = core_metrics::settling_time(&metrics.speed_history, target_speed, 0.02);
-    let os  = core_metrics::overshoot_pct(&metrics.speed_history, target_speed);
+    let rt = core_metrics::rise_time(&metrics.speed_history, target_speed);
+    let st = core_metrics::settling_time(&metrics.speed_history, target_speed, 0.02);
+    let os = core_metrics::overshoot_pct(&metrics.speed_history, target_speed);
 
-    let cte = core_metrics::cross_track_error(
-        &metrics.actual_positions,
-        &metrics.reference_positions,
-    );
-    let he = core_metrics::heading_error(
-        &metrics.actual_headings,
-        &metrics.reference_headings,
-    );
+    let cte =
+        core_metrics::cross_track_error(&metrics.actual_positions, &metrics.reference_positions);
+    let he = core_metrics::heading_error(&metrics.actual_headings, &metrics.reference_headings);
 
     let cte_mean = mean(&cte);
-    let cte_max  = cte.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
-    let he_mean  = mean(&he.iter().map(|v| v.abs()).collect::<Vec<_>>());
-    let he_max   = he.iter().map(|v| v.abs()).fold(f64::NEG_INFINITY, f64::max);
+    let cte_max = cte.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+    let he_mean = mean(&he.iter().map(|v| v.abs()).collect::<Vec<_>>());
+    let he_max = he.iter().map(|v| v.abs()).fold(f64::NEG_INFINITY, f64::max);
 
     info!("=== Control Metrics ===");
     info!("  Rise time       : {}", fmt_opt(rt, "s"));
     info!("  Settling time   : {}", fmt_opt(st, "s"));
     info!("  Overshoot       : {:.1} %", os);
-    info!("  Cross-track err : mean {:.3} m  max {:.3} m", cte_mean, cte_max);
-    info!("  Heading error   : mean {:.3} rad  max {:.3} rad", he_mean, he_max);
+    info!(
+        "  Cross-track err : mean {:.3} m  max {:.3} m",
+        cte_mean, cte_max
+    );
+    info!(
+        "  Heading error   : mean {:.3} rad  max {:.3} rad",
+        he_mean, he_max
+    );
 
     if let Some(ref path) = scenario.metrics.output_path {
         write_csv(path, &metrics, &cte, &he);
@@ -142,7 +144,9 @@ fn print_metrics(
 }
 
 fn mean(v: &[f64]) -> f64 {
-    if v.is_empty() { return 0.0; }
+    if v.is_empty() {
+        return 0.0;
+    }
     v.iter().sum::<f64>() / v.len() as f64
 }
 
@@ -153,12 +157,7 @@ fn fmt_opt(v: Option<f64>, unit: &str) -> String {
     }
 }
 
-fn write_csv(
-    path: &str,
-    metrics: &ControlMetrics,
-    cte: &[f64],
-    he: &[f64],
-) {
+fn write_csv(path: &str, metrics: &ControlMetrics, cte: &[f64], he: &[f64]) {
     use std::fmt::Write as _;
     let mut out = String::from("timestamp_s,speed_mps,cte_m,heading_err_rad\n");
     for (i, &(t, speed)) in metrics.speed_history.iter().enumerate() {

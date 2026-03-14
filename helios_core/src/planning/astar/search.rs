@@ -196,7 +196,11 @@ pub(super) fn run_astar(
             }
             let dr = (nr as i32 - row as i32).abs();
             let dc = (nc as i32 - col as i32).abs();
-            let step_cost = if dr + dc == 2 { std::f64::consts::SQRT_2 } else { 1.0 };
+            let step_cost = if dr + dc == 2 {
+                std::f64::consts::SQRT_2
+            } else {
+                1.0
+            };
             let new_g = node.g_score + step_cost;
 
             let existing_g = *buffers.g_score.get(&(nr, nc)).unwrap_or(&f64::INFINITY);
@@ -204,7 +208,12 @@ pub(super) fn run_astar(
                 buffers.g_score.insert((nr, nc), new_g);
                 buffers.parent.insert((nr, nc), (row, col));
                 let f = new_g + octile_heuristic(nr, nc, goal_row, goal_col);
-                buffers.open.push(AStarNode { f_score: f, g_score: new_g, row: nr, col: nc });
+                buffers.open.push(AStarNode {
+                    f_score: f,
+                    g_score: new_g,
+                    row: nr,
+                    col: nc,
+                });
             }
         }
     }

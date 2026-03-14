@@ -11,7 +11,9 @@ use helios_runtime::validation::validate_autonomy_config;
 
 use crate::prelude::*;
 use crate::simulation::config::structs::WorldModelConfig;
-use crate::simulation::core::components::{AgentTopicNames, MailboxEntry, SensorMailbox, SensorTopicName};
+use crate::simulation::core::components::{
+    AgentTopicNames, MailboxEntry, SensorMailbox, SensorTopicName,
+};
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::topics::TopicBus;
@@ -19,11 +21,11 @@ use crate::simulation::core::transforms::{enu_iso_to_bevy_transform, TfTree};
 use crate::simulation::plugins::autonomy::components::{
     ControlPipelineComponent, EstimatorComponent, MapperComponent, ModuleTimer, OdomFrameOf,
 };
-use helios_core::planning::types::PlannerGoal;
 use crate::simulation::registry::{
     AutonomyRegistry, ControllerBuildContext, EstimatorBuildContext, MapperBuildContext,
     PlannerBuildContext, SlamBuildContext,
 };
+use helios_core::planning::types::PlannerGoal;
 
 // =========================================================================
 // == Helpers ==
@@ -215,15 +217,20 @@ pub fn spawn_world_model_modules(
                 match registry.build_slam(slam_cfg.get_kind_str(), ctx) {
                     Ok(system) => {
                         let agent_name = agent_config.name();
-                        let (estimation, mapping, control) =
-                            PipelineBuilder::new().with_slam(system).build().into_parts();
+                        let (estimation, mapping, control) = PipelineBuilder::new()
+                            .with_slam(system)
+                            .build()
+                            .into_parts();
                         entity_commands.insert((
                             EstimatorComponent(Box::new(estimation)),
                             MapperComponent(Box::new(mapping)),
                             ControlPipelineComponent(control),
                             SensorMailbox::default(),
                             AgentTopicNames {
-                                active_waypoint: format!("/{}/planning/active_waypoint", agent_name),
+                                active_waypoint: format!(
+                                    "/{}/planning/active_waypoint",
+                                    agent_name
+                                ),
                                 odometry_estimated: format!("/{}/odometry/estimated", agent_name),
                                 map_global: format!("/{}/map/global", agent_name),
                                 map_local: format!("/{}/map", agent_name),
@@ -462,9 +469,12 @@ pub fn route_sensor_messages(
 
     // Sort each mailbox by timestamp (ascending) for EKF causality.
     for mut mailbox in &mut mailbox_query {
-        mailbox
-            .entries
-            .sort_by(|a, b| a.message.timestamp.partial_cmp(&b.message.timestamp).unwrap());
+        mailbox.entries.sort_by(|a, b| {
+            a.message
+                .timestamp
+                .partial_cmp(&b.message.timestamp)
+                .unwrap()
+        });
     }
 }
 
@@ -490,7 +500,12 @@ pub fn estimation_system(
 /// Forwards each agent's `SensorMailbox` to its mapper and handles timer-gated pose updates.
 /// Runs in parallel with `estimation_system` — accesses `MapperComponent` only.
 pub fn mapping_system(
-    mut module_query: Query<(Entity, &mut MapperComponent, &mut ModuleTimer, &SensorMailbox)>,
+    mut module_query: Query<(
+        Entity,
+        &mut MapperComponent,
+        &mut ModuleTimer,
+        &SensorMailbox,
+    )>,
     odom_query: Query<(&OdomFrameOf, Entity)>,
     time: Res<Time>,
     tf_tree: Res<TfTree>,
@@ -550,7 +565,12 @@ pub fn update_odom_frames(
 /// Runs in `SimulationSet::Validation` (cold telemetry path).
 /// Topic name strings are pre-computed in `AgentTopicNames` — no `format!()` allocations here.
 pub fn autonomy_telemetry_system(
-    query: Query<(&EstimatorComponent, &MapperComponent, &ControlPipelineComponent, &AgentTopicNames)>,
+    query: Query<(
+        &EstimatorComponent,
+        &MapperComponent,
+        &ControlPipelineComponent,
+        &AgentTopicNames,
+    )>,
     mut topic_bus: ResMut<TopicBus>,
 ) {
     for (estimator, mapper, control, topics) in &query {
@@ -558,7 +578,11 @@ pub fn autonomy_telemetry_system(
         if let Some(wp) = control
             .0
             .get_active_lookahead_waypoint(&PipelineLevel::Local)
-            .or_else(|| control.0.get_active_lookahead_waypoint(&PipelineLevel::Global))
+            .or_else(|| {
+                control
+                    .0
+                    .get_active_lookahead_waypoint(&PipelineLevel::Global)
+            })
         {
             topic_bus.publish(&topics.active_waypoint, wp.state.clone());
         }
@@ -588,10 +612,7 @@ pub fn autonomy_telemetry_system(
 /// Publishes each agent's sensor measurements to TopicBus.
 /// Runs in `SimulationSet::Validation` (cold telemetry path).
 /// Sensor systems no longer touch `TopicBus` directly — all sensor telemetry flows here.
-pub fn sensor_telemetry_system(
-    query: Query<&SensorMailbox>,
-    mut topic_bus: ResMut<TopicBus>,
-) {
+pub fn sensor_telemetry_system(query: Query<&SensorMailbox>, mut topic_bus: ResMut<TopicBus>) {
     for mailbox in &query {
         for entry in &mailbox.entries {
             if !entry.topic_name.is_empty() {

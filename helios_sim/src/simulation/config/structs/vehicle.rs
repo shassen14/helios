@@ -24,10 +24,18 @@ pub struct AckermannPhysicsConfig {
 }
 
 impl AckermannPhysicsConfig {
-    fn default_mass() -> f32 { 1500.0 }
-    fn default_friction() -> f32 { 0.7 }
-    fn default_linear_damping() -> f32 { 0.0 }
-    fn default_angular_damping() -> f32 { 0.0 }
+    fn default_mass() -> f32 {
+        1500.0
+    }
+    fn default_friction() -> f32 {
+        0.7
+    }
+    fn default_linear_damping() -> f32 {
+        0.0
+    }
+    fn default_angular_damping() -> f32 {
+        0.0
+    }
 }
 
 impl Default for AckermannPhysicsConfig {
@@ -52,17 +60,23 @@ impl Default for AckermannPhysicsConfig {
 #[serde(deny_unknown_fields)]
 pub struct AckermannActuatorConfig {
     #[serde(default = "AckermannActuatorConfig::default_max_force")]
-    pub max_force: f32,  // N
+    pub max_force: f32, // N
     #[serde(default = "AckermannActuatorConfig::default_max_torque")]
     pub max_torque: f32, // N·m
     #[serde(default = "AckermannActuatorConfig::default_max_speed")]
-    pub max_speed: f32,  // m/s
+    pub max_speed: f32, // m/s
 }
 
 impl AckermannActuatorConfig {
-    fn default_max_force() -> f32 { 5000.0 }
-    fn default_max_torque() -> f32 { 2500.0 }
-    fn default_max_speed() -> f32 { 20.0 }
+    fn default_max_force() -> f32 {
+        5000.0
+    }
+    fn default_max_torque() -> f32 {
+        2500.0
+    }
+    fn default_max_speed() -> f32 {
+        20.0
+    }
 }
 
 impl Default for AckermannActuatorConfig {

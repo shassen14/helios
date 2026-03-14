@@ -54,12 +54,21 @@ pub struct MeasurementMessage {
 
 /// The universal input packet for all `StateEstimator` implementations.
 pub enum ModuleInput<'a> {
-    TimeStep { dt: f64, current_time: f64 },
-    Control { u: &'a Control },
-    Measurement { message: &'a MeasurementMessage },
+    TimeStep {
+        dt: f64,
+        current_time: f64,
+    },
+    Control {
+        u: &'a Control,
+    },
+    Measurement {
+        message: &'a MeasurementMessage,
+    },
     /// Carries the robot's current ENU pose (e.g. from the odom TF frame).
     /// Mappers use this to recenter the grid; it is decoupled from any specific estimator.
-    PoseUpdate { pose: Isometry3<f64> },
+    PoseUpdate {
+        pose: Isometry3<f64>,
+    },
 }
 
 // =========================================================================

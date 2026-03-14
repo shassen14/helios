@@ -35,7 +35,10 @@ pub fn draw_covariance_ellipsoid(
         let eigenvectors = eigen.eigenvectors;
 
         if !eigenvalues.iter().all(|&v| v.is_finite() && v >= 0.0) {
-            warn!("[Debug] draw_covariance_ellipsoid: invalid eigenvalues {:?}", eigenvalues);
+            warn!(
+                "[Debug] draw_covariance_ellipsoid: invalid eigenvalues {:?}",
+                eigenvalues
+            );
             continue;
         }
 
@@ -56,7 +59,10 @@ pub fn draw_covariance_ellipsoid(
             (eigenvalues[2] * sigma).sqrt().max(0.05),
         );
         if !scale.iter().all(|&v| v.is_finite()) {
-            warn!("[Debug] draw_covariance_ellipsoid: non-finite scale {:?}", scale);
+            warn!(
+                "[Debug] draw_covariance_ellipsoid: non-finite scale {:?}",
+                scale
+            );
             continue;
         }
 

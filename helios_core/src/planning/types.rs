@@ -44,9 +44,7 @@ impl PlannerGoal {
     /// Extract the 2D ENU position of this goal.
     pub fn position_2d(&self) -> Vector2<f64> {
         match self {
-            PlannerGoal::WorldPose(iso) => {
-                Vector2::new(iso.translation.x, iso.translation.y)
-            }
+            PlannerGoal::WorldPose(iso) => Vector2::new(iso.translation.x, iso.translation.y),
             PlannerGoal::WorldPosition2D(v) => *v,
             PlannerGoal::GlobalPathWaypoint { .. } => Vector2::zeros(),
         }

@@ -52,9 +52,7 @@ impl FeedforwardPidController {
             ));
         }
 
-        let pids = (0..m)
-            .map(|i| SisoPid::new(kp[i], ki[i], kd[i]))
-            .collect();
+        let pids = (0..m).map(|i| SisoPid::new(kp[i], ki[i], kd[i])).collect();
 
         Ok(Self {
             dynamics,
@@ -67,12 +65,7 @@ impl FeedforwardPidController {
 }
 
 impl Controller for FeedforwardPidController {
-    fn compute(
-        &mut self,
-        state: &FrameAwareState,
-        dt: f64,
-        ctx: &ControlContext,
-    ) -> ControlOutput {
+    fn compute(&mut self, state: &FrameAwareState, dt: f64, ctx: &ControlContext) -> ControlOutput {
         let m = self.dynamics.get_control_dim();
 
         // --- Feedforward ---

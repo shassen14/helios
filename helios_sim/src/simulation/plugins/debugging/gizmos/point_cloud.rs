@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 
-use crate::simulation::plugins::debugging::components::{DebugSensorCache, DebugVisualizationConfig};
+use crate::simulation::plugins::debugging::components::{
+    DebugSensorCache, DebugVisualizationConfig,
+};
 
 /// Draws cyan sphere markers at each cached world-space point cloud position.
 pub fn draw_point_cloud(

@@ -16,8 +16,10 @@ pub fn draw_estimation_error_line(
         return;
     }
     for (gt, module) in &query {
-        if let Some(estimated_pose) =
-            module.0.get_state().and_then(|s: &FrameAwareState| s.get_pose_isometry())
+        if let Some(estimated_pose) = module
+            .0
+            .get_state()
+            .and_then(|s: &FrameAwareState| s.get_pose_isometry())
         {
             let gt_bevy = enu_iso_to_bevy_transform(&gt.pose).translation;
             let est_bevy = enu_iso_to_bevy_transform(&estimated_pose).translation;

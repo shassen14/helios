@@ -183,8 +183,7 @@ impl StateEstimator for ExtendedKalmanFilter {
             i_kh[(i, i)] += 1.0;
         }
         // P_post = (I - KH)P(I - KH)^T + KRK^T
-        let p_post =
-            &i_kh * p_priori * i_kh.transpose() + &k_gain * r_mat * k_gain.transpose();
+        let p_post = &i_kh * p_priori * i_kh.transpose() + &k_gain * r_mat * k_gain.transpose();
         self.state.covariance = p_post;
 
         // Enforce Symmetry and Positivity
@@ -241,19 +240,11 @@ mod tests {
             0
         }
 
-        fn get_control_from_measurement(
-            &self,
-            _data: &MeasurementData,
-        ) -> Option<DVector<f64>> {
+        fn get_control_from_measurement(&self, _data: &MeasurementData) -> Option<DVector<f64>> {
             None
         }
 
-        fn get_derivatives(
-            &self,
-            x: &DVector<f64>,
-            _u: &DVector<f64>,
-            _t: f64,
-        ) -> DVector<f64> {
+        fn get_derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
             let mut xdot = DVector::zeros(4);
             xdot[0] = x[2]; // px_dot = vx
             xdot[1] = x[3]; // py_dot = vy
@@ -377,10 +368,7 @@ mod tests {
             (px - 1.0).abs() < 0.05,
             "px should advance ≈ vx*dt = 1.0, got {px}"
         );
-        assert!(
-            ekf.get_state().vector[1].abs() < 1e-9,
-            "py should stay 0"
-        );
+        assert!(ekf.get_state().vector[1].abs() < 1e-9, "py should stay 0");
     }
 
     #[test]
@@ -392,7 +380,11 @@ mod tests {
 
         ekf.predict(0.0, &u, &ctx);
 
-        assert_eq!(ekf.get_state().vector[0], px_before, "zero dt must not change state");
+        assert_eq!(
+            ekf.get_state().vector[0],
+            px_before,
+            "zero dt must not change state"
+        );
     }
 
     #[test]

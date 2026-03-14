@@ -225,7 +225,8 @@ impl PipelineBuilder {
         level: PipelineLevel,
         controller: Box<dyn helios_core::control::Controller>,
     ) -> Self {
-        self.controllers.push(LeveledController { level, controller });
+        self.controllers
+            .push(LeveledController { level, controller });
         self
     }
 

@@ -10,18 +10,18 @@ pub struct TfLabelEntities(pub HashMap<String, Entity>);
 /// Global resource controlling all debug visualization toggles.
 #[derive(Resource, Default)]
 pub struct DebugVisualizationConfig {
-    pub show_pose_gimbals: bool,    // F1
-    pub show_covariance: bool,      // F2
-    pub show_point_cloud: bool,     // F3
-    pub show_velocity: bool,        // F4
-    pub show_error_line: bool,      // F5
-    pub show_path_trail: bool,      // F6
-    pub show_occupancy_grid: bool,  // F7
+    pub show_pose_gimbals: bool,   // F1
+    pub show_covariance: bool,     // F2
+    pub show_point_cloud: bool,    // F3
+    pub show_velocity: bool,       // F4
+    pub show_error_line: bool,     // F5
+    pub show_path_trail: bool,     // F6
+    pub show_occupancy_grid: bool, // F7
     /// Draw RGB coordinate axes for every tracked TF frame and the world ENU origin.
-    pub show_tf_frames: bool,       // F8
+    pub show_tf_frames: bool, // F8
     /// Draw the planned path polyline and active look-ahead waypoint.
-    pub show_planned_path: bool,    // F9
-    pub show_legend: bool,          // H
+    pub show_planned_path: bool, // F9
+    pub show_legend: bool,         // H
 }
 
 /// Caches the most recent world-space point cloud per sensor entity.
