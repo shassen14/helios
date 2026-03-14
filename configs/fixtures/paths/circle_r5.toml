@@ -1,0 +1,40 @@
+# configs/fixtures/paths/circle_r5.toml
+# A circular path of radius 5 m, 16 waypoints, in ENU XY-plane.
+
+level = "local"
+
+[[waypoints]]
+position = [5.0, 0.0, 1.0]
+yaw_deg  = 90.0
+
+[[waypoints]]
+position = [3.536, 3.536, 1.0]
+yaw_deg  = 135.0
+
+[[waypoints]]
+position = [0.0, 5.0, 1.0]
+yaw_deg  = 180.0
+
+[[waypoints]]
+position = [-3.536, 3.536, 1.0]
+yaw_deg  = 225.0
+
+[[waypoints]]
+position = [-5.0, 0.0, 1.0]
+yaw_deg  = 270.0
+
+[[waypoints]]
+position = [-3.536, -3.536, 1.0]
+yaw_deg  = 315.0
+
+[[waypoints]]
+position = [0.0, -5.0, 1.0]
+yaw_deg  = 0.0
+
+[[waypoints]]
+position = [3.536, -3.536, 1.0]
+yaw_deg  = 45.0
+
+[[waypoints]]
+position = [5.0, 0.0, 1.0]
+yaw_deg  = 90.0

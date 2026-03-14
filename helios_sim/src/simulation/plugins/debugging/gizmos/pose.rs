@@ -30,16 +30,30 @@ pub fn draw_estimated_pose_gimbals(
         return;
     }
     for module in &module_query {
-        if let Some(estimated_pose_enu) =
-            module.0.get_state().and_then(|s: &FrameAwareState| s.get_pose_isometry())
+        if let Some(estimated_pose_enu) = module
+            .0
+            .get_state()
+            .and_then(|s: &FrameAwareState| s.get_pose_isometry())
         {
             let bevy_transform = enu_iso_to_bevy_transform(&estimated_pose_enu);
             let global_transform = GlobalTransform::from(bevy_transform);
             let start = global_transform.translation();
             let length = 1.2;
-            gizmos.line(start, start + global_transform.right() * length, Color::srgb(1.0, 0.2, 0.2));
-            gizmos.line(start, start + global_transform.up() * length, Color::srgb(0.2, 1.0, 0.2));
-            gizmos.line(start, start + global_transform.back() * length, Color::srgb(0.2, 0.2, 1.0));
+            gizmos.line(
+                start,
+                start + global_transform.right() * length,
+                Color::srgb(1.0, 0.2, 0.2),
+            );
+            gizmos.line(
+                start,
+                start + global_transform.up() * length,
+                Color::srgb(0.2, 1.0, 0.2),
+            );
+            gizmos.line(
+                start,
+                start + global_transform.back() * length,
+                Color::srgb(0.2, 0.2, 1.0),
+            );
         }
     }
 }

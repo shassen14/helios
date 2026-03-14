@@ -37,26 +37,18 @@ pub enum PlannerConfig {
         #[serde(default = "default_level")]
         level: String,
     },
-    RrtStar {
-        rate: f32,
-        max_iterations: u32,
-        step_size_m: f32,
-        goal_tolerance_m: f32,
-    },
 }
 
 impl PlannerConfig {
     pub fn get_kind_str(&self) -> &str {
         match self {
             PlannerConfig::AStar { .. } => "AStar",
-            PlannerConfig::RrtStar { .. } => "RrtStar",
         }
     }
 
     pub fn get_level_str(&self) -> &str {
         match self {
             PlannerConfig::AStar { level, .. } => level.as_str(),
-            PlannerConfig::RrtStar { .. } => "local",
         }
     }
 }

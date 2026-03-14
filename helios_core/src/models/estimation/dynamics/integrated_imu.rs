@@ -145,3 +145,216 @@ impl EstimationDynamics for IntegratedImuModel {
 
 // NOTE: The `propagate` method from the trait uses the above `get_derivatives`
 // with an integrator like RK4, so it does not need to be reimplemented.
+
+#[cfg(test)]
+mod tests {
+    //! Tests for [`IntegratedImuModel`].
+    //!
+    //! Properties validated:
+    //! - Control routing: IMU variants accepted, all other sensor types rejected.
+    //! - Derivatives: position rate = velocity, gravity correctly subtracts from
+    //!   IMU acceleration, accel/gyro biases subtract from raw measurements.
+    //! - Jacobian: correct 16×16 / 16×6 shape; velocity-to-position coupling ≈ 1.
+    //! - Propagation: RK4 integration with gravity-compensating IMU keeps agent
+    //!   stationary (position and velocity remain near zero).
+
+    use super::*;
+    use crate::messages::MeasurementData;
+    use crate::types::FrameHandle;
+    use crate::utils::integrators::RK4;
+    use nalgebra::{DVector, Vector3, Vector6};
+
+    const AGENT: FrameHandle = FrameHandle(1);
+    const G: f64 = 9.81;
+
+    fn make_model() -> IntegratedImuModel {
+        IntegratedImuModel {
+            agent_handle: AGENT,
+            gravity_magnitude: G,
+        }
+    }
+
+    /// Builds a 16-element state vector with the identity quaternion at indices 6-9.
+    ///
+    /// Index layout mirrors [`standard_ins_state_layout`](crate::frames::layout::standard_ins_state_layout):
+    /// 0-2 position, 3-5 velocity, 6-9 quaternion (Qx, Qy, Qz, Qw),
+    /// 10-12 accel bias, 13-15 gyro bias.
+    fn identity_state() -> DVector<f64> {
+        let mut x = DVector::zeros(STANDARD_INS_STATE_DIM);
+        x[9] = 1.0; // Qw = 1 → identity quaternion
+        x
+    }
+
+    /// Returns a 6-element control vector with `az = g` to exactly counteract gravity.
+    fn gravity_compensating_imu(g: f64) -> DVector<f64> {
+        let mut u = DVector::zeros(6);
+        u[2] = g;
+        u
+    }
+
+    // ── Control routing ──────────────────────────────────────────────────────
+
+    #[test]
+    fn control_routing_accepts_imu6dof() {
+        // IMU6Dof is this model's primary driving input.
+        let model = make_model();
+        let data = MeasurementData::Imu6Dof(Vector6::zeros());
+        assert!(model.get_control_from_measurement(&data).is_some());
+    }
+
+    #[test]
+    fn control_routing_accepts_imu9dof_extracts_six_dof_part() {
+        // IMU9Dof should be accepted and only the accel/gyro 6-dof part returned.
+        let model = make_model();
+        let data = MeasurementData::Imu9Dof {
+            accel_gyro: Vector6::new(1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
+            mag: Vector3::zeros(),
+        };
+        let result = model.get_control_from_measurement(&data);
+        assert!(result.is_some());
+        let u = result.unwrap();
+        assert_eq!(u.nrows(), 6, "control vector must have 6 elements");
+        assert!((u[0] - 1.0).abs() < 1e-12, "accel_x must be preserved");
+        assert!((u[5] - 6.0).abs() < 1e-12, "gyro_z must be preserved");
+    }
+
+    #[test]
+    fn control_routing_ignores_gps() {
+        // GPS data is not a control input for this dynamics model.
+        let model = make_model();
+        let data = MeasurementData::GpsPosition(Vector3::zeros());
+        assert!(model.get_control_from_measurement(&data).is_none());
+    }
+
+    // ── Derivatives ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn derivatives_position_rate_equals_velocity() {
+        // With world velocity [2, 3, 1] and identity orientation, x_dot[0..3] = [2, 3, 1].
+        let model = make_model();
+        let mut x = identity_state();
+        x[3] = 2.0; // vx
+        x[4] = 3.0; // vy
+        x[5] = 1.0; // vz
+        let u = gravity_compensating_imu(G); // zero net acceleration
+        let xdot = model.get_derivatives(&x, &u, 0.0);
+
+        assert!((xdot[0] - 2.0).abs() < 1e-9, "px_dot should equal vx");
+        assert!((xdot[1] - 3.0).abs() < 1e-9, "py_dot should equal vy");
+        assert!((xdot[2] - 1.0).abs() < 1e-9, "pz_dot should equal vz");
+    }
+
+    #[test]
+    fn derivatives_free_fall_gives_downward_acceleration() {
+        // Zero IMU input with identity orientation: gravity alone drives velocity
+        // downward at ~9.81 m/s². Horizontal components must stay zero.
+        let model = make_model();
+        let x = identity_state();
+        let u = DVector::zeros(6);
+        let xdot = model.get_derivatives(&x, &u, 0.0);
+
+        assert!(
+            xdot[5] < -9.0,
+            "vz_dot should be strongly negative (gravity pull), got {}",
+            xdot[5]
+        );
+        assert!(xdot[3].abs() < 1e-9, "vx_dot must be zero in free fall");
+        assert!(xdot[4].abs() < 1e-9, "vy_dot must be zero in free fall");
+    }
+
+    #[test]
+    fn derivatives_gravity_compensation_gives_zero_velocity_change() {
+        // IMU reports [0, 0, 9.81] — exactly cancelling gravity in the world frame.
+        // With identity orientation, velocity derivative must be ≈ zero.
+        let model = make_model();
+        let x = identity_state();
+        let u = gravity_compensating_imu(G);
+        let xdot = model.get_derivatives(&x, &u, 0.0);
+
+        assert!(
+            xdot[3].abs() < 1e-9,
+            "vx_dot must be 0 with gravity compensation"
+        );
+        assert!(
+            xdot[4].abs() < 1e-9,
+            "vy_dot must be 0 with gravity compensation"
+        );
+        assert!(
+            xdot[5].abs() < 1e-9,
+            "vz_dot must be 0 with gravity compensation, got {}",
+            xdot[5]
+        );
+    }
+
+    #[test]
+    fn derivatives_accel_bias_subtracts_from_raw_measurement() {
+        // Accel bias z = 1.0 means corrected = raw - bias.
+        // With raw_az = 9.81 and bias_az = 1.0: corrected = 8.81.
+        // velocity_z derivative = 8.81 + (-9.81) = -1.0.
+        let model = make_model();
+        let mut x = identity_state();
+        x[12] = 1.0; // accel_bias_z (index 12 in standard INS layout)
+        let u = gravity_compensating_imu(G);
+        let xdot = model.get_derivatives(&x, &u, 0.0);
+
+        assert!(
+            (xdot[5] - (-1.0)).abs() < 1e-6,
+            "vz_dot with 1.0 z-bias should be -1.0, got {}",
+            xdot[5]
+        );
+    }
+
+    // ── Jacobian ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn jacobian_has_correct_dimensions() {
+        // A is the state Jacobian (16×16), B is the control Jacobian (16×6).
+        let model = make_model();
+        let x = identity_state();
+        let u = DVector::zeros(6);
+        let (a_jac, b_jac) = model.calculate_jacobian(&x, &u, 0.0);
+
+        assert_eq!(a_jac.nrows(), STANDARD_INS_STATE_DIM, "A rows");
+        assert_eq!(a_jac.ncols(), STANDARD_INS_STATE_DIM, "A cols");
+        assert_eq!(b_jac.nrows(), STANDARD_INS_STATE_DIM, "B rows");
+        assert_eq!(b_jac.ncols(), 6, "B cols = control_dim (ax,ay,az,wx,wy,wz)");
+    }
+
+    #[test]
+    fn jacobian_velocity_to_position_coupling_is_unity() {
+        // A(i, i+3) for i in 0..3 encodes d(pos)/d(vel) = 1.
+        // This is the clearest structural property of the INS dynamics.
+        let model = make_model();
+        let x = identity_state();
+        let u = DVector::zeros(6);
+        let (a_jac, _) = model.calculate_jacobian(&x, &u, 0.0);
+
+        for (pos_idx, vel_idx) in [(0, 3), (1, 4), (2, 5)] {
+            assert!(
+                (a_jac[(pos_idx, vel_idx)] - 1.0).abs() < 1e-4,
+                "A({pos_idx},{vel_idx}) = ∂pos_dot/∂vel ≈ 1.0, got {}",
+                a_jac[(pos_idx, vel_idx)]
+            );
+        }
+    }
+
+    // ── Propagation ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn propagate_with_gravity_compensation_keeps_agent_stationary() {
+        // At rest with gravity-compensating IMU input, RK4 integration over 0.1 s
+        // must leave position and velocity near zero.
+        let model = make_model();
+        let x = identity_state();
+        let u = gravity_compensating_imu(G);
+        let x_next = model.propagate(&x, &u, 0.0, 0.1, &RK4);
+
+        for idx in 0..6 {
+            assert!(
+                x_next[idx].abs() < 1e-9,
+                "state[{idx}] should remain 0 at rest, got {}",
+                x_next[idx]
+            );
+        }
+    }
+}

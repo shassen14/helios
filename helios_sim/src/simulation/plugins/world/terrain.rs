@@ -1,7 +1,11 @@
 use std::f64::consts::PI;
 
 use avian3d::prelude::{Collider, RigidBody, TrimeshFlags};
-use bevy::{asset::LoadState, gltf::{Gltf, GltfAssetLabel, GltfMesh}, prelude::*};
+use bevy::{
+    asset::LoadState,
+    gltf::{Gltf, GltfAssetLabel, GltfMesh},
+    prelude::*,
+};
 
 use crate::prelude::*;
 use crate::simulation::core::app_state::AssetLoadSet;
@@ -78,15 +82,17 @@ fn start_terrain_asset_loading(
     asset_server: Res<AssetServer>,
 ) {
     for (idx, terrain) in config.world.terrains.iter().enumerate() {
-        let scene = asset_server
-            .load(GltfAssetLabel::Scene(0).from_asset(terrain.mesh.clone()));
+        let scene = asset_server.load(GltfAssetLabel::Scene(0).from_asset(terrain.mesh.clone()));
         info!(
             "[Terrain] Loading visual mesh for tile {}: {:?}",
             idx, terrain.mesh
         );
 
         let collider = terrain.collider.as_ref().map(|col_path| {
-            info!("[Terrain] Loading collider mesh for tile {}: {:?}", idx, col_path);
+            info!(
+                "[Terrain] Loading collider mesh for tile {}: {:?}",
+                idx, col_path
+            );
             asset_server.load::<Gltf>(col_path.clone())
         });
 
@@ -149,7 +155,10 @@ fn spawn_terrain_tiles(
         // Spawn trimesh colliders from the collider GLTF.
         if let Some(ref col_handle) = entry.collider {
             let Some(gltf) = gltfs.get(col_handle) else {
-                warn!("[Terrain] Collider GLTF not found for tile {}.", entry.config_idx);
+                warn!(
+                    "[Terrain] Collider GLTF not found for tile {}.",
+                    entry.config_idx
+                );
                 continue;
             };
             spawn_trimesh_colliders_from_gltf(
@@ -178,9 +187,9 @@ fn spawn_terrain_tiles(
 // =========================================================================
 
 fn terrain_transform(position: [f64; 3], orientation_degrees: [f64; 3]) -> Transform {
-    let roll  = orientation_degrees[0] * PI / 180.0;
+    let roll = orientation_degrees[0] * PI / 180.0;
     let pitch = orientation_degrees[1] * PI / 180.0;
-    let yaw   = orientation_degrees[2] * PI / 180.0;
+    let yaw = orientation_degrees[2] * PI / 180.0;
     let translation = Translation3::new(position[0], position[1], position[2]);
     let rotation = UnitQuaternion::from_euler_angles(roll, pitch, yaw);
     enu_iso_to_bevy_transform(&Isometry3::from_parts(translation, rotation))

@@ -14,7 +14,9 @@ use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::mpsc;
 
 use crate::simulation::core::app_state::AppState;
-use bridge::{ChannelRegistry, FoxgloveBridgeResource, FoxgloveTopicReaders, foxglove_bridge_system};
+use bridge::{
+    foxglove_bridge_system, ChannelRegistry, FoxgloveBridgeResource, FoxgloveTopicReaders,
+};
 
 pub struct FoxgloveWebSocketPlugin {
     pub port: u16,
@@ -57,7 +59,12 @@ impl Plugin for FoxgloveWebSocketPlugin {
                     .enable_all()
                     .build()
                     .expect("foxglove: failed to build tokio runtime");
-                rt.block_on(server::run_server(port, data_rx, ctrl_tx, snapshot_for_server));
+                rt.block_on(server::run_server(
+                    port,
+                    data_rx,
+                    ctrl_tx,
+                    snapshot_for_server,
+                ));
             })
             .expect("foxglove: failed to spawn server thread");
 

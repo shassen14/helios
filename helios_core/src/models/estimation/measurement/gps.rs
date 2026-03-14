@@ -58,11 +58,7 @@ impl Measurement for GpsPositionModel {
         }
 
         // --- 1. Get the filter's current estimate of the BODY's state ---
-        let body_position_world = match filter_state.get_vector3(&StateVariable::Px(FrameId::World))
-        {
-            Some(pos) => pos,
-            None => return None, // Can't predict if state doesn't have position
-        };
+        let body_position_world = filter_state.get_vector3(&StateVariable::Px(FrameId::World))?;
         let body_orientation_world = filter_state.get_orientation().unwrap_or_default();
 
         // --- 2. Calculate the Lever Arm Effect ---
@@ -120,32 +116,18 @@ impl Measurement for GpsPositionModel {
 
         // 2. Iterate through each element of the state vector.
         for j in 0..state_dim {
-            // Create a copy of the state to perturb.
             let mut perturbed_state = filter_state.clone();
-
-            // "Wiggle" the j-th state variable by a small amount epsilon.
             perturbed_state.vector[j] += epsilon;
 
-            // IMPORTANT: If we are perturbing the quaternion part of the state,
-            // we must re-normalize it to keep it a valid unit quaternion.
-            // We check if the current index `j` is within the quaternion part of our state.
-            if j >= 6 && j <= 9 {
-                // Assuming Qx, Qy, Qz, Qw are at indices 6, 7, 8, 9
-                let mut quat_part = perturbed_state.vector.fixed_rows_mut::<4>(6);
-                let norm = quat_part.norm();
-                if norm > 1e-9 {
-                    quat_part /= norm;
-                }
-            }
-
-            // Recalculate the prediction with the "wiggled" state.
+            // No quaternion re-normalisation needed: predict_measurement calls
+            // get_orientation(), which calls UnitQuaternion::from_quaternion and
+            // normalises unconditionally. The ε perturbation (1e-8) is too small
+            // to meaningfully affect the norm anyway.
             if let Some(z_perturbed) =
                 self.predict_measurement(&perturbed_state, &dummy_message, tf)
             {
                 // Approximate the partial derivative: (f(x + h) - f(x)) / h
                 let derivative_column = (z_perturbed - &z_base) / epsilon;
-
-                // Place this column into our Jacobian matrix.
                 h_jac.column_mut(j).copy_from(&derivative_column);
             }
         }
@@ -161,5 +143,181 @@ impl Measurement for GpsPositionModel {
     /// Allows for dynamic downcasting.
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for [`GpsPositionModel`].
+    //!
+    //! Properties validated:
+    //! - Type dispatch: accepts `GpsPosition`, rejects all other variants.
+    //! - `predict_measurement`: returns `None` for non-GPS messages; with zero
+    //!   lever arm returns body position directly; with a non-zero lever arm adds
+    //!   the rotated offset to the predicted antenna position.
+    //! - Jacobian shape and identity of the position columns (∂z/∂Px ≈ 1).
+
+    use super::*;
+    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::messages::{MeasurementData, MeasurementMessage};
+    use crate::types::{FrameHandle, TfProvider};
+    use nalgebra::{DMatrix, Isometry3, Vector3};
+
+    const AGENT: FrameHandle = FrameHandle(1);
+    const SENSOR: FrameHandle = FrameHandle(2);
+
+    /// Stub TF provider that always returns the identity transform.
+    struct IdentityTf;
+    impl TfProvider for IdentityTf {
+        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
+            Some(Isometry3::identity())
+        }
+        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
+            Some(Isometry3::identity())
+        }
+    }
+
+    /// A minimal 7-element state layout: [Px, Py, Pz, Qx, Qy, Qz, Qw].
+    ///
+    /// `FrameAwareState::new` initialises Qw = 1.0 (identity quaternion) automatically.
+    fn make_state(px: f64, py: f64, pz: f64) -> FrameAwareState {
+        let body = FrameId::Body(AGENT);
+        let world = FrameId::World;
+        let layout = vec![
+            StateVariable::Px(world.clone()),
+            StateVariable::Py(world.clone()),
+            StateVariable::Pz(world.clone()),
+            StateVariable::Qx(body.clone(), world.clone()),
+            StateVariable::Qy(body.clone(), world.clone()),
+            StateVariable::Qz(body.clone(), world.clone()),
+            StateVariable::Qw(body.clone(), world.clone()),
+        ];
+        let mut state = FrameAwareState::new(layout, 1.0, 0.0);
+        state.vector[0] = px;
+        state.vector[1] = py;
+        state.vector[2] = pz;
+        state
+    }
+
+    fn make_model(offset: Vector3<f64>) -> GpsPositionModel {
+        GpsPositionModel {
+            r_matrix: DMatrix::identity(3, 3) * 0.1,
+            antenna_offset_body: offset,
+        }
+    }
+
+    fn gps_message(x: f64, y: f64, z: f64) -> MeasurementMessage {
+        MeasurementMessage {
+            agent_handle: AGENT,
+            sensor_handle: SENSOR,
+            timestamp: 0.1,
+            data: MeasurementData::GpsPosition(Vector3::new(x, y, z)),
+        }
+    }
+
+    fn imu_message() -> MeasurementMessage {
+        MeasurementMessage {
+            agent_handle: AGENT,
+            sensor_handle: SENSOR,
+            timestamp: 0.1,
+            data: MeasurementData::Imu6Dof(Default::default()),
+        }
+    }
+
+    // ── Type dispatch ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn measurement_vector_accepts_gps_position() {
+        let model = make_model(Vector3::zeros());
+        let data = MeasurementData::GpsPosition(Vector3::new(1.0, 2.0, 3.0));
+        let z = model.get_measurement_vector(&data);
+        assert!(z.is_some());
+        let z = z.unwrap();
+        assert_eq!(z.nrows(), 3);
+        assert!((z[0] - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn measurement_vector_rejects_imu() {
+        let model = make_model(Vector3::zeros());
+        let data = MeasurementData::Imu6Dof(Default::default());
+        assert!(model.get_measurement_vector(&data).is_none());
+    }
+
+    // ── predict_measurement ───────────────────────────────────────────────────
+
+    #[test]
+    fn predict_rejects_non_gps_message() {
+        let model = make_model(Vector3::zeros());
+        let state = make_state(1.0, 2.0, 3.0);
+        let tf = IdentityTf;
+        let result = model.predict_measurement(&state, &imu_message(), &tf);
+        assert!(result.is_none(), "non-GPS message must yield None");
+    }
+
+    #[test]
+    fn predict_no_lever_arm_returns_body_position() {
+        // Zero antenna offset: predicted measurement = body position exactly.
+        let model = make_model(Vector3::zeros());
+        let state = make_state(3.0, 4.0, 5.0);
+        let tf = IdentityTf;
+        let z = model
+            .predict_measurement(&state, &gps_message(0.0, 0.0, 0.0), &tf)
+            .unwrap();
+
+        assert!(
+            (z[0] - 3.0).abs() < 1e-9,
+            "predicted x should equal body px"
+        );
+        assert!(
+            (z[1] - 4.0).abs() < 1e-9,
+            "predicted y should equal body py"
+        );
+        assert!(
+            (z[2] - 5.0).abs() < 1e-9,
+            "predicted z should equal body pz"
+        );
+    }
+
+    #[test]
+    fn predict_lever_arm_adds_rotated_offset() {
+        // With identity orientation, the body-frame offset is not rotated.
+        // Predicted = body_position + antenna_offset_body.
+        let offset = Vector3::new(0.5, 0.0, 0.1);
+        let model = make_model(offset);
+        let state = make_state(1.0, 2.0, 3.0);
+        let tf = IdentityTf;
+        let z = model
+            .predict_measurement(&state, &gps_message(0.0, 0.0, 0.0), &tf)
+            .unwrap();
+
+        assert!((z[0] - 1.5).abs() < 1e-9, "predicted x = px + offset_x");
+        assert!(
+            (z[1] - 2.0).abs() < 1e-9,
+            "predicted y = py + offset_y (zero)"
+        );
+        assert!((z[2] - 3.1).abs() < 1e-9, "predicted z = pz + offset_z");
+    }
+
+    // ── Jacobian ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn jacobian_position_columns_are_identity() {
+        // With zero lever arm and identity orientation, ∂z/∂Px = 1, ∂z/∂Py = 1,
+        // ∂z/∂Pz = 1. The state layout places position at indices 0, 1, 2.
+        let model = make_model(Vector3::zeros());
+        let state = make_state(0.0, 0.0, 0.0);
+        let tf = IdentityTf;
+        let h = model.calculate_jacobian(&state, &tf);
+
+        assert_eq!(h.nrows(), 3, "H has 3 rows (measurement dim)");
+        assert_eq!(
+            h.ncols(),
+            state.dim(),
+            "H has one column per state variable"
+        );
+        assert!((h[(0, 0)] - 1.0).abs() < 1e-5, "H(0,0) = ∂z_x/∂Px ≈ 1.0");
+        assert!((h[(1, 1)] - 1.0).abs() < 1e-5, "H(1,1) = ∂z_y/∂Py ≈ 1.0");
+        assert!((h[(2, 2)] - 1.0).abs() < 1e-5, "H(2,2) = ∂z_z/∂Pz ≈ 1.0");
     }
 }

@@ -1,10 +1,9 @@
 // helios_core/src/planning/mod.rs
 //
-// Planner trait + sub-modules. Concrete implementations: astar, rrt.
+// Planner trait + sub-modules. Concrete implementations: astar.
 
 pub mod astar;
 pub mod context;
-pub mod rrt;
 pub mod search_space;
 pub mod types;
 

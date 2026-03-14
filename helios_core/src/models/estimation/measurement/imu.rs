@@ -149,3 +149,141 @@ impl Measurement for Imu6DofModel {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Tests for [`Imu6DofModel`].
+    //!
+    //! Properties validated:
+    //! - Type dispatch: accepts `Imu6Dof`, rejects all other variants.
+    //! - `predict_measurement`: returns `None` for non-IMU messages.
+    //! - Zero state + identity TF + identity orientation: accelerometer predicts
+    //!   [0, 0, g] (proper acceleration counteracting gravity), gyroscope predicts
+    //!   [0, 0, 0] (no angular velocity in state).
+    //! - Jacobian has correct shape (6 rows × state_dim columns).
+
+    use super::*;
+    use crate::frames::layout::standard_ins_state_layout;
+    use crate::frames::FrameAwareState;
+    use crate::messages::{MeasurementData, MeasurementMessage};
+    use crate::types::{FrameHandle, TfProvider};
+    use nalgebra::{DMatrix, Isometry3, Vector3};
+
+    const AGENT: FrameHandle = FrameHandle(1);
+    const SENSOR: FrameHandle = FrameHandle(2);
+    const G: f64 = 9.81;
+
+    /// Stub TF provider that always returns the identity transform.
+    struct IdentityTf;
+    impl TfProvider for IdentityTf {
+        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
+            Some(Isometry3::identity())
+        }
+        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
+            Some(Isometry3::identity())
+        }
+    }
+
+    fn make_model() -> Imu6DofModel {
+        Imu6DofModel {
+            agent_handle: AGENT,
+            sensor_handle: SENSOR,
+            r_matrix: DMatrix::identity(6, 6) * 0.01,
+            gravity_magnitude: G,
+        }
+    }
+
+    /// Builds the standard 16-element INS state with identity quaternion.
+    ///
+    /// `FrameAwareState::new` sets Qw = 1.0 automatically.
+    fn make_ins_state() -> FrameAwareState {
+        FrameAwareState::new(standard_ins_state_layout(AGENT), 1.0, 0.0)
+    }
+
+    fn imu_message() -> MeasurementMessage {
+        MeasurementMessage {
+            agent_handle: AGENT,
+            sensor_handle: SENSOR,
+            timestamp: 0.0,
+            data: MeasurementData::Imu6Dof(Default::default()),
+        }
+    }
+
+    fn gps_message() -> MeasurementMessage {
+        MeasurementMessage {
+            agent_handle: AGENT,
+            sensor_handle: SENSOR,
+            timestamp: 0.0,
+            data: MeasurementData::GpsPosition(Vector3::zeros()),
+        }
+    }
+
+    // ── Type dispatch ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn measurement_vector_accepts_imu6dof() {
+        let model = make_model();
+        let data = MeasurementData::Imu6Dof(Default::default());
+        assert!(model.get_measurement_vector(&data).is_some());
+    }
+
+    #[test]
+    fn measurement_vector_rejects_gps() {
+        let model = make_model();
+        let data = MeasurementData::GpsPosition(Vector3::zeros());
+        assert!(model.get_measurement_vector(&data).is_none());
+    }
+
+    // ── predict_measurement ───────────────────────────────────────────────────
+
+    #[test]
+    fn predict_rejects_non_imu_message() {
+        let model = make_model();
+        let state = make_ins_state();
+        let tf = IdentityTf;
+        assert!(
+            model
+                .predict_measurement(&state, &gps_message(), &tf)
+                .is_none(),
+            "non-IMU message must yield None"
+        );
+    }
+
+    #[test]
+    fn predict_zero_state_identity_tf_gives_gravity_up() {
+        // State: all zeros except Qw = 1 (identity orientation).
+        // With identity orientation and zero angular velocity:
+        //   - gravity_effect_in_body = inverse(identity) * [0, 0, -g] = [0, 0, -g]
+        //   - proper_accel = 0 - [0, 0, -g] = [0, 0, g]
+        // The accelerometer should therefore predict [0, 0, g], and the gyroscope [0, 0, 0].
+        let model = make_model();
+        let state = make_ins_state();
+        let tf = IdentityTf;
+        let z = model
+            .predict_measurement(&state, &imu_message(), &tf)
+            .unwrap();
+
+        assert_eq!(z.nrows(), 6, "IMU measurement vector is 6-dimensional");
+        assert!(z[0].abs() < 1e-9, "accel_x should be 0");
+        assert!(z[1].abs() < 1e-9, "accel_y should be 0");
+        assert!(
+            (z[2] - G).abs() < 1e-9,
+            "accel_z should equal gravity ({G})"
+        );
+        assert!(z[3].abs() < 1e-9, "gyro_x should be 0");
+        assert!(z[4].abs() < 1e-9, "gyro_y should be 0");
+        assert!(z[5].abs() < 1e-9, "gyro_z should be 0");
+    }
+
+    #[test]
+    fn jacobian_has_correct_shape() {
+        // H must have 6 rows (measurement dim) and state_dim columns.
+        let model = make_model();
+        let state = make_ins_state();
+        let tf = IdentityTf;
+        let h = model.calculate_jacobian(&state, &tf);
+
+        assert_eq!(h.nrows(), 6, "H rows = measurement dim");
+        assert_eq!(h.ncols(), state.dim(), "H cols = state dim");
+    }
+}

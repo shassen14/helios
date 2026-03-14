@@ -151,11 +151,15 @@ impl OccupancyGridMapper {
 
     /// Converts the log-odds buffer to a `DMatrix<u8>` and updates `cached_map`.
     fn rebuild_cache(&mut self) {
-        let data: Vec<u8> = self.log_odds.iter().map(|&lo| {
-            // p = eˡ / (1 + eˡ)
-            let p = lo.exp() / (1.0 + lo.exp());
-            (p * 255.0) as u8
-        }).collect();
+        let data: Vec<u8> = self
+            .log_odds
+            .iter()
+            .map(|&lo| {
+                // p = eˡ / (1 + eˡ)
+                let p = lo.exp() / (1.0 + lo.exp());
+                (p * 255.0) as u8
+            })
+            .collect();
 
         let mat = DMatrix::from_row_slice(self.height, self.width, &data);
 
@@ -197,7 +201,11 @@ impl Mapper for OccupancyGridMapper {
                             Some(p) => p,
                             None => return,
                         };
-                        (sensor_pose, robot_pose.translation.x, robot_pose.translation.y)
+                        (
+                            sensor_pose,
+                            robot_pose.translation.x,
+                            robot_pose.translation.y,
+                        )
                     }
                     MapperPoseSource::Estimated => {
                         let robot_pose = match self.robot_pose {
@@ -210,7 +218,11 @@ impl Mapper for OccupancyGridMapper {
                                 None => return,
                             };
                         let sensor_pose = robot_pose * body_from_sensor;
-                        (sensor_pose, robot_pose.translation.x, robot_pose.translation.y)
+                        (
+                            sensor_pose,
+                            robot_pose.translation.x,
+                            robot_pose.translation.y,
+                        )
                     }
                 };
 

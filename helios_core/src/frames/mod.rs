@@ -4,13 +4,14 @@ use crate::types::FrameHandle;
 use nalgebra::{
     DMatrix, DVector, Isometry3, Matrix3, Quaternion, Translation3, UnitQuaternion, Vector3,
 };
-use std::hash::Hash;
 use serde::{Deserialize, Serialize};
+use std::hash::Hash;
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum FrameId {
     /// The global ENU simulation frame. The ultimate source of truth.
+    #[default]
     World,
     /// The origin of a rigid body, where dynamics are typically calculated.
     /// Identified by the agent's unique FrameHandle.
@@ -18,12 +19,6 @@ pub enum FrameId {
     /// The specific origin of a sensor component.
     /// Identified by the sensor's own unique FrameHandle.
     Sensor(FrameHandle),
-}
-
-impl Default for FrameId {
-    fn default() -> Self {
-        FrameId::World
-    }
 }
 
 /// An enum that defines every possible variable that can exist in a state vector.
@@ -112,6 +107,17 @@ impl FrameAwareState {
     /// Finds the index of a specific `StateVariable` in the layout.
     pub fn find_idx(&self, var: &StateVariable) -> Option<usize> {
         self.layout.iter().position(|v| v == var)
+    }
+
+    /// Sets a single state variable by name. Returns `true` if the variable was found
+    /// in the layout and written; `false` if it is absent (a no-op in that case).
+    pub fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
+        if let Some(idx) = self.find_idx(var) {
+            self.vector[idx] = value;
+            true
+        } else {
+            false
+        }
     }
 
     /// Extracts a 3D vector from the state vector based on a starting `StateVariable`.
@@ -249,11 +255,15 @@ impl FrameAwareState {
         let start_idx = self.find_idx(start_variable)?;
 
         // Check for contiguity (simplified check for brevity)
-        if self.layout.get(start_idx + 1).map_or(false, |v| {
-            std::mem::discriminant(v) == std::mem::discriminant(&expected_y)
-        }) && self.layout.get(start_idx + 2).map_or(false, |v| {
-            std::mem::discriminant(v) == std::mem::discriminant(&expected_z)
-        }) {
+        if self
+            .layout
+            .get(start_idx + 1)
+            .is_some_and(|v| std::mem::discriminant(v) == std::mem::discriminant(&expected_y))
+            && self
+                .layout
+                .get(start_idx + 2)
+                .is_some_and(|v| std::mem::discriminant(v) == std::mem::discriminant(&expected_z))
+        {
             // Extract the 3x3 block from the top-left of the covariance matrix.
             Some(
                 self.covariance

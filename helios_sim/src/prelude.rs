@@ -15,8 +15,10 @@ pub use crate::simulation::config::structs::{
 };
 pub use crate::simulation::config::structs::{AtmosphereConfig, TerrainConfig};
 pub use crate::simulation::core::app_state::{AppState, SceneBuildSet, SimulationSet};
+pub use crate::simulation::core::components::{
+    BoundingBox3D, SemanticLabel, TerrainMedium, WorldObjectType,
+};
 pub use crate::simulation::core::components::{EstimationDynamicsModel, MeasurementModel};
-pub use crate::simulation::core::components::{BoundingBox3D, SemanticLabel, TerrainMedium, WorldObjectType};
 pub use crate::simulation::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::simulation::core::transforms::{TfFramePose, TfTree, TrackedFrame};
 
@@ -24,3 +26,7 @@ pub use crate::simulation::plugins::sensors::imu::ImuPlugin;
 pub use crate::simulation::plugins::vehicles::ackermann::{
     AckermannAdapterComponent, AckermannCarPlugin, AckermannOutputAdapter,
 };
+
+// Profile types for multi-profile binary support.
+pub use crate::simulation::profile::SimulationProfile;
+pub use crate::simulation::profile_plugin::ProfiledSimulationPlugin;

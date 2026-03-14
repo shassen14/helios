@@ -16,7 +16,7 @@ use crate::simulation::core::{
 // --- Core Library Imports ---
 use helios_core::{
     messages::{MeasurementData, MeasurementMessage},
-    models::estimation::measurement::{magnetometer::MagnetometerModel},
+    models::estimation::measurement::magnetometer::MagnetometerModel,
     types::FrameHandle,
 };
 
@@ -85,17 +85,34 @@ fn spawn_magnetometer_sensors(
                     world_magnetic_field,
                 };
 
+                // Validate all axis noise stddevs before creating any distributions.
+                let noise_stddevs = [
+                    ("x", mag_config.noise_stddev[0] as f64),
+                    ("y", mag_config.noise_stddev[1] as f64),
+                    ("z", mag_config.noise_stddev[2] as f64),
+                ];
+                let noise_valid = noise_stddevs.iter().all(|(axis, std)| {
+                    if *std <= 0.0 {
+                        error!(
+                            "Magnetometer '{}' has invalid {} noise_stddev={}: must be > 0. Skipping sensor.",
+                            sensor_name, axis, std
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if !noise_valid {
+                    continue;
+                }
+
                 // --- 2. Spawn the Sensor Entity ---
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
                 core_model.sensor_handle = FrameHandle::from_entity(sensor_entity);
 
-                let topic_name = format!(
-                    "/{}/sensors/{}",
-                    agent_name.as_str(),
-                    sensor_name
-                );
+                let topic_name = format!("/{}/sensors/{}", agent_name.as_str(), sensor_name);
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), mag_config.name)),
                     Magnetometer {
@@ -103,6 +120,7 @@ fn spawn_magnetometer_sensors(
                             Duration::from_secs_f32(1.0 / mag_config.rate),
                             TimerMode::Repeating,
                         ),
+                        // safe: all stddevs validated above
                         noise_dist_x: Normal::new(0.0, mag_config.noise_stddev[0] as f64).unwrap(),
                         noise_dist_y: Normal::new(0.0, mag_config.noise_stddev[1] as f64).unwrap(),
                         noise_dist_z: Normal::new(0.0, mag_config.noise_stddev[2] as f64).unwrap(),

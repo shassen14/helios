@@ -52,9 +52,15 @@ pub fn agent_select_system(
     }
 
     let Ok(window) = windows.single() else { return };
-    let Ok((camera, cam_gt)) = camera_query.single() else { return };
-    let Some(cursor) = window.cursor_position() else { return };
-    let Ok(ray) = camera.viewport_to_world(cam_gt, cursor) else { return };
+    let Ok((camera, cam_gt)) = camera_query.single() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(cam_gt, cursor) else {
+        return;
+    };
 
     // Find agent closest to the click ray within PICK_RADIUS_M.
     let mut best: Option<(Entity, f32, String)> = None;
@@ -76,7 +82,10 @@ pub fn agent_select_system(
     match best {
         Some((entity, _, name)) => {
             selected.0 = Some(entity);
-            info!("[Interaction] Selected '{}'  — right-click to set goal, Esc to deselect", name);
+            info!(
+                "[Interaction] Selected '{}'  — right-click to set goal, Esc to deselect",
+                name
+            );
         }
         None => {
             if selected.0.is_some() {
@@ -96,16 +105,24 @@ pub fn click_goal_system(
     mut goal_events: EventWriter<GoalCommandEvent>,
     mut goal_registry: ResMut<GoalRegistry>,
 ) {
-    let Some(agent_entity) = selected.0 else { return };
+    let Some(agent_entity) = selected.0 else {
+        return;
+    };
 
     if !mouse_buttons.just_pressed(MouseButton::Right) {
         return;
     }
 
     let Ok(window) = windows.single() else { return };
-    let Ok((camera, cam_gt)) = camera_query.single() else { return };
-    let Some(cursor) = window.cursor_position() else { return };
-    let Ok(ray) = camera.viewport_to_world(cam_gt, cursor) else { return };
+    let Ok((camera, cam_gt)) = camera_query.single() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Ok(ray) = camera.viewport_to_world(cam_gt, cursor) else {
+        return;
+    };
 
     // Intersect click ray with the ground plane (y = 0 in Bevy world space).
     let dir_y = ray.direction.y;
@@ -124,7 +141,10 @@ pub fn click_goal_system(
     let enu_y = -(hit.z as f64);
     let goal = PlannerGoal::WorldPosition2D(Vector2::new(enu_x, enu_y));
 
-    goal_events.write(GoalCommandEvent { agent: agent_entity, goal: goal.clone() });
+    goal_events.write(GoalCommandEvent {
+        agent: agent_entity,
+        goal: goal.clone(),
+    });
     goal_registry.0.insert(agent_entity, goal);
 
     info!(

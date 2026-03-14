@@ -12,12 +12,12 @@
 use bevy::prelude::*;
 use helios_runtime::stage::PipelineLevel;
 
-use crate::simulation::plugins::autonomy::ControlPipelineComponent;
 use super::super::DebugVisualizationConfig;
+use crate::simulation::plugins::autonomy::ControlPipelineComponent;
 
-const COLOR_LOCAL_PATH: Color = Color::srgb(1.0, 1.0, 0.0);   // yellow
-const COLOR_GLOBAL_PATH: Color = Color::srgb(1.0, 0.5, 0.0);  // orange
-const COLOR_WAYPOINT: Color = Color::srgb(0.0, 1.0, 1.0);     // cyan
+const COLOR_LOCAL_PATH: Color = Color::srgb(1.0, 1.0, 0.0); // yellow
+const COLOR_GLOBAL_PATH: Color = Color::srgb(1.0, 0.5, 0.0); // orange
+const COLOR_WAYPOINT: Color = Color::srgb(0.0, 1.0, 1.0); // cyan
 
 /// Convert a 2D ENU world position (z=0) to Bevy world space for path gizmos.
 #[inline]
@@ -83,10 +83,6 @@ fn draw_level_path(
     // Draw active look-ahead waypoint as a sphere.
     if let Some(wp) = core.get_active_lookahead_waypoint(level) {
         let pos = enu_path_to_bevy(wp.state.vector[0], wp.state.vector[1]);
-        gizmos.sphere(
-            Isometry3d::from_translation(pos),
-            0.5,
-            wp_color,
-        );
+        gizmos.sphere(Isometry3d::from_translation(pos), 0.5, wp_color);
     }
 }

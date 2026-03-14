@@ -70,7 +70,7 @@ not need to rotate anything manually.**
 | **Sensor** | Sensor geometry, optional (rarely needed) | `plugins/sensors/` |
 
 This document covers **Terrain** and **World Objects**. Vehicle assets follow
-the same rules and are documented in `docs/vehicle_asset_standards.md`.
+the same rules (vehicle mesh standards are not yet separately documented; follow this guide).
 
 ---
 

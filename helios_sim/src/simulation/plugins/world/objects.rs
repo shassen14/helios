@@ -2,11 +2,15 @@ use std::collections::HashMap;
 use std::f64::consts::PI;
 
 use avian3d::prelude::{Collider, RigidBody, TrimeshFlags};
-use bevy::{asset::LoadState, gltf::{Gltf, GltfAssetLabel, GltfMesh}, prelude::*};
+use bevy::{
+    asset::LoadState,
+    gltf::{Gltf, GltfAssetLabel, GltfMesh},
+    prelude::*,
+};
 
 use crate::prelude::*;
-use crate::simulation::config::PrefabCatalog;
 use crate::simulation::config::structs::world_object::{WorldObjectCollider, WorldObjectPrefab};
+use crate::simulation::config::PrefabCatalog;
 use crate::simulation::core::app_state::AssetLoadSet;
 use crate::simulation::core::components::{BoundingBox3D, SemanticLabel, WorldObjectType};
 use crate::simulation::core::transforms::enu_iso_to_bevy_transform;
@@ -32,12 +36,14 @@ pub struct WorldObjectAssets {
 impl WorldObjectAssets {
     /// Returns true when all registered scene handles have finished loading.
     pub fn all_loaded(&self, asset_server: &AssetServer) -> bool {
-        let scenes_ok = self.scenes.values().all(|h| {
-            matches!(asset_server.get_load_state(h), Some(LoadState::Loaded))
-        });
-        let colliders_ok = self.collider_gltfs.values().all(|h| {
-            matches!(asset_server.get_load_state(h), Some(LoadState::Loaded))
-        });
+        let scenes_ok = self
+            .scenes
+            .values()
+            .all(|h| matches!(asset_server.get_load_state(h), Some(LoadState::Loaded)));
+        let colliders_ok = self
+            .collider_gltfs
+            .values()
+            .all(|h| matches!(asset_server.get_load_state(h), Some(LoadState::Loaded)));
         scenes_ok && colliders_ok
     }
 }
@@ -92,20 +98,20 @@ fn start_object_asset_loading(
             continue;
         };
 
-        let prefab: WorldObjectPrefab = match figment::value::Value::deserialize::<WorldObjectPrefab>(raw_value) {
-            Ok(p) => p,
-            Err(e) => {
-                error!(
-                    "[WorldObjects] Failed to parse prefab '{}': {}",
-                    placement.prefab, e
-                );
-                continue;
-            }
-        };
+        let prefab: WorldObjectPrefab =
+            match figment::value::Value::deserialize::<WorldObjectPrefab>(raw_value) {
+                Ok(p) => p,
+                Err(e) => {
+                    error!(
+                        "[WorldObjects] Failed to parse prefab '{}': {}",
+                        placement.prefab, e
+                    );
+                    continue;
+                }
+            };
 
         if let Some(ref mesh_path) = prefab.visual_mesh {
-            let handle = asset_server
-                .load(GltfAssetLabel::Scene(0).from_asset(mesh_path.clone()));
+            let handle = asset_server.load(GltfAssetLabel::Scene(0).from_asset(mesh_path.clone()));
             info!(
                 "[WorldObjects] Loading visual mesh for '{}': {:?}",
                 placement.prefab, mesh_path
@@ -119,7 +125,9 @@ fn start_object_asset_loading(
                 "[WorldObjects] Loading collider mesh for '{}': {:?}",
                 placement.prefab, col_path
             );
-            assets.collider_gltfs.insert(placement.prefab.clone(), col_handle);
+            assets
+                .collider_gltfs
+                .insert(placement.prefab.clone(), col_handle);
         }
 
         assets.prefabs.insert(placement.prefab.clone(), prefab);
@@ -144,7 +152,8 @@ fn spawn_world_objects(
             continue;
         };
 
-        let transform = placement_to_bevy_transform(placement.position, placement.orientation_degrees);
+        let transform =
+            placement_to_bevy_transform(placement.position, placement.orientation_degrees);
         let scaled_transform = transform.with_scale(Vec3::from(placement.scale));
 
         let entity_name = format!("world_object/{}/{}", placement.prefab, idx);
@@ -190,10 +199,7 @@ fn spawn_world_objects(
 
         info!(
             "[WorldObjects] Spawned '{}' at ENU ({:.1}, {:.1}, {:.1})",
-            placement.prefab,
-            placement.position[0],
-            placement.position[1],
-            placement.position[2],
+            placement.prefab, placement.position[0], placement.position[1], placement.position[2],
         );
 
         // Trimesh colliders from a dedicated collision GLB.
@@ -261,9 +267,9 @@ fn read_object_gltf_extras(
 /// Converts an ENU position + RPY orientation (degrees) to a Bevy `Transform`.
 /// Uses `enu_iso_to_bevy_transform` so the axis conversion is always centralised.
 fn placement_to_bevy_transform(position: [f64; 3], orientation_degrees: [f64; 3]) -> Transform {
-    let roll  = orientation_degrees[0] * PI / 180.0;
+    let roll = orientation_degrees[0] * PI / 180.0;
     let pitch = orientation_degrees[1] * PI / 180.0;
-    let yaw   = orientation_degrees[2] * PI / 180.0;
+    let yaw = orientation_degrees[2] * PI / 180.0;
 
     let translation = Translation3::new(position[0], position[1], position[2]);
     let rotation = UnitQuaternion::from_euler_angles(roll, pitch, yaw);
@@ -281,18 +287,27 @@ fn spawn_object_trimesh_colliders(
     instance_idx: usize,
 ) {
     for (name, gltf_mesh_handle) in &gltf.named_meshes {
-        let Some(gltf_mesh) = gltf_meshes.get(gltf_mesh_handle) else { continue };
-        if gltf_mesh.primitives.is_empty() { continue }
+        let Some(gltf_mesh) = gltf_meshes.get(gltf_mesh_handle) else {
+            continue;
+        };
+        if gltf_mesh.primitives.is_empty() {
+            continue;
+        }
         let mesh_handle = gltf_mesh.primitives[0].mesh.clone();
-        let Some(mesh) = meshes.get(&mesh_handle) else { continue };
-        if let Some(collider) = Collider::trimesh_from_mesh_with_config(
-            mesh, TrimeshFlags::FIX_INTERNAL_EDGES,
-        ) {
+        let Some(mesh) = meshes.get(&mesh_handle) else {
+            continue;
+        };
+        if let Some(collider) =
+            Collider::trimesh_from_mesh_with_config(mesh, TrimeshFlags::FIX_INTERNAL_EDGES)
+        {
             commands.spawn((
                 collider,
                 RigidBody::Static,
                 transform,
-                Name::new(format!("world_object_col/{}/{}/{}", prefab_key, instance_idx, name)),
+                Name::new(format!(
+                    "world_object_col/{}/{}/{}",
+                    prefab_key, instance_idx, name
+                )),
             ));
         }
     }
@@ -302,7 +317,9 @@ fn spawn_object_trimesh_colliders(
 fn build_collider(cfg: &WorldObjectCollider) -> Result<Collider, String> {
     match cfg.shape.as_str() {
         "box" => {
-            let he = cfg.half_extents.ok_or("'box' collider requires `half_extents`")?;
+            let he = cfg
+                .half_extents
+                .ok_or("'box' collider requires `half_extents`")?;
             Ok(Collider::cuboid(he[0], he[1], he[2]))
         }
         "sphere" => {
@@ -310,16 +327,23 @@ fn build_collider(cfg: &WorldObjectCollider) -> Result<Collider, String> {
             Ok(Collider::sphere(r))
         }
         "capsule" => {
-            let r  = cfg.radius.ok_or("'capsule' collider requires `radius`")?;
-            let hh = cfg.half_height.ok_or("'capsule' collider requires `half_height`")?;
+            let r = cfg.radius.ok_or("'capsule' collider requires `radius`")?;
+            let hh = cfg
+                .half_height
+                .ok_or("'capsule' collider requires `half_height`")?;
             // Avian `capsule(height, radius)` where height is the cylinder section only.
             Ok(Collider::capsule(hh * 2.0, r))
         }
         "cylinder" => {
-            let r  = cfg.radius.ok_or("'cylinder' collider requires `radius`")?;
-            let hh = cfg.half_height.ok_or("'cylinder' collider requires `half_height`")?;
+            let r = cfg.radius.ok_or("'cylinder' collider requires `radius`")?;
+            let hh = cfg
+                .half_height
+                .ok_or("'cylinder' collider requires `half_height`")?;
             Ok(Collider::cylinder(hh * 2.0, r))
         }
-        other => Err(format!("Unknown collider shape '{}'. Use box/sphere/capsule/cylinder.", other)),
+        other => Err(format!(
+            "Unknown collider shape '{}'. Use box/sphere/capsule/cylinder.",
+            other
+        )),
     }
 }

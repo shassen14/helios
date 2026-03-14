@@ -7,9 +7,9 @@ To allow complex scenarios to be defined in human-readable files, supporting reu
 
 1.  **The `Catalog` Concept:**
     - Instead of one giant file, we support a library of "parts."
-    - `assets/catalog/sensors/`: Pre-configured sensors (e.g., `velodyne_vlp16.toml`).
-    - `assets/catalog/vehicles/`: Vehicle physics parameters.
-    - `assets/catalog/agents/`: Valid robot configurations (Vehicle + Sensors).
+    - `configs/catalog/sensors/`: Pre-configured sensors (e.g., `velodyne_vlp16.toml`).
+    - `configs/catalog/vehicles/`: Vehicle physics parameters.
+    - `configs/catalog/agents/`: Valid robot configurations (Vehicle + Sensors).
 
 2.  **The `Resolver`:**
     - A build-time or startup-time system that reads the `scenario.toml`.

@@ -6,7 +6,11 @@ pub use crate::config::{
     ImuProcessNoiseConfig, MapperConfig, MapperPoseSourceConfig, PlannerConfig,
     QuadcopterProcessNoiseConfig, SlamConfig, UkfConfig, WorldModelConfig,
 };
-pub use crate::pipeline::{AutonomyPipeline, ControlCore, EstimationCore, MappingCore, PipelineBuilder, PipelineOutputs};
+pub use crate::estimation::{EstimationDriver, GroundTruthPassthrough};
+pub use crate::mapping::{MapDriver, StaticMapProvider};
+pub use crate::pipeline::{
+    AutonomyPipeline, ControlCore, EstimationCore, MappingCore, PipelineBuilder, PipelineOutputs,
+};
 pub use crate::runtime::AgentRuntime;
 pub use crate::stage::{LeveledController, LeveledMapper, LeveledPlanner, PipelineLevel};
 pub use crate::validation::{validate_autonomy_config, CapabilitySet, ValidationError};

@@ -1,0 +1,40 @@
+# configs/scenarios/isolation/mapping_only.toml
+# Profile: MappingOnly — sensors + ground-truth estimator + occupancy grid mapper.
+# No real EKF, no planner, no controller.
+# cargo run --example 03_mapping_only -- --scenario configs/scenarios/isolation/mapping_only.toml
+
+[simulation]
+profile          = "mapping_only"
+duration_seconds = 60.0
+seed             = 42
+
+[[world.terrains]]
+mesh     = "maps/starter_world.glb"
+collider = "maps/starter_world_col.glb"
+medium   = "air"
+
+[world.atmosphere]
+gravity = [0.0, -9.81, 0.0]
+
+[debug]
+show_pose_gimbals   = true
+show_point_cloud    = true
+show_occupancy_grid = true
+show_legend         = true
+
+[[agents]]
+from          = "agents.ackermann_car_pro"
+name          = "MappingCar"
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose     = { translation = [10.0, 0.0, 0.5] }
+
+# Ground-truth estimator is injected by MockGroundTruthEstimatorPlugin.
+# Enable occupancy grid mapper driven by lidar.
+[agents.autonomy_stack.world_model]
+type      = "Separate"
+estimator = { from = "components.estimators.ekf_pro" }
+mapper    = { from = "components.mappers.occupancy_grid_2d" }
+
+# Add lidar for the mapper to consume.
+[agents.sensors.lidar]
+from = "sensors.lidar2d"

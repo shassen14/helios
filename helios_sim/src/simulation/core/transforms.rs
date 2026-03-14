@@ -92,11 +92,17 @@ impl TfTree {
     pub fn iter_frames(
         &self,
     ) -> impl Iterator<Item = (Entity, Isometry3<f64>, Isometry3<f64>, Option<Entity>)> + '_ {
-        self.transforms_to_world.iter().map(|(&entity, &world_iso)| {
-            let local_iso = self.local_transforms.get(&entity).copied().unwrap_or(world_iso);
-            let parent = self.parent_map.get(&entity).copied().flatten();
-            (entity, world_iso, local_iso, parent)
-        })
+        self.transforms_to_world
+            .iter()
+            .map(|(&entity, &world_iso)| {
+                let local_iso = self
+                    .local_transforms
+                    .get(&entity)
+                    .copied()
+                    .unwrap_or(world_iso);
+                let parent = self.parent_map.get(&entity).copied().flatten();
+                (entity, world_iso, local_iso, parent)
+            })
     }
 
     pub fn get_transform_by_name(
@@ -152,8 +158,15 @@ fn resolve_local_iso(
         .transforms_to_world
         .get(&parent_entity)
         .copied()
-        .or_else(|| all_transforms.get(parent_entity).ok().map(bevy_global_transform_to_enu_iso));
-    parent_world.map(|pw| pw.inverse() * world_iso).unwrap_or(world_iso)
+        .or_else(|| {
+            all_transforms
+                .get(parent_entity)
+                .ok()
+                .map(bevy_global_transform_to_enu_iso)
+        });
+    parent_world
+        .map(|pw| pw.inverse() * world_iso)
+        .unwrap_or(world_iso)
 }
 
 /// Handles structural changes to the TF graph: entities gaining or losing `TrackedFrame`.
@@ -178,8 +191,12 @@ pub fn tf_tree_structural_system(
 
     // Pass 1: world pose + parent link for every newly tracked entity.
     for (entity, gt, child_of) in &added_query {
-        tf_tree.transforms_to_world.insert(entity, bevy_global_transform_to_enu_iso(gt));
-        tf_tree.parent_map.insert(entity, child_of.map(|c| c.parent()));
+        tf_tree
+            .transforms_to_world
+            .insert(entity, bevy_global_transform_to_enu_iso(gt));
+        tf_tree
+            .parent_map
+            .insert(entity, child_of.map(|c| c.parent()));
     }
 
     // Pass 2: local pose — requires pass 1 complete so parent world poses are present.
@@ -214,8 +231,12 @@ pub fn tf_tree_incremental_update_system(
 
     // Pass 1: world poses + parent links (also handles reparenting).
     for (entity, gt, child_of) in &changed_query {
-        tf_tree.transforms_to_world.insert(entity, bevy_global_transform_to_enu_iso(gt));
-        tf_tree.parent_map.insert(entity, child_of.map(|c| c.parent()));
+        tf_tree
+            .transforms_to_world
+            .insert(entity, bevy_global_transform_to_enu_iso(gt));
+        tf_tree
+            .parent_map
+            .insert(entity, child_of.map(|c| c.parent()));
     }
 
     // Pass 2: local poses — parent world poses already updated in pass 1.

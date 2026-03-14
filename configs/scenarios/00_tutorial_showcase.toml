@@ -60,6 +60,7 @@ show_path_trail     = true
 show_occupancy_grid = true
 show_tf_frames      = true
 show_legend         = true
+show_planned_path   = true
 
 # =========================================================================
 # == Agent 1: The Baseline Vehicle ==

@@ -27,3 +27,12 @@ opt-level = 3 # using cranelift: 3 instead of 1 here, better runtime perf, same 
 [profile.dev.package."*"]
 opt-level = 3
 
+# Profiling profile: release optimizations + debug symbols for flamegraph stack traces.
+# strip = "none" and split-debuginfo = "unpacked" are required on macOS — release builds
+# strip debug info by default, leaving only hex addresses in samply profiles.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+split-debuginfo = "unpacked"
+

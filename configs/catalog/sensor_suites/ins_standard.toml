@@ -1,0 +1,13 @@
+# configs/catalog/sensor_suites/ins_standard.toml
+
+# This file defines a reusable table of sensor instances.
+# The structure of this file matches the `sensors` field in AgentConfig.
+
+[imu_standard]
+from = "sensors.imu_standard"
+
+[gps_standard]
+from = "sensors.gps_standard"
+
+[magnetometer_pro]
+from = "sensors.magnetometer_pro"

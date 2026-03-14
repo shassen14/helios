@@ -2,6 +2,7 @@ use avian3d::prelude::Gravity;
 use bevy::prelude::*;
 use helios_core::mapping::NoneMapper;
 use helios_core::types::FrameHandle;
+use helios_runtime::estimation::GroundTruthPassthrough;
 use helios_runtime::pipeline::PipelineBuilder;
 use helios_runtime::stage::PipelineLevel;
 use std::collections::HashMap;
@@ -10,7 +11,9 @@ use helios_runtime::validation::validate_autonomy_config;
 
 use crate::prelude::*;
 use crate::simulation::config::structs::WorldModelConfig;
-use crate::simulation::core::components::{MailboxEntry, SensorMailbox, SensorTopicName};
+use crate::simulation::core::components::{
+    AgentTopicNames, MailboxEntry, SensorMailbox, SensorTopicName,
+};
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::topics::TopicBus;
@@ -18,11 +21,11 @@ use crate::simulation::core::transforms::{enu_iso_to_bevy_transform, TfTree};
 use crate::simulation::plugins::autonomy::components::{
     ControlPipelineComponent, EstimatorComponent, MapperComponent, ModuleTimer, OdomFrameOf,
 };
-use helios_core::planning::types::PlannerGoal;
 use crate::simulation::registry::{
     AutonomyRegistry, ControllerBuildContext, EstimatorBuildContext, MapperBuildContext,
     PlannerBuildContext, SlamBuildContext,
 };
+use helios_core::planning::types::PlannerGoal;
 
 // =========================================================================
 // == Helpers ==
@@ -186,12 +189,19 @@ pub fn spawn_world_model_modules(
                 let goal_iso = agent_config.goal_pose.to_isometry();
                 builder = builder.with_goal(PlannerGoal::WorldPose(goal_iso));
 
+                let agent_name = agent_config.name();
                 let (estimation, mapping, control) = builder.build().into_parts();
                 entity_commands.insert((
-                    EstimatorComponent(estimation),
-                    MapperComponent(mapping),
+                    EstimatorComponent(Box::new(estimation)),
+                    MapperComponent(Box::new(mapping)),
                     ControlPipelineComponent(control),
                     SensorMailbox::default(),
+                    AgentTopicNames {
+                        active_waypoint: format!("/{}/planning/active_waypoint", agent_name),
+                        odometry_estimated: format!("/{}/odometry/estimated", agent_name),
+                        map_global: format!("/{}/map/global", agent_name),
+                        map_local: format!("/{}/map", agent_name),
+                    },
                 ));
             }
 
@@ -206,13 +216,25 @@ pub fn spawn_world_model_modules(
                 };
                 match registry.build_slam(slam_cfg.get_kind_str(), ctx) {
                     Ok(system) => {
-                        let (estimation, mapping, control) =
-                            PipelineBuilder::new().with_slam(system).build().into_parts();
+                        let agent_name = agent_config.name();
+                        let (estimation, mapping, control) = PipelineBuilder::new()
+                            .with_slam(system)
+                            .build()
+                            .into_parts();
                         entity_commands.insert((
-                            EstimatorComponent(estimation),
-                            MapperComponent(mapping),
+                            EstimatorComponent(Box::new(estimation)),
+                            MapperComponent(Box::new(mapping)),
                             ControlPipelineComponent(control),
                             SensorMailbox::default(),
+                            AgentTopicNames {
+                                active_waypoint: format!(
+                                    "/{}/planning/active_waypoint",
+                                    agent_name
+                                ),
+                                odometry_estimated: format!("/{}/odometry/estimated", agent_name),
+                                map_global: format!("/{}/map/global", agent_name),
+                                map_local: format!("/{}/map", agent_name),
+                            },
                         ));
                     }
                     Err(e) => {
@@ -223,6 +245,166 @@ pub fn spawn_world_model_modules(
                         );
                     }
                 }
+            }
+
+            None => {
+                warn!(
+                    "No world model configured for agent '{}'. Skipping.",
+                    agent_config.name()
+                );
+            }
+        }
+    }
+}
+
+/// Spawning system for mock-estimator profiles (MappingOnly, PlanningOnly, ControlOnly).
+/// Mirrors the `Separate` path of `spawn_world_model_modules` but skips estimator
+/// construction and inserts `GroundTruthPassthrough` instead.
+pub fn spawn_mock_world_model_modules(
+    mut commands: Commands,
+    agent_query: Query<(Entity, &SpawnAgentConfigRequest)>,
+    gravity: Res<Gravity>,
+    registry: Res<AutonomyRegistry>,
+) {
+    let capabilities = registry.capabilities();
+
+    for (agent_entity, request) in &agent_query {
+        let agent_config = &request.0;
+        let _gravity_magnitude = gravity.0.length() as f64;
+        let mut entity_commands = commands.entity(agent_entity);
+
+        let validation_errors =
+            validate_autonomy_config(agent_config.autonomy_stack(), &capabilities);
+        if !validation_errors.is_empty() {
+            for err in &validation_errors {
+                error!(
+                    "Config validation failed for agent '{}': {}",
+                    agent_config.name(),
+                    err
+                );
+            }
+            continue;
+        }
+
+        match &agent_config.autonomy_stack().world_model {
+            Some(WorldModelConfig::Separate {
+                estimator: _,
+                mapper: map_cfg,
+            }) => {
+                let mut builder = PipelineBuilder::new();
+                // Estimator intentionally skipped — GT passthrough handles state.
+
+                if let Some(cfg) = map_cfg {
+                    if let Some(rate) = cfg.get_timer_rate() {
+                        entity_commands.insert(ModuleTimer::from_hz(rate));
+                    }
+                    match registry.build_mapper(
+                        cfg.get_kind_str(),
+                        MapperBuildContext {
+                            agent_entity,
+                            mapper_cfg: cfg.clone(),
+                        },
+                    ) {
+                        Ok(m) => {
+                            builder = builder.with_mapper(PipelineLevel::Local, m);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Mapper build failed for '{}': {}. Falling back to NoneMapper.",
+                                agent_config.name(),
+                                e
+                            );
+                            builder =
+                                builder.with_mapper(PipelineLevel::Local, Box::new(NoneMapper));
+                        }
+                    }
+                }
+
+                for (_key, ctrl_cfg) in &agent_config.autonomy_stack().controllers {
+                    let kind = ctrl_cfg.get_kind_str();
+                    let ctx = ControllerBuildContext {
+                        agent_entity,
+                        controller_cfg: ctrl_cfg.clone(),
+                        agent_config: agent_config.clone(),
+                        dynamics_factories: registry.clone_dynamics_arc(),
+                    };
+                    match registry.build_controller(kind, ctx) {
+                        Ok(ctrl) => {
+                            builder = builder.with_controller(PipelineLevel::Local, ctrl);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to build controller '{}' for agent '{}': {}",
+                                kind,
+                                agent_config.name(),
+                                e
+                            );
+                        }
+                    }
+                }
+
+                for (_key, plan_cfg) in &agent_config.autonomy_stack().planners {
+                    let kind = plan_cfg.get_kind_str();
+                    let level = level_from_str(plan_cfg.get_level_str());
+                    let ctx = PlannerBuildContext {
+                        agent_entity,
+                        planner_cfg: plan_cfg.clone(),
+                        level: level.clone(),
+                    };
+                    match registry.build_planner(kind, ctx) {
+                        Ok(planner) => {
+                            builder = builder.with_planner(level, planner);
+                        }
+                        Err(e) => {
+                            error!(
+                                "Failed to build planner '{}' for agent '{}': {}",
+                                kind,
+                                agent_config.name(),
+                                e
+                            );
+                        }
+                    }
+                }
+
+                let goal_iso = agent_config.goal_pose.to_isometry();
+                builder = builder.with_goal(PlannerGoal::WorldPose(goal_iso));
+
+                let agent_name = agent_config.name();
+                let (_, mapping, control) = builder.build().into_parts();
+                entity_commands.insert((
+                    EstimatorComponent(Box::new(GroundTruthPassthrough::default())),
+                    MapperComponent(Box::new(mapping)),
+                    ControlPipelineComponent(control),
+                    SensorMailbox::default(),
+                    AgentTopicNames {
+                        active_waypoint: format!("/{}/planning/active_waypoint", agent_name),
+                        odometry_estimated: format!("/{}/odometry/estimated", agent_name),
+                        map_global: format!("/{}/map/global", agent_name),
+                        map_local: format!("/{}/map", agent_name),
+                    },
+                ));
+            }
+
+            Some(WorldModelConfig::CombinedSlam { .. }) => {
+                let agent_name = agent_config.name();
+                warn!(
+                    "Agent '{}' uses CombinedSlam but mock-estimator profile was requested. \
+                     Inserting GT passthrough with empty mapper/control.",
+                    agent_name
+                );
+                let (_, mapping, control) = PipelineBuilder::new().build().into_parts();
+                entity_commands.insert((
+                    EstimatorComponent(Box::new(GroundTruthPassthrough::default())),
+                    MapperComponent(Box::new(mapping)),
+                    ControlPipelineComponent(control),
+                    SensorMailbox::default(),
+                    AgentTopicNames {
+                        active_waypoint: format!("/{}/planning/active_waypoint", agent_name),
+                        odometry_estimated: format!("/{}/odometry/estimated", agent_name),
+                        map_global: format!("/{}/map/global", agent_name),
+                        map_local: format!("/{}/map", agent_name),
+                    },
+                ));
             }
 
             None => {
@@ -287,9 +469,12 @@ pub fn route_sensor_messages(
 
     // Sort each mailbox by timestamp (ascending) for EKF causality.
     for mut mailbox in &mut mailbox_query {
-        mailbox
-            .entries
-            .sort_by(|a, b| a.message.timestamp.partial_cmp(&b.message.timestamp).unwrap());
+        mailbox.entries.sort_by(|a, b| {
+            a.message
+                .timestamp
+                .partial_cmp(&b.message.timestamp)
+                .unwrap()
+        });
     }
 }
 
@@ -315,7 +500,12 @@ pub fn estimation_system(
 /// Forwards each agent's `SensorMailbox` to its mapper and handles timer-gated pose updates.
 /// Runs in parallel with `estimation_system` — accesses `MapperComponent` only.
 pub fn mapping_system(
-    mut module_query: Query<(Entity, &mut MapperComponent, &mut ModuleTimer, &SensorMailbox)>,
+    mut module_query: Query<(
+        Entity,
+        &mut MapperComponent,
+        &mut ModuleTimer,
+        &SensorMailbox,
+    )>,
     odom_query: Query<(&OdomFrameOf, Entity)>,
     time: Res<Time>,
     tf_tree: Res<TfTree>,
@@ -373,27 +563,31 @@ pub fn update_odom_frames(
 
 /// Publishes estimated state, maps, and active planning waypoint to TopicBus.
 /// Runs in `SimulationSet::Validation` (cold telemetry path).
+/// Topic name strings are pre-computed in `AgentTopicNames` — no `format!()` allocations here.
 pub fn autonomy_telemetry_system(
-    query: Query<(&EstimatorComponent, &MapperComponent, &ControlPipelineComponent, &Name)>,
+    query: Query<(
+        &EstimatorComponent,
+        &MapperComponent,
+        &ControlPipelineComponent,
+        &AgentTopicNames,
+    )>,
     mut topic_bus: ResMut<TopicBus>,
 ) {
-    for (estimator, mapper, control, name) in &query {
+    for (estimator, mapper, control, topics) in &query {
         // Active look-ahead waypoint.
         if let Some(wp) = control
             .0
             .get_active_lookahead_waypoint(&PipelineLevel::Local)
-            .or_else(|| control.0.get_active_lookahead_waypoint(&PipelineLevel::Global))
+            .or_else(|| {
+                control
+                    .0
+                    .get_active_lookahead_waypoint(&PipelineLevel::Global)
+            })
         {
-            topic_bus.publish(
-                &format!("/{}/planning/active_waypoint", name.as_str()),
-                wp.state.clone(),
-            );
+            topic_bus.publish(&topics.active_waypoint, wp.state.clone());
         }
         if let Some(state) = estimator.0.get_state() {
-            topic_bus.publish(
-                &format!("/{}/odometry/estimated", name.as_str()),
-                state.clone(),
-            );
+            topic_bus.publish(&topics.odometry_estimated, state.clone());
         }
 
         // Global map: SLAM takes priority over global mappers.
@@ -403,13 +597,13 @@ pub fn autonomy_telemetry_system(
             .or_else(|| mapper.0.get_map(&PipelineLevel::Global));
         if let Some(map) = global_map {
             if !matches!(map, helios_core::mapping::MapData::None) {
-                topic_bus.publish(&format!("/{}/map/global", name.as_str()), map.clone());
+                topic_bus.publish(&topics.map_global, map.clone());
             }
         }
 
         if let Some(map) = mapper.0.get_map(&PipelineLevel::Local) {
             if !matches!(map, helios_core::mapping::MapData::None) {
-                topic_bus.publish(&format!("/{}/map", name.as_str()), map.clone());
+                topic_bus.publish(&topics.map_local, map.clone());
             }
         }
     }
@@ -418,10 +612,7 @@ pub fn autonomy_telemetry_system(
 /// Publishes each agent's sensor measurements to TopicBus.
 /// Runs in `SimulationSet::Validation` (cold telemetry path).
 /// Sensor systems no longer touch `TopicBus` directly — all sensor telemetry flows here.
-pub fn sensor_telemetry_system(
-    query: Query<&SensorMailbox>,
-    mut topic_bus: ResMut<TopicBus>,
-) {
+pub fn sensor_telemetry_system(query: Query<&SensorMailbox>, mut topic_bus: ResMut<TopicBus>) {
     for mailbox in &query {
         for entry in &mailbox.entries {
             if !entry.topic_name.is_empty() {

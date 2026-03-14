@@ -7,9 +7,7 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::config::structs::{LidarConfig, SensorConfig};
 use crate::simulation::core::{
-    app_state::SimulationSet,
-    components::SensorTopicName,
-    events::BevyMeasurementMessage,
+    app_state::SimulationSet, components::SensorTopicName, events::BevyMeasurementMessage,
 };
 
 // --- Core Library Imports ---
@@ -35,7 +33,6 @@ pub struct RaycastingSensor {
     pub model: Box<dyn RaycastingSensorModel>,
     /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
     pub topic_name: String,
-
 }
 
 pub struct RaycastingSensorPlugin;
@@ -80,13 +77,30 @@ fn spawn_raycasting_sensors(
                         horizontal_beams,
                         range_noise_stddev,
                         ..
-                    } => Box::new(Lidar2DModel {
-                        max_range: *max_range,
-                        horizontal_fov_deg: *horizontal_fov,
-                        horizontal_beams: *horizontal_beams,
-                        range_noise_stddev: *range_noise_stddev,
-                        angular_noise_stddev_deg: 0.1,
-                    }),
+                    } => {
+                        let angular_noise_stddev_deg = 0.1_f32;
+                        if *range_noise_stddev <= 0.0 {
+                            error!(
+                                "LiDAR '{}' has invalid range_noise_stddev={}: must be > 0. Skipping sensor.",
+                                sensor_name, range_noise_stddev
+                            );
+                            continue;
+                        }
+                        if angular_noise_stddev_deg <= 0.0 {
+                            error!(
+                                "LiDAR '{}' has invalid angular_noise_stddev_deg={}: must be > 0. Skipping sensor.",
+                                sensor_name, angular_noise_stddev_deg
+                            );
+                            continue;
+                        }
+                        Box::new(Lidar2DModel {
+                            max_range: *max_range,
+                            horizontal_fov_deg: *horizontal_fov,
+                            horizontal_beams: *horizontal_beams,
+                            range_noise_stddev: *range_noise_stddev,
+                            angular_noise_stddev_deg,
+                        })
+                    }
                     LidarConfig::Lidar3D { .. } => {
                         // Future implementation would go here.
                         unimplemented!("Lidar3D spawning not yet implemented.");
@@ -97,11 +111,7 @@ fn spawn_raycasting_sensors(
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
-                let topic_name = format!(
-                    "/{}/sensors/{}",
-                    agent_name.as_str(),
-                    sensor_name
-                );
+                let topic_name = format!("/{}/sensors/{}", agent_name.as_str(), sensor_name);
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
                     RaycastingSensor {
@@ -176,13 +186,9 @@ fn raycasting_sensor_system(
 
                     // Convert it to `Dir3` for the raycast.
                     if let Ok(dir) = Dir3::new(world_direction) {
-                        if let Some(hit) = spatial_query.cast_ray(
-                            sensor_origin,
-                            dir,
-                            max_toi,
-                            true,
-                            &filter,
-                        ) {
+                        if let Some(hit) =
+                            spatial_query.cast_ray(sensor_origin, dir, max_toi, true, &filter)
+                        {
                             hits.push(RayHit {
                                 ray_id: ray.id,
                                 distance: hit.distance,

@@ -1,0 +1,34 @@
+# configs/scenarios/isolation/estimation_only.toml
+# Profile: EstimationOnly — sensors + EKF estimator. No mapper, planner, or controller.
+# cargo run --example 02_estimation_only -- --scenario configs/scenarios/isolation/estimation_only.toml
+
+[simulation]
+profile          = "estimation_only"
+duration_seconds = 30.0
+seed             = 42
+
+[[world.terrains]]
+mesh     = "maps/starter_world.glb"
+collider = "maps/starter_world_col.glb"
+medium   = "air"
+
+[world.atmosphere]
+gravity = [0.0, -9.81, 0.0]
+
+[debug]
+show_pose_gimbals = true
+show_covariance   = true
+show_velocity     = true
+show_legend       = true
+
+[[agents]]
+from          = "agents.ackermann_car_pro"
+name          = "EstimationCar"
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose     = { translation = [10.0, 0.0, 0.5] }
+
+# No mapper, no planner, no controller — estimator only.
+[agents.autonomy_stack.world_model]
+type      = "Separate"
+estimator = { from = "components.estimators.ekf_pro" }
+mapper    = { from = "components.mappers.none" }

@@ -10,8 +10,7 @@ pub use components::{AckermannActuator, AckermannCommand, AckermannParameters};
 use crate::simulation::core::app_state::{AppState, SceneBuildSet, SimulationSet};
 use bevy::prelude::*;
 use systems::{
-    attach_ackermann_physics, drive_ackermann_cars, process_ackermann_logic,
-    setup_ackermann_assets,
+    attach_ackermann_physics, drive_ackermann_cars, process_ackermann_logic, setup_ackermann_assets,
 };
 
 /// Shared mesh/material handles — created once at scene setup, reused for every car.

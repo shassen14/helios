@@ -2,8 +2,8 @@
 //
 // PlanningPlugin: drives all planner stages each tick and handles GoalCommandEvents.
 
-pub mod interaction;
 mod gizmos;
+pub mod interaction;
 
 use std::collections::HashMap;
 
@@ -96,7 +96,9 @@ fn planning_system(
             }
         }
 
-        control.0.step_planners(state, &maps, time.elapsed_secs_f64(), &runtime);
+        control
+            .0
+            .step_planners(state, &maps, time.elapsed_secs_f64(), &runtime);
     }
 }
 

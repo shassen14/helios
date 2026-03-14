@@ -7,9 +7,7 @@ use nalgebra::Vector3;
 
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
-use super::{
-    siso_pid::SisoPid, ControlContext, ControlOutput, Controller, TrajectoryPoint,
-};
+use super::{siso_pid::SisoPid, ControlContext, ControlOutput, Controller, TrajectoryPoint};
 
 /// Pure feedback velocity controller composed of three independent SISO PID loops.
 ///
@@ -34,11 +32,7 @@ impl VelocityPidController {
     }
 
     /// Construct with separate gains per channel.
-    pub fn with_gains(
-        vx: (f64, f64, f64),
-        vy: (f64, f64, f64),
-        yaw: (f64, f64, f64),
-    ) -> Self {
+    pub fn with_gains(vx: (f64, f64, f64), vy: (f64, f64, f64), yaw: (f64, f64, f64)) -> Self {
         Self {
             vx_pid: SisoPid::new(vx.0, vx.1, vx.2),
             vy_pid: SisoPid::new(vy.0, vy.1, vy.2),
@@ -75,12 +69,7 @@ fn extract_ref_velocities(reference: &TrajectoryPoint) -> (f64, f64, f64) {
 }
 
 impl Controller for VelocityPidController {
-    fn compute(
-        &mut self,
-        state: &FrameAwareState,
-        dt: f64,
-        ctx: &ControlContext,
-    ) -> ControlOutput {
+    fn compute(&mut self, state: &FrameAwareState, dt: f64, ctx: &ControlContext) -> ControlOutput {
         let (cur_vx, cur_vy, cur_yaw) = extract_body_velocities(state);
 
         let (ref_vx, ref_vy, ref_yaw) = ctx

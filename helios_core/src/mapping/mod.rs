@@ -5,8 +5,9 @@ use std::collections::HashMap;
 
 // --- Map Data Structures ---
 // We'll define the MapData enum here, as it's the primary output of this module.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub enum MapData {
+    #[default]
     None, // A default variant for when no map is produced.
     OccupancyGrid2D {
         origin: Isometry3<f64>,
@@ -17,12 +18,6 @@ pub enum MapData {
         // In the future, this will hold landmark data.
         landmarks: HashMap<u64, Isometry3<f64>>,
     },
-}
-
-impl Default for MapData {
-    fn default() -> Self {
-        MapData::None
-    }
 }
 
 // --- The Mapper Trait ("Contract") ---

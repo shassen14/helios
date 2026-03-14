@@ -29,6 +29,10 @@ rand_chacha = "0.3.1"                                          # match bevy
 rand_distr = "0.4.3"                                           # match bevy
 walkdir = "2.5.0"
 clap = { version = "4.5", features = ["derive"] }
+dhat = { version = "0.3", optional = true }
+
+[features]
+dhat-heap = ["dhat"]
 
 [dev-dependencies]
 approx = { workspace = true }

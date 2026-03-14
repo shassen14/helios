@@ -11,8 +11,8 @@ use helios_core::planning::types::PlannerGoal;
 use super::interaction::{GoalRegistry, SelectedAgent};
 use crate::simulation::plugins::autonomy::ControlPipelineComponent;
 
-const COLOR_SELECTION: Color = Color::srgb(0.0, 1.0, 0.0);  // green
-const COLOR_GOAL: Color = Color::srgb(1.0, 0.0, 1.0);        // magenta
+const COLOR_SELECTION: Color = Color::srgb(0.0, 1.0, 0.0); // green
+const COLOR_GOAL: Color = Color::srgb(1.0, 0.0, 1.0); // magenta
 
 const SELECTION_RING_RADIUS: f32 = 3.0;
 const GOAL_SPHERE_RADIUS: f32 = 0.8;
@@ -20,16 +20,12 @@ const GOAL_SPHERE_RADIUS: f32 = 0.8;
 /// ENU 2D goal position → Bevy Vec3 at a slight hover above the ground.
 fn goal_to_bevy(goal: &PlannerGoal) -> Option<Vec3> {
     match goal {
-        PlannerGoal::WorldPosition2D(v) => {
-            Some(Vec3::new(v.x as f32, 0.2, -(v.y as f32)))
-        }
-        PlannerGoal::WorldPose(iso) => {
-            Some(Vec3::new(
-                iso.translation.x as f32,
-                0.2,
-                -(iso.translation.y as f32),
-            ))
-        }
+        PlannerGoal::WorldPosition2D(v) => Some(Vec3::new(v.x as f32, 0.2, -(v.y as f32))),
+        PlannerGoal::WorldPose(iso) => Some(Vec3::new(
+            iso.translation.x as f32,
+            0.2,
+            -(iso.translation.y as f32),
+        )),
         PlannerGoal::GlobalPathWaypoint { .. } => None,
     }
 }

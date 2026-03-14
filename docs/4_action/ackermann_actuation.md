@@ -7,7 +7,7 @@ The actuation pipeline converts a `ControlOutput` into Avian3D `ExternalForce` +
 
 ```
 Layer 1  Controller::compute()  →  ControlOutput
-            │  reads: WorldModelComponent (EKF estimated state)
+            │  reads: EstimatorComponent (EKF estimated state)
             │  outer loop — setpoint generation, path following, planning
             │
 Layer 2  AckermannOutputAdapter::adapt()  →  AckermannCommand { throttle_norm, steering_torque_norm }
@@ -29,7 +29,7 @@ real embedded robotics systems:
 
 | | Real hardware | This sim |
 |---|---|---|
-| Outer loop | EKF / SLAM estimate (global pose, velocity) | `WorldModelComponent` (EKF) |
+| Outer loop | EKF / SLAM estimate (global pose, velocity) | `EstimatorComponent` (EKF) |
 | Inner loop | IMU gyro + wheel encoders (100–1000 Hz) | Avian3D `LinearVelocity`, `AngularVelocity` |
 
 On a real vehicle, the inner-loop speed and yaw-rate controllers read directly from

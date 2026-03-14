@@ -89,13 +89,15 @@ impl AckermannOutputAdapter for DefaultAckermannAdapter {
             _ => unreachable!(),
         };
 
-        let yaw_rate_demand =
-            (lin_vel.length() / params.wheelbase as f32) * steering_rad.tan();
+        let yaw_rate_demand = (lin_vel.length() / params.wheelbase as f32) * steering_rad.tan();
         let max_yaw_rate =
             (actuator.max_speed / params.wheelbase as f32) * params.max_steering_angle.tan();
         let steering_torque_norm = (yaw_rate_demand / max_yaw_rate.max(0.01)).clamp(-1.0, 1.0);
 
-        AckermannCommand { throttle_norm, steering_torque_norm }
+        AckermannCommand {
+            throttle_norm,
+            steering_torque_norm,
+        }
     }
 }
 
@@ -117,7 +119,11 @@ pub struct DualSisoPidAdapter {
 
 impl DualSisoPidAdapter {
     pub fn new(longitudinal: SisoPid, lateral: SisoPid) -> Self {
-        Self { longitudinal, lateral, fallback: DefaultAckermannAdapter }
+        Self {
+            longitudinal,
+            lateral,
+            fallback: DefaultAckermannAdapter,
+        }
     }
 }
 
@@ -134,7 +140,9 @@ impl AckermannOutputAdapter for DualSisoPidAdapter {
         dt: f32,
     ) -> AckermannCommand {
         let ControlOutput::BodyVelocity { linear, angular } = output else {
-            return self.fallback.adapt(output, params, actuator, transform, lin_vel, ang_vel, mass, dt);
+            return self.fallback.adapt(
+                output, params, actuator, transform, lin_vel, ang_vel, mass, dt,
+            );
         };
 
         // Longitudinal SISO: speed error → throttle_norm.
@@ -154,6 +162,9 @@ impl AckermannOutputAdapter for DualSisoPidAdapter {
         let raw_torque = self.lateral.update(yaw_error as f64, dt as f64) as f32;
         let steering_torque_norm = (raw_torque / actuator.max_torque).clamp(-1.0, 1.0);
 
-        AckermannCommand { throttle_norm, steering_torque_norm }
+        AckermannCommand {
+            throttle_norm,
+            steering_torque_norm,
+        }
     }
 }

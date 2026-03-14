@@ -10,11 +10,11 @@ use rand_chacha::ChaCha8Rng;
 use crate::prelude::*;
 use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::simulation::core::events::BevyMeasurementMessage;
+use crate::simulation::core::prng::SimulationRng;
+use crate::simulation::core::transforms::build_static_tf_maps;
 use crate::simulation::core::{
     ground_truth_publish_system, ground_truth_sync_system, tf_publish_system,
 };
-use crate::simulation::core::prng::SimulationRng;
-use crate::simulation::core::transforms::build_static_tf_maps;
 // Import the Bevy-specific types this plugin manages
 use super::components::GroundTruthState;
 use super::topics::TopicBus;
@@ -41,8 +41,7 @@ impl Plugin for SimulationSetupPlugin {
         app.insert_resource(SimulationRng(rng));
 
         // --- INITIALIZE RESOURCES & EVENTS ---
-        app
-            .init_resource::<TopicBus>()
+        app.init_resource::<TopicBus>()
             .init_resource::<TfTree>()
             .add_event::<BevyMeasurementMessage>();
 

@@ -52,19 +52,27 @@ pub struct AtmosphereConfig {
     pub fog_density: f32,
 }
 
-fn default_gravity() -> [f32; 3]     { [0.0, -9.81, 0.0] }
-fn default_sun_elevation() -> f32    { 45.0 }
-fn default_sun_azimuth() -> f32      { 180.0 }
-fn default_ambient_lux() -> f32      { 8000.0 }
+fn default_gravity() -> [f32; 3] {
+    [0.0, -9.81, 0.0]
+}
+fn default_sun_elevation() -> f32 {
+    45.0
+}
+fn default_sun_azimuth() -> f32 {
+    180.0
+}
+fn default_ambient_lux() -> f32 {
+    8000.0
+}
 
 impl Default for AtmosphereConfig {
     fn default() -> Self {
         Self {
-            gravity:       default_gravity(),
+            gravity: default_gravity(),
             sun_elevation: default_sun_elevation(),
-            sun_azimuth:   default_sun_azimuth(),
-            ambient_lux:   default_ambient_lux(),
-            fog_density:   0.0,
+            sun_azimuth: default_sun_azimuth(),
+            ambient_lux: default_ambient_lux(),
+            fog_density: 0.0,
         }
     }
 }

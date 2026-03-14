@@ -9,7 +9,6 @@ use helios_core::types::{FrameHandle, MonotonicTime};
 use helios_runtime::runtime::AgentRuntime;
 use nalgebra::Isometry3;
 
-
 use crate::simulation::core::transforms::TfTree;
 
 /// Wraps a TfTree reference and the current elapsed simulation time.
