@@ -5,8 +5,7 @@ use std::collections::HashMap;
 
 // --- Map Data Structures ---
 // We'll define the MapData enum here, as it's the primary output of this module.
-#[derive(Clone, Debug)]
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub enum MapData {
     #[default]
     None, // A default variant for when no map is produced.
@@ -20,7 +19,6 @@ pub enum MapData {
         landmarks: HashMap<u64, Isometry3<f64>>,
     },
 }
-
 
 // --- The Mapper Trait ("Contract") ---
 /// The contract for any algorithm that performs the "Mapper" role.

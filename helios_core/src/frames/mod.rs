@@ -8,8 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::hash::Hash;
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum FrameId {
     /// The global ENU simulation frame. The ultimate source of truth.
     #[default]
@@ -21,7 +20,6 @@ pub enum FrameId {
     /// Identified by the sensor's own unique FrameHandle.
     Sensor(FrameHandle),
 }
-
 
 /// An enum that defines every possible variable that can exist in a state vector.
 /// The FrameId specifies which frame the variable is expressed in.
@@ -257,11 +255,15 @@ impl FrameAwareState {
         let start_idx = self.find_idx(start_variable)?;
 
         // Check for contiguity (simplified check for brevity)
-        if self.layout.get(start_idx + 1).is_some_and(|v| {
-            std::mem::discriminant(v) == std::mem::discriminant(&expected_y)
-        }) && self.layout.get(start_idx + 2).is_some_and(|v| {
-            std::mem::discriminant(v) == std::mem::discriminant(&expected_z)
-        }) {
+        if self
+            .layout
+            .get(start_idx + 1)
+            .is_some_and(|v| std::mem::discriminant(v) == std::mem::discriminant(&expected_y))
+            && self
+                .layout
+                .get(start_idx + 2)
+                .is_some_and(|v| std::mem::discriminant(v) == std::mem::discriminant(&expected_z))
+        {
             // Extract the 3x3 block from the top-left of the covariance matrix.
             Some(
                 self.covariance
