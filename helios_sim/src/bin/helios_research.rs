@@ -5,6 +5,25 @@
 // Usage:
 //   cargo run --bin helios_research -- --profile control_only --scenario configs/scenarios/...
 //   cargo run --bin helios_research -- --monte-carlo 20 --profile control_only --scenario ...
+//
+// Samply CPU profiler (no sudo required on macOS or Linux):
+//   cargo install samply
+//   NOTE: profile the binary directly — `samply record cargo run` profiles cargo, not the binary.
+//   NOTE: BEVY_ASSET_ROOT=./helios_sim is required so Bevy finds assets/ relative to the workspace root,
+//         not relative to the binary in target/profiling/.
+//   cargo build --profile profiling --bin helios_research
+//   BEVY_ASSET_ROOT=./helios_sim samply record --output --save-only samply-profile.json ./target/profiling/helios_research --duration-secs 60 --scenario configs/scenarios/00_tutorial_showcase.toml
+//   (opens Firefox Profiler automatically in your browser)
+//
+// DHAT heap profiler:
+//   cargo run --bin helios_research --profile profiling --features dhat-heap -- \
+//     --headless --duration-secs 30 \
+//     --scenario configs/scenarios/00_tutorial_showcase.toml
+//   View output: open dhat-heap.json at https://nnethercote.github.io/dh_view/dh_view.html
+
+#[cfg(feature = "dhat-heap")]
+#[global_allocator]
+static ALLOC: dhat::Alloc = dhat::Alloc;
 
 use avian3d::prelude::*;
 use bevy::{log::LogPlugin, prelude::*};
@@ -51,6 +70,10 @@ struct ResearchCli {
     /// Run without a graphical window.
     #[arg(long, default_value_t = false)]
     pub headless: bool,
+
+    /// Exit cleanly after N seconds. Required for DHAT to write output.
+    #[arg(long, value_name = "SECONDS")]
+    pub duration_secs: Option<f32>,
 }
 
 impl From<&ResearchCli> for BaseCli {
@@ -64,10 +87,35 @@ impl From<&ResearchCli> for BaseCli {
 }
 
 // ---------------------------------------------------------------------------
+// Profiling resources and systems
+// ---------------------------------------------------------------------------
+
+#[derive(Resource)]
+struct ProfilingDuration(Option<f32>);
+
+fn timed_exit_system(
+    time: Res<Time>,
+    mut elapsed: Local<f32>,
+    duration: Res<ProfilingDuration>,
+    mut exit: EventWriter<AppExit>,
+) {
+    if let Some(limit) = duration.0 {
+        *elapsed += time.delta_secs();
+        if *elapsed >= limit {
+            info!("[profiling] Duration limit reached ({limit:.0}s). Exiting cleanly.");
+            exit.write(AppExit::Success);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
 
 fn main() {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::new_heap();
+
     let args = ResearchCli::parse();
 
     if let Some(n) = args.monte_carlo {
@@ -112,6 +160,9 @@ fn run_single(args: &ResearchCli, _run_index: u32) {
     app.add_plugins(ConfigPlugin);
     app.add_plugins(ProfiledSimulationPlugin { profile });
     app.add_systems(Update, keyboard_controller);
+
+    app.insert_resource(ProfilingDuration(args.duration_secs))
+        .add_systems(Update, timed_exit_system);
 
     app.run();
 }
