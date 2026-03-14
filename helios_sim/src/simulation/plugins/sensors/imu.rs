@@ -88,6 +88,30 @@ fn spawn_imu_sensors(
                     (gyro_std[2] as f64).powi(2),
                 ]));
 
+                // Validate all noise stddevs before creating any distributions.
+                let all_stddevs = [
+                    ("accel_x", accel_std[0] as f64),
+                    ("accel_y", accel_std[1] as f64),
+                    ("accel_z", accel_std[2] as f64),
+                    ("gyro_x", gyro_std[0] as f64),
+                    ("gyro_y", gyro_std[1] as f64),
+                    ("gyro_z", gyro_std[2] as f64),
+                ];
+                let noise_valid = all_stddevs.iter().all(|(axis, std)| {
+                    if *std <= 0.0 {
+                        error!(
+                            "IMU '{}' has invalid {} noise_stddev={}: must be > 0. Skipping sensor.",
+                            imu_config.get_name(), axis, std
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                });
+                if !noise_valid {
+                    continue;
+                }
+
                 // --- 2. Spawn the Sensor Entity as a Child ---
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
@@ -115,6 +139,7 @@ fn spawn_imu_sensors(
                             Duration::from_secs_f32(1.0 / imu_config.get_rate()),
                             TimerMode::Repeating,
                         ),
+                        // safe: all stddevs validated above
                         accel_noise: [
                             Normal::new(0.0, accel_std[0] as f64).unwrap(),
                             Normal::new(0.0, accel_std[1] as f64).unwrap(),

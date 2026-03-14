@@ -88,6 +88,16 @@ fn spawn_gps_sensors(
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
+                // TODO: Does this along with the other sensors check belong in runtime instead?
+                let stddev = gps_config.noise_stddev[0] as f64;
+                if stddev <= 0.0 {
+                    error!(
+                        "GPS sensor '{}' has invalid noise_stddev={}: must be > 0. Skipping sensor.",
+                        sensor_name, stddev
+                    );
+                    continue;
+                }
+
                 let topic_name = format!(
                     "/{}/sensors/{}",
                     agent_name.as_str(),
@@ -101,7 +111,7 @@ fn spawn_gps_sensors(
                             Duration::from_secs_f32(1.0 / gps_config.rate),
                             TimerMode::Repeating,
                         ),
-                        noise_dist: Normal::new(0.0, gps_config.noise_stddev[0] as f64).unwrap(),
+                        noise_dist: Normal::new(0.0, stddev).unwrap(), // safe: validated above
                         topic_name: topic_name.clone(),
                     },
                     // Topic name for the cold-path telemetry system.

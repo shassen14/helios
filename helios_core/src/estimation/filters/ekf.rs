@@ -48,24 +48,30 @@ impl ExtendedKalmanFilter {
     fn ensure_covariance_health(&mut self) {
         let dim = self.state.dim();
         let p = &mut self.state.covariance;
-        let min_variance = 1e-9; // A small positive number
+        let min_variance = 1e-9;
 
-        // 1. Enforce Symmetry (already in your update, good to have in predict too)
-        *p = (p.clone() + p.transpose()) * 0.5;
+        // 1. Enforce symmetry in-place (no allocation): average each off-diagonal pair.
+        // p * p^T * 0.5
+        for i in 0..dim {
+            for j in (i + 1)..dim {
+                let avg = (p[(i, j)] + p[(j, i)]) * 0.5;
+                p[(i, j)] = avg;
+                p[(j, i)] = avg;
+            }
+        }
 
-        // 2. Enforce Positive Diagonal (Prevent Negative Variance)
+        // 2. Enforce positive diagonal (prevent negative variance).
         for i in 0..dim {
             if p[(i, i)] < min_variance {
                 p[(i, i)] = min_variance;
             }
         }
 
-        // 3. (Optional but powerful) Regularization - Add a tiny identity matrix.
-        // This adds a tiny amount of uncertainty to all states, preventing the filter
-        // from becoming absolutely certain (and thus "closed-minded") about any state.
-        // It helps prevent "filter incest" and improves numerical stability.
-        let regularization = DMatrix::<f64>::identity(dim, dim) * 1e-12;
-        *p += regularization;
+        // 3. Regularization via diagonal add (no identity matrix allocation).
+        // Adds a tiny uncertainty preventing "close-minded" filters for numerical stability
+        for i in 0..dim {
+            p[(i, i)] += 1e-12;
+        }
     }
 }
 
@@ -107,8 +113,11 @@ impl StateEstimator for ExtendedKalmanFilter {
         // A = ∂f/∂x, B = ∂f/∂u
         let (a_jac, _b_jac) = dynamics.calculate_jacobian(x_old, u, t_old);
 
-        // Discretize the state transition matrix: F ≈ I + A*dt
-        let f_k = DMatrix::<f64>::identity(self.state.dim(), self.state.dim()) + &a_jac * dt;
+        // Discretize the state transition matrix: F ≈ I + A*dt (no identity allocation)
+        let mut f_k = &a_jac * dt;
+        for i in 0..self.state.dim() {
+            f_k[(i, i)] += 1.0;
+        }
 
         // --- 4. Predict the next covariance matrix ---
         // The correct approach is to apply the process noise `Q` *before* the main propagation.
@@ -167,9 +176,12 @@ impl StateEstimator for ExtendedKalmanFilter {
         let correction = &k_gain * &y;
 
         self.state.vector += correction;
-        let i = DMatrix::<f64>::identity(self.state.dim(), self.state.dim());
-        // Joseph form is used for numerically stable solution
-        let i_kh = &i - &k_gain * &h_jac;
+        // Joseph form: (I - KH) computed without allocating an identity matrix.
+        let mut i_kh = -(&k_gain * &h_jac);
+        let n = self.state.dim();
+        for i in 0..n {
+            i_kh[(i, i)] += 1.0;
+        }
         // P_post = (I - KH)P(I - KH)^T + KRK^T
         let p_post =
             &i_kh * p_priori * i_kh.transpose() + &k_gain * r_mat * k_gain.transpose();

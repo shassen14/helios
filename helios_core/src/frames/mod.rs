@@ -114,6 +114,17 @@ impl FrameAwareState {
         self.layout.iter().position(|v| v == var)
     }
 
+    /// Sets a single state variable by name. Returns `true` if the variable was found
+    /// in the layout and written; `false` if it is absent (a no-op in that case).
+    pub fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
+        if let Some(idx) = self.find_idx(var) {
+            self.vector[idx] = value;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Extracts a 3D vector from the state vector based on a starting `StateVariable`.
     ///
     /// For example, providing `StateVariable::Px(frame_id)` will attempt to find `Px`, `Py`,

@@ -11,7 +11,7 @@ use helios_runtime::validation::validate_autonomy_config;
 
 use crate::prelude::*;
 use crate::simulation::config::structs::WorldModelConfig;
-use crate::simulation::core::components::{MailboxEntry, SensorMailbox, SensorTopicName};
+use crate::simulation::core::components::{AgentTopicNames, MailboxEntry, SensorMailbox, SensorTopicName};
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::topics::TopicBus;
@@ -187,12 +187,19 @@ pub fn spawn_world_model_modules(
                 let goal_iso = agent_config.goal_pose.to_isometry();
                 builder = builder.with_goal(PlannerGoal::WorldPose(goal_iso));
 
+                let agent_name = agent_config.name();
                 let (estimation, mapping, control) = builder.build().into_parts();
                 entity_commands.insert((
                     EstimatorComponent(Box::new(estimation)),
                     MapperComponent(Box::new(mapping)),
                     ControlPipelineComponent(control),
                     SensorMailbox::default(),
+                    AgentTopicNames {
+                        active_waypoint: format!("/{}/planning/active_waypoint", agent_name),
+                        odometry_estimated: format!("/{}/odometry/estimated", agent_name),
+                        map_global: format!("/{}/map/global", agent_name),
+                        map_local: format!("/{}/map", agent_name),
+                    },
                 ));
             }
 
@@ -207,6 +214,7 @@ pub fn spawn_world_model_modules(
                 };
                 match registry.build_slam(slam_cfg.get_kind_str(), ctx) {
                     Ok(system) => {
+                        let agent_name = agent_config.name();
                         let (estimation, mapping, control) =
                             PipelineBuilder::new().with_slam(system).build().into_parts();
                         entity_commands.insert((
@@ -214,6 +222,12 @@ pub fn spawn_world_model_modules(
                             MapperComponent(Box::new(mapping)),
                             ControlPipelineComponent(control),
                             SensorMailbox::default(),
+                            AgentTopicNames {
+                                active_waypoint: format!("/{}/planning/active_waypoint", agent_name),
+                                odometry_estimated: format!("/{}/odometry/estimated", agent_name),
+                                map_global: format!("/{}/map/global", agent_name),
+                                map_local: format!("/{}/map", agent_name),
+                            },
                         ));
                     }
                     Err(e) => {
@@ -348,20 +362,28 @@ pub fn spawn_mock_world_model_modules(
                 let goal_iso = agent_config.goal_pose.to_isometry();
                 builder = builder.with_goal(PlannerGoal::WorldPose(goal_iso));
 
+                let agent_name = agent_config.name();
                 let (_, mapping, control) = builder.build().into_parts();
                 entity_commands.insert((
                     EstimatorComponent(Box::new(GroundTruthPassthrough::default())),
                     MapperComponent(Box::new(mapping)),
                     ControlPipelineComponent(control),
                     SensorMailbox::default(),
+                    AgentTopicNames {
+                        active_waypoint: format!("/{}/planning/active_waypoint", agent_name),
+                        odometry_estimated: format!("/{}/odometry/estimated", agent_name),
+                        map_global: format!("/{}/map/global", agent_name),
+                        map_local: format!("/{}/map", agent_name),
+                    },
                 ));
             }
 
             Some(WorldModelConfig::CombinedSlam { .. }) => {
+                let agent_name = agent_config.name();
                 warn!(
                     "Agent '{}' uses CombinedSlam but mock-estimator profile was requested. \
                      Inserting GT passthrough with empty mapper/control.",
-                    agent_config.name()
+                    agent_name
                 );
                 let (_, mapping, control) = PipelineBuilder::new().build().into_parts();
                 entity_commands.insert((
@@ -369,6 +391,12 @@ pub fn spawn_mock_world_model_modules(
                     MapperComponent(Box::new(mapping)),
                     ControlPipelineComponent(control),
                     SensorMailbox::default(),
+                    AgentTopicNames {
+                        active_waypoint: format!("/{}/planning/active_waypoint", agent_name),
+                        odometry_estimated: format!("/{}/odometry/estimated", agent_name),
+                        map_global: format!("/{}/map/global", agent_name),
+                        map_local: format!("/{}/map", agent_name),
+                    },
                 ));
             }
 
@@ -520,27 +548,22 @@ pub fn update_odom_frames(
 
 /// Publishes estimated state, maps, and active planning waypoint to TopicBus.
 /// Runs in `SimulationSet::Validation` (cold telemetry path).
+/// Topic name strings are pre-computed in `AgentTopicNames` — no `format!()` allocations here.
 pub fn autonomy_telemetry_system(
-    query: Query<(&EstimatorComponent, &MapperComponent, &ControlPipelineComponent, &Name)>,
+    query: Query<(&EstimatorComponent, &MapperComponent, &ControlPipelineComponent, &AgentTopicNames)>,
     mut topic_bus: ResMut<TopicBus>,
 ) {
-    for (estimator, mapper, control, name) in &query {
+    for (estimator, mapper, control, topics) in &query {
         // Active look-ahead waypoint.
         if let Some(wp) = control
             .0
             .get_active_lookahead_waypoint(&PipelineLevel::Local)
             .or_else(|| control.0.get_active_lookahead_waypoint(&PipelineLevel::Global))
         {
-            topic_bus.publish(
-                &format!("/{}/planning/active_waypoint", name.as_str()),
-                wp.state.clone(),
-            );
+            topic_bus.publish(&topics.active_waypoint, wp.state.clone());
         }
         if let Some(state) = estimator.0.get_state() {
-            topic_bus.publish(
-                &format!("/{}/odometry/estimated", name.as_str()),
-                state.clone(),
-            );
+            topic_bus.publish(&topics.odometry_estimated, state.clone());
         }
 
         // Global map: SLAM takes priority over global mappers.
@@ -550,13 +573,13 @@ pub fn autonomy_telemetry_system(
             .or_else(|| mapper.0.get_map(&PipelineLevel::Global));
         if let Some(map) = global_map {
             if !matches!(map, helios_core::mapping::MapData::None) {
-                topic_bus.publish(&format!("/{}/map/global", name.as_str()), map.clone());
+                topic_bus.publish(&topics.map_global, map.clone());
             }
         }
 
         if let Some(map) = mapper.0.get_map(&PipelineLevel::Local) {
             if !matches!(map, helios_core::mapping::MapData::None) {
-                topic_bus.publish(&format!("/{}/map", name.as_str()), map.clone());
+                topic_bus.publish(&topics.map_local, map.clone());
             }
         }
     }

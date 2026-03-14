@@ -7,15 +7,38 @@ use nalgebra::{Isometry3, Vector3};
 
 use crate::runtime::AgentRuntime;
 
-/// Polymorphic estimation driver. Implemented by both `EstimationCore` (real filter)
-/// and `GroundTruthPassthrough` (sim-only mock).
+/// Polymorphic estimation driver used by [`AutonomyPipeline`](crate::pipeline::AutonomyPipeline).
+///
+/// Two implementations exist:
+/// - `EstimationCore` — wraps a real [`StateEstimator`](helios_core::estimation::StateEstimator)
+///   (EKF, UKF, etc.) and runs full filter math.
+/// - [`GroundTruthPassthrough`] — injects physics ground-truth as a perfect state estimate.
+///   Used by `MappingOnly`, `PlanningOnly`, and `ControlOnly` simulation profiles.
+///
+/// `helios_hw` will only ever instantiate `EstimationCore`. `GroundTruthPassthrough` is
+/// simulation-only and must never appear in hardware code paths.
 pub trait EstimationDriver: Send + Sync {
+    /// Process one incoming sensor measurement through the estimation pipeline.
+    ///
+    /// For `EstimationCore`, this triggers a predict step followed by an update.
+    /// For `GroundTruthPassthrough`, this is a no-op (ground truth is injected separately).
     fn process_measurement(&mut self, msg: &MeasurementMessage, runtime: &dyn AgentRuntime);
+
+    /// Returns the current state estimate, if one is available.
+    ///
+    /// Returns `None` before the first measurement has been processed, or when
+    /// ground truth has not yet been injected into a `GroundTruthPassthrough`.
     fn get_state(&self) -> Option<&FrameAwareState>;
+
+    /// Returns the SLAM global map if a SLAM system is active. Default: `None`.
     fn get_slam_map(&self) -> Option<&MapData> {
         None
     }
-    /// Default no-op. Overridden by `GroundTruthPassthrough`.
+
+    /// Injects a physics ground-truth pose and velocity as the current state estimate.
+    ///
+    /// Default is a no-op; overridden by [`GroundTruthPassthrough`] for mock profiles.
+    /// Never called in `EstimationCore` — real filters use sensor measurements only.
     fn inject_ground_truth(
         &mut self,
         _pose: &Isometry3<f64>,
@@ -61,17 +84,17 @@ impl EstimationDriver for GroundTruthPassthrough {
             StateVariable::Qw(FrameId::World, FrameId::World),
         ];
         let mut state = FrameAwareState::new(layout, 1e-6, timestamp);
-        state.vector[0] = pose.translation.x;
-        state.vector[1] = pose.translation.y;
-        state.vector[2] = pose.translation.z;
-        state.vector[3] = velocity.x;
-        state.vector[4] = velocity.y;
-        state.vector[5] = velocity.z;
+        state.set_variable(&StateVariable::Px(FrameId::World), pose.translation.x);
+        state.set_variable(&StateVariable::Py(FrameId::World), pose.translation.y);
+        state.set_variable(&StateVariable::Pz(FrameId::World), pose.translation.z);
+        state.set_variable(&StateVariable::Vx(FrameId::World), velocity.x);
+        state.set_variable(&StateVariable::Vy(FrameId::World), velocity.y);
+        state.set_variable(&StateVariable::Vz(FrameId::World), velocity.z);
         let q = pose.rotation.quaternion();
-        state.vector[6] = q.i;
-        state.vector[7] = q.j;
-        state.vector[8] = q.k;
-        state.vector[9] = q.w;
+        state.set_variable(&StateVariable::Qx(FrameId::World, FrameId::World), q.i);
+        state.set_variable(&StateVariable::Qy(FrameId::World, FrameId::World), q.j);
+        state.set_variable(&StateVariable::Qz(FrameId::World, FrameId::World), q.k);
+        state.set_variable(&StateVariable::Qw(FrameId::World, FrameId::World), q.w);
         self.state = Some(state);
     }
 }

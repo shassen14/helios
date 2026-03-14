@@ -749,30 +749,30 @@ Layer 3  Vehicle plugin        VehicleCommand              → ExternalForce/Tor
 
 ### Phase 4: Config portability ✅ DONE (2026-03-09)
 
-| Item                                                                                                         | Impact            |
-| ------------------------------------------------------------------------------------------------------------ | ----------------- |
-| Moved autonomy config structs to `helios_runtime/src/config/` (AutonomyStack, EstimatorConfig, etc.)         | Portability ✅    |
-| Created `AgentBaseConfig { name, autonomy_stack }` in `helios_runtime` — the portable agent identity         | Portability ✅    |
-| `validate_autonomy_config()` + `CapabilitySet` + `ValidationError` in `helios_runtime/src/validation.rs`     | Reliability ✅    |
-| `AutonomyRegistry::capabilities()` snapshots registered keys for validation before any factory runs          | Reliability ✅    |
-| Moved all TOML files out of `helios_sim/assets/` into workspace-level `configs/`                             | Shared config ✅  |
-| Split agent prefabs: `configs/catalog/agent_profiles/` for portable autonomy, `agents/` for sim-specific     | Shared config ✅  |
-| Agent prefabs now use `autonomy_stack = { from = "agent_profiles.xxx" }` — no inline autonomy tables         | Portability ✅    |
-| `helios_sim` `AgentConfig` uses `#[serde(flatten)]` to embed `AgentBaseConfig` + accessor methods            | Architecture ✅   |
-| CLI `--config-root` arg (default `"configs"`) replaces hardcoded `"assets/catalog"` in catalog loader        | Deployability ✅  |
+| Item                                                                                                     | Impact           |
+| -------------------------------------------------------------------------------------------------------- | ---------------- |
+| Moved autonomy config structs to `helios_runtime/src/config/` (AutonomyStack, EstimatorConfig, etc.)     | Portability ✅   |
+| Created `AgentBaseConfig { name, autonomy_stack }` in `helios_runtime` — the portable agent identity     | Portability ✅   |
+| `validate_autonomy_config()` + `CapabilitySet` + `ValidationError` in `helios_runtime/src/validation.rs` | Reliability ✅   |
+| `AutonomyRegistry::capabilities()` snapshots registered keys for validation before any factory runs      | Reliability ✅   |
+| Moved all TOML files out of `helios_sim/assets/` into workspace-level `configs/`                         | Shared config ✅ |
+| Split agent prefabs: `configs/catalog/agent_profiles/` for portable autonomy, `agents/` for sim-specific | Shared config ✅ |
+| Agent prefabs now use `autonomy_stack = { from = "agent_profiles.xxx" }` — no inline autonomy tables     | Portability ✅   |
+| `helios_sim` `AgentConfig` uses `#[serde(flatten)]` to embed `AgentBaseConfig` + accessor methods        | Architecture ✅  |
+| CLI `--config-root` arg (default `"configs"`) replaces hardcoded `"assets/catalog"` in catalog loader    | Deployability ✅ |
 
 **Key serde constraint discovered:** `#[serde(deny_unknown_fields)]` is incompatible with `#[serde(flatten)]`.
 Removed `deny_unknown_fields` from `AgentConfig` only; all inner structs retain their own guards.
 
 ### Phase 5: Agent-local data isolation ✅ DONE (2026-03-10)
 
-| Item                                                                                              | Impact            |
-| ------------------------------------------------------------------------------------------------- | ----------------- |
-| `SensorMailbox` component on each agent — populated by `route_sensor_messages` each frame        | Scalability ✅    |
-| `TopicBus` removed from all sensor hot paths; all sensor telemetry flows through `sensor_telemetry_system` in `Validation` | Parallelism ✅ |
-| `AutonomyPipelineComponent` split into `EstimatorComponent`, `MapperComponent`, `ControlPipelineComponent` | Extensibility ✅ |
-| `estimation_system` + `mapping_system` run in parallel (different components per entity)         | Multi-agent ✅    |
-| Per-agent message batching: each agent's mailbox pre-sorted by timestamp before estimation runs  | Multi-agent ✅    |
+| Item                                                                                                                       | Impact           |
+| -------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `SensorMailbox` component on each agent — populated by `route_sensor_messages` each frame                                  | Scalability ✅   |
+| `TopicBus` removed from all sensor hot paths; all sensor telemetry flows through `sensor_telemetry_system` in `Validation` | Parallelism ✅   |
+| `AutonomyPipelineComponent` split into `EstimatorComponent`, `MapperComponent`, `ControlPipelineComponent`                 | Extensibility ✅ |
+| `estimation_system` + `mapping_system` run in parallel (different components per entity)                                   | Multi-agent ✅   |
+| Per-agent message batching: each agent's mailbox pre-sorted by timestamp before estimation runs                            | Multi-agent ✅   |
 
 **Stage split (stable interface):**
 
@@ -800,28 +800,28 @@ Cold path →  sensor_telemetry_system    (Validation) reads SensorMailbox → T
 
 ### Phase 6A: Debugging plugin split ✅ DONE (2026-03-11)
 
-| Item                                                                            | Impact         |
-| ------------------------------------------------------------------------------- | -------------- |
-| Split `debugging/systems.rs` (636 lines) into 8 per-concern files              | Maintainability ✅ |
-| `keybindings.rs` — `handle_debug_keybindings` (standalone)                     | Clarity ✅     |
-| `cache.rs` — `cache_sensor_data` (standalone)                                  | Clarity ✅     |
-| `gizmos/` — one file per visualization: pose, covariance, point_cloud, velocity, error, trail, tf_frames, occupancy | File size ✅ |
-| `ui/legend.rs` — HUD legend panel (standalone)                                 | Clarity ✅     |
-| `systems.rs` tombstoned (comment index only, no `mod systems` in mod.rs)       | Hygiene ✅     |
+| Item                                                                                                                | Impact             |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| Split `debugging/systems.rs` (636 lines) into 8 per-concern files                                                   | Maintainability ✅ |
+| `keybindings.rs` — `handle_debug_keybindings` (standalone)                                                          | Clarity ✅         |
+| `cache.rs` — `cache_sensor_data` (standalone)                                                                       | Clarity ✅         |
+| `gizmos/` — one file per visualization: pose, covariance, point_cloud, velocity, error, trail, tf_frames, occupancy | File size ✅       |
+| `ui/legend.rs` — HUD legend panel (standalone)                                                                      | Clarity ✅         |
+| `systems.rs` tombstoned (comment index only, no `mod systems` in mod.rs)                                            | Hygiene ✅         |
 
 ### Phase 6B: World system standardization ✅ DONE (2026-03-11)
 
-| Item                                                                                                | Impact           |
-| --------------------------------------------------------------------------------------------------- | ---------------- |
-| `TerrainPlugin` — asset loading, multi-tile support, AssetLoading→SceneBuilding gate               | Architecture ✅  |
-| `AtmospherePlugin` — gravity, sun transform, fly camera; ENU azimuth→Bevy -Z conversion            | Correctness ✅   |
-| `WorldObjectPlugin` — prefab catalog lookup, trimesh colliders from `_col.glb`, primitive colliders | Architecture ✅  |
-| `read_object_gltf_extras` — walks `ChildOf` chain to attach `SemanticLabel` from Blender extras    | Automation ✅    |
-| TOML label takes precedence over GLTF extras; GLTF serves as self-describing fallback              | Reliability ✅   |
-| `WorldObjectType(String)`, `SemanticLabel { label, class_id }`, `BoundingBox3D`, `TerrainMedium` components | Data model ✅ |
-| `WorldSpawnerPlugin` tombstoned — replaced by three focused plugins                                | Clarity ✅      |
-| `configs/catalog/objects/` prefab TOML: `label`, `class_id`, `visual_mesh`, `collider_mesh`, `[collider]`, `bounding_box` | Config ✅ |
-| `blender_asset_standards.md` created — full guide for Blender export, GLTF extras, collision meshes, class ID registry | Documentation ✅ |
+| Item                                                                                                                      | Impact           |
+| ------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `TerrainPlugin` — asset loading, multi-tile support, AssetLoading→SceneBuilding gate                                      | Architecture ✅  |
+| `AtmospherePlugin` — gravity, sun transform, fly camera; ENU azimuth→Bevy -Z conversion                                   | Correctness ✅   |
+| `WorldObjectPlugin` — prefab catalog lookup, trimesh colliders from `_col.glb`, primitive colliders                       | Architecture ✅  |
+| `read_object_gltf_extras` — walks `ChildOf` chain to attach `SemanticLabel` from Blender extras                           | Automation ✅    |
+| TOML label takes precedence over GLTF extras; GLTF serves as self-describing fallback                                     | Reliability ✅   |
+| `WorldObjectType(String)`, `SemanticLabel { label, class_id }`, `BoundingBox3D`, `TerrainMedium` components               | Data model ✅    |
+| `WorldSpawnerPlugin` tombstoned — replaced by three focused plugins                                                       | Clarity ✅       |
+| `configs/catalog/objects/` prefab TOML: `label`, `class_id`, `visual_mesh`, `collider_mesh`, `[collider]`, `bounding_box` | Config ✅        |
+| `blender_asset_standards.md` created — full guide for Blender export, GLTF extras, collision meshes, class ID registry    | Documentation ✅ |
 
 **World struct change (scenario.rs):**
 

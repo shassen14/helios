@@ -30,6 +30,16 @@ pub struct UnscentedKalmanFilter {
     weights_m: DVector<f64>,
     /// Weights for calculating the covariance from sigma points.
     weights_c: DVector<f64>,
+
+    // --- Pre-allocated workspace buffers (avoid per-cycle heap allocations) ---
+    /// Sigma point matrix reused by `generate_sigma_points`: n × (2n+1).
+    sigma_buf: DMatrix<f64>,
+    /// Propagated sigma points reused in `predict`: n × (2n+1).
+    propagated_buf: DMatrix<f64>,
+    /// Predicted covariance buffer reused in `predict`: n × n.
+    p_pred_buf: DMatrix<f64>,
+    /// Scratch state used in `update` to avoid cloning `self.state` per sigma point.
+    scratch_state: FrameAwareState,
 }
 
 impl UnscentedKalmanFilter {
@@ -49,6 +59,11 @@ impl UnscentedKalmanFilter {
         weights_m[0] = lambda / (n as f64 + lambda);
         weights_c[0] = weights_m[0] + (1.0 - params.alpha.powi(2) + params.beta);
 
+        let sigma_buf = DMatrix::zeros(n, 2 * n + 1);
+        let propagated_buf = DMatrix::zeros(n, 2 * n + 1);
+        let p_pred_buf = DMatrix::zeros(n, n);
+        let scratch_state = initial_state.clone();
+
         Self {
             state: initial_state,
             process_noise_q,
@@ -57,47 +72,44 @@ impl UnscentedKalmanFilter {
             params,
             weights_m,
             weights_c,
+            sigma_buf,
+            propagated_buf,
+            p_pred_buf,
+            scratch_state,
         }
     }
 
-    /// Generates the `2n+1` sigma points based on the current state and covariance.
-    fn generate_sigma_points(&self) -> DMatrix<f64> {
-        let n = self.state.dim();
-        let lambda = self.params.alpha.powi(2) * (n as f64 + self.params.kappa) - n as f64;
-        let mut sigma_points = DMatrix::zeros(n, 2 * n + 1);
+    /// Fills `sigma_buf` with the `2n+1` sigma points from `state` and `params`.
+    /// Takes explicit field borrows to avoid a `&mut self` conflict when the caller
+    /// also holds a borrow on another field (e.g. `measurement_models`).
+    fn fill_sigma_points(
+        sigma_buf: &mut DMatrix<f64>,
+        state: &FrameAwareState,
+        params: &UkfParams,
+    ) {
+        let n = state.dim();
+        let lambda = params.alpha.powi(2) * (n as f64 + params.kappa) - n as f64;
 
-        // Cholesky decomposition: P = L * L^T
-        // This gives us a "square root" of the covariance matrix.
-        // First, perform the decomposition and get the Option.
-        let cholesky_option = Cholesky::new(self.state.covariance.clone());
+        // One clone of covariance required for Cholesky ownership.
+        let cholesky_option = Cholesky::new(state.covariance.clone());
 
         if let Some(cholesky_result) = cholesky_option {
             let l_matrix = cholesky_result.l_dirty();
-
             let scale = (n as f64 + lambda).sqrt();
             let scaled_l = l_matrix * scale;
 
-            // First point is the mean.
-            sigma_points.column_mut(0).copy_from(&self.state.vector);
-
-            // The other 2n points are spread around the mean.
+            sigma_buf.column_mut(0).copy_from(&state.vector);
             for i in 0..n {
-                sigma_points
-                    .column_mut(i + 1)
-                    .copy_from(&(self.state.vector.clone() + scaled_l.column(i)));
-                sigma_points
-                    .column_mut(i + n + 1)
-                    .copy_from(&(self.state.vector.clone() - scaled_l.column(i)));
+                let col_pos = &state.vector + scaled_l.column(i);
+                let col_neg = &state.vector - scaled_l.column(i);
+                sigma_buf.column_mut(i + 1).copy_from(&col_pos);
+                sigma_buf.column_mut(i + n + 1).copy_from(&col_neg);
             }
         } else {
-            // If Cholesky fails (P is not positive definite), we can't generate points.
-            // A robust fallback is to just return the mean N times.
             for i in 0..(2 * n + 1) {
-                sigma_points.column_mut(i).copy_from(&self.state.vector);
+                sigma_buf.column_mut(i).copy_from(&state.vector);
             }
         }
-
-        sigma_points
     }
 }
 
@@ -105,13 +117,13 @@ impl StateEstimator for UnscentedKalmanFilter {
     fn predict(&mut self, dt: f64, u: &Control, _context: &FilterContext) {
         let n = self.state.dim();
 
-        // --- 1. Generate Sigma Points ---
-        let sigma_points = self.generate_sigma_points();
+        // --- 1. Generate Sigma Points into self.sigma_buf ---
+        Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params);
 
         // --- 2. Propagate each point through the NON-LINEAR dynamics model ---
-        let mut propagated_points = DMatrix::zeros(n, 2 * n + 1);
+        self.propagated_buf.fill(0.0);
         for i in 0..(2 * n + 1) {
-            let point = sigma_points.column(i).into_owned();
+            let point = self.sigma_buf.column(i).into_owned();
             let propagated = self.dynamics_model.propagate(
                 &point,
                 u,
@@ -119,28 +131,34 @@ impl StateEstimator for UnscentedKalmanFilter {
                 dt,
                 &RK4,
             );
-            propagated_points.column_mut(i).copy_from(&propagated);
+            self.propagated_buf.column_mut(i).copy_from(&propagated);
         }
 
         // --- 3. Recover the predicted mean and covariance ---
         // Predicted mean: x_pred = sum(w_m * propagated_point)
-        let x_pred = &propagated_points * &self.weights_m;
+        let x_pred = &self.propagated_buf * &self.weights_m;
 
-        // Predicted covariance: P_pred = sum(w_c * (propagated - x_pred) * (propagated - x_pred)^T) + Q
-        let mut p_pred = DMatrix::zeros(n, n);
+        // Predicted covariance (reuse p_pred_buf to avoid allocation).
+        self.p_pred_buf.fill(0.0);
         for i in 0..(2 * n + 1) {
-            let diff = propagated_points.column(i) - &x_pred;
-            p_pred += self.weights_c[i] * &diff * diff.transpose();
+            let diff = self.propagated_buf.column(i) - &x_pred;
+            self.p_pred_buf += self.weights_c[i] * &diff * diff.transpose();
         }
-        p_pred += &self.process_noise_q * dt;
+        self.p_pred_buf += &self.process_noise_q * dt;
 
         // --- 4. Update the state ---
         self.state.vector = x_pred;
-        self.state.covariance = p_pred;
+        self.state.covariance.copy_from(&self.p_pred_buf);
         self.state.last_update_timestamp += dt;
-        // Optional but Recommended Symmetrize Covariance
-        // Tiny numerical errors can make P slightly non-symmetric. This forces it.
-        self.state.covariance = (&self.state.covariance + self.state.covariance.transpose()) * 0.5;
+
+        // Symmetrize covariance in-place (no allocation).
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let avg = (self.state.covariance[(i, j)] + self.state.covariance[(j, i)]) * 0.5;
+                self.state.covariance[(i, j)] = avg;
+                self.state.covariance[(j, i)] = avg;
+            }
+        }
     }
 
     fn update(&mut self, message: &MeasurementMessage, context: &FilterContext) {
@@ -150,29 +168,28 @@ impl StateEstimator for UnscentedKalmanFilter {
         };
 
         for model in self.measurement_models.values() {
-            // We call the new `get_measurement_vector` method. If it returns `Some`,
-            // it means this is the right model and we have our `z` vector.
+            // `get_measurement_vector` returns `Some` only for the matching model.
             if let Some(z) = model.get_measurement_vector(&message.data) {
                 let n = self.state.dim();
                 let m = z.nrows();
 
                 // --- 1. Generate new sigma points from the PREDICTED state ---
-                let sigma_points = self.generate_sigma_points();
+                Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params);
 
                 // --- 2. Propagate points through the NON-LINEAR measurement model ---
-                // We need a dummy message for the predict_measurement call.
                 let dummy_message = MeasurementMessage {
                     data: message.data.clone(),
                     ..*message
                 };
 
+                // m varies per sensor type — these allocations depend on measurement dimension.
                 let mut measurement_points = DMatrix::zeros(m, 2 * n + 1);
                 for i in 0..(2 * n + 1) {
-                    let mut temp_state = self.state.clone();
-                    temp_state.vector.copy_from(&sigma_points.column(i));
+                    // Use scratch_state to avoid cloning self.state per sigma point.
+                    self.scratch_state.vector.copy_from(&self.sigma_buf.column(i));
 
                     if let Some(z_point) =
-                        model.predict_measurement(&temp_state, &dummy_message, tf)
+                        model.predict_measurement(&self.scratch_state, &dummy_message, tf)
                     {
                         measurement_points.column_mut(i).copy_from(&z_point);
                     }
@@ -190,7 +207,7 @@ impl StateEstimator for UnscentedKalmanFilter {
                 // --- 4. Calculate cross-covariance and Kalman Gain ---
                 let mut t_cov = DMatrix::zeros(n, m);
                 for i in 0..(2 * n + 1) {
-                    let diff_x = sigma_points.column(i) - &self.state.vector;
+                    let diff_x = self.sigma_buf.column(i) - &self.state.vector;
                     let diff_z = measurement_points.column(i) - &z_pred;
                     t_cov += self.weights_c[i] * &diff_x * diff_z.transpose();
                 }
@@ -198,15 +215,21 @@ impl StateEstimator for UnscentedKalmanFilter {
                 if let Some(s_inv) = s_cov.clone().try_inverse() {
                     let k_gain = t_cov * s_inv;
 
-                    // --- 5. Update state and covariance (same as EKF) ---
+                    // --- 5. Update state and covariance ---
                     self.state.vector += &k_gain * (z - z_pred);
                     self.state.covariance -= &k_gain * s_cov * k_gain.transpose();
                     self.state.last_update_timestamp = message.timestamp;
 
-                    // Optional but Recommended Symmetrize Covariance
-                    // Tiny numerical errors can make P slightly non-symmetric. This forces it.
-                    self.state.covariance =
-                        (&self.state.covariance + self.state.covariance.transpose()) * 0.5;
+                    // Symmetrize covariance in-place (no allocation).
+                    // P * P^T * 0.5
+                    let n = self.state.dim();
+                    for i in 0..n {
+                        for j in (i + 1)..n {
+                            let avg = (self.state.covariance[(i, j)] + self.state.covariance[(j, i)]) * 0.5;
+                            self.state.covariance[(i, j)] = avg;
+                            self.state.covariance[(j, i)] = avg;
+                        }
+                    }
                 }
             }
         }

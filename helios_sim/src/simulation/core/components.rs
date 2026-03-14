@@ -73,6 +73,21 @@ pub struct SensorMailbox {
 pub struct SensorTopicName(pub String);
 
 // =========================================================================
+// == Agent Topic Name Cache ==
+// =========================================================================
+
+/// Pre-computed TopicBus topic name strings for an agent's autonomy outputs.
+/// Inserted at spawn time so `autonomy_telemetry_system` never allocates `format!()` strings
+/// on the hot path.
+#[derive(Component)]
+pub struct AgentTopicNames {
+    pub active_waypoint: String,
+    pub odometry_estimated: String,
+    pub map_global: String,
+    pub map_local: String,
+}
+
+// =========================================================================
 // == World Object Components ==
 // =========================================================================
 

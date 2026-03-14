@@ -6,6 +6,33 @@
 // so Bevy can schedule EstimationCore and MappingCore in parallel.
 // helios_hw uses AutonomyPipeline as a whole unit.
 
+//! Autonomy pipeline: three independent stages and their composite.
+//!
+//! The pipeline is organized into three stages that can run independently:
+//!
+//! | Stage | Struct | Responsibility |
+//! |---|---|---|
+//! | Estimation | [`EstimationCore`] | EKF/UKF predict+update, SLAM |
+//! | Mapping | [`MappingCore`] | Occupancy grids, map maintenance |
+//! | Control | [`ControlCore`] | Planning, look-ahead, controller dispatch |
+//!
+//! The composite [`AutonomyPipeline`] wraps all three for `helios_hw` convenience.
+//! In `helios_sim`, [`AutonomyPipeline::into_parts`] decomposes it into three
+//! Bevy `Component` structs so estimation and mapping can be scheduled in parallel.
+//!
+//! ## Construction
+//!
+//! Always use [`PipelineBuilder`]. Never construct field structs directly.
+//!
+//! ```rust,ignore
+//! let pipeline = PipelineBuilder::new()
+//!     .with_estimator(ekf)
+//!     .with_mapper(PipelineLevel::Local, occ_grid)
+//!     .with_controller(PipelineLevel::Local, pure_pursuit)
+//!     .with_goal(PlannerGoal::WorldPose(goal))
+//!     .build();
+//! ```
+
 use std::collections::HashMap;
 
 use helios_core::{
@@ -376,6 +403,13 @@ impl AutonomyPipeline {
 // == PipelineBuilder ==
 // =========================================================================
 
+/// The only construction path for [`AutonomyPipeline`].
+///
+/// Stages are sorted by [`PipelineLevel`] at `build()` time so that
+/// `Global` always runs before `Local` and `Local` before `Custom` variants.
+///
+/// An empty builder (no stages registered) produces a valid, no-op pipeline —
+/// useful for agents that only need a subset of capabilities.
 pub struct PipelineBuilder {
     trackers: Vec<Box<dyn Tracker>>,
     estimator: Option<Box<dyn StateEstimator>>,
