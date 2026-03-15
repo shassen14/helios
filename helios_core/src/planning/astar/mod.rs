@@ -195,6 +195,7 @@ impl Planner for AStarPlanner {
                 origin,
                 resolution,
                 data,
+                ..
             } => (origin, *resolution, data),
             _ => return PlannerResult::Error("AStarPlanner requires OccupancyGrid2D map".into()),
         };
@@ -408,6 +409,7 @@ mod tests {
             origin: Isometry3::identity(),
             resolution,
             data: DMatrix::from_element(nrows, ncols, 0u8),
+            version: 0,
         }
     }
 
@@ -460,6 +462,7 @@ mod tests {
             origin: Isometry3::identity(),
             resolution: 1.0,
             data: DMatrix::from_element(0, 0, 0u8),
+            version: 0,
         };
         let result = planner.plan(&make_state(0.0, 0.0), &map, &ctx(0.0));
         assert!(matches!(result, PlannerResult::Error(_)));
@@ -499,6 +502,7 @@ mod tests {
             origin: Isometry3::identity(),
             resolution: 1.0,
             data,
+            version: 0,
         };
         let result = planner.plan(&make_state(0.5, 0.5), &map, &ctx(0.0));
         assert!(matches!(result, PlannerResult::Unreachable));

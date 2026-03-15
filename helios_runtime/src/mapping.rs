@@ -59,6 +59,7 @@ impl StaticMapProvider {
                 origin,
                 resolution: resolution_m,
                 data: DMatrix::zeros(rows, cols),
+                version: 0,
             },
             level,
         }

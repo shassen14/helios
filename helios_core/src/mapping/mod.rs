@@ -13,6 +13,10 @@ pub enum MapData {
         origin: Isometry3<f64>,
         resolution: f64,
         data: DMatrix<u8>,
+        /// Monotonically increasing counter; incremented on every `rebuild_cache` call.
+        /// Consumers can compare this against a stored value to skip redundant work when
+        /// the map data has not changed since the last frame.
+        version: u64,
     },
     FeatureMap {
         // In the future, this will hold landmark data.

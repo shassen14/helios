@@ -59,11 +59,13 @@ Planning and vehicle actuation.
 
 ## 5 — Telemetry & Tools
 
-Data flow from simulation to observability tools.
+Data flow from simulation to observability tools, and profiling workflows.
 
-| File                                                             | Description                                                      |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------- |
-| [5_telemetry_tools/topic_bus.md](5_telemetry_tools/topic_bus.md) | `TopicBus` publish/subscribe system, Foxglove bridge integration |
+| File                                                                       | Description                                                                           |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [5_telemetry_tools/topic_bus.md](5_telemetry_tools/topic_bus.md)           | `TopicBus` publish/subscribe system, Foxglove bridge integration                      |
+| [5_telemetry_tools/profiling_cpu.md](5_telemetry_tools/profiling_cpu.md)   | CPU profiling with samply — build, record, and analyze with `parse_samply_profile.py` |
+| [5_telemetry_tools/profiling_heap.md](5_telemetry_tools/profiling_heap.md) | Heap profiling with DHAT — run and analyze with `parse_dhat_profile.py`               |
 
 ---
 
