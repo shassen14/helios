@@ -389,7 +389,13 @@ mod tests {
     use super::*;
 
     fn make_mapper(width_m: f64, height_m: f64) -> OccupancyGridMapper {
-        OccupancyGridMapper::new(1.0, width_m, height_m, FrameHandle(0), MapperPoseSource::Estimated)
+        OccupancyGridMapper::new(
+            1.0,
+            width_m,
+            height_m,
+            FrameHandle(0),
+            MapperPoseSource::Estimated,
+        )
     }
 
     // -------------------------------------------------------------------------
@@ -492,11 +498,17 @@ mod tests {
 
         // The endpoint cell (7,5) should be > 0 (occupied update).
         let occ_idx = 5 * m.width + 7;
-        assert!(m.log_odds[occ_idx] > 0.0, "endpoint should have positive log-odds");
+        assert!(
+            m.log_odds[occ_idx] > 0.0,
+            "endpoint should have positive log-odds"
+        );
 
         // An intermediate cell, e.g. (6,5), should have negative log-odds (free update).
         let free_idx = 5 * m.width + 6;
-        assert!(m.log_odds[free_idx] < 0.0, "intermediate cell should have negative log-odds");
+        assert!(
+            m.log_odds[free_idx] < 0.0,
+            "intermediate cell should have negative log-odds"
+        );
 
         assert!(m.map_dirty);
     }
@@ -524,7 +536,10 @@ mod tests {
         let MapData::OccupancyGrid2D { ref data, .. } = m.cached_map else {
             panic!("expected OccupancyGrid2D");
         };
-        assert!(data[(0, 0)] > 240, "L_MAX log-odds should map to near-255 value");
+        assert!(
+            data[(0, 0)] > 240,
+            "L_MAX log-odds should map to near-255 value"
+        );
     }
 
     #[test]
@@ -570,7 +585,10 @@ mod tests {
             _ => panic!("expected OccupancyGrid2D"),
         };
 
-        assert_eq!(ptr1, ptr2, "DMatrix buffer must not be reallocated on second rebuild");
+        assert_eq!(
+            ptr1, ptr2,
+            "DMatrix buffer must not be reallocated on second rebuild"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -581,9 +599,8 @@ mod tests {
     fn process_measurement_without_pose_is_noop() {
         use crate::messages::{MeasurementData, MeasurementMessage, PointCloud};
 
-        let mut m = OccupancyGridMapper::new(
-            1.0, 10.0, 10.0, FrameHandle(0), MapperPoseSource::Estimated,
-        );
+        let mut m =
+            OccupancyGridMapper::new(1.0, 10.0, 10.0, FrameHandle(0), MapperPoseSource::Estimated);
 
         let msg = MeasurementMessage {
             agent_handle: FrameHandle(0),

@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use nalgebra::{Isometry3, Point3};
 
 use helios_core::estimation::FilterContext;
-use helios_core::mapping::{Mapper, OccupancyGridMapper, MapperPoseSource};
+use helios_core::mapping::{Mapper, MapperPoseSource, OccupancyGridMapper};
 use helios_core::messages::{MeasurementData, MeasurementMessage, ModuleInput, Point, PointCloud};
 use helios_core::types::FrameHandle;
 
