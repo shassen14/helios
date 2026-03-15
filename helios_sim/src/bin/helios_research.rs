@@ -151,8 +151,9 @@ fn run_single(args: &ResearchCli, _run_index: u32) {
                 .disable::<bevy::winit::WinitPlugin>()
                 .set(LogPlugin {
                     level: bevy::log::Level::INFO,
-                    filter: "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug"
-                        .to_string(),
+                    filter:
+                        "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug"
+                            .to_string(),
                     ..default()
                 }),
         );
