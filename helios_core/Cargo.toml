@@ -38,3 +38,7 @@ harness = false
 [[bench]]
 name = "planning"
 harness = false
+
+[[bench]]
+name = "mapping"
+harness = false

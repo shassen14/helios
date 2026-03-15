@@ -43,6 +43,7 @@ fn clear_map(nrows: usize, ncols: usize, resolution: f64) -> MapData {
         origin: Isometry3::identity(),
         resolution,
         data: DMatrix::from_element(nrows, ncols, 0u8),
+        version: 0,
     }
 }
 
@@ -59,6 +60,7 @@ fn obstacle_map_100x100(resolution: f64) -> MapData {
         origin: Isometry3::identity(),
         resolution,
         data,
+        version: 0,
     }
 }
 
