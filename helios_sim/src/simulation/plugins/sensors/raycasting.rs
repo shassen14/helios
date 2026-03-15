@@ -79,27 +79,20 @@ fn spawn_raycasting_sensors(
                         ..
                     } => {
                         let angular_noise_stddev_deg = 0.1_f32;
-                        if *range_noise_stddev <= 0.0 {
-                            error!(
-                                "LiDAR '{}' has invalid range_noise_stddev={}: must be > 0. Skipping sensor.",
-                                sensor_name, range_noise_stddev
-                            );
-                            continue;
-                        }
-                        if angular_noise_stddev_deg <= 0.0 {
-                            error!(
-                                "LiDAR '{}' has invalid angular_noise_stddev_deg={}: must be > 0. Skipping sensor.",
-                                sensor_name, angular_noise_stddev_deg
-                            );
-                            continue;
-                        }
-                        Box::new(Lidar2DModel {
-                            max_range: *max_range,
-                            horizontal_fov_deg: *horizontal_fov,
-                            horizontal_beams: *horizontal_beams,
-                            range_noise_stddev: *range_noise_stddev,
+                        let Some(model) = Lidar2DModel::new(
+                            *max_range,
+                            *horizontal_fov,
+                            *horizontal_beams,
+                            *range_noise_stddev,
                             angular_noise_stddev_deg,
-                        })
+                        ) else {
+                            error!(
+                                "LiDAR '{}' has invalid noise parameters (range_noise_stddev={}, angular_noise_stddev_deg={}): both must be > 0. Skipping sensor.",
+                                sensor_name, range_noise_stddev, angular_noise_stddev_deg
+                            );
+                            continue;
+                        };
+                        Box::new(model)
                     }
                     LidarConfig::Lidar3D { .. } => {
                         // Future implementation would go here.
