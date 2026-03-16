@@ -7,7 +7,10 @@ use serde::{Deserialize, Serialize};
 pub type State = DVector<f64>;
 pub type Control = DVector<f64>;
 
-// --- Core Identifier ---
+/// A lightweight, copyable identifier for a coordinate frame (agent body, sensor, world).
+///
+/// In simulation, the bits encode a Bevy `Entity` via `from_entity()`/`to_entity()` (behind
+/// the `bevy` feature gate). On hardware, bits encode static calibration IDs assigned at startup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct FrameHandle(pub u64);
 
@@ -28,7 +31,11 @@ impl FrameHandle {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct MonotonicTime(pub f64);
 
-// --- Core Trait for Transform Lookups ---
+/// Abstraction over any system that can answer transform queries between coordinate frames.
+///
+/// `helios_sim` implements this as `TfTree` (Bevy resource). `helios_hw` will implement it
+/// as a hardware-clock-backed calibration tree. Filters receive `&dyn TfProvider` via
+/// `FilterContext` — they never depend on the concrete host type.
 pub trait TfProvider {
     fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>>;
 

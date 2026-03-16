@@ -1,10 +1,8 @@
-// helios_core/src/control/mod.rs
-//
-// Controller abstraction layer. All types in this module are framework-agnostic.
-// Bevy/ECS wrappers live in helios_sim.
-//
-// ControlDynamics trait lives in models::controls — same home as EstimationDynamics.
-// Re-exported here for convenience so callers can use either path.
+//! Controller abstraction layer. All types are framework-agnostic.
+//!
+//! Defines the [`Controller`] trait, [`ControlOutput`] enum, and [`TrajectoryPoint`].
+//! [`ControlDynamics`] is re-exported from `models::controls` for caller convenience.
+//! Bevy/ECS wrappers and actuator dispatch live in `helios_sim`.
 
 pub mod feedforward_pid;
 pub mod lqr;

@@ -1,3 +1,11 @@
+//! Bevy + Avian3D simulation host for the Helios autonomy framework.
+//!
+//! Wraps `helios_runtime` and `helios_core` in an ECS application. Provides physics,
+//! sensor simulation, config loading (TOML), visualization (Bevy gizmos + Foxglove),
+//! and the `AutonomyRegistry` that maps config strings to concrete algorithm factories.
+//! Entry point: [`HeliosSimulationPlugin`] (or [`simulation::profile_plugin::ProfiledSimulationPlugin`]
+//! for non-default profiles).
+
 use bevy::prelude::*;
 
 use crate::simulation::profile::SimulationProfile;

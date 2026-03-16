@@ -1,4 +1,8 @@
-// helios_core/src/models/dynamics/mod.rs
+//! `EstimationDynamics` trait and concrete dynamics models for state estimators.
+//!
+//! Each model implements `get_derivatives(x, u, t)` (the continuous-time `ẋ = f(x, u, t)`)
+//! and optionally overrides `calculate_jacobian`. The default `propagate` implementation
+//! delegates to an `Integrator` (prefer RK4). Concrete models: `integrated_imu`.
 
 use crate::prelude::MeasurementData;
 use crate::types::{Control, State};

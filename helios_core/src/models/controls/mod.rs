@@ -1,11 +1,9 @@
-// helios_core/src/models/controls/mod.rs
-//
-// ControlDynamics trait and concrete implementations.
-//
-// Mirrors the structure of models/estimation/dynamics/ but is intentionally
-// simpler: no measurement routing, no sensor coupling.
-// Analytical models that also implement EstimationDynamics share the same
-// underlying math via a shared private function; the two trait impls just delegate.
+//! `ControlDynamics` trait and concrete vehicle dynamics models for controllers.
+//!
+//! Mirrors `models/estimation/dynamics/` but omits filter-specific concerns (no
+//! measurement routing, no `Integrator` argument). Analytical models like
+//! `AckermannKinematics` implement both `ControlDynamics` and `EstimationDynamics`
+//! via separate `impl` blocks delegating to the same internal math.
 
 pub mod ackermann;
 

@@ -1,6 +1,8 @@
-// helios_runtime/src/estimation.rs
-//
-// EstimationDriver trait and GroundTruthPassthrough implementation.
+//! Polymorphic estimation driver used by `AutonomyPipeline`.
+//!
+//! [`EstimationDriver`] abstracts over real filter execution (`EstimationCore`) and
+//! simulation mock injection ([`GroundTruthPassthrough`]). Hardware code paths only ever
+//! instantiate `EstimationCore`; `GroundTruthPassthrough` is simulation-only.
 
 use helios_core::{frames::FrameAwareState, mapping::MapData, messages::MeasurementMessage};
 use nalgebra::{Isometry3, Vector3};

@@ -1,4 +1,9 @@
-// helios_sim/src/simulation/core/topics.rs
+//! In-process publish/subscribe message bus for inter-system communication.
+//!
+//! [`TopicBus`] is a Bevy `Resource` holding a map of named ring-buffer topics.
+//! Publishers call `topic_bus.publish(name, value)`; consumers hold a [`TopicReader<T>`]
+//! cursor component that tracks which messages have already been read. Used for sensor
+//! data, ground truth, TF snapshots, and Foxglove bridge output.
 
 use bevy::prelude::*;
 use downcast_rs::{impl_downcast, Downcast};
@@ -115,7 +120,12 @@ pub struct TopicInfo {
     pub owner_agent_name: String,
 }
 
-// --- The Main TopicBus Resource ---
+/// Central publish/subscribe message bus for the simulation.
+///
+/// Holds a heterogeneous map of named ring-buffer topics. Each topic is typed;
+/// publishing to a topic with the wrong type is a no-op with a warning. Topics
+/// are auto-created on first publish with `DEFAULT_TOPIC_CAPACITY` and `TopicTag::Generic`,
+/// or can be pre-created with custom capacity and metadata via `create_topic`.
 #[derive(Resource, Default)]
 pub struct TopicBus {
     topics: HashMap<String, TopicInfo>,

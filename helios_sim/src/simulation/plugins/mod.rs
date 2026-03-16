@@ -1,4 +1,9 @@
-// helios_sim/src/simulation/plugins/mod.rs
+//! Domain plugins that compose the simulation. Each plugin owns one subsystem.
+//!
+//! Submodules: `autonomy` (EKF/pipeline wiring), `control` (controller dispatch),
+//! `sensors` (IMU, GPS, lidar), `vehicles` (Ackermann, quadcopter physics adapters),
+//! `planning`, `debugging` (gizmos + keybindings), `foxglove` (WebSocket bridge),
+//! `isolation` (mock profile plugins), `metrics`, `research`, `world`.
 
 pub mod autonomy;
 pub mod control;

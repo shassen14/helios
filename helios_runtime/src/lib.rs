@@ -1,8 +1,8 @@
-// helios_runtime/src/lib.rs
-//
-// A thin, Bevy-free layer between helios_core and helios_sim.
-// Provides AutonomyPipeline — a typed stage vector that runs identically
-// in simulation and on real hardware.
+//! Autonomy pipeline orchestration — Bevy-free, portable to real hardware.
+//!
+//! Assembles `helios_core` algorithm stages into an [`pipeline::AutonomyPipeline`]
+//! that runs identically in simulation and on hardware. Key types: `AutonomyPipeline`,
+//! `PipelineBuilder`, `EstimationDriver`, `MapDriver`, `AgentRuntime`, `PipelineLevel`.
 
 pub mod config;
 pub mod estimation;

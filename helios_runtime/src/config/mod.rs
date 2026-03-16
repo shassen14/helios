@@ -1,3 +1,9 @@
+//! Portable autonomy configuration structs, shared by simulation and hardware.
+//!
+//! Re-exports `AgentBaseConfig`, `AutonomyStack`, and all sub-configs
+//! (`EstimatorConfig`, `ControllerConfig`, `MapperConfig`, `PlannerConfig`, `SlamConfig`).
+//! These structs are TOML-deserializable and contain zero Bevy or simulation types.
+
 mod agent;
 mod autonomy;
 mod controller;

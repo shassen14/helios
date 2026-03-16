@@ -1,6 +1,8 @@
-// helios_runtime/src/mapping.rs
-//
-// MapDriver trait, StaticMapProvider, and impl MapDriver for MappingCore.
+//! Polymorphic mapping driver used by `AutonomyPipeline`.
+//!
+//! [`MapDriver`] abstracts over real mapper execution (`MappingCore`) and the
+//! simulation mock [`StaticMapProvider`] (pre-built zero-filled map for isolation
+//! profiles). Both implementations are `Send + Sync` for parallel Bevy scheduling.
 
 use helios_core::{mapping::MapData, messages::MeasurementMessage};
 use nalgebra::{DMatrix, Isometry3};

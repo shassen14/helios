@@ -1,3 +1,9 @@
+//! Mapper trait and map data structures.
+//!
+//! Defines the [`Mapper`] trait (process measurements, retrieve map) and the [`MapData`]
+//! enum whose variants represent different map representations (occupancy grid, feature map).
+//! Concrete implementations (`NoneMapper`, `OccupancyGridMapper`) live in submodules.
+
 use crate::estimation::FilterContext; // Mappers also need context
 use crate::messages::ModuleInput;
 use nalgebra::{DMatrix, Isometry3};

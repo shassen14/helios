@@ -1,5 +1,10 @@
-// helios_sim/src/simulation/registry/mod.rs
-//
+//! Algorithm factory registry for spawn-time algorithm instantiation.
+//!
+//! [`AutonomyRegistry`] maps config-string keys (e.g. `"ekf"`, `"astar"`) to factory
+//! closures that produce `helios_core` trait objects. Spawning systems never name concrete
+//! types — they call `registry.build_*(key, ctx)`. Adding an algorithm = implement the
+//! trait in `helios_core` + one `register_*` call. No spawning systems change.
+
 // Submodules
 pub mod adapters;
 pub mod controllers;
@@ -140,6 +145,12 @@ pub struct AdapterBuildContext {
 // == AutonomyRegistry ==
 // =========================================================================
 
+/// Central registry mapping algorithm keys to factory closures.
+///
+/// Populated during `Plugin::build()` before any scene-building systems run.
+/// Spawning systems call `build_estimator(key, ctx)`, `build_mapper(key, ctx)`, etc.
+/// to get boxed trait objects without referencing concrete types. An unregistered key
+/// returns `Err(String)` — log with `error!` and skip spawning rather than panicking.
 #[derive(Resource, Default)]
 pub struct AutonomyRegistry {
     pub estimators: HashMap<String, EstimatorFactory>,
