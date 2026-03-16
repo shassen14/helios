@@ -6,9 +6,9 @@
 //!
 //! | Sub-module | Contents |
 //! |---|---|
-//! | [`grid_space`] | [`OccupancyGridSpace`] — coordinate conversion, free-cell query, neighbour enumeration, Bresenham LOS |
-//! | [`search`] | [`AStarSearchBuffers`], [`AStarNode`], [`octile_heuristic`], [`run_astar`] |
-//! | [`smoothing`] | [`smooth_path`], [`make_waypoint`] |
+//! | `grid_space` | `OccupancyGridSpace` — coordinate conversion, free-cell query, neighbour enumeration, Bresenham LOS |
+//! | `search` | `AStarSearchBuffers`, `AStarNode`, `octile_heuristic`, `run_astar` |
+//! | `smoothing` | `smooth_path`, `make_waypoint` |
 //!
 //! External callers only need [`AStarConfig`] and [`AStarPlanner`]; everything
 //! else is `pub(super)` and invisible outside the `astar` module.
@@ -28,7 +28,7 @@
 //! # Pre-allocation
 //!
 //! The `BinaryHeap` and two `HashMap`s used by A\* are owned by
-//! [`AStarPlanner`] via [`AStarSearchBuffers`] and cleared (not reallocated)
+//! [`AStarPlanner`] via `AStarSearchBuffers` and cleared (not reallocated)
 //! at the start of each search.  This avoids repeated heap allocation at
 //! planning frequency (typically 1–10 Hz on a 100×100 grid).
 
