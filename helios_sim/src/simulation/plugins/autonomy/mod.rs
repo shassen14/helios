@@ -1,7 +1,7 @@
 // helios_sim/src/plugins/autonomy/mod.rs
 //
 // EstimationPlugin   — spawning + sensor routing + EKF/UKF + odom frames + telemetry.
-// MappingPlugin      — architectural seam (mapping_system lives in EstimationPlugin's chain).
+// MappingPlugin      — architectural seam (run_mapping lives in EstimationPlugin's chain).
 // AutonomyPlugin     — trivial combiner kept for backward compatibility.
 
 use crate::prelude::*;
@@ -12,8 +12,8 @@ pub mod systems;
 pub use components::{ControlPipelineComponent, EstimatorComponent, MapperComponent, OdomFrameOf};
 
 use systems::{
-    autonomy_telemetry_system, estimation_system, mapping_system, route_sensor_messages,
-    sensor_telemetry_system, spawn_odom_frames, spawn_world_model_modules, update_odom_frames,
+    publish_autonomy_telemetry, publish_sensor_telemetry, route_sensor_messages, run_estimation,
+    run_mapping, spawn_autonomy_pipeline, spawn_odom_frames, update_odom_frames,
 };
 
 // =========================================================================
@@ -31,7 +31,7 @@ impl Plugin for EstimationPlugin {
             .add_systems(
                 OnEnter(AppState::SceneBuilding),
                 (
-                    spawn_world_model_modules.in_set(SceneBuildSet::ProcessBaseAutonomy),
+                    spawn_autonomy_pipeline.in_set(SceneBuildSet::ProcessBaseAutonomy),
                     spawn_odom_frames.in_set(SceneBuildSet::ProcessDependentAutonomy),
                 ),
             )
@@ -39,7 +39,7 @@ impl Plugin for EstimationPlugin {
             // Chain: route fills SensorMailbox → estimation runs → odom frames updated.
             .add_systems(
                 FixedUpdate,
-                (route_sensor_messages, estimation_system, update_odom_frames)
+                (route_sensor_messages, run_estimation, update_odom_frames)
                     .chain()
                     .in_set(SimulationSet::Estimation)
                     .run_if(in_state(AppState::Running)),
@@ -47,7 +47,7 @@ impl Plugin for EstimationPlugin {
             // --- RUNTIME: Validation phase (cold telemetry path) ---
             .add_systems(
                 FixedUpdate,
-                (autonomy_telemetry_system, sensor_telemetry_system)
+                (publish_autonomy_telemetry, publish_sensor_telemetry)
                     .in_set(SimulationSet::Validation)
                     .run_if(in_state(AppState::Running)),
             );
@@ -58,9 +58,9 @@ impl Plugin for EstimationPlugin {
 // == MappingPlugin
 // =========================================================================
 
-/// Owns the mapping subsystem — `mapping_system` in `SimulationSet::WorldModeling`.
+/// Owns the mapping subsystem — `run_mapping` in `SimulationSet::WorldModeling`.
 ///
-/// `WorldModeling` runs before `Estimation` in the schedule, so `mapping_system`
+/// `WorldModeling` runs before `Estimation` in the schedule, so `run_mapping`
 /// reads the mailbox filled by the previous tick's `route_sensor_messages`.
 /// This one-tick latency is standard practice in robotics mapping.
 pub struct MappingPlugin;
@@ -69,7 +69,7 @@ impl Plugin for MappingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             FixedUpdate,
-            mapping_system
+            run_mapping
                 .in_set(SimulationSet::WorldModeling)
                 .run_if(in_state(AppState::Running)),
         );

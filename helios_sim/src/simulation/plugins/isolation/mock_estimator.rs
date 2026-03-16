@@ -9,8 +9,8 @@ use crate::prelude::AppState;
 use crate::simulation::core::app_state::{SceneBuildSet, SimulationSet};
 use crate::simulation::core::components::GroundTruthState;
 use crate::simulation::plugins::autonomy::systems::{
-    autonomy_telemetry_system, route_sensor_messages, sensor_telemetry_system,
-    spawn_mock_world_model_modules, spawn_odom_frames, update_odom_frames,
+    publish_autonomy_telemetry, publish_sensor_telemetry, route_sensor_messages, spawn_odom_frames,
+    spawn_passthrough_pipeline, update_odom_frames,
 };
 use crate::simulation::plugins::autonomy::EstimatorComponent;
 
@@ -23,7 +23,7 @@ impl Plugin for MockGroundTruthEstimatorPlugin {
             .add_systems(
                 OnEnter(AppState::SceneBuilding),
                 (
-                    spawn_mock_world_model_modules.in_set(SceneBuildSet::ProcessBaseAutonomy),
+                    spawn_passthrough_pipeline.in_set(SceneBuildSet::ProcessBaseAutonomy),
                     spawn_odom_frames.in_set(SceneBuildSet::ProcessDependentAutonomy),
                 ),
             )
@@ -38,7 +38,7 @@ impl Plugin for MockGroundTruthEstimatorPlugin {
             )
             .add_systems(
                 FixedUpdate,
-                (autonomy_telemetry_system, sensor_telemetry_system)
+                (publish_autonomy_telemetry, publish_sensor_telemetry)
                     .in_set(SimulationSet::Validation)
                     .run_if(in_state(AppState::Running)),
             );
