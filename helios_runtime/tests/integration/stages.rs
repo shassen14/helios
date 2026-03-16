@@ -4,10 +4,7 @@ use std::collections::HashMap;
 
 use helios_core::mapping::MapData;
 use helios_runtime::{
-    pipeline::{
-        control_core::ControlCore, mapping_core::MappingCore,
-        PipelineBuilder,
-    },
+    pipeline::{control_core::ControlCore, mapping_core::MappingCore, PipelineBuilder},
     stage::{LeveledController, LeveledMapper, PipelineLevel},
 };
 
@@ -127,7 +124,10 @@ fn mapping_global_mapper_skipped_when_slam_active() {
     core.process_messages(&[make_gps_message(0.0)], &rt);
     match core.get_map(&PipelineLevel::Global).unwrap() {
         MapData::OccupancyGrid2D { version, .. } => {
-            assert_eq!(*version, 0, "Global mapper must be skipped when slam_active")
+            assert_eq!(
+                *version, 0,
+                "Global mapper must be skipped when slam_active"
+            )
         }
         _ => panic!("Expected OccupancyGrid2D"),
     }

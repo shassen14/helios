@@ -38,10 +38,7 @@ fn gt_process_measurement_noop() {
 #[test]
 fn gt_inject_sets_position() {
     let mut gt = GroundTruthPassthrough::default();
-    let pose = Isometry3::from_parts(
-        Translation3::new(3.0, 4.0, 5.0),
-        UnitQuaternion::identity(),
-    );
+    let pose = Isometry3::from_parts(Translation3::new(3.0, 4.0, 5.0), UnitQuaternion::identity());
     gt.inject_ground_truth(&pose, Vector3::zeros(), 0.0);
     let state = gt.get_state().unwrap();
     // Layout: [Px, Py, Pz, Vx, Vy, Vz, Qx, Qy, Qz, Qw]
@@ -77,10 +74,8 @@ fn gt_inject_identity_quaternion() {
 fn gt_inject_nontrivial_rotation() {
     let mut gt = GroundTruthPassthrough::default();
     // 90° rotation around Z: k ≈ 0.707
-    let q = UnitQuaternion::from_axis_angle(
-        &nalgebra::Vector3::z_axis(),
-        std::f64::consts::FRAC_PI_2,
-    );
+    let q =
+        UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), std::f64::consts::FRAC_PI_2);
     let pose = Isometry3::from_parts(Translation3::identity(), q);
     gt.inject_ground_truth(&pose, Vector3::zeros(), 0.0);
     let state = gt.get_state().unwrap();
@@ -153,7 +148,10 @@ fn static_map_version_stays_zero_after_updates() {
     provider.process_pose_update(Isometry3::identity());
     match provider.get_map(&PipelineLevel::Local).unwrap() {
         MapData::OccupancyGrid2D { version, .. } => {
-            assert_eq!(*version, 0, "StaticMapProvider must never increment version");
+            assert_eq!(
+                *version, 0,
+                "StaticMapProvider must never increment version"
+            );
         }
         _ => panic!("Expected OccupancyGrid2D"),
     }

@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use helios_runtime::{
     config::{
-        AutonomyStack, ControllerConfig, EkfConfig,
-        EkfDynamicsConfig, EstimatorConfig, ImuProcessNoiseConfig, MapperConfig,
-        MapperPoseSourceConfig, PlannerConfig, WorldModelConfig,
+        AutonomyStack, ControllerConfig, EkfConfig, EkfDynamicsConfig, EstimatorConfig,
+        ImuProcessNoiseConfig, MapperConfig, MapperPoseSourceConfig, PlannerConfig,
+        WorldModelConfig,
     },
     stage::PipelineLevel,
     validation::{validate_autonomy_config, CapabilitySet, ValidationError},
@@ -320,10 +320,6 @@ fn pipeline_level_local_less_than_custom() {
 
 #[test]
 fn pipeline_level_custom_variants_sorted_lexicographically() {
-    assert!(
-        PipelineLevel::Custom("alpha".to_string()) < PipelineLevel::Custom("beta".to_string())
-    );
-    assert!(
-        PipelineLevel::Custom("a".to_string()) < PipelineLevel::Custom("b".to_string())
-    );
+    assert!(PipelineLevel::Custom("alpha".to_string()) < PipelineLevel::Custom("beta".to_string()));
+    assert!(PipelineLevel::Custom("a".to_string()) < PipelineLevel::Custom("b".to_string()));
 }
