@@ -1,4 +1,9 @@
-// helios_sim/src/simulation/core/mod.rs
+//! Core simulation infrastructure: TF tree, TopicBus, and ground-truth publishing.
+//!
+//! Contains systems that run every tick regardless of profile: ground-truth physics sync
+//! (`ground_truth_sync_system`), TopicBus publishing for ground truth and TF frames, and
+//! the structural/incremental TF tree update systems. All cross-boundary frame conversions
+//! delegate to [`transforms`].
 
 use crate::simulation::core::{
     components::GroundTruthState,

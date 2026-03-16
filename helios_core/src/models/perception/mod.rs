@@ -1,4 +1,8 @@
-// heios_core/src/models/perception/mod.rs
+//! Raycasting sensor model trait and concrete sensor implementations.
+//!
+//! Defines [`RaycastingSensorModel`] — the contract for sensors that work by casting
+//! rays (`generate_rays`) and processing physics results (`process_hits`) into
+//! `MeasurementData`. Concrete models in `lidar_2d` and `lidar_3d`.
 
 pub mod lidar_2d;
 pub mod lidar_3d;

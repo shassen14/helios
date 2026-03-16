@@ -1,4 +1,9 @@
-// helios_sim/src/simulation/core/transforms.rs
+//! Coordinate frame conversion helpers and the runtime TF tree.
+//!
+//! Provides the authoritative ENU↔Bevy world and FLU↔Bevy local conversion functions
+//! (`enu_iso_to_bevy_transform`, `flu_iso_to_bevy_local_transform`, etc.) plus the
+//! [`TfTree`] resource and its incremental/structural update systems. All axis-swap
+//! logic must live here — manual swaps elsewhere are latent bugs.
 
 use bevy::prelude::{
     GlobalTransform, Quat as BevyQuat, Transform as BevyTransform, Vec3 as BevyVec3, *,

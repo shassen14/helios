@@ -1,4 +1,9 @@
-// helios_core/src/frames/mod.rs
+//! Coordinate frame types and the layout-indexed state vector.
+//!
+//! Provides [`FrameId`] (world/body/sensor identifiers), [`StateVariable`] (typed
+//! state-vector slots), and [`FrameAwareState`] (the bundled state + covariance + layout
+//! used by all filters). Index into `FrameAwareState` only via layout lookup — never
+//! hardcode numeric indices.
 
 use crate::types::FrameHandle;
 use nalgebra::{

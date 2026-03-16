@@ -1,6 +1,7 @@
-// helios_core/src/tracking/mod.rs
-//
-// Tracker trait for object-level tracking. No concrete implementations in Phase 2.
+//! Object-level tracking trait and data structures.
+//!
+//! Defines the [`Tracker`] trait (update from measurements, query active tracks)
+//! and the [`Track`] struct. No concrete implementations exist yet.
 
 use crate::estimation::FilterContext;
 use crate::frames::FrameAwareState;

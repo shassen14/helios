@@ -1,7 +1,9 @@
-// helios_sim/src/simulation/profile.rs
-//
-// SimulationProfile: selects which subsystems the simulation runs.
-// Used by ProfiledSimulationPlugin to add only the required plugins.
+//! Simulation profile and capability-set gating for conditional plugin loading.
+//!
+//! [`SimulationProfile`] selects which subsystems are active (full pipeline, estimation
+//! only, planning only, etc.). [`CapabilitySet`] is the derived flat boolean resource
+//! inserted by `ProfiledSimulationPlugin` so any Bevy system can branch on active
+//! subsystems without re-deriving from the profile.
 
 use bevy::prelude::Resource;
 

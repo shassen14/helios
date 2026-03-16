@@ -1,11 +1,3 @@
-// helios_runtime/src/pipeline/mod.rs
-//
-// AutonomyPipeline, PipelineBuilder, PipelineOutputs + re-exports of stage submodules.
-//
-// helios_sim decomposes AutonomyPipeline into ECS components via into_parts()
-// so Bevy can schedule EstimationCore and MappingCore in parallel.
-// helios_hw uses AutonomyPipeline as a whole unit.
-
 //! Autonomy pipeline: three independent stages and their composite.
 //!
 //! The pipeline is organized into three stages that can run independently:

@@ -1,6 +1,7 @@
-// helios_core/src/planning/mod.rs
-//
-// Planner trait + sub-modules. Concrete implementations: astar.
+//! Planner trait and path-planning submodules.
+//!
+//! Defines the [`Planner`] trait (set goal, plan, replan decision, current path).
+//! Submodules: `astar` (concrete A* implementation), `context`, `search_space`, `types`.
 
 pub mod astar;
 pub mod context;

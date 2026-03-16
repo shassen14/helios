@@ -1,6 +1,10 @@
-// helios_core/src/lib.rs
+//! Pure algorithmic library for robotics. Framework-agnostic; runs on real hardware.
+//!
+//! Contains all algorithm implementations (EKF, UKF, A*), trait definitions
+//! (`StateEstimator`, `Controller`, `Planner`), and shared data structures
+//! (`MeasurementMessage`, `FrameAwareState`). Has zero dependency on Bevy or Avian3D.
+//! See submodules for details.
 
-// This file defines the public modules of your library.
 // pub mod context;
 pub mod control;
 pub mod estimation;
