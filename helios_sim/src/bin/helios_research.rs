@@ -97,15 +97,20 @@ fn timed_exit_system(
     time: Res<Time>,
     mut elapsed: Local<f32>,
     duration: Res<ProfilingDuration>,
-    mut exit: EventWriter<AppExit>,
+    state: Res<State<AppState>>,
+    mut next_state: ResMut<NextState<AppState>>,
 ) {
     if let Some(limit) = duration.0 {
         *elapsed += time.delta_secs();
-        if *elapsed >= limit {
-            info!("[profiling] Duration limit reached ({limit:.0}s). Exiting cleanly.");
-            exit.write(AppExit::Success);
+        if *elapsed >= limit && *state.get() == AppState::Running {
+            info!("[profiling] Duration limit reached ({limit:.0}s). Flushing and exiting.");
+            next_state.set(AppState::Flushing);
         }
     }
+}
+
+fn flushing_exit_system(mut exit: EventWriter<AppExit>) {
+    exit.write(AppExit::Success);
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +182,11 @@ fn run_single(args: &ResearchCli, _run_index: u32) {
     app.add_systems(Update, keyboard_controller);
 
     app.insert_resource(ProfilingDuration(args.duration_secs))
-        .add_systems(Update, timed_exit_system);
+        .add_systems(Update, timed_exit_system)
+        .add_systems(
+            Update,
+            flushing_exit_system.run_if(in_state(AppState::Flushing)),
+        );
 
     app.run();
 }

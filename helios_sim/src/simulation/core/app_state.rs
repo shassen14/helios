@@ -18,6 +18,11 @@ pub enum AppState {
 
     /// The simulation is paused. Physics is stopped.
     Paused,
+
+    /// Transitional state entered before application exit. I/O systems
+    /// (metrics, data logger) flush to disk here via `OnEnter(Flushing)`,
+    /// which Bevy guarantees to run before the next `Update` frame exits.
+    Flushing,
 }
 
 /// System sets to control the order of execution during the AssetLoading state.

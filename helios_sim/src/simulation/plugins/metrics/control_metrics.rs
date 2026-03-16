@@ -48,7 +48,7 @@ impl Plugin for ControlMetricsPlugin {
                     .in_set(SimulationSet::Validation)
                     .run_if(in_state(AppState::Running)),
             )
-            .add_systems(OnExit(AppState::Running), print_metrics);
+            .add_systems(OnEnter(AppState::Flushing), print_metrics);
     }
 }
 
