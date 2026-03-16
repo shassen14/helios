@@ -183,7 +183,10 @@ fn run_single(args: &ResearchCli, _run_index: u32) {
 
     app.insert_resource(ProfilingDuration(args.duration_secs))
         .add_systems(Update, timed_exit_system)
-        .add_systems(Update, flushing_exit_system.run_if(in_state(AppState::Flushing)));
+        .add_systems(
+            Update,
+            flushing_exit_system.run_if(in_state(AppState::Flushing)),
+        );
 
     app.run();
 }
