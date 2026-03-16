@@ -50,7 +50,7 @@ impl Plugin for DataLoggerPlugin {
                     .in_set(SimulationSet::Validation)
                     .run_if(in_state(AppState::Running)),
             )
-            .add_systems(OnExit(AppState::Running), flush_log);
+            .add_systems(OnEnter(AppState::Flushing), flush_log);
     }
 }
 
