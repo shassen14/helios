@@ -3,33 +3,22 @@ name: Benchmarks
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
 jobs:
-  bench:
-    name: Bench
+  benchmarks:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: Swatinem/rust-cache@v2
-      - run: cargo bench -p helios_core 2>&1 | tee bench-output.txt
-      - uses: actions/upload-pages-artifact@v3
+      - name: Install cargo-codspeed
+        run: cargo install cargo-codspeed --locked
+      - name: Build benchmark targets
+        run: cargo codspeed build -p helios_core
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v3
         with:
-          path: helios_core/target/criterion/
-      - name: Deploy Criterion reports to GitHub Pages
-        id: deploy
-        uses: actions/deploy-pages@v4
-      - uses: actions/upload-artifact@v4
-        with:
-          name: bench-results
-          path: bench-output.txt
-          retention-days: 30
+          run: cargo codspeed run -p helios_core
+          token: ${{ secrets.CODSPEED_TOKEN }}

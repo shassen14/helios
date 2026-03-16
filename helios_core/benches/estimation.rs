@@ -1,7 +1,7 @@
 use std::any::Any;
 use std::collections::HashMap;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::{DMatrix, DVector, Isometry3, Vector3};
 
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;

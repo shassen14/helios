@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::{DMatrix, Isometry3, Vector2};
 
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};

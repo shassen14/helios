@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::{Isometry3, Point3};
 
 use helios_core::estimation::FilterContext;
