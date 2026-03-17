@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use crate::simulation::core::components::{MailboxEntry, SensorMailbox, SensorTopicName};
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::sim_runtime::SimRuntime;
-use crate::simulation::core::transforms::{enu_iso_to_bevy_transform, TfTree};
+use crate::simulation::core::transforms::{enu_body_iso_to_bevy_transform, TfTree};
 use crate::simulation::plugins::autonomy::components::{EstimatorComponent, OdomFrameOf};
 
 /// Routes `BevyMeasurementMessage` events to per-agent `SensorMailbox` components.
@@ -79,7 +79,7 @@ pub fn update_odom_frames(
         };
 
         if let Some(iso) = estimator.0.get_state().and_then(|s| s.get_pose_isometry()) {
-            *transform = enu_iso_to_bevy_transform(&iso);
+            *transform = enu_body_iso_to_bevy_transform(&iso);
         }
     }
 }

@@ -4,7 +4,10 @@
 // Add new algorithms here — zero spawning systems change.
 
 use bevy::prelude::*;
-use helios_core::control::{lqr::LqrController, pid::VelocityPidController};
+use helios_core::control::{
+    lqr::LqrController, pid::VelocityPidController,
+    steering_pid::SteeringPidController,
+};
 
 use super::{AutonomyRegistry, ControllerBuildContext};
 use crate::simulation::config::structs::ControllerConfig;
@@ -37,6 +40,7 @@ impl Plugin for DefaultControllersPlugin {
                 control_dim,
                 u_min,
                 u_max,
+                ..
             } = ctx.controller_cfg
             {
                 // Supply symmetric default bounds if none given.
@@ -62,5 +66,16 @@ impl Plugin for DefaultControllersPlugin {
         // factory. Since ControlDynamics is a separate trait, the FeedforwardPid factory is
         // left as a stub until concrete ControlDynamics impls exist.
         // registry.register_controller("FeedforwardPid", |ctx| { ... });
+
+        // --- SteeringPid ---
+        registry.register_controller("SteeringPid", |ctx: ControllerBuildContext| {
+            if let ControllerConfig::SteeringPid { cruise_speed, kp, ki, kd, .. } = ctx.controller_cfg {
+                Ok(Box::new(SteeringPidController::new(
+                    kp as f64, ki as f64, kd as f64, cruise_speed as f64,
+                )))
+            } else {
+                Err("SteeringPid factory received wrong ControllerConfig variant".into())
+            }
+        });
     }
 }

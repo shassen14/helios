@@ -14,7 +14,7 @@ mod slam;
 
 pub use agent::AgentBaseConfig;
 pub use autonomy::{AutonomyStack, WorldModelConfig};
-pub use controller::ControllerConfig;
+pub use controller::{ControllerConfig, ControllerStateSourceConfig};
 pub use estimator::{
     AckermannProcessNoiseConfig, EkfConfig, EkfDynamicsConfig, EstimatorConfig,
     ImuProcessNoiseConfig, QuadcopterProcessNoiseConfig, UkfConfig,

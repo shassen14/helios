@@ -1,0 +1,6 @@
+kind = "SteeringPid"
+cruise_speed = 5.0     # m/s — gentle cruise for first run
+kp = 2.0
+ki = 0.05
+kd = 0.3
+state_source = "estimated"   # debug: bypass EKF to isolate 90° heading bug; remove when fixed

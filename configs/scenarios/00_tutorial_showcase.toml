@@ -51,12 +51,12 @@ ambient_lux   = 1500.0
 
 # Debug visualization defaults. All toggleable at runtime via F1–F7 and H.
 [debug]
-show_pose_gimbals   = false
+show_pose_gimbals   = true
 show_covariance     = false
-show_point_cloud    = false
+show_point_cloud    = true
 show_velocity       = false
-show_error_line     = false
-show_path_trail     = true
+show_error_line     = true
+show_path_trail     = false
 show_occupancy_grid = true
 show_tf_frames      = true
 show_legend         = true
@@ -78,7 +78,7 @@ from = "agents.ackermann_car_pro"
 name = "ProCar-Baseline"
 # The agent's starting pose in the world (ENU) frame.
 # `rotation` is [roll, pitch, yaw] in degrees. 90 deg yaw is North.
-starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 90.0] }
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose = { translation = [100.0, 50.0, 0.5] }
 
 

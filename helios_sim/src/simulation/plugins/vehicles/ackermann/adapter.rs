@@ -115,6 +115,7 @@ pub struct DualSisoPidAdapter {
     longitudinal: SisoPid,
     lateral: SisoPid,
     fallback: DefaultAckermannAdapter,
+    tick_count: u64,
 }
 
 impl DualSisoPidAdapter {
@@ -123,6 +124,7 @@ impl DualSisoPidAdapter {
             longitudinal,
             lateral,
             fallback: DefaultAckermannAdapter,
+            tick_count: 0,
         }
     }
 }
@@ -139,7 +141,13 @@ impl AckermannOutputAdapter for DualSisoPidAdapter {
         mass: f32,
         dt: f32,
     ) -> AckermannCommand {
+        self.tick_count += 1;
+        let log = self.tick_count % 60 == 1;
+
         let ControlOutput::BodyVelocity { linear, angular } = output else {
+            if log {
+                info!("[DualSisoPid #{tick}] non-BodyVelocity output — falling through to default adapter", tick = self.tick_count);
+            }
             return self.fallback.adapt(
                 output, params, actuator, transform, lin_vel, ang_vel, mass, dt,
             );
@@ -161,6 +169,28 @@ impl AckermannOutputAdapter for DualSisoPidAdapter {
         let yaw_error = desired_yaw_rate - current_yaw_rate;
         let raw_torque = self.lateral.update(yaw_error as f64, dt as f64) as f32;
         let steering_torque_norm = (raw_torque / actuator.max_torque).clamp(-1.0, 1.0);
+
+        if log {
+            let bevy_fwd = transform.forward();
+            info!(
+                "[DualSisoPid #{tick}]\n  \
+                 bevy_fwd         = ({fx:.3}, {fy:.3}, {fz:.3})\n  \
+                 bevy_ang_vel.y   = {avy:.4} rad/s  (Bevy Y-up yaw)\n  \
+                 speed: des={vdes:.2} cur={vcur:.2} err={verr:.2}  → throttle={thr:.3}\n  \
+                 yaw_rate: des={yrdes:.4} cur={yrcur:.4} err={yrerr:.4} rad/s  → steer_norm={steer:.3}",
+                tick   = self.tick_count,
+                fx = bevy_fwd.x, fy = bevy_fwd.y, fz = bevy_fwd.z,
+                avy    = current_yaw_rate,
+                vdes   = desired_speed,
+                vcur   = current_forward_speed,
+                verr   = speed_error,
+                thr    = throttle_norm,
+                yrdes  = desired_yaw_rate,
+                yrcur  = current_yaw_rate,
+                yrerr  = yaw_error,
+                steer  = steering_torque_norm,
+            );
+        }
 
         AckermannCommand {
             throttle_norm,

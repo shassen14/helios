@@ -30,19 +30,17 @@ pub fn enu_to_flu_rotation() -> UnitQuaternion<f64> {
     UnitQuaternion::from_axis_angle(&Vector3::z_axis(), -FRAC_PI_2)
 }
 
-/// Composes the FLU→ENU frame correction into a sensor world-pose isometry.
+/// Returns the sensor world-pose isometry for transforming FLU-frame points to ENU world.
 ///
-/// `sensor_world_pose` transforms ENU-sensor-local → ENU world (as produced
-/// by the TF tree). Points stored in FLU (e.g. lidar hit positions) can then
-/// be projected directly into the ENU world frame with the returned isometry.
+/// The TF tree stores ENU isometries with the FLU body convention:
+/// `sensor_world_pose.rotation` already maps FLU body coordinates to ENU world
+/// (i.e. FLU +X forward rotated by the sensor's ENU yaw gives the ENU forward direction).
+/// Therefore no additional frame correction is needed and this function is the identity.
 ///
 /// ```text
-/// p_world = flu_corrected_pose * p_flu
+/// p_world = sensor_world_pose * p_flu
 /// ```
 #[inline]
 pub fn sensor_pose_flu_to_world(sensor_world_pose: Isometry3<f64>) -> Isometry3<f64> {
-    Isometry3::from_parts(
-        sensor_world_pose.translation,
-        sensor_world_pose.rotation * flu_to_enu_rotation(),
-    )
+    sensor_world_pose
 }

@@ -12,7 +12,10 @@
 use bevy::prelude::*;
 use helios_core::{
     estimation::{filters::ekf::ExtendedKalmanFilter, StateEstimator},
-    frames::layout::{standard_ins_state_layout, STANDARD_INS_STATE_DIM},
+    frames::{
+        layout::{standard_ins_state_layout, STANDARD_INS_STATE_DIM},
+        FrameId, StateVariable,
+    },
     models::estimation::measurement::imu::Imu6DofModel,
 };
 use nalgebra::DMatrix;
@@ -87,6 +90,7 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, Stri
     }
 
     // --- 2. Build the dynamics model via the dynamics registry snapshot ---
+    let starting_pose = ctx.agent_config.starting_pose;
     let dynamics_ctx = DynamicsBuildContext {
         agent_entity,
         agent_config: ctx.agent_config,
@@ -119,7 +123,23 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, Stri
     // --- 4. Assemble and return the filter ---
     let agent_handle = helios_core::types::FrameHandle::from_entity(agent_entity);
     let state_layout = standard_ins_state_layout(agent_handle);
-    let initial_state = helios_core::frames::FrameAwareState::new(state_layout, 1.0, 0.0);
+    let mut initial_state = helios_core::frames::FrameAwareState::new(state_layout, 1.0, 0.0);
+
+    // Seed the EKF from the agent's known starting pose so the heading is correct
+    // from tick 0. Without this, the EKF starts at identity (yaw=0, facing East)
+    // regardless of the scenario starting_pose, causing a permanent heading offset
+    // that GPS+IMU alone cannot correct (no magnetometer = no absolute heading source).
+    let starting_iso = starting_pose.to_isometry();
+    let body_frame = FrameId::Body(agent_handle);
+    let world_frame = FrameId::World;
+    initial_state.set_variable(&StateVariable::Px(FrameId::World), starting_iso.translation.x);
+    initial_state.set_variable(&StateVariable::Py(FrameId::World), starting_iso.translation.y);
+    initial_state.set_variable(&StateVariable::Pz(FrameId::World), starting_iso.translation.z);
+    let q = starting_iso.rotation.quaternion();
+    initial_state.set_variable(&StateVariable::Qx(body_frame.clone(), world_frame.clone()), q.i);
+    initial_state.set_variable(&StateVariable::Qy(body_frame.clone(), world_frame.clone()), q.j);
+    initial_state.set_variable(&StateVariable::Qz(body_frame.clone(), world_frame.clone()), q.k);
+    initial_state.set_variable(&StateVariable::Qw(body_frame, world_frame), q.w);
 
     info!(
         "AutonomyRegistry: built EKF with '{}' dynamics for agent {:?}.",

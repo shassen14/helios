@@ -3,7 +3,7 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 use nalgebra::{Isometry3, SymmetricEigen, Translation3, UnitQuaternion, Vector3};
 
-use crate::simulation::core::transforms::enu_iso_to_bevy_transform;
+use crate::simulation::core::transforms::enu_body_iso_to_bevy_transform;
 use crate::simulation::plugins::autonomy::EstimatorComponent;
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
 use helios_core::prelude::{FrameId, StateVariable};
@@ -67,7 +67,7 @@ pub fn draw_covariance_ellipsoid(
         }
 
         let pose_enu = Isometry3::from_parts(Translation3::from(center_enu), orientation_enu);
-        let bevy_tf = enu_iso_to_bevy_transform(&pose_enu);
+        let bevy_tf = enu_body_iso_to_bevy_transform(&pose_enu);
         let center = bevy_tf.translation;
         let rot = bevy_tf.rotation;
 

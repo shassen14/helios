@@ -350,13 +350,40 @@ pub fn bevy_point_as_enu_vector(bevy_point: &BevyVec3) -> Vector3<f64> {
     bevy_vector_to_enu_vector(bevy_point)
 }
 
-/// Converts an object's orientation from ENU frame to Bevy world frame.
+/// Converts a world-frame object orientation from ENU to Bevy.
+///
+/// Uses the pure similarity transform: `q_bevy = Q_ENU_TO_BEVY * q_enu * Q_ENU_TO_BEVY⁻¹`.
+/// Use for static world objects (terrain, buildings) whose meshes are authored in Bevy space.
+/// Identity ENU → identity Bevy (mesh placed as authored, no rotation applied).
+///
+/// For agent/vehicle body orientations use `enu_body_quat_to_bevy_quat` instead.
 pub fn enu_quat_to_bevy_quat(enu_obj_quat: &UnitQuaternion<f64>) -> BevyQuat {
-    // q_obj_in_Bevy = Q_Frame(Bevy_from_ENU) * q_obj_in_ENU * Q_Frame(Bevy_from_ENU)_inverse
-    let final_rot_f64 = Q_ENU_FRAME_TO_BEVY_FRAME.with(|q_enu_to_bevy_frame| {
-        *q_enu_to_bevy_frame * enu_obj_quat * q_enu_to_bevy_frame.inverse()
+    let final_rot_f64 = Q_ENU_FRAME_TO_BEVY_FRAME.with(|q_enu_to_bevy| {
+        *q_enu_to_bevy * enu_obj_quat * q_enu_to_bevy.inverse()
     });
+    BevyQuat::from_xyzw(
+        final_rot_f64.coords.x as f32,
+        final_rot_f64.coords.y as f32,
+        final_rot_f64.coords.z as f32,
+        final_rot_f64.coords.w as f32,
+    )
+}
 
+/// Converts an agent/vehicle body orientation from ENU to Bevy.
+///
+/// Accounts for the body-frame convention difference (FLU +X forward vs Bevy −Z forward):
+/// `q_bevy = Q_ENU_TO_BEVY * q_enu * Q_FLU_BODY_TO_BEVY_LOCAL⁻¹`
+///
+/// ENU identity (heading East, FLU +X = ENU East) → Bevy R_y(−π/2)
+/// (Bevy −Z local forward rotated by R_y(−π/2) points to Bevy +X = ENU East). ✓
+///
+/// Inverse of `bevy_quat_to_enu_quat`. Use for all agent spawning and pose visualization.
+pub fn enu_body_quat_to_bevy_quat(enu_obj_quat: &UnitQuaternion<f64>) -> BevyQuat {
+    let final_rot_f64 = Q_ENU_FRAME_TO_BEVY_FRAME.with(|q_enu_to_bevy| {
+        Q_FLU_BODY_TO_BEVY_LOCAL.with(|q_flu_to_bevy_local| {
+            *q_enu_to_bevy * enu_obj_quat * q_flu_to_bevy_local.inverse()
+        })
+    });
     BevyQuat::from_xyzw(
         final_rot_f64.coords.x as f32,
         final_rot_f64.coords.y as f32,
@@ -366,6 +393,13 @@ pub fn enu_quat_to_bevy_quat(enu_obj_quat: &UnitQuaternion<f64>) -> BevyQuat {
 }
 
 /// Converts an object's orientation from Bevy world frame to ENU frame.
+///
+/// Correct formula: `q_enu = Q_ENU_TO_BEVY⁻¹ * q_bevy * Q_FLU_BODY_TO_BEVY_LOCAL`
+///
+/// The right-hand factor must be `Q_FLU_BODY_TO_BEVY_LOCAL`, not `Q_ENU_TO_BEVY`,
+/// because the Bevy body's local "forward" is −Z while the ENU/FLU body's
+/// "forward" is +X. Using `Q_ENU_TO_BEVY` on the right misses this 90° offset
+/// and produces ENU headings that are consistently ~90° wrong.
 pub fn bevy_quat_to_enu_quat(bevy_obj_quat: &BevyQuat) -> UnitQuaternion<f64> {
     let bevy_q_f64 = UnitQuaternion::from_quaternion(Quaternion::new(
         bevy_obj_quat.w as f64, // nalgebra Quaternion::new is w,x,y,z
@@ -374,21 +408,36 @@ pub fn bevy_quat_to_enu_quat(bevy_obj_quat: &BevyQuat) -> UnitQuaternion<f64> {
         bevy_obj_quat.z as f64,
     ));
 
-    // q_obj_in_ENU = Q_Frame(Bevy_from_ENU)_inverse * q_obj_in_Bevy * Q_Frame(Bevy_from_ENU)
-    let final_rot_f64 = Q_ENU_FRAME_TO_BEVY_FRAME.with(|q_enu_to_bevy_frame| {
-        q_enu_to_bevy_frame.inverse() * bevy_q_f64 * *q_enu_to_bevy_frame
-    });
-    final_rot_f64
+    Q_ENU_FRAME_TO_BEVY_FRAME.with(|q_enu_to_bevy| {
+        Q_FLU_BODY_TO_BEVY_LOCAL.with(|q_flu_to_bevy_local| {
+            q_enu_to_bevy.inverse() * bevy_q_f64 * *q_flu_to_bevy_local
+        })
+    })
 }
 
-/// Converts a full pose (Isometry3) from ENU frame to Bevy Transform.
+/// Converts a world-frame pose (Isometry3) from ENU to Bevy Transform.
+///
+/// Uses the pure similarity rotation formula. For static world objects (terrain,
+/// buildings) whose meshes are authored in Bevy world space. Identity ENU → identity Bevy.
+///
+/// For agent/vehicle poses use `enu_body_iso_to_bevy_transform` instead.
 pub fn enu_iso_to_bevy_transform(enu_pose: &Isometry3<f64>) -> BevyTransform {
-    let bevy_translation = enu_vector_to_bevy_vector(&enu_pose.translation.vector);
-    let bevy_rotation = enu_quat_to_bevy_quat(&enu_pose.rotation);
-
     BevyTransform {
-        translation: bevy_translation,
-        rotation: bevy_rotation,
+        translation: enu_vector_to_bevy_vector(&enu_pose.translation.vector),
+        rotation: enu_quat_to_bevy_quat(&enu_pose.rotation),
+        scale: BevyVec3::ONE,
+    }
+}
+
+/// Converts an agent/vehicle body pose (Isometry3) from ENU to Bevy Transform.
+///
+/// Uses the body-frame rotation formula (`enu_body_quat_to_bevy_quat`).
+/// ENU identity (heading East) → Bevy R_y(−π/2). Use for spawning agents and
+/// visualizing agent poses (pose gimbals, TF frames, covariance ellipsoids).
+pub fn enu_body_iso_to_bevy_transform(enu_pose: &Isometry3<f64>) -> BevyTransform {
+    BevyTransform {
+        translation: enu_vector_to_bevy_vector(&enu_pose.translation.vector),
+        rotation: enu_body_quat_to_bevy_quat(&enu_pose.rotation),
         scale: BevyVec3::ONE,
     }
 }
@@ -560,73 +609,129 @@ mod tests {
         assert_nalgebra_vector3_approx_eq(&enu_trans_vec_back, &enu_trans_vec, F64_EPSILON);
     }
 
-    // --- Tests for ENU <-> Bevy Object Orientation Transformations ---
+    // --- Tests for ENU <-> Bevy Orientation: World objects (pure similarity) ---
+    //
+    // `enu_quat_to_bevy_quat` uses the pure similarity transform:
+    //   q_bevy = Q_ENU_TO_BEVY * q_enu * Q_ENU_TO_BEVY^{-1}
+    // Identity ENU → identity Bevy (mesh placed as authored, no extra rotation). ✓
+
     #[test]
-    fn test_enu_quat_to_bevy_quat_identity() {
-        let enu_id = UnitQuaternion::identity();
-        let bevy_id_from_enu = enu_quat_to_bevy_quat(&enu_id);
-        assert_bevy_quat_approx_eq(&bevy_id_from_enu, &BevyQuat::IDENTITY, F32_EPSILON);
+    fn test_enu_quat_to_bevy_quat_world_identity() {
+        // Identity ENU → identity Bevy (terrain at origin, no rotation). ✓
+        let bevy = enu_quat_to_bevy_quat(&UnitQuaternion::identity());
+        assert_bevy_quat_approx_eq(&bevy, &BevyQuat::IDENTITY, F32_EPSILON);
+    }
+
+    #[test]
+    fn test_enu_quat_to_bevy_quat_world_yaw_90() {
+        // ENU yaw 90° (North) → Bevy R_y(+π/2) via pure similarity transform. ✓
+        let enu_north = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
+        let bevy = enu_quat_to_bevy_quat(&enu_north);
+        let expected = BevyQuat::from_rotation_y(PI_F32 / 2.0);
+        assert_bevy_quat_approx_eq(&bevy, &expected, F32_EPSILON);
+    }
+
+    // --- Tests for ENU <-> Bevy Orientation: Agent body frame ---
+    //
+    // `enu_body_quat_to_bevy_quat` accounts for FLU +X ↔ Bevy −Z body convention:
+    //   q_bevy = Q_ENU_TO_BEVY * q_enu * Q_FLU_BODY_TO_BEVY_LOCAL^{-1}
+    //   ENU identity (heading East) → Bevy R_y(−π/2)
+    //     Bevy −Z local rotated by R_y(−π/2) → Bevy +X = ENU East. ✓
+    //   Bevy identity ↔ ENU R_z(+π/2) = yaw 90° = North
+    //     Bevy −Z forward → ENU North = ENU yaw 90°. ✓
+
+    #[test]
+    fn test_enu_body_quat_to_bevy_quat_identity() {
+        // ENU identity (heading East) → Bevy R_y(-π/2). ✓
+        let bevy = enu_body_quat_to_bevy_quat(&UnitQuaternion::identity());
+        let expected = BevyQuat::from_rotation_y(-PI_F32 / 2.0);
+        assert_bevy_quat_approx_eq(&bevy, &expected, F32_EPSILON);
     }
 
     #[test]
     fn test_bevy_quat_to_enu_quat_identity() {
-        let bevy_id = BevyQuat::IDENTITY;
-        let enu_id_from_bevy = bevy_quat_to_enu_quat(&bevy_id);
-        assert_nalgebra_quat_approx_eq(&enu_id_from_bevy, &UnitQuaternion::identity(), F64_EPSILON);
+        // Bevy identity (-Z forward → ENU North) → ENU R_z(+π/2) = yaw 90°. ✓
+        let enu = bevy_quat_to_enu_quat(&BevyQuat::IDENTITY);
+        let expected = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
+        assert_nalgebra_quat_approx_eq(&enu, &expected, F64_EPSILON);
     }
 
     #[test]
-    fn test_enu_quat_to_bevy_quat_enu_yaw() {
-        let enu_yaw_90 = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0); // ENU Yaw (around Z_up)
-        let bevy_equiv_yaw_90 = enu_quat_to_bevy_quat(&enu_yaw_90);
-        let expected_bevy_yaw_90 = BevyQuat::from_rotation_y(PI_F32 / 2.0); // Bevy Yaw (around Y_up)
-        assert_bevy_quat_approx_eq(&bevy_equiv_yaw_90, &expected_bevy_yaw_90, F32_EPSILON);
+    fn test_enu_body_quat_to_bevy_quat_north() {
+        // ENU yaw 90° (North) → Bevy identity (-Z forward = ENU North). ✓
+        let enu_north = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
+        let bevy = enu_body_quat_to_bevy_quat(&enu_north);
+        assert_bevy_quat_approx_eq(&bevy, &BevyQuat::IDENTITY, F32_EPSILON);
     }
 
     #[test]
-    fn test_bevy_quat_to_enu_quat_bevy_yaw() {
-        let bevy_yaw_90 = BevyQuat::from_rotation_y(PI_F32 / 2.0); // Bevy Yaw
-        let enu_equiv_yaw_90 = bevy_quat_to_enu_quat(&bevy_yaw_90);
-        let expected_enu_yaw_90 = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0); // ENU Yaw
-        assert_nalgebra_quat_approx_eq(&enu_equiv_yaw_90, &expected_enu_yaw_90, F64_EPSILON);
+    fn test_bevy_quat_to_enu_quat_bevy_yaw_90() {
+        // Bevy R_y(+π/2) rotates -Z → (-1,0,0) = Bevy -X → ENU West = yaw 180°. ✓
+        let bevy_yaw_90 = BevyQuat::from_rotation_y(PI_F32 / 2.0);
+        let enu = bevy_quat_to_enu_quat(&bevy_yaw_90);
+        let expected = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64);
+        assert_nalgebra_quat_approx_eq(&enu, &expected, F64_EPSILON);
     }
 
     #[test]
-    fn test_enu_quat_to_bevy_quat_enu_roll() {
-        // Roll around common X-axis
-        let enu_roll_90 = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), PI_F64 / 2.0);
-        let bevy_equiv_roll_90 = enu_quat_to_bevy_quat(&enu_roll_90);
-        let expected_bevy_roll_90 = BevyQuat::from_rotation_x(PI_F32 / 2.0);
-        assert_bevy_quat_approx_eq(&bevy_equiv_roll_90, &expected_bevy_roll_90, F32_EPSILON);
+    fn test_enu_body_bevy_quat_round_trip() {
+        // Round trip: ENU body yaw → Bevy → ENU must recover the original.
+        for deg in [0.0f64, 45.0, 90.0, 135.0, 180.0, -45.0, -90.0] {
+            let enu_q = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), deg.to_radians());
+            let bevy_q = enu_body_quat_to_bevy_quat(&enu_q);
+            let enu_back = bevy_quat_to_enu_quat(&bevy_q);
+            assert_nalgebra_quat_approx_eq(&enu_back, &enu_q, F64_EPSILON);
+        }
+    }
+
+    #[test]
+    fn test_enu_body_heading_east_bevy_forward_east() {
+        // ENU heading 0° (East) → vehicle's Bevy -Z local points to Bevy +X = ENU East. ✓
+        let bevy_q = enu_body_quat_to_bevy_quat(&UnitQuaternion::identity());
+        let bevy_q_na = UnitQuaternion::from_quaternion(Quaternion::new(
+            bevy_q.w as f64, bevy_q.x as f64, bevy_q.y as f64, bevy_q.z as f64,
+        ));
+        let bevy_fwd = bevy_q_na * Vector3::new(0.0, 0.0, -1.0);
+        assert_nalgebra_vector3_approx_eq(&bevy_fwd, &Vector3::new(1.0, 0.0, 0.0), F64_EPSILON);
+    }
+
+    #[test]
+    fn test_bevy_forward_to_enu_heading() {
+        // Bevy R_y(-π/2): -Z local → +X Bevy world → ENU East → ENU yaw 0°. ✓
+        let bevy_q = BevyQuat::from_rotation_y(-PI_F32 / 2.0);
+        let enu_q = bevy_quat_to_enu_quat(&bevy_q);
+        assert_nalgebra_quat_approx_eq(&enu_q, &UnitQuaternion::identity(), F64_EPSILON);
     }
 
     // --- Tests for ENU <-> Bevy Full Pose Transformations ---
+
     #[test]
     fn test_enu_iso_to_bevy_transform_identity() {
-        let enu_pose_id = Isometry3::identity();
-        let bevy_transform_id = enu_iso_to_bevy_transform(&enu_pose_id);
-        assert_bevy_vec3_approx_eq(&bevy_transform_id.translation, &BevyVec3::ZERO, F32_EPSILON);
+        // World objects: ENU identity → Bevy identity (mesh placed as authored). ✓
+        let bevy = enu_iso_to_bevy_transform(&Isometry3::identity());
+        assert_bevy_vec3_approx_eq(&bevy.translation, &BevyVec3::ZERO, F32_EPSILON);
+        assert_bevy_quat_approx_eq(&bevy.rotation, &BevyQuat::IDENTITY, F32_EPSILON);
+    }
+
+    #[test]
+    fn test_enu_body_iso_to_bevy_transform_identity() {
+        // Agents: ENU identity (heading East) → Bevy R_y(-π/2). ✓
+        let bevy = enu_body_iso_to_bevy_transform(&Isometry3::identity());
+        assert_bevy_vec3_approx_eq(&bevy.translation, &BevyVec3::ZERO, F32_EPSILON);
         assert_bevy_quat_approx_eq(
-            &bevy_transform_id.rotation,
-            &BevyQuat::IDENTITY,
+            &bevy.rotation,
+            &BevyQuat::from_rotation_y(-PI_F32 / 2.0),
             F32_EPSILON,
         );
     }
 
     #[test]
     fn test_bevy_transform_to_enu_iso_identity() {
-        let bevy_transform_id = BevyTransform::IDENTITY;
-        let enu_pose_id_back = bevy_transform_to_enu_iso(&bevy_transform_id);
-        assert_nalgebra_vector3_approx_eq(
-            &enu_pose_id_back.translation.vector,
-            &Vector3::zeros(),
-            F64_EPSILON,
-        );
-        assert_nalgebra_quat_approx_eq(
-            &enu_pose_id_back.rotation,
-            &UnitQuaternion::identity(),
-            F64_EPSILON,
-        );
+        // Bevy identity (-Z → North) → ENU R_z(π/2) = yaw 90°. ✓
+        let enu = bevy_transform_to_enu_iso(&BevyTransform::IDENTITY);
+        assert_nalgebra_vector3_approx_eq(&enu.translation.vector, &Vector3::zeros(), F64_EPSILON);
+        let expected = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
+        assert_nalgebra_quat_approx_eq(&enu.rotation, &expected, F64_EPSILON);
     }
 
     // --- Tests for FLU Body Frame <-> Bevy Local Frame ---
@@ -679,15 +784,17 @@ mod tests {
     }
 
     #[test]
-    fn test_enu_iso_to_bevy_transform_general_and_back() {
-        let enu_translation = Vector3::new(1.0, 2.0, 0.5); // E, N, U
+    fn test_enu_body_iso_to_bevy_transform_general_and_back() {
+        // ENU yaw π/4 (45°, heading NE) → Bevy R_y(π/4 − π/2) = R_y(−π/4).
+        // Translation: E=1,N=2,U=0.5 → Bevy X=1,Y=0.5,Z=−2. ✓
+        let enu_translation = Vector3::new(1.0, 2.0, 0.5);
         let enu_yaw_rot = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 4.0);
         let enu_pose = Isometry3::from_parts(Translation3::from(enu_translation), enu_yaw_rot);
 
-        let bevy_transform = enu_iso_to_bevy_transform(&enu_pose);
+        let bevy_transform = enu_body_iso_to_bevy_transform(&enu_pose);
 
-        let expected_bevy_translation = BevyVec3::new(1.0, 0.5, -2.0); // X=E, Y=U, Z=-N
-        let expected_bevy_rotation = BevyQuat::from_rotation_y(PI_F32 / 4.0);
+        let expected_bevy_translation = BevyVec3::new(1.0, 0.5, -2.0);
+        let expected_bevy_rotation = BevyQuat::from_rotation_y(-PI_F32 / 4.0);
 
         assert_bevy_vec3_approx_eq(
             &bevy_transform.translation,
@@ -700,6 +807,7 @@ mod tests {
             F32_EPSILON,
         );
 
+        // Round-trip via body formula and its inverse.
         let enu_pose_back = bevy_transform_to_enu_iso(&bevy_transform);
         assert_nalgebra_vector3_approx_eq(
             &enu_pose_back.translation.vector,

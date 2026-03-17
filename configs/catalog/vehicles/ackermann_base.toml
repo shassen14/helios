@@ -43,4 +43,16 @@ max_speed  = 20.0     # m/s
 # kd             = 500.0
 # integral_clamp = 0.5
 [adapter]
-kind = "Default"
+kind = "DualSisoPid"
+
+[adapter.longitudinal]   # gains in N / (m/s)
+kp             = 8000.0
+ki             = 100.0
+kd             = 200.0
+integral_clamp = 0.5
+
+[adapter.lateral]        # gains in N·m / (rad/s)
+kp             = 8000.0
+ki             = 1.0
+kd             = 500.0
+integral_clamp = 0.5

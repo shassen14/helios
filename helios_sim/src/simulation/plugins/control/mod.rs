@@ -8,7 +8,7 @@ use crate::{
     simulation::{
         core::{
             app_state::{AppState, SceneBuildSet, SimulationSet},
-            components::ControlOutputComponent,
+            components::{ControlOutputComponent, ControllerStateSource, GroundTruthState},
             sim_runtime::SimRuntime,
         },
         plugins::autonomy::{ControlPipelineComponent, EstimatorComponent},
@@ -16,6 +16,8 @@ use crate::{
 };
 
 use helios_core::control::ControlOutput;
+use helios_core::frames::FrameAwareState;
+use helios_core::types::FrameHandle;
 use nalgebra::Vector3;
 
 pub struct ControlPlugin;
@@ -57,24 +59,40 @@ fn spawn_control_output(
 // =========================================================================
 
 /// Calls `step_controllers()` each tick.
-/// Reads estimated state from `EstimatorComponent`, writes result to `ControlOutputComponent`.
+/// Reads state from `EstimatorComponent` or `GroundTruthState` based on `ControllerStateSource`.
 fn controller_compute_system(
     time: Res<Time>,
     tf_tree: Res<crate::simulation::core::transforms::TfTree>,
     mut query: Query<(
+        Entity,
         &EstimatorComponent,
         &mut ControlPipelineComponent,
         &mut ControlOutputComponent,
+        &ControllerStateSource,
+        Option<&GroundTruthState>,
     )>,
 ) {
     let dt = time.delta_secs_f64();
+    let ts = time.elapsed_secs_f64();
     let runtime = SimRuntime {
         tf: &*tf_tree,
-        elapsed_secs: time.elapsed_secs_f64(),
+        elapsed_secs: ts,
     };
 
-    for (estimator, mut control, mut output) in &mut query {
-        if let Some(state) = estimator.0.get_state() {
+    for (entity, estimator, mut control, mut output, state_source, gt_opt) in &mut query {
+        let gt_built: Option<FrameAwareState> = match state_source {
+            ControllerStateSource::GroundTruth => {
+                let handle = FrameHandle::from_entity(entity);
+                gt_opt.map(|gt| gt.to_frame_aware_state(handle, ts))
+            }
+            ControllerStateSource::Estimated => None,
+        };
+        let state: Option<&FrameAwareState> = match state_source {
+            ControllerStateSource::GroundTruth => gt_built.as_ref(),
+            ControllerStateSource::Estimated => estimator.0.get_state(),
+        };
+
+        if let Some(state) = state {
             if let Some(out) = control.0.step_controllers(state, dt, &runtime) {
                 output.0 = out;
             }

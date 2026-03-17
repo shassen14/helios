@@ -1,8 +1,10 @@
 // helios_sim/src/simulation/core/components.rs
 
 use bevy::prelude::*;
+use helios_core::frames::{layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable};
 use helios_core::messages::MeasurementMessage;
 use helios_core::prelude::{ControlOutput, EstimationDynamics, Measurement};
+use helios_core::types::FrameHandle;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
 
@@ -46,6 +48,44 @@ impl Default for GroundTruthState {
             last_linear_velocity: Vector3::zeros(),
         }
     }
+}
+
+impl GroundTruthState {
+    /// Converts physics ground truth into a `FrameAwareState` using the standard INS layout.
+    /// The layout matches what the EKF produces, so the controller sees an identical type.
+    pub fn to_frame_aware_state(&self, agent_handle: FrameHandle, timestamp: f64) -> FrameAwareState {
+        let body_frame = FrameId::Body(agent_handle);
+        let world_frame = FrameId::World;
+        let layout = standard_ins_state_layout(agent_handle);
+        let mut state = FrameAwareState::new(layout, 1e-6, timestamp);
+        let t = &self.pose.translation;
+        state.set_variable(&StateVariable::Px(FrameId::World), t.x);
+        state.set_variable(&StateVariable::Py(FrameId::World), t.y);
+        state.set_variable(&StateVariable::Pz(FrameId::World), t.z);
+        let v = &self.linear_velocity;
+        state.set_variable(&StateVariable::Vx(FrameId::World), v.x);
+        state.set_variable(&StateVariable::Vy(FrameId::World), v.y);
+        state.set_variable(&StateVariable::Vz(FrameId::World), v.z);
+        let q = self.pose.rotation.quaternion();
+        state.set_variable(&StateVariable::Qx(body_frame.clone(), world_frame.clone()), q.i);
+        state.set_variable(&StateVariable::Qy(body_frame.clone(), world_frame.clone()), q.j);
+        state.set_variable(&StateVariable::Qz(body_frame.clone(), world_frame.clone()), q.k);
+        state.set_variable(&StateVariable::Qw(body_frame, world_frame), q.w);
+        state
+    }
+}
+
+// =========================================================================
+// == ControllerStateSource ==
+// =========================================================================
+
+/// Which state is passed to controllers: estimated (EKF) or ground-truth (physics).
+/// Set at scene build time from `ControllerStateSourceConfig`. Default = Estimated.
+#[derive(Component, Default, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerStateSource {
+    #[default]
+    Estimated,
+    GroundTruth,
 }
 
 // =========================================================================
