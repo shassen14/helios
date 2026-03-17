@@ -7,7 +7,7 @@ use crate::{
             components::{ControlOutputComponent, GroundTruthState},
             transforms::{
                 bevy_vector_to_enu_vector, enu_body_iso_to_bevy_transform,
-            flu_vector_to_bevy_local_vector,
+                flu_vector_to_bevy_local_vector,
             },
         },
         registry::{AdapterBuildContext, AutonomyRegistry},
@@ -186,7 +186,10 @@ pub(super) fn drive_ackermann_cars(
     {
         let Some(ctrl_output) = ctrl_output_opt else {
             if log {
-                info!("[Actuation #{}] entity {entity:?} has no ControlOutputComponent — skipping", *tick);
+                info!(
+                    "[Actuation #{}] entity {entity:?} has no ControlOutputComponent — skipping",
+                    *tick
+                );
             }
             continue;
         };
@@ -239,18 +242,34 @@ pub(super) fn drive_ackermann_cars(
                  force_world    = ({fwx:.1}, {fwy:.1}, {fwz:.1}) N (Bevy)\n  \
                  torque_flu     = ({tfx:.1}, {tfy:.1}, {tfz:.1}) N·m\n  \
                  torque_world   = ({twx:.1}, {twy:.1}, {twz:.1}) N·m (Bevy)",
-                tick  = *tick,
-                bx = bevy_pos.x, by = bevy_pos.y, bz = bevy_pos.z,
-                ex = enu_pos.x,  ey = enu_pos.y,  ez = enu_pos.z,
-                bfx = bevy_fwd.x, bfy = bevy_fwd.y, bfz = bevy_fwd.z,
-                efx = enu_fwd.x,  efy = enu_fwd.y,  efz = enu_fwd.z,
+                tick = *tick,
+                bx = bevy_pos.x,
+                by = bevy_pos.y,
+                bz = bevy_pos.z,
+                ex = enu_pos.x,
+                ey = enu_pos.y,
+                ez = enu_pos.z,
+                bfx = bevy_fwd.x,
+                bfy = bevy_fwd.y,
+                bfz = bevy_fwd.z,
+                efx = enu_fwd.x,
+                efy = enu_fwd.y,
+                efz = enu_fwd.z,
                 hdg = enu_fwd.y.atan2(enu_fwd.x).to_degrees(),
-                thr   = cmd.throttle_norm,
+                thr = cmd.throttle_norm,
                 steer = cmd.steering_torque_norm,
-                ffx = force_flu.x,    ffy = force_flu.y,    ffz = force_flu.z,
-                fwx = force_world.x,  fwy = force_world.y,  fwz = force_world.z,
-                tfx = torque_flu.x,   tfy = torque_flu.y,   tfz = torque_flu.z,
-                twx = torque_world.x, twy = torque_world.y, twz = torque_world.z,
+                ffx = force_flu.x,
+                ffy = force_flu.y,
+                ffz = force_flu.z,
+                fwx = force_world.x,
+                fwy = force_world.y,
+                fwz = force_world.z,
+                tfx = torque_flu.x,
+                tfy = torque_flu.y,
+                tfz = torque_flu.z,
+                twx = torque_world.x,
+                twy = torque_world.y,
+                twz = torque_world.z,
             );
         }
 

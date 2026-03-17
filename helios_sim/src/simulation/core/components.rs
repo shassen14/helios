@@ -1,7 +1,9 @@
 // helios_sim/src/simulation/core/components.rs
 
 use bevy::prelude::*;
-use helios_core::frames::{layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable};
+use helios_core::frames::{
+    layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable,
+};
 use helios_core::messages::MeasurementMessage;
 use helios_core::prelude::{ControlOutput, EstimationDynamics, Measurement};
 use helios_core::types::FrameHandle;
@@ -53,7 +55,11 @@ impl Default for GroundTruthState {
 impl GroundTruthState {
     /// Converts physics ground truth into a `FrameAwareState` using the standard INS layout.
     /// The layout matches what the EKF produces, so the controller sees an identical type.
-    pub fn to_frame_aware_state(&self, agent_handle: FrameHandle, timestamp: f64) -> FrameAwareState {
+    pub fn to_frame_aware_state(
+        &self,
+        agent_handle: FrameHandle,
+        timestamp: f64,
+    ) -> FrameAwareState {
         let body_frame = FrameId::Body(agent_handle);
         let world_frame = FrameId::World;
         let layout = standard_ins_state_layout(agent_handle);
@@ -67,9 +73,18 @@ impl GroundTruthState {
         state.set_variable(&StateVariable::Vy(FrameId::World), v.y);
         state.set_variable(&StateVariable::Vz(FrameId::World), v.z);
         let q = self.pose.rotation.quaternion();
-        state.set_variable(&StateVariable::Qx(body_frame.clone(), world_frame.clone()), q.i);
-        state.set_variable(&StateVariable::Qy(body_frame.clone(), world_frame.clone()), q.j);
-        state.set_variable(&StateVariable::Qz(body_frame.clone(), world_frame.clone()), q.k);
+        state.set_variable(
+            &StateVariable::Qx(body_frame.clone(), world_frame.clone()),
+            q.i,
+        );
+        state.set_variable(
+            &StateVariable::Qy(body_frame.clone(), world_frame.clone()),
+            q.j,
+        );
+        state.set_variable(
+            &StateVariable::Qz(body_frame.clone(), world_frame.clone()),
+            q.k,
+        );
         state.set_variable(&StateVariable::Qw(body_frame, world_frame), q.w);
         state
     }

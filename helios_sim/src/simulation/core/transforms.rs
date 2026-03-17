@@ -358,9 +358,8 @@ pub fn bevy_point_as_enu_vector(bevy_point: &BevyVec3) -> Vector3<f64> {
 ///
 /// For agent/vehicle body orientations use `enu_body_quat_to_bevy_quat` instead.
 pub fn enu_quat_to_bevy_quat(enu_obj_quat: &UnitQuaternion<f64>) -> BevyQuat {
-    let final_rot_f64 = Q_ENU_FRAME_TO_BEVY_FRAME.with(|q_enu_to_bevy| {
-        *q_enu_to_bevy * enu_obj_quat * q_enu_to_bevy.inverse()
-    });
+    let final_rot_f64 = Q_ENU_FRAME_TO_BEVY_FRAME
+        .with(|q_enu_to_bevy| *q_enu_to_bevy * enu_obj_quat * q_enu_to_bevy.inverse());
     BevyQuat::from_xyzw(
         final_rot_f64.coords.x as f32,
         final_rot_f64.coords.y as f32,
@@ -409,9 +408,8 @@ pub fn bevy_quat_to_enu_quat(bevy_obj_quat: &BevyQuat) -> UnitQuaternion<f64> {
     ));
 
     Q_ENU_FRAME_TO_BEVY_FRAME.with(|q_enu_to_bevy| {
-        Q_FLU_BODY_TO_BEVY_LOCAL.with(|q_flu_to_bevy_local| {
-            q_enu_to_bevy.inverse() * bevy_q_f64 * *q_flu_to_bevy_local
-        })
+        Q_FLU_BODY_TO_BEVY_LOCAL
+            .with(|q_flu_to_bevy_local| q_enu_to_bevy.inverse() * bevy_q_f64 * *q_flu_to_bevy_local)
     })
 }
 
@@ -689,7 +687,10 @@ mod tests {
         // ENU heading 0° (East) → vehicle's Bevy -Z local points to Bevy +X = ENU East. ✓
         let bevy_q = enu_body_quat_to_bevy_quat(&UnitQuaternion::identity());
         let bevy_q_na = UnitQuaternion::from_quaternion(Quaternion::new(
-            bevy_q.w as f64, bevy_q.x as f64, bevy_q.y as f64, bevy_q.z as f64,
+            bevy_q.w as f64,
+            bevy_q.x as f64,
+            bevy_q.y as f64,
+            bevy_q.z as f64,
         ));
         let bevy_fwd = bevy_q_na * Vector3::new(0.0, 0.0, -1.0);
         assert_nalgebra_vector3_approx_eq(&bevy_fwd, &Vector3::new(1.0, 0.0, 0.0), F64_EPSILON);

@@ -132,13 +132,31 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, Stri
     let starting_iso = starting_pose.to_isometry();
     let body_frame = FrameId::Body(agent_handle);
     let world_frame = FrameId::World;
-    initial_state.set_variable(&StateVariable::Px(FrameId::World), starting_iso.translation.x);
-    initial_state.set_variable(&StateVariable::Py(FrameId::World), starting_iso.translation.y);
-    initial_state.set_variable(&StateVariable::Pz(FrameId::World), starting_iso.translation.z);
+    initial_state.set_variable(
+        &StateVariable::Px(FrameId::World),
+        starting_iso.translation.x,
+    );
+    initial_state.set_variable(
+        &StateVariable::Py(FrameId::World),
+        starting_iso.translation.y,
+    );
+    initial_state.set_variable(
+        &StateVariable::Pz(FrameId::World),
+        starting_iso.translation.z,
+    );
     let q = starting_iso.rotation.quaternion();
-    initial_state.set_variable(&StateVariable::Qx(body_frame.clone(), world_frame.clone()), q.i);
-    initial_state.set_variable(&StateVariable::Qy(body_frame.clone(), world_frame.clone()), q.j);
-    initial_state.set_variable(&StateVariable::Qz(body_frame.clone(), world_frame.clone()), q.k);
+    initial_state.set_variable(
+        &StateVariable::Qx(body_frame.clone(), world_frame.clone()),
+        q.i,
+    );
+    initial_state.set_variable(
+        &StateVariable::Qy(body_frame.clone(), world_frame.clone()),
+        q.j,
+    );
+    initial_state.set_variable(
+        &StateVariable::Qz(body_frame.clone(), world_frame.clone()),
+        q.k,
+    );
     initial_state.set_variable(&StateVariable::Qw(body_frame, world_frame), q.w);
 
     info!(

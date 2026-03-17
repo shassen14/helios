@@ -5,8 +5,8 @@
 
 use nalgebra::Vector3;
 
-use crate::frames::{FrameId, FrameAwareState, StateVariable};
 use super::{siso_pid::SisoPid, ControlContext, ControlOutput, Controller};
+use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
 /// Heading-error path follower for non-holonomic (Ackermann) vehicles.
 ///
@@ -36,7 +36,11 @@ impl SteeringPidController {
 fn normalize_angle(a: f64) -> f64 {
     let two_pi = std::f64::consts::TAU;
     let a = ((a % two_pi) + two_pi) % two_pi;
-    if a > std::f64::consts::PI { a - two_pi } else { a }
+    if a > std::f64::consts::PI {
+        a - two_pi
+    } else {
+        a
+    }
 }
 
 fn world_xy(state: &FrameAwareState) -> Option<(f64, f64)> {
@@ -66,7 +70,10 @@ impl Controller for SteeringPidController {
             Some(r) => r,
             None => {
                 if log {
-                    eprintln!("[SteeringPid #{tick}] no reference waypoint — idling", tick = self.tick_count);
+                    eprintln!(
+                        "[SteeringPid #{tick}] no reference waypoint — idling",
+                        tick = self.tick_count
+                    );
                 }
                 self.heading_pid.reset();
                 return zero;
@@ -76,21 +83,36 @@ impl Controller for SteeringPidController {
         let (cx, cy) = match world_xy(state) {
             Some(p) => p,
             None => {
-                if log { eprintln!("[SteeringPid #{tick}] EKF state has no Px/Py(World)", tick = self.tick_count); }
+                if log {
+                    eprintln!(
+                        "[SteeringPid #{tick}] EKF state has no Px/Py(World)",
+                        tick = self.tick_count
+                    );
+                }
                 return zero;
             }
         };
         let (rx, ry) = match world_xy(&reference.state) {
             Some(p) => p,
             None => {
-                if log { eprintln!("[SteeringPid #{tick}] reference state has no Px/Py(World)", tick = self.tick_count); }
+                if log {
+                    eprintln!(
+                        "[SteeringPid #{tick}] reference state has no Px/Py(World)",
+                        tick = self.tick_count
+                    );
+                }
                 return zero;
             }
         };
         let orientation = match state.get_orientation() {
             Some(q) => q,
             None => {
-                if log { eprintln!("[SteeringPid #{tick}] EKF state has no orientation quaternion", tick = self.tick_count); }
+                if log {
+                    eprintln!(
+                        "[SteeringPid #{tick}] EKF state has no orientation quaternion",
+                        tick = self.tick_count
+                    );
+                }
                 return zero;
             }
         };
@@ -112,16 +134,21 @@ impl Controller for SteeringPidController {
                  desired_yaw   = {des:.1}°\n  \
                  heading_error = {err:.1}°\n  \
                  yaw_rate_cmd  = {yr:.4} rad/s",
-                tick  = self.tick_count,
-                cx = cx, cy = cy,
-                rx = rx, ry = ry,
-                qi = q.i, qj = q.j, qk = q.k, qw = q.w,
-                roll  = roll.to_degrees(),
+                tick = self.tick_count,
+                cx = cx,
+                cy = cy,
+                rx = rx,
+                ry = ry,
+                qi = q.i,
+                qj = q.j,
+                qk = q.k,
+                qw = q.w,
+                roll = roll.to_degrees(),
                 pitch = pitch.to_degrees(),
-                yaw   = current_yaw.to_degrees(),
-                des   = desired_yaw.to_degrees(),
-                err   = heading_error.to_degrees(),
-                yr    = yaw_rate,
+                yaw = current_yaw.to_degrees(),
+                des = desired_yaw.to_degrees(),
+                err = heading_error.to_degrees(),
+                yr = yaw_rate,
             );
         }
 

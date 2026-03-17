@@ -5,8 +5,7 @@
 
 use bevy::prelude::*;
 use helios_core::control::{
-    lqr::LqrController, pid::VelocityPidController,
-    steering_pid::SteeringPidController,
+    lqr::LqrController, pid::VelocityPidController, steering_pid::SteeringPidController,
 };
 
 use super::{AutonomyRegistry, ControllerBuildContext};
@@ -69,9 +68,19 @@ impl Plugin for DefaultControllersPlugin {
 
         // --- SteeringPid ---
         registry.register_controller("SteeringPid", |ctx: ControllerBuildContext| {
-            if let ControllerConfig::SteeringPid { cruise_speed, kp, ki, kd, .. } = ctx.controller_cfg {
+            if let ControllerConfig::SteeringPid {
+                cruise_speed,
+                kp,
+                ki,
+                kd,
+                ..
+            } = ctx.controller_cfg
+            {
                 Ok(Box::new(SteeringPidController::new(
-                    kp as f64, ki as f64, kd as f64, cruise_speed as f64,
+                    kp as f64,
+                    ki as f64,
+                    kd as f64,
+                    cruise_speed as f64,
                 )))
             } else {
                 Err("SteeringPid factory received wrong ControllerConfig variant".into())

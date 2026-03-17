@@ -265,8 +265,12 @@ pub fn spawn_autonomy_pipeline(
                             .map(|c| c.state_source())
                             .unwrap_or_default();
                         let ctrl_state_source_component = match ctrl_state_source {
-                            ControllerStateSourceConfig::GroundTruth => ControllerStateSource::GroundTruth,
-                            ControllerStateSourceConfig::Estimated => ControllerStateSource::Estimated,
+                            ControllerStateSourceConfig::GroundTruth => {
+                                ControllerStateSource::GroundTruth
+                            }
+                            ControllerStateSourceConfig::Estimated => {
+                                ControllerStateSource::Estimated
+                            }
                         };
                         let (estimation, mapping, control) = PipelineBuilder::new()
                             .with_slam(system)
