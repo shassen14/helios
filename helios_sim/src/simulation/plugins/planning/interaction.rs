@@ -9,8 +9,8 @@ use bevy::window::PrimaryWindow;
 use helios_core::planning::types::PlannerGoal;
 use nalgebra::Vector2;
 
-use crate::simulation::core::transforms::EnuVector;
 use crate::simulation::core::events::GoalCommandEvent;
+use crate::simulation::core::transforms::EnuVector;
 use crate::simulation::plugins::autonomy::ControlPipelineComponent;
 
 // =========================================================================

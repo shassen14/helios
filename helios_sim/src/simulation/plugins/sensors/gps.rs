@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::{
     app_state::SimulationSet, components::SensorTopicName, events::BevyMeasurementMessage,
-    prng::SimulationRng, transforms::EnuVector
+    prng::SimulationRng, transforms::EnuVector,
 };
 
 // --- Core Library Imports ---

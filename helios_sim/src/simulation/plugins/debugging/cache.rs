@@ -1,6 +1,6 @@
 use bevy::prelude::*;
-use nalgebra::Vector3;
 use helios_core::messages::MeasurementData;
+use nalgebra::Vector3;
 
 use super::components::DebugSensorCache;
 use crate::simulation::core::events::BevyMeasurementMessage;
@@ -21,7 +21,9 @@ pub fn cache_sensor_data(
                     .iter()
                     .map(|p| {
                         let local = Vec3::from(FluVector(Vector3::new(
-                            p.position.x, p.position.y, p.position.z,
+                            p.position.x,
+                            p.position.y,
+                            p.position.z,
                         )));
                         transform.transform_point(local)
                     })
