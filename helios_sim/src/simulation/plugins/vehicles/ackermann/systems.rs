@@ -5,7 +5,7 @@ use crate::{
     simulation::{
         core::{
             components::{ControlOutputComponent, GroundTruthState},
-            transforms::{EnuBodyPose, EnuVector, FluVector},
+            transforms::{EnuBodyPose, FluVector},
         },
         registry::{AdapterBuildContext, AutonomyRegistry},
     },
@@ -152,7 +152,6 @@ pub(super) fn attach_ackermann_physics(
 pub(super) fn drive_ackermann_cars(
     mut commands: Commands,
     time: Res<Time>,
-    mut tick: Local<u64>,
     mut query: Query<(
         Entity,
         &Transform,
@@ -165,9 +164,6 @@ pub(super) fn drive_ackermann_cars(
         Option<&ControlOutputComponent>,
     )>,
 ) {
-    *tick += 1;
-    let log = *tick % 60 == 1;
-
     let dt = time.delta_secs();
     for (
         entity,
@@ -182,12 +178,6 @@ pub(super) fn drive_ackermann_cars(
     ) in &mut query
     {
         let Some(ctrl_output) = ctrl_output_opt else {
-            if log {
-                info!(
-                    "[Actuation #{}] entity {entity:?} has no ControlOutputComponent — skipping",
-                    *tick
-                );
-            }
             continue;
         };
 
@@ -222,53 +212,6 @@ pub(super) fn drive_ackermann_cars(
         );
         let torque_bevy_local = Vec3::from(FluVector(torque_flu));
         let torque_world = transform.rotation * torque_bevy_local;
-
-        if log {
-            let bevy_pos = transform.translation;
-            let enu_pos = EnuVector::from(bevy_pos).0;
-            let bevy_fwd = transform.forward();
-            let enu_fwd = EnuVector::from(*bevy_fwd).0;
-            info!(
-                "[Actuation #{tick}] entity {entity:?}\n  \
-                 bevy_pos       = ({bx:.2}, {by:.2}, {bz:.2})\n  \
-                 enu_pos        = ({ex:.2}, {ey:.2}, {ez:.2})\n  \
-                 bevy_fwd       = ({bfx:.3}, {bfy:.3}, {bfz:.3})\n  \
-                 enu_fwd        = ({efx:.3}, {efy:.3}, {efz:.3})  heading={hdg:.1}°\n  \
-                 throttle_norm  = {thr:.3}  steer_norm={steer:.3}\n  \
-                 force_flu      = ({ffx:.1}, {ffy:.1}, {ffz:.1}) N\n  \
-                 force_world    = ({fwx:.1}, {fwy:.1}, {fwz:.1}) N (Bevy)\n  \
-                 torque_flu     = ({tfx:.1}, {tfy:.1}, {tfz:.1}) N·m\n  \
-                 torque_world   = ({twx:.1}, {twy:.1}, {twz:.1}) N·m (Bevy)",
-                tick = *tick,
-                bx = bevy_pos.x,
-                by = bevy_pos.y,
-                bz = bevy_pos.z,
-                ex = enu_pos.x,
-                ey = enu_pos.y,
-                ez = enu_pos.z,
-                bfx = bevy_fwd.x,
-                bfy = bevy_fwd.y,
-                bfz = bevy_fwd.z,
-                efx = enu_fwd.x,
-                efy = enu_fwd.y,
-                efz = enu_fwd.z,
-                hdg = enu_fwd.y.atan2(enu_fwd.x).to_degrees(),
-                thr = cmd.throttle_norm,
-                steer = cmd.steering_torque_norm,
-                ffx = force_flu.x,
-                ffy = force_flu.y,
-                ffz = force_flu.z,
-                fwx = force_world.x,
-                fwy = force_world.y,
-                fwz = force_world.z,
-                tfx = torque_flu.x,
-                tfy = torque_flu.y,
-                tfz = torque_flu.z,
-                twx = torque_world.x,
-                twy = torque_world.y,
-                twz = torque_world.z,
-            );
-        }
 
         commands.entity(entity).insert((
             ExternalForce::new(force_world),
