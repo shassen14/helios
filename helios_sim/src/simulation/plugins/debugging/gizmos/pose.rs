@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::simulation::core::components::GroundTruthState;
-use crate::simulation::core::transforms::enu_body_iso_to_bevy_transform;
+use crate::simulation::core::transforms::EnuBodyPose;
 use crate::simulation::plugins::autonomy::EstimatorComponent;
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
 use helios_core::frames::FrameAwareState;
@@ -35,7 +35,7 @@ pub fn draw_estimated_pose_gimbals(
             .get_state()
             .and_then(|s: &FrameAwareState| s.get_pose_isometry())
         {
-            let bevy_transform = enu_body_iso_to_bevy_transform(&estimated_pose_enu);
+            let bevy_transform = Transform::from(EnuBodyPose(estimated_pose_enu));
             let global_transform = GlobalTransform::from(bevy_transform);
             let start = global_transform.translation();
             let length = 1.2;

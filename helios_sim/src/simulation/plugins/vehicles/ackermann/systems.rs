@@ -5,10 +5,7 @@ use crate::{
     simulation::{
         core::{
             components::{ControlOutputComponent, GroundTruthState},
-            transforms::{
-                bevy_vector_to_enu_vector, enu_body_iso_to_bevy_transform,
-                flu_vector_to_bevy_local_vector,
-            },
+            transforms::{EnuBodyPose, EnuVector, FluVector},
         },
         registry::{AdapterBuildContext, AutonomyRegistry},
     },
@@ -97,7 +94,7 @@ pub(super) fn attach_ackermann_physics(
     assets: Res<AckermannAssets>,
 ) {
     for (entity, name, ground_truth, _params, request) in &query {
-        let start_transform_bevy = enu_body_iso_to_bevy_transform(&ground_truth.pose);
+        let start_transform_bevy = Transform::from(EnuBodyPose(ground_truth.pose));
 
         // Read physics config from TOML; fall back to defaults if variant doesn't match.
         let physics = if let Vehicle::Ackermann { physics, .. } = &request.0.vehicle {
@@ -214,7 +211,7 @@ pub(super) fn drive_ackermann_cars(
             0.0,
             0.0,
         );
-        let force_bevy_local = flu_vector_to_bevy_local_vector(&force_flu);
+        let force_bevy_local = Vec3::from(FluVector(force_flu));
         let force_world = transform.rotation * force_bevy_local;
 
         // Torque: steering_torque_norm * max_torque (FLU +Z = Yaw-up).
@@ -223,14 +220,14 @@ pub(super) fn drive_ackermann_cars(
             0.0,
             cmd.steering_torque_norm as f64 * actuator.max_torque as f64,
         );
-        let torque_bevy_local = flu_vector_to_bevy_local_vector(&torque_flu);
+        let torque_bevy_local = Vec3::from(FluVector(torque_flu));
         let torque_world = transform.rotation * torque_bevy_local;
 
         if log {
             let bevy_pos = transform.translation;
-            let enu_pos = bevy_vector_to_enu_vector(&bevy_pos);
+            let enu_pos = EnuVector::from(bevy_pos).0;
             let bevy_fwd = transform.forward();
-            let enu_fwd = bevy_vector_to_enu_vector(&bevy_fwd);
+            let enu_fwd = EnuVector::from(*bevy_fwd).0;
             info!(
                 "[Actuation #{tick}] entity {entity:?}\n  \
                  bevy_pos       = ({bx:.2}, {by:.2}, {bz:.2})\n  \

@@ -13,7 +13,7 @@ use crate::simulation::config::structs::world_object::{WorldObjectCollider, Worl
 use crate::simulation::config::PrefabCatalog;
 use crate::simulation::core::app_state::AssetLoadSet;
 use crate::simulation::core::components::{BoundingBox3D, SemanticLabel, WorldObjectType};
-use crate::simulation::core::transforms::enu_iso_to_bevy_transform;
+use crate::simulation::core::transforms::EnuWorldPose;
 use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
 // =========================================================================
@@ -274,7 +274,7 @@ fn placement_to_bevy_transform(position: [f64; 3], orientation_degrees: [f64; 3]
     let translation = Translation3::new(position[0], position[1], position[2]);
     let rotation = UnitQuaternion::from_euler_angles(roll, pitch, yaw);
     let iso = Isometry3::from_parts(translation, rotation);
-    enu_iso_to_bevy_transform(&iso)
+    Transform::from(EnuWorldPose(iso))
 }
 
 fn spawn_object_trimesh_colliders(

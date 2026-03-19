@@ -7,8 +7,10 @@
 
 use bevy::prelude::*;
 use helios_core::planning::types::PlannerGoal;
+use nalgebra::Vector3;
 
 use super::interaction::{GoalRegistry, SelectedAgent};
+use crate::simulation::core::transforms::EnuVector;
 use crate::simulation::plugins::autonomy::ControlPipelineComponent;
 
 const COLOR_SELECTION: Color = Color::srgb(0.0, 1.0, 0.0); // green
@@ -20,12 +22,18 @@ const GOAL_SPHERE_RADIUS: f32 = 0.8;
 /// ENU 2D goal position → Bevy Vec3 at a slight hover above the ground.
 fn goal_to_bevy(goal: &PlannerGoal) -> Option<Vec3> {
     match goal {
-        PlannerGoal::WorldPosition2D(v) => Some(Vec3::new(v.x as f32, 0.2, -(v.y as f32))),
-        PlannerGoal::WorldPose(iso) => Some(Vec3::new(
-            iso.translation.x as f32,
-            0.2,
-            -(iso.translation.y as f32),
-        )),
+        PlannerGoal::WorldPosition2D(v) => {
+            let enu = Vector3::new(v.x, v.y, 0.2);
+            let mut bevy = Vec3::from(EnuVector(enu));
+            bevy.y = 0.2; // slight hover above ground
+            Some(bevy)
+        }
+        PlannerGoal::WorldPose(iso) => {
+            let enu = Vector3::new(iso.translation.x, iso.translation.y, 0.2);
+            let mut bevy = Vec3::from(EnuVector(enu));
+            bevy.y = 0.2;
+            Some(bevy)
+        }
         PlannerGoal::GlobalPathWaypoint { .. } => None,
     }
 }

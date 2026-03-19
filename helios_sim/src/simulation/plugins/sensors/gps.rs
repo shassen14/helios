@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::{
     app_state::SimulationSet, components::SensorTopicName, events::BevyMeasurementMessage,
-    prng::SimulationRng,
+    prng::SimulationRng, transforms::EnuVector
 };
 
 // --- Core Library Imports ---
@@ -158,10 +158,7 @@ fn gps_sensor_system(
                 let true_position_bevy = sensor_global_transform.translation();
 
                 // 2. Convert it to our ENU coordinate system.
-                let true_position_enu =
-                    crate::simulation::core::transforms::bevy_vector_to_enu_vector(
-                        &true_position_bevy,
-                    );
+                let true_position_enu = EnuVector::from(true_position_bevy).0;
 
                 // 3. Add Gaussian noise to simulate GPS inaccuracy.
                 let noisy_position_enu = Vector3::new(

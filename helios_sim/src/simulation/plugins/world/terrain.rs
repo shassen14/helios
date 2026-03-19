@@ -10,7 +10,7 @@ use bevy::{
 use crate::prelude::*;
 use crate::simulation::core::app_state::AssetLoadSet;
 use crate::simulation::core::components::TerrainMedium;
-use crate::simulation::core::transforms::enu_iso_to_bevy_transform;
+use crate::simulation::core::transforms::EnuWorldPose;
 use crate::simulation::plugins::world::objects::WorldObjectAssets;
 use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
@@ -192,7 +192,7 @@ fn terrain_transform(position: [f64; 3], orientation_degrees: [f64; 3]) -> Trans
     let yaw = orientation_degrees[2] * PI / 180.0;
     let translation = Translation3::new(position[0], position[1], position[2]);
     let rotation = UnitQuaternion::from_euler_angles(roll, pitch, yaw);
-    enu_iso_to_bevy_transform(&Isometry3::from_parts(translation, rotation))
+    Transform::from(EnuWorldPose(Isometry3::from_parts(translation, rotation)))
 }
 
 fn spawn_trimesh_colliders_from_gltf(

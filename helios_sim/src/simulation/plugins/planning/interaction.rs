@@ -9,6 +9,7 @@ use bevy::window::PrimaryWindow;
 use helios_core::planning::types::PlannerGoal;
 use nalgebra::Vector2;
 
+use crate::simulation::core::transforms::EnuVector;
 use crate::simulation::core::events::GoalCommandEvent;
 use crate::simulation::plugins::autonomy::ControlPipelineComponent;
 
@@ -136,10 +137,9 @@ pub fn click_goal_system(
 
     let hit = ray.origin + *ray.direction * t;
 
-    // Bevy (x, y=0, z) → ENU: enu_x = bevy_x, enu_y = -bevy_z
-    let enu_x = hit.x as f64;
-    let enu_y = -(hit.z as f64);
-    let goal = PlannerGoal::WorldPosition2D(Vector2::new(enu_x, enu_y));
+    // Convert Bevy ground-plane hit to ENU 2D position.
+    let hit_enu = EnuVector::from(hit).0;
+    let goal = PlannerGoal::WorldPosition2D(Vector2::new(hit_enu.x, hit_enu.y));
 
     goal_events.write(GoalCommandEvent {
         agent: agent_entity,
@@ -149,6 +149,6 @@ pub fn click_goal_system(
 
     info!(
         "[Interaction] Goal → ENU ({:.1}, {:.1}) for {:?}",
-        enu_x, enu_y, agent_entity
+        hit_enu.x, hit_enu.y, agent_entity
     );
 }

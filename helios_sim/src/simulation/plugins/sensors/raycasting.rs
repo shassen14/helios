@@ -20,6 +20,7 @@ use helios_core::{
     },
     types::FrameHandle,
 };
+use crate::simulation::core::transforms::FluVector;
 
 // =========================================================================
 // == Components & Plugin ==
@@ -166,14 +167,13 @@ fn raycasting_sensor_system(
                 for ray in local_rays {
                     // 1. Convert ray direction from sensor FLU frame to Bevy local frame.
                     //    FLU +X (Forward) → Bevy -Z, FLU +Y (Left) → Bevy -X, FLU +Z (Up) → Bevy +Y
-                    let bevy_sensor_local_dir =
-                        crate::simulation::core::transforms::flu_vector_to_bevy_local_vector(
-                            &nalgebra::Vector3::new(
-                                ray.direction.x,
-                                ray.direction.y,
-                                ray.direction.z,
-                            ),
-                        );
+                    let bevy_sensor_local_dir = Vec3::from(
+                        FluVector(nalgebra::Vector3::new(
+                            ray.direction.x,
+                            ray.direction.y,
+                            ray.direction.z,
+                        )),
+                    );
                     // 2. Then, rotate it.
                     let world_direction: Vec3 = sensor_rotation * bevy_sensor_local_dir;
 

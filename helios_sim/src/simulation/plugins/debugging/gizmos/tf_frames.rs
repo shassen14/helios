@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::simulation::core::transforms::{enu_body_iso_to_bevy_transform, TfTree};
+use crate::simulation::core::transforms::{EnuBodyPose, TfTree};
 use crate::simulation::plugins::debugging::components::{
     DebugVisualizationConfig, TfLabelEntities,
 };
@@ -30,7 +30,7 @@ pub fn draw_tf_frames(
     gizmos.arrow(Vec3::ZERO, Vec3::Y * origin_len, Color::srgb(0.0, 0.0, 1.0));
 
     for (_entity, world_iso, _local_iso, parent_entity) in tf_tree.iter_frames() {
-        let bevy_tf = enu_body_iso_to_bevy_transform(&world_iso);
+        let bevy_tf = Transform::from(EnuBodyPose(world_iso));
         let frame_origin = bevy_tf.translation;
         let rot = bevy_tf.rotation;
 
@@ -58,7 +58,7 @@ pub fn draw_tf_frames(
 
         if let Some(parent_entity) = parent_entity {
             if let Some(parent_world_iso) = tf_tree.lookup_by_entity(parent_entity) {
-                let parent_bevy = enu_body_iso_to_bevy_transform(&parent_world_iso);
+                let parent_bevy = Transform::from(EnuBodyPose(parent_world_iso));
                 gizmos.line(
                     frame_origin,
                     parent_bevy.translation,
@@ -129,7 +129,7 @@ pub fn update_tf_labels(
             continue;
         };
 
-        let bevy_tf = enu_body_iso_to_bevy_transform(&world_iso);
+        let bevy_tf = Transform::from(EnuBodyPose(world_iso));
         let world_pos = bevy_tf.translation + Vec3::Y * 0.4;
 
         match camera.world_to_viewport(camera_tf, world_pos) {

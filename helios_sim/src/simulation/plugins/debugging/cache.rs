@@ -1,9 +1,10 @@
 use bevy::prelude::*;
+use nalgebra::Vector3;
 use helios_core::messages::MeasurementData;
 
 use super::components::DebugSensorCache;
 use crate::simulation::core::events::BevyMeasurementMessage;
-use crate::simulation::core::transforms::flu_vector_to_bevy_local_vector;
+use crate::simulation::core::transforms::FluVector;
 
 /// Reads PointCloud events and stores the latest world-space points per sensor.
 pub fn cache_sensor_data(
@@ -19,8 +20,9 @@ pub fn cache_sensor_data(
                     .points
                     .iter()
                     .map(|p| {
-                        let flu = nalgebra::Vector3::new(p.position.x, p.position.y, p.position.z);
-                        let local = flu_vector_to_bevy_local_vector(&flu);
+                        let local = Vec3::from(FluVector(Vector3::new(
+                            p.position.x, p.position.y, p.position.z,
+                        )));
                         transform.transform_point(local)
                     })
                     .collect();
