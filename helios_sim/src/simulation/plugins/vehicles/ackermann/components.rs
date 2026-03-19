@@ -21,6 +21,8 @@ pub struct AckermannActuator {
 
 /// Normalised command produced by an `AckermannOutputAdapter`.
 /// Both fields are in [-1.0, 1.0]; all vehicle-specific kinematics are resolved inside the adapter.
+/// Persisted as a Bevy component so the debug HUD can read the last applied command.
+#[derive(Component, Clone, Copy, Default)]
 pub struct AckermannCommand {
     /// Normalised forward force demand [-1.0, 1.0], positive = forward.
     pub throttle_norm: f32,

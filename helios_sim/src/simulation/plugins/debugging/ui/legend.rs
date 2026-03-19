@@ -68,6 +68,8 @@ fn toggle_state(config: &DebugVisualizationConfig, toggle: DebugToggle) -> &'sta
         DebugToggle::TfFrames => config.show_tf_frames,
         DebugToggle::PlannedPath => config.show_planned_path,
         DebugToggle::Legend => config.show_legend,
+        DebugToggle::VehicleHud => config.show_vehicle_hud,
+        DebugToggle::StateSource => true, // Not a bool toggle — always shown as active.
     };
     if active {
         "ON "

@@ -88,6 +88,24 @@ const PLANNING_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[(
     DebugToggle::PlannedPath,
 )];
 
+/// HUD toggle (C) and state-source toggle (T).
+/// C is registered for any profile with control or estimation.
+/// T is registered only when both control and estimation are active.
+const CONTROL_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
+    (
+        "toggle_vehicle_hud",
+        KeyCode::KeyC,
+        "C  Vehicle HUD",
+        DebugToggle::VehicleHud,
+    ),
+    (
+        "toggle_state_source",
+        KeyCode::KeyT,
+        "T  State Source",
+        DebugToggle::StateSource,
+    ),
+];
+
 /// Build the registry from action tables, gated by `CapabilitySet`.
 /// Runs once on entering Running state (before other startup systems read the registry).
 fn build_key_registry(
@@ -110,6 +128,12 @@ fn build_key_registry(
     if capabilities.planning() {
         register_actions(&mut registry, overrides, PLANNING_ACTIONS);
     }
+    if capabilities.control() || capabilities.estimation() {
+        register_actions(&mut registry, overrides, &CONTROL_ACTIONS[..1]); // C key only
+    }
+    if capabilities.control() && capabilities.estimation() {
+        register_actions(&mut registry, overrides, &CONTROL_ACTIONS[1..]); // T key only
+    }
 }
 
 fn apply_debug_config(scenario: Res<ScenarioConfig>, mut viz: ResMut<DebugVisualizationConfig>) {
@@ -124,6 +148,7 @@ fn apply_debug_config(scenario: Res<ScenarioConfig>, mut viz: ResMut<DebugVisual
     viz.show_tf_frames = d.show_tf_frames;
     viz.show_planned_path = d.show_planned_path;
     viz.show_legend = d.show_legend;
+    viz.show_vehicle_hud = d.show_vehicle_hud;
 }
 
 /// Top-level plugin that provides all debug visualization tooling.
@@ -141,6 +166,7 @@ impl Plugin for DebuggingPlugin {
                     build_key_registry,
                     apply_debug_config,
                     ui::legend::spawn_debug_legend,
+                    ui::vehicle_hud::spawn_vehicle_hud,
                 )
                     .chain(),
             )
@@ -150,6 +176,8 @@ impl Plugin for DebuggingPlugin {
                     keybindings::handle_debug_keybindings,
                     cache::cache_sensor_data,
                     ui::legend::update_legend_text,
+                    ui::vehicle_hud::update_vehicle_hud,
+                    ui::vehicle_hud::toggle_state_source,
                     gizmos::pose::draw_ground_truth_gimbals,
                     gizmos::pose::draw_estimated_pose_gimbals,
                     gizmos::covariance::draw_covariance_ellipsoid,
