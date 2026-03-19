@@ -56,6 +56,7 @@ fn pid() -> ControllerConfig {
         kp: 1.0,
         ki: 0.0,
         kd: 0.0,
+        state_source: Default::default(),
     }
 }
 
@@ -257,6 +258,7 @@ fn validation_feedforward_pid_unknown_dynamics_key_produces_error() {
             u_min: vec![],
             u_max: vec![],
             controlled_indices: vec![],
+            state_source: Default::default(),
         },
     );
     let stack = AutonomyStack {
@@ -289,6 +291,7 @@ fn validation_collects_all_errors_two_bad_controllers() {
             control_dim: 0,
             u_min: vec![],
             u_max: vec![],
+            state_source: Default::default(),
         },
     );
     let stack = AutonomyStack {

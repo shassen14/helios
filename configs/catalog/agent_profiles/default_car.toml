@@ -12,3 +12,6 @@ mapper = { from = "components.mappers.none" }
 
 [planners]
 local_path = { from = "components.planners.a_star" }
+
+[controllers]
+path_follower = { from = "components.controllers.steering_pid" }

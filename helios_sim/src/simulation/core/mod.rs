@@ -8,9 +8,7 @@
 use crate::simulation::core::{
     components::GroundTruthState,
     topics::TopicBus,
-    transforms::{
-        bevy_global_transform_to_enu_iso, bevy_vector_to_enu_vector, TfFramePose, TfTree,
-    },
+    transforms::{EnuBodyPose, EnuVector, TfFramePose, TfTree},
 };
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
@@ -33,16 +31,16 @@ fn ground_truth_sync_system(
     for (transform, lin_vel, ang_vel, mut ground_truth) in &mut query {
         // --- 1. Pose and Angular Velocity ---
         // This part is correct and remains.
-        ground_truth.pose = bevy_global_transform_to_enu_iso(transform);
+        ground_truth.pose = EnuBodyPose::from(transform).0;
         ground_truth.angular_velocity =
-            bevy_vector_to_enu_vector(&Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z));
+            EnuVector::from(Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z)).0;
         // TODO: Calculate angular acceleration here using the same pattern.
 
         // --- 2. Linear Velocity and Acceleration (The Correct Way) ---
 
         // Get the current velocity from the physics engine and convert to ENU.
         let current_linear_velocity_enu =
-            bevy_vector_to_enu_vector(&Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z));
+            EnuVector::from(Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z)).0;
 
         // Calculate coordinate acceleration using the stored velocity from the PREVIOUS frame.
         let linear_acceleration_enu =

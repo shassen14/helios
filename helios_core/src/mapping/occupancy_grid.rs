@@ -1,7 +1,6 @@
 use nalgebra::{DMatrix, Isometry3, Translation3, UnitQuaternion};
 
 use crate::estimation::FilterContext;
-use crate::frames::conventions::sensor_pose_flu_to_world;
 use crate::mapping::{MapData, Mapper};
 use crate::messages::{MeasurementData, ModuleInput};
 use crate::types::FrameHandle;
@@ -294,12 +293,10 @@ impl Mapper for OccupancyGridMapper {
                     }
                 };
 
-                // points are in FLU; compose the FLU→ENU correction so we
-                // can project directly into the ENU world frame.
-                let t_world_from_flu = sensor_pose_flu_to_world(sensor_world_pose);
-
+                // Convert sensor frame point cloud to world frame.
+                // Cast the cells that are affected by the ray
                 for point in &cloud.points {
-                    let p_world = t_world_from_flu * point.position;
+                    let p_world = sensor_world_pose * point.position;
                     self.raycast(robot_wx, robot_wy, p_world.x, p_world.y);
                 }
                 // Cache is rebuilt on the next PoseUpdate (timer-gated).

@@ -7,7 +7,7 @@ use std::time::Duration;
 
 // --- Simulation Crate Imports ---
 use crate::prelude::*;
-use crate::simulation::core::transforms::bevy_global_transform_to_enu_iso;
+use crate::simulation::core::transforms::EnuBodyPose;
 use crate::simulation::core::{
     app_state::SimulationSet,
     components::{GroundTruthState, SensorTopicName},
@@ -197,7 +197,7 @@ fn imu_sensor_system(
                 }
 
                 // --- 1. Get Sensor Orientation in ENU Frame ---
-                let sensor_pose_enu = bevy_global_transform_to_enu_iso(sensor_global_transform);
+                let sensor_pose_enu = EnuBodyPose::from(sensor_global_transform).0;
                 let rot_sensor_from_world = sensor_pose_enu.rotation;
                 let q_sensor_from_world = rot_sensor_from_world.inverse();
 

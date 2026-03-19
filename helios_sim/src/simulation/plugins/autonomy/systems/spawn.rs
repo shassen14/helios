@@ -17,7 +17,7 @@ use helios_runtime::validation::validate_autonomy_config;
 use std::collections::HashMap;
 
 use crate::prelude::*;
-use crate::simulation::core::components::{AgentTopicNames, SensorMailbox};
+use crate::simulation::core::components::{AgentTopicNames, ControllerStateSource, SensorMailbox};
 use crate::simulation::plugins::autonomy::components::{
     ControlPipelineComponent, EstimatorComponent, MapperComponent, ModuleTimer, OdomFrameOf,
 };
@@ -26,6 +26,7 @@ use crate::simulation::registry::{
     PlannerBuildContext, SlamBuildContext,
 };
 use helios_core::planning::types::PlannerGoal;
+use helios_runtime::config::ControllerStateSourceConfig;
 
 // =========================================================================
 // == Helpers ==
@@ -129,12 +130,25 @@ fn build_separate_pipeline(
     let goal_iso = agent_config.goal_pose.to_isometry();
     builder = builder.with_goal(PlannerGoal::WorldPose(goal_iso));
 
+    let ctrl_state_source = agent_config
+        .autonomy_stack()
+        .controllers
+        .values()
+        .next()
+        .map(|c| c.state_source())
+        .unwrap_or_default();
+    let ctrl_state_source_component = match ctrl_state_source {
+        ControllerStateSourceConfig::GroundTruth => ControllerStateSource::GroundTruth,
+        ControllerStateSourceConfig::Estimated => ControllerStateSource::Estimated,
+    };
+
     let agent_name = agent_config.name();
     let (_, mapping, control) = builder.build().into_parts();
     commands.entity(entity).insert((
         est_component,
         MapperComponent(Box::new(mapping)),
         ControlPipelineComponent(control),
+        ctrl_state_source_component,
         SensorMailbox::default(),
         AgentTopicNames {
             active_waypoint: format!("/{}/planning/active_waypoint", agent_name),
@@ -243,6 +257,21 @@ pub fn spawn_autonomy_pipeline(
                 match registry.build_slam(slam_cfg.get_kind_str(), ctx) {
                     Ok(system) => {
                         let agent_name = agent_config.name();
+                        let ctrl_state_source = agent_config
+                            .autonomy_stack()
+                            .controllers
+                            .values()
+                            .next()
+                            .map(|c| c.state_source())
+                            .unwrap_or_default();
+                        let ctrl_state_source_component = match ctrl_state_source {
+                            ControllerStateSourceConfig::GroundTruth => {
+                                ControllerStateSource::GroundTruth
+                            }
+                            ControllerStateSourceConfig::Estimated => {
+                                ControllerStateSource::Estimated
+                            }
+                        };
                         let (estimation, mapping, control) = PipelineBuilder::new()
                             .with_slam(system)
                             .build()
@@ -251,6 +280,7 @@ pub fn spawn_autonomy_pipeline(
                             EstimatorComponent(Box::new(estimation)),
                             MapperComponent(Box::new(mapping)),
                             ControlPipelineComponent(control),
+                            ctrl_state_source_component,
                             SensorMailbox::default(),
                             AgentTopicNames {
                                 active_waypoint: format!(
@@ -331,11 +361,23 @@ pub fn spawn_passthrough_pipeline(
                      Inserting GT passthrough with empty mapper/control.",
                     agent_name
                 );
+                let ctrl_state_source = agent_config
+                    .autonomy_stack()
+                    .controllers
+                    .values()
+                    .next()
+                    .map(|c| c.state_source())
+                    .unwrap_or_default();
+                let ctrl_state_source_component = match ctrl_state_source {
+                    ControllerStateSourceConfig::GroundTruth => ControllerStateSource::GroundTruth,
+                    ControllerStateSourceConfig::Estimated => ControllerStateSource::Estimated,
+                };
                 let (_, mapping, control) = PipelineBuilder::new().build().into_parts();
                 commands.entity(agent_entity).insert((
                     EstimatorComponent(Box::new(GroundTruthPassthrough::default())),
                     MapperComponent(Box::new(mapping)),
                     ControlPipelineComponent(control),
+                    ctrl_state_source_component,
                     SensorMailbox::default(),
                     AgentTopicNames {
                         active_waypoint: format!("/{}/planning/active_waypoint", agent_name),

@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::simulation::core::components::GroundTruthState;
-use crate::simulation::core::transforms::enu_iso_to_bevy_transform;
+use crate::simulation::core::transforms::EnuBodyPose;
 use crate::simulation::plugins::autonomy::EstimatorComponent;
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
 use helios_core::frames::FrameAwareState;
@@ -21,8 +21,8 @@ pub fn draw_estimation_error_line(
             .get_state()
             .and_then(|s: &FrameAwareState| s.get_pose_isometry())
         {
-            let gt_bevy = enu_iso_to_bevy_transform(&gt.pose).translation;
-            let est_bevy = enu_iso_to_bevy_transform(&estimated_pose).translation;
+            let gt_bevy = Transform::from(EnuBodyPose(gt.pose)).translation;
+            let est_bevy = Transform::from(EnuBodyPose(estimated_pose)).translation;
             gizmos.line(gt_bevy, est_bevy, Color::srgb(1.0, 0.0, 0.0));
         }
     }
