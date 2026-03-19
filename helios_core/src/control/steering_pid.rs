@@ -20,13 +20,15 @@ use crate::frames::{FrameAwareState, FrameId, StateVariable};
 pub struct SteeringPidController {
     heading_pid: SisoPid,
     cruise_speed: f64,
+    goal_radius: f64,
 }
 
 impl SteeringPidController {
-    pub fn new(kp: f64, ki: f64, kd: f64, cruise_speed: f64) -> Self {
+    pub fn new(kp: f64, ki: f64, kd: f64, cruise_speed: f64, goal_radius: f64) -> Self {
         Self {
             heading_pid: SisoPid::new(kp, ki, kd),
             cruise_speed,
+            goal_radius,
         }
     }
 }
@@ -77,6 +79,13 @@ impl Controller for SteeringPidController {
             Some(p) => p,
             None => return zero,
         };
+
+        let dist = ((rx - cx).powi(2) + (ry - cy).powi(2)).sqrt();
+        if dist < self.goal_radius {
+            self.heading_pid.reset();
+            return zero;
+        }
+
         let orientation = match state.get_orientation() {
             Some(q) => q,
             None => return zero,

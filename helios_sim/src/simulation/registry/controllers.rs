@@ -73,6 +73,7 @@ impl Plugin for DefaultControllersPlugin {
                 kp,
                 ki,
                 kd,
+                goal_radius,
                 ..
             } = ctx.controller_cfg
             {
@@ -81,6 +82,7 @@ impl Plugin for DefaultControllersPlugin {
                     ki as f64,
                     kd as f64,
                     cruise_speed as f64,
+                    goal_radius as f64,
                 )))
             } else {
                 Err("SteeringPid factory received wrong ControllerConfig variant".into())
