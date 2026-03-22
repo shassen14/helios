@@ -57,10 +57,11 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, Stri
             q_matrix[(3, 3)] = an_var;
             q_matrix[(4, 4)] = an_var;
             q_matrix[(5, 5)] = an_var;
-            // Orientation noise
+            // Orientation noise (Qx/Qy/Qz at 6/7/8, Qw at 9 — gyro noise propagates to all components)
             q_matrix[(6, 6)] = gn_var;
             q_matrix[(7, 7)] = gn_var;
             q_matrix[(8, 8)] = gn_var;
+            q_matrix[(9, 9)] = gn_var;
             // Accel bias noise
             q_matrix[(10, 10)] = ab_var;
             q_matrix[(11, 11)] = ab_var;
@@ -86,6 +87,7 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, Stri
             q_matrix[(6, 6)] = t_var;
             q_matrix[(7, 7)] = t_var;
             q_matrix[(8, 8)] = t_var;
+            q_matrix[(9, 9)] = t_var; // Qw — torque noise propagates to all quaternion components
         }
     }
 
@@ -158,6 +160,23 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, Stri
         q.k,
     );
     initial_state.set_variable(&StateVariable::Qw(body_frame, world_frame), q.w);
+
+    // The starting pose is known exactly, so orient covariance starts tight.
+    // σ=1.0 (the default) is enormous for quaternion components (range −1..1) and causes GPS
+    // updates to apply large spurious orientation corrections via position-orientation
+    // cross-covariance, producing oscillating heading estimates.
+    let q_initial_var: f64 = 1e-4; // σ ≈ 0.01 radians
+    for (i, var) in initial_state.layout.iter().enumerate() {
+        if matches!(
+            var,
+            StateVariable::Qx(_, _)
+                | StateVariable::Qy(_, _)
+                | StateVariable::Qz(_, _)
+                | StateVariable::Qw(_, _)
+        ) {
+            initial_state.covariance[(i, i)] = q_initial_var;
+        }
+    }
 
     info!(
         "AutonomyRegistry: built EKF with '{}' dynamics for agent {:?}.",

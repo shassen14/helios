@@ -220,6 +220,38 @@ impl FrameAwareState {
         }
     }
 
+    /// Normalizes the quaternion components in the state vector in-place.
+    /// Must be called after every predict and update step to prevent quaternion drift.
+    /// No-op if no quaternion is present or if the norm is near zero (degenerate state).
+    pub fn normalize_quaternion(&mut self) {
+        let mut qx_idx = None;
+        let mut qy_idx = None;
+        let mut qz_idx = None;
+        let mut qw_idx = None;
+        for (i, var) in self.layout.iter().enumerate() {
+            match var {
+                StateVariable::Qx(_, _) => qx_idx = Some(i),
+                StateVariable::Qy(_, _) => qy_idx = Some(i),
+                StateVariable::Qz(_, _) => qz_idx = Some(i),
+                StateVariable::Qw(_, _) => qw_idx = Some(i),
+                _ => {}
+            }
+        }
+        if let (Some(xi), Some(yi), Some(zi), Some(wi)) = (qx_idx, qy_idx, qz_idx, qw_idx) {
+            let norm = (self.vector[xi].powi(2)
+                + self.vector[yi].powi(2)
+                + self.vector[zi].powi(2)
+                + self.vector[wi].powi(2))
+            .sqrt();
+            if norm > 1e-9 {
+                self.vector[xi] /= norm;
+                self.vector[yi] /= norm;
+                self.vector[zi] /= norm;
+                self.vector[wi] /= norm;
+            }
+        }
+    }
+
     /// Extracts the full 6-DOF pose (position and orientation) from the state vector.
     ///
     /// This method composes the results of `get_vector3` for position and

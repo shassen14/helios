@@ -54,5 +54,5 @@ integral_clamp = 30.0    # was 0.5; allows up to 3000 N steady-state integral fo
 [adapter.lateral]        # gains in N·m / (rad/s)
 kp             = 8000.0
 ki             = 1.0
-kd             = 500.0
+kd             = 0.0
 integral_clamp = 0.5
