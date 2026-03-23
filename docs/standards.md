@@ -36,7 +36,7 @@ All rendering, physics (`Avian3D`), and gizmos use this frame.
 
 - **Conversion:** All conversions must happen via the helper functions in `helios_sim/src/simulation/core/transforms.rs`.
   - `enu_iso_to_bevy_transform(...)`
-  - `robot_body_vec_to_bevy_local_vec(...)`
+  - `flu_vector_to_bevy_local_vector(...)`
 - **Rule:** Never perform raw coordinate swaps (e.g., `y = z`) manually in system logic. Always use the transform helpers.
 
 ---

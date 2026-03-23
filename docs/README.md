@@ -67,10 +67,3 @@ Data flow from simulation to observability tools, and profiling workflows.
 | [5_telemetry_tools/profiling_cpu.md](5_telemetry_tools/profiling_cpu.md)   | CPU profiling with samply — build, record, and analyze with `parse_samply_profile.py` |
 | [5_telemetry_tools/profiling_heap.md](5_telemetry_tools/profiling_heap.md) | Heap profiling with DHAT — run and analyze with `parse_dhat_profile.py`               |
 
----
-
-## Archive
-
-| File                                                                     | Description                                                      |
-| ------------------------------------------------------------------------ | ---------------------------------------------------------------- |
-| [archive/profile_refactor_review.md](archive/profile_refactor_review.md) | Historical review of the simulation profile refactor (completed) |

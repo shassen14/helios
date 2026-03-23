@@ -1,933 +1,463 @@
-# Helios Architecture Review
+# Helios Architecture Principles
 
-> Comprehensive systems-level analysis of the Helios robotics simulation platform.
-> Covers structural weaknesses, scalability risks, ECS anti-patterns, recommended
-> improvements, and a next-generation architecture for multi-host deployment
-> (simulation, hardware, HIL, digital twin).
+> Architectural guidance for a modular robotics and autonomy simulation platform.
+> Written for engineers who build and review code in this workspace.
 
 ---
 
-## Table of Contents
+## 1. Philosophy
 
-1. [System Overview](#system-overview)
-2. [Structural Weaknesses](#structural-weaknesses)
-3. [ECS Anti-Patterns and Issues](#ecs-anti-patterns-and-issues)
-4. [Scalability Risks](#scalability-risks)
-5. [Module Boundary Problems](#module-boundary-problems)
-6. [Missing Abstractions](#missing-abstractions)
-7. [Recommended Improvements](#recommended-improvements)
-8. [Next-Generation Architecture](#next-generation-architecture)
-9. [Next Steps — Phased Roadmap](#next-steps--phased-roadmap)
-10. [Long-Term Vision](#long-term-vision)
+Helios exists to close the gap between algorithm research and physical deployment. Every architectural decision serves one mandate: **code that runs in simulation must run on hardware without modification to the algorithm layer.**
 
----
+Four pillars support this:
 
-## System Overview
+**Modularity over monoliths.** The workspace is split into crates with enforced, one-way dependencies (`helios_core` ← `helios_runtime` ← `helios_sim`). Each crate has a single reason to exist. `helios_core` is a math library. `helios_runtime` is a pipeline orchestrator. `helios_sim` is a Bevy host. A new host (`helios_hw`) plugs in at the same seam `helios_sim` occupies — it implements `AgentRuntime` and feeds the same `AutonomyPipeline`. This is not theoretical; the config system already separates portable agent profiles (`AgentBaseConfig`) from sim-specific spawn data (`AgentConfig`).
 
-Helios is a modular robotics/autonomy simulation platform built in Rust. It is
-split into three crates with a strict one-way dependency chain:
+**Composability over configuration.** Algorithms are registered as factory closures in the `AutonomyRegistry`, keyed by string identifiers that appear in TOML. Spawning systems never name concrete types. Swapping an EKF for a UKF, or A\* for RRT\*, is a config change, not a code change. The `PipelineBuilder` assembles stages by `PipelineLevel` (Global → Local → Custom), so adding a new planning layer means registering a factory and adding a TOML block.
 
-```
-helios_core      (pure algorithms, no framework deps)
-     ^
-     |
-helios_runtime   (autonomy pipeline orchestration, Bevy-free)
-     ^
-     |
-helios_sim       (Bevy 0.16+ / Avian3D simulation host)
-```
+**Determinism where it matters.** `helios_core` is pure: no I/O, no system clock, no global state. Filters receive time through `FilterContext`, transforms through `TfProvider`, and control inputs through function arguments. Given the same inputs, an EKF produces the same outputs on any machine, in any host. This makes unit testing trivial and replay-based debugging possible.
 
-### Data Flow Diagram
-
-```mermaid
-graph TD
-    %% --- THE PHYSICAL WORLD (Simulation) ---
-    subgraph "Physics & Environment (Avian3D)"
-        Physics[Rigid Body Dynamics]
-        Env["Environment (Map & Dynamic Actors)"]
-    end
-
-    %% --- SENSING ---
-    subgraph "Sensor Suite (helios_sim)"
-        IMU[IMU Plugin]
-        GPS[GPS Plugin]
-        LiDAR[LiDAR Plugin]
-        Cam[Camera Plugin]
-    end
-
-    %% --- PERCEPTION ---
-    subgraph "Perception & Tracking Layer"
-        Tracker[Object Tracker]
-        Detector[Object Detector]
-    end
-
-    %% --- THE WORLD MODEL (The "Brain") ---
-    subgraph "World Model (helios_core + helios_runtime)"
-        InputGatherer(Input Gatherer)
-
-        subgraph "Internal Logic (Mutually Exclusive)"
-            direction TB
-            Separate["Strategy A: Separate Modules<br/>(Estimator + Mapper)"]
-            SLAM["Strategy B: Unified System<br/>(SLAM)"]
-        end
-
-        Publisher(Output Publisher)
-    end
-
-    %% --- ACTION ---
-    subgraph "Decision Making"
-        Planner[Motion Planner]
-        Controller[Controller]
-    end
-
-    %% --- DATA FLOW ---
-
-    %% 1. Physics to Sensors
-    Physics -->|Ground Truth State| IMU
-    Physics -->|Ground Truth State| GPS
-    Physics -.->|Raycasting/Rendering| LiDAR
-    Env -.->|Raycasting/Rendering| LiDAR
-    Physics -.->|Rendering| Cam
-    Env -.->|Rendering| Cam
-
-    %% 2. Sensors to Perception & World Model
-    IMU -->|MeasurementMessage| InputGatherer
-    GPS -->|MeasurementMessage| InputGatherer
-    LiDAR -->|MeasurementMessage| InputGatherer
-
-    %% Perception Flow
-    LiDAR -->|Raw Data| Detector
-    Cam -->|Raw Data| Detector
-    Detector -->|Detections| Tracker
-    Tracker -->|MeasurementMessage - TrackedObject| InputGatherer
-    Tracker == "/objects/tracked" ==> Planner
-
-    %% 3. Inside World Model
-    InputGatherer --> Separate
-    InputGatherer --> SLAM
-    Separate --> Publisher
-    SLAM --> Publisher
-
-    %% 4. World Model Outputs (The API)
-    Publisher == "/odometry/estimated" ==> Planner
-    Publisher == "/odometry/estimated" ==> Controller
-    Publisher == "/map" ==> Planner
-
-    %% 5. Planning & Control
-    Planner -->|Path| Controller
-    Controller -->|Forces/Torques| Physics
-```
-
-### helios_core
-
-- Pure algorithmic library: EKF, UKF, PID, LQR, dynamics models, sensor models,
-  mapping, SLAM trait stubs.
-- Framework-agnostic. Could deploy to real hardware.
-- Coordinate conventions: ENU world, FLU body. All values SI, f64.
-- Key traits: `StateEstimator`, `EstimationDynamics`, `Measurement`, `Controller`,
-  `Mapper`, `SlamSystem`.
-- `FrameAwareState` provides a layout-indexed state vector with covariance.
-
-### helios_sim
-
-- Bevy ECS host wrapping core algorithms in components and systems.
-- Avian3D rigid-body physics.
-- TOML-driven configuration with a catalog/prefab resolution system.
-- `AutonomyRegistry` maps config string keys to factory closures — spawning
-  systems never name concrete algorithm types.
-- `TopicBus` provides a generic pub/sub message bus.
-- `TfTree` maintains a transform graph bridging Bevy transforms to ENU/FLU.
-- Phased spawn pipeline (`SceneBuildSet`, 10 ordered phases) and a runtime
-  data-flow schedule (`SimulationSet`, 7 ordered phases plus physics).
-
-### Current Scale
-
-- ~10,900 lines of Rust across both crates.
-- 1 vehicle type (Ackermann), 4 sensor types (IMU, GPS, magnetometer, 2D LiDAR).
-- 2 filter implementations (EKF, UKF), 3 controller types (PID, LQR, Feedforward PID).
-- 1 mapper (occupancy grid), SLAM trait defined but no concrete implementation.
-- Foxglove WebSocket bridge for scalar telemetry.
+**Sim-to-Real as a first-class constraint.** Every interface boundary is designed so that `helios_hw` can exist. `AgentRuntime` abstracts time and coordinate lookups. `AutonomyStack` configs live in `configs/catalog/agent_profiles/`, loadable by both sim and hardware hosts. The `EstimationDriver` / `MapDriver` traits allow swapping real estimation for ground-truth passthrough without touching the pipeline. If a design decision makes simulation easier but hardware harder, it's the wrong decision.
 
 ---
 
-## Structural Weaknesses
+## 2. Core Architectural Characteristics
 
-### SW-1: TopicBus serializes all parallel systems ✅ FIXED (Phase 5)
+### Testability
 
-All four sensor systems (`imu`, `gps`, `magnetometer`, `raycasting`) no longer take
-`ResMut<TopicBus>`. The hot path now has zero `TopicBus` writes. All TopicBus writes
-are isolated to `SimulationSet::Validation` via two cold-path systems:
-`sensor_telemetry_system` and `autonomy_telemetry_system`. The remaining `Validation`
-writers (`ground_truth_publish_system`, `tf_publish_system`) are inherently sequential
-and contend only with each other — never with hot-path estimation or sensor systems.
+**What it means here:** Every algorithm in `helios_core` can be tested with a deterministic state vector, a known Jacobian, and an asserted output — no ECS, no physics engine, no frame timing. Unit tests construct an `ExtendedKalmanFilter` with known initial state, feed it a `MeasurementMessage`, and assert the posterior covariance. Integration tests build an `AutonomyPipeline` via `PipelineBuilder`, feed it a sequence of measurements, and verify that estimated state converges.
 
-### SW-2: Dual messaging path — TopicBus AND Bevy Events ✅ FIXED (Phase 5)
+**Why it matters:** Robotics bugs are expensive. A sign error in a Jacobian can send a vehicle off course. Catching these in a 10ms unit test instead of a 60-second simulation run is the difference between shipping and debugging.
 
-Sensor systems now emit **only** `BevyMeasurementMessage` events.
-`route_sensor_messages` routes those events into per-agent `SensorMailbox` components.
-`sensor_telemetry_system` in `Validation` reads from `SensorMailbox` and publishes to
-`TopicBus`. There is exactly one source of truth. A new sensor needs only to emit an
-event — the cold-path publish is automatic via `SensorTopicName`.
+**How it influences design:**
+- `helios_core` has zero Bevy dependencies (the optional `bevy_ecs` feature exists solely for the `Entity` type in message routing, gated behind `#[cfg(feature = "bevy")]`).
+- `helios_runtime` depends on `helios_core` *without* the `bevy` feature. Its tests exercise the full pipeline with mock `AgentRuntime` implementations.
+- `SimulationProfile` and `CapabilitySet` let integration tests isolate subsystems — `EstimationOnly` runs sensors and filters without planning or control, `ControlOnly` feeds a static path and ground-truth state to verify controller convergence.
 
-### SW-3: SpawnAgentConfigRequest is a god component
+### Agility / Extensibility
 
-`SpawnAgentConfigRequest(pub AgentConfig)` carries the entire agent config —
-vehicle params, all sensors, full autonomy stack, poses — as one component.
-Every spawn phase queries the same monolithic blob.
+**What it means here:** Adding a new algorithm — a particle filter, a lattice planner, a model-predictive controller — requires implementing one trait, registering one factory, and writing one TOML block. No existing code changes.
 
-- No compile-time visibility into which phase consumed which data.
-- `AgentConfig` is deep-cloned into every build context.
-- After `cleanup_spawn_requests` removes it, nothing enforces that no system
-  reads it afterward.
+**Why it matters:** Autonomy R&D moves fast. If adding a new filter requires modifying the pipeline, the estimation system, and three spawning systems, researchers will work around the architecture instead of within it.
 
-### SW-4: WorldModelComponent enum forces exhaustive matching ✅ FIXED (Phase 2+3+5)
+**How it influences design:**
+- The `AutonomyRegistry` maps string keys to `Arc<dyn Fn(BuildContext) -> Result<Box<dyn Trait>>>` closures. Concrete types are invisible to the orchestration layer.
+- `PipelineLevel` (Global, Local, Custom) allows hierarchical planning and mapping stages to be composed from config. A drone with both a global mission planner and a local obstacle avoider is a two-entry TOML list.
+- New `MeasurementData` variants can be added to the enum without modifying existing `Measurement` implementations — each model's `get_measurement_vector` returns `None` for variants it doesn't handle.
 
-Phase 2 replaced the enum with `AutonomyPipelineComponent(pub AutonomyPipeline)`.
-Phase 3 renamed it and its directory. Phase 5 decomposed it further into three
-independent ECS components — no enum, no match arms anywhere:
+### Deployability
 
-```rust
-// plugins/autonomy/components.rs
-#[derive(Component)] pub struct EstimatorComponent(pub EstimationCore);
-#[derive(Component)] pub struct MapperComponent(pub MappingCore);
-#[derive(Component)] pub struct ControlPipelineComponent(pub ControlCore);
-```
+**What it means here:** `cargo build --release` produces a single binary with all algorithms, configs, and assets embedded or referenced by path. No ROS master, no roslaunch, no catkin workspace, no docker-compose.
 
-Systems query only the component they need. Adding a mapper-only agent requires
-zero changes to the estimation or control systems.
+**Why it matters:** Dependency trees kill deployment velocity. A ROS2 workspace with 30 packages, each with its own CMakeLists.txt, takes longer to build and is harder to cross-compile for ARM targets than a single Cargo workspace.
 
-### SW-5: Manual axis swaps outside transforms.rs ✅ FIXED (Phase 1)
+**How it influences design:**
+- The three-crate structure is a Cargo workspace, not three repositories. `cargo test --workspace` runs everything.
+- All config lives in `configs/` at the workspace root, loaded via `--config-root` CLI argument. No environment variables, no ROS parameter server.
+- `helios_hw` will be another binary target in the same workspace, sharing `helios_core` and `helios_runtime` as library dependencies.
 
-`ground_truth_sync_system` now uses `bevy_vector_to_enu_vector()` for both
-`linear_velocity` and `angular_velocity`. No manual axis arithmetic outside
-`transforms.rs`.
+### Performance
 
-### SW-6: `.unwrap()` in EKF runtime code path ✅ FIXED (Phase 1)
+**What it means here:** The simulation must support real-time operation at 200+ Hz fixed timestep for control loops, with sub-millisecond overhead per agent for the estimation-control hot path.
 
-The EKF update path now uses `if let Some(tf) = context.tf` guards.
-A missing TF provider skips the update gracefully instead of crashing.
+**Why it matters:** If the simulation can't run faster than real-time, you can't do Monte Carlo testing. If the hot path allocates, you get GC-like latency spikes that mask real timing issues.
 
----
+**How it influences design:**
+- `helios_core` is allocation-free during steady-state operation. EKF/UKF work on fixed-size `nalgebra` matrices. The `dhat-heap` profiler confirms zero `helios_core` allocations during simulation.
+- The Hot Path (Sensor → EKF → Control) uses zero-copy in-memory mechanisms: Bevy Events in sim, direct channels in hw. No serialization, no network I/O.
+- `SimulationSet` ordering guarantees that estimation completes before planning reads state, and planning completes before control reads the path — no locks, no mutexes, just ECS schedule ordering.
+- `TopicBus` uses ring buffers (`VecDeque<StampedMessage<T>>`) with fixed capacity — old messages are dropped, not reallocated.
 
-## ECS Anti-Patterns and Issues
+### Scalability
 
-### ECS-1: Commands used for per-tick component mutation ✅ FIXED (Phase 1)
+**What it means here:** The architecture must support 100+ simultaneous agents without lock contention or linear-in-agent-count overhead in shared systems.
 
-`ControlOutputComponent` is inserted once at scene build time by `spawn_control_output`.
-`controller_compute_system` (now `controller_compute_system` reading from
-`ControlPipelineComponent`) mutates `output_comp.0 = out` in-place each tick.
-No deferred commands on the hot path.
+**Why it matters:** Swarm research, traffic simulation, and adversarial testing all require many agents. If agent count is bounded by a global mutex, the architecture fails these use cases.
 
-### ECS-2: No per-agent parallelism ✅ FIXED (Phase 5)
+**How it influences design:**
+- Each agent owns its own `AutonomyPipeline` instance. There is no shared mutable state between agents' estimation or control systems.
+- The `TfTree` is rebuilt per-tick in `SimulationSet::Precomputation` and read immutably by all subsequent systems. This is a single-writer-many-reader pattern with no runtime synchronization.
+- `TopicBus` topics are per-agent (`/{agent}/sensors/{name}`), so publishing to one agent's IMU topic doesn't contend with another agent's GPS topic.
+- Future multi-agent coordination (`helios_swarm`) will use `helios_communications` (Zenoh) for inter-agent messaging — the Cold Path, explicitly outside the per-agent hot loop.
 
-`route_sensor_messages` routes events into per-agent `SensorMailbox` components,
-each pre-sorted by timestamp. `estimation_system` and `mapping_system` each iterate
-their own agents' mailboxes independently (no global sort, no shared vec).
-Both systems are in a parallel tuple — Bevy schedules them concurrently because they
-access different components (`EstimatorComponent` vs `MapperComponent`).
-`par_iter_mut` over agents requires no API changes when ready.
+### Interoperability
 
-### ECS-3: Monolithic debugging plugin ✅ FIXED (Phase 6A)
+**What it means here:** The system can export real-time telemetry to standard robotics tooling (Foxglove, custom dashboards) and accept commands from external systems without modifying internal data structures.
 
-`debugging/systems.rs` has been split into per-concern files. The plugin now
-has zero `systems.rs` (tombstoned to a comment index). Structure:
+**Why it matters:** Researchers need visualization. Operators need dashboards. Hardware teams need to bridge ROS bags for validation. A closed system that can't talk to anything is a toy.
 
-```
-plugins/debugging/
-  mod.rs           DebuggingPlugin — registers all sub-systems
-  components.rs    DebugState, trail/cache component types
-  keybindings.rs   handle_debug_keybindings
-  cache.rs         cache_sensor_data
-  gizmos/
-    mod.rs
-    pose.rs        pose axes gizmo
-    covariance.rs  covariance ellipsoid gizmo
-    point_cloud.rs LiDAR point cloud gizmo
-    velocity.rs    velocity vector gizmo
-    error.rs       estimation error gizmo
-    trail.rs       agent trail gizmo
-    tf_frames.rs   TF frame axes gizmo
-    occupancy.rs   occupancy grid gizmo
-  ui/
-    legend.rs      HUD legend panel
-```
-
-### ECS-4: TfTree rebuilt from scratch twice per tick ✅ FIXED
-
-`tf_tree_builder_system` has been split into two systems:
-
-- `tf_tree_structural_system` (Precomputation) — runs only on `Added<TrackedFrame>` /
-  `RemovedComponents<TrackedFrame>`. Inserts or removes map entries. No-op on the
-  vast majority of ticks.
-- `tf_tree_incremental_update_system` (Precomputation + StateSync) — uses
-  `Changed<GlobalTransform>` to update only the entries that actually moved.
-  Handles first-tick initialization in Precomputation; captures physics-driven
-  movement in StateSync. No full clear/rebuild on any hot-path tick.
+**How it influences design:**
+- `helios_communications` (Zenoh) handles the Cold Path: serializing `Odometry`, `PointCloud`, and other types for external consumption.
+- The `TopicBus` serves as the internal boundary — systems publish to topics, and bridge plugins (e.g., the Foxglove WebSocket bridge) read from topics and forward externally.
+- All core data structures implement `serde::Serialize` and `serde::Deserialize`, making them wire-format-agnostic.
 
 ---
 
-## Scalability Risks
+## 3. Architecture Decision Principles
 
-### SR-1: TopicBus contention ✅ FIXED (Phase 5, see SW-1)
+### 3.1 Coupling vs. Cohesion
 
-All sensor hot-path `ResMut<TopicBus>` accesses removed. The remaining TopicBus
-writes in `Validation` are intentionally sequential (cold telemetry path). At scale,
-`sensor_telemetry_system` can be rate-limited via MA-4 without touching sensors.
+**Tradeoff:** High cohesion within a crate means related logic lives together. Low coupling between crates means changes don't cascade.
 
-### SR-2: O(n) measurement model iteration in EKF ✅ FIXED (Phase 1)
+**Direction for Helios:** Minimize coupling at crate boundaries. Maximize cohesion within crates. The three-crate contract is the primary coupling firewall.
 
-EKF update dispatches via `self.measurement_models.get(&message.sensor_handle)` —
-O(1) HashMap lookup. Unknown sensor handles are silently skipped.
+**Concrete example:** `helios_core` defines `StateEstimator`, `EstimationDynamics`, and `Measurement` traits — all related to estimation — in the same crate. But `helios_sim`'s `AutonomyRegistry`, which instantiates these, lives in a different crate. The coupling between them is a single trait boundary (`Box<dyn StateEstimator>`). If the EKF's internal representation changes, only `helios_core` tests break. The registry doesn't care.
 
-### SR-3: SceneBuildSet doesn't scale to 100+ component types
+**Rule:** If two modules change for the same reason, they belong in the same crate. If they change for different reasons (algorithm math vs. ECS scheduling vs. physics integration), they belong in different crates.
 
-The 10-phase manual chain works when you can reason about ordering in your head.
-At 100 component types with cross-dependencies, it becomes unmanageable.
+### 3.2 Data Flow vs. Control Flow (Hot Path / Cold Path)
 
-### SR-4: No process-level experiment parallelism
+**Tradeoff:** Unified data flow is simpler to reason about but introduces latency. Separate paths are faster but harder to debug.
 
-For large experiments (100 runs of the same scenario with different seeds), the
-right answer is process-level parallelism. Each run is an independent OS process.
-This requires a robust MCAP/logging pipeline — currently absent.
+**Direction for Helios:** Two explicit paths. The Hot Path is in-memory, zero-copy, and synchronous within a tick. The Cold Path is asynchronous, serialized, and network-capable.
+
+**Hot Path (in-memory, per-tick):**
+```
+Sensor System → MeasurementMessage → EstimationCore.process_measurement()
+  → FrameAwareState → ControlCore.step_controllers() → ControlOutput
+  → VehicleOutputAdapter.adapt() → VehicleCommand → Avian3D Forces
+```
+Every step in this chain is a direct function call or a Bevy Event read within a single `FixedUpdate` tick. No serialization. No channel. No heap allocation.
+
+**Cold Path (networked, async):**
+```
+TopicBus.publish("/{agent}/odometry/estimated", odometry)
+  → FoxgloveBridge reads topic → WebSocket → Foxglove Studio
+  → helios_communications (Zenoh) → external subscriber
+```
+This path tolerates latency. Messages can be batched, dropped, or replayed.
+
+**Rule:** Never put Zenoh, serde serialization, or any I/O in the Hot Path. If you need to observe Hot Path data externally, publish a copy to the Cold Path after the Hot Path completes (in `SimulationSet::Validation`).
+
+### 3.3 State Management: Stateless Algorithms vs. Stateful ECS Components
+
+**Tradeoff:** ECS components are great for spatial queries and parallel iteration. But putting algorithm state in ECS components couples the algorithm to the host.
+
+**Direction for Helios:** Algorithm state lives in `AutonomyPipeline` (owned per-agent, stored as a Bevy Component in sim). ECS components hold only host-specific state (physics handles, render transforms, sensor config).
+
+**Concrete example:** The `ExtendedKalmanFilter` owns its `FrameAwareState` (state vector + covariance). This is *not* an ECS component — it's a field inside `EstimationCore`, inside `AutonomyPipeline`. The Bevy system that ticks estimation calls `pipeline.process_measurement(msg, &runtime)` and reads the result. The ECS never directly touches the state vector.
+
+Contrast this with physics state: `Transform`, `ExternalForce`, `LinearVelocity` are Avian3D components, managed by the physics engine. These are host-specific and belong in ECS.
+
+**Rule:** If state is consumed by `helios_core` or `helios_runtime` algorithms, it lives in the pipeline. If state is consumed by the physics engine or renderer, it lives in ECS components.
+
+### 3.4 Contract Design: Trait Bounds and the AgentRuntime Interface
+
+**Tradeoff:** Rich trait interfaces are expressive but hard to implement for new hosts. Minimal interfaces are easy to implement but push complexity to the caller.
+
+**Direction for Helios:** Minimal, host-agnostic trait surfaces. `AgentRuntime` has three methods: `now()`, `get_transform()`, `world_pose()`. That's it. A hardware implementation can satisfy this with a system clock and a static URDF lookup table. A simulation implementation wraps `TfTree` and `Time<Virtual>`.
+
+**Concrete example:** `FilterContext` holds an `Option<&dyn TfProvider>`. Measurement models call `tf.get_transform(sensor_frame, body_frame)` to transform sensor readings into the body frame. The model doesn't know whether the transform came from a Bevy `TfTree`, a ROS TF2 listener, or a hardcoded calibration matrix. It doesn't care.
+
+**Rule:** Traits in `helios_core` and `helios_runtime` must be implementable without any Bevy, Avian3D, or OS-specific dependency. If a trait method would require `bevy::ecs::World`, it belongs in `helios_sim`.
+
+### 3.5 Abstraction Boundaries: The Coordinate Frame Law
+
+**Tradeoff:** Allowing ad-hoc coordinate conversions is flexible but error-prone. Centralizing conversions adds indirection but eliminates an entire class of bugs.
+
+**Direction for Helios:** All frame conversions happen at exactly one boundary, through typed newtypes and dedicated conversion functions.
+
+**Concrete example:** `helios_core` operates in ENU (world) and FLU (body/sensor). `helios_sim` uses Bevy's Y-up/-Z-forward convention. The typed newtypes (`EnuWorldPose`, `FluLocalPose`, `EnuVector`, `FluVector`) in `helios_sim/src/simulation/core/transforms/` enforce conversions via `From` impls in `bevy_bridge.rs`. A developer cannot accidentally pass a Bevy `Transform` where an ENU pose is expected — the type system prevents it.
+
+**Rule:** Never perform manual axis swaps (`v.y = physics.z`) anywhere in the codebase. If you need a new conversion, add a `From` impl in `bevy_bridge.rs`. If you find yourself swapping axes in a system function, you have a bug.
+
+### 3.6 Evolutionary Architecture: The AutonomyRegistry as Extension Point
+
+**Tradeoff:** Static dispatch (generics/monomorphization) is faster. Dynamic dispatch (`Box<dyn Trait>`) is flexible. A registry adds indirection but enables runtime composition.
+
+**Direction for Helios:** Dynamic dispatch via the `AutonomyRegistry` for algorithm selection. Static dispatch within algorithm internals (e.g., nalgebra operations).
+
+**Concrete example:** `AutonomyRegistry` stores factories as `Arc<dyn Fn(BuildContext) -> Result<Box<dyn Trait>>>`. When a scenario TOML says `dynamics.type = "IntegratedImu"`, the spawning system looks up `"IntegratedImu"` in `registry.dynamics`, calls the factory, and gets back a `Box<dyn EstimationDynamics>`. The spawning system has no `match` statement, no concrete type name, no `use helios_core::models::estimation::dynamics::integrated_imu::IntegratedImuModel`.
+
+**Why this works:** The dynamic dispatch cost is paid once at spawn time (scene building). During simulation, the pipeline holds `Box<dyn StateEstimator>` and calls `predict`/`update` through vtable dispatch — a single indirect call per tick, invisible compared to the matrix math inside.
+
+**Rule:** Never `match` on algorithm type strings in spawning systems. If you're writing `if dynamics_type == "IntegratedImu"`, you should be registering a factory instead.
+
+### 3.7 Error Handling: Fail-Safe Degradation over Fail-Fast Panics
+
+**Tradeoff:** Panicking on errors is explicit and easy to debug. Graceful degradation keeps the system running but can mask bugs.
+
+**Direction for Helios:** Panic at startup on invalid configuration (catch errors early). Log and skip at runtime (never crash a running agent).
+
+**Concrete example:** If `AutonomyRegistry` can't find a factory for a requested dynamics model during scene building, it logs `error!` and skips spawning that agent. The simulation continues with the remaining agents. This is intentional — in a 100-agent swarm test, one bad config shouldn't kill the entire run.
+
+At runtime, if `s.try_inverse()` fails during an EKF update (singular innovation matrix), the update is skipped and covariance health is checked. The filter continues with the prior estimate. This is numerically correct — a skipped update is better than a NaN state.
+
+**Rule:** `unwrap()` and `expect()` are forbidden in runtime code paths. They are acceptable in startup/config-loading code where a missing field genuinely means the configuration is invalid and the user needs to fix it.
+
+### 3.8 The 3-Layer Actuation Model: Decoupling Abstraction Levels
+
+**Tradeoff:** A single monolithic controller that outputs motor torques is simple but couples high-level planning to low-level vehicle dynamics. Layered actuation is more complex but allows swapping vehicles under the same planner.
+
+**Direction for Helios:** Three explicit layers with clean interfaces between them.
+
+```
+Layer 1 (Core):    Controller.compute() → ControlOutput::BodyVelocity { linear, angular }
+Layer 2 (Adapter): AckermannOutputAdapter.adapt() → VehicleCommand { throttle, steering_torque }
+Layer 3 (Actuator): apply_ackermann_forces() → ExternalForce + ExternalTorque on Avian3D body
+```
+
+**Why three layers:** A Pure Pursuit controller outputs `ControlOutput::BodyVelocity` — an abstract command that says "go forward at 5 m/s, turn left at 0.3 rad/s." This same controller works for an Ackermann car, a differential-drive robot, and a drone (with different adapters). The adapter is "firmware" — it owns the PID loops that translate velocity commands into vehicle-specific actuator inputs. The actuator layer is "dumb" — it applies forces to the physics engine, no logic.
+
+**Rule:** Controllers in `helios_core` must never reference vehicle geometry (wheelbase, rotor arm length). Adapters in `helios_sim` must never reference planning goals. If a controller needs to know the turning radius, the adapter should expose it as a constraint, not the controller should query vehicle parameters.
 
 ---
 
-## Module Boundary Problems
+## 4. System Structure & Boundaries
 
-### MB-1: FrameHandle encodes Bevy Entity bits ✅ RESOLVED (Phase 2)
+### Dependency Graph
 
-`FrameHandle(pub u64)` stores `Entity::to_bits()` via `from_entity()`. A separate
-`SensorId` type was considered to decouple this from Bevy, but rejected: it would be
-structurally identical (`NewType(u64)`) and would add mechanical conversion boilerplate
-with zero semantic benefit.
+**Current workspace (3 crates):**
 
-The actual fix: `from_entity()`/`to_entity()` are behind `#[cfg(feature = "bevy")]` in
-`helios_core`. `helios_runtime` depends on `helios_core` **without** the bevy feature,
-so it has zero Bevy dependency. On hardware, `FrameHandle` bits encode static calibration
-IDs assigned at startup — the type is host-agnostic at the Rust level.
+```
+helios_core          (zero external runtime deps, pure math)
+    ↑
+helios_runtime       (depends on helios_core without bevy feature)
+    ↑
+helios_sim           (depends on helios_core with bevy feature + helios_runtime)
+```
 
-### MB-2: Autonomy orchestration lives in Bevy systems, not in core ✅ FIXED (Phase 2)
+**Planned crates:**
 
-Predict → update sequencing now lives in `AutonomyPipeline` in `helios_runtime`.
-Bevy systems call `wm.0.process_measurement(msg, &runtime)` — they drive timing
-but contain no algorithm logic. The same pipeline runs on hardware with a different
-`AgentRuntime` implementation.
+```
+helios_hw            (depends on helios_core + helios_runtime, no bevy)
+helios_communications (depends on helios_core for message types)
+helios_tools         (depends on helios_core for data structures)
+helios_research      (depends on helios_sim or helios_hw as a test harness)
+helios_ai            (depends on helios_core for trait impls)
+helios_swarm         (depends on helios_runtime + helios_communications)
+```
 
-### MB-3: FilterContext is simulation-shaped ✅ FIXED (Phase 2)
+### Crate Responsibilities and Rules
 
-`FilterContext { tf: Option<&dyn TfProvider> }` is now constructed via
-`TfProviderAdapter(runtime)` where `runtime: &dyn AgentRuntime`. The adapter is
-defined in `helios_runtime` and bridges the host-agnostic `AgentRuntime` trait to
-`TfProvider`. `helios_core` and `helios_runtime` have zero Bevy dependency.
-On hardware, `HardwareRuntime` implements `AgentRuntime` using static calibration data
-— the filter calling convention is identical.
+#### helios_core
+
+**Owns:** Trait definitions, data structures, algorithm implementations, math.
+
+**Allowed:** nalgebra, serde, rand, num-traits, thiserror, dyn-clone. The optional `bevy_ecs` feature for `Entity` only.
+
+**Forbidden:** Bevy app/render/schedule, Avian3D, tokio, std::time, std::fs, std::net, any I/O. No side effects. No global state. No `println!` outside tests.
+
+**Test strategy:** Unit tests with deterministic inputs. Property-based tests for numerical stability. No integration tests — those live in `helios_runtime` and `helios_sim`.
+
+#### helios_runtime
+
+**Owns:** `AutonomyPipeline`, `PipelineBuilder`, `AgentRuntime` trait, config schemas (`AutonomyStack`, `AgentBaseConfig`, `EstimatorConfig`), pipeline validation, `EstimationDriver`/`MapDriver` polymorphism.
+
+**Allowed:** helios_core (without `bevy` feature), nalgebra, serde, log, toml (for config parsing).
+
+**Forbidden:** Bevy, Avian3D, any rendering or physics types. No `Entity`. No `Component`. No `System`. No `App`. If you're importing from `bevy::*`, you're in the wrong crate.
+
+**Test strategy:** Integration tests that build pipelines from config, feed measurement sequences, and assert state convergence. Mock `AgentRuntime` implementations that return canned transforms and timestamps.
+
+#### helios_sim
+
+**Owns:** Bevy application, ECS plugins, physics integration, rendering, sensor simulation (raycasting, noise injection), `AutonomyRegistry`, scene building, `TfTree`, `TopicBus`, `SimRuntime`, `SimulationProfile`/`CapabilitySet`, coordinate frame conversions.
+
+**Allowed:** Everything. This is the integration point.
+
+**Forbidden:** Algorithm math. If a system function contains a Jacobian, a matrix inverse, or a dynamics equation, that code belongs in `helios_core`. Systems orchestrate; they don't compute.
+
+**Test strategy:** Scenario-level integration tests. Headless runs with `--duration-secs` and assertion checks on final state. Profile-specific tests (e.g., `ControlOnly` profile to verify path tracking convergence).
+
+#### helios_hw (planned)
+
+**Owns:** Hardware `AgentRuntime` implementation, device drivers (IMU, GPS, motor controllers), real-time scheduling.
+
+**Allowed:** helios_core, helios_runtime, Linux HAL libraries, async runtime (tokio).
+
+**Forbidden:** Bevy, Avian3D, anything rendering-related.
+
+**Key constraint:** Must implement `AgentRuntime` with real system clock (`std::time::Instant`) and real TF lookups (from URDF + encoder readings). The `AutonomyPipeline` it runs is identical to the one in `helios_sim`.
+
+#### helios_communications (planned)
+
+**Owns:** Zenoh session management, topic mapping (internal `TopicBus` names → Zenoh key expressions), serialization bridges, Foxglove WebSocket server.
+
+**Allowed:** helios_core (for message types), zenoh, serde, tokio.
+
+**Forbidden:** Bevy, helios_runtime internals. This crate reads from and writes to the `TopicBus` — it doesn't participate in the pipeline.
+
+#### helios_tools (planned)
+
+**Owns:** Offline log analysis (MCAP, Parquet), scenario validation, replay.
+
+**Allowed:** helios_core, helios_runtime (for config parsing), file I/O.
+
+**Forbidden:** Real-time constraints. This crate processes data after the fact.
+
+#### helios_research
+
+**Binary:** `helios_sim/src/bin/helios_research.rs` — the main simulation entry point. Used for headless profiling runs, scenario testing, and data collection.
+
+**Future:** Monte Carlo harness, parameter sweep infrastructure, statistical analysis of pipeline outputs. Will become a standalone crate wrapping `helios_sim` headless runs and `helios_hw`.
+
+#### helios_ai (planned)
+
+**Owns:** ML/DL model inference, training pipeline integration.
+
+**Key constraint:** AI models implement `helios_core` traits (`Planner`, `Controller`, `Mapper`). A neural network planner is just another `Box<dyn Planner>` registered in the `AutonomyRegistry`. The pipeline doesn't know or care that it's running inference instead of A\*.
+
+#### helios_swarm (planned)
+
+**Owns:** Multi-agent coordination protocols, consensus algorithms, task allocation.
+
+**Key constraint:** Inter-agent communication goes through `helios_communications` (Zenoh), not through shared memory or ECS queries. Each agent runs its own `AutonomyPipeline`. Swarm coordination is an overlay, not a replacement for per-agent autonomy.
+
+### Side-Effect Boundary Summary
+
+| Crate | File I/O | Network I/O | System Clock | Heap Alloc (hot path) | Global Mutable State |
+|-------|----------|-------------|-------------|----------------------|---------------------|
+| helios_core | No | No | No | No | No |
+| helios_runtime | No | No | No | Minimal | No |
+| helios_sim | Yes (config, assets) | Yes (Foxglove WS) | Yes (Bevy Time) | Yes (scene build) | No (ECS Resources only) |
+| helios_hw | Yes (device files) | Yes (Zenoh) | Yes (system clock) | Minimal | No |
+| helios_communications | No | Yes (Zenoh) | Yes | Yes (serialization) | No |
 
 ---
 
-## Missing Abstractions
+## 5. Tradeoffs
 
-### MA-1: Agent Runtime Contract ✅ FIXED (Phase 2)
+### Performance vs. Modularity
 
-Implemented in `helios_runtime`:
+**The tension:** Dynamic dispatch via `Box<dyn StateEstimator>` costs one vtable indirection per `predict`/`update` call. Monomorphization would eliminate this. But monomorphization requires the pipeline to be generic over the estimator type, which infects every caller with type parameters and makes the `AutonomyRegistry` impossible.
 
-- `MonotonicTime(f64)` in `helios_core/src/types.rs` — clock-source-agnostic timestamp
-- `AgentRuntime` trait in `helios_runtime/src/runtime.rs` — TF lookups + time
-- `AutonomyPipeline` in `helios_runtime/src/pipeline.rs` — self-contained predict → update → map
-- `SimRuntime<'a>` in `helios_sim` implements `AgentRuntime` over `&TfTree + elapsed_secs`
+**Our choice:** Dynamic dispatch at the pipeline level, static dispatch within algorithms. The vtable cost of calling `estimator.predict()` is approximately 1-2 nanoseconds. The matrix multiplication inside `predict()` is 100-1000 nanoseconds. The indirection is noise. The registry's flexibility is not.
 
-Note: `SensorId` was considered but rejected in favor of keeping `FrameHandle` everywhere.
-See MB-1 for the rationale. The runtime contract is fully host-agnostic without it.
+**Where we don't pay the cost:** Inside `ExtendedKalmanFilter`, all nalgebra operations use compile-time-sized types where possible (`Matrix6`, `Vector6`). The optimizer inlines and vectorizes these. We get the best of both worlds: flexible composition at the pipeline boundary, maximum performance inside the algorithm.
 
-### MA-2: PoseSource abstraction
+### Realism vs. Simulation Speed
 
-Entities get their pose from different sources (physics, estimator, network
-mirror, log replay). Currently hardcoded to Avian3D physics. Needed for digital
-twin and HIL.
+**The tension:** Full multi-body tire physics with deformable contact patches is more realistic. Rigid-body dynamics with simplified force models run 100x faster.
 
-### MA-3: Inter-agent communication
+**Our choice:** Avian3D rigid-body dynamics with force-based vehicle models. An Ackermann car applies `ExternalForce` and `ExternalTorque` proportional to throttle and steering — no tire slip model, no suspension simulation, no aerodynamics. This is sufficient for testing estimation, planning, and control algorithms. It is *not* sufficient for testing tire-wear strategies or suspension tuning.
 
-No mechanism for agents to exchange state estimates, map fragments, or plan
-intents. Required for multi-robot coordination.
+**When to revisit:** If Helios is used for vehicle dynamics research (not just autonomy algorithm development), a higher-fidelity physics model would be warranted. This would likely mean replacing Avian3D with a specialized vehicle dynamics solver, but the three-layer actuation model means only Layer 3 changes.
 
-### MA-4: Telemetry decimation
+### Opinionated Pipeline vs. Infinite DAG Flexibility
 
-No rate-limiting on TopicBus publishing. Every sensor fires every tick. For
-external consumers (Foxglove, loggers), most of this data is redundant.
+**The tension:** ROS lets you wire arbitrary nodes into arbitrary graphs. This is maximally flexible and maximally chaotic — debugging a 50-node ROS graph with circular dependencies is a known pain point. Helios enforces a fixed pipeline structure: Sense → Estimate → Map → Plan → Control → Actuate.
 
-### MA-5: Filter health diagnostics
+**Our choice:** The opinionated pipeline. `AutonomyPipeline` has exactly three sub-cores: `EstimationCore`, `MappingCore`, `ControlCore`. Stages within each core are ordered by `PipelineLevel` (Global → Local → Custom). You can add stages, but you can't reorder the top-level flow.
 
-`StateEstimator::predict/update` are infallible — no `Result` return, no health
-metrics. No way to detect filter divergence, NIS/NES violations, or covariance
-blow-up.
+**What we give up:** You can't easily build a pipeline where control output feeds back into estimation within the same tick (e.g., for model-predictive estimation). You can't build circular dependencies. This is a feature, not a limitation — circular dependencies in autonomy pipelines are a source of subtle, timing-dependent bugs.
 
----
+**Escape hatch:** The `Custom(String)` pipeline level and the `Raw`/`RawActuators` control output variants exist for cases that don't fit the standard pattern. If someone truly needs a non-standard pipeline topology, they can implement `EstimationDriver` or `MapDriver` with custom logic. But they should justify the deviation.
 
-## Recommended Improvements
+### Per-Agent Ownership vs. Shared State
 
-### Hot-path / cold-path separation
+**The tension:** Sharing a single occupancy grid across all agents is memory-efficient. Per-agent maps are wasteful but eliminate synchronization.
 
-**Hot path** (per-tick, performance-critical):
+**Our choice:** Per-agent pipeline ownership. Each agent's `AutonomyPipeline` owns its own `EstimationCore`, `MappingCore`, and `ControlCore`. Maps are per-agent. State estimates are per-agent. There is no shared mutable state between agents during the hot path.
 
-```
-Sensors  -->  BevyEvent<MeasurementMessage>  -->  Estimator
-         -->  EstimatedState component       -->  Controller
-         -->  ControlOutput component        -->  Actuator
-```
+**What we give up:** If 100 agents all build the same global occupancy grid from the same sensor data, we store 100 copies. This is acceptable for current scale. At 10,000 agents, a shared read-only map layer (written once per tick, read by all agents) would be worth the synchronization complexity.
 
-Use Bevy events and component mutation. No TopicBus. Full parallel scheduling.
+### TOML Configuration vs. Code Configuration
 
-**Cold path** (telemetry, logging, visualization):
+**The tension:** TOML is readable, diffable, and accessible to non-programmers. But it can't express conditional logic, loops, or type-safe validation at write time.
 
-```
-Components  -->  telemetry_flush_system  -->  TopicBus  -->  Foxglove / MCAP
-```
+**Our choice:** TOML for all tunable parameters (noise values, update rates, model selections, sensor placements). Rust code for structural validation (`validate_autonomy_config` in `helios_runtime`). The config system uses `figment` for layered resolution and `serde` for deserialization, so invalid configs fail at load time with clear error messages.
 
-A single system publishes to TopicBus at configurable rates. No `ResMut<TopicBus>`
-in the hot path.
-
-### Component composition over enum dispatch
-
-```rust
-// Replace WorldModelComponent enum with independent components:
-#[derive(Component)]
-pub struct EstimatorComponent(pub Box<dyn StateEstimator>);
-
-#[derive(Component)]
-pub struct MapperComponent(pub Box<dyn Mapper>);
-
-#[derive(Component)]
-pub struct SlamComponent(pub Box<dyn SlamSystem>);
-```
-
-Systems query only what they need. Adding a mapper-only agent requires zero code
-changes in unrelated systems.
-
-### Direct sensor routing in EKF
-
-```rust
-fn update(&mut self, message: &MeasurementMessage, context: &FilterContext) {
-    let Some(model) = self.measurement_models.get(&message.sensor_handle) else {
-        return;
-    };
-    // O(1) dispatch instead of O(n) iteration
-}
-```
-
-### Per-agent message batching
-
-```rust
-fn estimation_system(
-    mut agents: Query<(Entity, &mut EstimatorComponent, &mut SensorMailbox)>,
-    mut events: EventReader<BevyMeasurementMessage>,
-) {
-    // Group messages by agent
-    let mut per_agent: HashMap<Entity, Vec<_>> = HashMap::new();
-    for msg in events.read() {
-        per_agent.entry(msg.0.agent_handle.to_entity())
-            .or_default()
-            .push(msg.0.clone());
-    }
-
-    // Process each agent independently (future par_iter candidate)
-    for (entity, mut estimator, mut mailbox) in &mut agents {
-        let Some(messages) = per_agent.remove(&entity) else { continue };
-        for msg in messages { /* predict + update */ }
-    }
-}
-```
-
-### Phase-typed spawn requests
-
-```rust
-// Each spawn phase has its own request component
-#[derive(Component)] pub struct VehicleSpawnRequest(pub VehicleConfig);
-#[derive(Component)] pub struct SensorSpawnRequest(pub HashMap<String, SensorConfig>);
-#[derive(Component)] pub struct AutonomySpawnRequest(pub AutonomyStack);
-
-// Each phase consumes and removes its own request
-// Compile-time: systems can only access what they're meant to process
-```
+**Hard rule:** No noise value, update rate, or model type string is ever hardcoded in Rust source. If it changes between runs, it's in TOML.
 
 ---
 
-## Next-Generation Architecture
+## 6. Evolution Strategy
 
-### Crate Dependency Graph
+### Phase 1: Single-Agent Simulation (Current)
 
-```
-helios_core            pure math, traits, data structures
-     ^
-     |
-helios_runtime         agent runtime contract (IMPLEMENTED)
-     ^            ^
-     |            |
-helios_sim        helios_hw (future)
-(Bevy/Avian3D)    (tokio + HW drivers)
-```
+The system supports one or more agents in a single Bevy simulation, each with its own `AutonomyPipeline`, driven by `SimRuntime`. All communication is in-process via `TopicBus` and Bevy Events.
 
-### helios_runtime — The Portability Layer (IMPLEMENTED)
+**Stability criteria:** A single Ackermann car can drive a planned path with EKF-fused IMU+GPS, with less than 1m position error over 1km, in a headless 60-second run.
 
-A small, load-bearing crate that defines how an algorithm stack receives data and
-produces outputs, independent of the host. Uses `FrameHandle` throughout (not a
-separate `SensorId`) — the `bevy` feature gate on `helios_core` keeps it Bevy-free.
+### Phase 2: Multi-Agent Simulation
 
-```rust
-// helios_runtime/src/runtime.rs
+Add `helios_communications` (Zenoh) as the Cold Path. Agents still run in the same Bevy process, but telemetry and inter-agent messages flow through Zenoh topics.
 
-/// Clock-source-agnostic timestamp (in helios_core/src/types.rs).
-pub struct MonotonicTime(pub f64);
+**Key change:** The `TopicBus` gains a Zenoh bridge plugin. `helios_swarm` adds coordination protocols (consensus, task allocation) that communicate through Zenoh key expressions. The Hot Path is untouched — each agent's `AutonomyPipeline` still runs in-process.
 
-/// The contract any host must fulfill to run an autonomy stack.
-pub trait AgentRuntime: Send + Sync {
-    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>>;
-    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>>;
-    fn now(&self) -> MonotonicTime;
-}
+**Stability criteria:** 50 agents in a single simulation, each publishing odometry at 100 Hz to Zenoh, with Foxglove Studio receiving all streams in real-time without frame drops.
 
-// helios_runtime/src/pipeline.rs
+### Phase 3: Hardware Deployment
 
-/// A self-contained autonomy pipeline. Runs identically in sim and on hardware.
-pub struct AutonomyPipeline {
-    pub trackers:    Vec<Box<dyn Tracker>>,
-    pub estimator:   Option<Box<dyn StateEstimator>>,
-    pub slam:        Option<Box<dyn SlamSystem>>,
-    pub mappers:     Vec<LeveledMapper>,    // sorted by PipelineLevel at build time
-    pub planners:    Vec<LeveledPlanner>,
-    pub controllers: Vec<LeveledController>,
-}
+Add `helios_hw` as an alternative host. It implements `AgentRuntime` with real hardware drivers and system clock. The same `AgentBaseConfig` TOML that defines an agent's autonomy stack in simulation defines it on hardware.
 
-impl AutonomyPipeline {
-    /// Called on every sensor event. Drives predict + update.
-    pub fn process_measurement(&mut self, msg: &MeasurementMessage, runtime: &dyn AgentRuntime);
-    /// Called every frame. Forwards sensor data to mappers (cheap log-odds update).
-    pub fn process_mapper_messages(&mut self, msgs: &[MeasurementMessage], runtime: &dyn AgentRuntime);
-    /// Called on timer fire. Pushes odom pose so grid can recenter.
-    pub fn process_mapper_pose_update(&mut self, pose: Isometry3<f64>);
+**Key change:** `helios_hw` loads `configs/catalog/agent_profiles/` and builds an `AutonomyPipeline` via `PipelineBuilder`, identical to what `helios_sim` does. The difference is the `AgentRuntime` implementation: `SimRuntime` wraps `TfTree` + Bevy time; `HardwareRuntime` wraps URDF transforms + `std::time::Instant`.
 
-    pub fn get_state(&self) -> Option<&FrameAwareState>;
-    pub fn get_map(&self, level: &PipelineLevel) -> Option<&MapData>;
-}
-```
+**Stability criteria:** The same EKF config that converges in simulation converges on a Raspberry Pi with real IMU and GPS data, within 10% of the simulated error bounds.
 
-### Host implementations
+### Phase 4: Distributed Simulation
 
-**helios_sim** (`SimRuntime<'a>` in `helios_sim/src/simulation/core/sim_runtime.rs`):
+Multiple Bevy instances on different machines, each running a subset of agents, communicating through Zenoh. This enables large-scale swarm simulation beyond what a single machine can handle.
 
-```rust
-pub struct SimRuntime<'a> {
-    pub tf: &'a TfTree,
-    pub elapsed_secs: f64,
-}
+**Key change:** The Zenoh bridge becomes bidirectional — agents in Process A publish sensor data that agents in Process B can subscribe to (e.g., for cooperative perception). The pipeline architecture doesn't change; only the transport layer scales out.
 
-impl AgentRuntime for SimRuntime<'_> {
-    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>> {
-        self.tf.get_transform(from, to)
-    }
-    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>> {
-        self.tf.lookup_by_entity(Entity::from_bits(frame.0))
-    }
-    fn now(&self) -> MonotonicTime { MonotonicTime(self.elapsed_secs) }
-}
-```
+**Stability criteria:** 500 agents across 10 machines, with inter-agent message latency below 10ms on a local network.
 
-**helios_hw** (future — hardware will implement `AgentRuntime` using static calibration data
-and system clock; no Bevy entities involved, `FrameHandle` bits encode calibration IDs):
+### Phase 5: AI Integration
 
-```rust
-pub struct HardwareRuntime {
-    pub calibration: StaticTfTree,   // loaded from URDF or YAML at startup
-}
-impl AgentRuntime for HardwareRuntime {
-    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>> {
-        self.calibration.get_transform(from, to)
-    }
-    fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> { None }
-    fn now(&self) -> MonotonicTime { MonotonicTime(system_clock_secs()) }
-}
-```
+Add `helios_ai` for ML/DL-based algorithms. Neural network planners, learned controllers, and perception models implement `helios_core` traits and register in the `AutonomyRegistry` like any other algorithm.
 
-### Inter-agent communication
+**Key change:** `helios_ai` brings inference runtime dependencies (ONNX Runtime, TensorRT, or similar). These are optional — not everyone needs ML. The `AutonomyRegistry` doesn't care whether a `Box<dyn Planner>` runs A\* or a neural network.
 
-```rust
-pub struct AgentMessage {
-    pub from: AgentId,
-    pub to: AgentId,       // or Broadcast
-    pub payload: AgentPayload,
-    pub timestamp: MonotonicTime,
-}
-
-pub enum AgentPayload {
-    PoseEstimate(Odometry),
-    MapFragment(MapData),
-    PlanIntent(PathSegment),
-    Custom(Vec<u8>),
-}
-```
-
-- In `helios_sim`: instant delivery (or configurable latency/drop model).
-- In `helios_hw`: UDP multicast or DDS.
-
-### Digital twin / HIL
-
-A single Bevy instance runs the simulation with N virtual agents while
-simultaneously receiving real sensor data from M physical robots:
-
-```rust
-#[derive(Component)]
-pub enum PoseSource {
-    Physics,                              // driven by Avian3D
-    Estimator,                            // driven by autonomy pipeline
-    NetworkMirror { addr: SocketAddr },   // driven by remote robot
-    Replay { log: PathBuf },              // driven by MCAP playback
-}
-```
-
-All downstream systems (visualization, debugging, Foxglove) are agnostic to the
-source.
-
-### Proposed module layout
-
-```
-helios_core/
-  estimation/
-    traits.rs                 StateEstimator, FilterHealth
-    filters/                  ekf.rs, ukf.rs, particle.rs
-  control/
-    traits.rs                 Controller, ControlOutput, ControlContext
-    pid.rs, lqr.rs, feedforward_pid.rs
-  planning/
-    traits.rs                 Planner, PathSegment, PlanResult
-    a_star.rs, rrt_star.rs
-  mapping/
-    traits.rs                 Mapper, MapData
-    occupancy_grid.rs
-  models/
-    dynamics/                 EstimationDynamics implementations
-    measurement/              Measurement implementations
-    perception/               Raycasting sensor models
-  frames/                     FrameAwareState, StateVariable
-  messages.rs                 MeasurementMessage, Odometry, PointCloud
-  types.rs                    FrameHandle, MonotonicTime, TfProvider, State, Control
-
-helios_runtime/               (IMPLEMENTED)
-  lib.rs                      Declares modules, prelude
-  runtime.rs                  AgentRuntime trait + TfProviderAdapter
-  stage.rs                    PipelineLevel, LeveledMapper/Planner/Controller
-  pipeline.rs                 AutonomyPipeline, PipelineBuilder, PipelineOutputs
-  prelude.rs                  Re-exports
-  config/                     Shared autonomy config structs (no Bevy deps)
-    agent.rs                  AgentBaseConfig { name, autonomy_stack }
-    autonomy.rs               AutonomyStack, WorldModelConfig
-    estimator.rs              EstimatorConfig, EkfConfig, EkfDynamicsConfig, noise configs
-    controller.rs             ControllerConfig + get_kind_str()
-    mapper.rs                 MapperConfig, MapperPoseSourceConfig
-    planner.rs                PlannerConfig
-    slam.rs                   SlamConfig, EkfSlamConfig, FactorGraphSlamConfig
-  validation.rs               CapabilitySet, ValidationError, validate_autonomy_config()
-
-helios_sim/
-  config/
-    catalog.rs                Prefab resolution
-    resolver.rs               TOML loading + validation
-    schema/                   One file per config struct type
-  core/
-    agent.rs                  AgentId, AgentBundle, SensorIdMap
-    events.rs                 BevyMeasurementMessage
-    scheduling.rs             SimulationSet, SceneBuildSet, schedule config
-    transforms/
-      conversions.rs          ENU<->Bevy, FLU<->Bevy (pure functions)
-      tf_tree.rs              TfTree resource + TfProvider impl
-      systems.rs              tf_tree_builder, build_static_maps
-    components.rs             GroundTruthState, PoseSource
-  plugins/
-    sensors/                  One plugin per sensor type
-    vehicles/                 One plugin per vehicle type
-    estimation/               EstimationPlugin (owns EstimatorComponent)
-    mapping/                  MappingPlugin (owns MapperComponent)
-    control/                  ControlPlugin
-    planning/                 PlanningPlugin
-    telemetry/
-      topic_bus.rs            TopicBus (cold-path only)
-      foxglove/               WebSocket bridge
-      metrics.rs              Filter health, timing
-    visualization/
-      gizmos/                 Per-concern: pose.rs, covariance.rs, trail.rs
-      ui/                     Legend, HUD
-    debugging/
-      components.rs           DebugState, trail/cache types
-      keybindings.rs          handle_debug_keybindings
-      cache.rs                cache_sensor_data
-      gizmos/                 pose, covariance, point_cloud, velocity, error, trail, tf_frames, occupancy
-      ui/legend.rs            HUD legend panel
-    world/
-      terrain.rs              TerrainPlugin — multi-tile loading, AssetLoading gate
-      atmosphere.rs           AtmospherePlugin — gravity, sun, fly camera
-      objects.rs              WorldObjectPlugin — prefab spawn, trimesh/primitive colliders, SemanticLabel
-  registry/                   AutonomyRegistry (unchanged pattern)
-
-helios_hw/
-  runtime.rs                  HardwareRuntime impl
-  drivers/                    Sensor driver async tasks
-  actuators/                  Actuator output tasks
-  comms/                      Network transport for AgentMessage
-```
-
-### Runtime data-flow schedule
-
-```
-FixedUpdate (per tick):
-
-  Precomputation
-  |  tf_tree_incremental_update (Changed<GlobalTransform>)
-  |
-  +---> Sensors          Perception
-  |     (parallel)       (parallel)
-  |
-  +---> Estimation       WorldModeling
-  |     (parallel,       (parallel,
-  |      separate        separate
-  |      components)     components)
-  |
-  +---> Planning
-  |
-  +---> Control
-  |
-  +---> Actuation
-  |
-  +---> [Avian3D Physics]
-  |
-  +---> StateSync
-  |
-  +---> TelemetryPublish  (cold-path TopicBus writes)
-```
+**Key constraint for sim-to-real:** If a model trains on simulation data, the coordinate frames (ENU/FLU), units (SI), and data formats (`MeasurementMessage`, `PointCloud`) must match between training and deployment. This is why the Coordinate Frame Law and SI unit conventions are non-negotiable.
 
 ---
 
-## Next Steps — Phased Roadmap
+## 7. Anti-Goals
 
-### Phase 1: Fix foundations ✅ DONE (2026-03-08)
+These are things this architecture deliberately does not optimize for. If a proposed change serves one of these goals at the expense of the core characteristics, reject it.
 
-| Item                                                           | Effort | Impact         |
-| -------------------------------------------------------------- | ------ | -------------- |
-| Fix `.unwrap()` in EKF update (crash risk)                     | 30 min | Safety ✅      |
-| Fix manual axis swaps in `ground_truth_sync_system`            | 15 min | Correctness ✅ |
-| Route EKF updates by `sensor_handle` O(1) lookup               | 1 hr   | Performance ✅ |
-| Use `&mut ControlOutputComponent` instead of `commands.insert` | 30 min | Performance ✅ |
+**"Using ECS systems for pure mathematics."**
+Bevy systems orchestrate. They call `pipeline.process_measurement()` and read the result. They do not contain Jacobians, matrix inversions, quaternion operations, or dynamics equations. If math is in a system function, it's in the wrong place.
 
-### Phase 2: Introduce helios_runtime ✅ DONE (2026-03-08)
+**"Hardcoding vehicle geometry in high-level planners."**
+A planner should not know whether it's planning for an Ackermann car or a quadcopter. It receives a `MapData` and a `FrameAwareState` and produces a `Path`. Vehicle constraints (turning radius, max velocity) are expressed as planner parameters in TOML, not as hardcoded constants.
 
-| Item                                                                                                      | Impact           |
-| --------------------------------------------------------------------------------------------------------- | ---------------- |
-| Created `helios_runtime` crate with `MonotonicTime`, `AgentRuntime`, `TfProviderAdapter`                  | Architecture ✅  |
-| Defined `AutonomyPipeline` + `PipelineBuilder` — sequencing moved out of Bevy                             | Portability ✅   |
-| Kept `FrameHandle` (not `SensorId`) — bevy feature gate makes it host-agnostic                            | Decoupling ✅    |
-| `SimRuntime<'a>` in `helios_sim` implements `AgentRuntime` over `&TfTree + elapsed_secs`                  | Integration ✅   |
-| Replaced `WorldModelComponent` enum with `WorldModelComponent(pub AutonomyPipeline)` newtype              | Extensibility ✅ |
-| `ControllerComponent` removed — controllers now live inside `AutonomyPipeline.controllers`                | Architecture ✅  |
-| Added `Planner` and `Tracker` trait stubs to `helios_core` (no concrete impls yet)                        | Architecture ✅  |
-| Per-stage rate separation: `process_measurement`, `process_mapper_messages`, `process_mapper_pose_update` | Correctness ✅   |
+**"Rebuilding a monolithic ROS1-style node graph internally."**
+The `AutonomyPipeline` is a fixed-structure pipeline, not a general-purpose computation graph. Stages execute in a defined order (Sense → Estimate → Map → Plan → Control → Actuate). There is no runtime graph reconfiguration, no message-passing between arbitrary nodes, no `roslaunch`-style XML wiring.
 
-### Phase 3: Control pipeline consolidation + naming cleanup ✅ DONE (2026-03-08)
+**"Running a network middleware in the high-frequency control loop."**
+Zenoh, gRPC, WebSockets, and any other network protocol are Cold Path only. The Hot Path — from sensor reading to actuator command — is in-memory function calls within a single tick. Introducing network latency or serialization overhead in this path is a correctness bug, not just a performance issue. Estimation filters assume measurements arrive in causal order within a tick; network jitter violates this assumption.
 
-| Item                                                                                                   | Impact          |
-| ------------------------------------------------------------------------------------------------------ | --------------- |
-| Added `step_controllers(dt, runtime)` to `AutonomyPipeline` — controller compute inside the pipeline   | Architecture ✅ |
-| Removed `ControllerComponent` — controllers are now `Vec<LeveledController>` inside `AutonomyPipeline` | Consistency ✅  |
-| `ControlPlugin` slimmed to: spawn `ControlOutputComponent` + call `step_controllers()` each tick       | Simplicity ✅   |
-| Renamed `WorldModelComponent` → `AutonomyPipelineComponent` — name now matches its scope               | Clarity ✅      |
-| Renamed `plugins/world_model/` → `plugins/autonomy/` — directory matches contained concerns            | Clarity ✅      |
-| Renamed `WorldModelPlugin` → `AutonomyPlugin`                                                          | Clarity ✅      |
-| Documented 3-layer control split (pipeline → adapter → physics) and `helios_hw` portability path       | Architecture ✅ |
+**"Supporting arbitrary plugin architectures with uncontrolled loading order."**
+Every system belongs to exactly one `SimulationSet` or `SceneBuildSet` variant. There is no `.before()` / `.after()` spaghetti. If a new system doesn't fit an existing set, the correct response is usually to rethink the system's responsibility, not to add ordering constraints.
 
-**Control layer boundary (stable interface for `helios_hw`):**
+**"Optimizing for minimal binary size."**
+A single binary that includes all algorithms, all vehicle models, and all sensor simulations is acceptable. Helios is a research and development platform, not a microcontroller firmware. Binary size is not a constraint. Compile time is a secondary concern to correctness and modularity.
 
-```
-Layer 1  ControlPlugin         pipeline.step_controllers() → ControlOutput  (helios_core type)
-Layer 2  Vehicle plugin        VehicleAdapter::adapt()     → VehicleCommand (vehicle-specific)
-Layer 3  Vehicle plugin        VehicleCommand              → ExternalForce/Torque (sim) or CAN/PWM (hw)
-```
+**"Making helios_core generic over float precision."**
+All core algorithms use `f64`. Period. `f32` introduces numerical instability in EKF covariance updates, quaternion normalization, and integrator accumulation. The 2x memory cost is irrelevant for the state vector sizes we handle (typically 15-30 elements). If a future GPU-based particle filter needs `f32`, it uses `f32` internally and converts at the trait boundary.
 
-### Phase 4: Config portability ✅ DONE (2026-03-09)
-
-| Item                                                                                                     | Impact           |
-| -------------------------------------------------------------------------------------------------------- | ---------------- |
-| Moved autonomy config structs to `helios_runtime/src/config/` (AutonomyStack, EstimatorConfig, etc.)     | Portability ✅   |
-| Created `AgentBaseConfig { name, autonomy_stack }` in `helios_runtime` — the portable agent identity     | Portability ✅   |
-| `validate_autonomy_config()` + `CapabilitySet` + `ValidationError` in `helios_runtime/src/validation.rs` | Reliability ✅   |
-| `AutonomyRegistry::capabilities()` snapshots registered keys for validation before any factory runs      | Reliability ✅   |
-| Moved all TOML files out of `helios_sim/assets/` into workspace-level `configs/`                         | Shared config ✅ |
-| Split agent prefabs: `configs/catalog/agent_profiles/` for portable autonomy, `agents/` for sim-specific | Shared config ✅ |
-| Agent prefabs now use `autonomy_stack = { from = "agent_profiles.xxx" }` — no inline autonomy tables     | Portability ✅   |
-| `helios_sim` `AgentConfig` uses `#[serde(flatten)]` to embed `AgentBaseConfig` + accessor methods        | Architecture ✅  |
-| CLI `--config-root` arg (default `"configs"`) replaces hardcoded `"assets/catalog"` in catalog loader    | Deployability ✅ |
-
-**Key serde constraint discovered:** `#[serde(deny_unknown_fields)]` is incompatible with `#[serde(flatten)]`.
-Removed `deny_unknown_fields` from `AgentConfig` only; all inner structs retain their own guards.
-
-### Phase 5: Agent-local data isolation ✅ DONE (2026-03-10)
-
-| Item                                                                                                                       | Impact           |
-| -------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `SensorMailbox` component on each agent — populated by `route_sensor_messages` each frame                                  | Scalability ✅   |
-| `TopicBus` removed from all sensor hot paths; all sensor telemetry flows through `sensor_telemetry_system` in `Validation` | Parallelism ✅   |
-| `AutonomyPipelineComponent` split into `EstimatorComponent`, `MapperComponent`, `ControlPipelineComponent`                 | Extensibility ✅ |
-| `estimation_system` + `mapping_system` run in parallel (different components per entity)                                   | Multi-agent ✅   |
-| Per-agent message batching: each agent's mailbox pre-sorted by timestamp before estimation runs                            | Multi-agent ✅   |
-
-**Stage split (stable interface):**
-
-```
-EstimationCore   → EstimatorComponent   → estimation_system (SimulationSet::Estimation, parallel)
-MappingCore      → MapperComponent      → mapping_system    (SimulationSet::Estimation, parallel)
-ControlCore      → ControlPipelineComponent → controller_compute_system (SimulationSet::Control)
-```
-
-`AutonomyPipeline` in `helios_runtime` remains as a composite (`into_parts()` decomposes it for helios_sim).
-`helios_hw` uses `AutonomyPipeline` as a whole unit — no decomposition needed.
-
-**TopicBus data flow after Phase 5:**
-
-```
-Hot path  →  Sensors emit BevyMeasurementMessage events only
-          →  route_sensor_messages routes to per-agent SensorMailbox
-          →  estimation_system + mapping_system read from SensorMailbox (parallel)
-
-Cold path →  sensor_telemetry_system    (Validation) reads SensorMailbox → TopicBus
-          →  autonomy_telemetry_system  (Validation) reads components → TopicBus
-          →  ground_truth_publish_system (Validation) → TopicBus
-          →  tf_publish_system          (Validation) → TopicBus
-```
-
-### Phase 6A: Debugging plugin split ✅ DONE (2026-03-11)
-
-| Item                                                                                                                | Impact             |
-| ------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| Split `debugging/systems.rs` (636 lines) into 8 per-concern files                                                   | Maintainability ✅ |
-| `keybindings.rs` — `handle_debug_keybindings` (standalone)                                                          | Clarity ✅         |
-| `cache.rs` — `cache_sensor_data` (standalone)                                                                       | Clarity ✅         |
-| `gizmos/` — one file per visualization: pose, covariance, point_cloud, velocity, error, trail, tf_frames, occupancy | File size ✅       |
-| `ui/legend.rs` — HUD legend panel (standalone)                                                                      | Clarity ✅         |
-| `systems.rs` tombstoned (comment index only, no `mod systems` in mod.rs)                                            | Hygiene ✅         |
-
-### Phase 6B: World system standardization ✅ DONE (2026-03-11)
-
-| Item                                                                                                                      | Impact           |
-| ------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `TerrainPlugin` — asset loading, multi-tile support, AssetLoading→SceneBuilding gate                                      | Architecture ✅  |
-| `AtmospherePlugin` — gravity, sun transform, fly camera; ENU azimuth→Bevy -Z conversion                                   | Correctness ✅   |
-| `WorldObjectPlugin` — prefab catalog lookup, trimesh colliders from `_col.glb`, primitive colliders                       | Architecture ✅  |
-| `read_object_gltf_extras` — walks `ChildOf` chain to attach `SemanticLabel` from Blender extras                           | Automation ✅    |
-| TOML label takes precedence over GLTF extras; GLTF serves as self-describing fallback                                     | Reliability ✅   |
-| `WorldObjectType(String)`, `SemanticLabel { label, class_id }`, `BoundingBox3D`, `TerrainMedium` components               | Data model ✅    |
-| `WorldSpawnerPlugin` tombstoned — replaced by three focused plugins                                                       | Clarity ✅       |
-| `configs/catalog/objects/` prefab TOML: `label`, `class_id`, `visual_mesh`, `collider_mesh`, `[collider]`, `bounding_box` | Config ✅        |
-| `blender_asset_standards.md` created — full guide for Blender export, GLTF extras, collision meshes, class ID registry    | Documentation ✅ |
-
-**World struct change (scenario.rs):**
-
-```rust
-// Old
-struct World { map_file, gravity, objects }
-
-// New
-struct World {
-    terrains:   Vec<TerrainConfig>,
-    atmosphere: AtmosphereConfig,
-    objects:    Vec<WorldObjectPlacement>,
-}
-```
-
-**Scenario TOML format:**
-
-```toml
-[[world.terrains]]
-mesh     = "terrain/valley_floor.glb"
-collider = "terrain/valley_floor_col.glb"
-medium   = "air"
-
-[world.atmosphere]
-gravity       = [0.0, -9.81, 0.0]
-sun_elevation = 45.0   # degrees
-sun_azimuth   = 180.0  # 0=North, 90=East, 180=South
-
-[[world.objects]]
-prefab   = "objects.stop_sign"
-position = [10.0, 5.0, 0.0]   # ENU meters
-orientation_degrees = [0.0, 0.0, 0.0]
-```
-
-### Phase 7: helios_hw skeleton
-
-| Item                                                              | Effort | Impact   |
-| ----------------------------------------------------------------- | ------ | -------- |
-| Create `helios_hw` crate with tokio-based agent event loop        | 2 days | Hardware |
-| Implement `HardwareRuntime` (static TF, system clock)             | 1 day  | Hardware |
-| Load `AgentBaseConfig` from `configs/catalog/agent_profiles/`     | 4 hrs  | Hardware |
-| Sensor driver framework (async tasks feeding `SensorReading`)     | 2 days | Hardware |
-| Actuator output framework (async tasks consuming `ControlOutput`) | 1 day  | Hardware |
-
-### Phase 8: Multi-agent and digital twin
-
-| Item                                                     | Effort | Impact       |
-| -------------------------------------------------------- | ------ | ------------ |
-| `AgentMessage` pub/sub in `helios_runtime`               | 1 day  | Multi-robot  |
-| Sim implementation (instant or latency-delayed delivery) | 1 day  | Simulation   |
-| HW implementation (UDP multicast or DDS)                 | 2 days | Hardware     |
-| `PoseSource` component + mirror entities in Bevy         | 2 days | Digital twin |
-| MCAP logging plugin for offline analysis                 | 3 days | Experiments  |
+**"Providing a GUI for configuration."**
+Configuration is TOML files in `configs/`. They are version-controlled, diffable, and reviewable in pull requests. A GUI that generates TOML would be a `helios_tools` concern, not an architectural requirement.
 
 ---
 
-## Long-Term Vision
+## 8. Guiding Principles
 
-### The Platform Triangle
+A short list for code reviews and design discussions. If a change violates one of these, it needs explicit justification.
 
-```
-            helios_core
-           /     |     \
-          /      |      \
-   helios_sim  helios_hw  helios_runtime
-      |           |            |
-   Research    Deployment   Portability
-   + Viz       + Real HW    + Shared
-   + Physics   + Network    + Pipeline
-```
+1. **Algorithms are pure functions of their inputs.** A filter's output depends on state, measurement, and time — not on which host is running it, what frame the rendering engine uses, or whether a network connection is active.
 
-### Design principles
+2. **The dependency arrow points one way: core ← runtime ← sim.** If you find yourself importing `helios_sim` from `helios_runtime`, or `helios_runtime` from `helios_core`, stop. Restructure.
 
-- **Same algorithm, any host.** An `AutonomyPipeline` configured with a
-  particular EKF, dynamics model, and controller runs identically in simulation
-  and on hardware. Tuning parameters transfer directly.
+3. **Frame conversions happen at the boundary, nowhere else.** Use the typed newtypes (`EnuWorldPose`, `FluLocalPose`, etc.) and `bevy_bridge.rs` `From` impls. If you're writing `y = z` or `-z = y` in a system function, you have a bug.
 
-- **Component composition over enum dispatch.** Every autonomy module is its
-  own ECS component. Systems query only what they need. New module types require
-  zero changes to unrelated systems.
+4. **Systems orchestrate; they don't compute.** A Bevy system should call a method on `AutonomyPipeline` or read a result from it. It should not contain a `for` loop over matrix elements.
 
-- **Events for data flow, components for state.** Measurements flow via Bevy
-  events. Estimated state, control output, and ground truth are components
-  mutated in-place. No deferred commands in the hot path.
+5. **Config drives composition.** Adding a new algorithm means implementing a trait, registering a factory, and writing a TOML block. Zero changes to existing code.
 
-- **TopicBus is telemetry, not architecture.** Nothing in the control loop
-  reads from TopicBus. It exists solely for Foxglove, MCAP logging, and
-  metrics dashboards.
+6. **Hot Path stays hot.** No serialization, no I/O, no heap allocation in the Sensor → Estimate → Control path. If you need to observe it, publish a copy to the Cold Path after the fact.
 
-- **Agent-local data isolation.** Each agent's autonomy state is a
-  self-contained component set. Systems can `par_iter` across agents with no
-  shared mutable state.
+7. **Fail safe at runtime, fail fast at startup.** Invalid config panics during scene building. Invalid sensor data is logged and skipped during simulation. A running pipeline never panics.
 
-- **Process-level experiment parallelism.** Large-scale experiments (Monte
-  Carlo, hyperparameter sweeps) run as independent OS processes. A thin
-  orchestration layer launches runs, collects MCAP logs, and aggregates results.
+8. **Per-agent ownership, no shared mutable state.** Each agent's pipeline is independent. Cross-agent communication goes through the Cold Path (`helios_communications`).
 
-### Success criteria
+9. **SI units always, degrees only in TOML.** Radians, meters, seconds, kilograms in all Rust code. Convert degrees to radians immediately on config load.
 
-The architecture is successful when:
+10. **Every system belongs to a set.** `SimulationSet` for runtime systems, `SceneBuildSet` for scene construction. No orphan systems. No `.before()` / `.after()` ordering — the set defines the order.
 
-1. Adding a new sensor type requires: one `helios_core` model file, one
-   `helios_sim` plugin file, one TOML config entry, zero changes elsewhere.
-2. The same EKF + PID stack can be tested in simulation, deployed on a
-   Raspberry Pi, and visualized as a digital twin — with no code changes.
-3. A 100-agent simulation runs at real-time with sub-millisecond per-tick
-   overhead from the autonomy pipeline.
-4. A new team member can add a particle filter without understanding the
-   Bevy scheduler, TopicBus internals, or coordinate frame math.
+11. **No concrete types in spawning systems.** Spawning systems resolve algorithms through the `AutonomyRegistry`. If you're writing `IntegratedImuModel::new()` in a spawning system, use a factory instead.
+
+12. **Test at the right layer.** Math correctness in `helios_core` unit tests. Pipeline integration in `helios_runtime` tests. End-to-end behavior in `helios_sim` scenario tests. Don't test Jacobians through a full Bevy simulation.

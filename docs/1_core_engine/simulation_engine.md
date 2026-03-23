@@ -59,7 +59,7 @@ The `SceneBuildSet` enum defines a strict, chained order for entity creation to 
 1.  **CreateRequests:** Spawn empty agent entities with a `SpawnAgentConfigRequest`.
 2.  **ProcessVehicle:** Add vehicle-specific components (e.g., `AckermannParameters`).
 3.  **ProcessSensors:** Spawn sensor entities as children and attach their models.
-4.  **ProcessBaseAutonomy:** Add core autonomy components (`WorldModelComponent`) that depend on the vehicle and sensors.
+4.  **ProcessBaseAutonomy:** Add core autonomy components (`EstimatorComponent`, `MapperComponent`) that depend on the vehicle and sensors.
 5.  ... (Other steps)
 6.  **Finalize:** Run final setup systems (e.g., `build_static_tf_maps`) after all entities exist.
 7.  **Cleanup:** Remove temporary request components.
@@ -69,15 +69,19 @@ The `SceneBuildSet` enum defines a strict, chained order for entity creation to 
 The `SimulationSet` enum defines the main data flow loop for each timestep.
 
 1.  **`Precomputation`:** Prepare data for the frame (e.g., rebuild the `TfTree`).
-2.  **`Planning` & `Control`:** Make decisions based on the _previous_ frame's state.
-3.  **`Actuation`:** Apply forces/torques to the physics bodies.
-4.  **`PhysicsSet::Simulate` (Avian3D):** The physics engine runs, calculating the new state. **This is the "tick" of the clock.**
-5.  **`StateSync`:** The `ground_truth_sync_system` reads the new physics state and updates the `GroundTruthState` component. **The world state is now consistent for the current time.**
-6.  **`Sensors` & `Perception`:** Sensor plugins read the fresh `GroundTruthState` and generate new measurements for the current time.
-7.  **`Estimation` (`WorldModelPlugin`):** The estimator consumes the new sensor data to produce a new state estimate for the current time.
-8.  **`Validation`:** Ground truth is published to `TopicBus`; `update_path_trail` appends the latest position to each agent's trail buffer.
+2.  **`Sensors`:** Raw sensor simulation: IMU noise, GPS lever arm, LiDAR raycasting. Emits `BevyMeasurementMessage`.
+3.  **`Perception`:** Sensor data processing (detections, segmentation).
+4.  **`WorldModeling`:** SLAM, mapping, tracking.
+5.  **`Estimation`:** EKF/UKF predict+update via `EstimationPlugin`. Reads `BevyMeasurementMessage`, publishes `Odometry`.
+6.  **`Behavior`:** Behavior trees / high-level decision making.
+7.  **`Planning`:** Path planning (A\*, RRT\*).
+8.  **`Control`:** Motion control (PID, MPC). Reads estimated state and planned path.
+9.  **`Actuation`:** Apply forces/torques to the physics bodies.
+10. **`PhysicsSet::Simulate` (Avian3D):** The physics engine runs, calculating the new state.
+11. **`StateSync`:** The `ground_truth_sync_system` reads the new physics state and updates the `GroundTruthState` component.
+12. **`Validation`:** Ground truth is published to `TopicBus`; `update_path_trail` appends the latest position to each agent's trail buffer.
 
-This explicit ordering prevents "one-frame lag" errors and ensures a logical, causal flow of information through the entire simulation.
+This explicit ordering ensures a logical, causal flow of information through the entire simulation.
 
 ---
 
@@ -96,9 +100,9 @@ Helios achieves this multi-rate behavior _within_ a single, high-frequency `Fixe
 This pattern is used for processes that must react immediately to incoming data, like the estimator's `predict` step.
 
 - **Mechanism:** Instead of running on a clock, these systems are driven by the arrival of Bevy `Events`.
-- **Example (`world_model_event_processor`):**
+- **Example (`run_estimation`):**
   1.  The `ImuPlugin` runs in the `Sensors` set and publishes a `BevyMeasurementMessage` at 200 Hz.
-  2.  The `world_model_event_processor` system runs in the `Update` schedule (or a high-frequency `FixedUpdate`) and has a run condition: `.run_if(on_event::<BevyMeasurementMessage>())`.
+  2.  The `run_estimation` system runs in the `Estimation` set and has a run condition: `.run_if(on_event::<BevyMeasurementMessage>())`.
   3.  **Result:** This system only consumes CPU cycles when there are new IMU messages to process. It naturally runs at the same rate as the sensor that drives it. If you have two IMUs publishing at 200 Hz each, this system will run 400 times per second.
 
 ### B. Low-Frequency, Timer-Gated Systems
@@ -106,9 +110,9 @@ This pattern is used for processes that must react immediately to incoming data,
 This pattern is used for slow, periodic tasks like mapping or SLAM optimization.
 
 - **Mechanism:** The system itself still runs on every `FixedUpdate` tick (e.g., at 200 Hz), but the _expensive logic_ inside it is wrapped in a "gate" controlled by a `bevy::prelude::Timer`.
-- **Example (`world_model_mapping_system`):**
-  1.  At startup, the `spawn_world_model_modules` system reads the mapper's configured rate (e.g., 1 Hz) and adds a `ModuleTimer(Timer::from_seconds(1.0, ...))` component to the agent.
-  2.  On every `FixedUpdate` tick, the `world_model_mapping_system` runs.
+- **Example (mapping system):**
+  1.  At startup, the spawning system reads the mapper's configured rate (e.g., 1 Hz) and adds a `ModuleTimer(Timer::from_seconds(1.0, ...))` component to the agent.
+  2.  On every `FixedUpdate` tick, the mapping system runs.
   3.  The first thing it does is `timer.tick(time.delta())`. This is a very cheap operation.
   4.  It then checks `if !timer.just_finished() { return; }`.
   5.  **Result:** For 199 out of 200 ticks, the system does almost nothing and returns immediately. On the 200th tick, `timer.just_finished()` is true, and the system proceeds to execute its expensive mapping logic.
