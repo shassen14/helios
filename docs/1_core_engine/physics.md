@@ -21,7 +21,7 @@ Helios uses the `PhysicsPlugins::default()` from `avian3d` to provide the core s
 - **`RigidBody::Dynamic`:** Marks an entity as a movable object.
 - **`Collider`:** Defines the physical shape of an object for collision detection. We use primitive shapes like `Collider::cuboid()` and `Collider::cylinder()`. For complex world geometry, we will use `Collider::trimesh_from_mesh()`.
 - **`Mass`:** Defines the mass of the object.
-- **`ExternalForce` & `ExternalTorque`:** These are the primary inputs to the physics simulation. Our `Actuation` systems (like `drive_ackermann_cars`) write to these components to make the vehicle move. For Ackermann vehicles this is the output of a three-layer pipeline — see `docs/systems/ackermann_actuation.md`.
+- **`ExternalForce` & `ExternalTorque`:** These are the primary inputs to the physics simulation. Our `Actuation` systems (like `drive_ackermann_cars`) write to these components to make the vehicle move. For Ackermann vehicles this is the output of a three-layer pipeline — see `docs/4_action/ackermann_actuation.md`.
 - **`LinearVelocity` & `AngularVelocity`:** These components are written to by the physics engine. We read from them to get the results of the simulation.
 - **`Gravity`:** A Bevy `Resource` that defines the global gravity vector, which Avian automatically applies to all dynamic bodies.
 

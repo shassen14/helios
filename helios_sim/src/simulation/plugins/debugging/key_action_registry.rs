@@ -20,6 +20,8 @@ pub enum DebugToggle {
     TfFrames,
     PlannedPath,
     Legend,
+    VehicleHud,
+    StateSource,
 }
 
 /// A single registered debug key action.
@@ -48,7 +50,9 @@ pub struct KeyActionRegistry(pub Vec<KeyAction>);
 /// Returns `None` for unrecognised names.
 pub fn parse_key_code(name: &str) -> Option<KeyCode> {
     match name.to_uppercase().as_str() {
+        "C" => Some(KeyCode::KeyC),
         "H" => Some(KeyCode::KeyH),
+        "T" => Some(KeyCode::KeyT),
         "F1" => Some(KeyCode::F1),
         "F2" => Some(KeyCode::F2),
         "F3" => Some(KeyCode::F3),

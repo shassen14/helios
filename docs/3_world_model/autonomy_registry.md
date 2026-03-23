@@ -43,6 +43,9 @@ impl StateEstimator for MyFilter { ... }
 | Dynamics model | `registry/dynamics.rs` | `EstimationDynamics` |
 | Mapper | `registry/mappers.rs` | `Mapper` |
 | SLAM system | `registry/slam.rs` | `SlamSystem` |
+| Controller | `registry/controllers.rs` | `Controller` |
+| Planner | `registry/planners.rs` | `Planner` |
+| Adapter | `registry/adapters.rs` | `AckermannOutputAdapter` |
 
 ```rust
 // In registry/estimators.rs
@@ -127,7 +130,7 @@ Add to `HeliosSimulationPlugin::build()` in `helios_sim/src/lib.rs`:
 app.add_plugins(MySensorPlugin);
 ```
 
-The `WorldModelPlugin` spawner automatically picks up the new sensor's `MeasurementModel`
+The `EstimationPlugin` spawner automatically picks up the new sensor's `MeasurementModel`
 when building the estimator's measurement model map — no registry change needed for sensors.
 
 ---
@@ -143,11 +146,11 @@ does it use?
 
 ```
 EKF estimator ──┐
-                ├── WorldModelComponent  ←─?─  Controller
+                ├── EstimatorComponent  ←─?─  Controller
 SLAM system   ──┘
 ```
 
-In `WorldModelComponent::Separate`, the EKF is the answer. In `WorldModelComponent::CombinedSlam`,
+In `EstimatorComponent::Separate`, the EKF is the answer. In `EstimatorComponent::CombinedSlam`,
 the SLAM system is. If both are eventually possible simultaneously (e.g., EKF for velocity,
 SLAM for global position), the question has no clean answer at the type level, and the controller
 factory has no way to express which it needs. **This is unsolved.** The approaches below are
@@ -227,8 +230,9 @@ fused in the controller). This is probably too restrictive for a research sim.
 
 ### Notes
 
-- The current code has no controller trait yet — this problem is theoretical until `ControllerFactory`
-  is added to the registry. The time to resolve it is before that PR, not during.
+- The `Controller` trait and `ControllerFactory` now exist in the registry. Controllers currently
+  read estimated state from `EstimatorComponent` via the pipeline's `get_state()` method. The
+  multi-estimate routing question remains open for future SLAM + EKF coexistence scenarios.
 - Options 2 and 4 (staging component + single authoritative source) are compatible and together
   form a coherent design: one `CurrentBestEstimate` writer per agent, determined by world model
   variant, consumed uniformly by all downstream systems.

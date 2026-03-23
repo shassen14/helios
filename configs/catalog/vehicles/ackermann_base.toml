@@ -11,7 +11,7 @@ max_steering_rate  = 140.0 # degrees/sec
 [physics]
 mass             = 1500.0  # kg
 friction         = 0.7
-linear_damping   = 0.5   # light drag; provides passive deceleration when throttle is released
+linear_damping   = 1.0   # increased from 0.5; cuts passive coast distance when braking
 angular_damping  = 1.5   # gentle yaw decay; prevents spin-out without killing turns
 
 # Actuator saturation limits. These are physical force/torque maximums, not gains.
@@ -49,10 +49,10 @@ kind = "DualSisoPid"
 kp             = 8000.0
 ki             = 100.0
 kd             = 200.0
-integral_clamp = 0.5
+integral_clamp = 30.0    # was 0.5; allows up to 3000 N steady-state integral force
 
 [adapter.lateral]        # gains in N·m / (rad/s)
 kp             = 8000.0
 ki             = 1.0
-kd             = 500.0
+kd             = 0.0
 integral_clamp = 0.5

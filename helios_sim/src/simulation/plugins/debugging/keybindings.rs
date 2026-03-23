@@ -62,6 +62,14 @@ pub fn handle_debug_keybindings(
                 DebugToggle::Legend => {
                     config.show_legend = !config.show_legend;
                 }
+                DebugToggle::VehicleHud => {
+                    config.show_vehicle_hud = !config.show_vehicle_hud;
+                    info!("[Debug] Vehicle HUD {}", on_off(config.show_vehicle_hud));
+                }
+                DebugToggle::StateSource => {
+                    // State source toggle is handled by the toggle_state_source system
+                    // which directly mutates the ControllerStateSource component on agents.
+                }
             }
         }
     }

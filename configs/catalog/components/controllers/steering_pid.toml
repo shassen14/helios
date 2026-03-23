@@ -1,6 +1,7 @@
 kind = "SteeringPid"
 cruise_speed = 5.0     # m/s — gentle cruise for first run
 kp = 2.0
-ki = 0.05
-kd = 0.3
+ki = 0.01
+kd = 0.0
+goal_radius  = 3.0     # stop when within 3 m of active waypoint
 state_source = "estimated"   # debug: bypass EKF to isolate 90° heading bug; remove when fixed

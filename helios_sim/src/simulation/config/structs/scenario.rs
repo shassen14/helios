@@ -47,9 +47,15 @@ pub struct DebugConfig {
     pub show_tf_frames: bool,
     pub show_planned_path: bool,
     pub show_legend: bool,
+    #[serde(default = "default_true")]
+    pub show_vehicle_hud: bool,
     /// Optional key override table, e.g. `toggle_covariance = "F2"`.
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Temporary helper for the initial file-loading step before agent prefab resolution.

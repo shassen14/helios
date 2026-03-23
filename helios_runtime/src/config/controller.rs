@@ -54,9 +54,15 @@ pub enum ControllerConfig {
         kp: f64,
         ki: f64,
         kd: f64,
+        #[serde(default = "default_goal_radius")]
+        goal_radius: f64,
         #[serde(default)]
         state_source: ControllerStateSourceConfig,
     },
+}
+
+fn default_goal_radius() -> f64 {
+    3.0
 }
 
 impl ControllerConfig {

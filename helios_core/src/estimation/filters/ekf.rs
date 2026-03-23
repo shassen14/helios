@@ -135,6 +135,7 @@ impl StateEstimator for ExtendedKalmanFilter {
 
         // Force Symmetry and Positivity
         self.ensure_covariance_health();
+        self.state.normalize_quaternion();
     }
 
     /// Updates the state by fusing an aiding measurement.
@@ -188,6 +189,7 @@ impl StateEstimator for ExtendedKalmanFilter {
 
         // Enforce Symmetry and Positivity
         self.ensure_covariance_health();
+        self.state.normalize_quaternion();
 
         self.state.last_update_timestamp = message.timestamp;
     }

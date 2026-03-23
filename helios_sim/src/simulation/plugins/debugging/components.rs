@@ -22,6 +22,7 @@ pub struct DebugVisualizationConfig {
     /// Draw the planned path polyline and active look-ahead waypoint.
     pub show_planned_path: bool, // F9
     pub show_legend: bool,         // H
+    pub show_vehicle_hud: bool,    // C
 }
 
 /// Caches the most recent world-space point cloud per sensor entity.

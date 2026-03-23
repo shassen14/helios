@@ -4,7 +4,7 @@ type = "Lidar2D"                              # <-- This is the `tag` for the in
 rate = 10.0
 transform = { translation = [1.5, 0.0, 0.5], rotation = [0.0, 0.0, 0.0]} # 1.5m forward, 0.5m up (FLU frame)
 max_range = 50.0
-horizontal_fov = 180.0                        # A forward-facing scanner
+horizontal_fov = 360.0                        # A forward-facing scanner
 horizontal_beams = 360
 range_noise_stddev = 0.03
 

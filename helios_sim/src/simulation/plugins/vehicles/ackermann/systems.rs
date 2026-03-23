@@ -15,7 +15,7 @@ use nalgebra::Vector3 as NaVec3;
 
 use super::{
     adapter::{AckermannAdapterComponent, DefaultAckermannAdapter},
-    components::{AckermannActuator, AckermannParameters},
+    components::{AckermannActuator, AckermannCommand, AckermannParameters},
     AckermannAssets,
 };
 
@@ -193,6 +193,10 @@ pub(super) fn drive_ackermann_cars(
             dt,
         );
 
+        // Capture before consuming in Layer 3 (persisted for the debug HUD).
+        let throttle_norm = cmd.throttle_norm;
+        let steering_torque_norm = cmd.steering_torque_norm;
+
         // Layer 3: pure linear map — adapter has already resolved all kinematics.
 
         // Force: throttle_norm * max_force (FLU +X = Forward).
@@ -216,6 +220,10 @@ pub(super) fn drive_ackermann_cars(
         commands.entity(entity).insert((
             ExternalForce::new(force_world),
             ExternalTorque::new(torque_world),
+            AckermannCommand {
+                throttle_norm,
+                steering_torque_norm,
+            },
         ));
     }
 }
