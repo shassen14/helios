@@ -220,7 +220,10 @@ pub(super) fn drive_ackermann_cars(
         commands.entity(entity).insert((
             ExternalForce::new(force_world),
             ExternalTorque::new(torque_world),
-            AckermannCommand { throttle_norm, steering_torque_norm },
+            AckermannCommand {
+                throttle_norm,
+                steering_torque_norm,
+            },
         ));
     }
 }

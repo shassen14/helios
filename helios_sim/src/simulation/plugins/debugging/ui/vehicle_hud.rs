@@ -122,14 +122,12 @@ pub fn spawn_vehicle_hud(
         .id();
 
     let speed_section = commands
-        .spawn((
-            Node {
-                flex_direction: FlexDirection::Column,
-                width: Val::Percent(100.0),
-                row_gap: Val::Px(3.0),
-                ..default()
-            },
-        ))
+        .spawn((Node {
+            flex_direction: FlexDirection::Column,
+            width: Val::Percent(100.0),
+            row_gap: Val::Px(3.0),
+            ..default()
+        },))
         .id();
     commands
         .entity(speed_section)
@@ -455,8 +453,11 @@ pub fn update_vehicle_hud(
     if let Ok(mut text) = text_q.get_mut(entities.est_speed_text) {
         text.0 = match est_speed {
             Some(spd) => {
-                let marker =
-                    if *state_source == ControllerStateSource::Estimated { " [CTRL]" } else { "" };
+                let marker = if *state_source == ControllerStateSource::Estimated {
+                    " [CTRL]"
+                } else {
+                    ""
+                };
                 format!("Est: {:.1} m/s{}", spd, marker)
             }
             None => "Est: --".to_string(),
