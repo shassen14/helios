@@ -24,8 +24,6 @@ pub struct EstimationCore {
     pub estimator: Option<Box<dyn StateEstimator>>,
     pub slam: Option<Box<dyn SlamSystem>>,
     pub(crate) last_u: Control,
-    #[allow(dead_code)]
-    pub(crate) control_dim: usize,
 }
 
 impl EstimationCore {
