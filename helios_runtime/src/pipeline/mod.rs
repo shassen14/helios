@@ -242,7 +242,6 @@ impl PipelineBuilder {
                 estimator: self.estimator,
                 slam: self.slam,
                 last_u: DVector::zeros(self.control_dim),
-                control_dim: self.control_dim,
             },
             mapping: MappingCore {
                 mappers: self.mappers,
