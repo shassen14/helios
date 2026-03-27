@@ -39,28 +39,28 @@ duration_seconds = 180.0
 seed = 2024
 
 [[world.terrains]]
-mesh     = "maps/starter_world2.glb"
+mesh = "maps/starter_world2.glb"
 collider = "maps/starter_world2_col.glb"
-medium   = "air"
+medium = "air"
 
 [world.atmosphere]
-gravity       = [0.0, -9.81, 0.0]
+gravity = [0.0, -9.81, 0.0]
 sun_elevation = 45.0
-sun_azimuth   = 180.0
-ambient_lux   = 1500.0
+sun_azimuth = 180.0
+ambient_lux = 1500.0
 
 # Debug visualization defaults. All toggleable at runtime via F1–F7 and H.
 [debug]
-show_pose_gimbals   = true
-show_covariance     = false
-show_point_cloud    = true
-show_velocity       = false
-show_error_line     = true
-show_path_trail     = false
+show_pose_gimbals = true
+show_covariance = false
+show_point_cloud = true
+show_velocity = false
+show_error_line = true
+show_path_trail = false
 show_occupancy_grid = true
-show_tf_frames      = true
-show_legend         = true
-show_planned_path   = true
+show_tf_frames = true
+show_legend = true
+show_planned_path = true
 
 # =========================================================================
 # == Agent 1: The Baseline Vehicle ==
