@@ -15,25 +15,14 @@ pub use crate::models::controls::ControlDynamics;
 
 use nalgebra::{DVector, Vector3};
 
-use crate::{frames::FrameAwareState, types::TfProvider};
+use crate::{
+    frames::FrameAwareState,
+    types::{TfProvider, TrajectoryPoint},
+};
 
 // =========================================================================
 // == Core Data Types ==
 // =========================================================================
-
-/// Reference trajectory point for the current time step.
-///
-/// Provided by the planner; consumed by the controller.
-/// `state_dot` is `None` when the planner cannot or does not provide it
-/// (e.g. a waypoint planner). Feedforward controllers degrade gracefully
-/// to pure feedback and log a diagnostic when `state_dot` is absent.
-#[derive(Clone)]
-pub struct TrajectoryPoint {
-    pub state: FrameAwareState,
-    /// x_dot_ref = f(x_ref, u_nominal, t). None = feedforward unavailable.
-    pub state_dot: Option<DVector<f64>>,
-    pub time: f64,
-}
 
 /// Context passed to every `Controller::compute()` call.
 pub struct ControlContext<'a> {

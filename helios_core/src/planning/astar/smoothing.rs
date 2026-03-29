@@ -27,8 +27,8 @@
 
 use nalgebra::Vector2;
 
-use crate::control::TrajectoryPoint;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::types::TrajectoryPoint;
 
 use super::grid_space::OccupancyGridSpace;
 

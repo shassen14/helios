@@ -4,13 +4,13 @@
 pub use crate::messages::{MeasurementData, MeasurementMessage, ModuleInput};
 pub use crate::models::estimation::dynamics::EstimationDynamics;
 pub use crate::models::estimation::measurement::Measurement;
-pub use crate::types::{FrameHandle, MonotonicTime, TfProvider};
+pub use crate::types::{FrameHandle, MonotonicTime, TfProvider, TrajectoryPoint};
 
 // --- Core Data Structures (The "nouns" of the library) ---
 pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
 // --- Control Abstractions ---
-pub use crate::control::{ControlContext, ControlOutput, Controller, TrajectoryPoint};
+pub use crate::control::{ControlContext, ControlOutput, Controller};
 pub use crate::models::controls::ControlDynamics;
 
 // --- Planning & Tracking ---

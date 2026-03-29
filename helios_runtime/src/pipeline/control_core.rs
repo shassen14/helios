@@ -5,9 +5,10 @@
 use std::collections::HashMap;
 
 use helios_core::{
-    control::{ControlContext, ControlOutput, TrajectoryPoint},
+    control::{ControlContext, ControlOutput},
     frames::FrameAwareState,
     planning::{context::PlannerContext, types::PlannerGoal},
+    types::TrajectoryPoint,
 };
 
 use crate::{
