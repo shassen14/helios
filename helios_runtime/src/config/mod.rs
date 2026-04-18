@@ -9,6 +9,7 @@ mod autonomy;
 mod controller;
 mod estimator;
 mod mapper;
+mod path_following;
 mod planner;
 mod slam;
 
@@ -20,5 +21,6 @@ pub use estimator::{
     ImuProcessNoiseConfig, QuadcopterProcessNoiseConfig, UkfConfig,
 };
 pub use mapper::{MapperConfig, MapperPoseSourceConfig};
+pub use path_following::PathFollowingConfig;
 pub use planner::PlannerConfig;
 pub use slam::{EkfSlamConfig, FactorGraphSlamConfig, SlamConfig};

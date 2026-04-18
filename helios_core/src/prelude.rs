@@ -19,5 +19,8 @@ pub use crate::planning::types::{Path, PlannerGoal, PlannerResult, PlannerStatus
 pub use crate::planning::Planner;
 pub use crate::tracking::{Track, Tracker};
 
+// Path Following
+pub use crate::path_following::{PathFollower, PathFollowerResult};
+
 // --- Concrete Model Implementations (Export common ones for convenience) ---
 pub use crate::models::estimation::measurement::imu::Imu6DofModel;

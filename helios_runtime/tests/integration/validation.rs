@@ -106,6 +106,7 @@ fn validation_valid_full_stack_passes() {
             }),
         }),
         planners,
+        path_following: None,
         controllers,
     };
 

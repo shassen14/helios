@@ -7,7 +7,10 @@ use std::collections::HashMap;
 use helios_core::{
     control::{ControlContext, ControlOutput},
     frames::FrameAwareState,
-    planning::{context::PlannerContext, types::PlannerGoal},
+    planning::{
+        context::PlannerContext,
+        types::{Path, PlannerGoal},
+    },
     types::TrajectoryPoint,
 };
 
@@ -21,7 +24,7 @@ pub struct ControlCore {
     pub planners: Vec<LeveledPlanner>,
     pub controllers: Vec<LeveledController>,
     /// Most recently accepted path per level.
-    pub cached_paths: HashMap<PipelineLevel, helios_core::planning::types::Path>,
+    pub cached_paths: HashMap<PipelineLevel, Path>,
     /// Index of the current look-ahead waypoint per level.
     pub lookahead_indices: HashMap<PipelineLevel, usize>,
 }

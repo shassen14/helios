@@ -6,7 +6,7 @@ use std::any::Any;
 use nalgebra::{DMatrix, DVector, Isometry3};
 
 use helios_core::{
-    control::{ControlContext, ControlOutput, Controller, TrajectoryPoint},
+    control::{ControlContext, ControlOutput, Controller},
     estimation::{FilterContext, StateEstimator},
     frames::{FrameAwareState, FrameId, StateVariable},
     mapping::{MapData, Mapper},
@@ -18,7 +18,7 @@ use helios_core::{
         Planner,
     },
     tracking::{Track, Tracker},
-    types::{Control, FrameHandle, MonotonicTime, State},
+    types::{Control, FrameHandle, MonotonicTime, State, TrajectoryPoint},
 };
 use helios_runtime::runtime::AgentRuntime;
 
