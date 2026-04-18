@@ -1,5 +1,4 @@
 use super::{PathFollower, PathFollowerResult};
-use crate::frames;
 use crate::prelude::FrameAwareState;
 use crate::prelude::FrameId;
 use crate::prelude::Path;

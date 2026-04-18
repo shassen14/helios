@@ -28,6 +28,7 @@
 pub mod control_core;
 pub mod estimation_core;
 pub mod mapping_core;
+pub mod path_following_core;
 
 pub use control_core::ControlCore;
 pub use estimation_core::EstimationCore;
