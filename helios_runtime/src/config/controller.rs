@@ -59,6 +59,13 @@ pub enum ControllerConfig {
         #[serde(default)]
         state_source: ControllerStateSourceConfig,
     },
+    /// Passes Vx and Wz directly from the PathFollower reference to BodyVelocity.
+    /// Use this when a PathFollower (e.g., PurePursuit) has already computed
+    /// velocity commands and no additional feedback is needed.
+    DirectVelocity {
+        #[serde(default)]
+        state_source: ControllerStateSourceConfig,
+    },
 }
 
 fn default_goal_radius() -> f64 {
@@ -72,6 +79,7 @@ impl ControllerConfig {
             ControllerConfig::Lqr { .. } => "Lqr",
             ControllerConfig::FeedforwardPid { .. } => "FeedforwardPid",
             ControllerConfig::SteeringPid { .. } => "SteeringPid",
+            ControllerConfig::DirectVelocity { .. } => "DirectVelocity",
         }
     }
 
@@ -81,6 +89,7 @@ impl ControllerConfig {
             ControllerConfig::Lqr { state_source, .. } => *state_source,
             ControllerConfig::FeedforwardPid { state_source, .. } => *state_source,
             ControllerConfig::SteeringPid { state_source, .. } => *state_source,
+            ControllerConfig::DirectVelocity { state_source, .. } => *state_source,
         }
     }
 }

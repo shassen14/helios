@@ -4,6 +4,7 @@
 //! [`ControlDynamics`] is re-exported from `models::controls` for caller convenience.
 //! Bevy/ECS wrappers and actuator dispatch live in `helios_sim`.
 
+pub mod direct_velocity;
 pub mod feedforward_pid;
 pub mod lqr;
 pub mod metrics;
