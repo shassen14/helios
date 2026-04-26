@@ -34,7 +34,7 @@ impl ControlCore {
         }
     }
 
-    /// Run all planners in level order. Updates `cached_paths` and `lookahead_indices`.
+    /// Run all planners in level order.
     ///
     /// `maps` must be keyed by `PipelineLevel`; each planner is matched against its own level.
     pub fn step_planners(

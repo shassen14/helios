@@ -5,7 +5,7 @@ use crate::prelude::Path;
 use crate::prelude::StateVariable;
 use crate::types::FrameHandle;
 use crate::types::TrajectoryPoint;
-use nalgebra::Vector2;
+use nalgebra::{DVector, Vector2};
 // Plan: output (velocity.x, angle.z)
 //          dot (accel.x, ang_vel.z) -> curvature, but fails
 pub struct PurePursuitPathFollower {
@@ -81,26 +81,17 @@ impl PurePursuitPathFollower {
 
 impl PathFollower for PurePursuitPathFollower {
     fn compute(&mut self, state: &FrameAwareState, _dt: f64) -> PathFollowerResult {
-        // we have current state
-        // output desired state being v_x, yaw
-        // if lookahead_time_s exists -> calc the distance
-        //   with current velocity
-        // else -> distance = lookahead_distance
-        //
-        // if Path doesn't exist -> NoPath
-        //
-        // find the lookahead_index comparing distances
-        //
-        // using this we can probably calculate
-        // velocity and angular velocity
-        // w = curvature * velocity
-        //
-
-        let mut lookahead_distance: f64 = self.lookahead_distance;
-
-        if self.lookahead_time.is_some() {
-            // lookahead_distance = ;
-        }
+        
+        let lookahead_distance: f64 = match self.lookahead_time {
+            Some(t) => {
+                let speed = state
+                    .get_vector3(&StateVariable::Vx(FrameId::World))
+                    .map(|v| v.xy().norm())
+                    .unwrap_or(0.0);
+                (speed * t).max(self.lookahead_distance)
+            }
+            None => self.lookahead_distance,
+        };
 
         self.calculate_lookahead_index(state, lookahead_distance);
 
@@ -167,7 +158,7 @@ impl PathFollower for PurePursuitPathFollower {
 
         let point_desired = TrajectoryPoint {
             state: state_desired,
-            state_dot: None,
+            state_dot: Some(DVector::from_vec(vec![0.0, curvature])),
             time: state.last_update_timestamp,
         };
 
