@@ -148,7 +148,7 @@ impl PathFollower for PurePursuitPathFollower {
 
         let lookahead_yaw = delta.y.atan2(delta.x);
         let bearing_to_target = lookahead_yaw - agent_yaw;
-        let curvature = 2.0 * f64::sin(bearing_to_target) / distance;
+        let curvature = 2.0 * f64::sin(bearing_to_target) / lookahead_distance;
 
         let forward_velocity_desired = f64::sqrt(self.max_lateral_acceleration / curvature.abs())
             .clamp(self.min_speed, self.max_speed);

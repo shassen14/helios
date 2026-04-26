@@ -21,6 +21,7 @@
 //! or MPC (Architecture C) is active — see `pipeline_vision.md`.
 
 pub mod pure_pursuit;
+pub mod steering_pid;
 
 use crate::planning::types::Path;
 use crate::{frames::FrameAwareState, types::TrajectoryPoint};

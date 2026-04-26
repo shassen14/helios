@@ -10,7 +10,6 @@ pub mod lqr;
 pub mod metrics;
 pub mod pid;
 pub mod siso_pid;
-pub mod steering_pid;
 
 pub use crate::models::controls::ControlDynamics;
 
