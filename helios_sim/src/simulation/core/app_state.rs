@@ -110,7 +110,10 @@ pub enum SimulationSet {
     // --- Phase 5: Motion (Depends on Decision Making) ---
     /// Path planning systems (A*, RRT*). Runs *after* the Behavior Tree sets a goal.
     Planning,
-    /// Motion control systems (PID, MPC). Runs *after* a path is planned.
+    /// Path following algorithms (PurePursuit, SteeringPid). Advances the lookahead cursor
+    /// along the planned path and writes one TrajectoryPoint per tick.
+    PathFollowing,
+    /// Motion control systems (PID, MPC). Runs *after* path following produces a reference.
     Control,
 
     // --- Phase 6: Finalization ---

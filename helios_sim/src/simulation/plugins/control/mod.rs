@@ -11,7 +11,9 @@ use crate::{
             components::{ControlOutputComponent, ControllerStateSource, GroundTruthState},
             sim_runtime::SimRuntime,
         },
-        plugins::autonomy::{ControlPipelineComponent, EstimatorComponent},
+        plugins::autonomy::{
+            ControlPipelineComponent, EstimatorComponent, PathFollowingOutputComponent,
+        },
     },
 };
 
@@ -70,6 +72,7 @@ fn controller_compute_system(
         &mut ControlOutputComponent,
         &ControllerStateSource,
         Option<&GroundTruthState>,
+        &PathFollowingOutputComponent,
     )>,
 ) {
     let dt = time.delta_secs_f64();
@@ -79,7 +82,9 @@ fn controller_compute_system(
         elapsed_secs: ts,
     };
 
-    for (entity, estimator, mut control, mut output, state_source, gt_opt) in &mut query {
+    for (entity, estimator, mut control, mut output, state_source, gt_opt, pf_output) in
+        &mut query
+    {
         let gt_built: Option<FrameAwareState> = match state_source {
             ControllerStateSource::GroundTruth => {
                 let handle = FrameHandle::from_entity(entity);
@@ -93,7 +98,11 @@ fn controller_compute_system(
         };
 
         if let Some(state) = state {
-            if let Some(out) = control.0.step_controllers(state, dt, &runtime) {
+            if let Some(out) =
+                control
+                    .0
+                    .step_controllers(state, pf_output.0.as_ref(), dt, &runtime)
+            {
                 output.0 = out;
             }
         }

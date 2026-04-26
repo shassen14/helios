@@ -20,10 +20,11 @@ use crate::prelude::*;
 use crate::simulation::core::components::{AgentTopicNames, ControllerStateSource, SensorMailbox};
 use crate::simulation::plugins::autonomy::components::{
     ControlPipelineComponent, EstimatorComponent, MapperComponent, ModuleTimer, OdomFrameOf,
+    PathFollowingComponent, PathFollowingOutputComponent,
 };
 use crate::simulation::registry::{
     AutonomyRegistry, ControllerBuildContext, EstimatorBuildContext, MapperBuildContext,
-    PlannerBuildContext, SlamBuildContext,
+    PathFollowerBuildContext, PlannerBuildContext, SlamBuildContext,
 };
 use helios_core::planning::types::PlannerGoal;
 use helios_runtime::config::ControllerStateSourceConfig;
@@ -127,6 +128,27 @@ fn build_separate_pipeline(
         }
     }
 
+    if let Some(pf_cfg) = &agent_config.autonomy_stack().path_following {
+        let kind = pf_cfg.get_kind_str();
+        let ctx = PathFollowerBuildContext {
+            agent_entity: entity,
+            path_following_cfg: pf_cfg.clone(),
+        };
+        match registry.build_path_follower(kind, ctx) {
+            Ok(pf) => {
+                builder = builder.with_path_follower(pf);
+            }
+            Err(e) => {
+                error!(
+                    "Failed to build path follower '{}' for agent '{}': {}",
+                    kind,
+                    agent_config.name(),
+                    e
+                );
+            }
+        }
+    }
+
     let goal_iso = agent_config.goal_pose.to_isometry();
     builder = builder.with_goal(PlannerGoal::WorldPose(goal_iso));
 
@@ -143,11 +165,13 @@ fn build_separate_pipeline(
     };
 
     let agent_name = agent_config.name();
-    let (_, mapping, control) = builder.build().into_parts();
-    commands.entity(entity).insert((
+    let (_, mapping, path_following, control) = builder.build().into_parts();
+    let mut entity_cmd = commands.entity(entity);
+    entity_cmd.insert((
         est_component,
         MapperComponent(Box::new(mapping)),
         ControlPipelineComponent(control),
+        PathFollowingOutputComponent::default(),
         ctrl_state_source_component,
         SensorMailbox::default(),
         AgentTopicNames {
@@ -157,6 +181,9 @@ fn build_separate_pipeline(
             map_local: format!("/{}/map", agent_name),
         },
     ));
+    if let Some(pf) = path_following {
+        entity_cmd.insert(PathFollowingComponent(pf));
+    }
 }
 
 // =========================================================================
@@ -233,7 +260,7 @@ pub fn spawn_autonomy_pipeline(
                     }
                 }
 
-                let (estimation, _, _) = builder.build().into_parts();
+                let (estimation, _, _, _) = builder.build().into_parts();
                 let est_component = EstimatorComponent(Box::new(estimation));
                 build_separate_pipeline(
                     agent_entity,
@@ -272,14 +299,16 @@ pub fn spawn_autonomy_pipeline(
                                 ControllerStateSource::Estimated
                             }
                         };
-                        let (estimation, mapping, control) = PipelineBuilder::new()
+                        let (estimation, mapping, path_following, control) = PipelineBuilder::new()
                             .with_slam(system)
                             .build()
                             .into_parts();
-                        commands.entity(agent_entity).insert((
+                        let mut entity_cmd = commands.entity(agent_entity);
+                        entity_cmd.insert((
                             EstimatorComponent(Box::new(estimation)),
                             MapperComponent(Box::new(mapping)),
                             ControlPipelineComponent(control),
+                            PathFollowingOutputComponent::default(),
                             ctrl_state_source_component,
                             SensorMailbox::default(),
                             AgentTopicNames {
@@ -292,6 +321,9 @@ pub fn spawn_autonomy_pipeline(
                                 map_local: format!("/{}/map", agent_name),
                             },
                         ));
+                        if let Some(pf) = path_following {
+                            entity_cmd.insert(PathFollowingComponent(pf));
+                        }
                     }
                     Err(e) => {
                         error!(
@@ -372,11 +404,14 @@ pub fn spawn_passthrough_pipeline(
                     ControllerStateSourceConfig::GroundTruth => ControllerStateSource::GroundTruth,
                     ControllerStateSourceConfig::Estimated => ControllerStateSource::Estimated,
                 };
-                let (_, mapping, control) = PipelineBuilder::new().build().into_parts();
-                commands.entity(agent_entity).insert((
+                let (_, mapping, path_following, control) =
+                    PipelineBuilder::new().build().into_parts();
+                let mut entity_cmd = commands.entity(agent_entity);
+                entity_cmd.insert((
                     EstimatorComponent(Box::new(GroundTruthPassthrough::default())),
                     MapperComponent(Box::new(mapping)),
                     ControlPipelineComponent(control),
+                    PathFollowingOutputComponent::default(),
                     ctrl_state_source_component,
                     SensorMailbox::default(),
                     AgentTopicNames {
@@ -386,6 +421,9 @@ pub fn spawn_passthrough_pipeline(
                         map_local: format!("/{}/map", agent_name),
                     },
                 ));
+                if let Some(pf) = path_following {
+                    entity_cmd.insert(PathFollowingComponent(pf));
+                }
             }
 
             None => {

@@ -17,7 +17,7 @@ use crate::simulation::core::events::GoalCommandEvent;
 use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::transforms::TfTree;
 use crate::simulation::plugins::autonomy::{
-    ControlPipelineComponent, EstimatorComponent, MapperComponent,
+    ControlPipelineComponent, EstimatorComponent, MapperComponent, PathFollowingComponent,
 };
 use interaction::{GoalRegistry, SelectedAgent};
 
@@ -63,6 +63,7 @@ fn planning_system(
         &EstimatorComponent,
         &MapperComponent,
         &mut ControlPipelineComponent,
+        Option<&mut PathFollowingComponent>,
     )>,
 ) {
     let runtime = SimRuntime {
@@ -70,7 +71,7 @@ fn planning_system(
         elapsed_secs: time.elapsed_secs_f64(),
     };
 
-    for (estimator, mapper, mut control) in &mut query {
+    for (estimator, mapper, mut control, pf_opt) in &mut query {
         let Some(state) = estimator.0.get_state() else {
             continue;
         };
@@ -96,9 +97,22 @@ fn planning_system(
             }
         }
 
-        control
+        let new_paths = control
             .0
             .step_planners(state, &maps, time.elapsed_secs_f64(), &runtime);
+
+        // Forward the best new path to PathFollowingCore if one is configured.
+        if let Some(mut pf) = pf_opt {
+            let mut best_path = None;
+            for (level, path) in new_paths {
+                if best_path.is_none() || level == PipelineLevel::Local {
+                    best_path = Some(path);
+                }
+            }
+            if let Some(path) = best_path {
+                pf.0.set_path(path);
+            }
+        }
     }
 }
 

@@ -2,8 +2,8 @@
 //
 // MockPathInjectorPlugin: reads `simulation.mock_path` from the scenario TOML,
 // builds a `helios_core::planning::Path`, and injects it into every agent's
-// `ControlCore::cached_paths[Local]`.  The ControlPlugin then runs unchanged —
-// the path is already cached when the first control tick runs.
+// `PathFollowingComponent`.  The PathFollowingPlugin then runs unchanged —
+// the path is already set when the first tick runs.
 
 use bevy::prelude::*;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
@@ -14,7 +14,7 @@ use serde::Deserialize;
 
 use crate::prelude::AppState;
 use crate::simulation::config::ScenarioConfig;
-use crate::simulation::plugins::autonomy::ControlPipelineComponent;
+use crate::simulation::plugins::autonomy::PathFollowingComponent;
 
 pub struct MockPathInjectorPlugin;
 
@@ -54,7 +54,7 @@ fn default_level() -> String {
 
 fn inject_mock_path(
     scenario: Res<ScenarioConfig>,
-    mut query: Query<&mut ControlPipelineComponent>,
+    mut query: Query<Option<&mut PathFollowingComponent>>,
 ) {
     let Some(ref path_file) = scenario.simulation.mock_path else {
         return;
@@ -76,8 +76,10 @@ fn inject_mock_path(
     let path = build_path(&fixture, &level);
     let path_len = path.len();
 
-    for mut control in &mut query {
-        control.0.set_path(level.clone(), path.clone());
+    for pf_opt in &mut query {
+        if let Some(mut pf) = pf_opt {
+            pf.0.set_path(path.clone());
+        }
     }
 
     info!(

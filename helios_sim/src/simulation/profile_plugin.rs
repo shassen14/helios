@@ -10,6 +10,7 @@ use crate::simulation::core::TopicBusPlugin;
 use crate::simulation::plugins::autonomy::{EstimationPlugin, MappingPlugin};
 use crate::simulation::plugins::control::ControlPlugin;
 use crate::simulation::plugins::debugging::DebuggingPlugin;
+use crate::simulation::plugins::path_following::PathFollowingPlugin;
 use crate::simulation::plugins::foxglove::FoxgloveWebSocketPlugin;
 use crate::simulation::plugins::isolation::{
     MockGroundTruthEstimatorPlugin, MockMapInjectorPlugin, MockPathInjectorPlugin,
@@ -66,6 +67,7 @@ impl Plugin for ProfiledSimulationPlugin {
         }
         if caps.planning() {
             app.add_plugins(PlanningPlugin);
+            app.add_plugins(PathFollowingPlugin);
         }
         if caps.control() {
             app.add_plugins(ControlPlugin);

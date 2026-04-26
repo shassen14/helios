@@ -11,8 +11,7 @@ use crate::prelude::AppState;
 use crate::simulation::config::ScenarioConfig;
 use crate::simulation::core::app_state::SimulationSet;
 use crate::simulation::core::components::GroundTruthState;
-use crate::simulation::plugins::autonomy::ControlPipelineComponent;
-use helios_runtime::stage::PipelineLevel;
+use crate::simulation::plugins::autonomy::PathFollowingOutputComponent;
 
 // ---------------------------------------------------------------------------
 // Resource
@@ -59,12 +58,12 @@ impl Plugin for ControlMetricsPlugin {
 /// Samples ground-truth state and active path waypoint each FixedUpdate tick.
 fn sample_metrics(
     time: Res<Time>,
-    gt_query: Query<(&GroundTruthState, &ControlPipelineComponent)>,
+    gt_query: Query<(&GroundTruthState, &PathFollowingOutputComponent)>,
     mut metrics: ResMut<ControlMetrics>,
 ) {
     let t = time.elapsed_secs_f64();
 
-    for (gt, control) in &gt_query {
+    for (gt, pf_output) in &gt_query {
         let speed = gt.linear_velocity.norm();
         metrics.speed_history.push((t, speed));
 
@@ -74,16 +73,8 @@ fn sample_metrics(
         let yaw = gt.pose.rotation.euler_angles().2;
         metrics.actual_headings.push(yaw);
 
-        // Reference from active path lookahead.
-        if let Some(wp) = control
-            .0
-            .get_active_lookahead_waypoint(&PipelineLevel::Local)
-            .or_else(|| {
-                control
-                    .0
-                    .get_active_lookahead_waypoint(&PipelineLevel::Global)
-            })
-        {
+        // Reference from active path following waypoint.
+        if let Some(wp) = &pf_output.0 {
             let ref_x = wp.state.vector[0];
             let ref_y = wp.state.vector[1];
             metrics.reference_positions.push(Vector2::new(ref_x, ref_y));

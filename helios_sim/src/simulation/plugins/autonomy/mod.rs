@@ -9,7 +9,10 @@ use crate::prelude::*;
 mod components;
 pub mod systems;
 
-pub use components::{ControlPipelineComponent, EstimatorComponent, MapperComponent, OdomFrameOf};
+pub use components::{
+    ControlPipelineComponent, EstimatorComponent, MapperComponent, OdomFrameOf,
+    PathFollowingComponent, PathFollowingOutputComponent,
+};
 
 use systems::{
     publish_autonomy_telemetry, publish_sensor_telemetry, route_sensor_messages, run_estimation,

@@ -7,6 +7,7 @@
 
 pub mod autonomy;
 pub mod control;
+pub mod path_following;
 pub mod debugging;
 pub mod foxglove;
 pub mod isolation;
