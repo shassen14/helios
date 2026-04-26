@@ -10,9 +10,10 @@
 // For path waypoints at ground level (enu_z ≈ 0): bevy_y ≈ 0.
 
 use bevy::prelude::*;
+use helios_core::frames::{FrameId, StateVariable};
 
 use super::super::DebugVisualizationConfig;
-use crate::simulation::plugins::autonomy::{PathFollowingComponent, PathFollowingOutputComponent};
+use crate::simulation::plugins::autonomy::PathFollowingComponent;
 
 const COLOR_PATH: Color = Color::srgb(1.0, 1.0, 0.0); // yellow
 const COLOR_WAYPOINT: Color = Color::srgb(0.0, 1.0, 1.0); // cyan
@@ -25,34 +26,37 @@ fn enu_path_to_bevy(enu_x: f64, enu_y: f64) -> Vec3 {
 
 pub fn draw_planned_path(
     config: Res<DebugVisualizationConfig>,
-    query: Query<(Option<&PathFollowingComponent>, &PathFollowingOutputComponent)>,
+    query: Query<&PathFollowingComponent>,
     mut gizmos: Gizmos,
 ) {
     if !config.show_planned_path {
         return;
     }
 
-    for (pf_opt, pf_output) in &query {
+    for pf in &query {
         // Draw the current path held by PathFollowingCore.
-        if let Some(pf) = pf_opt {
-            if let Some(path) = pf.0.get_path() {
-                if path.waypoints.len() >= 2 {
-                    let points: Vec<Vec3> = path
-                        .waypoints
-                        .iter()
-                        .map(|wp| enu_path_to_bevy(wp.state.vector[0], wp.state.vector[1]))
-                        .collect();
-                    for window in points.windows(2) {
-                        gizmos.line(window[0], window[1], COLOR_PATH);
-                    }
+        if let Some(path) = pf.0.get_path() {
+            if path.waypoints.len() >= 2 {
+                let points: Vec<Vec3> = path
+                    .waypoints
+                    .iter()
+                    .filter_map(|wp| {
+                        let p = wp.state.get_vector3(&StateVariable::Px(FrameId::World))?;
+                        Some(enu_path_to_bevy(p.x, p.y))
+                    })
+                    .collect();
+                for window in points.windows(2) {
+                    gizmos.line(window[0], window[1], COLOR_PATH);
                 }
             }
         }
 
-        // Draw active look-ahead waypoint as a sphere.
-        if let Some(wp) = &pf_output.0 {
-            let pos = enu_path_to_bevy(wp.state.vector[0], wp.state.vector[1]);
-            gizmos.sphere(Isometry3d::from_translation(pos), 0.5, COLOR_WAYPOINT);
+        // Draw the active lookahead waypoint as a sphere.
+        if let Some(wp) = pf.0.get_lookahead_waypoint() {
+            if let Some(p) = wp.state.get_vector3(&StateVariable::Px(FrameId::World)) {
+                let pos = enu_path_to_bevy(p.x, p.y);
+                gizmos.sphere(Isometry3d::from_translation(pos), 0.5, COLOR_WAYPOINT);
+            }
         }
     }
 }

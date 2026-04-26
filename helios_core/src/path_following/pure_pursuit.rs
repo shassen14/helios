@@ -81,7 +81,6 @@ impl PurePursuitPathFollower {
 
 impl PathFollower for PurePursuitPathFollower {
     fn compute(&mut self, state: &FrameAwareState, _dt: f64) -> PathFollowerResult {
-        
         let lookahead_distance: f64 = match self.lookahead_time {
             Some(t) => {
                 let speed = state
@@ -168,6 +167,12 @@ impl PathFollower for PurePursuitPathFollower {
     fn set_path(&mut self, path: Path) {
         self.path = Some(path);
         self.lookahead_index = 0;
+    }
+
+    fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint> {
+        self.path
+            .as_ref()
+            .map(|p| &p.waypoints[self.lookahead_index])
     }
 
     fn reset(&mut self) {

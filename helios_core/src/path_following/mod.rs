@@ -75,6 +75,16 @@ pub trait PathFollower: Send + Sync {
     /// [`compute`]: PathFollower::compute
     fn set_path(&mut self, path: Path);
 
+    /// Return the path waypoint currently targeted by the internal lookahead cursor.
+    ///
+    /// This is the raw path waypoint at `lookahead_index`, not the computed reference
+    /// output from [`compute`]. Its state holds a world-frame position
+    /// (`Px(World)`, `Py(World)`, `Pz(World)`) that can be used for visualization
+    /// and debugging. Returns `None` when no path has been set.
+    ///
+    /// [`compute`]: PathFollower::compute
+    fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint>;
+
     /// Reset all internal state, including the stored path and progress cursor.
     ///
     /// Analogous to [`Controller::reset`]. Call when the agent is re-initialized

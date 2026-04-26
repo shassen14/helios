@@ -25,6 +25,10 @@ impl PathFollowingCore {
         self.current_path.as_ref()
     }
 
+    pub fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint> {
+        self.path_follower.as_ref().get_lookahead_waypoint()
+    }
+
     pub fn step(&mut self, state: &FrameAwareState, dt: f64) -> Option<TrajectoryPoint> {
         let result = self.path_follower.compute(state, dt);
 

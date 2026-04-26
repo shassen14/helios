@@ -69,7 +69,11 @@ impl SteeringPidPathFollower {
 fn normalize_angle(a: f64) -> f64 {
     let two_pi = std::f64::consts::TAU;
     let a = ((a % two_pi) + two_pi) % two_pi;
-    if a > std::f64::consts::PI { a - two_pi } else { a }
+    if a > std::f64::consts::PI {
+        a - two_pi
+    } else {
+        a
+    }
 }
 
 impl PathFollower for SteeringPidPathFollower {
@@ -131,6 +135,12 @@ impl PathFollower for SteeringPidPathFollower {
         self.path = Some(path);
         self.lookahead_index = 0;
         self.heading_pid.reset();
+    }
+
+    fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint> {
+        self.path
+            .as_ref()
+            .map(|p| &p.waypoints[self.lookahead_index])
     }
 
     fn reset(&mut self) {
