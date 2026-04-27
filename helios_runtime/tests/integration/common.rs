@@ -12,6 +12,7 @@ use helios_core::{
     mapping::{MapData, Mapper},
     messages::{MeasurementData, MeasurementMessage, ModuleInput},
     models::estimation::dynamics::EstimationDynamics,
+    path_following::{PathFollower, PathFollowerResult},
     planning::{
         context::PlannerContext,
         types::{Path, PlannerGoal, PlannerResult, PlannerStatus},
@@ -237,6 +238,47 @@ impl Controller for MockController {
     }
 
     fn reset(&mut self) {}
+}
+
+// =========================================================================
+// == MockPathFollower ==
+// =========================================================================
+
+pub struct MockPathFollower {
+    path: Option<Path>,
+}
+
+impl MockPathFollower {
+    pub fn new() -> Self {
+        Self { path: None }
+    }
+}
+
+impl PathFollower for MockPathFollower {
+    fn compute(&mut self, state: &FrameAwareState, _dt: f64) -> PathFollowerResult {
+        let Some(_path) = &self.path else {
+            return PathFollowerResult::NoPath;
+        };
+        let layout = vec![StateVariable::Vx(FrameId::World)];
+        let ref_state = FrameAwareState::new(layout, 0.0, state.last_update_timestamp);
+        PathFollowerResult::Active(TrajectoryPoint {
+            state: ref_state,
+            state_dot: None,
+            time: state.last_update_timestamp,
+        })
+    }
+
+    fn set_path(&mut self, path: Path) {
+        self.path = Some(path);
+    }
+
+    fn reset(&mut self) {
+        self.path = None;
+    }
+
+    fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint> {
+        self.path.as_ref()?.waypoints.first()
+    }
 }
 
 // =========================================================================
