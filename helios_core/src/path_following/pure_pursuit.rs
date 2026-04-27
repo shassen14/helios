@@ -8,8 +8,8 @@ use crate::types::TrajectoryPoint;
 use nalgebra::{DVector, Vector2};
 // Plan: output (velocity.x, angle.z)
 //          dot (accel.x, ang_vel.z) -> curvature, but fails
+
 pub struct PurePursuitPathFollower {
-    wheelbase: f64,
     lookahead_distance: f64,
     lookahead_time: Option<f64>,
     goal_radius: f64,
@@ -23,7 +23,6 @@ pub struct PurePursuitPathFollower {
 
 impl PurePursuitPathFollower {
     pub fn new(
-        wheelbase: f64,
         lookahead_distance: f64,
         lookahead_time: Option<f64>,
         goal_radius: f64,
@@ -33,7 +32,6 @@ impl PurePursuitPathFollower {
         agent_handle: FrameHandle,
     ) -> Self {
         Self {
-            wheelbase,
             lookahead_distance,
             lookahead_time,
             goal_radius,

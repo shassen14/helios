@@ -53,6 +53,7 @@ impl Plugin for DefaultPathFollowersPlugin {
                 max_speed_m_s,
                 min_speed_m_s,
                 lookahead_distance_m,
+                lookahead_time_s,
                 goal_radius,
                 max_lateral_acceleration,
                 ..
@@ -60,9 +61,8 @@ impl Plugin for DefaultPathFollowersPlugin {
             {
                 let agent_handle = FrameHandle::from_entity(ctx.agent_entity);
                 Ok(Box::new(PurePursuitPathFollower::new(
-                    0.0, // wheelbase: unused in current compute() implementation
                     lookahead_distance_m,
-                    None, // lookahead_time: stub not yet implemented
+                    lookahead_time_s, // lookahead_time: stub not yet implemented
                     goal_radius,
                     min_speed_m_s,
                     max_speed_m_s,
