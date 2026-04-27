@@ -4,9 +4,10 @@ use bevy::{
     prelude::{Component, Entity},
     time::{Timer, TimerMode},
 };
+use helios_core::types::TrajectoryPoint;
 use helios_runtime::estimation::EstimationDriver;
 use helios_runtime::mapping::MapDriver;
-use helios_runtime::pipeline::ControlCore;
+use helios_runtime::pipeline::{ControlCore, PathFollowingCore};
 
 /// Holds the estimation stage for an agent: estimator/SLAM + trackers + predict/update logic.
 /// Systems that need estimated state query this component.
@@ -22,6 +23,17 @@ pub struct MapperComponent(pub Box<dyn MapDriver>);
 /// `ControlPlugin` calls `step_controllers()` each tick.
 #[derive(Component)]
 pub struct ControlPipelineComponent(pub ControlCore);
+
+/// Holds the path following stage for an agent when one is configured.
+/// Absent on agents that have no `path_follower` in their `AutonomyStack`.
+#[derive(Component)]
+pub struct PathFollowingComponent(pub PathFollowingCore);
+
+/// The TrajectoryPoint produced by path following this tick.
+/// Always present on agents with a control pipeline. `None` when no path is active
+/// or no path follower is configured.
+#[derive(Component, Default)]
+pub struct PathFollowingOutputComponent(pub Option<TrajectoryPoint>);
 
 /// Marker on a virtual "odom frame" entity that links it back to its agent.
 ///

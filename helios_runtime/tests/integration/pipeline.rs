@@ -195,7 +195,7 @@ fn mappers_sorted_global_local_custom_after_build() {
         .with_mapper(PipelineLevel::Local, Box::new(MockMapper::new()))
         .with_mapper(PipelineLevel::Global, Box::new(MockMapper::new()))
         .build();
-    let (_, mapping, _) = pipeline.into_parts();
+    let (_, mapping, _, _) = pipeline.into_parts();
     let levels: Vec<&PipelineLevel> = mapping.mappers.iter().map(|lm| &lm.level).collect();
     assert_eq!(levels[0], &PipelineLevel::Global);
     assert_eq!(levels[1], &PipelineLevel::Local);
@@ -205,7 +205,7 @@ fn mappers_sorted_global_local_custom_after_build() {
 #[test]
 fn slam_active_is_false_without_slam() {
     let pipeline = PipelineBuilder::new().build();
-    let (_, mapping, _) = pipeline.into_parts();
+    let (_, mapping, _, _) = pipeline.into_parts();
     assert!(!mapping.slam_active);
 }
 

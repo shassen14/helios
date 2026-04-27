@@ -9,8 +9,8 @@ use bevy::prelude::*;
 use super::{
     adapters::DefaultAdaptersPlugin, controllers::DefaultControllersPlugin,
     dynamics::DefaultDynamicsPlugin, estimators::DefaultEstimatorsPlugin,
-    mappers::DefaultMappersPlugin, planners::DefaultPlannersPlugin, slam::DefaultSlamPlugin,
-    AutonomyRegistry,
+    mappers::DefaultMappersPlugin, path_followers::DefaultPathFollowersPlugin,
+    planners::DefaultPlannersPlugin, slam::DefaultSlamPlugin, AutonomyRegistry,
 };
 
 pub struct AutonomyRegistryPlugin;
@@ -26,6 +26,7 @@ impl Plugin for AutonomyRegistryPlugin {
             DefaultControllersPlugin,
             DefaultPlannersPlugin,
             DefaultAdaptersPlugin,
+            DefaultPathFollowersPlugin,
         ));
     }
 }

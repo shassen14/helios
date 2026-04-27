@@ -28,10 +28,12 @@
 pub mod control_core;
 pub mod estimation_core;
 pub mod mapping_core;
+pub mod path_following_core;
 
 pub use control_core::ControlCore;
 pub use estimation_core::EstimationCore;
 pub use mapping_core::MappingCore;
+pub use path_following_core::PathFollowingCore;
 
 use std::collections::HashMap;
 
@@ -41,6 +43,7 @@ use helios_core::{
     mapping::{MapData, Mapper},
     messages::MeasurementMessage,
     planning::{types::PlannerGoal, Planner},
+    prelude::{Path, PathFollower},
     slam::SlamSystem,
     tracking::Tracker,
 };
@@ -71,6 +74,7 @@ pub struct PipelineOutputs {
 pub struct AutonomyPipeline {
     pub estimation: EstimationCore,
     pub mapping: MappingCore,
+    pub path_following: Option<PathFollowingCore>,
     pub control: ControlCore,
 }
 
@@ -81,8 +85,20 @@ impl AutonomyPipeline {
 
     /// Decompose into three independent stage values for ECS component insertion.
     /// After this call, `self` is consumed. Use `into_parts()` in helios_sim spawn systems.
-    pub fn into_parts(self) -> (EstimationCore, MappingCore, ControlCore) {
-        (self.estimation, self.mapping, self.control)
+    pub fn into_parts(
+        self,
+    ) -> (
+        EstimationCore,
+        MappingCore,
+        Option<PathFollowingCore>,
+        ControlCore,
+    ) {
+        (
+            self.estimation,
+            self.mapping,
+            self.path_following,
+            self.control,
+        )
     }
 
     // =========================================================================
@@ -128,6 +144,39 @@ impl AutonomyPipeline {
         self.mapping.get_map(level)
     }
 
+    pub fn step_planners(&mut self, now: f64, runtime: &dyn AgentRuntime) {
+        let Some(state) = self.estimation.get_state().cloned() else {
+            return;
+        };
+
+        // Clone map data so `maps` owns its values and doesn't borrow from `self`,
+        // allowing the subsequent mutable borrow of `self.control`.
+        let global_map = self.get_map(&PipelineLevel::Global).cloned();
+        let local_map = self.get_map(&PipelineLevel::Local).cloned();
+
+        let mut maps: HashMap<PipelineLevel, &MapData> = HashMap::new();
+        if let Some(ref map) = global_map {
+            maps.insert(PipelineLevel::Global, map);
+        }
+        if let Some(ref map) = local_map {
+            maps.insert(PipelineLevel::Local, map);
+        }
+
+        let new_paths = self.control.step_planners(&state, &maps, now, runtime);
+
+        // Prefer Local path; fall back to Global.
+        let mut best_path: Option<Path> = None;
+        for (level, path) in new_paths {
+            if best_path.is_none() || level == PipelineLevel::Local {
+                best_path = Some(path);
+            }
+        }
+
+        if let (Some(pf), Some(path)) = (self.path_following.as_mut(), best_path) {
+            pf.set_path(path);
+        }
+    }
+
     /// Run the highest-priority controller. Delegates to `ControlCore`.
     pub fn step_controllers(
         &mut self,
@@ -135,7 +184,12 @@ impl AutonomyPipeline {
         runtime: &dyn AgentRuntime,
     ) -> Option<ControlOutput> {
         let state = self.estimation.get_state()?.clone();
-        self.control.step_controllers(&state, dt, runtime)
+        let reference = self
+            .path_following
+            .as_mut()
+            .and_then(|pf| pf.step(&state, dt));
+        self.control
+            .step_controllers(&state, reference.as_ref(), dt, runtime)
     }
 
     fn build_outputs(&self) -> PipelineOutputs {
@@ -165,6 +219,7 @@ pub struct PipelineBuilder {
     slam: Option<Box<dyn SlamSystem>>,
     mappers: Vec<LeveledMapper>,
     planners: Vec<LeveledPlanner>,
+    path_follower: Option<Box<dyn PathFollower>>,
     controllers: Vec<LeveledController>,
     control_dim: usize,
     goal: Option<PlannerGoal>,
@@ -180,6 +235,7 @@ impl PipelineBuilder {
             slam: None,
             mappers: Vec::new(),
             planners: Vec::new(),
+            path_follower: None,
             controllers: Vec::new(),
             control_dim: 0,
             goal: None,
@@ -212,6 +268,11 @@ impl PipelineBuilder {
         self
     }
 
+    pub fn with_path_follower(mut self, path_follower: Box<dyn PathFollower>) -> Self {
+        self.path_follower = Some(path_follower);
+        self
+    }
+
     pub fn with_controller(
         mut self,
         level: PipelineLevel,
@@ -236,6 +297,12 @@ impl PipelineBuilder {
 
         let slam_active = self.slam.is_some();
 
+        let mut path_following = None;
+
+        if let Some(p) = self.path_follower {
+            path_following = Some(PathFollowingCore::new(p));
+        };
+
         AutonomyPipeline {
             estimation: EstimationCore {
                 trackers: self.trackers,
@@ -247,11 +314,10 @@ impl PipelineBuilder {
                 mappers: self.mappers,
                 slam_active,
             },
+            path_following,
             control: ControlCore {
                 planners: self.planners,
                 controllers: self.controllers,
-                cached_paths: HashMap::new(),
-                lookahead_indices: HashMap::new(),
             },
         }
     }

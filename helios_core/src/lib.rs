@@ -12,6 +12,7 @@ pub mod frames;
 pub mod mapping;
 pub mod messages;
 pub mod models;
+pub mod path_following;
 pub mod planning;
 pub mod prelude;
 pub mod slam;

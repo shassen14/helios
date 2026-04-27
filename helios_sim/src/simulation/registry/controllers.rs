@@ -5,7 +5,7 @@
 
 use bevy::prelude::*;
 use helios_core::control::{
-    lqr::LqrController, pid::VelocityPidController, steering_pid::SteeringPidController,
+    direct_velocity::DirectVelocityController, lqr::LqrController, pid::VelocityPidController,
 };
 
 use super::{AutonomyRegistry, ControllerBuildContext};
@@ -60,33 +60,15 @@ impl Plugin for DefaultControllersPlugin {
             }
         });
 
+        // --- DirectVelocity ---
+        registry.register_controller("DirectVelocity", |_ctx: ControllerBuildContext| {
+            Ok(Box::new(DirectVelocityController::new()))
+        });
+
         // FeedforwardPid requires a ControlDynamics model at runtime.
         // That model comes from a DynamicsFactory, which is itself an EstimationDynamics-rooted
         // factory. Since ControlDynamics is a separate trait, the FeedforwardPid factory is
         // left as a stub until concrete ControlDynamics impls exist.
         // registry.register_controller("FeedforwardPid", |ctx| { ... });
-
-        // --- SteeringPid ---
-        registry.register_controller("SteeringPid", |ctx: ControllerBuildContext| {
-            if let ControllerConfig::SteeringPid {
-                cruise_speed,
-                kp,
-                ki,
-                kd,
-                goal_radius,
-                ..
-            } = ctx.controller_cfg
-            {
-                Ok(Box::new(SteeringPidController::new(
-                    kp as f64,
-                    ki as f64,
-                    kd as f64,
-                    cruise_speed as f64,
-                    goal_radius as f64,
-                )))
-            } else {
-                Err("SteeringPid factory received wrong ControllerConfig variant".into())
-            }
-        });
     }
 }

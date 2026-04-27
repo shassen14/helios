@@ -15,6 +15,7 @@ use crate::simulation::plugins::isolation::{
     MockGroundTruthEstimatorPlugin, MockMapInjectorPlugin, MockPathInjectorPlugin,
 };
 use crate::simulation::plugins::metrics::ControlMetricsPlugin;
+use crate::simulation::plugins::path_following::PathFollowingPlugin;
 use crate::simulation::plugins::planning::PlanningPlugin;
 use crate::simulation::plugins::sensors::HeliosSensorsPlugin;
 use crate::simulation::plugins::vehicles::HeliosVehiclesPlugin;
@@ -66,6 +67,7 @@ impl Plugin for ProfiledSimulationPlugin {
         }
         if caps.planning() {
             app.add_plugins(PlanningPlugin);
+            app.add_plugins(PathFollowingPlugin);
         }
         if caps.control() {
             app.add_plugins(ControlPlugin);

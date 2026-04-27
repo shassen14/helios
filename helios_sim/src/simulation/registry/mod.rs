@@ -11,6 +11,7 @@ pub mod controllers;
 pub mod dynamics;
 pub mod estimators;
 pub mod mappers;
+pub mod path_followers;
 pub mod planners;
 pub mod plugin;
 pub mod slam;
@@ -33,6 +34,7 @@ use helios_core::{
     estimation::StateEstimator,
     mapping::Mapper,
     models::estimation::{dynamics::EstimationDynamics, measurement::Measurement},
+    path_following::PathFollower,
     planning::Planner,
     slam::SlamSystem,
     types::FrameHandle,
@@ -41,7 +43,7 @@ use helios_runtime::validation::CapabilitySet;
 
 use crate::simulation::config::structs::{
     AckermannAdapterConfig, AgentConfig, ControllerConfig, EstimatorConfig, MapperConfig,
-    PlannerConfig, SlamConfig,
+    PathFollowingConfig, PlannerConfig, SlamConfig,
 };
 use crate::simulation::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
 
@@ -71,6 +73,9 @@ pub type PlannerFactory =
 pub type AdapterFactory = Arc<
     dyn Fn(AdapterBuildContext) -> Result<Box<dyn AckermannOutputAdapter>, String> + Send + Sync,
 >;
+
+pub type PathFollowerFactory =
+    Arc<dyn Fn(PathFollowerBuildContext) -> Result<Box<dyn PathFollower>, String> + Send + Sync>;
 
 // =========================================================================
 // == Build Contexts ==
@@ -141,6 +146,12 @@ pub struct AdapterBuildContext {
     pub adapter_cfg: AckermannAdapterConfig,
 }
 
+/// Context for constructing a path follower (e.g., PurePursuit).
+pub struct PathFollowerBuildContext {
+    pub agent_entity: Entity,
+    pub path_following_cfg: PathFollowingConfig,
+}
+
 // =========================================================================
 // == AutonomyRegistry ==
 // =========================================================================
@@ -160,6 +171,7 @@ pub struct AutonomyRegistry {
     pub controllers: HashMap<String, ControllerFactory>,
     pub planners: HashMap<String, PlannerFactory>,
     pub adapters: HashMap<String, AdapterFactory>,
+    pub path_followers: HashMap<String, PathFollowerFactory>,
 }
 
 impl AutonomyRegistry {
@@ -230,6 +242,18 @@ impl AutonomyRegistry {
             + 'static,
     {
         self.adapters.insert(key.to_string(), Arc::new(factory));
+        self
+    }
+
+    pub fn register_path_follower<F>(&mut self, key: &str, factory: F) -> &mut Self
+    where
+        F: Fn(PathFollowerBuildContext) -> Result<Box<dyn PathFollower>, String>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.path_followers
+            .insert(key.to_string(), Arc::new(factory));
         self
     }
 
@@ -309,6 +333,17 @@ impl AutonomyRegistry {
     ) -> Result<Box<dyn AckermannOutputAdapter>, String> {
         let factory = self.adapters.get(key).ok_or_else(|| {
             format!("No adapter registered for '{key}'. Call register_adapter().")
+        })?;
+        factory(ctx)
+    }
+
+    pub fn build_path_follower(
+        &self,
+        key: &str,
+        ctx: PathFollowerBuildContext,
+    ) -> Result<Box<dyn PathFollower>, String> {
+        let factory = self.path_followers.get(key).ok_or_else(|| {
+            format!("No path follower registered for '{key}'. Call register_path_follower().")
         })?;
         factory(ctx)
     }

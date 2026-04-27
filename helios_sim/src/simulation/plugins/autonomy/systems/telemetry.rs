@@ -8,7 +8,7 @@ use helios_runtime::stage::PipelineLevel;
 use crate::simulation::core::components::{AgentTopicNames, SensorMailbox};
 use crate::simulation::core::topics::TopicBus;
 use crate::simulation::plugins::autonomy::components::{
-    ControlPipelineComponent, EstimatorComponent, MapperComponent,
+    EstimatorComponent, MapperComponent, PathFollowingOutputComponent,
 };
 
 /// Publishes estimated state, maps, and active planning waypoint to TopicBus.
@@ -18,22 +18,14 @@ pub fn publish_autonomy_telemetry(
     query: Query<(
         &EstimatorComponent,
         &MapperComponent,
-        &ControlPipelineComponent,
+        &PathFollowingOutputComponent,
         &AgentTopicNames,
     )>,
     mut topic_bus: ResMut<TopicBus>,
 ) {
-    for (estimator, mapper, control, topics) in &query {
-        // Active look-ahead waypoint.
-        if let Some(wp) = control
-            .0
-            .get_active_lookahead_waypoint(&PipelineLevel::Local)
-            .or_else(|| {
-                control
-                    .0
-                    .get_active_lookahead_waypoint(&PipelineLevel::Global)
-            })
-        {
+    for (estimator, mapper, pf_output, topics) in &query {
+        // Active path following reference point.
+        if let Some(ref wp) = pf_output.0 {
             topic_bus.publish(&topics.active_waypoint, wp.state.clone());
         }
         if let Some(state) = estimator.0.get_state() {
