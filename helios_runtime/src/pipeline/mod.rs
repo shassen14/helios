@@ -184,7 +184,10 @@ impl AutonomyPipeline {
         runtime: &dyn AgentRuntime,
     ) -> Option<ControlOutput> {
         let state = self.estimation.get_state()?.clone();
-        let reference = self.path_following.as_mut().and_then(|pf| pf.step(&state, dt));
+        let reference = self
+            .path_following
+            .as_mut()
+            .and_then(|pf| pf.step(&state, dt));
         self.control
             .step_controllers(&state, reference.as_ref(), dt, runtime)
     }

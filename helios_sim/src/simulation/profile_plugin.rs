@@ -10,12 +10,12 @@ use crate::simulation::core::TopicBusPlugin;
 use crate::simulation::plugins::autonomy::{EstimationPlugin, MappingPlugin};
 use crate::simulation::plugins::control::ControlPlugin;
 use crate::simulation::plugins::debugging::DebuggingPlugin;
-use crate::simulation::plugins::path_following::PathFollowingPlugin;
 use crate::simulation::plugins::foxglove::FoxgloveWebSocketPlugin;
 use crate::simulation::plugins::isolation::{
     MockGroundTruthEstimatorPlugin, MockMapInjectorPlugin, MockPathInjectorPlugin,
 };
 use crate::simulation::plugins::metrics::ControlMetricsPlugin;
+use crate::simulation::plugins::path_following::PathFollowingPlugin;
 use crate::simulation::plugins::planning::PlanningPlugin;
 use crate::simulation::plugins::sensors::HeliosSensorsPlugin;
 use crate::simulation::plugins::vehicles::HeliosVehiclesPlugin;

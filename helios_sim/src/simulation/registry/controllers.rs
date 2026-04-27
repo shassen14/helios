@@ -5,8 +5,7 @@
 
 use bevy::prelude::*;
 use helios_core::control::{
-    direct_velocity::DirectVelocityController, lqr::LqrController,
-    pid::VelocityPidController,
+    direct_velocity::DirectVelocityController, lqr::LqrController, pid::VelocityPidController,
 };
 
 use super::{AutonomyRegistry, ControllerBuildContext};

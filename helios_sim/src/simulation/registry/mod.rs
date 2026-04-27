@@ -252,7 +252,8 @@ impl AutonomyRegistry {
             + Sync
             + 'static,
     {
-        self.path_followers.insert(key.to_string(), Arc::new(factory));
+        self.path_followers
+            .insert(key.to_string(), Arc::new(factory));
         self
     }
 

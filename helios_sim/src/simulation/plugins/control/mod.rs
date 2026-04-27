@@ -82,8 +82,7 @@ fn controller_compute_system(
         elapsed_secs: ts,
     };
 
-    for (entity, estimator, mut control, mut output, state_source, gt_opt, pf_output) in
-        &mut query
+    for (entity, estimator, mut control, mut output, state_source, gt_opt, pf_output) in &mut query
     {
         let gt_built: Option<FrameAwareState> = match state_source {
             ControllerStateSource::GroundTruth => {
@@ -98,10 +97,9 @@ fn controller_compute_system(
         };
 
         if let Some(state) = state {
-            if let Some(out) =
-                control
-                    .0
-                    .step_controllers(state, pf_output.0.as_ref(), dt, &runtime)
+            if let Some(out) = control
+                .0
+                .step_controllers(state, pf_output.0.as_ref(), dt, &runtime)
             {
                 output.0 = out;
             }
