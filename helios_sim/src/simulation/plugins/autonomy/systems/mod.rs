@@ -5,9 +5,8 @@
 mod estimation;
 mod mapping;
 mod spawn;
-mod telemetry;
+mod spawn_helpers;
 
 pub use estimation::{route_sensor_messages, run_estimation, update_odom_frames};
 pub use mapping::run_mapping;
 pub use spawn::{spawn_autonomy_pipeline, spawn_odom_frames, spawn_passthrough_pipeline};
-pub use telemetry::{publish_autonomy_telemetry, publish_sensor_telemetry};

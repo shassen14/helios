@@ -16,12 +16,8 @@ bevy_fly_camera = "0.16.0" # For the debug camera
 helios_core = { path = "../helios_core", features = ["bevy"] }
 helios_runtime = { path = "../helios_runtime" }
 nalgebra = { workspace = true, features = ["serde-serialize"] }
-tokio = { version = "1.50.0", features = ["rt", "net", "time", "sync", "macros"] }
-tokio-tungstenite = "0.28.0"
 serde_json = "1.0.149"
-futures-util = { version = "0.3.32", default-features = false, features = ["sink", "std"] }
 serde = { workspace = true }
-downcast-rs = "2.0.1"
 figment = { version = "0.10.19", features = ["toml"] }
 toml = "0.8"                                                   # For parsing scenario files
 rand = "0.8"

@@ -6,11 +6,9 @@
 use bevy::prelude::*;
 
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
-use crate::simulation::core::TopicBusPlugin;
 use crate::simulation::plugins::autonomy::{EstimationPlugin, MappingPlugin};
 use crate::simulation::plugins::control::ControlPlugin;
 use crate::simulation::plugins::debugging::DebuggingPlugin;
-use crate::simulation::plugins::foxglove::FoxgloveWebSocketPlugin;
 use crate::simulation::plugins::isolation::{
     MockGroundTruthEstimatorPlugin, MockMapInjectorPlugin, MockPathInjectorPlugin,
 };
@@ -41,18 +39,14 @@ impl Plugin for ProfiledSimulationPlugin {
         app.insert_resource(self.profile.clone());
         app.insert_resource(caps.clone());
 
-        // Always-present infrastructure.
         app.add_plugins((
-            TopicBusPlugin,
             SimulationSetupPlugin,
             AutonomyRegistryPlugin,
             HeliosWorldPlugin,
             HeliosVehiclesPlugin,
-            FoxgloveWebSocketPlugin::default(),
             DebuggingPlugin,
         ));
 
-        // Conditional subsystems.
         if caps.sensors() {
             app.add_plugins(HeliosSensorsPlugin);
         }

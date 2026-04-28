@@ -1,28 +1,16 @@
 // helios_sim/src/simulation/plugins/debugging/ui/vehicle_hud.rs
 //
-// Compact bottom-left HUD showing real-time vehicle control state:
-//   - Desired speed (from ControlOutputComponent)
-//   - GT and estimated speeds with [CTRL] marker on active source
-//   - Horizontal speed bar (fills to active speed / max_speed)
-//   - Steering wheel (spoke rotates with steering_torque_norm)
-//   - Throttle gauge (fills from bottom, green = fwd, red = rev/brake)
+// Vehicle control HUD: spawn logic + entity handle resource.
+// Runtime update systems live in vehicle_hud_update.rs.
 //
 // Toggle with C; T switches ControllerStateSource when both control + estimation are active.
 
 use bevy::prelude::*;
 
-use helios_core::control::ControlOutput;
-use helios_core::frames::{FrameId, StateVariable};
-
-use crate::simulation::core::components::{
-    ControlOutputComponent, ControllerStateSource, GroundTruthState,
-};
-use crate::simulation::plugins::autonomy::EstimatorComponent;
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
-use crate::simulation::plugins::vehicles::ackermann::components::{
-    AckermannActuator, AckermannCommand,
-};
 use crate::simulation::profile::CapabilitySet;
+
+pub use super::vehicle_hud_update::{toggle_state_source, update_vehicle_hud};
 
 /// Entity IDs for nodes that `update_vehicle_hud` mutates each frame.
 /// Inserted as a Bevy resource by `spawn_vehicle_hud`; absent when the HUD was not spawned.
@@ -38,10 +26,6 @@ pub struct VehicleHudEntities {
     pub steering_spoke: Entity,
     pub steering_text: Entity,
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Spawn
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Builds the full HUD node tree and inserts `VehicleHudEntities`.
 /// Called once on `OnEnter(Running)`; no-ops if neither control nor estimation is active.
@@ -349,194 +333,4 @@ pub fn spawn_vehicle_hud(
         steering_spoke,
         steering_text,
     });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Update
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Reads agent components each frame and updates HUD text/gauges.
-/// No-ops if `VehicleHudEntities` resource is absent (HUD was not spawned).
-#[allow(clippy::too_many_arguments)]
-pub fn update_vehicle_hud(
-    entities: Option<Res<VehicleHudEntities>>,
-    config: Res<DebugVisualizationConfig>,
-    mut node_q: Query<&mut Node>,
-    mut transform_q: Query<&mut Transform>,
-    mut text_q: Query<&mut Text>,
-    mut bg_q: Query<&mut BackgroundColor>,
-    mut vis_q: Query<&mut Visibility>,
-    agent_q: Query<(
-        &GroundTruthState,
-        &AckermannActuator,
-        &ControllerStateSource,
-        Option<&EstimatorComponent>,
-        Option<&ControlOutputComponent>,
-        Option<&AckermannCommand>,
-    )>,
-) {
-    let Some(entities) = entities else {
-        return;
-    };
-
-    // Toggle root visibility.
-    if let Ok(mut vis) = vis_q.get_mut(entities.root) {
-        *vis = if config.show_vehicle_hud {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-
-    if !config.show_vehicle_hud {
-        return;
-    }
-
-    // Get data from the first matching agent.
-    let Some((gt_state, actuator, state_source, est_opt, ctrl_opt, cmd_opt)) =
-        agent_q.iter().next()
-    else {
-        return;
-    };
-
-    let max_speed = actuator.max_speed;
-
-    // GT speed is always available (queried as required).
-    let gt_speed = gt_state.linear_velocity.norm() as f32;
-
-    // Estimated speed: only present when an EstimatorComponent exists.
-    let est_speed: Option<f32> = est_opt.and_then(|est| {
-        est.0
-            .get_state()
-            .and_then(|s| s.get_vector3(&StateVariable::Vx(FrameId::World)))
-            .map(|v| v.norm() as f32)
-    });
-
-    // Speed used for the bar fill tracks the active controller source.
-    let active_speed = match state_source {
-        ControllerStateSource::GroundTruth => gt_speed,
-        ControllerStateSource::Estimated => est_speed.unwrap_or(gt_speed),
-    };
-
-    // Desired speed from the last ControlOutput.
-    let desired_speed: Option<f32> = ctrl_opt.map(|ctrl| match &ctrl.0 {
-        ControlOutput::BodyVelocity { linear, .. } => linear.x as f32,
-        ControlOutput::Raw(u) if !u.is_empty() => u[0] as f32 * max_speed,
-        _ => 0.0,
-    });
-
-    // Throttle and steering from the persisted AckermannCommand component.
-    let throttle_norm: Option<f32> = cmd_opt.map(|c| c.throttle_norm);
-    let steering_norm: Option<f32> = cmd_opt.map(|c| c.steering_torque_norm);
-
-    // Whether to display [CTRL] markers (only meaningful when both sources exist).
-    let show_ctrl_marker = est_speed.is_some();
-
-    // ── Text updates ─────────────────────────────────────────────────────────
-
-    if let Ok(mut text) = text_q.get_mut(entities.desired_speed_text) {
-        text.0 = match desired_speed {
-            Some(s) => format!("Des: {:.1} m/s", s),
-            None => "Des: --".to_string(),
-        };
-    }
-
-    if let Ok(mut text) = text_q.get_mut(entities.gt_speed_text) {
-        let marker = if show_ctrl_marker && *state_source == ControllerStateSource::GroundTruth {
-            " [CTRL]"
-        } else {
-            ""
-        };
-        text.0 = format!("GT:  {:.1} m/s{}", gt_speed, marker);
-    }
-
-    if let Ok(mut text) = text_q.get_mut(entities.est_speed_text) {
-        text.0 = match est_speed {
-            Some(spd) => {
-                let marker = if *state_source == ControllerStateSource::Estimated {
-                    " [CTRL]"
-                } else {
-                    ""
-                };
-                format!("Est: {:.1} m/s{}", spd, marker)
-            }
-            None => "Est: --".to_string(),
-        };
-    }
-
-    if let Ok(mut text) = text_q.get_mut(entities.throttle_text) {
-        text.0 = match throttle_norm {
-            Some(t) => format!("{:+.0}%", t * 100.0),
-            None => "--".to_string(),
-        };
-    }
-
-    if let Ok(mut text) = text_q.get_mut(entities.steering_text) {
-        text.0 = match steering_norm {
-            Some(s) => format!("{:+.0}%", s * 100.0),
-            None => "--".to_string(),
-        };
-    }
-
-    // ── Speed bar ────────────────────────────────────────────────────────────
-
-    if let Ok(mut node) = node_q.get_mut(entities.speed_fill) {
-        let pct = if max_speed > 0.0 {
-            (active_speed / max_speed * 100.0).clamp(0.0, 100.0)
-        } else {
-            0.0
-        };
-        node.width = Val::Percent(pct);
-    }
-
-    // ── Throttle gauge ───────────────────────────────────────────────────────
-
-    if let Ok(mut node) = node_q.get_mut(entities.throttle_fill) {
-        let pct = throttle_norm.map(|t| t.abs() * 100.0).unwrap_or(0.0);
-        node.height = Val::Percent(pct);
-    }
-
-    if let Ok(mut bg) = bg_q.get_mut(entities.throttle_fill) {
-        let color = match throttle_norm {
-            Some(t) if t < 0.0 => Color::srgb(0.8, 0.1, 0.1),
-            _ => Color::srgb(0.0, 0.8, 0.0),
-        };
-        *bg = BackgroundColor(color);
-    }
-
-    // ── Steering spoke rotation ───────────────────────────────────────────────
-
-    if let Ok(mut transform) = transform_q.get_mut(entities.steering_spoke) {
-        let angle = steering_norm
-            .map(|s| s * 135.0_f32.to_radians())
-            .unwrap_or(0.0);
-        transform.rotation = Quat::from_rotation_z(angle);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// State source toggle
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Flips `ControllerStateSource` on all agent entities when T is pressed.
-/// Runs every frame in `Running` state; has no effect if no agents have the component.
-pub fn toggle_state_source(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut source_q: Query<&mut ControllerStateSource>,
-) {
-    if !keyboard.just_pressed(KeyCode::KeyT) {
-        return;
-    }
-    for mut source in &mut source_q {
-        *source = match *source {
-            ControllerStateSource::Estimated => {
-                info!("[Debug] Controller state source → GroundTruth");
-                ControllerStateSource::GroundTruth
-            }
-            ControllerStateSource::GroundTruth => {
-                info!("[Debug] Controller state source → Estimated");
-                ControllerStateSource::Estimated
-            }
-        };
-    }
 }

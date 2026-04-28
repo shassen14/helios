@@ -9,8 +9,7 @@ use crate::prelude::AppState;
 use crate::simulation::core::app_state::{SceneBuildSet, SimulationSet};
 use crate::simulation::core::components::GroundTruthState;
 use crate::simulation::plugins::autonomy::systems::{
-    publish_autonomy_telemetry, publish_sensor_telemetry, route_sensor_messages, spawn_odom_frames,
-    spawn_passthrough_pipeline, update_odom_frames,
+    route_sensor_messages, spawn_odom_frames, spawn_passthrough_pipeline, update_odom_frames,
 };
 use crate::simulation::plugins::autonomy::EstimatorComponent;
 
@@ -18,30 +17,20 @@ pub struct MockGroundTruthEstimatorPlugin;
 
 impl Plugin for MockGroundTruthEstimatorPlugin {
     fn build(&self, app: &mut App) {
-        app
-            // --- SPAWNING: GT passthrough instead of real EKF/UKF ---
-            .add_systems(
-                OnEnter(AppState::SceneBuilding),
-                (
-                    spawn_passthrough_pipeline.in_set(SceneBuildSet::ProcessBaseAutonomy),
-                    spawn_odom_frames.in_set(SceneBuildSet::ProcessDependentAutonomy),
-                ),
-            )
-            // --- RUNTIME ---
-            // Chain: route sensor mailbox → inject GT state → update odom frames.
-            .add_systems(
-                FixedUpdate,
-                (route_sensor_messages, gt_inject_system, update_odom_frames)
-                    .chain()
-                    .in_set(SimulationSet::Estimation)
-                    .run_if(in_state(AppState::Running)),
-            )
-            .add_systems(
-                FixedUpdate,
-                (publish_autonomy_telemetry, publish_sensor_telemetry)
-                    .in_set(SimulationSet::Validation)
-                    .run_if(in_state(AppState::Running)),
-            );
+        app.add_systems(
+            OnEnter(AppState::SceneBuilding),
+            (
+                spawn_passthrough_pipeline.in_set(SceneBuildSet::ProcessBaseAutonomy),
+                spawn_odom_frames.in_set(SceneBuildSet::ProcessDependentAutonomy),
+            ),
+        );
+        app.add_systems(
+            FixedUpdate,
+            (route_sensor_messages, gt_inject_system, update_odom_frames)
+                .chain()
+                .in_set(SimulationSet::Estimation)
+                .run_if(in_state(AppState::Running)),
+        );
     }
 }
 

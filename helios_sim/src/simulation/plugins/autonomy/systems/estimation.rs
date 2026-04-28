@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 
-use crate::simulation::core::components::{MailboxEntry, SensorMailbox, SensorTopicName};
+use crate::simulation::core::components::{MailboxEntry, SensorMailbox};
 use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::transforms::{EnuBodyPose, TfTree};
@@ -16,30 +16,20 @@ use crate::simulation::plugins::autonomy::components::{EstimatorComponent, OdomF
 pub fn route_sensor_messages(
     mut events: EventReader<BevyMeasurementMessage>,
     mut mailbox_query: Query<&mut SensorMailbox>,
-    topic_name_query: Query<&SensorTopicName>,
 ) {
-    // Clear all mailboxes at the start of each frame.
     for mut mailbox in &mut mailbox_query {
         mailbox.entries.clear();
     }
 
     for event in events.read() {
-        let sensor_entity = event.0.sensor_handle.to_entity();
-        let topic_name = topic_name_query
-            .get(sensor_entity)
-            .map(|t| t.0.clone())
-            .unwrap_or_default();
-
         let agent_entity = event.0.agent_handle.to_entity();
         if let Ok(mut mailbox) = mailbox_query.get_mut(agent_entity) {
             mailbox.entries.push(MailboxEntry {
-                topic_name,
                 message: event.0.clone(),
             });
         }
     }
 
-    // Sort each mailbox by timestamp (ascending) for EKF causality.
     for mut mailbox in &mut mailbox_query {
         mailbox.entries.sort_by(|a, b| {
             a.message

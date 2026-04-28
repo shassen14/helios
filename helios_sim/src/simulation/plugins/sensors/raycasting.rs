@@ -6,9 +6,7 @@ use std::time::Duration;
 // --- Simulation Crate Imports ---
 use crate::prelude::*;
 use crate::simulation::config::structs::{LidarConfig, SensorConfig};
-use crate::simulation::core::{
-    app_state::SimulationSet, components::SensorTopicName, events::BevyMeasurementMessage,
-};
+use crate::simulation::core::{app_state::SimulationSet, events::BevyMeasurementMessage};
 
 // --- Core Library Imports ---
 use crate::simulation::core::transforms::FluVector;
@@ -30,10 +28,7 @@ use helios_core::{
 #[derive(Component)]
 pub struct RaycastingSensor {
     pub timer: Timer,
-    /// It holds a boxed trait object of the specific `helios_core` model.
     pub model: Box<dyn RaycastingSensorModel>,
-    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
-    pub topic_name: String,
 }
 
 pub struct RaycastingSensorPlugin;
@@ -105,7 +100,6 @@ fn spawn_raycasting_sensors(
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
-                let topic_name = format!("/{}/sensors/{}", agent_name.as_str(), sensor_name);
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
                     RaycastingSensor {
@@ -114,10 +108,7 @@ fn spawn_raycasting_sensors(
                             TimerMode::Repeating,
                         ),
                         model: core_model,
-                        topic_name: topic_name.clone(),
                     },
-                    // Topic name for the cold-path telemetry system.
-                    SensorTopicName(topic_name),
                     TrackedFrame,
                     lidar_config.get_relative_pose().to_bevy_local_transform(),
                 ));
