@@ -1,4 +1,5 @@
-use std::any::TypeId;
+use std::any::{Any, TypeId};
+use std::collections::HashMap;
 use std::option::Option;
 
 /// Defines what a node needs and produces
@@ -16,4 +17,23 @@ pub struct PortDescriptor {
 
     /// Execution rate in Hz. `None` means every tick.
     pub rate: Option<f64>,
+}
+
+pub struct PortBus {
+    slots: HashMap<TypeId, Option<Box<dyn Any + Send>>>,
+}
+
+impl PortBus {
+    pub fn new(all_type_ids: Vec<TypeId>) -> Self {
+        let slots = all_type_ids.into_iter().map(|id| (id, None)).collect();
+        Self { slots }
+    }
+
+    pub fn write<T: Any + Send>(&mut self, value: T) {
+        todo!();
+    }
+
+    pub fn read<T: Any>(&self) -> Option<&T> {
+        self.slots.get(&TypeId::of::<T>())?.as_ref()?.downcast_ref()
+    }
 }
