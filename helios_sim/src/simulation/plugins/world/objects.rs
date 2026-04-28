@@ -7,14 +7,14 @@ use bevy::{
     prelude::*,
 };
 
+use super::object_helpers::{
+    build_collider, placement_to_bevy_transform, spawn_object_trimesh_colliders, GltfObjectMeta,
+};
 use crate::prelude::*;
 use crate::simulation::config::structs::world_object::WorldObjectPrefab;
 use crate::simulation::config::PrefabCatalog;
 use crate::simulation::core::app_state::AssetLoadSet;
 use crate::simulation::core::components::{BoundingBox3D, SemanticLabel, WorldObjectType};
-use super::object_helpers::{
-    build_collider, placement_to_bevy_transform, spawn_object_trimesh_colliders, GltfObjectMeta,
-};
 
 // =========================================================================
 // == Resource ==
@@ -105,14 +105,22 @@ fn start_object_asset_loading(
 
         if let Some(ref mesh_path) = prefab.visual_mesh {
             let handle = asset_server.load(GltfAssetLabel::Scene(0).from_asset(mesh_path.clone()));
-            info!("[WorldObjects] Loading visual mesh for '{}'", placement.prefab);
+            info!(
+                "[WorldObjects] Loading visual mesh for '{}'",
+                placement.prefab
+            );
             assets.scenes.insert(placement.prefab.clone(), handle);
         }
 
         if let Some(ref col_path) = prefab.collider_mesh {
             let col_handle: Handle<Gltf> = asset_server.load(col_path.clone());
-            info!("[WorldObjects] Loading collider mesh for '{}'", placement.prefab);
-            assets.collider_gltfs.insert(placement.prefab.clone(), col_handle);
+            info!(
+                "[WorldObjects] Loading collider mesh for '{}'",
+                placement.prefab
+            );
+            assets
+                .collider_gltfs
+                .insert(placement.prefab.clone(), col_handle);
         }
 
         assets.prefabs.insert(placement.prefab.clone(), prefab);
@@ -168,7 +176,10 @@ fn spawn_world_objects(
                     entity_cmds.insert((RigidBody::Static, collider));
                 }
                 Err(msg) => {
-                    warn!("[WorldObjects] Collider for '{}' skipped: {}", placement.prefab, msg);
+                    warn!(
+                        "[WorldObjects] Collider for '{}' skipped: {}",
+                        placement.prefab, msg
+                    );
                 }
             }
         }

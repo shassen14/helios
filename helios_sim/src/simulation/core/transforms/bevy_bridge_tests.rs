@@ -120,11 +120,7 @@ fn test_enu_body_pose_north() {
 #[test]
 fn test_bevy_transform_to_enu_body_pose_identity() {
     let enu = EnuBodyPose::from(&BevyTransform::IDENTITY);
-    assert_nalgebra_vector3_approx_eq(
-        &enu.0.translation.vector,
-        &Vector3::zeros(),
-        F64_EPSILON,
-    );
+    assert_nalgebra_vector3_approx_eq(&enu.0.translation.vector, &Vector3::zeros(), F64_EPSILON);
     let expected = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
     assert_nalgebra_quat_approx_eq(&enu.0.rotation, &expected, F64_EPSILON);
 }

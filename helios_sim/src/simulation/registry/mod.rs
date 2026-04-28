@@ -27,21 +27,17 @@ use std::sync::Arc;
 
 use bevy::prelude::Resource;
 use helios_core::{
-    control::Controller,
-    estimation::StateEstimator,
-    mapping::Mapper,
-    models::estimation::dynamics::EstimationDynamics,
-    path_following::PathFollower,
-    planning::Planner,
-    slam::SlamSystem,
+    control::Controller, estimation::StateEstimator, mapping::Mapper,
+    models::estimation::dynamics::EstimationDynamics, path_following::PathFollower,
+    planning::Planner, slam::SlamSystem,
 };
 use helios_runtime::validation::CapabilitySet;
 
-use contexts::{
-    AdapterFactory, EstimatorFactory, MapperFactory, PathFollowerFactory, PlannerFactory,
-    SlamFactory, ControllerFactory,
-};
 use crate::simulation::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
+use contexts::{
+    AdapterFactory, ControllerFactory, EstimatorFactory, MapperFactory, PathFollowerFactory,
+    PlannerFactory, SlamFactory,
+};
 
 /// Central registry mapping algorithm keys to factory closures.
 ///
@@ -65,7 +61,9 @@ impl AutonomyRegistry {
     pub fn register_estimator<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
         F: Fn(EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, String>
-            + Send + Sync + 'static,
+            + Send
+            + Sync
+            + 'static,
     {
         self.estimators.insert(key.to_string(), Arc::new(factory));
         self
@@ -74,7 +72,9 @@ impl AutonomyRegistry {
     pub fn register_dynamics<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
         F: Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String>
-            + Send + Sync + 'static,
+            + Send
+            + Sync
+            + 'static,
     {
         self.dynamics.insert(key.to_string(), Arc::new(factory));
         self
@@ -99,7 +99,9 @@ impl AutonomyRegistry {
     pub fn register_controller<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
         F: Fn(ControllerBuildContext) -> Result<Box<dyn Controller>, String>
-            + Send + Sync + 'static,
+            + Send
+            + Sync
+            + 'static,
     {
         self.controllers.insert(key.to_string(), Arc::new(factory));
         self
@@ -116,7 +118,9 @@ impl AutonomyRegistry {
     pub fn register_adapter<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
         F: Fn(AdapterBuildContext) -> Result<Box<dyn AckermannOutputAdapter>, String>
-            + Send + Sync + 'static,
+            + Send
+            + Sync
+            + 'static,
     {
         self.adapters.insert(key.to_string(), Arc::new(factory));
         self
@@ -125,72 +129,99 @@ impl AutonomyRegistry {
     pub fn register_path_follower<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
         F: Fn(PathFollowerBuildContext) -> Result<Box<dyn PathFollower>, String>
-            + Send + Sync + 'static,
+            + Send
+            + Sync
+            + 'static,
     {
-        self.path_followers.insert(key.to_string(), Arc::new(factory));
+        self.path_followers
+            .insert(key.to_string(), Arc::new(factory));
         self
     }
 
     pub fn build_estimator(
-        &self, key: &str, ctx: EstimatorBuildContext,
+        &self,
+        key: &str,
+        ctx: EstimatorBuildContext,
     ) -> Result<Box<dyn StateEstimator>, String> {
-        self.estimators.get(key)
+        self.estimators
+            .get(key)
             .ok_or_else(|| format!("No estimator registered for '{key}'."))
             .and_then(|f| f(ctx))
     }
 
     pub fn build_dynamics(
-        &self, key: &str, ctx: DynamicsBuildContext,
+        &self,
+        key: &str,
+        ctx: DynamicsBuildContext,
     ) -> Result<Box<dyn EstimationDynamics>, String> {
-        self.dynamics.get(key)
+        self.dynamics
+            .get(key)
             .ok_or_else(|| format!("No dynamics registered for '{key}'."))
             .and_then(|f| f(ctx))
     }
 
     pub fn build_mapper(
-        &self, key: &str, ctx: MapperBuildContext,
+        &self,
+        key: &str,
+        ctx: MapperBuildContext,
     ) -> Result<Box<dyn Mapper>, String> {
-        self.mappers.get(key)
+        self.mappers
+            .get(key)
             .ok_or_else(|| format!("No mapper registered for '{key}'."))
             .and_then(|f| f(ctx))
     }
 
     pub fn build_slam(
-        &self, key: &str, ctx: SlamBuildContext,
+        &self,
+        key: &str,
+        ctx: SlamBuildContext,
     ) -> Result<Box<dyn SlamSystem>, String> {
-        self.slam.get(key)
+        self.slam
+            .get(key)
             .ok_or_else(|| format!("No SLAM system registered for '{key}'."))
             .and_then(|f| f(ctx))
     }
 
     pub fn build_controller(
-        &self, key: &str, ctx: ControllerBuildContext,
+        &self,
+        key: &str,
+        ctx: ControllerBuildContext,
     ) -> Result<Box<dyn Controller>, String> {
-        self.controllers.get(key)
+        self.controllers
+            .get(key)
             .ok_or_else(|| format!("No controller registered for '{key}'."))
             .and_then(|f| f(ctx))
     }
 
     pub fn build_planner(
-        &self, key: &str, ctx: PlannerBuildContext,
+        &self,
+        key: &str,
+        ctx: PlannerBuildContext,
     ) -> Result<Box<dyn Planner>, String> {
-        self.planners.get(key)
+        self.planners
+            .get(key)
             .ok_or_else(|| format!("No planner registered for '{key}'."))
             .and_then(|f| f(ctx))
     }
 
     pub fn build_adapter(
-        &self, key: &str, ctx: AdapterBuildContext,
+        &self,
+        key: &str,
+        ctx: AdapterBuildContext,
     ) -> Result<Box<dyn AckermannOutputAdapter>, String> {
-        self.adapters.get(key)
+        self.adapters
+            .get(key)
             .ok_or_else(|| format!("No adapter registered for '{key}'."))
             .and_then(|f| f(ctx))
     }
 
     pub fn build_path_follower(
-        &self, key: &str, ctx: PathFollowerBuildContext,
+        &self,
+        key: &str,
+        ctx: PathFollowerBuildContext,
     ) -> Result<Box<dyn PathFollower>, String> {
-        self.path_followers.get(key)
+        self.path_followers
+            .get(key)
             .ok_or_else(|| format!("No path follower registered for '{key}'."))
             .and_then(|f| f(ctx))
     }

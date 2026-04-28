@@ -18,9 +18,7 @@ use crate::simulation::plugins::autonomy::components::{
     ControlPipelineComponent, EstimatorComponent, MapperComponent, OdomFrameOf,
     PathFollowingComponent, PathFollowingOutputComponent,
 };
-use crate::simulation::registry::{
-    AutonomyRegistry, EstimatorBuildContext, SlamBuildContext,
-};
+use crate::simulation::registry::{AutonomyRegistry, EstimatorBuildContext, SlamBuildContext};
 
 use super::spawn_helpers::build_separate_pipeline;
 

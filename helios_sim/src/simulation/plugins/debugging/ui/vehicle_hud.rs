@@ -73,7 +73,10 @@ pub fn spawn_vehicle_hud(
         .spawn((
             Node::default(),
             Text::new("Des: --"),
-            TextFont { font_size: 12.0, ..default() },
+            TextFont {
+                font_size: 12.0,
+                ..default()
+            },
             TextColor(Color::srgb(0.8, 0.8, 0.8)),
         ))
         .id();
@@ -82,7 +85,10 @@ pub fn spawn_vehicle_hud(
         .spawn((
             Node::default(),
             Text::new("GT:  -- m/s"),
-            TextFont { font_size: 12.0, ..default() },
+            TextFont {
+                font_size: 12.0,
+                ..default()
+            },
             TextColor(Color::WHITE),
         ))
         .id();
@@ -91,7 +97,10 @@ pub fn spawn_vehicle_hud(
         .spawn((
             Node::default(),
             Text::new("Est: --"),
-            TextFont { font_size: 12.0, ..default() },
+            TextFont {
+                font_size: 12.0,
+                ..default()
+            },
             TextColor(Color::srgb(0.6, 0.8, 1.0)),
         ))
         .id();
@@ -115,7 +124,11 @@ pub fn spawn_vehicle_hud(
 
     let steering_spoke = commands
         .spawn((
-            Node { width: Val::Px(4.0), height: Val::Px(28.0), ..default() },
+            Node {
+                width: Val::Px(4.0),
+                height: Val::Px(28.0),
+                ..default()
+            },
             BackgroundColor(Color::WHITE),
             Transform::IDENTITY,
         ))
@@ -140,7 +153,10 @@ pub fn spawn_vehicle_hud(
         .spawn((
             Node::default(),
             Text::new("--"),
-            TextFont { font_size: 11.0, ..default() },
+            TextFont {
+                font_size: 11.0,
+                ..default()
+            },
             TextColor(Color::WHITE),
         ))
         .id();
@@ -149,7 +165,10 @@ pub fn spawn_vehicle_hud(
         .spawn((
             Node::default(),
             Text::new("Steering"),
-            TextFont { font_size: 11.0, ..default() },
+            TextFont {
+                font_size: 11.0,
+                ..default()
+            },
             TextColor(Color::srgb(0.6, 0.6, 0.6)),
         ))
         .id();
@@ -173,7 +192,11 @@ pub fn spawn_vehicle_hud(
 
     let throttle_fill = commands
         .spawn((
-            Node { width: Val::Percent(100.0), height: Val::Percent(0.0), ..default() },
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(0.0),
+                ..default()
+            },
             BackgroundColor(Color::srgb(0.0, 0.8, 0.0)),
         ))
         .id();
@@ -196,7 +219,10 @@ pub fn spawn_vehicle_hud(
         .spawn((
             Node::default(),
             Text::new("--"),
-            TextFont { font_size: 11.0, ..default() },
+            TextFont {
+                font_size: 11.0,
+                ..default()
+            },
             TextColor(Color::WHITE),
         ))
         .id();
@@ -205,7 +231,10 @@ pub fn spawn_vehicle_hud(
         .spawn((
             Node::default(),
             Text::new("Throttle"),
-            TextFont { font_size: 11.0, ..default() },
+            TextFont {
+                font_size: 11.0,
+                ..default()
+            },
             TextColor(Color::srgb(0.6, 0.6, 0.6)),
         ))
         .id();
@@ -247,7 +276,10 @@ pub fn spawn_vehicle_hud(
         .spawn((
             Node::default(),
             Text::new("Vehicle Control [C]"),
-            TextFont { font_size: 13.0, ..default() },
+            TextFont {
+                font_size: 13.0,
+                ..default()
+            },
             TextColor(Color::srgb(0.9, 0.9, 0.9)),
         ))
         .id();
@@ -256,7 +288,10 @@ pub fn spawn_vehicle_hud(
         .spawn((
             Node::default(),
             Text::new("─ Speed (m/s) ─"),
-            TextFont { font_size: 11.0, ..default() },
+            TextFont {
+                font_size: 11.0,
+                ..default()
+            },
             TextColor(Color::srgb(0.5, 0.5, 0.5)),
         ))
         .id();

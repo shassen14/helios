@@ -7,14 +7,14 @@ use rand::rngs::OsRng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
+use super::components::GroundTruthState;
+use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 use crate::prelude::*;
 use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::simulation::core::events::BevyMeasurementMessage;
+use crate::simulation::core::ground_truth_sync_system;
 use crate::simulation::core::prng::SimulationRng;
 use crate::simulation::core::transforms::build_static_tf_maps;
-use crate::simulation::core::ground_truth_sync_system;
-use super::components::GroundTruthState;
-use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 
 pub struct SimulationSetupPlugin;
 

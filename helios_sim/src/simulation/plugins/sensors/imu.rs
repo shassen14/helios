@@ -9,9 +9,7 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::transforms::EnuBodyPose;
 use crate::simulation::core::{
-    app_state::SimulationSet,
-    components::GroundTruthState,
-    events::BevyMeasurementMessage,
+    app_state::SimulationSet, components::GroundTruthState, events::BevyMeasurementMessage,
     prng::SimulationRng,
 };
 
