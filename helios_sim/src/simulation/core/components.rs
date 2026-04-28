@@ -107,10 +107,9 @@ pub enum ControllerStateSource {
 // == Sensor mailbox (per-agent, filled each frame by route_sensor_messages) ==
 // =========================================================================
 
-/// One entry in a `SensorMailbox`: the telemetry topic name plus the measurement.
+/// One entry in a `SensorMailbox`: a measurement from a sensor this frame.
 #[derive(Clone)]
 pub struct MailboxEntry {
-    pub topic_name: String,
     pub message: MeasurementMessage,
 }
 
@@ -120,26 +119,6 @@ pub struct MailboxEntry {
 #[derive(Component, Default)]
 pub struct SensorMailbox {
     pub entries: Vec<MailboxEntry>,
-}
-
-/// A marker component on each sensor entity recording its telemetry topic name.
-/// Read by `route_sensor_messages` to populate `SensorMailbox` entries.
-#[derive(Component)]
-pub struct SensorTopicName(pub String);
-
-// =========================================================================
-// == Agent Topic Name Cache ==
-// =========================================================================
-
-/// Pre-computed TopicBus topic name strings for an agent's autonomy outputs.
-/// Inserted at spawn time so `autonomy_telemetry_system` never allocates `format!()` strings
-/// on the hot path.
-#[derive(Component)]
-pub struct AgentTopicNames {
-    pub active_waypoint: String,
-    pub odometry_estimated: String,
-    pub map_global: String,
-    pub map_local: String,
 }
 
 // =========================================================================

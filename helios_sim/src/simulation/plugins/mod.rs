@@ -2,13 +2,12 @@
 //!
 //! Submodules: `autonomy` (EKF/pipeline wiring), `control` (controller dispatch),
 //! `sensors` (IMU, GPS, lidar), `vehicles` (Ackermann, quadcopter physics adapters),
-//! `planning`, `debugging` (gizmos + keybindings), `foxglove` (WebSocket bridge),
+//! `planning`, `debugging` (gizmos + keybindings),
 //! `isolation` (mock profile plugins), `metrics`, `research`, `world`.
 
 pub mod autonomy;
 pub mod control;
 pub mod debugging;
-pub mod foxglove;
 pub mod isolation;
 pub mod metrics;
 pub mod path_following;

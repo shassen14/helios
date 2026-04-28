@@ -15,8 +15,8 @@ pub use components::{
 };
 
 use systems::{
-    publish_autonomy_telemetry, publish_sensor_telemetry, route_sensor_messages, run_estimation,
-    run_mapping, spawn_autonomy_pipeline, spawn_odom_frames, update_odom_frames,
+    route_sensor_messages, run_estimation, run_mapping, spawn_autonomy_pipeline, spawn_odom_frames,
+    update_odom_frames,
 };
 
 // =========================================================================
@@ -29,31 +29,20 @@ pub struct EstimationPlugin;
 
 impl Plugin for EstimationPlugin {
     fn build(&self, app: &mut App) {
-        app
-            // --- SPAWNING ---
-            .add_systems(
-                OnEnter(AppState::SceneBuilding),
-                (
-                    spawn_autonomy_pipeline.in_set(SceneBuildSet::ProcessBaseAutonomy),
-                    spawn_odom_frames.in_set(SceneBuildSet::ProcessDependentAutonomy),
-                ),
-            )
-            // --- RUNTIME: Estimation phase ---
-            // Chain: route fills SensorMailbox → estimation runs → odom frames updated.
-            .add_systems(
-                FixedUpdate,
-                (route_sensor_messages, run_estimation, update_odom_frames)
-                    .chain()
-                    .in_set(SimulationSet::Estimation)
-                    .run_if(in_state(AppState::Running)),
-            )
-            // --- RUNTIME: Validation phase (cold telemetry path) ---
-            .add_systems(
-                FixedUpdate,
-                (publish_autonomy_telemetry, publish_sensor_telemetry)
-                    .in_set(SimulationSet::Validation)
-                    .run_if(in_state(AppState::Running)),
-            );
+        app.add_systems(
+            OnEnter(AppState::SceneBuilding),
+            (
+                spawn_autonomy_pipeline.in_set(SceneBuildSet::ProcessBaseAutonomy),
+                spawn_odom_frames.in_set(SceneBuildSet::ProcessDependentAutonomy),
+            ),
+        );
+        app.add_systems(
+            FixedUpdate,
+            (route_sensor_messages, run_estimation, update_odom_frames)
+                .chain()
+                .in_set(SimulationSet::Estimation)
+                .run_if(in_state(AppState::Running)),
+        );
     }
 }
 

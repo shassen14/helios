@@ -7,9 +7,7 @@ use std::time::Duration;
 use crate::prelude::*;
 use crate::simulation::core::transforms::EnuBodyPose;
 use crate::simulation::core::{
-    app_state::SimulationSet,
-    components::{GroundTruthState, SensorTopicName},
-    events::BevyMeasurementMessage,
+    app_state::SimulationSet, components::GroundTruthState, events::BevyMeasurementMessage,
     prng::SimulationRng,
 };
 
@@ -27,12 +25,9 @@ use helios_core::{
 #[derive(Component)]
 pub struct Magnetometer {
     pub timer: Timer,
-    // Store noise distributions for each axis
     noise_dist_x: Normal<f64>,
     noise_dist_y: Normal<f64>,
     noise_dist_z: Normal<f64>,
-    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
-    pub topic_name: String,
 }
 
 pub struct MagnetometerPlugin;
@@ -112,7 +107,6 @@ fn spawn_magnetometer_sensors(
 
                 core_model.sensor_handle = FrameHandle::from_entity(sensor_entity);
 
-                let topic_name = format!("/{}/sensors/{}", agent_name.as_str(), sensor_name);
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), mag_config.name)),
                     Magnetometer {
@@ -120,14 +114,10 @@ fn spawn_magnetometer_sensors(
                             Duration::from_secs_f32(1.0 / mag_config.rate),
                             TimerMode::Repeating,
                         ),
-                        // safe: all stddevs validated above
                         noise_dist_x: Normal::new(0.0, mag_config.noise_stddev[0] as f64).unwrap(),
                         noise_dist_y: Normal::new(0.0, mag_config.noise_stddev[1] as f64).unwrap(),
                         noise_dist_z: Normal::new(0.0, mag_config.noise_stddev[2] as f64).unwrap(),
-                        topic_name: topic_name.clone(),
                     },
-                    // Topic name for the cold-path telemetry system.
-                    SensorTopicName(topic_name),
                     MeasurementModel(Box::new(core_model)),
                     TrackedFrame,
                     mag_config.get_relative_pose().to_bevy_local_transform(),
