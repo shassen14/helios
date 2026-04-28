@@ -10,7 +10,7 @@ use crate::prelude::*;
 use crate::simulation::core::transforms::EnuBodyPose;
 use crate::simulation::core::{
     app_state::SimulationSet,
-    components::{GroundTruthState, SensorTopicName},
+    components::GroundTruthState,
     events::BevyMeasurementMessage,
     prng::SimulationRng,
 };
@@ -30,10 +30,8 @@ use helios_core::{
 #[derive(Component)]
 pub struct Imu {
     pub timer: Timer,
-    accel_noise: [Normal<f64>; 3], // X, Y, Z
-    gyro_noise: [Normal<f64>; 3],  // X, Y, Z
-    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
-    pub topic_name: String,
+    accel_noise: [Normal<f64>; 3],
+    gyro_noise: [Normal<f64>; 3],
 }
 
 pub struct ImuPlugin;
@@ -126,17 +124,13 @@ fn spawn_imu_sensors(
                 };
 
                 // --- 3. Add all components to the new sensor entity ---
-                let topic_name =
-                    format!("/{}/sensors/{}", agent_name.as_str(), imu_config.get_name());
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), imu_config.get_name())),
-                    // The Bevy component with runtime state.
                     Imu {
                         timer: Timer::new(
                             Duration::from_secs_f32(1.0 / imu_config.get_rate()),
                             TimerMode::Repeating,
                         ),
-                        // safe: all stddevs validated above
                         accel_noise: [
                             Normal::new(0.0, accel_std[0] as f64).unwrap(),
                             Normal::new(0.0, accel_std[1] as f64).unwrap(),
@@ -147,15 +141,9 @@ fn spawn_imu_sensors(
                             Normal::new(0.0, gyro_std[1] as f64).unwrap(),
                             Normal::new(0.0, gyro_std[2] as f64).unwrap(),
                         ],
-                        topic_name: topic_name.clone(),
                     },
-                    // Topic name for the cold-path telemetry system.
-                    SensorTopicName(topic_name),
-                    // The pure `helios_core` model, wrapped for use in Bevy.
                     MeasurementModel(Box::new(final_core_model)),
-                    // Marker so the TF system can find it.
                     TrackedFrame,
-                    // Its local transform relative to the parent (the agent).
                     imu_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 

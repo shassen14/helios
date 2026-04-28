@@ -6,8 +6,8 @@ use std::time::Duration;
 // --- Simulation Crate Imports ---
 use crate::prelude::*;
 use crate::simulation::core::{
-    app_state::SimulationSet, components::SensorTopicName, events::BevyMeasurementMessage,
-    prng::SimulationRng, transforms::EnuVector,
+    app_state::SimulationSet, events::BevyMeasurementMessage, prng::SimulationRng,
+    transforms::EnuVector,
 };
 
 // --- Core Library Imports ---
@@ -25,10 +25,7 @@ use helios_core::{
 #[derive(Component)]
 pub struct Gps {
     pub timer: Timer,
-    // Store the noise distribution for efficiency
     noise_dist: Normal<f64>,
-    /// Pre-computed topic name: `/{agent_name}/sensors/{sensor_name}`
-    pub topic_name: String,
 }
 
 pub struct GpsPlugin;
@@ -96,21 +93,15 @@ fn spawn_gps_sensors(
                     continue;
                 }
 
-                let topic_name = format!("/{}/sensors/{}", agent_name.as_str(), sensor_name);
                 sensor_entity_commands.insert((
                     Name::new(format!("{}/{}", agent_name.as_str(), gps_config.name)),
-                    // The Bevy component with the runtime timer.
                     Gps {
                         timer: Timer::new(
                             Duration::from_secs_f32(1.0 / gps_config.rate),
                             TimerMode::Repeating,
                         ),
-                        noise_dist: Normal::new(0.0, stddev).unwrap(), // safe: validated above
-                        topic_name: topic_name.clone(),
+                        noise_dist: Normal::new(0.0, stddev).unwrap(),
                     },
-                    // Topic name for the cold-path telemetry system.
-                    SensorTopicName(topic_name),
-                    // The wrapped `helios_core` model.
                     MeasurementModel(Box::new(core_model)),
                     TrackedFrame,
                     gps_config.get_relative_pose().to_bevy_local_transform(),

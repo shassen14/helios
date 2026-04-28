@@ -1,4 +1,5 @@
 pub mod atmosphere;
+mod object_helpers;
 pub mod objects;
 pub mod plugin_set;
 pub mod terrain;
