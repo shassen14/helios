@@ -5,7 +5,6 @@
 //! (`MeasurementMessage`, `FrameAwareState`). Has zero dependency on Bevy or Avian3D.
 //! See submodules for details.
 
-// pub mod context;
 pub mod control;
 pub mod estimation;
 pub mod frames;
