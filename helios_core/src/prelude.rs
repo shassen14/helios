@@ -5,8 +5,8 @@ pub use crate::messages::{MeasurementData, MeasurementMessage, ModuleInput};
 pub use crate::models::estimation::dynamics::EstimationDynamics;
 pub use crate::models::estimation::measurement::Measurement;
 pub use crate::sensor_data::{
-    AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
-    PointCloud2D, PointCloud3D,
+    AngularVelocity3D, DepthImage, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
+    PointCloud2D, PointCloud3D, RgbImage,
 };
 pub use crate::types::{FrameHandle, MonotonicTime, TfProvider, TrajectoryPoint};
 

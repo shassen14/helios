@@ -11,6 +11,7 @@ use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::messages::{MeasurementData, MeasurementMessage};
 use helios_core::models::estimation::measurement::Measurement;
 use helios_core::prelude::EstimationDynamics;
+use helios_core::sensor_data;
 use helios_core::types::{FrameHandle, TfProvider};
 
 // =========================================================================
@@ -75,7 +76,7 @@ impl Measurement for Position2DMeasurement {
 
     fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
         if let MeasurementData::GpsPosition(v) = data {
-            Some(DVector::from_row_slice(&[v[0], v[1]]))
+            Some(DVector::from_row_slice(&[v.position.x, v.position.y]))
         } else {
             None
         }
@@ -152,7 +153,9 @@ fn gps_message(x: f64, y: f64) -> MeasurementMessage {
         agent_handle: FrameHandle::default(),
         sensor_handle: SENSOR,
         timestamp: 0.1,
-        data: MeasurementData::GpsPosition(Vector3::new(x, y, 0.0)),
+        data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+            position: Vector3::new(x, y, 0.0),
+        }),
     }
 }
 

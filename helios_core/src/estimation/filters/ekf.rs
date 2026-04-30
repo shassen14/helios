@@ -283,7 +283,10 @@ mod tests {
 
         fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
             if let MeasurementData::GpsPosition(gps_position) = data {
-                Some(DVector::from_row_slice(gps_position.position.as_slice()))
+                Some(DVector::from_row_slice(&[
+                    gps_position.position.x,
+                    gps_position.position.y,
+                ]))
             } else {
                 None
             }

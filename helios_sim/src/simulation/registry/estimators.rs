@@ -16,7 +16,9 @@ use helios_core::{
         layout::{standard_ins_state_layout, STANDARD_INS_STATE_DIM},
         FrameId, StateVariable,
     },
-    models::estimation::measurement::imu::Imu6DofModel,
+    models::estimation::measurement::{
+        accelerometer::AccelerometerModel, gyroscope::GyroscopeModel,
+    },
 };
 use nalgebra::DMatrix;
 
@@ -113,11 +115,16 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, Stri
     // --- 3. Filter measurement models ---
     // IntegratedImu dynamics uses IMU data as control input (u), not as an aiding measurement.
     // Other dynamics use all sensor models for updates.
+    // IntegratedImu dynamics uses accelerometer and gyroscope data as control input (u),
+    // not as aiding measurements. Exclude those models from the EKF update step so the
+    // filter does not double-count the same data.
     let measurement_models = match &ekf_config.dynamics {
         EkfDynamicsConfig::IntegratedImu(_) => ctx
             .measurement_models
             .into_iter()
-            .filter(|(_, m)| !m.as_any().is::<Imu6DofModel>())
+            .filter(|(_, m)| {
+                !m.as_any().is::<AccelerometerModel>() && !m.as_any().is::<GyroscopeModel>()
+            })
             .collect(),
         _ => ctx.measurement_models,
     };

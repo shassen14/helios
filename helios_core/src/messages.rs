@@ -18,6 +18,8 @@ pub enum MeasurementData {
     MagneticField(sensor_data::MagneticField3D),
     PointCloud2D(sensor_data::PointCloud2D),
     PointCloud3D(sensor_data::PointCloud3D),
+    RgbImage(sensor_data::RgbImage),
+    DepthImage(sensor_data::DepthImage),
 }
 
 /// The generic message that carries all sensor data through the system.

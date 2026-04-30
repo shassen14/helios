@@ -138,3 +138,120 @@ impl Measurement for AccelerometerModel {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::messages::{MeasurementData, MeasurementMessage};
+    use crate::sensor_data;
+    use crate::types::{FrameHandle, TfProvider};
+    use nalgebra::{DMatrix, Isometry3};
+
+    const AGENT: FrameHandle = FrameHandle(1);
+    const SENSOR: FrameHandle = FrameHandle(2);
+
+    struct IdentityTf;
+    impl TfProvider for IdentityTf {
+        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
+            Some(Isometry3::identity())
+        }
+        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
+            Some(Isometry3::identity())
+        }
+    }
+
+    fn make_model() -> AccelerometerModel {
+        AccelerometerModel {
+            agent_handle: AGENT,
+            sensor_handle: SENSOR,
+            r_matrix: DMatrix::identity(3, 3) * 0.01,
+            gravity_magnitude: 9.81,
+        }
+    }
+
+    fn make_state() -> FrameAwareState {
+        let body = FrameId::Body(AGENT);
+        let world = FrameId::World;
+        let layout = vec![
+            StateVariable::Px(world.clone()),
+            StateVariable::Py(world.clone()),
+            StateVariable::Pz(world.clone()),
+            StateVariable::Qx(body.clone(), world.clone()),
+            StateVariable::Qy(body.clone(), world.clone()),
+            StateVariable::Qz(body.clone(), world.clone()),
+            StateVariable::Qw(body.clone(), world.clone()),
+        ];
+        FrameAwareState::new(layout, 1.0, 0.0)
+    }
+
+    fn accel_message() -> MeasurementMessage {
+        MeasurementMessage {
+            agent_handle: AGENT,
+            sensor_handle: SENSOR,
+            timestamp: 0.0,
+            data: MeasurementData::LinearAcceleration(Default::default()),
+        }
+    }
+
+    fn gps_message() -> MeasurementMessage {
+        MeasurementMessage {
+            agent_handle: AGENT,
+            sensor_handle: SENSOR,
+            timestamp: 0.0,
+            data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+                position: nalgebra::Vector3::zeros(),
+            }),
+        }
+    }
+
+    #[test]
+    fn measurement_vector_accepts_linear_acceleration() {
+        let model = make_model();
+        let data = MeasurementData::LinearAcceleration(sensor_data::LinearAcceleration3D {
+            value: nalgebra::Vector3::new(1.0, 2.0, 3.0),
+        });
+        let z = model.get_measurement_vector(&data).unwrap();
+        assert_eq!(z.nrows(), 3);
+        assert!((z[0] - 1.0).abs() < 1e-12);
+        assert!((z[1] - 2.0).abs() < 1e-12);
+        assert!((z[2] - 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn measurement_vector_rejects_angular_velocity() {
+        let model = make_model();
+        let data = MeasurementData::AngularVelocity(Default::default());
+        assert!(model.get_measurement_vector(&data).is_none());
+    }
+
+    #[test]
+    fn predict_rejects_non_accel_message() {
+        let model = make_model();
+        let state = make_state();
+        let tf = IdentityTf;
+        assert!(model
+            .predict_measurement(&state, &gps_message(), &tf)
+            .is_none());
+    }
+
+    #[test]
+    fn predict_returns_some_for_accel_message() {
+        let model = make_model();
+        let state = make_state();
+        let tf = IdentityTf;
+        assert!(model
+            .predict_measurement(&state, &accel_message(), &tf)
+            .is_some());
+    }
+
+    #[test]
+    fn jacobian_has_correct_shape() {
+        let model = make_model();
+        let state = make_state();
+        let tf = IdentityTf;
+        let h = model.calculate_jacobian(&state, &tf);
+        assert_eq!(h.nrows(), 3);
+        assert_eq!(h.ncols(), state.dim());
+    }
+}

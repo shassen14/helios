@@ -1,9 +1,10 @@
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
-use nalgebra::{Isometry3, Point3};
+use nalgebra::{Isometry3, Point2};
 
 use helios_core::estimation::FilterContext;
 use helios_core::mapping::{Mapper, MapperPoseSource, OccupancyGridMapper};
-use helios_core::messages::{MeasurementData, MeasurementMessage, ModuleInput, Point, PointCloud};
+use helios_core::messages::{MeasurementData, MeasurementMessage, ModuleInput};
+use helios_core::sensor_data;
 use helios_core::types::FrameHandle;
 
 // =========================================================================
@@ -31,28 +32,21 @@ fn pose_update(x: f64, y: f64) -> ModuleInput<'static> {
 
 /// Synthesise a 360-beam scan (one ray per degree) from the robot origin outward
 /// to `range_m`, all rays along the ground plane.
-fn make_scan(range_m: f64) -> Vec<Point> {
+fn make_scan(range_m: f64) -> Vec<Point2<f64>> {
     (0..360)
         .map(|deg| {
             let angle = (deg as f64).to_radians();
-            Point {
-                position: Point3::new(angle.cos() * range_m, angle.sin() * range_m, 0.0),
-                intensity: None,
-            }
+            Point2::new(angle.cos() * range_m, angle.sin() * range_m)
         })
         .collect()
 }
 
-fn scan_message(points: Vec<Point>) -> MeasurementMessage {
+fn scan_message(points: Vec<Point2<f64>>) -> MeasurementMessage {
     MeasurementMessage {
         agent_handle: AGENT,
         sensor_handle: SENSOR,
         timestamp: 0.0,
-        data: MeasurementData::PointCloud(PointCloud {
-            sensor_handle: SENSOR,
-            timestamp: 0.0,
-            points,
-        }),
+        data: MeasurementData::PointCloud2D(sensor_data::PointCloud2D { points }),
     }
 }
 

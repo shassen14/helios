@@ -13,11 +13,24 @@ pub fn cache_sensor_data(
     mut cache: ResMut<DebugSensorCache>,
 ) {
     for msg in events.read() {
-        if let MeasurementData::PointCloud(ref pc) = msg.0.data {
-            let sensor_entity = msg.0.sensor_handle.to_entity();
-            if let Ok(transform) = transform_query.get(sensor_entity) {
-                let world_pts: Vec<Vec3> = pc
-                    .points
+        let sensor_entity = msg.0.sensor_handle.to_entity();
+        let Ok(transform) = transform_query.get(sensor_entity) else {
+            continue;
+        };
+
+        let world_pts: Option<Vec<Vec3>> = match &msg.0.data {
+            MeasurementData::PointCloud2D(pc) => Some(
+                pc.points
+                    .iter()
+                    .map(|p| {
+                        // 2D LiDAR points live in the sensor's XY plane (z=0 in sensor frame).
+                        let local = Vec3::from(FluVector(Vector3::new(p.x, p.y, 0.0)));
+                        transform.transform_point(local)
+                    })
+                    .collect(),
+            ),
+            MeasurementData::PointCloud3D(pc) => Some(
+                pc.points
                     .iter()
                     .map(|p| {
                         let local = Vec3::from(FluVector(Vector3::new(
@@ -27,9 +40,13 @@ pub fn cache_sensor_data(
                         )));
                         transform.transform_point(local)
                     })
-                    .collect();
-                cache.point_clouds.insert(sensor_entity, world_pts);
-            }
+                    .collect(),
+            ),
+            _ => None,
+        };
+
+        if let Some(pts) = world_pts {
+            cache.point_clouds.insert(sensor_entity, pts);
         }
     }
 }
