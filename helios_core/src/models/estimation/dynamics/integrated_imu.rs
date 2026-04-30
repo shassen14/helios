@@ -187,30 +187,10 @@ mod tests {
     }
 
     // ── Control routing ──────────────────────────────────────────────────────
-
-    // #[test]
-    // fn control_routing_accepts_imu6dof() {
-    //     // IMU6Dof is this model's primary driving input.
-    //     let model = make_model();
-    //     let data = MeasurementData::Imu6Dof(Vector6::zeros());
-    //     assert!(model.get_control_from_measurement(&data).is_some());
-    // }
-
-    // #[test]
-    // fn control_routing_accepts_imu9dof_extracts_six_dof_part() {
-    //     // IMU9Dof should be accepted and only the accel/gyro 6-dof part returned.
-    //     let model = make_model();
-    //     let data = MeasurementData::Imu9Dof {
-    //         accel_gyro: Vector6::new(1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
-    //         mag: Vector3::zeros(),
-    //     };
-    //     let result = model.get_control_from_measurement(&data);
-    //     assert!(result.is_some());
-    //     let u = result.unwrap();
-    //     assert_eq!(u.nrows(), 6, "control vector must have 6 elements");
-    //     assert!((u[0] - 1.0).abs() < 1e-12, "accel_x must be preserved");
-    //     assert!((u[5] - 6.0).abs() < 1e-12, "gyro_z must be preserved");
-    // }
+    // TODO: add control_routing_accepts_linear_acceleration and
+    // control_routing_accepts_angular_velocity tests once
+    // get_control_from_measurement is redesigned to accumulate separate
+    // LinearAcceleration + AngularVelocity messages into a 6D control vector.
 
     #[test]
     fn control_routing_ignores_gps() {

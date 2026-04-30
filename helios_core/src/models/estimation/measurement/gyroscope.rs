@@ -32,8 +32,8 @@ impl Measurement for GyroscopeModel {
         }
     }
 
-    /// Predicts the 6-element measurement vector [ax, ay, az, wx, wy, wz].
-    /// It returns `Some` only if the input message contains `Imu6Dof` data.
+    /// Predicts the 3-element measurement vector [wx, wy, wz].
+    /// It returns `Some` only if the input message contains `AngularVelocity` data.
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,

@@ -25,66 +25,40 @@ impl SensorConfig {
     }
 }
 
+/// Configuration parameters for a simulated IMU sensor.
+///
+/// An IMU chip always produces two physical quantities: linear acceleration
+/// (`LinearAcceleration3D`) and angular velocity (`AngularVelocity3D`). If the
+/// chip also has an onboard magnetometer, add a separate `Magnetometer` entry
+/// to the sensor suite — that quantity is independently configured and spawns
+/// its own `MeasurementModel`.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "PascalCase")]
-#[serde(tag = "type")]
-pub enum ImuConfig {
-    SixDof {
-        name: String,
-        rate: f32,
-        #[serde(default)]
-        transform: Pose,
-        #[serde(default)]
-        accel_noise_stddev: [f32; 3],
-        #[serde(default)]
-        gyro_noise_stddev: [f32; 3],
-    },
-    NineDof {
-        name: String,
-        rate: f32,
-        #[serde(default)]
-        transform: Pose,
-        #[serde(default)]
-        accel_noise_stddev: [f32; 3],
-        #[serde(default)]
-        gyro_noise_stddev: [f32; 3],
-        #[serde(default)]
-        mag_noise_stddev: [f32; 3],
-    },
+#[serde(deny_unknown_fields)]
+pub struct ImuConfig {
+    pub name: String,
+    pub rate: f32,
+    #[serde(default)]
+    pub transform: Pose,
+    /// Per-axis noise standard deviation for the accelerometer (m/s²).
+    #[serde(default)]
+    pub accel_noise_stddev: [f32; 3],
+    /// Per-axis noise standard deviation for the gyroscope (rad/s).
+    #[serde(default)]
+    pub gyro_noise_stddev: [f32; 3],
 }
 
 impl ImuConfig {
     pub fn get_name(&self) -> &str {
-        match self {
-            ImuConfig::SixDof { name, .. } => name,
-            ImuConfig::NineDof { name, .. } => name,
-        }
+        &self.name
     }
     pub fn get_rate(&self) -> f32 {
-        match self {
-            ImuConfig::SixDof { rate, .. } => *rate,
-            ImuConfig::NineDof { rate, .. } => *rate,
-        }
+        self.rate
     }
     pub fn get_relative_pose(&self) -> Pose {
-        match self {
-            ImuConfig::SixDof { transform, .. } => *transform,
-            ImuConfig::NineDof { transform, .. } => *transform,
-        }
+        self.transform
     }
     pub fn get_noise_stddevs(&self) -> ([f32; 3], [f32; 3]) {
-        match self {
-            ImuConfig::SixDof {
-                accel_noise_stddev,
-                gyro_noise_stddev,
-                ..
-            } => (*accel_noise_stddev, *gyro_noise_stddev),
-            ImuConfig::NineDof {
-                accel_noise_stddev,
-                gyro_noise_stddev,
-                ..
-            } => (*accel_noise_stddev, *gyro_noise_stddev),
-        }
+        (self.accel_noise_stddev, self.gyro_noise_stddev)
     }
 }
 
