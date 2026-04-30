@@ -1,9 +1,9 @@
 // heios_core/src/models/perception/lidar_2d.rs
 
-use crate::messages::{MeasurementData, Point, PointCloud};
+use crate::messages::MeasurementData;
 use crate::models::perception::{RayHit, RaycastingSensorModel, SensorRay};
-use crate::types::FrameHandle;
-use nalgebra::{Point3, Vector3};
+use crate::sensor_data;
+use nalgebra::{Point2, Vector2, Vector3};
 use rand_distr::{Distribution, Normal};
 
 /// A model for a single-plane, 2D LiDAR sensor.
@@ -65,12 +65,7 @@ impl RaycastingSensorModel for Lidar2DModel {
         rays
     }
 
-    fn process_hits(
-        &self,
-        hits: &[RayHit],
-        sensor_handle: FrameHandle,
-        timestamp: f64,
-    ) -> MeasurementData {
+    fn process_hits(&self, hits: &[RayHit]) -> MeasurementData {
         let mut rng = rand::thread_rng();
 
         // Pre-compute scan geometry once rather than repeating it inside the closure.
@@ -78,7 +73,7 @@ impl RaycastingSensorModel for Lidar2DModel {
         let start_angle = -fov_rad / 2.0;
         let angle_increment = fov_rad / (self.horizontal_beams - 1) as f64;
 
-        let points: Vec<Point> = hits
+        let points: Vec<Point2<f64>> = hits
             .iter()
             .map(|hit| {
                 // 1. Add noise to the measured distance.
@@ -91,19 +86,12 @@ impl RaycastingSensorModel for Lidar2DModel {
                 let noisy_angle = perfect_angle + self.angular_noise_dist.sample(&mut rng);
 
                 // 4. Create the final point from the noisy angle and distance.
-                let direction = Vector3::new(noisy_angle.cos(), noisy_angle.sin(), 0.0);
-                Point {
-                    position: Point3::from(direction * noisy_distance),
-                    intensity: None,
-                }
+                let direction = Vector2::new(noisy_angle.cos(), noisy_angle.sin());
+                Point2::from(direction * noisy_distance)
             })
             .collect();
 
-        MeasurementData::PointCloud(PointCloud {
-            sensor_handle,
-            timestamp,
-            points,
-        })
+        MeasurementData::PointCloud2D(sensor_data::PointCloud2D { points })
     }
 
     fn get_max_range(&self) -> f32 {

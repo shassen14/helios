@@ -1,4 +1,4 @@
-use nalgebra::{DMatrix, Isometry3, Translation3, UnitQuaternion};
+use nalgebra::{DMatrix, Isometry3, Point3, Translation3, UnitQuaternion};
 
 use crate::estimation::FilterContext;
 use crate::mapping::{MapData, Mapper};
@@ -250,7 +250,7 @@ impl Mapper for OccupancyGridMapper {
                 self.rebuild_cache();
             }
             ModuleInput::Measurement { message } => {
-                let MeasurementData::PointCloud(ref cloud) = message.data else {
+                let MeasurementData::PointCloud2D(ref cloud) = message.data else {
                     return;
                 };
                 let tf = match context.tf {
@@ -296,7 +296,7 @@ impl Mapper for OccupancyGridMapper {
                 // Convert sensor frame point cloud to world frame.
                 // Cast the cells that are affected by the ray
                 for point in &cloud.points {
-                    let p_world = sensor_world_pose * point.position;
+                    let p_world = sensor_world_pose * Point3::new(point.x, point.y, 0.0);
                     self.raycast(robot_wx, robot_wy, p_world.x, p_world.y);
                 }
                 // Cache is rebuilt on the next PoseUpdate (timer-gated).
@@ -594,7 +594,8 @@ mod tests {
 
     #[test]
     fn process_measurement_without_pose_is_noop() {
-        use crate::messages::{MeasurementData, MeasurementMessage, PointCloud};
+        use crate::messages::{MeasurementData, MeasurementMessage};
+        use crate::sensor_data;
 
         let mut m =
             OccupancyGridMapper::new(1.0, 10.0, 10.0, FrameHandle(0), MapperPoseSource::Estimated);
@@ -603,11 +604,7 @@ mod tests {
             agent_handle: FrameHandle(0),
             sensor_handle: FrameHandle(1),
             timestamp: 0.0,
-            data: MeasurementData::PointCloud(PointCloud {
-                sensor_handle: FrameHandle(1),
-                timestamp: 0.0,
-                points: vec![],
-            }),
+            data: MeasurementData::PointCloud2D(sensor_data::PointCloud2D { points: vec![] }),
         };
         let ctx = FilterContext { tf: None };
         m.process(&ModuleInput::Measurement { message: &msg }, &ctx);

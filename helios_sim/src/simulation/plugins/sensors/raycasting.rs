@@ -183,10 +183,7 @@ fn raycasting_sensor_system(
                 let sensor_handle = FrameHandle::from_entity(sensor_entity);
 
                 // Pass the raw hits back to the model to apply noise and create the final data packet.
-                let measurement_data =
-                    sensor
-                        .model
-                        .process_hits(&hits, sensor_handle, time.elapsed_secs_f64());
+                let measurement_data = sensor.model.process_hits(&hits);
 
                 let pure_message = MeasurementMessage {
                     agent_handle,

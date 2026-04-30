@@ -89,6 +89,7 @@ pub trait Measurement: DynClone + Debug + Send + Sync {
 // This macro automatically generates the implementation of `Clone` for `Box<dyn Measurement>`.
 dyn_clone::clone_trait_object!(Measurement);
 
+pub mod accelerometer;
 pub mod gps;
-pub mod imu;
+pub mod gyroscope;
 pub mod magnetometer;

@@ -6,6 +6,7 @@ use std::fmt::Debug;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
 use crate::messages::{MeasurementData, MeasurementMessage};
 use crate::models::estimation::measurement::Measurement;
+use crate::sensor_data;
 use crate::types::TfProvider;
 
 /// A measurement model for a standard GPS sensor that provides 3D position.
@@ -37,8 +38,8 @@ impl Measurement for GpsPositionModel {
     }
 
     fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
-        if let MeasurementData::GpsPosition(vec) = data {
-            Some(DVector::from_row_slice(vec.as_slice()))
+        if let MeasurementData::GpsPosition(gps_position) = data {
+            Some(DVector::from_row_slice(gps_position.position.as_slice()))
         } else {
             None // I am a GPS model, I only handle GpsPosition data.
         }
@@ -104,7 +105,9 @@ impl Measurement for GpsPositionModel {
             agent_handle: Default::default(),
             sensor_handle: Default::default(),
             timestamp: 0.0,
-            data: MeasurementData::GpsPosition(Default::default()),
+            data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+                position: Default::default(),
+            }),
         };
 
         // 1. Calculate the baseline predicted measurement with the current state.
@@ -211,16 +214,18 @@ mod tests {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
             timestamp: 0.1,
-            data: MeasurementData::GpsPosition(Vector3::new(x, y, z)),
+            data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+                position: Vector3::new(x, y, z),
+            }),
         }
     }
 
-    fn imu_message() -> MeasurementMessage {
+    fn accel_message() -> MeasurementMessage {
         MeasurementMessage {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
             timestamp: 0.1,
-            data: MeasurementData::Imu6Dof(Default::default()),
+            data: MeasurementData::LinearAcceleration(Default::default()),
         }
     }
 
@@ -229,7 +234,9 @@ mod tests {
     #[test]
     fn measurement_vector_accepts_gps_position() {
         let model = make_model(Vector3::zeros());
-        let data = MeasurementData::GpsPosition(Vector3::new(1.0, 2.0, 3.0));
+        let data = MeasurementData::GpsPosition(sensor_data::GpsPosition {
+            position: Vector3::new(1.0, 2.0, 3.0),
+        });
         let z = model.get_measurement_vector(&data);
         assert!(z.is_some());
         let z = z.unwrap();
@@ -238,9 +245,9 @@ mod tests {
     }
 
     #[test]
-    fn measurement_vector_rejects_imu() {
+    fn measurement_vector_rejects_lin_accel() {
         let model = make_model(Vector3::zeros());
-        let data = MeasurementData::Imu6Dof(Default::default());
+        let data = MeasurementData::LinearAcceleration(Default::default());
         assert!(model.get_measurement_vector(&data).is_none());
     }
 
@@ -251,7 +258,7 @@ mod tests {
         let model = make_model(Vector3::zeros());
         let state = make_state(1.0, 2.0, 3.0);
         let tf = IdentityTf;
-        let result = model.predict_measurement(&state, &imu_message(), &tf);
+        let result = model.predict_measurement(&state, &accel_message(), &tf);
         assert!(result.is_none(), "non-GPS message must yield None");
     }
 

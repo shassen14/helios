@@ -291,7 +291,7 @@ pub fn make_gps_message(t: f64) -> MeasurementMessage {
         agent_handle: FrameHandle(0),
         sensor_handle: FrameHandle(1),
         timestamp: t,
-        data: MeasurementData::GpsPosition(nalgebra::Vector3::zeros()),
+        data: MeasurementData::GpsPosition(Default::default()),
     }
 }
 
