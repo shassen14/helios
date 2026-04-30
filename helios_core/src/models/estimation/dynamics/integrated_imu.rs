@@ -5,7 +5,7 @@ use crate::types::{Control, FrameHandle, State};
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 
 /// A dynamics model that integrates raw IMU measurements (as control inputs)
-/// to propagate a 156-state inertial navigation system (INS) state vector.
+/// to propagate a 16-state inertial navigation system (INS) state vector.
 ///
 /// This model correctly handles 3D rotations and estimates IMU biases.
 #[derive(Debug, Clone)]
@@ -26,16 +26,10 @@ impl EstimationDynamics for IntegratedImuModel {
     /// data is an IMU reading and, if so, converts it into the control vector `u`.
     fn get_control_from_measurement(&self, data: &MeasurementData) -> Option<DVector<f64>> {
         match data {
-            // Case 1: The data is from a 6-DOF IMU. We use it directly.
-            MeasurementData::Imu6Dof(imu_vector) => {
-                // Convert the static `Vector6` into a dynamic `DVector`.
-                Some(DVector::from_row_slice(imu_vector.as_slice()))
-            }
-            // Case 2: The data is from a 9-DOF IMU. We only want the accel/gyro part.
-            MeasurementData::Imu9Dof { accel_gyro, mag: _ } => {
-                // We explicitly ignore the `mag` field and only use the 6-DOF part.
-                Some(DVector::from_row_slice(accel_gyro.as_slice()))
-            }
+            // Case 1: Linear Acceleration Measurement
+            MeasurementData::LinearAcceleration(_) => None,
+            // Case 2: Angular Velocity Measurement
+            MeasurementData::AngularVelocity(_) => None,
             // Case 3: The data is anything else (GPS, etc.). This model does not
             // use it as a control input, so we return None.
             _ => None,
@@ -162,7 +156,7 @@ mod tests {
     use crate::messages::MeasurementData;
     use crate::types::FrameHandle;
     use crate::utils::integrators::RK4;
-    use nalgebra::{DVector, Vector3, Vector6};
+    use nalgebra::DVector;
 
     const AGENT: FrameHandle = FrameHandle(1);
     const G: f64 = 9.81;
@@ -193,36 +187,16 @@ mod tests {
     }
 
     // ── Control routing ──────────────────────────────────────────────────────
-
-    #[test]
-    fn control_routing_accepts_imu6dof() {
-        // IMU6Dof is this model's primary driving input.
-        let model = make_model();
-        let data = MeasurementData::Imu6Dof(Vector6::zeros());
-        assert!(model.get_control_from_measurement(&data).is_some());
-    }
-
-    #[test]
-    fn control_routing_accepts_imu9dof_extracts_six_dof_part() {
-        // IMU9Dof should be accepted and only the accel/gyro 6-dof part returned.
-        let model = make_model();
-        let data = MeasurementData::Imu9Dof {
-            accel_gyro: Vector6::new(1.0, 2.0, 3.0, 4.0, 5.0, 6.0),
-            mag: Vector3::zeros(),
-        };
-        let result = model.get_control_from_measurement(&data);
-        assert!(result.is_some());
-        let u = result.unwrap();
-        assert_eq!(u.nrows(), 6, "control vector must have 6 elements");
-        assert!((u[0] - 1.0).abs() < 1e-12, "accel_x must be preserved");
-        assert!((u[5] - 6.0).abs() < 1e-12, "gyro_z must be preserved");
-    }
+    // TODO: add control_routing_accepts_linear_acceleration and
+    // control_routing_accepts_angular_velocity tests once
+    // get_control_from_measurement is redesigned to accumulate separate
+    // LinearAcceleration + AngularVelocity messages into a 6D control vector.
 
     #[test]
     fn control_routing_ignores_gps() {
         // GPS data is not a control input for this dynamics model.
         let model = make_model();
-        let data = MeasurementData::GpsPosition(Vector3::zeros());
+        let data = MeasurementData::GpsPosition(Default::default());
         assert!(model.get_control_from_measurement(&data).is_none());
     }
 

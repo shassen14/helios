@@ -1,8 +1,6 @@
 # configs/catalog/sensors/imu_pro.toml
 # Corresponds to the `SensorConfig::Imu` enum variant.
 kind = "Imu"
-# Corresponds to the `ImuConfig::SixDof` variant.
-type = "SixDof"
 name = "imu_pro"
 # currently the max rate (Hz).
 # Simulation time runs at 400 Hz so any higher will not actually run at that rate

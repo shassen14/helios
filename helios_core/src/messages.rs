@@ -1,30 +1,9 @@
-use crate::types::{Control, FrameHandle};
-use nalgebra::{Isometry3, Matrix6, Point3, Vector3, Vector6};
+use crate::{
+    sensor_data,
+    types::{Control, FrameHandle},
+};
+use nalgebra::{Isometry3, Matrix6, Vector3, Vector6};
 use serde::Serialize;
-
-// =========================================================================
-// == Perception-Specific Data Structures ==
-// =========================================================================
-
-/// Represents a single point from a sensor like a LiDAR.
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct Point {
-    /// The 3D position of the point in the SENSOR's local coordinate frame.
-    pub position: Point3<f64>,
-    /// Optional: The intensity of the laser return for this point.
-    pub intensity: Option<f32>,
-}
-
-/// A structured representation of a point cloud from a sensor.
-#[derive(Clone, Debug, Serialize)]
-pub struct PointCloud {
-    /// The handle of the sensor that generated this point cloud.
-    pub sensor_handle: FrameHandle,
-    /// The timestamp of when the scan was captured.
-    pub timestamp: f64,
-    /// The collection of points that make up the scan.
-    pub points: Vec<Point>,
-}
 
 // =========================================================================
 // == Core Message and Data Enums ==
@@ -33,14 +12,14 @@ pub struct PointCloud {
 /// A rich, self-describing container for all sensor data.
 #[derive(Clone, Debug, Serialize)]
 pub enum MeasurementData {
-    Imu6Dof(Vector6<f64>),
-    Imu9Dof {
-        accel_gyro: Vector6<f64>,
-        mag: Vector3<f64>,
-    },
-    GpsPosition(Vector3<f64>),
-    Magnetometer(Vector3<f64>),
-    PointCloud(PointCloud),
+    LinearAcceleration(sensor_data::LinearAcceleration3D),
+    AngularVelocity(sensor_data::AngularVelocity3D),
+    GpsPosition(sensor_data::GpsPosition),
+    MagneticField(sensor_data::MagneticField3D),
+    PointCloud2D(sensor_data::PointCloud2D),
+    PointCloud3D(sensor_data::PointCloud3D),
+    RgbImage(sensor_data::RgbImage),
+    DepthImage(sensor_data::DepthImage),
 }
 
 /// The generic message that carries all sensor data through the system.

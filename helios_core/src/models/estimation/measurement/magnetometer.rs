@@ -36,8 +36,8 @@ impl Measurement for MagnetometerModel {
     }
 
     fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
-        if let MeasurementData::Magnetometer(vec) = data {
-            Some(DVector::from_row_slice(vec.as_slice()))
+        if let MeasurementData::MagneticField(magnetic_field) = data {
+            Some(DVector::from_row_slice(magnetic_field.value.as_slice()))
         } else {
             None
         }
@@ -50,7 +50,7 @@ impl Measurement for MagnetometerModel {
         _tf: &dyn TfProvider,
     ) -> Option<DVector<f64>> {
         // This model only cares about Magnetometer data.
-        if !matches!(&message.data, MeasurementData::Magnetometer(_)) {
+        if !matches!(&message.data, MeasurementData::MagneticField(_)) {
             return None;
         }
 
@@ -80,7 +80,7 @@ impl Measurement for MagnetometerModel {
             agent_handle: self.agent_handle,
             sensor_handle: self.sensor_handle,
             timestamp: 0.0,
-            data: MeasurementData::Magnetometer(Default::default()),
+            data: MeasurementData::MagneticField(Default::default()),
         };
 
         let z_base = match self.predict_measurement(filter_state, &dummy_message, tf) {
@@ -190,7 +190,7 @@ mod tests {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
             timestamp: 0.0,
-            data: MeasurementData::Magnetometer(Default::default()),
+            data: MeasurementData::MagneticField(Default::default()),
         }
     }
 
@@ -199,7 +199,9 @@ mod tests {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
             timestamp: 0.0,
-            data: MeasurementData::GpsPosition(Vector3::zeros()),
+            data: MeasurementData::GpsPosition(crate::sensor_data::GpsPosition {
+                position: Vector3::zeros(),
+            }),
         }
     }
 
@@ -208,7 +210,9 @@ mod tests {
     #[test]
     fn measurement_vector_accepts_magnetometer() {
         let model = make_model();
-        let data = MeasurementData::Magnetometer(Vector3::new(1.0, 0.5, 0.0));
+        let data = MeasurementData::MagneticField(crate::sensor_data::MagneticField3D {
+            value: Vector3::new(1.0, 0.5, 0.0),
+        });
         let z = model.get_measurement_vector(&data).unwrap();
         assert_eq!(z.nrows(), 3);
         assert!((z[0] - 1.0).abs() < 1e-12);
@@ -217,7 +221,9 @@ mod tests {
     #[test]
     fn measurement_vector_rejects_gps() {
         let model = make_model();
-        let data = MeasurementData::GpsPosition(Vector3::zeros());
+        let data = MeasurementData::GpsPosition(crate::sensor_data::GpsPosition {
+            position: Vector3::zeros(),
+        });
         assert!(model.get_measurement_vector(&data).is_none());
     }
 

@@ -214,6 +214,7 @@ mod tests {
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::messages::{MeasurementData, MeasurementMessage};
     use crate::models::estimation::measurement::Measurement;
+    use crate::sensor_data;
     use crate::types::{FrameHandle, TfProvider};
     use nalgebra::{DMatrix, DVector, Isometry3, Vector3};
     use std::any::Any;
@@ -281,8 +282,11 @@ mod tests {
         }
 
         fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
-            if let MeasurementData::GpsPosition(v) = data {
-                Some(DVector::from_row_slice(&[v[0], v[1]]))
+            if let MeasurementData::GpsPosition(gps_position) = data {
+                Some(DVector::from_row_slice(&[
+                    gps_position.position.x,
+                    gps_position.position.y,
+                ]))
             } else {
                 None
             }
@@ -351,7 +355,9 @@ mod tests {
             agent_handle: FrameHandle::default(),
             sensor_handle: SENSOR,
             timestamp: t,
-            data: MeasurementData::GpsPosition(Vector3::new(x, y, 0.0)),
+            data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+                position: Vector3::new(x, y, 0.0),
+            }),
         }
     }
 
@@ -463,7 +469,9 @@ mod tests {
             agent_handle: FrameHandle::default(),
             sensor_handle: FrameHandle(99), // not registered
             timestamp: 0.1,
-            data: MeasurementData::GpsPosition(Vector3::new(5.0, 0.0, 0.0)),
+            data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+                position: Vector3::new(5.0, 0.0, 0.0),
+            }),
         };
         ekf.update(&msg, &ctx);
 

@@ -15,6 +15,7 @@ use crate::simulation::core::{
 use helios_core::{
     messages::{MeasurementData, MeasurementMessage},
     models::estimation::measurement::magnetometer::MagnetometerModel,
+    sensor_data,
     types::FrameHandle,
 };
 
@@ -173,7 +174,9 @@ fn magnetometer_sensor_system(
                     agent_handle: FrameHandle::from_entity(agent_entity),
                     sensor_handle: FrameHandle::from_entity(sensor_entity),
                     timestamp: time.elapsed_secs_f64(),
-                    data: MeasurementData::Magnetometer(noisy_mag_reading),
+                    data: MeasurementData::MagneticField(sensor_data::MagneticField3D {
+                        value: noisy_mag_reading,
+                    }),
                 };
                 // Emit event — routed to SensorMailbox by route_sensor_messages.
                 // TopicBus publishing is deferred to sensor_telemetry_system (Validation).
