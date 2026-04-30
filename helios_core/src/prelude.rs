@@ -8,6 +8,7 @@ pub use crate::sensor_data::{
     AngularVelocity3D, DepthImage, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
     PointCloud2D, PointCloud3D, RgbImage,
 };
+pub use crate::sensor_reading::SensorReading;
 pub use crate::types::{FrameHandle, MonotonicTime, TfProvider, TrajectoryPoint};
 
 // --- Core Data Structures (The "nouns" of the library) ---

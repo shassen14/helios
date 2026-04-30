@@ -1,9 +1,7 @@
-// helios_core/src/sensor_reading.rs
-
-use crate::types::FrameHandle;
+use crate::types::{FrameHandle, MonotonicTime};
 
 pub struct SensorReading<T> {
     pub sensor_handle: FrameHandle,
-    pub timestamp: f64,
+    pub timestamp: MonotonicTime,
     pub data: T,
 }
