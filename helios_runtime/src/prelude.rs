@@ -1,5 +1,6 @@
+pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext};
 pub use crate::port::{ChannelKey, PortDescriptor};
-pub use crate::stamped::{Health, NodeId, Stamped};
+pub use crate::stamped::{Health, Stamped};
 
 pub use crate::config::{
     AckermannProcessNoiseConfig, AgentBaseConfig, AutonomyStack, ControllerConfig, EkfConfig,

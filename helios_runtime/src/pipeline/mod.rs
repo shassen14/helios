@@ -28,11 +28,13 @@
 pub mod control_core;
 pub mod estimation_core;
 pub mod mapping_core;
+pub mod node;
 pub mod path_following_core;
 
 pub use control_core::ControlCore;
 pub use estimation_core::EstimationCore;
 pub use mapping_core::MappingCore;
+pub use node::{NodeId, PipelineNode, TickContext};
 pub use path_following_core::PathFollowingCore;
 
 use std::collections::HashMap;
