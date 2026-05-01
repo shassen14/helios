@@ -1,3 +1,5 @@
+use crate::pipeline::node::NodeId;
+
 use std::borrow::Cow;
 
 use helios_core::types::MonotonicTime;
@@ -10,7 +12,7 @@ use helios_core::types::MonotonicTime;
 /// `producer` is a build-time-assigned node ID used for diagnostics — it
 /// identifies which node wrote this slot, not the originating sensor.
 #[derive(Clone, Debug)]
-pub struct Stamped<T: std::fmt::Debug> {
+pub struct Stamped<T> {
     pub value: T,
     pub timestamp: MonotonicTime,
     pub health: Health,
@@ -29,8 +31,6 @@ pub enum Health {
     Degraded { reason: Cow<'static, str> },
     Stale { duration: f64 },
 }
-
-pub type NodeId = u32;
 
 #[cfg(test)]
 mod tests {

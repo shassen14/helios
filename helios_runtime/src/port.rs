@@ -1,4 +1,13 @@
-use std::any::TypeId;
+use crate::prelude::Stamped;
+
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    sync::Arc,
+};
+
+use arc_swap::ArcSwap;
+use atomic_float::AtomicF64;
 
 /// Identifies a single bus slot. `type_id` carries the data shape; `instance`
 /// carries the role. Default instance is `""`.
@@ -55,6 +64,40 @@ pub struct PortDescriptor {
 
     /// Execution rate in Hz. `None` means every tick.
     pub rate: Option<f64>,
+}
+
+#[allow(unused)]
+pub struct PortBus {
+    slots: HashMap<ChannelKey, ArcSwap<Option<Arc<dyn Any + Send + Sync>>>>,
+    signal_keys: Vec<ChannelKey>,
+    tick_now: AtomicF64,
+}
+
+#[allow(unused)]
+impl PortBus {
+    pub fn write<T: Any + Send + Sync>(&self, channel: ChannelKey, stamped: Stamped<T>) {
+        todo!()
+    }
+
+    pub fn read<T: Any + Send + Sync>(&self, channel: ChannelKey) -> Option<Arc<Stamped<T>>> {
+        todo!()
+    }
+
+    pub fn read_fresh<T: Any + Send + Sync>(
+        &self,
+        channel: ChannelKey,
+        max_age_secs: f64,
+    ) -> Option<Arc<Stamped<T>>> {
+        todo!()
+    }
+
+    pub fn clear_signals(&self) {
+        todo!()
+    }
+
+    pub(crate) fn set_tick_time(&self, now: f64) {
+        todo!()
+    }
 }
 
 #[cfg(test)]
