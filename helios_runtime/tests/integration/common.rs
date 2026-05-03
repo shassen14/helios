@@ -14,9 +14,8 @@ use helios_core::{
     models::estimation::dynamics::EstimationDynamics,
     path_following::{PathFollower, PathFollowerResult},
     planning::{
-        context::PlannerContext,
         types::{Path, PlannerGoal, PlannerResult, PlannerStatus},
-        Planner,
+        Planner, PlannerInputs,
     },
     tracking::{Track, Tracker},
     types::{Control, FrameHandle, MonotonicTime, State, TrajectoryPoint},
@@ -195,20 +194,11 @@ impl MockPlanner {
 }
 
 impl Planner for MockPlanner {
-    fn set_goal(&mut self, goal: PlannerGoal) {
-        self.goal = Some(goal);
-    }
-
-    fn plan(
-        &mut self,
-        _state: &FrameAwareState,
-        _map: &MapData,
-        _ctx: &PlannerContext,
-    ) -> PlannerResult {
+    fn plan(&mut self, _inputs: &PlannerInputs) -> PlannerResult {
         PlannerResult::NoGoal
     }
 
-    fn should_replan(&self, _state: &FrameAwareState, _ctx: &PlannerContext) -> bool {
+    fn should_replan(&self, _inputs: &PlannerInputs) -> bool {
         false
     }
 

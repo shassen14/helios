@@ -177,6 +177,7 @@ fn control_step_controllers_returns_none_with_no_controllers() {
     let mut core = ControlCore {
         planners: vec![],
         controllers: vec![],
+        current_goal: None,
     };
     let state = make_world_state(0.0, 0.0);
     let rt = MockRuntime;
@@ -191,6 +192,7 @@ fn control_step_controllers_returns_some_with_controller() {
             level: PipelineLevel::Local,
             controller: Box::new(MockController),
         }],
+        current_goal: None,
     };
     let state = make_world_state(0.0, 0.0);
     let rt = MockRuntime;

@@ -14,7 +14,6 @@ use helios_runtime::stage::PipelineLevel;
 use crate::prelude::AppState;
 use crate::simulation::core::app_state::SimulationSet;
 use crate::simulation::core::events::GoalCommandEvent;
-use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::transforms::TfTree;
 use crate::simulation::plugins::autonomy::{
     ControlPipelineComponent, EstimatorComponent, MapperComponent, PathFollowingComponent,
@@ -58,7 +57,7 @@ impl Plugin for PlanningPlugin {
 /// MapperComponent (local / global mappers), then calls `step_planners`.
 fn planning_system(
     time: Res<Time>,
-    tf_tree: Res<TfTree>,
+    _tf_tree: Res<TfTree>,
     mut query: Query<(
         &EstimatorComponent,
         &MapperComponent,
@@ -66,11 +65,6 @@ fn planning_system(
         Option<&mut PathFollowingComponent>,
     )>,
 ) {
-    let runtime = SimRuntime {
-        tf: &*tf_tree,
-        elapsed_secs: time.elapsed_secs_f64(),
-    };
-
     for (estimator, mapper, mut control, pf_opt) in &mut query {
         let Some(state) = estimator.0.get_state() else {
             continue;
@@ -99,7 +93,7 @@ fn planning_system(
 
         let new_paths = control
             .0
-            .step_planners(state, &maps, time.elapsed_secs_f64(), &runtime);
+            .step_planners(state, &maps, time.elapsed_secs_f64());
 
         // Forward the best new path to PathFollowingCore if one is configured.
         if let Some(mut pf) = pf_opt {

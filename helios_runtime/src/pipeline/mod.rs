@@ -147,7 +147,7 @@ impl AutonomyPipeline {
         self.mapping.get_map(level)
     }
 
-    pub fn step_planners(&mut self, now: f64, runtime: &dyn AgentRuntime) {
+    pub fn step_planners(&mut self, now: f64, _runtime: &dyn AgentRuntime) {
         let Some(state) = self.estimation.get_state().cloned() else {
             return;
         };
@@ -165,7 +165,7 @@ impl AutonomyPipeline {
             maps.insert(PipelineLevel::Local, map);
         }
 
-        let new_paths = self.control.step_planners(&state, &maps, now, runtime);
+        let new_paths = self.control.step_planners(&state, &maps, now);
 
         // Prefer Local path; fall back to Global.
         let mut best_path: Option<Path> = None;
@@ -291,13 +291,6 @@ impl PipelineBuilder {
         self.planners.sort_by(|a, b| a.level.cmp(&b.level));
         self.controllers.sort_by(|a, b| a.level.cmp(&b.level));
 
-        // Inject static goal into all planners if one was provided.
-        if let Some(ref goal) = self.goal {
-            for lp in &mut self.planners {
-                lp.planner.set_goal(goal.clone());
-            }
-        }
-
         let slam_active = self.slam.is_some();
 
         let mut path_following = None;
@@ -321,6 +314,7 @@ impl PipelineBuilder {
             control: ControlCore {
                 planners: self.planners,
                 controllers: self.controllers,
+                current_goal: self.goal,
             },
         }
     }
