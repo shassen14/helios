@@ -90,7 +90,7 @@ impl Measurement for MagnetometerModel {
 
         for j in 0..state_dim {
             let mut perturbed_state = filter_state.clone();
-            perturbed_state.vector[j] += epsilon;
+            perturbed_state.state.vector[j] += epsilon;
 
             // No quaternion re-normalisation needed: predict_measurement calls
             // get_orientation(), which calls UnitQuaternion::from_quaternion and
@@ -169,10 +169,10 @@ mod tests {
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
         let q = UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2);
         // Layout: [Qx, Qy, Qz, Qw] at indices 0-3.
-        state.vector[0] = q.i;
-        state.vector[1] = q.j;
-        state.vector[2] = q.k;
-        state.vector[3] = q.w;
+        state.state.vector[0] = q.i;
+        state.state.vector[1] = q.j;
+        state.state.vector[2] = q.k;
+        state.state.vector[3] = q.w;
     }
 
     fn make_model() -> MagnetometerModel {

@@ -120,14 +120,14 @@ impl PathFollower for SteeringPidPathFollower {
             StateVariable::Vx(body_id.clone()),
             StateVariable::Wz(body_id.clone()),
         ];
-        let mut ref_state = FrameAwareState::new(layout, 0.0, state.last_update_timestamp);
-        ref_state.vector[0] = self.cruise_speed;
-        ref_state.vector[1] = wz;
+        let mut ref_state = FrameAwareState::new(layout, 0.0, state.state.timestamp);
+        ref_state.state.vector[0] = self.cruise_speed;
+        ref_state.state.vector[1] = wz;
 
         PathFollowerResult::Active(TrajectoryPoint {
-            state: ref_state,
+            state: ref_state.state,
             state_dot: None,
-            time: state.last_update_timestamp,
+            time: state.state.timestamp,
         })
     }
 

@@ -91,7 +91,10 @@ impl Measurement for Position2DMeasurement {
         if !matches!(&message.data, MeasurementData::GpsPosition(_)) {
             return None;
         }
-        Some(DVector::from_row_slice(&[state.vector[0], state.vector[1]]))
+        Some(DVector::from_row_slice(&[
+            state.state.vector[0],
+            state.state.vector[1],
+        ]))
     }
 
     fn calculate_jacobian(&self, state: &FrameAwareState, _tf: &dyn TfProvider) -> DMatrix<f64> {
@@ -121,7 +124,7 @@ fn make_state() -> FrameAwareState {
         StateVariable::Vy(FrameId::World),
     ];
     let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-    state.vector[2] = 1.0; // vx = 1.0 m/s
+    state.state.vector[2] = 1.0; // vx = 1.0 m/s
     state
 }
 

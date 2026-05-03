@@ -38,7 +38,7 @@ impl EstimationCore {
         }
 
         if let Some(estimator) = &mut self.estimator {
-            let dt = msg.timestamp - estimator.get_state().last_update_timestamp;
+            let dt = msg.timestamp - estimator.get_state().state.timestamp;
             if dt > 1e-9 {
                 estimator.predict(dt, &self.last_u, &context);
             }
@@ -49,7 +49,7 @@ impl EstimationCore {
                 estimator.update(msg, &context);
             }
         } else if let Some(slam) = &mut self.slam {
-            let dt = msg.timestamp - slam.get_state().last_update_timestamp;
+            let dt = msg.timestamp - slam.get_state().state.timestamp;
             if dt > 1e-9 {
                 slam.predict(dt, &self.last_u, &context);
             }

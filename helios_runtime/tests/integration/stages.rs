@@ -47,9 +47,9 @@ fn estimation_process_measurement_advances_timestamp() {
     estimation.process_measurement(&msg, &rt);
     let state = estimation.get_state().unwrap();
     assert!(
-        (state.last_update_timestamp - 2.5).abs() < 1e-9,
+        (state.state.timestamp - 2.5).abs() < 1e-9,
         "timestamp should advance to 2.5 after update, got {}",
-        state.last_update_timestamp
+        state.state.timestamp
     );
 }
 

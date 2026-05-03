@@ -397,9 +397,9 @@ mod tests {
             StateVariable::Pz(FrameId::World),
         ];
         let mut state = FrameAwareState::new(layout, 0.0, 0.0);
-        state.vector[0] = x;
-        state.vector[1] = y;
-        state.vector[2] = 0.0;
+        state.state.vector[0] = x;
+        state.state.vector[1] = y;
+        state.state.vector[2] = 0.0;
         state
     }
 

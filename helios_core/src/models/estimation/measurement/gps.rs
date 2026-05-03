@@ -120,7 +120,7 @@ impl Measurement for GpsPositionModel {
         // 2. Iterate through each element of the state vector.
         for j in 0..state_dim {
             let mut perturbed_state = filter_state.clone();
-            perturbed_state.vector[j] += epsilon;
+            perturbed_state.state.vector[j] += epsilon;
 
             // No quaternion re-normalisation needed: predict_measurement calls
             // get_orientation(), which calls UnitQuaternion::from_quaternion and
@@ -196,9 +196,9 @@ mod tests {
             StateVariable::Qw(body.clone(), world.clone()),
         ];
         let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-        state.vector[0] = px;
-        state.vector[1] = py;
-        state.vector[2] = pz;
+        state.state.vector[0] = px;
+        state.state.vector[1] = py;
+        state.state.vector[2] = pz;
         state
     }
 

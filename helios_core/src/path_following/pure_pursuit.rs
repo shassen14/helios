@@ -149,14 +149,14 @@ impl PathFollower for PurePursuitPathFollower {
             StateVariable::Wz(body_handle.clone()),
         ];
 
-        let mut state_desired = FrameAwareState::new(layout, 0.0f64, state.last_update_timestamp);
-        state_desired.vector[0] = forward_velocity_desired;
-        state_desired.vector[1] = angular_velocity_desired;
+        let mut state_desired = FrameAwareState::new(layout, 0.0f64, state.state.timestamp);
+        state_desired.state.vector[0] = forward_velocity_desired;
+        state_desired.state.vector[1] = angular_velocity_desired;
 
         let point_desired = TrajectoryPoint {
-            state: state_desired,
+            state: state_desired.state,
             state_dot: Some(DVector::from_vec(vec![0.0, curvature])),
-            time: state.last_update_timestamp,
+            time: state.state.timestamp,
         };
 
         PathFollowerResult::Active(point_desired)

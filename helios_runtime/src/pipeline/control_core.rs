@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use helios_core::{
-    control::{ControlContext, ControlOutput},
+    control::{ControlInputs, ControlOutput},
     frames::FrameAwareState,
     mapping::MapData,
     planning::{
@@ -87,15 +87,15 @@ impl ControlCore {
         state: &FrameAwareState,
         reference_waypoint: Option<&TrajectoryPoint>,
         dt: f64,
-        runtime: &dyn AgentRuntime,
+        _runtime: &dyn AgentRuntime,
     ) -> Option<ControlOutput> {
-        let adapter = TfProviderAdapter(runtime);
-        let ctx = ControlContext {
-            tf: Some(&adapter),
-            reference: reference_waypoint,
+        let inputs = ControlInputs {
+            state: state.clone(),
+            reference: reference_waypoint.cloned(),
+            dt,
         };
         self.controllers
             .first_mut()
-            .map(|lc| lc.controller.compute(state, dt, &ctx))
+            .map(|lc| lc.controller.compute(&inputs))
     }
 }

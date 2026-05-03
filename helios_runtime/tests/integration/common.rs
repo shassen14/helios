@@ -6,7 +6,7 @@ use std::any::Any;
 use nalgebra::{DMatrix, DVector, Isometry3};
 
 use helios_core::{
-    control::{ControlContext, ControlOutput, Controller},
+    control::{ControlInputs, ControlOutput, Controller},
     estimation::{FilterContext, StateEstimator},
     frames::{FrameAwareState, FrameId, StateVariable},
     mapping::{MapData, Mapper},
@@ -110,7 +110,7 @@ impl StateEstimator for MockEstimator {
     fn predict(&mut self, _dt: f64, _u: &Control, _context: &FilterContext) {}
 
     fn update(&mut self, message: &MeasurementMessage, _context: &FilterContext) {
-        self.state.last_update_timestamp = message.timestamp;
+        self.state.state.timestamp = message.timestamp;
     }
 
     fn get_state(&self) -> &FrameAwareState {
@@ -228,12 +228,7 @@ impl Planner for MockPlanner {
 pub struct MockController;
 
 impl Controller for MockController {
-    fn compute(
-        &mut self,
-        _state: &FrameAwareState,
-        _dt: f64,
-        _ctx: &ControlContext,
-    ) -> ControlOutput {
+    fn compute(&mut self, _inputs: &ControlInputs) -> ControlOutput {
         ControlOutput::Raw(DVector::zeros(2))
     }
 
@@ -260,11 +255,11 @@ impl PathFollower for MockPathFollower {
             return PathFollowerResult::NoPath;
         };
         let layout = vec![StateVariable::Vx(FrameId::World)];
-        let ref_state = FrameAwareState::new(layout, 0.0, state.last_update_timestamp);
+        let ref_state = FrameAwareState::new(layout, 0.0, state.state.timestamp);
         PathFollowerResult::Active(TrajectoryPoint {
-            state: ref_state,
+            state: ref_state.state,
             state_dot: None,
-            time: state.last_update_timestamp,
+            time: state.state.timestamp,
         })
     }
 
@@ -309,8 +304,8 @@ pub fn make_world_state(px: f64, py: f64) -> FrameAwareState {
     ];
     // FrameAwareState::new initializes Qw to 1.0 (identity quaternion).
     let mut state = FrameAwareState::new(layout, 1e-6, 0.0);
-    state.vector[0] = px;
-    state.vector[1] = py;
+    state.state.vector[0] = px;
+    state.state.vector[1] = py;
     state
 }
 
@@ -326,10 +321,10 @@ pub fn make_path(level_key: &str, waypoints: &[[f64; 2]]) -> Path {
             .iter()
             .map(|&[x, y]| {
                 let mut state = FrameAwareState::new(layout.clone(), 1e-6, 0.0);
-                state.vector[0] = x;
-                state.vector[1] = y;
+                state.state.vector[0] = x;
+                state.state.vector[1] = y;
                 TrajectoryPoint {
-                    state,
+                    state: state.state,
                     state_dot: None,
                     time: 0.0,
                 }

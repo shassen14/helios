@@ -85,9 +85,9 @@ impl StateEstimator for ExtendedKalmanFilter {
 
         // --- 1. Get current state and dynamics model ---
         let dynamics = &self.dynamics_model;
-        let x_old = &self.state.vector;
+        let x_old = &self.state.state.vector;
         let p_old = &self.state.covariance;
-        let t_old = self.state.last_update_timestamp;
+        let t_old = self.state.state.timestamp;
 
         // Ensure control input `u` has the correct dimension for the dynamics model.
         let u_sized = if u.nrows() == dynamics.get_control_dim() {
@@ -129,9 +129,9 @@ impl StateEstimator for ExtendedKalmanFilter {
         let p_new = &f_k * p_with_noise * f_k.transpose();
 
         // --- 5. Update the filter's internal state ---
-        self.state.vector = x_new;
+        self.state.state.vector = x_new;
         self.state.covariance = p_new;
-        self.state.last_update_timestamp += dt;
+        self.state.state.timestamp += dt;
 
         // Force Symmetry and Positivity
         self.ensure_covariance_health();
@@ -176,7 +176,7 @@ impl StateEstimator for ExtendedKalmanFilter {
         let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
         let correction = &k_gain * &y;
 
-        self.state.vector += correction;
+        self.state.state.vector += correction;
         // Joseph form: (I - KH) computed without allocating an identity matrix.
         let mut i_kh = -(&k_gain * &h_jac);
         let n = self.state.dim();
@@ -191,7 +191,7 @@ impl StateEstimator for ExtendedKalmanFilter {
         self.ensure_covariance_health();
         self.state.normalize_quaternion();
 
-        self.state.last_update_timestamp = message.timestamp;
+        self.state.state.timestamp = message.timestamp;
     }
 
     fn get_state(&self) -> &FrameAwareState {
@@ -301,7 +301,10 @@ mod tests {
             if !matches!(&message.data, MeasurementData::GpsPosition(_)) {
                 return None;
             }
-            Some(DVector::from_row_slice(&[state.vector[0], state.vector[1]]))
+            Some(DVector::from_row_slice(&[
+                state.state.vector[0],
+                state.state.vector[1],
+            ]))
         }
 
         fn calculate_jacobian(
@@ -335,13 +338,13 @@ mod tests {
             StateVariable::Vy(FrameId::World),
         ];
         let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-        state.vector[2] = vx;
+        state.state.vector[2] = vx;
         state
     }
 
     fn make_ekf(initial_px: f64, vx: f64) -> ExtendedKalmanFilter {
         let mut state = make_state_with_velocity(vx);
-        state.vector[0] = initial_px;
+        state.state.vector[0] = initial_px;
         let q = DMatrix::identity(4, 4) * 0.01;
         let r = DMatrix::identity(2, 2) * 0.1;
         let model: Box<dyn Measurement> = Box::new(Position2DMeasurement { r });
@@ -371,12 +374,15 @@ mod tests {
 
         ekf.predict(1.0, &u, &ctx);
 
-        let px = ekf.get_state().vector[0];
+        let px = ekf.get_state().state.vector[0];
         assert!(
             (px - 1.0).abs() < 0.05,
             "px should advance ≈ vx*dt = 1.0, got {px}"
         );
-        assert!(ekf.get_state().vector[1].abs() < 1e-9, "py should stay 0");
+        assert!(
+            ekf.get_state().state.vector[1].abs() < 1e-9,
+            "py should stay 0"
+        );
     }
 
     #[test]
@@ -384,12 +390,12 @@ mod tests {
         let mut ekf = make_ekf(5.0, 2.0);
         let u = DVector::zeros(0);
         let ctx = FilterContext::default();
-        let px_before = ekf.get_state().vector[0];
+        let px_before = ekf.get_state().state.vector[0];
 
         ekf.predict(0.0, &u, &ctx);
 
         assert_eq!(
-            ekf.get_state().vector[0],
+            ekf.get_state().state.vector[0],
             px_before,
             "zero dt must not change state"
         );
@@ -422,7 +428,7 @@ mod tests {
         // Measurement says position is at [5, 0]; filter starts at [0, 0].
         ekf.update(&gps_message(5.0, 0.0, 0.1), &ctx);
 
-        let px = ekf.get_state().vector[0];
+        let px = ekf.get_state().state.vector[0];
         assert!(px > 0.0, "state should correct toward measurement (px > 0)");
         assert!(px < 5.0, "state should not overshoot measurement");
     }
@@ -447,12 +453,12 @@ mod tests {
     fn update_skipped_without_tf() {
         let mut ekf = make_ekf(0.0, 0.0);
         let ctx = FilterContext { tf: None };
-        let px_before = ekf.get_state().vector[0];
+        let px_before = ekf.get_state().state.vector[0];
 
         ekf.update(&gps_message(5.0, 0.0, 0.1), &ctx);
 
         assert_eq!(
-            ekf.get_state().vector[0],
+            ekf.get_state().state.vector[0],
             px_before,
             "update must be skipped when TF is None"
         );
@@ -463,7 +469,7 @@ mod tests {
         let mut ekf = make_ekf(0.0, 0.0);
         let tf = IdentityTf;
         let ctx = FilterContext { tf: Some(&tf) };
-        let px_before = ekf.get_state().vector[0];
+        let px_before = ekf.get_state().state.vector[0];
 
         let msg = MeasurementMessage {
             agent_handle: FrameHandle::default(),
@@ -476,7 +482,7 @@ mod tests {
         ekf.update(&msg, &ctx);
 
         assert_eq!(
-            ekf.get_state().vector[0],
+            ekf.get_state().state.vector[0],
             px_before,
             "update should be ignored for unregistered sensor handle"
         );
@@ -499,7 +505,7 @@ mod tests {
             ekf.update(&gps_message(true_px, 0.0, (i + 1) as f64 * 0.1), &ctx);
         }
 
-        let px = ekf.get_state().vector[0];
+        let px = ekf.get_state().state.vector[0];
         assert!(
             (px - true_px).abs() < 0.1,
             "EKF should converge near {true_px} m, got {px}"

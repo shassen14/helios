@@ -42,9 +42,9 @@ fn gt_inject_sets_position() {
     gt.inject_ground_truth(&pose, Vector3::zeros(), 0.0);
     let state = gt.get_state().unwrap();
     // Layout: [Px, Py, Pz, Vx, Vy, Vz, Qx, Qy, Qz, Qw]
-    assert!((state.vector[0] - 3.0).abs() < 1e-9, "Px mismatch");
-    assert!((state.vector[1] - 4.0).abs() < 1e-9, "Py mismatch");
-    assert!((state.vector[2] - 5.0).abs() < 1e-9, "Pz mismatch");
+    assert!((state.state.vector[0] - 3.0).abs() < 1e-9, "Px mismatch");
+    assert!((state.state.vector[1] - 4.0).abs() < 1e-9, "Py mismatch");
+    assert!((state.state.vector[2] - 5.0).abs() < 1e-9, "Pz mismatch");
 }
 
 #[test]
@@ -53,9 +53,9 @@ fn gt_inject_sets_velocity() {
     gt.inject_ground_truth(&Isometry3::identity(), Vector3::new(1.0, 2.0, 3.0), 0.0);
     let state = gt.get_state().unwrap();
     // Layout: [Px, Py, Pz, Vx, Vy, Vz, ...]
-    assert!((state.vector[3] - 1.0).abs() < 1e-9, "Vx mismatch");
-    assert!((state.vector[4] - 2.0).abs() < 1e-9, "Vy mismatch");
-    assert!((state.vector[5] - 3.0).abs() < 1e-9, "Vz mismatch");
+    assert!((state.state.vector[3] - 1.0).abs() < 1e-9, "Vx mismatch");
+    assert!((state.state.vector[4] - 2.0).abs() < 1e-9, "Vy mismatch");
+    assert!((state.state.vector[5] - 3.0).abs() < 1e-9, "Vz mismatch");
 }
 
 #[test]

@@ -25,6 +25,7 @@
 //!     .build();
 //! ```
 
+pub mod builders;
 pub mod control_core;
 pub mod estimation_core;
 pub mod mapping_core;

@@ -99,7 +99,7 @@ impl Measurement for GyroscopeModel {
 
         for j in 0..state_dim {
             let mut perturbed_state = filter_state.clone();
-            perturbed_state.vector[j] += epsilon;
+            perturbed_state.state.vector[j] += epsilon;
 
             if let Some(z_perturbed) =
                 self.predict_measurement(&perturbed_state, &dummy_message, tf)

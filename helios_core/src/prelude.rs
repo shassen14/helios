@@ -15,7 +15,7 @@ pub use crate::types::{FrameHandle, MonotonicTime, TfProvider, TrajectoryPoint};
 pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
 // --- Control Abstractions ---
-pub use crate::control::{ControlContext, ControlOutput, Controller};
+pub use crate::control::{ControlInputs, ControlOutput, Controller};
 pub use crate::models::controls::ControlDynamics;
 
 // --- Planning & Tracking ---

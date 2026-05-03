@@ -173,7 +173,7 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, Stri
     // updates to apply large spurious orientation corrections via position-orientation
     // cross-covariance, producing oscillating heading estimates.
     let q_initial_var: f64 = 1e-4; // σ ≈ 0.01 radians
-    for (i, var) in initial_state.layout.iter().enumerate() {
+    for (i, var) in initial_state.state.layout.iter().enumerate() {
         if matches!(
             var,
             StateVariable::Qx(_, _)

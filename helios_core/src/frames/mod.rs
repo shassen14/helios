@@ -6,11 +6,13 @@
 //! hardcode numeric indices.
 
 use crate::types::FrameHandle;
+
+use std::hash::Hash;
+
 use nalgebra::{
     DMatrix, DVector, Isometry3, Matrix3, Quaternion, Translation3, UnitQuaternion, Vector3,
 };
 use serde::{Deserialize, Serialize};
-use std::hash::Hash;
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -63,26 +65,19 @@ pub enum StateVariable {
     MagZ(FrameId),
 }
 
-/// The "smart" state object used by filters. It bundles the state vector
-/// with its schema (the layout), covariance, and timestamp.
 #[derive(Debug, Clone, Serialize)]
-pub struct FrameAwareState {
+pub struct RobotState {
     /// The ordered "schema" of the state vector.
     pub layout: Vec<StateVariable>,
     /// The actual numerical data vector `x`.
     pub vector: DVector<f64>,
-    /// The covariance matrix `P`.
-    pub covariance: DMatrix<f64>,
     /// The timestamp of the last update.
-    pub last_update_timestamp: f64,
+    pub timestamp: f64,
 }
 
-impl FrameAwareState {
-    /// Creates a new state with a given layout, initializing the vector to zero
-    /// (with a valid identity quaternion) and the covariance to a scaled identity matrix.
-    pub fn new(layout: Vec<StateVariable>, initial_covariance_val: f64, timestamp: f64) -> Self {
-        let dim = layout.len();
-        let mut vector = DVector::zeros(dim);
+impl RobotState {
+    pub fn new(layout: Vec<StateVariable>, timestamp: f64) -> Self {
+        let mut vector = DVector::zeros(layout.len());
 
         // Find the quaternion part of the state and initialize it to identity (0,0,0,1).
         // This is critical to prevent NaN values from an invalid zero quaternion.
@@ -99,8 +94,7 @@ impl FrameAwareState {
         Self {
             layout,
             vector,
-            covariance: DMatrix::identity(dim, dim) * initial_covariance_val,
-            last_update_timestamp: timestamp,
+            timestamp,
         }
     }
 
@@ -277,6 +271,52 @@ impl FrameAwareState {
             orientation,
         ))
     }
+}
+/// The "smart" state object used zby filters. It bundles the state vector
+/// with its schema (the layout), covariance, and timestamp.
+#[derive(Debug, Clone, Serialize)]
+pub struct FrameAwareState {
+    pub state: RobotState,
+    /// The covariance matrix `P`.
+    pub covariance: DMatrix<f64>,
+}
+
+impl FrameAwareState {
+    pub fn new(layout: Vec<StateVariable>, initial_covariance_val: f64, timestamp: f64) -> Self {
+        let dim = layout.len();
+        Self {
+            state: RobotState::new(layout, timestamp),
+            covariance: DMatrix::identity(dim, dim) * initial_covariance_val,
+        }
+    }
+
+    pub fn dim(&self) -> usize {
+        self.state.dim()
+    }
+
+    pub fn find_idx(&self, var: &StateVariable) -> Option<usize> {
+        self.state.find_idx(var)
+    }
+
+    pub fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
+        self.state.set_variable(var, value)
+    }
+
+    pub fn get_vector3(&self, start_variable: &StateVariable) -> Option<Vector3<f64>> {
+        self.state.get_vector3(start_variable)
+    }
+
+    pub fn get_orientation(&self) -> Option<UnitQuaternion<f64>> {
+        self.state.get_orientation()
+    }
+
+    pub fn normalize_quaternion(&mut self) {
+        self.state.normalize_quaternion();
+    }
+
+    pub fn get_pose_isometry(&self) -> Option<Isometry3<f64>> {
+        self.state.get_pose_isometry()
+    }
 
     pub fn get_sub_covariance_3x3(&self, start_variable: &StateVariable) -> Option<Matrix3<f64>> {
         // This logic is very similar to get_vector3, but for the covariance matrix.
@@ -293,10 +333,12 @@ impl FrameAwareState {
 
         // Check for contiguity (simplified check for brevity)
         if self
+            .state
             .layout
             .get(start_idx + 1)
             .is_some_and(|v| std::mem::discriminant(v) == std::mem::discriminant(&expected_y))
             && self
+                .state
                 .layout
                 .get(start_idx + 2)
                 .is_some_and(|v| std::mem::discriminant(v) == std::mem::discriminant(&expected_z))
