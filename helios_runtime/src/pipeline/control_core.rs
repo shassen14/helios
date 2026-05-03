@@ -9,8 +9,8 @@ use helios_core::{
     frames::FrameAwareState,
     mapping::MapData,
     planning::{
-        PlannerInputs,
         types::{Path, PlannerGoal},
+        PlannerInputs,
     },
     types::TrajectoryPoint,
 };
@@ -27,7 +27,6 @@ pub struct ControlCore {
     /// Current navigation goal, passed to planners each tick via `PlannerInputs`.
     pub current_goal: Option<PlannerGoal>,
 }
-
 impl ControlCore {
     /// Set (or replace) the navigation goal. Planners will receive it on the next `step_planners` call.
     pub fn set_goal(&mut self, goal: PlannerGoal) {
