@@ -91,7 +91,7 @@ pub fn build_pipeline_from_stack(
         }
     }
 
-    for (_key, plan_cfg) in &stack.planners {
+    for (_key, plan_cfg) in &stack.geometric_planners {
         let kind = plan_cfg.get_kind_str();
         let level = level_from_str(plan_cfg.get_level_str());
         let ctx = PlannerBuildContext {

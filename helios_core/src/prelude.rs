@@ -21,8 +21,8 @@ pub use crate::models::controls::ControlDynamics;
 
 // --- Planning & Tracking ---
 pub use crate::planning::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
-pub use crate::planning::Planner;
-pub use crate::planning::PlannerInputs;
+pub use crate::planning::GeometricPlanner;
+pub use crate::planning::GeometricPlannerInputs;
 pub use crate::tracking::{Track, Tracker};
 
 // Path Following

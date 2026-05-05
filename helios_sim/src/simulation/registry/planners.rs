@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use helios_core::planning::astar::{AStarConfig, AStarPlanner};
 
 use super::{AutonomyRegistry, PlannerBuildContext};
-use crate::simulation::config::structs::PlannerConfig;
+use crate::simulation::config::structs::GeometricPlannerConfig;
 
 pub struct DefaultPlannersPlugin;
 
@@ -19,7 +19,7 @@ impl Plugin for DefaultPlannersPlugin {
 
         // --- AStar ---
         registry.register_planner("AStar", |ctx: PlannerBuildContext| {
-            let PlannerConfig::AStar {
+            let GeometricPlannerConfig::AStar {
                 rate,
                 arrival_tolerance_m,
                 occupancy_threshold,

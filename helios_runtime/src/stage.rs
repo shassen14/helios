@@ -4,7 +4,7 @@
 //! can sort stages at build time (`Global` → `Local` → `Custom`). Map layers are
 //! keyed by string name (matching TOML `map_layers` keys) rather than `PipelineLevel`.
 
-use helios_core::{control::Controller, planning::Planner};
+use helios_core::{control::Controller, planning::GeometricPlanner};
 
 /// Execution level for planners and controllers.
 ///
@@ -23,7 +23,7 @@ pub enum PipelineLevel {
 /// A planner with an associated level tag.
 pub struct LeveledPlanner {
     pub level: PipelineLevel,
-    pub planner: Box<dyn Planner>,
+    pub planner: Box<dyn GeometricPlanner>,
 }
 
 /// A controller with an associated level tag.

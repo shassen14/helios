@@ -15,7 +15,7 @@ use helios_core::{
     path_following::{PathFollower, PathFollowerInputs, PathFollowerResult},
     planning::{
         types::{Path, PlannerGoal, PlannerResult, PlannerStatus},
-        Planner, PlannerInputs,
+        GeometricPlanner, GeometricPlannerInputs,
     },
     tracking::{Track, Tracker},
     types::{Control, FrameHandle, MonotonicTime, State, TrajectoryPoint},
@@ -193,12 +193,12 @@ impl MockPlanner {
     }
 }
 
-impl Planner for MockPlanner {
-    fn plan(&mut self, _now: f64, _inputs: &PlannerInputs) -> PlannerResult {
+impl GeometricPlanner for MockPlanner {
+    fn plan(&mut self, _now: f64, _inputs: &GeometricPlannerInputs) -> PlannerResult {
         PlannerResult::NoGoal
     }
 
-    fn should_replan(&self, _now: f64, _inputs: &PlannerInputs) -> bool {
+    fn should_replan(&self, _now: f64, _inputs: &GeometricPlannerInputs) -> bool {
         false
     }
 

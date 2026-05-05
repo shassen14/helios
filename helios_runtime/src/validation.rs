@@ -117,7 +117,7 @@ pub fn validate_autonomy_config(
     }
 
     // Planner validation
-    for plan_cfg in config.planners.values() {
+    for plan_cfg in config.geometric_planners.values() {
         let kind = plan_cfg.get_kind_str();
         if !capabilities.planners.contains(kind) {
             errors.push(ValidationError::UnknownPlanner {

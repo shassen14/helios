@@ -4,8 +4,8 @@ pub use crate::stamped::{Health, Stamped};
 
 pub use crate::config::{
     AckermannProcessNoiseConfig, AgentBaseConfig, AutonomyStack, ControllerConfig, EkfConfig,
-    EkfDynamicsConfig, EstimatorConfig, ImuProcessNoiseConfig, MapLayerConfig,
-    MapperPoseSourceConfig, PlannerConfig, QuadcopterProcessNoiseConfig, UkfConfig,
+    EkfDynamicsConfig, EstimatorConfig, GeometricPlannerConfig, ImuProcessNoiseConfig,
+    MapLayerConfig, MapperPoseSourceConfig, QuadcopterProcessNoiseConfig, UkfConfig,
 };
 pub use crate::estimation::{EstimationDriver, GroundTruthPassthrough};
 pub use crate::mapping::{MapDriver, StaticMapProvider};

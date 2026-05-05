@@ -5,8 +5,8 @@ use helios_core::frames::{FrameId, RobotState, StateVariable};
 use helios_core::mapping::MapData;
 use helios_core::planning::astar::{AStarConfig, AStarPlanner};
 use helios_core::planning::types::PlannerGoal;
-use helios_core::planning::Planner;
-use helios_core::planning::PlannerInputs;
+use helios_core::planning::GeometricPlanner;
+use helios_core::planning::GeometricPlannerInputs;
 
 // =========================================================================
 // == Fixtures ==
@@ -64,8 +64,8 @@ fn obstacle_map_100x100(resolution: f64) -> MapData {
     }
 }
 
-fn make_inputs(x: f64, y: f64, map: MapData, goal: Option<PlannerGoal>) -> PlannerInputs {
-    PlannerInputs {
+fn make_inputs(x: f64, y: f64, map: MapData, goal: Option<PlannerGoal>) -> GeometricPlannerInputs {
+    GeometricPlannerInputs {
         state: make_state(x, y),
         map,
         goal,

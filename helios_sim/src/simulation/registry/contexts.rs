@@ -13,13 +13,13 @@ use helios_core::{
     mapping::Mapper,
     models::estimation::{dynamics::EstimationDynamics, measurement::Measurement},
     path_following::PathFollower,
-    planning::Planner,
+    planning::GeometricPlanner,
     types::FrameHandle,
 };
 
 use crate::simulation::config::structs::{
-    AckermannAdapterConfig, AgentConfig, ControllerConfig, EstimatorConfig, MapLayerConfig,
-    PathFollowingConfig, PlannerConfig,
+    AckermannAdapterConfig, AgentConfig, ControllerConfig, EstimatorConfig, GeometricPlannerConfig,
+    MapLayerConfig, PathFollowingConfig,
 };
 use crate::simulation::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
 
@@ -41,7 +41,7 @@ pub type ControllerFactory =
     Arc<dyn Fn(ControllerBuildContext) -> Result<Box<dyn Controller>, String> + Send + Sync>;
 
 pub type PlannerFactory =
-    Arc<dyn Fn(PlannerBuildContext) -> Result<Box<dyn Planner>, String> + Send + Sync>;
+    Arc<dyn Fn(PlannerBuildContext) -> Result<Box<dyn GeometricPlanner>, String> + Send + Sync>;
 
 pub type AdapterFactory = Arc<
     dyn Fn(AdapterBuildContext) -> Result<Box<dyn AckermannOutputAdapter>, String> + Send + Sync,
@@ -84,7 +84,7 @@ pub struct ControllerBuildContext {
 
 pub struct PlannerBuildContext {
     pub agent_entity: Entity,
-    pub planner_cfg: PlannerConfig,
+    pub planner_cfg: GeometricPlannerConfig,
     pub level: helios_runtime::stage::PipelineLevel,
 }
 

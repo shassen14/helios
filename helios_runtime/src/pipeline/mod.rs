@@ -46,7 +46,7 @@ use helios_core::{
     frames::FrameAwareState,
     mapping::{MapData, Mapper},
     messages::MeasurementMessage,
-    planning::{types::PlannerGoal, Planner},
+    planning::{types::PlannerGoal, GeometricPlanner},
     prelude::{Path, PathFollower},
     tracking::Tracker,
 };
@@ -250,7 +250,11 @@ impl PipelineBuilder {
         self
     }
 
-    pub fn with_planner(mut self, level: PipelineLevel, planner: Box<dyn Planner>) -> Self {
+    pub fn with_planner(
+        mut self,
+        level: PipelineLevel,
+        planner: Box<dyn GeometricPlanner>,
+    ) -> Self {
         self.planners.push(LeveledPlanner { level, planner });
         self
     }

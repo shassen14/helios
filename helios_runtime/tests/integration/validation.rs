@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use helios_runtime::{
     config::{
         AutonomyStack, ControllerConfig, EkfConfig, EkfDynamicsConfig, EstimatorConfig,
-        ImuProcessNoiseConfig, MapLayerConfig, MapperPoseSourceConfig, PlannerConfig,
+        GeometricPlannerConfig, ImuProcessNoiseConfig, MapLayerConfig, MapperPoseSourceConfig,
     },
     stage::PipelineLevel,
     validation::{validate_autonomy_config, CapabilitySet, ValidationError},
@@ -57,8 +57,8 @@ fn pid() -> ControllerConfig {
     }
 }
 
-fn astar() -> PlannerConfig {
-    PlannerConfig::AStar {
+fn astar() -> GeometricPlannerConfig {
+    GeometricPlannerConfig::AStar {
         rate: 5.0,
         arrival_tolerance_m: 1.5,
         occupancy_threshold: 180,
@@ -93,8 +93,8 @@ fn validation_empty_stack_passes() {
 
 #[test]
 fn validation_valid_full_stack_passes() {
-    let mut planners = HashMap::new();
-    planners.insert("local_planner".to_string(), astar());
+    let mut geometric_planners = HashMap::new();
+    geometric_planners.insert("local_planner".to_string(), astar());
 
     let mut controllers = HashMap::new();
     controllers.insert("main_ctrl".to_string(), pid());
@@ -107,7 +107,7 @@ fn validation_valid_full_stack_passes() {
             dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
         })),
         map_layers,
-        planners,
+        geometric_planners,
         path_following: None,
         controllers,
     };
@@ -199,10 +199,10 @@ fn validation_unknown_controller_produces_error() {
 
 #[test]
 fn validation_unknown_planner_produces_error() {
-    let mut planners = HashMap::new();
-    planners.insert("planner".to_string(), astar());
+    let mut geometric_planners = HashMap::new();
+    geometric_planners.insert("planner".to_string(), astar());
     let stack = AutonomyStack {
-        planners,
+        geometric_planners,
         ..Default::default()
     };
     let errors = validate_autonomy_config(&stack, &empty_caps());

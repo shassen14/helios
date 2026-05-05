@@ -40,11 +40,11 @@ use nalgebra::Vector2;
 
 use crate::frames::{FrameId, StateVariable};
 use crate::mapping::MapData;
-use crate::planning::PlannerInputs;
+use crate::planning::GeometricPlannerInputs;
 
 use super::search_space::SearchSpace;
 use super::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
-use super::Planner;
+use super::GeometricPlanner;
 
 use grid_space::OccupancyGridSpace;
 use search::{run_astar, AStarSearchBuffers};
@@ -131,7 +131,7 @@ impl AStarPlanner {
 // == Planner trait impl ==
 // =========================================================================
 
-impl Planner for AStarPlanner {
+impl GeometricPlanner for AStarPlanner {
     /// Compute or update the planned path.
     ///
     /// ## Decision tree
@@ -147,7 +147,7 @@ impl Planner for AStarPlanner {
     /// 9. Robot outside map → [`PlannerResult::Error`].
     /// 10. A\* finds no path → [`PlannerResult::Unreachable`].
     /// 11. Path found → [`PlannerResult::Path`] (or `GoalOutsideMap` from step 8).
-    fn plan(&mut self, now: f64, inputs: &PlannerInputs) -> PlannerResult {
+    fn plan(&mut self, now: f64, inputs: &GeometricPlannerInputs) -> PlannerResult {
         let goal = match &inputs.goal {
             Some(g) => g.clone(),
             None => return PlannerResult::NoGoal,
@@ -302,7 +302,7 @@ impl Planner for AStarPlanner {
     /// `deviation_tolerance_m`.
     ///
     /// Otherwise replan when `ctx.now - last_plan_time >= 1 / rate_hz`.
-    fn should_replan(&self, now: f64, inputs: &PlannerInputs) -> bool {
+    fn should_replan(&self, now: f64, inputs: &GeometricPlannerInputs) -> bool {
         if self.status == PlannerStatus::Idle || self.cached_path.is_none() {
             return true;
         }
@@ -357,8 +357,8 @@ mod tests {
     use crate::frames::{FrameId, RobotState, StateVariable};
     use crate::mapping::MapData;
     use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
-    use crate::planning::Planner;
-    use crate::planning::PlannerInputs;
+    use crate::planning::GeometricPlanner;
+    use crate::planning::GeometricPlannerInputs;
 
     use super::{AStarConfig, AStarPlanner};
 
@@ -409,8 +409,13 @@ mod tests {
         PlannerGoal::WorldPosition2D(Vector2::new(x, y))
     }
 
-    fn make_inputs(x: f64, y: f64, map: MapData, goal: Option<PlannerGoal>) -> PlannerInputs {
-        PlannerInputs {
+    fn make_inputs(
+        x: f64,
+        y: f64,
+        map: MapData,
+        goal: Option<PlannerGoal>,
+    ) -> GeometricPlannerInputs {
+        GeometricPlannerInputs {
             state: make_state(x, y),
             map,
             goal,

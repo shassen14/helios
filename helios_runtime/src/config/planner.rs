@@ -19,7 +19,7 @@ fn default_level() -> String {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
-pub enum PlannerConfig {
+pub enum GeometricPlannerConfig {
     AStar {
         rate: f32,
         #[serde(default = "default_arrival_tolerance_m")]
@@ -39,16 +39,16 @@ pub enum PlannerConfig {
     },
 }
 
-impl PlannerConfig {
+impl GeometricPlannerConfig {
     pub fn get_kind_str(&self) -> &str {
         match self {
-            PlannerConfig::AStar { .. } => "AStar",
+            GeometricPlannerConfig::AStar { .. } => "AStar",
         }
     }
 
     pub fn get_level_str(&self) -> &str {
         match self {
-            PlannerConfig::AStar { level, .. } => level.as_str(),
+            GeometricPlannerConfig::AStar { level, .. } => level.as_str(),
         }
     }
 }

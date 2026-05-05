@@ -1,7 +1,7 @@
 use helios_core::{
     frames::FrameAwareState,
     mapping::MapData,
-    prelude::{PlannerGoal, PlannerInputs},
+    prelude::{GeometricPlannerInputs, PlannerGoal},
 };
 
 use crate::{
@@ -15,7 +15,7 @@ pub trait PlannerInputBuilder: Send + Sync {
         bus: &PortBus,
         runtime: &dyn AgentRuntime,
         tick: &TickContext,
-    ) -> Option<PlannerInputs>;
+    ) -> Option<GeometricPlannerInputs>;
 
     fn required_channels(&self) -> &[ChannelKey];
 
@@ -51,14 +51,14 @@ impl PlannerInputBuilder for DefaultPlannerInputBuilder {
         bus: &PortBus,
         _runtime: &dyn AgentRuntime,
         _tick: &TickContext,
-    ) -> Option<PlannerInputs> {
+    ) -> Option<GeometricPlannerInputs> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;
         let map_stamped = bus.read::<MapData>(self.map_channel.clone())?;
         let goal = bus
             .read::<PlannerGoal>(self.goal_channel.clone())
             .map(|s| s.value.clone());
 
-        Some(PlannerInputs {
+        Some(GeometricPlannerInputs {
             state: state_stamped.value.state.clone(),
             map: map_stamped.value.clone(),
             goal,

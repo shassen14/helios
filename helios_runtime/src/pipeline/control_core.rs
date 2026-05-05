@@ -10,7 +10,7 @@ use helios_core::{
     mapping::MapData,
     planning::{
         types::{Path, PlannerGoal},
-        PlannerInputs,
+        GeometricPlannerInputs,
     },
     types::TrajectoryPoint,
 };
@@ -24,7 +24,7 @@ use crate::{
 pub struct ControlCore {
     pub planners: Vec<LeveledPlanner>,
     pub controllers: Vec<LeveledController>,
-    /// Current navigation goal, passed to planners each tick via `PlannerInputs`.
+    /// Current navigation goal, passed to planners each tick via `GeometricPlannerInputs`.
     pub current_goal: Option<PlannerGoal>,
 }
 impl ControlCore {
@@ -50,7 +50,7 @@ impl ControlCore {
                 None => continue,
             };
 
-            let inputs = PlannerInputs {
+            let inputs = GeometricPlannerInputs {
                 state: state.state.clone(),
                 map: map.clone(),
                 goal: self.current_goal.clone(),
