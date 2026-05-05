@@ -3,11 +3,11 @@ use std::any::Any;
 use std::collections::HashMap;
 
 // --- Core Library Imports ---
-use crate::estimation::{FilterContext, StateEstimator};
+use crate::estimation::{EstimatorInputs, FilterContext, StateEstimator};
 use crate::frames::FrameAwareState;
 use crate::models::estimation::measurement::Measurement;
 use crate::prelude::{EstimationDynamics, MeasurementMessage};
-use crate::types::{Control, FrameHandle};
+use crate::types::FrameHandle;
 use crate::utils::integrators::RK4;
 /// Configuration parameters for the UKF's sigma point generation.
 #[derive(Debug, Clone, Copy)]
@@ -114,7 +114,7 @@ impl UnscentedKalmanFilter {
 }
 
 impl StateEstimator for UnscentedKalmanFilter {
-    fn predict(&mut self, dt: f64, u: &Control, _context: &FilterContext) {
+    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) {
         let n = self.state.dim();
 
         // --- 1. Generate Sigma Points into self.sigma_buf ---
@@ -126,7 +126,7 @@ impl StateEstimator for UnscentedKalmanFilter {
             let point = self.sigma_buf.column(i).into_owned();
             let propagated =
                 self.dynamics_model
-                    .propagate(&point, u, self.state.state.timestamp, dt, &RK4);
+                    .propagate(&point, &inputs.control, self.state.state.timestamp, dt, &RK4);
             self.propagated_buf.column_mut(i).copy_from(&propagated);
         }
 
@@ -252,7 +252,7 @@ impl StateEstimator for UnscentedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::estimation::FilterContext;
+    use crate::estimation::{EstimatorInputs, FilterContext};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::messages::{MeasurementData, MeasurementMessage};
     use crate::models::estimation::measurement::Measurement;
@@ -399,9 +399,8 @@ mod tests {
     fn predict_advances_position_by_velocity() {
         let mut ukf = make_ukf(0.0, 1.0);
         let u = DVector::zeros(0);
-        let ctx = FilterContext::default();
 
-        ukf.predict(1.0, &u, &ctx);
+        ukf.predict(1.0, &EstimatorInputs { control: u });
 
         let px = ukf.get_state().state.vector[0];
         assert!(
@@ -414,10 +413,9 @@ mod tests {
     fn predict_grows_covariance() {
         let mut ukf = make_ukf(0.0, 1.0);
         let u = DVector::zeros(0);
-        let ctx = FilterContext::default();
         let trace_before: f64 = ukf.get_state().covariance.diagonal().sum();
 
-        ukf.predict(1.0, &u, &ctx);
+        ukf.predict(1.0, &EstimatorInputs { control: u });
 
         let trace_after: f64 = ukf.get_state().covariance.diagonal().sum();
         assert!(
@@ -485,7 +483,7 @@ mod tests {
         let true_px = 3.0_f64;
 
         for i in 0..50 {
-            ukf.predict(0.1, &u, &ctx);
+            ukf.predict(0.1, &EstimatorInputs { control: u.clone() });
             ukf.update(&gps_message(true_px, 0.0, (i + 1) as f64 * 0.1), &ctx);
         }
 

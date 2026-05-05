@@ -7,7 +7,7 @@ use nalgebra::{DMatrix, DVector, Isometry3};
 
 use helios_core::{
     control::{ControlInputs, ControlOutput, Controller},
-    estimation::{FilterContext, StateEstimator},
+    estimation::{EstimatorInputs, FilterContext, StateEstimator},
     frames::{FrameAwareState, FrameId, StateVariable},
     mapping::{MapData, Mapper},
     messages::{MeasurementData, MeasurementMessage, ModuleInput},
@@ -106,7 +106,7 @@ impl MockEstimator {
 }
 
 impl StateEstimator for MockEstimator {
-    fn predict(&mut self, _dt: f64, _u: &Control, _context: &FilterContext) {}
+    fn predict(&mut self, _dt: f64, _inputs: &EstimatorInputs) {}
 
     fn update(&mut self, message: &MeasurementMessage, _context: &FilterContext) {
         self.state.state.timestamp = message.timestamp;

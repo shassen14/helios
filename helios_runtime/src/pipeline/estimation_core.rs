@@ -3,7 +3,7 @@
 // EstimationCore struct + impl + EstimationDriver trait impl.
 
 use helios_core::{
-    estimation::{FilterContext, StateEstimator},
+    estimation::{EstimatorInputs, FilterContext, StateEstimator},
     frames::FrameAwareState,
     mapping::MapData,
     messages::MeasurementMessage,
@@ -40,7 +40,7 @@ impl EstimationCore {
         if let Some(estimator) = &mut self.estimator {
             let dt = msg.timestamp - estimator.get_state().state.timestamp;
             if dt > 1e-9 {
-                estimator.predict(dt, &self.last_u, &context);
+                estimator.predict(dt, &EstimatorInputs { control: self.last_u.clone() });
             }
             let dynamics = estimator.get_dynamics_model();
             if let Some(new_u) = dynamics.get_control_from_measurement(&msg.data) {
@@ -51,7 +51,7 @@ impl EstimationCore {
         } else if let Some(slam) = &mut self.slam {
             let dt = msg.timestamp - slam.get_state().state.timestamp;
             if dt > 1e-9 {
-                slam.predict(dt, &self.last_u, &context);
+                slam.predict(dt, &EstimatorInputs { control: self.last_u.clone() });
             }
             let dynamics = slam.get_dynamics_model();
             if let Some(new_u) = dynamics.get_control_from_measurement(&msg.data) {

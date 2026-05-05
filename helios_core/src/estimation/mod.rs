@@ -4,9 +4,11 @@
 //! Concrete filter implementations (`ExtendedKalmanFilter`, `UnscentedKalmanFilter`)
 //! live in [`filters`].
 
+use nalgebra::DVector;
+
 use crate::frames::FrameAwareState;
 use crate::prelude::{EstimationDynamics, MeasurementMessage};
-use crate::types::{Control, TfProvider};
+use crate::types::TfProvider;
 use std::any::Any;
 
 /// World-context passed into every estimator predict/update call.
@@ -20,6 +22,10 @@ pub struct FilterContext<'a> {
     /// Provides access to the transform tree for coordinate frame conversions.
     /// Always check with `if let Some(tf) = context.tf` — never `.unwrap()`.
     pub tf: Option<&'a dyn TfProvider>,
+}
+
+pub struct EstimatorInputs {
+    pub control: DVector<f64>,
 }
 
 /// Core contract for any state-estimation algorithm.
@@ -49,7 +55,7 @@ pub trait StateEstimator: Send + Sync {
     /// * `dt` — elapsed time in seconds since the last prediction.
     /// * `u` — control input vector; dimension must match the dynamics model.
     /// * `context` — world context; `context.tf` may be `None`.
-    fn predict(&mut self, dt: f64, u: &Control, context: &FilterContext);
+    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs);
 
     /// Fuses a sensor measurement to correct the current estimate.
     ///

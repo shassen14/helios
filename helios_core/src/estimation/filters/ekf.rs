@@ -3,12 +3,12 @@
 use std::any::Any;
 use std::collections::HashMap;
 
-use crate::estimation::{FilterContext, StateEstimator};
+use crate::estimation::{EstimatorInputs, FilterContext, StateEstimator};
 use crate::frames::FrameAwareState;
 use crate::models::estimation::measurement::Measurement;
 use crate::prelude::{EstimationDynamics, MeasurementMessage};
 // The helper trait for sensors
-use crate::types::{Control, FrameHandle};
+use crate::types::FrameHandle;
 use crate::utils::integrators::RK4;
 use nalgebra::{DMatrix, DVector}; // Assuming you have this
 
@@ -78,7 +78,7 @@ impl ExtendedKalmanFilter {
 // --- The Public Trait Implementation ---
 impl StateEstimator for ExtendedKalmanFilter {
     /// Predicts the state forward by `dt` using the provided control input `u`.
-    fn predict(&mut self, dt: f64, u: &Control, _context: &FilterContext) {
+    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) {
         if dt <= 0.0 {
             return;
         }
@@ -90,8 +90,8 @@ impl StateEstimator for ExtendedKalmanFilter {
         let t_old = self.state.state.timestamp;
 
         // Ensure control input `u` has the correct dimension for the dynamics model.
-        let u_sized = if u.nrows() == dynamics.get_control_dim() {
-            u
+        let u_sized = if inputs.control.nrows() == dynamics.get_control_dim() {
+            &inputs.control
         } else {
             // This case can happen if the control input cache wasn't updated.
             // We fall back to a zero vector to prevent a panic.
@@ -111,7 +111,7 @@ impl StateEstimator for ExtendedKalmanFilter {
         // or just the calculated Jacobian `A` from the continuous model. We will use `A`.
         // --- 2. Calculate State Transition and Noise Input Matrices--
         // A = ∂f/∂x, B = ∂f/∂u
-        let (a_jac, _b_jac) = dynamics.calculate_jacobian(x_old, u, t_old);
+        let (a_jac, _b_jac) = dynamics.calculate_jacobian(x_old, &inputs.control, t_old);
 
         // Discretize the state transition matrix: F ≈ I + A*dt (no identity allocation)
         let mut f_k = &a_jac * dt;
@@ -210,7 +210,7 @@ impl StateEstimator for ExtendedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::estimation::FilterContext;
+    use crate::estimation::{EstimatorInputs, FilterContext};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::messages::{MeasurementData, MeasurementMessage};
     use crate::models::estimation::measurement::Measurement;
@@ -370,9 +370,8 @@ mod tests {
     fn predict_advances_position_by_velocity() {
         let mut ekf = make_ekf(0.0, 1.0);
         let u = DVector::zeros(0);
-        let ctx = FilterContext::default();
 
-        ekf.predict(1.0, &u, &ctx);
+        ekf.predict(1.0, &EstimatorInputs { control: u });
 
         let px = ekf.get_state().state.vector[0];
         assert!(
@@ -389,10 +388,9 @@ mod tests {
     fn predict_zero_dt_is_noop() {
         let mut ekf = make_ekf(5.0, 2.0);
         let u = DVector::zeros(0);
-        let ctx = FilterContext::default();
         let px_before = ekf.get_state().state.vector[0];
 
-        ekf.predict(0.0, &u, &ctx);
+        ekf.predict(0.0, &EstimatorInputs { control: u });
 
         assert_eq!(
             ekf.get_state().state.vector[0],
@@ -405,10 +403,9 @@ mod tests {
     fn predict_grows_covariance() {
         let mut ekf = make_ekf(0.0, 1.0);
         let u = DVector::zeros(0);
-        let ctx = FilterContext::default();
         let trace_before: f64 = ekf.get_state().covariance.diagonal().sum();
 
-        ekf.predict(1.0, &u, &ctx);
+        ekf.predict(1.0, &EstimatorInputs { control: u });
 
         let trace_after: f64 = ekf.get_state().covariance.diagonal().sum();
         assert!(
@@ -501,7 +498,7 @@ mod tests {
         let true_px = 3.0_f64;
 
         for i in 0..50 {
-            ekf.predict(0.1, &u, &ctx);
+            ekf.predict(0.1, &EstimatorInputs { control: u.clone() });
             ekf.update(&gps_message(true_px, 0.0, (i + 1) as f64 * 0.1), &ctx);
         }
 
