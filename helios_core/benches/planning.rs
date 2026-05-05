@@ -4,9 +4,9 @@ use nalgebra::{DMatrix, Isometry3, Vector2};
 use helios_core::frames::{FrameId, RobotState, StateVariable};
 use helios_core::mapping::MapData;
 use helios_core::planning::astar::{AStarConfig, AStarPlanner};
-use helios_core::planning::PlannerInputs;
 use helios_core::planning::types::PlannerGoal;
 use helios_core::planning::Planner;
+use helios_core::planning::PlannerInputs;
 
 // =========================================================================
 // == Fixtures ==
@@ -83,11 +83,15 @@ fn bench_astar(c: &mut Criterion) {
     group.bench_function("50x50_free", |b| {
         b.iter(|| {
             let mut planner = AStarPlanner::new(bench_config());
-            planner.plan(0.0, &make_inputs(
-                0.5, 0.5,
-                clear_map(50, 50, 1.0),
-                Some(PlannerGoal::WorldPosition2D(Vector2::new(49.5, 49.5))),
-            ))
+            planner.plan(
+                0.0,
+                &make_inputs(
+                    0.5,
+                    0.5,
+                    clear_map(50, 50, 1.0),
+                    Some(PlannerGoal::WorldPosition2D(Vector2::new(49.5, 49.5))),
+                ),
+            )
         });
     });
 
@@ -95,11 +99,15 @@ fn bench_astar(c: &mut Criterion) {
     group.bench_function("100x100_free", |b| {
         b.iter(|| {
             let mut planner = AStarPlanner::new(bench_config());
-            planner.plan(0.0, &make_inputs(
-                0.5, 0.5,
-                clear_map(100, 100, 1.0),
-                Some(PlannerGoal::WorldPosition2D(Vector2::new(99.5, 99.5))),
-            ))
+            planner.plan(
+                0.0,
+                &make_inputs(
+                    0.5,
+                    0.5,
+                    clear_map(100, 100, 1.0),
+                    Some(PlannerGoal::WorldPosition2D(Vector2::new(99.5, 99.5))),
+                ),
+            )
         });
     });
 
@@ -107,11 +115,15 @@ fn bench_astar(c: &mut Criterion) {
     group.bench_function("100x100_obstacles", |b| {
         b.iter(|| {
             let mut planner = AStarPlanner::new(bench_config());
-            planner.plan(0.0, &make_inputs(
-                0.5, 0.5,
-                obstacle_map_100x100(1.0),
-                Some(PlannerGoal::WorldPosition2D(Vector2::new(99.5, 99.5))),
-            ))
+            planner.plan(
+                0.0,
+                &make_inputs(
+                    0.5,
+                    0.5,
+                    obstacle_map_100x100(1.0),
+                    Some(PlannerGoal::WorldPosition2D(Vector2::new(99.5, 99.5))),
+                ),
+            )
         });
     });
 

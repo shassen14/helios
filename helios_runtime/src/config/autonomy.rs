@@ -1,7 +1,9 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-use super::{ControllerConfig, EstimatorConfig, MapLayerConfig, PathFollowingConfig, PlannerConfig};
+use super::{
+    ControllerConfig, EstimatorConfig, MapLayerConfig, PathFollowingConfig, PlannerConfig,
+};
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]

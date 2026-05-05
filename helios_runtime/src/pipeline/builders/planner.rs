@@ -50,7 +50,7 @@ impl PlannerInputBuilder for DefaultPlannerInputBuilder {
         &self,
         bus: &PortBus,
         _runtime: &dyn AgentRuntime,
-        tick: &TickContext,
+        _tick: &TickContext,
     ) -> Option<PlannerInputs> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;
         let map_stamped = bus.read::<MapData>(self.map_channel.clone())?;

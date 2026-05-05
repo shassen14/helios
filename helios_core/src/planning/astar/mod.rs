@@ -536,7 +536,10 @@ mod tests {
         let map = clear_map(10, 10, 1.0);
 
         // Seed last_plan_time = 0.0.
-        planner.plan(0.0, &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5))));
+        planner.plan(
+            0.0,
+            &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5))),
+        );
 
         assert!(!planner.should_replan(
             0.5,
@@ -558,7 +561,10 @@ mod tests {
         let mut planner = AStarPlanner::new(config);
 
         // Compute path at t=0.
-        planner.plan(0.0, &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5))));
+        planner.plan(
+            0.0,
+            &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5))),
+        );
 
         // Robot on the path — no replan.
         assert!(!planner.should_replan(

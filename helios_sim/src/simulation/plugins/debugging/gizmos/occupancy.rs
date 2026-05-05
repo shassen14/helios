@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use bevy::prelude::*;
-use helios_core::mapping::MapData;
 use crate::simulation::core::components::GroundTruthState;
 use crate::simulation::plugins::autonomy::MapperComponent;
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
+use bevy::prelude::*;
+use helios_core::mapping::MapData;
 
 /// Render radius around each agent. Only cells within this many metres of
 /// the agent's ground-truth position are drawn.

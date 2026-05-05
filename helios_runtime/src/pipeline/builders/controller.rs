@@ -43,7 +43,7 @@ impl ControlInputBuilder for DefaultControlInputBuilder {
         &self,
         bus: &PortBus,
         _runtime: &dyn AgentRuntime,
-        tick: &TickContext,
+        _tick: &TickContext,
     ) -> Option<ControlInputs> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;
 

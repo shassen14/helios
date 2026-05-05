@@ -124,9 +124,13 @@ impl StateEstimator for UnscentedKalmanFilter {
         self.propagated_buf.fill(0.0);
         for i in 0..(2 * n + 1) {
             let point = self.sigma_buf.column(i).into_owned();
-            let propagated =
-                self.dynamics_model
-                    .propagate(&point, &inputs.control, self.state.state.timestamp, dt, &RK4);
+            let propagated = self.dynamics_model.propagate(
+                &point,
+                &inputs.control,
+                self.state.state.timestamp,
+                dt,
+                &RK4,
+            );
             self.propagated_buf.column_mut(i).copy_from(&propagated);
         }
 

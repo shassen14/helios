@@ -170,7 +170,7 @@ fn bench_ekf(c: &mut Criterion) {
     let u = DVector::zeros(0);
     let tf = IdentityTf;
     let ctx_with_tf = FilterContext { tf: Some(&tf) };
-    let inputs = EstimatorInputs{ control: u};
+    let inputs = EstimatorInputs { control: u };
     let msg = gps_message(1.0, 0.0);
 
     let mut group = c.benchmark_group("ekf");
@@ -192,7 +192,7 @@ fn bench_ukf(c: &mut Criterion) {
     let u = DVector::zeros(0);
     let tf = IdentityTf;
     let ctx_with_tf = FilterContext { tf: Some(&tf) };
-    let inputs = EstimatorInputs{ control: u};
+    let inputs = EstimatorInputs { control: u };
     let msg = gps_message(1.0, 0.0);
 
     let mut group = c.benchmark_group("ukf");

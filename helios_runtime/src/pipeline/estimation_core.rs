@@ -37,7 +37,12 @@ impl EstimationCore {
         if let Some(estimator) = &mut self.estimator {
             let dt = msg.timestamp - estimator.get_state().state.timestamp;
             if dt > 1e-9 {
-                estimator.predict(dt, &EstimatorInputs { control: self.last_u.clone() });
+                estimator.predict(
+                    dt,
+                    &EstimatorInputs {
+                        control: self.last_u.clone(),
+                    },
+                );
             }
             let dynamics = estimator.get_dynamics_model();
             if let Some(new_u) = dynamics.get_control_from_measurement(&msg.data) {

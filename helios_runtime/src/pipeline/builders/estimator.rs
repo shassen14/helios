@@ -50,8 +50,10 @@ impl EstimatorInputBuilder for IntegratedImuInputBuilder {
         _runtime: &dyn AgentRuntime,
         _tick: &TickContext,
     ) -> Option<EstimatorInputs> {
-        let accel_stamped = bus.read::<Vec<SensorReading<LinearAcceleration3D>>>(self.accel_channel.clone())?;
-        let gyro_stamped = bus.read::<Vec<SensorReading<AngularVelocity3D>>>(self.gyro_channel.clone())?;
+        let accel_stamped =
+            bus.read::<Vec<SensorReading<LinearAcceleration3D>>>(self.accel_channel.clone())?;
+        let gyro_stamped =
+            bus.read::<Vec<SensorReading<AngularVelocity3D>>>(self.gyro_channel.clone())?;
 
         let accel = accel_stamped.value.last()?;
         let gyro = gyro_stamped.value.last()?;

@@ -89,8 +89,7 @@ fn gt_inject_nontrivial_rotation() {
 
 #[test]
 fn static_map_grid_dimensions() {
-    let provider =
-        StaticMapProvider::from_fixture(10.0, 20.0, 1.0, Isometry3::identity(), "local");
+    let provider = StaticMapProvider::from_fixture(10.0, 20.0, 1.0, Isometry3::identity(), "local");
     match provider.get_map("local").unwrap() {
         MapData::OccupancyGrid2D { data, .. } => {
             assert_eq!(data.ncols(), 10, "cols = width / resolution");

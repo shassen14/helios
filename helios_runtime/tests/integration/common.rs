@@ -8,13 +8,14 @@ use nalgebra::{DMatrix, DVector, Isometry3};
 use helios_core::{
     control::{ControlInputs, ControlOutput, Controller},
     estimation::{EstimatorInputs, FilterContext, StateEstimator},
-    frames::{FrameAwareState, FrameId, RobotState, StateVariable},
+    frames::{FrameAwareState, FrameId, StateVariable},
     mapping::{MapData, Mapper},
     messages::{MeasurementData, MeasurementMessage, ModuleInput},
     models::estimation::dynamics::EstimationDynamics,
     path_following::{PathFollower, PathFollowerInputs, PathFollowerResult},
     planning::{
-        Planner, PlannerInputs, types::{Path, PlannerGoal, PlannerResult, PlannerStatus}
+        types::{Path, PlannerGoal, PlannerResult, PlannerStatus},
+        Planner, PlannerInputs,
     },
     tracking::{Track, Tracker},
     types::{Control, FrameHandle, MonotonicTime, State, TrajectoryPoint},
