@@ -8,14 +8,13 @@ use nalgebra::{DMatrix, DVector, Isometry3};
 use helios_core::{
     control::{ControlInputs, ControlOutput, Controller},
     estimation::{EstimatorInputs, FilterContext, StateEstimator},
-    frames::{FrameAwareState, FrameId, StateVariable},
+    frames::{FrameAwareState, FrameId, RobotState, StateVariable},
     mapping::{MapData, Mapper},
     messages::{MeasurementData, MeasurementMessage, ModuleInput},
     models::estimation::dynamics::EstimationDynamics,
-    path_following::{PathFollower, PathFollowerResult},
+    path_following::{PathFollower, PathFollowerInputs, PathFollowerResult},
     planning::{
-        types::{Path, PlannerGoal, PlannerResult, PlannerStatus},
-        Planner, PlannerInputs,
+        Planner, PlannerInputs, types::{Path, PlannerGoal, PlannerResult, PlannerStatus}
     },
     tracking::{Track, Tracker},
     types::{Control, FrameHandle, MonotonicTime, State, TrajectoryPoint},
@@ -240,16 +239,15 @@ impl MockPathFollower {
 }
 
 impl PathFollower for MockPathFollower {
-    fn compute(&mut self, state: &FrameAwareState, _dt: f64) -> PathFollowerResult {
+    fn compute(&mut self, _dt: f64, inputs: &PathFollowerInputs) -> PathFollowerResult {
         let Some(_path) = &self.path else {
             return PathFollowerResult::NoPath;
         };
-        let layout = vec![StateVariable::Vx(FrameId::World)];
-        let ref_state = FrameAwareState::new(layout, 0.0, state.state.timestamp);
+        let ref_state = inputs.state.clone();
         PathFollowerResult::Active(TrajectoryPoint {
-            state: ref_state.state,
+            state: ref_state.clone(),
             state_dot: None,
-            time: state.state.timestamp,
+            time: ref_state.timestamp.clone(),
         })
     }
 
