@@ -10,9 +10,9 @@
 
 use nalgebra::Vector2;
 
-use super::{PathFollower, PathFollowerResult};
+use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::siso_pid::SisoPid;
-use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::frames::{FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
 use crate::types::{FrameHandle, TrajectoryPoint};
 
@@ -77,7 +77,9 @@ fn normalize_angle(a: f64) -> f64 {
 }
 
 impl PathFollower for SteeringPidPathFollower {
-    fn compute(&mut self, state: &FrameAwareState, dt: f64) -> PathFollowerResult {
+    fn compute(&mut self, dt: f64, inputs: &PathFollowerInputs) -> PathFollowerResult {
+        let state = &inputs.state;
+
         if self.path.is_none() {
             return PathFollowerResult::NoPath;
         }
@@ -120,14 +122,14 @@ impl PathFollower for SteeringPidPathFollower {
             StateVariable::Vx(body_id.clone()),
             StateVariable::Wz(body_id.clone()),
         ];
-        let mut ref_state = FrameAwareState::new(layout, 0.0, state.state.timestamp);
-        ref_state.state.vector[0] = self.cruise_speed;
-        ref_state.state.vector[1] = wz;
+        let mut ref_state = RobotState::new(layout, state.timestamp);
+        ref_state.vector[0] = self.cruise_speed;
+        ref_state.vector[1] = wz;
 
         PathFollowerResult::Active(TrajectoryPoint {
-            state: ref_state.state,
+            state: ref_state,
             state_dot: None,
-            time: state.state.timestamp,
+            time: state.timestamp,
         })
     }
 

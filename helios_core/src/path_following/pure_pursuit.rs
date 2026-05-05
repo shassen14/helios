@@ -1,8 +1,6 @@
-use super::{PathFollower, PathFollowerResult};
-use crate::prelude::FrameAwareState;
-use crate::prelude::FrameId;
+use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
+use crate::frames::{FrameId, RobotState, StateVariable};
 use crate::prelude::Path;
-use crate::prelude::StateVariable;
 use crate::types::FrameHandle;
 use crate::types::TrajectoryPoint;
 use nalgebra::{DVector, Vector2};
@@ -44,7 +42,7 @@ impl PurePursuitPathFollower {
         }
     }
 
-    fn calculate_lookahead_index(&mut self, state: &FrameAwareState, lookahead_distance: f64) {
+    fn calculate_lookahead_index(&mut self, state: &RobotState, lookahead_distance: f64) {
         let Some(path) = &self.path else {
             return;
         };
@@ -78,7 +76,9 @@ impl PurePursuitPathFollower {
 }
 
 impl PathFollower for PurePursuitPathFollower {
-    fn compute(&mut self, state: &FrameAwareState, _dt: f64) -> PathFollowerResult {
+    fn compute(&mut self, _dt: f64, inputs: &PathFollowerInputs) -> PathFollowerResult {
+        let state = &inputs.state;
+
         let lookahead_distance: f64 = match self.lookahead_time {
             Some(t) => {
                 let speed = state
@@ -149,14 +149,14 @@ impl PathFollower for PurePursuitPathFollower {
             StateVariable::Wz(body_handle.clone()),
         ];
 
-        let mut state_desired = FrameAwareState::new(layout, 0.0f64, state.state.timestamp);
-        state_desired.state.vector[0] = forward_velocity_desired;
-        state_desired.state.vector[1] = angular_velocity_desired;
+        let mut state_desired = RobotState::new(layout, state.timestamp);
+        state_desired.vector[0] = forward_velocity_desired;
+        state_desired.vector[1] = angular_velocity_desired;
 
         let point_desired = TrajectoryPoint {
-            state: state_desired.state,
+            state: state_desired,
             state_dot: Some(DVector::from_vec(vec![0.0, curvature])),
-            time: state.state.timestamp,
+            time: state.timestamp,
         };
 
         PathFollowerResult::Active(point_desired)

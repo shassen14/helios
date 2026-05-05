@@ -26,7 +26,7 @@ pub use crate::planning::PlannerInputs;
 pub use crate::tracking::{Track, Tracker};
 
 // Path Following
-pub use crate::path_following::{PathFollower, PathFollowerResult};
+pub use crate::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
 
 // --- Concrete Model Implementations (Export common ones for convenience) ---
 pub use crate::models::estimation::measurement::{accelerometer, gps, gyroscope, magnetometer};

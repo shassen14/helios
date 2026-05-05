@@ -1,6 +1,6 @@
 use helios_core::frames::FrameAwareState;
 use helios_core::planning::types::Path;
-use helios_core::prelude::{PathFollower, PathFollowerResult};
+use helios_core::prelude::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use helios_core::types::TrajectoryPoint;
 
 pub struct PathFollowingCore {
@@ -30,7 +30,10 @@ impl PathFollowingCore {
     }
 
     pub fn step(&mut self, state: &FrameAwareState, dt: f64) -> Option<TrajectoryPoint> {
-        let result = self.path_follower.compute(state, dt);
+        let inputs = PathFollowerInputs {
+            state: state.state.clone(),
+        };
+        let result = self.path_follower.compute(dt, &inputs);
 
         match result {
             PathFollowerResult::NoPath => None,
