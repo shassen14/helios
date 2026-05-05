@@ -6,17 +6,16 @@ use std::any::Any;
 use nalgebra::{DMatrix, DVector, Isometry3};
 
 use helios_core::{
-    control::{ControlContext, ControlOutput, Controller},
-    estimation::{FilterContext, StateEstimator},
+    control::{ControlInputs, ControlOutput, Controller},
+    estimation::{EstimatorInputs, FilterContext, StateEstimator},
     frames::{FrameAwareState, FrameId, StateVariable},
     mapping::{MapData, Mapper},
     messages::{MeasurementData, MeasurementMessage, ModuleInput},
     models::estimation::dynamics::EstimationDynamics,
-    path_following::{PathFollower, PathFollowerResult},
+    path_following::{PathFollower, PathFollowerInputs, PathFollowerResult},
     planning::{
-        context::PlannerContext,
         types::{Path, PlannerGoal, PlannerResult, PlannerStatus},
-        Planner,
+        GeometricPlanner, GeometricPlannerInputs,
     },
     tracking::{Track, Tracker},
     types::{Control, FrameHandle, MonotonicTime, State, TrajectoryPoint},
@@ -107,10 +106,10 @@ impl MockEstimator {
 }
 
 impl StateEstimator for MockEstimator {
-    fn predict(&mut self, _dt: f64, _u: &Control, _context: &FilterContext) {}
+    fn predict(&mut self, _dt: f64, _inputs: &EstimatorInputs) {}
 
     fn update(&mut self, message: &MeasurementMessage, _context: &FilterContext) {
-        self.state.last_update_timestamp = message.timestamp;
+        self.state.state.timestamp = message.timestamp;
     }
 
     fn get_state(&self) -> &FrameAwareState {
@@ -194,21 +193,12 @@ impl MockPlanner {
     }
 }
 
-impl Planner for MockPlanner {
-    fn set_goal(&mut self, goal: PlannerGoal) {
-        self.goal = Some(goal);
-    }
-
-    fn plan(
-        &mut self,
-        _state: &FrameAwareState,
-        _map: &MapData,
-        _ctx: &PlannerContext,
-    ) -> PlannerResult {
+impl GeometricPlanner for MockPlanner {
+    fn plan(&mut self, _now: f64, _inputs: &GeometricPlannerInputs) -> PlannerResult {
         PlannerResult::NoGoal
     }
 
-    fn should_replan(&self, _state: &FrameAwareState, _ctx: &PlannerContext) -> bool {
+    fn should_replan(&self, _now: f64, _inputs: &GeometricPlannerInputs) -> bool {
         false
     }
 
@@ -228,12 +218,7 @@ impl Planner for MockPlanner {
 pub struct MockController;
 
 impl Controller for MockController {
-    fn compute(
-        &mut self,
-        _state: &FrameAwareState,
-        _dt: f64,
-        _ctx: &ControlContext,
-    ) -> ControlOutput {
+    fn compute(&mut self, _dt: f64, _inputs: &ControlInputs) -> ControlOutput {
         ControlOutput::Raw(DVector::zeros(2))
     }
 
@@ -255,16 +240,15 @@ impl MockPathFollower {
 }
 
 impl PathFollower for MockPathFollower {
-    fn compute(&mut self, state: &FrameAwareState, _dt: f64) -> PathFollowerResult {
+    fn compute(&mut self, _dt: f64, inputs: &PathFollowerInputs) -> PathFollowerResult {
         let Some(_path) = &self.path else {
             return PathFollowerResult::NoPath;
         };
-        let layout = vec![StateVariable::Vx(FrameId::World)];
-        let ref_state = FrameAwareState::new(layout, 0.0, state.last_update_timestamp);
+        let ref_state = inputs.state.clone();
         PathFollowerResult::Active(TrajectoryPoint {
-            state: ref_state,
+            state: ref_state.clone(),
             state_dot: None,
-            time: state.last_update_timestamp,
+            time: ref_state.timestamp.clone(),
         })
     }
 
@@ -309,8 +293,8 @@ pub fn make_world_state(px: f64, py: f64) -> FrameAwareState {
     ];
     // FrameAwareState::new initializes Qw to 1.0 (identity quaternion).
     let mut state = FrameAwareState::new(layout, 1e-6, 0.0);
-    state.vector[0] = px;
-    state.vector[1] = py;
+    state.state.vector[0] = px;
+    state.state.vector[1] = py;
     state
 }
 
@@ -326,10 +310,10 @@ pub fn make_path(level_key: &str, waypoints: &[[f64; 2]]) -> Path {
             .iter()
             .map(|&[x, y]| {
                 let mut state = FrameAwareState::new(layout.clone(), 1e-6, 0.0);
-                state.vector[0] = x;
-                state.vector[1] = y;
+                state.state.vector[0] = x;
+                state.state.vector[1] = y;
                 TrajectoryPoint {
-                    state,
+                    state: state.state,
                     state_dot: None,
                     time: 0.0,
                 }

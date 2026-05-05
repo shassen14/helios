@@ -1,6 +1,6 @@
 // helios_core/src/types.rs
 
-use crate::frames::FrameAwareState;
+use crate::frames::RobotState;
 use nalgebra::{DVector, Isometry3};
 use serde::{Deserialize, Serialize};
 
@@ -53,7 +53,7 @@ pub trait TfProvider {
 /// to pure feedback and log a diagnostic when `state_dot` is absent.
 #[derive(Clone)]
 pub struct TrajectoryPoint {
-    pub state: FrameAwareState,
+    pub state: RobotState,
     /// x_dot_ref = f(x_ref, u_nominal, t). None = feedforward unavailable.
     pub state_dot: Option<DVector<f64>>,
     pub time: f64,

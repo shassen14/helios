@@ -39,7 +39,7 @@ pub fn load_catalog_from_disk(mut catalog: ResMut<PrefabCatalog>, cli: Res<Cli>)
         .into_iter()
         .filter_map(Result::ok)
         .filter(|e| {
-            !e.file_type().is_dir() && e.path().extension().map_or(false, |ext| ext == "toml")
+            !e.file_type().is_dir() && e.path().extension().is_some_and(|ext| ext == "toml")
         })
     {
         let path = entry.path();

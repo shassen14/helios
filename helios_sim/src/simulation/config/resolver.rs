@@ -69,14 +69,14 @@ fn resolve_value_recursively(value: &Value, catalog: &PrefabCatalog) -> Result<V
                 }
                 new_dict.insert(key.clone(), resolve_value_recursively(val, catalog)?);
             }
-            Ok(Value::Dict(tag.clone(), new_dict))
+            Ok(Value::Dict(*tag, new_dict))
         }
         Value::Array(tag, arr) => {
             let mut resolved_arr = Vec::new();
             for item in arr {
                 resolved_arr.push(resolve_value_recursively(item, catalog)?);
             }
-            Ok(Value::Array(tag.clone(), resolved_arr))
+            Ok(Value::Array(*tag, resolved_arr))
         }
         _ => Ok(current_node),
     }

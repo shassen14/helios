@@ -37,10 +37,8 @@ goal_pose     = { translation = [10.0, 0.0, 0.5] }
 
 # Real EKF estimator (sensors provide measurements).
 # Path is provided by MockPathInjectorPlugin (no planner needed).
-[agents.autonomy_stack.world_model]
-type      = "Separate"
-estimator = { from = "components.estimators.ekf_pro" }
-mapper    = { from = "components.mappers.none" }
+[agents.autonomy_stack.estimator]
+from = "components.estimators.ekf_pro"
 
 [agents.autonomy_stack.controllers]
 path_follower = { from = "components.controllers.pid_path_follower" }

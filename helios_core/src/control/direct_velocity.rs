@@ -6,8 +6,8 @@
 
 use nalgebra::Vector3;
 
-use super::{ControlContext, ControlOutput, Controller};
-use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use super::{ControlInputs, ControlOutput, Controller};
+use crate::frames::{FrameId, StateVariable};
 
 pub struct DirectVelocityController;
 
@@ -24,18 +24,13 @@ impl Default for DirectVelocityController {
 }
 
 impl Controller for DirectVelocityController {
-    fn compute(
-        &mut self,
-        _state: &FrameAwareState,
-        _dt: f64,
-        ctx: &ControlContext,
-    ) -> ControlOutput {
+    fn compute(&mut self, _dt: f64, inputs: &ControlInputs) -> ControlOutput {
         let zero = ControlOutput::BodyVelocity {
             linear: Vector3::zeros(),
             angular: Vector3::zeros(),
         };
 
-        let Some(reference) = ctx.reference else {
+        let Some(reference) = &inputs.reference else {
             return zero;
         };
 

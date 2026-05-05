@@ -14,12 +14,10 @@ pub mod mappers;
 pub mod path_followers;
 pub mod planners;
 pub mod plugin;
-pub mod slam;
 
 pub use contexts::{
     AdapterBuildContext, ControllerBuildContext, DynamicsBuildContext, DynamicsFactory,
     EstimatorBuildContext, MapperBuildContext, PathFollowerBuildContext, PlannerBuildContext,
-    SlamBuildContext,
 };
 
 use std::collections::{HashMap, HashSet};
@@ -29,14 +27,14 @@ use bevy::prelude::Resource;
 use helios_core::{
     control::Controller, estimation::StateEstimator, mapping::Mapper,
     models::estimation::dynamics::EstimationDynamics, path_following::PathFollower,
-    planning::Planner, slam::SlamSystem,
+    planning::GeometricPlanner,
 };
 use helios_runtime::validation::CapabilitySet;
 
 use crate::simulation::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
 use contexts::{
     AdapterFactory, ControllerFactory, EstimatorFactory, MapperFactory, PathFollowerFactory,
-    PlannerFactory, SlamFactory,
+    PlannerFactory,
 };
 
 /// Central registry mapping algorithm keys to factory closures.
@@ -50,7 +48,6 @@ pub struct AutonomyRegistry {
     pub estimators: HashMap<String, EstimatorFactory>,
     pub dynamics: HashMap<String, DynamicsFactory>,
     pub mappers: HashMap<String, MapperFactory>,
-    pub slam: HashMap<String, SlamFactory>,
     pub controllers: HashMap<String, ControllerFactory>,
     pub planners: HashMap<String, PlannerFactory>,
     pub adapters: HashMap<String, AdapterFactory>,
@@ -88,14 +85,6 @@ impl AutonomyRegistry {
         self
     }
 
-    pub fn register_slam<F>(&mut self, key: &str, factory: F) -> &mut Self
-    where
-        F: Fn(SlamBuildContext) -> Result<Box<dyn SlamSystem>, String> + Send + Sync + 'static,
-    {
-        self.slam.insert(key.to_string(), Arc::new(factory));
-        self
-    }
-
     pub fn register_controller<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
         F: Fn(ControllerBuildContext) -> Result<Box<dyn Controller>, String>
@@ -109,7 +98,10 @@ impl AutonomyRegistry {
 
     pub fn register_planner<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
-        F: Fn(PlannerBuildContext) -> Result<Box<dyn Planner>, String> + Send + Sync + 'static,
+        F: Fn(PlannerBuildContext) -> Result<Box<dyn GeometricPlanner>, String>
+            + Send
+            + Sync
+            + 'static,
     {
         self.planners.insert(key.to_string(), Arc::new(factory));
         self
@@ -171,17 +163,6 @@ impl AutonomyRegistry {
             .and_then(|f| f(ctx))
     }
 
-    pub fn build_slam(
-        &self,
-        key: &str,
-        ctx: SlamBuildContext,
-    ) -> Result<Box<dyn SlamSystem>, String> {
-        self.slam
-            .get(key)
-            .ok_or_else(|| format!("No SLAM system registered for '{key}'."))
-            .and_then(|f| f(ctx))
-    }
-
     pub fn build_controller(
         &self,
         key: &str,
@@ -197,7 +178,7 @@ impl AutonomyRegistry {
         &self,
         key: &str,
         ctx: PlannerBuildContext,
-    ) -> Result<Box<dyn Planner>, String> {
+    ) -> Result<Box<dyn GeometricPlanner>, String> {
         self.planners
             .get(key)
             .ok_or_else(|| format!("No planner registered for '{key}'."))
@@ -232,7 +213,6 @@ impl AutonomyRegistry {
             estimators: self.estimators.keys().cloned().collect::<HashSet<_>>(),
             dynamics: self.dynamics.keys().cloned().collect::<HashSet<_>>(),
             mappers: self.mappers.keys().cloned().collect::<HashSet<_>>(),
-            slam: self.slam.keys().cloned().collect::<HashSet<_>>(),
             controllers: self.controllers.keys().cloned().collect::<HashSet<_>>(),
             planners: self.planners.keys().cloned().collect::<HashSet<_>>(),
         }

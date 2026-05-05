@@ -5,18 +5,18 @@
 use std::collections::HashMap;
 
 use helios_core::{
-    control::{ControlContext, ControlOutput},
+    control::{ControlInputs, ControlOutput},
     frames::FrameAwareState,
     mapping::MapData,
     planning::{
-        context::PlannerContext,
         types::{Path, PlannerGoal},
+        GeometricPlannerInputs,
     },
     types::TrajectoryPoint,
 };
 
 use crate::{
-    runtime::{AgentRuntime, TfProviderAdapter},
+    runtime::AgentRuntime,
     stage::{LeveledController, LeveledPlanner, PipelineLevel},
 };
 
@@ -24,14 +24,13 @@ use crate::{
 pub struct ControlCore {
     pub planners: Vec<LeveledPlanner>,
     pub controllers: Vec<LeveledController>,
+    /// Current navigation goal, passed to planners each tick via `GeometricPlannerInputs`.
+    pub current_goal: Option<PlannerGoal>,
 }
-
 impl ControlCore {
-    /// Set a navigation goal on all planners and trigger an immediate replan.
+    /// Set (or replace) the navigation goal. Planners will receive it on the next `step_planners` call.
     pub fn set_goal(&mut self, goal: PlannerGoal) {
-        for lp in &mut self.planners {
-            lp.planner.set_goal(goal.clone());
-        }
+        self.current_goal = Some(goal);
     }
 
     /// Run all planners in level order.
@@ -42,14 +41,7 @@ impl ControlCore {
         state: &FrameAwareState,
         maps: &HashMap<PipelineLevel, &MapData>,
         now: f64,
-        runtime: &dyn AgentRuntime,
     ) -> Vec<(PipelineLevel, Path)> {
-        let adapter = TfProviderAdapter(runtime);
-        let ctx = PlannerContext {
-            tf: Some(&adapter),
-            now,
-        };
-
         let mut new_paths: Vec<(PipelineLevel, Path)> = vec![];
 
         for lp in &mut self.planners {
@@ -58,8 +50,14 @@ impl ControlCore {
                 None => continue,
             };
 
+            let inputs = GeometricPlannerInputs {
+                state: state.state.clone(),
+                map: map.clone(),
+                goal: self.current_goal.clone(),
+            };
+
             use helios_core::planning::types::PlannerResult;
-            match lp.planner.plan(state, map, &ctx) {
+            match lp.planner.plan(now, &inputs) {
                 PlannerResult::Path(path) | PlannerResult::GoalOutsideMap(path) => {
                     new_paths.push((lp.level.clone(), path));
                 }
@@ -87,15 +85,14 @@ impl ControlCore {
         state: &FrameAwareState,
         reference_waypoint: Option<&TrajectoryPoint>,
         dt: f64,
-        runtime: &dyn AgentRuntime,
+        _runtime: &dyn AgentRuntime,
     ) -> Option<ControlOutput> {
-        let adapter = TfProviderAdapter(runtime);
-        let ctx = ControlContext {
-            tf: Some(&adapter),
-            reference: reference_waypoint,
+        let inputs = ControlInputs {
+            state: state.clone(),
+            reference: reference_waypoint.cloned(),
         };
         self.controllers
             .first_mut()
-            .map(|lc| lc.controller.compute(state, dt, &ctx))
+            .map(|lc| lc.controller.compute(dt, &inputs))
     }
 }

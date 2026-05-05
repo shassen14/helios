@@ -76,10 +76,8 @@ fn inject_mock_path(
     let path = build_path(&fixture, &level);
     let path_len = path.len();
 
-    for pf_opt in &mut query {
-        if let Some(mut pf) = pf_opt {
-            pf.0.set_path(path.clone());
-        }
+    for mut pf in (&mut query).into_iter().flatten() {
+        pf.0.set_path(path.clone());
     }
 
     info!(
@@ -109,17 +107,17 @@ fn build_path(fixture: &PathFixture, level: &PipelineLevel) -> Path {
                 StateVariable::Qw(FrameId::World, FrameId::World),
             ];
             let mut state = FrameAwareState::new(layout, 1e-6, 0.0);
-            state.vector[0] = wp.position[0];
-            state.vector[1] = wp.position[1];
-            state.vector[2] = wp.position[2];
+            state.state.vector[0] = wp.position[0];
+            state.state.vector[1] = wp.position[1];
+            state.state.vector[2] = wp.position[2];
             // Build orientation from yaw.
             let half_yaw = wp.yaw_deg.to_radians() * 0.5;
-            state.vector[3] = 0.0; // Qx
-            state.vector[4] = 0.0; // Qy
-            state.vector[5] = half_yaw.sin(); // Qz
-            state.vector[6] = half_yaw.cos(); // Qw
+            state.state.vector[3] = 0.0; // Qx
+            state.state.vector[4] = 0.0; // Qy
+            state.state.vector[5] = half_yaw.sin(); // Qz
+            state.state.vector[6] = half_yaw.cos(); // Qw
             TrajectoryPoint {
-                state,
+                state: state.state,
                 state_dot: None,
                 time: i as f64,
             }

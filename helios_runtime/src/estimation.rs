@@ -4,7 +4,7 @@
 //! simulation mock injection ([`GroundTruthPassthrough`]). Hardware code paths only ever
 //! instantiate `EstimationCore`; `GroundTruthPassthrough` is simulation-only.
 
-use helios_core::{frames::FrameAwareState, mapping::MapData, messages::MeasurementMessage};
+use helios_core::{frames::FrameAwareState, messages::MeasurementMessage};
 use nalgebra::{Isometry3, Vector3};
 
 use crate::runtime::AgentRuntime;
@@ -31,11 +31,6 @@ pub trait EstimationDriver: Send + Sync {
     /// Returns `None` before the first measurement has been processed, or when
     /// ground truth has not yet been injected into a `GroundTruthPassthrough`.
     fn get_state(&self) -> Option<&FrameAwareState>;
-
-    /// Returns the SLAM global map if a SLAM system is active. Default: `None`.
-    fn get_slam_map(&self) -> Option<&MapData> {
-        None
-    }
 
     /// Injects a physics ground-truth pose and velocity as the current state estimate.
     ///

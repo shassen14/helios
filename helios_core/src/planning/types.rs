@@ -30,7 +30,7 @@ impl Path {
 }
 
 /// The goal a planner should drive toward.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum PlannerGoal {
     /// Full 6-DOF pose in ENU world frame.
     WorldPose(Isometry3<f64>),

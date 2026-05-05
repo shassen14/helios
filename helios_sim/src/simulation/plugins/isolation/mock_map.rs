@@ -12,7 +12,6 @@ use crate::prelude::AppState;
 use crate::simulation::config::ScenarioConfig;
 use crate::simulation::plugins::autonomy::MapperComponent;
 use helios_runtime::mapping::StaticMapProvider;
-use helios_runtime::stage::PipelineLevel;
 
 pub struct MockMapInjectorPlugin;
 
@@ -63,7 +62,7 @@ fn inject_mock_map(
         fixture.height_m,
         fixture.resolution_m,
         origin,
-        PipelineLevel::Local,
+        "local",
     );
 
     for entity in &query {

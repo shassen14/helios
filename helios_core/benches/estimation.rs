@@ -6,7 +6,7 @@ use nalgebra::{DMatrix, DVector, Isometry3, Vector3};
 
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
-use helios_core::estimation::{FilterContext, StateEstimator};
+use helios_core::estimation::{EstimatorInputs, FilterContext, StateEstimator};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::messages::{MeasurementData, MeasurementMessage};
 use helios_core::models::estimation::measurement::Measurement;
@@ -91,7 +91,10 @@ impl Measurement for Position2DMeasurement {
         if !matches!(&message.data, MeasurementData::GpsPosition(_)) {
             return None;
         }
-        Some(DVector::from_row_slice(&[state.vector[0], state.vector[1]]))
+        Some(DVector::from_row_slice(&[
+            state.state.vector[0],
+            state.state.vector[1],
+        ]))
     }
 
     fn calculate_jacobian(&self, state: &FrameAwareState, _tf: &dyn TfProvider) -> DMatrix<f64> {
@@ -121,7 +124,7 @@ fn make_state() -> FrameAwareState {
         StateVariable::Vy(FrameId::World),
     ];
     let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-    state.vector[2] = 1.0; // vx = 1.0 m/s
+    state.state.vector[2] = 1.0; // vx = 1.0 m/s
     state
 }
 
@@ -167,14 +170,14 @@ fn bench_ekf(c: &mut Criterion) {
     let u = DVector::zeros(0);
     let tf = IdentityTf;
     let ctx_with_tf = FilterContext { tf: Some(&tf) };
-    let ctx_no_tf = FilterContext::default();
+    let inputs = EstimatorInputs { control: u };
     let msg = gps_message(1.0, 0.0);
 
     let mut group = c.benchmark_group("ekf");
 
     group.bench_function("predict", |b| {
         let mut ekf = make_ekf();
-        b.iter(|| ekf.predict(0.1, &u, &ctx_no_tf));
+        b.iter(|| ekf.predict(0.1, &inputs));
     });
 
     group.bench_function("update", |b| {
@@ -189,14 +192,14 @@ fn bench_ukf(c: &mut Criterion) {
     let u = DVector::zeros(0);
     let tf = IdentityTf;
     let ctx_with_tf = FilterContext { tf: Some(&tf) };
-    let ctx_no_tf = FilterContext::default();
+    let inputs = EstimatorInputs { control: u };
     let msg = gps_message(1.0, 0.0);
 
     let mut group = c.benchmark_group("ukf");
 
     group.bench_function("predict", |b| {
         let mut ukf = make_ukf();
-        b.iter(|| ukf.predict(0.1, &u, &ctx_no_tf));
+        b.iter(|| ukf.predict(0.1, &inputs));
     });
 
     group.bench_function("update", |b| {

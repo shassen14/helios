@@ -29,11 +29,13 @@ starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose     = { translation = [10.0, 0.0, 0.5] }
 
 # Ground-truth estimator is injected by MockGroundTruthEstimatorPlugin.
-# Enable occupancy grid mapper driven by lidar.
-[agents.autonomy_stack.world_model]
-type      = "Separate"
-estimator = { from = "components.estimators.ekf_pro" }
-mapper    = { from = "components.mappers.occupancy_grid_2d" }
+[agents.autonomy_stack.estimator]
+from = "components.estimators.ekf_pro"
+
+# Enable occupancy grid mapper as the "local" layer, driven by lidar.
+
+[agents.autonomy_stack.map_layers.local]
+from = "components.mappers.occupancy_grid_2d"
 
 # Add lidar for the mapper to consume.
 [agents.sensors.lidar]

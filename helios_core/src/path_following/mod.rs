@@ -23,8 +23,14 @@
 pub mod pure_pursuit;
 pub mod steering_pid;
 
+use crate::frames::RobotState;
 use crate::planning::types::Path;
-use crate::{frames::FrameAwareState, types::TrajectoryPoint};
+use crate::types::TrajectoryPoint;
+
+/// Bus-sourced inputs for one [`PathFollower::compute`] call.
+pub struct PathFollowerInputs {
+    pub state: RobotState,
+}
 
 /// The outcome of one [`PathFollower::compute`] call.
 pub enum PathFollowerResult {
@@ -61,10 +67,11 @@ pub enum PathFollowerResult {
 pub trait PathFollower: Send + Sync {
     /// Advance the internal cursor and return a reference for this tick.
     ///
-    /// Called at controller rate. The follower decides internally whether to
-    /// step the cursor forward based on proximity, signed distance, or elapsed
-    /// time — the caller does not control advancement.
-    fn compute(&mut self, state: &FrameAwareState, dt: f64) -> PathFollowerResult;
+    /// Called at controller rate. `inputs` carries bus-sourced data; `dt` is
+    /// the tick timestep from the pipeline clock. The follower decides
+    /// internally whether to step the cursor forward based on proximity,
+    /// signed distance, or elapsed time — the caller does not control advancement.
+    fn compute(&mut self, dt: f64, inputs: &PathFollowerInputs) -> PathFollowerResult;
 
     /// Replace the active path and reset all internal progress state.
     ///

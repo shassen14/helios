@@ -6,11 +6,9 @@
 
 use nalgebra::DVector;
 
-use crate::frames::FrameAwareState;
-
 use crate::models::controls::ControlDynamics;
 
-use super::{siso_pid::SisoPid, ControlContext, ControlOutput, Controller};
+use super::{siso_pid::SisoPid, ControlInputs, ControlOutput, Controller};
 
 /// Feedforward + feedback controller.
 ///
@@ -65,11 +63,11 @@ impl FeedforwardPidController {
 }
 
 impl Controller for FeedforwardPidController {
-    fn compute(&mut self, state: &FrameAwareState, dt: f64, ctx: &ControlContext) -> ControlOutput {
+    fn compute(&mut self, dt: f64, inputs: &ControlInputs) -> ControlOutput {
         let m = self.dynamics.get_control_dim();
 
         // --- Feedforward ---
-        let u_ff = if let Some(ref_pt) = ctx.reference {
+        let u_ff = if let Some(ref_pt) = &inputs.reference {
             if let Some(x_dot_ref) = &ref_pt.state_dot {
                 // Single Newton step to invert f(x_ref, u_ff) = x_dot_ref.
                 // u_ff ≈ B_pinv * (x_dot_ref - A * x_ref) where A, B come from calculate_jacobian.
@@ -99,9 +97,16 @@ impl Controller for FeedforwardPidController {
         let mut u_fb = DVector::zeros(m);
         for (i, pid) in self.pids.iter_mut().enumerate() {
             let state_idx = self.controlled_indices.get(i).copied().unwrap_or(i);
-            let x_cur = state.vector.get(state_idx).copied().unwrap_or(0.0);
-            let x_ref = ctx
+            let x_cur = inputs
+                .state
+                .state
+                .vector
+                .get(state_idx)
+                .copied()
+                .unwrap_or(0.0);
+            let x_ref = inputs
                 .reference
+                .as_ref()
                 .and_then(|r| r.state.vector.get(state_idx).copied())
                 .unwrap_or(0.0);
             u_fb[i] = pid.update(x_ref - x_cur, dt);

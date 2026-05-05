@@ -5,8 +5,7 @@ use std::collections::HashMap;
 use helios_runtime::{
     config::{
         AutonomyStack, ControllerConfig, EkfConfig, EkfDynamicsConfig, EstimatorConfig,
-        ImuProcessNoiseConfig, MapperConfig, MapperPoseSourceConfig, PlannerConfig,
-        WorldModelConfig,
+        GeometricPlannerConfig, ImuProcessNoiseConfig, MapLayerConfig, MapperPoseSourceConfig,
     },
     stage::PipelineLevel,
     validation::{validate_autonomy_config, CapabilitySet, ValidationError},
@@ -21,7 +20,6 @@ fn empty_caps() -> CapabilitySet {
         estimators: Default::default(),
         dynamics: Default::default(),
         mappers: Default::default(),
-        slam: Default::default(),
         controllers: Default::default(),
         planners: Default::default(),
     }
@@ -35,7 +33,6 @@ fn full_caps() -> CapabilitySet {
         estimators: set(&["Ekf"]),
         dynamics: set(&["IntegratedImu", "AckermannOdometry"]),
         mappers: set(&["OccupancyGrid2D"]),
-        slam: set(&["EkfSlam"]),
         controllers: set(&["Pid", "Lqr", "FeedforwardPid"]),
         planners: set(&["AStar"]),
     }
@@ -60,8 +57,8 @@ fn pid() -> ControllerConfig {
     }
 }
 
-fn astar() -> PlannerConfig {
-    PlannerConfig::AStar {
+fn astar() -> GeometricPlannerConfig {
+    GeometricPlannerConfig::AStar {
         rate: 5.0,
         arrival_tolerance_m: 1.5,
         occupancy_threshold: 180,
@@ -70,6 +67,16 @@ fn astar() -> PlannerConfig {
         replan_on_path_deviation: false,
         deviation_tolerance_m: 3.0,
         level: "local".to_string(),
+    }
+}
+
+fn occupancy_grid() -> MapLayerConfig {
+    MapLayerConfig::OccupancyGrid2D {
+        rate: 10.0,
+        resolution: 0.1,
+        width_m: 20.0,
+        height_m: 20.0,
+        pose_source: MapperPoseSourceConfig::GroundTruth,
     }
 }
 
@@ -86,26 +93,21 @@ fn validation_empty_stack_passes() {
 
 #[test]
 fn validation_valid_full_stack_passes() {
-    let mut planners = HashMap::new();
-    planners.insert("local_planner".to_string(), astar());
+    let mut geometric_planners = HashMap::new();
+    geometric_planners.insert("local_planner".to_string(), astar());
 
     let mut controllers = HashMap::new();
     controllers.insert("main_ctrl".to_string(), pid());
 
+    let mut map_layers = HashMap::new();
+    map_layers.insert("local".to_string(), occupancy_grid());
+
     let stack = AutonomyStack {
-        world_model: Some(WorldModelConfig::Separate {
-            estimator: Some(EstimatorConfig::Ekf(EkfConfig {
-                dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
-            })),
-            mapper: Some(MapperConfig::OccupancyGrid2D {
-                rate: 10.0,
-                resolution: 0.1,
-                width_m: 20.0,
-                height_m: 20.0,
-                pose_source: MapperPoseSourceConfig::GroundTruth,
-            }),
-        }),
-        planners,
+        estimator: Some(EstimatorConfig::Ekf(EkfConfig {
+            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
+        })),
+        map_layers,
+        geometric_planners,
         path_following: None,
         controllers,
     };
@@ -121,15 +123,11 @@ fn validation_valid_full_stack_passes() {
 #[test]
 fn validation_unknown_estimator_produces_error() {
     let stack = AutonomyStack {
-        world_model: Some(WorldModelConfig::Separate {
-            estimator: Some(EstimatorConfig::Ekf(EkfConfig {
-                dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
-            })),
-            mapper: None,
-        }),
+        estimator: Some(EstimatorConfig::Ekf(EkfConfig {
+            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
+        })),
         ..Default::default()
     };
-    // Ekf not in capabilities
     let mut caps = full_caps();
     caps.estimators.clear();
     let errors = validate_autonomy_config(&stack, &caps);
@@ -144,15 +142,11 @@ fn validation_unknown_estimator_produces_error() {
 #[test]
 fn validation_unknown_dynamics_produces_error() {
     let stack = AutonomyStack {
-        world_model: Some(WorldModelConfig::Separate {
-            estimator: Some(EstimatorConfig::Ekf(EkfConfig {
-                dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
-            })),
-            mapper: None,
-        }),
+        estimator: Some(EstimatorConfig::Ekf(EkfConfig {
+            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
+        })),
         ..Default::default()
     };
-    // IntegratedImu not in capabilities
     let mut caps = full_caps();
     caps.dynamics.clear();
     let errors = validate_autonomy_config(&stack, &caps);
@@ -167,20 +161,13 @@ fn validation_unknown_dynamics_produces_error() {
 
 #[test]
 fn validation_unknown_mapper_produces_error() {
+    let mut map_layers = HashMap::new();
+    map_layers.insert("local".to_string(), occupancy_grid());
+
     let stack = AutonomyStack {
-        world_model: Some(WorldModelConfig::Separate {
-            estimator: None,
-            mapper: Some(MapperConfig::OccupancyGrid2D {
-                rate: 10.0,
-                resolution: 0.1,
-                width_m: 20.0,
-                height_m: 20.0,
-                pose_source: MapperPoseSourceConfig::GroundTruth,
-            }),
-        }),
+        map_layers,
         ..Default::default()
     };
-    // OccupancyGrid2D not in capabilities
     let mut caps = full_caps();
     caps.mappers.clear();
     let errors = validate_autonomy_config(&stack, &caps);
@@ -201,7 +188,6 @@ fn validation_unknown_controller_produces_error() {
         controllers,
         ..Default::default()
     };
-    // Pid not in capabilities
     let errors = validate_autonomy_config(&stack, &empty_caps());
     assert!(
         errors
@@ -213,10 +199,10 @@ fn validation_unknown_controller_produces_error() {
 
 #[test]
 fn validation_unknown_planner_produces_error() {
-    let mut planners = HashMap::new();
-    planners.insert("planner".to_string(), astar());
+    let mut geometric_planners = HashMap::new();
+    geometric_planners.insert("planner".to_string(), astar());
     let stack = AutonomyStack {
-        planners,
+        geometric_planners,
         ..Default::default()
     };
     let errors = validate_autonomy_config(&stack, &empty_caps());
@@ -225,24 +211,6 @@ fn validation_unknown_planner_produces_error() {
             .iter()
             .any(|e| matches!(e, ValidationError::UnknownPlanner { kind } if kind == "AStar")),
         "Expected UnknownPlanner for AStar"
-    );
-}
-
-#[test]
-fn validation_unknown_slam_produces_error() {
-    use helios_runtime::config::{EkfSlamConfig, SlamConfig};
-    let stack = AutonomyStack {
-        world_model: Some(WorldModelConfig::CombinedSlam {
-            slam: SlamConfig::EkfSlam(EkfSlamConfig {}),
-        }),
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &empty_caps());
-    assert!(
-        errors
-            .iter()
-            .any(|e| matches!(e, ValidationError::UnknownSlam { kind } if kind == "EkfSlam")),
-        "Expected UnknownSlam for EkfSlam"
     );
 }
 
@@ -266,7 +234,6 @@ fn validation_feedforward_pid_unknown_dynamics_key_produces_error() {
         controllers,
         ..Default::default()
     };
-    // FeedforwardPid is known, but dynamics_key is not
     let mut caps = full_caps();
     caps.dynamics.clear();
     let errors = validate_autonomy_config(&stack, &caps);
@@ -299,7 +266,6 @@ fn validation_collects_all_errors_two_bad_controllers() {
         controllers,
         ..Default::default()
     };
-    // Neither Pid nor Lqr is registered
     let errors = validate_autonomy_config(&stack, &empty_caps());
     assert!(
         errors.len() >= 2,

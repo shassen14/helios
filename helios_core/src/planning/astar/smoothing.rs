@@ -98,11 +98,11 @@ pub(super) fn make_waypoint(world_x: f64, world_y: f64, time: f64) -> Trajectory
         StateVariable::Pz(FrameId::World),
     ];
     let mut state = FrameAwareState::new(layout, 0.0, time);
-    state.vector[0] = world_x;
-    state.vector[1] = world_y;
-    state.vector[2] = 0.0;
+    state.state.vector[0] = world_x;
+    state.state.vector[1] = world_y;
+    state.state.vector[2] = 0.0;
     TrajectoryPoint {
-        state,
+        state: state.state,
         state_dot: None,
         time,
     }

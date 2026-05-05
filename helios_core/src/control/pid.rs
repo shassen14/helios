@@ -5,9 +5,9 @@
 
 use nalgebra::Vector3;
 
-use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::frames::{FrameId, RobotState, StateVariable};
 
-use super::{siso_pid::SisoPid, ControlContext, ControlOutput, Controller, TrajectoryPoint};
+use super::{siso_pid::SisoPid, ControlInputs, ControlOutput, Controller, TrajectoryPoint};
 
 /// Pure feedback velocity controller composed of three independent SISO PID loops.
 ///
@@ -42,7 +42,7 @@ impl VelocityPidController {
 }
 
 /// Extract body-frame vx/vy/yaw_rate from a FrameAwareState by scanning the layout.
-fn extract_body_velocities(state: &FrameAwareState) -> (f64, f64, f64) {
+fn extract_body_velocities(state: &RobotState) -> (f64, f64, f64) {
     let mut vx = 0.0f64;
     let mut vy = 0.0f64;
     let mut yaw_rate = 0.0f64;
@@ -69,11 +69,12 @@ fn extract_ref_velocities(reference: &TrajectoryPoint) -> (f64, f64, f64) {
 }
 
 impl Controller for VelocityPidController {
-    fn compute(&mut self, state: &FrameAwareState, dt: f64, ctx: &ControlContext) -> ControlOutput {
-        let (cur_vx, cur_vy, cur_yaw) = extract_body_velocities(state);
+    fn compute(&mut self, dt: f64, inputs: &ControlInputs) -> ControlOutput {
+        let (cur_vx, cur_vy, cur_yaw) = extract_body_velocities(&inputs.state.state);
 
-        let (ref_vx, ref_vy, ref_yaw) = ctx
+        let (ref_vx, ref_vy, ref_yaw) = inputs
             .reference
+            .as_ref()
             .map(extract_ref_velocities)
             .unwrap_or((0.0, 0.0, 0.0));
 

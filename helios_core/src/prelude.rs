@@ -15,17 +15,18 @@ pub use crate::types::{FrameHandle, MonotonicTime, TfProvider, TrajectoryPoint};
 pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
 // --- Control Abstractions ---
-pub use crate::control::{ControlContext, ControlOutput, Controller};
+pub use crate::control::{ControlInputs, ControlOutput, Controller};
+pub use crate::estimation::EstimatorInputs;
 pub use crate::models::controls::ControlDynamics;
 
 // --- Planning & Tracking ---
-pub use crate::planning::context::PlannerContext;
 pub use crate::planning::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
-pub use crate::planning::Planner;
+pub use crate::planning::GeometricPlanner;
+pub use crate::planning::GeometricPlannerInputs;
 pub use crate::tracking::{Track, Tracker};
 
 // Path Following
-pub use crate::path_following::{PathFollower, PathFollowerResult};
+pub use crate::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
 
 // --- Concrete Model Implementations (Export common ones for convenience) ---
 pub use crate::models::estimation::measurement::{accelerometer, gps, gyroscope, magnetometer};

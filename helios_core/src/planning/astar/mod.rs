@@ -38,13 +38,13 @@ mod smoothing;
 
 use nalgebra::Vector2;
 
-use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::frames::{FrameId, StateVariable};
 use crate::mapping::MapData;
+use crate::planning::GeometricPlannerInputs;
 
-use super::context::PlannerContext;
 use super::search_space::SearchSpace;
 use super::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
-use super::Planner;
+use super::GeometricPlanner;
 
 use grid_space::OccupancyGridSpace;
 use search::{run_astar, AStarSearchBuffers};
@@ -97,8 +97,8 @@ pub struct AStarConfig {
 /// they are reused across calls without reallocation.
 pub struct AStarPlanner {
     config: AStarConfig,
-    /// Active navigation goal, or `None` if no goal has been set.
-    goal: Option<PlannerGoal>,
+    /// Last-seen goal, used to detect changes and reset replan state.
+    last_goal: Option<PlannerGoal>,
     /// Most recently computed path; returned by `current_path()`.
     cached_path: Option<Path>,
     /// Lifecycle status exposed through `Planner::status()`.
@@ -118,7 +118,7 @@ impl AStarPlanner {
     pub fn new(config: AStarConfig) -> Self {
         Self {
             config,
-            goal: None,
+            last_goal: None,
             cached_path: None,
             status: PlannerStatus::Idle,
             last_plan_time: f64::NEG_INFINITY,
@@ -131,45 +131,37 @@ impl AStarPlanner {
 // == Planner trait impl ==
 // =========================================================================
 
-impl Planner for AStarPlanner {
-    /// Set (or replace) the navigation goal.
-    ///
-    /// Resets the status to `Idle` and sets `last_plan_time` to `NEG_INFINITY`
-    /// so that `plan()` will replan immediately on the next call regardless of
-    /// the rate gate.
-    fn set_goal(&mut self, goal: PlannerGoal) {
-        self.goal = Some(goal);
-        self.status = PlannerStatus::Idle;
-        self.last_plan_time = f64::NEG_INFINITY;
-    }
-
+impl GeometricPlanner for AStarPlanner {
     /// Compute or update the planned path.
     ///
     /// ## Decision tree
     ///
-    /// 1. No goal → [`PlannerResult::NoGoal`].
-    /// 2. State has no world position → [`PlannerResult::Error`].
-    /// 3. Within `arrival_tolerance_m` → [`PlannerResult::GoalReached`].
-    /// 4. Rate / deviation gate closed → [`PlannerResult::PathStillValid`].
-    /// 5. Map is not `OccupancyGrid2D` → [`PlannerResult::Error`].
-    /// 6. Map has zero dimensions → [`PlannerResult::Error`].
-    /// 7. Goal outside map → project to boundary; result is [`PlannerResult::GoalOutsideMap`].
-    /// 8. Robot outside map → [`PlannerResult::Error`].
-    /// 9. A\* finds no path → [`PlannerResult::Unreachable`].
-    /// 10. Path found → [`PlannerResult::Path`] (or `GoalOutsideMap` from step 7).
-    fn plan(
-        &mut self,
-        state: &FrameAwareState,
-        map: &MapData,
-        ctx: &PlannerContext,
-    ) -> PlannerResult {
-        let goal = match &self.goal {
+    /// 1. No goal in inputs → [`PlannerResult::NoGoal`].
+    /// 2. Goal changed since last tick → reset status to `Idle`, clear rate gate.
+    /// 3. State has no world position → [`PlannerResult::Error`].
+    /// 4. Within `arrival_tolerance_m` → [`PlannerResult::GoalReached`].
+    /// 5. Rate / deviation gate closed → [`PlannerResult::PathStillValid`].
+    /// 6. Map is not `OccupancyGrid2D` → [`PlannerResult::Error`].
+    /// 7. Map has zero dimensions → [`PlannerResult::Error`].
+    /// 8. Goal outside map → project to boundary; result is [`PlannerResult::GoalOutsideMap`].
+    /// 9. Robot outside map → [`PlannerResult::Error`].
+    /// 10. A\* finds no path → [`PlannerResult::Unreachable`].
+    /// 11. Path found → [`PlannerResult::Path`] (or `GoalOutsideMap` from step 8).
+    fn plan(&mut self, now: f64, inputs: &GeometricPlannerInputs) -> PlannerResult {
+        let goal = match &inputs.goal {
             Some(g) => g.clone(),
             None => return PlannerResult::NoGoal,
         };
 
+        // Reset replan state when the goal changes.
+        if self.last_goal.as_ref() != Some(&goal) {
+            self.last_goal = Some(goal.clone());
+            self.status = PlannerStatus::Idle;
+            self.last_plan_time = f64::NEG_INFINITY;
+        }
+
         // Robot 2D position from world-frame state.
-        let robot_pos = match state.get_vector3(&StateVariable::Px(FrameId::World)) {
+        let robot_pos = match inputs.state.get_vector3(&StateVariable::Px(FrameId::World)) {
             Some(p) => Vector2::new(p.x, p.y),
             None => {
                 return PlannerResult::Error("AStarPlanner: state missing world position".into())
@@ -185,18 +177,18 @@ impl Planner for AStarPlanner {
         }
 
         // Rate gate / deviation check.
-        if !self.should_replan(state, ctx) {
+        if !self.should_replan(now, inputs) {
             return PlannerResult::PathStillValid;
         }
 
         // Require an occupancy grid map.
-        let (origin, resolution, data) = match map {
+        let (origin, resolution, data) = match &inputs.map {
             MapData::OccupancyGrid2D {
                 origin,
                 resolution,
                 data,
                 ..
-            } => (origin, *resolution, data),
+            } => (origin, resolution, data),
             _ => return PlannerResult::Error("AStarPlanner requires OccupancyGrid2D map".into()),
         };
 
@@ -209,7 +201,7 @@ impl Planner for AStarPlanner {
         let space = OccupancyGridSpace {
             origin_x: origin.translation.x,
             origin_y: origin.translation.y,
-            resolution,
+            resolution: *resolution,
             nrows,
             ncols,
             data,
@@ -273,7 +265,7 @@ impl Planner for AStarPlanner {
             .iter()
             .map(|&(row, col)| {
                 let wp = space.cell_to_world_center(row, col);
-                make_waypoint(wp.x, wp.y, ctx.now)
+                make_waypoint(wp.x, wp.y, now)
             })
             .collect();
 
@@ -284,11 +276,11 @@ impl Planner for AStarPlanner {
 
         let path = Path {
             waypoints,
-            timestamp: ctx.now,
+            timestamp: now,
             level_key: self.config.level_key.clone(),
         };
 
-        self.last_plan_time = ctx.now;
+        self.last_plan_time = now;
         self.status = PlannerStatus::Active;
         self.cached_path = Some(path.clone());
 
@@ -310,12 +302,12 @@ impl Planner for AStarPlanner {
     /// `deviation_tolerance_m`.
     ///
     /// Otherwise replan when `ctx.now - last_plan_time >= 1 / rate_hz`.
-    fn should_replan(&self, state: &FrameAwareState, ctx: &PlannerContext) -> bool {
+    fn should_replan(&self, now: f64, inputs: &GeometricPlannerInputs) -> bool {
         if self.status == PlannerStatus::Idle || self.cached_path.is_none() {
             return true;
         }
 
-        let elapsed = ctx.now - self.last_plan_time;
+        let elapsed = now - self.last_plan_time;
         let period = if self.config.rate_hz > 0.0 {
             1.0 / self.config.rate_hz
         } else {
@@ -324,7 +316,7 @@ impl Planner for AStarPlanner {
 
         // Deviation check (optional).
         if self.config.replan_on_path_deviation {
-            if let Some(robot_pos) = state.get_vector3(&StateVariable::Px(FrameId::World)) {
+            if let Some(robot_pos) = inputs.state.get_vector3(&StateVariable::Px(FrameId::World)) {
                 if let Some(path) = &self.cached_path {
                     let robot_2d = Vector2::new(robot_pos.x, robot_pos.y);
                     let min_dist = path
@@ -362,11 +354,11 @@ impl Planner for AStarPlanner {
 mod tests {
     use nalgebra::{DMatrix, Isometry3, Vector2};
 
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::frames::{FrameId, RobotState, StateVariable};
     use crate::mapping::MapData;
-    use crate::planning::context::PlannerContext;
     use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
-    use crate::planning::Planner;
+    use crate::planning::GeometricPlanner;
+    use crate::planning::GeometricPlannerInputs;
 
     use super::{AStarConfig, AStarPlanner};
 
@@ -390,13 +382,13 @@ mod tests {
     }
 
     /// Build a minimal world-frame state with only `[Px, Py, Pz]`.
-    fn make_state(x: f64, y: f64) -> FrameAwareState {
+    fn make_state(x: f64, y: f64) -> RobotState {
         let layout = vec![
             StateVariable::Px(FrameId::World),
             StateVariable::Py(FrameId::World),
             StateVariable::Pz(FrameId::World),
         ];
-        let mut state = FrameAwareState::new(layout, 0.0, 0.0);
+        let mut state = RobotState::new(layout, 0.0);
         state.vector[0] = x;
         state.vector[1] = y;
         state.vector[2] = 0.0;
@@ -413,12 +405,21 @@ mod tests {
         }
     }
 
-    fn ctx(now: f64) -> PlannerContext<'static> {
-        PlannerContext { tf: None, now }
-    }
-
     fn goal_2d(x: f64, y: f64) -> PlannerGoal {
         PlannerGoal::WorldPosition2D(Vector2::new(x, y))
+    }
+
+    fn make_inputs(
+        x: f64,
+        y: f64,
+        map: MapData,
+        goal: Option<PlannerGoal>,
+    ) -> GeometricPlannerInputs {
+        GeometricPlannerInputs {
+            state: make_state(x, y),
+            map,
+            goal,
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -429,7 +430,8 @@ mod tests {
     #[test]
     fn plan_no_goal() {
         let mut planner = AStarPlanner::new(default_config());
-        let result = planner.plan(&make_state(0.0, 0.0), &clear_map(10, 10, 1.0), &ctx(0.0));
+        let inputs = make_inputs(0.0, 0.0, clear_map(10, 10, 1.0), None);
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::NoGoal));
     }
 
@@ -438,8 +440,8 @@ mod tests {
     #[test]
     fn plan_goal_reached() {
         let mut planner = AStarPlanner::new(default_config());
-        planner.set_goal(goal_2d(5.1, 5.0));
-        let result = planner.plan(&make_state(5.0, 5.0), &clear_map(20, 20, 1.0), &ctx(0.0));
+        let inputs = make_inputs(5.0, 5.0, clear_map(20, 20, 1.0), Some(goal_2d(5.1, 5.0)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::GoalReached));
         assert_eq!(planner.status(), PlannerStatus::GoalReached);
     }
@@ -448,8 +450,8 @@ mod tests {
     #[test]
     fn plan_wrong_map_type() {
         let mut planner = AStarPlanner::new(default_config());
-        planner.set_goal(goal_2d(5.0, 5.0));
-        let result = planner.plan(&make_state(0.0, 0.0), &MapData::None, &ctx(0.0));
+        let inputs = make_inputs(0.0, 0.0, MapData::None, Some(goal_2d(5.0, 5.0)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::Error(_)));
     }
 
@@ -457,14 +459,14 @@ mod tests {
     #[test]
     fn plan_empty_map() {
         let mut planner = AStarPlanner::new(default_config());
-        planner.set_goal(goal_2d(1.0, 1.0));
         let map = MapData::OccupancyGrid2D {
             origin: Isometry3::identity(),
             resolution: 1.0,
             data: DMatrix::from_element(0, 0, 0u8),
             version: 0,
         };
-        let result = planner.plan(&make_state(0.0, 0.0), &map, &ctx(0.0));
+        let inputs = make_inputs(0.0, 0.0, map, Some(goal_2d(1.0, 1.0)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::Error(_)));
     }
 
@@ -473,8 +475,8 @@ mod tests {
     #[test]
     fn plan_success() {
         let mut planner = AStarPlanner::new(default_config());
-        planner.set_goal(goal_2d(9.5, 9.5));
-        let result = planner.plan(&make_state(0.5, 0.5), &clear_map(10, 10, 1.0), &ctx(0.0));
+        let inputs = make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)));
+        let result = planner.plan(0.0, &inputs);
         match result {
             PlannerResult::Path(path) => {
                 assert!(!path.waypoints.is_empty());
@@ -493,7 +495,6 @@ mod tests {
     #[test]
     fn plan_unreachable() {
         let mut planner = AStarPlanner::new(default_config());
-        planner.set_goal(goal_2d(9.5, 9.5));
         let mut data = DMatrix::from_element(10, 10, 0u8);
         data[(0, 1)] = 255;
         data[(1, 0)] = 255;
@@ -504,7 +505,8 @@ mod tests {
             data,
             version: 0,
         };
-        let result = planner.plan(&make_state(0.5, 0.5), &map, &ctx(0.0));
+        let inputs = make_inputs(0.5, 0.5, map, Some(goal_2d(9.5, 9.5)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::Unreachable));
         assert_eq!(planner.status(), PlannerStatus::Failed);
     }
@@ -514,8 +516,8 @@ mod tests {
     #[test]
     fn plan_goal_outside_map() {
         let mut planner = AStarPlanner::new(default_config());
-        planner.set_goal(goal_2d(50.0, 50.0));
-        let result = planner.plan(&make_state(0.5, 0.5), &clear_map(10, 10, 1.0), &ctx(0.0));
+        let inputs = make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(50.0, 50.0)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::GoalOutsideMap(_)));
     }
 
@@ -527,7 +529,8 @@ mod tests {
     #[test]
     fn should_replan_idle() {
         let planner = AStarPlanner::new(default_config());
-        assert!(planner.should_replan(&make_state(0.0, 0.0), &ctx(0.0)));
+        let inputs = make_inputs(0.0, 0.0, clear_map(10, 10, 1.0), None);
+        assert!(planner.should_replan(0.0, &inputs));
     }
 
     /// After a successful plan at `t=0` with `rate_hz=1.0`, the gate is
@@ -535,14 +538,20 @@ mod tests {
     #[test]
     fn should_replan_rate_gate() {
         let mut planner = AStarPlanner::new(default_config()); // rate_hz = 1.0
-        planner.set_goal(goal_2d(9.5, 9.5));
-        let state = make_state(0.5, 0.5);
+        let map = clear_map(10, 10, 1.0);
 
         // Seed last_plan_time = 0.0.
-        planner.plan(&state, &clear_map(10, 10, 1.0), &ctx(0.0));
+        planner.plan(
+            0.0,
+            &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5))),
+        );
 
-        assert!(!planner.should_replan(&state, &ctx(0.5))); // half-period: gate closed
-        assert!(planner.should_replan(&state, &ctx(1.0))); // full period: gate opens
+        assert!(!planner.should_replan(
+            0.5,
+            &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)))
+        )); // half-period: gate closed
+        assert!(planner.should_replan(1.0, &make_inputs(0.5, 0.5, map, Some(goal_2d(9.5, 9.5)))));
+        // full period: gate opens
     }
 
     /// With `rate_hz=0.0` (gate disabled) and `replan_on_path_deviation=true`,
@@ -555,15 +564,22 @@ mod tests {
         config.rate_hz = 0.0; // Disable rate gate; deviation is the only trigger.
 
         let mut planner = AStarPlanner::new(config);
-        planner.set_goal(goal_2d(9.5, 9.5));
-        let state = make_state(0.5, 0.5);
 
         // Compute path at t=0.
-        planner.plan(&state, &clear_map(10, 10, 1.0), &ctx(0.0));
+        planner.plan(
+            0.0,
+            &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5))),
+        );
 
         // Robot on the path — no replan.
-        assert!(!planner.should_replan(&make_state(0.5, 0.5), &ctx(0.1)));
+        assert!(!planner.should_replan(
+            0.1,
+            &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)))
+        ));
         // Robot far from every waypoint — triggers replan.
-        assert!(planner.should_replan(&make_state(50.0, 50.0), &ctx(0.1)));
+        assert!(planner.should_replan(
+            0.1,
+            &make_inputs(50.0, 50.0, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)))
+        ));
     }
 }

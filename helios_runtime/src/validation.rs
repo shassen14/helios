@@ -1,13 +1,12 @@
 use std::collections::HashSet;
 
-use crate::config::{AutonomyStack, ControllerConfig, WorldModelConfig};
+use crate::config::{AutonomyStack, ControllerConfig};
 
 /// Snapshot of algorithm keys registered in each category.
 pub struct CapabilitySet {
     pub estimators: HashSet<String>,
     pub dynamics: HashSet<String>,
     pub mappers: HashSet<String>,
-    pub slam: HashSet<String>,
     pub controllers: HashSet<String>,
     pub planners: HashSet<String>,
 }
@@ -34,9 +33,6 @@ pub enum ValidationError {
     UnknownPlanner {
         kind: String,
     },
-    UnknownSlam {
-        kind: String,
-    },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -60,7 +56,6 @@ impl std::fmt::Display for ValidationError {
             ),
             ValidationError::UnknownMapper { kind } => write!(f, "Unknown mapper kind '{kind}'"),
             ValidationError::UnknownPlanner { kind } => write!(f, "Unknown planner kind '{kind}'"),
-            ValidationError::UnknownSlam { kind } => write!(f, "Unknown SLAM kind '{kind}'"),
         }
     }
 }
@@ -73,44 +68,33 @@ pub fn validate_autonomy_config(
 ) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    // World model validation
-    match &config.world_model {
-        Some(WorldModelConfig::Separate { estimator, mapper }) => {
-            if let Some(est_cfg) = estimator {
-                let kind = est_cfg.get_kind_str();
-                if !capabilities.estimators.contains(kind) {
-                    errors.push(ValidationError::UnknownEstimator {
-                        kind: kind.to_string(),
-                    });
-                }
-                // Validate dynamics referenced by the estimator
-                if let crate::config::EstimatorConfig::Ekf(ekf) = est_cfg {
-                    let dyn_kind = ekf.dynamics.get_kind_str();
-                    if !capabilities.dynamics.contains(dyn_kind) {
-                        errors.push(ValidationError::UnknownDynamics {
-                            kind: dyn_kind.to_string(),
-                        });
-                    }
-                }
-            }
-            if let Some(map_cfg) = mapper {
-                let kind = map_cfg.get_kind_str();
-                if kind != "None" && !capabilities.mappers.contains(kind) {
-                    errors.push(ValidationError::UnknownMapper {
-                        kind: kind.to_string(),
-                    });
-                }
-            }
+    // Estimator validation
+    if let Some(est_cfg) = &config.estimator {
+        let kind = est_cfg.get_kind_str();
+        if !capabilities.estimators.contains(kind) {
+            errors.push(ValidationError::UnknownEstimator {
+                kind: kind.to_string(),
+            });
         }
-        Some(WorldModelConfig::CombinedSlam { slam }) => {
-            let kind = slam.get_kind_str();
-            if !capabilities.slam.contains(kind) {
-                errors.push(ValidationError::UnknownSlam {
-                    kind: kind.to_string(),
+        // Validate dynamics referenced by the estimator
+        if let crate::config::EstimatorConfig::Ekf(ekf) = est_cfg {
+            let dyn_kind = ekf.dynamics.get_kind_str();
+            if !capabilities.dynamics.contains(dyn_kind) {
+                errors.push(ValidationError::UnknownDynamics {
+                    kind: dyn_kind.to_string(),
                 });
             }
         }
-        None => {}
+    }
+
+    // Map layer validation
+    for map_cfg in config.map_layers.values() {
+        let kind = map_cfg.get_kind_str();
+        if kind != "None" && !capabilities.mappers.contains(kind) {
+            errors.push(ValidationError::UnknownMapper {
+                kind: kind.to_string(),
+            });
+        }
     }
 
     // Controller validation
@@ -133,7 +117,7 @@ pub fn validate_autonomy_config(
     }
 
     // Planner validation
-    for plan_cfg in config.planners.values() {
+    for plan_cfg in config.geometric_planners.values() {
         let kind = plan_cfg.get_kind_str();
         if !capabilities.planners.contains(kind) {
             errors.push(ValidationError::UnknownPlanner {

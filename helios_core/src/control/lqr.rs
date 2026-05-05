@@ -5,9 +5,7 @@
 
 use nalgebra::{DMatrix, DVector};
 
-use crate::frames::FrameAwareState;
-
-use super::{ControlContext, ControlOutput, Controller};
+use super::{ControlInputs, ControlOutput, Controller};
 
 /// Linear-Quadratic Regulator with a precomputed gain matrix K.
 ///
@@ -63,17 +61,13 @@ impl LqrController {
 }
 
 impl Controller for LqrController {
-    fn compute(
-        &mut self,
-        state: &FrameAwareState,
-        _dt: f64,
-        ctx: &ControlContext,
-    ) -> ControlOutput {
-        let x = &state.vector;
+    fn compute(&mut self, _dt: f64, inputs: &ControlInputs) -> ControlOutput {
+        let x = &inputs.state.state.vector;
 
         // Build reference vector from TrajectoryPoint if available.
-        let x_ref = ctx
+        let x_ref = inputs
             .reference
+            .as_ref()
             .map(|r| r.state.vector.clone())
             .unwrap_or_else(|| DVector::zeros(self.state_dim));
 

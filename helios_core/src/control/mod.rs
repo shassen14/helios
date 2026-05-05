@@ -15,19 +15,15 @@ pub use crate::models::controls::ControlDynamics;
 
 use nalgebra::{DVector, Vector3};
 
-use crate::{
-    frames::FrameAwareState,
-    types::{TfProvider, TrajectoryPoint},
-};
+use crate::{frames::FrameAwareState, types::TrajectoryPoint};
 
 // =========================================================================
 // == Core Data Types ==
 // =========================================================================
 
-/// Context passed to every `Controller::compute()` call.
-pub struct ControlContext<'a> {
-    pub tf: Option<&'a dyn TfProvider>,
-    pub reference: Option<&'a TrajectoryPoint>,
+pub struct ControlInputs {
+    pub state: FrameAwareState,
+    pub reference: Option<TrajectoryPoint>,
 }
 
 /// The typed output of any `Controller`. All vectors are in the **body FLU frame**, SI units.
@@ -78,7 +74,7 @@ pub enum ControlOutput {
 /// can implement it by storing whatever internal state it needs.
 pub trait Controller: Send + Sync {
     /// Compute a control output for the current state and time step.
-    fn compute(&mut self, state: &FrameAwareState, dt: f64, ctx: &ControlContext) -> ControlOutput;
+    fn compute(&mut self, dt: f64, inputs: &ControlInputs) -> ControlOutput;
 
     /// Reset all internal integrators, accumulators, and filters to zero.
     fn reset(&mut self);
