@@ -13,7 +13,7 @@ use helios_core::{
 };
 
 use super::{AutonomyRegistry, MapperBuildContext};
-use crate::simulation::config::structs::{MapperConfig, MapperPoseSourceConfig};
+use crate::simulation::config::structs::{MapLayerConfig, MapperPoseSourceConfig};
 
 pub struct DefaultMappersPlugin;
 
@@ -31,13 +31,13 @@ fn build_none_mapper(_ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String
 }
 
 fn build_occupancy_grid_mapper(ctx: MapperBuildContext) -> Result<Box<dyn Mapper>, String> {
-    let MapperConfig::OccupancyGrid2D {
+    let MapLayerConfig::OccupancyGrid2D {
         resolution,
         width_m,
         height_m,
         pose_source,
         ..
-    } = ctx.mapper_cfg
+    } = ctx.map_layer_cfg
     else {
         return Err("Expected OccupancyGrid2D config".to_string());
     };

@@ -3,7 +3,6 @@
 // Telemetry systems (cold path — Validation phase).
 
 use bevy::prelude::*;
-use helios_runtime::stage::PipelineLevel;
 
 use crate::simulation::core::components::{AgentTopicNames, SensorMailbox};
 use crate::simulation::core::topics::TopicBus;
@@ -24,7 +23,6 @@ pub fn publish_autonomy_telemetry(
     mut topic_bus: ResMut<TopicBus>,
 ) {
     for (estimator, mapper, pf_output, topics) in &query {
-        // Active path following reference point.
         if let Some(ref wp) = pf_output.0 {
             topic_bus.publish(&topics.active_waypoint, wp.state.clone());
         }
@@ -32,18 +30,13 @@ pub fn publish_autonomy_telemetry(
             topic_bus.publish(&topics.odometry_estimated, state.clone());
         }
 
-        // Global map: SLAM takes priority over global mappers.
-        let global_map = estimator
-            .0
-            .get_slam_map()
-            .or_else(|| mapper.0.get_map(&PipelineLevel::Global));
-        if let Some(map) = global_map {
+        if let Some(map) = mapper.0.get_map("global") {
             if !matches!(map, helios_core::mapping::MapData::None) {
                 topic_bus.publish(&topics.map_global, map.clone());
             }
         }
 
-        if let Some(map) = mapper.0.get_map(&PipelineLevel::Local) {
+        if let Some(map) = mapper.0.get_map("local") {
             if !matches!(map, helios_core::mapping::MapData::None) {
                 topic_bus.publish(&topics.map_local, map.clone());
             }

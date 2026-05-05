@@ -14,13 +14,12 @@ use helios_core::{
     models::estimation::{dynamics::EstimationDynamics, measurement::Measurement},
     path_following::PathFollower,
     planning::Planner,
-    slam::SlamSystem,
     types::FrameHandle,
 };
 
 use crate::simulation::config::structs::{
-    AckermannAdapterConfig, AgentConfig, ControllerConfig, EstimatorConfig, MapperConfig,
-    PathFollowingConfig, PlannerConfig, SlamConfig,
+    AckermannAdapterConfig, AgentConfig, ControllerConfig, EstimatorConfig, MapLayerConfig,
+    PathFollowingConfig, PlannerConfig,
 };
 use crate::simulation::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
 
@@ -37,9 +36,6 @@ pub type EstimatorFactory =
 
 pub type MapperFactory =
     Arc<dyn Fn(MapperBuildContext) -> Result<Box<dyn Mapper>, String> + Send + Sync>;
-
-pub type SlamFactory =
-    Arc<dyn Fn(SlamBuildContext) -> Result<Box<dyn SlamSystem>, String> + Send + Sync>;
 
 pub type ControllerFactory =
     Arc<dyn Fn(ControllerBuildContext) -> Result<Box<dyn Controller>, String> + Send + Sync>;
@@ -76,7 +72,7 @@ pub struct EstimatorBuildContext {
 
 pub struct MapperBuildContext {
     pub agent_entity: Entity,
-    pub mapper_cfg: MapperConfig,
+    pub map_layer_cfg: MapLayerConfig,
 }
 
 pub struct ControllerBuildContext {
@@ -84,15 +80,6 @@ pub struct ControllerBuildContext {
     pub controller_cfg: ControllerConfig,
     pub agent_config: AgentConfig,
     pub dynamics_factories: Arc<HashMap<String, DynamicsFactory>>,
-}
-
-pub struct SlamBuildContext {
-    pub agent_entity: Entity,
-    pub slam_cfg: SlamConfig,
-    pub agent_config: AgentConfig,
-    pub gravity_magnitude: f64,
-    pub measurement_models: HashMap<FrameHandle, Box<dyn Measurement>>,
-    pub dynamics_factories: HashMap<String, DynamicsFactory>,
 }
 
 pub struct PlannerBuildContext {

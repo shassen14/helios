@@ -8,7 +8,6 @@ use helios_runtime::{
     estimation::{EstimationDriver, GroundTruthPassthrough},
     mapping::{MapDriver, StaticMapProvider},
     pipeline::PipelineBuilder,
-    stage::PipelineLevel,
 };
 
 use crate::common::{make_gps_message, MockEstimator, MockMapper, MockRuntime};
@@ -41,7 +40,6 @@ fn gt_inject_sets_position() {
     let pose = Isometry3::from_parts(Translation3::new(3.0, 4.0, 5.0), UnitQuaternion::identity());
     gt.inject_ground_truth(&pose, Vector3::zeros(), 0.0);
     let state = gt.get_state().unwrap();
-    // Layout: [Px, Py, Pz, Vx, Vy, Vz, Qx, Qy, Qz, Qw]
     assert!((state.state.vector[0] - 3.0).abs() < 1e-9, "Px mismatch");
     assert!((state.state.vector[1] - 4.0).abs() < 1e-9, "Py mismatch");
     assert!((state.state.vector[2] - 5.0).abs() < 1e-9, "Pz mismatch");
@@ -52,7 +50,6 @@ fn gt_inject_sets_velocity() {
     let mut gt = GroundTruthPassthrough::default();
     gt.inject_ground_truth(&Isometry3::identity(), Vector3::new(1.0, 2.0, 3.0), 0.0);
     let state = gt.get_state().unwrap();
-    // Layout: [Px, Py, Pz, Vx, Vy, Vz, ...]
     assert!((state.state.vector[3] - 1.0).abs() < 1e-9, "Vx mismatch");
     assert!((state.state.vector[4] - 2.0).abs() < 1e-9, "Vy mismatch");
     assert!((state.state.vector[5] - 3.0).abs() < 1e-9, "Vz mismatch");
@@ -73,7 +70,6 @@ fn gt_inject_identity_quaternion() {
 #[test]
 fn gt_inject_nontrivial_rotation() {
     let mut gt = GroundTruthPassthrough::default();
-    // 90° rotation around Z: k ≈ 0.707
     let q =
         UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), std::f64::consts::FRAC_PI_2);
     let pose = Isometry3::from_parts(Translation3::identity(), q);
@@ -93,14 +89,9 @@ fn gt_inject_nontrivial_rotation() {
 
 #[test]
 fn static_map_grid_dimensions() {
-    let provider = StaticMapProvider::from_fixture(
-        10.0,
-        20.0,
-        1.0,
-        Isometry3::identity(),
-        PipelineLevel::Local,
-    );
-    match provider.get_map(&PipelineLevel::Local).unwrap() {
+    let provider =
+        StaticMapProvider::from_fixture(10.0, 20.0, 1.0, Isometry3::identity(), "local");
+    match provider.get_map("local").unwrap() {
         MapData::OccupancyGrid2D { data, .. } => {
             assert_eq!(data.ncols(), 10, "cols = width / resolution");
             assert_eq!(data.nrows(), 20, "rows = height / resolution");
@@ -110,43 +101,28 @@ fn static_map_grid_dimensions() {
 }
 
 #[test]
-fn static_map_returns_at_registered_level() {
-    let provider = StaticMapProvider::from_fixture(
-        10.0,
-        10.0,
-        1.0,
-        Isometry3::identity(),
-        PipelineLevel::Global,
-    );
-    assert!(provider.get_map(&PipelineLevel::Global).is_some());
+fn static_map_returns_at_registered_layer() {
+    let provider =
+        StaticMapProvider::from_fixture(10.0, 10.0, 1.0, Isometry3::identity(), "global");
+    assert!(provider.get_map("global").is_some());
 }
 
 #[test]
-fn static_map_returns_none_at_wrong_level() {
-    let provider = StaticMapProvider::from_fixture(
-        10.0,
-        10.0,
-        1.0,
-        Isometry3::identity(),
-        PipelineLevel::Global,
-    );
-    assert!(provider.get_map(&PipelineLevel::Local).is_none());
+fn static_map_returns_none_at_wrong_layer() {
+    let provider =
+        StaticMapProvider::from_fixture(10.0, 10.0, 1.0, Isometry3::identity(), "global");
+    assert!(provider.get_map("local").is_none());
 }
 
 #[test]
 fn static_map_version_stays_zero_after_updates() {
-    let mut provider = StaticMapProvider::from_fixture(
-        10.0,
-        10.0,
-        1.0,
-        Isometry3::identity(),
-        PipelineLevel::Local,
-    );
+    let mut provider =
+        StaticMapProvider::from_fixture(10.0, 10.0, 1.0, Isometry3::identity(), "local");
     let rt = MockRuntime;
     let msg = make_gps_message(0.0);
     provider.process_messages(&[msg], &rt);
     provider.process_pose_update(Isometry3::identity());
-    match provider.get_map(&PipelineLevel::Local).unwrap() {
+    match provider.get_map("local").unwrap() {
         MapData::OccupancyGrid2D { version, .. } => {
             assert_eq!(
                 *version, 0,
@@ -171,7 +147,7 @@ fn empty_pipeline_all_queries_none() {
     assert!(output.global_map.is_none());
     assert!(output.local_map.is_none());
     assert!(pipeline.get_state().is_none());
-    assert!(pipeline.get_map(&PipelineLevel::Global).is_none());
+    assert!(pipeline.get_map("global").is_none());
 }
 
 #[test]
@@ -186,37 +162,24 @@ fn with_estimator_state_is_some_after_measurement() {
 }
 
 #[test]
-fn mappers_sorted_global_local_custom_after_build() {
+fn mappers_keyed_by_string_are_each_accessible() {
     let pipeline = PipelineBuilder::new()
-        .with_mapper(
-            PipelineLevel::Custom("z_layer".to_string()),
-            Box::new(MockMapper::new()),
-        )
-        .with_mapper(PipelineLevel::Local, Box::new(MockMapper::new()))
-        .with_mapper(PipelineLevel::Global, Box::new(MockMapper::new()))
+        .with_mapper("local", Box::new(MockMapper::new()))
+        .with_mapper("global", Box::new(MockMapper::new()))
         .build();
     let (_, mapping, _, _) = pipeline.into_parts();
-    let levels: Vec<&PipelineLevel> = mapping.mappers.iter().map(|lm| &lm.level).collect();
-    assert_eq!(levels[0], &PipelineLevel::Global);
-    assert_eq!(levels[1], &PipelineLevel::Local);
-    assert_eq!(levels[2], &PipelineLevel::Custom("z_layer".to_string()));
-}
-
-#[test]
-fn slam_active_is_false_without_slam() {
-    let pipeline = PipelineBuilder::new().build();
-    let (_, mapping, _, _) = pipeline.into_parts();
-    assert!(!mapping.slam_active);
+    assert!(mapping.get_map("local").is_some());
+    assert!(mapping.get_map("global").is_some());
+    assert!(mapping.get_map("semantic").is_none());
 }
 
 #[test]
 fn process_mapper_pose_update_delegates_to_mapping_core() {
     let mut pipeline = PipelineBuilder::new()
-        .with_mapper(PipelineLevel::Local, Box::new(MockMapper::new()))
+        .with_mapper("local", Box::new(MockMapper::new()))
         .build();
-    // MockMapper increments version on any process() call (including PoseUpdate).
     pipeline.process_mapper_pose_update(Isometry3::identity());
-    match pipeline.get_map(&PipelineLevel::Local).unwrap() {
+    match pipeline.get_map("local").unwrap() {
         MapData::OccupancyGrid2D { version, .. } => {
             assert_eq!(*version, 1, "mapper must have been called exactly once");
         }

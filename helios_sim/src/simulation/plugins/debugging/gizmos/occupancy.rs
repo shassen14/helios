@@ -2,8 +2,6 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use helios_core::mapping::MapData;
-use helios_runtime::stage::PipelineLevel;
-
 use crate::simulation::core::components::GroundTruthState;
 use crate::simulation::plugins::autonomy::MapperComponent;
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
@@ -48,7 +46,7 @@ pub fn draw_occupancy_grid(
     let flat = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
 
     for (entity, module, gt_transform) in &query {
-        let Some(map) = module.0.get_map(&PipelineLevel::Local) else {
+        let Some(map) = module.0.get_map("local") else {
             continue;
         };
 

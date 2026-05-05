@@ -16,7 +16,6 @@ pub mod planning;
 pub mod prelude;
 pub mod sensor_data;
 pub mod sensor_reading;
-pub mod slam;
 pub mod tracking;
 pub mod types;
 pub mod utils;

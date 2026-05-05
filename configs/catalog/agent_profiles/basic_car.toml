@@ -5,6 +5,4 @@
 # Root-level keys are the fields of AutonomyStack.
 # Safe to load in helios_hw without helios_sim.
 
-[world_model]
-type = "Separate"
 estimator = { from = "components.estimators.ekf_basic" }

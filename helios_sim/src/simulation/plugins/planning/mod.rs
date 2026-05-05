@@ -53,8 +53,8 @@ impl Plugin for PlanningPlugin {
 
 /// Runs all planners for every agent each tick.
 ///
-/// Builds a map-by-level lookup from EstimatorComponent (SLAM global map) and
-/// MapperComponent (local / global mappers), then calls `step_planners`.
+/// Builds a PipelineLevel-keyed map lookup from the string-keyed map layers,
+/// then calls `step_planners` on the control pipeline.
 fn planning_system(
     time: Res<Time>,
     _tf_tree: Res<TfTree>,
@@ -70,22 +70,14 @@ fn planning_system(
             continue;
         };
 
-        // Build map lookup: prefer SLAM global map over global mapper.
         let mut maps: HashMap<PipelineLevel, &MapData> = HashMap::new();
 
-        if let Some(slam_map) = estimator.0.get_slam_map() {
-            if !matches!(*slam_map, MapData::None) {
-                maps.insert(PipelineLevel::Global, slam_map);
+        if let Some(global_map) = mapper.0.get_map("global") {
+            if !matches!(*global_map, MapData::None) {
+                maps.insert(PipelineLevel::Global, global_map);
             }
         }
-        if maps.get(&PipelineLevel::Global).is_none() {
-            if let Some(global_map) = mapper.0.get_map(&PipelineLevel::Global) {
-                if !matches!(*global_map, MapData::None) {
-                    maps.insert(PipelineLevel::Global, global_map);
-                }
-            }
-        }
-        if let Some(local_map) = mapper.0.get_map(&PipelineLevel::Local) {
+        if let Some(local_map) = mapper.0.get_map("local") {
             if !matches!(*local_map, MapData::None) {
                 maps.insert(PipelineLevel::Local, local_map);
             }
@@ -95,7 +87,6 @@ fn planning_system(
             .0
             .step_planners(state, &maps, time.elapsed_secs_f64());
 
-        // Forward the best new path to PathFollowingCore if one is configured.
         if let Some(mut pf) = pf_opt {
             let mut best_path = None;
             for (level, path) in new_paths {

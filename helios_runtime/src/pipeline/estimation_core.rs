@@ -5,9 +5,7 @@
 use helios_core::{
     estimation::{EstimatorInputs, FilterContext, StateEstimator},
     frames::FrameAwareState,
-    mapping::MapData,
     messages::MeasurementMessage,
-    slam::SlamSystem,
     tracking::Tracker,
     types::Control,
 };
@@ -17,17 +15,16 @@ use crate::{
     runtime::{AgentRuntime, TfProviderAdapter},
 };
 
-/// Estimation stage: trackers + estimator/SLAM + shared control input state.
+/// Estimation stage: trackers + estimator + shared control input state.
 /// Owns all logic for predict + update sequencing.
 pub struct EstimationCore {
     pub trackers: Vec<Box<dyn Tracker>>,
     pub estimator: Option<Box<dyn StateEstimator>>,
-    pub slam: Option<Box<dyn SlamSystem>>,
     pub(crate) last_u: Control,
 }
 
 impl EstimationCore {
-    /// Process one incoming sensor measurement through trackers + estimator/SLAM.
+    /// Process one incoming sensor measurement through trackers + estimator.
     /// Called once per measurement event.
     pub fn process_measurement(&mut self, msg: &MeasurementMessage, runtime: &dyn AgentRuntime) {
         let adapter = TfProviderAdapter(runtime);
@@ -48,32 +45,12 @@ impl EstimationCore {
             } else {
                 estimator.update(msg, &context);
             }
-        } else if let Some(slam) = &mut self.slam {
-            let dt = msg.timestamp - slam.get_state().state.timestamp;
-            if dt > 1e-9 {
-                slam.predict(dt, &EstimatorInputs { control: self.last_u.clone() });
-            }
-            let dynamics = slam.get_dynamics_model();
-            if let Some(new_u) = dynamics.get_control_from_measurement(&msg.data) {
-                self.last_u = new_u;
-            } else {
-                slam.update(msg, &context);
-            }
         }
     }
 
-    /// Current best estimate of the ego state (from estimator or SLAM).
+    /// Current best estimate of the ego state.
     pub fn get_state(&self) -> Option<&FrameAwareState> {
-        if let Some(est) = &self.estimator {
-            Some(est.get_state())
-        } else {
-            self.slam.as_ref().map(|s| s.get_state())
-        }
-    }
-
-    /// SLAM global map, if a SLAM system is active.
-    pub fn get_slam_map(&self) -> Option<&MapData> {
-        self.slam.as_ref().map(|s| s.get_map())
+        self.estimator.as_ref().map(|e| e.get_state())
     }
 }
 
@@ -83,9 +60,6 @@ impl EstimationDriver for EstimationCore {
     }
     fn get_state(&self) -> Option<&FrameAwareState> {
         self.get_state()
-    }
-    fn get_slam_map(&self) -> Option<&MapData> {
-        self.get_slam_map()
     }
     // inject_ground_truth: default no-op — real estimator ignores GT injection
 }

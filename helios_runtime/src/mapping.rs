@@ -7,7 +7,7 @@
 use helios_core::{mapping::MapData, messages::MeasurementMessage};
 use nalgebra::{DMatrix, Isometry3};
 
-use crate::{pipeline::MappingCore, runtime::AgentRuntime, stage::PipelineLevel};
+use crate::{pipeline::MappingCore, runtime::AgentRuntime};
 
 /// Polymorphic mapping driver used by [`AutonomyPipeline`](crate::pipeline::AutonomyPipeline).
 ///
@@ -19,23 +19,22 @@ use crate::{pipeline::MappingCore, runtime::AgentRuntime, stage::PipelineLevel};
 ///
 /// Both implementations are `Send + Sync` to support parallel Bevy system scheduling.
 pub trait MapDriver: Send + Sync {
-    /// Forward a batch of sensor measurements to all active mappers.
+    /// Forward a batch of sensor measurements to all active map layers.
     ///
     /// Called every `FixedUpdate` tick. The slice contains all measurements that
     /// arrived since the last tick, sorted by timestamp.
     fn process_messages(&mut self, msgs: &[MeasurementMessage], runtime: &dyn AgentRuntime);
 
-    /// Notify mappers that the robot's odometry frame has moved.
+    /// Notify map layers that the robot's odometry frame has moved.
     ///
     /// Used by local-frame occupancy grids to recenter around the current pose.
     /// Called on a separate timer (configurable Hz) rather than every tick.
     fn process_pose_update(&mut self, pose: Isometry3<f64>);
 
-    /// Returns the current map at the given pipeline level, if one exists.
+    /// Returns the current map for the given layer key, or `None` if no such layer exists.
     ///
-    /// Returns `None` when no mapper is registered at `level`, or when the map
-    /// has not yet been initialized (e.g. before the first pose update).
-    fn get_map(&self, level: &PipelineLevel) -> Option<&MapData>;
+    /// The key matches the TOML `map_layers` entry name (e.g. `"local"`, `"global"`).
+    fn get_map(&self, key: &str) -> Option<&MapData>;
 }
 
 /// Static pre-built map for mock profiles.
@@ -43,7 +42,7 @@ pub trait MapDriver: Send + Sync {
 #[derive(Clone)]
 pub struct StaticMapProvider {
     map: MapData,
-    level: PipelineLevel,
+    layer: String,
 }
 
 impl StaticMapProvider {
@@ -52,7 +51,7 @@ impl StaticMapProvider {
         height_m: f64,
         resolution_m: f64,
         origin: Isometry3<f64>,
-        level: PipelineLevel,
+        layer: impl Into<String>,
     ) -> Self {
         let cols = (width_m / resolution_m).ceil() as usize;
         let rows = (height_m / resolution_m).ceil() as usize;
@@ -63,7 +62,7 @@ impl StaticMapProvider {
                 data: DMatrix::zeros(rows, cols),
                 version: 0,
             },
-            level,
+            layer: layer.into(),
         }
     }
 }
@@ -71,8 +70,8 @@ impl StaticMapProvider {
 impl MapDriver for StaticMapProvider {
     fn process_messages(&mut self, _: &[MeasurementMessage], _: &dyn AgentRuntime) {}
     fn process_pose_update(&mut self, _: Isometry3<f64>) {}
-    fn get_map(&self, level: &PipelineLevel) -> Option<&MapData> {
-        if *level == self.level {
+    fn get_map(&self, key: &str) -> Option<&MapData> {
+        if key == self.layer {
             Some(&self.map)
         } else {
             None
@@ -87,7 +86,7 @@ impl MapDriver for MappingCore {
     fn process_pose_update(&mut self, pose: Isometry3<f64>) {
         self.process_pose_update(pose);
     }
-    fn get_map(&self, level: &PipelineLevel) -> Option<&MapData> {
-        self.get_map(level)
+    fn get_map(&self, key: &str) -> Option<&MapData> {
+        self.get_map(key)
     }
 }

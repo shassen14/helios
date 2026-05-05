@@ -10,7 +10,7 @@ use super::{
     adapters::DefaultAdaptersPlugin, controllers::DefaultControllersPlugin,
     dynamics::DefaultDynamicsPlugin, estimators::DefaultEstimatorsPlugin,
     mappers::DefaultMappersPlugin, path_followers::DefaultPathFollowersPlugin,
-    planners::DefaultPlannersPlugin, slam::DefaultSlamPlugin, AutonomyRegistry,
+    planners::DefaultPlannersPlugin, AutonomyRegistry,
 };
 
 pub struct AutonomyRegistryPlugin;
@@ -22,7 +22,6 @@ impl Plugin for AutonomyRegistryPlugin {
             DefaultDynamicsPlugin,
             DefaultEstimatorsPlugin,
             DefaultMappersPlugin,
-            DefaultSlamPlugin,
             DefaultControllersPlugin,
             DefaultPlannersPlugin,
             DefaultAdaptersPlugin,

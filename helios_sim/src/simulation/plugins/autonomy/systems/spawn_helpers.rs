@@ -5,8 +5,7 @@
 use bevy::prelude::*;
 use helios_core::mapping::NoneMapper;
 use helios_core::planning::types::PlannerGoal;
-use helios_runtime::config::ControllerStateSourceConfig;
-use helios_runtime::config::MapperConfig;
+use helios_runtime::config::{AutonomyStack, ControllerStateSourceConfig};
 use helios_runtime::pipeline::PipelineBuilder;
 use helios_runtime::stage::PipelineLevel;
 
@@ -29,44 +28,47 @@ pub fn level_from_str(s: &str) -> PipelineLevel {
     }
 }
 
-/// Builds mapper, controllers, planners, and goal from config; inserts all pipeline
-/// components onto the agent entity. The caller provides the `EstimatorComponent`.
-pub fn build_separate_pipeline(
+/// Builds map layers, controllers, planners, and path follower from `AutonomyStack`;
+/// inserts all pipeline components onto the agent entity. The caller provides the
+/// `EstimatorComponent`.
+pub fn build_pipeline_from_stack(
     entity: Entity,
     commands: &mut Commands,
-    map_cfg: Option<&MapperConfig>,
+    stack: &AutonomyStack,
     agent_config: &AgentConfig,
     registry: &AutonomyRegistry,
     est_component: EstimatorComponent,
 ) {
     let mut builder = PipelineBuilder::new();
 
-    if let Some(cfg) = map_cfg {
-        if let Some(rate) = cfg.get_timer_rate() {
+    // Build each named map layer from map_layers HashMap.
+    for (layer_key, map_cfg) in &stack.map_layers {
+        if let Some(rate) = map_cfg.get_timer_rate() {
             commands.entity(entity).insert(ModuleTimer::from_hz(rate));
         }
         match registry.build_mapper(
-            cfg.get_kind_str(),
+            map_cfg.get_kind_str(),
             MapperBuildContext {
                 agent_entity: entity,
-                mapper_cfg: cfg.clone(),
+                map_layer_cfg: map_cfg.clone(),
             },
         ) {
             Ok(m) => {
-                builder = builder.with_mapper(PipelineLevel::Local, m);
+                builder = builder.with_mapper(layer_key.clone(), m);
             }
             Err(e) => {
                 error!(
-                    "Mapper build failed for '{}': {}. Falling back to NoneMapper.",
+                    "Mapper build failed for layer '{}' on agent '{}': {}. Falling back to NoneMapper.",
+                    layer_key,
                     agent_config.name(),
                     e
                 );
-                builder = builder.with_mapper(PipelineLevel::Local, Box::new(NoneMapper));
+                builder = builder.with_mapper(layer_key.clone(), Box::new(NoneMapper));
             }
         }
     }
 
-    for (_key, ctrl_cfg) in &agent_config.autonomy_stack().controllers {
+    for (_key, ctrl_cfg) in &stack.controllers {
         let kind = ctrl_cfg.get_kind_str();
         let ctx = ControllerBuildContext {
             agent_entity: entity,
@@ -89,7 +91,7 @@ pub fn build_separate_pipeline(
         }
     }
 
-    for (_key, plan_cfg) in &agent_config.autonomy_stack().planners {
+    for (_key, plan_cfg) in &stack.planners {
         let kind = plan_cfg.get_kind_str();
         let level = level_from_str(plan_cfg.get_level_str());
         let ctx = PlannerBuildContext {
@@ -112,7 +114,7 @@ pub fn build_separate_pipeline(
         }
     }
 
-    if let Some(pf_cfg) = &agent_config.autonomy_stack().path_following {
+    if let Some(pf_cfg) = &stack.path_following {
         let kind = pf_cfg.get_kind_str();
         let ctx = PathFollowerBuildContext {
             agent_entity: entity,
@@ -135,8 +137,7 @@ pub fn build_separate_pipeline(
 
     builder = builder.with_goal(PlannerGoal::WorldPose(agent_config.goal_pose.to_isometry()));
 
-    let ctrl_state_source = agent_config
-        .autonomy_stack()
+    let ctrl_state_source = stack
         .controllers
         .values()
         .next()

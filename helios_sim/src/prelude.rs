@@ -11,7 +11,7 @@ pub use helios_core::prelude::*;
 pub use crate::cli::Cli;
 pub use crate::simulation::config::structs::{
     AgentConfig, AutonomyStack, EkfDynamicsConfig, RawScenarioConfig, ScenarioConfig, SensorConfig,
-    Vehicle, WorldModelConfig,
+    Vehicle,
 };
 pub use crate::simulation::config::structs::{AtmosphereConfig, TerrainConfig};
 pub use crate::simulation::core::app_state::{AppState, SceneBuildSet, SimulationSet};

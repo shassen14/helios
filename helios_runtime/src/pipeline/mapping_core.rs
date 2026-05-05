@@ -2,58 +2,48 @@
 //
 // MappingCore struct + impl.
 
+use std::collections::HashMap;
+
 use helios_core::{
     estimation::FilterContext,
-    mapping::MapData,
+    mapping::{MapData, Mapper},
     messages::{MeasurementMessage, ModuleInput},
 };
 use nalgebra::Isometry3;
 
-use crate::{
-    runtime::{AgentRuntime, TfProviderAdapter},
-    stage::{LeveledMapper, PipelineLevel},
-};
+use crate::runtime::{AgentRuntime, TfProviderAdapter};
 
-/// Mapping stage: leveled mappers.
-/// When `slam_active` is true, global-level mappers are skipped (SLAM owns that slot).
+/// Mapping stage: named map layers keyed by their TOML layer name.
+///
+/// Each entry corresponds to one `map_layers` key from `AutonomyStack`.
+/// The key is also the channel name consumed by downstream planners (`MapData @ "<key>"`).
 pub struct MappingCore {
-    pub mappers: Vec<LeveledMapper>,
-    pub slam_active: bool,
+    pub mappers: HashMap<String, Box<dyn Mapper>>,
 }
 
 impl MappingCore {
-    /// Feed new sensor messages to all mappers (cheap log-odds update).
+    /// Feed new sensor messages to all map layers.
     pub fn process_messages(&mut self, inputs: &[MeasurementMessage], runtime: &dyn AgentRuntime) {
         let adapter = TfProviderAdapter(runtime);
         let context = FilterContext { tf: Some(&adapter) };
 
-        for leveled_mapper in &mut self.mappers {
-            if self.slam_active && leveled_mapper.level == PipelineLevel::Global {
-                continue;
-            }
+        for mapper in self.mappers.values_mut() {
             for msg in inputs {
-                leveled_mapper
-                    .mapper
-                    .process(&ModuleInput::Measurement { message: msg }, &context);
+                mapper.process(&ModuleInput::Measurement { message: msg }, &context);
             }
         }
     }
 
-    /// Push an odom pose update into all mappers so the grid can recenter.
+    /// Push an odom pose update into all map layers so rolling-window grids can recenter.
     pub fn process_pose_update(&mut self, pose: Isometry3<f64>) {
         let context = FilterContext { tf: None };
-        for leveled_mapper in &mut self.mappers {
-            leveled_mapper
-                .mapper
-                .process(&ModuleInput::PoseUpdate { pose }, &context);
+        for mapper in self.mappers.values_mut() {
+            mapper.process(&ModuleInput::PoseUpdate { pose }, &context);
         }
     }
 
-    /// Current map at the given level.
-    pub fn get_map(&self, level: &PipelineLevel) -> Option<&MapData> {
-        self.mappers
-            .iter()
-            .find(|lm| &lm.level == level)
-            .map(|lm| lm.mapper.get_map())
+    /// Current map for the given layer key, or `None` if no such layer is registered.
+    pub fn get_map(&self, key: &str) -> Option<&MapData> {
+        self.mappers.get(key).map(|m| m.get_map())
     }
 }

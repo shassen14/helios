@@ -28,7 +28,5 @@ starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose     = { translation = [10.0, 0.0, 0.5] }
 
 # No mapper, no planner, no controller — estimator only.
-[agents.autonomy_stack.world_model]
-type      = "Separate"
+[agents.autonomy_stack]
 estimator = { from = "components.estimators.ekf_pro" }
-mapper    = { from = "components.mappers.none" }

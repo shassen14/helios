@@ -4,8 +4,8 @@
 //!
 //! | Stage | Struct | Responsibility |
 //! |---|---|---|
-//! | Estimation | [`EstimationCore`] | EKF/UKF predict+update, SLAM |
-//! | Mapping | [`MappingCore`] | Occupancy grids, map maintenance |
+//! | Estimation | [`EstimationCore`] | EKF/UKF predict+update |
+//! | Mapping | [`MappingCore`] | Occupancy grids, named map layers |
 //! | Control | [`ControlCore`] | Planning, look-ahead, controller dispatch |
 //!
 //! The composite [`AutonomyPipeline`] wraps all three for `helios_hw` convenience.
@@ -19,7 +19,7 @@
 //! ```rust,ignore
 //! let pipeline = PipelineBuilder::new()
 //!     .with_estimator(ekf)
-//!     .with_mapper(PipelineLevel::Local, occ_grid)
+//!     .with_mapper("local", occ_grid)
 //!     .with_controller(PipelineLevel::Local, pure_pursuit)
 //!     .with_goal(PlannerGoal::WorldPose(goal))
 //!     .build();
@@ -42,19 +42,19 @@ use std::collections::HashMap;
 
 use helios_core::{
     control::ControlOutput,
+    estimation::StateEstimator,
     frames::FrameAwareState,
     mapping::{MapData, Mapper},
     messages::MeasurementMessage,
     planning::{types::PlannerGoal, Planner},
     prelude::{Path, PathFollower},
-    slam::SlamSystem,
     tracking::Tracker,
 };
 use nalgebra::{DVector, Isometry3};
 
 use crate::{
     runtime::AgentRuntime,
-    stage::{LeveledController, LeveledMapper, LeveledPlanner, PipelineLevel},
+    stage::{LeveledController, LeveledPlanner, PipelineLevel},
 };
 
 /// Snapshot of all stage outputs for a given tick.
@@ -86,7 +86,7 @@ impl AutonomyPipeline {
         PipelineBuilder::new()
     }
 
-    /// Decompose into three independent stage values for ECS component insertion.
+    /// Decompose into four independent stage values for ECS component insertion.
     /// After this call, `self` is consumed. Use `into_parts()` in helios_sim spawn systems.
     pub fn into_parts(
         self,
@@ -118,7 +118,7 @@ impl AutonomyPipeline {
         self.build_outputs()
     }
 
-    /// Feed new sensor messages to all mappers. Delegates to `MappingCore`.
+    /// Feed new sensor messages to all map layers. Delegates to `MappingCore`.
     pub fn process_mapper_messages(
         &mut self,
         inputs: &[MeasurementMessage],
@@ -127,7 +127,7 @@ impl AutonomyPipeline {
         self.mapping.process_messages(inputs, runtime);
     }
 
-    /// Push an odom pose update into all mappers. Delegates to `MappingCore`.
+    /// Push an odom pose update into all map layers. Delegates to `MappingCore`.
     pub fn process_mapper_pose_update(&mut self, pose: Isometry3<f64>) {
         self.mapping.process_pose_update(pose);
     }
@@ -137,14 +137,9 @@ impl AutonomyPipeline {
         self.estimation.get_state()
     }
 
-    /// Current map at the given level. Global level checks SLAM first.
-    pub fn get_map(&self, level: &PipelineLevel) -> Option<&MapData> {
-        if *level == PipelineLevel::Global {
-            if let Some(map) = self.estimation.get_slam_map() {
-                return Some(map);
-            }
-        }
-        self.mapping.get_map(level)
+    /// Current map for the given layer key. Delegates to `MappingCore`.
+    pub fn get_map(&self, key: &str) -> Option<&MapData> {
+        self.mapping.get_map(key)
     }
 
     pub fn step_planners(&mut self, now: f64, _runtime: &dyn AgentRuntime) {
@@ -154,8 +149,8 @@ impl AutonomyPipeline {
 
         // Clone map data so `maps` owns its values and doesn't borrow from `self`,
         // allowing the subsequent mutable borrow of `self.control`.
-        let global_map = self.get_map(&PipelineLevel::Global).cloned();
-        let local_map = self.get_map(&PipelineLevel::Local).cloned();
+        let global_map = self.mapping.get_map("global").cloned();
+        let local_map = self.mapping.get_map("local").cloned();
 
         let mut maps: HashMap<PipelineLevel, &MapData> = HashMap::new();
         if let Some(ref map) = global_map {
@@ -198,8 +193,8 @@ impl AutonomyPipeline {
     fn build_outputs(&self) -> PipelineOutputs {
         PipelineOutputs {
             ego_state: self.get_state().cloned(),
-            global_map: self.get_map(&PipelineLevel::Global).cloned(),
-            local_map: self.get_map(&PipelineLevel::Local).cloned(),
+            global_map: self.mapping.get_map("global").cloned(),
+            local_map: self.mapping.get_map("local").cloned(),
             control_output: None,
         }
     }
@@ -211,16 +206,12 @@ impl AutonomyPipeline {
 
 /// The only construction path for [`AutonomyPipeline`].
 ///
-/// Stages are sorted by [`PipelineLevel`] at `build()` time so that
-/// `Global` always runs before `Local` and `Local` before `Custom` variants.
-///
 /// An empty builder (no stages registered) produces a valid, no-op pipeline —
 /// useful for agents that only need a subset of capabilities.
 pub struct PipelineBuilder {
     trackers: Vec<Box<dyn Tracker>>,
     estimator: Option<Box<dyn StateEstimator>>,
-    slam: Option<Box<dyn SlamSystem>>,
-    mappers: Vec<LeveledMapper>,
+    mappers: HashMap<String, Box<dyn Mapper>>,
     planners: Vec<LeveledPlanner>,
     path_follower: Option<Box<dyn PathFollower>>,
     controllers: Vec<LeveledController>,
@@ -228,15 +219,12 @@ pub struct PipelineBuilder {
     goal: Option<PlannerGoal>,
 }
 
-use helios_core::estimation::StateEstimator;
-
 impl PipelineBuilder {
     pub fn new() -> Self {
         Self {
             trackers: Vec::new(),
             estimator: None,
-            slam: None,
-            mappers: Vec::new(),
+            mappers: HashMap::new(),
             planners: Vec::new(),
             path_follower: None,
             controllers: Vec::new(),
@@ -256,13 +244,9 @@ impl PipelineBuilder {
         self
     }
 
-    pub fn with_slam(mut self, slam: Box<dyn SlamSystem>) -> Self {
-        self.slam = Some(slam);
-        self
-    }
-
-    pub fn with_mapper(mut self, level: PipelineLevel, mapper: Box<dyn Mapper>) -> Self {
-        self.mappers.push(LeveledMapper { level, mapper });
+    /// Register a map layer under the given key. The key matches the TOML `map_layers` entry.
+    pub fn with_mapper(mut self, key: impl Into<String>, mapper: Box<dyn Mapper>) -> Self {
+        self.mappers.insert(key.into(), mapper);
         self
     }
 
@@ -287,28 +271,19 @@ impl PipelineBuilder {
     }
 
     pub fn build(mut self) -> AutonomyPipeline {
-        self.mappers.sort_by(|a, b| a.level.cmp(&b.level));
         self.planners.sort_by(|a, b| a.level.cmp(&b.level));
         self.controllers.sort_by(|a, b| a.level.cmp(&b.level));
 
-        let slam_active = self.slam.is_some();
-
-        let mut path_following = None;
-
-        if let Some(p) = self.path_follower {
-            path_following = Some(PathFollowingCore::new(p));
-        };
+        let path_following = self.path_follower.map(PathFollowingCore::new);
 
         AutonomyPipeline {
             estimation: EstimationCore {
                 trackers: self.trackers,
                 estimator: self.estimator,
-                slam: self.slam,
                 last_u: DVector::zeros(self.control_dim),
             },
             mapping: MappingCore {
                 mappers: self.mappers,
-                slam_active,
             },
             path_following,
             control: ControlCore {

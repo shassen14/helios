@@ -11,7 +11,7 @@ pub enum MapperPoseSourceConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
-pub enum MapperConfig {
+pub enum MapLayerConfig {
     None,
     OccupancyGrid2D {
         rate: f32,
@@ -25,19 +25,19 @@ pub enum MapperConfig {
     },
 }
 
-impl MapperConfig {
+impl MapLayerConfig {
     pub fn get_kind_str(&self) -> &str {
         match self {
-            MapperConfig::None => "None",
-            MapperConfig::OccupancyGrid2D { .. } => "OccupancyGrid2D",
+            MapLayerConfig::None => "None",
+            MapLayerConfig::OccupancyGrid2D { .. } => "OccupancyGrid2D",
         }
     }
 
     /// Returns the update rate for mappers that need a `ModuleTimer`, `None` otherwise.
     pub fn get_timer_rate(&self) -> Option<f32> {
         match self {
-            MapperConfig::OccupancyGrid2D { rate, .. } => Some(*rate),
-            MapperConfig::None => None,
+            MapLayerConfig::OccupancyGrid2D { rate, .. } => Some(*rate),
+            MapLayerConfig::None => None,
         }
     }
 }
