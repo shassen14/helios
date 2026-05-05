@@ -24,7 +24,7 @@ impl Default for DirectVelocityController {
 }
 
 impl Controller for DirectVelocityController {
-    fn compute(&mut self, inputs: &ControlInputs) -> ControlOutput {
+    fn compute(&mut self, _dt: f64, inputs: &ControlInputs) -> ControlOutput {
         let zero = ControlOutput::BodyVelocity {
             linear: Vector3::zeros(),
             angular: Vector3::zeros(),

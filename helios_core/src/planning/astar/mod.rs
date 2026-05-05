@@ -147,7 +147,7 @@ impl Planner for AStarPlanner {
     /// 9. Robot outside map → [`PlannerResult::Error`].
     /// 10. A\* finds no path → [`PlannerResult::Unreachable`].
     /// 11. Path found → [`PlannerResult::Path`] (or `GoalOutsideMap` from step 8).
-    fn plan(&mut self, inputs: &PlannerInputs) -> PlannerResult {
+    fn plan(&mut self, now: f64, inputs: &PlannerInputs) -> PlannerResult {
         let goal = match &inputs.goal {
             Some(g) => g.clone(),
             None => return PlannerResult::NoGoal,
@@ -177,7 +177,7 @@ impl Planner for AStarPlanner {
         }
 
         // Rate gate / deviation check.
-        if !self.should_replan(inputs) {
+        if !self.should_replan(now, inputs) {
             return PlannerResult::PathStillValid;
         }
 
@@ -265,7 +265,7 @@ impl Planner for AStarPlanner {
             .iter()
             .map(|&(row, col)| {
                 let wp = space.cell_to_world_center(row, col);
-                make_waypoint(wp.x, wp.y, inputs.now)
+                make_waypoint(wp.x, wp.y, now)
             })
             .collect();
 
@@ -276,11 +276,11 @@ impl Planner for AStarPlanner {
 
         let path = Path {
             waypoints,
-            timestamp: inputs.now,
+            timestamp: now,
             level_key: self.config.level_key.clone(),
         };
 
-        self.last_plan_time = inputs.now;
+        self.last_plan_time = now;
         self.status = PlannerStatus::Active;
         self.cached_path = Some(path.clone());
 
@@ -302,12 +302,12 @@ impl Planner for AStarPlanner {
     /// `deviation_tolerance_m`.
     ///
     /// Otherwise replan when `ctx.now - last_plan_time >= 1 / rate_hz`.
-    fn should_replan(&self, inputs: &PlannerInputs) -> bool {
+    fn should_replan(&self, now: f64, inputs: &PlannerInputs) -> bool {
         if self.status == PlannerStatus::Idle || self.cached_path.is_none() {
             return true;
         }
 
-        let elapsed = inputs.now - self.last_plan_time;
+        let elapsed = now - self.last_plan_time;
         let period = if self.config.rate_hz > 0.0 {
             1.0 / self.config.rate_hz
         } else {
@@ -409,18 +409,11 @@ mod tests {
         PlannerGoal::WorldPosition2D(Vector2::new(x, y))
     }
 
-    fn make_inputs(
-        x: f64,
-        y: f64,
-        map: MapData,
-        goal: Option<PlannerGoal>,
-        now: f64,
-    ) -> PlannerInputs {
+    fn make_inputs(x: f64, y: f64, map: MapData, goal: Option<PlannerGoal>) -> PlannerInputs {
         PlannerInputs {
             state: make_state(x, y),
             map,
             goal,
-            now,
         }
     }
 
@@ -432,8 +425,8 @@ mod tests {
     #[test]
     fn plan_no_goal() {
         let mut planner = AStarPlanner::new(default_config());
-        let inputs = make_inputs(0.0, 0.0, clear_map(10, 10, 1.0), None, 0.0);
-        let result = planner.plan(&inputs);
+        let inputs = make_inputs(0.0, 0.0, clear_map(10, 10, 1.0), None);
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::NoGoal));
     }
 
@@ -442,14 +435,8 @@ mod tests {
     #[test]
     fn plan_goal_reached() {
         let mut planner = AStarPlanner::new(default_config());
-        let inputs = make_inputs(
-            5.0,
-            5.0,
-            clear_map(20, 20, 1.0),
-            Some(goal_2d(5.1, 5.0)),
-            0.0,
-        );
-        let result = planner.plan(&inputs);
+        let inputs = make_inputs(5.0, 5.0, clear_map(20, 20, 1.0), Some(goal_2d(5.1, 5.0)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::GoalReached));
         assert_eq!(planner.status(), PlannerStatus::GoalReached);
     }
@@ -458,8 +445,8 @@ mod tests {
     #[test]
     fn plan_wrong_map_type() {
         let mut planner = AStarPlanner::new(default_config());
-        let inputs = make_inputs(0.0, 0.0, MapData::None, Some(goal_2d(5.0, 5.0)), 0.0);
-        let result = planner.plan(&inputs);
+        let inputs = make_inputs(0.0, 0.0, MapData::None, Some(goal_2d(5.0, 5.0)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::Error(_)));
     }
 
@@ -473,8 +460,8 @@ mod tests {
             data: DMatrix::from_element(0, 0, 0u8),
             version: 0,
         };
-        let inputs = make_inputs(0.0, 0.0, map, Some(goal_2d(1.0, 1.0)), 0.0);
-        let result = planner.plan(&inputs);
+        let inputs = make_inputs(0.0, 0.0, map, Some(goal_2d(1.0, 1.0)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::Error(_)));
     }
 
@@ -483,14 +470,8 @@ mod tests {
     #[test]
     fn plan_success() {
         let mut planner = AStarPlanner::new(default_config());
-        let inputs = make_inputs(
-            0.5,
-            0.5,
-            clear_map(10, 10, 1.0),
-            Some(goal_2d(9.5, 9.5)),
-            0.0,
-        );
-        let result = planner.plan(&inputs);
+        let inputs = make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)));
+        let result = planner.plan(0.0, &inputs);
         match result {
             PlannerResult::Path(path) => {
                 assert!(!path.waypoints.is_empty());
@@ -519,8 +500,8 @@ mod tests {
             data,
             version: 0,
         };
-        let inputs = make_inputs(0.5, 0.5, map, Some(goal_2d(9.5, 9.5)), 0.0);
-        let result = planner.plan(&inputs);
+        let inputs = make_inputs(0.5, 0.5, map, Some(goal_2d(9.5, 9.5)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::Unreachable));
         assert_eq!(planner.status(), PlannerStatus::Failed);
     }
@@ -530,14 +511,8 @@ mod tests {
     #[test]
     fn plan_goal_outside_map() {
         let mut planner = AStarPlanner::new(default_config());
-        let inputs = make_inputs(
-            0.5,
-            0.5,
-            clear_map(10, 10, 1.0),
-            Some(goal_2d(50.0, 50.0)),
-            0.0,
-        );
-        let result = planner.plan(&inputs);
+        let inputs = make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(50.0, 50.0)));
+        let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::GoalOutsideMap(_)));
     }
 
@@ -549,8 +524,8 @@ mod tests {
     #[test]
     fn should_replan_idle() {
         let planner = AStarPlanner::new(default_config());
-        let inputs = make_inputs(0.0, 0.0, clear_map(10, 10, 1.0), None, 0.0);
-        assert!(planner.should_replan(&inputs));
+        let inputs = make_inputs(0.0, 0.0, clear_map(10, 10, 1.0), None);
+        assert!(planner.should_replan(0.0, &inputs));
     }
 
     /// After a successful plan at `t=0` with `rate_hz=1.0`, the gate is
@@ -561,22 +536,13 @@ mod tests {
         let map = clear_map(10, 10, 1.0);
 
         // Seed last_plan_time = 0.0.
-        planner.plan(&make_inputs(
-            0.5,
-            0.5,
-            clear_map(10, 10, 1.0),
-            Some(goal_2d(9.5, 9.5)),
-            0.0,
-        ));
+        planner.plan(0.0, &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5))));
 
-        assert!(!planner.should_replan(&make_inputs(
+        assert!(!planner.should_replan(
             0.5,
-            0.5,
-            clear_map(10, 10, 1.0),
-            Some(goal_2d(9.5, 9.5)),
-            0.5
-        ))); // half-period: gate closed
-        assert!(planner.should_replan(&make_inputs(0.5, 0.5, map, Some(goal_2d(9.5, 9.5)), 1.0)));
+            &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)))
+        )); // half-period: gate closed
+        assert!(planner.should_replan(1.0, &make_inputs(0.5, 0.5, map, Some(goal_2d(9.5, 9.5)))));
         // full period: gate opens
     }
 
@@ -592,29 +558,17 @@ mod tests {
         let mut planner = AStarPlanner::new(config);
 
         // Compute path at t=0.
-        planner.plan(&make_inputs(
-            0.5,
-            0.5,
-            clear_map(10, 10, 1.0),
-            Some(goal_2d(9.5, 9.5)),
-            0.0,
-        ));
+        planner.plan(0.0, &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5))));
 
         // Robot on the path — no replan.
-        assert!(!planner.should_replan(&make_inputs(
-            0.5,
-            0.5,
-            clear_map(10, 10, 1.0),
-            Some(goal_2d(9.5, 9.5)),
-            0.1
-        )));
+        assert!(!planner.should_replan(
+            0.1,
+            &make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)))
+        ));
         // Robot far from every waypoint — triggers replan.
-        assert!(planner.should_replan(&make_inputs(
-            50.0,
-            50.0,
-            clear_map(10, 10, 1.0),
-            Some(goal_2d(9.5, 9.5)),
-            0.1
-        )));
+        assert!(planner.should_replan(
+            0.1,
+            &make_inputs(50.0, 50.0, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)))
+        ));
     }
 }

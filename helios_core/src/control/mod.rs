@@ -24,7 +24,6 @@ use crate::{frames::FrameAwareState, types::TrajectoryPoint};
 pub struct ControlInputs {
     pub state: FrameAwareState,
     pub reference: Option<TrajectoryPoint>,
-    pub dt: f64,
 }
 
 /// The typed output of any `Controller`. All vectors are in the **body FLU frame**, SI units.
@@ -75,7 +74,7 @@ pub enum ControlOutput {
 /// can implement it by storing whatever internal state it needs.
 pub trait Controller: Send + Sync {
     /// Compute a control output for the current state and time step.
-    fn compute(&mut self, inputs: &ControlInputs) -> ControlOutput;
+    fn compute(&mut self, dt: f64, inputs: &ControlInputs) -> ControlOutput;
 
     /// Reset all internal integrators, accumulators, and filters to zero.
     fn reset(&mut self);

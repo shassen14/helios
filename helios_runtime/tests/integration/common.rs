@@ -194,11 +194,11 @@ impl MockPlanner {
 }
 
 impl Planner for MockPlanner {
-    fn plan(&mut self, _inputs: &PlannerInputs) -> PlannerResult {
+    fn plan(&mut self, _now: f64, _inputs: &PlannerInputs) -> PlannerResult {
         PlannerResult::NoGoal
     }
 
-    fn should_replan(&self, _inputs: &PlannerInputs) -> bool {
+    fn should_replan(&self, _now: f64, _inputs: &PlannerInputs) -> bool {
         false
     }
 
@@ -218,7 +218,7 @@ impl Planner for MockPlanner {
 pub struct MockController;
 
 impl Controller for MockController {
-    fn compute(&mut self, _inputs: &ControlInputs) -> ControlOutput {
+    fn compute(&mut self, _dt: f64, _inputs: &ControlInputs) -> ControlOutput {
         ControlOutput::Raw(DVector::zeros(2))
     }
 

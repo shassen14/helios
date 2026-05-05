@@ -62,7 +62,6 @@ impl PlannerInputBuilder for DefaultPlannerInputBuilder {
             state: state_stamped.value.state.clone(),
             map: map_stamped.value.clone(),
             goal,
-            now: tick.now.0,
         })
     }
 

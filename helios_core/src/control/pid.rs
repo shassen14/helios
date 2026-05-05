@@ -69,7 +69,7 @@ fn extract_ref_velocities(reference: &TrajectoryPoint) -> (f64, f64, f64) {
 }
 
 impl Controller for VelocityPidController {
-    fn compute(&mut self, inputs: &ControlInputs) -> ControlOutput {
+    fn compute(&mut self, dt: f64, inputs: &ControlInputs) -> ControlOutput {
         let (cur_vx, cur_vy, cur_yaw) = extract_body_velocities(&inputs.state.state);
 
         let (ref_vx, ref_vy, ref_yaw) = inputs
@@ -78,9 +78,9 @@ impl Controller for VelocityPidController {
             .map(extract_ref_velocities)
             .unwrap_or((0.0, 0.0, 0.0));
 
-        let out_vx = self.vx_pid.update(ref_vx - cur_vx, inputs.dt);
-        let out_vy = self.vy_pid.update(ref_vy - cur_vy, inputs.dt);
-        let out_yaw = self.yaw_pid.update(ref_yaw - cur_yaw, inputs.dt);
+        let out_vx = self.vx_pid.update(ref_vx - cur_vx, dt);
+        let out_vy = self.vy_pid.update(ref_vy - cur_vy, dt);
+        let out_yaw = self.yaw_pid.update(ref_yaw - cur_yaw, dt);
 
         ControlOutput::BodyVelocity {
             linear: Vector3::new(out_vx, out_vy, 0.0),

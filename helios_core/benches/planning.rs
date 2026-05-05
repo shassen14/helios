@@ -64,12 +64,11 @@ fn obstacle_map_100x100(resolution: f64) -> MapData {
     }
 }
 
-fn make_inputs(x: f64, y: f64, map: MapData, goal: Option<PlannerGoal>, now: f64) -> PlannerInputs {
+fn make_inputs(x: f64, y: f64, map: MapData, goal: Option<PlannerGoal>) -> PlannerInputs {
     PlannerInputs {
         state: make_state(x, y),
         map,
         goal,
-        now,
     }
 }
 
@@ -84,11 +83,10 @@ fn bench_astar(c: &mut Criterion) {
     group.bench_function("50x50_free", |b| {
         b.iter(|| {
             let mut planner = AStarPlanner::new(bench_config());
-            planner.plan(&make_inputs(
+            planner.plan(0.0, &make_inputs(
                 0.5, 0.5,
                 clear_map(50, 50, 1.0),
                 Some(PlannerGoal::WorldPosition2D(Vector2::new(49.5, 49.5))),
-                0.0,
             ))
         });
     });
@@ -97,11 +95,10 @@ fn bench_astar(c: &mut Criterion) {
     group.bench_function("100x100_free", |b| {
         b.iter(|| {
             let mut planner = AStarPlanner::new(bench_config());
-            planner.plan(&make_inputs(
+            planner.plan(0.0, &make_inputs(
                 0.5, 0.5,
                 clear_map(100, 100, 1.0),
                 Some(PlannerGoal::WorldPosition2D(Vector2::new(99.5, 99.5))),
-                0.0,
             ))
         });
     });
@@ -110,11 +107,10 @@ fn bench_astar(c: &mut Criterion) {
     group.bench_function("100x100_obstacles", |b| {
         b.iter(|| {
             let mut planner = AStarPlanner::new(bench_config());
-            planner.plan(&make_inputs(
+            planner.plan(0.0, &make_inputs(
                 0.5, 0.5,
                 obstacle_map_100x100(1.0),
                 Some(PlannerGoal::WorldPosition2D(Vector2::new(99.5, 99.5))),
-                0.0,
             ))
         });
     });

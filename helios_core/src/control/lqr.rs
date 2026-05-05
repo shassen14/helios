@@ -61,7 +61,7 @@ impl LqrController {
 }
 
 impl Controller for LqrController {
-    fn compute(&mut self, inputs: &ControlInputs) -> ControlOutput {
+    fn compute(&mut self, _dt: f64, inputs: &ControlInputs) -> ControlOutput {
         let x = &inputs.state.state.vector;
 
         // Build reference vector from TrajectoryPoint if available.

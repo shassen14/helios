@@ -24,11 +24,11 @@ pub trait Planner: Send + Sync {
     /// - Return `GoalReached` when within `arrival_tolerance_m`.
     /// - Return `GoalOutsideMap(partial_path)` for local planners whose goal is outside the map.
     /// - Never panic; return `Error(reason)` for recoverable failures.
-    fn plan(&mut self, inputs: &PlannerInputs) -> PlannerResult;
+    fn plan(&mut self, now: f64, inputs: &PlannerInputs) -> PlannerResult;
 
     /// Returns true if a replan should be performed on this tick.
     /// Each implementation decides based on rate_hz, deviation, goal change, etc.
-    fn should_replan(&self, inputs: &PlannerInputs) -> bool;
+    fn should_replan(&self, now: f64, inputs: &PlannerInputs) -> bool;
 
     /// Current lifecycle status.
     fn status(&self) -> PlannerStatus;
@@ -41,5 +41,4 @@ pub struct PlannerInputs {
     pub state: RobotState,
     pub map: MapData,
     pub goal: Option<PlannerGoal>,
-    pub now: f64,
 }

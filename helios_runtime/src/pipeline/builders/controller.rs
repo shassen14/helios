@@ -54,7 +54,6 @@ impl ControlInputBuilder for DefaultControlInputBuilder {
         Some(ControlInputs {
             state: state_stamped.value.clone(),
             reference,
-            dt: tick.dt,
         })
     }
 

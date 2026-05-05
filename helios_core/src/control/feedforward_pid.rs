@@ -63,7 +63,7 @@ impl FeedforwardPidController {
 }
 
 impl Controller for FeedforwardPidController {
-    fn compute(&mut self, inputs: &ControlInputs) -> ControlOutput {
+    fn compute(&mut self, dt: f64, inputs: &ControlInputs) -> ControlOutput {
         let m = self.dynamics.get_control_dim();
 
         // --- Feedforward ---
@@ -109,7 +109,7 @@ impl Controller for FeedforwardPidController {
                 .as_ref()
                 .and_then(|r| r.state.vector.get(state_idx).copied())
                 .unwrap_or(0.0);
-            u_fb[i] = pid.update(x_ref - x_cur, inputs.dt);
+            u_fb[i] = pid.update(x_ref - x_cur, dt);
         }
 
         // --- Combine and clamp ---

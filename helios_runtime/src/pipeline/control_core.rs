@@ -54,11 +54,10 @@ impl ControlCore {
                 state: state.state.clone(),
                 map: map.clone(),
                 goal: self.current_goal.clone(),
-                now,
             };
 
             use helios_core::planning::types::PlannerResult;
-            match lp.planner.plan(&inputs) {
+            match lp.planner.plan(now, &inputs) {
                 PlannerResult::Path(path) | PlannerResult::GoalOutsideMap(path) => {
                     new_paths.push((lp.level.clone(), path));
                 }
@@ -91,10 +90,9 @@ impl ControlCore {
         let inputs = ControlInputs {
             state: state.clone(),
             reference: reference_waypoint.cloned(),
-            dt,
         };
         self.controllers
             .first_mut()
-            .map(|lc| lc.controller.compute(&inputs))
+            .map(|lc| lc.controller.compute(dt, &inputs))
     }
 }
