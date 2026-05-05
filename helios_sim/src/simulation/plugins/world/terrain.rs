@@ -38,9 +38,10 @@ impl TerrainAssets {
                 asset_server.get_load_state(&e.scene),
                 Some(LoadState::Loaded)
             );
-            let col_ok = e.collider.as_ref().is_none_or(|h| {
-                matches!(asset_server.get_load_state(h), Some(LoadState::Loaded))
-            });
+            let col_ok = e
+                .collider
+                .as_ref()
+                .is_none_or(|h| matches!(asset_server.get_load_state(h), Some(LoadState::Loaded)));
             scene_ok && col_ok
         })
     }

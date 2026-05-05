@@ -26,7 +26,6 @@ pub struct ProfiledSimulationPlugin {
     pub profile: SimulationProfile,
 }
 
-
 impl Plugin for ProfiledSimulationPlugin {
     fn build(&self, app: &mut App) {
         let caps = self.profile.capabilities();
