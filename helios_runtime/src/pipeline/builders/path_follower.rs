@@ -23,6 +23,12 @@ pub struct DefaultPathFollowerInputBuilder {
     required: Vec<ChannelKey>,
 }
 
+impl Default for DefaultPathFollowerInputBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DefaultPathFollowerInputBuilder {
     pub fn new() -> Self {
         let state_channel = ChannelKey::of::<FrameAwareState>();

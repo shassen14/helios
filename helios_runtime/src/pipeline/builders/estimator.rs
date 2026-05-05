@@ -30,6 +30,12 @@ pub struct IntegratedImuInputBuilder {
     required: Vec<ChannelKey>,
 }
 
+impl Default for IntegratedImuInputBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IntegratedImuInputBuilder {
     pub fn new() -> Self {
         let accel_channel = ChannelKey::of::<Vec<SensorReading<LinearAcceleration3D>>>();

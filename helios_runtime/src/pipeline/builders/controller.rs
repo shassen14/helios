@@ -24,6 +24,12 @@ pub struct DefaultControlInputBuilder {
     optional: Vec<ChannelKey>,
 }
 
+impl Default for DefaultControlInputBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DefaultControlInputBuilder {
     pub fn new() -> Self {
         let state_channel = ChannelKey::of::<FrameAwareState>();
