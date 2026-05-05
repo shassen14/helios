@@ -24,7 +24,7 @@ pub fn run_mapping(
     tf_tree: Res<TfTree>,
 ) {
     let runtime = SimRuntime {
-        tf: &*tf_tree,
+        tf: &tf_tree,
         elapsed_secs: time.elapsed_secs_f64(),
     };
 

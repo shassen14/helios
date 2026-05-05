@@ -48,7 +48,7 @@ pub fn run_estimation(
     time: Res<Time>,
 ) {
     let runtime = SimRuntime {
-        tf: &*tf_tree,
+        tf: &tf_tree,
         elapsed_secs: time.elapsed_secs_f64(),
     };
 

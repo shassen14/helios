@@ -76,10 +76,8 @@ fn inject_mock_path(
     let path = build_path(&fixture, &level);
     let path_len = path.len();
 
-    for pf_opt in &mut query {
-        if let Some(mut pf) = pf_opt {
-            pf.0.set_path(path.clone());
-        }
+    for mut pf in (&mut query).into_iter().flatten() {
+        pf.0.set_path(path.clone());
     }
 
     info!(

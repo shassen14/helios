@@ -21,17 +21,11 @@ use crate::simulation::plugins::world::HeliosWorldPlugin;
 use crate::simulation::profile::SimulationProfile;
 use crate::simulation::registry::plugin::AutonomyRegistryPlugin;
 
+#[derive(Default)]
 pub struct ProfiledSimulationPlugin {
     pub profile: SimulationProfile,
 }
 
-impl Default for ProfiledSimulationPlugin {
-    fn default() -> Self {
-        Self {
-            profile: SimulationProfile::default(),
-        }
-    }
-}
 
 impl Plugin for ProfiledSimulationPlugin {
     fn build(&self, app: &mut App) {

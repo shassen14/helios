@@ -78,7 +78,7 @@ fn controller_compute_system(
     let dt = time.delta_secs_f64();
     let ts = time.elapsed_secs_f64();
     let runtime = SimRuntime {
-        tf: &*tf_tree,
+        tf: &tf_tree,
         elapsed_secs: ts,
     };
 

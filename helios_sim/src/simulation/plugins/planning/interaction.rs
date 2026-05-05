@@ -73,11 +73,10 @@ pub fn agent_select_system(
         let on_ray = ray.origin + *ray.direction * t;
         let dist = (pos - on_ray).length();
 
-        if dist <= PICK_RADIUS_M {
-            if best.as_ref().map_or(true, |(_, d, _)| dist < *d) {
+        if dist <= PICK_RADIUS_M
+            && best.as_ref().is_none_or(|(_, d, _)| dist < *d) {
                 best = Some((entity, dist, name.to_string()));
             }
-        }
     }
 
     match best {
