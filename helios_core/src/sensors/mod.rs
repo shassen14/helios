@@ -6,7 +6,7 @@
 
 pub mod lidar_2d;
 
-use crate::messages::MeasurementData;
+use crate::data::messages::MeasurementData;
 use dyn_clone::DynClone;
 use nalgebra::Vector3;
 use std::fmt::Debug;

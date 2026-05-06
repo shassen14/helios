@@ -3,11 +3,10 @@
 // EstimationCore struct + impl + EstimationDriver trait impl.
 
 use helios_core::{
+    data::messages::MeasurementMessage,
+    data::primitives::Control,
     estimation::{EstimatorInputs, FilterContext, StateEstimator},
     frames::FrameAwareState,
-    messages::MeasurementMessage,
-    tracking::Tracker,
-    types::Control,
 };
 
 use crate::{
@@ -18,7 +17,6 @@ use crate::{
 /// Estimation stage: trackers + estimator + shared control input state.
 /// Owns all logic for predict + update sequencing.
 pub struct EstimationCore {
-    pub trackers: Vec<Box<dyn Tracker>>,
     pub estimator: Option<Box<dyn StateEstimator>>,
     pub(crate) last_u: Control,
 }
@@ -29,10 +27,6 @@ impl EstimationCore {
     pub fn process_measurement(&mut self, msg: &MeasurementMessage, runtime: &dyn AgentRuntime) {
         let adapter = TfProviderAdapter(runtime);
         let context = FilterContext { tf: Some(&adapter) };
-
-        for tracker in &mut self.trackers {
-            tracker.update(msg, &context);
-        }
 
         if let Some(estimator) = &mut self.estimator {
             let dt = msg.timestamp - estimator.get_state().state.timestamp;

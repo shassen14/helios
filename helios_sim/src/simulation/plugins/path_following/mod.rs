@@ -4,8 +4,8 @@
 // one TrajectoryPoint to PathFollowingOutputComponent for the control system.
 
 use bevy::prelude::*;
+use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::FrameAwareState;
-use helios_core::types::FrameHandle;
 
 use crate::prelude::AppState;
 use crate::simulation::core::app_state::SimulationSet;

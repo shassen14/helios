@@ -6,7 +6,7 @@
 
 use nalgebra::DVector;
 
-use crate::models::controls::ControlDynamics;
+use crate::control::dynamics::ControlDynamics;
 
 use super::{siso_pid::SisoPid, ControlInputs, ControlOutput, Controller};
 

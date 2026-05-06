@@ -4,7 +4,7 @@
 //! simulation mock injection ([`GroundTruthPassthrough`]). Hardware code paths only ever
 //! instantiate `EstimationCore`; `GroundTruthPassthrough` is simulation-only.
 
-use helios_core::{frames::FrameAwareState, messages::MeasurementMessage};
+use helios_core::{data::messages::MeasurementMessage, frames::FrameAwareState};
 use nalgebra::{Isometry3, Vector3};
 
 use crate::runtime::AgentRuntime;

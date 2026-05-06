@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use helios_core::messages::MeasurementData;
+use helios_core::data::messages::MeasurementData;
 use nalgebra::Vector3;
 
 use super::components::DebugSensorCache;

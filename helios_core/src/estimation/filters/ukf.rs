@@ -3,11 +3,12 @@ use std::any::Any;
 use std::collections::HashMap;
 
 // --- Core Library Imports ---
+use crate::data::messages::MeasurementMessage;
+use crate::data::primitives::FrameHandle;
+use crate::estimation::dynamics::EstimationDynamics;
+use crate::estimation::measurement::Measurement;
 use crate::estimation::{EstimatorInputs, FilterContext, StateEstimator};
 use crate::frames::FrameAwareState;
-use crate::models::estimation::measurement::Measurement;
-use crate::prelude::{EstimationDynamics, MeasurementMessage};
-use crate::types::FrameHandle;
 use crate::utils::integrators::RK4;
 /// Configuration parameters for the UKF's sigma point generation.
 #[derive(Debug, Clone, Copy)]
@@ -256,12 +257,12 @@ impl StateEstimator for UnscentedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::messages::{MeasurementData, MeasurementMessage};
+    use crate::data::primitives::{FrameHandle, TfProvider};
+    use crate::data::sensor;
+    use crate::estimation::measurement::Measurement;
     use crate::estimation::{EstimatorInputs, FilterContext};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::messages::{MeasurementData, MeasurementMessage};
-    use crate::models::estimation::measurement::Measurement;
-    use crate::sensor_data;
-    use crate::types::{FrameHandle, TfProvider};
     use nalgebra::{DMatrix, DVector, Isometry3, Vector3};
     use std::any::Any;
     use std::collections::HashMap;
@@ -391,7 +392,7 @@ mod tests {
             agent_handle: FrameHandle::default(),
             sensor_handle: SENSOR,
             timestamp: t,
-            data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+            data: MeasurementData::GpsPosition(sensor::GpsPosition {
                 position: Vector3::new(x, y, 0.0),
             }),
         }

@@ -12,10 +12,10 @@ use crate::simulation::core::{
 
 // --- Core Library Imports ---
 use helios_core::{
-    messages::{MeasurementData, MeasurementMessage},
-    models::estimation::measurement::gps::GpsPositionModel,
-    sensor_data,
-    types::FrameHandle,
+    data::messages::{MeasurementData, MeasurementMessage},
+    data::primitives::FrameHandle,
+    data::sensor,
+    estimation::measurement::gps::GpsPositionModel,
 };
 
 // =========================================================================
@@ -164,7 +164,7 @@ fn gps_sensor_system(
                     agent_handle: FrameHandle::from_entity(agent_entity),
                     sensor_handle: FrameHandle::from_entity(sensor_entity),
                     timestamp: time.elapsed_secs_f64(),
-                    data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+                    data: MeasurementData::GpsPosition(sensor::GpsPosition {
                         position: noisy_position_enu,
                     }),
                 };

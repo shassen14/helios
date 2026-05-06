@@ -6,13 +6,13 @@ use std::collections::HashMap;
 
 use helios_core::{
     control::{ControlInputs, ControlOutput},
+    data::primitives::TrajectoryPoint,
     frames::FrameAwareState,
     mapping::MapData,
     planning::{
         types::{Path, PlannerGoal},
         GeometricPlannerInputs,
     },
-    types::TrajectoryPoint,
 };
 
 use crate::{

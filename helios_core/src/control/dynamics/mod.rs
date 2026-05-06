@@ -1,6 +1,6 @@
 //! `ControlDynamics` trait and concrete vehicle dynamics models for controllers.
 //!
-//! Mirrors `models/estimation/dynamics/` but omits filter-specific concerns (no
+//! Mirrors `estimation/dynamics/` but omits filter-specific concerns (no
 //! measurement routing, no `Integrator` argument). Analytical models like
 //! `AckermannKinematics` implement both `ControlDynamics` and `EstimationDynamics`
 //! via separate `impl` blocks delegating to the same internal math.

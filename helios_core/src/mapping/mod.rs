@@ -4,8 +4,8 @@
 //! enum whose variants represent different map representations (occupancy grid, feature map).
 //! Concrete implementations (`NoneMapper`, `OccupancyGridMapper`) live in submodules.
 
+use crate::data::messages::ModuleInput;
 use crate::estimation::FilterContext; // Mappers also need context
-use crate::messages::ModuleInput;
 use nalgebra::{DMatrix, Isometry3};
 use std::collections::HashMap;
 

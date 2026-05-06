@@ -1,7 +1,7 @@
+use crate::data::messages::MeasurementData;
+use crate::data::primitives::{Control, FrameHandle, State};
+use crate::estimation::dynamics::EstimationDynamics;
 use crate::frames::layout::STANDARD_INS_STATE_DIM;
-use crate::models::estimation::dynamics::EstimationDynamics;
-use crate::prelude::MeasurementData;
-use crate::types::{Control, FrameHandle, State};
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 
 /// A dynamics model that integrates raw IMU measurements (as control inputs)
@@ -24,6 +24,7 @@ impl EstimationDynamics for IntegratedImuModel {
 
     /// This is the key declarative method. It checks if the provided measurement
     /// data is an IMU reading and, if so, converts it into the control vector `u`.
+    /// Otherwise, it returns `None`.
     fn get_control_from_measurement(&self, data: &MeasurementData) -> Option<DVector<f64>> {
         match data {
             // Case 1: Linear Acceleration Measurement
@@ -153,8 +154,8 @@ mod tests {
     //!   stationary (position and velocity remain near zero).
 
     use super::*;
-    use crate::messages::MeasurementData;
-    use crate::types::FrameHandle;
+    use crate::data::messages::MeasurementData;
+    use crate::data::primitives::FrameHandle;
     use crate::utils::integrators::RK4;
     use nalgebra::DVector;
 

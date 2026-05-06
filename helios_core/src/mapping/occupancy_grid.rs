@@ -1,9 +1,9 @@
 use nalgebra::{DMatrix, Isometry3, Point3, Translation3, UnitQuaternion};
 
+use crate::data::messages::{MeasurementData, ModuleInput};
+use crate::data::primitives::FrameHandle;
 use crate::estimation::FilterContext;
 use crate::mapping::{MapData, Mapper};
-use crate::messages::{MeasurementData, ModuleInput};
-use crate::types::FrameHandle;
 
 /// Selects how the mapper obtains the sensor's world pose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -594,8 +594,8 @@ mod tests {
 
     #[test]
     fn process_measurement_without_pose_is_noop() {
-        use crate::messages::{MeasurementData, MeasurementMessage};
-        use crate::sensor_data;
+        use crate::data::messages::{MeasurementData, MeasurementMessage};
+        use crate::data::sensor;
 
         let mut m =
             OccupancyGridMapper::new(1.0, 10.0, 10.0, FrameHandle(0), MapperPoseSource::Estimated);
@@ -604,7 +604,7 @@ mod tests {
             agent_handle: FrameHandle(0),
             sensor_handle: FrameHandle(1),
             timestamp: 0.0,
-            data: MeasurementData::PointCloud2D(sensor_data::PointCloud2D { points: vec![] }),
+            data: MeasurementData::PointCloud2D(sensor::PointCloud2D { points: vec![] }),
         };
         let ctx = FilterContext { tf: None };
         m.process(&ModuleInput::Measurement { message: &msg }, &ctx);

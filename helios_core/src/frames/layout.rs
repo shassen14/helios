@@ -1,6 +1,6 @@
 // helios_core/src/frames/layout.rs
+use crate::data::primitives::FrameHandle;
 use crate::frames::{FrameId, StateVariable};
-use crate::types::FrameHandle;
 
 /// The standard dimension of the 16-state INS state vector.
 pub const STANDARD_INS_STATE_DIM: usize = 16;

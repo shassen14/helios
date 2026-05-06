@@ -1,8 +1,8 @@
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
+use crate::data::primitives::FrameHandle;
+use crate::data::primitives::TrajectoryPoint;
 use crate::frames::{FrameId, RobotState, StateVariable};
-use crate::prelude::Path;
-use crate::types::FrameHandle;
-use crate::types::TrajectoryPoint;
+use crate::planning::types::Path;
 use nalgebra::{DVector, Vector2};
 // Plan: output (velocity.x, angle.z)
 //          dot (accel.x, ang_vel.z) -> curvature, but fails

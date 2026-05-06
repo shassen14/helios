@@ -178,7 +178,7 @@ impl PortBus {
 mod tests {
     use super::*;
     use crate::prelude::{Health, Stamped};
-    use helios_core::types::MonotonicTime;
+    use helios_core::data::primitives::MonotonicTime;
 
     struct Foo;
     struct Bar;

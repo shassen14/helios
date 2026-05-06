@@ -1,23 +1,25 @@
 // helios_core/src/prelude.rs
 
 // --- Core Abstractions (The main contracts of the library) ---
-pub use crate::messages::{MeasurementData, MeasurementMessage, ModuleInput};
-pub use crate::models::estimation::dynamics::EstimationDynamics;
-pub use crate::models::estimation::measurement::Measurement;
-pub use crate::sensor_data::{
+pub use crate::data::messages::{MeasurementData, MeasurementMessage, ModuleInput, Odometry};
+pub use crate::data::primitives::{FrameHandle, MonotonicTime, TfProvider, TrajectoryPoint};
+pub use crate::data::sensor::SensorReading;
+pub use crate::data::sensor::{
     AngularVelocity3D, DepthImage, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
     PointCloud2D, PointCloud3D, RgbImage,
 };
-pub use crate::sensor_reading::SensorReading;
-pub use crate::types::{FrameHandle, MonotonicTime, TfProvider, TrajectoryPoint};
 
 // --- Core Data Structures (The "nouns" of the library) ---
 pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
 // --- Control Abstractions ---
+pub use crate::control::dynamics::ControlDynamics;
 pub use crate::control::{ControlInputs, ControlOutput, Controller};
+
+// --- Estimation ---
+pub use crate::estimation::dynamics::EstimationDynamics;
+pub use crate::estimation::measurement::Measurement;
 pub use crate::estimation::EstimatorInputs;
-pub use crate::models::controls::ControlDynamics;
 
 // --- Planning ---
 pub use crate::planning::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
@@ -28,4 +30,4 @@ pub use crate::planning::GeometricPlannerInputs;
 pub use crate::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
 
 // --- Concrete Model Implementations (Export common ones for convenience) ---
-pub use crate::models::estimation::measurement::{accelerometer, gps, gyroscope, magnetometer};
+pub use crate::estimation::measurement::{accelerometer, gps, gyroscope, magnetometer};

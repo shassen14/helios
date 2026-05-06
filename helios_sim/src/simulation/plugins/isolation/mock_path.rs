@@ -6,9 +6,9 @@
 // the path is already set when the first tick runs.
 
 use bevy::prelude::*;
+use helios_core::data::primitives::TrajectoryPoint;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::planning::types::Path;
-use helios_core::types::TrajectoryPoint;
 use helios_runtime::stage::PipelineLevel;
 use serde::Deserialize;
 

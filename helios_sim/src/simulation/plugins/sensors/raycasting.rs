@@ -11,13 +11,13 @@ use crate::simulation::core::{app_state::SimulationSet, events::BevyMeasurementM
 // --- Core Library Imports ---
 use crate::simulation::core::transforms::FluVector;
 use helios_core::{
-    messages::MeasurementMessage,
-    models::perception::{
+    data::messages::MeasurementMessage,
+    data::primitives::FrameHandle,
+    sensors::{
         lidar_2d::Lidar2DModel, // We'll import our concrete models here
         RayHit,
         RaycastingSensorModel,
     },
-    types::FrameHandle,
 };
 
 // =========================================================================

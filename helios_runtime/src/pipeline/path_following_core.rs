@@ -1,7 +1,7 @@
+use helios_core::data::primitives::TrajectoryPoint;
 use helios_core::frames::FrameAwareState;
 use helios_core::planning::types::Path;
 use helios_core::prelude::{PathFollower, PathFollowerInputs, PathFollowerResult};
-use helios_core::types::TrajectoryPoint;
 
 pub struct PathFollowingCore {
     pub path_follower: Box<dyn PathFollower>,

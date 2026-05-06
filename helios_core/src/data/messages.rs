@@ -1,6 +1,6 @@
 use crate::{
-    sensor_data,
-    types::{Control, FrameHandle},
+    data::primitives::{Control, FrameHandle},
+    data::sensor,
 };
 use nalgebra::{Isometry3, Matrix6, Vector3, Vector6};
 use serde::Serialize;
@@ -12,14 +12,14 @@ use serde::Serialize;
 /// A rich, self-describing container for all sensor data.
 #[derive(Clone, Debug, Serialize)]
 pub enum MeasurementData {
-    LinearAcceleration(sensor_data::LinearAcceleration3D),
-    AngularVelocity(sensor_data::AngularVelocity3D),
-    GpsPosition(sensor_data::GpsPosition),
-    MagneticField(sensor_data::MagneticField3D),
-    PointCloud2D(sensor_data::PointCloud2D),
-    PointCloud3D(sensor_data::PointCloud3D),
-    RgbImage(sensor_data::RgbImage),
-    DepthImage(sensor_data::DepthImage),
+    LinearAcceleration(sensor::LinearAcceleration3D),
+    AngularVelocity(sensor::AngularVelocity3D),
+    GpsPosition(sensor::GpsPosition),
+    MagneticField(sensor::MagneticField3D),
+    PointCloud2D(sensor::PointCloud2D),
+    PointCloud3D(sensor::PointCloud3D),
+    RgbImage(sensor::RgbImage),
+    DepthImage(sensor::DepthImage),
 }
 
 /// The generic message that carries all sensor data through the system.

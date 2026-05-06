@@ -1,6 +1,6 @@
+use crate::data::messages::ModuleInput;
 use crate::estimation::FilterContext;
 use crate::mapping::{MapData, Mapper};
-use crate::messages::ModuleInput;
 
 /// A placeholder mapper that does nothing.
 /// It is used when an agent is configured with an estimator but no mapping capability.

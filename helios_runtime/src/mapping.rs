@@ -4,7 +4,7 @@
 //! simulation mock [`StaticMapProvider`] (pre-built zero-filled map for isolation
 //! profiles). Both implementations are `Send + Sync` for parallel Bevy scheduling.
 
-use helios_core::{mapping::MapData, messages::MeasurementMessage};
+use helios_core::{data::messages::MeasurementMessage, mapping::MapData};
 use nalgebra::{DMatrix, Isometry3};
 
 use crate::{pipeline::MappingCore, runtime::AgentRuntime};

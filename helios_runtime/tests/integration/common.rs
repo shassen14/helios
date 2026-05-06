@@ -7,18 +7,17 @@ use nalgebra::{DMatrix, DVector, Isometry3};
 
 use helios_core::{
     control::{ControlInputs, ControlOutput, Controller},
+    data::messages::{MeasurementData, MeasurementMessage, ModuleInput},
+    data::primitives::{Control, FrameHandle, MonotonicTime, State, TrajectoryPoint},
+    estimation::dynamics::EstimationDynamics,
     estimation::{EstimatorInputs, FilterContext, StateEstimator},
     frames::{FrameAwareState, FrameId, StateVariable},
     mapping::{MapData, Mapper},
-    messages::{MeasurementData, MeasurementMessage, ModuleInput},
-    models::estimation::dynamics::EstimationDynamics,
     path_following::{PathFollower, PathFollowerInputs, PathFollowerResult},
     planning::{
         types::{Path, PlannerGoal, PlannerResult, PlannerStatus},
         GeometricPlanner, GeometricPlannerInputs,
     },
-    tracking::{Track, Tracker},
-    types::{Control, FrameHandle, MonotonicTime, State, TrajectoryPoint},
 };
 use helios_runtime::runtime::AgentRuntime;
 
@@ -54,10 +53,7 @@ impl EstimationDynamics for MockDynamics {
         2
     }
 
-    fn get_control_from_measurement(
-        &self,
-        _data: &helios_core::messages::MeasurementData,
-    ) -> Option<DVector<f64>> {
+    fn get_control_from_measurement(&self, _data: &MeasurementData) -> Option<DVector<f64>> {
         None
     }
 
@@ -162,20 +158,6 @@ impl Mapper for MockMapper {
 
     fn get_map(&self) -> &MapData {
         &self.map
-    }
-}
-
-// =========================================================================
-// == MockTracker ==
-// =========================================================================
-
-pub struct MockTracker;
-
-impl Tracker for MockTracker {
-    fn update(&mut self, _msg: &MeasurementMessage, _context: &FilterContext) {}
-
-    fn get_tracks(&self) -> &[Track] {
-        &[]
     }
 }
 

@@ -5,7 +5,7 @@
 // Public: spawn_autonomy_pipeline, spawn_passthrough_pipeline, spawn_odom_frames
 
 use bevy::prelude::*;
-use helios_core::types::FrameHandle;
+use helios_core::data::primitives::FrameHandle;
 use helios_runtime::estimation::GroundTruthPassthrough;
 use helios_runtime::pipeline::PipelineBuilder;
 use helios_runtime::validation::validate_autonomy_config;

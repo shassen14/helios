@@ -13,10 +13,10 @@ use crate::simulation::core::{
 
 // --- Core Library Imports ---
 use helios_core::{
-    messages::{MeasurementData, MeasurementMessage},
-    models::estimation::measurement::magnetometer::MagnetometerModel,
-    sensor_data,
-    types::FrameHandle,
+    data::messages::{MeasurementData, MeasurementMessage},
+    data::primitives::FrameHandle,
+    data::sensor,
+    estimation::measurement::magnetometer::MagnetometerModel,
 };
 
 // =========================================================================
@@ -174,7 +174,7 @@ fn magnetometer_sensor_system(
                     agent_handle: FrameHandle::from_entity(agent_entity),
                     sensor_handle: FrameHandle::from_entity(sensor_entity),
                     timestamp: time.elapsed_secs_f64(),
-                    data: MeasurementData::MagneticField(sensor_data::MagneticField3D {
+                    data: MeasurementData::MagneticField(sensor::MagneticField3D {
                         value: noisy_mag_reading,
                     }),
                 };

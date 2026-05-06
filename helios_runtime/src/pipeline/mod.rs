@@ -42,13 +42,12 @@ use std::collections::HashMap;
 
 use helios_core::{
     control::ControlOutput,
+    data::messages::MeasurementMessage,
     estimation::StateEstimator,
     frames::FrameAwareState,
     mapping::{MapData, Mapper},
-    messages::MeasurementMessage,
     planning::{types::PlannerGoal, GeometricPlanner},
     prelude::{Path, PathFollower},
-    tracking::Tracker,
 };
 use nalgebra::{DVector, Isometry3};
 
@@ -209,7 +208,6 @@ impl AutonomyPipeline {
 /// An empty builder (no stages registered) produces a valid, no-op pipeline —
 /// useful for agents that only need a subset of capabilities.
 pub struct PipelineBuilder {
-    trackers: Vec<Box<dyn Tracker>>,
     estimator: Option<Box<dyn StateEstimator>>,
     mappers: HashMap<String, Box<dyn Mapper>>,
     planners: Vec<LeveledPlanner>,
@@ -222,7 +220,6 @@ pub struct PipelineBuilder {
 impl PipelineBuilder {
     pub fn new() -> Self {
         Self {
-            trackers: Vec::new(),
             estimator: None,
             mappers: HashMap::new(),
             planners: Vec::new(),
@@ -282,7 +279,6 @@ impl PipelineBuilder {
 
         AutonomyPipeline {
             estimation: EstimationCore {
-                trackers: self.trackers,
                 estimator: self.estimator,
                 last_u: DVector::zeros(self.control_dim),
             },

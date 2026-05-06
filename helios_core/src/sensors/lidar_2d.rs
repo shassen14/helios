@@ -1,8 +1,8 @@
-// heios_core/src/models/perception/lidar_2d.rs
+// helios_core/src/sensors/lidar_2d.rs
 
-use crate::messages::MeasurementData;
-use crate::models::perception::{RayHit, RaycastingSensorModel, SensorRay};
-use crate::sensor_data;
+use crate::data::messages::MeasurementData;
+use crate::data::sensor;
+use crate::sensors::{RayHit, RaycastingSensorModel, SensorRay};
 use nalgebra::{Point2, Vector2, Vector3};
 use rand_distr::{Distribution, Normal};
 
@@ -91,7 +91,7 @@ impl RaycastingSensorModel for Lidar2DModel {
             })
             .collect();
 
-        MeasurementData::PointCloud2D(sensor_data::PointCloud2D { points })
+        MeasurementData::PointCloud2D(sensor::PointCloud2D { points })
     }
 
     fn get_max_range(&self) -> f32 {

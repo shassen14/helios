@@ -6,9 +6,10 @@
 
 use nalgebra::DVector;
 
+use crate::data::messages::MeasurementMessage;
+use crate::data::primitives::TfProvider;
+use crate::estimation::dynamics::EstimationDynamics;
 use crate::frames::FrameAwareState;
-use crate::prelude::{EstimationDynamics, MeasurementMessage};
-use crate::types::TfProvider;
 use std::any::Any;
 
 /// World-context passed into every estimator predict/update call.
@@ -85,4 +86,6 @@ pub trait StateEstimator: Send + Sync {
     fn get_dynamics_model(&self) -> &dyn EstimationDynamics;
 }
 
+pub mod dynamics;
 pub mod filters;
+pub mod measurement;

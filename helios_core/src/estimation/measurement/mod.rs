@@ -5,15 +5,15 @@
 //!
 //! # Implementing a New Sensor Model
 //!
-//! 1. Create `models/estimation/measurement/my_sensor.rs`, implement [`Measurement`].
+//! 1. Create `estimation/measurement/my_sensor.rs`, implement [`Measurement`].
 //! 2. `predict_measurement` must return `None` if `message.data` is the wrong variant — never panic.
 //! 3. Re-export from this `mod.rs`.
 //! 4. Register the sensor entity's handle and model in the EKF/UKF `measurement_models` map
 //!    inside the corresponding `helios_sim` spawning system.
 
+use crate::data::messages::{MeasurementData, MeasurementMessage};
+use crate::data::primitives::TfProvider;
 use crate::frames::{FrameAwareState, StateVariable};
-use crate::prelude::{MeasurementData, MeasurementMessage};
-use crate::types::TfProvider;
 use dyn_clone::DynClone;
 use nalgebra::{DMatrix, DVector};
 use std::any::Any;
@@ -23,7 +23,7 @@ use std::fmt::Debug;
 ///
 /// A `Measurement` implementation describes one physical sensor type — GPS,
 /// IMU, magnetometer, etc. It is registered with a filter alongside the
-/// sensor's [`FrameHandle`](crate::types::FrameHandle) so the filter can
+/// sensor's [`FrameHandle`](crate::data::primitives::FrameHandle) so the filter can
 /// dispatch measurements to the correct model in O(1).
 ///
 /// `Measurement` objects are cloneable (`DynClone`) so the filter can be

@@ -8,8 +8,8 @@
 
 use bevy::prelude::{App, Plugin};
 use helios_core::{
-    models::estimation::dynamics::{integrated_imu::IntegratedImuModel, EstimationDynamics},
-    types::FrameHandle,
+    data::primitives::FrameHandle,
+    estimation::dynamics::{integrated_imu::IntegratedImuModel, EstimationDynamics},
 };
 
 use super::{AutonomyRegistry, DynamicsBuildContext};

@@ -25,9 +25,8 @@ use std::sync::Arc;
 
 use bevy::prelude::Resource;
 use helios_core::{
-    control::Controller, estimation::StateEstimator, mapping::Mapper,
-    models::estimation::dynamics::EstimationDynamics, path_following::PathFollower,
-    planning::GeometricPlanner,
+    control::Controller, estimation::dynamics::EstimationDynamics, estimation::StateEstimator,
+    mapping::Mapper, path_following::PathFollower, planning::GeometricPlanner,
 };
 use helios_runtime::validation::CapabilitySet;
 

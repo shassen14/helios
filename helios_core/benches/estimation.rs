@@ -4,15 +4,15 @@ use std::collections::HashMap;
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::{DMatrix, DVector, Isometry3, Vector3};
 
+use helios_core::data::messages::{MeasurementData, MeasurementMessage};
+use helios_core::data::primitives::{FrameHandle, TfProvider};
+use helios_core::data::sensor;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
+use helios_core::estimation::measurement::Measurement;
 use helios_core::estimation::{EstimatorInputs, FilterContext, StateEstimator};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-use helios_core::messages::{MeasurementData, MeasurementMessage};
-use helios_core::models::estimation::measurement::Measurement;
 use helios_core::prelude::EstimationDynamics;
-use helios_core::sensor_data;
-use helios_core::types::{FrameHandle, TfProvider};
 
 // =========================================================================
 // == Fixtures (duplicated from test modules — benches are separate) ==
@@ -156,7 +156,7 @@ fn gps_message(x: f64, y: f64) -> MeasurementMessage {
         agent_handle: FrameHandle::default(),
         sensor_handle: SENSOR,
         timestamp: 0.1,
-        data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+        data: MeasurementData::GpsPosition(sensor::GpsPosition {
             position: Vector3::new(x, y, 0.0),
         }),
     }

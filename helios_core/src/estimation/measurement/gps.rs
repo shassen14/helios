@@ -3,11 +3,11 @@ use std::any::Any;
 use std::fmt::Debug;
 
 // --- Core Library Imports ---
+use crate::data::messages::{MeasurementData, MeasurementMessage};
+use crate::data::primitives::TfProvider;
+use crate::data::sensor;
+use crate::estimation::measurement::Measurement;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
-use crate::messages::{MeasurementData, MeasurementMessage};
-use crate::models::estimation::measurement::Measurement;
-use crate::sensor_data;
-use crate::types::TfProvider;
 
 /// A measurement model for a standard GPS sensor that provides 3D position.
 ///
@@ -105,7 +105,7 @@ impl Measurement for GpsPositionModel {
             agent_handle: Default::default(),
             sensor_handle: Default::default(),
             timestamp: 0.0,
-            data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+            data: MeasurementData::GpsPosition(sensor::GpsPosition {
                 position: Default::default(),
             }),
         };
@@ -161,9 +161,9 @@ mod tests {
     //! - Jacobian shape and identity of the position columns (∂z/∂Px ≈ 1).
 
     use super::*;
+    use crate::data::messages::{MeasurementData, MeasurementMessage};
+    use crate::data::primitives::{FrameHandle, TfProvider};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::messages::{MeasurementData, MeasurementMessage};
-    use crate::types::{FrameHandle, TfProvider};
     use nalgebra::{DMatrix, Isometry3, Vector3};
 
     const AGENT: FrameHandle = FrameHandle(1);
@@ -214,7 +214,7 @@ mod tests {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
             timestamp: 0.1,
-            data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+            data: MeasurementData::GpsPosition(sensor::GpsPosition {
                 position: Vector3::new(x, y, z),
             }),
         }
@@ -234,7 +234,7 @@ mod tests {
     #[test]
     fn measurement_vector_accepts_gps_position() {
         let model = make_model(Vector3::zeros());
-        let data = MeasurementData::GpsPosition(sensor_data::GpsPosition {
+        let data = MeasurementData::GpsPosition(sensor::GpsPosition {
             position: Vector3::new(1.0, 2.0, 3.0),
         });
         let z = model.get_measurement_vector(&data);

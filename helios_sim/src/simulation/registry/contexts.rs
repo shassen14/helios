@@ -9,12 +9,12 @@ use std::sync::Arc;
 use bevy::prelude::Entity;
 use helios_core::{
     control::Controller,
+    data::primitives::FrameHandle,
     estimation::StateEstimator,
+    estimation::{dynamics::EstimationDynamics, measurement::Measurement},
     mapping::Mapper,
-    models::estimation::{dynamics::EstimationDynamics, measurement::Measurement},
     path_following::PathFollower,
     planning::GeometricPlanner,
-    types::FrameHandle,
 };
 
 use crate::simulation::config::structs::{

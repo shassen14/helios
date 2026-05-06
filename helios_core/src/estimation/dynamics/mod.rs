@@ -4,8 +4,8 @@
 //! and optionally overrides `calculate_jacobian`. The default `propagate` implementation
 //! delegates to an `Integrator` (prefer RK4). Concrete models: `integrated_imu`.
 
-use crate::prelude::MeasurementData;
-use crate::types::{Control, State};
+use crate::data::messages::MeasurementData;
+use crate::data::primitives::{Control, State};
 use crate::utils::integrators::Integrator;
 use nalgebra::{DMatrix, DVector};
 use std::fmt::Debug;

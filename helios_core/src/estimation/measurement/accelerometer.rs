@@ -2,10 +2,10 @@ use nalgebra::{DMatrix, DVector, Vector3};
 use std::any::Any;
 use std::fmt::Debug;
 
+use crate::data::messages::{MeasurementData, MeasurementMessage};
+use crate::data::primitives::{FrameHandle, TfProvider};
+use crate::estimation::measurement::Measurement;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
-use crate::messages::{MeasurementData, MeasurementMessage};
-use crate::models::estimation::measurement::Measurement;
-use crate::types::{FrameHandle, TfProvider};
 
 #[derive(Debug, Clone)]
 pub struct AccelerometerModel {
@@ -142,10 +142,10 @@ impl Measurement for AccelerometerModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::messages::{MeasurementData, MeasurementMessage};
+    use crate::data::primitives::{FrameHandle, TfProvider};
+    use crate::data::sensor;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::messages::{MeasurementData, MeasurementMessage};
-    use crate::sensor_data;
-    use crate::types::{FrameHandle, TfProvider};
     use nalgebra::{DMatrix, Isometry3};
 
     const AGENT: FrameHandle = FrameHandle(1);
@@ -199,7 +199,7 @@ mod tests {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
             timestamp: 0.0,
-            data: MeasurementData::GpsPosition(sensor_data::GpsPosition {
+            data: MeasurementData::GpsPosition(sensor::GpsPosition {
                 position: nalgebra::Vector3::zeros(),
             }),
         }
@@ -208,7 +208,7 @@ mod tests {
     #[test]
     fn measurement_vector_accepts_linear_acceleration() {
         let model = make_model();
-        let data = MeasurementData::LinearAcceleration(sensor_data::LinearAcceleration3D {
+        let data = MeasurementData::LinearAcceleration(sensor::LinearAcceleration3D {
             value: nalgebra::Vector3::new(1.0, 2.0, 3.0),
         });
         let z = model.get_measurement_vector(&data).unwrap();

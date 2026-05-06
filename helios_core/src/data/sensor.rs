@@ -1,5 +1,11 @@
-// helios_core/src/sensor_data.rs
+// helios_core/src/data/sensor.rs
+//
+// Raw sensor payload types and the generic `SensorReading<T>` wrapper.
+// Sensor payloads (structs like `LinearAcceleration3D`, `GpsPosition`, etc.)
+// describe what a physical sensor measures. `SensorReading<T>` is the
+// timestamped envelope that carries any payload through the pipeline.
 
+use crate::data::primitives::{FrameHandle, MonotonicTime};
 use nalgebra::{Point2, Point3, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -59,6 +65,16 @@ pub struct RgbImage;
 /// Placeholder for depth/RGBD camera output. Buffer representation is TBD.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DepthImage;
+
+// =========================================================================
+// == SensorReading<T> ==
+// =========================================================================
+
+pub struct SensorReading<T> {
+    pub sensor_handle: FrameHandle,
+    pub timestamp: MonotonicTime,
+    pub data: T,
+}
 
 #[cfg(test)]
 mod tests {

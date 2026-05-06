@@ -6,16 +6,12 @@
 //! See submodules for details.
 
 pub mod control;
+pub mod data;
 pub mod estimation;
 pub mod frames;
 pub mod mapping;
-pub mod messages;
-pub mod models;
 pub mod path_following;
 pub mod planning;
 pub mod prelude;
-pub mod sensor_data;
-pub mod sensor_reading;
-pub mod tracking;
-pub mod types;
+pub mod sensors;
 pub mod utils;

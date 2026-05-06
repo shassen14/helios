@@ -1,4 +1,4 @@
-// helios_core/src/types.rs
+// helios_core/src/data/primitives.rs
 
 use crate::frames::RobotState;
 use nalgebra::{DVector, Isometry3};

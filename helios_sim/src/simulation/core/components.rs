@@ -1,12 +1,12 @@
 // helios_sim/src/simulation/core/components.rs
 
 use bevy::prelude::*;
+use helios_core::data::messages::MeasurementMessage;
+use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::{
     layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable,
 };
-use helios_core::messages::MeasurementMessage;
 use helios_core::prelude::{ControlOutput, EstimationDynamics, Measurement};
-use helios_core::types::FrameHandle;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
 

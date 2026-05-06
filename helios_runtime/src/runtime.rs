@@ -13,7 +13,7 @@
 //!
 //! Neither implementation is visible to `helios_runtime`; the trait is the only coupling point.
 
-use helios_core::types::{FrameHandle, MonotonicTime, TfProvider};
+use helios_core::data::primitives::{FrameHandle, MonotonicTime, TfProvider};
 use nalgebra::Isometry3;
 
 /// The only external interface [`AutonomyPipeline`](crate::pipeline::AutonomyPipeline)

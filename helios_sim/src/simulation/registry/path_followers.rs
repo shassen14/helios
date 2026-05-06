@@ -4,9 +4,9 @@
 // Add new algorithms here — zero spawning systems change.
 
 use bevy::prelude::*;
+use helios_core::data::primitives::FrameHandle;
 use helios_core::path_following::pure_pursuit::PurePursuitPathFollower;
 use helios_core::path_following::steering_pid::SteeringPidPathFollower;
-use helios_core::types::FrameHandle;
 
 use super::{AutonomyRegistry, PathFollowerBuildContext};
 use crate::simulation::config::structs::PathFollowingConfig;

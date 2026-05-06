@@ -15,12 +15,10 @@ use crate::simulation::core::{
 
 // --- Core Library Imports ---
 use helios_core::{
-    messages::{MeasurementData, MeasurementMessage},
-    models::estimation::measurement::{
-        accelerometer::AccelerometerModel, gyroscope::GyroscopeModel,
-    },
-    sensor_data,
-    types::FrameHandle,
+    data::messages::{MeasurementData, MeasurementMessage},
+    data::primitives::FrameHandle,
+    data::sensor,
+    estimation::measurement::{accelerometer::AccelerometerModel, gyroscope::GyroscopeModel},
 };
 
 // =========================================================================
@@ -270,7 +268,7 @@ fn imu_sensor_system(
                     agent_handle,
                     sensor_handle: FrameHandle::from_entity(imu.accel_entity),
                     timestamp,
-                    data: MeasurementData::LinearAcceleration(sensor_data::LinearAcceleration3D {
+                    data: MeasurementData::LinearAcceleration(sensor::LinearAcceleration3D {
                         value: noisy_accel,
                     }),
                 }));
@@ -280,7 +278,7 @@ fn imu_sensor_system(
                     agent_handle,
                     sensor_handle: FrameHandle::from_entity(imu.gyro_entity),
                     timestamp,
-                    data: MeasurementData::AngularVelocity(sensor_data::AngularVelocity3D {
+                    data: MeasurementData::AngularVelocity(sensor::AngularVelocity3D {
                         value: noisy_gyro,
                     }),
                 }));

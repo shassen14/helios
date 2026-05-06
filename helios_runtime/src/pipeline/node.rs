@@ -1,7 +1,7 @@
 use crate::port::{PortBus, PortDescriptor};
 use crate::runtime::AgentRuntime;
 
-use helios_core::types::MonotonicTime;
+use helios_core::data::primitives::MonotonicTime;
 
 pub trait PipelineNode: Send + Sync {
     fn name(&self) -> &str;

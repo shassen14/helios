@@ -1,6 +1,6 @@
 // helios_sim/src/simulation/core/events.rs
 use bevy::prelude::{Entity, Event};
-use helios_core::messages::MeasurementMessage;
+use helios_core::data::messages::MeasurementMessage;
 use helios_core::planning::types::PlannerGoal;
 
 /// Bevy wrapper for a raw sensor measurement.

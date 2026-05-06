@@ -1,4 +1,4 @@
-// helios_core/src/models/controls/ackermann.rs
+// helios_core/src/control/dynamics/ackermann.rs
 //
 // ControlDynamics implementation for an Ackermann-steering vehicle.
 //

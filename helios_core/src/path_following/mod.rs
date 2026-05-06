@@ -23,9 +23,9 @@
 pub mod pure_pursuit;
 pub mod steering_pid;
 
+use crate::data::primitives::TrajectoryPoint;
 use crate::frames::RobotState;
 use crate::planning::types::Path;
-use crate::types::TrajectoryPoint;
 
 /// Bus-sourced inputs for one [`PathFollower::compute`] call.
 pub struct PathFollowerInputs {

@@ -1,9 +1,10 @@
 use std::any::Any;
 
 use crate::{
+    data::messages::{MeasurementData, MeasurementMessage},
+    data::primitives::{FrameHandle, TfProvider},
+    estimation::measurement::Measurement,
     frames::{FrameAwareState, FrameId, StateVariable},
-    prelude::{Measurement, MeasurementData, MeasurementMessage},
-    types::{FrameHandle, TfProvider},
 };
 use nalgebra::{DMatrix, DVector, Vector3};
 
@@ -128,9 +129,10 @@ mod tests {
     //!   the sensor frame (since body X is now aligned with North).
 
     use super::*;
+    use crate::data::messages::{MeasurementData, MeasurementMessage};
+    use crate::data::primitives::{FrameHandle, TfProvider};
+    use crate::data::sensor;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::messages::{MeasurementData, MeasurementMessage};
-    use crate::types::{FrameHandle, TfProvider};
     use nalgebra::{DMatrix, Isometry3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
 
@@ -199,7 +201,7 @@ mod tests {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
             timestamp: 0.0,
-            data: MeasurementData::GpsPosition(crate::sensor_data::GpsPosition {
+            data: MeasurementData::GpsPosition(sensor::GpsPosition {
                 position: Vector3::zeros(),
             }),
         }
@@ -210,7 +212,7 @@ mod tests {
     #[test]
     fn measurement_vector_accepts_magnetometer() {
         let model = make_model();
-        let data = MeasurementData::MagneticField(crate::sensor_data::MagneticField3D {
+        let data = MeasurementData::MagneticField(sensor::MagneticField3D {
             value: Vector3::new(1.0, 0.5, 0.0),
         });
         let z = model.get_measurement_vector(&data).unwrap();
@@ -221,7 +223,7 @@ mod tests {
     #[test]
     fn measurement_vector_rejects_gps() {
         let model = make_model();
-        let data = MeasurementData::GpsPosition(crate::sensor_data::GpsPosition {
+        let data = MeasurementData::GpsPosition(sensor::GpsPosition {
             position: Vector3::zeros(),
         });
         assert!(model.get_measurement_vector(&data).is_none());

@@ -2,7 +2,9 @@ use crate::{
     port::{ChannelKey, PortBus},
     prelude::{AgentRuntime, TickContext},
 };
-use helios_core::{frames::FrameAwareState, prelude::ControlInputs, types::TrajectoryPoint};
+use helios_core::{
+    data::primitives::TrajectoryPoint, frames::FrameAwareState, prelude::ControlInputs,
+};
 
 pub trait ControlInputBuilder: Send + Sync {
     fn assemble(

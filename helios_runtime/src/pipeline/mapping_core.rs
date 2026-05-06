@@ -5,9 +5,9 @@
 use std::collections::HashMap;
 
 use helios_core::{
+    data::messages::{MeasurementMessage, ModuleInput},
     estimation::FilterContext,
     mapping::{MapData, Mapper},
-    messages::{MeasurementMessage, ModuleInput},
 };
 use nalgebra::Isometry3;
 

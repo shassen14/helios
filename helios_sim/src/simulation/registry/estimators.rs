@@ -11,13 +11,11 @@
 
 use bevy::prelude::*;
 use helios_core::{
+    estimation::measurement::{accelerometer::AccelerometerModel, gyroscope::GyroscopeModel},
     estimation::{filters::ekf::ExtendedKalmanFilter, StateEstimator},
     frames::{
         layout::{standard_ins_state_layout, STANDARD_INS_STATE_DIM},
         FrameId, StateVariable,
-    },
-    models::estimation::measurement::{
-        accelerometer::AccelerometerModel, gyroscope::GyroscopeModel,
     },
 };
 use nalgebra::DMatrix;
@@ -130,7 +128,7 @@ fn build_ekf(ctx: EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, Stri
     };
 
     // --- 4. Assemble and return the filter ---
-    let agent_handle = helios_core::types::FrameHandle::from_entity(agent_entity);
+    let agent_handle = helios_core::data::primitives::FrameHandle::from_entity(agent_entity);
     let state_layout = standard_ins_state_layout(agent_handle);
     let mut initial_state = helios_core::frames::FrameAwareState::new(state_layout, 1.0, 0.0);
 

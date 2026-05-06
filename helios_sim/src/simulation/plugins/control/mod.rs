@@ -18,8 +18,8 @@ use crate::{
 };
 
 use helios_core::control::ControlOutput;
+use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::FrameAwareState;
-use helios_core::types::FrameHandle;
 use nalgebra::Vector3;
 
 pub struct ControlPlugin;

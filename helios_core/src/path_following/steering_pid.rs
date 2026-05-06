@@ -12,9 +12,9 @@ use nalgebra::Vector2;
 
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::siso_pid::SisoPid;
+use crate::data::primitives::{FrameHandle, TrajectoryPoint};
 use crate::frames::{FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
-use crate::types::{FrameHandle, TrajectoryPoint};
 
 pub struct SteeringPidPathFollower {
     heading_pid: SisoPid,

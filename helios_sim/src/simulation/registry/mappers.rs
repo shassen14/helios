@@ -8,8 +8,8 @@
 
 use bevy::prelude::{App, Plugin};
 use helios_core::{
+    data::primitives::FrameHandle,
     mapping::{Mapper, MapperPoseSource, NoneMapper, OccupancyGridMapper},
-    types::FrameHandle,
 };
 
 use super::{AutonomyRegistry, MapperBuildContext};

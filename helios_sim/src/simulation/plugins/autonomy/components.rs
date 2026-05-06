@@ -4,7 +4,7 @@ use bevy::{
     prelude::{Component, Entity},
     time::{Timer, TimerMode},
 };
-use helios_core::types::TrajectoryPoint;
+use helios_core::data::primitives::TrajectoryPoint;
 use helios_runtime::estimation::EstimationDriver;
 use helios_runtime::mapping::MapDriver;
 use helios_runtime::pipeline::{ControlCore, PathFollowingCore};
