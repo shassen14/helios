@@ -96,9 +96,11 @@ impl PathFollower for SteeringPidPathFollower {
 
         self.advance_lookahead(agent_pos);
 
-        let lookahead_pos = match self.path.as_ref().unwrap().waypoints[self.lookahead_index]
-            .state
-            .get_vector3(&StateVariable::Px(FrameId::World))
+        let lookahead_pos = match self
+            .path
+            .as_ref()
+            .and_then(|p| p.waypoints.get(self.lookahead_index))
+            .and_then(|wp| wp.state.get_vector3(&StateVariable::Px(FrameId::World)))
         {
             Some(p) => Vector2::new(p.x, p.y),
             None => return PathFollowerResult::Error("missing waypoint position".into()),
@@ -142,7 +144,7 @@ impl PathFollower for SteeringPidPathFollower {
     fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint> {
         self.path
             .as_ref()
-            .map(|p| &p.waypoints[self.lookahead_index])
+            .and_then(|p| p.waypoints.get(self.lookahead_index))
     }
 
     fn reset(&mut self) {

@@ -50,12 +50,33 @@ pub trait EstimationDynamics: Debug + Send + Sync {
     /// # Returns
     /// A tuple `(A, B)` where `A` is an NxN matrix and `B` is an NxM matrix (N=state dim, M=control dim).
     fn calculate_jacobian(&self, x: &State, u: &Control, t: f64) -> (DMatrix<f64>, DMatrix<f64>) {
-        let _ = t;
-        let _ = u;
-        let _ = x;
-        // Default implementation: Indicate that Jacobians are not implemented for this model.
-        // Consider returning Option<(...)> or Result<(...), Error> in a production setting.
-        unimplemented!("Jacobian calculation not implemented for this dynamics model.");
+        let n = x.nrows();
+        let m = self.get_control_dim();
+        let f0 = self.get_derivatives(x, u, t);
+
+        let mut a = DMatrix::zeros(n, n);
+        for i in 0..n {
+            let eps = 1e-5 * (1.0 + x[i].abs());
+            let mut x_pert = x.clone();
+            x_pert[i] += eps;
+            let f_pert = self.get_derivatives(&x_pert, u, t);
+            for j in 0..n {
+                a[(j, i)] = (f_pert[j] - f0[j]) / eps;
+            }
+        }
+
+        let mut b = DMatrix::zeros(n, m);
+        for i in 0..m {
+            let eps = 1e-5 * (1.0 + u[i].abs());
+            let mut u_pert = u.clone();
+            u_pert[i] += eps;
+            let f_pert = self.get_derivatives(x, &u_pert, t);
+            for j in 0..n {
+                b[(j, i)] = (f_pert[j] - f0[j]) / eps;
+            }
+        }
+
+        (a, b)
     }
 
     /// Propagates the state forward in time using a numerical integrator.
@@ -112,6 +133,4 @@ pub trait EstimationDynamics: Debug + Send + Sync {
     }
 }
 
-// pub mod ackermann;
-// pub mod generic;
 pub mod integrated_imu;

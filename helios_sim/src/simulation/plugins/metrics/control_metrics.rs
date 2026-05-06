@@ -4,7 +4,7 @@
 // Pure-data accumulation — all math delegates to helios_core::control::metrics.
 
 use bevy::prelude::*;
-use helios_core::control::metrics as core_metrics;
+use helios_core::utils::metrics as core_metrics;
 use nalgebra::Vector2;
 
 use crate::prelude::AppState;

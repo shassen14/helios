@@ -19,11 +19,10 @@ pub use crate::control::{ControlInputs, ControlOutput, Controller};
 pub use crate::estimation::EstimatorInputs;
 pub use crate::models::controls::ControlDynamics;
 
-// --- Planning & Tracking ---
+// --- Planning ---
 pub use crate::planning::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
 pub use crate::planning::GeometricPlanner;
 pub use crate::planning::GeometricPlannerInputs;
-pub use crate::tracking::{Track, Tracker};
 
 // Path Following
 pub use crate::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};

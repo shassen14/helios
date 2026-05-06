@@ -5,7 +5,6 @@
 //! `MeasurementData`. Concrete models in `lidar_2d` and `lidar_3d`.
 
 pub mod lidar_2d;
-pub mod lidar_3d;
 
 use crate::messages::MeasurementData;
 use dyn_clone::DynClone;

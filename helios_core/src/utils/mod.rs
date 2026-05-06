@@ -4,3 +4,4 @@
 //! unless the system is provably linear.
 
 pub mod integrators;
+pub mod metrics;
