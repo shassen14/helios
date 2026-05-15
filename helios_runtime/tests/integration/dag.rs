@@ -54,7 +54,12 @@ impl PipelineNode for ProducerNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, _runtime: &dyn helios_runtime::prelude::AgentRuntime, tick: TickContext) {
+    fn execute(
+        &self,
+        bus: &PortBus,
+        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        tick: TickContext,
+    ) {
         let stamped = Stamped {
             value: self.value,
             timestamp: tick.now,
@@ -103,7 +108,12 @@ impl PipelineNode for TransformNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, _runtime: &dyn helios_runtime::prelude::AgentRuntime, tick: TickContext) {
+    fn execute(
+        &self,
+        bus: &PortBus,
+        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        tick: TickContext,
+    ) {
         let Some(input) = bus.read::<u32>(self.input.clone()) else {
             return;
         };
@@ -153,7 +163,12 @@ impl PipelineNode for JoinNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, _runtime: &dyn helios_runtime::prelude::AgentRuntime, tick: TickContext) {
+    fn execute(
+        &self,
+        bus: &PortBus,
+        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        tick: TickContext,
+    ) {
         let Some(a) = bus.read::<u32>(self.input_a.clone()) else {
             return;
         };
@@ -201,7 +216,12 @@ impl PipelineNode for CountingNode {
         &self.descriptor
     }
 
-    fn execute(&self, _bus: &PortBus, _runtime: &dyn helios_runtime::prelude::AgentRuntime, _tick: TickContext) {
+    fn execute(
+        &self,
+        _bus: &PortBus,
+        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        _tick: TickContext,
+    ) {
         self.counter.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -236,7 +256,12 @@ impl PipelineNode for SinkNode {
         &self.descriptor
     }
 
-    fn execute(&self, _bus: &PortBus, _runtime: &dyn helios_runtime::prelude::AgentRuntime, _tick: TickContext) {
+    fn execute(
+        &self,
+        _bus: &PortBus,
+        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        _tick: TickContext,
+    ) {
     }
 }
 
@@ -261,7 +286,10 @@ fn single_node_executes() {
 
     pipeline.tick(&MockRuntime, 0.1);
 
-    let value = pipeline.bus().read::<u32>(out).expect("output should exist");
+    let value = pipeline
+        .bus()
+        .read::<u32>(out)
+        .expect("output should exist");
     assert_eq!(value.value, 42);
 }
 
@@ -286,7 +314,10 @@ fn two_node_chain_level_ordering() {
     // If B were placed in level 0 alongside A, B would early-return (A's
     // output not yet on the bus when B reads). Output present means B ran
     // after A.
-    let result = pipeline.bus().read::<u32>(b).expect("b output should exist");
+    let result = pipeline
+        .bus()
+        .read::<u32>(b)
+        .expect("b output should exist");
     assert_eq!(result.value, 14);
 }
 
@@ -309,7 +340,10 @@ fn two_node_chain_with_builder_inserted_out_of_order() {
 
     pipeline.tick(&MockRuntime, 0.1);
 
-    let result = pipeline.bus().read::<u32>(b).expect("b output should exist");
+    let result = pipeline
+        .bus()
+        .read::<u32>(b)
+        .expect("b output should exist");
     assert_eq!(result.value, 11);
 }
 
@@ -335,14 +369,22 @@ fn three_node_diamond_resolves() {
             c.clone(),
             |v| v * 3,
         )))
-        .add_node(Box::new(JoinNode::new("d", b.clone(), c.clone(), d.clone())))
+        .add_node(Box::new(JoinNode::new(
+            "d",
+            b.clone(),
+            c.clone(),
+            d.clone(),
+        )))
         .build()
         .expect("build should succeed");
 
     pipeline.tick(&MockRuntime, 0.1);
 
     // A=1, B=A*2=2, C=A*3=3, D=B+C=5.
-    let result = pipeline.bus().read::<u32>(d).expect("d output should exist");
+    let result = pipeline
+        .bus()
+        .read::<u32>(d)
+        .expect("d output should exist");
     assert_eq!(result.value, 5);
 }
 
@@ -371,7 +413,9 @@ fn cycle_detected() {
         panic!("should fail with cycle");
     };
     assert!(
-        errors.iter().any(|e| matches!(e, PipelineBuildError::Cycle)),
+        errors
+            .iter()
+            .any(|e| matches!(e, PipelineBuildError::Cycle)),
         "expected Cycle, got {:?}",
         errors
     );
@@ -473,7 +517,11 @@ fn rate_gated_node_fires_at_correct_interval() {
     for _ in 0..4 {
         pipeline.tick(&MockRuntime, 0.1);
     }
-    assert_eq!(counter.load(Ordering::Relaxed), 0, "must not fire before 0.5s elapsed");
+    assert_eq!(
+        counter.load(Ordering::Relaxed),
+        0,
+        "must not fire before 0.5s elapsed"
+    );
 
     pipeline.tick(&MockRuntime, 0.1);
     assert_eq!(counter.load(Ordering::Relaxed), 1, "must fire on 5th tick");
@@ -494,7 +542,11 @@ fn rate_gated_node_does_not_double_fire() {
         .expect("build should succeed");
 
     pipeline.tick(&MockRuntime, 1.0);
-    assert_eq!(counter.load(Ordering::Relaxed), 1, "must fire exactly once on slow tick");
+    assert_eq!(
+        counter.load(Ordering::Relaxed),
+        1,
+        "must fire exactly once on slow tick"
+    );
 }
 
 #[test]
