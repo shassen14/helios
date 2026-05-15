@@ -230,8 +230,6 @@ impl NodePipeline {
                 }
             }
         }
-
-        todo!()
     }
 
     pub fn inject_mission_goal(&self, goal: PlannerGoal, runtime: &dyn AgentRuntime) {
@@ -247,7 +245,6 @@ impl NodePipeline {
             ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE),
             goal_stamped,
         );
-        todo!()
     }
 
     pub fn read_state(&self) -> Option<Arc<Stamped<FrameAwareState>>> {
