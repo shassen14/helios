@@ -25,18 +25,24 @@
 //!     .build();
 //! ```
 
+pub mod build_error;
 pub mod builders;
 pub mod control_core;
 pub mod estimation_core;
 pub mod mapping_core;
 pub mod node;
+pub mod node_pipeline;
 pub mod path_following_core;
+pub mod rate_gate;
 
 pub use control_core::ControlCore;
 pub use estimation_core::EstimationCore;
 pub use mapping_core::MappingCore;
 pub use node::{NodeId, PipelineNode, TickContext};
 pub use path_following_core::PathFollowingCore;
+
+pub use build_error::PipelineBuildError;
+pub use node_pipeline::{NodePipeline, NodePipelineBuilder};
 
 use std::collections::HashMap;
 

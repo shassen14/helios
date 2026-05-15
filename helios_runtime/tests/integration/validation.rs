@@ -8,7 +8,7 @@ use helios_runtime::{
         GeometricPlannerConfig, ImuProcessNoiseConfig, MapLayerConfig, MapperPoseSourceConfig,
     },
     stage::PipelineLevel,
-    validation::{validate_autonomy_config, CapabilitySet, ValidationError},
+    validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
 };
 
 // =========================================================================
@@ -132,9 +132,9 @@ fn validation_unknown_estimator_produces_error() {
     caps.estimators.clear();
     let errors = validate_autonomy_config(&stack, &caps);
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(e, ValidationError::UnknownEstimator { kind } if kind == "Ekf")),
+        errors.iter().any(
+            |e| matches!(e, ConfigValidationError::UnknownEstimator { kind } if kind == "Ekf")
+        ),
         "Expected UnknownEstimator for Ekf"
     );
 }
@@ -153,7 +153,7 @@ fn validation_unknown_dynamics_produces_error() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            ValidationError::UnknownDynamics { kind } if kind == "IntegratedImu"
+            ConfigValidationError::UnknownDynamics { kind } if kind == "IntegratedImu"
         )),
         "Expected UnknownDynamics for IntegratedImu"
     );
@@ -174,7 +174,7 @@ fn validation_unknown_mapper_produces_error() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            ValidationError::UnknownMapper { kind } if kind == "OccupancyGrid2D"
+            ConfigValidationError::UnknownMapper { kind } if kind == "OccupancyGrid2D"
         )),
         "Expected UnknownMapper for OccupancyGrid2D"
     );
@@ -190,9 +190,9 @@ fn validation_unknown_controller_produces_error() {
     };
     let errors = validate_autonomy_config(&stack, &empty_caps());
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(e, ValidationError::UnknownController { kind } if kind == "Pid")),
+        errors.iter().any(
+            |e| matches!(e, ConfigValidationError::UnknownController { kind } if kind == "Pid")
+        ),
         "Expected UnknownController for Pid"
     );
 }
@@ -207,9 +207,9 @@ fn validation_unknown_planner_produces_error() {
     };
     let errors = validate_autonomy_config(&stack, &empty_caps());
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(e, ValidationError::UnknownPlanner { kind } if kind == "AStar")),
+        errors.iter().any(
+            |e| matches!(e, ConfigValidationError::UnknownPlanner { kind } if kind == "AStar")
+        ),
         "Expected UnknownPlanner for AStar"
     );
 }
@@ -240,7 +240,7 @@ fn validation_feedforward_pid_unknown_dynamics_key_produces_error() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            ValidationError::UnknownControllerDynamics { dynamics_key, .. }
+            ConfigValidationError::UnknownControllerDynamics { dynamics_key, .. }
                 if dynamics_key == "MyCustomDynamics"
         )),
         "Expected UnknownControllerDynamics for MyCustomDynamics"

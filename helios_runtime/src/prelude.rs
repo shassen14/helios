@@ -1,4 +1,6 @@
+pub use crate::pipeline::build_error::PipelineBuildError;
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext};
+pub use crate::pipeline::{NodePipeline, NodePipelineBuilder};
 pub use crate::port::{ChannelKey, PortDescriptor};
 pub use crate::stamped::{Health, Stamped};
 
@@ -14,4 +16,4 @@ pub use crate::pipeline::{
 };
 pub use crate::runtime::AgentRuntime;
 pub use crate::stage::{LeveledController, LeveledPlanner, PipelineLevel};
-pub use crate::validation::{validate_autonomy_config, CapabilitySet, ValidationError};
+pub use crate::validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError};
