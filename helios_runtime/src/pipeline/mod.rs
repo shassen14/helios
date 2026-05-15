@@ -42,7 +42,9 @@ pub use node::{NodeId, PipelineNode, TickContext};
 pub use path_following_core::PathFollowingCore;
 
 pub use build_error::PipelineBuildError;
-pub use node_pipeline::{NodePipeline, NodePipelineBuilder};
+pub use node_pipeline::{
+    NodePipeline, NodePipelineBuilder, HOST_PRODUCER_ID, MISSION_GOAL_INSTANCE,
+};
 
 use std::collections::HashMap;
 

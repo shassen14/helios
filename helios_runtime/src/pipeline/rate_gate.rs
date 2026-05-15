@@ -17,7 +17,7 @@ impl RateTimer {
 
     pub(crate) fn should_fire_and_advance(&self, dt: f64) -> bool {
         let Some(period) = self.period_secs else {
-            return false;
+            return true;
         };
 
         let period_micros = (period * 1_000_000f64) as u64;
@@ -31,6 +31,9 @@ impl RateTimer {
             return false;
         }
 
+        // TODO: I think this will make multithreading per node
+        //       actually single threading since one thread will
+        //       beat the rest and reset the timer
         // last time fired and now have met the run rate.
         // attempt to reset elapsed time to be 0
         // if another thread already incremented, then the compare

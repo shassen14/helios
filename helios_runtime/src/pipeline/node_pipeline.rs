@@ -11,13 +11,19 @@ use helios_core::{
 use crate::{
     pipeline::rate_gate::RateTimer,
     port::{ChannelKey, PortBus},
-    prelude::{AgentRuntime, NodeId, PipelineBuildError, PipelineNode, Stamped},
+    prelude::{
+        AgentRuntime, Health, NodeId, PipelineBuildError, PipelineNode, Stamped, TickContext,
+    },
 };
+
+// Constant Sentinal Values
+pub const MISSION_GOAL_INSTANCE: &str = "mission";
+pub const HOST_PRODUCER_ID: NodeId = NodeId::MAX;
 
 pub struct NodePipelineBuilder {
     nodes: Vec<Box<dyn PipelineNode>>,
     sensor_signal_keys: Vec<ChannelKey>,
-    host_signal_keys: Vec<ChannelKey>,
+    host_state_keys: Vec<ChannelKey>,
 }
 
 impl Default for NodePipelineBuilder {
@@ -31,7 +37,7 @@ impl NodePipelineBuilder {
         NodePipelineBuilder {
             nodes: vec![],
             sensor_signal_keys: vec![],
-            host_signal_keys: vec![],
+            host_state_keys: vec![],
         }
     }
 
@@ -45,8 +51,8 @@ impl NodePipelineBuilder {
         self
     }
 
-    pub fn with_host_signals(mut self, keys: Vec<ChannelKey>) -> Self {
-        self.host_signal_keys = keys;
+    pub fn with_host_states(mut self, keys: Vec<ChannelKey>) -> Self {
+        self.host_state_keys = keys;
         self
     }
 
@@ -78,7 +84,7 @@ impl NodePipelineBuilder {
         // which should be just host/sensor signals
         let mut produced: HashSet<ChannelKey> = HashSet::new();
         produced.extend(self.sensor_signal_keys.iter().cloned());
-        produced.extend(self.host_signal_keys.iter().cloned());
+        produced.extend(self.host_state_keys.iter().cloned());
 
         let mut remaining: Vec<Box<dyn PipelineNode>> = self.nodes;
         let mut levels: Vec<Vec<(NodeId, Box<dyn PipelineNode>)>> = Vec::new();
@@ -172,8 +178,7 @@ impl NodePipelineBuilder {
             .iter()
             .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));
 
-        let mut signals = self.sensor_signal_keys;
-        signals.extend(self.host_signal_keys);
+        let signals = self.sensor_signal_keys;
 
         // create bus with descriptors and signals
         let bus = PortBus::new(descriptor_iter, signals);
@@ -205,19 +210,51 @@ impl NodePipeline {
         &self.bus
     }
 
-    pub fn tick(&self, _runtime: &dyn AgentRuntime, _dt: f64) {
+    pub fn tick(&self, runtime: &dyn AgentRuntime, dt: f64) {
+        let now = runtime.now();
+        self.bus.set_tick_time(now.0);
+
+        // level by level, execute each node if the it meets the rate
+        for level in &self.levels {
+            for (node_id, node) in level {
+                if self.rate_timers[*node_id as usize].should_fire_and_advance(dt) {
+                    node.execute(
+                        &self.bus,
+                        runtime,
+                        TickContext {
+                            now,
+                            dt,
+                            node_id: *node_id,
+                        },
+                    );
+                }
+            }
+        }
+
         todo!()
     }
 
-    pub fn inject_mission_goal(&self, _goal: PlannerGoal, _runtime: &dyn AgentRuntime) {
+    pub fn inject_mission_goal(&self, goal: PlannerGoal, runtime: &dyn AgentRuntime) {
+        let now = runtime.now();
+        let goal_stamped = Stamped {
+            value: goal,
+            timestamp: now,
+            health: Health::Ok,
+            producer: HOST_PRODUCER_ID,
+        };
+
+        let _ = self.bus.write(
+            ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE),
+            goal_stamped,
+        );
         todo!()
     }
 
     pub fn read_state(&self) -> Option<Arc<Stamped<FrameAwareState>>> {
-        todo!()
+        self.bus.read(ChannelKey::of::<FrameAwareState>())
     }
 
     pub fn read_control(&self) -> Option<Arc<Stamped<ControlOutput>>> {
-        todo!()
+        self.bus.read(ChannelKey::of::<ControlOutput>())
     }
 }
