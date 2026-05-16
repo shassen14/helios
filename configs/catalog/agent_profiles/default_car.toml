@@ -8,7 +8,7 @@
 [estimator]
 from = "components.estimators.ekf_pro"
 
-[geometric_planners]
+[search_planners]
 local_path = { from = "components.planners.a_star" }
 
 [path_following]

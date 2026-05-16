@@ -34,5 +34,5 @@ from = "components.estimators.ekf_pro"
 
 # Enable A* planner. Map is provided by MockMapInjectorPlugin.
 
-[agents.autonomy_stack.geometric_planners]
+[agents.autonomy_stack.search_planners]
 local_path = { from = "components.planners.a_star" }

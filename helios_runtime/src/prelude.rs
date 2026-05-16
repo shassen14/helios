@@ -7,7 +7,7 @@ pub use crate::stamped::{Health, Stamped};
 
 pub use crate::config::{
     AckermannProcessNoiseConfig, AgentBaseConfig, AutonomyStack, ControllerConfig, EkfConfig,
-    EkfDynamicsConfig, EstimatorConfig, GeometricPlannerConfig, ImuProcessNoiseConfig,
+    EkfDynamicsConfig, EstimatorConfig, SearchPlannerConfig, ImuProcessNoiseConfig,
     MapLayerConfig, MapperPoseSourceConfig, QuadcopterProcessNoiseConfig, UkfConfig,
 };
 pub use crate::runtime::AgentRuntime;

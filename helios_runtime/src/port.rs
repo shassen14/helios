@@ -26,7 +26,14 @@ pub enum ChannelError {
 pub struct ChannelKey {
     pub type_id: TypeId,
     pub type_name: &'static str,
-    pub instance: &'static str,
+    /// Disambiguator for multiple channels of the same type. Empty string =
+    /// the unnamed/default channel (see [`ChannelKey::of`]).
+    ///
+    /// Stored as `Arc<str>` so the name can originate from either a `&'static
+    /// str` literal (zero-cost via `From<&str>`) or a runtime-built `String`
+    /// from TOML config without leaking. Clones are cheap refcount bumps;
+    /// equality and hashing compare string contents.
+    pub instance: Arc<str>,
 }
 
 impl ChannelKey {
@@ -34,15 +41,18 @@ impl ChannelKey {
         Self {
             type_id: TypeId::of::<T>(),
             type_name: std::any::type_name::<T>(),
-            instance: "",
+            instance: Arc::from(""),
         }
     }
 
-    pub fn named<T: 'static>(instance: &'static str) -> Self {
+    /// Construct a named channel. Accepts anything `Into<Arc<str>>` —
+    /// `&'static str` literals at the call site, owned `String`s from
+    /// config loading, or pre-built `Arc<str>` from a name registry.
+    pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
         Self {
             type_id: TypeId::of::<T>(),
             type_name: std::any::type_name::<T>(),
-            instance,
+            instance: instance.into(),
         }
     }
 }

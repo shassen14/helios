@@ -40,11 +40,11 @@ use nalgebra::Vector2;
 
 use crate::frames::{FrameId, StateVariable};
 use crate::mapping::MapData;
-use crate::planning::GeometricPlannerInputs;
+use crate::planning::SearchPlannerInputs;
 
 use super::search_space::SearchSpace;
 use super::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
-use super::GeometricPlanner;
+use super::SearchPlanner;
 
 use grid_space::OccupancyGridSpace;
 use search::{run_astar, AStarSearchBuffers};
@@ -131,7 +131,7 @@ impl AStarPlanner {
 // == Planner trait impl ==
 // =========================================================================
 
-impl GeometricPlanner for AStarPlanner {
+impl SearchPlanner for AStarPlanner {
     /// Compute or update the planned path.
     ///
     /// ## Decision tree
@@ -147,7 +147,7 @@ impl GeometricPlanner for AStarPlanner {
     /// 9. Robot outside map → [`PlannerResult::Error`].
     /// 10. A\* finds no path → [`PlannerResult::Unreachable`].
     /// 11. Path found → [`PlannerResult::Path`] (or `GoalOutsideMap` from step 8).
-    fn plan(&mut self, now: f64, inputs: &GeometricPlannerInputs) -> PlannerResult {
+    fn plan(&mut self, now: f64, inputs: &SearchPlannerInputs) -> PlannerResult {
         let goal = match &inputs.goal {
             Some(g) => g.clone(),
             None => return PlannerResult::NoGoal,
@@ -302,7 +302,7 @@ impl GeometricPlanner for AStarPlanner {
     /// `deviation_tolerance_m`.
     ///
     /// Otherwise replan when `ctx.now - last_plan_time >= 1 / rate_hz`.
-    fn should_replan(&self, now: f64, inputs: &GeometricPlannerInputs) -> bool {
+    fn should_replan(&self, now: f64, inputs: &SearchPlannerInputs) -> bool {
         if self.status == PlannerStatus::Idle || self.cached_path.is_none() {
             return true;
         }
@@ -337,11 +337,19 @@ impl GeometricPlanner for AStarPlanner {
         elapsed >= period
     }
 
-    fn status(&self) -> PlannerStatus {
+}
+
+impl AStarPlanner {
+    /// Lifecycle status — exposed as an inherent accessor for diagnostics and
+    /// tests. Not part of [`SearchPlanner`]; the pipeline reads planner outputs
+    /// from the bus, not from the planner directly.
+    pub fn status(&self) -> PlannerStatus {
         self.status.clone()
     }
 
-    fn current_path(&self) -> Option<&Path> {
+    /// Most recently computed path, if any. Inherent accessor (see
+    /// [`Self::status`]).
+    pub fn current_path(&self) -> Option<&Path> {
         self.cached_path.as_ref()
     }
 }
@@ -357,8 +365,8 @@ mod tests {
     use crate::frames::{FrameId, RobotState, StateVariable};
     use crate::mapping::MapData;
     use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
-    use crate::planning::GeometricPlanner;
-    use crate::planning::GeometricPlannerInputs;
+    use crate::planning::SearchPlanner;
+    use crate::planning::SearchPlannerInputs;
 
     use super::{AStarConfig, AStarPlanner};
 
@@ -414,8 +422,8 @@ mod tests {
         y: f64,
         map: MapData,
         goal: Option<PlannerGoal>,
-    ) -> GeometricPlannerInputs {
-        GeometricPlannerInputs {
+    ) -> SearchPlannerInputs {
+        SearchPlannerInputs {
             state: make_state(x, y),
             map,
             goal,

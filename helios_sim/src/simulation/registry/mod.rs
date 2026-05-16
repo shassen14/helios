@@ -26,7 +26,7 @@ use std::sync::Arc;
 use bevy::prelude::Resource;
 use helios_core::{
     control::Controller, estimation::dynamics::EstimationDynamics, estimation::StateEstimator,
-    mapping::Mapper, path_following::PathFollower, planning::GeometricPlanner,
+    mapping::Mapper, path_following::PathFollower, planning::SearchPlanner,
 };
 use helios_runtime::validation::CapabilitySet;
 
@@ -97,7 +97,7 @@ impl AutonomyRegistry {
 
     pub fn register_planner<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
-        F: Fn(PlannerBuildContext) -> Result<Box<dyn GeometricPlanner>, String>
+        F: Fn(PlannerBuildContext) -> Result<Box<dyn SearchPlanner>, String>
             + Send
             + Sync
             + 'static,
@@ -177,7 +177,7 @@ impl AutonomyRegistry {
         &self,
         key: &str,
         ctx: PlannerBuildContext,
-    ) -> Result<Box<dyn GeometricPlanner>, String> {
+    ) -> Result<Box<dyn SearchPlanner>, String> {
         self.planners
             .get(key)
             .ok_or_else(|| format!("No planner registered for '{key}'."))

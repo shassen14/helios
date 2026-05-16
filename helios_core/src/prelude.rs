@@ -23,8 +23,8 @@ pub use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
 
 // --- Planning ---
 pub use crate::planning::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
-pub use crate::planning::GeometricPlanner;
-pub use crate::planning::GeometricPlannerInputs;
+pub use crate::planning::SearchPlanner;
+pub use crate::planning::SearchPlannerInputs;
 
 // Path Following
 pub use crate::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};

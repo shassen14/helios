@@ -2,7 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::{
-    ControllerConfig, EstimatorConfig, GeometricPlannerConfig, MapLayerConfig, PathFollowingConfig,
+    ControllerConfig, EstimatorConfig, SearchPlannerConfig, MapLayerConfig, PathFollowingConfig,
 };
 
 #[derive(Debug, Deserialize, Default, Clone)]
@@ -18,7 +18,7 @@ pub struct AutonomyStack {
     pub map_layers: HashMap<String, MapLayerConfig>,
 
     #[serde(default)]
-    pub geometric_planners: HashMap<String, GeometricPlannerConfig>,
+    pub search_planners: HashMap<String, SearchPlannerConfig>,
 
     #[serde(default)]
     pub path_following: Option<PathFollowingConfig>,
