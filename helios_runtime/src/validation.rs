@@ -13,7 +13,7 @@ pub struct CapabilitySet {
 
 /// Structured validation failure.
 #[derive(Debug)]
-pub enum ValidationError {
+pub enum ConfigValidationError {
     UnknownEstimator {
         kind: String,
     },
@@ -35,27 +35,31 @@ pub enum ValidationError {
     },
 }
 
-impl std::fmt::Display for ValidationError {
+impl std::fmt::Display for ConfigValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ValidationError::UnknownEstimator { kind } => {
+            ConfigValidationError::UnknownEstimator { kind } => {
                 write!(f, "Unknown estimator kind '{kind}'")
             }
-            ValidationError::UnknownDynamics { kind } => {
+            ConfigValidationError::UnknownDynamics { kind } => {
                 write!(f, "Unknown dynamics kind '{kind}'")
             }
-            ValidationError::UnknownController { kind } => {
+            ConfigValidationError::UnknownController { kind } => {
                 write!(f, "Unknown controller kind '{kind}'")
             }
-            ValidationError::UnknownControllerDynamics {
+            ConfigValidationError::UnknownControllerDynamics {
                 controller_kind,
                 dynamics_key,
             } => write!(
                 f,
                 "Controller '{controller_kind}' references unknown dynamics_key '{dynamics_key}'"
             ),
-            ValidationError::UnknownMapper { kind } => write!(f, "Unknown mapper kind '{kind}'"),
-            ValidationError::UnknownPlanner { kind } => write!(f, "Unknown planner kind '{kind}'"),
+            ConfigValidationError::UnknownMapper { kind } => {
+                write!(f, "Unknown mapper kind '{kind}'")
+            }
+            ConfigValidationError::UnknownPlanner { kind } => {
+                write!(f, "Unknown planner kind '{kind}'")
+            }
         }
     }
 }
@@ -65,14 +69,14 @@ impl std::fmt::Display for ValidationError {
 pub fn validate_autonomy_config(
     config: &AutonomyStack,
     capabilities: &CapabilitySet,
-) -> Vec<ValidationError> {
+) -> Vec<ConfigValidationError> {
     let mut errors = Vec::new();
 
     // Estimator validation
     if let Some(est_cfg) = &config.estimator {
         let kind = est_cfg.get_kind_str();
         if !capabilities.estimators.contains(kind) {
-            errors.push(ValidationError::UnknownEstimator {
+            errors.push(ConfigValidationError::UnknownEstimator {
                 kind: kind.to_string(),
             });
         }
@@ -80,7 +84,7 @@ pub fn validate_autonomy_config(
         if let crate::config::EstimatorConfig::Ekf(ekf) = est_cfg {
             let dyn_kind = ekf.dynamics.get_kind_str();
             if !capabilities.dynamics.contains(dyn_kind) {
-                errors.push(ValidationError::UnknownDynamics {
+                errors.push(ConfigValidationError::UnknownDynamics {
                     kind: dyn_kind.to_string(),
                 });
             }
@@ -91,7 +95,7 @@ pub fn validate_autonomy_config(
     for map_cfg in config.map_layers.values() {
         let kind = map_cfg.get_kind_str();
         if kind != "None" && !capabilities.mappers.contains(kind) {
-            errors.push(ValidationError::UnknownMapper {
+            errors.push(ConfigValidationError::UnknownMapper {
                 kind: kind.to_string(),
             });
         }
@@ -101,14 +105,14 @@ pub fn validate_autonomy_config(
     for ctrl_cfg in config.controllers.values() {
         let kind = ctrl_cfg.get_kind_str();
         if !capabilities.controllers.contains(kind) {
-            errors.push(ValidationError::UnknownController {
+            errors.push(ConfigValidationError::UnknownController {
                 kind: kind.to_string(),
             });
         }
         // FeedforwardPid references a dynamics_key that must also be registered
         if let ControllerConfig::FeedforwardPid { dynamics_key, .. } = ctrl_cfg {
             if !capabilities.dynamics.contains(dynamics_key.as_str()) {
-                errors.push(ValidationError::UnknownControllerDynamics {
+                errors.push(ConfigValidationError::UnknownControllerDynamics {
                     controller_kind: kind.to_string(),
                     dynamics_key: dynamics_key.clone(),
                 });
@@ -120,7 +124,7 @@ pub fn validate_autonomy_config(
     for plan_cfg in config.geometric_planners.values() {
         let kind = plan_cfg.get_kind_str();
         if !capabilities.planners.contains(kind) {
-            errors.push(ValidationError::UnknownPlanner {
+            errors.push(ConfigValidationError::UnknownPlanner {
                 kind: kind.to_string(),
             });
         }

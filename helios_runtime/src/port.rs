@@ -47,6 +47,16 @@ impl ChannelKey {
     }
 }
 
+impl std::fmt::Display for ChannelKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.instance.trim().is_empty() {
+            write!(f, "{}", self.type_name)
+        } else {
+            write!(f, "{} @ \"{}\"", self.type_name, self.instance)
+        }
+    }
+}
+
 /// Declares what a pipeline node reads from and writes to the bus.
 ///
 /// `required_inputs` channels must have a declared producer in the graph for
@@ -100,7 +110,10 @@ impl PortBus {
     /// [`PortBus::clear_signals`]. All other slots use last-known-good semantics.
     /// The caller (typically [`PipelineBuilder`]) is responsible for classifying
     /// signals from the sensor suite configuration.
-    pub fn new(descriptors: &[PortDescriptor], signal_keys: Vec<ChannelKey>) -> Self {
+    pub fn new<'a>(
+        descriptors: impl IntoIterator<Item = &'a PortDescriptor>,
+        signal_keys: Vec<ChannelKey>,
+    ) -> Self {
         let mut slots = HashMap::new();
 
         for descriptor in descriptors {

@@ -1,5 +1,7 @@
 #[path = "integration/common.rs"]
 mod common;
+#[path = "integration/dag.rs"]
+mod dag;
 #[path = "integration/pipeline.rs"]
 mod pipeline;
 #[path = "integration/stages.rs"]

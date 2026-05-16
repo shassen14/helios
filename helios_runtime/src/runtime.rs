@@ -1,5 +1,3 @@
-// helios_runtime/src/runtime.rs
-//
 // AgentRuntime trait — the only interface the pipeline uses to query world state.
 // SimRuntime in helios_sim implements this for simulation.
 // On real hardware, a HardwareRuntime would implement it using sensor calibration data.
