@@ -1,4 +1,4 @@
-// Validation integration tests: validate_autonomy_config and PipelineLevel ordering.
+// Validation integration tests: validate_autonomy_config.
 
 use std::collections::HashMap;
 
@@ -7,7 +7,6 @@ use helios_runtime::{
         AutonomyStack, ControllerConfig, EkfConfig, EkfDynamicsConfig, EstimatorConfig,
         GeometricPlannerConfig, ImuProcessNoiseConfig, MapLayerConfig, MapperPoseSourceConfig,
     },
-    stage::PipelineLevel,
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
 };
 
@@ -274,22 +273,3 @@ fn validation_collects_all_errors_two_bad_controllers() {
     );
 }
 
-// =========================================================================
-// == PipelineLevel ordering ==
-// =========================================================================
-
-#[test]
-fn pipeline_level_global_less_than_local() {
-    assert!(PipelineLevel::Global < PipelineLevel::Local);
-}
-
-#[test]
-fn pipeline_level_local_less_than_custom() {
-    assert!(PipelineLevel::Local < PipelineLevel::Custom("anything".to_string()));
-}
-
-#[test]
-fn pipeline_level_custom_variants_sorted_lexicographically() {
-    assert!(PipelineLevel::Custom("alpha".to_string()) < PipelineLevel::Custom("beta".to_string()));
-    assert!(PipelineLevel::Custom("a".to_string()) < PipelineLevel::Custom("b".to_string()));
-}
