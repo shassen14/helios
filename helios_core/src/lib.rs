@@ -1,9 +1,9 @@
 //! Pure algorithmic library for robotics. Framework-agnostic; runs on real hardware.
 //!
 //! Contains all algorithm implementations (EKF, UKF, A*), trait definitions
-//! (`StateEstimator`, `Controller`, `Planner`), and shared data structures
-//! (`MeasurementMessage`, `FrameAwareState`). Has zero dependency on Bevy or Avian3D.
-//! See submodules for details.
+//! (`GaussianStateEstimator`, `MeasurementModel`, `SensorPayload`, `Controller`,
+//! `Planner`), and shared data structures (`FrameAwareState`). Has zero dependency
+//! on Bevy or Avian3D. See submodules for details.
 
 pub mod control;
 pub mod data;

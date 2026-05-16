@@ -124,7 +124,6 @@ fn spawn_raycasting_sensors(
 // =========================================================================
 
 /// Runs every frame to simulate raycasting sensors and emit `BevyMeasurementMessage` events.
-/// PointCloud data is not published to TopicBus (see CLAUDE.md: visual data → MCAP, not Foxglove).
 fn raycasting_sensor_system(
     mut measurement_writer: EventWriter<BevyMeasurementMessage>,
     time: Res<Time>,

@@ -1,18 +1,19 @@
 // helios_core/src/estimation/filters/ekf.rs
 
-use std::any::Any;
-use std::collections::HashMap;
-
-use crate::data::messages::MeasurementMessage;
-use crate::data::primitives::FrameHandle;
+use crate::data::primitives::TfProvider;
 use crate::estimation::dynamics::EstimationDynamics;
-use crate::estimation::measurement::Measurement;
-use crate::estimation::{EstimatorInputs, FilterContext, StateEstimator};
+use crate::estimation::measurement::MeasurementModel;
+use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
 use crate::frames::FrameAwareState;
 use crate::utils::integrators::RK4;
-use nalgebra::{DMatrix, DVector}; // Assuming you have this
+use nalgebra::{DMatrix, DVector};
 
 /// A concrete implementation of an Extended Kalman Filter.
+///
+/// Holds only filter-intrinsic state: the current `(x, P, t)`, the process noise
+/// `Q`, and the dynamics model. Measurement models and their `R` matrices are
+/// supplied per `update` call by the caller — the filter does not maintain a
+/// registry of sensors.
 pub struct ExtendedKalmanFilter {
     /// The current state of the filter (x, P, t).
     state: FrameAwareState,
@@ -20,8 +21,6 @@ pub struct ExtendedKalmanFilter {
     process_noise_q: DMatrix<f64>,
     /// The specific dynamics model this filter will use for prediction.
     dynamics_model: Box<dyn EstimationDynamics>,
-    /// Maps a sensor's handle to the model that describes its physics.
-    measurement_models: HashMap<FrameHandle, Box<dyn Measurement>>,
 }
 
 impl ExtendedKalmanFilter {
@@ -30,9 +29,7 @@ impl ExtendedKalmanFilter {
         initial_state: FrameAwareState,
         process_noise_q: DMatrix<f64>,
         dynamics_model: Box<dyn EstimationDynamics>,
-        measurement_models: HashMap<FrameHandle, Box<dyn Measurement>>,
     ) -> Self {
-        // Ensure Q has the correct dimensions.
         assert_eq!(initial_state.dim(), process_noise_q.nrows());
         assert_eq!(initial_state.dim(), process_noise_q.ncols());
 
@@ -40,11 +37,11 @@ impl ExtendedKalmanFilter {
             state: initial_state,
             process_noise_q,
             dynamics_model,
-            measurement_models,
         }
     }
+
     /// Enforces physical properties on the covariance matrix to prevent divergence.
-    /// This should be called at the end of every predict and update step.
+    /// Called at the end of every predict and update step.
     fn ensure_covariance_health(&mut self) {
         let dim = self.state.dim();
         let p = &mut self.state.covariance;
@@ -75,9 +72,7 @@ impl ExtendedKalmanFilter {
     }
 }
 
-// --- The Public Trait Implementation ---
-impl StateEstimator for ExtendedKalmanFilter {
-    /// Predicts the state forward by `dt` using the provided control input `u`.
+impl GaussianStateEstimator for ExtendedKalmanFilter {
     fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) {
         if dt <= 0.0 {
             return;
@@ -89,14 +84,9 @@ impl StateEstimator for ExtendedKalmanFilter {
         let p_old = &self.state.covariance;
         let t_old = self.state.state.timestamp;
 
-        // Ensure control input `u` has the correct dimension for the dynamics model.
         let u_sized = if inputs.control.nrows() == dynamics.get_control_dim() {
             &inputs.control
         } else {
-            // This case can happen if the control input cache wasn't updated.
-            // We fall back to a zero vector to prevent a panic.
-            // warn!("Control input dimension mismatch in EKF predict. Using zeros.");
-            // A more robust solution might use a thread_local static as before.
             &DVector::zeros(dynamics.get_control_dim())
         };
 
@@ -113,17 +103,17 @@ impl StateEstimator for ExtendedKalmanFilter {
         // A = ∂f/∂x, B = ∂f/∂u
         let (a_jac, _b_jac) = dynamics.calculate_jacobian(x_old, &inputs.control, t_old);
 
-        // Discretize the state transition matrix: F ≈ I + A*dt (no identity allocation)
+        // F ≈ I + A*dt (no identity allocation).
         let mut f_k = &a_jac * dt;
         for i in 0..self.state.dim() {
             f_k[(i, i)] += 1.0;
         }
-
+        
         // --- 4. Predict the next covariance matrix ---
         // The correct approach is to apply the process noise `Q` *before* the main propagation.
         // This represents adding uncertainty to the model itself before you predict.
         let p_with_noise = p_old + &self.process_noise_q * dt;
-
+        
         // Now, propagate this "noisier" covariance forward using the state transition matrix.
         // P_new = F * (P_old + Q*dt) * F^T
         let p_new = &f_k * p_with_noise * f_k.transpose();
@@ -133,42 +123,34 @@ impl StateEstimator for ExtendedKalmanFilter {
         self.state.covariance = p_new;
         self.state.state.timestamp += dt;
 
-        // Force Symmetry and Positivity
         self.ensure_covariance_health();
         self.state.normalize_quaternion();
     }
 
-    /// Updates the state by fusing an aiding measurement.
-    fn update(&mut self, message: &MeasurementMessage, context: &FilterContext) {
-        // O(1) dispatch: look up the model directly by sensor handle.
-        let Some(model) = self.measurement_models.get(&message.sensor_handle) else {
+    fn update(
+        &mut self,
+        z: &DVector<f64>,
+        model: &dyn MeasurementModel,
+        r: &DMatrix<f64>,
+        tf: Option<&dyn TfProvider>,
+    ) {
+        let m = model.dim();
+        if z.nrows() != m || r.nrows() != m || r.ncols() != m {
+            return;
+        }
+
+        let Some(z_pred) = model.predict_measurement(&self.state, tf) else {
             return;
         };
-
-        let Some(z) = model.get_measurement_vector(&message.data) else {
-            return;
-        };
-
-        // tf is required for measurement prediction; skip update if unavailable.
-        let Some(tf) = context.tf else {
-            return;
-        };
-
-        let Some(z_pred) = model.predict_measurement(&self.state, message, tf) else {
-            return;
-        };
-
-        if z.nrows() != z_pred.nrows() {
+        if z_pred.nrows() != m {
             return;
         }
 
         let p_priori = &self.state.covariance;
-        let h_jac = model.calculate_jacobian(&self.state, tf);
-        let r_mat = model.get_r();
+        let h_jac = model.jacobian(&self.state, tf);
         let y = z - &z_pred;
 
-        // --- Calculate the full Kalman update values once ---
-        let s = &h_jac * p_priori * h_jac.transpose() + r_mat;
+        let s = &h_jac * p_priori * h_jac.transpose() + r;
         let Some(s_inv) = s.try_inverse() else {
             return;
         };
@@ -177,52 +159,36 @@ impl StateEstimator for ExtendedKalmanFilter {
         let correction = &k_gain * &y;
 
         self.state.state.vector += correction;
-        // Joseph form: (I - KH) computed without allocating an identity matrix.
+
+        // Joseph form: (I - KH) P (I - KH)^T + K R K^T, no identity allocation.
         let mut i_kh = -(&k_gain * &h_jac);
         let n = self.state.dim();
         for i in 0..n {
             i_kh[(i, i)] += 1.0;
         }
-        // P_post = (I - KH)P(I - KH)^T + KRK^T
-        let p_post = &i_kh * p_priori * i_kh.transpose() + &k_gain * r_mat * k_gain.transpose();
+        let p_post = &i_kh * p_priori * i_kh.transpose() + &k_gain * r * k_gain.transpose();
         self.state.covariance = p_post;
 
-        // Enforce Symmetry and Positivity
         self.ensure_covariance_health();
         self.state.normalize_quaternion();
-
-        self.state.state.timestamp = message.timestamp;
     }
 
-    fn get_state(&self) -> &FrameAwareState {
+    fn state(&self) -> &FrameAwareState {
         &self.state
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn get_dynamics_model(&self) -> &dyn EstimationDynamics {
-        &*self.dynamics_model
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::messages::{MeasurementData, MeasurementMessage};
     use crate::data::primitives::{FrameHandle, TfProvider};
-    use crate::data::sensor;
-    use crate::estimation::measurement::Measurement;
-    use crate::estimation::{EstimatorInputs, FilterContext};
+    use crate::estimation::measurement::MeasurementModel;
+    use crate::estimation::EstimatorInputs;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use nalgebra::{DMatrix, DVector, Isometry3, Vector3};
-    use std::any::Any;
-    use std::collections::HashMap;
+    use nalgebra::{DMatrix, DVector, Isometry3};
 
     // --- Test Fixtures ---
 
-    /// Stub TF provider that returns identity transforms.
     struct IdentityTf;
 
     impl TfProvider for IdentityTf {
@@ -243,14 +209,10 @@ mod tests {
             0
         }
 
-        fn get_control_from_measurement(&self, _data: &MeasurementData) -> Option<DVector<f64>> {
-            None
-        }
-
         fn get_derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
             let mut xdot = DVector::zeros(4);
-            xdot[0] = x[2]; // px_dot = vx
-            xdot[1] = x[3]; // py_dot = vy
+            xdot[0] = x[2];
+            xdot[1] = x[3];
             xdot
         }
 
@@ -267,50 +229,31 @@ mod tests {
         }
     }
 
-    /// 2D position measurement model: z = [px, py] from GpsPosition data.
+    /// 2D position measurement model: z = [px, py].
+    /// `R` is held by the test, not the model.
     #[derive(Debug, Clone)]
-    struct Position2DMeasurement {
-        r: DMatrix<f64>,
-    }
+    struct Position2DMeasurement;
 
-    impl Measurement for Position2DMeasurement {
-        fn get_measurement_layout(&self) -> Vec<StateVariable> {
-            vec![
-                StateVariable::Px(FrameId::World),
-                StateVariable::Py(FrameId::World),
-            ]
-        }
-
-        fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
-            if let MeasurementData::GpsPosition(gps_position) = data {
-                Some(DVector::from_row_slice(&[
-                    gps_position.position.x,
-                    gps_position.position.y,
-                ]))
-            } else {
-                None
-            }
+    impl MeasurementModel for Position2DMeasurement {
+        fn dim(&self) -> usize {
+            2
         }
 
         fn predict_measurement(
             &self,
             state: &FrameAwareState,
-            message: &MeasurementMessage,
-            _tf: &dyn TfProvider,
+            _tf: Option<&dyn TfProvider>,
         ) -> Option<DVector<f64>> {
-            if !matches!(&message.data, MeasurementData::GpsPosition(_)) {
-                return None;
-            }
             Some(DVector::from_row_slice(&[
                 state.state.vector[0],
                 state.state.vector[1],
             ]))
         }
 
-        fn calculate_jacobian(
+        fn jacobian(
             &self,
             state: &FrameAwareState,
-            _tf: &dyn TfProvider,
+            _tf: Option<&dyn TfProvider>,
         ) -> DMatrix<f64> {
             let n = state.dim();
             let mut h = DMatrix::zeros(2, n);
@@ -318,17 +261,7 @@ mod tests {
             h[(1, 1)] = 1.0;
             h
         }
-
-        fn get_r(&self) -> &DMatrix<f64> {
-            &self.r
-        }
-
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
     }
-
-    const SENSOR: FrameHandle = FrameHandle(1);
 
     fn make_state_with_velocity(vx: f64) -> FrameAwareState {
         let layout = vec![
@@ -346,22 +279,15 @@ mod tests {
         let mut state = make_state_with_velocity(vx);
         state.state.vector[0] = initial_px;
         let q = DMatrix::identity(4, 4) * 0.01;
-        let r = DMatrix::identity(2, 2) * 0.1;
-        let model: Box<dyn Measurement> = Box::new(Position2DMeasurement { r });
-        let mut models = HashMap::new();
-        models.insert(SENSOR, model);
-        ExtendedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D), models)
+        ExtendedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D))
     }
 
-    fn gps_message(x: f64, y: f64, t: f64) -> MeasurementMessage {
-        MeasurementMessage {
-            agent_handle: FrameHandle::default(),
-            sensor_handle: SENSOR,
-            timestamp: t,
-            data: MeasurementData::GpsPosition(sensor::GpsPosition {
-                position: Vector3::new(x, y, 0.0),
-            }),
-        }
+    fn gps_r() -> DMatrix<f64> {
+        DMatrix::identity(2, 2) * 0.1
+    }
+
+    fn gps_z(x: f64, y: f64) -> DVector<f64> {
+        DVector::from_row_slice(&[x, y])
     }
 
     // --- Predict Step Tests ---
@@ -373,45 +299,35 @@ mod tests {
 
         ekf.predict(1.0, &EstimatorInputs { control: u });
 
-        let px = ekf.get_state().state.vector[0];
+        let px = ekf.state().state.vector[0];
         assert!(
             (px - 1.0).abs() < 0.05,
             "px should advance ≈ vx*dt = 1.0, got {px}"
         );
-        assert!(
-            ekf.get_state().state.vector[1].abs() < 1e-9,
-            "py should stay 0"
-        );
+        assert!(ekf.state().state.vector[1].abs() < 1e-9);
     }
 
     #[test]
     fn predict_zero_dt_is_noop() {
         let mut ekf = make_ekf(5.0, 2.0);
         let u = DVector::zeros(0);
-        let px_before = ekf.get_state().state.vector[0];
+        let px_before = ekf.state().state.vector[0];
 
         ekf.predict(0.0, &EstimatorInputs { control: u });
 
-        assert_eq!(
-            ekf.get_state().state.vector[0],
-            px_before,
-            "zero dt must not change state"
-        );
+        assert_eq!(ekf.state().state.vector[0], px_before);
     }
 
     #[test]
     fn predict_grows_covariance() {
         let mut ekf = make_ekf(0.0, 1.0);
         let u = DVector::zeros(0);
-        let trace_before: f64 = ekf.get_state().covariance.diagonal().sum();
+        let trace_before: f64 = ekf.state().covariance.diagonal().sum();
 
         ekf.predict(1.0, &EstimatorInputs { control: u });
 
-        let trace_after: f64 = ekf.get_state().covariance.diagonal().sum();
-        assert!(
-            trace_after > trace_before,
-            "covariance trace should grow after predict"
-        );
+        let trace_after: f64 = ekf.state().covariance.diagonal().sum();
+        assert!(trace_after > trace_before);
     }
 
     // --- Update Step Tests ---
@@ -420,12 +336,12 @@ mod tests {
     fn update_corrects_state_toward_measurement() {
         let mut ekf = make_ekf(0.0, 0.0);
         let tf = IdentityTf;
-        let ctx = FilterContext { tf: Some(&tf) };
+        let model = Position2DMeasurement;
+        let r = gps_r();
 
-        // Measurement says position is at [5, 0]; filter starts at [0, 0].
-        ekf.update(&gps_message(5.0, 0.0, 0.1), &ctx);
+        ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf));
 
-        let px = ekf.get_state().state.vector[0];
+        let px = ekf.state().state.vector[0];
         assert!(px > 0.0, "state should correct toward measurement (px > 0)");
         assert!(px < 5.0, "state should not overshoot measurement");
     }
@@ -434,75 +350,47 @@ mod tests {
     fn update_shrinks_position_uncertainty() {
         let mut ekf = make_ekf(0.0, 0.0);
         let tf = IdentityTf;
-        let ctx = FilterContext { tf: Some(&tf) };
-        let p00_before = ekf.get_state().covariance[(0, 0)];
+        let model = Position2DMeasurement;
+        let r = gps_r();
+        let p00_before = ekf.state().covariance[(0, 0)];
 
-        ekf.update(&gps_message(0.0, 0.0, 0.1), &ctx);
+        ekf.update(&gps_z(0.0, 0.0), &model, &r, Some(&tf));
 
-        let p00_after = ekf.get_state().covariance[(0, 0)];
-        assert!(
-            p00_after < p00_before,
-            "position variance should shrink after update"
-        );
+        let p00_after = ekf.state().covariance[(0, 0)];
+        assert!(p00_after < p00_before);
     }
 
     #[test]
-    fn update_skipped_without_tf() {
-        let mut ekf = make_ekf(0.0, 0.0);
-        let ctx = FilterContext { tf: None };
-        let px_before = ekf.get_state().state.vector[0];
-
-        ekf.update(&gps_message(5.0, 0.0, 0.1), &ctx);
-
-        assert_eq!(
-            ekf.get_state().state.vector[0],
-            px_before,
-            "update must be skipped when TF is None"
-        );
-    }
-
-    #[test]
-    fn update_ignores_unknown_sensor_handle() {
+    fn update_with_mismatched_r_is_skipped() {
         let mut ekf = make_ekf(0.0, 0.0);
         let tf = IdentityTf;
-        let ctx = FilterContext { tf: Some(&tf) };
-        let px_before = ekf.get_state().state.vector[0];
+        let model = Position2DMeasurement;
+        // Wrong-sized R (3x3 instead of 2x2) — must be silently skipped.
+        let bad_r = DMatrix::identity(3, 3) * 0.1;
+        let px_before = ekf.state().state.vector[0];
 
-        let msg = MeasurementMessage {
-            agent_handle: FrameHandle::default(),
-            sensor_handle: FrameHandle(99), // not registered
-            timestamp: 0.1,
-            data: MeasurementData::GpsPosition(sensor::GpsPosition {
-                position: Vector3::new(5.0, 0.0, 0.0),
-            }),
-        };
-        ekf.update(&msg, &ctx);
+        ekf.update(&gps_z(5.0, 0.0), &model, &bad_r, Some(&tf));
 
-        assert_eq!(
-            ekf.get_state().state.vector[0],
-            px_before,
-            "update should be ignored for unregistered sensor handle"
-        );
+        assert_eq!(ekf.state().state.vector[0], px_before);
     }
 
     // --- Convergence Test ---
 
     #[test]
     fn filter_converges_to_true_position() {
-        // Start at px=0, true position is 3.0 m. After repeated predict+update cycles
-        // with a GPS measurement, the filter should converge.
         let mut ekf = make_ekf(0.0, 0.0);
         let tf = IdentityTf;
-        let ctx = FilterContext { tf: Some(&tf) };
+        let model = Position2DMeasurement;
+        let r = gps_r();
         let u = DVector::zeros(0);
         let true_px = 3.0_f64;
 
-        for i in 0..50 {
+        for _ in 0..50 {
             ekf.predict(0.1, &EstimatorInputs { control: u.clone() });
-            ekf.update(&gps_message(true_px, 0.0, (i + 1) as f64 * 0.1), &ctx);
+            ekf.update(&gps_z(true_px, 0.0), &model, &r, Some(&tf));
         }
 
-        let px = ekf.get_state().state.vector[0];
+        let px = ekf.state().state.vector[0];
         assert!(
             (px - true_px).abs() < 0.1,
             "EKF should converge near {true_px} m, got {px}"
