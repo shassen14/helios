@@ -10,9 +10,9 @@ starting_pose = { translation = [0.0, 0.5, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose     = { translation = [0.0, 0.5, 0.0] }
 
 # --- Hardware Configuration ---
-vehicle  = { from = "vehicles.ackermann_base" }
-sensors  = { from = "sensor_suites.ins_pro" }
+vehicle  = { from = "entities.vehicles.ackermann_base" }
+sensors  = { from = "runtime.catalog.sensor_suites.ins_pro" }
 
 # --- Software (Autonomy) Configuration ---
 # References the portable agent profile. helios_hw loads this same profile directly.
-autonomy_stack = { from = "agent_profiles.pro_car" }
+autonomy_stack = { from = "runtime.profiles.agent_profiles.pro_car" }

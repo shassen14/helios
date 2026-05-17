@@ -4,10 +4,10 @@
 # The structure of this file matches the `sensors` field in AgentConfig.
 
 [imu_pro]
-from = "sensors.imu_pro"
+from = "entities.sensors.imu_pro"
 
 [gps_pro]
-from = "sensors.gps_pro"
+from = "entities.sensors.gps_pro"
 
 [magnetometer_pro]
-from = "sensors.magnetometer_pro"
+from = "entities.sensors.magnetometer_pro"

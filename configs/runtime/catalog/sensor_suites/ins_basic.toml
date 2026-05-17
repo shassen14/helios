@@ -6,13 +6,13 @@
 # The key "imu_basic" will be the key in the HashMap.
 [imu_basic]
 # The value is a dictionary that references our granular component.
-from = "sensors.imu_basic"
+from = "entities.sensors.imu_basic"
 
 # The key "gps_basic" is the second key in the HashMap.
 [gps_basic]
-from = "sensors.gps_basic"
+from = "entities.sensors.gps_basic"
 # We can provide an override directly here to modify the `gps_standard` template.
 # transform = { translation = [0.0, 0.0, 1.2] }
 
 [magnetometer_pro]
-from = "sensors.magnetometer_pro"
+from = "entities.sensors.magnetometer_pro"

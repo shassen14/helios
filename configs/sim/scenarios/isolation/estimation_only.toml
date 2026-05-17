@@ -22,11 +22,11 @@ show_velocity     = true
 show_legend       = true
 
 [[agents]]
-from          = "agents.ackermann_car_pro"
+from          = "sim.catalog.agents.ackermann_car_pro"
 name          = "EstimationCar"
 starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose     = { translation = [10.0, 0.0, 0.5] }
 
 # No mapper, no planner, no controller — estimator only.
 [agents.autonomy_stack.estimator]
-from = "components.estimators.ekf_pro"
+from = "runtime.catalog.estimators.ekf_pro"

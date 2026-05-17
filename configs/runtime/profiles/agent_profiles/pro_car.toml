@@ -6,10 +6,10 @@
 # Safe to load in helios_hw without helios_sim.
 
 [estimator]
-from = "components.estimators.ekf_pro"
+from = "runtime.catalog.estimators.ekf_pro"
 
 [search_planners]
-local_path = { from = "components.planners.a_star" }
+local_path = { from = "runtime.catalog.planners.a_star" }
 
 [path_following]
 kind = "PurePursuit"
@@ -21,4 +21,4 @@ max_lateral_acceleration = 3.0
 state_source = "ground_truth"
 
 [controllers]
-path_follower = { from = "components.controllers.direct_velocity" }
+path_follower = { from = "runtime.catalog.controllers.direct_velocity" }

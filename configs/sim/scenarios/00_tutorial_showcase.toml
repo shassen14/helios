@@ -72,7 +72,7 @@ show_planned_path = true
 # Inherit all properties from the `ackermann_car_pro` prefab. This prefab
 # defines the vehicle type, a professional-grade sensor suite, and a
 # matching EKF tune.
-from = "agents.ackermann_car_pro"
+from = "sim.catalog.agents.ackermann_car_pro"
 
 # Any key at this level is a direct override of the prefab's top-level keys.
 name = "ProCar-Baseline"
@@ -90,7 +90,7 @@ goal_pose = { translation = [100.0, 50.0, 0.5] }
 
 # [[agents]]
 # # Start with the most basic car prefab.
-# from = "agents.ackermann_car_basic"
+# from = "sim.catalog.agents.ackermann_car_basic"
 
 # name = "ResearchCar-Custom"
 # starting_pose = { translation = [-20.0, 0.0, 1.0], rotation = [0.0, 0.0, 90.0] }
@@ -98,7 +98,7 @@ goal_pose = { translation = [100.0, 50.0, 0.5] }
 
 # # 1. REPLACEMENT: Replace the entire vehicle model with the 'truck' version.
 # # The `from` key in the `vehicle` table here replaces the one from the base prefab.
-# vehicle = { from = "vehicles.ackermann_truck" }
+# vehicle = { from = "entities.vehicles.ackermann_truck" }
 
 
 # # 2. DEEP MERGE: Modify and add to the sensor suite.
@@ -109,7 +109,7 @@ goal_pose = { translation = [100.0, 50.0, 0.5] }
 # # The base suite has no LiDAR. We add one by defining a new key.
 # # This new key, "front_lidar", is its unique instance name on this agent.
 # [agents.sensors.secondary_gps]
-# from = "sensors.gps_pro"
+# from = "entities.sensors.gps_pro"
 # # Override the transform to place this GPS antenna.
 # # Pose is in the Vehicle Body (FLU) frame: [forward, left, up] in meters.
 # # This places the antenna 1.5m forward and 0.8m up from the vehicle's origin.
@@ -139,7 +139,7 @@ goal_pose = { translation = [100.0, 50.0, 0.5] }
 
 # adding lidar 
 [agents.sensors.lidar]
-from = "sensors.lidar2d"
+from = "entities.sensors.lidar2d"
 
 # 3. DEEP MERGE: Tuning the Autonomy Stack
 
@@ -149,4 +149,4 @@ gyro_bias_instability = 0.02 # Tighter tuning for this experiment.
 
 # 3b. Enable the occupancy grid mapper as the "local" layer (uses the lidar added above).
 [agents.autonomy_stack.map_layers.local]
-from = "components.mappers.occupancy_grid_2d"
+from = "runtime.catalog.mappers.occupancy_grid_2d"

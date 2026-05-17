@@ -6,4 +6,4 @@
 # Safe to load in helios_hw without helios_sim.
 
 [estimator]
-from = "components.estimators.ekf_basic"
+from = "runtime.catalog.estimators.ekf_basic"

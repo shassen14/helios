@@ -23,20 +23,20 @@ show_occupancy_grid = true
 show_legend         = true
 
 [[agents]]
-from          = "agents.ackermann_car_pro"
+from          = "sim.catalog.agents.ackermann_car_pro"
 name          = "MappingCar"
 starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose     = { translation = [10.0, 0.0, 0.5] }
 
 # Ground-truth estimator is injected by MockGroundTruthEstimatorPlugin.
 [agents.autonomy_stack.estimator]
-from = "components.estimators.ekf_pro"
+from = "runtime.catalog.estimators.ekf_pro"
 
 # Enable occupancy grid mapper as the "local" layer, driven by lidar.
 
 [agents.autonomy_stack.map_layers.local]
-from = "components.mappers.occupancy_grid_2d"
+from = "runtime.catalog.mappers.occupancy_grid_2d"
 
 # Add lidar for the mapper to consume.
 [agents.sensors.lidar]
-from = "sensors.lidar2d"
+from = "entities.sensors.lidar2d"

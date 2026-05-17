@@ -29,7 +29,7 @@ show_legend       = true
 output_path = "results/control_only.csv"
 
 [[agents]]
-from          = "agents.ackermann_car_pro"
+from          = "sim.catalog.agents.ackermann_car_pro"
 name          = "ControlCar"
 starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose     = { translation = [10.0, 0.0, 0.5] }
@@ -37,7 +37,7 @@ goal_pose     = { translation = [10.0, 0.0, 0.5] }
 # Ground-truth estimator is injected by MockGroundTruthEstimatorPlugin.
 # Path is provided by MockPathInjectorPlugin.
 [agents.autonomy_stack.estimator]
-from = "components.estimators.ekf_pro"
+from = "runtime.catalog.estimators.ekf_pro"
 
 [agents.autonomy_stack.controllers]
-path_follower = { from = "components.controllers.pid_path_follower" }
+path_follower = { from = "runtime.catalog.controllers.pid_path_follower" }
