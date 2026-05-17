@@ -10,5 +10,11 @@ pub use crate::config::{
     EkfDynamicsConfig, EstimatorConfig, SearchPlannerConfig, ImuProcessNoiseConfig,
     MapLayerConfig, MapperPoseSourceConfig, QuadcopterProcessNoiseConfig, UkfConfig,
 };
+pub use crate::registry::contexts::{
+    ControllerBuildContext, DynamicsBuildContext, GaussianEstimatorBuildContext,
+    MapperBuildContext, MeasurementModelBuildContext, PathFollowerBuildContext,
+    SearchPlannerBuildContext,
+};
+pub use crate::registry::AutonomyRegistry;
 pub use crate::runtime::AgentRuntime;
 pub use crate::validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError};

@@ -9,6 +9,7 @@ pub mod config;
 pub mod pipeline;
 pub mod port;
 pub mod prelude;
+pub mod registry;
 pub mod runtime;
 pub mod stamped;
 pub mod validation;
