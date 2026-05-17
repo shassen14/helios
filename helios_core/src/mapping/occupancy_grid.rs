@@ -1,18 +1,7 @@
 use nalgebra::{DMatrix, Isometry3, Point3, Translation3, UnitQuaternion};
 
-use crate::data::messages::{MeasurementData, ModuleInput};
-use crate::data::primitives::FrameHandle;
-use crate::estimation::FilterContext;
+use crate::data::sensor::PointCloud2D;
 use crate::mapping::{MapData, Mapper};
-
-/// Selects how the mapper obtains the sensor's world pose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MapperPoseSource {
-    /// Physics ground-truth from TfTree. Decoupled from estimation.
-    GroundTruth,
-    /// EKF/odom estimate. Map lives in the odom frame.
-    Estimated,
-}
 
 /// Log-odds free-space update increment (negative → lowers occupancy probability).
 const L_FREE: f32 = -0.4;
@@ -28,6 +17,14 @@ const L_MAX: f32 = 3.5;
 /// The grid follows the robot: when the robot drifts more than half the half-extent
 /// from the current grid center, the log-odds buffer is shifted and newly exposed
 /// strips are reset to 0 (unknown prior).  All coordinates are ENU (m).
+///
+/// # Pose handling
+///
+/// The mapper does **no TF resolution**. Callers (the pipeline node)
+/// pre-compose the robot's world pose for [`Mapper::recenter`] and each
+/// reading's sensor world pose for [`Mapper::integrate_scan_2d`]. Which
+/// upstream provides the pose (real estimator vs. ground-truth) is
+/// invisible here.
 ///
 /// # Allocation strategy
 ///
@@ -52,9 +49,6 @@ pub struct OccupancyGridMapper {
     map_dirty: bool,
     /// Monotonically increasing; copied into `MapData::OccupancyGrid2D::version` on rebuild.
     map_version: u64,
-    robot_pose: Option<Isometry3<f64>>,
-    agent_handle: FrameHandle,
-    pose_source: MapperPoseSource,
     cached_map: MapData,
 }
 
@@ -63,13 +57,7 @@ impl OccupancyGridMapper {
     ///
     /// `width_m` and `height_m` are in metres; `resolution` is metres-per-cell.
     /// The grid is initially centred on the world origin with all cells unknown (log-odds 0).
-    pub fn new(
-        resolution: f64,
-        width_m: f64,
-        height_m: f64,
-        agent_handle: FrameHandle,
-        pose_source: MapperPoseSource,
-    ) -> Self {
+    pub fn new(resolution: f64, width_m: f64, height_m: f64) -> Self {
         let width = (width_m / resolution).ceil() as usize;
         let height = (height_m / resolution).ceil() as usize;
         let n = width * height;
@@ -83,9 +71,6 @@ impl OccupancyGridMapper {
             shift_buffer: vec![0.0_f32; n],
             map_dirty: false,
             map_version: 0,
-            robot_pose: None,
-            agent_handle,
-            pose_source,
             cached_map: MapData::None,
         }
     }
@@ -242,71 +227,23 @@ impl OccupancyGridMapper {
 }
 
 impl Mapper for OccupancyGridMapper {
-    fn process(&mut self, input: &ModuleInput, context: &FilterContext) {
-        match input {
-            ModuleInput::PoseUpdate { pose } => {
-                self.recenter_on(pose.translation.x, pose.translation.y);
-                self.robot_pose = Some(*pose);
-                self.rebuild_cache();
-            }
-            ModuleInput::Measurement { message } => {
-                let MeasurementData::PointCloud2D(ref cloud) = message.data else {
-                    return;
-                };
-                let tf = match context.tf {
-                    Some(tf) => tf,
-                    None => return,
-                };
+    fn recenter(&mut self, robot_world_pose: &Isometry3<f64>) {
+        let t = &robot_world_pose.translation;
+        self.recenter_on(t.x, t.y);
+    }
 
-                let (sensor_world_pose, robot_wx, robot_wy) = match self.pose_source {
-                    MapperPoseSource::GroundTruth => {
-                        let robot_pose = match tf.world_pose(self.agent_handle) {
-                            Some(p) => p,
-                            None => return,
-                        };
-                        let sensor_pose = match tf.world_pose(message.sensor_handle) {
-                            Some(p) => p,
-                            None => return,
-                        };
-                        (
-                            sensor_pose,
-                            robot_pose.translation.x,
-                            robot_pose.translation.y,
-                        )
-                    }
-                    MapperPoseSource::Estimated => {
-                        let robot_pose = match self.robot_pose {
-                            Some(p) => p,
-                            None => return,
-                        };
-                        let body_from_sensor =
-                            match tf.get_transform(self.agent_handle, message.sensor_handle) {
-                                Some(t) => t,
-                                None => return,
-                            };
-                        let sensor_pose = robot_pose * body_from_sensor;
-                        (
-                            sensor_pose,
-                            robot_pose.translation.x,
-                            robot_pose.translation.y,
-                        )
-                    }
-                };
-
-                // Convert sensor frame point cloud to world frame.
-                // Cast the cells that are affected by the ray
-                for point in &cloud.points {
-                    let p_world = sensor_world_pose * Point3::new(point.x, point.y, 0.0);
-                    self.raycast(robot_wx, robot_wy, p_world.x, p_world.y);
-                }
-                // Cache is rebuilt on the next PoseUpdate (timer-gated).
-                // Do not rebuild here to avoid O(width*height) work per scan.
-            }
-            _ => {}
+    fn integrate_scan_2d(&mut self, sensor_world_pose: &Isometry3<f64>, cloud: &PointCloud2D) {
+        let robot_wx = sensor_world_pose.translation.x;
+        let robot_wy = sensor_world_pose.translation.y;
+        // Sensor-FLU 2D points → world ENU via the sensor pose (z = 0 plane).
+        for point in &cloud.points {
+            let p_world = sensor_world_pose * Point3::new(point.x, point.y, 0.0);
+            self.raycast(robot_wx, robot_wy, p_world.x, p_world.y);
         }
     }
 
-    fn get_map(&self) -> &MapData {
+    fn get_map(&mut self) -> &MapData {
+        self.rebuild_cache();
         &self.cached_map
     }
 }
@@ -384,15 +321,10 @@ fn bresenham(x0: i64, y0: i64, x1: i64, y1: i64) -> impl Iterator<Item = (i64, i
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nalgebra::Point2;
 
     fn make_mapper(width_m: f64, height_m: f64) -> OccupancyGridMapper {
-        OccupancyGridMapper::new(
-            1.0,
-            width_m,
-            height_m,
-            FrameHandle(0),
-            MapperPoseSource::Estimated,
-        )
+        OccupancyGridMapper::new(1.0, width_m, height_m)
     }
 
     // -------------------------------------------------------------------------
@@ -589,28 +521,56 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // process (Estimated pose source, no robot_pose) — measurement is a no-op
+    // Mapper trait wiring
     // -------------------------------------------------------------------------
 
     #[test]
-    fn process_measurement_without_pose_is_noop() {
-        use crate::data::messages::{MeasurementData, MeasurementMessage};
-        use crate::data::sensor;
+    fn mapper_recenter_translates_via_isometry() {
+        let mut m = make_mapper(10.0, 10.0);
+        let pose = Isometry3::from_parts(
+            Translation3::new(4.0, 0.0, 0.0),
+            UnitQuaternion::identity(),
+        );
+        <OccupancyGridMapper as Mapper>::recenter(&mut m, &pose);
+        // Same outcome as recenter_on(4.0, 0.0) — see recenter_shifts_correctly.
+        assert!((m.origin_x - (-1.0)).abs() < 1e-9);
+    }
 
-        let mut m =
-            OccupancyGridMapper::new(1.0, 10.0, 10.0, FrameHandle(0), MapperPoseSource::Estimated);
-
-        let msg = MeasurementMessage {
-            agent_handle: FrameHandle(0),
-            sensor_handle: FrameHandle(1),
-            timestamp: 0.0,
-            data: MeasurementData::PointCloud2D(sensor::PointCloud2D { points: vec![] }),
+    #[test]
+    fn mapper_integrate_scan_2d_marks_cells() {
+        let mut m = make_mapper(10.0, 10.0);
+        // Sensor at world origin (identity pose). One hit 2m east in sensor FLU
+        // = (x=2, y=0) → world (2,0).
+        let sensor_pose = Isometry3::identity();
+        let cloud = PointCloud2D {
+            points: vec![Point2::new(2.0, 0.0)],
         };
-        let ctx = FilterContext { tf: None };
-        m.process(&ModuleInput::Measurement { message: &msg }, &ctx);
+        <OccupancyGridMapper as Mapper>::integrate_scan_2d(&mut m, &sensor_pose, &cloud);
 
-        // No pose was ever set, so the process call should be a silent no-op.
+        let occ_idx = 5 * m.width + 7;
+        assert!(m.log_odds[occ_idx] > 0.0);
+        assert!(m.map_dirty);
+    }
+
+    #[test]
+    fn mapper_get_map_rebuilds_lazily() {
+        let mut m = make_mapper(4.0, 4.0);
+        // Initially no map cached.
         assert!(matches!(m.cached_map, MapData::None));
-        assert!(!m.map_dirty);
+
+        // Dirty without explicit rebuild.
+        m.add_log_odds(0, 0, L_OCC);
+
+        // get_map should trigger the rebuild.
+        let map = <OccupancyGridMapper as Mapper>::get_map(&mut m);
+        assert!(matches!(map, MapData::OccupancyGrid2D { .. }));
+    }
+
+    #[test]
+    fn mapper_get_map_empty_when_never_touched() {
+        let mut m = make_mapper(4.0, 4.0);
+        let map = <OccupancyGridMapper as Mapper>::get_map(&mut m);
+        // No dirty → no rebuild → cached_map stays None.
+        assert!(matches!(map, MapData::None));
     }
 }

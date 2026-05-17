@@ -1,7 +1,7 @@
 //! [`SearchPlannerNode`] — pipeline adapter for any search-family planner
 //! (A*, Dijkstra, D*).
 //!
-//! One node type per algorithm family per `docs/algorithm_family_traits.md`.
+//! One node type per algorithm family.
 //! Today the only impl is A*, but the node is generic over
 //! [`SearchPlanner`] so Dijkstra/D* drop in without touching the pipeline.
 //!

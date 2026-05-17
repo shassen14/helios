@@ -3,7 +3,7 @@
 //!
 //! One node type for the whole path-following family today. The trait is small
 //! enough (`compute` + `set_path` + lookahead/reset accessors) that there is no
-//! family split — see `docs/algorithm_family_traits.md` §7 open question 4.
+//! family split.
 //!
 //! ## Execution skeleton
 //!
