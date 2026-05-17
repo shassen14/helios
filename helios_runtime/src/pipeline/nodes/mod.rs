@@ -4,8 +4,12 @@
 //! family trait object. `GaussianEstimatorNode` wraps any
 //! `Box<dyn GaussianStateEstimator>` — EKF, UKF, ESKF, IF.
 
+pub mod controller;
 pub mod gaussian_estimator;
+pub mod path_follower;
 pub mod search_planner;
 
+pub use controller::ControllerNode;
 pub use gaussian_estimator::{AidingHandler, GaussianEstimatorNode, TypedAidingHandler};
+pub use path_follower::PathFollowerNode;
 pub use search_planner::SearchPlannerNode;
