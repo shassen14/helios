@@ -24,7 +24,7 @@ use crate::{
 /// duplicated literal so the contract stays in one place.
 pub const MISSION_GOAL_INSTANCE: &str = "mission";
 
-/// Constructs a [`NodePipeline`] from a set of [`PipelineNode`]s and the
+/// Constructs a [`AutonomyPipeline`] from a set of [`PipelineNode`]s and the
 /// channels supplied from outside the graph.
 ///
 /// Build sequence:
@@ -43,23 +43,23 @@ pub const MISSION_GOAL_INSTANCE: &str = "mission";
 /// with [`PipelineBuildError::UnsatisfiedInput`]. The split between them
 /// only affects `PortBus`'s signal-clear list: sensor signals get cleared
 /// each tick; host states do not.
-pub struct NodePipelineBuilder {
+pub struct PipelineBuilder {
     nodes: Vec<Box<dyn PipelineNode>>,
     sensor_signal_keys: Vec<ChannelKey>,
     host_state_keys: Vec<ChannelKey>,
 }
 
-impl Default for NodePipelineBuilder {
+impl Default for PipelineBuilder {
     fn default() -> Self {
-        NodePipelineBuilder::new()
+        PipelineBuilder::new()
     }
 }
 
-impl NodePipelineBuilder {
+impl PipelineBuilder {
     /// Creates an empty builder. Add nodes and declare external channels
     /// before calling [`build`](Self::build).
     pub fn new() -> Self {
-        NodePipelineBuilder {
+        PipelineBuilder {
             nodes: vec![],
             sensor_signal_keys: vec![],
             host_state_keys: vec![],
@@ -97,7 +97,7 @@ impl NodePipelineBuilder {
         self
     }
 
-    /// Validates the registered nodes and builds a [`NodePipeline`].
+    /// Validates the registered nodes and builds a [`AutonomyPipeline`].
     ///
     /// All errors are collected — `build` never short-circuits. The
     /// returned [`Vec`] contains every issue found, in this order:
@@ -110,7 +110,7 @@ impl NodePipelineBuilder {
     ///
     /// On success, [`NodeId`]s are assigned in level-major order starting
     /// at `0`, indexing into the pipeline's rate-timer array.
-    pub fn build(self) -> Result<NodePipeline, Vec<PipelineBuildError>> {
+    pub fn build(self) -> Result<AutonomyPipeline, Vec<PipelineBuildError>> {
         let mut errors: Vec<PipelineBuildError> = vec![];
 
         // First pass: single-producer check. For each output channel of
@@ -252,7 +252,7 @@ impl NodePipelineBuilder {
             }
         }
 
-        Ok(NodePipeline {
+        Ok(AutonomyPipeline {
             levels,
             bus,
             rate_timers,
@@ -262,11 +262,11 @@ impl NodePipelineBuilder {
 
 /// A built, validated autonomy pipeline.
 ///
-/// Constructed only via [`NodePipelineBuilder::build`]. After construction
+/// Constructed only via [`PipelineBuilder::build`]. After construction
 /// the topology is fixed; the only mutable state is the bus contents and
 /// per-node timer counters, both of which use interior mutability so
 /// [`tick`](Self::tick) can take `&self`.
-pub struct NodePipeline {
+pub struct AutonomyPipeline {
     /// Nodes grouped by topological level, in execution order. Each entry
     /// pairs a node with its build-time-assigned [`NodeId`].
     levels: Vec<Vec<(NodeId, Box<dyn PipelineNode>)>>,
@@ -279,7 +279,7 @@ pub struct NodePipeline {
     rate_timers: Vec<RateTimer>,
 }
 
-impl NodePipeline {
+impl AutonomyPipeline {
     /// Returns a reference to the [`PortBus`] for direct read/write access.
     ///
     /// External callers use this to:

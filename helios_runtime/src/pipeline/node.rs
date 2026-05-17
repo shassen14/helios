@@ -3,7 +3,7 @@ use crate::runtime::AgentRuntime;
 
 use helios_core::data::primitives::MonotonicTime;
 
-/// One unit of computation in an [`AutonomyPipeline`](super::NodePipeline).
+/// One unit of computation in an [`AutonomyPipeline`].
 ///
 /// Nodes declare their bus interaction (inputs, outputs, rate) via
 /// [`port_descriptor`](PipelineNode::port_descriptor). The pipeline calls
@@ -29,7 +29,7 @@ pub trait PipelineNode: Send + Sync {
     /// immutable after construction.
     fn port_descriptor(&self) -> &PortDescriptor;
 
-    /// Run one iteration. Called by [`NodePipeline::tick`](super::NodePipeline::tick).
+    /// Run one iteration. Called by [`AutonomyPipeline::tick`](super::AutonomyPipeline::tick).
     fn execute(&self, bus: &PortBus, runtime: &dyn AgentRuntime, tick: TickContext);
 }
 

@@ -4,8 +4,9 @@ use std::collections::HashMap;
 
 use helios_runtime::{
     config::{
-        AutonomyStack, ControllerConfig, EkfConfig, EkfDynamicsConfig, EstimatorConfig,
-        SearchPlannerConfig, ImuProcessNoiseConfig, MapLayerConfig, MapperPoseSourceConfig,
+        AidingConfig, AutonomyStack, ControllerConfig, EkfConfig, EkfDynamicsConfig,
+        EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig,
+        MapperPoseSourceConfig, SearchPlannerConfig, SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
 };
@@ -16,8 +17,9 @@ use helios_runtime::{
 
 fn empty_caps() -> CapabilitySet {
     CapabilitySet {
-        estimators: Default::default(),
+        gaussian_estimators: Default::default(),
         dynamics: Default::default(),
+        measurement_models: Default::default(),
         mappers: Default::default(),
         controllers: Default::default(),
         planners: Default::default(),
@@ -29,21 +31,31 @@ fn full_caps() -> CapabilitySet {
         items.iter().map(|s| s.to_string()).collect()
     }
     CapabilitySet {
-        estimators: set(&["Ekf"]),
+        gaussian_estimators: set(&["Ekf"]),
         dynamics: set(&["IntegratedImu", "AckermannOdometry"]),
+        measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
         mappers: set(&["OccupancyGrid2D"]),
         controllers: set(&["Pid", "Lqr", "FeedforwardPid"]),
         planners: set(&["AStar"]),
     }
 }
 
-fn imu_noise() -> ImuProcessNoiseConfig {
-    ImuProcessNoiseConfig {
+fn imu_noise() -> IntegratedImuConfig {
+    IntegratedImuConfig {
+        gravity: 9.81,
         accel_noise_stddev: 0.1,
         gyro_noise_stddev: 0.01,
         accel_bias_instability: 0.001,
         gyro_bias_instability: 0.001,
     }
+}
+
+fn ekf_config() -> EstimatorConfig {
+    EstimatorConfig::Ekf(EkfConfig {
+        dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
+        aiding: vec![],
+        initial_state: EkfInitialStateConfig::default(),
+    })
 }
 
 fn pid() -> ControllerConfig {
@@ -79,6 +91,19 @@ fn occupancy_grid() -> MapLayerConfig {
     }
 }
 
+fn ekf_aiding_entry() -> AidingConfig {
+    AidingConfig {
+        sensor_payload: "GpsPosition".to_string(),
+        model: SensorModelConfig {
+            kind: "gps_position".to_string(),
+            gravity: 9.81,
+            magnetic_field_enu: None,
+        },
+        input_channel: "sensor.gps.primary".to_string(),
+        r_diag: vec![1.0, 1.0, 1.0],
+    }
+}
+
 // =========================================================================
 // == validate_autonomy_config ==
 // =========================================================================
@@ -101,10 +126,11 @@ fn validation_valid_full_stack_passes() {
     let mut map_layers = HashMap::new();
     map_layers.insert("local".to_string(), occupancy_grid());
 
+    let mut estimators = HashMap::new();
+    estimators.insert("primary".to_string(), ekf_config());
+
     let stack = AutonomyStack {
-        estimator: Some(EstimatorConfig::Ekf(EkfConfig {
-            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
-        })),
+        estimators,
         map_layers,
         search_planners,
         path_following: None,
@@ -121,29 +147,32 @@ fn validation_valid_full_stack_passes() {
 
 #[test]
 fn validation_unknown_estimator_produces_error() {
+    let mut estimators = HashMap::new();
+    estimators.insert("primary".to_string(), ekf_config());
+
     let stack = AutonomyStack {
-        estimator: Some(EstimatorConfig::Ekf(EkfConfig {
-            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
-        })),
+        estimators,
         ..Default::default()
     };
     let mut caps = full_caps();
-    caps.estimators.clear();
+    caps.gaussian_estimators.clear();
     let errors = validate_autonomy_config(&stack, &caps);
     assert!(
-        errors.iter().any(
-            |e| matches!(e, ConfigValidationError::UnknownEstimator { kind } if kind == "Ekf")
-        ),
-        "Expected UnknownEstimator for Ekf"
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::UnknownGaussianEstimator { kind, .. } if kind == "Ekf"
+        )),
+        "Expected UnknownGaussianEstimator for Ekf"
     );
 }
 
 #[test]
 fn validation_unknown_dynamics_produces_error() {
+    let mut estimators = HashMap::new();
+    estimators.insert("primary".to_string(), ekf_config());
+
     let stack = AutonomyStack {
-        estimator: Some(EstimatorConfig::Ekf(EkfConfig {
-            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
-        })),
+        estimators,
         ..Default::default()
     };
     let mut caps = full_caps();
@@ -273,3 +302,98 @@ fn validation_collects_all_errors_two_bad_controllers() {
     );
 }
 
+#[test]
+fn validation_unknown_measurement_model_in_aiding_produces_error() {
+    let bad_aiding = AidingConfig {
+        sensor_payload: "GpsPosition".to_string(),
+        model: SensorModelConfig {
+            kind: "nonexistent_model".to_string(),
+            gravity: 9.81,
+            magnetic_field_enu: None,
+        },
+        input_channel: "sensor.gps.primary".to_string(),
+        r_diag: vec![1.0, 1.0, 1.0],
+    };
+    let mut estimators = HashMap::new();
+    estimators.insert(
+        "primary".to_string(),
+        EstimatorConfig::Ekf(EkfConfig {
+            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
+            aiding: vec![bad_aiding],
+            initial_state: EkfInitialStateConfig::default(),
+        }),
+    );
+    let stack = AutonomyStack {
+        estimators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::UnknownMeasurementModel { model_kind, .. }
+                if model_kind == "nonexistent_model"
+        )),
+        "Expected UnknownMeasurementModel for nonexistent_model, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_unknown_sensor_payload_in_aiding_produces_error() {
+    let bad_aiding = AidingConfig {
+        sensor_payload: "UnknownSensorType".to_string(),
+        model: SensorModelConfig {
+            kind: "gps_position".to_string(),
+            gravity: 9.81,
+            magnetic_field_enu: None,
+        },
+        input_channel: "sensor.unknown".to_string(),
+        r_diag: vec![1.0],
+    };
+    let mut estimators = HashMap::new();
+    estimators.insert(
+        "primary".to_string(),
+        EstimatorConfig::Ekf(EkfConfig {
+            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
+            aiding: vec![bad_aiding],
+            initial_state: EkfInitialStateConfig::default(),
+        }),
+    );
+    let stack = AutonomyStack {
+        estimators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::UnknownSensorPayload { payload_kind, .. }
+                if payload_kind == "UnknownSensorType"
+        )),
+        "Expected UnknownSensorPayload for UnknownSensorType"
+    );
+}
+
+#[test]
+fn validation_valid_aiding_entry_passes() {
+    let mut estimators = HashMap::new();
+    estimators.insert(
+        "primary".to_string(),
+        EstimatorConfig::Ekf(EkfConfig {
+            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
+            aiding: vec![ekf_aiding_entry()],
+            initial_state: EkfInitialStateConfig::default(),
+        }),
+    );
+    let stack = AutonomyStack {
+        estimators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.is_empty(),
+        "Valid aiding entry must pass, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}

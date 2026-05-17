@@ -3,12 +3,12 @@
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::frames::layout::{standard_ins_state_layout, STANDARD_INS_STATE_DIM};
 use helios_core::frames::{FrameId, StateVariable};
-use nalgebra::DMatrix;
+use nalgebra::{DMatrix, Isometry3, Quaternion, Translation3, UnitQuaternion};
 
 use crate::config::{EkfDynamicsConfig, EstimatorConfig};
 use crate::pipeline::builders::estimator::IntegratedImuInputBuilder;
-use crate::pipeline::nodes::gaussian_estimator::GaussianEstimatorNode;
 use crate::pipeline::node::PipelineNode;
+use crate::pipeline::nodes::gaussian_estimator::GaussianEstimatorNode;
 
 use super::{
     contexts::{DynamicsBuildContext, GaussianEstimatorBuildContext},
@@ -34,7 +34,7 @@ fn build_ekf(
     let agent_handle = ctx.agent_handle;
     let dim = STANDARD_INS_STATE_DIM;
 
-    // --- 1. Build Q process-noise matrix ---
+    // --- 1. Build Q process-noise matrix from dynamics config ---
     let mut q = DMatrix::<f64>::zeros(dim, dim);
     let dynamics_key = ekf_config.dynamics.get_kind_str();
 
@@ -44,7 +44,6 @@ fn build_ekf(
             let gn = n.gyro_noise_stddev.powi(2);
             let ab = n.accel_bias_instability.powi(2);
             let gb = n.gyro_bias_instability.powi(2);
-            // indices per standard_ins_state_layout: Vx/Vy/Vz = 3-5, Qx-Qw = 6-9, Ax-Az = 10-12, Wx-Wz = 13-15
             q[(3, 3)] = an; q[(4, 4)] = an; q[(5, 5)] = an;
             q[(6, 6)] = gn; q[(7, 7)] = gn; q[(8, 8)] = gn; q[(9, 9)] = gn;
             q[(10, 10)] = ab; q[(11, 11)] = ab; q[(12, 12)] = ab;
@@ -63,21 +62,30 @@ fn build_ekf(
         }
     }
 
-    // --- 2. Build dynamics via registry ---
+    // --- 2. Build dynamics via registry (gravity sourced from dynamics config) ---
+    let gravity = ekf_config.dynamics.gravity();
     let dynamics = registry.build_dynamics(
         dynamics_key,
-        DynamicsBuildContext {
-            agent_handle,
-            gravity: ctx.gravity,
-        },
+        DynamicsBuildContext { agent_handle, gravity },
     )?;
 
-    // --- 3. Seed initial state from starting pose ---
+    // --- 3. Seed initial state from EkfInitialStateConfig ---
+    let init = &ekf_config.initial_state;
     let state_layout = standard_ins_state_layout(agent_handle);
     let mut initial_state =
         helios_core::frames::FrameAwareState::new(state_layout, 1.0, 0.0);
 
-    let iso = ctx.starting_pose;
+    let yaw = init.heading_deg.to_radians();
+    let iso = Isometry3::from_parts(
+        Translation3::new(init.x, init.y, init.z),
+        UnitQuaternion::from_quaternion(Quaternion::new(
+            (yaw / 2.0).cos(),
+            0.0,
+            0.0,
+            (yaw / 2.0).sin(),
+        )),
+    );
+
     let body = FrameId::Body(agent_handle);
     let world = FrameId::World;
 
@@ -91,24 +99,37 @@ fn build_ekf(
     initial_state.set_variable(&StateVariable::Qz(body.clone(), world.clone()), q_rot.k);
     initial_state.set_variable(&StateVariable::Qw(body, world), q_rot.w);
 
-    // Starting orientation is known exactly — tighten quaternion covariance to avoid
-    // spurious position-orientation cross-covariance corrections from early GPS updates.
-    let q_var: f64 = 1e-4;
+    // Apply configured initial covariance.
+    let pos_var = init.position_uncertainty_m.powi(2);
+    let ori_var = init.orientation_uncertainty_deg.to_radians().powi(2);
     for (i, var) in initial_state.state.layout.iter().enumerate() {
-        if matches!(
-            var,
+        match var {
+            StateVariable::Px(_) | StateVariable::Py(_) | StateVariable::Pz(_) => {
+                initial_state.covariance[(i, i)] = pos_var;
+            }
             StateVariable::Qx(_, _)
-                | StateVariable::Qy(_, _)
-                | StateVariable::Qz(_, _)
-                | StateVariable::Qw(_, _)
-        ) {
-            initial_state.covariance[(i, i)] = q_var;
+            | StateVariable::Qy(_, _)
+            | StateVariable::Qz(_, _)
+            | StateVariable::Qw(_, _) => {
+                initial_state.covariance[(i, i)] = ori_var;
+            }
+            _ => {}
         }
     }
 
-    // --- 4. Assemble node ---
+    // --- 4. Select input builder based on dynamics kind ---
+    let input_builder: Box<dyn crate::pipeline::builders::estimator::EstimatorInputBuilder> =
+        match &ekf_config.dynamics {
+            EkfDynamicsConfig::IntegratedImu(_) => Box::new(IntegratedImuInputBuilder::new()),
+            EkfDynamicsConfig::AckermannOdometry(_) | EkfDynamicsConfig::Quadcopter(_) => {
+                return Err(format!(
+                    "No input builder implemented for dynamics kind '{dynamics_key}'"
+                ));
+            }
+        };
+
+    // --- 5. Assemble node ---
     let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
-    let input_builder = Box::new(IntegratedImuInputBuilder::new());
     Ok(Box::new(GaussianEstimatorNode::new(
         "ekf",
         ekf,

@@ -269,8 +269,9 @@ impl AutonomyRegistry {
     /// Snapshot of all registered keys per family, for `validate_autonomy_config`.
     pub fn capabilities(&self) -> CapabilitySet {
         CapabilitySet {
-            estimators: self.gaussian_estimators.keys().cloned().collect(),
+            gaussian_estimators: self.gaussian_estimators.keys().cloned().collect(),
             dynamics: self.dynamics.keys().cloned().collect(),
+            measurement_models: self.measurement_models.keys().cloned().collect(),
             mappers: self.mappers.keys().cloned().collect(),
             controllers: self.controllers.keys().cloned().collect(),
             planners: self.search_planners.keys().cloned().collect(),

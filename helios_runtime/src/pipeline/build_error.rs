@@ -1,6 +1,6 @@
 use crate::port::ChannelKey;
 
-/// Errors produced by [`NodePipelineBuilder::build`](super::NodePipelineBuilder::build).
+/// Errors produced by [`PipelineBuilder::build`](super::PipelineBuilder::build).
 ///
 /// `build` collects every detected error and returns them as a `Vec`
 /// rather than short-circuiting, so a misconfigured pipeline reports all

@@ -2,13 +2,16 @@
 //!
 //! Models are registered by string key (e.g. `"gps_position"`) and built by
 //! the assembler when constructing aiding handlers for `GaussianEstimatorNode`.
-//! All four models resolve their sensor geometry from the TF tree, so all
-//! require `agent_handle` and `sensor_handle` in the build context.
+//! All four models resolve their sensor geometry from the TF tree at tick time,
+//! so all require `agent_handle` and `sensor_handle` in the build context.
+//! Physical constants (gravity, magnetic field) are read from
+//! `ctx.model_config` so they originate from config, not external callers.
 
 use helios_core::estimation::measurement::{
     accelerometer::AccelerometerModel, gps::GpsPositionModel, gyroscope::GyroscopeModel,
     magnetometer::MagnetometerModel, MeasurementModel,
 };
+use nalgebra::Vector3;
 
 use super::{contexts::MeasurementModelBuildContext, AutonomyRegistry};
 
@@ -34,7 +37,7 @@ fn build_accelerometer(
     Ok(Box::new(AccelerometerModel {
         agent_handle: ctx.agent_handle,
         sensor_handle: ctx.sensor_handle,
-        gravity_magnitude: ctx.gravity,
+        gravity_magnitude: ctx.model_config.gravity,
     }))
 }
 
@@ -50,9 +53,10 @@ fn build_gyroscope(
 fn build_magnetometer(
     ctx: MeasurementModelBuildContext,
 ) -> Result<Box<dyn MeasurementModel>, String> {
-    let field = ctx
-        .world_magnetic_field
-        .ok_or("magnetometer model requires world_magnetic_field")?;
+    let field_arr = ctx.model_config.magnetic_field_enu.ok_or(
+        "magnetometer model requires `magnetic_field_enu` in its SensorModelConfig",
+    )?;
+    let field = Vector3::new(field_arr[0], field_arr[1], field_arr[2]);
     Ok(Box::new(MagnetometerModel {
         agent_handle: ctx.agent_handle,
         sensor_handle: ctx.sensor_handle,

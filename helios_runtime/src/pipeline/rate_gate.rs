@@ -1,6 +1,6 @@
 //! Per-node rate gating.
 //!
-//! One [`RateTimer`] lives in [`NodePipeline`](super::NodePipeline)'s
+//! One [`RateTimer`] lives in [`AutonomyPipeline`](super::AutonomyPipeline)'s
 //! `rate_timers` vector per [`NodeId`](super::node::NodeId). Each tick,
 //! the pipeline calls [`RateTimer::should_fire_and_advance`] for every
 //! node; only nodes whose elapsed time has crossed their configured
@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Accumulates elapsed time and reports when a node is due to fire.
 ///
 /// `elapsed_micros` is an [`AtomicU64`] rather than a `Mutex<f64>` so
-/// [`NodePipeline::tick`](super::NodePipeline::tick) can advance every
+/// [`AutonomyPipeline::tick`](super::AutonomyPipeline::tick) can advance every
 /// timer through a shared `&self` reference without acquiring any lock.
 /// No panic can poison shared state across ticks, and a future
 /// `par_iter`-within-a-level optimization remains a one-line change.
@@ -52,7 +52,7 @@ impl RateTimer {
     /// double-fire after a slow tick.
     ///
     /// **Concurrency:** with one caller per timer per tick (the only
-    /// shape `NodePipeline::tick` ever calls in), the `compare_exchange`
+    /// shape `AutonomyPipeline::tick` ever calls in), the `compare_exchange`
     /// always succeeds. The CAS is defensive: if a future change ever
     /// adds parallel within-level execution that touched the same timer,
     /// it would still fire at most once per period rather than
