@@ -5,6 +5,7 @@ use helios_core::{
 };
 
 use crate::{
+    pipeline::autonomy_pipeline::MISSION_GOAL_INSTANCE,
     port::{ChannelKey, PortBus},
     prelude::{AgentRuntime, TickContext},
 };
@@ -32,7 +33,8 @@ pub trait SearchPlannerInputBuilder: Send + Sync {
 }
 
 /// Default builder: reads `FrameAwareState @ ""`, a configurable map channel,
-/// and an optional `PlannerGoal @ ""`.
+/// and an optional `PlannerGoal @ "mission"` (the canonical mission slot
+/// written by `AutonomyPipeline::inject_mission_goal`).
 pub struct DefaultSearchPlannerInputBuilder {
     state_channel: ChannelKey,
     map_channel: ChannelKey,
@@ -44,7 +46,7 @@ pub struct DefaultSearchPlannerInputBuilder {
 impl DefaultSearchPlannerInputBuilder {
     pub fn new(map_channel: ChannelKey) -> Self {
         let state_channel = ChannelKey::of::<FrameAwareState>();
-        let goal_channel = ChannelKey::of::<PlannerGoal>();
+        let goal_channel = ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE);
 
         Self {
             state_channel: state_channel.clone(),

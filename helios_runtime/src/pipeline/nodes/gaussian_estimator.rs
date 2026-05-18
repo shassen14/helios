@@ -16,8 +16,10 @@
 //!    on the bus.
 
 use std::marker::PhantomData;
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
+use atomic_float::AtomicF64;
 use helios_core::data::primitives::TfProvider;
 use helios_core::data::sensor::{SensorPayload, SensorReading};
 use helios_core::estimation::measurement::MeasurementModel;
@@ -63,6 +65,11 @@ pub struct TypedAidingHandler<T: SensorPayload> {
     channel: ChannelKey,
     model: Box<dyn MeasurementModel>,
     r: DMatrix<f64>,
+    /// Highest per-reading [`SensorReading::timestamp`] applied to the
+    /// filter so far. Readings with `timestamp <= last_applied_ts` are
+    /// skipped — re-applying the same measurement would over-tighten the
+    /// EKF's posterior as if independent observations had been received.
+    last_applied_ts: AtomicF64,
     // phantom data in order to avoid compile error that T isn't used
     // fn() -> T to say output-only, non-owned, covariant data
     _phantom: PhantomData<fn() -> T>,
@@ -79,6 +86,7 @@ impl<T: SensorPayload> TypedAidingHandler<T> {
             channel,
             model,
             r,
+            last_applied_ts: AtomicF64::new(f64::NEG_INFINITY),
             _phantom: PhantomData,
         }
     }
@@ -112,9 +120,25 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
                 .total_cmp(&stamped.value[b].timestamp.0)
         });
 
+        // Skip readings already applied on a prior tick. Bus slots are
+        // last-known-good, so the same batch can show up on consecutive
+        // ticks; re-applying would treat one measurement as several
+        // independent observations and overstate confidence.
+        let last_applied = self.last_applied_ts.load(Ordering::Relaxed);
+        let mut max_applied = last_applied;
         for idx in indices {
+            let reading_ts = stamped.value[idx].timestamp.0;
+            if reading_ts <= last_applied {
+                continue;
+            }
             let z = stamped.value[idx].data.to_measurement_vector();
             estimator.update(&z, &*self.model, &self.r, tf);
+            if reading_ts > max_applied {
+                max_applied = reading_ts;
+            }
+        }
+        if max_applied > last_applied {
+            self.last_applied_ts.store(max_applied, Ordering::Relaxed);
         }
     }
 }
@@ -361,7 +385,7 @@ mod tests {
             },
             rate: None,
         };
-        PortBus::new(&[descriptor], vec![])
+        PortBus::new(&[descriptor])
     }
 
     fn tick_at(now: f64, dt: f64) -> TickContext {

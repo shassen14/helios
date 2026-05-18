@@ -238,7 +238,7 @@ mod tests {
             outputs: vec![out_channel()],
             rate: None,
         };
-        PortBus::new(&[descriptor], vec![])
+        PortBus::new(&[descriptor])
     }
 
     fn tick_at(now: f64, dt: f64) -> TickContext {

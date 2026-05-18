@@ -49,7 +49,10 @@ pub struct OccupancyGridMapper {
     map_dirty: bool,
     /// Monotonically increasing; copied into `MapData::OccupancyGrid2D::version` on rebuild.
     map_version: u64,
-    cached_map: MapData,
+    /// `None` until the first scan is integrated and `rebuild_cache` runs.
+    /// Returned via `Mapper::get_map` as a borrow; downstream sees cold-start
+    /// (slot empty) until a real map exists.
+    cached_map: Option<MapData>,
 }
 
 impl OccupancyGridMapper {
@@ -71,7 +74,7 @@ impl OccupancyGridMapper {
             shift_buffer: vec![0.0_f32; n],
             map_dirty: false,
             map_version: 0,
-            cached_map: MapData::None,
+            cached_map: None,
         }
     }
 
@@ -187,12 +190,12 @@ impl OccupancyGridMapper {
         );
         let new_resolution = self.resolution;
 
-        if let MapData::OccupancyGrid2D {
+        if let Some(MapData::OccupancyGrid2D {
             ref mut data,
             ref mut origin,
             ref mut resolution,
             ref mut version,
-        } = self.cached_map
+        }) = self.cached_map
         {
             // Update in-place: no allocation.
             for row in 0..self.height {
@@ -214,12 +217,12 @@ impl OccupancyGridMapper {
                 (p * 255.0) as u8
             });
             self.map_version += 1;
-            self.cached_map = MapData::OccupancyGrid2D {
+            self.cached_map = Some(MapData::OccupancyGrid2D {
                 origin: new_origin,
                 resolution: new_resolution,
                 data,
                 version: self.map_version,
-            };
+            });
         }
 
         self.map_dirty = false;
@@ -242,9 +245,9 @@ impl Mapper for OccupancyGridMapper {
         }
     }
 
-    fn get_map(&mut self) -> &MapData {
+    fn get_map(&mut self) -> Option<&MapData> {
         self.rebuild_cache();
-        &self.cached_map
+        self.cached_map.as_ref()
     }
 }
 
@@ -453,7 +456,7 @@ mod tests {
         // log_odds = 0 → p = 0.5 → value ≈ 127.
         m.map_dirty = true;
         m.rebuild_cache();
-        let MapData::OccupancyGrid2D { ref data, .. } = m.cached_map else {
+        let Some(MapData::OccupancyGrid2D { ref data, .. }) = m.cached_map else {
             panic!("expected OccupancyGrid2D");
         };
         assert_eq!(data[(0, 0)], 127);
@@ -462,7 +465,7 @@ mod tests {
         m.log_odds[0] = L_MAX;
         m.map_dirty = true;
         m.rebuild_cache();
-        let MapData::OccupancyGrid2D { ref data, .. } = m.cached_map else {
+        let Some(MapData::OccupancyGrid2D { ref data, .. }) = m.cached_map else {
             panic!("expected OccupancyGrid2D");
         };
         assert!(
@@ -479,14 +482,14 @@ mod tests {
         m.map_dirty = true;
         m.rebuild_cache();
         let v1 = match &m.cached_map {
-            MapData::OccupancyGrid2D { version, .. } => *version,
+            Some(MapData::OccupancyGrid2D { version, .. }) => *version,
             _ => panic!("expected OccupancyGrid2D"),
         };
 
         // Second call with no intervening dirty — version must not change.
         m.rebuild_cache();
         let v2 = match &m.cached_map {
-            MapData::OccupancyGrid2D { version, .. } => *version,
+            Some(MapData::OccupancyGrid2D { version, .. }) => *version,
             _ => panic!("expected OccupancyGrid2D"),
         };
 
@@ -501,7 +504,7 @@ mod tests {
         m.rebuild_cache();
 
         let ptr1 = match &m.cached_map {
-            MapData::OccupancyGrid2D { data, .. } => data.as_slice().as_ptr(),
+            Some(MapData::OccupancyGrid2D { data, .. }) => data.as_slice().as_ptr(),
             _ => panic!("expected OccupancyGrid2D"),
         };
 
@@ -510,7 +513,7 @@ mod tests {
         m.rebuild_cache();
 
         let ptr2 = match &m.cached_map {
-            MapData::OccupancyGrid2D { data, .. } => data.as_slice().as_ptr(),
+            Some(MapData::OccupancyGrid2D { data, .. }) => data.as_slice().as_ptr(),
             _ => panic!("expected OccupancyGrid2D"),
         };
 
@@ -556,14 +559,14 @@ mod tests {
     fn mapper_get_map_rebuilds_lazily() {
         let mut m = make_mapper(4.0, 4.0);
         // Initially no map cached.
-        assert!(matches!(m.cached_map, MapData::None));
+        assert!(m.cached_map.is_none());
 
         // Dirty without explicit rebuild.
         m.add_log_odds(0, 0, L_OCC);
 
         // get_map should trigger the rebuild.
         let map = <OccupancyGridMapper as Mapper>::get_map(&mut m);
-        assert!(matches!(map, MapData::OccupancyGrid2D { .. }));
+        assert!(matches!(map, Some(MapData::OccupancyGrid2D { .. })));
     }
 
     #[test]
@@ -571,6 +574,6 @@ mod tests {
         let mut m = make_mapper(4.0, 4.0);
         let map = <OccupancyGridMapper as Mapper>::get_map(&mut m);
         // No dirty → no rebuild → cached_map stays None.
-        assert!(matches!(map, MapData::None));
+        assert!(map.is_none());
     }
 }

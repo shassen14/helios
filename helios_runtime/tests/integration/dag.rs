@@ -470,28 +470,14 @@ fn multiple_producers_detected() {
 }
 
 #[test]
-fn signal_keys_satisfy_required_inputs() {
-    // A node requires a sensor-injected channel that no node produces.
-    // Declaring it via with_sensor_signals must make the build succeed.
+fn external_channels_satisfy_required_inputs() {
+    // A node requires a channel that no node produces. Declaring it via
+    // with_external_channels must make the build succeed.
     let sensor_key = ChannelKey::named::<Sensor>("imu");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
-        .with_sensor_signals(vec![sensor_key])
-        .build();
-
-    assert!(result.is_ok(), "build should succeed: {:?}", result.err());
-}
-
-#[test]
-fn host_state_keys_satisfy_required_inputs() {
-    // Same as above but via with_host_states — a host-state channel
-    // (persists across ticks, no clear_signals) also seeds `produced`.
-    let host_key = ChannelKey::named::<ChA>("mission");
-
-    let result = PipelineBuilder::new()
-        .add_node(Box::new(SinkNode::new("planner", host_key.clone())))
-        .with_host_states(vec![host_key])
+        .with_external_channels(vec![sensor_key])
         .build();
 
     assert!(result.is_ok(), "build should succeed: {:?}", result.err());
@@ -573,13 +559,13 @@ fn unrated_node_fires_every_tick() {
 // =========================================================================
 
 #[test]
-fn tick_does_not_clear_signals() {
-    // Signals are cleared only by explicit bus.clear_signals() — never
-    // by tick() itself.
+fn tick_preserves_externally_written_values() {
+    // All bus slots are last-known-good — a value written from outside
+    // the graph must still be readable after `tick()`.
     let sensor_key = ChannelKey::named::<Sensor>("imu");
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
-        .with_sensor_signals(vec![sensor_key.clone()])
+        .with_external_channels(vec![sensor_key.clone()])
         .build()
         .expect("build should succeed");
 
@@ -599,6 +585,6 @@ fn tick_does_not_clear_signals() {
     let after = pipeline
         .bus()
         .read::<u32>(sensor_key)
-        .expect("signal should still be present after tick");
+        .expect("value should still be present after tick");
     assert_eq!(after.value, 99);
 }

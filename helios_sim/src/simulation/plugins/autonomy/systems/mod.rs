@@ -6,6 +6,6 @@ mod spawn;
 mod telemetry;
 
 pub use estimation::update_odom_frames;
-pub use pipeline_tick::{clear_pipeline_signals, run_pipeline_tick};
+pub use pipeline_tick::run_pipeline_tick;
 pub use spawn::{spawn_autonomy_pipeline, spawn_odom_frames};
 pub use telemetry::{publish_autonomy_telemetry, publish_sensor_telemetry};

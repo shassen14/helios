@@ -18,8 +18,9 @@
 //!    `sensor_world = robot_world * agent_to_sensor`, and call
 //!    [`Mapper::integrate_scan_2d`]. Readings whose TF lookup fails are
 //!    silently skipped — TF rebuild lag is normal at startup.
-//! 4. **Publish.** Snapshot the map via [`Mapper::get_map`], clone, write
-//!    to `map_channel` as `Stamped<MapData>`.
+//! 4. **Publish.** Snapshot the map via [`Mapper::get_map`]; if `Some`,
+//!    clone and write to `map_channel` as `Stamped<MapData>`. If `None`,
+//!    skip the write so the slot stays empty during cold-start.
 //!
 //! ## Rate
 //!
@@ -50,12 +51,14 @@
 //! [`OccupancyGridMapper`]: helios_core::mapping::OccupancyGridMapper
 //! [`MapData`]: helios_core::mapping::MapData
 
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
+use atomic_float::AtomicF64;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::data::sensor::{PointCloud2D, SensorReading};
 use helios_core::frames::FrameAwareState;
-use helios_core::mapping::{MapData, Mapper};
+use helios_core::mapping::Mapper;
 
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, PortBus, PortDescriptor};
@@ -80,6 +83,11 @@ pub struct OccupancyGridNode {
     scan_channel: ChannelKey,
     map_channel: ChannelKey,
     descriptor: PortDescriptor,
+    /// Highest scan-batch [`Stamped::timestamp`] this node has consumed.
+    /// Bus slots are last-known-good, so the same batch reappears on
+    /// consecutive ticks; re-integrating would double-count evidence in
+    /// the cells the scan touches.
+    last_integrated_ts: AtomicF64,
 }
 
 impl OccupancyGridNode {
@@ -110,6 +118,7 @@ impl OccupancyGridNode {
             scan_channel,
             map_channel,
             descriptor,
+            last_integrated_ts: AtomicF64::new(f64::NEG_INFINITY),
         }
     }
 }
@@ -141,27 +150,37 @@ impl PipelineNode for OccupancyGridNode {
         // 2. Keep the rolling window centered on the robot.
         mapper.recenter(&robot_world_pose);
 
-        // 3. Integrate each scan. Sensor world pose is composed in the
-        //    estimator's frame: robot_world (from FrameAwareState) * the
-        //    static agent→sensor TF. Readings whose TF lookup fails are
-        //    skipped — startup ordering can briefly leave a sensor without
-        //    a TF entry.
+        // 3. Integrate the scan batch — only once per batch. The bus is
+        //    last-known-good, so without dedup the same batch would be
+        //    re-integrated on every tick and accumulate phantom evidence.
+        //    Readings whose TF lookup fails are skipped; startup ordering
+        //    can briefly leave a sensor without a TF entry.
         if let Some(stamped_scans) =
             bus.read::<Vec<SensorReading<PointCloud2D>>>(self.scan_channel.clone())
         {
-            for reading in stamped_scans.value.iter() {
-                let Some(sensor_in_agent) =
-                    runtime.get_transform(self.agent_handle, reading.sensor_handle)
-                else {
-                    continue;
-                };
-                let sensor_world_pose = robot_world_pose * sensor_in_agent;
-                mapper.integrate_scan_2d(&sensor_world_pose, &reading.data);
+            let batch_ts = stamped_scans.timestamp.0;
+            if batch_ts > self.last_integrated_ts.load(Ordering::Relaxed) {
+                for reading in stamped_scans.value.iter() {
+                    let Some(sensor_in_agent) =
+                        runtime.get_transform(self.agent_handle, reading.sensor_handle)
+                    else {
+                        continue;
+                    };
+                    let sensor_world_pose = robot_world_pose * sensor_in_agent;
+                    mapper.integrate_scan_2d(&sensor_world_pose, &reading.data);
+                }
+                self.last_integrated_ts.store(batch_ts, Ordering::Relaxed);
             }
         }
 
-        // 4. Publish the (possibly rebuilt) map.
-        let map_snapshot: MapData = mapper.get_map().clone();
+        // 4. Publish only once the mapper has real data. While `get_map`
+        //    returns `None` (cold-start) the bus slot stays empty, so
+        //    downstream consumers see cold-start through the normal
+        //    "slot empty" signal instead of a sentinel `MapData` variant
+        //    they'd have to pattern-match against.
+        let Some(map_snapshot) = mapper.get_map().cloned() else {
+            return;
+        };
         let stamped = Stamped {
             value: map_snapshot,
             timestamp: tick.now,
@@ -187,7 +206,7 @@ mod tests {
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::data::sensor::{PointCloud2D, SensorReading};
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-    use helios_core::mapping::{MapData, Mapper, NoneMapper};
+    use helios_core::mapping::{MapData, Mapper};
     use nalgebra::{Isometry3, Point2, Translation3, UnitQuaternion};
     use std::sync::Mutex as StdMutex;
 
@@ -257,10 +276,21 @@ mod tests {
         ) {
             self.calls.lock().unwrap().integrate += 1;
         }
-        fn get_map(&mut self) -> &MapData {
+        fn get_map(&mut self) -> Option<&MapData> {
             self.calls.lock().unwrap().get_map += 1;
-            static M: MapData = MapData::None;
-            &M
+            None
+        }
+    }
+
+    /// Test stand-in for an always-empty mapper (replaces the deleted
+    /// `NoneMapper`). Verifies that a node holding a mapper that never
+    /// returns `Some` does not publish to the bus.
+    struct EmptyMapper;
+    impl Mapper for EmptyMapper {
+        fn recenter(&mut self, _: &Isometry3<f64>) {}
+        fn integrate_scan_2d(&mut self, _: &Isometry3<f64>, _: &PointCloud2D) {}
+        fn get_map(&mut self) -> Option<&MapData> {
+            None
         }
     }
 
@@ -294,7 +324,7 @@ mod tests {
             outputs: vec![map_channel()],
             rate: None,
         };
-        PortBus::new(&[host_state, host_scans, map_producer], vec![])
+        PortBus::new(&[host_state, host_scans, map_producer])
     }
 
     fn make_state_at(x: f64) -> FrameAwareState {
@@ -348,7 +378,7 @@ mod tests {
     fn descriptor_requires_state_and_scan_and_outputs_map_channel() {
         let node = OccupancyGridNode::new(
             "occ",
-            Box::new(NoneMapper),
+            Box::new(EmptyMapper),
             AGENT,
             scan_channel(),
             map_channel(),
@@ -380,10 +410,14 @@ mod tests {
     }
 
     #[test]
-    fn execute_publishes_map_when_state_present_even_without_scans() {
+    fn execute_does_not_publish_until_mapper_has_real_data() {
+        // With state present but no scans integrated, the mapper still
+        // holds `MapData::None`. The node deliberately skips the bus write
+        // in that case so consumers see cold-start (empty slot) rather
+        // than a sentinel variant.
         let node = OccupancyGridNode::new(
             "occ",
-            Box::new(NoneMapper),
+            Box::new(EmptyMapper),
             AGENT,
             scan_channel(),
             map_channel(),
@@ -392,11 +426,10 @@ mod tests {
         let bus = make_bus();
         publish_state(&bus, 0.0);
         node.execute(&bus, &MockRuntime::new(), tick_at(2.5, 0.1));
-        let published = bus
-            .read::<MapData>(map_channel())
-            .expect("node must publish a MapData snapshot when state is present");
-        assert!((published.timestamp.0 - 2.5).abs() < 1e-9);
-        assert_eq!(published.producer, 5);
+        assert!(
+            bus.read::<MapData>(map_channel()).is_none(),
+            "node must not publish while cached_map is MapData::None"
+        );
     }
 
     #[test]

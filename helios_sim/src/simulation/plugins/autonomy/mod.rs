@@ -13,8 +13,7 @@ pub use components::{
 };
 
 use systems::{
-    clear_pipeline_signals, run_pipeline_tick, spawn_autonomy_pipeline, spawn_odom_frames,
-    update_odom_frames,
+    run_pipeline_tick, spawn_autonomy_pipeline, spawn_odom_frames, update_odom_frames,
 };
 
 // =========================================================================
@@ -31,12 +30,6 @@ impl Plugin for EstimationPlugin {
                 spawn_autonomy_pipeline.in_set(SceneBuildSet::ProcessBaseAutonomy),
                 spawn_odom_frames.in_set(SceneBuildSet::ProcessDependentAutonomy),
             ),
-        );
-        app.add_systems(
-            FixedUpdate,
-            clear_pipeline_signals
-                .in_set(SimulationSet::Precomputation)
-                .run_if(in_state(AppState::Running)),
         );
         app.add_systems(
             FixedUpdate,

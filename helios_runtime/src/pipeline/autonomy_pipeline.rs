@@ -5,6 +5,8 @@ use std::{
 
 use helios_core::{
     frames::FrameAwareState,
+    mapping::MapData,
+    planning::types::Path,
     prelude::{ControlOutput, PlannerGoal},
 };
 
@@ -29,24 +31,20 @@ pub const MISSION_GOAL_INSTANCE: &str = "mission";
 ///
 /// Build sequence:
 /// 1. Register every node with [`add_node`](Self::add_node).
-/// 2. Declare channels written by sensor tick systems via
-///    [`with_sensor_signals`](Self::with_sensor_signals). These slots are
-///    cleared each tick by [`PortBus::clear_signals`].
-/// 3. Declare channels written by external systems (mission layer, Zenoh,
-///    operator UI) via [`with_host_states`](Self::with_host_states). These
-///    persist across ticks.
-/// 4. Call [`build`](Self::build) — returns either a fully validated
+/// 2. Declare channels written from outside the graph — sensor tick systems,
+///    mission layer, Zenoh bridge, operator UI — via
+///    [`with_external_channels`](Self::with_external_channels). These seed
+///    the topological sort so consumers don't trip
+///    [`PipelineBuildError::UnsatisfiedInput`].
+/// 3. Call [`build`](Self::build) — returns either a fully validated
 ///    pipeline or every detected error.
 ///
-/// Both `with_sensor_signals` and `with_host_states` seed the topological
-/// sort so a node consuming an externally-provided channel doesn't fail
-/// with [`PipelineBuildError::UnsatisfiedInput`]. The split between them
-/// only affects `PortBus`'s signal-clear list: sensor signals get cleared
-/// each tick; host states do not.
+/// All bus slots use last-known-good semantics; nothing is cleared per tick.
+/// Consumers that must process each reading at most once track their own
+/// last-seen [`Stamped::timestamp`] internally.
 pub struct PipelineBuilder {
     nodes: Vec<Box<dyn PipelineNode>>,
-    sensor_signal_keys: Vec<ChannelKey>,
-    host_state_keys: Vec<ChannelKey>,
+    external_channel_keys: Vec<ChannelKey>,
 }
 
 impl Default for PipelineBuilder {
@@ -61,8 +59,7 @@ impl PipelineBuilder {
     pub fn new() -> Self {
         PipelineBuilder {
             nodes: vec![],
-            sensor_signal_keys: vec![],
-            host_state_keys: vec![],
+            external_channel_keys: vec![],
         }
     }
 
@@ -74,26 +71,15 @@ impl PipelineBuilder {
         self
     }
 
-    /// Declares channels written by sensor tick systems each tick.
+    /// Declares channels written from outside the graph.
     ///
-    /// These keys are passed to [`PortBus::clear_signals`] so the slot is
-    /// wiped at the start of every tick — sensor batches must not carry
-    /// across ticks.
-    pub fn with_sensor_signals(mut self, keys: Vec<ChannelKey>) -> Self {
-        self.sensor_signal_keys = keys;
-        self
-    }
-
-    /// Declares persistent channels written by external systems
-    /// (mission layer, Zenoh bridge, operator UI).
-    ///
-    /// Unlike sensor signals, these slots are **not** cleared each tick —
-    /// the host writes once when the value changes, consumers read the
-    /// last-known-good value on every subsequent tick. This is the slot
-    /// semantics needed for mission goals, mode flags, and parameter
-    /// overrides.
-    pub fn with_host_states(mut self, keys: Vec<ChannelKey>) -> Self {
-        self.host_state_keys = keys;
+    /// These keys seed the topological sort as already-satisfied so a
+    /// consumer of an externally-supplied channel doesn't fail with
+    /// [`PipelineBuildError::UnsatisfiedInput`]. Slot allocation in
+    /// [`PortBus`] still comes from node descriptors — if no node consumes
+    /// a channel, the host write returns [`crate::port::ChannelError::UnknownChannel`].
+    pub fn with_external_channels(mut self, keys: Vec<ChannelKey>) -> Self {
+        self.external_channel_keys = keys;
         self
     }
 
@@ -135,8 +121,7 @@ impl PipelineBuilder {
         // The topological sort treats them as already-satisfied so any
         // consumer of these channels doesn't trip UnsatisfiedInput.
         let mut produced: HashSet<ChannelKey> = HashSet::new();
-        produced.extend(self.sensor_signal_keys.iter().cloned());
-        produced.extend(self.host_state_keys.iter().cloned());
+        produced.extend(self.external_channel_keys.iter().cloned());
 
         // Kahn's algorithm (level-by-level form). Each iteration pulls out
         // every node whose required inputs are already produced, assigns
@@ -230,18 +215,16 @@ impl PipelineBuilder {
         }
 
         // Bus slots are allocated from the union of all node descriptors.
-        // A host-state channel gets its slot via the consuming node's
+        // An external channel gets its slot via the consuming node's
         // `required_inputs` (or `optional_inputs`) — no need to seed slots
-        // from `host_state_keys` separately. If no node consumes a host
-        // channel, the host write returns `UnknownChannel`, which is the
-        // correct outcome.
+        // from `external_channel_keys` separately. If no node consumes an
+        // external channel, the host write returns `UnknownChannel`, which
+        // is the correct outcome.
         let descriptor_iter = levels
             .iter()
             .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));
 
-        // Only sensor signals go into the bus's signal-clear list. Host
-        // states must persist across ticks.
-        let bus = PortBus::new(descriptor_iter, self.sensor_signal_keys);
+        let bus = PortBus::new(descriptor_iter);
 
         // One timer per node, indexed by NodeId (which matches level-major
         // iteration order below).
@@ -292,16 +275,6 @@ impl AutonomyPipeline {
 
     /// Executes one tick: stamps the bus clock, then runs every rate-due
     /// node in topological order.
-    ///
-    /// `tick` deliberately does **not** call [`PortBus::clear_signals`].
-    /// The host owns the per-tick sequence so it can also be driven from
-    /// non-Bevy contexts (hardware loop, replay):
-    ///
-    /// ```text
-    /// pipeline.bus().clear_signals();
-    /// // host writes fresh sensor data into the bus
-    /// pipeline.tick(runtime, dt);
-    /// ```
     ///
     /// `dt` is the elapsed wall time since the last call (used by
     /// [`RateTimer`]). The bus tick-time is sourced from
@@ -365,5 +338,30 @@ impl AutonomyPipeline {
     /// written one this run.
     pub fn read_control(&self) -> Option<Arc<Stamped<ControlOutput>>> {
         self.bus.read(ChannelKey::of::<ControlOutput>())
+    }
+
+    /// Reads any [`Path`] currently on the bus, ignoring the planner instance
+    /// name. Convenience for single-planner stacks and debug visualization.
+    /// For multi-planner stacks, read the specific planner's channel via
+    /// `bus().read::<Path>(ChannelKey::named::<Path>(planner_name))`.
+    pub fn read_any_path(&self) -> Option<Arc<Stamped<Path>>> {
+        self.bus.read_any::<Path>()
+    }
+
+    /// Reads any [`MapData`] currently on the bus, ignoring the layer
+    /// instance name. Convenience for debug visualization.
+    pub fn read_any_map(&self) -> Option<Arc<Stamped<MapData>>> {
+        self.bus.read_any::<MapData>()
+    }
+
+    /// Reads the currently-injected mission goal, if any.
+    pub fn read_mission_goal(&self) -> Option<Arc<Stamped<PlannerGoal>>> {
+        self.bus
+            .read(ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE))
+    }
+
+    /// Debug: returns whether any slot of type `T` currently holds a value.
+    pub fn has_any<T: std::any::Any + Send + Sync>(&self) -> bool {
+        self.bus.read_any::<T>().is_some()
     }
 }

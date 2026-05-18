@@ -361,6 +361,7 @@ impl AStarPlanner {
 #[cfg(test)]
 mod tests {
     use nalgebra::{DMatrix, Isometry3, Vector2};
+    use std::collections::HashMap;
 
     use crate::frames::{FrameId, RobotState, StateVariable};
     use crate::mapping::MapData;
@@ -458,7 +459,14 @@ mod tests {
     #[test]
     fn plan_wrong_map_type() {
         let mut planner = AStarPlanner::new(default_config());
-        let inputs = make_inputs(0.0, 0.0, MapData::None, Some(goal_2d(5.0, 5.0)));
+        let inputs = make_inputs(
+            0.0,
+            0.0,
+            MapData::FeatureMap {
+                landmarks: HashMap::new(),
+            },
+            Some(goal_2d(5.0, 5.0)),
+        );
         let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::Error(_)));
     }

@@ -144,7 +144,10 @@ pub fn build_pipeline(
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
     let mut errors: Vec<PipelineAssemblyError> = vec![];
     let mut builder = PipelineBuilder::new();
-    let mut sensor_signals: Vec<ChannelKey> = vec![];
+    // Channels supplied from outside the graph (sensor publishers, mission
+    // layer, operator UI). Used to seed the topological sort so consumers
+    // don't trip UnsatisfiedInput.
+    let mut external_channels: Vec<ChannelKey> = vec![];
 
     // --- Estimators ---
     for (instance_name, est_cfg) in &stack.estimators {
@@ -154,7 +157,7 @@ pub fn build_pipeline(
             agent_handle,
             sensor_frame_handles,
             registry,
-            &mut sensor_signals,
+            &mut external_channels,
         ) {
             Ok(node) => { builder = builder.add_node(node); }
             Err(e) => errors.push(e),
@@ -172,11 +175,12 @@ pub fn build_pipeline(
             MapperBuildContext { agent_handle, config: map_cfg.clone() },
         ) {
             Ok(node) => {
-                // FrameAwareState is produced by the estimator upstream, not a sensor.
-                // Every other required input of a mapper node is a sensor signal.
+                // FrameAwareState is produced by the estimator upstream;
+                // every other required input of a mapper is an external
+                // sensor channel that must seed the topological sort.
                 for key in &node.port_descriptor().required_inputs {
                     if *key != ChannelKey::of::<helios_core::frames::FrameAwareState>() {
-                        sensor_signals.push(key.clone());
+                        external_channels.push(key.clone());
                     }
                 }
                 builder = builder.add_node(node);
@@ -252,12 +256,12 @@ pub fn build_pipeline(
         return Err(errors);
     }
 
-    // Deduplicate sensor signals before handing to the builder.
-    sensor_signals.sort_by_key(|k| format!("{k:?}"));
-    sensor_signals.dedup();
+    // Deduplicate external channels before handing to the builder.
+    external_channels.sort_by_key(|k| format!("{k:?}"));
+    external_channels.dedup();
 
     builder
-        .with_sensor_signals(sensor_signals)
+        .with_external_channels(external_channels)
         .build()
         .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
 }
@@ -270,7 +274,7 @@ fn build_estimator_node(
     agent_handle: FrameHandle,
     sensor_frame_handles: &HashMap<String, FrameHandle>,
     registry: &AutonomyRegistry,
-    sensor_signals: &mut Vec<ChannelKey>,
+    external_channels: &mut Vec<ChannelKey>,
 ) -> Result<Box<dyn crate::pipeline::node::PipelineNode>, PipelineAssemblyError> {
     let EstimatorConfig::Ekf(ekf_cfg) = est_cfg else {
         return Err(PipelineAssemblyError::FactoryFailure {
@@ -289,16 +293,16 @@ fn build_estimator_node(
             sensor_frame_handles,
             registry,
         )?;
-        sensor_signals.push(handler.channel().clone());
+        external_channels.push(handler.channel().clone());
         aiding.push(handler);
     }
 
     // If dynamics is IntegratedImu, declare the IMU predict-side channels
-    // as sensor signals too (accel + gyro Vec<SensorReading<_>>).
+    // as external too (accel + gyro Vec<SensorReading<_>>).
     if matches!(ekf_cfg.dynamics, EkfDynamicsConfig::IntegratedImu(_)) {
         use crate::pipeline::builders::estimator::{EstimatorInputBuilder, IntegratedImuInputBuilder};
         let builder = IntegratedImuInputBuilder::new();
-        sensor_signals.extend_from_slice(builder.required_channels());
+        external_channels.extend_from_slice(builder.required_channels());
     }
 
     registry

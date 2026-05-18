@@ -99,31 +99,21 @@ pub struct PortDescriptor {
 /// declared inputs and outputs. Reads and writes never block — each slot uses
 /// an [`ArcSwap`] for atomic pointer swap with concurrent read access.
 ///
-/// Two slot semantics coexist:
-/// - **Signal slots** are cleared at the start of each tick via [`PortBus::clear_signals`].
-///   These hold per-tick sensor batches (e.g. `Vec<SensorReading<LinearAcceleration3D>>`)
-///   that must not carry over across ticks.
-/// - **State slots** use last-known-good semantics and persist until a node overwrites them.
-///   A 1 Hz planner's `Path` output stays readable by a 200 Hz controller on every tick
-///   between fires.
+/// All slots use **last-known-good** semantics — a write replaces the current
+/// value; subsequent reads return the most recent write until something else
+/// overwrites it. Consumers that need to react only to fresh data must
+/// dedupe on [`Stamped::timestamp`] themselves (see [`PortBus::read_fresh`]
+/// for the simple max-age helper, or track a per-consumer last-seen
+/// timestamp for exact one-shot semantics).
 pub struct PortBus {
     slots: HashMap<ChannelKey, ArcSwap<Option<Arc<dyn Any + Send + Sync>>>>,
-    signal_keys: Vec<ChannelKey>,
     tick_now: AtomicF64,
 }
 
 impl PortBus {
     /// Constructs a [`PortBus`] pre-populated with one empty slot per unique
     /// [`ChannelKey`] found across all `descriptors`.
-    ///
-    /// `signal_keys` identifies which slots are cleared each tick by
-    /// [`PortBus::clear_signals`]. All other slots use last-known-good semantics.
-    /// The caller (typically [`PipelineBuilder`]) is responsible for classifying
-    /// signals from the sensor suite configuration.
-    pub fn new<'a>(
-        descriptors: impl IntoIterator<Item = &'a PortDescriptor>,
-        signal_keys: Vec<ChannelKey>,
-    ) -> Self {
+    pub fn new<'a>(descriptors: impl IntoIterator<Item = &'a PortDescriptor>) -> Self {
         let mut slots = HashMap::new();
 
         for descriptor in descriptors {
@@ -141,7 +131,6 @@ impl PortBus {
 
         Self {
             slots,
-            signal_keys,
             tick_now: AtomicF64::new(0.0),
         }
     }
@@ -169,6 +158,25 @@ impl PortBus {
         Arc::clone(any_arc).downcast::<Stamped<T>>().ok()
     }
 
+    /// Returns the first non-empty slot whose value downcasts to `Stamped<T>`,
+    /// ignoring the channel instance name.
+    ///
+    /// Iteration order is unspecified — use this only when there is exactly
+    /// one channel of type `T` in the graph (e.g. a single planner's `Path`)
+    /// or when "any one" is acceptable (e.g. debug visualization).
+    pub fn read_any<T: Any + Send + Sync>(&self) -> Option<Arc<Stamped<T>>> {
+        for slot in self.slots.values() {
+            let guard = slot.load();
+            let Some(any_arc) = guard.as_ref().as_ref() else {
+                continue;
+            };
+            if let Ok(stamped) = Arc::clone(any_arc).downcast::<Stamped<T>>() {
+                return Some(stamped);
+            }
+        }
+        None
+    }
+
     pub fn read_fresh<T: Any + Send + Sync>(
         &self,
         channel: ChannelKey,
@@ -181,14 +189,6 @@ impl PortBus {
             Some(stamped)
         } else {
             None
-        }
-    }
-
-    pub fn clear_signals(&self) {
-        for key in &self.signal_keys {
-            if let Some(slot) = self.slots.get(key) {
-                slot.store(Arc::new(None));
-            }
         }
     }
 
@@ -215,14 +215,14 @@ mod tests {
         }
     }
 
-    fn bus_with_outputs(outputs: Vec<ChannelKey>, signal_keys: Vec<ChannelKey>) -> PortBus {
+    fn bus_with_outputs(outputs: Vec<ChannelKey>) -> PortBus {
         let descriptor = PortDescriptor {
             required_inputs: vec![],
             optional_inputs: vec![],
             outputs,
             rate: None,
         };
-        PortBus::new(&[descriptor], signal_keys)
+        PortBus::new(&[descriptor])
     }
 
     // --- ChannelKey tests ---
@@ -285,7 +285,7 @@ mod tests {
             outputs: vec![out.clone()],
             rate: None,
         };
-        let bus = PortBus::new(&[descriptor], vec![]);
+        let bus = PortBus::new(&[descriptor]);
         assert!(bus.write(req, make_stamped(1u32, 0.0)).is_ok());
         assert!(bus.write(opt, make_stamped(2u32, 0.0)).is_ok());
         assert!(bus.write(out, make_stamped(3u32, 0.0)).is_ok());
@@ -306,7 +306,7 @@ mod tests {
             outputs: vec![],
             rate: None,
         };
-        let bus = PortBus::new(&[d1, d2], vec![]);
+        let bus = PortBus::new(&[d1, d2]);
         assert_eq!(bus.slots.len(), 1);
     }
 
@@ -315,7 +315,7 @@ mod tests {
     #[test]
     fn write_and_read_roundtrip() {
         let key = ChannelKey::of::<u32>();
-        let bus = bus_with_outputs(vec![key.clone()], vec![]);
+        let bus = bus_with_outputs(vec![key.clone()]);
         bus.write(key.clone(), make_stamped(42u32, 1.0)).unwrap();
         assert_eq!(bus.read::<u32>(key).unwrap().value, 42);
     }
@@ -323,19 +323,19 @@ mod tests {
     #[test]
     fn read_empty_slot_returns_none() {
         let key = ChannelKey::of::<u32>();
-        let bus = bus_with_outputs(vec![key.clone()], vec![]);
+        let bus = bus_with_outputs(vec![key.clone()]);
         assert!(bus.read::<u32>(key).is_none());
     }
 
     #[test]
     fn read_unknown_channel_returns_none() {
-        let bus = PortBus::new(&[], vec![]);
+        let bus = PortBus::new(&[]);
         assert!(bus.read::<u32>(ChannelKey::of::<u32>()).is_none());
     }
 
     #[test]
     fn write_unknown_channel_returns_error() {
-        let bus = PortBus::new(&[], vec![]);
+        let bus = PortBus::new(&[]);
         let result = bus.write(ChannelKey::of::<u32>(), make_stamped(1u32, 0.0));
         assert!(matches!(result, Err(ChannelError::UnknownChannel)));
     }
@@ -343,33 +343,10 @@ mod tests {
     #[test]
     fn write_overwrites_previous_value() {
         let key = ChannelKey::of::<u32>();
-        let bus = bus_with_outputs(vec![key.clone()], vec![]);
+        let bus = bus_with_outputs(vec![key.clone()]);
         bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
         bus.write(key.clone(), make_stamped(2u32, 1.0)).unwrap();
         assert_eq!(bus.read::<u32>(key).unwrap().value, 2);
-    }
-
-    // --- clear_signals tests ---
-
-    #[test]
-    fn clear_signals_clears_signal_slot() {
-        let key = ChannelKey::of::<u32>();
-        let bus = bus_with_outputs(vec![key.clone()], vec![key.clone()]);
-        bus.write(key.clone(), make_stamped(99u32, 0.0)).unwrap();
-        bus.clear_signals();
-        assert!(bus.read::<u32>(key).is_none());
-    }
-
-    #[test]
-    fn clear_signals_leaves_state_slot_intact() {
-        let sig = ChannelKey::of::<u32>();
-        let state = ChannelKey::named::<u32>("state");
-        let bus = bus_with_outputs(vec![sig.clone(), state.clone()], vec![sig.clone()]);
-        bus.write(sig.clone(), make_stamped(1u32, 0.0)).unwrap();
-        bus.write(state.clone(), make_stamped(2u32, 0.0)).unwrap();
-        bus.clear_signals();
-        assert!(bus.read::<u32>(sig).is_none());
-        assert_eq!(bus.read::<u32>(state).unwrap().value, 2);
     }
 
     // --- read_fresh tests ---
@@ -377,7 +354,7 @@ mod tests {
     #[test]
     fn read_fresh_returns_none_when_stale() {
         let key = ChannelKey::of::<u32>();
-        let bus = bus_with_outputs(vec![key.clone()], vec![]);
+        let bus = bus_with_outputs(vec![key.clone()]);
         bus.set_tick_time(10.0);
         bus.write(key.clone(), make_stamped(1u32, 5.0)).unwrap();
         assert!(bus.read_fresh::<u32>(key, 3.0).is_none());
@@ -386,7 +363,7 @@ mod tests {
     #[test]
     fn read_fresh_returns_value_when_current() {
         let key = ChannelKey::of::<u32>();
-        let bus = bus_with_outputs(vec![key.clone()], vec![]);
+        let bus = bus_with_outputs(vec![key.clone()]);
         bus.set_tick_time(10.0);
         bus.write(key.clone(), make_stamped(7u32, 9.0)).unwrap();
         assert_eq!(bus.read_fresh::<u32>(key, 3.0).unwrap().value, 7);
@@ -395,7 +372,7 @@ mod tests {
     #[test]
     fn read_fresh_returns_none_for_empty_slot() {
         let key = ChannelKey::of::<u32>();
-        let bus = bus_with_outputs(vec![key.clone()], vec![]);
+        let bus = bus_with_outputs(vec![key.clone()]);
         bus.set_tick_time(10.0);
         assert!(bus.read_fresh::<u32>(key, 5.0).is_none());
     }

@@ -26,8 +26,23 @@ pub fn cache_sensor_data(
             continue;
         };
 
+        // Per-sensor dedup on batch timestamp: re-transform only when the
+        // bus actually has a new batch. Without this we'd re-transform the
+        // same FLU-local points by the sensor's *current* world transform
+        // every Update frame, making the points slide with the moving
+        // vehicle between lidar fires. The cache stores the world points
+        // at the moment of the laser hit — they stay still in the world
+        // while the vehicle drives through them.
+        let batch_ts = stamped.timestamp.0;
         for reading in &stamped.value {
             let sensor_entity = reading.sensor_handle.to_entity();
+            if cache
+                .last_batch_ts
+                .get(&sensor_entity)
+                .is_some_and(|&prev| prev >= batch_ts)
+            {
+                continue;
+            }
             let Ok(transform) = transform_query.get(sensor_entity) else {
                 continue;
             };
@@ -43,6 +58,7 @@ pub fn cache_sensor_data(
                 .collect();
 
             cache.point_clouds.insert(sensor_entity, world_pts);
+            cache.last_batch_ts.insert(sensor_entity, batch_ts);
         }
     }
 }

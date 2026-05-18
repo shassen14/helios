@@ -27,9 +27,18 @@ pub struct DebugVisualizationConfig {
 
 /// Caches the most recent world-space point cloud per sensor entity.
 /// Populated by `cache_sensor_data`; read by `draw_point_cloud`.
+///
+/// Points are world-frame and frozen at the moment the scan was captured.
+/// They are not re-transformed between lidar fires — the bus retains the
+/// last-known-good batch across many `Update` frames, and retransforming
+/// each frame would make the points slide with the moving sensor instead
+/// of staying where the laser actually hit.
 #[derive(Resource, Default)]
 pub struct DebugSensorCache {
     pub point_clouds: HashMap<Entity, Vec<Vec3>>,
+    /// Last batch timestamp (`Stamped::timestamp.0`) cached per sensor.
+    /// `cache_sensor_data` re-transforms only when this advances.
+    pub last_batch_ts: HashMap<Entity, f64>,
 }
 
 /// Marker component for the legend UI entity.
