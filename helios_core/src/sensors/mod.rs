@@ -1,12 +1,8 @@
 //! Raycasting sensor model trait and concrete sensor implementations.
-//!
-//! Defines [`RaycastingSensorModel`] — the contract for sensors that work by casting
-//! rays (`generate_rays`) and processing physics results (`process_hits`) into
-//! `MeasurementData`. Concrete models in `lidar_2d` and `lidar_3d`.
 
 pub mod lidar_2d;
 
-use crate::data::messages::MeasurementData;
+use crate::data::sensor::{PointCloud2D, PointCloud3D};
 use dyn_clone::DynClone;
 use nalgebra::Vector3;
 use std::fmt::Debug;
@@ -15,48 +11,39 @@ use std::fmt::Debug;
 /// All vectors are in the SENSOR's local coordinate frame.
 #[derive(Debug, Clone)]
 pub struct SensorRay {
-    /// A unique identifier for this ray within its scan pattern.
     pub id: u32,
-    /// The direction vector of the ray. Should be a unit vector.
     pub direction: Vector3<f64>,
 }
 
 /// Represents the result of a single raycast from the physics engine.
 #[derive(Debug, Clone)]
 pub struct RayHit {
-    /// The ID of the ray that produced this hit.
     pub ray_id: u32,
-    /// The measured distance to the hit object.
     pub distance: f32,
-    // Future additions could include:
-    // pub hit_normal: Vector3<f64>,
-    // pub material_reflectivity: f32,
+}
+
+/// Output type for `process_hits`. Typed per sensor family so `MeasurementData` is not required.
+#[derive(Debug, Clone)]
+pub enum RaycastingOutput {
+    PointCloud2D(PointCloud2D),
+    PointCloud3D(PointCloud3D),
 }
 
 /// The contract for any sensor model that works by casting rays into the environment.
-///
-/// The model is responsible for defining its own scan pattern (`generate_rays`) and
-/// for processing the raw physics results (`process_hits`) into a final, clean
-/// `MeasurementData` packet, including the application of sensor-specific noise.
 pub trait RaycastingSensorModel: Send + Sync + DynClone + Debug {
     /// Generates the complete set of rays that defines this sensor's scan pattern.
     /// The rays are returned in the sensor's local coordinate frame.
     fn generate_rays(&self) -> Vec<SensorRay>;
 
     /// Takes the raw results from the physics engine's raycasting and processes
-    /// them into a final `MeasurementData` packet. This is where sensor-specific
-    /// noise (range, angular) and other effects should be applied.
+    /// them into a final `RaycastingOutput` packet, applying sensor-specific noise.
     ///
-    /// # Arguments
-    /// * `hits`: A slice containing all the rays that successfully hit an object.
-    ///
-    /// # Returns
-    /// The processed `MeasurementData` (e.g., a PointCloud).
-    fn process_hits(&self, hits: &[RayHit]) -> MeasurementData;
+    /// The caller supplies the RNG so this function is deterministic under the project's
+    /// seeded-PRNG rule (no `thread_rng` inside algorithm code).
+    fn process_hits(&self, hits: &[RayHit], rng: &mut dyn rand::RngCore) -> RaycastingOutput;
 
     /// Returns the maximum effective range of the sensor in meters.
     fn get_max_range(&self) -> f32;
 }
 
-// Make the trait object cloneable.
 dyn_clone::clone_trait_object!(RaycastingSensorModel);

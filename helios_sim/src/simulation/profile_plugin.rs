@@ -6,7 +6,7 @@
 use bevy::prelude::*;
 
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
-use crate::simulation::plugins::autonomy::{EstimationPlugin, MappingPlugin};
+use crate::simulation::plugins::autonomy::EstimationPlugin;
 use crate::simulation::plugins::control::ControlPlugin;
 use crate::simulation::plugins::debugging::DebuggingPlugin;
 use crate::simulation::plugins::isolation::{
@@ -48,9 +48,6 @@ impl Plugin for ProfiledSimulationPlugin {
         }
         if caps.mock_estimator() {
             app.add_plugins(MockGroundTruthEstimatorPlugin);
-        }
-        if caps.mapping() {
-            app.add_plugins(MappingPlugin);
         }
         if caps.planning() {
             app.add_plugins(PlanningPlugin);

@@ -10,7 +10,7 @@ use std::sync::{
 
 use helios_core::data::primitives::MonotonicTime;
 use helios_runtime::{
-    pipeline::{NodePipelineBuilder, PipelineBuildError},
+    pipeline::{PipelineBuildError, PipelineBuilder},
     port::{ChannelKey, PortBus, PortDescriptor},
     prelude::{Health, PipelineNode, Stamped, TickContext},
 };
@@ -279,7 +279,7 @@ struct Sensor;
 #[test]
 fn single_node_executes() {
     let out = ChannelKey::of::<ChA>();
-    let pipeline = NodePipelineBuilder::new()
+    let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", out.clone(), 42)))
         .build()
         .expect("build should succeed");
@@ -298,7 +298,7 @@ fn two_node_chain_level_ordering() {
     let a = ChannelKey::of::<ChA>();
     let b = ChannelKey::of::<ChB>();
 
-    let pipeline = NodePipelineBuilder::new()
+    let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 7)))
         .add_node(Box::new(TransformNode::new(
             "b",
@@ -327,7 +327,7 @@ fn two_node_chain_with_builder_inserted_out_of_order() {
     let a = ChannelKey::of::<ChA>();
     let b = ChannelKey::of::<ChB>();
 
-    let pipeline = NodePipelineBuilder::new()
+    let pipeline = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
             "b",
             a.clone(),
@@ -355,7 +355,7 @@ fn three_node_diamond_resolves() {
     let c = ChannelKey::of::<ChC>();
     let d = ChannelKey::of::<ChD>();
 
-    let pipeline = NodePipelineBuilder::new()
+    let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 1)))
         .add_node(Box::new(TransformNode::new(
             "b",
@@ -394,7 +394,7 @@ fn cycle_detected() {
     let a_out = ChannelKey::named::<ChA>("a_out");
     let b_out = ChannelKey::named::<ChB>("b_out");
 
-    let result = NodePipelineBuilder::new()
+    let result = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
             "a",
             b_out.clone(),
@@ -426,7 +426,7 @@ fn unsatisfied_input_detected() {
     let missing = ChannelKey::named::<ChA>("missing");
     let out = ChannelKey::of::<ChB>();
 
-    let result = NodePipelineBuilder::new()
+    let result = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
             "needs_missing",
             missing.clone(),
@@ -452,7 +452,7 @@ fn unsatisfied_input_detected() {
 fn multiple_producers_detected() {
     let shared = ChannelKey::of::<ChA>();
 
-    let result = NodePipelineBuilder::new()
+    let result = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
         .add_node(Box::new(ProducerNode::new("b", shared.clone(), 2)))
         .build();
@@ -470,28 +470,14 @@ fn multiple_producers_detected() {
 }
 
 #[test]
-fn signal_keys_satisfy_required_inputs() {
-    // A node requires a sensor-injected channel that no node produces.
-    // Declaring it via with_sensor_signals must make the build succeed.
+fn external_channels_satisfy_required_inputs() {
+    // A node requires a channel that no node produces. Declaring it via
+    // with_external_channels must make the build succeed.
     let sensor_key = ChannelKey::named::<Sensor>("imu");
 
-    let result = NodePipelineBuilder::new()
+    let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
-        .with_sensor_signals(vec![sensor_key])
-        .build();
-
-    assert!(result.is_ok(), "build should succeed: {:?}", result.err());
-}
-
-#[test]
-fn host_state_keys_satisfy_required_inputs() {
-    // Same as above but via with_host_states — a host-state channel
-    // (persists across ticks, no clear_signals) also seeds `produced`.
-    let host_key = ChannelKey::named::<ChA>("mission");
-
-    let result = NodePipelineBuilder::new()
-        .add_node(Box::new(SinkNode::new("planner", host_key.clone())))
-        .with_host_states(vec![host_key])
+        .with_external_channels(vec![sensor_key])
         .build();
 
     assert!(result.is_ok(), "build should succeed: {:?}", result.err());
@@ -505,7 +491,7 @@ fn host_state_keys_satisfy_required_inputs() {
 fn rate_gated_node_fires_at_correct_interval() {
     // Period = 1 / 2 Hz = 0.5s. dt = 0.1s → fires on the 5th tick only.
     let counter = Arc::new(AtomicU32::new(0));
-    let pipeline = NodePipelineBuilder::new()
+    let pipeline = PipelineBuilder::new()
         .add_node(Box::new(CountingNode::new(
             "rated",
             Some(2.0),
@@ -532,7 +518,7 @@ fn rate_gated_node_does_not_double_fire() {
     // dt = 1.0s with period = 0.5s would cover two periods; node must
     // still fire exactly once (no catch-up).
     let counter = Arc::new(AtomicU32::new(0));
-    let pipeline = NodePipelineBuilder::new()
+    let pipeline = PipelineBuilder::new()
         .add_node(Box::new(CountingNode::new(
             "rated",
             Some(2.0),
@@ -553,7 +539,7 @@ fn rate_gated_node_does_not_double_fire() {
 fn unrated_node_fires_every_tick() {
     // rate: None means fire every tick.
     let counter = Arc::new(AtomicU32::new(0));
-    let pipeline = NodePipelineBuilder::new()
+    let pipeline = PipelineBuilder::new()
         .add_node(Box::new(CountingNode::new(
             "every_tick",
             None,
@@ -573,13 +559,13 @@ fn unrated_node_fires_every_tick() {
 // =========================================================================
 
 #[test]
-fn tick_does_not_clear_signals() {
-    // Signals are cleared only by explicit bus.clear_signals() — never
-    // by tick() itself.
+fn tick_preserves_externally_written_values() {
+    // All bus slots are last-known-good — a value written from outside
+    // the graph must still be readable after `tick()`.
     let sensor_key = ChannelKey::named::<Sensor>("imu");
-    let pipeline = NodePipelineBuilder::new()
+    let pipeline = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
-        .with_sensor_signals(vec![sensor_key.clone()])
+        .with_external_channels(vec![sensor_key.clone()])
         .build()
         .expect("build should succeed");
 
@@ -599,6 +585,6 @@ fn tick_does_not_clear_signals() {
     let after = pipeline
         .bus()
         .read::<u32>(sensor_key)
-        .expect("signal should still be present after tick");
+        .expect("value should still be present after tick");
     assert_eq!(after.value, 99);
 }

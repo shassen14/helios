@@ -1,0 +1,24 @@
+# =========================================================================
+# == Agent Profile: Pro Car ==
+# =========================================================================
+# Portable autonomy configuration. No vehicle, sensors, or physics.
+# Root-level keys are the fields of AutonomyStack.
+# Safe to load in helios_hw without helios_sim.
+
+[estimators.primary]
+from = "runtime.catalog.estimators.ekf_pro"
+
+[search_planners]
+local_path = { from = "runtime.catalog.planners.a_star" }
+
+[path_following]
+kind = "PurePursuit"
+max_speed_m_s = 5.0
+min_speed_m_s = 0.5
+lookahead_distance_m = 4.0
+goal_radius = 3.0
+max_lateral_acceleration = 3.0
+state_source = "ground_truth"
+
+[controllers]
+path_follower = { from = "runtime.catalog.controllers.direct_velocity" }

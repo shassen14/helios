@@ -64,7 +64,6 @@ impl ImuConfig {
 
 /// Configuration parameters for a simulated GPS sensor.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct GpsConfig {
     pub name: String,
     pub rate: f32,
@@ -73,6 +72,9 @@ pub struct GpsConfig {
     /// Standard deviation of noise in [East, North, Up] axes, in meters.
     #[serde(default)]
     pub noise_stddev: [f32; 3],
+    /// Bus channel name for `Vec<SensorReading<GpsPosition>>` published to the pipeline.
+    /// Must match the `input_channel` in the estimator's aiding config.
+    pub channel: String,
 }
 
 impl GpsConfig {
@@ -83,7 +85,6 @@ impl GpsConfig {
 
 /// Configuration parameters for a simulated 3-axis magnetometer.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct MagnetometerConfig {
     pub name: String,
     pub rate: f32,
@@ -92,6 +93,9 @@ pub struct MagnetometerConfig {
     /// Standard deviation of noise in [X, Y, Z] body axes, in µT.
     #[serde(default)]
     pub noise_stddev: [f32; 3],
+    /// Bus channel name for `Vec<SensorReading<MagneticField3D>>` published to the pipeline.
+    /// Must match the `input_channel` in the estimator's aiding config.
+    pub channel: String,
 }
 
 impl MagnetometerConfig {
@@ -119,6 +123,8 @@ pub enum LidarConfig {
         range_noise_stddev: f32,
         #[serde(default)]
         debug_visuals: bool,
+        /// Bus channel name for `Vec<SensorReading<PointCloud2D>>` published to the pipeline.
+        channel: String,
     },
     Lidar3D {
         rate: f32,
@@ -135,6 +141,8 @@ pub enum LidarConfig {
         range_noise_stddev: f32,
         #[serde(default)]
         debug_visuals: bool,
+        /// Bus channel name for `Vec<SensorReading<PointCloud3D>>` published to the pipeline.
+        channel: String,
     },
 }
 
@@ -157,6 +165,13 @@ impl LidarConfig {
         match self {
             LidarConfig::Lidar2D { debug_visuals, .. } => *debug_visuals,
             LidarConfig::Lidar3D { debug_visuals, .. } => *debug_visuals,
+        }
+    }
+
+    pub fn get_channel(&self) -> &str {
+        match self {
+            LidarConfig::Lidar2D { channel, .. } => channel.as_str(),
+            LidarConfig::Lidar3D { channel, .. } => channel.as_str(),
         }
     }
 }

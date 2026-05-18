@@ -30,6 +30,7 @@ pub struct ControlInputs {
 ///
 /// Actuator systems in `helios_sim` are responsible for converting these to
 /// Bevy-frame forces via `transforms.rs`.
+#[derive(Clone, Debug)]
 pub enum ControlOutput {
     /// Desired body-frame velocity (m/s forward/lateral/vertical, rad/s roll/pitch/yaw).
     BodyVelocity {

@@ -10,7 +10,7 @@ use helios_core::frames::{FrameId, StateVariable};
 use crate::simulation::core::components::{
     ControlOutputComponent, ControllerStateSource, GroundTruthState,
 };
-use crate::simulation::plugins::autonomy::EstimatorComponent;
+use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
 use crate::simulation::plugins::debugging::ui::vehicle_hud::VehicleHudEntities;
 use crate::simulation::plugins::vehicles::ackermann::components::{
@@ -32,7 +32,7 @@ pub fn update_vehicle_hud(
         &GroundTruthState,
         &AckermannActuator,
         &ControllerStateSource,
-        Option<&EstimatorComponent>,
+        Option<&AutonomyPipelineComponent>,
         Option<&ControlOutputComponent>,
         Option<&AckermannCommand>,
     )>,
@@ -62,10 +62,11 @@ pub fn update_vehicle_hud(
     let max_speed = actuator.max_speed;
     let gt_speed = gt_state.linear_velocity.norm() as f32;
 
-    let est_speed: Option<f32> = est_opt.and_then(|est| {
-        est.0
-            .get_state()
-            .and_then(|s| s.get_vector3(&StateVariable::Vx(FrameId::World)))
+    let est_speed: Option<f32> = est_opt.and_then(|pipeline| {
+        pipeline
+            .0
+            .read_state()
+            .and_then(|st| st.value.get_vector3(&StateVariable::Vx(FrameId::World)))
             .map(|v| v.norm() as f32)
     });
 

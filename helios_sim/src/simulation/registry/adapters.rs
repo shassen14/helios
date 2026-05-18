@@ -1,12 +1,11 @@
 // helios_sim/src/simulation/registry/adapters.rs
 //
-// Registers all built-in AckermannOutputAdapter factories into AutonomyRegistry.
-// Add new adapter implementations here — zero spawning systems change.
+// Registers all built-in AckermannOutputAdapter factories into VehicleAdapterRegistry.
 
 use bevy::prelude::*;
 use helios_core::control::siso_pid::SisoPid;
 
-use super::{AdapterBuildContext, AutonomyRegistry};
+use super::{AdapterBuildContext, VehicleAdapterRegistry};
 use crate::simulation::config::structs::AckermannAdapterConfig;
 use crate::simulation::plugins::vehicles::ackermann::adapter::{
     DefaultAckermannAdapter, DualSisoPidAdapter,
@@ -16,8 +15,9 @@ pub struct DefaultAdaptersPlugin;
 
 impl Plugin for DefaultAdaptersPlugin {
     fn build(&self, app: &mut App) {
-        let Some(mut registry) = app.world_mut().get_resource_mut::<AutonomyRegistry>() else {
-            error!("DefaultAdaptersPlugin: AutonomyRegistry resource not found. Add AutonomyRegistryPlugin first.");
+        let Some(mut registry) = app.world_mut().get_resource_mut::<VehicleAdapterRegistry>()
+        else {
+            error!("DefaultAdaptersPlugin: VehicleAdapterRegistry resource not found. Add AutonomyRegistryPlugin first.");
             return;
         };
 

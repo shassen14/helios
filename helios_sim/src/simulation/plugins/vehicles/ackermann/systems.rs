@@ -7,7 +7,7 @@ use crate::{
             components::{ControlOutputComponent, GroundTruthState},
             transforms::{EnuBodyPose, FluVector},
         },
-        registry::{AdapterBuildContext, AutonomyRegistry},
+        registry::{AdapterBuildContext, VehicleAdapterRegistry},
     },
 };
 use avian3d::prelude::*;
@@ -35,7 +35,7 @@ pub(super) fn setup_ackermann_assets(
 pub(super) fn process_ackermann_logic(
     mut commands: Commands,
     request_query: Query<(Entity, &SpawnAgentConfigRequest)>,
-    registry: Res<AutonomyRegistry>,
+    registry: Res<VehicleAdapterRegistry>,
 ) {
     for (entity, request) in &request_query {
         if let Vehicle::Ackermann {

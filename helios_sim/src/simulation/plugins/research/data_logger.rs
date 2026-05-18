@@ -10,7 +10,7 @@ use crate::prelude::AppState;
 use crate::simulation::config::ScenarioConfig;
 use crate::simulation::core::app_state::SimulationSet;
 use crate::simulation::core::components::{ControlOutputComponent, GroundTruthState};
-use crate::simulation::plugins::autonomy::EstimatorComponent;
+use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
 
 // ---------------------------------------------------------------------------
 // Resource
@@ -62,7 +62,7 @@ fn sample_data(
     time: Res<Time>,
     query: Query<(
         &GroundTruthState,
-        Option<&EstimatorComponent>,
+        Option<&AutonomyPipelineComponent>,
         Option<&ControlOutputComponent>,
     )>,
     mut buffer: ResMut<DataLogBuffer>,
@@ -73,8 +73,8 @@ fn sample_data(
         let gt_yaw = gt.pose.rotation.euler_angles().2;
 
         let (est_x, est_y, est_yaw): (f64, f64, f64) = est_opt
-            .and_then(|e| e.0.get_state())
-            .and_then(|s| s.get_pose_isometry())
+            .and_then(|pipeline| pipeline.0.read_state())
+            .and_then(|st| st.value.get_pose_isometry())
             .map(|iso| {
                 let yaw = iso.rotation.euler_angles().2;
                 (iso.translation.x, iso.translation.y, yaw)

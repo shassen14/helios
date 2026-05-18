@@ -1,111 +1,32 @@
-//! Algorithm factory registry for spawn-time algorithm instantiation.
-//!
-//! [`AutonomyRegistry`] maps config-string keys (e.g. `"ekf"`, `"astar"`) to factory
-//! closures that produce `helios_core` trait objects. Spawning systems never name concrete
-//! types — they call `registry.build_*(key, ctx)`. Adding an algorithm = implement the
-//! trait in `helios_core` + one `register_*` call. No spawning systems change.
+// helios_sim/src/simulation/registry/mod.rs
+//
+// VehicleAdapterRegistry: sim-only registry for AckermannOutputAdapter factories.
+// All algorithm factories (estimators, mappers, controllers, etc.) live in
+// `helios_runtime::registry::AutonomyRegistry`, wrapped as `RuntimeAutonomyRegistry`.
 
 pub mod adapters;
 pub mod contexts;
-pub mod controllers;
-pub mod dynamics;
-pub mod estimators;
-pub mod mappers;
-pub mod path_followers;
-pub mod planners;
 pub mod plugin;
 
-pub use contexts::{
-    AdapterBuildContext, ControllerBuildContext, DynamicsBuildContext, DynamicsFactory,
-    EstimatorBuildContext, MapperBuildContext, PathFollowerBuildContext, PlannerBuildContext,
-};
+pub use contexts::{AdapterBuildContext, AdapterFactory};
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashMap;
 
 use bevy::prelude::Resource;
-use helios_core::{
-    control::Controller, estimation::dynamics::EstimationDynamics, estimation::StateEstimator,
-    mapping::Mapper, path_following::PathFollower, planning::GeometricPlanner,
-};
-use helios_runtime::validation::CapabilitySet;
 
 use crate::simulation::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
-use contexts::{
-    AdapterFactory, ControllerFactory, EstimatorFactory, MapperFactory, PathFollowerFactory,
-    PlannerFactory,
-};
+use contexts::AdapterFactory as AdapterFactoryAlias;
 
-/// Central registry mapping algorithm keys to factory closures.
+/// Sim-only registry for vehicle output adapters.
 ///
-/// Populated during `Plugin::build()` before any scene-building systems run.
-/// Spawning systems call `build_estimator(key, ctx)`, `build_mapper(key, ctx)`, etc.
-/// to get boxed trait objects without referencing concrete types. An unregistered key
-/// returns `Err(String)` — log with `error!` and skip spawning rather than panicking.
+/// Algorithm factories (EKF, mappers, planners, etc.) are in
+/// `RuntimeAutonomyRegistry` (wraps `helios_runtime::registry::AutonomyRegistry`).
 #[derive(Resource, Default)]
-pub struct AutonomyRegistry {
-    pub estimators: HashMap<String, EstimatorFactory>,
-    pub dynamics: HashMap<String, DynamicsFactory>,
-    pub mappers: HashMap<String, MapperFactory>,
-    pub controllers: HashMap<String, ControllerFactory>,
-    pub planners: HashMap<String, PlannerFactory>,
-    pub adapters: HashMap<String, AdapterFactory>,
-    pub path_followers: HashMap<String, PathFollowerFactory>,
+pub struct VehicleAdapterRegistry {
+    pub adapters: HashMap<String, AdapterFactoryAlias>,
 }
 
-impl AutonomyRegistry {
-    pub fn register_estimator<F>(&mut self, key: &str, factory: F) -> &mut Self
-    where
-        F: Fn(EstimatorBuildContext) -> Result<Box<dyn StateEstimator>, String>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.estimators.insert(key.to_string(), Arc::new(factory));
-        self
-    }
-
-    pub fn register_dynamics<F>(&mut self, key: &str, factory: F) -> &mut Self
-    where
-        F: Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.dynamics.insert(key.to_string(), Arc::new(factory));
-        self
-    }
-
-    pub fn register_mapper<F>(&mut self, key: &str, factory: F) -> &mut Self
-    where
-        F: Fn(MapperBuildContext) -> Result<Box<dyn Mapper>, String> + Send + Sync + 'static,
-    {
-        self.mappers.insert(key.to_string(), Arc::new(factory));
-        self
-    }
-
-    pub fn register_controller<F>(&mut self, key: &str, factory: F) -> &mut Self
-    where
-        F: Fn(ControllerBuildContext) -> Result<Box<dyn Controller>, String>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.controllers.insert(key.to_string(), Arc::new(factory));
-        self
-    }
-
-    pub fn register_planner<F>(&mut self, key: &str, factory: F) -> &mut Self
-    where
-        F: Fn(PlannerBuildContext) -> Result<Box<dyn GeometricPlanner>, String>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.planners.insert(key.to_string(), Arc::new(factory));
-        self
-    }
-
+impl VehicleAdapterRegistry {
     pub fn register_adapter<F>(&mut self, key: &str, factory: F) -> &mut Self
     where
         F: Fn(AdapterBuildContext) -> Result<Box<dyn AckermannOutputAdapter>, String>
@@ -113,75 +34,9 @@ impl AutonomyRegistry {
             + Sync
             + 'static,
     {
-        self.adapters.insert(key.to_string(), Arc::new(factory));
+        self.adapters
+            .insert(key.to_string(), std::sync::Arc::new(factory));
         self
-    }
-
-    pub fn register_path_follower<F>(&mut self, key: &str, factory: F) -> &mut Self
-    where
-        F: Fn(PathFollowerBuildContext) -> Result<Box<dyn PathFollower>, String>
-            + Send
-            + Sync
-            + 'static,
-    {
-        self.path_followers
-            .insert(key.to_string(), Arc::new(factory));
-        self
-    }
-
-    pub fn build_estimator(
-        &self,
-        key: &str,
-        ctx: EstimatorBuildContext,
-    ) -> Result<Box<dyn StateEstimator>, String> {
-        self.estimators
-            .get(key)
-            .ok_or_else(|| format!("No estimator registered for '{key}'."))
-            .and_then(|f| f(ctx))
-    }
-
-    pub fn build_dynamics(
-        &self,
-        key: &str,
-        ctx: DynamicsBuildContext,
-    ) -> Result<Box<dyn EstimationDynamics>, String> {
-        self.dynamics
-            .get(key)
-            .ok_or_else(|| format!("No dynamics registered for '{key}'."))
-            .and_then(|f| f(ctx))
-    }
-
-    pub fn build_mapper(
-        &self,
-        key: &str,
-        ctx: MapperBuildContext,
-    ) -> Result<Box<dyn Mapper>, String> {
-        self.mappers
-            .get(key)
-            .ok_or_else(|| format!("No mapper registered for '{key}'."))
-            .and_then(|f| f(ctx))
-    }
-
-    pub fn build_controller(
-        &self,
-        key: &str,
-        ctx: ControllerBuildContext,
-    ) -> Result<Box<dyn Controller>, String> {
-        self.controllers
-            .get(key)
-            .ok_or_else(|| format!("No controller registered for '{key}'."))
-            .and_then(|f| f(ctx))
-    }
-
-    pub fn build_planner(
-        &self,
-        key: &str,
-        ctx: PlannerBuildContext,
-    ) -> Result<Box<dyn GeometricPlanner>, String> {
-        self.planners
-            .get(key)
-            .ok_or_else(|| format!("No planner registered for '{key}'."))
-            .and_then(|f| f(ctx))
     }
 
     pub fn build_adapter(
@@ -193,37 +48,5 @@ impl AutonomyRegistry {
             .get(key)
             .ok_or_else(|| format!("No adapter registered for '{key}'."))
             .and_then(|f| f(ctx))
-    }
-
-    pub fn build_path_follower(
-        &self,
-        key: &str,
-        ctx: PathFollowerBuildContext,
-    ) -> Result<Box<dyn PathFollower>, String> {
-        self.path_followers
-            .get(key)
-            .ok_or_else(|| format!("No path follower registered for '{key}'."))
-            .and_then(|f| f(ctx))
-    }
-
-    /// Snapshot of all registered algorithm keys, for use with `validate_autonomy_config`.
-    pub fn capabilities(&self) -> CapabilitySet {
-        CapabilitySet {
-            estimators: self.estimators.keys().cloned().collect::<HashSet<_>>(),
-            dynamics: self.dynamics.keys().cloned().collect::<HashSet<_>>(),
-            mappers: self.mappers.keys().cloned().collect::<HashSet<_>>(),
-            controllers: self.controllers.keys().cloned().collect::<HashSet<_>>(),
-            planners: self.planners.keys().cloned().collect::<HashSet<_>>(),
-        }
-    }
-
-    /// Cheap clone of the dynamics factory map for embedding in `EstimatorBuildContext`.
-    pub fn clone_dynamics(&self) -> HashMap<String, DynamicsFactory> {
-        self.dynamics.clone()
-    }
-
-    /// Cheap clone wrapped in Arc for `ControllerBuildContext`.
-    pub fn clone_dynamics_arc(&self) -> Arc<HashMap<String, DynamicsFactory>> {
-        Arc::new(self.dynamics.clone())
     }
 }

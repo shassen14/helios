@@ -1,4 +1,3 @@
-use crate::data::messages::MeasurementData;
 use crate::data::primitives::{Control, FrameHandle, State};
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::frames::layout::STANDARD_INS_STATE_DIM;
@@ -20,21 +19,6 @@ impl EstimationDynamics for IntegratedImuModel {
     /// The control input `u` is a 6D vector: [ax, ay, az, wx, wy, wz] from the IMU.
     fn get_control_dim(&self) -> usize {
         6
-    }
-
-    /// This is the key declarative method. It checks if the provided measurement
-    /// data is an IMU reading and, if so, converts it into the control vector `u`.
-    /// Otherwise, it returns `None`.
-    fn get_control_from_measurement(&self, data: &MeasurementData) -> Option<DVector<f64>> {
-        match data {
-            // Case 1: Linear Acceleration Measurement
-            MeasurementData::LinearAcceleration(_) => None,
-            // Case 2: Angular Velocity Measurement
-            MeasurementData::AngularVelocity(_) => None,
-            // Case 3: The data is anything else (GPS, etc.). This model does not
-            // use it as a control input, so we return None.
-            _ => None,
-        }
     }
 
     fn get_derivatives(&self, x: &State, u: &Control, _t: f64) -> State {
@@ -154,7 +138,6 @@ mod tests {
     //!   stationary (position and velocity remain near zero).
 
     use super::*;
-    use crate::data::messages::MeasurementData;
     use crate::data::primitives::FrameHandle;
     use crate::utils::integrators::RK4;
     use nalgebra::DVector;
@@ -185,20 +168,6 @@ mod tests {
         let mut u = DVector::zeros(6);
         u[2] = g;
         u
-    }
-
-    // ── Control routing ──────────────────────────────────────────────────────
-    // TODO: add control_routing_accepts_linear_acceleration and
-    // control_routing_accepts_angular_velocity tests once
-    // get_control_from_measurement is redesigned to accumulate separate
-    // LinearAcceleration + AngularVelocity messages into a 6D control vector.
-
-    #[test]
-    fn control_routing_ignores_gps() {
-        // GPS data is not a control input for this dynamics model.
-        let model = make_model();
-        let data = MeasurementData::GpsPosition(Default::default());
-        assert!(model.get_control_from_measurement(&data).is_none());
     }
 
     // ── Derivatives ──────────────────────────────────────────────────────────

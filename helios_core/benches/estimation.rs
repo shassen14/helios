@@ -1,16 +1,11 @@
-use std::any::Any;
-use std::collections::HashMap;
-
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
-use nalgebra::{DMatrix, DVector, Isometry3, Vector3};
+use nalgebra::{DMatrix, DVector, Isometry3};
 
-use helios_core::data::messages::{MeasurementData, MeasurementMessage};
 use helios_core::data::primitives::{FrameHandle, TfProvider};
-use helios_core::data::sensor;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
-use helios_core::estimation::measurement::Measurement;
-use helios_core::estimation::{EstimatorInputs, FilterContext, StateEstimator};
+use helios_core::estimation::measurement::MeasurementModel;
+use helios_core::estimation::{EstimatorInputs, GaussianStateEstimator};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::prelude::EstimationDynamics;
 
@@ -37,10 +32,6 @@ impl EstimationDynamics for ConstantVelocity2D {
         0
     }
 
-    fn get_control_from_measurement(&self, _data: &MeasurementData) -> Option<DVector<f64>> {
-        None
-    }
-
     fn get_derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
         let mut xdot = DVector::zeros(4);
         xdot[0] = x[2];
@@ -62,59 +53,32 @@ impl EstimationDynamics for ConstantVelocity2D {
 }
 
 #[derive(Debug, Clone)]
-struct Position2DMeasurement {
-    r: DMatrix<f64>,
-}
+struct Position2DMeasurement;
 
-impl Measurement for Position2DMeasurement {
-    fn get_measurement_layout(&self) -> Vec<StateVariable> {
-        vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-        ]
-    }
-
-    fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
-        if let MeasurementData::GpsPosition(v) = data {
-            Some(DVector::from_row_slice(&[v.position.x, v.position.y]))
-        } else {
-            None
-        }
+impl MeasurementModel for Position2DMeasurement {
+    fn dim(&self) -> usize {
+        2
     }
 
     fn predict_measurement(
         &self,
         state: &FrameAwareState,
-        message: &MeasurementMessage,
-        _tf: &dyn TfProvider,
+        _tf: Option<&dyn TfProvider>,
     ) -> Option<DVector<f64>> {
-        if !matches!(&message.data, MeasurementData::GpsPosition(_)) {
-            return None;
-        }
         Some(DVector::from_row_slice(&[
             state.state.vector[0],
             state.state.vector[1],
         ]))
     }
 
-    fn calculate_jacobian(&self, state: &FrameAwareState, _tf: &dyn TfProvider) -> DMatrix<f64> {
+    fn jacobian(&self, state: &FrameAwareState, _tf: Option<&dyn TfProvider>) -> DMatrix<f64> {
         let n = state.dim();
         let mut h = DMatrix::zeros(2, n);
         h[(0, 0)] = 1.0;
         h[(1, 1)] = 1.0;
         h
     }
-
-    fn get_r(&self) -> &DMatrix<f64> {
-        &self.r
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
-
-const SENSOR: FrameHandle = FrameHandle(1);
 
 fn make_state() -> FrameAwareState {
     let layout = vec![
@@ -131,35 +95,26 @@ fn make_state() -> FrameAwareState {
 fn make_ekf() -> ExtendedKalmanFilter {
     let state = make_state();
     let q = DMatrix::identity(4, 4) * 0.01;
-    let r = DMatrix::identity(2, 2) * 0.1;
-    let mut models: HashMap<FrameHandle, Box<dyn Measurement>> = HashMap::new();
-    models.insert(SENSOR, Box::new(Position2DMeasurement { r }));
-    ExtendedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D), models)
+    ExtendedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D))
 }
 
 fn make_ukf() -> UnscentedKalmanFilter {
     let state = make_state();
     let q = DMatrix::identity(4, 4) * 0.01;
-    let r = DMatrix::identity(2, 2) * 0.1;
-    let mut models: HashMap<FrameHandle, Box<dyn Measurement>> = HashMap::new();
-    models.insert(SENSOR, Box::new(Position2DMeasurement { r }));
     let params = UkfParams {
         alpha: 1e-3,
         beta: 2.0,
         kappa: 0.0,
     };
-    UnscentedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D), models, params)
+    UnscentedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D), params)
 }
 
-fn gps_message(x: f64, y: f64) -> MeasurementMessage {
-    MeasurementMessage {
-        agent_handle: FrameHandle::default(),
-        sensor_handle: SENSOR,
-        timestamp: 0.1,
-        data: MeasurementData::GpsPosition(sensor::GpsPosition {
-            position: Vector3::new(x, y, 0.0),
-        }),
-    }
+fn gps_z(x: f64, y: f64) -> DVector<f64> {
+    DVector::from_row_slice(&[x, y])
+}
+
+fn gps_r() -> DMatrix<f64> {
+    DMatrix::identity(2, 2) * 0.1
 }
 
 // =========================================================================
@@ -169,9 +124,10 @@ fn gps_message(x: f64, y: f64) -> MeasurementMessage {
 fn bench_ekf(c: &mut Criterion) {
     let u = DVector::zeros(0);
     let tf = IdentityTf;
-    let ctx_with_tf = FilterContext { tf: Some(&tf) };
     let inputs = EstimatorInputs { control: u };
-    let msg = gps_message(1.0, 0.0);
+    let z = gps_z(1.0, 0.0);
+    let r = gps_r();
+    let model = Position2DMeasurement;
 
     let mut group = c.benchmark_group("ekf");
 
@@ -182,7 +138,7 @@ fn bench_ekf(c: &mut Criterion) {
 
     group.bench_function("update", |b| {
         let mut ekf = make_ekf();
-        b.iter(|| ekf.update(&msg, &ctx_with_tf));
+        b.iter(|| ekf.update(&z, &model, &r, Some(&tf)));
     });
 
     group.finish();
@@ -191,9 +147,10 @@ fn bench_ekf(c: &mut Criterion) {
 fn bench_ukf(c: &mut Criterion) {
     let u = DVector::zeros(0);
     let tf = IdentityTf;
-    let ctx_with_tf = FilterContext { tf: Some(&tf) };
     let inputs = EstimatorInputs { control: u };
-    let msg = gps_message(1.0, 0.0);
+    let z = gps_z(1.0, 0.0);
+    let r = gps_r();
+    let model = Position2DMeasurement;
 
     let mut group = c.benchmark_group("ukf");
 
@@ -204,7 +161,7 @@ fn bench_ukf(c: &mut Criterion) {
 
     group.bench_function("update", |b| {
         let mut ukf = make_ukf();
-        b.iter(|| ukf.update(&msg, &ctx_with_tf));
+        b.iter(|| ukf.update(&z, &model, &r, Some(&tf)));
     });
 
     group.finish();

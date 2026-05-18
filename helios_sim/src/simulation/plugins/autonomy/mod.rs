@@ -1,30 +1,23 @@
 // helios_sim/src/plugins/autonomy/mod.rs
 //
-// EstimationPlugin   — spawning + sensor routing + EKF/UKF + odom frames + telemetry.
-// MappingPlugin      — architectural seam (run_mapping lives in EstimationPlugin's chain).
-// AutonomyPlugin     — trivial combiner kept for backward compatibility.
+// EstimationPlugin — spawning + pipeline tick + odom frames.
+// AutonomyPlugin   — thin wrapper re-exporting EstimationPlugin.
 
 use crate::prelude::*;
 
-mod components;
+pub mod components;
 pub mod systems;
 
 pub use components::{
-    ControlPipelineComponent, EstimatorComponent, MapperComponent, OdomFrameOf,
-    PathFollowingComponent, PathFollowingOutputComponent,
+    AutonomyPipelineComponent, OdomFrameOf, PathFollowingOutputComponent, SensorPublishChannel,
 };
 
-use systems::{
-    route_sensor_messages, run_estimation, run_mapping, spawn_autonomy_pipeline, spawn_odom_frames,
-    update_odom_frames,
-};
+use systems::{run_pipeline_tick, spawn_autonomy_pipeline, spawn_odom_frames, update_odom_frames};
 
 // =========================================================================
 // == EstimationPlugin
 // =========================================================================
 
-/// Handles spawning of all agent pipeline components, sensor routing, EKF/UKF,
-/// odom frame maintenance, and telemetry.
 pub struct EstimationPlugin;
 
 impl Plugin for EstimationPlugin {
@@ -38,7 +31,7 @@ impl Plugin for EstimationPlugin {
         );
         app.add_systems(
             FixedUpdate,
-            (route_sensor_messages, run_estimation, update_odom_frames)
+            (run_pipeline_tick, update_odom_frames)
                 .chain()
                 .in_set(SimulationSet::Estimation)
                 .run_if(in_state(AppState::Running)),
@@ -47,37 +40,13 @@ impl Plugin for EstimationPlugin {
 }
 
 // =========================================================================
-// == MappingPlugin
+// == AutonomyPlugin
 // =========================================================================
 
-/// Owns the mapping subsystem — `run_mapping` in `SimulationSet::WorldModeling`.
-///
-/// `WorldModeling` runs before `Estimation` in the schedule, so `run_mapping`
-/// reads the mailbox filled by the previous tick's `route_sensor_messages`.
-/// This one-tick latency is standard practice in robotics mapping.
-pub struct MappingPlugin;
-
-impl Plugin for MappingPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(
-            FixedUpdate,
-            run_mapping
-                .in_set(SimulationSet::WorldModeling)
-                .run_if(in_state(AppState::Running)),
-        );
-    }
-}
-
-// =========================================================================
-// == AutonomyPlugin (backward-compatibility combiner)
-// =========================================================================
-
-/// Combined estimation + mapping plugin. Identical behavior to the original
-/// monolithic `AutonomyPlugin`.
 pub struct AutonomyPlugin;
 
 impl Plugin for AutonomyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((EstimationPlugin, MappingPlugin));
+        app.add_plugins(EstimationPlugin);
     }
 }

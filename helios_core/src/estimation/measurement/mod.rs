@@ -1,93 +1,75 @@
 //! Measurement model trait and concrete sensor implementations.
 //!
-//! Each sensor type implements [`Measurement`], which describes the function
+//! Each sensor type implements [`MeasurementModel`], which describes the function
 //! `z = h(x) + v` — the ideal measurement predicted from filter state, plus noise.
 //!
 //! # Implementing a New Sensor Model
 //!
-//! 1. Create `estimation/measurement/my_sensor.rs`, implement [`Measurement`].
-//! 2. `predict_measurement` must return `None` if `message.data` is the wrong variant — never panic.
-//! 3. Re-export from this `mod.rs`.
-//! 4. Register the sensor entity's handle and model in the EKF/UKF `measurement_models` map
-//!    inside the corresponding `helios_sim` spawning system.
+//! 1. Create `estimation/measurement/my_sensor.rs`, implement [`MeasurementModel`].
+//! 2. `predict_measurement` returns `None` when the model cannot produce a
+//!    prediction for this state (e.g. a required TF is missing). Never panic.
+//! 3. The default [`MeasurementModel::jacobian`] computes `H` via finite differences
+//!    on `predict_measurement`. Override only when an analytic Jacobian is faster
+//!    or more accurate.
+//! 4. Re-export from this `mod.rs`.
 
-use crate::data::messages::{MeasurementData, MeasurementMessage};
 use crate::data::primitives::TfProvider;
-use crate::frames::{FrameAwareState, StateVariable};
-use dyn_clone::DynClone;
+use crate::frames::FrameAwareState;
 use nalgebra::{DMatrix, DVector};
-use std::any::Any;
-use std::fmt::Debug;
 
 /// Mathematical model of a sensor: `z = h(x) + v`.
 ///
-/// A `Measurement` implementation describes one physical sensor type — GPS,
-/// IMU, magnetometer, etc. It is registered with a filter alongside the
-/// sensor's [`FrameHandle`](crate::data::primitives::FrameHandle) so the filter can
-/// dispatch measurements to the correct model in O(1).
-///
-/// `Measurement` objects are cloneable (`DynClone`) so the filter can be
-/// deep-copied for multi-hypothesis tracking without re-building the model map.
-pub trait Measurement: DynClone + Debug + Send + Sync {
-    /// Layout of the measurement vector `z` expressed in the sensor's native frame.
-    ///
-    /// Used by higher-level tooling to introspect which state variables this
-    /// sensor observes. Not used directly by EKF/UKF internals.
-    fn get_measurement_layout(&self) -> Vec<StateVariable>;
-
-    /// Converts a generic [`MeasurementData`] enum into the typed measurement vector `z`.
-    ///
-    /// This method is the primary dispatch gate: if the incoming data matches
-    /// this model's sensor type, return `Some(z)`. Otherwise return `None` to
-    /// indicate that this model does not apply.
-    ///
-    /// # Returns
-    /// * `Some(z)` — this model handles the data; `z` has dimension `m`.
-    /// * `None` — wrong sensor type; the filter will skip this model.
-    fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>>;
-
-    /// The measurement noise covariance matrix `R` (m × m).
-    ///
-    /// Built from `noise_stddev` entries in the sensor TOML config at spawn time.
-    /// Never hardcode noise values here — they must come from config.
-    fn get_r(&self) -> &DMatrix<f64>;
-
+/// Describes the deterministic part of a sensor — the function that maps filter
+/// state to an ideal measurement. Noise covariance `R` is **not** part of the
+/// model; it lives at the call site (handler / standalone caller), is constructed
+/// per physical sensor, and is passed in per `update`. This split lets one model
+/// serve N sensors of differing quality and lets adaptive callers vary `R` per
+/// reading without mutating the model.
+pub trait MeasurementModel: Send + Sync {
     /// Computes the ideal predicted measurement `z_pred = h(x)` from the filter state.
     ///
-    /// This is called during the EKF/UKF update step to form the innovation
-    /// `y = z - z_pred`. The `tf` argument provides sensor-to-world transforms
-    /// needed for models like IMU that must rotate measurements into body frame.
-    ///
-    /// Return `None` if `message.data` is the wrong variant — never panic on mismatch.
-    ///
-    /// # Arguments
-    /// * `filter_state` — current filter state `x`.
-    /// * `message` — the incoming measurement event; use `message.data` to check variant.
-    /// * `tf` — transform provider for frame conversions.
+    /// Used during the EKF/UKF update to form the innovation `y = z - z_pred`.
+    /// `tf` is `None` when no transform tree is available; models that need TF for
+    /// a frame conversion should return `None` in that case and the filter will
+    /// silently skip the update.
     fn predict_measurement(
         &self,
-        filter_state: &FrameAwareState,
-        message: &MeasurementMessage,
-        tf: &dyn TfProvider,
+        state: &FrameAwareState,
+        tf: Option<&dyn TfProvider>,
     ) -> Option<DVector<f64>>;
 
-    /// Computes the measurement Jacobian `H = ∂h/∂x` (m × n).
+    /// Measurement Jacobian `H = ∂h/∂x` of shape `(dim(), state.dim())`.
     ///
-    /// Used by the EKF for linearization. For nonlinear measurement functions,
-    /// use finite differences with adaptive epsilon `ε = 1e-5 * (1 + |xᵢ|)`.
-    /// The UKF does not call this method.
-    fn calculate_jacobian(
-        &self,
-        filter_state: &FrameAwareState,
-        context: &dyn TfProvider,
-    ) -> DMatrix<f64>;
+    /// Default impl computes `H` via central finite differences on
+    /// [`predict_measurement`] using adaptive epsilon `ε = 1e-5 · (1 + |xᵢ|)`.
+    /// Override for analytic Jacobians where performance or accuracy matters.
+    fn jacobian(&self, state: &FrameAwareState, tf: Option<&dyn TfProvider>) -> DMatrix<f64> {
+        let m = self.dim();
+        let n = state.dim();
+        let mut h = DMatrix::zeros(m, n);
+        let Some(z_base) = self.predict_measurement(state, tf) else {
+            return h;
+        };
+        if z_base.nrows() != m {
+            return h;
+        }
+        for j in 0..n {
+            let eps = 1e-5 * (1.0 + state.state.vector[j].abs());
+            let mut perturbed = state.clone();
+            perturbed.state.vector[j] += eps;
+            if let Some(z_pert) = self.predict_measurement(&perturbed, tf) {
+                if z_pert.nrows() == m {
+                    let col = (z_pert - &z_base) / eps;
+                    h.column_mut(j).copy_from(&col);
+                }
+            }
+        }
+        h
+    }
 
-    /// Dynamic downcast for algorithm-specific access or test introspection.
-    fn as_any(&self) -> &dyn Any;
+    /// Dimension of the measurement vector `z`.
+    fn dim(&self) -> usize;
 }
-
-// This macro automatically generates the implementation of `Clone` for `Box<dyn Measurement>`.
-dyn_clone::clone_trait_object!(Measurement);
 
 pub mod accelerometer;
 pub mod gps;

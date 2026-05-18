@@ -1,37 +1,23 @@
 // helios_sim/src/simulation/plugins/autonomy/components.rs
 
-use bevy::{
-    prelude::{Component, Entity},
-    time::{Timer, TimerMode},
-};
+use bevy::prelude::{Component, Entity};
 use helios_core::data::primitives::TrajectoryPoint;
-use helios_runtime::estimation::EstimationDriver;
-use helios_runtime::mapping::MapDriver;
-use helios_runtime::pipeline::{ControlCore, PathFollowingCore};
+use helios_runtime::pipeline::AutonomyPipeline;
 
-/// Holds the estimation stage for an agent: estimator/SLAM + trackers + predict/update logic.
-/// Systems that need estimated state query this component.
+/// Holds the fully-assembled autonomy pipeline for an agent.
+/// Written at spawn time by `spawn_autonomy_pipeline`. Ticked every frame
+/// by `run_pipeline_tick` in `SimulationSet::Estimation`.
 #[derive(Component)]
-pub struct EstimatorComponent(pub Box<dyn EstimationDriver>);
+pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
 
-/// Holds the mapping stage for an agent: leveled mappers.
-/// Systems that need map data query this component.
-#[derive(Component)]
-pub struct MapperComponent(pub Box<dyn MapDriver>);
-
-/// Holds the control stage for an agent: planners + controllers.
-/// `ControlPlugin` calls `step_controllers()` each tick.
-#[derive(Component)]
-pub struct ControlPipelineComponent(pub ControlCore);
-
-/// Holds the path following stage for an agent when one is configured.
-/// Absent on agents that have no `path_follower` in their `AutonomyStack`.
-#[derive(Component)]
-pub struct PathFollowingComponent(pub PathFollowingCore);
+/// Declares the bus channel name this sensor publishes on.
+/// Attached to GPS, magnetometer, and LiDAR sensor child entities at spawn time.
+/// Queried by `spawn_autonomy_pipeline` to build `sensor_frame_handles` for `build_pipeline`.
+#[derive(Component, Clone)]
+pub struct SensorPublishChannel(pub String);
 
 /// The TrajectoryPoint produced by path following this tick.
-/// Always present on agents with a control pipeline. `None` when no path is active
-/// or no path follower is configured.
+/// Kept as a component for downstream consumers (vehicle adapters, debug gizmos).
 #[derive(Component, Default)]
 pub struct PathFollowingOutputComponent(pub Option<TrajectoryPoint>);
 
@@ -42,17 +28,3 @@ pub struct PathFollowingOutputComponent(pub Option<TrajectoryPoint>);
 /// the pipeline's current pose estimate.
 #[derive(Component)]
 pub struct OdomFrameOf(pub Entity);
-
-/// Rate-limit timer for the mapper pose update.
-/// Fires at the mapper's configured Hz so the grid recenters periodically.
-#[derive(Component)]
-pub struct ModuleTimer(pub Timer);
-
-impl ModuleTimer {
-    pub fn from_hz(hz: f32) -> Self {
-        let mut timer = Timer::from_seconds(1.0 / hz, TimerMode::Repeating);
-        // Tick once immediately so it fires on the very first frame.
-        timer.tick(timer.duration());
-        Self(timer)
-    }
-}

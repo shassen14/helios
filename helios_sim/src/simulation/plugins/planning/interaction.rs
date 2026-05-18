@@ -11,7 +11,7 @@ use nalgebra::Vector2;
 
 use crate::simulation::core::events::GoalCommandEvent;
 use crate::simulation::core::transforms::EnuVector;
-use crate::simulation::plugins::autonomy::ControlPipelineComponent;
+use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
 
 // =========================================================================
 // == Resources ==
@@ -37,7 +37,7 @@ pub fn agent_select_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     windows: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
-    agents: Query<(Entity, &GlobalTransform, &Name), With<ControlPipelineComponent>>,
+    agents: Query<(Entity, &GlobalTransform, &Name), With<AutonomyPipelineComponent>>,
     mut selected: ResMut<SelectedAgent>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {

@@ -1,65 +1,39 @@
-use nalgebra::{DMatrix, DVector, Vector3};
-use std::any::Any;
-use std::fmt::Debug;
+use nalgebra::{DVector, Vector3};
 
-use crate::data::messages::{MeasurementData, MeasurementMessage};
 use crate::data::primitives::{FrameHandle, TfProvider};
-use crate::estimation::measurement::Measurement;
+use crate::estimation::measurement::MeasurementModel;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
 #[derive(Debug, Clone)]
 pub struct AccelerometerModel {
     pub agent_handle: FrameHandle,
     pub sensor_handle: FrameHandle,
-    pub r_matrix: DMatrix<f64>, // 3x3 measurement noise covariance
     pub gravity_magnitude: f64,
 }
 
-impl Measurement for AccelerometerModel {
-    fn get_measurement_layout(&self) -> Vec<StateVariable> {
-        let sensor_frame = FrameId::Sensor(self.sensor_handle);
-        vec![
-            StateVariable::Ax(sensor_frame.clone()),
-            StateVariable::Ay(sensor_frame.clone()),
-            StateVariable::Az(sensor_frame.clone()),
-        ]
+impl MeasurementModel for AccelerometerModel {
+    fn dim(&self) -> usize {
+        3
     }
 
-    fn get_measurement_vector(&self, data: &MeasurementData) -> Option<DVector<f64>> {
-        if let MeasurementData::LinearAcceleration(accel) = data {
-            Some(DVector::from_row_slice(accel.value.as_slice()))
-        } else {
-            None
-        }
-    }
-
-    /// Predicts the 3-element measurement vector [ax, ay, az].
-    /// It returns `Some` only if the input message contains `LinearAcceleration` data.
+    /// Predicts the proper acceleration measured by an accelerometer in its sensor frame.
+    ///
+    /// Returns `None` when `tf` is unavailable — the body→sensor transform is
+    /// required to project the predicted acceleration into the sensor frame.
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,
-        message: &MeasurementMessage,
-        tf: &dyn TfProvider,
+        tf: Option<&dyn TfProvider>,
     ) -> Option<DVector<f64>> {
-        // --- 1. Check if this model can handle the data ---
-        // This model only processes `LinearAcceleration` data. It ignores everything else.
-        if !matches!(&message.data, MeasurementData::LinearAcceleration(_)) {
-            return None;
-        }
-
-        // --- At this point, we know we should proceed. ---
-        let mut z_pred = DVector::zeros(3);
+        let tf = tf?;
         let body_frame = FrameId::Body(self.agent_handle);
 
-        // --- 2. Get Transform Data ---
         let tf_sensor_from_body = tf
             .get_transform(self.agent_handle, self.sensor_handle)
             .unwrap_or_default();
         let r_body_to_sensor = tf_sensor_from_body.translation.vector;
         let rot_sensor_from_body = tf_sensor_from_body.rotation;
 
-        // --- 3. Extract States from Filter ---
-        // Get the filter's current belief about its own state.
         let linear_accel_body = filter_state
             .get_vector3(&StateVariable::Ax(body_frame.clone()))
             .unwrap_or_default();
@@ -71,7 +45,6 @@ impl Measurement for AccelerometerModel {
             .unwrap_or_default();
         let orientation_body_to_world = filter_state.get_orientation().unwrap_or_default();
 
-        // --- 4. Predict Linear Acceleration ---
         let tangential_accel = angular_accel_body.cross(&r_body_to_sensor);
         let centripetal_accel = angular_vel_body.cross(&angular_vel_body.cross(&r_body_to_sensor));
         let total_kinematic_accel_at_sensor =
@@ -83,70 +56,19 @@ impl Measurement for AccelerometerModel {
 
         let proper_accel_in_body_frame = total_kinematic_accel_at_sensor - gravity_effect_in_body;
         let predicted_accel = rot_sensor_from_body.inverse() * proper_accel_in_body_frame;
+
+        let mut z_pred = DVector::zeros(3);
         z_pred.fixed_rows_mut::<3>(0).copy_from(&predicted_accel);
-
-        // Since we successfully processed the data, return the prediction.
         Some(z_pred)
-    }
-
-    /// Calculates the Jacobian H using numerical differentiation.
-    fn calculate_jacobian(
-        &self,
-        filter_state: &FrameAwareState,
-        tf: &dyn TfProvider,
-    ) -> DMatrix<f64> {
-        // This numerical implementation is robust and works well here.
-        let state_dim = filter_state.dim();
-        let mut h_jac = DMatrix::zeros(3, state_dim);
-        let epsilon = 1e-8;
-
-        // We need a dummy message to pass to predict_measurement.
-        // The data variant just needs to be the one this model accepts.
-        let dummy_message = MeasurementMessage {
-            agent_handle: self.agent_handle,
-            sensor_handle: self.sensor_handle,
-            timestamp: 0.0,
-            data: MeasurementData::LinearAcceleration(Default::default()),
-        };
-
-        // The baseline prediction must be valid for the subtraction to work.
-        let z_base = match self.predict_measurement(filter_state, &dummy_message, tf) {
-            Some(z) => z,
-            None => return h_jac, // Should not happen if called correctly
-        };
-
-        for j in 0..state_dim {
-            let mut perturbed_state = filter_state.clone();
-            perturbed_state.state.vector[j] += epsilon;
-
-            if let Some(z_perturbed) =
-                self.predict_measurement(&perturbed_state, &dummy_message, tf)
-            {
-                let derivative_column = (z_perturbed - &z_base) / epsilon;
-                h_jac.column_mut(j).copy_from(&derivative_column);
-            }
-        }
-
-        h_jac
-    }
-
-    fn get_r(&self) -> &DMatrix<f64> {
-        &self.r_matrix
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::messages::{MeasurementData, MeasurementMessage};
     use crate::data::primitives::{FrameHandle, TfProvider};
-    use crate::data::sensor;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use nalgebra::{DMatrix, Isometry3};
+    use nalgebra::Isometry3;
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
@@ -165,7 +87,6 @@ mod tests {
         AccelerometerModel {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
-            r_matrix: DMatrix::identity(3, 3) * 0.01,
             gravity_magnitude: 9.81,
         }
     }
@@ -185,64 +106,24 @@ mod tests {
         FrameAwareState::new(layout, 1.0, 0.0)
     }
 
-    fn accel_message() -> MeasurementMessage {
-        MeasurementMessage {
-            agent_handle: AGENT,
-            sensor_handle: SENSOR,
-            timestamp: 0.0,
-            data: MeasurementData::LinearAcceleration(Default::default()),
-        }
-    }
-
-    fn gps_message() -> MeasurementMessage {
-        MeasurementMessage {
-            agent_handle: AGENT,
-            sensor_handle: SENSOR,
-            timestamp: 0.0,
-            data: MeasurementData::GpsPosition(sensor::GpsPosition {
-                position: nalgebra::Vector3::zeros(),
-            }),
-        }
+    #[test]
+    fn dim_is_three() {
+        assert_eq!(make_model().dim(), 3);
     }
 
     #[test]
-    fn measurement_vector_accepts_linear_acceleration() {
+    fn predict_without_tf_returns_none() {
         let model = make_model();
-        let data = MeasurementData::LinearAcceleration(sensor::LinearAcceleration3D {
-            value: nalgebra::Vector3::new(1.0, 2.0, 3.0),
-        });
-        let z = model.get_measurement_vector(&data).unwrap();
-        assert_eq!(z.nrows(), 3);
-        assert!((z[0] - 1.0).abs() < 1e-12);
-        assert!((z[1] - 2.0).abs() < 1e-12);
-        assert!((z[2] - 3.0).abs() < 1e-12);
+        let state = make_state();
+        assert!(model.predict_measurement(&state, None).is_none());
     }
 
     #[test]
-    fn measurement_vector_rejects_angular_velocity() {
-        let model = make_model();
-        let data = MeasurementData::AngularVelocity(Default::default());
-        assert!(model.get_measurement_vector(&data).is_none());
-    }
-
-    #[test]
-    fn predict_rejects_non_accel_message() {
+    fn predict_with_tf_returns_some() {
         let model = make_model();
         let state = make_state();
         let tf = IdentityTf;
-        assert!(model
-            .predict_measurement(&state, &gps_message(), &tf)
-            .is_none());
-    }
-
-    #[test]
-    fn predict_returns_some_for_accel_message() {
-        let model = make_model();
-        let state = make_state();
-        let tf = IdentityTf;
-        assert!(model
-            .predict_measurement(&state, &accel_message(), &tf)
-            .is_some());
+        assert!(model.predict_measurement(&state, Some(&tf)).is_some());
     }
 
     #[test]
@@ -250,7 +131,7 @@ mod tests {
         let model = make_model();
         let state = make_state();
         let tf = IdentityTf;
-        let h = model.calculate_jacobian(&state, &tf);
+        let h = model.jacobian(&state, Some(&tf));
         assert_eq!(h.nrows(), 3);
         assert_eq!(h.ncols(), state.dim());
     }

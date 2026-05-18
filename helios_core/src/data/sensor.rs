@@ -1,13 +1,51 @@
-// helios_core/src/data/sensor.rs
-//
 // Raw sensor payload types and the generic `SensorReading<T>` wrapper.
 // Sensor payloads (structs like `LinearAcceleration3D`, `GpsPosition`, etc.)
 // describe what a physical sensor measures. `SensorReading<T>` is the
 // timestamped envelope that carries any payload through the pipeline.
 
 use crate::data::primitives::{FrameHandle, MonotonicTime};
-use nalgebra::{Point2, Point3, Vector3};
+use nalgebra::{DVector, Point2, Point3, Vector3};
 use serde::{Deserialize, Serialize};
+
+/// Conversion from a typed sensor payload to the flat measurement vector `z` consumed
+/// by Gaussian-family filters (EKF, UKF, ESKF, IF).
+///
+/// One impl per primitive payload that maps cleanly onto `DVector<f64>`. Payloads that
+/// don't fit this shape (point clouds, images) are not `SensorPayload` — they flow
+/// through perception/mapping paths, not the Kalman update path.
+pub trait SensorPayload: 'static + Send + Sync {
+    fn to_measurement_vector(&self) -> DVector<f64>;
+}
+
+impl SensorPayload for GpsPosition {
+    fn to_measurement_vector(&self) -> DVector<f64> {
+        DVector::from_row_slice(self.position.as_slice())
+    }
+}
+
+impl SensorPayload for GpsVelocity {
+    fn to_measurement_vector(&self) -> DVector<f64> {
+        DVector::from_row_slice(self.velocity.as_slice())
+    }
+}
+
+impl SensorPayload for LinearAcceleration3D {
+    fn to_measurement_vector(&self) -> DVector<f64> {
+        DVector::from_row_slice(self.value.as_slice())
+    }
+}
+
+impl SensorPayload for AngularVelocity3D {
+    fn to_measurement_vector(&self) -> DVector<f64> {
+        DVector::from_row_slice(self.value.as_slice())
+    }
+}
+
+impl SensorPayload for MagneticField3D {
+    fn to_measurement_vector(&self) -> DVector<f64> {
+        DVector::from_row_slice(self.value.as_slice())
+    }
+}
 
 /// 3-axis linear acceleration (m/s²) in the sensor's FLU frame.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -115,5 +153,27 @@ mod tests {
         let mut cloud = PointCloud3D::default();
         cloud.points.push(LidarPoint3D::default());
         assert_eq!(cloud.points.len(), 1);
+    }
+
+    #[test]
+    fn sensor_payload_gps_position_yields_xyz() {
+        let p = GpsPosition {
+            position: Vector3::new(1.0, 2.0, 3.0),
+        };
+        let z = p.to_measurement_vector();
+        assert_eq!(z.nrows(), 3);
+        assert!((z[0] - 1.0).abs() < 1e-12);
+        assert!((z[1] - 2.0).abs() < 1e-12);
+        assert!((z[2] - 3.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn sensor_payload_linear_acceleration_yields_xyz() {
+        let a = LinearAcceleration3D {
+            value: Vector3::new(0.1, 0.2, 9.8),
+        };
+        let z = a.to_measurement_vector();
+        assert_eq!(z.nrows(), 3);
+        assert!((z[2] - 9.8).abs() < 1e-12);
     }
 }

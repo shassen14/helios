@@ -4,10 +4,9 @@
 //! and optionally overrides `calculate_jacobian`. The default `propagate` implementation
 //! delegates to an `Integrator` (prefer RK4). Concrete models: `integrated_imu`.
 
-use crate::data::messages::MeasurementData;
 use crate::data::primitives::{Control, State};
 use crate::utils::integrators::Integrator;
-use nalgebra::{DMatrix, DVector};
+use nalgebra::DMatrix;
 use std::fmt::Debug;
 
 /// A trait for dynamics models used within state estimators.
@@ -18,11 +17,6 @@ use std::fmt::Debug;
 pub trait EstimationDynamics: Debug + Send + Sync {
     /// Returns the number of dimensions in the control input vector `u`.
     fn get_control_dim(&self) -> usize;
-
-    /// **The key routing method.** If this model uses the given sensor data as a
-    /// driving input, it returns the corresponding control vector `u`.
-    /// Otherwise, it returns `None`.
-    fn get_control_from_measurement(&self, data: &MeasurementData) -> Option<DVector<f64>>;
 
     /// Computes the time derivative of the state vector: `x_dot = f(x, u, t)`.
     /// This is the core function describing the system's behavior.

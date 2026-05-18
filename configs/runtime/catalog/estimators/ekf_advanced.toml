@@ -1,0 +1,25 @@
+# configs/runtime/catalog/estimators/ekf_advanced.toml
+# Advanced EKF — ultra-low-noise IMU, pro GPS + pro magnetometer aiding.
+kind = "Ekf"
+
+[config]
+[config.dynamics]
+type = "IntegratedImu"
+accel_noise_stddev = 0.02
+gyro_noise_stddev = 0.001
+accel_bias_instability = 0.005
+gyro_bias_instability = 0.0005
+
+# GPS aiding — r_diag = noise_stddev² for gps_pro [0.02, 0.02, 0.05]
+[[config.aiding]]
+sensor_payload = "GpsPosition"
+input_channel = "sensor.gps.primary"
+r_diag = [0.0004, 0.0004, 0.0025]
+model = { kind = "gps_position" }
+
+# Magnetometer aiding — r_diag = noise_stddev² for magnetometer_pro [0.005, 0.005, 0.005]
+[[config.aiding]]
+sensor_payload = "MagneticField3D"
+input_channel = "sensor.mag.body"
+r_diag = [0.000025, 0.000025, 0.000025]
+model = { kind = "magnetometer", magnetic_field_enu = [0.0, 1.0, 0.0] }

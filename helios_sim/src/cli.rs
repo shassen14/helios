@@ -13,7 +13,7 @@ pub struct Cli {
     #[arg(
         short,
         long,
-        default_value = "configs/scenarios/00_tutorial_showcase.toml"
+        default_value = "configs/sim/scenarios/00_tutorial_showcase.toml"
     )]
     pub scenario: PathBuf,
 

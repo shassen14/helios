@@ -1,11 +1,16 @@
 use std::collections::HashSet;
 
-use crate::config::{AutonomyStack, ControllerConfig};
+use crate::config::{AutonomyStack, ControllerConfig, EstimatorConfig};
 
-/// Snapshot of algorithm keys registered in each category.
+/// Snapshot of algorithm keys registered in each family.
+///
+/// Family-granular so the validator distinguishes "no Gaussian estimator
+/// named X" from "no particle estimator named X" — important once both
+/// families have implementations.
 pub struct CapabilitySet {
-    pub estimators: HashSet<String>,
+    pub gaussian_estimators: HashSet<String>,
     pub dynamics: HashSet<String>,
+    pub measurement_models: HashSet<String>,
     pub mappers: HashSet<String>,
     pub controllers: HashSet<String>,
     pub planners: HashSet<String>,
@@ -14,7 +19,8 @@ pub struct CapabilitySet {
 /// Structured validation failure.
 #[derive(Debug)]
 pub enum ConfigValidationError {
-    UnknownEstimator {
+    UnknownGaussianEstimator {
+        instance: String,
         kind: String,
     },
     UnknownDynamics {
@@ -33,13 +39,24 @@ pub enum ConfigValidationError {
     UnknownPlanner {
         kind: String,
     },
+    UnknownMeasurementModel {
+        estimator_instance: String,
+        model_kind: String,
+    },
+    UnknownSensorPayload {
+        estimator_instance: String,
+        payload_kind: String,
+    },
 }
 
 impl std::fmt::Display for ConfigValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConfigValidationError::UnknownEstimator { kind } => {
-                write!(f, "Unknown estimator kind '{kind}'")
+            ConfigValidationError::UnknownGaussianEstimator { instance, kind } => {
+                write!(
+                    f,
+                    "Unknown Gaussian estimator kind '{kind}' in estimator '{instance}'"
+                )
             }
             ConfigValidationError::UnknownDynamics { kind } => {
                 write!(f, "Unknown dynamics kind '{kind}'")
@@ -60,9 +77,41 @@ impl std::fmt::Display for ConfigValidationError {
             ConfigValidationError::UnknownPlanner { kind } => {
                 write!(f, "Unknown planner kind '{kind}'")
             }
+            ConfigValidationError::UnknownMeasurementModel {
+                estimator_instance,
+                model_kind,
+            } => {
+                write!(
+                    f,
+                    "Estimator '{estimator_instance}' references unknown measurement model kind '{model_kind}'"
+                )
+            }
+            ConfigValidationError::UnknownSensorPayload {
+                estimator_instance,
+                payload_kind,
+            } => {
+                write!(
+                    f,
+                    "Estimator '{estimator_instance}' references unknown sensor payload '{payload_kind}'"
+                )
+            }
         }
     }
 }
+
+/// Known `SensorPayload` implementor names. These must stay in sync with the
+/// types that implement `SensorPayload` in `helios_core::data::sensor`.
+///
+/// When a new sensor payload type is added to `helios_core`, add its name here.
+/// A future registry-based approach would make this dynamic, but an inline
+/// list is sufficient while the set is small.
+const KNOWN_SENSOR_PAYLOADS: &[&str] = &[
+    "GpsPosition",
+    "GpsVelocity",
+    "LinearAcceleration3D",
+    "AngularVelocity3D",
+    "MagneticField3D",
+];
 
 /// Validates `config` against `capabilities`, collecting all errors.
 /// Returns an empty `Vec` when the config is fully valid.
@@ -72,26 +121,44 @@ pub fn validate_autonomy_config(
 ) -> Vec<ConfigValidationError> {
     let mut errors = Vec::new();
 
-    // Estimator validation
-    if let Some(est_cfg) = &config.estimator {
+    // Estimator validation (all named instances).
+    for (instance, est_cfg) in &config.estimators {
         let kind = est_cfg.get_kind_str();
-        if !capabilities.estimators.contains(kind) {
-            errors.push(ConfigValidationError::UnknownEstimator {
+        if !capabilities.gaussian_estimators.contains(kind) {
+            errors.push(ConfigValidationError::UnknownGaussianEstimator {
+                instance: instance.clone(),
                 kind: kind.to_string(),
             });
         }
-        // Validate dynamics referenced by the estimator
-        if let crate::config::EstimatorConfig::Ekf(ekf) = est_cfg {
+
+        // Validate dynamics and aiding for EKF configs.
+        if let EstimatorConfig::Ekf(ekf) = est_cfg {
             let dyn_kind = ekf.dynamics.get_kind_str();
             if !capabilities.dynamics.contains(dyn_kind) {
                 errors.push(ConfigValidationError::UnknownDynamics {
                     kind: dyn_kind.to_string(),
                 });
             }
+
+            for aiding in &ekf.aiding {
+                if !capabilities.measurement_models.contains(&aiding.model.kind) {
+                    errors.push(ConfigValidationError::UnknownMeasurementModel {
+                        estimator_instance: instance.clone(),
+                        model_kind: aiding.model.kind.clone(),
+                    });
+                }
+
+                if !KNOWN_SENSOR_PAYLOADS.contains(&aiding.sensor_payload.as_str()) {
+                    errors.push(ConfigValidationError::UnknownSensorPayload {
+                        estimator_instance: instance.clone(),
+                        payload_kind: aiding.sensor_payload.clone(),
+                    });
+                }
+            }
         }
     }
 
-    // Map layer validation
+    // Map layer validation.
     for map_cfg in config.map_layers.values() {
         let kind = map_cfg.get_kind_str();
         if kind != "None" && !capabilities.mappers.contains(kind) {
@@ -101,7 +168,7 @@ pub fn validate_autonomy_config(
         }
     }
 
-    // Controller validation
+    // Controller validation.
     for ctrl_cfg in config.controllers.values() {
         let kind = ctrl_cfg.get_kind_str();
         if !capabilities.controllers.contains(kind) {
@@ -109,7 +176,6 @@ pub fn validate_autonomy_config(
                 kind: kind.to_string(),
             });
         }
-        // FeedforwardPid references a dynamics_key that must also be registered
         if let ControllerConfig::FeedforwardPid { dynamics_key, .. } = ctrl_cfg {
             if !capabilities.dynamics.contains(dynamics_key.as_str()) {
                 errors.push(ConfigValidationError::UnknownControllerDynamics {
@@ -120,8 +186,8 @@ pub fn validate_autonomy_config(
         }
     }
 
-    // Planner validation
-    for plan_cfg in config.geometric_planners.values() {
+    // Planner validation.
+    for plan_cfg in config.search_planners.values() {
         let kind = plan_cfg.get_kind_str();
         if !capabilities.planners.contains(kind) {
             errors.push(ConfigValidationError::UnknownPlanner {

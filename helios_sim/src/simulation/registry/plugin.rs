@@ -1,31 +1,32 @@
 // helios_sim/src/simulation/registry/plugin.rs
 //
-// Top-level plugin that initialises the AutonomyRegistry resource and
-// loads all default algorithm registrations. Add this to HeliosSimulationPlugin
-// BEFORE WorldModelPlugin so the registry is populated before any spawning runs.
+// Initialises the VehicleAdapterRegistry and RuntimeAutonomyRegistry resources.
+// Add this to HeliosSimulationPlugin BEFORE WorldModelPlugin so registries are
+// populated before any spawning runs.
 
 use bevy::prelude::*;
+use helios_runtime::registry::AutonomyRegistry;
 
-use super::{
-    adapters::DefaultAdaptersPlugin, controllers::DefaultControllersPlugin,
-    dynamics::DefaultDynamicsPlugin, estimators::DefaultEstimatorsPlugin,
-    mappers::DefaultMappersPlugin, path_followers::DefaultPathFollowersPlugin,
-    planners::DefaultPlannersPlugin, AutonomyRegistry,
-};
+use super::{adapters::DefaultAdaptersPlugin, VehicleAdapterRegistry};
+
+/// Wraps the portable `helios_runtime::AutonomyRegistry` as a Bevy resource.
+///
+/// `build_pipeline()` in the spawn system reads this to assemble `AutonomyPipeline`.
+#[derive(Resource)]
+pub struct RuntimeAutonomyRegistry(pub AutonomyRegistry);
+
+impl Default for RuntimeAutonomyRegistry {
+    fn default() -> Self {
+        Self(AutonomyRegistry::default())
+    }
+}
 
 pub struct AutonomyRegistryPlugin;
 
 impl Plugin for AutonomyRegistryPlugin {
     fn build(&self, app: &mut App) {
-        // Initialise the resource first; Default* plugins register into it.
-        app.init_resource::<AutonomyRegistry>().add_plugins((
-            DefaultDynamicsPlugin,
-            DefaultEstimatorsPlugin,
-            DefaultMappersPlugin,
-            DefaultControllersPlugin,
-            DefaultPlannersPlugin,
-            DefaultAdaptersPlugin,
-            DefaultPathFollowersPlugin,
-        ));
+        app.init_resource::<VehicleAdapterRegistry>()
+            .init_resource::<RuntimeAutonomyRegistry>()
+            .add_plugins(DefaultAdaptersPlugin);
     }
 }
