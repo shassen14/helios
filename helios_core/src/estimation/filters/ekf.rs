@@ -108,12 +108,12 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         for i in 0..self.state.dim() {
             f_k[(i, i)] += 1.0;
         }
-        
+
         // --- 4. Predict the next covariance matrix ---
         // The correct approach is to apply the process noise `Q` *before* the main propagation.
         // This represents adding uncertainty to the model itself before you predict.
         let p_with_noise = p_old + &self.process_noise_q * dt;
-        
+
         // Now, propagate this "noisier" covariance forward using the state transition matrix.
         // P_new = F * (P_old + Q*dt) * F^T
         let p_new = &f_k * p_with_noise * f_k.transpose();
@@ -250,11 +250,7 @@ mod tests {
             ]))
         }
 
-        fn jacobian(
-            &self,
-            state: &FrameAwareState,
-            _tf: Option<&dyn TfProvider>,
-        ) -> DMatrix<f64> {
+        fn jacobian(&self, state: &FrameAwareState, _tf: Option<&dyn TfProvider>) -> DMatrix<f64> {
             let n = state.dim();
             let mut h = DMatrix::zeros(2, n);
             h[(0, 0)] = 1.0;

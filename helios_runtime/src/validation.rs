@@ -53,7 +53,10 @@ impl std::fmt::Display for ConfigValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConfigValidationError::UnknownGaussianEstimator { instance, kind } => {
-                write!(f, "Unknown Gaussian estimator kind '{kind}' in estimator '{instance}'")
+                write!(
+                    f,
+                    "Unknown Gaussian estimator kind '{kind}' in estimator '{instance}'"
+                )
             }
             ConfigValidationError::UnknownDynamics { kind } => {
                 write!(f, "Unknown dynamics kind '{kind}'")
@@ -74,13 +77,19 @@ impl std::fmt::Display for ConfigValidationError {
             ConfigValidationError::UnknownPlanner { kind } => {
                 write!(f, "Unknown planner kind '{kind}'")
             }
-            ConfigValidationError::UnknownMeasurementModel { estimator_instance, model_kind } => {
+            ConfigValidationError::UnknownMeasurementModel {
+                estimator_instance,
+                model_kind,
+            } => {
                 write!(
                     f,
                     "Estimator '{estimator_instance}' references unknown measurement model kind '{model_kind}'"
                 )
             }
-            ConfigValidationError::UnknownSensorPayload { estimator_instance, payload_kind } => {
+            ConfigValidationError::UnknownSensorPayload {
+                estimator_instance,
+                payload_kind,
+            } => {
                 write!(
                     f,
                     "Estimator '{estimator_instance}' references unknown sensor payload '{payload_kind}'"

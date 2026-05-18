@@ -19,9 +19,9 @@ pub fn cache_sensor_data(
         let Some(stamped) = pipeline_comp
             .0
             .bus()
-            .read::<Vec<SensorReading<PointCloud2D>>>(
-                ChannelKey::of::<Vec<SensorReading<PointCloud2D>>>(),
-            )
+            .read::<Vec<SensorReading<PointCloud2D>>>(ChannelKey::of::<
+                Vec<SensorReading<PointCloud2D>>,
+            >())
         else {
             continue;
         };

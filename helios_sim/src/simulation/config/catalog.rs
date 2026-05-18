@@ -9,7 +9,7 @@ use figment::{
     value::Value,
     Figment,
 };
-use std::{collections::HashMap, path::Path};
+use std::collections::HashMap;
 use walkdir::WalkDir;
 
 use crate::cli::Cli;
@@ -42,7 +42,10 @@ pub fn load_catalog_from_disk(mut catalog: ResMut<PrefabCatalog>, cli: Res<Cli>)
     for sub_dir in CATALOG_ROOTS {
         let dir_path = config_root.join(sub_dir);
         if !dir_path.exists() {
-            warn!("Catalog sub-directory not found at {:?}, skipping.", dir_path);
+            warn!(
+                "Catalog sub-directory not found at {:?}, skipping.",
+                dir_path
+            );
             continue;
         }
 
@@ -52,8 +55,7 @@ pub fn load_catalog_from_disk(mut catalog: ResMut<PrefabCatalog>, cli: Res<Cli>)
             .into_iter()
             .filter_map(Result::ok)
             .filter(|e| {
-                !e.file_type().is_dir()
-                    && e.path().extension().is_some_and(|ext| ext == "toml")
+                !e.file_type().is_dir() && e.path().extension().is_some_and(|ext| ext == "toml")
             })
         {
             let path = entry.path();

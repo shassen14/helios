@@ -42,7 +42,7 @@ pub struct EstimatorInputs {
 ///    consume any `Box<dyn GaussianStateEstimator>` without further changes.
 ///
 /// Implementations must be `Send + Sync`. They use `&mut self` for predict/update;
-/// interior mutability inside the filter struct is forbidden 
+/// interior mutability inside the filter struct is forbidden
 pub trait GaussianStateEstimator: Send + Sync {
     /// Propagates the state and covariance forward by `dt` seconds.
     ///

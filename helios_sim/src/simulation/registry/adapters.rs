@@ -15,7 +15,8 @@ pub struct DefaultAdaptersPlugin;
 
 impl Plugin for DefaultAdaptersPlugin {
     fn build(&self, app: &mut App) {
-        let Some(mut registry) = app.world_mut().get_resource_mut::<VehicleAdapterRegistry>() else {
+        let Some(mut registry) = app.world_mut().get_resource_mut::<VehicleAdapterRegistry>()
+        else {
             error!("DefaultAdaptersPlugin: VehicleAdapterRegistry resource not found. Add AutonomyRegistryPlugin first.");
             return;
         };

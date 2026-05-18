@@ -18,7 +18,11 @@ pub fn update_odom_frames(
             continue;
         };
 
-        if let Some(iso) = pipeline.0.read_state().and_then(|st| st.value.get_pose_isometry()) {
+        if let Some(iso) = pipeline
+            .0
+            .read_state()
+            .and_then(|st| st.value.get_pose_isometry())
+        {
             *transform = Transform::from(EnuBodyPose(iso));
         }
     }

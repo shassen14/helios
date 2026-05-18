@@ -1,7 +1,7 @@
 //! [`GaussianEstimatorNode`] — pipeline adapter for any Gaussian-family filter
 //! (EKF, UKF, ESKF, IF).
 //!
-//! One node type per algorithm family, generic over the family trait object. 
+//! One node type per algorithm family, generic over the family trait object.
 //! EKF and UKF both wear the same node here; their differences
 //! (sigma points vs. Jacobians) live behind [`GaussianStateEstimator`].
 //!

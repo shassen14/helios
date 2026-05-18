@@ -12,13 +12,13 @@
 //! Algorithm-family node implementations live under [`nodes`]; reusable
 //! per-node input/handler helpers live under [`builders`].
 
+pub mod autonomy_pipeline;
 pub mod build_error;
 pub mod builders;
 pub mod node;
-pub mod autonomy_pipeline;
 pub mod nodes;
 pub mod rate_gate;
 
+pub use autonomy_pipeline::{AutonomyPipeline, PipelineBuilder, MISSION_GOAL_INSTANCE};
 pub use build_error::PipelineBuildError;
 pub use node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
-pub use autonomy_pipeline::{AutonomyPipeline, PipelineBuilder, MISSION_GOAL_INSTANCE};

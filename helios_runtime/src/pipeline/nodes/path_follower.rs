@@ -457,8 +457,7 @@ mod tests {
     #[test]
     fn execute_early_returns_when_input_builder_returns_none() {
         // Cold-start: state missing → follower never called, nothing published.
-        let (follower, calls) =
-            ScriptedFollower::new(PathFollowerResult::Active(dummy_waypoint()));
+        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::Active(dummy_waypoint()));
         let node = PathFollowerNode::new(
             "pure_pursuit",
             Box::new(follower),
@@ -527,8 +526,7 @@ mod tests {
 
     #[test]
     fn execute_forwards_dt_to_follower() {
-        let (follower, calls) =
-            ScriptedFollower::new(PathFollowerResult::Active(dummy_waypoint()));
+        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::Active(dummy_waypoint()));
         let node = PathFollowerNode::new(
             "pure_pursuit",
             Box::new(follower),

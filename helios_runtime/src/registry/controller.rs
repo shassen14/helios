@@ -44,7 +44,11 @@ fn build_pid(ctx: ControllerBuildContext) -> Result<Box<dyn PipelineNode>, Strin
     let controller: Box<dyn Controller> =
         Box::new(VelocityPidController::new(kp as f64, ki as f64, kd as f64));
     let input_builder = Box::new(DefaultControlInputBuilder::new());
-    Ok(Box::new(ControllerNode::new("pid", controller, input_builder)))
+    Ok(Box::new(ControllerNode::new(
+        "pid",
+        controller,
+        input_builder,
+    )))
 }
 
 fn build_lqr(ctx: ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String> {
@@ -59,8 +63,17 @@ fn build_lqr(ctx: ControllerBuildContext) -> Result<Box<dyn PipelineNode>, Strin
     else {
         return Err("build_lqr received wrong config variant".to_string());
     };
-    let controller: Box<dyn Controller> =
-        Box::new(LqrController::new(gain_matrix, state_dim, control_dim, u_min, u_max)?);
+    let controller: Box<dyn Controller> = Box::new(LqrController::new(
+        gain_matrix,
+        state_dim,
+        control_dim,
+        u_min,
+        u_max,
+    )?);
     let input_builder = Box::new(DefaultControlInputBuilder::new());
-    Ok(Box::new(ControllerNode::new("lqr", controller, input_builder)))
+    Ok(Box::new(ControllerNode::new(
+        "lqr",
+        controller,
+        input_builder,
+    )))
 }

@@ -530,10 +530,8 @@ mod tests {
     #[test]
     fn mapper_recenter_translates_via_isometry() {
         let mut m = make_mapper(10.0, 10.0);
-        let pose = Isometry3::from_parts(
-            Translation3::new(4.0, 0.0, 0.0),
-            UnitQuaternion::identity(),
-        );
+        let pose =
+            Isometry3::from_parts(Translation3::new(4.0, 0.0, 0.0), UnitQuaternion::identity());
         <OccupancyGridMapper as Mapper>::recenter(&mut m, &pose);
         // Same outcome as recenter_on(4.0, 0.0) — see recenter_shifts_correctly.
         assert!((m.origin_x - (-1.0)).abs() < 1e-9);

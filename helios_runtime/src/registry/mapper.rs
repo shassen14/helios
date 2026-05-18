@@ -1,8 +1,8 @@
 //! Registers built-in mapper factories.
 
 use helios_core::data::sensor::{PointCloud2D, SensorReading};
-use helios_core::mapping::{OccupancyGridMapper, Mapper};
 use helios_core::mapping::MapData;
+use helios_core::mapping::{Mapper, OccupancyGridMapper};
 
 use crate::config::MapLayerConfig;
 use crate::pipeline::node::PipelineNode;

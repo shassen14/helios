@@ -41,9 +41,7 @@ fn build_accelerometer(
     }))
 }
 
-fn build_gyroscope(
-    ctx: MeasurementModelBuildContext,
-) -> Result<Box<dyn MeasurementModel>, String> {
+fn build_gyroscope(ctx: MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(GyroscopeModel {
         agent_handle: ctx.agent_handle,
         sensor_handle: ctx.sensor_handle,
@@ -53,9 +51,10 @@ fn build_gyroscope(
 fn build_magnetometer(
     ctx: MeasurementModelBuildContext,
 ) -> Result<Box<dyn MeasurementModel>, String> {
-    let field_arr = ctx.model_config.magnetic_field_enu.ok_or(
-        "magnetometer model requires `magnetic_field_enu` in its SensorModelConfig",
-    )?;
+    let field_arr = ctx
+        .model_config
+        .magnetic_field_enu
+        .ok_or("magnetometer model requires `magnetic_field_enu` in its SensorModelConfig")?;
     let field = Vector3::new(field_arr[0], field_arr[1], field_arr[2]);
     Ok(Box::new(MagnetometerModel {
         agent_handle: ctx.agent_handle,

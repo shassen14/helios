@@ -336,7 +336,6 @@ impl SearchPlanner for AStarPlanner {
 
         elapsed >= period
     }
-
 }
 
 impl AStarPlanner {
@@ -418,12 +417,7 @@ mod tests {
         PlannerGoal::WorldPosition2D(Vector2::new(x, y))
     }
 
-    fn make_inputs(
-        x: f64,
-        y: f64,
-        map: MapData,
-        goal: Option<PlannerGoal>,
-    ) -> SearchPlannerInputs {
+    fn make_inputs(x: f64, y: f64, map: MapData, goal: Option<PlannerGoal>) -> SearchPlannerInputs {
         SearchPlannerInputs {
             state: make_state(x, y),
             map,

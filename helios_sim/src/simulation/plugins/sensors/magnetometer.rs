@@ -152,7 +152,9 @@ fn magnetometer_sensor_system(
         let reading = SensorReading {
             sensor_handle: FrameHandle::from_entity(sensor_entity),
             timestamp: MonotonicTime(elapsed),
-            data: MagneticField3D { value: noisy_mag_reading },
+            data: MagneticField3D {
+                value: noisy_mag_reading,
+            },
         };
         let stamped = Stamped {
             value: vec![reading],

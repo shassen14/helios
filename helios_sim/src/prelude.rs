@@ -10,8 +10,7 @@ pub use helios_core::prelude::*;
 // Re-export common simulationecific types for easy access in other plugins.
 pub use crate::cli::Cli;
 pub use crate::simulation::config::structs::{
-    AgentConfig, AutonomyStack, EkfDynamicsConfig, RawScenarioConfig, ScenarioConfig, SensorConfig,
-    Vehicle,
+    AgentConfig, RawScenarioConfig, ScenarioConfig, SensorConfig, Vehicle,
 };
 pub use crate::simulation::config::structs::{AtmosphereConfig, TerrainConfig};
 pub use crate::simulation::core::app_state::{AppState, SceneBuildSet, SimulationSet};

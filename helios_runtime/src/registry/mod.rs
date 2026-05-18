@@ -47,11 +47,16 @@ use contexts::{
 type DynamicsFactory =
     Box<dyn Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String> + Send + Sync>;
 
-type MeasurementModelFactory =
-    Box<dyn Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> + Send + Sync>;
+type MeasurementModelFactory = Box<
+    dyn Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> + Send + Sync,
+>;
 
 type GaussianEstimatorFactory = Box<
-    dyn Fn(EstimatorConfig, GaussianEstimatorBuildContext, &AutonomyRegistry) -> Result<Box<dyn PipelineNode>, String>
+    dyn Fn(
+            EstimatorConfig,
+            GaussianEstimatorBuildContext,
+            &AutonomyRegistry,
+        ) -> Result<Box<dyn PipelineNode>, String>
         + Send
         + Sync,
 >;
@@ -128,18 +133,24 @@ impl AutonomyRegistry {
             + Sync
             + 'static,
     ) {
-        self.measurement_models.insert(key.into(), Box::new(factory));
+        self.measurement_models
+            .insert(key.into(), Box::new(factory));
     }
 
     pub fn register_gaussian_estimator(
         &mut self,
         key: impl Into<String>,
-        factory: impl Fn(EstimatorConfig, GaussianEstimatorBuildContext, &AutonomyRegistry) -> Result<Box<dyn PipelineNode>, String>
+        factory: impl Fn(
+                EstimatorConfig,
+                GaussianEstimatorBuildContext,
+                &AutonomyRegistry,
+            ) -> Result<Box<dyn PipelineNode>, String>
             + Send
             + Sync
             + 'static,
     ) {
-        self.gaussian_estimators.insert(key.into(), Box::new(factory));
+        self.gaussian_estimators
+            .insert(key.into(), Box::new(factory));
     }
 
     pub fn register_mapper(
@@ -195,8 +206,7 @@ impl AutonomyRegistry {
     ) -> Result<Box<dyn EstimationDynamics>, String> {
         self.dynamics
             .get(key)
-            .ok_or_else(|| format!("No dynamics factory registered for '{key}'"))?
-            (ctx)
+            .ok_or_else(|| format!("No dynamics factory registered for '{key}'"))?(ctx)
     }
 
     pub fn build_measurement_model(
@@ -206,8 +216,9 @@ impl AutonomyRegistry {
     ) -> Result<Box<dyn MeasurementModel>, String> {
         self.measurement_models
             .get(key)
-            .ok_or_else(|| format!("No measurement model factory registered for '{key}'"))?
-            (ctx)
+            .ok_or_else(|| format!("No measurement model factory registered for '{key}'"))?(
+            ctx
+        )
     }
 
     pub fn build_gaussian_estimator(
@@ -218,8 +229,9 @@ impl AutonomyRegistry {
     ) -> Result<Box<dyn PipelineNode>, String> {
         self.gaussian_estimators
             .get(key)
-            .ok_or_else(|| format!("No Gaussian estimator factory registered for '{key}'"))?
-            (config, ctx, self)
+            .ok_or_else(|| format!("No Gaussian estimator factory registered for '{key}'"))?(
+            config, ctx, self,
+        )
     }
 
     pub fn build_mapper(
@@ -229,8 +241,7 @@ impl AutonomyRegistry {
     ) -> Result<Box<dyn PipelineNode>, String> {
         self.mappers
             .get(key)
-            .ok_or_else(|| format!("No mapper factory registered for '{key}'"))?
-            (ctx)
+            .ok_or_else(|| format!("No mapper factory registered for '{key}'"))?(ctx)
     }
 
     pub fn build_controller(
@@ -240,8 +251,7 @@ impl AutonomyRegistry {
     ) -> Result<Box<dyn PipelineNode>, String> {
         self.controllers
             .get(key)
-            .ok_or_else(|| format!("No controller factory registered for '{key}'"))?
-            (ctx)
+            .ok_or_else(|| format!("No controller factory registered for '{key}'"))?(ctx)
     }
 
     pub fn build_search_planner(
@@ -251,8 +261,7 @@ impl AutonomyRegistry {
     ) -> Result<Box<dyn PipelineNode>, String> {
         self.search_planners
             .get(key)
-            .ok_or_else(|| format!("No search planner factory registered for '{key}'"))?
-            (ctx)
+            .ok_or_else(|| format!("No search planner factory registered for '{key}'"))?(ctx)
     }
 
     pub fn build_path_follower(
@@ -262,8 +271,7 @@ impl AutonomyRegistry {
     ) -> Result<Box<dyn PipelineNode>, String> {
         self.path_followers
             .get(key)
-            .ok_or_else(|| format!("No path follower factory registered for '{key}'"))?
-            (ctx)
+            .ok_or_else(|| format!("No path follower factory registered for '{key}'"))?(ctx)
     }
 
     /// Snapshot of all registered keys per family, for `validate_autonomy_config`.

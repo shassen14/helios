@@ -6,7 +6,9 @@
 
 use helios_core::data::primitives::FrameHandle;
 
-use crate::config::{ControllerConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig, SensorModelConfig};
+use crate::config::{
+    ControllerConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig, SensorModelConfig,
+};
 use crate::pipeline::nodes::gaussian_estimator::AidingHandler;
 
 /// Context for building a dynamics model (e.g. `IntegratedImuModel`).

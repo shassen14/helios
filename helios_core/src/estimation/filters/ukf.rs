@@ -276,11 +276,7 @@ mod tests {
             ]))
         }
 
-        fn jacobian(
-            &self,
-            state: &FrameAwareState,
-            _tf: Option<&dyn TfProvider>,
-        ) -> DMatrix<f64> {
+        fn jacobian(&self, state: &FrameAwareState, _tf: Option<&dyn TfProvider>) -> DMatrix<f64> {
             let n = state.dim();
             let mut h = DMatrix::zeros(2, n);
             h[(0, 0)] = 1.0;

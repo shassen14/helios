@@ -41,9 +41,10 @@ use helios_core::mapping::MapData;
 use helios_core::planning::types::Path;
 use nalgebra::DMatrix;
 
+use crate::config::AutonomyStack;
 use crate::config::{AidingConfig, EkfDynamicsConfig, EstimatorConfig, MapLayerConfig};
-use crate::pipeline::build_error::PipelineBuildError;
 use crate::pipeline::autonomy_pipeline::PipelineBuilder;
+use crate::pipeline::build_error::PipelineBuildError;
 use crate::pipeline::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
 use crate::pipeline::AutonomyPipeline;
 use crate::port::ChannelKey;
@@ -52,16 +53,12 @@ use crate::registry::contexts::{
     MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 use crate::registry::AutonomyRegistry;
-use crate::config::AutonomyStack;
 
 /// Errors that can occur while assembling a pipeline from config.
 #[derive(Debug)]
 pub enum PipelineAssemblyError {
     /// The config references an algorithm or model not in the registry.
-    FactoryFailure {
-        node_kind: String,
-        reason: String,
-    },
+    FactoryFailure { node_kind: String, reason: String },
     /// The assembled node graph failed topological validation.
     PipelineBuild(Vec<PipelineBuildError>),
     /// An aiding entry names a sensor channel with no corresponding
@@ -81,9 +78,7 @@ pub enum PipelineAssemblyError {
     NoPathSourceForFollower,
     /// `path_following` names a `path_source` planner key that does not exist
     /// in `search_planners`.
-    UnknownPathSource {
-        path_source: String,
-    },
+    UnknownPathSource { path_source: String },
 }
 
 impl std::fmt::Display for PipelineAssemblyError {
@@ -95,18 +90,26 @@ impl std::fmt::Display for PipelineAssemblyError {
             PipelineAssemblyError::PipelineBuild(errs) => {
                 write!(f, "pipeline graph errors: ")?;
                 for (i, e) in errs.iter().enumerate() {
-                    if i > 0 { write!(f, "; ")?; }
+                    if i > 0 {
+                        write!(f, "; ")?;
+                    }
                     write!(f, "{e}")?;
                 }
                 Ok(())
             }
-            PipelineAssemblyError::UnknownSensorChannel { estimator_instance, input_channel } => {
+            PipelineAssemblyError::UnknownSensorChannel {
+                estimator_instance,
+                input_channel,
+            } => {
                 write!(
                     f,
                     "estimator '{estimator_instance}' aiding channel '{input_channel}' has no FrameHandle in sensor_frame_handles"
                 )
             }
-            PipelineAssemblyError::UnknownSensorPayload { estimator_instance, payload_kind } => {
+            PipelineAssemblyError::UnknownSensorPayload {
+                estimator_instance,
+                payload_kind,
+            } => {
                 write!(
                     f,
                     "estimator '{estimator_instance}' aiding entry has unknown sensor_payload '{payload_kind}'"
@@ -159,7 +162,9 @@ pub fn build_pipeline(
             registry,
             &mut external_channels,
         ) {
-            Ok(node) => { builder = builder.add_node(node); }
+            Ok(node) => {
+                builder = builder.add_node(node);
+            }
             Err(e) => errors.push(e),
         }
     }
@@ -172,7 +177,10 @@ pub fn build_pipeline(
 
         match registry.build_mapper(
             map_cfg.get_kind_str(),
-            MapperBuildContext { agent_handle, config: map_cfg.clone() },
+            MapperBuildContext {
+                agent_handle,
+                config: map_cfg.clone(),
+            },
         ) {
             Ok(node) => {
                 // FrameAwareState is produced by the estimator upstream;
@@ -207,7 +215,9 @@ pub fn build_pipeline(
                 path_channel,
             },
         ) {
-            Ok(node) => { builder = builder.add_node(node); }
+            Ok(node) => {
+                builder = builder.add_node(node);
+            }
             Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
                 node_kind: plan_cfg.get_kind_str().to_string(),
                 reason,
@@ -227,7 +237,9 @@ pub fn build_pipeline(
                         path_channel,
                     },
                 ) {
-                    Ok(node) => { builder = builder.add_node(node); }
+                    Ok(node) => {
+                        builder = builder.add_node(node);
+                    }
                     Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
                         node_kind: pf_cfg.get_kind_str().to_string(),
                         reason,
@@ -242,9 +254,14 @@ pub fn build_pipeline(
     for (_, ctrl_cfg) in &stack.controllers {
         match registry.build_controller(
             ctrl_cfg.get_kind_str(),
-            ControllerBuildContext { agent_handle, config: ctrl_cfg.clone() },
+            ControllerBuildContext {
+                agent_handle,
+                config: ctrl_cfg.clone(),
+            },
         ) {
-            Ok(node) => { builder = builder.add_node(node); }
+            Ok(node) => {
+                builder = builder.add_node(node);
+            }
             Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
                 node_kind: ctrl_cfg.get_kind_str().to_string(),
                 reason,
@@ -300,7 +317,9 @@ fn build_estimator_node(
     // If dynamics is IntegratedImu, declare the IMU predict-side channels
     // as external too (accel + gyro Vec<SensorReading<_>>).
     if matches!(ekf_cfg.dynamics, EkfDynamicsConfig::IntegratedImu(_)) {
-        use crate::pipeline::builders::estimator::{EstimatorInputBuilder, IntegratedImuInputBuilder};
+        use crate::pipeline::builders::estimator::{
+            EstimatorInputBuilder, IntegratedImuInputBuilder,
+        };
         let builder = IntegratedImuInputBuilder::new();
         external_channels.extend_from_slice(builder.required_channels());
     }
@@ -309,7 +328,10 @@ fn build_estimator_node(
         .build_gaussian_estimator(
             est_cfg.get_kind_str(),
             est_cfg.clone(),
-            GaussianEstimatorBuildContext { agent_handle, aiding },
+            GaussianEstimatorBuildContext {
+                agent_handle,
+                aiding,
+            },
         )
         .map_err(|reason| PipelineAssemblyError::FactoryFailure {
             node_kind: est_cfg.get_kind_str().to_string(),
@@ -359,15 +381,15 @@ fn build_aiding_handler(
     let handler: Box<dyn AidingHandler> = match aid.sensor_payload.as_str() {
         "GpsPosition" => Box::new(TypedAidingHandler::<GpsPosition>::new(channel, model, r)),
         "GpsVelocity" => Box::new(TypedAidingHandler::<GpsVelocity>::new(channel, model, r)),
-        "LinearAcceleration3D" => {
-            Box::new(TypedAidingHandler::<LinearAcceleration3D>::new(channel, model, r))
-        }
-        "AngularVelocity3D" => {
-            Box::new(TypedAidingHandler::<AngularVelocity3D>::new(channel, model, r))
-        }
-        "MagneticField3D" => {
-            Box::new(TypedAidingHandler::<MagneticField3D>::new(channel, model, r))
-        }
+        "LinearAcceleration3D" => Box::new(TypedAidingHandler::<LinearAcceleration3D>::new(
+            channel, model, r,
+        )),
+        "AngularVelocity3D" => Box::new(TypedAidingHandler::<AngularVelocity3D>::new(
+            channel, model, r,
+        )),
+        "MagneticField3D" => Box::new(TypedAidingHandler::<MagneticField3D>::new(
+            channel, model, r,
+        )),
         other => {
             return Err(PipelineAssemblyError::UnknownSensorPayload {
                 estimator_instance: instance_name.to_string(),

@@ -12,9 +12,7 @@ pub use components::{
     AutonomyPipelineComponent, OdomFrameOf, PathFollowingOutputComponent, SensorPublishChannel,
 };
 
-use systems::{
-    run_pipeline_tick, spawn_autonomy_pipeline, spawn_odom_frames, update_odom_frames,
-};
+use systems::{run_pipeline_tick, spawn_autonomy_pipeline, spawn_odom_frames, update_odom_frames};
 
 // =========================================================================
 // == EstimationPlugin

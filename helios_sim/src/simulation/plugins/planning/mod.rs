@@ -89,8 +89,16 @@ fn log_chain_status(
         if p.read_state().is_some() { "Y" } else { "." },
         if scan_present { "Y" } else { "." },
         map_kind,
-        if p.read_mission_goal().is_some() { "Y" } else { "." },
-        if p.read_any_path().is_some() { "Y" } else { "." },
+        if p.read_mission_goal().is_some() {
+            "Y"
+        } else {
+            "."
+        },
+        if p.read_any_path().is_some() {
+            "Y"
+        } else {
+            "."
+        },
         if p.read_control().is_some() { "Y" } else { "." },
     );
 }

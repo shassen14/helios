@@ -4,7 +4,9 @@ use rand_distr::{Distribution, Normal};
 use std::time::Duration;
 
 use crate::prelude::*;
-use crate::simulation::core::{app_state::SimulationSet, prng::SimulationRng, transforms::EnuVector};
+use crate::simulation::core::{
+    app_state::SimulationSet, prng::SimulationRng, transforms::EnuVector,
+};
 use crate::simulation::plugins::autonomy::components::{
     AutonomyPipelineComponent, SensorPublishChannel,
 };
@@ -95,7 +97,13 @@ fn spawn_gps_sensors(
 fn gps_sensor_system(
     time: Res<Time>,
     mut rng: ResMut<SimulationRng>,
-    mut sensor_query: Query<(Entity, &mut Gps, &GlobalTransform, &SensorPublishChannel, &ChildOf)>,
+    mut sensor_query: Query<(
+        Entity,
+        &mut Gps,
+        &GlobalTransform,
+        &SensorPublishChannel,
+        &ChildOf,
+    )>,
     pipeline_query: Query<&AutonomyPipelineComponent>,
 ) {
     let elapsed = time.elapsed_secs_f64();
@@ -123,7 +131,9 @@ fn gps_sensor_system(
         let reading = SensorReading {
             sensor_handle: FrameHandle::from_entity(sensor_entity),
             timestamp: MonotonicTime(elapsed),
-            data: GpsPosition { position: noisy_position },
+            data: GpsPosition {
+                position: noisy_position,
+            },
         };
         let stamped = Stamped {
             value: vec![reading],

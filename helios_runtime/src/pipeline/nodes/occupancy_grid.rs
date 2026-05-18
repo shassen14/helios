@@ -231,7 +231,11 @@ mod tests {
     }
 
     impl AgentRuntime for MockRuntime {
-        fn get_transform(&self, _agent: FrameHandle, sensor: FrameHandle) -> Option<Isometry3<f64>> {
+        fn get_transform(
+            &self,
+            _agent: FrameHandle,
+            sensor: FrameHandle,
+        ) -> Option<Isometry3<f64>> {
             self.agent_to_sensor.get(&sensor.0).copied()
         }
         fn world_pose(&self, _: FrameHandle) -> Option<Isometry3<f64>> {
@@ -351,7 +355,8 @@ mod tests {
             health: Health::Ok,
             producer: 99,
         };
-        bus.write(ChannelKey::of::<FrameAwareState>(), stamped).unwrap();
+        bus.write(ChannelKey::of::<FrameAwareState>(), stamped)
+            .unwrap();
     }
 
     fn publish_scans(bus: &PortBus, readings: Vec<SensorReading<PointCloud2D>>) {
@@ -385,7 +390,9 @@ mod tests {
             Some(5.0),
         );
         let d = node.port_descriptor();
-        assert!(d.required_inputs.contains(&ChannelKey::of::<FrameAwareState>()));
+        assert!(d
+            .required_inputs
+            .contains(&ChannelKey::of::<FrameAwareState>()));
         assert!(d.required_inputs.contains(&scan_channel()));
         assert_eq!(d.outputs, vec![map_channel()]);
         assert_eq!(d.rate, Some(5.0));
@@ -486,10 +493,7 @@ mod tests {
         let sensor = FrameHandle(3);
         let runtime = MockRuntime::new().with_sensor(
             sensor.0,
-            Isometry3::from_parts(
-                Translation3::new(0.0, 0.0, 0.0),
-                UnitQuaternion::identity(),
-            ),
+            Isometry3::from_parts(Translation3::new(0.0, 0.0, 0.0), UnitQuaternion::identity()),
         );
 
         let mapper = helios_core::mapping::OccupancyGridMapper::new(1.0, 20.0, 20.0);

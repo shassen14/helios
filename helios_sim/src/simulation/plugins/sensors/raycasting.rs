@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use crate::prelude::*;
 use crate::simulation::config::structs::{LidarConfig, SensorConfig};
-use crate::simulation::core::{app_state::SimulationSet, prng::SimulationRng};
 use crate::simulation::core::transforms::FluVector;
+use crate::simulation::core::{app_state::SimulationSet, prng::SimulationRng};
 use crate::simulation::plugins::autonomy::components::{
     AutonomyPipelineComponent, SensorPublishChannel,
 };

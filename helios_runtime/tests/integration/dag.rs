@@ -10,7 +10,7 @@ use std::sync::{
 
 use helios_core::data::primitives::MonotonicTime;
 use helios_runtime::{
-    pipeline::{PipelineBuilder, PipelineBuildError},
+    pipeline::{PipelineBuildError, PipelineBuilder},
     port::{ChannelKey, PortBus, PortDescriptor},
     prelude::{Health, PipelineNode, Stamped, TickContext},
 };

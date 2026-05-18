@@ -140,10 +140,8 @@ mod tests {
         let model = make_model();
         let state = make_state(1.0, 2.0, 3.0);
         // Antenna is 0.5 m forward, 0.1 m up from body origin; identity orientation.
-        let offset = Isometry3::from_parts(
-            Translation3::new(0.5, 0.0, 0.1),
-            UnitQuaternion::identity(),
-        );
+        let offset =
+            Isometry3::from_parts(Translation3::new(0.5, 0.0, 0.1), UnitQuaternion::identity());
         let tf = FixedTf(offset);
         let z = model.predict_measurement(&state, Some(&tf)).unwrap();
         assert!((z[0] - 1.5).abs() < 1e-9);

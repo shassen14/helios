@@ -3,11 +3,11 @@
 // --- Core Abstractions (The main contracts of the library) ---
 pub use crate::data::messages::Odometry;
 pub use crate::data::primitives::{FrameHandle, MonotonicTime, TfProvider, TrajectoryPoint};
-pub use crate::data::sensor::{SensorPayload, SensorReading};
 pub use crate::data::sensor::{
     AngularVelocity3D, DepthImage, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
     PointCloud2D, PointCloud3D, RgbImage,
 };
+pub use crate::data::sensor::{SensorPayload, SensorReading};
 
 // --- Core Data Structures (The "nouns" of the library) ---
 pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
