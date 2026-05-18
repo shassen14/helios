@@ -70,7 +70,7 @@ mod tests {
     use super::*;
     use crate::data::primitives::{FrameHandle, TfProvider};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
+    use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
