@@ -144,7 +144,7 @@ from = "entities.sensors.lidar2d"
 # 3. DEEP MERGE: Tuning the Autonomy Stack
 
 # 3a. Tune the estimator dynamics.
-[agents.autonomy_stack.estimator.dynamics]
+[agents.autonomy_stack.estimators.primary.dynamics]
 gyro_bias_instability = 0.02 # Tighter tuning for this experiment.
 
 # 3b. Enable the occupancy grid mapper as the "local" layer (uses the lidar added above).

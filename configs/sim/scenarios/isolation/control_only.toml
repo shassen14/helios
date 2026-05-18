@@ -36,7 +36,7 @@ goal_pose     = { translation = [10.0, 0.0, 0.5] }
 
 # Ground-truth estimator is injected by MockGroundTruthEstimatorPlugin.
 # Path is provided by MockPathInjectorPlugin.
-[agents.autonomy_stack.estimator]
+[agents.autonomy_stack.estimators.primary]
 from = "runtime.catalog.estimators.ekf_pro"
 
 [agents.autonomy_stack.controllers]

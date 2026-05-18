@@ -1,23 +1,14 @@
 // helios_sim/src/simulation/plugins/planning/mod.rs
 //
-// PlanningPlugin: drives all planner stages each tick and handles GoalCommandEvents.
+// PlanningPlugin stub. Will be wired to AutonomyPipelineComponent in a later step.
 
-mod gizmos;
 pub mod interaction;
 
-use std::collections::HashMap;
-
 use bevy::prelude::*;
-use helios_core::mapping::MapData;
-use helios_runtime::stage::PipelineLevel;
 
 use crate::prelude::AppState;
 use crate::simulation::core::app_state::SimulationSet;
 use crate::simulation::core::events::GoalCommandEvent;
-use crate::simulation::core::transforms::TfTree;
-use crate::simulation::plugins::autonomy::{
-    ControlPipelineComponent, EstimatorComponent, MapperComponent, PathFollowingComponent,
-};
 use interaction::{GoalRegistry, SelectedAgent};
 
 pub struct PlanningPlugin;
@@ -29,14 +20,8 @@ impl Plugin for PlanningPlugin {
             .add_event::<GoalCommandEvent>()
             .add_systems(
                 FixedUpdate,
-                planning_system
+                planning_stub
                     .in_set(SimulationSet::Planning)
-                    .run_if(in_state(AppState::Running)),
-            )
-            .add_systems(
-                FixedUpdate,
-                goal_command_system
-                    .in_set(SimulationSet::Behavior)
                     .run_if(in_state(AppState::Running)),
             )
             .add_systems(
@@ -44,74 +29,11 @@ impl Plugin for PlanningPlugin {
                 (
                     interaction::agent_select_system,
                     interaction::click_goal_system,
-                    gizmos::draw_selection,
                 )
                     .run_if(in_state(AppState::Running)),
             );
     }
 }
 
-/// Runs all planners for every agent each tick.
-///
-/// Builds a PipelineLevel-keyed map lookup from the string-keyed map layers,
-/// then calls `step_planners` on the control pipeline.
-fn planning_system(
-    time: Res<Time>,
-    _tf_tree: Res<TfTree>,
-    mut query: Query<(
-        &EstimatorComponent,
-        &MapperComponent,
-        &mut ControlPipelineComponent,
-        Option<&mut PathFollowingComponent>,
-    )>,
-) {
-    for (estimator, mapper, mut control, pf_opt) in &mut query {
-        let Some(state) = estimator.0.get_state() else {
-            continue;
-        };
-
-        let mut maps: HashMap<PipelineLevel, &MapData> = HashMap::new();
-
-        if let Some(global_map) = mapper.0.get_map("global") {
-            if !matches!(*global_map, MapData::None) {
-                maps.insert(PipelineLevel::Global, global_map);
-            }
-        }
-        if let Some(local_map) = mapper.0.get_map("local") {
-            if !matches!(*local_map, MapData::None) {
-                maps.insert(PipelineLevel::Local, local_map);
-            }
-        }
-
-        let new_paths = control
-            .0
-            .step_planners(state, &maps, time.elapsed_secs_f64());
-
-        if let Some(mut pf) = pf_opt {
-            let mut best_path = None;
-            for (level, path) in new_paths {
-                if best_path.is_none() || level == PipelineLevel::Local {
-                    best_path = Some(path);
-                }
-            }
-            if let Some(path) = best_path {
-                pf.0.set_path(path);
-            }
-        }
-    }
-}
-
-/// Processes `GoalCommandEvent`s: finds the target agent and calls `set_goal`.
-/// Also keeps `GoalRegistry` in sync so gizmos and UI reflect the latest goal per agent.
-fn goal_command_system(
-    mut events: EventReader<GoalCommandEvent>,
-    mut query: Query<&mut ControlPipelineComponent>,
-    mut goal_registry: ResMut<GoalRegistry>,
-) {
-    for event in events.read() {
-        if let Ok(mut control) = query.get_mut(event.agent) {
-            control.0.set_goal(event.goal.clone());
-        }
-        goal_registry.0.insert(event.agent, event.goal.clone());
-    }
-}
+/// No-op stub. Planning will be wired to the pipeline in a later step.
+fn planning_stub() {}

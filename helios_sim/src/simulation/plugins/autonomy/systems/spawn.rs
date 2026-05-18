@@ -1,139 +1,71 @@
 // helios_sim/src/simulation/plugins/autonomy/systems/spawn.rs
 //
 // Spawning systems for agent autonomy pipelines.
-//
-// Public: spawn_autonomy_pipeline, spawn_passthrough_pipeline, spawn_odom_frames
 
 use bevy::prelude::*;
-use helios_core::data::primitives::FrameHandle;
-use helios_runtime::estimation::GroundTruthPassthrough;
-use helios_runtime::pipeline::PipelineBuilder;
-use helios_runtime::validation::validate_autonomy_config;
 use std::collections::HashMap;
 
+use helios_core::data::primitives::FrameHandle;
+use helios_runtime::build_pipeline;
+
 use crate::prelude::*;
-use crate::simulation::plugins::autonomy::components::{EstimatorComponent, OdomFrameOf};
-use crate::simulation::registry::{AutonomyRegistry, EstimatorBuildContext};
+use crate::simulation::plugins::autonomy::components::{
+    AutonomyPipelineComponent, OdomFrameOf, SensorPublishChannel,
+};
+use crate::simulation::registry::plugin::RuntimeAutonomyRegistry;
 
-use super::spawn_helpers::build_pipeline_from_stack;
-
-/// Spawns the full autonomy pipeline for agents with real estimation (EKF/UKF).
+/// Spawns the autonomy pipeline for agents with real estimation.
+///
+/// Queries each agent's sensor children for `SensorPublishChannel` to build
+/// the channel→FrameHandle map passed to `build_pipeline()`.
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
     agent_query: Query<(Entity, &SpawnAgentConfigRequest, &Children)>,
-    measurement_model_query: Query<&MeasurementModel>,
-    gravity: Res<avian3d::prelude::Gravity>,
-    registry: Res<AutonomyRegistry>,
+    channel_query: Query<&SensorPublishChannel>,
+    registry: Res<RuntimeAutonomyRegistry>,
 ) {
-    let dynamics_factories = registry.clone_dynamics();
-    let capabilities = registry.capabilities();
-
     for (agent_entity, request, children) in &agent_query {
         let agent_config = &request.0;
-        let gravity_magnitude = gravity.0.length() as f64;
+        let stack = agent_config.autonomy_stack();
+        let agent_handle = FrameHandle::from_entity(agent_entity);
 
-        let measurement_models: HashMap<FrameHandle, _> = children
+        let sensor_frame_handles: HashMap<String, FrameHandle> = children
             .iter()
             .filter_map(|child| {
-                measurement_model_query
+                channel_query
                     .get(child)
                     .ok()
-                    .map(|m| (FrameHandle::from_entity(child), m.0.clone()))
+                    .map(|ch| (ch.0.clone(), FrameHandle::from_entity(child)))
             })
             .collect();
 
-        let validation_errors =
-            validate_autonomy_config(agent_config.autonomy_stack(), &capabilities);
-        if !validation_errors.is_empty() {
-            for err in &validation_errors {
-                error!(
-                    "Config validation failed for agent '{}': {}",
-                    agent_config.name(),
-                    err
+        match build_pipeline(stack, &registry.0, agent_handle, &sensor_frame_handles) {
+            Ok(pipeline) => {
+                commands
+                    .entity(agent_entity)
+                    .insert(AutonomyPipelineComponent(pipeline));
+                info!(
+                    "[spawn_autonomy_pipeline] Built pipeline for agent '{}'",
+                    agent_config.name()
                 );
             }
-            continue;
-        }
-
-        let stack = agent_config.autonomy_stack();
-        let mut builder = PipelineBuilder::new();
-
-        if let Some(cfg) = &stack.estimator {
-            let ctx = EstimatorBuildContext {
-                agent_entity,
-                estimator_cfg: cfg.clone(),
-                agent_config: agent_config.clone(),
-                gravity_magnitude,
-                measurement_models,
-                dynamics_factories: dynamics_factories.clone(),
-            };
-            match registry.build_estimator(cfg.get_kind_str(), ctx) {
-                Ok(est) => {
-                    builder = builder.with_estimator(est);
-                }
-                Err(e) => {
+            Err(errors) => {
+                for err in &errors {
                     error!(
-                        "Cannot build estimator for agent '{}': {}",
+                        "[spawn_autonomy_pipeline] Agent '{}': {}",
                         agent_config.name(),
-                        e
+                        err
                     );
-                    continue;
                 }
             }
         }
-
-        let (estimation, _, _, _) = builder.build().into_parts();
-        let est_component = EstimatorComponent(Box::new(estimation));
-        build_pipeline_from_stack(
-            agent_entity,
-            &mut commands,
-            stack,
-            agent_config,
-            &registry,
-            est_component,
-        );
     }
 }
 
-/// Spawns the passthrough pipeline for mock-estimator profiles.
-pub fn spawn_passthrough_pipeline(
-    mut commands: Commands,
-    agent_query: Query<(Entity, &SpawnAgentConfigRequest)>,
-    registry: Res<AutonomyRegistry>,
-) {
-    let capabilities = registry.capabilities();
-
-    for (agent_entity, request) in &agent_query {
-        let agent_config = &request.0;
-
-        let validation_errors =
-            validate_autonomy_config(agent_config.autonomy_stack(), &capabilities);
-        if !validation_errors.is_empty() {
-            for err in &validation_errors {
-                error!(
-                    "Config validation failed for agent '{}': {}",
-                    agent_config.name(),
-                    err
-                );
-            }
-            continue;
-        }
-
-        let est_component = EstimatorComponent(Box::new(GroundTruthPassthrough::default()));
-        build_pipeline_from_stack(
-            agent_entity,
-            &mut commands,
-            agent_config.autonomy_stack(),
-            agent_config,
-            &registry,
-            est_component,
-        );
-    }
-}
-
+/// Spawns odom frame entities for agents that have an `AutonomyPipelineComponent`.
 pub fn spawn_odom_frames(
     mut commands: Commands,
-    agent_query: Query<(Entity, &SpawnAgentConfigRequest), With<EstimatorComponent>>,
+    agent_query: Query<(Entity, &SpawnAgentConfigRequest), With<AutonomyPipelineComponent>>,
 ) {
     for (agent_entity, request) in &agent_query {
         let agent_name = request.0.name();

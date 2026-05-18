@@ -1,24 +1,25 @@
-# helios_sim/assets/catalog/components/estimators/ekf_basic.toml
-# This defines a standard, well-behaved Extended Kalman Filter configuration.
-# The `kind` key tells serde to use the `EstimatorConfig::Ekf` variant.
+# configs/runtime/catalog/estimators/ekf_basic.toml
+# Basic EKF — high-noise IMU, basic GPS + magnetometer aiding.
 kind = "Ekf"
 
-# The `config` table holds the parameters for the `EkfConfig` struct.
 [config]
-# The 'dynamics' table. The 'type' field selects the enum variant.
 [config.dynamics]
 type = "IntegratedImu"
-
-# This models the noise of the IMU itself, which directly impacts the
-# certainty of our state prediction. For a basic IMU, assume high noise.
-# Units: m/s^2
 accel_noise_stddev = 0.8
-# Units: rad/s
 gyro_noise_stddev = 0.08
-
-# Assume the sensor biases are highly unstable and wander a lot.
-# This forces the filter to constantly re-estimate them.
-# Units: m/s^2 per second (or per sqrt(Hz) in datasheets)
 accel_bias_instability = 0.1
-# Units: rad/s per second
 gyro_bias_instability = 0.01
+
+# GPS aiding — r_diag = noise_stddev² for gps_basic [2.5, 2.5, 4.0]
+[[config.aiding]]
+sensor_payload = "GpsPosition"
+input_channel = "sensor.gps.primary"
+r_diag = [6.25, 6.25, 16.0]
+model = { kind = "gps_position" }
+
+# Magnetometer aiding — r_diag = noise_stddev² for magnetometer_basic [5.0, 5.0, 5.0]
+[[config.aiding]]
+sensor_payload = "MagneticField3D"
+input_channel = "sensor.mag.body"
+r_diag = [25.0, 25.0, 25.0]
+model = { kind = "magnetometer", magnetic_field_enu = [0.0, 1.0, 0.0] }

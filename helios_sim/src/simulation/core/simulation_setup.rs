@@ -11,7 +11,6 @@ use super::components::GroundTruthState;
 use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 use crate::prelude::*;
 use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
-use crate::simulation::core::events::BevyMeasurementMessage;
 use crate::simulation::core::ground_truth_sync_system;
 use crate::simulation::core::prng::SimulationRng;
 use crate::simulation::core::transforms::build_static_tf_maps;
@@ -37,8 +36,7 @@ impl Plugin for SimulationSetupPlugin {
         app.insert_resource(SimulationRng(rng));
 
         // --- INITIALIZE RESOURCES & EVENTS ---
-        app.init_resource::<TfTree>()
-            .add_event::<BevyMeasurementMessage>();
+        app.init_resource::<TfTree>();
 
         let fixed_update_timestep = 1.0 / frequency_hz;
 

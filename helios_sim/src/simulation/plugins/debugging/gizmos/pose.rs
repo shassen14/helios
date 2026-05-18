@@ -2,9 +2,8 @@ use bevy::prelude::*;
 
 use crate::simulation::core::components::GroundTruthState;
 use crate::simulation::core::transforms::EnuBodyPose;
-use crate::simulation::plugins::autonomy::EstimatorComponent;
+use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
-use helios_core::frames::FrameAwareState;
 
 /// Draws coordinate frame axes at the ground truth pose of each agent.
 pub fn draw_ground_truth_gimbals(
@@ -24,16 +23,16 @@ pub fn draw_ground_truth_gimbals(
 pub fn draw_estimated_pose_gimbals(
     config: Res<DebugVisualizationConfig>,
     mut gizmos: Gizmos,
-    module_query: Query<&EstimatorComponent>,
+    module_query: Query<&AutonomyPipelineComponent>,
 ) {
     if !config.show_pose_gimbals {
         return;
     }
-    for module in &module_query {
-        if let Some(estimated_pose_enu) = module
+    for pipeline in &module_query {
+        if let Some(estimated_pose_enu) = pipeline
             .0
-            .get_state()
-            .and_then(|s: &FrameAwareState| s.get_pose_isometry())
+            .read_state()
+            .and_then(|st| st.value.get_pose_isometry())
         {
             let bevy_transform = Transform::from(EnuBodyPose(estimated_pose_enu));
             let global_transform = GlobalTransform::from(bevy_transform);

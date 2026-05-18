@@ -18,10 +18,10 @@ pub use crate::simulation::core::app_state::{AppState, SceneBuildSet, Simulation
 pub use crate::simulation::core::components::{
     BoundingBox3D, SemanticLabel, TerrainMedium, WorldObjectType,
 };
-pub use crate::simulation::core::components::{EstimationDynamicsModel, MeasurementModel};
 pub use crate::simulation::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::simulation::core::transforms::{TfTree, TrackedFrame};
 
+pub use crate::simulation::plugins::autonomy::SensorPublishChannel;
 pub use crate::simulation::plugins::sensors::imu::ImuPlugin;
 pub use crate::simulation::plugins::vehicles::ackermann::{
     AckermannAdapterComponent, AckermannCarPlugin, AckermannOutputAdapter,

@@ -1,23 +1,20 @@
 use bevy::prelude::*;
-use nalgebra::{DMatrix, Vector3};
+use nalgebra::Vector3;
 use rand_distr::{Distribution, Normal};
 use std::time::Duration;
 
-// --- Simulation Crate Imports ---
 use crate::prelude::*;
 use crate::simulation::core::transforms::EnuBodyPose;
-use crate::simulation::core::{
-    app_state::SimulationSet, components::GroundTruthState, events::BevyMeasurementMessage,
-    prng::SimulationRng,
+use crate::simulation::core::{app_state::SimulationSet, prng::SimulationRng};
+use crate::simulation::plugins::autonomy::components::{
+    AutonomyPipelineComponent, SensorPublishChannel,
 };
 
-// --- Core Library Imports ---
-use helios_core::{
-    data::messages::{MeasurementData, MeasurementMessage},
-    data::primitives::FrameHandle,
-    data::sensor,
-    estimation::measurement::magnetometer::MagnetometerModel,
-};
+use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+use helios_core::data::sensor::{MagneticField3D, SensorReading};
+use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
+use helios_runtime::port::ChannelKey;
+use helios_runtime::stamped::{Health, Stamped};
 
 // =========================================================================
 // == Magnetometer Components & Plugin ==
@@ -64,24 +61,6 @@ fn spawn_magnetometer_sensors(
                     mag_config.get_rate()
                 );
 
-                // --- 1. Create the `helios_core` Measurement Model ---
-                let r_matrix = DMatrix::from_diagonal(&nalgebra::DVector::from_vec(vec![
-                    mag_config.noise_stddev[0].powi(2) as f64,
-                    mag_config.noise_stddev[1].powi(2) as f64,
-                    mag_config.noise_stddev[2].powi(2) as f64,
-                ]));
-
-                // Define the world's magnetic field in ENU (points North, along +Y).
-                let world_magnetic_field = Vector3::new(0.0, 1.0, 0.0).normalize();
-
-                let mut core_model = MagnetometerModel {
-                    agent_handle: FrameHandle::from_entity(agent_entity),
-                    sensor_handle: FrameHandle(0), // Placeholder
-                    r_matrix,
-                    world_magnetic_field,
-                };
-
-                // Validate all axis noise stddevs before creating any distributions.
                 let noise_stddevs = [
                     ("x", mag_config.noise_stddev[0] as f64),
                     ("y", mag_config.noise_stddev[1] as f64),
@@ -102,27 +81,26 @@ fn spawn_magnetometer_sensors(
                     continue;
                 }
 
-                // --- 2. Spawn the Sensor Entity ---
-                let mut sensor_entity_commands = commands.spawn_empty();
-                let sensor_entity = sensor_entity_commands.id();
-
-                core_model.sensor_handle = FrameHandle::from_entity(sensor_entity);
-
-                sensor_entity_commands.insert((
-                    Name::new(format!("{}/{}", agent_name.as_str(), mag_config.name)),
-                    Magnetometer {
-                        timer: Timer::new(
-                            Duration::from_secs_f32(1.0 / mag_config.rate),
-                            TimerMode::Repeating,
-                        ),
-                        noise_dist_x: Normal::new(0.0, mag_config.noise_stddev[0] as f64).unwrap(),
-                        noise_dist_y: Normal::new(0.0, mag_config.noise_stddev[1] as f64).unwrap(),
-                        noise_dist_z: Normal::new(0.0, mag_config.noise_stddev[2] as f64).unwrap(),
-                    },
-                    MeasurementModel(Box::new(core_model)),
-                    TrackedFrame,
-                    mag_config.get_relative_pose().to_bevy_local_transform(),
-                ));
+                let sensor_entity = commands
+                    .spawn((
+                        Name::new(format!("{}/{}", agent_name.as_str(), mag_config.name)),
+                        Magnetometer {
+                            timer: Timer::new(
+                                Duration::from_secs_f32(1.0 / mag_config.rate),
+                                TimerMode::Repeating,
+                            ),
+                            noise_dist_x: Normal::new(0.0, mag_config.noise_stddev[0] as f64)
+                                .unwrap(),
+                            noise_dist_y: Normal::new(0.0, mag_config.noise_stddev[1] as f64)
+                                .unwrap(),
+                            noise_dist_z: Normal::new(0.0, mag_config.noise_stddev[2] as f64)
+                                .unwrap(),
+                        },
+                        SensorPublishChannel(mag_config.channel.clone()),
+                        TrackedFrame,
+                        mag_config.get_relative_pose().to_bevy_local_transform(),
+                    ))
+                    .id();
 
                 commands.entity(agent_entity).add_child(sensor_entity);
             }
@@ -135,53 +113,61 @@ fn spawn_magnetometer_sensors(
 // =========================================================================
 
 fn magnetometer_sensor_system(
-    mut measurement_writer: EventWriter<BevyMeasurementMessage>,
     time: Res<Time>,
     mut rng: ResMut<SimulationRng>,
-    parent_query: Query<(Entity, &GroundTruthState, &Children)>,
-    mut sensor_query: Query<(Entity, &mut Magnetometer, &GlobalTransform)>,
+    mut sensor_query: Query<(
+        Entity,
+        &mut Magnetometer,
+        &GlobalTransform,
+        &SensorPublishChannel,
+        &ChildOf,
+    )>,
+    pipeline_query: Query<&AutonomyPipelineComponent>,
 ) {
+    let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
-    // Re-use the world magnetic field definition.
     let world_magnetic_field_enu = Vector3::new(0.0, 1.0, 0.0).normalize();
 
-    for (agent_entity, _ground_truth, children) in &parent_query {
-        for &child_entity in children {
-            if let Ok((sensor_entity, mut mag, sensor_global_transform)) =
-                sensor_query.get_mut(child_entity)
-            {
-                mag.timer.tick(dt);
-                if !mag.timer.just_finished() {
-                    continue;
-                }
-
-                // --- Simulate Magnetometer Measurement ---
-                let sensor_pose_enu = EnuBodyPose::from(sensor_global_transform).0;
-                let q_sensor_from_world = sensor_pose_enu.rotation.inverse();
-
-                // Rotate the true world magnetic field into the sensor's local frame.
-                let perfect_mag_reading = q_sensor_from_world * world_magnetic_field_enu;
-
-                // Add noise.
-                let noisy_mag_reading = Vector3::new(
-                    perfect_mag_reading.x + mag.noise_dist_x.sample(&mut rng.0),
-                    perfect_mag_reading.y + mag.noise_dist_y.sample(&mut rng.0),
-                    perfect_mag_reading.z + mag.noise_dist_z.sample(&mut rng.0),
-                );
-
-                // Create and send the message.
-                let pure_message = MeasurementMessage {
-                    agent_handle: FrameHandle::from_entity(agent_entity),
-                    sensor_handle: FrameHandle::from_entity(sensor_entity),
-                    timestamp: time.elapsed_secs_f64(),
-                    data: MeasurementData::MagneticField(sensor::MagneticField3D {
-                        value: noisy_mag_reading,
-                    }),
-                };
-                // Emit event — routed to SensorMailbox by route_sensor_messages.
-                // TopicBus publishing is deferred to sensor_telemetry_system (Validation).
-                measurement_writer.write(BevyMeasurementMessage(pure_message));
-            }
+    for (sensor_entity, mut mag, sensor_global_transform, channel, parent) in &mut sensor_query {
+        mag.timer.tick(dt);
+        if !mag.timer.just_finished() {
+            continue;
         }
+
+        let Ok(pipeline_comp) = pipeline_query.get(parent.parent()) else {
+            continue;
+        };
+
+        let sensor_pose_enu = EnuBodyPose::from(sensor_global_transform).0;
+        let q_sensor_from_world = sensor_pose_enu.rotation.inverse();
+
+        let perfect_mag_reading = q_sensor_from_world * world_magnetic_field_enu;
+
+        let noisy_mag_reading = Vector3::new(
+            perfect_mag_reading.x + mag.noise_dist_x.sample(&mut rng.0),
+            perfect_mag_reading.y + mag.noise_dist_y.sample(&mut rng.0),
+            perfect_mag_reading.z + mag.noise_dist_z.sample(&mut rng.0),
+        );
+
+        let reading = SensorReading {
+            sensor_handle: FrameHandle::from_entity(sensor_entity),
+            timestamp: MonotonicTime(elapsed),
+            data: MagneticField3D { value: noisy_mag_reading },
+        };
+        let stamped = Stamped {
+            value: vec![reading],
+            timestamp: MonotonicTime(elapsed),
+            health: Health::Ok,
+            producer: HOST_PRODUCER_ID,
+        };
+
+        pipeline_comp
+            .0
+            .bus()
+            .write(
+                ChannelKey::named::<Vec<SensorReading<MagneticField3D>>>(channel.0.as_str()),
+                stamped,
+            )
+            .ok();
     }
 }

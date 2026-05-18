@@ -1,25 +1,20 @@
 // helios_sim/src/simulation/plugins/control/mod.rs
 //
-// ControlPlugin: initializes ControlOutputComponent at scene build time and calls
-// step_controllers() each tick via EstimatorComponent (for state) + ControlPipelineComponent.
+// ControlPlugin: initializes ControlOutputComponent at scene build time.
+// Step 9b will wire this to AutonomyPipelineComponent for real control output.
 
 use crate::{
     prelude::*,
     simulation::{
         core::{
             app_state::{AppState, SceneBuildSet, SimulationSet},
-            components::{ControlOutputComponent, ControllerStateSource, GroundTruthState},
-            sim_runtime::SimRuntime,
+            components::ControlOutputComponent,
         },
-        plugins::autonomy::{
-            ControlPipelineComponent, EstimatorComponent, PathFollowingOutputComponent,
-        },
+        plugins::autonomy::AutonomyPipelineComponent,
     },
 };
 
 use helios_core::control::ControlOutput;
-use helios_core::data::primitives::FrameHandle;
-use helios_core::frames::FrameAwareState;
 use nalgebra::Vector3;
 
 pub struct ControlPlugin;
@@ -32,19 +27,14 @@ impl Plugin for ControlPlugin {
         )
         .add_systems(
             FixedUpdate,
-            controller_compute_system.in_set(SimulationSet::Control),
+            controller_compute_stub.in_set(SimulationSet::Control),
         );
     }
 }
 
-// =========================================================================
-// == Spawning System ==
-// =========================================================================
-
-/// Inserts `ControlOutputComponent` on every agent that has an `EstimatorComponent`.
 fn spawn_control_output(
     mut commands: Commands,
-    agent_query: Query<Entity, With<EstimatorComponent>>,
+    agent_query: Query<Entity, With<AutonomyPipelineComponent>>,
 ) {
     for entity in &agent_query {
         commands
@@ -56,53 +46,5 @@ fn spawn_control_output(
     }
 }
 
-// =========================================================================
-// == Runtime System ==
-// =========================================================================
-
-/// Calls `step_controllers()` each tick.
-/// Reads state from `EstimatorComponent` or `GroundTruthState` based on `ControllerStateSource`.
-fn controller_compute_system(
-    time: Res<Time>,
-    tf_tree: Res<crate::simulation::core::transforms::TfTree>,
-    mut query: Query<(
-        Entity,
-        &EstimatorComponent,
-        &mut ControlPipelineComponent,
-        &mut ControlOutputComponent,
-        &ControllerStateSource,
-        Option<&GroundTruthState>,
-        &PathFollowingOutputComponent,
-    )>,
-) {
-    let dt = time.delta_secs_f64();
-    let ts = time.elapsed_secs_f64();
-    let runtime = SimRuntime {
-        tf: &tf_tree,
-        elapsed_secs: ts,
-    };
-
-    for (entity, estimator, mut control, mut output, state_source, gt_opt, pf_output) in &mut query
-    {
-        let gt_built: Option<FrameAwareState> = match state_source {
-            ControllerStateSource::GroundTruth => {
-                let handle = FrameHandle::from_entity(entity);
-                gt_opt.map(|gt| gt.to_frame_aware_state(handle, ts))
-            }
-            ControllerStateSource::Estimated => None,
-        };
-        let state: Option<&FrameAwareState> = match state_source {
-            ControllerStateSource::GroundTruth => gt_built.as_ref(),
-            ControllerStateSource::Estimated => estimator.0.get_state(),
-        };
-
-        if let Some(state) = state {
-            if let Some(out) = control
-                .0
-                .step_controllers(state, pf_output.0.as_ref(), dt, &runtime)
-            {
-                output.0 = out;
-            }
-        }
-    }
-}
+/// No-op stub. Control will be wired to the pipeline in a later step.
+fn controller_compute_stub() {}

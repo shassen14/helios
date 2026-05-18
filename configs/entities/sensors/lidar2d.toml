@@ -9,3 +9,4 @@ horizontal_beams = 360
 range_noise_stddev = 0.03
 
 debug_visuals = true
+channel = "sensor.lidar.front"

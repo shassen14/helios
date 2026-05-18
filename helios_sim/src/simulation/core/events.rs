@@ -1,11 +1,6 @@
 // helios_sim/src/simulation/core/events.rs
 use bevy::prelude::{Entity, Event};
-use helios_core::data::messages::MeasurementMessage;
 use helios_core::planning::types::PlannerGoal;
-
-/// Bevy wrapper for a raw sensor measurement.
-#[derive(Event, Clone)]
-pub struct BevyMeasurementMessage(pub MeasurementMessage);
 
 /// Commands a navigation goal change for a specific agent.
 /// Send this event from any system (UI, scenario logic, test harness)

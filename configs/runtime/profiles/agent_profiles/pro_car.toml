@@ -5,7 +5,7 @@
 # Root-level keys are the fields of AutonomyStack.
 # Safe to load in helios_hw without helios_sim.
 
-[estimator]
+[estimators.primary]
 from = "runtime.catalog.estimators.ekf_pro"
 
 [search_planners]

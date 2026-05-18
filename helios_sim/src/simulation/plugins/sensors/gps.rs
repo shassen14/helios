@@ -1,28 +1,24 @@
 use bevy::prelude::*;
-use nalgebra::{DMatrix, Vector3};
+use nalgebra::Vector3;
 use rand_distr::{Distribution, Normal};
 use std::time::Duration;
 
-// --- Simulation Crate Imports ---
 use crate::prelude::*;
-use crate::simulation::core::{
-    app_state::SimulationSet, events::BevyMeasurementMessage, prng::SimulationRng,
-    transforms::EnuVector,
+use crate::simulation::core::{app_state::SimulationSet, prng::SimulationRng, transforms::EnuVector};
+use crate::simulation::plugins::autonomy::components::{
+    AutonomyPipelineComponent, SensorPublishChannel,
 };
 
-// --- Core Library Imports ---
-use helios_core::{
-    data::messages::{MeasurementData, MeasurementMessage},
-    data::primitives::FrameHandle,
-    data::sensor,
-    estimation::measurement::gps::GpsPositionModel,
-};
+use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+use helios_core::data::sensor::{GpsPosition, SensorReading};
+use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
+use helios_runtime::port::ChannelKey;
+use helios_runtime::stamped::{Health, Stamped};
 
 // =========================================================================
 // == GPS Components & Plugin ==
 // =========================================================================
 
-/// A Bevy component attached to a GPS sensor entity, containing its runtime state.
 #[derive(Component)]
 pub struct Gps {
     pub timer: Timer,
@@ -48,7 +44,6 @@ impl Plugin for GpsPlugin {
 // == Spawning System ==
 // =========================================================================
 
-/// Reads the config and spawns GPS sensor entities as children of the appropriate agent.
 fn spawn_gps_sensors(
     mut commands: Commands,
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
@@ -62,29 +57,6 @@ fn spawn_gps_sensors(
                     agent_name.as_str()
                 );
 
-                // --- 1. Create the `helios_core` Measurement Model ---
-                // This model contains the physics and noise characteristics of the sensor.
-
-                // Create the 3x3 measurement noise covariance matrix R.
-                let r_matrix = DMatrix::from_diagonal(&nalgebra::DVector::from_vec(vec![
-                    gps_config.noise_stddev[0].powi(2) as f64,
-                    gps_config.noise_stddev[1].powi(2) as f64,
-                    gps_config.noise_stddev[2].powi(2) as f64,
-                ]));
-
-                // Get the antenna's physical offset from the config.
-                let antenna_offset_body = gps_config.get_relative_pose().translation;
-
-                let core_model = GpsPositionModel {
-                    r_matrix,
-                    antenna_offset_body,
-                };
-
-                // --- 2. Spawn the Sensor Entity as a Child ---
-                let mut sensor_entity_commands = commands.spawn_empty();
-                let sensor_entity = sensor_entity_commands.id();
-
-                // TODO: Does this along with the other sensors check belong in runtime instead?
                 let stddev = gps_config.noise_stddev[0] as f64;
                 if stddev <= 0.0 {
                     error!(
@@ -94,21 +66,22 @@ fn spawn_gps_sensors(
                     continue;
                 }
 
-                sensor_entity_commands.insert((
-                    Name::new(format!("{}/{}", agent_name.as_str(), gps_config.name)),
-                    Gps {
-                        timer: Timer::new(
-                            Duration::from_secs_f32(1.0 / gps_config.rate),
-                            TimerMode::Repeating,
-                        ),
-                        noise_dist: Normal::new(0.0, stddev).unwrap(),
-                    },
-                    MeasurementModel(Box::new(core_model)),
-                    TrackedFrame,
-                    gps_config.get_relative_pose().to_bevy_local_transform(),
-                ));
+                let sensor_entity = commands
+                    .spawn((
+                        Name::new(format!("{}/{}", agent_name.as_str(), gps_config.name)),
+                        Gps {
+                            timer: Timer::new(
+                                Duration::from_secs_f32(1.0 / gps_config.rate),
+                                TimerMode::Repeating,
+                            ),
+                            noise_dist: Normal::new(0.0, stddev).unwrap(),
+                        },
+                        SensorPublishChannel(gps_config.channel.clone()),
+                        TrackedFrame,
+                        gps_config.get_relative_pose().to_bevy_local_transform(),
+                    ))
+                    .id();
 
-                // --- 3. Add the sensor as a child of the agent ---
                 commands.entity(agent_entity).add_child(sensor_entity);
             }
         }
@@ -119,60 +92,53 @@ fn spawn_gps_sensors(
 // == Runtime System ==
 // =========================================================================
 
-/// Runs every frame to simulate GPS physics and emit `BevyMeasurementMessage` events.
-/// TopicBus publishing is deferred to `sensor_telemetry_system` in the Validation phase.
 fn gps_sensor_system(
-    mut measurement_writer: EventWriter<BevyMeasurementMessage>,
     time: Res<Time>,
     mut rng: ResMut<SimulationRng>,
-
-    // We need the GlobalTransform of the parent (agent) to calculate the true
-    // position of the antenna.
-    parent_query: Query<(Entity, &GlobalTransform, &Children)>,
-    mut sensor_query: Query<(Entity, &mut Gps, &GlobalTransform)>,
+    mut sensor_query: Query<(Entity, &mut Gps, &GlobalTransform, &SensorPublishChannel, &ChildOf)>,
+    pipeline_query: Query<&AutonomyPipelineComponent>,
 ) {
+    let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (agent_entity, _agent_transform, children) in &parent_query {
-        for &child_entity in children {
-            // Check if this child is a GPS sensor we need to process.
-            if let Ok((sensor_entity, mut gps, sensor_global_transform)) =
-                sensor_query.get_mut(child_entity)
-            {
-                gps.timer.tick(dt);
-                if !gps.timer.just_finished() {
-                    continue;
-                }
-
-                // --- Simulate GPS Measurement ---
-
-                // 1. Get the sensor's true position in the Bevy world.
-                let true_position_bevy = sensor_global_transform.translation();
-
-                // 2. Convert it to our ENU coordinate system.
-                let true_position_enu = EnuVector::from(true_position_bevy).0;
-
-                // 3. Add Gaussian noise to simulate GPS inaccuracy.
-                let noisy_position_enu = Vector3::new(
-                    true_position_enu.x + gps.noise_dist.sample(&mut rng.0),
-                    true_position_enu.y + gps.noise_dist.sample(&mut rng.0),
-                    true_position_enu.z + gps.noise_dist.sample(&mut rng.0),
-                );
-
-                // 4. Create the pure `MeasurementMessage`.
-                let pure_message = MeasurementMessage {
-                    agent_handle: FrameHandle::from_entity(agent_entity),
-                    sensor_handle: FrameHandle::from_entity(sensor_entity),
-                    timestamp: time.elapsed_secs_f64(),
-                    data: MeasurementData::GpsPosition(sensor::GpsPosition {
-                        position: noisy_position_enu,
-                    }),
-                };
-
-                // Emit event — routed to SensorMailbox by route_sensor_messages.
-                // TopicBus publishing is deferred to sensor_telemetry_system (Validation).
-                measurement_writer.write(BevyMeasurementMessage(pure_message));
-            }
+    for (sensor_entity, mut gps, sensor_global_transform, channel, parent) in &mut sensor_query {
+        gps.timer.tick(dt);
+        if !gps.timer.just_finished() {
+            continue;
         }
+
+        let Ok(pipeline_comp) = pipeline_query.get(parent.parent()) else {
+            continue;
+        };
+
+        let true_position_bevy = sensor_global_transform.translation();
+        let true_position_enu = EnuVector::from(true_position_bevy).0;
+
+        let noisy_position = Vector3::new(
+            true_position_enu.x + gps.noise_dist.sample(&mut rng.0),
+            true_position_enu.y + gps.noise_dist.sample(&mut rng.0),
+            true_position_enu.z + gps.noise_dist.sample(&mut rng.0),
+        );
+
+        let reading = SensorReading {
+            sensor_handle: FrameHandle::from_entity(sensor_entity),
+            timestamp: MonotonicTime(elapsed),
+            data: GpsPosition { position: noisy_position },
+        };
+        let stamped = Stamped {
+            value: vec![reading],
+            timestamp: MonotonicTime(elapsed),
+            health: Health::Ok,
+            producer: HOST_PRODUCER_ID,
+        };
+
+        pipeline_comp
+            .0
+            .bus()
+            .write(
+                ChannelKey::named::<Vec<SensorReading<GpsPosition>>>(channel.0.as_str()),
+                stamped,
+            )
+            .ok();
     }
 }

@@ -1,24 +1,13 @@
 // helios_sim/src/simulation/core/components.rs
 
 use bevy::prelude::*;
-use helios_core::data::messages::MeasurementMessage;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::{
     layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable,
 };
-use helios_core::prelude::{ControlOutput, EstimationDynamics, Measurement};
+use helios_core::prelude::ControlOutput;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
-
-// --- Wrapper Components for Core Traits ---
-
-/// A Bevy component that wraps a pure `Dynamics` trait object.
-#[derive(Component)]
-pub struct EstimationDynamicsModel(pub Box<dyn EstimationDynamics>);
-
-/// A Bevy component that wraps a pure `Measurement` trait object.
-#[derive(Component)]
-pub struct MeasurementModel(pub Box<dyn Measurement>);
 
 // --- Controller Output Component ---
 
@@ -26,6 +15,14 @@ pub struct MeasurementModel(pub Box<dyn Measurement>);
 /// Written by `SimulationSet::Control`; read by `SimulationSet::Actuation`.
 #[derive(Component)]
 pub struct ControlOutputComponent(pub ControlOutput);
+
+/// Selects which state estimate the controller reads. Toggled by the HUD's T key.
+#[derive(Component, Clone, Debug, PartialEq, Default)]
+pub enum ControllerStateSource {
+    #[default]
+    GroundTruth,
+    Estimated,
+}
 
 // --- Agent State Components ---
 
@@ -88,37 +85,6 @@ impl GroundTruthState {
         state.set_variable(&StateVariable::Qw(body_frame, world_frame), q.w);
         state
     }
-}
-
-// =========================================================================
-// == ControllerStateSource ==
-// =========================================================================
-
-/// Which state is passed to controllers: estimated (EKF) or ground-truth (physics).
-/// Set at scene build time from `ControllerStateSourceConfig`. Default = Estimated.
-#[derive(Component, Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControllerStateSource {
-    #[default]
-    Estimated,
-    GroundTruth,
-}
-
-// =========================================================================
-// == Sensor mailbox (per-agent, filled each frame by route_sensor_messages) ==
-// =========================================================================
-
-/// One entry in a `SensorMailbox`: a measurement from a sensor this frame.
-#[derive(Clone)]
-pub struct MailboxEntry {
-    pub message: MeasurementMessage,
-}
-
-/// Per-agent component that collects sensor measurements for the current frame.
-/// Cleared and refilled each frame by `route_sensor_messages` before
-/// estimation and mapping systems run. Entries are sorted by timestamp (ascending).
-#[derive(Component, Default)]
-pub struct SensorMailbox {
-    pub entries: Vec<MailboxEntry>,
 }
 
 // =========================================================================

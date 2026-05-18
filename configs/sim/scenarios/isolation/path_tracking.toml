@@ -37,7 +37,7 @@ goal_pose     = { translation = [10.0, 0.0, 0.5] }
 
 # Real EKF estimator (sensors provide measurements).
 # Path is provided by MockPathInjectorPlugin (no planner needed).
-[agents.autonomy_stack.estimator]
+[agents.autonomy_stack.estimators.primary]
 from = "runtime.catalog.estimators.ekf_pro"
 
 [agents.autonomy_stack.controllers]

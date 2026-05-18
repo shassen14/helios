@@ -11,7 +11,7 @@ use nalgebra::Vector3;
 
 use super::interaction::{GoalRegistry, SelectedAgent};
 use crate::simulation::core::transforms::EnuVector;
-use crate::simulation::plugins::autonomy::ControlPipelineComponent;
+use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
 
 const COLOR_SELECTION: Color = Color::srgb(0.0, 1.0, 0.0); // green
 const COLOR_GOAL: Color = Color::srgb(1.0, 0.0, 1.0); // magenta
@@ -42,7 +42,7 @@ fn goal_to_bevy(goal: &PlannerGoal) -> Option<Vec3> {
 pub fn draw_selection(
     selected: Res<SelectedAgent>,
     goal_registry: Res<GoalRegistry>,
-    agents: Query<&GlobalTransform, With<ControlPipelineComponent>>,
+    agents: Query<&GlobalTransform, With<AutonomyPipelineComponent>>,
     mut gizmos: Gizmos,
 ) {
     let Some(entity) = selected.0 else { return };

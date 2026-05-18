@@ -13,3 +13,4 @@ noise_stddev = [0.4, 0.4, 0.8]
 # This is a good, realistic spot for clear sky view.
 # [x, y, z] in the body frame: Forward, Left, Up.
 transform = { translation = [0.0, 0.0, 0.0], rotation = [0, 0, 0] }
+channel = "sensor.gps.primary"

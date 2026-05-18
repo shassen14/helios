@@ -1,30 +1,29 @@
 // helios_sim/src/simulation/plugins/sensors/raycasting.rs
-use avian3d::prelude::{SpatialQuery, SpatialQueryFilter}; // Import the correct types
+use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use bevy::prelude::*;
 use std::time::Duration;
 
-// --- Simulation Crate Imports ---
 use crate::prelude::*;
 use crate::simulation::config::structs::{LidarConfig, SensorConfig};
-use crate::simulation::core::{app_state::SimulationSet, events::BevyMeasurementMessage};
-
-// --- Core Library Imports ---
+use crate::simulation::core::{app_state::SimulationSet, prng::SimulationRng};
 use crate::simulation::core::transforms::FluVector;
-use helios_core::{
-    data::messages::MeasurementMessage,
-    data::primitives::FrameHandle,
-    sensors::{
-        lidar_2d::Lidar2DModel, // We'll import our concrete models here
-        RayHit,
-        RaycastingSensorModel,
-    },
+use crate::simulation::plugins::autonomy::components::{
+    AutonomyPipelineComponent, SensorPublishChannel,
 };
+
+use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+use helios_core::data::sensor::{PointCloud2D, SensorReading};
+use helios_core::sensors::{
+    lidar_2d::Lidar2DModel, RayHit, RaycastingOutput, RaycastingSensorModel,
+};
+use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
+use helios_runtime::port::ChannelKey;
+use helios_runtime::stamped::{Health, Stamped};
 
 // =========================================================================
 // == Components & Plugin ==
 // =========================================================================
 
-/// A generic component for any sensor that works by raycasting.
 #[derive(Component)]
 pub struct RaycastingSensor {
     pub timer: Timer,
@@ -50,7 +49,6 @@ impl Plugin for RaycastingSensorPlugin {
 // == Spawning System ==
 // =========================================================================
 
-// This function now mirrors the structure of your `spawn_imu_sensors`
 fn spawn_raycasting_sensors(
     mut commands: Commands,
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
@@ -65,7 +63,6 @@ fn spawn_raycasting_sensors(
                     lidar_config.get_rate()
                 );
 
-                // --- 1. Create the `helios_core` Model ---
                 let core_model: Box<dyn RaycastingSensorModel> = match lidar_config {
                     LidarConfig::Lidar2D {
                         max_range,
@@ -91,12 +88,10 @@ fn spawn_raycasting_sensors(
                         Box::new(model)
                     }
                     LidarConfig::Lidar3D { .. } => {
-                        // Future implementation would go here.
                         unimplemented!("Lidar3D spawning not yet implemented.");
                     }
                 };
 
-                // --- 2. Spawn the Sensor Entity ---
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
@@ -109,6 +104,7 @@ fn spawn_raycasting_sensors(
                         ),
                         model: core_model,
                     },
+                    SensorPublishChannel(lidar_config.get_channel().to_string()),
                     TrackedFrame,
                     lidar_config.get_relative_pose().to_bevy_local_transform(),
                 ));
@@ -123,77 +119,80 @@ fn spawn_raycasting_sensors(
 // == Runtime System ==
 // =========================================================================
 
-/// Runs every frame to simulate raycasting sensors and emit `BevyMeasurementMessage` events.
 fn raycasting_sensor_system(
-    mut measurement_writer: EventWriter<BevyMeasurementMessage>,
     time: Res<Time>,
+    mut rng: ResMut<SimulationRng>,
     spatial_query: SpatialQuery,
-
-    // Use the same parent-child query pattern as the IMU.
-    parent_query: Query<(Entity, &Children)>,
-    mut sensor_query: Query<(Entity, &mut RaycastingSensor, &GlobalTransform)>,
+    mut sensor_query: Query<(Entity, &mut RaycastingSensor, &GlobalTransform, &ChildOf)>,
+    pipeline_query: Query<&AutonomyPipelineComponent>,
 ) {
+    let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (agent_entity, children) in &parent_query {
-        for &child_entity in children {
-            if let Ok((sensor_entity, mut sensor, sensor_transform)) =
-                sensor_query.get_mut(child_entity)
-            {
-                sensor.timer.tick(dt);
-                if !sensor.timer.just_finished() {
-                    continue;
+    for (sensor_entity, mut sensor, sensor_transform, parent) in &mut sensor_query {
+        sensor.timer.tick(dt);
+        if !sensor.timer.just_finished() {
+            continue;
+        }
+
+        let Ok(pipeline_comp) = pipeline_query.get(parent.parent()) else {
+            continue;
+        };
+
+        let local_rays = sensor.model.generate_rays();
+        let mut hits: Vec<RayHit> = Vec::with_capacity(local_rays.len());
+        let sensor_origin = sensor_transform.translation();
+        let sensor_rotation = sensor_transform.rotation();
+        let max_toi = sensor.model.get_max_range();
+
+        let filter = SpatialQueryFilter::from_excluded_entities([parent.parent()]);
+
+        for ray in local_rays {
+            let bevy_sensor_local_dir = Vec3::from(FluVector(nalgebra::Vector3::new(
+                ray.direction.x,
+                ray.direction.y,
+                ray.direction.z,
+            )));
+            let world_direction: Vec3 = sensor_rotation * bevy_sensor_local_dir;
+
+            if let Ok(dir) = Dir3::new(world_direction) {
+                if let Some(hit) =
+                    spatial_query.cast_ray(sensor_origin, dir, max_toi, true, &filter)
+                {
+                    hits.push(RayHit {
+                        ray_id: ray.id,
+                        distance: hit.distance,
+                    });
                 }
-
-                let local_rays = sensor.model.generate_rays();
-                let mut hits: Vec<RayHit> = Vec::with_capacity(local_rays.len());
-                let sensor_origin = sensor_transform.translation();
-                let sensor_rotation = sensor_transform.rotation();
-                let max_toi = sensor.model.get_max_range();
-
-                // We create a filter that excludes the sensor's own parent agent.
-                let filter = SpatialQueryFilter::from_excluded_entities([agent_entity]);
-
-                for ray in local_rays {
-                    // 1. Convert ray direction from sensor FLU frame to Bevy local frame.
-                    //    FLU +X (Forward) → Bevy -Z, FLU +Y (Left) → Bevy -X, FLU +Z (Up) → Bevy +Y
-                    let bevy_sensor_local_dir = Vec3::from(FluVector(nalgebra::Vector3::new(
-                        ray.direction.x,
-                        ray.direction.y,
-                        ray.direction.z,
-                    )));
-                    // 2. Then, rotate it.
-                    let world_direction: Vec3 = sensor_rotation * bevy_sensor_local_dir;
-
-                    // Convert it to `Dir3` for the raycast.
-                    if let Ok(dir) = Dir3::new(world_direction) {
-                        if let Some(hit) =
-                            spatial_query.cast_ray(sensor_origin, dir, max_toi, true, &filter)
-                        {
-                            hits.push(RayHit {
-                                ray_id: ray.id,
-                                distance: hit.distance,
-                            });
-                        }
-                    }
-                }
-
-                let agent_handle = FrameHandle::from_entity(agent_entity);
-                let sensor_handle = FrameHandle::from_entity(sensor_entity);
-
-                // Pass the raw hits back to the model to apply noise and create the final data packet.
-                let measurement_data = sensor.model.process_hits(&hits);
-
-                let pure_message = MeasurementMessage {
-                    agent_handle,
-                    sensor_handle,
-                    timestamp: time.elapsed_secs_f64(),
-                    data: measurement_data,
-                };
-
-                // Emit event — routed to SensorMailbox by route_sensor_messages.
-                measurement_writer.write(BevyMeasurementMessage(pure_message));
             }
         }
+
+        let output = sensor.model.process_hits(&hits, &mut rng.0);
+
+        let point_cloud = match output {
+            RaycastingOutput::PointCloud2D(cloud) => cloud,
+            RaycastingOutput::PointCloud3D(_) => continue,
+        };
+
+        let reading = SensorReading {
+            sensor_handle: FrameHandle::from_entity(sensor_entity),
+            timestamp: MonotonicTime(elapsed),
+            data: point_cloud,
+        };
+        let stamped = Stamped {
+            value: vec![reading],
+            timestamp: MonotonicTime(elapsed),
+            health: Health::Ok,
+            producer: HOST_PRODUCER_ID,
+        };
+
+        pipeline_comp
+            .0
+            .bus()
+            .write(
+                ChannelKey::of::<Vec<SensorReading<PointCloud2D>>>(),
+                stamped,
+            )
+            .ok();
     }
 }
