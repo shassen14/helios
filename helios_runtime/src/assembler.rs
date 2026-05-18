@@ -170,7 +170,7 @@ pub fn build_pipeline(
     }
 
     // --- Map layers ---
-    for (_, map_cfg) in &stack.map_layers {
+    for map_cfg in stack.map_layers.values() {
         if matches!(map_cfg, MapLayerConfig::None) {
             continue;
         }
@@ -251,7 +251,7 @@ pub fn build_pipeline(
     }
 
     // --- Controllers ---
-    for (_, ctrl_cfg) in &stack.controllers {
+    for ctrl_cfg in stack.controllers.values() {
         match registry.build_controller(
             ctrl_cfg.get_kind_str(),
             ControllerBuildContext {
