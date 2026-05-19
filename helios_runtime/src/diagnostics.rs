@@ -6,6 +6,7 @@
 //! path, or a test. Never wire `inspect_bus` into a per-tick system — at
 //! the default 200 Hz host rate the slot walk is wasted work.
 
+use crate::pipeline::key_format::format_key_short;
 use crate::port::{ChannelKey, PortBus};
 
 /// One row of a [`PortBus`] snapshot.
@@ -44,7 +45,7 @@ pub fn format_bus(bus: &PortBus) -> String {
     out.push_str("PortBus snapshot:\n");
     for row in &rows {
         let marker = if row.has_value { "set" } else { "---" };
-        out.push_str(&format!("  [{marker}] {}\n", row.channel));
+        out.push_str(&format!("  [{marker}] {}\n", format_key_short(&row.channel)));
     }
     out
 }
