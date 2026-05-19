@@ -6,7 +6,7 @@ use crate::simulation::core::transforms::FluVector;
 use crate::simulation::plugins::autonomy::components::AutonomyPipelineComponent;
 
 use helios_core::data::sensor::{PointCloud2D, SensorReading};
-use helios_runtime::port::ChannelKey;
+use helios_runtime::port::SensorChannel;
 
 /// Reads the latest PointCloud2D readings from each agent's pipeline bus and
 /// stores world-space points in the debug cache for visualization.
@@ -19,9 +19,9 @@ pub fn cache_sensor_data(
         let Some(stamped) = pipeline_comp
             .0
             .bus()
-            .read::<Vec<SensorReading<PointCloud2D>>>(ChannelKey::of::<
-                Vec<SensorReading<PointCloud2D>>,
-            >())
+            .read::<Vec<SensorReading<PointCloud2D>>>(
+                SensorChannel::of::<Vec<SensorReading<PointCloud2D>>>().into(),
+            )
         else {
             continue;
         };

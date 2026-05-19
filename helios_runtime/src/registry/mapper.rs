@@ -7,7 +7,7 @@ use helios_core::mapping::{Mapper, OccupancyGridMapper};
 use crate::config::MapLayerConfig;
 use crate::pipeline::node::PipelineNode;
 use crate::pipeline::nodes::occupancy_grid::OccupancyGridNode;
-use crate::port::ChannelKey;
+use crate::port::{InternalChannel, SensorChannel};
 
 use super::{contexts::MapperBuildContext, AutonomyRegistry};
 
@@ -36,8 +36,8 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
         height_m as f64,
     ));
 
-    let scan_channel = ChannelKey::of::<Vec<SensorReading<PointCloud2D>>>();
-    let map_channel = ChannelKey::named::<MapData>("local");
+    let scan_channel = SensorChannel::of::<Vec<SensorReading<PointCloud2D>>>();
+    let map_channel = InternalChannel::named::<MapData>("local");
 
     Ok(Box::new(OccupancyGridNode::new(
         "occupancy_grid",

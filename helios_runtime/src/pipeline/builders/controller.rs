@@ -1,5 +1,5 @@
 use crate::{
-    port::{ChannelKey, PortBus},
+    port::{ChannelKey, InternalChannel, PortBus},
     prelude::{AgentRuntime, TickContext},
 };
 use helios_core::{
@@ -34,8 +34,8 @@ impl Default for DefaultControlInputBuilder {
 
 impl DefaultControlInputBuilder {
     pub fn new() -> Self {
-        let state_channel = ChannelKey::of::<FrameAwareState>();
-        let reference_channel = ChannelKey::of::<TrajectoryPoint>();
+        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
+        let reference_channel: ChannelKey = InternalChannel::of::<TrajectoryPoint>().into();
 
         Self {
             state_channel: state_channel.clone(),

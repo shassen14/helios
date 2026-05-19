@@ -14,7 +14,7 @@ use helios_core::{
 
 use crate::{
     pipeline::{key_format::format_key_short, node::HOST_PRODUCER_ID, rate_gate::RateTimer},
-    port::{ChannelKey, PortBus},
+    port::{ChannelKey, InternalChannel, PortBus},
     prelude::{
         AgentRuntime, Health, NodeId, PipelineBuildError, PipelineNode, Stamped, TickContext,
     },
@@ -395,7 +395,7 @@ impl AutonomyPipeline {
         };
 
         let _ = self.bus.write(
-            ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE),
+            InternalChannel::named::<PlannerGoal>(MISSION_GOAL_INSTANCE).into(),
             goal_stamped,
         );
     }
@@ -405,13 +405,14 @@ impl AutonomyPipeline {
     /// Returns `None` during cold-start (before the estimator has produced
     /// its first state) and when no estimator node is present in the graph.
     pub fn read_state(&self) -> Option<Arc<Stamped<FrameAwareState>>> {
-        self.bus.read(ChannelKey::of::<FrameAwareState>())
+        self.bus
+            .read(InternalChannel::of::<FrameAwareState>().into())
     }
 
     /// Reads the current control output, if any controller node has
     /// written one this run.
     pub fn read_control(&self) -> Option<Arc<Stamped<ControlOutput>>> {
-        self.bus.read(ChannelKey::of::<ControlOutput>())
+        self.bus.read(InternalChannel::of::<ControlOutput>().into())
     }
 
     /// Reads any [`Path`] currently on the bus, ignoring the planner instance
@@ -431,6 +432,6 @@ impl AutonomyPipeline {
     /// Reads the currently-injected mission goal, if any.
     pub fn read_mission_goal(&self) -> Option<Arc<Stamped<PlannerGoal>>> {
         self.bus
-            .read(ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE))
+            .read(InternalChannel::named::<PlannerGoal>(MISSION_GOAL_INSTANCE).into())
     }
 }

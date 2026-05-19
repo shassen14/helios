@@ -30,29 +30,30 @@
 //! promoted to a registry family (`register_aiding_handler_factory`). For the
 //! current set of five built-in types, the inline match is sufficient.
 
-use std::collections::HashMap;
-
-use helios_core::data::primitives::FrameHandle;
-use helios_core::data::sensor::{
-    AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
-    SensorReading,
-};
-use helios_core::mapping::MapData;
-use helios_core::planning::types::Path;
-use nalgebra::DMatrix;
-
 use crate::config::AutonomyStack;
 use crate::config::{AidingConfig, EkfDynamicsConfig, EstimatorConfig, MapLayerConfig};
 use crate::pipeline::autonomy_pipeline::PipelineBuilder;
 use crate::pipeline::build_error::PipelineBuildError;
 use crate::pipeline::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
 use crate::pipeline::AutonomyPipeline;
-use crate::port::ChannelKey;
+use crate::port::{ChannelKey, InternalChannel, SensorChannel};
 use crate::registry::contexts::{
     ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
     MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 use crate::registry::AutonomyRegistry;
+
+use helios_core::data::primitives::FrameHandle;
+use helios_core::data::sensor::{
+    AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
+    SensorReading,
+};
+use helios_core::frames::FrameAwareState;
+use helios_core::mapping::MapData;
+use helios_core::planning::types::Path;
+use nalgebra::DMatrix;
+
+use std::collections::HashMap;
 
 /// Errors that can occur while assembling a pipeline from config.
 #[derive(Debug)]
@@ -186,8 +187,9 @@ pub fn build_pipeline(
                 // FrameAwareState is produced by the estimator upstream;
                 // every other required input of a mapper is an external
                 // sensor channel that must seed the topological sort.
+                let state_key: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
                 for key in &node.port_descriptor().required_inputs {
-                    if *key != ChannelKey::of::<helios_core::frames::FrameAwareState>() {
+                    if *key != state_key {
                         external_channels.push(key.clone());
                     }
                 }
@@ -203,8 +205,8 @@ pub fn build_pipeline(
     // --- Planners ---
     for (planner_name, plan_cfg) in &stack.search_planners {
         let level = plan_cfg.get_level_str();
-        let map_channel = ChannelKey::named::<MapData>(level);
-        let path_channel = ChannelKey::named::<Path>(planner_name.as_str());
+        let map_channel = InternalChannel::named::<MapData>(level);
+        let path_channel = InternalChannel::named::<Path>(planner_name.as_str());
 
         match registry.build_search_planner(
             plan_cfg.get_kind_str(),
@@ -401,17 +403,19 @@ fn build_aiding_handler(
     Ok(handler)
 }
 
-/// Constructs the bus [`ChannelKey`] for a sensor reading channel, typed by
-/// `sensor_payload`. The channel key encodes both the Rust type and the
+/// Constructs the bus [`SensorChannel`] for a sensor reading channel, typed
+/// by `sensor_payload`. The channel encodes both the Rust type and the
 /// instance qualifier from `input_channel`.
-fn build_aiding_channel(aid: &AidingConfig) -> Result<ChannelKey, PipelineAssemblyError> {
+fn build_aiding_channel(aid: &AidingConfig) -> Result<SensorChannel, PipelineAssemblyError> {
     let q = aid.input_channel.as_str();
     let key = match aid.sensor_payload.as_str() {
-        "GpsPosition" => ChannelKey::named::<Vec<SensorReading<GpsPosition>>>(q),
-        "GpsVelocity" => ChannelKey::named::<Vec<SensorReading<GpsVelocity>>>(q),
-        "LinearAcceleration3D" => ChannelKey::named::<Vec<SensorReading<LinearAcceleration3D>>>(q),
-        "AngularVelocity3D" => ChannelKey::named::<Vec<SensorReading<AngularVelocity3D>>>(q),
-        "MagneticField3D" => ChannelKey::named::<Vec<SensorReading<MagneticField3D>>>(q),
+        "GpsPosition" => SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(q),
+        "GpsVelocity" => SensorChannel::named::<Vec<SensorReading<GpsVelocity>>>(q),
+        "LinearAcceleration3D" => {
+            SensorChannel::named::<Vec<SensorReading<LinearAcceleration3D>>>(q)
+        }
+        "AngularVelocity3D" => SensorChannel::named::<Vec<SensorReading<AngularVelocity3D>>>(q),
+        "MagneticField3D" => SensorChannel::named::<Vec<SensorReading<MagneticField3D>>>(q),
         _ => unreachable!("caller already validated sensor_payload"),
     };
     Ok(key)
@@ -422,7 +426,7 @@ fn build_aiding_channel(aid: &AidingConfig) -> Result<ChannelKey, PipelineAssemb
 /// Uses `PathFollowingConfig::path_source` if set; otherwise, falls back to
 /// the single planner's key. Errors if multiple planners exist and no
 /// explicit source is given.
-fn resolve_path_channel(stack: &AutonomyStack) -> Result<ChannelKey, PipelineAssemblyError> {
+fn resolve_path_channel(stack: &AutonomyStack) -> Result<InternalChannel, PipelineAssemblyError> {
     // Use an explicit path_source if configured.
     // TODO: add `path_source: Option<String>` to PathFollowingConfig to
     // support multi-planner stacks without ambiguity.
@@ -431,7 +435,7 @@ fn resolve_path_channel(stack: &AutonomyStack) -> Result<ChannelKey, PipelineAss
         0 => Err(PipelineAssemblyError::NoPathSourceForFollower),
         1 => {
             let planner_name = stack.search_planners.keys().next().unwrap();
-            Ok(ChannelKey::named::<Path>(planner_name.as_str()))
+            Ok(InternalChannel::named::<Path>(planner_name.as_str()))
         }
         _ => {
             // Multiple planners: cannot auto-select. Caller should add

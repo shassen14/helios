@@ -1,7 +1,7 @@
 use helios_core::{frames::FrameAwareState, prelude::PathFollowerInputs};
 
 use crate::{
-    port::{ChannelKey, PortBus},
+    port::{ChannelKey, InternalChannel, PortBus},
     prelude::{AgentRuntime, TickContext},
 };
 
@@ -31,7 +31,7 @@ impl Default for DefaultPathFollowerInputBuilder {
 
 impl DefaultPathFollowerInputBuilder {
     pub fn new() -> Self {
-        let state_channel = ChannelKey::of::<FrameAwareState>();
+        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
         Self {
             state_channel: state_channel.clone(),
             required: vec![state_channel],

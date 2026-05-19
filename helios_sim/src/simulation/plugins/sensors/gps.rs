@@ -14,7 +14,7 @@ use crate::simulation::plugins::autonomy::components::{
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::{GpsPosition, SensorReading};
 use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
-use helios_runtime::port::ChannelKey;
+use helios_runtime::port::SensorChannel;
 use helios_runtime::stamped::{Health, Stamped};
 
 // =========================================================================
@@ -147,7 +147,7 @@ fn gps_sensor_system(
             .0
             .bus()
             .write(
-                ChannelKey::named::<Vec<SensorReading<GpsPosition>>>(channel.0.as_str()),
+                SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(channel.0.as_str()).into(),
                 stamped,
             )
             .ok();

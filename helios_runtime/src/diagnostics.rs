@@ -28,10 +28,15 @@ pub fn inspect_bus(bus: &PortBus) -> Vec<SlotSummary> {
         .collect();
 
     rows.sort_by(|a, b| {
-        a.channel
-            .type_name
-            .cmp(b.channel.type_name)
-            .then_with(|| a.channel.instance.as_ref().cmp(b.channel.instance.as_ref()))
+        (a.channel.kind() as u8)
+            .cmp(&(b.channel.kind() as u8))
+            .then_with(|| a.channel.type_name().cmp(b.channel.type_name()))
+            .then_with(|| {
+                a.channel
+                    .instance()
+                    .as_ref()
+                    .cmp(b.channel.instance().as_ref())
+            })
     });
 
     rows

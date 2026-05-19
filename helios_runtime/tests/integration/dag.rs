@@ -11,11 +11,22 @@ use std::sync::{
 use helios_core::data::primitives::MonotonicTime;
 use helios_runtime::{
     pipeline::{PipelineBuildError, PipelineBuilder},
-    port::{ChannelKey, PortBus, PortDescriptor},
+    port::{ChannelKey, InternalChannel, PortBus, PortDescriptor},
     prelude::{Health, PipelineNode, Stamped, TickContext},
 };
 
 use crate::common::MockRuntime;
+
+/// Test-only sugar: every channel in this file is internal (algorithm-to-
+/// algorithm wiring), so go through the `InternalChannel` constructor and
+/// convert into the enum key once.
+fn ikey_of<T: 'static>() -> ChannelKey {
+    InternalChannel::of::<T>().into()
+}
+
+fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
+    InternalChannel::named::<T>(instance).into()
+}
 
 // =========================================================================
 // == Dummy PipelineNode implementations ==
@@ -278,7 +289,7 @@ struct Sensor;
 
 #[test]
 fn single_node_executes() {
-    let out = ChannelKey::of::<ChA>();
+    let out = ikey_of::<ChA>();
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", out.clone(), 42)))
         .build()
@@ -295,8 +306,8 @@ fn single_node_executes() {
 
 #[test]
 fn two_node_chain_level_ordering() {
-    let a = ChannelKey::of::<ChA>();
-    let b = ChannelKey::of::<ChB>();
+    let a = ikey_of::<ChA>();
+    let b = ikey_of::<ChB>();
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 7)))
@@ -324,8 +335,8 @@ fn two_node_chain_level_ordering() {
 #[test]
 fn two_node_chain_with_builder_inserted_out_of_order() {
     // B added before A — toposort must still resolve A→B.
-    let a = ChannelKey::of::<ChA>();
-    let b = ChannelKey::of::<ChB>();
+    let a = ikey_of::<ChA>();
+    let b = ikey_of::<ChB>();
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
@@ -350,10 +361,10 @@ fn two_node_chain_with_builder_inserted_out_of_order() {
 #[test]
 fn three_node_diamond_resolves() {
     // A → (B, C) → D, with D summing B and C's outputs.
-    let a = ChannelKey::of::<ChA>();
-    let b = ChannelKey::of::<ChB>();
-    let c = ChannelKey::of::<ChC>();
-    let d = ChannelKey::of::<ChD>();
+    let a = ikey_of::<ChA>();
+    let b = ikey_of::<ChB>();
+    let c = ikey_of::<ChC>();
+    let d = ikey_of::<ChD>();
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 1)))
@@ -391,8 +402,8 @@ fn three_node_diamond_resolves() {
 #[test]
 fn cycle_detected() {
     // A requires B's output, B requires A's output.
-    let a_out = ChannelKey::named::<ChA>("a_out");
-    let b_out = ChannelKey::named::<ChB>("b_out");
+    let a_out = ikey_named::<ChA>("a_out");
+    let b_out = ikey_named::<ChB>("b_out");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
@@ -423,8 +434,8 @@ fn cycle_detected() {
 
 #[test]
 fn unsatisfied_input_detected() {
-    let missing = ChannelKey::named::<ChA>("missing");
-    let out = ChannelKey::of::<ChB>();
+    let missing = ikey_named::<ChA>("missing");
+    let out = ikey_of::<ChB>();
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
@@ -450,7 +461,7 @@ fn unsatisfied_input_detected() {
 
 #[test]
 fn multiple_producers_detected() {
-    let shared = ChannelKey::of::<ChA>();
+    let shared = ikey_of::<ChA>();
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
@@ -473,7 +484,7 @@ fn multiple_producers_detected() {
 fn external_channels_satisfy_required_inputs() {
     // A node requires a channel that no node produces. Declaring it via
     // with_external_channels must make the build succeed.
-    let sensor_key = ChannelKey::named::<Sensor>("imu");
+    let sensor_key = ikey_named::<Sensor>("imu");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
@@ -562,7 +573,7 @@ fn unrated_node_fires_every_tick() {
 fn tick_preserves_externally_written_values() {
     // All bus slots are last-known-good — a value written from outside
     // the graph must still be readable after `tick()`.
-    let sensor_key = ChannelKey::named::<Sensor>("imu");
+    let sensor_key = ikey_named::<Sensor>("imu");
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
         .with_external_channels(vec![sensor_key.clone()])

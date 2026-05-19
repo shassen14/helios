@@ -25,8 +25,9 @@ use std::sync::Mutex;
 use helios_core::control::{ControlOutput, Controller};
 
 use crate::pipeline::builders::controller::ControlInputBuilder;
+use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, PortBus, PortDescriptor};
+use crate::port::{InternalChannel, PortBus, PortDescriptor};
 use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
@@ -49,14 +50,13 @@ impl ControllerNode {
         controller: Box<dyn Controller>,
         input_builder: Box<dyn ControlInputBuilder>,
     ) -> Self {
-        let required_inputs = input_builder.required_channels().to_vec();
-        let optional_inputs = input_builder.optional_channels().to_vec();
-        let descriptor = PortDescriptor {
-            required_inputs,
-            optional_inputs,
-            outputs: vec![ChannelKey::of::<ControlOutput>()],
-            rate: None,
-        };
+        let descriptor = AlgorithmNodePortDescriptor::new()
+            .inputs_from_slices(
+                input_builder.required_channels(),
+                input_builder.optional_channels(),
+            )
+            .output_internal(InternalChannel::of::<ControlOutput>())
+            .build();
         Self {
             name: name.into(),
             controller: Mutex::new(controller),
@@ -94,7 +94,7 @@ impl PipelineNode for ControllerNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(ChannelKey::of::<ControlOutput>(), stamped);
+        let _ = bus.write(InternalChannel::of::<ControlOutput>().into(), stamped);
     }
 }
 
@@ -109,6 +109,8 @@ mod tests {
     //!   - mirrors the builder's required/optional channels in its descriptor
 
     use super::*;
+
+    use crate::port::ChannelKey;
 
     use helios_core::control::ControlInputs;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
@@ -179,7 +181,7 @@ mod tests {
     impl AlwaysReadyBuilder {
         fn new() -> Self {
             Self {
-                required: vec![ChannelKey::of::<FrameAwareState>()],
+                required: vec![InternalChannel::of::<FrameAwareState>().into()],
                 optional: vec![],
             }
         }
@@ -228,7 +230,7 @@ mod tests {
     // --- Helpers ---
 
     fn out_channel() -> ChannelKey {
-        ChannelKey::of::<ControlOutput>()
+        InternalChannel::of::<ControlOutput>().into()
     }
 
     fn make_bus() -> PortBus {

@@ -1,3 +1,34 @@
+//! Typed bus channels and the blackboard they live on.
+//!
+//! # Channel kinds — the partition
+//!
+//! Every bus channel carries a **kind tag** that says who is allowed to
+//! produce it and who is allowed to declare it as input:
+//!
+//! | Kind | Producer | Algorithm-node input? | Mock-node input? |
+//! |---|---|:-:|:-:|
+//! | [`SensorChannel`] | Body (driver / sim plugin) | ✅ | ✅ |
+//! | [`InternalChannel`] | Algorithm or mock node | ✅ | ✅ |
+//! | [`OracleChannel`] | Body, when truth is known | ❌ | ✅ |
+//! | [`HealthChannel`] | Body driver layer | ❌ (today) | ❌ (today) |
+//!
+//! Storage in [`PortBus`] is uniform — one slot per [`ChannelKey`]. The
+//! partition is at the **declaration surface**: see the descriptor builders
+//! in [`crate::pipeline::descriptor`]. The compiler refuses to construct an
+//! algorithm node's descriptor that names an [`OracleChannel`] as input.
+//!
+//! # Naming convention
+//!
+//! Within a kind, the `instance` string is just a disambiguator. Across
+//! kinds, prefix conventions help humans read the DAG dump:
+//!
+//! - `OracleChannel` instances start with `oracle/` (enforced by
+//!   `debug_assert!`).
+//! - `HealthChannel` instances start with `health/` (enforced by
+//!   `debug_assert!`).
+//! - `SensorChannel` and `InternalChannel` are unconstrained — the type
+//!   plus role disambiguator is enough.
+
 use crate::prelude::Stamped;
 
 use std::{
@@ -16,16 +47,69 @@ pub enum ChannelError {
     UnknownChannel,
 }
 
-/// Identifies a single bus slot. `type_id` carries the data shape; `instance`
-/// carries the role. Default instance is `""`.
-///
-/// Two channel keys are equal when both `TypeId` and `instance` match — this is
-/// what allows two nodes to produce the same Rust type for different roles
-/// (e.g. `Path @ "raw"` vs `Path @ "smoothed"`) without a newtype per role.
+/// Discriminator returned by [`ChannelKey::kind`].
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+pub enum ChannelKind {
+    Sensor,
+    Internal,
+    Oracle,
+    Health,
+}
+
+impl ChannelKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ChannelKind::Sensor => "sensor",
+            ChannelKind::Internal => "internal",
+            ChannelKind::Oracle => "oracle",
+            ChannelKind::Health => "health",
+        }
+    }
+}
+
+/// Sensor data published by a body driver (real or simulated). Algorithm
+/// nodes read these; mocks may read them too.
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub struct ChannelKey {
-    pub type_id: TypeId,
-    pub type_name: &'static str,
+pub struct SensorChannel {
+    type_id: TypeId,
+    type_name: &'static str,
+    instance: Arc<str>,
+}
+
+impl SensorChannel {
+    pub fn of<T: 'static>() -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            type_name: std::any::type_name::<T>(),
+            instance: Arc::from(""),
+        }
+    }
+
+    pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
+        Self {
+            type_id: TypeId::of::<T>(),
+            type_name: std::any::type_name::<T>(),
+            instance: instance.into(),
+        }
+    }
+
+    pub fn type_id(&self) -> TypeId {
+        self.type_id
+    }
+    pub fn type_name(&self) -> &'static str {
+        self.type_name
+    }
+    pub fn instance(&self) -> &Arc<str> {
+        &self.instance
+    }
+}
+
+/// Brain-internal channel: produced by an algorithm or mock node, consumed
+/// by other nodes / viz / tests. The default kind for node-to-node values.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct InternalChannel {
+    type_id: TypeId,
+    type_name: &'static str,
     /// Disambiguator for multiple channels of the same type. Empty string =
     /// the unnamed/default channel (see [`ChannelKey::of`]).
     ///
@@ -33,10 +117,10 @@ pub struct ChannelKey {
     /// str` literal (zero-cost via `From<&str>`) or a runtime-built `String`
     /// from TOML config without leaking. Clones are cheap refcount bumps;
     /// equality and hashing compare string contents.
-    pub instance: Arc<str>,
+    instance: Arc<str>,
 }
 
-impl ChannelKey {
+impl InternalChannel {
     pub fn of<T: 'static>() -> Self {
         Self {
             type_id: TypeId::of::<T>(),
@@ -55,14 +139,177 @@ impl ChannelKey {
             instance: instance.into(),
         }
     }
+
+    pub fn type_id(&self) -> TypeId {
+        self.type_id
+    }
+    pub fn type_name(&self) -> &'static str {
+        self.type_name
+    }
+    pub fn instance(&self) -> &Arc<str> {
+        &self.instance
+    }
+}
+
+/// Reference truth published by a body that happens to know the answer
+/// (e.g. physics ground-truth in sim, RTK on hardware). **Algorithm nodes
+/// must not declare these as inputs** — only mocks, viz, recorders, and
+/// tests may consume them.
+///
+/// `instance` must start with `oracle/` (enforced by `debug_assert!`) so
+/// the prefix is visible in the bus inspector and DAG dump.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct OracleChannel {
+    type_id: TypeId,
+    type_name: &'static str,
+    instance: Arc<str>,
+}
+
+impl OracleChannel {
+    pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
+        let instance: Arc<str> = instance.into();
+        debug_assert!(
+            instance.starts_with("oracle/"),
+            "OracleChannel instance must start with \"oracle/\", got \"{instance}\""
+        );
+        Self {
+            type_id: TypeId::of::<T>(),
+            type_name: std::any::type_name::<T>(),
+            instance,
+        }
+    }
+
+    pub fn type_id(&self) -> TypeId {
+        self.type_id
+    }
+    pub fn type_name(&self) -> &'static str {
+        self.type_name
+    }
+    pub fn instance(&self) -> &Arc<str> {
+        &self.instance
+    }
+}
+
+/// Driver / fault status published by a body. Reserved for the future
+/// safety-supervisor consumer; no descriptor
+/// builder accepts `HealthChannel` as input today.
+///
+/// `instance` must start with `health/` (enforced by `debug_assert!`).
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct HealthChannel {
+    type_id: TypeId,
+    type_name: &'static str,
+    instance: Arc<str>,
+}
+
+impl HealthChannel {
+    pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
+        let instance: Arc<str> = instance.into();
+        debug_assert!(
+            instance.starts_with("health/"),
+            "HealthChannel instance must start with \"health/\", got \"{instance}\""
+        );
+        Self {
+            type_id: TypeId::of::<T>(),
+            type_name: std::any::type_name::<T>(),
+            instance,
+        }
+    }
+
+    pub fn type_id(&self) -> TypeId {
+        self.type_id
+    }
+    pub fn type_name(&self) -> &'static str {
+        self.type_name
+    }
+    pub fn instance(&self) -> &Arc<str> {
+        &self.instance
+    }
+}
+
+/// Kinded identifier for a single bus slot.
+///
+/// The kind tag is the type-system fence that keeps algorithm nodes from
+/// declaring body-only channels (Oracle, Health) as inputs. Two channel
+/// keys are equal when their kind, `TypeId`, and `instance` all match —
+/// so `oracle/pose` and `pose` are distinct slots even when their Rust
+/// payload type is the same.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub enum ChannelKey {
+    Sensor(SensorChannel),
+    Internal(InternalChannel),
+    Oracle(OracleChannel),
+    Health(HealthChannel),
+}
+
+impl ChannelKey {
+    pub fn kind(&self) -> ChannelKind {
+        match self {
+            ChannelKey::Sensor(_) => ChannelKind::Sensor,
+            ChannelKey::Internal(_) => ChannelKind::Internal,
+            ChannelKey::Oracle(_) => ChannelKind::Oracle,
+            ChannelKey::Health(_) => ChannelKind::Health,
+        }
+    }
+
+    pub fn type_id(&self) -> TypeId {
+        match self {
+            ChannelKey::Sensor(c) => c.type_id,
+            ChannelKey::Internal(c) => c.type_id,
+            ChannelKey::Oracle(c) => c.type_id,
+            ChannelKey::Health(c) => c.type_id,
+        }
+    }
+
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            ChannelKey::Sensor(c) => c.type_name,
+            ChannelKey::Internal(c) => c.type_name,
+            ChannelKey::Oracle(c) => c.type_name,
+            ChannelKey::Health(c) => c.type_name,
+        }
+    }
+
+    pub fn instance(&self) -> &Arc<str> {
+        match self {
+            ChannelKey::Sensor(c) => &c.instance,
+            ChannelKey::Internal(c) => &c.instance,
+            ChannelKey::Oracle(c) => &c.instance,
+            ChannelKey::Health(c) => &c.instance,
+        }
+    }
+}
+
+impl From<SensorChannel> for ChannelKey {
+    fn from(c: SensorChannel) -> Self {
+        ChannelKey::Sensor(c)
+    }
+}
+impl From<InternalChannel> for ChannelKey {
+    fn from(c: InternalChannel) -> Self {
+        ChannelKey::Internal(c)
+    }
+}
+impl From<OracleChannel> for ChannelKey {
+    fn from(c: OracleChannel) -> Self {
+        ChannelKey::Oracle(c)
+    }
+}
+impl From<HealthChannel> for ChannelKey {
+    fn from(c: HealthChannel) -> Self {
+        ChannelKey::Health(c)
+    }
 }
 
 impl std::fmt::Display for ChannelKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.instance.trim().is_empty() {
-            write!(f, "{}", self.type_name)
+        let kind = self.kind().as_str();
+        let type_name = self.type_name();
+        let instance = self.instance();
+        if instance.trim().is_empty() {
+            write!(f, "[{kind}] {type_name}")
         } else {
-            write!(f, "{} @ \"{}\"", self.type_name, self.instance)
+            write!(f, "[{kind}] {type_name} @ \"{instance}\"")
         }
     }
 }
@@ -78,6 +325,10 @@ impl std::fmt::Display for ChannelKey {
 /// `optional_inputs` channels are consumed if present; no build-time check.
 ///
 /// No two nodes may declare the same `outputs` channel — enforced at build time.
+///
+/// Construct via [`crate::pipeline::descriptor::AlgorithmNodePortDescriptor`]
+/// or [`crate::pipeline::descriptor::MockNodePortDescriptor`] rather than
+/// building this struct directly — those builders are the kind fence.
 #[derive(Debug)]
 pub struct PortDescriptor {
     /// Channels that must have a producer in the graph for the build to succeed.
@@ -159,7 +410,7 @@ impl PortBus {
     }
 
     /// Returns the first non-empty slot whose value downcasts to `Stamped<T>`,
-    /// ignoring the channel instance name.
+    /// ignoring the channel kind and instance name.
     ///
     /// Iteration order is unspecified — use this only when there is exactly
     /// one channel of type `T` in the graph (e.g. a single planner's `Path`)
@@ -235,60 +486,84 @@ mod tests {
         PortBus::new(&[descriptor])
     }
 
+    fn ikey<T: 'static>() -> ChannelKey {
+        InternalChannel::of::<T>().into()
+    }
+
+    fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
+        InternalChannel::named::<T>(instance).into()
+    }
+
     // --- ChannelKey tests ---
 
     #[test]
     fn of_same_type_produces_equal_keys() {
-        assert_eq!(ChannelKey::of::<Foo>(), ChannelKey::of::<Foo>());
+        assert_eq!(ikey::<Foo>(), ikey::<Foo>());
     }
 
     #[test]
     fn of_different_types_produces_distinct_keys() {
-        assert_ne!(ChannelKey::of::<Foo>(), ChannelKey::of::<Bar>());
+        assert_ne!(ikey::<Foo>(), ikey::<Bar>());
     }
 
     #[test]
     fn named_differs_from_default_instance() {
-        assert_ne!(ChannelKey::of::<Foo>(), ChannelKey::named::<Foo>("role"));
+        assert_ne!(ikey::<Foo>(), ikey_named::<Foo>("role"));
     }
 
     #[test]
     fn named_same_instance_equal() {
-        assert_eq!(ChannelKey::named::<Foo>("a"), ChannelKey::named::<Foo>("a"));
+        assert_eq!(ikey_named::<Foo>("a"), ikey_named::<Foo>("a"));
     }
 
     #[test]
     fn named_different_instances_not_equal() {
-        assert_ne!(ChannelKey::named::<Foo>("a"), ChannelKey::named::<Foo>("b"));
+        assert_ne!(ikey_named::<Foo>("a"), ikey_named::<Foo>("b"));
+    }
+
+    #[test]
+    fn distinct_kinds_with_same_type_and_instance_are_distinct() {
+        // Two channels with identical TypeId and instance string but
+        // different kinds occupy distinct slots — the kind tag is part of
+        // identity.
+        let internal: ChannelKey = InternalChannel::of::<Foo>().into();
+        let sensor: ChannelKey = SensorChannel::of::<Foo>().into();
+        assert_ne!(internal, sensor);
     }
 
     #[test]
     fn usable_as_hashmap_key() {
         let mut map = HashMap::new();
-        map.insert(ChannelKey::of::<Foo>(), 42u32);
-        assert_eq!(map[&ChannelKey::of::<Foo>()], 42);
+        map.insert(ikey::<Foo>(), 42u32);
+        assert_eq!(map[&ikey::<Foo>()], 42);
     }
 
     #[test]
-    fn type_name_field_contains_type_name() {
-        let key = ChannelKey::of::<Foo>();
-        assert!(key.type_name.contains("Foo"));
+    fn type_name_accessor_contains_type_name() {
+        let key = ikey::<Foo>();
+        assert!(key.type_name().contains("Foo"));
     }
 
     #[test]
-    fn named_type_name_matches_unnamed() {
-        let plain = ChannelKey::of::<Foo>();
-        let named = ChannelKey::named::<Foo>("role");
-        assert_eq!(plain.type_name, named.type_name);
+    fn kind_reports_correct_variant() {
+        assert_eq!(SensorChannel::of::<Foo>().type_id(), TypeId::of::<Foo>());
+        let s: ChannelKey = SensorChannel::of::<Foo>().into();
+        let i: ChannelKey = InternalChannel::of::<Foo>().into();
+        let o: ChannelKey = OracleChannel::named::<Foo>("oracle/x").into();
+        let h: ChannelKey = HealthChannel::named::<Foo>("health/x").into();
+        assert_eq!(s.kind(), ChannelKind::Sensor);
+        assert_eq!(i.kind(), ChannelKind::Internal);
+        assert_eq!(o.kind(), ChannelKind::Oracle);
+        assert_eq!(h.kind(), ChannelKind::Health);
     }
 
     // --- PortBus::new tests ---
 
     #[test]
     fn new_populates_slots_from_all_descriptor_sections() {
-        let req = ChannelKey::of::<u32>();
-        let opt = ChannelKey::named::<u32>("opt");
-        let out = ChannelKey::named::<u32>("out");
+        let req = ikey::<u32>();
+        let opt = ikey_named::<u32>("opt");
+        let out = ikey_named::<u32>("out");
         let descriptor = PortDescriptor {
             required_inputs: vec![req.clone()],
             optional_inputs: vec![opt.clone()],
@@ -303,7 +578,7 @@ mod tests {
 
     #[test]
     fn new_deduplicates_shared_keys_across_descriptors() {
-        let shared = ChannelKey::of::<u32>();
+        let shared = ikey::<u32>();
         let d1 = PortDescriptor {
             required_inputs: vec![shared.clone()],
             optional_inputs: vec![],
@@ -324,7 +599,7 @@ mod tests {
 
     #[test]
     fn write_and_read_roundtrip() {
-        let key = ChannelKey::of::<u32>();
+        let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.write(key.clone(), make_stamped(42u32, 1.0)).unwrap();
         assert_eq!(bus.read::<u32>(key).unwrap().value, 42);
@@ -332,7 +607,7 @@ mod tests {
 
     #[test]
     fn read_empty_slot_returns_none() {
-        let key = ChannelKey::of::<u32>();
+        let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         assert!(bus.read::<u32>(key).is_none());
     }
@@ -340,19 +615,19 @@ mod tests {
     #[test]
     fn read_unknown_channel_returns_none() {
         let bus = PortBus::new(&[]);
-        assert!(bus.read::<u32>(ChannelKey::of::<u32>()).is_none());
+        assert!(bus.read::<u32>(ikey::<u32>()).is_none());
     }
 
     #[test]
     fn write_unknown_channel_returns_error() {
         let bus = PortBus::new(&[]);
-        let result = bus.write(ChannelKey::of::<u32>(), make_stamped(1u32, 0.0));
+        let result = bus.write(ikey::<u32>(), make_stamped(1u32, 0.0));
         assert!(matches!(result, Err(ChannelError::UnknownChannel)));
     }
 
     #[test]
     fn write_overwrites_previous_value() {
-        let key = ChannelKey::of::<u32>();
+        let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
         bus.write(key.clone(), make_stamped(2u32, 1.0)).unwrap();
@@ -363,7 +638,7 @@ mod tests {
 
     #[test]
     fn read_fresh_returns_none_when_stale() {
-        let key = ChannelKey::of::<u32>();
+        let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.set_tick_time(10.0);
         bus.write(key.clone(), make_stamped(1u32, 5.0)).unwrap();
@@ -372,7 +647,7 @@ mod tests {
 
     #[test]
     fn read_fresh_returns_value_when_current() {
-        let key = ChannelKey::of::<u32>();
+        let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.set_tick_time(10.0);
         bus.write(key.clone(), make_stamped(7u32, 9.0)).unwrap();
@@ -381,7 +656,7 @@ mod tests {
 
     #[test]
     fn read_fresh_returns_none_for_empty_slot() {
-        let key = ChannelKey::of::<u32>();
+        let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.set_tick_time(10.0);
         assert!(bus.read_fresh::<u32>(key, 5.0).is_none());

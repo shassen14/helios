@@ -1,5 +1,5 @@
 use crate::{
-    port::{ChannelKey, PortBus},
+    port::{ChannelKey, PortBus, SensorChannel},
     prelude::{AgentRuntime, TickContext},
 };
 use helios_core::{
@@ -38,8 +38,10 @@ impl Default for IntegratedImuInputBuilder {
 
 impl IntegratedImuInputBuilder {
     pub fn new() -> Self {
-        let accel_channel = ChannelKey::of::<Vec<SensorReading<LinearAcceleration3D>>>();
-        let gyro_channel = ChannelKey::of::<Vec<SensorReading<AngularVelocity3D>>>();
+        let accel_channel: ChannelKey =
+            SensorChannel::of::<Vec<SensorReading<LinearAcceleration3D>>>().into();
+        let gyro_channel: ChannelKey =
+            SensorChannel::of::<Vec<SensorReading<AngularVelocity3D>>>().into();
 
         Self {
             accel_channel: accel_channel.clone(),

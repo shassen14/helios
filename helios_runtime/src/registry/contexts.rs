@@ -4,12 +4,13 @@
 //! reads. No Bevy `Entity`, no full `AgentConfig`. The host (sim or hw)
 //! resolves the agent-specific values and passes them here.
 
-use helios_core::data::primitives::FrameHandle;
-
 use crate::config::{
     ControllerConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig, SensorModelConfig,
 };
 use crate::pipeline::nodes::gaussian_estimator::AidingHandler;
+use crate::port::InternalChannel;
+
+use helios_core::data::primitives::FrameHandle;
 
 /// Context for building a dynamics model (e.g. `IntegratedImuModel`).
 ///
@@ -65,9 +66,10 @@ pub struct SearchPlannerBuildContext {
     pub agent_handle: FrameHandle,
     pub config: SearchPlannerConfig,
     /// The bus channel on which the upstream mapper publishes `MapData`.
-    pub map_channel: crate::port::ChannelKey,
+    /// Always internal (brain-produced).
+    pub map_channel: InternalChannel,
     /// The bus channel on which this node will publish its `Path` output.
-    pub path_channel: crate::port::ChannelKey,
+    pub path_channel: InternalChannel,
 }
 
 /// Context for building a `PathFollowerNode`.
@@ -75,5 +77,6 @@ pub struct PathFollowerBuildContext {
     pub agent_handle: FrameHandle,
     pub config: PathFollowingConfig,
     /// The bus channel on which the upstream planner publishes `Path`.
-    pub path_channel: crate::port::ChannelKey,
+    /// Always internal (brain-produced).
+    pub path_channel: InternalChannel,
 }

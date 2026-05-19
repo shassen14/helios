@@ -17,7 +17,7 @@ use helios_core::sensors::{
     lidar_2d::Lidar2DModel, RayHit, RaycastingOutput, RaycastingSensorModel,
 };
 use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
-use helios_runtime::port::ChannelKey;
+use helios_runtime::port::SensorChannel;
 use helios_runtime::stamped::{Health, Stamped};
 
 // =========================================================================
@@ -191,7 +191,7 @@ fn raycasting_sensor_system(
             .0
             .bus()
             .write(
-                ChannelKey::of::<Vec<SensorReading<PointCloud2D>>>(),
+                SensorChannel::of::<Vec<SensorReading<PointCloud2D>>>().into(),
                 stamped,
             )
             .ok();
