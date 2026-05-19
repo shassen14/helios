@@ -60,6 +60,7 @@ fn spawn_control_output(
 fn publish_pipeline_control(
     mut query: Query<(&AutonomyPipelineComponent, &mut ControlOutputComponent)>,
 ) {
+    let _span = tracing::trace_span!("sim.control.publish").entered();
     for (pipeline, mut output) in &mut query {
         if let Some(stamped) = pipeline.0.read_control() {
             output.0 = stamped.value.clone();

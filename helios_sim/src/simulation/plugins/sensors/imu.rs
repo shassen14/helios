@@ -161,6 +161,7 @@ fn imu_sensor_system(
     mut sensor_query: Query<(&mut Imu, &GlobalTransform, &ChildOf)>,
     parent_query: Query<(&GroundTruthState, &AutonomyPipelineComponent)>,
 ) {
+    let _span = tracing::trace_span!("sim.sensor.publish", sensor = "imu").entered();
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 

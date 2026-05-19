@@ -12,8 +12,10 @@ use crate::port::ChannelKey;
 pub enum PipelineBuildError {
     /// The dependency graph has no valid topological ordering. At least
     /// one set of nodes has every input satisfied only by each others'
-    /// outputs.
-    Cycle,
+    /// outputs. `participants` lists every stranded node whose required
+    /// inputs are all covered by the stranded set's collective outputs —
+    /// the cycle members plus anything downstream of them.
+    Cycle { participants: Vec<String> },
     /// A node declared a required input that no other node produces and
     /// that is not in the builder's sensor-signal or host-state lists.
     UnsatisfiedInput {
@@ -35,10 +37,18 @@ impl std::error::Error for PipelineBuildError {}
 impl std::fmt::Display for PipelineBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PipelineBuildError::Cycle => write!(
-                f,
-                "pipeline has a dependency cycle — no valid topological ordering exists"
-            ),
+            PipelineBuildError::Cycle { participants } => {
+                let names = if participants.is_empty() {
+                    "<unknown>".to_string()
+                } else {
+                    participants.join(", ")
+                };
+                write!(
+                    f,
+                    "pipeline has a dependency cycle — no valid topological ordering exists; \
+                     stranded nodes: [{names}]"
+                )
+            }
             PipelineBuildError::UnsatisfiedInput { node_name, channel } => {
                 write!(f, "node \"{node_name}\" requires channel {channel} but no upstream node or signal key produces it")
             }

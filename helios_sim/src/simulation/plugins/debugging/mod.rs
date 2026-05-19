@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 
+mod bus_dump;
 mod cache;
 mod components;
 pub mod gizmos;
@@ -174,6 +175,7 @@ impl Plugin for DebuggingPlugin {
                 Update,
                 (
                     keybindings::handle_debug_keybindings,
+                    bus_dump::dump_bus_on_keypress,
                     cache::cache_sensor_data,
                     ui::legend::update_legend_text,
                     ui::vehicle_hud::update_vehicle_hud,

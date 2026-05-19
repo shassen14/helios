@@ -126,6 +126,7 @@ fn raycasting_sensor_system(
     mut sensor_query: Query<(Entity, &mut RaycastingSensor, &GlobalTransform, &ChildOf)>,
     pipeline_query: Query<&AutonomyPipelineComponent>,
 ) {
+    let _span = tracing::trace_span!("sim.sensor.publish", sensor = "raycasting").entered();
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 

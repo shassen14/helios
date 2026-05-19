@@ -6,6 +6,7 @@
 
 pub mod assembler;
 pub mod config;
+pub mod diagnostics;
 pub mod pipeline;
 pub mod port;
 pub mod prelude;

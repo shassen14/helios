@@ -195,6 +195,16 @@ impl PortBus {
     pub(crate) fn set_tick_time(&self, now: f64) {
         self.tick_now.store(now, Ordering::Relaxed);
     }
+
+    /// Debug-only: enumerate every declared slot and whether it currently
+    /// holds a value. Iteration order is unspecified (HashMap order). Use
+    /// from `crate::diagnostics` or tests — not from per-tick code paths.
+    pub fn slot_presence(&self) -> Vec<(ChannelKey, bool)> {
+        self.slots
+            .iter()
+            .map(|(key, slot)| (key.clone(), slot.load().as_ref().is_some()))
+            .collect()
+    }
 }
 
 #[cfg(test)]

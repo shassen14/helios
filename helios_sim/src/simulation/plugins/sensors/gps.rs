@@ -106,6 +106,7 @@ fn gps_sensor_system(
     )>,
     pipeline_query: Query<&AutonomyPipelineComponent>,
 ) {
+    let _span = tracing::trace_span!("sim.sensor.publish", sensor = "gps").entered();
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 

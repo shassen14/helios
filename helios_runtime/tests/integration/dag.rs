@@ -415,7 +415,7 @@ fn cycle_detected() {
     assert!(
         errors
             .iter()
-            .any(|e| matches!(e, PipelineBuildError::Cycle)),
+            .any(|e| matches!(e, PipelineBuildError::Cycle { .. })),
         "expected Cycle, got {:?}",
         errors
     );
