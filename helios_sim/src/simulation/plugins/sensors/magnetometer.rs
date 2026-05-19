@@ -124,6 +124,7 @@ fn magnetometer_sensor_system(
     )>,
     pipeline_query: Query<&AutonomyPipelineComponent>,
 ) {
+    let _span = tracing::trace_span!("sim.sensor.publish", sensor = "magnetometer").entered();
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
     let world_magnetic_field_enu = Vector3::new(0.0, 1.0, 0.0).normalize();

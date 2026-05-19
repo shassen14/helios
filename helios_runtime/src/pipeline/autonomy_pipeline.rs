@@ -3,6 +3,8 @@ use std::{
     sync::Arc,
 };
 
+use tracing::{debug_span, info, trace_span};
+
 use helios_core::{
     frames::FrameAwareState,
     mapping::MapData,
@@ -169,7 +171,16 @@ impl PipelineBuilder {
                 });
 
                 if is_cycle_detected {
-                    errors.push(PipelineBuildError::Cycle);
+                    let participants = remaining
+                        .iter()
+                        .filter(|node| {
+                            node.port_descriptor().required_inputs.iter().all(|channel| {
+                                produced.contains(channel) || pending_outputs.contains(channel)
+                            })
+                        })
+                        .map(|node| node.name().to_string())
+                        .collect();
+                    errors.push(PipelineBuildError::Cycle { participants });
                 }
 
                 // Unsatisfied-input pass: any required input not covered
@@ -235,12 +246,96 @@ impl PipelineBuilder {
             }
         }
 
+        log_resolved_dag(&levels);
+
         Ok(AutonomyPipeline {
             levels,
             bus,
             rate_timers,
         })
     }
+}
+
+/// One-shot startup dump of the resolved DAG. Emits at `info` so it's
+/// visible with the default `helios=info` filter; nothing else in the
+/// per-tick path emits at that level, so this stays a single block.
+fn log_resolved_dag(levels: &[Vec<(NodeId, Box<dyn PipelineNode>)>]) {
+    info!(
+        target: "helios_runtime::pipeline",
+        levels = levels.len(),
+        nodes = levels.iter().map(|level| level.len()).sum::<usize>(),
+        "resolved autonomy pipeline",
+    );
+
+    for (level_idx, level) in levels.iter().enumerate() {
+        for (node_id, node) in level {
+            let descriptor = node.port_descriptor();
+            let rate = match descriptor.rate {
+                Some(hz) => format!("{hz} Hz"),
+                None => "every tick".to_string(),
+            };
+            let inputs = format_keys(&descriptor.required_inputs);
+            let optional = format_keys(&descriptor.optional_inputs);
+            let outputs = format_keys(&descriptor.outputs);
+            info!(
+                target: "helios_runtime::pipeline",
+                level = level_idx,
+                id = *node_id,
+                name = node.name(),
+                rate = %rate,
+                inputs = %inputs,
+                optional_inputs = %optional,
+                outputs = %outputs,
+                "  node",
+            );
+        }
+    }
+}
+
+fn format_keys(keys: &[ChannelKey]) -> String {
+    if keys.is_empty() {
+        return "[]".to_string();
+    }
+    let joined = keys
+        .iter()
+        .map(format_key_short)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{joined}]")
+}
+
+/// Render a [`ChannelKey`] with each `::`-qualified path collapsed to its
+/// leaf — `helios_core::data::sensor::SensorReading` → `SensorReading`.
+/// Used only by the DAG-dump for readability; production code keeps full
+/// paths via [`ChannelKey::Display`].
+fn format_key_short(key: &ChannelKey) -> String {
+    let mut out = String::with_capacity(key.type_name.len());
+    let mut segment_start = 0usize;
+    let bytes = key.type_name.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if matches!(c, '<' | '>' | ',' | ' ' | '&' | '(' | ')') {
+            push_leaf(&mut out, &key.type_name[segment_start..i]);
+            out.push(c);
+            i += 1;
+            segment_start = i;
+        } else {
+            i += 1;
+        }
+    }
+    push_leaf(&mut out, &key.type_name[segment_start..]);
+
+    if key.instance.trim().is_empty() {
+        out
+    } else {
+        format!("{out} @ \"{}\"", key.instance)
+    }
+}
+
+fn push_leaf(out: &mut String, segment: &str) {
+    let leaf = segment.rsplit("::").next().unwrap_or(segment);
+    out.push_str(leaf);
 }
 
 /// A built, validated autonomy pipeline.
@@ -284,9 +379,19 @@ impl AutonomyPipeline {
         let now = runtime.now();
         self.bus.set_tick_time(now.0);
 
+        // Span only — no event emitted inside. At a default 200 Hz host
+        // tick rate, an `info!`/`debug!` per tick would flood the terminal.
+        // The span attaches context to any event the nodes themselves emit
+        // (errors, warnings) so they're attributable to a tick. `trace`
+        // level for the per-node span keeps default `helios=debug` clean;
+        // raise to `helios=trace` to see each node firing.
+        let _tick_span = debug_span!("pipeline.tick", t = now.0, dt).entered();
+
         for level in &self.levels {
             for (node_id, node) in level {
                 if self.rate_timers[*node_id as usize].should_fire_and_advance(dt) {
+                    let _node_span =
+                        trace_span!("node.execute", name = node.name(), id = *node_id).entered();
                     node.execute(
                         &self.bus,
                         runtime,
@@ -358,10 +463,5 @@ impl AutonomyPipeline {
     pub fn read_mission_goal(&self) -> Option<Arc<Stamped<PlannerGoal>>> {
         self.bus
             .read(ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE))
-    }
-
-    /// Debug: returns whether any slot of type `T` currently holds a value.
-    pub fn has_any<T: std::any::Any + Send + Sync>(&self) -> bool {
-        self.bus.read_any::<T>().is_some()
     }
 }

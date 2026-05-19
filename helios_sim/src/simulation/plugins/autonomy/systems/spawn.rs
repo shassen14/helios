@@ -24,6 +24,7 @@ pub fn spawn_autonomy_pipeline(
     channel_query: Query<&SensorPublishChannel>,
     registry: Res<RuntimeAutonomyRegistry>,
 ) {
+    let _span = tracing::info_span!("sim.scene_build.autonomy").entered();
     for (agent_entity, request, children) in &agent_query {
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
