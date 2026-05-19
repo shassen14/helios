@@ -45,7 +45,10 @@ pub fn format_bus(bus: &PortBus) -> String {
     out.push_str("PortBus snapshot:\n");
     for row in &rows {
         let marker = if row.has_value { "set" } else { "---" };
-        out.push_str(&format!("  [{marker}] {}\n", format_key_short(&row.channel)));
+        out.push_str(&format!(
+            "  [{marker}] {}\n",
+            format_key_short(&row.channel)
+        ));
     }
     out
 }

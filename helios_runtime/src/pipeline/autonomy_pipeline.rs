@@ -174,9 +174,12 @@ impl PipelineBuilder {
                     let participants = remaining
                         .iter()
                         .filter(|node| {
-                            node.port_descriptor().required_inputs.iter().all(|channel| {
-                                produced.contains(channel) || pending_outputs.contains(channel)
-                            })
+                            node.port_descriptor()
+                                .required_inputs
+                                .iter()
+                                .all(|channel| {
+                                    produced.contains(channel) || pending_outputs.contains(channel)
+                                })
                         })
                         .map(|node| node.name().to_string())
                         .collect();
@@ -303,7 +306,6 @@ fn format_keys(keys: &[ChannelKey]) -> String {
         .join(", ");
     format!("[{joined}]")
 }
-
 
 /// A built, validated autonomy pipeline.
 ///
