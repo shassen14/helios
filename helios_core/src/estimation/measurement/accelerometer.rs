@@ -1,6 +1,7 @@
 use nalgebra::{DVector, Vector3};
 
-use crate::data::primitives::{FrameHandle, TfProvider};
+use crate::data::primitives::FrameHandle;
+use crate::ports::TfProvider;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
@@ -66,7 +67,8 @@ impl MeasurementModel for AccelerometerModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::{FrameHandle, TfProvider};
+    use crate::data::primitives::FrameHandle;
+use crate::ports::TfProvider;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::Isometry3;
 

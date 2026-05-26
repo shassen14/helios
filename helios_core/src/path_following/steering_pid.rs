@@ -12,7 +12,8 @@ use nalgebra::Vector2;
 
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::siso_pid::SisoPid;
-use crate::data::primitives::{FrameHandle, TrajectoryPoint};
+use crate::data::messages::TrajectoryPoint;
+use crate::data::primitives::FrameHandle;
 use crate::frames::{FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
 

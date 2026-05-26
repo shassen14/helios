@@ -1,7 +1,8 @@
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::{DMatrix, DVector, Isometry3};
 
-use helios_core::data::primitives::{FrameHandle, TfProvider};
+use helios_core::data::primitives::FrameHandle;
+use helios_core::ports::TfProvider;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
 use helios_core::estimation::measurement::MeasurementModel;

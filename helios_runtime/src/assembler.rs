@@ -43,10 +43,10 @@ use crate::registry::contexts::{
 };
 use crate::registry::AutonomyRegistry;
 
+use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::data::sensor::{
     AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
-    SensorReading,
 };
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::MapData;

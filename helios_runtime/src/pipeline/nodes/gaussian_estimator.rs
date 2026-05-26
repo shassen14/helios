@@ -20,8 +20,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use atomic_float::AtomicF64;
-use helios_core::data::primitives::TfProvider;
-use helios_core::data::sensor::{SensorPayload, SensorReading};
+use helios_core::data::envelope::SensorReading;
+use helios_core::data::sensor::SensorPayload;
+use helios_core::ports::TfProvider;
 use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::frames::FrameAwareState;
@@ -236,8 +237,9 @@ mod tests {
     //! and bus publish.
 
     use super::*;
+    use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-    use helios_core::data::sensor::{LinearAcceleration3D, SensorReading};
+    use helios_core::data::sensor::LinearAcceleration3D;
     use helios_core::estimation::EstimatorInputs;
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector, Isometry3};

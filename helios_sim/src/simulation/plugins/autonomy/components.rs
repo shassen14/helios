@@ -1,7 +1,7 @@
 // helios_sim/src/simulation/plugins/autonomy/components.rs
 
 use bevy::prelude::{Component, Entity};
-use helios_core::data::primitives::TrajectoryPoint;
+use helios_core::data::messages::TrajectoryPoint;
 use helios_runtime::pipeline::AutonomyPipeline;
 
 /// Holds the fully-assembled autonomy pipeline for an agent.

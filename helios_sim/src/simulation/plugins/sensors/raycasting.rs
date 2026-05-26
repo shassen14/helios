@@ -11,8 +11,9 @@ use crate::simulation::plugins::autonomy::components::{
     AutonomyPipelineComponent, SensorPublishChannel,
 };
 
+use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::data::sensor::{PointCloud2D, SensorReading};
+use helios_core::data::sensor::PointCloud2D;
 use helios_core::sensors::{
     lidar_2d::Lidar2DModel, RayHit, RaycastingOutput, RaycastingSensorModel,
 };

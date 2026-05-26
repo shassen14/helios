@@ -1,6 +1,7 @@
 use nalgebra::DVector;
 
-use crate::data::primitives::{FrameHandle, TfProvider};
+use crate::data::primitives::FrameHandle;
+use crate::ports::TfProvider;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
@@ -68,7 +69,8 @@ mod tests {
     //! - Default finite-diff Jacobian has the correct shape and identity position columns.
 
     use super::*;
-    use crate::data::primitives::{FrameHandle, TfProvider};
+    use crate::data::primitives::FrameHandle;
+use crate::ports::TfProvider;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 

@@ -13,8 +13,8 @@
 //!    or more accurate.
 //! 4. Re-export from this `mod.rs`.
 
-use crate::data::primitives::TfProvider;
 use crate::frames::FrameAwareState;
+use crate::ports::TfProvider;
 use nalgebra::{DMatrix, DVector};
 
 /// Mathematical model of a sensor: `z = h(x) + v`.

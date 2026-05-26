@@ -1,7 +1,7 @@
 //! Short-form rendering for [`ChannelKey`] type names.
 //!
 //! Collapses each `::`-qualified path inside a `ChannelKey::type_name` to its
-//! leaf — `helios_core::data::sensor::SensorReading` → `SensorReading` —
+//! leaf — `helios_core::data::envelope::SensorReading` → `SensorReading` —
 //! while leaving generic punctuation (`<`, `>`, `,`, `&`, parens) intact.
 //! Used by the DAG dump and the bus snapshot for readability; production
 //! code keeps full paths via [`ChannelKey`]'s `Display`.

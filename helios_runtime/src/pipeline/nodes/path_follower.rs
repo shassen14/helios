@@ -33,7 +33,7 @@
 
 use std::sync::Mutex;
 
-use helios_core::data::primitives::TrajectoryPoint;
+use helios_core::data::messages::TrajectoryPoint;
 use helios_core::path_following::{PathFollower, PathFollowerResult};
 use helios_core::planning::types::Path;
 
@@ -174,7 +174,8 @@ mod tests {
 
     use super::*;
 
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime, TrajectoryPoint};
+    use helios_core::data::messages::TrajectoryPoint;
+    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::frames::{FrameId, RobotState, StateVariable};
     use helios_core::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::planning::types::Path;

@@ -1,6 +1,6 @@
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
+use crate::data::messages::TrajectoryPoint;
 use crate::data::primitives::FrameHandle;
-use crate::data::primitives::TrajectoryPoint;
 use crate::frames::{FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
 use nalgebra::{DVector, Vector2};

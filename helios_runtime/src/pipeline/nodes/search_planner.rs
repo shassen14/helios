@@ -130,7 +130,8 @@ mod tests {
 
     use super::*;
 
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime, TrajectoryPoint};
+    use helios_core::data::messages::TrajectoryPoint;
+    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::frames::{FrameId, RobotState, StateVariable};
     use helios_core::mapping::MapData;
     use helios_core::planning::types::Path;

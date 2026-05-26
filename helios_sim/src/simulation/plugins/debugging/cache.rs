@@ -5,7 +5,8 @@ use super::components::DebugSensorCache;
 use crate::simulation::core::transforms::FluVector;
 use crate::simulation::plugins::autonomy::components::AutonomyPipelineComponent;
 
-use helios_core::data::sensor::{PointCloud2D, SensorReading};
+use helios_core::data::envelope::SensorReading;
+use helios_core::data::sensor::PointCloud2D;
 use helios_runtime::port::SensorChannel;
 
 /// Reads the latest PointCloud2D readings from each agent's pipeline bus and

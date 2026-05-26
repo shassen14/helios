@@ -12,8 +12,9 @@ use crate::simulation::core::{
 };
 use crate::simulation::plugins::autonomy::components::AutonomyPipelineComponent;
 
+use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::data::sensor::{AngularVelocity3D, LinearAcceleration3D, SensorReading};
+use helios_core::data::sensor::{AngularVelocity3D, LinearAcceleration3D};
 use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
 use helios_runtime::port::SensorChannel;
 use helios_runtime::stamped::{Health, Stamped};

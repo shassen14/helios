@@ -5,6 +5,7 @@
 //! `PipelineBuilder`, `PipelineNode`, `PortBus`, `AgentRuntime`.
 
 pub mod assembler;
+pub mod body;
 pub mod config;
 pub mod diagnostics;
 pub mod pipeline;
@@ -15,6 +16,7 @@ pub mod runtime;
 pub mod stamped;
 pub mod validation;
 
+pub use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 pub use crate::pipeline::autonomy_pipeline::MISSION_GOAL_INSTANCE;
 pub use crate::pipeline::build_error::PipelineBuildError;
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};

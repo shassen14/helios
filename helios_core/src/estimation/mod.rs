@@ -4,8 +4,8 @@
 //! information-form filters. Concrete implementations live in [`filters`].
 use nalgebra::{DMatrix, DVector};
 
-use crate::data::primitives::TfProvider;
 use crate::estimation::measurement::MeasurementModel;
+use crate::ports::TfProvider;
 use crate::frames::FrameAwareState;
 
 /// World-context passed into mappers and other modules that still consume

@@ -1,9 +1,9 @@
 use nalgebra::{Cholesky, DMatrix, DVector};
 
-use crate::data::primitives::TfProvider;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
+use crate::ports::TfProvider;
 use crate::frames::FrameAwareState;
 use crate::utils::integrators::RK4;
 
@@ -224,9 +224,10 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::{FrameHandle, TfProvider};
+    use crate::data::primitives::FrameHandle;
     use crate::estimation::measurement::MeasurementModel;
     use crate::estimation::EstimatorInputs;
+    use crate::ports::TfProvider;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector, Isometry3};
 

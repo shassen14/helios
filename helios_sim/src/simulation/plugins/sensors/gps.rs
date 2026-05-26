@@ -11,8 +11,9 @@ use crate::simulation::plugins::autonomy::components::{
     AutonomyPipelineComponent, SensorPublishChannel,
 };
 
+use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::data::sensor::{GpsPosition, SensorReading};
+use helios_core::data::sensor::GpsPosition;
 use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
 use helios_runtime::port::SensorChannel;
 use helios_runtime::stamped::{Health, Stamped};

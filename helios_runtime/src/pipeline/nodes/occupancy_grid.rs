@@ -55,8 +55,9 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use atomic_float::AtomicF64;
+use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::FrameHandle;
-use helios_core::data::sensor::{PointCloud2D, SensorReading};
+use helios_core::data::sensor::PointCloud2D;
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::Mapper;
 
@@ -207,8 +208,9 @@ mod tests {
     //!     the correct `now` / `producer`
 
     use super::*;
+    use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-    use helios_core::data::sensor::{PointCloud2D, SensorReading};
+    use helios_core::data::sensor::PointCloud2D;
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use helios_core::mapping::{MapData, Mapper};
     use nalgebra::{Isometry3, Point2, Translation3, UnitQuaternion};

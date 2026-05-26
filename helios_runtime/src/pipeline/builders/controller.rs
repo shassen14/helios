@@ -3,7 +3,7 @@ use crate::{
     prelude::{AgentRuntime, TickContext},
 };
 use helios_core::{
-    data::primitives::TrajectoryPoint, frames::FrameAwareState, prelude::ControlInputs,
+    data::messages::TrajectoryPoint, frames::FrameAwareState, prelude::ControlInputs,
 };
 
 pub trait ControlInputBuilder: Send + Sync {

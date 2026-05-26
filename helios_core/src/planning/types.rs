@@ -4,7 +4,7 @@
 
 use nalgebra::{Isometry3, Vector2};
 
-use crate::data::primitives::TrajectoryPoint;
+use crate::data::messages::TrajectoryPoint;
 
 /// A planned path: an ordered sequence of trajectory waypoints.
 #[derive(Clone)]
