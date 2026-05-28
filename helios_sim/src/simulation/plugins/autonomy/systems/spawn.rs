@@ -36,7 +36,15 @@ pub fn spawn_autonomy_pipeline(
             })
             .collect();
 
-        match build_pipeline(stack, &registry.0, agent_handle, &sensor_frame_handles) {
+        let host_capabilities = build_host_body_capabilities(agent_config.name());
+
+        match build_pipeline(
+            stack,
+            &registry.0,
+            agent_handle,
+            &sensor_frame_handles,
+            host_capabilities,
+        ) {
             Ok(pipeline) => {
                 commands
                     .entity(agent_entity)

@@ -246,11 +246,12 @@ impl PipelineBuilder {
         }
 
         // Bus slots are allocated from the union of all node descriptors.
-        // A body-published channel gets its slot via the consuming node's
-        // `required_inputs` (or `optional_inputs`) — no need to seed slots
-        // from `capabilities.publishes` separately. If no node consumes a
-        // published channel, the host write returns `UnknownChannel`, which
-        // is the correct outcome.
+        // A channel the body advertises via `capabilities.publishes` but
+        // which no in-graph node consumes intentionally has no slot — the
+        // host's `bus.write(...)` for such a channel returns
+        // `ChannelError::UnknownChannel` and drops silently. The body
+        // declares intent; the bus tracks intra-graph flow. The two
+        // overlap iff a consumer exists.
         let descriptor_iter = levels
             .iter()
             .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));

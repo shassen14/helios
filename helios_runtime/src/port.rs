@@ -364,6 +364,13 @@ pub struct PortBus {
 impl PortBus {
     /// Constructs a [`PortBus`] pre-populated with one empty slot per unique
     /// [`ChannelKey`] found across all `descriptors`.
+    ///
+    /// The bus represents intra-graph flow: a slot exists iff some node in
+    /// the graph mentions the channel. Channels the host body *advertises*
+    /// via [`BodyCapabilities`](crate::BodyCapabilities) but which no node
+    /// consumes intentionally have no slot — host writes return
+    /// [`ChannelError::UnknownChannel`] until a consumer is added. The body
+    /// declares intent; the bus tracks reality.
     pub fn new<'a>(descriptors: impl IntoIterator<Item = &'a PortDescriptor>) -> Self {
         let mut slots = HashMap::new();
 

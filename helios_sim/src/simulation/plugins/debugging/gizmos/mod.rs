@@ -1,6 +1,7 @@
 pub mod covariance;
 pub mod error;
 pub mod occupancy;
+pub mod oracle;
 pub mod planned_path;
 pub mod point_cloud;
 pub mod pose;

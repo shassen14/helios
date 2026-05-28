@@ -51,6 +51,12 @@ const ALWAYS_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
         "F8 TF Frames",
         DebugToggle::TfFrames,
     ),
+    (
+        "toggle_oracle_pose",
+        KeyCode::F10,
+        "F10 Oracle Pose",
+        DebugToggle::OraclePose,
+    ),
 ];
 
 const SENSOR_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[(
@@ -148,6 +154,7 @@ fn apply_debug_config(scenario: Res<ScenarioConfig>, mut viz: ResMut<DebugVisual
     viz.show_occupancy_grid = d.show_occupancy_grid;
     viz.show_tf_frames = d.show_tf_frames;
     viz.show_planned_path = d.show_planned_path;
+    viz.show_oracle_pose = d.show_oracle_pose;
     viz.show_legend = d.show_legend;
     viz.show_vehicle_hud = d.show_vehicle_hud;
 }
@@ -182,6 +189,7 @@ impl Plugin for DebuggingPlugin {
                     ui::vehicle_hud::toggle_state_source,
                     gizmos::pose::draw_ground_truth_gimbals,
                     gizmos::pose::draw_estimated_pose_gimbals,
+                    gizmos::oracle::draw_oracle_pose_gimbals,
                     gizmos::covariance::draw_covariance_ellipsoid,
                     gizmos::point_cloud::draw_point_cloud,
                     gizmos::velocity::draw_velocity_vector,

@@ -19,6 +19,7 @@ pub enum DebugToggle {
     OccupancyGrid,
     TfFrames,
     PlannedPath,
+    OraclePose,
     Legend,
     VehicleHud,
     StateSource,

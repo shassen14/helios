@@ -46,6 +46,7 @@ pub struct DebugConfig {
     pub show_occupancy_grid: bool,
     pub show_tf_frames: bool,
     pub show_planned_path: bool,
+    pub show_oracle_pose: bool,
     pub show_legend: bool,
     #[serde(default = "default_true")]
     pub show_vehicle_hud: bool,

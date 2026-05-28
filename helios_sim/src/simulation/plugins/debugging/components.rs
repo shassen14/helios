@@ -21,6 +21,11 @@ pub struct DebugVisualizationConfig {
     pub show_tf_frames: bool, // F8
     /// Draw the planned path polyline and active look-ahead waypoint.
     pub show_planned_path: bool, // F9
+    /// Draw axes at the body's oracle pose (read from `oracle/pose` on the
+    /// autonomy bus). Distinct from `show_pose_gimbals`, which reads the
+    /// ECS `GlobalTransform` directly. Use this to verify the oracle
+    /// publish/read path end-to-end.
+    pub show_oracle_pose: bool, // F10
     pub show_legend: bool,         // H
     pub show_vehicle_hud: bool,    // C
 }
