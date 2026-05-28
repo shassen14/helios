@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/core/simulation_setup.rs
-
 use std::time::Duration;
 
 use avian3d::prelude::PhysicsSet;
@@ -11,6 +9,7 @@ use super::components::GroundTruthState;
 use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 use crate::prelude::*;
 use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
+use crate::simulation::core::ground_truth::publish_oracle_channels_system;
 use crate::simulation::core::ground_truth_sync_system;
 use crate::simulation::core::prng::SimulationRng;
 use crate::simulation::core::transforms::build_static_tf_maps;
@@ -158,6 +157,7 @@ impl Plugin for SimulationSetupPlugin {
                     .in_set(SimulationSet::Precomputation)
                     .run_if(in_state(AppState::Running)),
                 ground_truth_sync_system.in_set(SimulationSet::StateSync),
+                publish_oracle_channels_system.after(ground_truth_sync_system),
                 tf_tree_incremental_update_system
                     .in_set(SimulationSet::StateSync)
                     .after(ground_truth_sync_system)

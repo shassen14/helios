@@ -280,11 +280,20 @@ pub fn build_pipeline(
     external_channels.sort_by_key(|k| format!("{k:?}"));
     external_channels.dedup();
 
-    // Wrap the config-derived sensor channels as the body's published
-    // surface. Phase 2 item 5 replaces this with a `BodyCapabilities`
-    // threaded in from the host (real `name`, `oracle/*` channels, and
-    // `consumes_control`); for now the assembler only knows the sensor
-    // channels it derived from the autonomy config.
+    // Transitional placeholder — three knowingly-wrong fields:
+    //   1. `name: String::new()` — the agent name is a host-side fact, not
+    //      knowable from the autonomy stack alone.
+    //   2. `consumes_control: false` — whether the body actuates control is
+    //      also a host-side fact; nothing enforces it yet (the build-time
+    //      gate is deferred until playback/hw lands).
+    //   3. `Provenance::Exact` on every published channel — `Provenance`
+    //      currently has only the `Exact` variant, so this is technically
+    //      true today but will become wrong as soon as `Noisy`/`Estimated`/
+    //      etc. are added; real sensor channels should be tagged by the host.
+    // This will be addressed soon. At that point
+    // the assembler stops fabricating capabilities and just merges its
+    // config-derived sensor channels with the host-supplied oracle/health
+    // channels.
     let capabilities = BodyCapabilities {
         name: String::new(),
         publishes: external_channels
