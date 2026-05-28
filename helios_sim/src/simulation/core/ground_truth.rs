@@ -73,8 +73,25 @@ pub fn ground_truth_sync_system(
 pub fn publish_oracle_channels_system(
     query: Query<(&GroundTruthState, &AutonomyPipelineComponent)>,
     time: Res<Time>,
+    mut has_logged_first_tick: Local<bool>,
 ) {
     let now = MonotonicTime(time.elapsed_secs_f64());
+
+    // One-shot verification trace: fires exactly once the first time this
+    // system actually executes. Used to confirm the schedule wiring is
+    // correct (system is in StateSync, run_if(Running) is satisfied) — a
+    // silent run cannot otherwise be observed from outside, because the
+    // bus writes below land on slots that don't exist yet until a mock
+    // consumer is built (Phase 3). Cheap to leave in; remove if it ever
+    // becomes noise. Enable with RUST_LOG=helios_sim::oracle=trace.
+    if !*has_logged_first_tick {
+        tracing::trace!(
+            target: "helios_sim::oracle",
+            agent_count = query.iter().len(),
+            "publish_oracle_channels_system: first tick"
+        );
+        *has_logged_first_tick = true;
+    }
 
     for (ground_truth, autonomy_pipeline) in query {
         let pose = ground_truth.pose;

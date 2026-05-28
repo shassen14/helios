@@ -1,18 +1,14 @@
-// helios_sim/src/simulation/plugins/autonomy/systems/spawn.rs
-//
-// Spawning systems for agent autonomy pipelines.
-
-use bevy::prelude::*;
-use std::collections::HashMap;
-
-use helios_core::data::primitives::FrameHandle;
-use helios_runtime::build_pipeline;
-
 use crate::prelude::*;
 use crate::simulation::plugins::autonomy::components::{
     AutonomyPipelineComponent, OdomFrameOf, SensorPublishChannel,
 };
 use crate::simulation::registry::plugin::RuntimeAutonomyRegistry;
+
+use helios_core::data::primitives::FrameHandle;
+use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
+use helios_runtime::{build_pipeline, BodyCapabilities, Provenance, PublishedChannel};
+
+use std::collections::HashMap;
 
 /// Spawns the autonomy pipeline for agents with real estimation.
 ///
@@ -78,5 +74,86 @@ pub fn spawn_odom_frames(
             OdomFrameOf(agent_entity),
         ));
         info!("[OdomFrame] Spawned odom frame for '{}'", agent_name);
+    }
+}
+
+/// Builds the sim host's [`BodyCapabilities`] for one agent.
+///
+/// This is the host's view of what the body advertises to the autonomy
+/// graph — distinct from anything the autonomy stack itself declares.
+/// Two responsibilities split between host and assembler:
+/// - **Host (this fn)** knows the agent's name, whether the body actuates,
+///   and which host-owned channels exist (`oracle/*`, later `health/*`).
+/// - **Assembler** ([`build_pipeline`]) knows the sensor channels derived
+///   from the autonomy config and merges them into `publishes` before
+///   handing the merged `BodyCapabilities` to [`PipelineBuilder`].
+///
+/// # Field rationale
+///
+/// - `name`: cloned from `agent_name`; used by error messages
+///   (`PipelineBuildError::UnsatisfiedBodyCapabilities`) and the DAG dump.
+/// - `consumes_control`: hardcoded `true` — every sim agent has an
+///   actuation adapter (`AckermannAdapterComponent` etc.). Becomes a
+///   parameter (or moves to `AgentConfig`) once passive observer agents,
+///   log-playback agents, or hw-passive Zenoh-bridge nodes exist.
+/// - `publishes`: only the two oracle channels — `oracle/pose` (world ENU)
+///   and `oracle/twist` (body FLU). Both tagged `Provenance::Exact`
+///   because the sim is ground truth. Health channels are intentionally
+///   omitted: no sim publisher exists for them yet, and advertising a
+///   channel the host never writes would let a consumer build and then
+///   read `None` forever.
+///
+/// Construct one of these in [`spawn_autonomy_pipeline`] per agent and
+/// pass it to [`build_pipeline`].
+fn build_host_body_capabilities(agent_name: &str) -> BodyCapabilities {
+    let published_pose = PublishedChannel {
+        key: oracle_pose_channel(),
+        provenance: Provenance::Exact,
+    };
+
+    let published_twist = PublishedChannel {
+        key: oracle_twist_channel(),
+        provenance: Provenance::Exact,
+    };
+
+    BodyCapabilities {
+        name: agent_name.to_string(),
+        publishes: vec![published_pose, published_twist],
+        consumes_control: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_is_copied_from_argument() {
+        let caps = build_host_body_capabilities("rover_1");
+        assert_eq!(caps.name, "rover_1");
+    }
+
+    #[test]
+    fn sim_agents_consume_control() {
+        let caps = build_host_body_capabilities("any");
+        assert!(caps.consumes_control);
+    }
+
+    #[test]
+    fn publishes_exactly_pose_and_twist() {
+        let caps = build_host_body_capabilities("any");
+        assert_eq!(caps.publishes.len(), 2);
+
+        let keys: Vec<_> = caps.publishes.iter().map(|p| &p.key).collect();
+        assert!(keys.contains(&&oracle_pose_channel()));
+        assert!(keys.contains(&&oracle_twist_channel()));
+    }
+
+    #[test]
+    fn all_published_channels_are_provenance_exact() {
+        let caps = build_host_body_capabilities("any");
+        for pc in &caps.publishes {
+            assert_eq!(pc.provenance, Provenance::Exact);
+        }
     }
 }

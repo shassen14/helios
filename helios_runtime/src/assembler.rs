@@ -7,13 +7,18 @@
 //!
 //! ## What the host provides
 //!
-//! Two things cannot come from config — they are host-specific runtime tokens:
+//! Three things cannot come from config — they are host-specific runtime tokens:
 //!
 //! - `agent_handle` — the agent's [`FrameHandle`], assigned by the host's
 //!   entity system (Bevy `Entity` bits in sim, static calibration ID on hw).
 //! - `sensor_frame_handles` — maps each aiding `input_channel` string to the
 //!   [`FrameHandle`] of the physical sensor that publishes on it. Used to build
 //!   the `MeasurementModelBuildContext` for each aiding handler.
+//! - `host_capabilities` — the body's name, whether it consumes control, and
+//!   the channels the host publishes outside the autonomy stack (today:
+//!   `oracle/*`; later: `health/*`). The assembler appends config-derived
+//!   sensor channels onto `host_capabilities.publishes` before handing the
+//!   merged value to [`PipelineBuilder::with_body_capabilities`].
 //!
 //! Everything else — algorithm kinds, noise params, physical constants,
 //! channel names — comes from `stack`.
@@ -52,8 +57,8 @@ use helios_core::data::sensor::{
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::MapData;
 use helios_core::planning::types::Path;
-use nalgebra::DMatrix;
 
+use nalgebra::DMatrix;
 use std::collections::HashMap;
 
 /// Errors that can occur while assembling a pipeline from config.
@@ -141,11 +146,16 @@ impl std::fmt::Display for PipelineAssemblyError {
 /// - `sensor_frame_handles` — maps each aiding `input_channel` to the
 ///   [`FrameHandle`] of the physical sensor publishing on that channel.
 ///   Channels not used by any aiding entry may be absent.
+/// - `host_capabilities` — host-supplied body capabilities (name,
+///   `consumes_control`, host-published channels such as `oracle/*`).
+///   The assembler extends `host_capabilities.publishes` with the
+///   config-derived sensor channels before building.
 pub fn build_pipeline(
     stack: &AutonomyStack,
     registry: &AutonomyRegistry,
     agent_handle: FrameHandle,
     sensor_frame_handles: &HashMap<String, FrameHandle>,
+    mut host_capabilities: BodyCapabilities,
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
     let mut errors: Vec<PipelineAssemblyError> = vec![];
     let mut builder = PipelineBuilder::new();
@@ -280,34 +290,15 @@ pub fn build_pipeline(
     external_channels.sort_by_key(|k| format!("{k:?}"));
     external_channels.dedup();
 
-    // Transitional placeholder — three knowingly-wrong fields:
-    //   1. `name: String::new()` — the agent name is a host-side fact, not
-    //      knowable from the autonomy stack alone.
-    //   2. `consumes_control: false` — whether the body actuates control is
-    //      also a host-side fact; nothing enforces it yet (the build-time
-    //      gate is deferred until playback/hw lands).
-    //   3. `Provenance::Exact` on every published channel — `Provenance`
-    //      currently has only the `Exact` variant, so this is technically
-    //      true today but will become wrong as soon as `Noisy`/`Estimated`/
-    //      etc. are added; real sensor channels should be tagged by the host.
-    // This will be addressed soon. At that point
-    // the assembler stops fabricating capabilities and just merges its
-    // config-derived sensor channels with the host-supplied oracle/health
-    // channels.
-    let capabilities = BodyCapabilities {
-        name: String::new(),
-        publishes: external_channels
-            .into_iter()
-            .map(|key| PublishedChannel {
-                key,
-                provenance: Provenance::Exact,
-            })
-            .collect(),
-        consumes_control: false,
-    };
+    host_capabilities
+        .publishes
+        .extend(external_channels.into_iter().map(|key| PublishedChannel {
+            key,
+            provenance: Provenance::Exact,
+        }));
 
     builder
-        .with_body_capabilities(capabilities)
+        .with_body_capabilities(host_capabilities)
         .build()
         .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
 }

@@ -157,10 +157,14 @@ impl Plugin for SimulationSetupPlugin {
                     .in_set(SimulationSet::Precomputation)
                     .run_if(in_state(AppState::Running)),
                 ground_truth_sync_system.in_set(SimulationSet::StateSync),
-                publish_oracle_channels_system.after(ground_truth_sync_system),
+                publish_oracle_channels_system
+                    .after(ground_truth_sync_system)
+                    .in_set(SimulationSet::StateSync)
+                    .run_if(in_state(AppState::Running)),
                 tf_tree_incremental_update_system
                     .in_set(SimulationSet::StateSync)
                     .after(ground_truth_sync_system)
+                    .in_set(SimulationSet::StateSync)
                     .run_if(in_state(AppState::Running)),
             ),
         );
