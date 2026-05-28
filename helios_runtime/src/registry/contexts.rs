@@ -80,3 +80,9 @@ pub struct PathFollowerBuildContext {
     /// Always internal (brain-produced).
     pub path_channel: InternalChannel,
 }
+
+// ------- Mocks --------
+
+pub struct MockEstimatorBuildContext {
+    pub agent_handle: FrameHandle,
+}

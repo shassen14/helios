@@ -45,7 +45,8 @@ use crate::pipeline::AutonomyPipeline;
 use crate::port::{ChannelKey, InternalChannel, SensorChannel};
 use crate::registry::contexts::{
     ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
-    MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
+    MeasurementModelBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
+    SearchPlannerBuildContext,
 };
 use crate::registry::AutonomyRegistry;
 
@@ -313,13 +314,55 @@ fn build_estimator_node(
     registry: &AutonomyRegistry,
     external_channels: &mut Vec<ChannelKey>,
 ) -> Result<Box<dyn crate::pipeline::node::PipelineNode>, PipelineAssemblyError> {
-    let EstimatorConfig::Ekf(ekf_cfg) = est_cfg else {
-        return Err(PipelineAssemblyError::FactoryFailure {
-            node_kind: est_cfg.get_kind_str().to_string(),
-            reason: "only EKF is currently implemented".to_string(),
-        });
-    };
+    // Dispatch on estimator family. Each family owns a different build
+    // context shape (Gaussian needs aiding handlers; mock needs none;
+    // particle will need particle-count / resampling). Adding a new
+    // family means a new `registry/<family>.rs` and a new arm here.
+    match est_cfg {
+        EstimatorConfig::Ekf(ekf_cfg) => {
+            build_gaussian_estimator_node(
+                instance_name,
+                est_cfg,
+                ekf_cfg,
+                agent_handle,
+                sensor_frame_handles,
+                registry,
+                external_channels,
+            )
+        }
+        EstimatorConfig::Ukf(_) => Err(PipelineAssemblyError::FactoryFailure {
+            node_kind: "Ukf".to_string(),
+            reason: "UKF not yet implemented".to_string(),
+        }),
+        EstimatorConfig::MockOracle(_) => {
+            // Mocks declare oracle inputs through their port descriptor and
+            // the build-time check against BodyCapabilities decides whether
+            // the body satisfies them. Nothing to push onto external_channels:
+            // that list is for sensor / control signals routed around the
+            // graph, not for body-published oracle channels.
+            registry
+                .build_mock_estimator(
+                    "MockOracle",
+                    est_cfg.clone(),
+                    MockEstimatorBuildContext { agent_handle },
+                )
+                .map_err(|reason| PipelineAssemblyError::FactoryFailure {
+                    node_kind: "MockOracle".to_string(),
+                    reason,
+                })
+        }
+    }
+}
 
+fn build_gaussian_estimator_node(
+    instance_name: &str,
+    est_cfg: &EstimatorConfig,
+    ekf_cfg: &crate::config::EkfConfig,
+    agent_handle: FrameHandle,
+    sensor_frame_handles: &HashMap<String, FrameHandle>,
+    registry: &AutonomyRegistry,
+    external_channels: &mut Vec<ChannelKey>,
+) -> Result<Box<dyn crate::pipeline::node::PipelineNode>, PipelineAssemblyError> {
     // Build aiding handlers from the aiding list in EkfConfig.
     let mut aiding: Vec<Box<dyn AidingHandler>> = vec![];
     for aid in &ekf_cfg.aiding {

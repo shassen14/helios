@@ -6,6 +6,7 @@
 
 pub mod controller;
 pub mod gaussian_estimator;
+pub mod mock_oracle_estimator;
 pub mod occupancy_grid;
 pub mod path_follower;
 pub mod search_planner;

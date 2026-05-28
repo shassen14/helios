@@ -57,10 +57,10 @@ pub fn ground_truth_sync_system(
 /// slots. Runs in [`SimulationSet::StateSync`] after
 /// [`ground_truth_sync_system`].
 ///
-/// Pose is published in world ENU (matching [`GroundTruthState`]). Twist
-/// is converted into body FLU here — `linear` and `angular` are rotated
-/// by `pose.rotation.inverse()` so mocks reading this channel see the
-/// same body-frame convention real hardware delivers.
+/// Pose and twist are both published in world ENU (matching
+/// [`GroundTruthState`]). Aligns with `STANDARD_INS_LAYOUT`'s velocity
+/// convention so the mock-oracle estimator can passthrough into a
+/// `FrameAwareState` without rotating.
 ///
 /// The bus timestamp source is `Time::elapsed_secs_f64`, identical to
 /// what `SimRuntime::now()` returns later in the autonomy tick — so
@@ -95,11 +95,6 @@ pub fn publish_oracle_channels_system(
 
     for (ground_truth, autonomy_pipeline) in query {
         let pose = ground_truth.pose;
-        let rot_inv = pose.rotation.inverse();
-
-        // World ENU → body FLU. Documented on `oracle_twist_channel`.
-        let linear_body = rot_inv * ground_truth.linear_velocity;
-        let angular_body = rot_inv * ground_truth.angular_velocity;
 
         let stamped_pose: Stamped<Isometry3<f64>> = Stamped {
             value: pose,
@@ -108,10 +103,12 @@ pub fn publish_oracle_channels_system(
             producer: HOST_PRODUCER_ID,
         };
 
+        // World-frame twist matches STANDARD_INS_LAYOUT; mocks pass through
+        // without rotating. See `oracle_twist_channel` docs.
         let stamped_twist = Stamped {
             value: Twist {
-                linear: linear_body,
-                angular: angular_body,
+                linear: ground_truth.linear_velocity,
+                angular: ground_truth.angular_velocity,
             },
             timestamp: now,
             health: Health::Ok,

@@ -18,6 +18,7 @@ fn default_orientation_uncertainty_deg() -> f64 {
 pub enum EstimatorConfig {
     Ekf(EkfConfig),
     Ukf(UkfConfig),
+    MockOracle(MockOracleEstimatorConfig),
 }
 
 impl EstimatorConfig {
@@ -25,6 +26,7 @@ impl EstimatorConfig {
         match self {
             EstimatorConfig::Ekf(_) => "Ekf",
             EstimatorConfig::Ukf(_) => "Ukf",
+            EstimatorConfig::MockOracle(_) => "MockOracle",
         }
     }
 }
@@ -188,3 +190,6 @@ pub struct UkfConfig {
     pub beta: f64,
     pub kappa: f64,
 }
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct MockOracleEstimatorConfig {}

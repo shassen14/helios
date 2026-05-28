@@ -1,0 +1,28 @@
+# =========================================================================
+# == Agent Profile: Mock Oracle Car ==
+# =========================================================================
+# Identical to default_car except the estimator is replaced by the mock
+# oracle passthrough. The vehicle's `FrameAwareState` is the body's true
+# pose / twist from the sim host — no estimation drift, no IMU/GPS aiding.
+#
+# Use for controller / planner bring-up where estimation noise would mask
+# the behavior under test. Fails to load on bodies that don't publish
+# `oracle/pose` (e.g. any hardware target).
+
+[estimators.primary]
+from = "runtime.catalog.estimators.mock_oracle"
+
+[search_planners]
+local_path = { from = "runtime.catalog.planners.a_star" }
+
+[path_following]
+kind = "PurePursuit"
+max_speed_m_s = 5.0
+min_speed_m_s = 0.5
+lookahead_distance_m = 4.0
+goal_radius = 3.0
+max_lateral_acceleration = 2.0
+state_source = "ground_truth"
+
+[controllers]
+path_follower = { from = "runtime.catalog.controllers.direct_velocity" }

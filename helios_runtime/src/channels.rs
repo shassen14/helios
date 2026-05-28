@@ -29,11 +29,12 @@ pub fn oracle_pose_channel() -> ChannelKey {
 
 /// Oracle channel carrying the agent body's twist at the current tick.
 ///
-/// Payload: [`Twist`] expressed in **body FLU**. `linear` is the body
-/// origin's translational velocity, and `angular` is its angular velocity,
-/// both rotated into the body frame at the publisher. This matches the
-/// convention real hardware odometry / IMU stacks deliver, so mocks
-/// written against this channel transfer to hw without a frame change.
+/// Payload: [`Twist`] expressed in **world ENU**. `linear` is the body
+/// origin's translational velocity in world; `angular` is the body's
+/// angular velocity expressed in world. This matches the
+/// `STANDARD_INS_LAYOUT` convention (velocity entries live in `FrameId::World`)
+/// so passthrough mocks don't have to rotate before writing into a
+/// `FrameAwareState`.
 ///
 /// Published by the sim host's `publish_oracle_channels_system`. Only mock
 /// nodes may declare this as an input.

@@ -1,0 +1,10 @@
+# configs/runtime/catalog/estimators/mock_oracle.toml
+# Mock estimator that republishes the body's oracle/pose (and oracle/twist
+# when present) as FrameAwareState. Skips estimation entirely.
+#
+# Use for controller / planner bring-up, demos, and regression tests where
+# estimation drift would distract. Fails to build on bodies that do not
+# advertise oracle/pose (e.g. most hardware deployments).
+kind = "MockOracle"
+
+[config]
