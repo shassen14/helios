@@ -43,6 +43,7 @@ pub struct PublishedChannel {
 /// suite), never here.
 #[derive(Clone, Debug, Default)]
 pub struct BodyCapabilities {
+    pub name: String,
     /// Channels the body writes to the bus: sensor channels, `oracle/*`
     /// ground-truth, and `health/*` driver/sensor status. The assembler reads
     /// this to seed the pipeline's external channels.
@@ -52,7 +53,6 @@ pub struct BodyCapabilities {
     /// live in `publishes`.
     pub consumes_control: bool,
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +69,7 @@ mod tests {
     fn published_channel_records_key_and_provenance() {
         let key: ChannelKey = InternalChannel::of::<f64>().into();
         let caps = BodyCapabilities {
+            name: String::default(),
             publishes: vec![PublishedChannel {
                 key: key.clone(),
                 provenance: Provenance::default(),

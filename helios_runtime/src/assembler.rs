@@ -30,6 +30,7 @@
 //! promoted to a registry family (`register_aiding_handler_factory`). For the
 //! current set of five built-in types, the inline match is sufficient.
 
+use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::config::AutonomyStack;
 use crate::config::{AidingConfig, EkfDynamicsConfig, EstimatorConfig, MapLayerConfig};
 use crate::pipeline::autonomy_pipeline::PipelineBuilder;
@@ -279,8 +280,25 @@ pub fn build_pipeline(
     external_channels.sort_by_key(|k| format!("{k:?}"));
     external_channels.dedup();
 
+    // Wrap the config-derived sensor channels as the body's published
+    // surface. Phase 2 item 5 replaces this with a `BodyCapabilities`
+    // threaded in from the host (real `name`, `oracle/*` channels, and
+    // `consumes_control`); for now the assembler only knows the sensor
+    // channels it derived from the autonomy config.
+    let capabilities = BodyCapabilities {
+        name: String::new(),
+        publishes: external_channels
+            .into_iter()
+            .map(|key| PublishedChannel {
+                key,
+                provenance: Provenance::Exact,
+            })
+            .collect(),
+        consumes_control: false,
+    };
+
     builder
-        .with_external_channels(external_channels)
+        .with_body_capabilities(capabilities)
         .build()
         .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
 }

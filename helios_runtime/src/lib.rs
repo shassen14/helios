@@ -6,6 +6,7 @@
 
 pub mod assembler;
 pub mod body;
+pub mod channels;
 pub mod config;
 pub mod diagnostics;
 pub mod pipeline;

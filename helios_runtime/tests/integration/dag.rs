@@ -11,8 +11,10 @@ use std::sync::{
 use helios_core::data::primitives::MonotonicTime;
 use helios_runtime::{
     pipeline::{PipelineBuildError, PipelineBuilder},
-    port::{ChannelKey, InternalChannel, PortBus, PortDescriptor},
-    prelude::{Health, PipelineNode, Stamped, TickContext},
+    port::{ChannelKey, InternalChannel, OracleChannel, PortBus, PortDescriptor},
+    prelude::{
+        BodyCapabilities, Health, PipelineNode, Provenance, PublishedChannel, Stamped, TickContext,
+    },
 };
 
 use crate::common::MockRuntime;
@@ -26,6 +28,12 @@ fn ikey_of<T: 'static>() -> ChannelKey {
 
 fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
     InternalChannel::named::<T>(instance).into()
+}
+
+/// Oracle-channel sugar — only mocks/viz/tests may mint these. The instance
+/// must start with `oracle/` (enforced by `OracleChannel::named`).
+fn okey_named<T: 'static>(instance: &'static str) -> ChannelKey {
+    OracleChannel::named::<T>(instance).into()
 }
 
 // =========================================================================
@@ -282,6 +290,7 @@ struct ChB;
 struct ChC;
 struct ChD;
 struct Sensor;
+struct Truth;
 
 // =========================================================================
 // == Build-time validation ==
@@ -481,17 +490,76 @@ fn multiple_producers_detected() {
 }
 
 #[test]
-fn external_channels_satisfy_required_inputs() {
-    // A node requires a channel that no node produces. Declaring it via
-    // with_external_channels must make the build succeed.
+fn body_capabilities_satisfy_required_inputs() {
+    // A node requires a channel that no node produces. Declaring it as a
+    // body-published channel via with_body_capabilities must make the build
+    // succeed.
     let sensor_key = ikey_named::<Sensor>("imu");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
-        .with_external_channels(vec![sensor_key])
+        .with_body_capabilities(BodyCapabilities {
+            name: "test_body".to_string(),
+            publishes: vec![PublishedChannel {
+                key: sensor_key,
+                provenance: Provenance::Exact,
+            }],
+            consumes_control: false,
+        })
         .build();
 
     assert!(result.is_ok(), "build should succeed: {:?}", result.err());
+}
+
+#[test]
+fn oracle_input_satisfied_by_body_capability() {
+    // A mock-style node declares an Oracle channel as a required input.
+    // When the body advertises it, the build succeeds.
+    let oracle_key = okey_named::<Truth>("oracle/pose");
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(SinkNode::new("mock_oracle", oracle_key.clone())))
+        .with_body_capabilities(BodyCapabilities {
+            name: "sim".to_string(),
+            publishes: vec![PublishedChannel {
+                key: oracle_key,
+                provenance: Provenance::Exact,
+            }],
+            consumes_control: false,
+        })
+        .build();
+
+    assert!(result.is_ok(), "build should succeed: {:?}", result.err());
+}
+
+#[test]
+fn oracle_input_without_body_capability_errors() {
+    // Same node, but the body does not advertise the oracle channel. The
+    // build must fail with UnsatisfiedBodyCapabilities naming the node and
+    // body — not the generic UnsatisfiedInput. Oracle channels are never
+    // produced by a node, so the only possible supplier is the body.
+    let oracle_key = okey_named::<Truth>("oracle/pose");
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(SinkNode::new("mock_oracle", oracle_key.clone())))
+        .with_body_capabilities(BodyCapabilities {
+            name: "hw".to_string(),
+            publishes: vec![],
+            consumes_control: false,
+        })
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: body does not advertise the oracle channel");
+    };
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineBuildError::UnsatisfiedBodyCapabilities { node_name, channel_key, body }
+                if node_name == "mock_oracle" && *channel_key == oracle_key && body == "hw"
+        )),
+        "expected UnsatisfiedBodyCapabilities for 'mock_oracle'/{oracle_key:?}, got {errors:?}"
+    );
 }
 
 // =========================================================================
@@ -576,7 +644,14 @@ fn tick_preserves_externally_written_values() {
     let sensor_key = ikey_named::<Sensor>("imu");
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
-        .with_external_channels(vec![sensor_key.clone()])
+        .with_body_capabilities(BodyCapabilities {
+            name: "test_body".to_string(),
+            publishes: vec![PublishedChannel {
+                key: sensor_key.clone(),
+                provenance: Provenance::Exact,
+            }],
+            consumes_control: false,
+        })
         .build()
         .expect("build should succeed");
 
