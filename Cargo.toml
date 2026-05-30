@@ -1,11 +1,7 @@
 # Cargo.toml
 [workspace]
-resolver = "2" # Use the new feature resolver
-members = [
-    "helios_core",
-    "helios_runtime",
-    "helios_sim",
-]
+resolver = "2"
+members = ["helios_core", "helios_runtime", "helios_sim", "helios_test"]
 
 [workspace.package]
 version = "0.1.0"
@@ -35,4 +31,3 @@ inherits = "release"
 debug = true
 strip = false
 split-debuginfo = "unpacked"
-

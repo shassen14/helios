@@ -1,0 +1,19 @@
+[package]
+name = "helios_test"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[features]
+sim = []
+hw = []
+fake_body = []
+
+[dependencies]
+helios_core = { version = "0.1.0", path = "../helios_core" }
+helios_runtime = { version = "0.1.0", path = "../helios_runtime" }
+serde.workspace = true
+thiserror.workspace = true
+toml = "1.1.2"
+tracing = "0.1.44"

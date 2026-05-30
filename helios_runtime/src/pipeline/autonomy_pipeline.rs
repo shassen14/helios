@@ -441,6 +441,32 @@ impl AutonomyPipeline {
         );
     }
 
+    /// Iterates over every output channel produced by the graph, paired with
+    /// the name of the node that produces it.
+    ///
+    /// Order follows the topological build order (level by level, then node
+    /// order within each level), so producers always appear before the nodes
+    /// that consume their output. Only declared outputs are listed — host-
+    /// supplied external channels and channels with no producing node do not
+    /// appear here. A node that declares multiple outputs yields one entry per
+    /// output, all sharing the same node name.
+    ///
+    /// `helios_test` is the sole consumer: it walks these pairs to build the
+    /// assertion-target paths (`agent.<agent>.<node>.<channel>`) that tests
+    /// reference. This is metadata about the graph's wiring — to read live
+    /// values off the bus, use [`AutonomyPipeline::bus`].
+    pub fn channels(&self) -> impl Iterator<Item = (&str, &ChannelKey)> + '_ {
+        self.levels.iter().flat_map(|level| {
+            level.iter().flat_map(|(_, node)| {
+                let name = node.name();
+                node.port_descriptor()
+                    .outputs
+                    .iter()
+                    .map(move |key| (name, key))
+            })
+        })
+    }
+
     /// Reads the current ego state, if any node has written one this run.
     ///
     /// Returns `None` during cold-start (before the estimator has produced
