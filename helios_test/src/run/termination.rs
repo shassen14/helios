@@ -9,7 +9,7 @@ use serde::Deserialize;
 /// *and* bail early on an assertion outcome, whichever fires first. The
 /// `deny_unknown_fields` fence is doing real work: it rejects not-yet-supported
 /// triggers (e.g. `on_collision`) at parse time rather than silently ignoring
-/// them, so no run file can depend on a stop condition Phase 11 hasn't added.
+/// them, so no run file can depend on a stop condition that isn't implemented yet.
 ///
 /// This is the *config* (when to stop). [`TerminationReason`] is the separate
 /// *outcome* (why we actually stopped) — produced and consumed at different
@@ -92,8 +92,8 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_trigger() {
-        // The forward-compat fence: a stop condition Phase 11 hasn't added yet
-        // is a hard parse error, not a silently-ignored field.
+        // The forward-compat fence: an unimplemented stop condition is a hard
+        // parse error, not a silently-ignored field.
         assert!(toml::from_str::<Termination>(r#"on_collision = true"#).is_err());
     }
 

@@ -28,8 +28,8 @@ pub enum Assertion {
 // whose channel hasn't published yet is not a failure — it just has no value to
 // judge. A continuous assertion sits `Pending` until first data arrives; a
 // terminal one resolved as `Pending` at finalize means "never observed".
-// Derives are required by the evaluator's tests (step 7) — `assert_eq!` against
-// a result needs `PartialEq`, and failure output needs `Debug`.
+// Derives are required by the evaluator's tests — `assert_eq!` against a result
+// needs `PartialEq`, and failure output needs `Debug`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AssertionResult {
     Passed,

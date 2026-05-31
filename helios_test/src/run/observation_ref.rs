@@ -3,11 +3,10 @@ use serde::Deserialize;
 /// Deferred reference to an observation preset by config path (the
 /// `{ from = "..." }` form used throughout `configs/`).
 ///
-/// Like [`ScenarioRef`](super::scenario_ref::ScenarioRef), this is a Phase-4
-/// placeholder: it captures the reference string and hands it back, but
-/// nothing wires up observation yet — that resolution is Phase 5. The
-/// one-field struct matches the composition-by-reference convention and lets
-/// `deny_unknown_fields` catch typos in the run file.
+/// Like [`ScenarioRef`](super::scenario_ref::ScenarioRef), this only captures
+/// the reference string and hands it back; nothing wires up observation yet.
+/// The one-field struct matches the composition-by-reference convention and
+/// lets `deny_unknown_fields` catch typos in the run file.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObservationRef {
@@ -16,8 +15,8 @@ pub struct ObservationRef {
 
 impl ObservationRef {
     /// The unresolved config path this reference points at. Named `path`
-    /// rather than `from` so it reads as "what the string is" at the Phase-5
-    /// call site, and to avoid shadowing the conventional `From::from`.
+    /// rather than `from` so it reads as "what the string is" at the call
+    /// site, and to avoid shadowing the conventional `From::from`.
     pub fn path(&self) -> &str {
         &self.from
     }

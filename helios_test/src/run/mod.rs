@@ -76,8 +76,8 @@ pub enum RunLoadError {
 }
 
 /// Read and parse a run file. Parse-only: this answers "can I read this?", not
-/// "is this a sane run?" — cross-field coherence is `validate`'s job (step 12),
-/// which keeps the two concerns and their error variants separate.
+/// "is this a sane run?" — cross-field coherence is `validate`'s job, which
+/// keeps the two concerns and their error variants separate.
 ///
 /// The `#[from]` attributes on `RunLoadError::Io`/`Parse` generate the `From`
 /// impls that let `?` convert each underlying error into the right variant.

@@ -33,7 +33,7 @@ pub struct TerminalAssertion {
     // a flat string in TOML and all of an assertion's data sits in one table.
     // The cost is two representable illegal states: `WithinRange` with no
     // bounds, and bounds set alongside a non-range condition. Neither is
-    // rejected here — the structs stay pure data. Validation (step 12) is the
+    // rejected here — the structs stay pure data. The `validate` pass is the
     // intended guard; the evaluator's `InvalidBounds` failure is the backstop.
     pub low: Option<f64>,
     pub high: Option<f64>,
