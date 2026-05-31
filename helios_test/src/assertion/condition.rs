@@ -186,8 +186,7 @@ mod tests {
 
     #[test]
     fn equals_strict_rejects_int_vs_float() {
-        let result =
-            Condition::Equals.apply(&AssertionValue::Int(5), &AssertionValue::Float(5.0));
+        let result = Condition::Equals.apply(&AssertionValue::Int(5), &AssertionValue::Float(5.0));
         assert!(matches!(result, Err(ConditionError::TypeMismatch { .. })));
     }
 
@@ -221,10 +220,8 @@ mod tests {
 
     #[test]
     fn ordered_rejects_non_numeric() {
-        let result = Condition::LessThan.apply(
-            &AssertionValue::Bool(true),
-            &AssertionValue::Bool(false),
-        );
+        let result =
+            Condition::LessThan.apply(&AssertionValue::Bool(true), &AssertionValue::Bool(false));
         assert!(matches!(result, Err(ConditionError::NotComparable { .. })));
     }
 

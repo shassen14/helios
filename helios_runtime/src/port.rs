@@ -31,6 +31,8 @@
 
 use crate::prelude::Stamped;
 
+use helios_core::data::primitives::MonotonicTime;
+
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
@@ -344,6 +346,52 @@ pub struct PortDescriptor {
     pub rate: Option<f64>,
 }
 
+/// Type-agnostic view of a [`Stamped<T>`] value on the bus.
+///
+/// The bus stores values erased so slots are uniform, but pulling `T` back
+/// out of a bare `dyn Any` requires naming `T` again — which a runtime
+/// consumer (e.g. the test harness's assertion evaluator) cannot do, since
+/// it only learns the type as a `TypeId` carried inside the [`ChannelKey`].
+/// The fix is to capture the payload projection *at write time*, where `T`
+/// is statically known, into this trait's vtable. A later, type-agnostic
+/// reader then calls [`payload`](Self::payload) / [`payload_type`](Self::payload_type)
+/// without ever naming `T`.
+pub trait ErasedStamped: Any + Send + Sync {
+    /// The wrapped value, **not** the `Stamped` envelope. This is the `&dyn
+    /// Any` an extractor downcasts on; keeping it the bare payload means the
+    /// extractor table stays keyed on the payload type, not `Stamped<T>`.
+    fn payload(&self) -> &dyn Any;
+
+    /// `TypeId` of the payload `T` — matches the `ChannelKey`'s `type_id()`,
+    /// so a consumer can pick the right extractor before downcasting.
+    fn payload_type_id(&self) -> TypeId;
+
+    fn timestamp(&self) -> MonotonicTime;
+
+    /// Escape hatch to a plain `dyn Any` so the typed `read`/`read_any` paths
+    /// can `.downcast::<Stamped<T>>()` — std only downcasts `dyn Any`, never a
+    /// custom trait object.
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+}
+
+impl<T: Any + Send + Sync> ErasedStamped for Stamped<T> {
+    fn payload(&self) -> &dyn Any {
+        &self.value
+    }
+
+    fn payload_type_id(&self) -> TypeId {
+        self.value.type_id()
+    }
+
+    fn timestamp(&self) -> MonotonicTime {
+        self.timestamp
+    }
+
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self
+    }
+}
+
 /// Typed, lock-free in-memory blackboard for intra-pipeline data exchange.
 ///
 /// All slots are pre-populated at construction from the union of every node's
@@ -357,7 +405,7 @@ pub struct PortDescriptor {
 /// for the simple max-age helper, or track a per-consumer last-seen
 /// timestamp for exact one-shot semantics).
 pub struct PortBus {
-    slots: HashMap<ChannelKey, ArcSwap<Option<Arc<dyn Any + Send + Sync>>>>,
+    slots: HashMap<ChannelKey, ArcSwap<Option<Arc<dyn ErasedStamped>>>>,
     tick_now: AtomicF64,
 }
 
@@ -394,7 +442,6 @@ impl PortBus {
     }
 }
 
-#[allow(unused)]
 impl PortBus {
     pub fn write<T: Any + Send + Sync>(
         &self,
@@ -405,7 +452,7 @@ impl PortBus {
             .slots
             .get(&channel)
             .ok_or(ChannelError::UnknownChannel)?;
-        slot.store(Arc::new(Some(Arc::new(stamped))));
+        slot.store(Arc::new(Some(Arc::new(stamped) as Arc<dyn ErasedStamped>)));
         Ok(())
     }
 
@@ -413,7 +460,7 @@ impl PortBus {
         let guard = self.slots.get(&channel)?.load();
         let any_arc = guard.as_ref().as_ref()?;
 
-        Arc::clone(any_arc).downcast::<Stamped<T>>().ok()
+        Arc::clone(any_arc).into_any().downcast::<Stamped<T>>().ok()
     }
 
     /// Returns the first non-empty slot whose value downcasts to `Stamped<T>`,
@@ -428,7 +475,7 @@ impl PortBus {
             let Some(any_arc) = guard.as_ref().as_ref() else {
                 continue;
             };
-            if let Ok(stamped) = Arc::clone(any_arc).downcast::<Stamped<T>>() {
+            if let Ok(stamped) = Arc::clone(any_arc).into_any().downcast::<Stamped<T>>() {
                 return Some(stamped);
             }
         }
@@ -448,6 +495,19 @@ impl PortBus {
         } else {
             None
         }
+    }
+
+    /// Read a slot's current value without naming its Rust type — the one
+    /// primitive a runtime consumer (assertion evaluator, bus inspector) can
+    /// call when it only has a [`ChannelKey`] and not a compile-time `T`.
+    ///
+    /// Returns an owned `Arc`, not a borrow: `load()` hands back a temporary
+    /// guard, so cloning the inner `Arc` out is what lets the value outlive
+    /// this call. `None` covers both an unknown channel and an empty slot.
+    pub fn read_erased(&self, key: &ChannelKey) -> Option<Arc<dyn ErasedStamped>> {
+        let guard = self.slots.get(key)?.load();
+        let erased = guard.as_ref().as_ref()?;
+        Some(Arc::clone(erased))
     }
 
     pub(crate) fn set_tick_time(&self, now: f64) {
@@ -667,5 +727,80 @@ mod tests {
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.set_tick_time(10.0);
         assert!(bus.read_fresh::<u32>(key, 5.0).is_none());
+    }
+
+    // --- read_erased / ErasedStamped tests ---
+
+    #[test]
+    fn read_erased_payload_downcasts_to_value() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(42u32, 1.0)).unwrap();
+
+        let erased = bus.read_erased(&key).unwrap();
+        // Payload is the bare value, not the Stamped envelope.
+        let value = erased.payload().downcast_ref::<u32>().unwrap();
+        assert_eq!(*value, 42);
+    }
+
+    #[test]
+    fn read_erased_payload_type_matches_typeid() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
+
+        let erased = bus.read_erased(&key).unwrap();
+        // The payload TypeId is what a consumer keys its extractor on, and it
+        // must agree with the channel key's own type_id.
+        assert_eq!(erased.payload_type(), TypeId::of::<u32>());
+        assert_eq!(erased.payload_type(), key.type_id());
+    }
+
+    #[test]
+    fn read_erased_exposes_timestamp() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 7.5)).unwrap();
+
+        let erased = bus.read_erased(&key).unwrap();
+        assert_eq!(erased.timestamp(), MonotonicTime(7.5));
+    }
+
+    #[test]
+    fn read_erased_returns_none_for_empty_slot() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        assert!(bus.read_erased(&key).is_none());
+    }
+
+    #[test]
+    fn read_erased_returns_none_for_unknown_channel() {
+        let bus = PortBus::new(&[]);
+        assert!(bus.read_erased(&ikey::<u32>()).is_none());
+    }
+
+    #[test]
+    fn read_erased_payload_rejects_wrong_type() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
+
+        let erased = bus.read_erased(&key).unwrap();
+        // Downcasting to the wrong payload type fails rather than mis-reads.
+        assert!(erased.payload().downcast_ref::<i64>().is_none());
+    }
+
+    #[test]
+    fn into_any_roundtrips_to_stamped() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(99u32, 2.0)).unwrap();
+
+        let erased = bus.read_erased(&key).unwrap();
+        // The escape hatch recovers the full Stamped<T>, the same path the
+        // typed read::<T> takes internally.
+        let stamped = erased.into_any().downcast::<Stamped<u32>>().unwrap();
+        assert_eq!(stamped.value, 99);
+        assert_eq!(stamped.timestamp, MonotonicTime(2.0));
     }
 }

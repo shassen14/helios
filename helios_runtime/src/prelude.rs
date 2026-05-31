@@ -4,7 +4,7 @@ pub use crate::pipeline::autonomy_pipeline::MISSION_GOAL_INSTANCE;
 pub use crate::pipeline::build_error::PipelineBuildError;
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{AutonomyPipeline, PipelineBuilder};
-pub use crate::port::{ChannelKey, PortDescriptor};
+pub use crate::port::{ChannelKey, ErasedStamped, PortDescriptor};
 pub use crate::stamped::{Health, Stamped};
 
 pub use crate::config::{
