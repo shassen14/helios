@@ -12,6 +12,7 @@ pub enum ValidationError {
     NoTermination,
     #[error("`on_assertion` is set but the run declares no assertions for it to watch")]
     OnAssertionWithoutAssertions,
+    // todo!() WithinRangeWithoutBounds
 }
 
 /// Check a parsed [`Run`] for coherence. A flat checklist of guard clauses:
