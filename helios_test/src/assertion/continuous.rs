@@ -5,6 +5,7 @@ use crate::assertion::{
 
 use serde::Deserialize;
 
+/// _Pre-step._ A run-file assertion checked every tick across the run.
 // A continuous assertion is checked every tick across the run ("continuous"),
 // e.g. "speed stays below the limit the whole time".
 //

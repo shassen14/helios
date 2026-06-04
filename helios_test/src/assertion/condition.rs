@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+/// _Shared (pre + post)._ A comparable value: read from a run file and written
+/// back into the report.
 // `untagged` lets TOML `value = 0` deserialize as `Int(0)` rather than `{ Int = 0 }`.
 // Variant order is load-bearing: serde tries each in declaration order, so the most
 // specific TOML type (bool) must come before the most permissive (string).
@@ -27,6 +29,8 @@ impl AssertionValue {
     }
 }
 
+/// _Shared (pre + post)._ The comparison verb: parsed from a run file and
+/// echoed into the report entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Condition {
@@ -124,6 +128,7 @@ fn compare_ordered(
     })
 }
 
+/// _Per-step._ A comparison that couldn't be carried out, produced during evaluation.
 // Two distinct author errors: comparing different types (`TypeMismatch`) vs
 // applying a condition a type can't support, e.g. `LessThan` on a bool
 // (`NotComparable`). Kept separate so reports can phrase each one usefully.

@@ -752,8 +752,8 @@ mod tests {
         let erased = bus.read_erased(&key).unwrap();
         // The payload TypeId is what a consumer keys its extractor on, and it
         // must agree with the channel key's own type_id.
-        assert_eq!(erased.payload_type(), TypeId::of::<u32>());
-        assert_eq!(erased.payload_type(), key.type_id());
+        assert_eq!(erased.payload_type_id(), TypeId::of::<u32>());
+        assert_eq!(erased.payload_type_id(), key.type_id());
     }
 
     #[test]

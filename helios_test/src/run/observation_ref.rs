@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-/// Deferred reference to an observation preset by config path (the
+/// _Pre-step._ Deferred reference to an observation preset by config path (the
 /// `{ from = "..." }` form used throughout `configs/`).
 ///
 /// Like [`ScenarioRef`](super::scenario_ref::ScenarioRef), this only captures

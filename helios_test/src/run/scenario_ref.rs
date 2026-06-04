@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
-/// Deferred reference to a scenario by config path (the `{ from = "..." }`
-/// form used throughout `configs/`).
+/// _Pre-step._ Deferred reference to a scenario by config path (the
+/// `{ from = "..." }` form used throughout `configs/`).
 ///
 /// Currently, `helios_test` is Bevy-free and cannot build a scenario
 ///  — so this type only captures the reference string and hands it back;

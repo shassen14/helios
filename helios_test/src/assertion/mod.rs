@@ -12,6 +12,7 @@ use terminal::TerminalAssertion;
 
 use serde::Deserialize;
 
+/// _Pre-step._ One assertion entry as written in the run file.
 // The `when` field is the discriminant: `when = "at_completion"` selects a
 // terminal assertion, `when = "continuous"` a continuous one. Internally tagged
 // (not a nested table) so a run file reads as one flat assertion entry. The
@@ -22,35 +23,6 @@ pub enum Assertion {
     #[serde(rename = "at_completion")]
     Terminal(TerminalAssertion),
     Continuous(ContinuousAssertion),
-}
-
-// Three outcomes, not two: `Pending` is distinct from `Failed` because a target
-// whose channel hasn't published yet is not a failure — it just has no value to
-// judge. A continuous assertion sits `Pending` until first data arrives; a
-// terminal one resolved as `Pending` at finalize means "never observed".
-// Derives are required by the evaluator's tests — `assert_eq!` against a result
-// needs `PartialEq`, and failure output needs `Debug`.
-#[derive(Clone, Debug, PartialEq)]
-pub enum AssertionResult {
-    Passed,
-    Failed {
-        kind: FailureKind,
-        actual: Option<AssertionValue>,
-    },
-    Pending,
-}
-
-// Each variant names the evaluator stage that rejected the assertion, so the
-// report can phrase the cause precisely instead of a generic "failed":
-// target didn't resolve, no extractor for the payload type, types didn't match,
-// the condition returned false, or `WithinRange` lacked usable bounds.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FailureKind {
-    UnresolvedTarget,
-    NoExtractor,
-    TypeMismatch,
-    ConditionFailed,
-    InvalidBounds,
 }
 
 impl Assertion {
@@ -81,6 +53,66 @@ impl Assertion {
         match self {
             Assertion::Terminal(t) => Some((t.low?, t.high?)),
             Assertion::Continuous(c) => Some((c.low?, c.high?)),
+        }
+    }
+}
+
+/// _Per-step._ The evaluator's verdict for one assertion, produced each tick.
+// Three outcomes, not two: `Pending` is distinct from `Failed` because a target
+// whose channel hasn't published yet is not a failure — it just has no value to
+// judge. A continuous assertion sits `Pending` until first data arrives; a
+// terminal one resolved as `Pending` at finalize means "never observed".
+// Derives are required by the evaluator's tests — `assert_eq!` against a result
+// needs `PartialEq`, and failure output needs `Debug`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum AssertionResult {
+    Passed {
+        actual: AssertionValue,
+    },
+    Failed {
+        kind: FailureKind,
+        actual: Option<AssertionValue>,
+    },
+    Pending,
+}
+
+impl AssertionResult {
+    /// The observed value carried out of a result, if any. `Passed` always has
+    /// one; `Failed` has one for a condition failure but not for a resolve /
+    /// extract failure; `Pending` never does. Consuming `self`, since
+    /// `finalize` owns the result locally and only needs the value moved out
+    /// into the report entry.
+    pub(crate) fn into_actual(self) -> Option<AssertionValue> {
+        match self {
+            AssertionResult::Passed { actual } => Some(actual),
+            AssertionResult::Failed { actual, .. } => actual,
+            AssertionResult::Pending => None,
+        }
+    }
+}
+
+/// _Per-step._ Which evaluator stage rejected an assertion.
+// Each variant names the evaluator stage that rejected the assertion, so the
+// report can phrase the cause precisely instead of a generic "failed":
+// target didn't resolve, no extractor for the payload type, types didn't match,
+// the condition returned false, or `WithinRange` lacked usable bounds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureKind {
+    UnresolvedTarget,
+    NoExtractor,
+    TypeMismatch,
+    ConditionFailed,
+    InvalidBounds,
+}
+
+impl std::fmt::Display for FailureKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FailureKind::UnresolvedTarget => write!(f, "unresolved target"),
+            FailureKind::NoExtractor => write!(f, "no extractor"),
+            FailureKind::TypeMismatch => write!(f, "type mismatch"),
+            FailureKind::ConditionFailed => write!(f, "condition failed"),
+            FailureKind::InvalidBounds => write!(f, "invalid bounds"),
         }
     }
 }

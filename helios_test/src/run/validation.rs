@@ -2,7 +2,7 @@ use thiserror::Error;
 
 use crate::run::Run;
 
-/// Coherence problems a structurally-valid run file can still have. Parsing
+/// _Pre-step._ Coherence problems a structurally-valid run file can still have. Parsing
 /// proves the *shape* is right; these are the cross-field checks serde can't
 /// express. Caught at load time so a nonsensical run fails fast instead of
 /// being discovered partway through a simulation.

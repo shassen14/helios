@@ -2,8 +2,8 @@ use crate::assertion::AssertionResult;
 
 use serde::Deserialize;
 
-/// When a run is allowed to stop. Every run must declare at least one trigger;
-/// a run with no stop condition would loop forever.
+/// _Pre-step._ When a run is allowed to stop. Every run must declare at least
+/// one trigger; a run with no stop condition would loop forever.
 ///
 /// Both fields are optional and may be combined — a run can cap simulated time
 /// *and* bail early on an assertion outcome, whichever fires first. The
@@ -35,7 +35,7 @@ impl Termination {
     }
 }
 
-/// Assertion-outcome trigger: stop the run as soon as the run's assertions
+/// _Pre-step._ Assertion-outcome trigger: stop the run as soon as the run's assertions
 /// reach this collective state. `rename_all = "snake_case"` so the TOML reads
 /// `on_assertion = "any_passed"`, matching the rest of the config vocabulary.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -47,7 +47,7 @@ pub enum OnAssertion {
     AnyFailed,
 }
 
-/// Why a run actually stopped — the outcome paired with [`Termination`]'s
+/// _Per-step._ Why a run actually stopped — the outcome paired with [`Termination`]'s
 /// config. Carries the triggering [`AssertionResult`] for the assertion case so
 /// the report can show what tripped the stop, not just that one did.
 #[derive(Debug, Clone, PartialEq)]

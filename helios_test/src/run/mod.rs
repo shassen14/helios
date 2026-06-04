@@ -14,8 +14,8 @@ use crate::assertion::Assertion;
 use serde::Deserialize;
 use thiserror::Error;
 
-/// The run-file vocabulary: the single top-level deserialize target that ties
-/// scenario + observation + assertions + termination into one file.
+/// _Pre-step._ The run-file vocabulary: the single top-level deserialize target
+/// that ties scenario + observation + assertions + termination into one file.
 ///
 /// `schema_version` is carried so the format can evolve with explicit migration
 /// instead of silent breakage. `deny_unknown_fields` rejects stray or misspelled
@@ -57,7 +57,7 @@ impl Run {
     }
 }
 
-/// Why a run file couldn't be loaded. The three variants stay distinct so a
+/// _Pre-step._ Why a run file couldn't be loaded. The three variants stay distinct so a
 /// caller can tell *unreadable* from *malformed* from *incoherent*: `Io` and
 /// `Parse` come from [`load`]; `Validation` is produced by the separate
 /// `validate` pass. `Io`/`Parse` carry their source so the report can show the

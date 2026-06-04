@@ -5,6 +5,7 @@ use std::{
     collections::HashMap,
 };
 
+/// _Per-step._ Projects one typed bus payload into an `AssertionValue`.
 // `fn` (not `Fn`) means only captureless closures coerce in. That's deliberate —
 // the table stores function pointers, not boxed closures, so registrations stay
 // cheap to copy and free of per-entry allocation. If you ever need a registration
@@ -12,6 +13,7 @@ use std::{
 // allocation; until then, every extractor is a pure type projection.
 pub type Extractor = fn(&dyn Any) -> Option<AssertionValue>;
 
+/// _Per-step._ The `TypeId`-keyed table of payload extractors the evaluator uses.
 // Bridges typed bus payloads to the untyped `AssertionValue` space the evaluator
 // compares against TOML. Keyed by the *payload* `TypeId` — the evaluator unwraps
 // `Stamped<T>` before calling `extract`, so registrations target `T`, never

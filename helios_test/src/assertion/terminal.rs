@@ -5,6 +5,7 @@ use crate::assertion::{
 
 use serde::Deserialize;
 
+/// _Pre-step._ A run-file assertion checked once, at the end of the run.
 // A terminal assertion is checked once, at the end of the run ("at_completion").
 //
 // Why a separate type from `ContinuousAssertion` despite the identical shape:

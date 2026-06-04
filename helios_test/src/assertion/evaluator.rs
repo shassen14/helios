@@ -57,7 +57,7 @@ pub fn evaluate(
     // `Ok(false)` is "compared and didn't hold"; `Err(kind)` is "couldn't
     // compare at all" (bad bounds or incompatible types).
     match check(assertion, &actual) {
-        Ok(true) => AssertionResult::Passed,
+        Ok(true) => AssertionResult::Passed { actual },
         Ok(false) => AssertionResult::Failed {
             kind: FailureKind::ConditionFailed,
             actual: Some(actual),
@@ -167,7 +167,10 @@ mod tests {
         let a = terminal(Condition::Equals, AssertionValue::Float(5.0));
         assert_eq!(
             evaluate(&a, &agent, &reg, &bus, &standard_extractors()),
-            AssertionResult::Passed
+            // `Passed` carries the observed value, just like the `Failed` cases.
+            AssertionResult::Passed {
+                actual: AssertionValue::Float(5.0),
+            }
         );
     }
 
@@ -234,7 +237,9 @@ mod tests {
         let a = terminal_range(Some(1.0), Some(3.0));
         assert_eq!(
             evaluate(&a, &agent, &reg, &bus, &standard_extractors()),
-            AssertionResult::Passed
+            AssertionResult::Passed {
+                actual: AssertionValue::Float(2.0),
+            }
         );
     }
 

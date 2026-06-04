@@ -27,9 +27,9 @@ pub fn check(
     // carries its kind and observed value through to the report unchanged.
     if let Some(on_assertion) = termination.on_assertion() {
         let triggered = match on_assertion {
-            OnAssertion::AnyPassed => {
-                results.iter().find(|r| matches!(r, AssertionResult::Passed))
-            }
+            OnAssertion::AnyPassed => results
+                .iter()
+                .find(|r| matches!(r, AssertionResult::Passed { .. })),
             OnAssertion::AnyFailed => results
                 .iter()
                 .find(|r| matches!(r, AssertionResult::Failed { .. })),
@@ -78,12 +78,20 @@ mod tests {
         }
     }
 
+    // A `Passed` result. It carries the observed value, so the trigger has a
+    // concrete result to clone into `OnAssertion`.
+    fn passed() -> AssertionResult {
+        AssertionResult::Passed {
+            actual: AssertionValue::Float(1.0),
+        }
+    }
+
     #[test]
     fn no_trigger_set_never_stops() {
         // Empty termination → both triggers `None`. Even with decisive results
         // present, there's nothing configured to act on them.
         let t = term("");
-        let results = [AssertionResult::Passed, failed()];
+        let results = [passed(), failed()];
         assert_eq!(check(at(100.0), at(0.0), &t, &results), None);
     }
 
@@ -122,12 +130,10 @@ mod tests {
     #[test]
     fn any_passed_fires_on_a_pass() {
         let t = term(r#"on_assertion = "any_passed""#);
-        let results = [AssertionResult::Pending, AssertionResult::Passed];
+        let results = [AssertionResult::Pending, passed()];
         assert_eq!(
             check(at(0.0), at(0.0), &t, &results),
-            Some(TerminationReason::OnAssertion {
-                result: AssertionResult::Passed,
-            })
+            Some(TerminationReason::OnAssertion { result: passed() })
         );
     }
 
@@ -143,7 +149,7 @@ mod tests {
         // The reason must forward the real failure (kind + observed value), not
         // a placeholder, so the report can explain what tripped.
         let t = term(r#"on_assertion = "any_failed""#);
-        let results = [AssertionResult::Passed, failed()];
+        let results = [passed(), failed()];
         assert_eq!(
             check(at(0.0), at(0.0), &t, &results),
             Some(TerminationReason::OnAssertion { result: failed() })
@@ -153,7 +159,7 @@ mod tests {
     #[test]
     fn any_failed_ignores_passes_and_pending() {
         let t = term(r#"on_assertion = "any_failed""#);
-        let results = [AssertionResult::Passed, AssertionResult::Pending];
+        let results = [passed(), AssertionResult::Pending];
         assert_eq!(check(at(0.0), at(0.0), &t, &results), None);
     }
 
@@ -183,7 +189,7 @@ mod tests {
             on_assertion = "any_failed"
             "#,
         );
-        let results = [AssertionResult::Passed];
+        let results = [passed()];
         assert_eq!(
             check(at(6.0), at(0.0), &t, &results),
             Some(TerminationReason::MaxSimulatedSeconds)

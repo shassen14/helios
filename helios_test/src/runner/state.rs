@@ -2,7 +2,7 @@ use crate::assertion::AssertionValue;
 
 use helios_core::data::MonotonicTime;
 
-/// The running verdict of a *continuous* assertion — one that must hold every
+/// _Per-step._ The running verdict of a *continuous* assertion — one that must hold every
 /// tick, not just at the end. It's a latch: once `FailedAt`, it stays there,
 /// because a single violation condemns the whole run even if the value later
 /// recovers.
@@ -17,7 +17,7 @@ pub enum ContinuousStatus {
     FailedAt { t: MonotonicTime, reason: String },
 }
 
-/// Per-assertion runtime state the runner carries across ticks. `last_value`
+/// _Per-step._ Per-assertion runtime state the runner carries across ticks. `last_value`
 /// caches the most recent observation for the report; `continuous` is the latch
 /// above. Terminal assertions reuse this type but leave `continuous` as
 /// `Pending` forever — they're judged once at finalize, not per tick — so the
@@ -42,12 +42,22 @@ impl AssertionState {
     /// did that and handed the verdict in via `outcome` (`Ok` = held this tick,
     /// `Err(reason)` = failed, with a human-readable reason). This method only
     /// caches the value and applies the latch, so the condition logic stays in
-    /// one place. The runner calls this only when there's a value to record; on
-    /// a `Pending` observation it skips `record`, leaving the status untouched.
-    pub fn record(&mut self, value: AssertionValue, outcome: Result<(), String>, t: MonotonicTime) {
+    /// one place. `value` is `Some` whenever an observation was extracted (every
+    /// pass, and most failures); it's `None` for a failure that produced no
+    /// comparable value (e.g. `NoExtractor`), which still latches but leaves
+    /// `last_value` untouched. The runner skips `record` entirely on a `Pending`
+    /// observation, leaving the status alone.
+    pub fn record(
+        &mut self,
+        value: Option<AssertionValue>,
+        outcome: Result<(), String>,
+        t: MonotonicTime,
+    ) {
         // Always cache the latest reading so the report can show it, regardless
         // of pass/fail or whether the status is already latched.
-        self.last_value = Some(value);
+        if value.is_some() {
+            self.last_value = value;
+        }
 
         match outcome {
             Ok(()) => {
@@ -103,23 +113,23 @@ mod tests {
     #[test]
     fn first_passing_tick_advances_to_holding() {
         let mut s = AssertionState::new();
-        s.record(val(1.0), Ok(()), at(0.0));
+        s.record(Some(val(1.0)), Ok(()), at(0.0));
         assert_eq!(s.status(), &ContinuousStatus::Holding);
     }
 
     #[test]
     fn stays_holding_while_passing() {
         let mut s = AssertionState::new();
-        s.record(val(1.0), Ok(()), at(0.0));
-        s.record(val(2.0), Ok(()), at(1.0));
+        s.record(Some(val(1.0)), Ok(()), at(0.0));
+        s.record(Some(val(2.0)), Ok(()), at(1.0));
         assert_eq!(s.status(), &ContinuousStatus::Holding);
     }
 
     #[test]
     fn failure_latches_with_time_and_reason() {
         let mut s = AssertionState::new();
-        s.record(val(1.0), Ok(()), at(0.0));
-        s.record(val(9.0), Err("over limit".into()), at(3.0));
+        s.record(Some(val(1.0)), Ok(()), at(0.0));
+        s.record(Some(val(9.0)), Err("over limit".into()), at(3.0));
         assert_eq!(
             s.status(),
             &ContinuousStatus::FailedAt {
@@ -134,8 +144,8 @@ mod tests {
         // The point of the latch: a passing tick after a failure must NOT
         // overwrite FailedAt back to Holding.
         let mut s = AssertionState::new();
-        s.record(val(9.0), Err("over limit".into()), at(3.0));
-        s.record(val(1.0), Ok(()), at(4.0));
+        s.record(Some(val(9.0)), Err("over limit".into()), at(3.0));
+        s.record(Some(val(1.0)), Ok(()), at(4.0));
         assert_eq!(
             s.status(),
             &ContinuousStatus::FailedAt {
@@ -150,8 +160,8 @@ mod tests {
         // Only the first violation latches; a later failure is ignored so the
         // report shows when it first broke.
         let mut s = AssertionState::new();
-        s.record(val(9.0), Err("first".into()), at(3.0));
-        s.record(val(8.0), Err("second".into()), at(5.0));
+        s.record(Some(val(9.0)), Err("first".into()), at(3.0));
+        s.record(Some(val(8.0)), Err("second".into()), at(5.0));
         assert_eq!(
             s.status(),
             &ContinuousStatus::FailedAt {
@@ -163,10 +173,27 @@ mod tests {
 
     #[test]
     fn last_value_updates_even_when_latched_failed() {
-        // record always caches the latest reading, regardless of status.
+        // record caches the latest observed reading, regardless of status.
         let mut s = AssertionState::new();
-        s.record(val(9.0), Err("over limit".into()), at(3.0));
-        s.record(val(1.0), Ok(()), at(4.0));
+        s.record(Some(val(9.0)), Err("over limit".into()), at(3.0));
+        s.record(Some(val(1.0)), Ok(()), at(4.0));
         assert_eq!(s.last_value(), &Some(val(1.0)));
+    }
+
+    #[test]
+    fn valueless_failure_latches_but_leaves_last_value() {
+        // A failure with no comparable value (e.g. NoExtractor) still condemns
+        // the run, but there's nothing to cache — last_value stays as it was.
+        let mut s = AssertionState::new();
+        s.record(Some(val(2.0)), Ok(()), at(1.0));
+        s.record(None, Err("no extractor".into()), at(2.0));
+        assert_eq!(
+            s.status(),
+            &ContinuousStatus::FailedAt {
+                t: at(2.0),
+                reason: "no extractor".into(),
+            }
+        );
+        assert_eq!(s.last_value(), &Some(val(2.0)));
     }
 }

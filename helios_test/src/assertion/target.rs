@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use helios_runtime::{AutonomyPipeline, ChannelKey};
 use serde::Deserialize;
 
+/// _Shared (pre + per)._ A symbolic subsystem path naming what an assertion
+/// watches. Parsed from the run file, then used as a per-step registry key.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
 pub struct AssertionTarget(String);
 
@@ -16,6 +18,8 @@ impl AssertionTarget {
     }
 }
 
+/// _Per-step._ Identifies one agent at runtime; supplied by the host, used as a
+/// registry key. Not parsed from the run file.
 // TODO: move to `helios_runtime` once multi-agent scheduling lands there.
 // Lives in `helios_test` for now so we don't churn the runtime crate before
 // it has a real consumer.
@@ -32,6 +36,8 @@ impl AgentId {
     }
 }
 
+/// _Per-step._ Resolves an assertion target to a bus channel; built at
+/// pipeline-built time, queried each tick.
 // Leaf-lookup map: TOML target string → bus channel for one agent. Populated
 // once per agent at `on_pipeline_built`; queried once per assertion per tick.
 pub struct TargetRegistry {
