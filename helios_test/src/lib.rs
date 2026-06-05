@@ -34,3 +34,15 @@ pub mod assertion;
 pub mod report;
 pub mod run;
 pub mod runner;
+
+// The crate's public face. Host drivers (sim bin, fake-body tests,
+// eventually the hw bin) import from the crate root, so internal module
+// reorganization never breaks them. Re-export only what a driver needs to load a
+// run, build and pump a `Runner`, and read the report; everything else stays
+// reachable through its module path but isn't surfaced here.
+pub use run::{Run, RunLoadError};
+pub use assertion::{Assertion, AssertionResult, AssertionTarget, AssertionValue};
+pub use assertion::target::{AgentId, TargetRegistry};
+pub use assertion::extract::{standard_extractors, ExtractorTable};
+pub use runner::{Runner, TickAction};
+pub use report::{Report, ReportStatus};

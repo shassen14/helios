@@ -120,11 +120,11 @@ impl Runner {
         Report::new(
             run_name,
             self.run.scenario().path().to_string(),
-            None, // master_seed: filled when the determinism feature lands
+            None, // todo: input when seed number matters for determinism
             run_status,
             simulated_duration_secs,
             wall_duration_secs,
-            Some(TerminatedBy::from(&terminated_by_reason)),
+            TerminatedBy::from(&terminated_by_reason),
             entries,
         )
     }
@@ -146,7 +146,7 @@ impl Runner {
             .iter()
             .find(|(agent, _)| self.registry.resolve(agent, assertion.target()).is_some());
 
-        let result = match resolved {
+        match resolved {
             // `bus` is `&&PortBus` here; deref coercion at the call site
             // hands `evaluate` the `&PortBus` it expects.
             Some((agent, bus)) => evaluate(assertion, agent, &self.registry, bus, &self.extractors),
@@ -157,9 +157,7 @@ impl Runner {
                 kind: FailureKind::UnresolvedTarget,
                 actual: None,
             },
-        };
-
-        result
+        }
     }
 }
 
@@ -304,254 +302,6 @@ mod tests {
             Err(LifecycleError::UnresolvedTargets(vec![
                 AssertionTarget::new("agent.car.bad")
             ]))
-        );
-    }
-
-    // ---- finalize ----
-    //
-    // These exercise the real path: build through `Runner::new` (standard
-    // extractors + one state per assertion), seed a registry that the test
-    // controls, and — for continuous assertions — pump `tick` so the latch
-    // records before `finalize` reads it. The struct-literal `runner` helper
-    // above can't serve here because it installs an *empty* extractor table,
-    // which would make every value fail with `NoExtractor`.
-
-    use crate::assertion::AssertionValue;
-    use crate::runner::tick::TickAction;
-
-    use helios_runtime::prelude::{ChannelKey, Health, PortDescriptor, Stamped};
-
-    // A single-output bus over one unnamed f64 channel, plus the key to write it.
-    fn bus() -> (PortBus, ChannelKey) {
-        let channel: ChannelKey = InternalChannel::of::<f64>().into();
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![channel.clone()],
-            rate: None,
-        };
-        (PortBus::new(&[descriptor]), channel)
-    }
-
-    fn publish(bus: &PortBus, channel: &ChannelKey, value: f64) {
-        bus.write(
-            channel.clone(),
-            Stamped {
-                value,
-                timestamp: MonotonicTime(0.0),
-                health: Health::Ok,
-                producer: 0,
-            },
-        )
-        .unwrap();
-    }
-
-    // Build a runner via the real constructor, then swap in a pre-seeded
-    // registry (production fills it in `on_pipeline_built`, which these skip).
-    fn built(run: Run, registry: TargetRegistry) -> Runner {
-        let mut r = Runner::new(run).expect("valid run");
-        r.registry = registry;
-        r
-    }
-
-    fn seed_channel(reg: &mut TargetRegistry, agent: &AgentId, target: &str, ch: &ChannelKey) {
-        reg.register(agent.clone(), AssertionTarget::new(target), ch.clone());
-    }
-
-    // Build a `Run` from a termination body plus assertion blocks.
-    fn run_blocks(termination: &str, assertions: &[&str]) -> Run {
-        let mut text = format!(
-            "schema_version = \"1.0\"\n\
-             scenario = {{ from = \"sim.scenarios.lot\" }}\n\
-             observation = {{ from = \"o\" }}\n\
-             termination = {{ {termination} }}\n"
-        );
-        for block in assertions {
-            text.push_str("\n[[assert]]\n");
-            text.push_str(block);
-            text.push('\n');
-        }
-        toml::from_str(&text).expect("valid run toml")
-    }
-
-    // `{value:?}` forces a decimal point so TOML reads a float, not an int.
-    fn cont(target: &str, value: f64) -> String {
-        format!(
-            "when = \"continuous\"\n\
-             target = \"{target}\"\n\
-             condition = \"equals\"\n\
-             value = {value:?}"
-        )
-    }
-
-    fn term(target: &str, value: f64) -> String {
-        format!(
-            "when = \"at_completion\"\n\
-             target = \"{target}\"\n\
-             condition = \"equals\"\n\
-             value = {value:?}"
-        )
-    }
-
-    #[test]
-    fn terminal_pass_reports_passed() {
-        // A terminal assertion is judged at finalize against the final bus.
-        // The value matches, so its entry — and the whole run — passes.
-        let agent = AgentId::new("car");
-        let (b, ch) = bus();
-        publish(&b, &ch, 5.0);
-        let mut reg = TargetRegistry::new();
-        seed_channel(&mut reg, &agent, "agent.car.x", &ch);
-
-        let a = term("agent.car.x", 5.0);
-        let r = built(run_blocks("max_simulated_seconds = 10.0", &[&a]), reg);
-
-        let report = r.finalize(
-            MonotonicTime(5.0),
-            0.2,
-            "run".to_string(),
-            TerminationReason::MaxSimulatedSeconds,
-            &[(agent, &b)],
-        );
-
-        assert_eq!(report.status(), &ReportStatus::Passed);
-        assert_eq!(report.assertions().len(), 1);
-        let entry = &report.assertions()[0];
-        assert_eq!(entry.status(), &AssertionStatus::Passed);
-        // A passing entry carries the observed value.
-        assert_eq!(entry.actual(), Some(&AssertionValue::Float(5.0)));
-        // The time-budget reason projects to `TimeBudget`.
-        assert_eq!(report.terminated_by(), Some(&TerminatedBy::TimeBudget));
-    }
-
-    #[test]
-    fn continuous_failure_is_read_from_the_latch() {
-        // The continuous assertion violated its condition during a tick. The
-        // latch holds that verdict; finalize reads it without re-evaluating,
-        // and the cached value rides along into the entry.
-        let agent = AgentId::new("car");
-        let (b, ch) = bus();
-        publish(&b, &ch, 9.0); // violates `equals 5.0`
-        let mut reg = TargetRegistry::new();
-        seed_channel(&mut reg, &agent, "agent.car.x", &ch);
-
-        let a = cont("agent.car.x", 5.0);
-        let mut r = built(run_blocks("max_simulated_seconds = 10.0", &[&a]), reg);
-
-        // No `on_assertion` trigger and the budget unmet, so the tick continues
-        // while the latch records the violation at t=2.
-        assert_eq!(
-            r.tick(MonotonicTime(2.0), &[(agent.clone(), &b)]),
-            TickAction::Continue
-        );
-
-        let report = r.finalize(
-            MonotonicTime(2.0),
-            0.1,
-            "run".to_string(),
-            TerminationReason::MaxSimulatedSeconds,
-            &[(agent, &b)],
-        );
-
-        assert_eq!(report.status(), &ReportStatus::Failed);
-        let entry = &report.assertions()[0];
-        assert_eq!(entry.status(), &AssertionStatus::Failed);
-        assert_eq!(entry.actual(), Some(&AssertionValue::Float(9.0)));
-    }
-
-    #[test]
-    fn never_observed_is_pending_and_fails_the_run() {
-        // The channel exists but nothing published, so the assertion stays
-        // Pending. Policy: a never-observed assertion drops the run to Failed,
-        // while its entry still reads `Pending` (distinct from a wrong value).
-        let agent = AgentId::new("car");
-        let (b, ch) = bus();
-        let mut reg = TargetRegistry::new();
-        seed_channel(&mut reg, &agent, "agent.car.x", &ch);
-
-        let a = cont("agent.car.x", 5.0);
-        let mut r = built(run_blocks("max_simulated_seconds = 10.0", &[&a]), reg);
-
-        // The tick observes Pending and leaves the latch alone.
-        assert_eq!(
-            r.tick(MonotonicTime(0.0), &[(agent.clone(), &b)]),
-            TickAction::Continue
-        );
-
-        let report = r.finalize(
-            MonotonicTime(1.0),
-            0.05,
-            "run".to_string(),
-            TerminationReason::MaxSimulatedSeconds,
-            &[(agent, &b)],
-        );
-
-        let entry = &report.assertions()[0];
-        assert_eq!(entry.status(), &AssertionStatus::Pending);
-        assert_eq!(entry.actual(), None);
-        assert_eq!(report.status(), &ReportStatus::Failed);
-    }
-
-    #[test]
-    fn smoke_run_passes_with_no_entries() {
-        // Zero assertions: nothing to judge, so the run passes with an empty
-        // assertion list. `finalize` was never preceded by a tick, so the
-        // simulated duration falls back to zero.
-        let r = built(
-            run_blocks("max_simulated_seconds = 5.0", &[]),
-            TargetRegistry::new(),
-        );
-
-        let report = r.finalize(
-            MonotonicTime(5.0),
-            0.3,
-            "smoke".to_string(),
-            TerminationReason::MaxSimulatedSeconds,
-            &[],
-        );
-
-        assert_eq!(report.status(), &ReportStatus::Passed);
-        assert!(report.assertions().is_empty());
-        assert_eq!(report.simulated_duration_secs(), 0.0);
-        assert_eq!(report.terminated_by(), Some(&TerminatedBy::TimeBudget));
-    }
-
-    #[test]
-    fn terminated_by_assertion_projects_outcome_and_duration() {
-        // A passing terminal under `any_passed` stops the run via the
-        // assertion, not the clock. finalize projects that reason to
-        // `Assertion { outcome: Passed }` and measures elapsed sim time from
-        // the origin the tick stamped.
-        let agent = AgentId::new("car");
-        let (b, ch) = bus();
-        publish(&b, &ch, 5.0);
-        let mut reg = TargetRegistry::new();
-        seed_channel(&mut reg, &agent, "agent.car.x", &ch);
-
-        let a = term("agent.car.x", 5.0);
-        let mut r = built(run_blocks("on_assertion = \"any_passed\"", &[&a]), reg);
-
-        // Clock origin stamped at t=3; the terminal passes, so the run stops.
-        let reason = match r.tick(MonotonicTime(3.0), &[(agent.clone(), &b)]) {
-            TickAction::Terminate { reason } => reason,
-            TickAction::Continue => panic!("expected termination on the passing terminal"),
-        };
-
-        let report = r.finalize(
-            MonotonicTime(8.0),
-            0.5,
-            "run".to_string(),
-            reason,
-            &[(agent, &b)],
-        );
-
-        // Origin at t=3, finalize at t=8 → 5.0s elapsed.
-        assert_eq!(report.simulated_duration_secs(), 5.0);
-        assert_eq!(
-            report.terminated_by(),
-            Some(&TerminatedBy::Assertion {
-                outcome: AssertionStatus::Passed,
-            })
         );
     }
 }

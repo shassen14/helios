@@ -22,8 +22,7 @@ pub struct Report {
     status: ReportStatus,
     simulated_duration_secs: f64,
     wall_duration_secs: f64,
-    /// `None` when the run never reached termination (e.g. `FailedToStart`).
-    terminated_by: Option<TerminatedBy>,
+    terminated_by: TerminatedBy,
     assertions: Vec<AssertionReportEntry>,
 }
 
@@ -39,7 +38,7 @@ impl Report {
         status: ReportStatus,
         simulated_duration_secs: f64,
         wall_duration_secs: f64,
-        terminated_by: Option<TerminatedBy>,
+        terminated_by: TerminatedBy,
         assertions: Vec<AssertionReportEntry>,
     ) -> Self {
         Self {
@@ -64,9 +63,9 @@ impl Report {
         &self.assertions
     }
 
-    /// Why the run stopped, or `None` if it never reached termination.
-    pub fn terminated_by(&self) -> Option<&TerminatedBy> {
-        self.terminated_by.as_ref()
+    /// Why the run stopped.
+    pub fn terminated_by(&self) -> &TerminatedBy {
+        &self.terminated_by
     }
 
     /// Elapsed simulated time, in seconds, measured from the run's clock origin.
@@ -75,16 +74,14 @@ impl Report {
     }
 }
 
-/// _Post-step._ Run-level outcome. `FailedToStart` is distinct from `Failed`:
-/// the former means the run never began (bad config, unresolved target); the
-/// latter that it ran and assertions failed. Different things to whoever reads
-/// the exit code.
+/// _Post-step._ Run-level outcome. A `Report` only ever describes a run that
+/// actually ran to a verdict; a run that never started (bad config, unresolved
+/// target) is surfaced by the host as an error + non-zero exit, not a report.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportStatus {
     Passed,
     Failed,
-    FailedToStart { reason: String },
 }
 
 /// _Post-step._ Why the run stopped — the report's own projection of the
@@ -159,7 +156,7 @@ impl AssertionReportEntry {
 }
 
 /// _Post-step._ Per-assertion verdict. Distinct from `ReportStatus`, which is
-/// run-level and carries a `FailedToStart` a single assertion can never have.
+/// the run-level outcome rather than any single assertion's.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AssertionStatus {
