@@ -319,17 +319,15 @@ fn build_estimator_node(
     // particle will need particle-count / resampling). Adding a new
     // family means a new `registry/<family>.rs` and a new arm here.
     match est_cfg {
-        EstimatorConfig::Ekf(ekf_cfg) => {
-            build_gaussian_estimator_node(
-                instance_name,
-                est_cfg,
-                ekf_cfg,
-                agent_handle,
-                sensor_frame_handles,
-                registry,
-                external_channels,
-            )
-        }
+        EstimatorConfig::Ekf(ekf_cfg) => build_gaussian_estimator_node(
+            instance_name,
+            est_cfg,
+            ekf_cfg,
+            agent_handle,
+            sensor_frame_handles,
+            registry,
+            external_channels,
+        ),
         EstimatorConfig::Ukf(_) => Err(PipelineAssemblyError::FactoryFailure {
             node_kind: "Ukf".to_string(),
             reason: "UKF not yet implemented".to_string(),

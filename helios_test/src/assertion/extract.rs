@@ -99,10 +99,7 @@ mod tests {
     fn extract_returns_none_for_unregistered_type() {
         let table = standard_extractors();
         let v: String = "hello".to_string();
-        assert_eq!(
-            table.extract(TypeId::of::<String>(), &v as &dyn Any),
-            None
-        );
+        assert_eq!(table.extract(TypeId::of::<String>(), &v as &dyn Any), None);
     }
 
     #[test]

@@ -185,11 +185,7 @@ mod tests {
     }
 
     impl AgentRuntime for MockRuntime {
-        fn get_transform(
-            &self,
-            _: FrameHandle,
-            _: FrameHandle,
-        ) -> Option<Isometry3<f64>> {
+        fn get_transform(&self, _: FrameHandle, _: FrameHandle) -> Option<Isometry3<f64>> {
             Some(Isometry3::identity())
         }
         fn world_pose(&self, _: FrameHandle) -> Option<Isometry3<f64>> {
@@ -225,9 +221,7 @@ mod tests {
         }
     }
 
-    fn make_bus_with_oracle_producer(
-        node: &MockOracleEstimatorNode,
-    ) -> PortBus {
+    fn make_bus_with_oracle_producer(node: &MockOracleEstimatorNode) -> PortBus {
         let producer = oracle_producer_descriptor();
         PortBus::new([node.port_descriptor(), &producer])
     }
@@ -313,7 +307,10 @@ mod tests {
             .get_pose_isometry()
             .expect("standard layout includes pose");
         let dx = (recovered.translation.vector - pose.translation.vector).norm();
-        assert!(dx < 1e-9, "pose translation should round-trip exactly, dx={dx}");
+        assert!(
+            dx < 1e-9,
+            "pose translation should round-trip exactly, dx={dx}"
+        );
     }
 
     #[test]
@@ -444,12 +441,17 @@ mod tests {
             .map(|_| ())
             .expect_err("build must reject mock without oracle/pose");
 
-        let saw = errs.iter().any(|e| matches!(
-            e,
-            PipelineBuildError::UnsatisfiedBodyCapabilities { body, channel_key, .. }
-                if body == "no_oracle_body" && *channel_key == oracle_pose_channel()
-        ));
-        assert!(saw, "expected UnsatisfiedBodyCapabilities for oracle/pose, got: {errs:?}");
+        let saw = errs.iter().any(|e| {
+            matches!(
+                e,
+                PipelineBuildError::UnsatisfiedBodyCapabilities { body, channel_key, .. }
+                    if body == "no_oracle_body" && *channel_key == oracle_pose_channel()
+            )
+        });
+        assert!(
+            saw,
+            "expected UnsatisfiedBodyCapabilities for oracle/pose, got: {errs:?}"
+        );
     }
 
     #[test]

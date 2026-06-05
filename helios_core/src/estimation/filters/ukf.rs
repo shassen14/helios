@@ -3,8 +3,8 @@ use nalgebra::{Cholesky, DMatrix, DVector};
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
-use crate::ports::TfProvider;
 use crate::frames::FrameAwareState;
+use crate::ports::TfProvider;
 use crate::utils::integrators::RK4;
 
 /// Configuration parameters for the UKF's sigma point generation.
@@ -227,8 +227,8 @@ mod tests {
     use crate::data::primitives::FrameHandle;
     use crate::estimation::measurement::MeasurementModel;
     use crate::estimation::EstimatorInputs;
-    use crate::ports::TfProvider;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::ports::TfProvider;
     use nalgebra::{DMatrix, DVector, Isometry3};
 
     struct IdentityTf;

@@ -6,7 +6,7 @@ use serde::Deserialize;
 /// Currently, `helios_test` is Bevy-free and cannot build a scenario
 ///  — so this type only captures the reference string and hands it back;
 /// nothing resolves it yet. Modeled as a one-field struct rather than a bare
-///  `String` to match the composition-by-reference convention and so 
+///  `String` to match the composition-by-reference convention and so
 /// `deny_unknown_fields` can reject typos in the run file.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -29,8 +29,7 @@ mod tests {
 
     #[test]
     fn parses_from_reference() {
-        let parsed: ScenarioRef =
-            toml::from_str(r#"from = "sim.scenarios.parking_lot""#).unwrap();
+        let parsed: ScenarioRef = toml::from_str(r#"from = "sim.scenarios.parking_lot""#).unwrap();
         assert_eq!(parsed.path(), "sim.scenarios.parking_lot");
     }
 

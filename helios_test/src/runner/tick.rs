@@ -23,7 +23,7 @@ impl Runner {
         // `on_assertion` triggers; only their latch is left untouched (pass 2).
         let mut results: Vec<AssertionResult> = Vec::with_capacity(self.run.assertions().len());
         for assertion in self.run.assertions() {
-            let result = self.result_for(assertion, &blackboards);
+            let result = self.result_for(assertion, blackboards);
 
             results.push(result);
         }

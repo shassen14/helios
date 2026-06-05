@@ -3,6 +3,8 @@ pub mod state;
 pub mod termination_check;
 pub mod tick;
 
+pub use tick::TickAction;
+
 use crate::{
     assertion::{
         extract::{standard_extractors, ExtractorTable},
@@ -120,8 +122,8 @@ mod tests {
     #[test]
     fn a_smoke_run_has_no_states() {
         // Zero assertions is valid when a time budget guarantees termination.
-        let r =
-            Runner::new(run_with("termination = { max_simulated_seconds = 5.0 }")).expect("valid run");
+        let r = Runner::new(run_with("termination = { max_simulated_seconds = 5.0 }"))
+            .expect("valid run");
         assert!(r.states.is_empty());
     }
 }
