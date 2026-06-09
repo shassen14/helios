@@ -2745,10 +2745,8 @@ dependencies = [
  "nalgebra",
  "num-traits",
  "rand",
- "rand_chacha",
  "rand_distr",
  "serde",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2782,9 +2780,7 @@ dependencies = [
  "rand_distr",
  "serde",
  "serde_json",
- "toml 0.8.21",
  "tracing",
- "tracing-subscriber",
  "walkdir",
 ]
 
@@ -2792,8 +2788,10 @@ dependencies = [
 name = "helios_test"
 version = "0.1.0"
 dependencies = [
+ "bevy",
  "helios_core",
  "helios_runtime",
+ "helios_sim",
  "serde",
  "thiserror 1.0.69",
  "toml 1.1.2+spec-1.1.0",
