@@ -2,8 +2,8 @@ use nalgebra::DVector;
 use serde::{Deserialize, Serialize};
 
 // --- Core Type Aliases ---
-pub type State = DVector<f64>;
-pub type Control = DVector<f64>;
+pub(crate) type State = DVector<f64>;
+pub(crate) type Control = DVector<f64>;
 
 /// Monotonically increasing time in seconds (simulation or hardware clock).
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]

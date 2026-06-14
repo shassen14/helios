@@ -19,7 +19,7 @@ use crate::{
 /// [`PortDescriptor`]: crate::port::PortDescriptor
 /// [`required_channels`]: SearchPlannerInputBuilder::required_channels
 /// [`optional_channels`]: SearchPlannerInputBuilder::optional_channels
-pub trait SearchPlannerInputBuilder: Send + Sync {
+pub(crate) trait SearchPlannerInputBuilder: Send + Sync {
     fn assemble(
         &self,
         bus: &PortBus,
@@ -35,7 +35,7 @@ pub trait SearchPlannerInputBuilder: Send + Sync {
 /// Default builder: reads `FrameAwareState @ ""`, a configurable map channel,
 /// and an optional `PlannerGoal @ "mission"` (the canonical mission slot
 /// written by `AutonomyPipeline::inject_mission_goal`).
-pub struct DefaultSearchPlannerInputBuilder {
+pub(crate) struct DefaultSearchPlannerInputBuilder {
     state_channel: ChannelKey,
     map_channel: ChannelKey,
     goal_channel: ChannelKey,
@@ -44,7 +44,7 @@ pub struct DefaultSearchPlannerInputBuilder {
 }
 
 impl DefaultSearchPlannerInputBuilder {
-    pub fn new(map_channel: InternalChannel) -> Self {
+    pub(crate) fn new(map_channel: InternalChannel) -> Self {
         let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
         let map_channel_key: ChannelKey = map_channel.into();
         let goal_channel: ChannelKey =

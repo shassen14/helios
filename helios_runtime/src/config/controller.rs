@@ -58,7 +58,7 @@ pub enum ControllerConfig {
 }
 
 impl ControllerConfig {
-    pub fn get_kind_str(&self) -> &str {
+    pub(crate) fn get_kind_str(&self) -> &str {
         match self {
             ControllerConfig::Pid { .. } => "Pid",
             ControllerConfig::Lqr { .. } => "Lqr",

@@ -12,9 +12,8 @@ use helios_core::data::primitives::MonotonicTime;
 use helios_runtime::{
     pipeline::{PipelineBuildError, PipelineBuilder},
     port::{ChannelKey, InternalChannel, OracleChannel, PortBus, PortDescriptor},
-    prelude::{
-        BodyCapabilities, Health, PipelineNode, Provenance, PublishedChannel, Stamped, TickContext,
-    },
+    prelude::{Health, PipelineNode, Stamped, TickContext},
+    BodyCapabilities, Provenance, PublishedChannel,
 };
 
 use crate::common::MockRuntime;

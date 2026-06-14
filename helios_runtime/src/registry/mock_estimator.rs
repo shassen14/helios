@@ -10,7 +10,7 @@ use crate::pipeline::nodes::mock_oracle_estimator::MockOracleEstimatorNode;
 
 use super::{contexts::MockEstimatorBuildContext, AutonomyRegistry};
 
-pub fn register(registry: &mut AutonomyRegistry) {
+pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_mock_estimator("MockOracle", build_mock_oracle);
 }
 

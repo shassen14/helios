@@ -24,14 +24,6 @@ fn default_kd() -> f64 {
     0.0
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum PathFollowingStateSourceConfig {
-    #[default]
-    Estimated,
-    GroundTruth,
-}
-
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
@@ -48,8 +40,6 @@ pub enum PathFollowingConfig {
         goal_radius: f64,
         #[serde(default = "default_lookahead_distance_m")]
         lookahead_distance_m: f64,
-        #[serde(default)]
-        state_source: PathFollowingStateSourceConfig,
     },
     PurePursuit {
         max_speed_m_s: f64,
@@ -62,22 +52,14 @@ pub enum PathFollowingConfig {
         goal_radius: f64,
         #[serde(default = "default_max_lateral_acceleration")]
         max_lateral_acceleration: f64,
-        #[serde(default)]
-        state_source: PathFollowingStateSourceConfig,
     },
 }
 
 impl PathFollowingConfig {
-    pub fn get_kind_str(&self) -> &str {
+    pub(crate) fn get_kind_str(&self) -> &str {
         match self {
             PathFollowingConfig::SteeringPid { .. } => "SteeringPid",
             PathFollowingConfig::PurePursuit { .. } => "PurePursuit",
-        }
-    }
-    pub fn state_source(&self) -> PathFollowingStateSourceConfig {
-        match self {
-            PathFollowingConfig::SteeringPid { state_source, .. } => *state_source,
-            PathFollowingConfig::PurePursuit { state_source, .. } => *state_source,
         }
     }
 }

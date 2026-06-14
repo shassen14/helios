@@ -6,7 +6,7 @@ use helios_core::{
     data::messages::TrajectoryPoint, frames::FrameAwareState, prelude::ControlInputs,
 };
 
-pub trait ControlInputBuilder: Send + Sync {
+pub(crate) trait ControlInputBuilder: Send + Sync {
     fn assemble(
         &self,
         bus: &PortBus,
@@ -19,7 +19,7 @@ pub trait ControlInputBuilder: Send + Sync {
     fn optional_channels(&self) -> &[ChannelKey];
 }
 
-pub struct DefaultControlInputBuilder {
+pub(crate) struct DefaultControlInputBuilder {
     state_channel: ChannelKey,
     reference_channel: ChannelKey,
     required: Vec<ChannelKey>,
@@ -33,7 +33,7 @@ impl Default for DefaultControlInputBuilder {
 }
 
 impl DefaultControlInputBuilder {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
         let reference_channel: ChannelKey = InternalChannel::of::<TrajectoryPoint>().into();
 

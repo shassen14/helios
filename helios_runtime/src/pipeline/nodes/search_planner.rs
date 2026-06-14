@@ -40,7 +40,7 @@ use crate::stamped::{Health, Stamped};
 ///
 /// Construction is via [`Self::new`]. The port descriptor is derived from the
 /// input builder — required/optional channels come from there directly.
-pub struct SearchPlannerNode {
+pub(crate) struct SearchPlannerNode {
     name: String,
     planner: Mutex<Box<dyn SearchPlanner>>,
     input_builder: Box<dyn SearchPlannerInputBuilder>,
@@ -55,7 +55,7 @@ impl SearchPlannerNode {
     /// The descriptor's `outputs` is `[path_channel]`, `required_inputs` /
     /// `optional_inputs` mirror the input builder, and `rate` is `None`
     /// (planner owns the replan decision — see the module-level docs).
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         planner: Box<dyn SearchPlanner>,
         input_builder: Box<dyn SearchPlannerInputBuilder>,

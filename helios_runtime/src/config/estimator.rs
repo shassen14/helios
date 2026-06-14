@@ -22,7 +22,7 @@ pub enum EstimatorConfig {
 }
 
 impl EstimatorConfig {
-    pub fn get_kind_str(&self) -> &str {
+    pub(crate) fn get_kind_str(&self) -> &str {
         match self {
             EstimatorConfig::Ekf(_) => "Ekf",
             EstimatorConfig::Ukf(_) => "Ukf",
@@ -131,7 +131,7 @@ pub enum EkfDynamicsConfig {
 }
 
 impl EkfDynamicsConfig {
-    pub fn get_kind_str(&self) -> &str {
+    pub(crate) fn get_kind_str(&self) -> &str {
         match self {
             EkfDynamicsConfig::IntegratedImu(_) => "IntegratedImu",
             EkfDynamicsConfig::AckermannOdometry(_) => "AckermannOdometry",
@@ -140,7 +140,7 @@ impl EkfDynamicsConfig {
     }
 
     /// Gravitational acceleration used by this dynamics model.
-    pub fn gravity(&self) -> f64 {
+    pub(crate) fn gravity(&self) -> f64 {
         match self {
             EkfDynamicsConfig::IntegratedImu(c) => c.gravity,
             EkfDynamicsConfig::AckermannOdometry(_) => default_gravity(),

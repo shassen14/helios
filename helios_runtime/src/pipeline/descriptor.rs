@@ -53,44 +53,47 @@ use crate::port::{
 /// let _ = AlgorithmNodePortDescriptor::new().input_oracle(oracle);
 /// ```
 #[derive(Debug, Default)]
-pub struct AlgorithmNodePortDescriptor {
+pub(crate) struct AlgorithmNodePortDescriptor {
     required_inputs: Vec<ChannelKey>,
     optional_inputs: Vec<ChannelKey>,
     outputs: Vec<ChannelKey>,
     rate: Option<f64>,
 }
 
+// Symmetric port-descriptor builder vocabulary; not every input/optional
+// variant is exercised by current nodes, but the full set is kept deliberately.
+#[allow(dead_code)]
 impl AlgorithmNodePortDescriptor {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub fn input_sensor(mut self, c: SensorChannel) -> Self {
+    pub(crate) fn input_sensor(mut self, c: SensorChannel) -> Self {
         self.required_inputs.push(c.into());
         self
     }
 
-    pub fn input_internal(mut self, c: InternalChannel) -> Self {
+    pub(crate) fn input_internal(mut self, c: InternalChannel) -> Self {
         self.required_inputs.push(c.into());
         self
     }
 
-    pub fn optional_sensor(mut self, c: SensorChannel) -> Self {
+    pub(crate) fn optional_sensor(mut self, c: SensorChannel) -> Self {
         self.optional_inputs.push(c.into());
         self
     }
 
-    pub fn optional_internal(mut self, c: InternalChannel) -> Self {
+    pub(crate) fn optional_internal(mut self, c: InternalChannel) -> Self {
         self.optional_inputs.push(c.into());
         self
     }
 
-    pub fn output_internal(mut self, c: InternalChannel) -> Self {
+    pub(crate) fn output_internal(mut self, c: InternalChannel) -> Self {
         self.outputs.push(c.into());
         self
     }
 
-    pub fn rate_hz(mut self, hz: f64) -> Self {
+    pub(crate) fn rate_hz(mut self, hz: f64) -> Self {
         self.rate = Some(hz);
         self
     }
@@ -99,7 +102,11 @@ impl AlgorithmNodePortDescriptor {
     /// for keeping the slices to `Sensor` / `Internal` kinds; misuse is
     /// `debug_assert!`-checked. Deferred to runtime because the input
     /// builder traits return `&[ChannelKey]` for ergonomic reasons.
-    pub fn inputs_from_slices(mut self, required: &[ChannelKey], optional: &[ChannelKey]) -> Self {
+    pub(crate) fn inputs_from_slices(
+        mut self,
+        required: &[ChannelKey],
+        optional: &[ChannelKey],
+    ) -> Self {
         for c in required {
             debug_assert!(
                 matches!(c.kind(), ChannelKind::Sensor | ChannelKind::Internal),
@@ -121,7 +128,7 @@ impl AlgorithmNodePortDescriptor {
         self
     }
 
-    pub fn build(self) -> PortDescriptor {
+    pub(crate) fn build(self) -> PortDescriptor {
         PortDescriptor {
             required_inputs: self.required_inputs,
             optional_inputs: self.optional_inputs,
@@ -136,59 +143,62 @@ impl AlgorithmNodePortDescriptor {
 /// Algorithm surface plus `input_oracle` / `optional_oracle`. Mocks are
 /// licensed to read reference truth from oracle channels.
 #[derive(Debug, Default)]
-pub struct MockNodePortDescriptor {
+pub(crate) struct MockNodePortDescriptor {
     required_inputs: Vec<ChannelKey>,
     optional_inputs: Vec<ChannelKey>,
     outputs: Vec<ChannelKey>,
     rate: Option<f64>,
 }
 
+// Symmetric port-descriptor builder vocabulary for mock/test nodes; the full
+// input/optional set is kept deliberately even where unexercised.
+#[allow(dead_code)]
 impl MockNodePortDescriptor {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub fn input_sensor(mut self, c: SensorChannel) -> Self {
+    pub(crate) fn input_sensor(mut self, c: SensorChannel) -> Self {
         self.required_inputs.push(c.into());
         self
     }
 
-    pub fn input_internal(mut self, c: InternalChannel) -> Self {
+    pub(crate) fn input_internal(mut self, c: InternalChannel) -> Self {
         self.required_inputs.push(c.into());
         self
     }
 
-    pub fn input_oracle(mut self, c: OracleChannel) -> Self {
+    pub(crate) fn input_oracle(mut self, c: OracleChannel) -> Self {
         self.required_inputs.push(c.into());
         self
     }
 
-    pub fn optional_sensor(mut self, c: SensorChannel) -> Self {
+    pub(crate) fn optional_sensor(mut self, c: SensorChannel) -> Self {
         self.optional_inputs.push(c.into());
         self
     }
 
-    pub fn optional_internal(mut self, c: InternalChannel) -> Self {
+    pub(crate) fn optional_internal(mut self, c: InternalChannel) -> Self {
         self.optional_inputs.push(c.into());
         self
     }
 
-    pub fn optional_oracle(mut self, c: OracleChannel) -> Self {
+    pub(crate) fn optional_oracle(mut self, c: OracleChannel) -> Self {
         self.optional_inputs.push(c.into());
         self
     }
 
-    pub fn output_internal(mut self, c: InternalChannel) -> Self {
+    pub(crate) fn output_internal(mut self, c: InternalChannel) -> Self {
         self.outputs.push(c.into());
         self
     }
 
-    pub fn rate_hz(mut self, hz: f64) -> Self {
+    pub(crate) fn rate_hz(mut self, hz: f64) -> Self {
         self.rate = Some(hz);
         self
     }
 
-    pub fn build(self) -> PortDescriptor {
+    pub(crate) fn build(self) -> PortDescriptor {
         PortDescriptor {
             required_inputs: self.required_inputs,
             optional_inputs: self.optional_inputs,

@@ -7,7 +7,7 @@ use nalgebra::Vector2;
 
 /// Rise time: elapsed seconds from the first sample until the signal first
 /// reaches 90 % of `target`.  Returns `None` if the threshold is never crossed.
-pub fn rise_time(history: &[(f64, f64)], target: f64) -> Option<f64> {
+pub(crate) fn rise_time(history: &[(f64, f64)], target: f64) -> Option<f64> {
     let threshold = 0.9 * target;
     let t0 = history.first().map(|(t, _)| *t)?;
     history
@@ -21,7 +21,7 @@ pub fn rise_time(history: &[(f64, f64)], target: f64) -> Option<f64> {
 ///
 /// `band_pct` is e.g. `0.02` for ±2 %.
 /// Returns `None` if the signal never enters the band.
-pub fn settling_time(history: &[(f64, f64)], target: f64, band_pct: f64) -> Option<f64> {
+pub(crate) fn settling_time(history: &[(f64, f64)], target: f64, band_pct: f64) -> Option<f64> {
     let band = (target * band_pct).abs();
     let t0 = history.first().map(|(t, _)| *t)?;
     // Find the last sample that lies *outside* the band.
@@ -33,7 +33,7 @@ pub fn settling_time(history: &[(f64, f64)], target: f64, band_pct: f64) -> Opti
 
 /// Percent overshoot: `(peak − target) / |target| × 100`.
 /// Returns 0 if `target` is near zero.
-pub fn overshoot_pct(history: &[(f64, f64)], target: f64) -> f64 {
+pub(crate) fn overshoot_pct(history: &[(f64, f64)], target: f64) -> f64 {
     if target.abs() < 1e-12 {
         return 0.0;
     }
@@ -48,7 +48,7 @@ pub fn overshoot_pct(history: &[(f64, f64)], target: f64) -> f64 {
 /// and the corresponding `reference` position.
 ///
 /// The two slices are zipped — excess elements in the longer slice are ignored.
-pub fn cross_track_error(actual: &[Vector2<f64>], reference: &[Vector2<f64>]) -> Vec<f64> {
+pub(crate) fn cross_track_error(actual: &[Vector2<f64>], reference: &[Vector2<f64>]) -> Vec<f64> {
     actual
         .iter()
         .zip(reference.iter())
@@ -59,7 +59,7 @@ pub fn cross_track_error(actual: &[Vector2<f64>], reference: &[Vector2<f64>]) ->
 /// Heading error `(actual − reference)` wrapped to `(−π, π]`.
 ///
 /// The two slices are zipped — excess elements in the longer slice are ignored.
-pub fn heading_error(actual_rad: &[f64], reference_rad: &[f64]) -> Vec<f64> {
+pub(crate) fn heading_error(actual_rad: &[f64], reference_rad: &[f64]) -> Vec<f64> {
     actual_rad
         .iter()
         .zip(reference_rad.iter())

@@ -26,7 +26,7 @@ pub enum MapLayerConfig {
 }
 
 impl MapLayerConfig {
-    pub fn get_kind_str(&self) -> &str {
+    pub(crate) fn get_kind_str(&self) -> &str {
         match self {
             MapLayerConfig::None => "None",
             MapLayerConfig::OccupancyGrid2D { .. } => "OccupancyGrid2D",

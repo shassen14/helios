@@ -36,26 +36,26 @@ use crate::planning::search_space::SearchSpace;
 /// one `plan()` call; it owns no heap allocations.
 pub(super) struct OccupancyGridSpace<'a> {
     /// World-frame X coordinate of the grid's south-west corner (metres).
-    pub origin_x: f64,
+    pub(crate) origin_x: f64,
     /// World-frame Y coordinate of the grid's south-west corner (metres).
-    pub origin_y: f64,
+    pub(crate) origin_y: f64,
     /// Side length of one square cell (metres).
-    pub resolution: f64,
+    pub(crate) resolution: f64,
     /// Number of rows in the grid (Y extent / resolution).
-    pub nrows: usize,
+    pub(crate) nrows: usize,
     /// Number of columns in the grid (X extent / resolution).
-    pub ncols: usize,
+    pub(crate) ncols: usize,
     /// Raw occupancy data. Index as `data[(row, col)]`.
-    pub data: &'a DMatrix<u8>,
+    pub(crate) data: &'a DMatrix<u8>,
     /// Cells with value `>= threshold` are treated as occupied.
-    pub threshold: u8,
+    pub(crate) threshold: u8,
 }
 
 impl<'a> OccupancyGridSpace<'a> {
     /// Convert a world-frame position to a `(row, col)` grid cell.
     ///
     /// Returns `None` if `pos` lies outside the grid boundary.
-    pub fn world_to_cell(&self, pos: Vector2<f64>) -> Option<(usize, usize)> {
+    pub(crate) fn world_to_cell(&self, pos: Vector2<f64>) -> Option<(usize, usize)> {
         let col = ((pos.x - self.origin_x) / self.resolution).floor() as isize;
         let row = ((pos.y - self.origin_y) / self.resolution).floor() as isize;
         if col >= 0 && row >= 0 && (col as usize) < self.ncols && (row as usize) < self.nrows {
@@ -66,7 +66,7 @@ impl<'a> OccupancyGridSpace<'a> {
     }
 
     /// Return the world-frame centre of cell `(row, col)`.
-    pub fn cell_to_world_center(&self, row: usize, col: usize) -> Vector2<f64> {
+    pub(crate) fn cell_to_world_center(&self, row: usize, col: usize) -> Vector2<f64> {
         Vector2::new(
             self.origin_x + (col as f64 + 0.5) * self.resolution,
             self.origin_y + (row as f64 + 0.5) * self.resolution,
@@ -74,7 +74,7 @@ impl<'a> OccupancyGridSpace<'a> {
     }
 
     /// Return `true` if `data[(row, col)] < threshold` (i.e. the cell is free).
-    pub fn is_cell_free(&self, row: usize, col: usize) -> bool {
+    pub(crate) fn is_cell_free(&self, row: usize, col: usize) -> bool {
         self.data[(row, col)] < self.threshold
     }
 
@@ -83,7 +83,7 @@ impl<'a> OccupancyGridSpace<'a> {
     ///
     /// Neighbours are returned in the order: N, S, W, E, NW, NE, SW, SE.
     /// Diagonal moves are included so A\* can find octile-distance-optimal paths.
-    pub fn neighbors(&self, row: usize, col: usize) -> impl Iterator<Item = (usize, usize)> {
+    pub(crate) fn neighbors(&self, row: usize, col: usize) -> impl Iterator<Item = (usize, usize)> {
         const DIRS: [(i32, i32); 8] = [
             (-1, 0),
             (1, 0),
@@ -114,7 +114,7 @@ impl<'a> OccupancyGridSpace<'a> {
     /// cell is encountered. The end cell itself is not checked, matching the
     /// convention expected by the string-pull smoother (the goal cell may be
     /// non-free but the robot still wants a waypoint near it).
-    pub fn has_line_of_sight(&self, r1: usize, c1: usize, r2: usize, c2: usize) -> bool {
+    pub(crate) fn has_line_of_sight(&self, r1: usize, c1: usize, r2: usize, c2: usize) -> bool {
         let (mut r, mut c) = (r1 as i32, c1 as i32);
         let (er, ec) = (r2 as i32, c2 as i32);
         let dr = (er - r).abs();
@@ -149,13 +149,6 @@ impl<'a> OccupancyGridSpace<'a> {
 // =========================================================================
 
 impl<'a> SearchSpace for OccupancyGridSpace<'a> {
-    fn is_free(&self, pos: Vector2<f64>) -> bool {
-        match self.world_to_cell(pos) {
-            Some((row, col)) => self.is_cell_free(row, col),
-            None => false,
-        }
-    }
-
     fn is_in_bounds(&self, pos: Vector2<f64>) -> bool {
         self.world_to_cell(pos).is_some()
     }
@@ -176,10 +169,6 @@ impl<'a> SearchSpace for OccupancyGridSpace<'a> {
             pos.x.clamp(x_min, x_max),
             pos.y.clamp(y_min, y_max),
         ))
-    }
-
-    fn resolution(&self) -> Option<f64> {
-        Some(self.resolution)
     }
 }
 

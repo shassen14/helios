@@ -1,10 +1,8 @@
 use crate::{
     pipeline::{key_format::format_key_short, node::HOST_PRODUCER_ID, rate_gate::RateTimer},
     port::{ChannelKey, ChannelKind, InternalChannel, PortBus},
-    prelude::{
-        AgentRuntime, Health, NodeId, PipelineBuildError, PipelineNode, Stamped, TickContext,
-    },
-    BodyCapabilities,
+    prelude::{AgentRuntime, Health, PipelineNode, Stamped, TickContext},
+    BodyCapabilities, NodeId, PipelineBuildError,
 };
 
 use helios_core::{

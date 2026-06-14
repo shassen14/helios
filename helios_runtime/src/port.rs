@@ -51,7 +51,7 @@ pub enum ChannelError {
 
 /// Discriminator returned by [`ChannelKey::kind`].
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
-pub enum ChannelKind {
+pub(crate) enum ChannelKind {
     Sensor,
     Internal,
     Oracle,
@@ -59,7 +59,7 @@ pub enum ChannelKind {
 }
 
 impl ChannelKind {
-    pub fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             ChannelKind::Sensor => "sensor",
             ChannelKind::Internal => "internal",
@@ -245,7 +245,7 @@ pub enum ChannelKey {
 }
 
 impl ChannelKey {
-    pub fn kind(&self) -> ChannelKind {
+    pub(crate) fn kind(&self) -> ChannelKind {
         match self {
             ChannelKey::Sensor(_) => ChannelKind::Sensor,
             ChannelKey::Internal(_) => ChannelKind::Internal,
@@ -469,7 +469,7 @@ impl PortBus {
     /// Iteration order is unspecified — use this only when there is exactly
     /// one channel of type `T` in the graph (e.g. a single planner's `Path`)
     /// or when "any one" is acceptable (e.g. debug visualization).
-    pub fn read_any<T: Any + Send + Sync>(&self) -> Option<Arc<Stamped<T>>> {
+    pub(crate) fn read_any<T: Any + Send + Sync>(&self) -> Option<Arc<Stamped<T>>> {
         for slot in self.slots.values() {
             let guard = slot.load();
             let Some(any_arc) = guard.as_ref().as_ref() else {
@@ -517,7 +517,7 @@ impl PortBus {
     /// Debug-only: enumerate every declared slot and whether it currently
     /// holds a value. Iteration order is unspecified (HashMap order). Use
     /// from `crate::diagnostics` or tests — not from per-tick code paths.
-    pub fn slot_presence(&self) -> Vec<(ChannelKey, bool)> {
+    pub(crate) fn slot_presence(&self) -> Vec<(ChannelKey, bool)> {
         self.slots
             .iter()
             .map(|(key, slot)| (key.clone(), slot.load().as_ref().is_some()))

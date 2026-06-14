@@ -6,7 +6,6 @@
 
 pub mod direct_velocity;
 pub mod dynamics;
-pub mod feedforward_pid;
 pub mod lqr;
 pub mod pid;
 pub mod siso_pid;

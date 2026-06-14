@@ -8,13 +8,6 @@ use crate::estimation::measurement::MeasurementModel;
 use crate::frames::FrameAwareState;
 use crate::ports::TfProvider;
 
-/// World-context passed into mappers and other modules that still consume
-/// `ModuleInput::Measurement`.
-#[derive(Default)]
-pub struct FilterContext<'a> {
-    pub tf: Option<&'a dyn TfProvider>,
-}
-
 /// Predict-side inputs for a Gaussian estimator.
 ///
 /// Wrapper struct (instead of a bare `DVector<f64>`) so additional fields can be

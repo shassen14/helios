@@ -37,7 +37,7 @@ use crate::stamped::{Health, Stamped};
 /// optional inputs are taken directly from the input builder; output is
 /// always `ControlOutput @ ""`. `rate` is `None` — controllers fire every
 /// tick (rate-limiting belongs to the actuator side if it's needed at all).
-pub struct ControllerNode {
+pub(crate) struct ControllerNode {
     name: String,
     controller: Mutex<Box<dyn Controller>>,
     input_builder: Box<dyn ControlInputBuilder>,
@@ -45,7 +45,7 @@ pub struct ControllerNode {
 }
 
 impl ControllerNode {
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         controller: Box<dyn Controller>,
         input_builder: Box<dyn ControlInputBuilder>,

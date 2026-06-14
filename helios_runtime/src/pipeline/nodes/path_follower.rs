@@ -59,7 +59,7 @@ struct FollowerState {
 /// The port descriptor adds `path_channel` to whatever the input builder
 /// requires, declares `TrajectoryPoint @ ""` as its single output, and uses
 /// `rate: None` — the follower fires every tick (controller rate).
-pub struct PathFollowerNode {
+pub(crate) struct PathFollowerNode {
     name: String,
     state: Mutex<FollowerState>,
     input_builder: Box<dyn PathFollowerInputBuilder>,
@@ -75,7 +75,7 @@ impl PathFollowerNode {
     /// `optional_inputs` mirrors the builder.
     /// `outputs` = `[TrajectoryPoint @ ""]`.
     /// `rate` = `None`.
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         follower: Box<dyn PathFollower>,
         input_builder: Box<dyn PathFollowerInputBuilder>,

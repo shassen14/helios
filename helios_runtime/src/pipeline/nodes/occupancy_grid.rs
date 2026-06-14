@@ -74,7 +74,7 @@ use crate::stamped::{Health, Stamped};
 /// scan streams have been split). `map_channel` is the published map slot
 /// — convention `MapData @ "local"` for rolling-window grids, `@ "global"`
 /// for SLAM-style world maps.
-pub struct OccupancyGridNode {
+pub(crate) struct OccupancyGridNode {
     name: String,
     mapper: Mutex<Box<dyn Mapper>>,
     /// Agent (body) frame used to compose `agent → sensor` static transforms
@@ -99,7 +99,7 @@ impl OccupancyGridNode {
     /// `rate_hz = Some(hz)` rate-gates the node; `None` fires every tick.
     /// Required inputs: `FrameAwareState @ ""` and `scan_channel`.
     /// Outputs: `map_channel`.
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         mapper: Box<dyn Mapper>,
         agent_handle: FrameHandle,

@@ -1,11 +1,9 @@
 //! `ControlDynamics` trait and concrete vehicle dynamics models for controllers.
 //!
 //! Mirrors `estimation/dynamics/` but omits filter-specific concerns (no
-//! measurement routing, no `Integrator` argument). Analytical models like
-//! `AckermannKinematics` implement both `ControlDynamics` and `EstimationDynamics`
-//! via separate `impl` blocks delegating to the same internal math.
-
-pub mod ackermann;
+//! measurement routing, no `Integrator` argument). Analytical models implement
+//! both `ControlDynamics` and `EstimationDynamics` via separate `impl` blocks
+//! delegating to the same internal math.
 
 use nalgebra::{DMatrix, DVector};
 

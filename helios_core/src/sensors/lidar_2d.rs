@@ -8,9 +8,9 @@ use rand_distr::{Distribution, Normal};
 
 #[derive(Debug, Clone)]
 pub struct Lidar2DModel {
-    pub max_range: f32,
-    pub horizontal_fov_deg: f32,
-    pub horizontal_beams: u32,
+    pub(crate) max_range: f32,
+    pub(crate) horizontal_fov_deg: f32,
+    pub(crate) horizontal_beams: u32,
     pub range_noise_stddev: f32,
     pub angular_noise_stddev_deg: f32,
     range_noise_dist: Normal<f64>,

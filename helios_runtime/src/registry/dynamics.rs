@@ -4,7 +4,7 @@ use helios_core::estimation::dynamics::{integrated_imu::IntegratedImuModel, Esti
 
 use super::{contexts::DynamicsBuildContext, AutonomyRegistry};
 
-pub fn register(registry: &mut AutonomyRegistry) {
+pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_dynamics("IntegratedImu", build_integrated_imu);
     registry.register_dynamics("AckermannOdometry", |_| {
         Err("AckermannOdometry dynamics not yet implemented".to_string())

@@ -12,7 +12,7 @@ use crate::port::{InternalChannel, SensorChannel};
 
 use super::{contexts::MapperBuildContext, AutonomyRegistry};
 
-pub fn register(registry: &mut AutonomyRegistry) {
+pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_mapper("OccupancyGrid2D", build_occupancy_grid_2d);
     registry.register_mapper("None", |_| {
         Err("None mapper produces no pipeline node — omit the map_layer entry instead".to_string())

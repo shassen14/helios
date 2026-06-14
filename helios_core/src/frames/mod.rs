@@ -9,9 +9,7 @@ use crate::data::primitives::FrameHandle;
 
 use std::hash::Hash;
 
-use nalgebra::{
-    DMatrix, DVector, Isometry3, Matrix3, Quaternion, Translation3, UnitQuaternion, Vector3,
-};
+use nalgebra::{DMatrix, DVector, Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
@@ -72,7 +70,7 @@ pub struct RobotState {
     /// The actual numerical data vector `x`.
     pub vector: DVector<f64>,
     /// The timestamp of the last update.
-    pub timestamp: f64,
+    pub(crate) timestamp: f64,
 }
 
 impl RobotState {
@@ -99,18 +97,18 @@ impl RobotState {
     }
 
     /// Returns the dimension (number of rows) of the state vector.
-    pub fn dim(&self) -> usize {
+    pub(crate) fn dim(&self) -> usize {
         self.layout.len()
     }
 
     /// Finds the index of a specific `StateVariable` in the layout.
-    pub fn find_idx(&self, var: &StateVariable) -> Option<usize> {
+    pub(crate) fn find_idx(&self, var: &StateVariable) -> Option<usize> {
         self.layout.iter().position(|v| v == var)
     }
 
     /// Sets a single state variable by name. Returns `true` if the variable was found
     /// in the layout and written; `false` if it is absent (a no-op in that case).
-    pub fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
+    pub(crate) fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
         if let Some(idx) = self.find_idx(var) {
             self.vector[idx] = value;
             true
@@ -173,7 +171,7 @@ impl RobotState {
     /// # Returns
     /// * `Some(UnitQuaternion<f64>)` if a valid quaternion is found.
     /// * `None` if the quaternion components are not found contiguously.
-    pub fn get_orientation(&self) -> Option<UnitQuaternion<f64>> {
+    pub(crate) fn get_orientation(&self) -> Option<UnitQuaternion<f64>> {
         // We can find any of the quaternion components to start, but searching for
         // Qw is often convenient as it's the last one.
         let mut qx_idx = None;
@@ -217,7 +215,7 @@ impl RobotState {
     /// Normalizes the quaternion components in the state vector in-place.
     /// Must be called after every predict and update step to prevent quaternion drift.
     /// No-op if no quaternion is present or if the norm is near zero (degenerate state).
-    pub fn normalize_quaternion(&mut self) {
+    pub(crate) fn normalize_quaternion(&mut self) {
         let mut qx_idx = None;
         let mut qy_idx = None;
         let mut qz_idx = None;
@@ -255,7 +253,7 @@ impl RobotState {
     /// * `Some(Isometry3<f64>)` if both the world-frame position and the orientation
     ///   quaternion are found in the state vector.
     /// * `None` if either the position or orientation components are missing.
-    pub fn get_pose_isometry(&self) -> Option<Isometry3<f64>> {
+    pub(crate) fn get_pose_isometry(&self) -> Option<Isometry3<f64>> {
         // 1. Get the position vector from the state.
         // We specifically look for position in the World frame.
         let position = self.get_vector3(&StateVariable::Px(FrameId::World))?;
@@ -294,10 +292,6 @@ impl FrameAwareState {
         self.state.dim()
     }
 
-    pub fn find_idx(&self, var: &StateVariable) -> Option<usize> {
-        self.state.find_idx(var)
-    }
-
     pub fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
         self.state.set_variable(var, value)
     }
@@ -306,52 +300,16 @@ impl FrameAwareState {
         self.state.get_vector3(start_variable)
     }
 
-    pub fn get_orientation(&self) -> Option<UnitQuaternion<f64>> {
+    pub(crate) fn get_orientation(&self) -> Option<UnitQuaternion<f64>> {
         self.state.get_orientation()
     }
 
-    pub fn normalize_quaternion(&mut self) {
+    pub(crate) fn normalize_quaternion(&mut self) {
         self.state.normalize_quaternion();
     }
 
     pub fn get_pose_isometry(&self) -> Option<Isometry3<f64>> {
         self.state.get_pose_isometry()
-    }
-
-    pub fn get_sub_covariance_3x3(&self, start_variable: &StateVariable) -> Option<Matrix3<f64>> {
-        // This logic is very similar to get_vector3, but for the covariance matrix.
-        let (expected_y, expected_z) = match start_variable {
-            StateVariable::Px(_) => (
-                StateVariable::Py(Default::default()),
-                StateVariable::Pz(Default::default()),
-            ),
-            // ... other cases if needed ...
-            _ => return None,
-        };
-
-        let start_idx = self.find_idx(start_variable)?;
-
-        // Check for contiguity (simplified check for brevity)
-        if self
-            .state
-            .layout
-            .get(start_idx + 1)
-            .is_some_and(|v| std::mem::discriminant(v) == std::mem::discriminant(&expected_y))
-            && self
-                .state
-                .layout
-                .get(start_idx + 2)
-                .is_some_and(|v| std::mem::discriminant(v) == std::mem::discriminant(&expected_z))
-        {
-            // Extract the 3x3 block from the top-left of the covariance matrix.
-            Some(
-                self.covariance
-                    .fixed_view::<3, 3>(start_idx, start_idx)
-                    .into(),
-            )
-        } else {
-            None
-        }
     }
 }
 

@@ -51,7 +51,7 @@ use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 
 use nalgebra::Isometry3;
 
-pub struct MockOracleEstimatorNode {
+pub(crate) struct MockOracleEstimatorNode {
     name: String,
     agent_handle: FrameHandle,
     descriptor: PortDescriptor,
@@ -62,7 +62,7 @@ pub struct MockOracleEstimatorNode {
 }
 
 impl MockOracleEstimatorNode {
-    pub fn new(name: impl Into<String>, agent_handle: FrameHandle) -> Self {
+    pub(crate) fn new(name: impl Into<String>, agent_handle: FrameHandle) -> Self {
         let descriptor = MockNodePortDescriptor::new()
             .input_oracle(OracleChannel::named::<Isometry3<f64>>("oracle/pose"))
             .optional_oracle(OracleChannel::named::<Twist>("oracle/twist"))

@@ -5,11 +5,11 @@
 
 /// A single-input single-output PID controller with anti-windup clamping.
 pub struct SisoPid {
-    pub kp: f64,
-    pub ki: f64,
-    pub kd: f64,
+    pub(crate) kp: f64,
+    pub(crate) ki: f64,
+    pub(crate) kd: f64,
     /// Maximum absolute value of the integral accumulator. 0.0 = unclamped.
-    pub integral_clamp: f64,
+    pub(crate) integral_clamp: f64,
     integral: f64,
     prev_error: f64,
 }
@@ -49,7 +49,7 @@ impl SisoPid {
     }
 
     /// Reset integrator and derivative state.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.integral = 0.0;
         self.prev_error = 0.0;
     }

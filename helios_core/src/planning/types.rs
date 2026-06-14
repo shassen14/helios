@@ -15,20 +15,6 @@ pub struct Path {
     pub level_key: String,
 }
 
-impl Path {
-    pub fn is_empty(&self) -> bool {
-        self.waypoints.is_empty()
-    }
-
-    pub fn len(&self) -> usize {
-        self.waypoints.len()
-    }
-
-    pub fn get(&self, idx: usize) -> Option<&TrajectoryPoint> {
-        self.waypoints.get(idx)
-    }
-}
-
 /// The goal a planner should drive toward.
 #[derive(Clone, PartialEq)]
 pub enum PlannerGoal {
@@ -42,7 +28,7 @@ pub enum PlannerGoal {
 
 impl PlannerGoal {
     /// Extract the 2D ENU position of this goal.
-    pub fn position_2d(&self) -> Vector2<f64> {
+    pub(crate) fn position_2d(&self) -> Vector2<f64> {
         match self {
             PlannerGoal::WorldPose(iso) => Vector2::new(iso.translation.x, iso.translation.y),
             PlannerGoal::WorldPosition2D(v) => *v,

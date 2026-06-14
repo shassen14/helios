@@ -125,7 +125,7 @@ impl Default for AutonomyRegistry {
 impl AutonomyRegistry {
     // --- Registration ---
 
-    pub fn register_dynamics(
+    pub(crate) fn register_dynamics(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String>
@@ -136,7 +136,7 @@ impl AutonomyRegistry {
         self.dynamics.insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_measurement_model(
+    pub(crate) fn register_measurement_model(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String>
@@ -148,7 +148,7 @@ impl AutonomyRegistry {
             .insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_gaussian_estimator(
+    pub(crate) fn register_gaussian_estimator(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(
@@ -164,7 +164,7 @@ impl AutonomyRegistry {
             .insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_mapper(
+    pub(crate) fn register_mapper(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(MapperBuildContext) -> Result<Box<dyn PipelineNode>, String>
@@ -175,7 +175,7 @@ impl AutonomyRegistry {
         self.mappers.insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_controller(
+    pub(crate) fn register_controller(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String>
@@ -186,7 +186,7 @@ impl AutonomyRegistry {
         self.controllers.insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_search_planner(
+    pub(crate) fn register_search_planner(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(SearchPlannerBuildContext) -> Result<Box<dyn PipelineNode>, String>
@@ -197,7 +197,7 @@ impl AutonomyRegistry {
         self.search_planners.insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_path_follower(
+    pub(crate) fn register_path_follower(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(PathFollowerBuildContext) -> Result<Box<dyn PipelineNode>, String>
@@ -208,7 +208,7 @@ impl AutonomyRegistry {
         self.path_followers.insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_mock_estimator(
+    pub(crate) fn register_mock_estimator(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(EstimatorConfig, MockEstimatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
@@ -221,7 +221,7 @@ impl AutonomyRegistry {
 
     // --- Build ---
 
-    pub fn build_dynamics(
+    pub(crate) fn build_dynamics(
         &self,
         key: &str,
         ctx: DynamicsBuildContext,
@@ -231,7 +231,7 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No dynamics factory registered for '{key}'"))?(ctx)
     }
 
-    pub fn build_measurement_model(
+    pub(crate) fn build_measurement_model(
         &self,
         key: &str,
         ctx: MeasurementModelBuildContext,
@@ -243,7 +243,7 @@ impl AutonomyRegistry {
         )
     }
 
-    pub fn build_gaussian_estimator(
+    pub(crate) fn build_gaussian_estimator(
         &self,
         key: &str,
         config: EstimatorConfig,
@@ -256,7 +256,7 @@ impl AutonomyRegistry {
         )
     }
 
-    pub fn build_mapper(
+    pub(crate) fn build_mapper(
         &self,
         key: &str,
         ctx: MapperBuildContext,
@@ -266,7 +266,7 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No mapper factory registered for '{key}'"))?(ctx)
     }
 
-    pub fn build_controller(
+    pub(crate) fn build_controller(
         &self,
         key: &str,
         ctx: ControllerBuildContext,
@@ -276,7 +276,7 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No controller factory registered for '{key}'"))?(ctx)
     }
 
-    pub fn build_search_planner(
+    pub(crate) fn build_search_planner(
         &self,
         key: &str,
         ctx: SearchPlannerBuildContext,
@@ -286,7 +286,7 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No search planner factory registered for '{key}'"))?(ctx)
     }
 
-    pub fn build_path_follower(
+    pub(crate) fn build_path_follower(
         &self,
         key: &str,
         ctx: PathFollowerBuildContext,
@@ -296,7 +296,7 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No path follower factory registered for '{key}'"))?(ctx)
     }
 
-    pub fn build_mock_estimator(
+    pub(crate) fn build_mock_estimator(
         &self,
         key: &str,
         config: EstimatorConfig,

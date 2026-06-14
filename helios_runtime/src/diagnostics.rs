@@ -15,8 +15,8 @@ use crate::port::{ChannelKey, PortBus};
 /// flips back to `false` because slot semantics are last-known-good.
 #[derive(Debug, Clone)]
 pub struct SlotSummary {
-    pub channel: ChannelKey,
-    pub has_value: bool,
+    pub(crate) channel: ChannelKey,
+    pub(crate) has_value: bool,
 }
 
 /// Snapshot every slot on a bus. Order is unspecified.

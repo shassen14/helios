@@ -14,13 +14,13 @@ pub struct Twist {
 /// The primary output of the estimator. Represents the robot's full dynamic state.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Odometry {
-    pub timestamp: f64,
-    pub pose: Isometry3<f64>,
-    pub velocity_body: Vector6<f64>,
-    pub linear_acceleration_body: Vector3<f64>,
-    pub angular_acceleration_body: Vector3<f64>,
-    pub pose_covariance: Matrix6<f64>,
-    pub velocity_covariance: Matrix6<f64>,
+    pub(crate) timestamp: f64,
+    pub(crate) pose: Isometry3<f64>,
+    pub(crate) velocity_body: Vector6<f64>,
+    pub(crate) linear_acceleration_body: Vector3<f64>,
+    pub(crate) angular_acceleration_body: Vector3<f64>,
+    pub(crate) pose_covariance: Matrix6<f64>,
+    pub(crate) velocity_covariance: Matrix6<f64>,
 }
 
 /// Reference trajectory point for the current time step.

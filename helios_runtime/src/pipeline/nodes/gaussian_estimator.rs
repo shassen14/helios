@@ -40,7 +40,7 @@ use crate::stamped::{Health, Stamped};
 ///
 /// The generic payload type `T` is erased behind this trait so the node can hold
 /// a `Vec<Box<dyn AidingHandler>>` across sensor types.
-pub trait AidingHandler: Send + Sync {
+pub(crate) trait AidingHandler: Send + Sync {
     /// The bus channel this handler reads from.
     fn channel(&self) -> &ChannelKey;
 
@@ -63,7 +63,7 @@ pub trait AidingHandler: Send + Sync {
 /// Owns the [`MeasurementModel`] (the math) and the noise covariance `R`
 /// (per-sensor). Both are constructed once and reused across every reading on
 /// the channel.
-pub struct TypedAidingHandler<T: SensorPayload> {
+pub(crate) struct TypedAidingHandler<T: SensorPayload> {
     /// Cached enum-form key for `bus.read` calls. Built once from the
     /// kinded `SensorChannel` passed to [`Self::new`].
     channel: ChannelKey,
@@ -85,7 +85,11 @@ impl<T: SensorPayload> TypedAidingHandler<T> {
     /// `r` must be square with side equal to `model.dim()`; the filter silently
     /// skips updates with mismatched `R` so a wrong-sized matrix becomes a
     /// no-op rather than a panic.
-    pub fn new(channel: SensorChannel, model: Box<dyn MeasurementModel>, r: DMatrix<f64>) -> Self {
+    pub(crate) fn new(
+        channel: SensorChannel,
+        model: Box<dyn MeasurementModel>,
+        r: DMatrix<f64>,
+    ) -> Self {
         Self {
             channel: channel.into(),
             model,
@@ -152,7 +156,7 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
 /// Construction is via [`Self::new`]. The port descriptor is derived from the
 /// input builder and aiding handlers — callers don't compose channel keys
 /// directly. Output is `FrameAwareState @ ""`.
-pub struct GaussianEstimatorNode {
+pub(crate) struct GaussianEstimatorNode {
     name: String,
     estimator: Mutex<Box<dyn GaussianStateEstimator>>,
     input_builder: Box<dyn EstimatorInputBuilder>,
@@ -161,7 +165,7 @@ pub struct GaussianEstimatorNode {
 }
 
 impl GaussianEstimatorNode {
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         estimator: Box<dyn GaussianStateEstimator>,
         input_builder: Box<dyn EstimatorInputBuilder>,
