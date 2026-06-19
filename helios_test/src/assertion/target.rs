@@ -23,6 +23,7 @@ impl AssertionTarget {
 // TODO: move to `helios_runtime` once multi-agent scheduling lands there.
 // Lives in `helios_test` for now so we don't churn the runtime crate before
 // it has a real consumer.
+// TODO: String -> Arc<str>
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
 pub struct AgentId(String);
 

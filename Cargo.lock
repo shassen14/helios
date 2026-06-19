@@ -2788,7 +2788,9 @@ dependencies = [
 name = "helios_test"
 version = "0.1.0"
 dependencies = [
+ "avian3d",
  "bevy",
+ "clap",
  "helios_core",
  "helios_runtime",
  "helios_sim",

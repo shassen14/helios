@@ -40,9 +40,13 @@ pub mod runner;
 // reorganization never breaks them. Re-export only what a driver needs to load a
 // run, build and pump a `Runner`, and read the report; everything else stays
 // reachable through its module path but isn't surfaced here.
-pub use run::{Run, RunLoadError};
-pub use assertion::{Assertion, AssertionResult, AssertionTarget, AssertionValue};
-pub use assertion::target::{AgentId, TargetRegistry};
 pub use assertion::extract::{standard_extractors, ExtractorTable};
-pub use runner::{Runner, TickAction};
+pub use assertion::target::{AgentId, TargetRegistry};
+pub use assertion::{Assertion, AssertionResult, AssertionTarget, AssertionValue};
 pub use report::{Report, ReportStatus};
+pub use run::{Run, RunLoadError};
+pub use runner::{Runner, TickAction};
+
+// features
+#[cfg(feature = "sim")]
+pub mod sim;
