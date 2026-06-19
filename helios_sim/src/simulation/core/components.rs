@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/core/components.rs
-
 use bevy::prelude::*;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::{

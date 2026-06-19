@@ -164,7 +164,6 @@ impl Plugin for SimulationSetupPlugin {
                 tf_tree_incremental_update_system
                     .in_set(SimulationSet::StateSync)
                     .after(ground_truth_sync_system)
-                    .in_set(SimulationSet::StateSync)
                     .run_if(in_state(AppState::Running)),
             ),
         );

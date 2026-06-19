@@ -23,15 +23,17 @@
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-use avian3d::prelude::*;
-use bevy::{log::LogPlugin, prelude::*};
-use clap::Parser;
-use helios_core::control::ControlOutput;
 use helios_sim::cli::Cli as BaseCli;
 use helios_sim::prelude::{AppState, ProfiledSimulationPlugin, SimulationProfile};
 use helios_sim::simulation::config::ConfigPlugin;
 use helios_sim::simulation::core::components::ControlOutputComponent;
 use helios_sim::simulation::plugins::vehicles::ackermann::AckermannActuator;
+
+use helios_core::control::ControlOutput;
+
+use avian3d::prelude::*;
+use bevy::{log::LogPlugin, prelude::*};
+use clap::Parser;
 use std::path::PathBuf;
 
 // ---------------------------------------------------------------------------

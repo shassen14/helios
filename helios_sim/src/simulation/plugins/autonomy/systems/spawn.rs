@@ -1,6 +1,6 @@
 use crate::prelude::*;
 use crate::simulation::plugins::autonomy::components::{
-    AutonomyPipelineComponent, OdomFrameOf, SensorPublishChannel,
+    AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf, SensorPublishChannel,
 };
 use crate::simulation::registry::plugin::RuntimeAutonomyRegistry;
 
@@ -46,8 +46,12 @@ pub fn spawn_autonomy_pipeline(
             host_capabilities,
         ) {
             Ok(pipeline) => {
+                // Insert the id in the same chain as the pipeline so the test
+                // bridge's `(&AgentId, &AutonomyPipelineComponent)` query can
+                // never see one without the other.
                 commands
                     .entity(agent_entity)
+                    .insert(AgentIdComponent(agent_config.name().to_string()))
                     .insert(AutonomyPipelineComponent(pipeline));
                 info!(
                     "[spawn_autonomy_pipeline] Built pipeline for agent '{}'",
