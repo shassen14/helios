@@ -1,12 +1,23 @@
 use std::time::Duration;
 
 use bevy::{app::ScheduleRunnerPlugin, log::LogPlugin, prelude::*};
+use helios_sim::asset_root;
 
 /// The plugin set for a windowless test run. Returns the group rather than an
 /// `App` so the *bin* owns the `App` and decides what else to add
 /// (`HeliosSimulationPlugin`, the runner resources, `TestRunnerPlugin`).
 pub fn headless() -> impl PluginGroup {
     DefaultPlugins
+        .set(AssetPlugin {
+            // Non-lossy, startup-only conversion: the path comes from
+            // `CARGO_MANIFEST_DIR` (always valid UTF-8), so this never fails —
+            // the `expect` documents the invariant rather than guarding it.
+            file_path: asset_root()
+                .into_os_string()
+                .into_string()
+                .expect("helios_sim asset root is valid UTF-8"),
+            ..default()
+        })
         // No window: a test run renders nothing, and CI has no display.
         .set(WindowPlugin {
             primary_window: None,
