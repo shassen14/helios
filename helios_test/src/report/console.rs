@@ -91,6 +91,7 @@ fn render(report: &Report) -> String {
 fn termination_line(report: &Report) -> String {
     let at = format!("t={:.1}s", report.simulated_duration_secs);
     match &report.terminated_by {
+        TerminatedBy::Aborted => "aborted during setup, before the first tick".to_string(),
         TerminatedBy::TimeBudget => format!("time budget reached at {at}"),
         TerminatedBy::Assertion { outcome } => {
             format!("assertion {} at {at}", status_label(outcome))

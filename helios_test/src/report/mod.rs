@@ -90,6 +90,8 @@ pub enum ReportStatus {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum TerminatedBy {
+    /// The failed setup abort.
+    Aborted,
     /// The simulated-time budget elapsed.
     TimeBudget,
     /// An assertion reached the configured `on_assertion` state; `outcome` is
@@ -104,6 +106,7 @@ pub enum TerminatedBy {
 impl From<&TerminationReason> for TerminatedBy {
     fn from(value: &TerminationReason) -> Self {
         match value {
+            TerminationReason::Aborted => TerminatedBy::Aborted,
             TerminationReason::MaxSimulatedSeconds => TerminatedBy::TimeBudget,
             TerminationReason::OnAssertion { result } => TerminatedBy::Assertion {
                 outcome: AssertionStatus::from(result),

@@ -52,6 +52,8 @@ pub enum OnAssertion {
 /// the report can show what tripped the stop, not just that one did.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TerminationReason {
+    /// The failed setup abort.
+    Aborted,
     /// The simulated-time budget elapsed.
     MaxSimulatedSeconds,
     /// An assertion reached the configured `on_assertion` state.

@@ -24,7 +24,7 @@ pub struct ExtractorTable {
 
 impl ExtractorTable {
     pub fn new() -> Self {
-        ExtractorTable {
+        Self {
             by_type: HashMap::new(),
         }
     }

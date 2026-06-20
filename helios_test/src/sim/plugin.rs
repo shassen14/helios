@@ -121,12 +121,10 @@ fn finalize_system(
     let wall_secs = wall_start.0.elapsed().as_secs_f64();
     let run_name = outcome.run_name.clone();
     // `None` only on the "terminated before any tick" path (system 1's
-    // short-circuit). MaxSimulatedSeconds is a stand-in until a dedicated
-    // `Aborted` variant lands — see phase_5_plan.md §Improvements.
-    let reason = outcome
-        .reason
-        .clone()
-        .unwrap_or(TerminationReason::MaxSimulatedSeconds);
+    // short-circuit): setup never produced a tick, so there is no real
+    // termination cause. `Aborted` names that case instead of borrowing a
+    // misleading stand-in like the time budget.
+    let reason = outcome.reason.clone().unwrap_or(TerminationReason::Aborted);
 
     // TODO(perf): SmallVec / scratch buffer at swarm scale (see §Improvements).
     let mut pairs: Vec<(AgentId, &PortBus)> = Vec::new();
