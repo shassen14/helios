@@ -17,9 +17,12 @@
 //!   `TickAction`, `AssertionResult`, `FailureKind`, `ConditionError`,
 //!   `TerminationReason`, `TargetRegistry`, `ExtractorTable`, `Extractor`,
 //!   `AgentId`.
+//! - **`_Per/Post-step._`** — measurement data filled *during* a run, then
+//!   read back *after* it to build the serialized aggregate. `RunMetrics`.
 //! - **`_Post-step._`** — built *after* the run and serialized out. Its job is
 //!   to be *stable*: never break the consumer that parses it. `Report`,
-//!   `ReportStatus`, `TerminatedBy`, `AssertionStatus`, `AssertionReportEntry`.
+//!   `ReportStatus`, `TerminatedBy`, `AssertionStatus`, `AssertionReportEntry`,
+//!   `AggregateReport`, `MetricRow`.
 //! - **`_Shared._`** — leaf values that cross phases, so they carry both serde
 //!   directions. `AssertionValue`, `Condition` (pre + post); `AssertionTarget`
 //!   (pre + per).
@@ -31,9 +34,12 @@
 //! though they share the same value leaves.
 
 pub mod assertion;
+pub mod metrics;
+pub mod monte_carlo;
 pub mod report;
 pub mod run;
 pub mod runner;
+pub mod statistics;
 
 // The crate's public face. Host drivers (sim bin, fake-body tests,
 // eventually the hw bin) import from the crate root, so internal module
@@ -43,6 +49,8 @@ pub mod runner;
 pub use assertion::extract::{standard_extractors, ExtractorTable};
 pub use assertion::target::{AgentId, TargetRegistry};
 pub use assertion::{Assertion, AssertionResult, AssertionTarget, AssertionValue};
+pub use metrics::{MetricId, RunMetrics};
+pub use report::aggregate::AggregateReport;
 pub use report::{Report, ReportStatus};
 pub use run::{Run, RunLoadError};
 pub use runner::{Runner, TickAction};

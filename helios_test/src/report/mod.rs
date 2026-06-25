@@ -1,3 +1,4 @@
+pub mod aggregate;
 pub mod console;
 pub mod toml_writer;
 
