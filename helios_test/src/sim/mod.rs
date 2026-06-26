@@ -9,17 +9,21 @@
 //! pure `Runner`.
 
 mod headless;
+mod metrics;
 mod plugin;
 
 pub use headless::headless;
+pub use metrics::MetricsPlugin;
 pub use plugin::TestRunnerPlugin;
 
 use crate::report::ReportStatus;
 use crate::run::termination::TerminationReason;
 use crate::runner::Runner;
+use crate::RunMetrics;
 
 use bevy::prelude::Resource;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Holds the live [`Runner`] across ticks. Wraps it because `Runner` lives in
@@ -96,6 +100,48 @@ impl RunVerdict {
     }
 }
 
+/// The one wire by which a whole `RunMetrics` escapes the Bevy loop — the
+/// struct-sized sibling of [`RunVerdict`], which can only carry a pass/fail bit
+/// out via the exit code.
+///
+/// Read the type inside-out and it spells the design:
+/// - `Option` — the slot starts empty and is filled exactly once, at flush.
+///   `None` means the run produced no metrics (the summarizer never ran);
+///   the bin treats that as "nothing to collect", never a silent zero.
+/// - `Mutex` — the summarizer writes through a *shared* `&` reference (interior
+///   mutability), which is why `store`/`take` take `&self`. Thread-safe because
+///   Bevy resources are touched across threads (`Resource: Send + Sync`).
+/// - `Arc` — shared ownership across the `app.run()` boundary. The bin keeps one
+///   clone and inserts another into the world; when `run()` drains the world
+///   (Bevy 0.16) the world drops *its* clone, but the bin's clone keeps the
+///   value alive. Reading a `Res` from the world *after* `run()` would instead
+///   panic on the emptied world — this clone is the documented escape hatch.
+#[derive(Resource, Clone)]
+pub struct MetricsCollector(Arc<Mutex<Option<RunMetrics>>>);
+
+impl MetricsCollector {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(None)))
+    }
+
+    /// Pull the stored metrics out, leaving the slot empty — the bin's read,
+    /// called *after* `run()` returns. Destructive: a second `take` yields
+    /// `None`. A poisoned lock (a thread panicked mid-write) also yields `None`
+    /// rather than panicking, because runtime paths never unwrap.
+    pub fn take(&self) -> Option<RunMetrics> {
+        self.0.lock().ok().and_then(|mut guard| guard.take())
+    }
+
+    /// Store this run's metrics — the summarizer's write, at `OnEnter(Flushing)`
+    /// before the world drains. A poisoned lock drops the metrics silently; we
+    /// cannot safely recover and must not panic in a runtime path.
+    pub fn store(&self, metrics: RunMetrics) {
+        if let Ok(mut guard) = self.0.lock() {
+            *guard = Some(metrics);
+        }
+    }
+}
+
 /// Where `finalize` writes the machine-readable TOML report. Supplied by the
 /// bin's `--out` flag so the path is never hardcoded in source.
 #[derive(Resource)]
@@ -104,6 +150,22 @@ pub struct ReportOutputPath(PathBuf);
 impl ReportOutputPath {
     pub fn new(path: PathBuf) -> Self {
         Self(path)
+    }
+}
+
+/// The per-run identity (`run_index` + `seed`) the summarizer stamps onto each
+/// `RunMetrics`. Inserted by the bin; `Default` (both `0`) suits a single run.
+/// A multi-run driver writes a distinct value per run — the per-run seed
+/// override sets these, and the summarizer reads them back unchanged.
+#[derive(Resource, Default)]
+pub struct RunMetadata {
+    run_index: u32,
+    seed: u64,
+}
+
+impl RunMetadata {
+    pub fn new(run_index: u32, seed: u64) -> Self {
+        Self { run_index, seed }
     }
 }
 
@@ -133,5 +195,48 @@ mod tests {
         let outcome = RunOutcome::new("smoke".to_string());
         assert_eq!(outcome.run_name, "smoke");
         assert!(outcome.reason.is_none());
+    }
+
+    #[test]
+    fn collector_round_trips_metrics_and_take_is_destructive() {
+        use crate::MetricId;
+
+        let collector = MetricsCollector::new();
+        // Nothing stored yet: the bin must see "no metrics", not a default.
+        assert!(collector.take().is_none());
+
+        let mut m = RunMetrics::new(3, 99);
+        m.insert(MetricId::new("final_speed"), 1.5);
+        collector.store(m);
+
+        let got = collector
+            .take()
+            .expect("stored metrics must survive and come back out");
+        assert_eq!(got.run_index(), 3);
+        assert_eq!(got.seed(), 99);
+        assert_eq!(got.get(&MetricId::new("final_speed")), Some(1.5));
+
+        // `take` empties the slot — a second read finds nothing.
+        assert!(collector.take().is_none());
+    }
+
+    #[test]
+    fn collector_clones_share_one_slot() {
+        // The bin keeps one clone and inserts another into the world; both must
+        // point at the *same* value, or the metrics would not escape the drained
+        // world. Storing through one clone must be visible through the other.
+        use crate::MetricId;
+
+        let bin_side = MetricsCollector::new();
+        let world_side = bin_side.clone();
+
+        let mut m = RunMetrics::new(0, 0);
+        m.insert(MetricId::new("final_speed"), 2.0);
+        world_side.store(m); // the summarizer would write through this clone
+
+        let got = bin_side // the bin reads through its own clone
+            .take()
+            .expect("a store through one clone is visible through the other");
+        assert_eq!(got.get(&MetricId::new("final_speed")), Some(2.0));
     }
 }

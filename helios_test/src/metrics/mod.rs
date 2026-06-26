@@ -24,6 +24,13 @@ impl MetricId {
     }
 }
 
+// TODO: stop gap. this needs to be defined somewhere else
+// like in defs.rs or something. maybe think if a different
+// solution than this one to define metrics
+pub(crate) fn final_speed_id() -> MetricId {
+    MetricId::new("final_speed")
+}
+
 /// _Per/Post-step._ One run's worth of named scalars, plus the metadata
 /// identifying which run produced them. Filled as a run finishes, then drained
 /// by the cross-run aggregator.

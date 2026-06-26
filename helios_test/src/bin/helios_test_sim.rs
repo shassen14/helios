@@ -16,7 +16,10 @@ use std::path::{Path, PathBuf};
 
 use helios_sim::prelude::AppState;
 use helios_test::{
-    sim::{ActiveRunner, ReportOutputPath, RunOutcome, RunVerdict, WallClockStart},
+    sim::{
+        ActiveRunner, MetricsCollector, MetricsPlugin, ReportOutputPath, RunMetadata, RunOutcome,
+        RunVerdict, WallClockStart,
+    },
     Runner,
 };
 
@@ -95,19 +98,40 @@ fn main() {
     app.add_plugins(helios_sim::simulation::config::ConfigPlugin);
     app.add_plugins(helios_sim::HeliosSimulationPlugin);
 
+    // Created out here so the bin keeps its own clone: the world's clone (below)
+    // is dropped when `run()` drains the App, but this one keeps the collected
+    // metrics alive to be read afterward.
+    let collector = MetricsCollector::new();
+
     // The test layer wraps the host: resources first, then the plugin that
     // registers the three runner systems against them.
+    app.insert_resource(collector.clone()); // the world's clone of the collector
+    app.init_resource::<RunMetadata>(); // Default (run 0, seed 0) for a single run
     app.insert_resource(ActiveRunner::new(runner));
     app.insert_resource(WallClockStart::new(std::time::Instant::now()));
     app.insert_resource(RunOutcome::new(run_name));
     app.init_resource::<RunVerdict>(); // defaults to Failed (fail-closed)
     app.insert_resource(ReportOutputPath::new(args.out));
     app.add_plugins(helios_test::sim::TestRunnerPlugin);
+    app.add_plugins(MetricsPlugin);
 
     // `run()` returns the AppExit that `finalize` wrote (it carries the verdict
     // as its exit code). We can't read RunVerdict from the world here because
     // `run()` empties the App in Bevy 0.16 — hence the AppExit channel.
     let exit = app.run();
+
+    // The world is drained now, but the bin's clone still points at the metrics
+    // the summarizer stored before flush. `take` empties the slot; `None` means
+    // the summarizer never ran (e.g. the run aborted before reaching flush).
+    match collector.take() {
+        Some(metrics) => tracing::info!(
+            run_index = metrics.run_index(),
+            seed = metrics.seed(),
+            "collected run metrics"
+        ),
+        None => tracing::warn!("no run metrics collected — summarizer did not run"),
+    }
+
     std::process::exit(if exit.is_success() { 0 } else { 1 });
 }
 

@@ -12,7 +12,6 @@ use crate::simulation::plugins::debugging::DebuggingPlugin;
 use crate::simulation::plugins::isolation::{
     MockGroundTruthEstimatorPlugin, MockMapInjectorPlugin, MockPathInjectorPlugin,
 };
-use crate::simulation::plugins::metrics::ControlMetricsPlugin;
 use crate::simulation::plugins::path_following::PathFollowingPlugin;
 use crate::simulation::plugins::planning::PlanningPlugin;
 use crate::simulation::plugins::sensors::HeliosSensorsPlugin;
@@ -62,8 +61,8 @@ impl Plugin for ProfiledSimulationPlugin {
         if caps.mock_map() {
             app.add_plugins(MockMapInjectorPlugin);
         }
-        if caps.metrics() {
-            app.add_plugins(ControlMetricsPlugin);
-        }
+        // The control-metrics plugin was archived to docs/archive/helios_sim/
+        // (its capability flag `caps.metrics()` is retained as a re-add hook).
+        // Control-quality metrics now accrue in the helios_test crate.
     }
 }
