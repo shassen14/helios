@@ -12,20 +12,20 @@
 //! pass/fail into the exit code (`run()` empties the App, so the world can't be
 //! read afterward).
 
-use std::path::{Path, PathBuf};
-
-use helios_sim::prelude::AppState;
+use helios_sim::host::{HeliosHost, Presentation};
 use helios_test::{
+    report::aggregate::{console::print, toml_writer::write},
     sim::{
         ActiveRunner, MetricsCollector, MetricsPlugin, ReportOutputPath, RunMetadata, RunOutcome,
         RunVerdict, WallClockStart,
     },
-    Runner,
+    statistics::{standard_statistics, StatId},
+    AggregateReport, Runner,
 };
 
-use avian3d::prelude::*;
 use bevy::prelude::*;
 use clap::Parser;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug, Clone)]
 #[command(
@@ -45,6 +45,9 @@ struct SimCli {
     /// Where to write the machine-readable TOML report.
     #[arg(long, default_value = "test_report.toml")]
     pub out: PathBuf,
+
+    #[arg(long)]
+    pub monte_carlo: Option<usize>,
 }
 
 fn main() {
@@ -63,16 +66,16 @@ fn main() {
         }
     };
 
-    // `Runner::new` consumes `run`, so capture the scenario reference first.
     let scenario_ref = run.scenario().path().to_string();
 
-    let runner = match Runner::new(run) {
-        Ok(runner) => runner,
-        Err(e) => {
-            eprintln!("invalid run: {e}");
-            std::process::exit(2);
-        }
-    };
+    // Validate up front so an incoherent run fails here (exit 2) rather than
+    // partway through a sim. We rebuild a fresh `Runner` per MC iteration below,
+    // so this one is discarded — it only proves the run is coherent. Validate on
+    // a clone so `run` survives for the loop.
+    if let Err(e) = Runner::new(run.clone()) {
+        eprintln!("invalid run: {e}");
+        std::process::exit(2);
+    }
 
     // Resolve the scenario ref under --config-root and confirm it exists, so a
     // bad reference fails here with a clear message rather than panicking deep
@@ -83,56 +86,92 @@ fn main() {
         std::process::exit(2);
     }
 
-    // --- Assemble the host. Order mirrors helios_research::run_single. ---
-    let mut app = App::new();
-    app.add_plugins(helios_test::sim::headless())
-        .add_plugins(PhysicsPlugins::default());
+    // Absent or `0` collapses to a single run; `max(1)` keeps `--monte-carlo 0`
+    // from silently running zero apps and reporting a vacuous pass.
+    let n = args.monte_carlo.unwrap_or(1).max(1);
 
-    // The Cli resource must exist BEFORE ConfigPlugin's startup system reads it.
-    app.insert_resource(helios_sim::cli::Cli {
-        scenario: scenario_path,
-        config_root: args.config_root.clone(),
-        headless: true,
-    });
-    app.init_state::<AppState>();
-    app.add_plugins(helios_sim::simulation::config::ConfigPlugin);
-    app.add_plugins(helios_sim::HeliosSimulationPlugin);
+    let mut runs = Vec::new();
+    let mut all_passed = true;
 
-    // Created out here so the bin keeps its own clone: the world's clone (below)
-    // is dropped when `run()` drains the App, but this one keeps the collected
-    // metrics alive to be read afterward.
-    let collector = MetricsCollector::new();
+    for i in 0..n {
+        // --- Assemble the host body; the test layer wraps it below. ---
+        let mut app = App::new();
 
-    // The test layer wraps the host: resources first, then the plugin that
-    // registers the three runner systems against them.
-    app.insert_resource(collector.clone()); // the world's clone of the collector
-    app.init_resource::<RunMetadata>(); // Default (run 0, seed 0) for a single run
-    app.insert_resource(ActiveRunner::new(runner));
-    app.insert_resource(WallClockStart::new(std::time::Instant::now()));
-    app.insert_resource(RunOutcome::new(run_name));
-    app.init_resource::<RunVerdict>(); // defaults to Failed (fail-closed)
-    app.insert_resource(ReportOutputPath::new(args.out));
-    app.add_plugins(helios_test::sim::TestRunnerPlugin);
-    app.add_plugins(MetricsPlugin);
+        let cli = helios_sim::cli::Cli {
+            scenario: scenario_path.clone(),
+            config_root: args.config_root.clone(),
+            headless: true,
+            seed: None,
+        };
 
-    // `run()` returns the AppExit that `finalize` wrote (it carries the verdict
-    // as its exit code). We can't read RunVerdict from the world here because
-    // `run()` empties the App in Bevy 0.16 — hence the AppExit channel.
-    let exit = app.run();
+        app.add_plugins(HeliosHost::new(cli, Presentation::Headless));
 
-    // The world is drained now, but the bin's clone still points at the metrics
-    // the summarizer stored before flush. `take` empties the slot; `None` means
-    // the summarizer never ran (e.g. the run aborted before reaching flush).
-    match collector.take() {
-        Some(metrics) => tracing::info!(
-            run_index = metrics.run_index(),
-            seed = metrics.seed(),
-            "collected run metrics"
-        ),
-        None => tracing::warn!("no run metrics collected — summarizer did not run"),
+        // Created out here so the bin keeps its own clone: the world's clone (below)
+        // is dropped when `run()` drains the App, but this one keeps the collected
+        // metrics alive to be read afterward.
+        let collector = MetricsCollector::new();
+
+        // The test layer wraps the host: resources first, then the plugin that
+        // registers the three runner systems against them.
+        app.insert_resource(collector.clone()); // the world's clone of the collector
+        app.insert_resource(RunMetadata::new(i as u32, 0)); // todo: stub seed
+                                                            // needs to be replaced
+
+        // Fresh runner per run: `Runner::new` re-validates and allocates fresh
+        // per-run state (empty registry, pending latches). Pre-flight already
+        // proved coherence, so an Err here is unexpected — treat it as exit 2.
+        let runner = match Runner::new(run.clone()) {
+            Ok(runner) => runner,
+            Err(e) => {
+                eprintln!("invalid run: {e}");
+                std::process::exit(2);
+            }
+        };
+        app.insert_resource(ActiveRunner::new(runner));
+        app.insert_resource(WallClockStart::new(std::time::Instant::now()));
+        app.insert_resource(RunOutcome::new(run_name.clone()));
+        app.init_resource::<RunVerdict>(); // defaults to Failed (fail-closed)
+                                           // Per-run report path: with one run it is `--out` unchanged; with many,
+                                           // each run gets a `.run{i}` suffix so the N single-run reports don't
+                                           // clobber each other (and `--out` stays free for the aggregate below).
+        app.insert_resource(ReportOutputPath::new(per_run_report_path(&args.out, i, n)));
+        app.add_plugins(helios_test::sim::TestRunnerPlugin);
+        app.add_plugins(MetricsPlugin);
+
+        // `run()` returns the AppExit that `finalize` wrote (it carries the verdict
+        // as its exit code). We can't read RunVerdict from the world here because
+        // `run()` empties the App in Bevy 0.16 — hence the AppExit channel.
+        let exit = app.run();
+        all_passed &= exit.is_success();
+
+        // The world is drained now, but the bin's clone still points at the metrics
+        // the summarizer stored before flush. `take` empties the slot; `None` means
+        // the summarizer never ran (e.g. the run aborted before reaching flush).
+        if let Some(m) = collector.take() {
+            runs.push(m);
+        }
     }
 
-    std::process::exit(if exit.is_success() { 0 } else { 1 });
+    // Only a batch produces an aggregate; a single run's artifact is its own
+    // report, already written by `finalize`. Build the reducer set lazily so a
+    // single run does no aggregation work.
+    if n > 1 {
+        let stat_table = standard_statistics();
+        let stat_ids = ["mean", "std", "max", "min"].map(StatId::new);
+
+        let aggregate_report = AggregateReport::from_runs(&runs, &stat_table, &stat_ids);
+
+        // A failed write is an I/O problem, not a test failure: log it and carry
+        // on, exactly as the single-run report path does. It must not flip the
+        // exit code (reserved for assertion pass/fail) or panic.
+        if let Err(e) = write(&aggregate_report, &args.out) {
+            eprintln!("failed to write aggregate report: {e}");
+        }
+
+        print(&aggregate_report);
+    }
+
+    std::process::exit(if all_passed { 0 } else { 1 });
 }
 
 /// Derive a human-readable run name from the run file path (its file stem),
@@ -148,6 +187,33 @@ fn run_name_from_path(run_path: &Path) -> String {
 /// path joining — existence is checked by the caller.
 fn resolve_scenario_path(config_root: &Path, scenario_ref: &str) -> PathBuf {
     config_root.join(scenario_ref)
+}
+
+/// Where run `index` of a `total`-run batch writes its single-run report.
+///
+/// A single-run batch (`total <= 1`) writes to `base` unchanged — the common
+/// case must not get a surprise suffix. A multi-run batch inserts a `.run{index}`
+/// segment before the extension (`out.toml` → `out.run0.toml`) so the N reports
+/// don't overwrite each other; `base` itself is left free for the aggregate.
+/// A `base` with no extension just gets the suffix appended (`out` → `out.run0`).
+fn per_run_report_path(base: &Path, index: usize, total: usize) -> PathBuf {
+    if total <= 1 {
+        return base.to_path_buf();
+    }
+
+    // Assemble the whole filename in one string rather than `set_extension`,
+    // which would mistake the `.run{index}` segment for the extension and
+    // overwrite it (`out.run0` + set "toml" → `out.toml`, collapsing the suffix).
+    let stem = base.file_stem().map(|s| s.to_string_lossy().into_owned());
+    let ext = base.extension().map(|e| e.to_string_lossy().into_owned());
+    let file_name = match (stem, ext) {
+        (Some(stem), Some(ext)) => format!("{stem}.run{index}.{ext}"),
+        (Some(stem), None) => format!("{stem}.run{index}"),
+        (None, Some(ext)) => format!("run{index}.{ext}"),
+        (None, None) => format!("run{index}"),
+    };
+
+    base.with_file_name(file_name)
 }
 
 #[cfg(test)]
@@ -177,5 +243,30 @@ mod tests {
             path,
             PathBuf::from("configs/sim/scenarios/00_tutorial_showcase.toml")
         );
+    }
+
+    #[test]
+    fn single_run_keeps_the_base_report_path() {
+        // One run must write exactly where `--out` points, with no suffix.
+        let path = per_run_report_path(Path::new("test_report.toml"), 0, 1);
+        assert_eq!(path, PathBuf::from("test_report.toml"));
+    }
+
+    #[test]
+    fn batch_runs_get_distinct_suffixed_paths() {
+        // Each run in a batch lands on its own file so the N reports never clobber.
+        let base = Path::new("out/test_report.toml");
+        let r0 = per_run_report_path(base, 0, 3);
+        let r1 = per_run_report_path(base, 1, 3);
+
+        assert_eq!(r0, PathBuf::from("out/test_report.run0.toml"));
+        assert_eq!(r1, PathBuf::from("out/test_report.run1.toml"));
+        assert_ne!(r0, r1);
+    }
+
+    #[test]
+    fn suffix_is_appended_when_base_has_no_extension() {
+        let path = per_run_report_path(Path::new("report"), 2, 5);
+        assert_eq!(path, PathBuf::from("report.run2"));
     }
 }

@@ -18,6 +18,7 @@ pub mod prelude;
 
 // This module contains all the simulation-specific logic.
 pub mod cli;
+pub mod host;
 pub mod simulation;
 
 /// The main plugin that brings together all simulation subsystems.

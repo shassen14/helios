@@ -29,3 +29,6 @@ pub use crate::simulation::plugins::vehicles::ackermann::{
 // Profile types for multi-profile binary support.
 pub use crate::simulation::profile::SimulationProfile;
 pub use crate::simulation::profile_plugin::ProfiledSimulationPlugin;
+
+// host types
+pub use crate::host::{HeliosHost, Presentation};

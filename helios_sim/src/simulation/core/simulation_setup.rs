@@ -18,38 +18,17 @@ pub struct SimulationSetupPlugin;
 
 impl Plugin for SimulationSetupPlugin {
     fn build(&self, app: &mut App) {
-        // Extract config values before mutably borrowing app.
-        let (seed, frequency_hz) = {
-            let config = app
-                .world()
-                .get_resource::<ScenarioConfig>()
-                .expect("SimulationConfig not found!");
-            (config.simulation.seed, config.simulation.frequency_hz)
-        };
-
-        // --- 1. Add the Deterministic PRNG Resource ---
-        let rng = match seed {
-            Some(seed) => ChaCha8Rng::seed_from_u64(seed),
-            None => ChaCha8Rng::from_rng(&mut OsRng).expect("OS RNG failed"),
-        };
-        app.insert_resource(SimulationRng(rng));
-
         // --- INITIALIZE RESOURCES & EVENTS ---
         app.init_resource::<TfTree>();
-
-        let fixed_update_timestep = 1.0 / frequency_hz;
-
-        app.insert_resource(
-            // The resource is of type Time<Fixed>.
-            Time::<Fixed>::from_duration(
-                // We create a Duration from the calculated timestep.
-                Duration::from_secs_f64(fixed_update_timestep),
-            ),
-        );
 
         app.configure_sets(
             OnEnter(AppState::AssetLoading),
             (AssetLoadSet::Config, AssetLoadSet::Kickoff).chain(), // .chain() guarantees Config runs before Kickoff
+        );
+
+        app.add_systems(
+            OnEnter(AppState::AssetLoading),
+            initialize_simulation_resources.in_set(AssetLoadSet::Kickoff),
         );
 
         // --- CONFIGURE THE SPAWNING PIPELINE ---
@@ -168,6 +147,30 @@ impl Plugin for SimulationSetupPlugin {
             ),
         );
     }
+}
+
+// Seed the simulation RNG and set the fixed-update rate from the resolved
+// scenario config. This runs in `AssetLoadSet::Kickoff`, after the config
+// loader has populated `ScenarioConfig` in `AssetLoadSet::Config`. Reading these
+// values any earlier (as in `Plugin::build`) sees only the struct defaults, not
+// the loaded TOML — so a configured seed would never reach the RNG.
+fn initialize_simulation_resources(mut commands: Commands, config: Res<ScenarioConfig>) {
+    // A configured seed makes the run reproducible: the same seed always yields
+    // the same sequence. Without one, fall back to OS entropy, which differs
+    // from run to run and is therefore non-deterministic.
+    let rng = match config.simulation.seed {
+        Some(seed) => ChaCha8Rng::seed_from_u64(seed),
+        None => ChaCha8Rng::from_rng(&mut OsRng).expect("OS RNG failed"),
+    };
+
+    commands.insert_resource(SimulationRng(rng));
+
+    // Drive FixedUpdate at the configured rate: one tick every `1 / frequency`
+    // seconds.
+    let frequency_hz = config.simulation.frequency_hz;
+    commands.insert_resource(Time::<Fixed>::from_duration(Duration::from_secs_f64(
+        1.0 / frequency_hz,
+    )));
 }
 
 fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {

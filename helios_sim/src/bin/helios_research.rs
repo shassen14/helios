@@ -84,6 +84,7 @@ impl From<&ResearchCli> for BaseCli {
             scenario: r.scenario.clone(),
             config_root: r.config_root.clone(),
             headless: r.headless,
+            seed: None,
         }
     }
 }

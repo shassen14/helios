@@ -52,11 +52,7 @@ impl AggregateReport {
     ///
     /// `table` and `stat_ids` are injected, not built here, so the reducer set is
     /// config-chosen and this stays a pure, testable function over its inputs.
-    pub(crate) fn from_runs(
-        runs: &[RunMetrics],
-        table: &StatisticTable,
-        stat_ids: &[StatId],
-    ) -> Self {
+    pub fn from_runs(runs: &[RunMetrics], table: &StatisticTable, stat_ids: &[StatId]) -> Self {
         let run_count: usize = runs.len();
         let seeds: Vec<u64> = runs.iter().map(|r| r.seed()).collect();
         let ids: Vec<String> = stat_ids.iter().map(|s| s.as_str().to_string()).collect();

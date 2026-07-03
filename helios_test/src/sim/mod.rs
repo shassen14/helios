@@ -8,11 +8,9 @@
 //! They are intentionally dumb: no verdict logic lives here — that stays in the
 //! pure `Runner`.
 
-mod headless;
 mod metrics;
 mod plugin;
 
-pub use headless::headless;
 pub use metrics::MetricsPlugin;
 pub use plugin::TestRunnerPlugin;
 
