@@ -54,9 +54,10 @@ impl Runner {
     /// `Failed`, or a never-observed `Pending`, drops it to `Failed`.
     ///
     /// Takes `&self`, not `&mut`: the latches are only read, nothing is
-    /// recorded. `run_name`, `wall_duration_secs`, and the stop `reason` are
-    /// supplied by the host — the runner reads no wall clock and stores no name
-    /// — and `master_seed` is `None` until the determinism feature lands.
+    /// recorded. `run_name`, `wall_duration_secs`, the stop `reason`, and
+    /// `master_seed` are supplied by the host — the runner reads no wall clock,
+    /// stores no name, and does not own the seed. `master_seed` is `None` for an
+    /// unseeded run, whose real seed is chosen inside the sim and unknown here.
     pub fn finalize(
         &self,
         sim_now: MonotonicTime,
@@ -64,6 +65,7 @@ impl Runner {
         run_name: String,
         terminated_by_reason: TerminationReason,
         blackboards: &[(AgentId, &PortBus)],
+        master_seed: Option<u64>,
     ) -> Report {
         let mut entries = Vec::with_capacity(self.run.assertions().len());
         // Run-level verdict accumulator: flipped false the moment any assertion
@@ -120,7 +122,7 @@ impl Runner {
         Report::new(
             run_name,
             self.run.scenario().path().to_string(),
-            None, // todo: input when seed number matters for determinism
+            master_seed,
             run_status,
             simulated_duration_secs,
             wall_duration_secs,

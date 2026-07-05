@@ -1,0 +1,23 @@
+# Part B acceptance run — proves the full seed → drive → measure chain.
+#
+# Zero assertions on purpose (like smoke). The thing under test isn't an
+# assertion target on the bus; it's the summarizer's final-position metric
+# (final_pos_e / final_pos_n), read off GroundTruthState. This run drives the
+# agent to its authored goal_pose and lets us read that final position back:
+#   - single run  → the "run metrics summarized" log line
+#   - --monte-carlo N --seed S → the aggregate report's final_pos_* stats + seeds
+#
+# A moved agent reads far from its (0, 0) origin; a stationary one reads ~0.
+
+schema_version = "1.0"
+
+# Resolved relative to --config-root (default "configs").
+scenario = { from = "sim/scenarios/00_tutorial_showcase.toml" }
+
+# Carried but unused (observation presets aren't resolved yet).
+observation = { from = "default" }
+
+# Longer than smoke's 5 s so the agent actually drives a visible distance
+# toward its goal before the run stops. Simulated seconds, measured from the
+# first tick (asset-load wall time doesn't count against it).
+termination = { max_simulated_seconds = 20.0 }

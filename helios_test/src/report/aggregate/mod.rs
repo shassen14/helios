@@ -29,9 +29,11 @@ use std::collections::{BTreeMap, BTreeSet};
 /// output schema stable while the internal `MetricId` / `StatId` types churn.
 ///
 /// `seeds` is carried metadata, never itself reduced — there is no "mean of the
-/// seeds", so it lives beside the metric map, not inside it. The `BTreeMap` (and
-/// the `BTreeSet` the constructor builds from) keep the rows in a stable, sorted
-/// order, so the serialized output is deterministic across runs of the tool.
+/// seeds", so it lives beside the metric map, not inside it. It holds only the
+/// seeds that are known: an unseeded batch reports an empty list rather than
+/// placeholder zeros. The `BTreeMap` (and the `BTreeSet` the constructor builds
+/// from) keep the rows in a stable, sorted order, so the serialized output is
+/// deterministic across runs of the tool.
 #[derive(Debug, Clone, Serialize)]
 pub struct AggregateReport {
     run_count: usize,
@@ -54,7 +56,11 @@ impl AggregateReport {
     /// config-chosen and this stays a pure, testable function over its inputs.
     pub fn from_runs(runs: &[RunMetrics], table: &StatisticTable, stat_ids: &[StatId]) -> Self {
         let run_count: usize = runs.len();
-        let seeds: Vec<u64> = runs.iter().map(|r| r.seed()).collect();
+        // Only known seeds are carried: an unseeded run has no seed to report, so
+        // it contributes nothing rather than a fabricated `0`. `--seed` is
+        // all-or-nothing across a batch, so this is either every run's seed (in
+        // run order) or empty — never a subset that would misalign with runs.
+        let seeds: Vec<u64> = runs.iter().filter_map(|r| r.seed()).collect();
         let ids: Vec<String> = stat_ids.iter().map(|s| s.as_str().to_string()).collect();
 
         // Every metric any run recorded, deduplicated and sorted. The `flat_map`
@@ -130,9 +136,9 @@ mod tests {
         (a - b).abs() < EPS
     }
 
-    // Build one run that recorded the given `(metric, value)` pairs.
+    // Build one seeded run that recorded the given `(metric, value)` pairs.
     fn run_with(run_index: u32, seed: u64, recorded: &[(&str, f64)]) -> RunMetrics {
-        let mut run = RunMetrics::new(run_index, seed);
+        let mut run = RunMetrics::new(run_index, Some(seed));
         for (id, value) in recorded {
             run.insert(MetricId::new(*id), *value);
         }
@@ -203,6 +209,35 @@ mod tests {
         let report = AggregateReport::from_runs(&runs, &table, &stat_ids(&["mean"]));
 
         assert_eq!(report.seeds, vec![10, 20, 30]);
+    }
+
+    #[test]
+    fn an_unseeded_batch_carries_no_seeds() {
+        // Runs the harness left unseeded (`None`) must not surface as placeholder
+        // zeros: the seed list is empty, not `[0, 0]`. This is the fix for the
+        // fabricated-seed smell.
+        let runs = vec![
+            {
+                let mut r = RunMetrics::new(0, None);
+                r.insert(MetricId::new("cte.mean"), 0.0);
+                r
+            },
+            {
+                let mut r = RunMetrics::new(1, None);
+                r.insert(MetricId::new("cte.mean"), 0.0);
+                r
+            },
+        ];
+
+        let table = standard_statistics();
+        let report = AggregateReport::from_runs(&runs, &table, &stat_ids(&["mean"]));
+
+        assert!(
+            report.seeds.is_empty(),
+            "unseeded batch must report no seeds"
+        );
+        // The metrics still aggregate normally — only the seed metadata is absent.
+        assert_eq!(report.metrics["cte.mean"].present, 2);
     }
 
     #[test]

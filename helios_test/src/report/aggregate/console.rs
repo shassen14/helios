@@ -112,7 +112,7 @@ mod tests {
     use crate::{MetricId, RunMetrics};
 
     fn run_with(run_index: u32, seed: u64, recorded: &[(&str, f64)]) -> RunMetrics {
-        let mut run = RunMetrics::new(run_index, seed);
+        let mut run = RunMetrics::new(run_index, Some(seed));
         for (id, value) in recorded {
             run.insert(MetricId::new(*id), *value);
         }

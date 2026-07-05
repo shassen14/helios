@@ -8,14 +8,16 @@
 pub mod gizmos;
 pub mod interaction;
 
+
 use bevy::prelude::*;
 
-use crate::prelude::AppState;
 use crate::simulation::core::app_state::SimulationSet;
+use crate::simulation::core::components::GoalDispatched;
 use crate::simulation::core::events::GoalCommandEvent;
 use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::transforms::TfTree;
 use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
+use crate::{prelude::AppState, simulation::core::components::ConfiguredMissionGoal};
 use interaction::{GoalRegistry, SelectedAgent};
 
 pub struct PlanningPlugin;
@@ -38,6 +40,12 @@ impl Plugin for PlanningPlugin {
                     interaction::click_goal_system,
                     gizmos::draw_selection,
                 )
+                    .run_if(in_state(AppState::Running)),
+            )
+            .add_systems(
+                FixedUpdate,
+                dispatch_configured_goals
+                    .in_set(SimulationSet::Behavior)
                     .run_if(in_state(AppState::Running)),
             );
     }
@@ -70,5 +78,31 @@ fn forward_goal_events(
             continue;
         };
         pipeline.0.inject_mission_goal(event.goal.clone(), &runtime);
+    }
+}
+
+/// Auto-starts each agent's mission. On the first tick an agent is seen, this
+/// synthesizes the `GoalCommandEvent` a mouse click would have produced, taken
+/// from the agent's authored `goal_pose` — so a headless run drives toward its
+/// goal with no user input. `forward_goal_events` (in `SimulationSet::Planning`,
+/// later the same tick) consumes the event and injects it into the pipeline.
+///
+/// The `GoalDispatched` marker, stamped once here, drops the agent from the
+/// query on every later tick: the authored goal is sent exactly once, so a
+/// mid-run click can retarget the agent without this system stomping it back.
+fn dispatch_configured_goals(
+    agents: Query<(Entity, &ConfiguredMissionGoal), Without<GoalDispatched>>,
+    mut goal_events: EventWriter<GoalCommandEvent>,
+    mut commands: Commands,
+) {
+    for (entity, goal) in agents {
+        let event = GoalCommandEvent {
+            agent: entity,
+            goal: goal.0.clone(),
+        };
+
+        goal_events.write(event);
+
+        commands.entity(entity).insert(GoalDispatched);
     }
 }

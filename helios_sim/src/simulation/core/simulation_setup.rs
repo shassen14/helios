@@ -9,6 +9,7 @@ use super::components::GroundTruthState;
 use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 use crate::prelude::*;
 use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
+use crate::simulation::core::components::ConfiguredMissionGoal;
 use crate::simulation::core::ground_truth::publish_oracle_channels_system;
 use crate::simulation::core::ground_truth_sync_system;
 use crate::simulation::core::prng::SimulationRng;
@@ -199,6 +200,7 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
             // This is necessary because multiple systems in your spawning pipeline
             // (for sensors, estimators, etc.) will need to read from it.
             SpawnAgentConfigRequest(agent_config.clone()),
+            ConfiguredMissionGoal(PlannerGoal::WorldPose(agent_config.goal_pose.to_isometry())),
         ));
     }
 }

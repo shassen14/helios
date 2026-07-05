@@ -17,4 +17,4 @@ observation = { from = "default" }
 
 # A stop trigger is mandatory — without it validation rejects the run as one
 # that would never terminate. Small budget so the smoke run finishes fast.
-termination = { max_simulated_seconds = 2.0 }
+termination = { max_simulated_seconds = 5.0 }

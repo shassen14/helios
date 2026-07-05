@@ -152,17 +152,19 @@ impl ReportOutputPath {
 }
 
 /// The per-run identity (`run_index` + `seed`) the summarizer stamps onto each
-/// `RunMetrics`. Inserted by the bin; `Default` (both `0`) suits a single run.
-/// A multi-run driver writes a distinct value per run — the per-run seed
-/// override sets these, and the summarizer reads them back unchanged.
+/// `RunMetrics`. Inserted by the bin; `Default` (`run_index` 0, `seed` `None`)
+/// suits a single unseeded run. A multi-run driver writes a distinct value per
+/// run — the per-run seed override sets these, and the summarizer reads them
+/// back unchanged. A `None` seed means the run was unseeded: the real seed was
+/// chosen inside the sim and isn't known here.
 #[derive(Resource, Default)]
 pub struct RunMetadata {
     run_index: u32,
-    seed: u64,
+    seed: Option<u64>,
 }
 
 impl RunMetadata {
-    pub fn new(run_index: u32, seed: u64) -> Self {
+    pub fn new(run_index: u32, seed: Option<u64>) -> Self {
         Self { run_index, seed }
     }
 }
@@ -203,16 +205,16 @@ mod tests {
         // Nothing stored yet: the bin must see "no metrics", not a default.
         assert!(collector.take().is_none());
 
-        let mut m = RunMetrics::new(3, 99);
-        m.insert(MetricId::new("final_speed"), 1.5);
+        let mut m = RunMetrics::new(3, Some(99));
+        m.insert(MetricId::new("final_pos_e"), 1.5);
         collector.store(m);
 
         let got = collector
             .take()
             .expect("stored metrics must survive and come back out");
         assert_eq!(got.run_index(), 3);
-        assert_eq!(got.seed(), 99);
-        assert_eq!(got.get(&MetricId::new("final_speed")), Some(1.5));
+        assert_eq!(got.seed(), Some(99));
+        assert_eq!(got.get(&MetricId::new("final_pos_e")), Some(1.5));
 
         // `take` empties the slot — a second read finds nothing.
         assert!(collector.take().is_none());
@@ -228,13 +230,13 @@ mod tests {
         let bin_side = MetricsCollector::new();
         let world_side = bin_side.clone();
 
-        let mut m = RunMetrics::new(0, 0);
-        m.insert(MetricId::new("final_speed"), 2.0);
+        let mut m = RunMetrics::new(0, Some(0));
+        m.insert(MetricId::new("final_pos_e"), 2.0);
         world_side.store(m); // the summarizer would write through this clone
 
         let got = bin_side // the bin reads through its own clone
             .take()
             .expect("a store through one clone is visible through the other");
-        assert_eq!(got.get(&MetricId::new("final_speed")), Some(2.0));
+        assert_eq!(got.get(&MetricId::new("final_pos_e")), Some(2.0));
     }
 }

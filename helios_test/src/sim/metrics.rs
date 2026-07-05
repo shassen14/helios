@@ -12,7 +12,7 @@
 //!   goes.
 
 use super::{MetricsCollector, RunMetadata};
-use crate::metrics::{final_speed_id, RunMetrics};
+use crate::metrics::{final_pos_e_id, final_pos_n_id, RunMetrics};
 
 use helios_sim::prelude::AppState;
 use helios_sim::simulation::core::components::GroundTruthState;
@@ -34,8 +34,8 @@ impl Plugin for MetricsPlugin {
 }
 
 /// Runs once at `OnEnter(AppState::Flushing)`. Reads the agent's ground-truth
-/// velocity, stamps it with the run's identity, and stores one `RunMetrics` in
-/// the collector before `app.run()` drains the world.
+/// final position, stamps it with the run's identity, and stores one
+/// `RunMetrics` in the collector before `app.run()` drains the world.
 fn summarize_metrics_system(
     query: Query<&GroundTruthState>,
     metadata: Res<RunMetadata>,
@@ -51,16 +51,19 @@ fn summarize_metrics_system(
         return;
     };
 
-    // STOPGAP: a hand-checkable stand-in metric. Final true speed is trivially
-    // verifiable and varies with the run seed (so seeded runs genuinely
-    // diverge), and commits nothing to a specific control-metrics design.
+    // STOPGAP: a hand-checkable stand-in metric. The ground-truth final
+    // position (ENU east/north) is trivially verifiable and directly reflects
+    // whether the agent received its goal and drove: an agent that never moved
+    // reads near its origin, one that ran reads far from it. `pose` is already
+    // ENU, so `.x`/`.y` are east/north with no frame conversion here.
     // Replaced once producers emit their own named scalars to a telemetry sink.
-    let final_speed = ground_truth.linear_velocity.norm();
+    let t = &ground_truth.pose.translation;
 
     let mut run_metrics = RunMetrics::new(metadata.run_index, metadata.seed);
-    run_metrics.insert(final_speed_id(), final_speed);
+    run_metrics.insert(final_pos_e_id(), t.x);
+    run_metrics.insert(final_pos_n_id(), t.y);
 
     collector.store(run_metrics);
 
-    tracing::info!(final_speed, "run metrics summarized");
+    tracing::info!(final_e = t.x, final_n = t.y, "run metrics summarized");
 }

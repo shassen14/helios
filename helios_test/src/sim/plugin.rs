@@ -1,6 +1,6 @@
 use super::{ActiveRunner, RunOutcome, RunVerdict, WallClockStart};
 use crate::run::termination::TerminationReason;
-use crate::sim::ReportOutputPath;
+use crate::sim::{ReportOutputPath, RunMetadata};
 use crate::{AgentId, ReportStatus, TickAction};
 
 use helios_core::data::MonotonicTime;
@@ -114,6 +114,7 @@ fn finalize_system(
     runner: Res<ActiveRunner>,
     outcome: Res<RunOutcome>,
     out_path: Res<ReportOutputPath>,
+    metadata: Res<RunMetadata>,
     mut verdict: ResMut<RunVerdict>,
     mut exit: EventWriter<AppExit>,
 ) {
@@ -126,7 +127,7 @@ fn finalize_system(
     // misleading stand-in like the time budget.
     let reason = outcome.reason.clone().unwrap_or(TerminationReason::Aborted);
 
-    // TODO(perf): SmallVec / scratch buffer at swarm scale (see §Improvements).
+    // TODO(perf): SmallVec / scratch buffer at swarm scale.
     let mut pairs: Vec<(AgentId, &PortBus)> = Vec::new();
     for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
         pairs.push((
@@ -135,7 +136,9 @@ fn finalize_system(
         ));
     }
 
-    let report = runner.0.finalize(now, wall_secs, run_name, reason, &pairs);
+    let report = runner
+        .0
+        .finalize(now, wall_secs, run_name, reason, &pairs, metadata.seed);
 
     // Two surfaces: machine-readable TOML for CI, human summary for the console.
     // A failed write is logged, not panicked — runtime paths never unwrap.

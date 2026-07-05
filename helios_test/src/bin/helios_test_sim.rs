@@ -14,6 +14,7 @@
 
 use helios_sim::host::{HeliosHost, Presentation};
 use helios_test::{
+    monte_carlo::seed_for_run,
     report::aggregate::{console::print, toml_writer::write},
     sim::{
         ActiveRunner, MetricsCollector, MetricsPlugin, ReportOutputPath, RunMetadata, RunOutcome,
@@ -46,8 +47,16 @@ struct SimCli {
     #[arg(long, default_value = "test_report.toml")]
     pub out: PathBuf,
 
+    /// Number of Monte Carlo runs. Absent or `0` collapses to a single run.
     #[arg(long)]
     pub monte_carlo: Option<usize>,
+
+    /// Master seed for the batch. Each run derives its own seed from this, so
+    /// the whole batch is reproducible while individual runs still diverge.
+    /// Omit to let each run fall back to its scenario file's seed (or OS
+    /// entropy), which leaves a batch unseeded and near-identical run to run.
+    #[arg(long)]
+    pub seed: Option<u64>,
 }
 
 fn main() {
@@ -97,11 +106,13 @@ fn main() {
         // --- Assemble the host body; the test layer wraps it below. ---
         let mut app = App::new();
 
+        let seed = args.seed.map(|base| seed_for_run(base, i as u32));
+
         let cli = helios_sim::cli::Cli {
             scenario: scenario_path.clone(),
             config_root: args.config_root.clone(),
             headless: true,
-            seed: None,
+            seed,
         };
 
         app.add_plugins(HeliosHost::new(cli, Presentation::Headless));
@@ -114,8 +125,7 @@ fn main() {
         // The test layer wraps the host: resources first, then the plugin that
         // registers the three runner systems against them.
         app.insert_resource(collector.clone()); // the world's clone of the collector
-        app.insert_resource(RunMetadata::new(i as u32, 0)); // todo: stub seed
-                                                            // needs to be replaced
+        app.insert_resource(RunMetadata::new(i as u32, seed));
 
         // Fresh runner per run: `Runner::new` re-validates and allocates fresh
         // per-run state (empty registry, pending latches). Pre-flight already

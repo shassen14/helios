@@ -27,8 +27,15 @@ impl MetricId {
 // TODO: stop gap. this needs to be defined somewhere else
 // like in defs.rs or something. maybe think if a different
 // solution than this one to define metrics
-pub(crate) fn final_speed_id() -> MetricId {
-    MetricId::new("final_speed")
+pub(crate) fn final_pos_e_id() -> MetricId {
+    MetricId::new("final_pos_e")
+}
+
+// TODO: stop gap. this needs to be defined somewhere else
+// like in defs.rs or something. maybe think if a different
+// solution than this one to define metrics
+pub(crate) fn final_pos_n_id() -> MetricId {
+    MetricId::new("final_pos_n")
 }
 
 /// _Per/Post-step._ One run's worth of named scalars, plus the metadata
@@ -50,11 +57,11 @@ pub(crate) fn final_speed_id() -> MetricId {
 pub struct RunMetrics {
     by_metric: BTreeMap<MetricId, f64>,
     run_index: u32,
-    seed: u64,
+    seed: Option<u64>,
 }
 
 impl RunMetrics {
-    pub fn new(run_index: u32, seed: u64) -> Self {
+    pub fn new(run_index: u32, seed: Option<u64>) -> Self {
         Self {
             by_metric: BTreeMap::new(),
             run_index,
@@ -84,7 +91,10 @@ impl RunMetrics {
         self.run_index
     }
 
-    pub fn seed(&self) -> u64 {
+    /// The seed that drove this run, or `None` when the run was unseeded (the
+    /// harness left the seed to the scenario file or OS entropy, so the value
+    /// is unknown here).
+    pub fn seed(&self) -> Option<u64> {
         self.seed
     }
 }
@@ -95,7 +105,7 @@ mod tests {
 
     #[test]
     fn get_returns_value_when_present_and_none_when_absent() {
-        let mut m = RunMetrics::new(0, 42);
+        let mut m = RunMetrics::new(0, Some(42));
         m.insert(MetricId::new("cte.mean"), 0.5);
 
         assert_eq!(m.get(&MetricId::new("cte.mean")), Some(0.5));
@@ -104,7 +114,7 @@ mod tests {
 
     #[test]
     fn insert_overrides_previous_value() {
-        let mut m = RunMetrics::new(0, 0);
+        let mut m = RunMetrics::new(0, Some(0));
         m.insert(MetricId::new("cte.mean"), 1.0);
         m.insert(MetricId::new("cte.mean"), 2.0);
         assert_eq!(m.get(&MetricId::new("cte.mean")), Some(2.0));
@@ -112,7 +122,7 @@ mod tests {
 
     #[test]
     fn iter_yields_metrics_in_sorted_key_order() {
-        let mut m = RunMetrics::new(0, 0);
+        let mut m = RunMetrics::new(0, Some(0));
         // inserted out of order; BTreeMap must hand them back sorted.
         m.insert(MetricId::new("rise_time"), 1.8);
         m.insert(MetricId::new("cte.mean"), 0.4);
@@ -124,13 +134,21 @@ mod tests {
 
     #[test]
     fn metadata_is_readable_and_separate_from_metrics() {
-        let mut m = RunMetrics::new(7, 12345);
+        let mut m = RunMetrics::new(7, Some(12345));
         m.insert(MetricId::new("cte.mean"), 0.4);
 
         assert_eq!(m.run_index(), 7);
-        assert_eq!(m.seed(), 12345);
+        assert_eq!(m.seed(), Some(12345));
         // seed/run_index never leak into the aggregatable metric stream.
         let count = m.iter().count();
         assert_eq!(count, 1, "iter should expose only metrics, not metadata");
+    }
+
+    #[test]
+    fn an_unseeded_run_reports_no_seed() {
+        // A run the harness left unseeded carries `None`, not a stand-in value —
+        // the aggregate relies on this to omit it rather than fabricate a seed.
+        let m = RunMetrics::new(0, None);
+        assert_eq!(m.seed(), None);
     }
 }
