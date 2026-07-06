@@ -16,11 +16,11 @@ pub use key_action_registry::{DebugToggle, KeyAction, KeyActionRegistry};
 use crate::prelude::AppState;
 use crate::simulation::config::ScenarioConfig;
 use crate::simulation::core::app_state::SimulationSet;
-use crate::simulation::profile::CapabilitySet;
 use key_action_registry::{parse_key_code, KeyAction as KA};
 
-/// Default key assignments that are ALWAYS registered (profile-independent).
-const ALWAYS_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
+/// Every debug key assignment. All toggles register unconditionally; a gizmo
+/// whose subsystem produced no data simply draws nothing when toggled on.
+const DEBUG_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
     (
         "toggle_legend",
         KeyCode::KeyH,
@@ -34,10 +34,28 @@ const ALWAYS_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
         DebugToggle::Pose,
     ),
     (
+        "toggle_covariance",
+        KeyCode::F2,
+        "F2 Covariance",
+        DebugToggle::Covariance,
+    ),
+    (
+        "toggle_point_cloud",
+        KeyCode::F3,
+        "F3 Point Cloud",
+        DebugToggle::PointCloud,
+    ),
+    (
         "toggle_velocity",
         KeyCode::F4,
         "F4 Velocity",
         DebugToggle::Velocity,
+    ),
+    (
+        "toggle_error_line",
+        KeyCode::F5,
+        "F5 Est. Error",
+        DebugToggle::ErrorLine,
     ),
     (
         "toggle_path_trail",
@@ -46,10 +64,22 @@ const ALWAYS_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
         DebugToggle::PathTrail,
     ),
     (
+        "toggle_occupancy_grid",
+        KeyCode::F7,
+        "F7 Occupancy Grid",
+        DebugToggle::OccupancyGrid,
+    ),
+    (
         "toggle_tf_frames",
         KeyCode::F8,
         "F8 TF Frames",
         DebugToggle::TfFrames,
+    ),
+    (
+        "toggle_planned_path",
+        KeyCode::F9,
+        "F9 Planned Path",
+        DebugToggle::PlannedPath,
     ),
     (
         "toggle_oracle_pose",
@@ -57,48 +87,6 @@ const ALWAYS_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
         "F10 Oracle Pose",
         DebugToggle::OraclePose,
     ),
-];
-
-const SENSOR_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[(
-    "toggle_point_cloud",
-    KeyCode::F3,
-    "F3 Point Cloud",
-    DebugToggle::PointCloud,
-)];
-
-const ESTIMATION_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
-    (
-        "toggle_covariance",
-        KeyCode::F2,
-        "F2 Covariance",
-        DebugToggle::Covariance,
-    ),
-    (
-        "toggle_error_line",
-        KeyCode::F5,
-        "F5 Est. Error",
-        DebugToggle::ErrorLine,
-    ),
-];
-
-const MAPPING_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[(
-    "toggle_occupancy_grid",
-    KeyCode::F7,
-    "F7 Occupancy Grid",
-    DebugToggle::OccupancyGrid,
-)];
-
-const PLANNING_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[(
-    "toggle_planned_path",
-    KeyCode::F9,
-    "F9 Planned Path",
-    DebugToggle::PlannedPath,
-)];
-
-/// HUD toggle (C) and state-source toggle (T).
-/// C is registered for any profile with control or estimation.
-/// T is registered only when both control and estimation are active.
-const CONTROL_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
     (
         "toggle_vehicle_hud",
         KeyCode::KeyC,
@@ -113,34 +101,12 @@ const CONTROL_ACTIONS: &[(&str, KeyCode, &str, DebugToggle)] = &[
     ),
 ];
 
-/// Build the registry from action tables, gated by `CapabilitySet`.
-/// Runs once on entering Running state (before other startup systems read the registry).
-fn build_key_registry(
-    mut registry: ResMut<KeyActionRegistry>,
-    scenario: Res<ScenarioConfig>,
-    capabilities: Res<CapabilitySet>,
-) {
+/// Build the key registry from the single action table, applying any scenario
+/// keybinding overrides. Runs once on entering Running state (before other
+/// startup systems read the registry).
+fn build_key_registry(mut registry: ResMut<KeyActionRegistry>, scenario: Res<ScenarioConfig>) {
     let overrides = &scenario.debug.keybindings.0;
-    register_actions(&mut registry, overrides, ALWAYS_ACTIONS);
-
-    if capabilities.sensors() {
-        register_actions(&mut registry, overrides, SENSOR_ACTIONS);
-    }
-    if capabilities.estimation() {
-        register_actions(&mut registry, overrides, ESTIMATION_ACTIONS);
-    }
-    if capabilities.mapping() {
-        register_actions(&mut registry, overrides, MAPPING_ACTIONS);
-    }
-    if capabilities.planning() {
-        register_actions(&mut registry, overrides, PLANNING_ACTIONS);
-    }
-    if capabilities.control() || capabilities.estimation() {
-        register_actions(&mut registry, overrides, &CONTROL_ACTIONS[..1]); // C key only
-    }
-    if capabilities.control() && capabilities.estimation() {
-        register_actions(&mut registry, overrides, &CONTROL_ACTIONS[1..]); // T key only
-    }
+    register_actions(&mut registry, overrides, DEBUG_ACTIONS);
 }
 
 fn apply_debug_config(scenario: Res<ScenarioConfig>, mut viz: ResMut<DebugVisualizationConfig>) {

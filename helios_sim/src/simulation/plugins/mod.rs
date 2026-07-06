@@ -12,8 +12,6 @@
 pub mod autonomy;
 pub mod control;
 pub mod debugging;
-pub mod isolation;
-pub mod path_following;
 pub mod planning;
 pub mod sensors;
 pub mod vehicles;

@@ -8,7 +8,6 @@
 use bevy::prelude::*;
 
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
-use crate::simulation::profile::CapabilitySet;
 
 pub use super::vehicle_hud_update::{toggle_state_source, update_vehicle_hud};
 
@@ -28,16 +27,9 @@ pub struct VehicleHudEntities {
 }
 
 /// Builds the full HUD node tree and inserts `VehicleHudEntities`.
-/// Called once on `OnEnter(Running)`; no-ops if neither control nor estimation is active.
-pub fn spawn_vehicle_hud(
-    mut commands: Commands,
-    capabilities: Res<CapabilitySet>,
-    config: Res<DebugVisualizationConfig>,
-) {
-    if !capabilities.control() && !capabilities.estimation() {
-        return;
-    }
-
+/// Called once on `OnEnter(Running)`. The HUD is hidden by default and shown
+/// when its `show_vehicle_hud` flag is set or the C key is pressed.
+pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationConfig>) {
     let initial_vis = if config.show_vehicle_hud {
         Visibility::Visible
     } else {
