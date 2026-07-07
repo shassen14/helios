@@ -32,6 +32,7 @@ impl Report {
     /// `finalize`, because these fields are private to the `report` module —
     /// keeping construction of the output schema in one place, next to the
     /// projections that feed it.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         run_name: String,
         scenario: String,

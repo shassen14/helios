@@ -52,7 +52,7 @@ fn main() {
     app.add_plugins(PhysicsPlugins::default())
         .insert_resource(cli.clone());
     if !cli.headless {
-        app.add_plugins(PhysicsDebugPlugin::default());
+        app.add_plugins(PhysicsDebugPlugin);
     }
 
     app.init_state::<AppState>();

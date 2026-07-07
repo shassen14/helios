@@ -68,10 +68,10 @@ mod tests {
     #[test]
     fn standard_extractors_handles_f64() {
         let table = standard_extractors();
-        let v: f64 = 3.14;
+        let v: f64 = 2.5;
         assert_eq!(
             table.extract(TypeId::of::<f64>(), &v as &dyn Any),
-            Some(AssertionValue::Float(3.14))
+            Some(AssertionValue::Float(2.5))
         );
     }
 

@@ -27,6 +27,7 @@ impl MetricId {
 // TODO: stop gap. this needs to be defined somewhere else
 // like in defs.rs or something. maybe think if a different
 // solution than this one to define metrics
+#[allow(dead_code)]
 pub(crate) fn final_pos_e_id() -> MetricId {
     MetricId::new("final_pos_e")
 }
@@ -34,6 +35,7 @@ pub(crate) fn final_pos_e_id() -> MetricId {
 // TODO: stop gap. this needs to be defined somewhere else
 // like in defs.rs or something. maybe think if a different
 // solution than this one to define metrics
+#[allow(dead_code)]
 pub(crate) fn final_pos_n_id() -> MetricId {
     MetricId::new("final_pos_n")
 }

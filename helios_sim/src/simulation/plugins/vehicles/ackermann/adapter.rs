@@ -9,6 +9,7 @@ use super::components::{AckermannActuator, AckermannCommand, AckermannParameters
 /// Translates a `ControlOutput` into an `AckermannCommand`.
 /// Owns all feedback loops and intermediate calculations; Layer 3 sees only the final command.
 pub trait AckermannOutputAdapter: Send + Sync {
+    #[allow(clippy::too_many_arguments)]
     fn adapt(
         &mut self,
         output: &ControlOutput,

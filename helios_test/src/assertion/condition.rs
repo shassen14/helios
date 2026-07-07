@@ -161,7 +161,7 @@ mod tests {
             ("v = 0", AssertionValue::Int(0)),
             ("v = 42", AssertionValue::Int(42)),
             ("v = 0.0", AssertionValue::Float(0.0)),
-            ("v = 3.14", AssertionValue::Float(3.14)),
+            ("v = 2.5", AssertionValue::Float(2.5)),
             ("v = \"hello\"", AssertionValue::String("hello".into())),
         ];
         for (src, expected) in cases {

@@ -149,6 +149,7 @@ pub(super) fn attach_ackermann_physics(
 /// `AckermannCommand`, then applies forces/torques via dumb kinematic mapping (Layer 3).
 ///
 /// No embedded P controllers — passive damping is handled by Avian3D physics parameters.
+#[allow(clippy::type_complexity)]
 pub(super) fn drive_ackermann_cars(
     mut commands: Commands,
     time: Res<Time>,

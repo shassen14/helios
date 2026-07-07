@@ -46,7 +46,6 @@ pub struct StatisticTable {
     by_stat: HashMap<StatId, Statistic>,
 }
 
-
 impl StatisticTable {
     pub fn new() -> Self {
         Self::default()
