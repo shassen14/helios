@@ -1,6 +1,5 @@
 use avian3d::prelude::Gravity;
 use bevy::prelude::*;
-use bevy_fly_camera::{FlyCamera, FlyCameraPlugin};
 
 use crate::prelude::*;
 
@@ -8,7 +7,7 @@ pub struct AtmospherePlugin;
 
 impl Plugin for AtmospherePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(FlyCameraPlugin).add_systems(
+        app.add_systems(
             OnEnter(AppState::SceneBuilding),
             (configure_gravity, spawn_sun, spawn_camera),
         );
@@ -40,14 +39,7 @@ fn spawn_sun(mut commands: Commands, config: Res<ScenarioConfig>) {
 
 fn spawn_camera(mut commands: Commands) {
     let transform = Transform::from_xyz(-30.0, 25.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y);
-    let euler = transform.rotation.to_euler(EulerRot::YZX);
-    commands
-        .spawn((Camera3d::default(), transform))
-        .insert(FlyCamera {
-            pitch: euler.2,
-            yaw: euler.0,
-            ..Default::default()
-        });
+    commands.spawn((Camera3d::default(), transform));
 }
 
 /// Builds a Bevy Transform for a directional light at the given sun position.

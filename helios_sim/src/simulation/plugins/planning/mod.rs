@@ -19,7 +19,7 @@ pub struct PlanningPlugin;
 
 impl Plugin for PlanningPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<GoalCommandEvent>()
+        app.add_message::<GoalCommandEvent>()
             .add_systems(
                 FixedUpdate,
                 forward_goal_events
@@ -39,7 +39,7 @@ impl Plugin for PlanningPlugin {
 /// pipeline mission slot. The mission slot is a host-state channel, so the
 /// value persists across ticks until overwritten.
 fn forward_goal_events(
-    mut events: EventReader<GoalCommandEvent>,
+    mut events: MessageReader<GoalCommandEvent>,
     pipelines: Query<&AutonomyPipelineComponent>,
     tf_tree: Res<TfTree>,
     time: Res<Time>,
@@ -76,7 +76,7 @@ fn forward_goal_events(
 /// mid-run click can retarget the agent without this system stomping it back.
 fn dispatch_configured_goals(
     agents: Query<(Entity, &ConfiguredMissionGoal), Without<GoalDispatched>>,
-    mut goal_events: EventWriter<GoalCommandEvent>,
+    mut goal_events: MessageWriter<GoalCommandEvent>,
     mut commands: Commands,
 ) {
     for (entity, goal) in agents {

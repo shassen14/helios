@@ -9,8 +9,7 @@ license.workspace = true
 [dependencies]
 # Bevy and its ecosystem
 bevy = { workspace = true }
-avian3d = "0.3.0"
-bevy_fly_camera = "0.16.0" # For the debug camera
+avian3d = "0.4.0"
 
 # The crucial dependency on our pure core library
 helios_core = { path = "../helios_core", features = ["bevy"] }
@@ -20,7 +19,7 @@ serde_json = "1.0.149"
 serde = { workspace = true }
 figment = { version = "0.10.19", features = ["toml"] }
 rand = { workspace = true }
-rand_chacha = "0.3.1" # match bevy
+rand_chacha = "0.3.1"                                           # match bevy
 rand_distr = { workspace = true }
 walkdir = "2.5.0"
 clap = { version = "4.5", features = ["derive"] }
