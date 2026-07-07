@@ -25,7 +25,7 @@ fn spawn_sun(mut commands: Commands, config: Res<ScenarioConfig>) {
     let light_transform = sun_transform(atmos.sun_elevation, atmos.sun_azimuth);
     commands.spawn((
         DirectionalLight {
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             illuminance: atmos.ambient_lux,
             ..default()
         },

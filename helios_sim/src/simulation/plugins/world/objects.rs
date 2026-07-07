@@ -26,7 +26,7 @@ use crate::simulation::core::components::{BoundingBox3D, SemanticLabel, WorldObj
 #[derive(Resource, Default)]
 pub struct WorldObjectAssets {
     pub prefabs: HashMap<String, WorldObjectPrefab>,
-    pub scenes: HashMap<String, Handle<Scene>>,
+    pub scenes: HashMap<String, Handle<WorldAsset>>,
     pub collider_gltfs: HashMap<String, Handle<Gltf>>,
 }
 
@@ -159,7 +159,7 @@ fn spawn_world_objects(
         ));
 
         if let Some(scene_handle) = assets.scenes.get(&placement.prefab) {
-            entity_cmds.insert(SceneRoot(scene_handle.clone()));
+            entity_cmds.insert(WorldAssetRoot(scene_handle.clone()));
         }
 
         if let Some(bb) = prefab.bounding_box {

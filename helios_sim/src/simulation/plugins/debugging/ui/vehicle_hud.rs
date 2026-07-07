@@ -66,7 +66,7 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
             Node::default(),
             Text::new("Des: --"),
             TextFont {
-                font_size: 12.0,
+                font_size: FontSize::Px(12.0),
                 ..default()
             },
             TextColor(Color::srgb(0.8, 0.8, 0.8)),
@@ -78,7 +78,7 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
             Node::default(),
             Text::new("GT:  -- m/s"),
             TextFont {
-                font_size: 12.0,
+                font_size: FontSize::Px(12.0),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -90,7 +90,7 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
             Node::default(),
             Text::new("Est: --"),
             TextFont {
-                font_size: 12.0,
+                font_size: FontSize::Px(12.0),
                 ..default()
             },
             TextColor(Color::srgb(0.6, 0.8, 1.0)),
@@ -146,7 +146,7 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
             Node::default(),
             Text::new("--"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -158,7 +158,7 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
             Node::default(),
             Text::new("Steering"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::srgb(0.6, 0.6, 0.6)),
@@ -212,7 +212,7 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
             Node::default(),
             Text::new("--"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -224,7 +224,7 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
             Node::default(),
             Text::new("Throttle"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::srgb(0.6, 0.6, 0.6)),
@@ -269,7 +269,7 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
             Node::default(),
             Text::new("Vehicle Control [C]"),
             TextFont {
-                font_size: 13.0,
+                font_size: FontSize::Px(13.0),
                 ..default()
             },
             TextColor(Color::srgb(0.9, 0.9, 0.9)),
@@ -281,7 +281,7 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
             Node::default(),
             Text::new("─ Speed (m/s) ─"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::srgb(0.5, 0.5, 0.5)),

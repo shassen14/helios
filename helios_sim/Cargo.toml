@@ -9,7 +9,7 @@ license.workspace = true
 [dependencies]
 # Bevy and its ecosystem
 bevy = { workspace = true }
-avian3d = "0.6.0"
+avian3d = "0.7"
 
 # The crucial dependency on our pure core library
 helios_core = { path = "../helios_core", features = ["bevy"] }

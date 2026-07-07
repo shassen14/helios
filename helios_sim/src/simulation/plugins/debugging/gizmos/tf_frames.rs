@@ -108,7 +108,7 @@ pub fn update_tf_labels(
                 },
                 Text::new(name_str.clone()),
                 TextFont {
-                    font_size: 11.0,
+                    font_size: FontSize::Px(11.0),
                     ..default()
                 },
                 TextColor(Color::srgb(1.0, 1.0, 0.2)),
