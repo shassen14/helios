@@ -89,28 +89,26 @@ pub enum SimulationSet {
     /// Example: `tf_tree_builder_system`.
     Precomputation,
 
-    // --- Phase 2: Perception (Can run in parallel) ---
-    /// Systems that simulate raw physical sensors (IMU, GPS, LiDAR, Cameras).
+    // --- Phase 2: Perception ---
+    /// Systems that simulate raw physical sensors (IMU, GPS, LiDAR, Cameras)
+    /// and publish `SensorReading` batches to the pipeline bus.
     Sensors,
-    /// Systems that process raw sensor data into detections (Object Detection, Segmentation).
-    /// This can run in parallel with raw sensor simulation.
-    Perception,
 
-    // --- Phase 3: World Modeling (Depends on Perception) ---
-    /// Systems that build geometric or semantic representations of the world.
-    /// This includes SLAM, Mapping, and Tracking. This set runs *after* Perception.
-    WorldModeling,
-
-    // --- Phase 4: State & Decision Making (Depends on World Modeling) ---
-    /// The core state estimator (EKF, UKF). It needs the latest sensor data and world model.
+    // --- Phase 3: Autonomy tick ---
+    /// The whole-brain tick: `run_pipeline_tick` fires every DAG node
+    /// (estimator, mapper, planner, path-follower, controller) in topological
+    /// order. Named `Estimation` for historical reasons — it is not just the
+    /// estimator.
     Estimation,
-    /// High-level decision making (Behavior Trees). Runs *after* the state is estimated.
+    /// Host→pipeline goal glue (`dispatch_configured_goals`). Runs after the tick.
     Behavior,
 
-    // --- Phase 5: Motion (Depends on Decision Making) ---
-    /// Path planning systems (A*, RRT*). Runs *after* the Behavior Tree sets a goal.
+    // --- Phase 4: Host→pipeline output bridges ---
+    /// Forwards queued goal events into the pipeline's mission slot. Not the
+    /// planner (that is a DAG node inside the tick).
     Planning,
-    /// Motion control systems (PID, MPC). Runs *after* path following produces a reference.
+    /// Copies `pipeline.read_control()` into `ControlOutputComponent`. Not the
+    /// controller (that is a DAG node inside the tick).
     Control,
 
     // --- Phase 6: Finalization ---

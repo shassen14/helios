@@ -72,20 +72,18 @@ impl Plugin for SimulationSetupPlugin {
         app.configure_sets(
             FixedUpdate,
             (
-                // Phase 1
+                // Phase 1: prepare TF from current transforms.
                 SimulationSet::Precomputation,
-                // Phase 2 (these two can run in parallel with each other)
-                (SimulationSet::Sensors, SimulationSet::Perception),
-                // Phase 3
-                SimulationSet::WorldModeling,
-                // Phase 4
+                // Phase 2: simulate sensors, publish readings to the bus.
+                SimulationSet::Sensors,
+                // Phase 3: tick the whole autonomy pipeline, then goal glue.
                 (SimulationSet::Estimation, SimulationSet::Behavior),
-                // Phase 5
+                // Phase 4: drain pipeline outputs to ECS.
                 SimulationSet::Planning,
                 SimulationSet::Control,
-                // Phase 6
+                // Phase 5: convert control to physical forces.
                 SimulationSet::Actuation,
-                // Phase 7
+                // Phase 6: physics, then read state back.
                 (
                     // Avian's internal set where it prepares bodies.
                     PhysicsSet::Prepare,
@@ -103,19 +101,12 @@ impl Plugin for SimulationSetupPlugin {
         app.configure_sets(
             FixedUpdate,
             (
-                // WorldModeling must run after BOTH Sensors and Perception are complete.
-                SimulationSet::WorldModeling
-                    .after(SimulationSet::Sensors)
-                    .after(SimulationSet::Perception),
-                // Estimation needs the latest sensor data.
+                // The pipeline tick needs the latest sensor data.
                 SimulationSet::Estimation.after(SimulationSet::Sensors),
-                // Behavior needs the latest state estimate and world model.
-                SimulationSet::Behavior
-                    .after(SimulationSet::Estimation)
-                    .after(SimulationSet::WorldModeling),
-                // Planning is triggered by Behavior.
+                // Goal glue runs after the tick.
+                SimulationSet::Behavior.after(SimulationSet::Estimation),
+                // Output bridges run after the tick produced outputs.
                 SimulationSet::Planning.after(SimulationSet::Behavior),
-                // Control is triggered by Planning.
                 SimulationSet::Control.after(SimulationSet::Planning),
                 // Actuation is triggered by Control.
                 SimulationSet::Actuation.after(SimulationSet::Control),

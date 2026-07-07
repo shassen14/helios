@@ -5,10 +5,6 @@
 // PipelineNode inside the DAG; this system is the host→pipeline bridge for
 // the long-lived mission goal slot.
 
-pub mod gizmos;
-pub mod interaction;
-
-
 use bevy::prelude::*;
 
 use crate::simulation::core::app_state::SimulationSet;
@@ -18,28 +14,16 @@ use crate::simulation::core::sim_runtime::SimRuntime;
 use crate::simulation::core::transforms::TfTree;
 use crate::simulation::plugins::autonomy::AutonomyPipelineComponent;
 use crate::{prelude::AppState, simulation::core::components::ConfiguredMissionGoal};
-use interaction::{GoalRegistry, SelectedAgent};
 
 pub struct PlanningPlugin;
 
 impl Plugin for PlanningPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SelectedAgent>()
-            .init_resource::<GoalRegistry>()
-            .add_event::<GoalCommandEvent>()
+        app.add_event::<GoalCommandEvent>()
             .add_systems(
                 FixedUpdate,
                 forward_goal_events
                     .in_set(SimulationSet::Planning)
-                    .run_if(in_state(AppState::Running)),
-            )
-            .add_systems(
-                Update,
-                (
-                    interaction::agent_select_system,
-                    interaction::click_goal_system,
-                    gizmos::draw_selection,
-                )
                     .run_if(in_state(AppState::Running)),
             )
             .add_systems(
