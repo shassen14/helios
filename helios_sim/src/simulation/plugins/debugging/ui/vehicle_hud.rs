@@ -133,10 +133,10 @@ pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationC
                 height: Val::Px(60.0),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
+                border_radius: BorderRadius::all(Val::Px(30.0)),
                 ..default()
             },
             BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
-            BorderRadius::all(Val::Px(30.0)),
         ))
         .id();
     commands.entity(steering_circle).add_child(steering_spoke);

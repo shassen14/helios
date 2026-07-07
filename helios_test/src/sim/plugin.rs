@@ -116,7 +116,7 @@ fn finalize_system(
     out_path: Res<ReportOutputPath>,
     metadata: Res<RunMetadata>,
     mut verdict: ResMut<RunVerdict>,
-    mut exit: EventWriter<AppExit>,
+    mut exit: MessageWriter<AppExit>,
 ) {
     let now = MonotonicTime(time.elapsed_secs_f64());
     let wall_secs = wall_start.0.elapsed().as_secs_f64();

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use avian3d::prelude::PhysicsSet;
+use avian3d::prelude::PhysicsSystems;
 use rand::rngs::OsRng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -86,9 +86,9 @@ impl Plugin for SimulationSetupPlugin {
                 // Phase 6: physics, then read state back.
                 (
                     // Avian's internal set where it prepares bodies.
-                    PhysicsSet::Prepare,
+                    PhysicsSystems::Prepare,
                     // The main physics simulation step.
-                    PhysicsSet::StepSimulation,
+                    PhysicsSystems::StepSimulation,
                     // Our system runs IMMEDIATELY AFTER the simulation.
                     SimulationSet::StateSync,
                 ),
