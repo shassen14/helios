@@ -87,7 +87,10 @@ mod tests {
         assert_eq!(cte["stats"]["mean"].as_float(), Some(5.0));
 
         // `rise_time` was recorded by only the first run.
-        assert_eq!(value["metrics"]["rise_time"]["present"].as_integer(), Some(1));
+        assert_eq!(
+            value["metrics"]["rise_time"]["present"].as_integer(),
+            Some(1)
+        );
 
         // A statistic that wasn't requested is absent, not nulled.
         assert!(cte["stats"].get("std").is_none());

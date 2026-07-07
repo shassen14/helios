@@ -134,7 +134,10 @@ mod tests {
 
         let text = render(&report);
 
-        assert!(text.contains("[mc] 2 runs"), "missing summary header:\n{text}");
+        assert!(
+            text.contains("[mc] 2 runs"),
+            "missing summary header:\n{text}"
+        );
         assert!(text.contains("metric"), "missing column header:\n{text}");
         assert!(text.contains("present"));
         // The metric row, with its present count and a value at the chosen precision.

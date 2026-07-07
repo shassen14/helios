@@ -28,6 +28,12 @@ pub struct AssertionState {
     continuous: ContinuousStatus,
 }
 
+impl Default for AssertionState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AssertionState {
     /// Starting state for every assertion: nothing observed, status `Pending`.
     pub fn new() -> Self {

@@ -41,17 +41,11 @@ impl StatId {
 /// A registry of named reducers. Built once (usually from
 /// [`standard_statistics`]), then queried by id to reduce a slice — within a
 /// single run *or* across runs.
+#[derive(Default)]
 pub struct StatisticTable {
     by_stat: HashMap<StatId, Statistic>,
 }
 
-impl Default for StatisticTable {
-    fn default() -> Self {
-        Self {
-            by_stat: HashMap::new(),
-        }
-    }
-}
 
 impl StatisticTable {
     pub fn new() -> Self {
