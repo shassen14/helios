@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/config/catalog.rs
-
 //! This module defines the `PrefabCatalog` resource and a plugin to load
 //! all component definitions from disk at startup.
 

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use super::{
     pose::Pose,
     sensors::SensorConfig,
-    simulation::{KeybindingsConfig, MetricsConfig},
+    simulation::MetricsConfig,
     terrain::{AtmosphereConfig, TerrainConfig},
     vehicle::Vehicle,
     world_object::WorldObjectPlacement,
@@ -24,39 +24,10 @@ pub struct ScenarioConfig {
     pub world: World,
 
     #[serde(default)]
-    pub debug: DebugConfig,
-
-    #[serde(default)]
     pub metrics: MetricsConfig,
 
     #[serde(default)]
     pub agents: Vec<AgentConfig>,
-}
-
-/// Optional `[debug]` table in the scenario TOML.
-#[derive(Debug, Deserialize, Default, Clone)]
-#[serde(default)]
-pub struct DebugConfig {
-    pub show_pose_gimbals: bool,
-    pub show_covariance: bool,
-    pub show_point_cloud: bool,
-    pub show_velocity: bool,
-    pub show_error_line: bool,
-    pub show_path_trail: bool,
-    pub show_occupancy_grid: bool,
-    pub show_tf_frames: bool,
-    pub show_planned_path: bool,
-    pub show_oracle_pose: bool,
-    pub show_legend: bool,
-    #[serde(default = "default_true")]
-    pub show_vehicle_hud: bool,
-    /// Optional key override table, e.g. `toggle_covariance = "F2"`.
-    #[serde(default)]
-    pub keybindings: KeybindingsConfig,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// Temporary helper for the initial file-loading step before agent prefab resolution.
@@ -66,8 +37,6 @@ pub struct RawScenarioConfig {
     pub simulation: Simulation,
     #[serde(default)]
     pub world: World,
-    #[serde(default)]
-    pub debug: DebugConfig,
     #[serde(default)]
     pub metrics: MetricsConfig,
     #[serde(default)]

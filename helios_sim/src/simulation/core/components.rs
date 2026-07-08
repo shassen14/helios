@@ -25,7 +25,8 @@ pub enum ControllerStateSource {
 // --- Agent State Components ---
 
 /// The perfect, physics-driven ground truth state of an agent.
-/// Written by the StateSync system; read by sensors and debugging.
+/// Written by the StateSync system; read by sensors, vehicle adapters, and
+/// the ground-truth (oracle) publisher.
 #[derive(Component, Clone, Debug, Serialize)]
 pub struct GroundTruthState {
     pub pose: Isometry3<f64>,

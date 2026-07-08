@@ -2,8 +2,7 @@
 //!
 //! Submodules: `autonomy` (EKF/pipeline wiring), `control` (controller dispatch),
 //! `sensors` (IMU, GPS, lidar), `vehicles` (Ackermann, quadcopter physics adapters),
-//! `planning`, `debugging` (gizmos + keybindings),
-//! `isolation` (mock profile plugins), `world`.
+//! `planning`, `world`.
 //!
 //! The former `metrics` and `research` plugin trees were moved to
 //! `docs/archive/helios_sim/` pending a decision to revive (control metrics and
@@ -11,7 +10,6 @@
 
 pub mod autonomy;
 pub mod control;
-pub mod debugging;
 pub mod planning;
 pub mod sensors;
 pub mod vehicles;

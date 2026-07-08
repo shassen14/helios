@@ -30,15 +30,6 @@ sun_elevation = 45.0
 sun_azimuth = 180.0
 ambient_lux = 1500.0
 
-[debug]
-show_pose_gimbals = true
-show_point_cloud = true
-show_error_line = true
-show_occupancy_grid = true
-show_tf_frames = true
-show_legend = true
-show_planned_path = true
-
 [[agents]]
 from = "sim.catalog.agents.ackermann_car_pro"
 name = "MockOraclePro"

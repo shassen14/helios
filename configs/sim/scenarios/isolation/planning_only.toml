@@ -17,11 +17,6 @@ medium   = "air"
 [world.atmosphere]
 gravity = [0.0, -9.81, 0.0]
 
-[debug]
-show_pose_gimbals = true
-show_planned_path = true
-show_legend       = true
-
 [[agents]]
 from          = "sim.catalog.agents.ackermann_car_pro"
 name          = "PlanningCar"

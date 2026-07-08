@@ -77,7 +77,6 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
     let mut final_config = ScenarioConfig {
         simulation: raw_config.simulation,
         world: raw_config.world,
-        debug: raw_config.debug,
         metrics: raw_config.metrics,
         agents: resolved_agents,
     };

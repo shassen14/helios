@@ -13,7 +13,6 @@ use bevy::prelude::*;
 use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
 use crate::simulation::plugins::autonomy::EstimationPlugin;
 use crate::simulation::plugins::control::ControlPlugin;
-use crate::simulation::plugins::debugging::DebuggingPlugin;
 use crate::simulation::plugins::planning::PlanningPlugin;
 use crate::simulation::plugins::sensors::HeliosSensorsPlugin;
 use crate::simulation::plugins::vehicles::HeliosVehiclesPlugin;
@@ -48,7 +47,6 @@ impl Plugin for HeliosSimulationPlugin {
             EstimationPlugin,
             PlanningPlugin,
             ControlPlugin,
-            DebuggingPlugin,
         ));
     }
 }
