@@ -1,5 +1,5 @@
 use crate::{
-    port::{ChannelKey, PortBus},
+    port::{ChannelKey, PortBus, SensorChannel},
     prelude::{AgentRuntime, TickContext},
 };
 use helios_core::{
@@ -8,7 +8,7 @@ use helios_core::{
 };
 use nalgebra::DVector;
 
-pub trait EstimatorInputBuilder: Send + Sync {
+pub(crate) trait EstimatorInputBuilder: Send + Sync {
     fn assemble(
         &self,
         bus: &PortBus,
@@ -24,7 +24,7 @@ pub trait EstimatorInputBuilder: Send + Sync {
 /// Assembles a 6-element IMU control vector `[ax, ay, az, wx, wy, wz]` from
 /// the most recent linear acceleration and angular velocity readings on the bus.
 /// Returns `None` if either channel is empty (cold-start or sensor dropout).
-pub struct IntegratedImuInputBuilder {
+pub(crate) struct IntegratedImuInputBuilder {
     accel_channel: ChannelKey,
     gyro_channel: ChannelKey,
     required: Vec<ChannelKey>,
@@ -37,9 +37,11 @@ impl Default for IntegratedImuInputBuilder {
 }
 
 impl IntegratedImuInputBuilder {
-    pub fn new() -> Self {
-        let accel_channel = ChannelKey::of::<Vec<SensorReading<LinearAcceleration3D>>>();
-        let gyro_channel = ChannelKey::of::<Vec<SensorReading<AngularVelocity3D>>>();
+    pub(crate) fn new() -> Self {
+        let accel_channel: ChannelKey =
+            SensorChannel::of::<Vec<SensorReading<LinearAcceleration3D>>>().into();
+        let gyro_channel: ChannelKey =
+            SensorChannel::of::<Vec<SensorReading<AngularVelocity3D>>>().into();
 
         Self {
             accel_channel: accel_channel.clone(),

@@ -36,16 +36,16 @@ use super::grid_space::OccupancyGridSpace;
 /// backing storage is retained between calls.
 pub(super) struct AStarSearchBuffers {
     /// Priority queue of nodes ordered by ascending `f_score`.
-    pub open: BinaryHeap<AStarNode>,
+    pub(crate) open: BinaryHeap<AStarNode>,
     /// Best known path cost from start to each visited cell.
-    pub g_score: HashMap<(usize, usize), f64>,
+    pub(crate) g_score: HashMap<(usize, usize), f64>,
     /// Back-pointer map used to reconstruct the path on goal expansion.
-    pub parent: HashMap<(usize, usize), (usize, usize)>,
+    pub(crate) parent: HashMap<(usize, usize), (usize, usize)>,
 }
 
 impl AStarSearchBuffers {
     /// Allocate empty collections. Called once when [`AStarPlanner`] is constructed.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             open: BinaryHeap::new(),
             g_score: HashMap::new(),
@@ -54,7 +54,7 @@ impl AStarSearchBuffers {
     }
 
     /// Empty all three collections without releasing backing storage.
-    pub fn clear(&mut self) {
+    pub(crate) fn clear(&mut self) {
         self.open.clear();
         self.g_score.clear();
         self.parent.clear();
@@ -74,13 +74,13 @@ impl AStarSearchBuffers {
 #[derive(PartialEq)]
 pub(super) struct AStarNode {
     /// `g + h` — estimated total path cost through this node.
-    pub f_score: f64,
+    pub(crate) f_score: f64,
     /// Cost paid to reach this node from the start.
-    pub g_score: f64,
+    pub(crate) g_score: f64,
     /// Grid row of this node.
-    pub row: usize,
+    pub(crate) row: usize,
     /// Grid column of this node.
-    pub col: usize,
+    pub(crate) col: usize,
 }
 
 impl Eq for AStarNode {}

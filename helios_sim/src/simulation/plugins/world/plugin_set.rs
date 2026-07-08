@@ -2,7 +2,7 @@
 //
 // HeliosWorldPlugin: aggregates all world environment plugins.
 // Future: reads `[world] type` from scenario TOML to add domain-specific plugins
-// (UnderwaterWorldPlugin, SpaceWorldPlugin, …) — zero changes to ProfiledSimulationPlugin.
+// (UnderwaterWorldPlugin, SpaceWorldPlugin, …) — added here, transparent to HeliosSimulationPlugin.
 
 use bevy::prelude::*;
 

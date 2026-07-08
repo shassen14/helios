@@ -11,7 +11,7 @@ use crate::pipeline::nodes::path_follower::PathFollowerNode;
 
 use super::{contexts::PathFollowerBuildContext, AutonomyRegistry};
 
-pub fn register(registry: &mut AutonomyRegistry) {
+pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_path_follower("PurePursuit", build_pure_pursuit);
     registry.register_path_follower("SteeringPid", build_steering_pid);
 }

@@ -1,8 +1,9 @@
 use nalgebra::DVector;
 
-use crate::data::primitives::{FrameHandle, TfProvider};
+use crate::data::primitives::FrameHandle;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::ports::TfProvider;
 
 /// A measurement model for a standard GPS sensor that provides 3D position.
 ///
@@ -68,8 +69,9 @@ mod tests {
     //! - Default finite-diff Jacobian has the correct shape and identity position columns.
 
     use super::*;
-    use crate::data::primitives::{FrameHandle, TfProvider};
+    use crate::data::primitives::FrameHandle;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::ports::TfProvider;
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
     const AGENT: FrameHandle = FrameHandle(1);

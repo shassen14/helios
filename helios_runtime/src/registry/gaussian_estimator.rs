@@ -15,7 +15,7 @@ use super::{
     AutonomyRegistry,
 };
 
-pub fn register(registry: &mut AutonomyRegistry) {
+pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_gaussian_estimator("Ekf", build_ekf);
     registry
         .register_gaussian_estimator("Ukf", |_, _, _| Err("UKF not yet implemented".to_string()));

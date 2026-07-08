@@ -25,4 +25,10 @@ pub struct Cli {
     /// Run the simulation in headless mode (without a graphical window).
     #[arg(long, default_value_t = false)]
     pub headless: bool,
+
+    /// Master RNG seed for a reproducible run. Overrides the scenario file's
+    /// `[simulation] seed`. Omit to fall back to the file value, or to OS
+    /// entropy when the file leaves it unset.
+    #[arg(long)]
+    pub seed: Option<u64>,
 }

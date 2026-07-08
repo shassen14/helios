@@ -19,7 +19,7 @@ use crate::simulation::plugins::vehicles::ackermann::components::{
 
 /// Reads agent components each frame and updates HUD text/gauges.
 /// No-ops if `VehicleHudEntities` resource is absent (HUD was not spawned).
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn update_vehicle_hud(
     entities: Option<Res<VehicleHudEntities>>,
     config: Res<DebugVisualizationConfig>,

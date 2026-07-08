@@ -1,11 +1,9 @@
-// helios_sim/src/simulation/core/components.rs
-
 use bevy::prelude::*;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::{
     layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable,
 };
-use helios_core::prelude::ControlOutput;
+use helios_core::prelude::{ControlOutput, PlannerGoal};
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
 
@@ -86,6 +84,12 @@ impl GroundTruthState {
         state
     }
 }
+
+#[derive(Component, Clone)]
+pub struct ConfiguredMissionGoal(pub PlannerGoal);
+
+#[derive(Component)]
+pub struct GoalDispatched;
 
 // =========================================================================
 // == World Object Components ==

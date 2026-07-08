@@ -1,0 +1,20 @@
+# Smoke run — the thinnest end-to-end path through the test harness.
+#
+# Zero assertions on purpose: this proves the *plumbing* (scene builds → runner
+# ticks → terminates on the time budget → report written → exit 0), so any
+# failure here is plainly a wiring bug, not an assertion bug. Add assertions
+# only after this run is green.
+
+schema_version = "1.0"
+
+# Resolved relative to --config-root (default "configs"); see the bin's
+# resolve_scenario_path. Points at a scenario that already runs.
+scenario = { from = "sim/scenarios/00_tutorial_showcase.toml" }
+
+# Observation presets are not resolved in Phase 5 (validate() stubs that check),
+# so this reference is carried but unused for now.
+observation = { from = "default" }
+
+# A stop trigger is mandatory — without it validation rejects the run as one
+# that would never terminate. Small budget so the smoke run finishes fast.
+termination = { max_simulated_seconds = 5.0 }

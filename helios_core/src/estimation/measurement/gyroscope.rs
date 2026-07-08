@@ -1,8 +1,9 @@
 use nalgebra::DVector;
 
-use crate::data::primitives::{FrameHandle, TfProvider};
+use crate::data::primitives::FrameHandle;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::ports::TfProvider;
 
 #[derive(Debug, Clone)]
 pub struct GyroscopeModel {
@@ -46,8 +47,9 @@ impl MeasurementModel for GyroscopeModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::{FrameHandle, TfProvider};
+    use crate::data::primitives::FrameHandle;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::ports::TfProvider;
     use nalgebra::Isometry3;
 
     const AGENT: FrameHandle = FrameHandle(1);

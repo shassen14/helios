@@ -6,7 +6,7 @@ use helios_core::{
 
 use crate::{
     pipeline::autonomy_pipeline::MISSION_GOAL_INSTANCE,
-    port::{ChannelKey, PortBus},
+    port::{ChannelKey, InternalChannel, PortBus},
     prelude::{AgentRuntime, TickContext},
 };
 
@@ -19,7 +19,7 @@ use crate::{
 /// [`PortDescriptor`]: crate::port::PortDescriptor
 /// [`required_channels`]: SearchPlannerInputBuilder::required_channels
 /// [`optional_channels`]: SearchPlannerInputBuilder::optional_channels
-pub trait SearchPlannerInputBuilder: Send + Sync {
+pub(crate) trait SearchPlannerInputBuilder: Send + Sync {
     fn assemble(
         &self,
         bus: &PortBus,
@@ -35,7 +35,7 @@ pub trait SearchPlannerInputBuilder: Send + Sync {
 /// Default builder: reads `FrameAwareState @ ""`, a configurable map channel,
 /// and an optional `PlannerGoal @ "mission"` (the canonical mission slot
 /// written by `AutonomyPipeline::inject_mission_goal`).
-pub struct DefaultSearchPlannerInputBuilder {
+pub(crate) struct DefaultSearchPlannerInputBuilder {
     state_channel: ChannelKey,
     map_channel: ChannelKey,
     goal_channel: ChannelKey,
@@ -44,15 +44,17 @@ pub struct DefaultSearchPlannerInputBuilder {
 }
 
 impl DefaultSearchPlannerInputBuilder {
-    pub fn new(map_channel: ChannelKey) -> Self {
-        let state_channel = ChannelKey::of::<FrameAwareState>();
-        let goal_channel = ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE);
+    pub(crate) fn new(map_channel: InternalChannel) -> Self {
+        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
+        let map_channel_key: ChannelKey = map_channel.into();
+        let goal_channel: ChannelKey =
+            InternalChannel::named::<PlannerGoal>(MISSION_GOAL_INSTANCE).into();
 
         Self {
             state_channel: state_channel.clone(),
-            map_channel: map_channel.clone(),
+            map_channel: map_channel_key.clone(),
             goal_channel: goal_channel.clone(),
-            required: vec![state_channel, map_channel],
+            required: vec![state_channel, map_channel_key],
             optional: vec![goal_channel],
         }
     }

@@ -10,7 +10,7 @@ use crate::pipeline::nodes::search_planner::SearchPlannerNode;
 
 use super::{contexts::SearchPlannerBuildContext, AutonomyRegistry};
 
-pub fn register(registry: &mut AutonomyRegistry) {
+pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_search_planner("AStar", build_astar);
 }
 

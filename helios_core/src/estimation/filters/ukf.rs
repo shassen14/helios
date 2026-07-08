@@ -1,10 +1,10 @@
 use nalgebra::{Cholesky, DMatrix, DVector};
 
-use crate::data::primitives::TfProvider;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
 use crate::frames::FrameAwareState;
+use crate::ports::TfProvider;
 use crate::utils::integrators::RK4;
 
 /// Configuration parameters for the UKF's sigma point generation.
@@ -224,10 +224,11 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::{FrameHandle, TfProvider};
+    use crate::data::primitives::FrameHandle;
     use crate::estimation::measurement::MeasurementModel;
     use crate::estimation::EstimatorInputs;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::ports::TfProvider;
     use nalgebra::{DMatrix, DVector, Isometry3};
 
     struct IdentityTf;

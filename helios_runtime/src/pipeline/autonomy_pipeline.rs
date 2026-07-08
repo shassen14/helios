@@ -1,9 +1,9 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
+use crate::{
+    pipeline::{key_format::format_key_short, node::HOST_PRODUCER_ID, rate_gate::RateTimer},
+    port::{ChannelKey, ChannelKind, InternalChannel, PortBus},
+    prelude::{AgentRuntime, Health, PipelineNode, Stamped, TickContext},
+    BodyCapabilities, NodeId, PipelineBuildError,
 };
-
-use tracing::{debug_span, info, trace_span};
 
 use helios_core::{
     frames::FrameAwareState,
@@ -12,13 +12,12 @@ use helios_core::{
     prelude::{ControlOutput, PlannerGoal},
 };
 
-use crate::{
-    pipeline::{key_format::format_key_short, node::HOST_PRODUCER_ID, rate_gate::RateTimer},
-    port::{ChannelKey, PortBus},
-    prelude::{
-        AgentRuntime, Health, NodeId, PipelineBuildError, PipelineNode, Stamped, TickContext,
-    },
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
 };
+
+use tracing::{debug_span, info, trace_span};
 
 /// Canonical [`ChannelKey`] instance name for the long-lived mission goal slot.
 ///
@@ -29,13 +28,13 @@ use crate::{
 pub const MISSION_GOAL_INSTANCE: &str = "mission";
 
 /// Constructs a [`AutonomyPipeline`] from a set of [`PipelineNode`]s and the
-/// channels supplied from outside the graph.
+/// [`BodyCapabilities`] describing what the host body feeds the graph.
 ///
 /// Build sequence:
 /// 1. Register every node with [`add_node`](Self::add_node).
-/// 2. Declare channels written from outside the graph — sensor tick systems,
-///    mission layer, Zenoh bridge, operator UI — via
-///    [`with_external_channels`](Self::with_external_channels). These seed
+/// 2. Declare the host body's published channels — sensor tick systems,
+///    oracle ground truth, mission layer, Zenoh bridge, operator UI — via
+///    [`with_body_capabilities`](Self::with_body_capabilities). These seed
 ///    the topological sort so consumers don't trip
 ///    [`PipelineBuildError::UnsatisfiedInput`].
 /// 3. Call [`build`](Self::build) — returns either a fully validated
@@ -46,7 +45,7 @@ pub const MISSION_GOAL_INSTANCE: &str = "mission";
 /// last-seen [`Stamped::timestamp`] internally.
 pub struct PipelineBuilder {
     nodes: Vec<Box<dyn PipelineNode>>,
-    external_channel_keys: Vec<ChannelKey>,
+    capabilities: BodyCapabilities,
 }
 
 impl Default for PipelineBuilder {
@@ -56,12 +55,14 @@ impl Default for PipelineBuilder {
 }
 
 impl PipelineBuilder {
-    /// Creates an empty builder. Add nodes and declare external channels
+    /// Creates an empty builder with a default (passive, empty)
+    /// [`BodyCapabilities`]. Add nodes and declare the body's published
+    /// channels via [`with_body_capabilities`](Self::with_body_capabilities)
     /// before calling [`build`](Self::build).
     pub fn new() -> Self {
         PipelineBuilder {
             nodes: vec![],
-            external_channel_keys: vec![],
+            capabilities: BodyCapabilities::default(),
         }
     }
 
@@ -73,15 +74,16 @@ impl PipelineBuilder {
         self
     }
 
-    /// Declares channels written from outside the graph.
-    ///
-    /// These keys seed the topological sort as already-satisfied so a
-    /// consumer of an externally-supplied channel doesn't fail with
-    /// [`PipelineBuildError::UnsatisfiedInput`]. Slot allocation in
-    /// [`PortBus`] still comes from node descriptors — if no node consumes
-    /// a channel, the host write returns [`crate::port::ChannelError::UnknownChannel`].
-    pub fn with_external_channels(mut self, keys: Vec<ChannelKey>) -> Self {
-        self.external_channel_keys = keys;
+    /// Declares the host body's I/O surface — the channels it publishes
+    /// (sensor signals, oracle ground truth, health) and whether it consumes
+    /// control. Each published channel seeds the topological sort in
+    /// [`build`](Self::build) so consumers don't trip
+    /// [`PipelineBuildError::UnsatisfiedInput`]; an unmet `Oracle`/`Health`
+    /// input instead surfaces as
+    /// [`PipelineBuildError::UnsatisfiedBodyCapabilities`], naming the body
+    /// that failed to advertise it.
+    pub fn with_body_capabilities(mut self, capabilities: BodyCapabilities) -> Self {
+        self.capabilities = capabilities;
         self
     }
 
@@ -123,7 +125,7 @@ impl PipelineBuilder {
         // The topological sort treats them as already-satisfied so any
         // consumer of these channels doesn't trip UnsatisfiedInput.
         let mut produced: HashSet<ChannelKey> = HashSet::new();
-        produced.extend(self.external_channel_keys.iter().cloned());
+        produced.extend(self.capabilities.publishes.iter().map(|p| p.key.clone()));
 
         // Kahn's algorithm (level-by-level form). Each iteration pulls out
         // every node whose required inputs are already produced, assigns
@@ -192,10 +194,23 @@ impl PipelineBuilder {
                 for node in &remaining {
                     for channel in &node.port_descriptor().required_inputs {
                         if !produced.contains(channel) && !pending_outputs.contains(channel) {
-                            errors.push(PipelineBuildError::UnsatisfiedInput {
-                                node_name: node.name().to_string(),
-                                channel: channel.clone(),
-                            });
+                            let error = match channel.kind() {
+                                ChannelKind::Sensor | ChannelKind::Internal => {
+                                    PipelineBuildError::UnsatisfiedInput {
+                                        node_name: node.name().to_string(),
+                                        channel: channel.clone(),
+                                    }
+                                }
+                                // todo: fix hardcoded body
+                                ChannelKind::Health | ChannelKind::Oracle => {
+                                    PipelineBuildError::UnsatisfiedBodyCapabilities {
+                                        node_name: node.name().to_string(),
+                                        channel_key: channel.clone(),
+                                        body: self.capabilities.name.clone(),
+                                    }
+                                }
+                            };
+                            errors.push(error);
                         }
                     }
                 }
@@ -229,11 +244,12 @@ impl PipelineBuilder {
         }
 
         // Bus slots are allocated from the union of all node descriptors.
-        // An external channel gets its slot via the consuming node's
-        // `required_inputs` (or `optional_inputs`) — no need to seed slots
-        // from `external_channel_keys` separately. If no node consumes an
-        // external channel, the host write returns `UnknownChannel`, which
-        // is the correct outcome.
+        // A channel the body advertises via `capabilities.publishes` but
+        // which no in-graph node consumes intentionally has no slot — the
+        // host's `bus.write(...)` for such a channel returns
+        // `ChannelError::UnknownChannel` and drops silently. The body
+        // declares intent; the bus tracks intra-graph flow. The two
+        // overlap iff a consumer exists.
         let descriptor_iter = levels
             .iter()
             .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));
@@ -249,7 +265,7 @@ impl PipelineBuilder {
             }
         }
 
-        log_resolved_dag(&levels);
+        log_resolved_dag(&levels, &self.capabilities);
 
         Ok(AutonomyPipeline {
             levels,
@@ -262,13 +278,36 @@ impl PipelineBuilder {
 /// One-shot startup dump of the resolved DAG. Emits at `info` so it's
 /// visible with the default `helios=info` filter; nothing else in the
 /// per-tick path emits at that level, so this stays a single block.
-fn log_resolved_dag(levels: &[Vec<(NodeId, Box<dyn PipelineNode>)>]) {
+fn log_resolved_dag(
+    levels: &[Vec<(NodeId, Box<dyn PipelineNode>)>],
+    capabilities: &BodyCapabilities,
+) {
     info!(
         target: "helios_runtime::pipeline",
         levels = levels.len(),
         nodes = levels.iter().map(|level| level.len()).sum::<usize>(),
         "resolved autonomy pipeline",
     );
+
+    // Body line: who the host is and what it offers the graph. Indented two
+    // spaces to nest under the pipeline header, matching the node lines below.
+    info!(
+        target: "helios_runtime::pipeline",
+        name = capabilities.name,
+        consumes_control = capabilities.consumes_control,
+        published = capabilities.publishes.len(),
+        "  body"
+    );
+
+    // One line per host-published channel, nested another level under body.
+    for pc in &capabilities.publishes {
+        info!(
+            target: "helios_runtime::pipeline",
+            channel = %format_key_short(&pc.key),
+            provenance = ?pc.provenance,
+            "    publishes"
+        )
+    }
 
     for (level_idx, level) in levels.iter().enumerate() {
         for (node_id, node) in level {
@@ -395,9 +434,35 @@ impl AutonomyPipeline {
         };
 
         let _ = self.bus.write(
-            ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE),
+            InternalChannel::named::<PlannerGoal>(MISSION_GOAL_INSTANCE).into(),
             goal_stamped,
         );
+    }
+
+    /// Iterates over every output channel produced by the graph, paired with
+    /// the name of the node that produces it.
+    ///
+    /// Order follows the topological build order (level by level, then node
+    /// order within each level), so producers always appear before the nodes
+    /// that consume their output. Only declared outputs are listed — host-
+    /// supplied external channels and channels with no producing node do not
+    /// appear here. A node that declares multiple outputs yields one entry per
+    /// output, all sharing the same node name.
+    ///
+    /// `helios_test` is the sole consumer: it walks these pairs to build the
+    /// assertion-target paths (`agent.<agent>.<node>.<channel>`) that tests
+    /// reference. This is metadata about the graph's wiring — to read live
+    /// values off the bus, use [`AutonomyPipeline::bus`].
+    pub fn channels(&self) -> impl Iterator<Item = (&str, &ChannelKey)> + '_ {
+        self.levels.iter().flat_map(|level| {
+            level.iter().flat_map(|(_, node)| {
+                let name = node.name();
+                node.port_descriptor()
+                    .outputs
+                    .iter()
+                    .map(move |key| (name, key))
+            })
+        })
     }
 
     /// Reads the current ego state, if any node has written one this run.
@@ -405,13 +470,14 @@ impl AutonomyPipeline {
     /// Returns `None` during cold-start (before the estimator has produced
     /// its first state) and when no estimator node is present in the graph.
     pub fn read_state(&self) -> Option<Arc<Stamped<FrameAwareState>>> {
-        self.bus.read(ChannelKey::of::<FrameAwareState>())
+        self.bus
+            .read(InternalChannel::of::<FrameAwareState>().into())
     }
 
     /// Reads the current control output, if any controller node has
     /// written one this run.
     pub fn read_control(&self) -> Option<Arc<Stamped<ControlOutput>>> {
-        self.bus.read(ChannelKey::of::<ControlOutput>())
+        self.bus.read(InternalChannel::of::<ControlOutput>().into())
     }
 
     /// Reads any [`Path`] currently on the bus, ignoring the planner instance
@@ -431,6 +497,6 @@ impl AutonomyPipeline {
     /// Reads the currently-injected mission goal, if any.
     pub fn read_mission_goal(&self) -> Option<Arc<Stamped<PlannerGoal>>> {
         self.bus
-            .read(ChannelKey::named::<PlannerGoal>(MISSION_GOAL_INSTANCE))
+            .read(InternalChannel::named::<PlannerGoal>(MISSION_GOAL_INSTANCE).into())
     }
 }

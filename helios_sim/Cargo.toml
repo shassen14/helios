@@ -8,9 +8,8 @@ license.workspace = true
 
 [dependencies]
 # Bevy and its ecosystem
-bevy = "0.16.0"
-avian3d = "0.3.0"
-bevy_fly_camera = "0.16.0" # For the debug camera
+bevy = { workspace = true }
+avian3d = "0.7"
 
 # The crucial dependency on our pure core library
 helios_core = { path = "../helios_core", features = ["bevy"] }
@@ -19,15 +18,13 @@ nalgebra = { workspace = true, features = ["serde-serialize"] }
 serde_json = "1.0.149"
 serde = { workspace = true }
 figment = { version = "0.10.19", features = ["toml"] }
-toml = "0.8"                                                               # For parsing scenario files
-rand = "0.8"
-rand_chacha = "0.3.1"                                                      # match bevy
-rand_distr = "0.4.3"                                                       # match bevy
+rand = { workspace = true }
+rand_chacha = "0.3.1"                                           # match bevy
+rand_distr = { workspace = true }
 walkdir = "2.5.0"
 clap = { version = "4.5", features = ["derive"] }
 dhat = { version = "0.3", optional = true }
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing = { workspace = true }
 
 
 [features]

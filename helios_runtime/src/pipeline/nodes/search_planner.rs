@@ -30,8 +30,9 @@ use helios_core::planning::types::PlannerResult;
 use helios_core::planning::SearchPlanner;
 
 use crate::pipeline::builders::planner::SearchPlannerInputBuilder;
+use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
 use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
@@ -39,7 +40,7 @@ use crate::stamped::{Health, Stamped};
 ///
 /// Construction is via [`Self::new`]. The port descriptor is derived from the
 /// input builder — required/optional channels come from there directly.
-pub struct SearchPlannerNode {
+pub(crate) struct SearchPlannerNode {
     name: String,
     planner: Mutex<Box<dyn SearchPlanner>>,
     input_builder: Box<dyn SearchPlannerInputBuilder>,
@@ -54,25 +55,24 @@ impl SearchPlannerNode {
     /// The descriptor's `outputs` is `[path_channel]`, `required_inputs` /
     /// `optional_inputs` mirror the input builder, and `rate` is `None`
     /// (planner owns the replan decision — see the module-level docs).
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         planner: Box<dyn SearchPlanner>,
         input_builder: Box<dyn SearchPlannerInputBuilder>,
-        path_channel: ChannelKey,
+        path_channel: InternalChannel,
     ) -> Self {
-        let required_inputs = input_builder.required_channels().to_vec();
-        let optional_inputs = input_builder.optional_channels().to_vec();
-        let descriptor = PortDescriptor {
-            required_inputs,
-            optional_inputs,
-            outputs: vec![path_channel.clone()],
-            rate: None,
-        };
+        let descriptor = AlgorithmNodePortDescriptor::new()
+            .inputs_from_slices(
+                input_builder.required_channels(),
+                input_builder.optional_channels(),
+            )
+            .output_internal(path_channel.clone())
+            .build();
         Self {
             name: name.into(),
             planner: Mutex::new(planner),
             input_builder,
-            path_channel,
+            path_channel: path_channel.into(),
             descriptor,
         }
     }
@@ -130,7 +130,8 @@ mod tests {
 
     use super::*;
 
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime, TrajectoryPoint};
+    use helios_core::data::messages::TrajectoryPoint;
+    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::frames::{FrameId, RobotState, StateVariable};
     use helios_core::mapping::MapData;
     use helios_core::planning::types::Path;
@@ -249,15 +250,19 @@ mod tests {
 
     // --- Helpers ---
 
-    fn path_channel() -> ChannelKey {
-        ChannelKey::named::<Path>("raw")
+    fn path_channel() -> InternalChannel {
+        InternalChannel::named::<Path>("raw")
+    }
+
+    fn path_channel_key() -> ChannelKey {
+        path_channel().into()
     }
 
     fn make_bus() -> PortBus {
         let descriptor = PortDescriptor {
             required_inputs: vec![],
             optional_inputs: vec![],
-            outputs: vec![path_channel()],
+            outputs: vec![path_channel_key()],
             rate: None,
         };
         PortBus::new(&[descriptor])
@@ -294,7 +299,7 @@ mod tests {
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![path_channel()]);
+        assert_eq!(node.port_descriptor().outputs, vec![path_channel_key()]);
         assert!(node.port_descriptor().rate.is_none());
     }
 
@@ -310,7 +315,7 @@ mod tests {
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
 
         let published = bus
-            .read::<Path>(path_channel())
+            .read::<Path>(path_channel_key())
             .expect("node must publish a Path on PlannerResult::Path");
         assert!((published.timestamp.0 - 1.0).abs() < 1e-9);
         assert_eq!(published.producer, 7);
@@ -328,7 +333,7 @@ mod tests {
         );
         let bus = make_bus();
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<Path>(path_channel()).is_some());
+        assert!(bus.read::<Path>(path_channel_key()).is_some());
     }
 
     #[test]
@@ -341,7 +346,7 @@ mod tests {
         );
         let bus = make_bus();
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<Path>(path_channel()).is_none());
+        assert!(bus.read::<Path>(path_channel_key()).is_none());
     }
 
     #[test]
@@ -360,6 +365,6 @@ mod tests {
         );
         let bus = make_bus();
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<Path>(path_channel()).is_none());
+        assert!(bus.read::<Path>(path_channel_key()).is_none());
     }
 }

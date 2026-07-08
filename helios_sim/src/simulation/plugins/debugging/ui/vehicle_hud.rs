@@ -8,7 +8,6 @@
 use bevy::prelude::*;
 
 use crate::simulation::plugins::debugging::components::DebugVisualizationConfig;
-use crate::simulation::profile::CapabilitySet;
 
 pub use super::vehicle_hud_update::{toggle_state_source, update_vehicle_hud};
 
@@ -28,16 +27,9 @@ pub struct VehicleHudEntities {
 }
 
 /// Builds the full HUD node tree and inserts `VehicleHudEntities`.
-/// Called once on `OnEnter(Running)`; no-ops if neither control nor estimation is active.
-pub fn spawn_vehicle_hud(
-    mut commands: Commands,
-    capabilities: Res<CapabilitySet>,
-    config: Res<DebugVisualizationConfig>,
-) {
-    if !capabilities.control() && !capabilities.estimation() {
-        return;
-    }
-
+/// Called once on `OnEnter(Running)`. The HUD is hidden by default and shown
+/// when its `show_vehicle_hud` flag is set or the C key is pressed.
+pub fn spawn_vehicle_hud(mut commands: Commands, config: Res<DebugVisualizationConfig>) {
     let initial_vis = if config.show_vehicle_hud {
         Visibility::Visible
     } else {
@@ -74,7 +66,7 @@ pub fn spawn_vehicle_hud(
             Node::default(),
             Text::new("Des: --"),
             TextFont {
-                font_size: 12.0,
+                font_size: FontSize::Px(12.0),
                 ..default()
             },
             TextColor(Color::srgb(0.8, 0.8, 0.8)),
@@ -86,7 +78,7 @@ pub fn spawn_vehicle_hud(
             Node::default(),
             Text::new("GT:  -- m/s"),
             TextFont {
-                font_size: 12.0,
+                font_size: FontSize::Px(12.0),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -98,7 +90,7 @@ pub fn spawn_vehicle_hud(
             Node::default(),
             Text::new("Est: --"),
             TextFont {
-                font_size: 12.0,
+                font_size: FontSize::Px(12.0),
                 ..default()
             },
             TextColor(Color::srgb(0.6, 0.8, 1.0)),
@@ -141,10 +133,10 @@ pub fn spawn_vehicle_hud(
                 height: Val::Px(60.0),
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
+                border_radius: BorderRadius::all(Val::Px(30.0)),
                 ..default()
             },
             BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
-            BorderRadius::all(Val::Px(30.0)),
         ))
         .id();
     commands.entity(steering_circle).add_child(steering_spoke);
@@ -154,7 +146,7 @@ pub fn spawn_vehicle_hud(
             Node::default(),
             Text::new("--"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -166,7 +158,7 @@ pub fn spawn_vehicle_hud(
             Node::default(),
             Text::new("Steering"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::srgb(0.6, 0.6, 0.6)),
@@ -220,7 +212,7 @@ pub fn spawn_vehicle_hud(
             Node::default(),
             Text::new("--"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -232,7 +224,7 @@ pub fn spawn_vehicle_hud(
             Node::default(),
             Text::new("Throttle"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::srgb(0.6, 0.6, 0.6)),
@@ -277,7 +269,7 @@ pub fn spawn_vehicle_hud(
             Node::default(),
             Text::new("Vehicle Control [C]"),
             TextFont {
-                font_size: 13.0,
+                font_size: FontSize::Px(13.0),
                 ..default()
             },
             TextColor(Color::srgb(0.9, 0.9, 0.9)),
@@ -289,7 +281,7 @@ pub fn spawn_vehicle_hud(
             Node::default(),
             Text::new("─ Speed (m/s) ─"),
             TextFont {
-                font_size: 11.0,
+                font_size: FontSize::Px(11.0),
                 ..default()
             },
             TextColor(Color::srgb(0.5, 0.5, 0.5)),

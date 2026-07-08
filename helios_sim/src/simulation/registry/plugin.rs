@@ -12,14 +12,8 @@ use super::{adapters::DefaultAdaptersPlugin, VehicleAdapterRegistry};
 /// Wraps the portable `helios_runtime::AutonomyRegistry` as a Bevy resource.
 ///
 /// `build_pipeline()` in the spawn system reads this to assemble `AutonomyPipeline`.
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct RuntimeAutonomyRegistry(pub AutonomyRegistry);
-
-impl Default for RuntimeAutonomyRegistry {
-    fn default() -> Self {
-        Self(AutonomyRegistry::default())
-    }
-}
 
 pub struct AutonomyRegistryPlugin;
 

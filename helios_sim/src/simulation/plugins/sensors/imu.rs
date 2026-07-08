@@ -12,10 +12,11 @@ use crate::simulation::core::{
 };
 use crate::simulation::plugins::autonomy::components::AutonomyPipelineComponent;
 
+use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::data::sensor::{AngularVelocity3D, LinearAcceleration3D, SensorReading};
+use helios_core::data::sensor::{AngularVelocity3D, LinearAcceleration3D};
 use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
-use helios_runtime::port::ChannelKey;
+use helios_runtime::port::SensorChannel;
 use helios_runtime::stamped::{Health, Stamped};
 
 // =========================================================================
@@ -223,7 +224,7 @@ fn imu_sensor_system(
             .0
             .bus()
             .write(
-                ChannelKey::of::<Vec<SensorReading<LinearAcceleration3D>>>(),
+                SensorChannel::of::<Vec<SensorReading<LinearAcceleration3D>>>().into(),
                 accel_stamped,
             )
             .ok();
@@ -232,7 +233,7 @@ fn imu_sensor_system(
             .0
             .bus()
             .write(
-                ChannelKey::of::<Vec<SensorReading<AngularVelocity3D>>>(),
+                SensorChannel::of::<Vec<SensorReading<AngularVelocity3D>>>().into(),
                 gyro_stamped,
             )
             .ok();

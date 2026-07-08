@@ -40,13 +40,13 @@ pub enum SearchPlannerConfig {
 }
 
 impl SearchPlannerConfig {
-    pub fn get_kind_str(&self) -> &str {
+    pub(crate) fn get_kind_str(&self) -> &str {
         match self {
             SearchPlannerConfig::AStar { .. } => "AStar",
         }
     }
 
-    pub fn get_level_str(&self) -> &str {
+    pub(crate) fn get_level_str(&self) -> &str {
         match self {
             SearchPlannerConfig::AStar { level, .. } => level.as_str(),
         }

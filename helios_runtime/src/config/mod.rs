@@ -14,7 +14,8 @@ mod planner;
 
 pub use agent::AgentBaseConfig;
 pub use autonomy::AutonomyStack;
-pub use controller::{ControllerConfig, ControllerStateSourceConfig};
+pub use controller::ControllerConfig;
+pub use controller::ControllerStateSourceConfig;
 pub use estimator::{
     AckermannProcessNoiseConfig, AidingConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig,
     EstimatorConfig, IntegratedImuConfig, QuadcopterProcessNoiseConfig, SensorModelConfig,

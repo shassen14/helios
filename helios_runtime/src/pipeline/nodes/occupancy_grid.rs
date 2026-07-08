@@ -55,13 +55,15 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use atomic_float::AtomicF64;
+use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::FrameHandle;
-use helios_core::data::sensor::{PointCloud2D, SensorReading};
+use helios_core::data::sensor::PointCloud2D;
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::Mapper;
 
+use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};
 use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
@@ -72,7 +74,7 @@ use crate::stamped::{Health, Stamped};
 /// scan streams have been split). `map_channel` is the published map slot
 /// — convention `MapData @ "local"` for rolling-window grids, `@ "global"`
 /// for SLAM-style world maps.
-pub struct OccupancyGridNode {
+pub(crate) struct OccupancyGridNode {
     name: String,
     mapper: Mutex<Box<dyn Mapper>>,
     /// Agent (body) frame used to compose `agent → sensor` static transforms
@@ -97,26 +99,28 @@ impl OccupancyGridNode {
     /// `rate_hz = Some(hz)` rate-gates the node; `None` fires every tick.
     /// Required inputs: `FrameAwareState @ ""` and `scan_channel`.
     /// Outputs: `map_channel`.
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         mapper: Box<dyn Mapper>,
         agent_handle: FrameHandle,
-        scan_channel: ChannelKey,
-        map_channel: ChannelKey,
+        scan_channel: SensorChannel,
+        map_channel: InternalChannel,
         rate_hz: Option<f64>,
     ) -> Self {
-        let descriptor = PortDescriptor {
-            required_inputs: vec![ChannelKey::of::<FrameAwareState>(), scan_channel.clone()],
-            optional_inputs: vec![],
-            outputs: vec![map_channel.clone()],
-            rate: rate_hz,
-        };
+        let mut builder = AlgorithmNodePortDescriptor::new()
+            .input_internal(InternalChannel::of::<FrameAwareState>())
+            .input_sensor(scan_channel.clone())
+            .output_internal(map_channel.clone());
+        if let Some(hz) = rate_hz {
+            builder = builder.rate_hz(hz);
+        }
+        let descriptor = builder.build();
         Self {
             name: name.into(),
             mapper: Mutex::new(mapper),
             agent_handle,
-            scan_channel,
-            map_channel,
+            scan_channel: scan_channel.into(),
+            map_channel: map_channel.into(),
             descriptor,
             last_integrated_ts: AtomicF64::new(f64::NEG_INFINITY),
         }
@@ -134,7 +138,8 @@ impl PipelineNode for OccupancyGridNode {
 
     fn execute(&self, bus: &PortBus, runtime: &dyn AgentRuntime, tick: TickContext) {
         // 1. Robot pose from the upstream estimator (real or ground-truth).
-        let Some(stamped_state) = bus.read::<FrameAwareState>(ChannelKey::of::<FrameAwareState>())
+        let Some(stamped_state) =
+            bus.read::<FrameAwareState>(InternalChannel::of::<FrameAwareState>().into())
         else {
             return;
         };
@@ -203,8 +208,9 @@ mod tests {
     //!     the correct `now` / `producer`
 
     use super::*;
+    use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-    use helios_core::data::sensor::{PointCloud2D, SensorReading};
+    use helios_core::data::sensor::PointCloud2D;
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use helios_core::mapping::{MapData, Mapper};
     use nalgebra::{Isometry3, Point2, Translation3, UnitQuaternion};
@@ -300,11 +306,20 @@ mod tests {
 
     // --- Helpers ---
 
+    fn scan_sensor_channel() -> SensorChannel {
+        SensorChannel::of::<Vec<SensorReading<PointCloud2D>>>()
+    }
     fn scan_channel() -> ChannelKey {
-        ChannelKey::of::<Vec<SensorReading<PointCloud2D>>>()
+        scan_sensor_channel().into()
+    }
+    fn map_internal_channel() -> InternalChannel {
+        InternalChannel::named::<MapData>("local")
     }
     fn map_channel() -> ChannelKey {
-        ChannelKey::named::<MapData>("local")
+        map_internal_channel().into()
+    }
+    fn state_channel() -> ChannelKey {
+        InternalChannel::of::<FrameAwareState>().into()
     }
 
     fn make_bus() -> PortBus {
@@ -313,7 +328,7 @@ mod tests {
         let host_state = PortDescriptor {
             required_inputs: vec![],
             optional_inputs: vec![],
-            outputs: vec![ChannelKey::of::<FrameAwareState>()],
+            outputs: vec![state_channel()],
             rate: None,
         };
         let host_scans = PortDescriptor {
@@ -355,8 +370,7 @@ mod tests {
             health: Health::Ok,
             producer: 99,
         };
-        bus.write(ChannelKey::of::<FrameAwareState>(), stamped)
-            .unwrap();
+        bus.write(state_channel(), stamped).unwrap();
     }
 
     fn publish_scans(bus: &PortBus, readings: Vec<SensorReading<PointCloud2D>>) {
@@ -385,14 +399,12 @@ mod tests {
             "occ",
             Box::new(EmptyMapper),
             AGENT,
-            scan_channel(),
-            map_channel(),
+            scan_sensor_channel(),
+            map_internal_channel(),
             Some(5.0),
         );
         let d = node.port_descriptor();
-        assert!(d
-            .required_inputs
-            .contains(&ChannelKey::of::<FrameAwareState>()));
+        assert!(d.required_inputs.contains(&state_channel()));
         assert!(d.required_inputs.contains(&scan_channel()));
         assert_eq!(d.outputs, vec![map_channel()]);
         assert_eq!(d.rate, Some(5.0));
@@ -406,8 +418,8 @@ mod tests {
             "occ",
             Box::new(RecordingMapper::new()),
             AGENT,
-            scan_channel(),
-            map_channel(),
+            scan_sensor_channel(),
+            map_internal_channel(),
             None,
         );
         let bus = make_bus();
@@ -426,8 +438,8 @@ mod tests {
             "occ",
             Box::new(EmptyMapper),
             AGENT,
-            scan_channel(),
-            map_channel(),
+            scan_sensor_channel(),
+            map_internal_channel(),
             None,
         );
         let bus = make_bus();
@@ -453,8 +465,8 @@ mod tests {
             "occ",
             Box::new(mapper),
             AGENT,
-            scan_channel(),
-            map_channel(),
+            scan_sensor_channel(),
+            map_internal_channel(),
             None,
         );
         let bus = make_bus();
@@ -501,8 +513,8 @@ mod tests {
             "occ",
             Box::new(mapper),
             AGENT,
-            scan_channel(),
-            map_channel(),
+            scan_sensor_channel(),
+            map_internal_channel(),
             None,
         );
         let bus = make_bus();

@@ -22,6 +22,11 @@ pub enum PipelineBuildError {
         node_name: String,
         channel: ChannelKey,
     },
+    UnsatisfiedBodyCapabilities {
+        node_name: String,
+        channel_key: ChannelKey,
+        body: String,
+    },
     /// Two nodes both declared the same channel as one of their outputs.
     /// At most one producer per channel is allowed.
     MultipleProducers {
@@ -52,6 +57,14 @@ impl std::fmt::Display for PipelineBuildError {
             PipelineBuildError::UnsatisfiedInput { node_name, channel } => {
                 write!(f, "node \"{node_name}\" requires channel {channel} but no upstream node or signal key produces it")
             }
+            PipelineBuildError::UnsatisfiedBodyCapabilities {
+                node_name,
+                channel_key,
+                body,
+            } => write!(
+                f,
+                "Node {node_name} requires channel {channel_key}; body {body} does not advertise it."
+            ),
             PipelineBuildError::MultipleProducers {
                 channel,
                 first_node,

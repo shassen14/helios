@@ -16,7 +16,11 @@ use figment::{
 };
 
 // Re-export public types
-use crate::{cli::Cli, prelude::AppState, simulation::core::app_state::AssetLoadSet};
+use crate::{
+    cli::Cli,
+    prelude::AppState,
+    simulation::{config::structs::Simulation, core::app_state::AssetLoadSet},
+};
 use catalog::load_catalog_from_disk;
 pub use catalog::PrefabCatalog;
 pub use structs::{AgentConfig, RawScenarioConfig, ScenarioConfig};
@@ -70,7 +74,7 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
     }
 
     // 3. Assemble the final, complete `ScenarioConfig` resource.
-    let final_config = ScenarioConfig {
+    let mut final_config = ScenarioConfig {
         simulation: raw_config.simulation,
         world: raw_config.world,
         debug: raw_config.debug,
@@ -78,6 +82,86 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
         agents: resolved_agents,
     };
 
+    apply_cli_overrides(&mut final_config.simulation, &cli);
+
     // 4. Insert the single, unified config as a resource.
     commands.insert_resource(final_config);
+}
+
+// Stamp command-line overrides onto the resolved simulation config, after the
+// scenario file has been loaded. Precedence is CLI > file > default: a flag that
+// is set wins over the file's value; a flag left unset leaves the file untouched.
+// This is the single seam where launch-time flags reach the runtime config, so
+// the resolved-config dump reflects exactly what ran.
+fn apply_cli_overrides(sim: &mut Simulation, cli: &Cli) {
+    // Only override when `--seed` was actually passed; otherwise the scenario
+    // file's seed (or its absence) stands. Binding the value avoids re-reading
+    // `cli.seed` through an `Option` after the assignment.
+    if let Some(seed) = cli.seed {
+        sim.seed = Some(seed);
+        info!("seed from CLI override: {seed}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::path::PathBuf;
+
+    // A `Cli` carrying only the seed under test; the path fields are irrelevant
+    // to `apply_cli_overrides` and just need to be well-formed.
+    fn cli_with_seed(seed: Option<u64>) -> Cli {
+        Cli {
+            scenario: PathBuf::from("unused.toml"),
+            config_root: PathBuf::from("configs"),
+            headless: true,
+            seed,
+        }
+    }
+
+    #[test]
+    fn cli_seed_overrides_the_file_seed() {
+        // CLI > file: an explicit `--seed` must win over the scenario value.
+        let mut sim = Simulation {
+            seed: Some(2024),
+            ..Default::default()
+        };
+        apply_cli_overrides(&mut sim, &cli_with_seed(Some(99)));
+        assert_eq!(sim.seed, Some(99));
+    }
+
+    #[test]
+    fn absent_cli_seed_keeps_the_file_seed() {
+        // No `--seed` passed: the scenario file's seed stands untouched.
+        let mut sim = Simulation {
+            seed: Some(2024),
+            ..Default::default()
+        };
+        apply_cli_overrides(&mut sim, &cli_with_seed(None));
+        assert_eq!(sim.seed, Some(2024));
+    }
+
+    #[test]
+    fn absent_cli_seed_leaves_an_unset_file_seed_unset() {
+        // No `--seed` and no file seed: stays `None` so the RNG later falls back
+        // to OS entropy.
+        let mut sim = Simulation {
+            seed: None,
+            ..Default::default()
+        };
+        apply_cli_overrides(&mut sim, &cli_with_seed(None));
+        assert_eq!(sim.seed, None);
+    }
+
+    #[test]
+    fn cli_seed_sets_a_previously_unset_file_seed() {
+        // `--seed` on a scenario that left seed unset still takes effect.
+        let mut sim = Simulation {
+            seed: None,
+            ..Default::default()
+        };
+        apply_cli_overrides(&mut sim, &cli_with_seed(Some(7)));
+        assert_eq!(sim.seed, Some(7));
+    }
 }

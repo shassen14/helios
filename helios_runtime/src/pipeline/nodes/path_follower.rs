@@ -33,13 +33,14 @@
 
 use std::sync::Mutex;
 
-use helios_core::data::primitives::TrajectoryPoint;
+use helios_core::data::messages::TrajectoryPoint;
 use helios_core::path_following::{PathFollower, PathFollowerResult};
 use helios_core::planning::types::Path;
 
 use crate::pipeline::builders::path_follower::PathFollowerInputBuilder;
+use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
 use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
@@ -58,7 +59,7 @@ struct FollowerState {
 /// The port descriptor adds `path_channel` to whatever the input builder
 /// requires, declares `TrajectoryPoint @ ""` as its single output, and uses
 /// `rate: None` — the follower fires every tick (controller rate).
-pub struct PathFollowerNode {
+pub(crate) struct PathFollowerNode {
     name: String,
     state: Mutex<FollowerState>,
     input_builder: Box<dyn PathFollowerInputBuilder>,
@@ -74,25 +75,24 @@ impl PathFollowerNode {
     /// `optional_inputs` mirrors the builder.
     /// `outputs` = `[TrajectoryPoint @ ""]`.
     /// `rate` = `None`.
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         follower: Box<dyn PathFollower>,
         input_builder: Box<dyn PathFollowerInputBuilder>,
-        path_channel: ChannelKey,
+        path_channel: InternalChannel,
     ) -> Self {
-        let mut required_inputs = input_builder.required_channels().to_vec();
-        // Avoid silently double-declaring if a future builder ever includes the
-        // path channel itself.
-        if !required_inputs.contains(&path_channel) {
-            required_inputs.push(path_channel.clone());
+        let path_channel_key: ChannelKey = path_channel.clone().into();
+
+        // Avoid silently double-declaring if a future builder ever includes
+        // the path channel itself.
+        let builder_required = input_builder.required_channels();
+        let mut builder = AlgorithmNodePortDescriptor::new()
+            .inputs_from_slices(builder_required, input_builder.optional_channels())
+            .output_internal(InternalChannel::of::<TrajectoryPoint>());
+        if !builder_required.contains(&path_channel_key) {
+            builder = builder.input_internal(path_channel.clone());
         }
-        let optional_inputs = input_builder.optional_channels().to_vec();
-        let descriptor = PortDescriptor {
-            required_inputs,
-            optional_inputs,
-            outputs: vec![ChannelKey::of::<TrajectoryPoint>()],
-            rate: None,
-        };
+        let descriptor = builder.build();
         Self {
             name: name.into(),
             state: Mutex::new(FollowerState {
@@ -100,7 +100,7 @@ impl PathFollowerNode {
                 last_path_timestamp: None,
             }),
             input_builder,
-            path_channel,
+            path_channel: path_channel_key,
             descriptor,
         }
     }
@@ -156,7 +156,7 @@ impl PipelineNode for PathFollowerNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(ChannelKey::of::<TrajectoryPoint>(), stamped);
+        let _ = bus.write(InternalChannel::of::<TrajectoryPoint>().into(), stamped);
     }
 }
 
@@ -174,7 +174,8 @@ mod tests {
 
     use super::*;
 
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime, TrajectoryPoint};
+    use helios_core::data::messages::TrajectoryPoint;
+    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::frames::{FrameId, RobotState, StateVariable};
     use helios_core::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::planning::types::Path;
@@ -303,12 +304,16 @@ mod tests {
 
     // --- Helpers ---
 
-    fn path_channel() -> ChannelKey {
-        ChannelKey::named::<Path>("raw")
+    fn path_channel() -> InternalChannel {
+        InternalChannel::named::<Path>("raw")
+    }
+
+    fn path_channel_key() -> ChannelKey {
+        path_channel().into()
     }
 
     fn out_channel() -> ChannelKey {
-        ChannelKey::of::<TrajectoryPoint>()
+        InternalChannel::of::<TrajectoryPoint>().into()
     }
 
     fn make_bus() -> PortBus {
@@ -318,7 +323,7 @@ mod tests {
         let path_producer = PortDescriptor {
             required_inputs: vec![],
             optional_inputs: vec![],
-            outputs: vec![path_channel()],
+            outputs: vec![path_channel_key()],
             rate: None,
         };
         let traj_producer = PortDescriptor {
@@ -363,7 +368,7 @@ mod tests {
             health: Health::Ok,
             producer: 99,
         };
-        bus.write(path_channel(), stamped).unwrap();
+        bus.write(path_channel_key(), stamped).unwrap();
     }
 
     // --- Tests ---
@@ -382,7 +387,7 @@ mod tests {
         assert!(node
             .port_descriptor()
             .required_inputs
-            .contains(&path_channel()));
+            .contains(&path_channel_key()));
     }
 
     #[test]

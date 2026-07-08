@@ -1,0 +1,61 @@
+# =========================================================================
+# == Dev Scenario: Mock Oracle Estimator ==
+# =========================================================================
+# E2E acceptance for Phase 3's mock_oracle_estimator. Built by deep-merging
+# the tutorial scenario and replacing only the estimator with the MockOracle
+# passthrough. Everything else (A*, occupancy grid, controller, lidar) is
+# the same real pipeline.
+#
+# What to verify when running this:
+#   1. DAG dump at startup lists `mock_oracle_estimator` (not `ekf`).
+#   2. F10 oracle-pose gizmo lights up — consumer-side declaration of
+#      oracle/pose is what allocates the bus slot the publisher writes to.
+#   3. `\` bus dump shows `oracle/pose`, `oracle/twist`, and
+#      `FrameAwareState @ ""` all `[set]`.
+#   4. Vehicle tracks the planned path; with the mock estimator there is
+#      no estimation error.
+
+[simulation]
+duration_seconds = 60.0
+seed = 1337
+
+[[world.terrains]]
+mesh     = "maps/starter_world2.glb"
+collider = "maps/starter_world2_col.glb"
+medium   = "air"
+
+[world.atmosphere]
+gravity = [0.0, -9.81, 0.0]
+sun_elevation = 45.0
+sun_azimuth = 180.0
+ambient_lux = 1500.0
+
+[debug]
+show_pose_gimbals = true
+show_point_cloud = true
+show_error_line = true
+show_occupancy_grid = true
+show_tf_frames = true
+show_legend = true
+show_planned_path = true
+
+[[agents]]
+from = "sim.catalog.agents.ackermann_car_pro"
+name = "MockOraclePro"
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { translation = [100.0, 50.0, 0.5] }
+
+# Add the lidar (the pro prefab doesn't include one by default) so the
+# occupancy grid mapper has a scan source.
+[agents.sensors.lidar]
+from = "entities.sensors.lidar2d"
+
+# Enable the local-layer mapper so A* has a map to plan against.
+[agents.autonomy_stack.map_layers.local]
+from = "runtime.catalog.mappers.occupancy_grid_2d"
+
+# === The only real Phase 3 change: swap the estimator for MockOracle. ===
+# Deep-merge override of the estimator field inherited from ackermann_car_pro.
+# Because MockOracle's config is empty, no further keys are needed.
+[agents.autonomy_stack.estimators.primary]
+from = "runtime.catalog.estimators.mock_oracle"

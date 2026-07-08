@@ -26,23 +26,24 @@ mod dynamics;
 mod gaussian_estimator;
 mod mapper;
 mod measurement_model;
+mod mock_estimator;
 mod path_follower;
 mod search_planner;
 
-use std::collections::HashMap;
-
-use helios_core::estimation::dynamics::EstimationDynamics;
-use helios_core::estimation::measurement::MeasurementModel;
+use contexts::{
+    ControllerBuildContext, DynamicsBuildContext, GaussianEstimatorBuildContext,
+    MapperBuildContext, MeasurementModelBuildContext, MockEstimatorBuildContext,
+    PathFollowerBuildContext, SearchPlannerBuildContext,
+};
 
 use crate::config::EstimatorConfig;
 use crate::pipeline::node::PipelineNode;
 use crate::validation::CapabilitySet;
 
-use contexts::{
-    ControllerBuildContext, DynamicsBuildContext, GaussianEstimatorBuildContext,
-    MapperBuildContext, MeasurementModelBuildContext, PathFollowerBuildContext,
-    SearchPlannerBuildContext,
-};
+use helios_core::estimation::dynamics::EstimationDynamics;
+use helios_core::estimation::measurement::MeasurementModel;
+
+use std::collections::HashMap;
 
 type DynamicsFactory =
     Box<dyn Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String> + Send + Sync>;
@@ -73,6 +74,12 @@ type SearchPlannerFactory =
 type PathFollowerFactory =
     Box<dyn Fn(PathFollowerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
+type MockEstimatorFactory = Box<
+    dyn Fn(EstimatorConfig, MockEstimatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
+        + Send
+        + Sync,
+>;
+
 /// Portable factory registry for autonomy pipeline nodes.
 ///
 /// All `register_*` methods accept a `key: impl Into<String>` and a factory
@@ -86,6 +93,8 @@ pub struct AutonomyRegistry {
     controllers: HashMap<String, ControllerFactory>,
     search_planners: HashMap<String, SearchPlannerFactory>,
     path_followers: HashMap<String, PathFollowerFactory>,
+    // mocks
+    mock_estimators: HashMap<String, MockEstimatorFactory>,
 }
 
 impl Default for AutonomyRegistry {
@@ -98,6 +107,7 @@ impl Default for AutonomyRegistry {
             controllers: HashMap::new(),
             search_planners: HashMap::new(),
             path_followers: HashMap::new(),
+            mock_estimators: HashMap::new(),
         };
         // Registration order: leaf dependencies before composites.
         dynamics::register(&mut registry);
@@ -107,6 +117,7 @@ impl Default for AutonomyRegistry {
         controller::register(&mut registry);
         search_planner::register(&mut registry);
         path_follower::register(&mut registry);
+        mock_estimator::register(&mut registry);
         registry
     }
 }
@@ -114,7 +125,7 @@ impl Default for AutonomyRegistry {
 impl AutonomyRegistry {
     // --- Registration ---
 
-    pub fn register_dynamics(
+    pub(crate) fn register_dynamics(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String>
@@ -125,7 +136,7 @@ impl AutonomyRegistry {
         self.dynamics.insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_measurement_model(
+    pub(crate) fn register_measurement_model(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String>
@@ -137,7 +148,7 @@ impl AutonomyRegistry {
             .insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_gaussian_estimator(
+    pub(crate) fn register_gaussian_estimator(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(
@@ -153,7 +164,7 @@ impl AutonomyRegistry {
             .insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_mapper(
+    pub(crate) fn register_mapper(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(MapperBuildContext) -> Result<Box<dyn PipelineNode>, String>
@@ -164,7 +175,7 @@ impl AutonomyRegistry {
         self.mappers.insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_controller(
+    pub(crate) fn register_controller(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String>
@@ -175,7 +186,7 @@ impl AutonomyRegistry {
         self.controllers.insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_search_planner(
+    pub(crate) fn register_search_planner(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(SearchPlannerBuildContext) -> Result<Box<dyn PipelineNode>, String>
@@ -186,7 +197,7 @@ impl AutonomyRegistry {
         self.search_planners.insert(key.into(), Box::new(factory));
     }
 
-    pub fn register_path_follower(
+    pub(crate) fn register_path_follower(
         &mut self,
         key: impl Into<String>,
         factory: impl Fn(PathFollowerBuildContext) -> Result<Box<dyn PipelineNode>, String>
@@ -197,9 +208,20 @@ impl AutonomyRegistry {
         self.path_followers.insert(key.into(), Box::new(factory));
     }
 
+    pub(crate) fn register_mock_estimator(
+        &mut self,
+        key: impl Into<String>,
+        factory: impl Fn(EstimatorConfig, MockEstimatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.mock_estimators.insert(key.into(), Box::new(factory));
+    }
+
     // --- Build ---
 
-    pub fn build_dynamics(
+    pub(crate) fn build_dynamics(
         &self,
         key: &str,
         ctx: DynamicsBuildContext,
@@ -209,7 +231,7 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No dynamics factory registered for '{key}'"))?(ctx)
     }
 
-    pub fn build_measurement_model(
+    pub(crate) fn build_measurement_model(
         &self,
         key: &str,
         ctx: MeasurementModelBuildContext,
@@ -221,7 +243,7 @@ impl AutonomyRegistry {
         )
     }
 
-    pub fn build_gaussian_estimator(
+    pub(crate) fn build_gaussian_estimator(
         &self,
         key: &str,
         config: EstimatorConfig,
@@ -234,7 +256,7 @@ impl AutonomyRegistry {
         )
     }
 
-    pub fn build_mapper(
+    pub(crate) fn build_mapper(
         &self,
         key: &str,
         ctx: MapperBuildContext,
@@ -244,7 +266,7 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No mapper factory registered for '{key}'"))?(ctx)
     }
 
-    pub fn build_controller(
+    pub(crate) fn build_controller(
         &self,
         key: &str,
         ctx: ControllerBuildContext,
@@ -254,7 +276,7 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No controller factory registered for '{key}'"))?(ctx)
     }
 
-    pub fn build_search_planner(
+    pub(crate) fn build_search_planner(
         &self,
         key: &str,
         ctx: SearchPlannerBuildContext,
@@ -264,7 +286,7 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No search planner factory registered for '{key}'"))?(ctx)
     }
 
-    pub fn build_path_follower(
+    pub(crate) fn build_path_follower(
         &self,
         key: &str,
         ctx: PathFollowerBuildContext,
@@ -272,6 +294,20 @@ impl AutonomyRegistry {
         self.path_followers
             .get(key)
             .ok_or_else(|| format!("No path follower factory registered for '{key}'"))?(ctx)
+    }
+
+    pub(crate) fn build_mock_estimator(
+        &self,
+        key: &str,
+        config: EstimatorConfig,
+        ctx: MockEstimatorBuildContext,
+    ) -> Result<Box<dyn PipelineNode>, String> {
+        self.mock_estimators.get(key).ok_or_else(|| {
+            format!(
+                "No mock estimator factory
+  registered for '{key}'"
+            )
+        })?(config, ctx)
     }
 
     /// Snapshot of all registered keys per family, for `validate_autonomy_config`.

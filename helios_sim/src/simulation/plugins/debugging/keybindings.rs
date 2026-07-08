@@ -59,6 +59,10 @@ pub fn handle_debug_keybindings(
                     config.show_planned_path = !config.show_planned_path;
                     info!("[Debug] Planned Path {}", on_off(config.show_planned_path));
                 }
+                DebugToggle::OraclePose => {
+                    config.show_oracle_pose = !config.show_oracle_pose;
+                    info!("[Debug] Oracle Pose {}", on_off(config.show_oracle_pose));
+                }
                 DebugToggle::Legend => {
                     config.show_legend = !config.show_legend;
                 }

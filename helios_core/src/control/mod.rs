@@ -6,7 +6,6 @@
 
 pub mod direct_velocity;
 pub mod dynamics;
-pub mod feedforward_pid;
 pub mod lqr;
 pub mod pid;
 pub mod siso_pid;
@@ -15,7 +14,7 @@ pub use crate::control::dynamics::ControlDynamics;
 
 use nalgebra::{DVector, Vector3};
 
-use crate::{data::primitives::TrajectoryPoint, frames::FrameAwareState};
+use crate::{data::messages::TrajectoryPoint, frames::FrameAwareState};
 
 // =========================================================================
 // == Core Data Types ==

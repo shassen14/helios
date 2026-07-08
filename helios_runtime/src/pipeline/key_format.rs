@@ -1,7 +1,7 @@
 //! Short-form rendering for [`ChannelKey`] type names.
 //!
 //! Collapses each `::`-qualified path inside a `ChannelKey::type_name` to its
-//! leaf — `helios_core::data::sensor::SensorReading` → `SensorReading` —
+//! leaf — `helios_core::data::envelope::SensorReading` → `SensorReading` —
 //! while leaving generic punctuation (`<`, `>`, `,`, `&`, parens) intact.
 //! Used by the DAG dump and the bus snapshot for readability; production
 //! code keeps full paths via [`ChannelKey`]'s `Display`.
@@ -9,14 +9,22 @@
 use crate::port::ChannelKey;
 
 pub(crate) fn format_key_short(key: &ChannelKey) -> String {
-    let mut out = String::with_capacity(key.type_name.len());
+    let type_name = key.type_name();
+    let instance = key.instance();
+    let kind = key.kind().as_str();
+
+    let mut out = String::with_capacity(type_name.len() + kind.len() + 4);
+    out.push('[');
+    out.push_str(kind);
+    out.push_str("] ");
+
     let mut segment_start = 0usize;
-    let bytes = key.type_name.as_bytes();
+    let bytes = type_name.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         let c = bytes[i] as char;
         if matches!(c, '<' | '>' | ',' | ' ' | '&' | '(' | ')') {
-            push_leaf(&mut out, &key.type_name[segment_start..i]);
+            push_leaf(&mut out, &type_name[segment_start..i]);
             out.push(c);
             i += 1;
             segment_start = i;
@@ -24,12 +32,12 @@ pub(crate) fn format_key_short(key: &ChannelKey) -> String {
             i += 1;
         }
     }
-    push_leaf(&mut out, &key.type_name[segment_start..]);
+    push_leaf(&mut out, &type_name[segment_start..]);
 
-    if key.instance.trim().is_empty() {
+    if instance.trim().is_empty() {
         out
     } else {
-        format!("{out} @ \"{}\"", key.instance)
+        format!("{out} @ \"{instance}\"")
     }
 }
 

@@ -1,8 +1,6 @@
-// helios_sim/src/simulation/core/simulation_setup.rs
-
 use std::time::Duration;
 
-use avian3d::prelude::PhysicsSet;
+use avian3d::prelude::PhysicsSystems;
 use rand::rngs::OsRng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -11,6 +9,8 @@ use super::components::GroundTruthState;
 use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 use crate::prelude::*;
 use crate::simulation::core::app_state::{AssetLoadSet, SimulationSet};
+use crate::simulation::core::components::ConfiguredMissionGoal;
+use crate::simulation::core::ground_truth::publish_oracle_channels_system;
 use crate::simulation::core::ground_truth_sync_system;
 use crate::simulation::core::prng::SimulationRng;
 use crate::simulation::core::transforms::build_static_tf_maps;
@@ -19,38 +19,17 @@ pub struct SimulationSetupPlugin;
 
 impl Plugin for SimulationSetupPlugin {
     fn build(&self, app: &mut App) {
-        // Extract config values before mutably borrowing app.
-        let (seed, frequency_hz) = {
-            let config = app
-                .world()
-                .get_resource::<ScenarioConfig>()
-                .expect("SimulationConfig not found!");
-            (config.simulation.seed, config.simulation.frequency_hz)
-        };
-
-        // --- 1. Add the Deterministic PRNG Resource ---
-        let rng = match seed {
-            Some(seed) => ChaCha8Rng::seed_from_u64(seed),
-            None => ChaCha8Rng::from_rng(&mut OsRng).expect("OS RNG failed"),
-        };
-        app.insert_resource(SimulationRng(rng));
-
         // --- INITIALIZE RESOURCES & EVENTS ---
         app.init_resource::<TfTree>();
-
-        let fixed_update_timestep = 1.0 / frequency_hz;
-
-        app.insert_resource(
-            // The resource is of type Time<Fixed>.
-            Time::<Fixed>::from_duration(
-                // We create a Duration from the calculated timestep.
-                Duration::from_secs_f64(fixed_update_timestep),
-            ),
-        );
 
         app.configure_sets(
             OnEnter(AppState::AssetLoading),
             (AssetLoadSet::Config, AssetLoadSet::Kickoff).chain(), // .chain() guarantees Config runs before Kickoff
+        );
+
+        app.add_systems(
+            OnEnter(AppState::AssetLoading),
+            initialize_simulation_resources.in_set(AssetLoadSet::Kickoff),
         );
 
         // --- CONFIGURE THE SPAWNING PIPELINE ---
@@ -93,25 +72,23 @@ impl Plugin for SimulationSetupPlugin {
         app.configure_sets(
             FixedUpdate,
             (
-                // Phase 1
+                // Phase 1: prepare TF from current transforms.
                 SimulationSet::Precomputation,
-                // Phase 2 (these two can run in parallel with each other)
-                (SimulationSet::Sensors, SimulationSet::Perception),
-                // Phase 3
-                SimulationSet::WorldModeling,
-                // Phase 4
+                // Phase 2: simulate sensors, publish readings to the bus.
+                SimulationSet::Sensors,
+                // Phase 3: tick the whole autonomy pipeline, then goal glue.
                 (SimulationSet::Estimation, SimulationSet::Behavior),
-                // Phase 5
+                // Phase 4: drain pipeline outputs to ECS.
                 SimulationSet::Planning,
                 SimulationSet::Control,
-                // Phase 6
+                // Phase 5: convert control to physical forces.
                 SimulationSet::Actuation,
-                // Phase 7
+                // Phase 6: physics, then read state back.
                 (
                     // Avian's internal set where it prepares bodies.
-                    PhysicsSet::Prepare,
+                    PhysicsSystems::Prepare,
                     // The main physics simulation step.
-                    PhysicsSet::StepSimulation,
+                    PhysicsSystems::StepSimulation,
                     // Our system runs IMMEDIATELY AFTER the simulation.
                     SimulationSet::StateSync,
                 ),
@@ -124,19 +101,12 @@ impl Plugin for SimulationSetupPlugin {
         app.configure_sets(
             FixedUpdate,
             (
-                // WorldModeling must run after BOTH Sensors and Perception are complete.
-                SimulationSet::WorldModeling
-                    .after(SimulationSet::Sensors)
-                    .after(SimulationSet::Perception),
-                // Estimation needs the latest sensor data.
+                // The pipeline tick needs the latest sensor data.
                 SimulationSet::Estimation.after(SimulationSet::Sensors),
-                // Behavior needs the latest state estimate and world model.
-                SimulationSet::Behavior
-                    .after(SimulationSet::Estimation)
-                    .after(SimulationSet::WorldModeling),
-                // Planning is triggered by Behavior.
+                // Goal glue runs after the tick.
+                SimulationSet::Behavior.after(SimulationSet::Estimation),
+                // Output bridges run after the tick produced outputs.
                 SimulationSet::Planning.after(SimulationSet::Behavior),
-                // Control is triggered by Planning.
                 SimulationSet::Control.after(SimulationSet::Planning),
                 // Actuation is triggered by Control.
                 SimulationSet::Actuation.after(SimulationSet::Control),
@@ -158,6 +128,10 @@ impl Plugin for SimulationSetupPlugin {
                     .in_set(SimulationSet::Precomputation)
                     .run_if(in_state(AppState::Running)),
                 ground_truth_sync_system.in_set(SimulationSet::StateSync),
+                publish_oracle_channels_system
+                    .after(ground_truth_sync_system)
+                    .in_set(SimulationSet::StateSync)
+                    .run_if(in_state(AppState::Running)),
                 tf_tree_incremental_update_system
                     .in_set(SimulationSet::StateSync)
                     .after(ground_truth_sync_system)
@@ -165,6 +139,30 @@ impl Plugin for SimulationSetupPlugin {
             ),
         );
     }
+}
+
+// Seed the simulation RNG and set the fixed-update rate from the resolved
+// scenario config. This runs in `AssetLoadSet::Kickoff`, after the config
+// loader has populated `ScenarioConfig` in `AssetLoadSet::Config`. Reading these
+// values any earlier (as in `Plugin::build`) sees only the struct defaults, not
+// the loaded TOML — so a configured seed would never reach the RNG.
+fn initialize_simulation_resources(mut commands: Commands, config: Res<ScenarioConfig>) {
+    // A configured seed makes the run reproducible: the same seed always yields
+    // the same sequence. Without one, fall back to OS entropy, which differs
+    // from run to run and is therefore non-deterministic.
+    let rng = match config.simulation.seed {
+        Some(seed) => ChaCha8Rng::seed_from_u64(seed),
+        None => ChaCha8Rng::from_rng(&mut OsRng).expect("OS RNG failed"),
+    };
+
+    commands.insert_resource(SimulationRng(rng));
+
+    // Drive FixedUpdate at the configured rate: one tick every `1 / frequency`
+    // seconds.
+    let frequency_hz = config.simulation.frequency_hz;
+    commands.insert_resource(Time::<Fixed>::from_duration(Duration::from_secs_f64(
+        1.0 / frequency_hz,
+    )));
 }
 
 fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
@@ -193,6 +191,7 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
             // This is necessary because multiple systems in your spawning pipeline
             // (for sensors, estimators, etc.) will need to read from it.
             SpawnAgentConfigRequest(agent_config.clone()),
+            ConfiguredMissionGoal(PlannerGoal::WorldPose(agent_config.goal_pose.to_isometry())),
         ));
     }
 }

@@ -218,6 +218,7 @@ pub fn tf_tree_structural_system(
 /// Registered **twice** in the schedule:
 /// - `SimulationSet::Precomputation` — captures first-tick initialization.
 /// - `SimulationSet::StateSync` — runs immediately after Avian3D's physics step.
+#[allow(clippy::type_complexity)]
 pub fn tf_tree_incremental_update_system(
     mut tf_tree: ResMut<TfTree>,
     changed_query: Query<

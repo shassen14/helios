@@ -1,0 +1,17 @@
+# Failure-path proof: an assertion whose target no agent produces.
+#
+# `on_pipeline_built` cannot resolve `agent.nobody.no_such_node.value` to any
+# bus channel, so it returns `UnresolvedTargets` — a legitimate test FAILURE
+# (exit 1), not a crash. Confirms the failing exit code flows through the same
+# report path as a pass.
+
+schema_version = "1.0"
+scenario = { from = "sim/scenarios/00_tutorial_showcase.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 2.0 }
+
+[[assert]]
+when = "at_completion"
+target = "agent.nobody.no_such_node.value"
+condition = "equals"
+value = 0.0

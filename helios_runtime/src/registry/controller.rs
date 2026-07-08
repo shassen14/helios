@@ -12,7 +12,7 @@ use crate::pipeline::nodes::controller::ControllerNode;
 
 use super::{contexts::ControllerBuildContext, AutonomyRegistry};
 
-pub fn register(registry: &mut AutonomyRegistry) {
+pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_controller("DirectVelocity", build_direct_velocity);
     registry.register_controller("Pid", build_pid);
     registry.register_controller("Lqr", build_lqr);

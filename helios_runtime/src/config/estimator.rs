@@ -18,13 +18,15 @@ fn default_orientation_uncertainty_deg() -> f64 {
 pub enum EstimatorConfig {
     Ekf(EkfConfig),
     Ukf(UkfConfig),
+    MockOracle(MockOracleEstimatorConfig),
 }
 
 impl EstimatorConfig {
-    pub fn get_kind_str(&self) -> &str {
+    pub(crate) fn get_kind_str(&self) -> &str {
         match self {
             EstimatorConfig::Ekf(_) => "Ekf",
             EstimatorConfig::Ukf(_) => "Ukf",
+            EstimatorConfig::MockOracle(_) => "MockOracle",
         }
     }
 }
@@ -129,7 +131,7 @@ pub enum EkfDynamicsConfig {
 }
 
 impl EkfDynamicsConfig {
-    pub fn get_kind_str(&self) -> &str {
+    pub(crate) fn get_kind_str(&self) -> &str {
         match self {
             EkfDynamicsConfig::IntegratedImu(_) => "IntegratedImu",
             EkfDynamicsConfig::AckermannOdometry(_) => "AckermannOdometry",
@@ -138,7 +140,7 @@ impl EkfDynamicsConfig {
     }
 
     /// Gravitational acceleration used by this dynamics model.
-    pub fn gravity(&self) -> f64 {
+    pub(crate) fn gravity(&self) -> f64 {
         match self {
             EkfDynamicsConfig::IntegratedImu(c) => c.gravity,
             EkfDynamicsConfig::AckermannOdometry(_) => default_gravity(),
@@ -188,3 +190,6 @@ pub struct UkfConfig {
     pub beta: f64,
     pub kappa: f64,
 }
+
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct MockOracleEstimatorConfig {}

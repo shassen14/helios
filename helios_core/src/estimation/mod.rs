@@ -4,16 +4,9 @@
 //! information-form filters. Concrete implementations live in [`filters`].
 use nalgebra::{DMatrix, DVector};
 
-use crate::data::primitives::TfProvider;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::FrameAwareState;
-
-/// World-context passed into mappers and other modules that still consume
-/// `ModuleInput::Measurement`.
-#[derive(Default)]
-pub struct FilterContext<'a> {
-    pub tf: Option<&'a dyn TfProvider>,
-}
+use crate::ports::TfProvider;
 
 /// Predict-side inputs for a Gaussian estimator.
 ///

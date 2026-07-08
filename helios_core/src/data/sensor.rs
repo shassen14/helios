@@ -1,9 +1,7 @@
 // Raw sensor payload types and the generic `SensorReading<T>` wrapper.
 // Sensor payloads (structs like `LinearAcceleration3D`, `GpsPosition`, etc.)
-// describe what a physical sensor measures. `SensorReading<T>` is the
-// timestamped envelope that carries any payload through the pipeline.
+// describe what a physical sensor measures.
 
-use crate::data::primitives::{FrameHandle, MonotonicTime};
 use nalgebra::{DVector, Point2, Point3, Vector3};
 use serde::{Deserialize, Serialize};
 
@@ -74,7 +72,7 @@ pub struct GpsPosition {
 /// 3D velocity (m/s) in the ENU world frame.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GpsVelocity {
-    pub velocity: Vector3<f64>,
+    pub(crate) velocity: Vector3<f64>,
 }
 
 /// 2D point cloud (meters) in the sensor's FLU frame.
@@ -87,7 +85,7 @@ pub struct PointCloud2D {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LidarPoint3D {
     pub position: Point3<f64>,
-    pub intensity: Option<f32>,
+    pub(crate) intensity: Option<f32>,
 }
 
 /// 3D point cloud (meters) in the sensor's FLU frame.
@@ -103,16 +101,6 @@ pub struct RgbImage;
 /// Placeholder for depth/RGBD camera output. Buffer representation is TBD.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DepthImage;
-
-// =========================================================================
-// == SensorReading<T> ==
-// =========================================================================
-
-pub struct SensorReading<T> {
-    pub sensor_handle: FrameHandle,
-    pub timestamp: MonotonicTime,
-    pub data: T,
-}
 
 #[cfg(test)]
 mod tests {

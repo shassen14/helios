@@ -20,16 +20,18 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use atomic_float::AtomicF64;
-use helios_core::data::primitives::TfProvider;
-use helios_core::data::sensor::{SensorPayload, SensorReading};
+use helios_core::data::envelope::SensorReading;
+use helios_core::data::sensor::SensorPayload;
 use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::frames::FrameAwareState;
+use helios_core::ports::TfProvider;
 use nalgebra::DMatrix;
 
 use crate::pipeline::builders::estimator::EstimatorInputBuilder;
+use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};
 use crate::runtime::{AgentRuntime, TfProviderAdapter};
 use crate::stamped::{Health, Stamped};
 
@@ -38,7 +40,7 @@ use crate::stamped::{Health, Stamped};
 ///
 /// The generic payload type `T` is erased behind this trait so the node can hold
 /// a `Vec<Box<dyn AidingHandler>>` across sensor types.
-pub trait AidingHandler: Send + Sync {
+pub(crate) trait AidingHandler: Send + Sync {
     /// The bus channel this handler reads from.
     fn channel(&self) -> &ChannelKey;
 
@@ -61,7 +63,9 @@ pub trait AidingHandler: Send + Sync {
 /// Owns the [`MeasurementModel`] (the math) and the noise covariance `R`
 /// (per-sensor). Both are constructed once and reused across every reading on
 /// the channel.
-pub struct TypedAidingHandler<T: SensorPayload> {
+pub(crate) struct TypedAidingHandler<T: SensorPayload> {
+    /// Cached enum-form key for `bus.read` calls. Built once from the
+    /// kinded `SensorChannel` passed to [`Self::new`].
     channel: ChannelKey,
     model: Box<dyn MeasurementModel>,
     r: DMatrix<f64>,
@@ -81,9 +85,13 @@ impl<T: SensorPayload> TypedAidingHandler<T> {
     /// `r` must be square with side equal to `model.dim()`; the filter silently
     /// skips updates with mismatched `R` so a wrong-sized matrix becomes a
     /// no-op rather than a panic.
-    pub fn new(channel: ChannelKey, model: Box<dyn MeasurementModel>, r: DMatrix<f64>) -> Self {
+    pub(crate) fn new(
+        channel: SensorChannel,
+        model: Box<dyn MeasurementModel>,
+        r: DMatrix<f64>,
+    ) -> Self {
         Self {
-            channel,
+            channel: channel.into(),
             model,
             r,
             last_applied_ts: AtomicF64::new(f64::NEG_INFINITY),
@@ -148,7 +156,7 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
 /// Construction is via [`Self::new`]. The port descriptor is derived from the
 /// input builder and aiding handlers — callers don't compose channel keys
 /// directly. Output is `FrameAwareState @ ""`.
-pub struct GaussianEstimatorNode {
+pub(crate) struct GaussianEstimatorNode {
     name: String,
     estimator: Mutex<Box<dyn GaussianStateEstimator>>,
     input_builder: Box<dyn EstimatorInputBuilder>,
@@ -157,23 +165,24 @@ pub struct GaussianEstimatorNode {
 }
 
 impl GaussianEstimatorNode {
-    pub fn new(
+    pub(crate) fn new(
         name: impl Into<String>,
         estimator: Box<dyn GaussianStateEstimator>,
         input_builder: Box<dyn EstimatorInputBuilder>,
         aiding: Vec<Box<dyn AidingHandler>>,
     ) -> Self {
-        let required_inputs = input_builder.required_channels().to_vec();
-        let mut optional_inputs = input_builder.optional_channels().to_vec();
+        let mut builder = AlgorithmNodePortDescriptor::new()
+            .inputs_from_slices(
+                input_builder.required_channels(),
+                input_builder.optional_channels(),
+            )
+            .output_internal(InternalChannel::of::<FrameAwareState>());
         for handler in &aiding {
-            optional_inputs.push(handler.channel().clone());
+            // Aiding handlers always read a SensorChannel; the cached
+            // enum-form is unwrapped back via `kind()`-checked optional.
+            builder = builder.inputs_from_slices(&[], &[handler.channel().clone()]);
         }
-        let descriptor = PortDescriptor {
-            required_inputs,
-            optional_inputs,
-            outputs: vec![ChannelKey::of::<FrameAwareState>()],
-            rate: None,
-        };
+        let descriptor = builder.build();
         Self {
             name: name.into(),
             estimator: Mutex::new(estimator),
@@ -220,7 +229,7 @@ impl PipelineNode for GaussianEstimatorNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(ChannelKey::of::<FrameAwareState>(), stamped);
+        let _ = bus.write(InternalChannel::of::<FrameAwareState>().into(), stamped);
     }
 }
 
@@ -232,8 +241,9 @@ mod tests {
     //! and bus publish.
 
     use super::*;
+    use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-    use helios_core::data::sensor::{LinearAcceleration3D, SensorReading};
+    use helios_core::data::sensor::LinearAcceleration3D;
     use helios_core::estimation::EstimatorInputs;
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector, Isometry3};
@@ -370,8 +380,16 @@ mod tests {
 
     // --- Helpers ---
 
+    fn accel_sensor_channel() -> SensorChannel {
+        SensorChannel::of::<Vec<SensorReading<LinearAcceleration3D>>>()
+    }
+
     fn accel_channel() -> ChannelKey {
-        ChannelKey::of::<Vec<SensorReading<LinearAcceleration3D>>>()
+        accel_sensor_channel().into()
+    }
+
+    fn state_channel() -> ChannelKey {
+        InternalChannel::of::<FrameAwareState>().into()
     }
 
     fn make_bus(extra_outputs: Vec<ChannelKey>) -> PortBus {
@@ -379,7 +397,7 @@ mod tests {
             required_inputs: vec![],
             optional_inputs: vec![],
             outputs: {
-                let mut v = vec![ChannelKey::of::<FrameAwareState>(), accel_channel()];
+                let mut v = vec![state_channel(), accel_channel()];
                 v.extend(extra_outputs);
                 v
             },
@@ -407,16 +425,13 @@ mod tests {
             vec![],
         );
         assert_eq!(node.port_descriptor().outputs.len(), 1);
-        assert_eq!(
-            node.port_descriptor().outputs[0],
-            ChannelKey::of::<FrameAwareState>()
-        );
+        assert_eq!(node.port_descriptor().outputs[0], state_channel());
     }
 
     #[test]
     fn descriptor_lists_aiding_channels_as_optional() {
         let handler = TypedAidingHandler::<LinearAcceleration3D>::new(
-            accel_channel(),
+            accel_sensor_channel(),
             Box::new(OnePassModel),
             DMatrix::identity(3, 3),
         );
@@ -446,7 +461,7 @@ mod tests {
         node.execute(&bus, &runtime, tick_at(1.0, 0.1));
 
         let published = bus
-            .read::<FrameAwareState>(ChannelKey::of::<FrameAwareState>())
+            .read::<FrameAwareState>(state_channel())
             .expect("node must publish FrameAwareState");
         assert!((published.timestamp.0 - 1.0).abs() < 1e-9);
         assert_eq!(published.producer, 0);
@@ -467,9 +482,7 @@ mod tests {
 
         node.execute(&bus, &runtime, tick_at(0.5, 0.1));
 
-        assert!(bus
-            .read::<FrameAwareState>(ChannelKey::of::<FrameAwareState>())
-            .is_some());
+        assert!(bus.read::<FrameAwareState>(state_channel()).is_some());
     }
 
     #[test]
@@ -479,7 +492,7 @@ mod tests {
         let mut estimator = MockEstimator::new();
 
         let handler = TypedAidingHandler::<LinearAcceleration3D>::new(
-            accel_channel(),
+            accel_sensor_channel(),
             Box::new(OnePassModel),
             DMatrix::identity(3, 3),
         );
@@ -518,7 +531,7 @@ mod tests {
     fn aiding_handler_no_op_on_empty_channel() {
         let mut estimator = MockEstimator::new();
         let handler = TypedAidingHandler::<LinearAcceleration3D>::new(
-            accel_channel(),
+            accel_sensor_channel(),
             Box::new(OnePassModel),
             DMatrix::identity(3, 3),
         );

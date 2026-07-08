@@ -1,12 +1,12 @@
 use crate::{
-    port::{ChannelKey, PortBus},
+    port::{ChannelKey, InternalChannel, PortBus},
     prelude::{AgentRuntime, TickContext},
 };
 use helios_core::{
-    data::primitives::TrajectoryPoint, frames::FrameAwareState, prelude::ControlInputs,
+    data::messages::TrajectoryPoint, frames::FrameAwareState, prelude::ControlInputs,
 };
 
-pub trait ControlInputBuilder: Send + Sync {
+pub(crate) trait ControlInputBuilder: Send + Sync {
     fn assemble(
         &self,
         bus: &PortBus,
@@ -19,7 +19,7 @@ pub trait ControlInputBuilder: Send + Sync {
     fn optional_channels(&self) -> &[ChannelKey];
 }
 
-pub struct DefaultControlInputBuilder {
+pub(crate) struct DefaultControlInputBuilder {
     state_channel: ChannelKey,
     reference_channel: ChannelKey,
     required: Vec<ChannelKey>,
@@ -33,9 +33,9 @@ impl Default for DefaultControlInputBuilder {
 }
 
 impl DefaultControlInputBuilder {
-    pub fn new() -> Self {
-        let state_channel = ChannelKey::of::<FrameAwareState>();
-        let reference_channel = ChannelKey::of::<TrajectoryPoint>();
+    pub(crate) fn new() -> Self {
+        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
+        let reference_channel: ChannelKey = InternalChannel::of::<TrajectoryPoint>().into();
 
         Self {
             state_channel: state_channel.clone(),

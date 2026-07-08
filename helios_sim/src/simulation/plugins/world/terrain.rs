@@ -20,7 +20,7 @@ use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
 struct TerrainAssetEntry {
     config_idx: usize,
-    scene: Handle<Scene>,
+    scene: Handle<WorldAsset>,
     collider: Option<Handle<Gltf>>,
 }
 
@@ -148,7 +148,7 @@ fn spawn_terrain_tiles(
         // Spawn the visual scene entity.
         commands.spawn((
             Name::new(format!("terrain/tile_{}", entry.config_idx)),
-            SceneRoot(entry.scene.clone()),
+            WorldAssetRoot(entry.scene.clone()),
             transform,
             TerrainMedium(terrain_cfg.medium.clone()),
         ));
