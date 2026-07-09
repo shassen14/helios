@@ -15,8 +15,7 @@
 //! ```
 
 use crate::{
-    asset_root, cli::Cli, simulation::config::ConfigPlugin, simulation::core::app_state::AppState,
-    HeliosSimulationPlugin,
+    asset_root, cli::Cli, config::ConfigPlugin, core::app_state::AppState, HeliosSimulationPlugin,
 };
 
 use avian3d::prelude::PhysicsPlugins;

@@ -14,8 +14,8 @@
 use super::{MetricsCollector, RunMetadata};
 use crate::metrics::{final_pos_e_id, final_pos_n_id, RunMetrics};
 
+use helios_sim::core::components::GroundTruthState;
 use helios_sim::prelude::AppState;
-use helios_sim::simulation::core::components::GroundTruthState;
 
 use bevy::prelude::*;
 

@@ -10,22 +10,26 @@ use std::path::PathBuf;
 
 use bevy::prelude::*;
 
-use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
-use crate::simulation::plugins::autonomy::EstimationPlugin;
-use crate::simulation::plugins::control::ControlPlugin;
-use crate::simulation::plugins::planning::PlanningPlugin;
-use crate::simulation::plugins::sensors::HeliosSensorsPlugin;
-use crate::simulation::plugins::vehicles::HeliosVehiclesPlugin;
-use crate::simulation::plugins::world::HeliosWorldPlugin;
-use crate::simulation::registry::plugin::AutonomyRegistryPlugin;
+use crate::core::simulation_setup::SimulationSetupPlugin;
+use crate::plugins::autonomy::EstimationPlugin;
+use crate::plugins::control::ControlPlugin;
+use crate::plugins::planning::PlanningPlugin;
+use crate::plugins::sensors::HeliosSensorsPlugin;
+use crate::plugins::vehicles::HeliosVehiclesPlugin;
+use crate::plugins::world::HeliosWorldPlugin;
+use crate::registry::plugin::AutonomyRegistryPlugin;
 
 // This prelude is for convenience for other files WITHIN the helios_sim crate.
 pub mod prelude;
 
 // This module contains all the simulation-specific logic.
 pub mod cli;
+pub mod config;
+pub mod core;
 pub mod host;
-pub mod simulation;
+pub mod plugins;
+pub mod registry;
+pub mod utils;
 
 /// The main plugin that brings together all simulation subsystems.
 ///
