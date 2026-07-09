@@ -52,6 +52,8 @@ impl Plugin for SimulationSetupPlugin {
                 .chain(),
         );
 
+        configure_fixed_update_sets(app);
+
         // --- ADD THE CORE SYSTEMS TO THE SCHEDULE ---
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
@@ -65,51 +67,6 @@ impl Plugin for SimulationSetupPlugin {
                 transition_to_running
                     .in_set(SceneBuildSet::Cleanup)
                     .after(cleanup_spawn_requests),
-            ),
-        );
-
-        // Configure the runtime schedule graph.
-        app.configure_sets(
-            FixedUpdate,
-            (
-                // Phase 1: prepare TF from current transforms.
-                SimulationSet::Precomputation,
-                // Phase 2: simulate sensors, publish readings to the bus.
-                SimulationSet::Sensors,
-                // Phase 3: tick the whole autonomy pipeline, then goal glue.
-                (SimulationSet::Estimation, SimulationSet::Behavior),
-                // Phase 4: drain pipeline outputs to ECS.
-                SimulationSet::Planning,
-                SimulationSet::Control,
-                // Phase 5: convert control to physical forces.
-                SimulationSet::Actuation,
-                // Phase 6: physics, then read state back.
-                (
-                    // Avian's internal set where it prepares bodies.
-                    PhysicsSystems::Prepare,
-                    // The main physics simulation step.
-                    PhysicsSystems::StepSimulation,
-                    // Our system runs IMMEDIATELY AFTER the simulation.
-                    SimulationSet::StateSync,
-                ),
-                SimulationSet::Validation,
-            )
-                .chain(), // .chain() enforces the order of the tuples/sets
-        );
-
-        // Define the more complex dependencies
-        app.configure_sets(
-            FixedUpdate,
-            (
-                // The pipeline tick needs the latest sensor data.
-                SimulationSet::Estimation.after(SimulationSet::Sensors),
-                // Goal glue runs after the tick.
-                SimulationSet::Behavior.after(SimulationSet::Estimation),
-                // Output bridges run after the tick produced outputs.
-                SimulationSet::Planning.after(SimulationSet::Behavior),
-                SimulationSet::Control.after(SimulationSet::Planning),
-                // Actuation is triggered by Control.
-                SimulationSet::Actuation.after(SimulationSet::Control),
             ),
         );
 
@@ -139,6 +96,53 @@ impl Plugin for SimulationSetupPlugin {
             ),
         );
     }
+}
+
+fn configure_fixed_update_sets(app: &mut App) {
+    // Configure the runtime schedule graph.
+    app.configure_sets(
+        FixedUpdate,
+        (
+            // Phase 1: prepare TF from current transforms.
+            SimulationSet::Precomputation,
+            // Phase 2: simulate sensors, publish readings to the bus.
+            SimulationSet::Sensors,
+            // Phase 3: tick the whole autonomy pipeline, then goal glue.
+            (SimulationSet::Estimation, SimulationSet::Behavior),
+            // Phase 4: drain pipeline outputs to ECS.
+            SimulationSet::Planning,
+            SimulationSet::Control,
+            // Phase 5: convert control to physical forces.
+            SimulationSet::Actuation,
+            // Phase 6: physics, then read state back.
+            (
+                // Avian's internal set where it prepares bodies.
+                PhysicsSystems::Prepare,
+                // The main physics simulation step.
+                PhysicsSystems::StepSimulation,
+                // Our system runs IMMEDIATELY AFTER the simulation.
+                SimulationSet::StateSync,
+            ),
+            SimulationSet::Validation,
+        )
+            .chain(), // .chain() enforces the order of the tuples/sets
+    );
+
+    // Define the more complex dependencies
+    app.configure_sets(
+        FixedUpdate,
+        (
+            // The pipeline tick needs the latest sensor data.
+            SimulationSet::Estimation.after(SimulationSet::Sensors),
+            // Goal glue runs after the tick.
+            SimulationSet::Behavior.after(SimulationSet::Estimation),
+            // Output bridges run after the tick produced outputs.
+            SimulationSet::Planning.after(SimulationSet::Behavior),
+            SimulationSet::Control.after(SimulationSet::Planning),
+            // Actuation is triggered by Control.
+            SimulationSet::Actuation.after(SimulationSet::Control),
+        ),
+    );
 }
 
 // Seed the simulation RNG and set the fixed-update rate from the resolved
@@ -211,4 +215,65 @@ fn cleanup_spawn_requests(
 fn transition_to_running(mut next_state: ResMut<NextState<AppState>>) {
     info!("Scene building complete. Transitioning to Running state.");
     next_state.set(AppState::Running);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::configure_fixed_update_sets;
+    use crate::simulation::core::app_state::SimulationSet;
+
+    use bevy::prelude::*;
+
+    // Records the order in which the FixedUpdate sim sets actually fire.
+    // Every probe writes this resource, so Bevy must serialize them — the only
+    // execution order that satisfies the set graph is the one we assert.
+    #[derive(Resource, Default)]
+    struct SetOrder(Vec<&'static str>);
+
+    #[test]
+    fn fixed_update_sets_run_in_declared_order() {
+        let mut app = App::new();
+        app.init_resource::<SetOrder>();
+
+        // The real ordering under test — same function the plugin calls.
+        configure_fixed_update_sets(&mut app);
+
+        // One trivial probe per set: append the set's name, nothing else.
+        app.add_systems(
+            FixedUpdate,
+            (
+                (|mut o: ResMut<SetOrder>| o.0.push("Precomputation"))
+                    .in_set(SimulationSet::Precomputation),
+                (|mut o: ResMut<SetOrder>| o.0.push("Sensors")).in_set(SimulationSet::Sensors),
+                (|mut o: ResMut<SetOrder>| o.0.push("Estimation"))
+                    .in_set(SimulationSet::Estimation),
+                (|mut o: ResMut<SetOrder>| o.0.push("Behavior")).in_set(SimulationSet::Behavior),
+                (|mut o: ResMut<SetOrder>| o.0.push("Planning")).in_set(SimulationSet::Planning),
+                (|mut o: ResMut<SetOrder>| o.0.push("Control")).in_set(SimulationSet::Control),
+                (|mut o: ResMut<SetOrder>| o.0.push("Actuation")).in_set(SimulationSet::Actuation),
+                (|mut o: ResMut<SetOrder>| o.0.push("StateSync")).in_set(SimulationSet::StateSync),
+                (|mut o: ResMut<SetOrder>| o.0.push("Validation"))
+                    .in_set(SimulationSet::Validation),
+            ),
+        );
+
+        // Run the schedule exactly once — bypasses the Time<Fixed> accumulator,
+        // so we get one deterministic pass instead of N wall-clock-driven steps.
+        app.world_mut().run_schedule(FixedUpdate);
+
+        assert_eq!(
+            app.world().resource::<SetOrder>().0,
+            vec![
+                "Precomputation",
+                "Sensors",
+                "Estimation",
+                "Behavior",
+                "Planning",
+                "Control",
+                "Actuation",
+                "StateSync",
+                "Validation",
+            ],
+        );
+    }
 }
