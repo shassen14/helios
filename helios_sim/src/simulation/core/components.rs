@@ -10,7 +10,7 @@ use serde::Serialize;
 // --- Controller Output Component ---
 
 /// The output of the last `Controller::compute()` call.
-/// Written by `SimulationSet::Control`; read by `SimulationSet::Actuation`.
+/// Written by `SimulationSet::BrainOutput`; read by `SimulationSet::Actuation`.
 #[derive(Component)]
 pub struct ControlOutputComponent(pub ControlOutput);
 

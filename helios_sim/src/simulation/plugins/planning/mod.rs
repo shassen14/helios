@@ -19,19 +19,17 @@ pub struct PlanningPlugin;
 
 impl Plugin for PlanningPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<GoalCommandEvent>()
-            .add_systems(
-                FixedUpdate,
-                forward_goal_events
-                    .in_set(SimulationSet::Planning)
-                    .run_if(in_state(AppState::Running)),
-            )
-            .add_systems(
-                FixedUpdate,
-                dispatch_configured_goals
-                    .in_set(SimulationSet::Behavior)
-                    .run_if(in_state(AppState::Running)),
-            );
+        app.add_message::<GoalCommandEvent>().add_systems(
+            FixedUpdate,
+            // Both are host→pipeline goal glue, so they share the BrainInput set.
+            // The chain is load-bearing: `dispatch_configured_goals` writes a
+            // `GoalCommandEvent` that `forward_goal_events` reads the same tick,
+            // and a Bevy message is only readable this tick if the writer ran first.
+            (dispatch_configured_goals, forward_goal_events)
+                .chain()
+                .in_set(SimulationSet::BrainInput)
+                .run_if(in_state(AppState::Running)),
+        );
     }
 }
 
@@ -68,8 +66,8 @@ fn forward_goal_events(
 /// Auto-starts each agent's mission. On the first tick an agent is seen, this
 /// synthesizes the `GoalCommandEvent` a mouse click would have produced, taken
 /// from the agent's authored `goal_pose` — so a headless run drives toward its
-/// goal with no user input. `forward_goal_events` (in `SimulationSet::Planning`,
-/// later the same tick) consumes the event and injects it into the pipeline.
+/// goal with no user input. `forward_goal_events` (chained after this in
+/// `SimulationSet::BrainInput`) consumes the event and injects it into the pipeline.
 ///
 /// The `GoalDispatched` marker, stamped once here, drops the agent from the
 /// query on every later tick: the authored goal is sent exactly once, so a

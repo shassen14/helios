@@ -1,6 +1,6 @@
 // helios_sim/src/simulation/plugins/autonomy/systems/pipeline_tick.rs
 //
-// `run_pipeline_tick` runs in `SimulationSet::Estimation` to execute every node
+// `run_pipeline_tick` runs in `SimulationSet::BrainTick` to execute every node
 // in topological order. All bus slots use last-known-good semantics; consumers
 // dedupe by `Stamped::timestamp` internally where exactly-once semantics are
 // required.

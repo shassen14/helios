@@ -29,7 +29,7 @@ impl Plugin for ControlPlugin {
         .add_systems(
             FixedUpdate,
             publish_pipeline_control
-                .in_set(SimulationSet::Control)
+                .in_set(SimulationSet::BrainOutput)
                 .run_if(in_state(AppState::Running)),
         );
     }
@@ -54,7 +54,7 @@ fn spawn_control_output(
 }
 
 /// Copies the pipeline's latest `ControlOutput` (written by the controller
-/// node inside the DAG during `SimulationSet::Estimation`) into
+/// node inside the DAG during `SimulationSet::BrainTick`) into
 /// `ControlOutputComponent` so the vehicle adapter in `SimulationSet::Actuation`
 /// can read it.
 fn publish_pipeline_control(

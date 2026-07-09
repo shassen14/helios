@@ -33,7 +33,7 @@ impl Plugin for EstimationPlugin {
             FixedUpdate,
             (run_pipeline_tick, update_odom_frames)
                 .chain()
-                .in_set(SimulationSet::Estimation)
+                .in_set(SimulationSet::BrainTick)
                 .run_if(in_state(AppState::Running)),
         );
     }

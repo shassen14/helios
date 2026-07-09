@@ -84,40 +84,34 @@ pub enum SceneBuildSet {
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SimulationSet {
-    // --- Phase 1: Data Preparation ---
-    /// Systems that prepare data for the rest of the frame. Runs first.
-    /// Example: `tf_tree_builder_system`.
+    /// Prepare per-frame data before anything reads it: rebuild the TF tree from
+    /// the current physics transforms. Runs first.
     Precomputation,
 
-    // --- Phase 2: Perception ---
-    /// Systems that simulate raw physical sensors (IMU, GPS, LiDAR, Cameras)
-    /// and publish `SensorReading` batches to the pipeline bus.
+    /// Simulate raw physical sensors (IMU, GPS, LiDAR, …) and publish
+    /// `SensorReading` batches to the pipeline bus.
     Sensors,
 
-    // --- Phase 3: Autonomy tick ---
-    /// The whole-brain tick: `run_pipeline_tick` fires every DAG node
-    /// (estimator, mapper, planner, path-follower, controller) in topological
-    /// order. Named `Estimation` for historical reasons — it is not just the
-    /// estimator.
-    Estimation,
-    /// Host→pipeline goal glue (`dispatch_configured_goals`). Runs after the tick.
-    Behavior,
+    /// The whole-brain tick: `run_pipeline_tick` fires every DAG node (estimator,
+    /// mapper, planner, path-follower, controller) in topological order, each
+    /// gated by its own `RateTimer`. This is the entire autonomy pipeline for
+    /// every agent, not just estimation.
+    BrainTick,
 
-    // --- Phase 4: Host→pipeline output bridges ---
-    /// Forwards queued goal events into the pipeline's mission slot. Not the
-    /// planner (that is a DAG node inside the tick).
-    Planning,
-    /// Copies `pipeline.read_control()` into `ControlOutputComponent`. Not the
-    /// controller (that is a DAG node inside the tick).
-    Control,
+    /// Host → pipeline input glue: feeds the pipeline's mission-goal slot
+    /// (`dispatch_configured_goals`, then `forward_goal_events`). Runs *after*
+    /// `BrainTick`, so an injected goal takes effect on the next tick — the name
+    /// describes data direction (into the pipeline), not temporal order.
+    BrainInput,
 
-    // --- Phase 6: Finalization ---
-    /// Systems that convert control commands into physical forces. Runs last.
+    /// Pipeline → host output glue: copies `pipeline.read_control()` into
+    /// `ControlOutputComponent` for the vehicle adapter to consume.
+    BrainOutput,
+
+    /// Convert control commands into physical forces (vehicle adapter → Avian3D
+    /// `ExternalForce` / `ExternalTorque`).
     Actuation,
 
-    // --- Phase 7: Synchronization ---
-    /// Systems that sync the ground truth state
+    /// Sync ground-truth state back from Avian3D after the physics step.
     StateSync,
-
-    Validation,
 }

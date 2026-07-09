@@ -76,7 +76,7 @@ impl Plugin for SimulationSetupPlugin {
         // - Incremental system (Precomputation): updates poses for Changed<GlobalTransform>.
         //   Handles first-tick initialization; no-op every tick after that until physics runs.
         // - Incremental system (StateSync): updates poses after Avian3D physics, so
-        //   Validation, publishing, and visualization always see the latest state.
+        //   oracle publishing and any downstream consumers see the latest state.
         app.add_systems(
             FixedUpdate,
             (
@@ -103,18 +103,18 @@ fn configure_fixed_update_sets(app: &mut App) {
     app.configure_sets(
         FixedUpdate,
         (
-            // Phase 1: prepare TF from current transforms.
+            // Prepare TF from current transforms.
             SimulationSet::Precomputation,
-            // Phase 2: simulate sensors, publish readings to the bus.
+            // Simulate sensors, publish readings to the bus.
             SimulationSet::Sensors,
-            // Phase 3: tick the whole autonomy pipeline, then goal glue.
-            (SimulationSet::Estimation, SimulationSet::Behavior),
-            // Phase 4: drain pipeline outputs to ECS.
-            SimulationSet::Planning,
-            SimulationSet::Control,
-            // Phase 5: convert control to physical forces.
+            // Tick the whole autonomy pipeline (every DAG node).
+            SimulationSet::BrainTick,
+            // Feed goals into the pipeline, then drain its outputs to ECS.
+            SimulationSet::BrainInput,
+            SimulationSet::BrainOutput,
+            // Convert control to physical forces.
             SimulationSet::Actuation,
-            // Phase 6: physics, then read state back.
+            // Physics, then read state back.
             (
                 // Avian's internal set where it prepares bodies.
                 PhysicsSystems::Prepare,
@@ -123,25 +123,8 @@ fn configure_fixed_update_sets(app: &mut App) {
                 // Our system runs IMMEDIATELY AFTER the simulation.
                 SimulationSet::StateSync,
             ),
-            SimulationSet::Validation,
         )
             .chain(), // .chain() enforces the order of the tuples/sets
-    );
-
-    // Define the more complex dependencies
-    app.configure_sets(
-        FixedUpdate,
-        (
-            // The pipeline tick needs the latest sensor data.
-            SimulationSet::Estimation.after(SimulationSet::Sensors),
-            // Goal glue runs after the tick.
-            SimulationSet::Behavior.after(SimulationSet::Estimation),
-            // Output bridges run after the tick produced outputs.
-            SimulationSet::Planning.after(SimulationSet::Behavior),
-            SimulationSet::Control.after(SimulationSet::Planning),
-            // Actuation is triggered by Control.
-            SimulationSet::Actuation.after(SimulationSet::Control),
-        ),
     );
 }
 
@@ -245,15 +228,13 @@ mod tests {
                 (|mut o: ResMut<SetOrder>| o.0.push("Precomputation"))
                     .in_set(SimulationSet::Precomputation),
                 (|mut o: ResMut<SetOrder>| o.0.push("Sensors")).in_set(SimulationSet::Sensors),
-                (|mut o: ResMut<SetOrder>| o.0.push("Estimation"))
-                    .in_set(SimulationSet::Estimation),
-                (|mut o: ResMut<SetOrder>| o.0.push("Behavior")).in_set(SimulationSet::Behavior),
-                (|mut o: ResMut<SetOrder>| o.0.push("Planning")).in_set(SimulationSet::Planning),
-                (|mut o: ResMut<SetOrder>| o.0.push("Control")).in_set(SimulationSet::Control),
+                (|mut o: ResMut<SetOrder>| o.0.push("BrainTick")).in_set(SimulationSet::BrainTick),
+                (|mut o: ResMut<SetOrder>| o.0.push("BrainInput"))
+                    .in_set(SimulationSet::BrainInput),
+                (|mut o: ResMut<SetOrder>| o.0.push("BrainOutput"))
+                    .in_set(SimulationSet::BrainOutput),
                 (|mut o: ResMut<SetOrder>| o.0.push("Actuation")).in_set(SimulationSet::Actuation),
                 (|mut o: ResMut<SetOrder>| o.0.push("StateSync")).in_set(SimulationSet::StateSync),
-                (|mut o: ResMut<SetOrder>| o.0.push("Validation"))
-                    .in_set(SimulationSet::Validation),
             ),
         );
 
@@ -266,13 +247,11 @@ mod tests {
             vec![
                 "Precomputation",
                 "Sensors",
-                "Estimation",
-                "Behavior",
-                "Planning",
-                "Control",
+                "BrainTick",
+                "BrainInput",
+                "BrainOutput",
                 "Actuation",
                 "StateSync",
-                "Validation",
             ],
         );
     }

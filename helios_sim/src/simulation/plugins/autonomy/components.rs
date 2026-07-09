@@ -5,7 +5,7 @@ use bevy::prelude::{Component, Entity};
 
 /// Holds the fully-assembled autonomy pipeline for an agent.
 /// Written at spawn time by `spawn_autonomy_pipeline`. Ticked every frame
-/// by `run_pipeline_tick` in `SimulationSet::Estimation`.
+/// by `run_pipeline_tick` in `SimulationSet::BrainTick`.
 #[derive(Component)]
 pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
 
