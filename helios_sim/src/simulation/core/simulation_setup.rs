@@ -33,24 +33,7 @@ impl Plugin for SimulationSetupPlugin {
         );
 
         // --- CONFIGURE THE SPAWNING PIPELINE ---
-        // This chain of SystemSets guarantees the correct spawning order.
-        app.configure_sets(
-            OnEnter(AppState::SceneBuilding),
-            (
-                SceneBuildSet::CreateRequests,
-                SceneBuildSet::ProcessWorldObjects,
-                SceneBuildSet::ProcessVehicle,
-                SceneBuildSet::ProcessSensors,
-                SceneBuildSet::ProcessBaseAutonomy,
-                SceneBuildSet::ProcessDependentAutonomy,
-                SceneBuildSet::ProcessControllers,
-                SceneBuildSet::Physics,
-                SceneBuildSet::Finalize,
-                SceneBuildSet::Validation,
-                SceneBuildSet::Cleanup,
-            )
-                .chain(),
-        );
+        configure_scene_build_sets(app);
 
         configure_fixed_update_sets(app);
 
@@ -96,6 +79,29 @@ impl Plugin for SimulationSetupPlugin {
             ),
         );
     }
+}
+
+// Chain the scene-building sets so each pass runs after the previous one's
+// spawns are visible. Every set boundary is a Commands sync point, so a pass
+// that queries the prior pass's inserts (e.g. `SpawnPipeline` reading the
+// sensor channels from `ProcessSensors`) must sit in a later set, not just a
+// later system.
+fn configure_scene_build_sets(app: &mut App) {
+    app.configure_sets(
+        OnEnter(AppState::SceneBuilding),
+        (
+            SceneBuildSet::CreateRequests,
+            SceneBuildSet::ProcessWorldObjects,
+            SceneBuildSet::ProcessVehicle,
+            SceneBuildSet::ProcessSensors,
+            SceneBuildSet::SpawnPipeline,
+            SceneBuildSet::BindPipeline,
+            SceneBuildSet::Physics,
+            SceneBuildSet::Finalize,
+            SceneBuildSet::Cleanup,
+        )
+            .chain(),
+    );
 }
 
 fn configure_fixed_update_sets(app: &mut App) {
@@ -202,8 +208,8 @@ fn transition_to_running(mut next_state: ResMut<NextState<AppState>>) {
 
 #[cfg(test)]
 mod tests {
-    use super::configure_fixed_update_sets;
-    use crate::simulation::core::app_state::SimulationSet;
+    use super::{configure_fixed_update_sets, configure_scene_build_sets};
+    use crate::simulation::core::app_state::{AppState, SceneBuildSet, SimulationSet};
 
     use bevy::prelude::*;
 
@@ -252,6 +258,57 @@ mod tests {
                 "BrainOutput",
                 "Actuation",
                 "StateSync",
+            ],
+        );
+    }
+
+    #[test]
+    fn scene_build_sets_run_in_declared_order() {
+        let mut app = App::new();
+        app.init_resource::<SetOrder>();
+
+        // The real ordering under test — same function the plugin calls.
+        configure_scene_build_sets(&mut app);
+
+        // One trivial probe per set: append the set's name, nothing else.
+        app.add_systems(
+            OnEnter(AppState::SceneBuilding),
+            (
+                (|mut o: ResMut<SetOrder>| o.0.push("CreateRequests"))
+                    .in_set(SceneBuildSet::CreateRequests),
+                (|mut o: ResMut<SetOrder>| o.0.push("ProcessWorldObjects"))
+                    .in_set(SceneBuildSet::ProcessWorldObjects),
+                (|mut o: ResMut<SetOrder>| o.0.push("ProcessVehicle"))
+                    .in_set(SceneBuildSet::ProcessVehicle),
+                (|mut o: ResMut<SetOrder>| o.0.push("ProcessSensors"))
+                    .in_set(SceneBuildSet::ProcessSensors),
+                (|mut o: ResMut<SetOrder>| o.0.push("SpawnPipeline"))
+                    .in_set(SceneBuildSet::SpawnPipeline),
+                (|mut o: ResMut<SetOrder>| o.0.push("BindPipeline"))
+                    .in_set(SceneBuildSet::BindPipeline),
+                (|mut o: ResMut<SetOrder>| o.0.push("Physics")).in_set(SceneBuildSet::Physics),
+                (|mut o: ResMut<SetOrder>| o.0.push("Finalize")).in_set(SceneBuildSet::Finalize),
+                (|mut o: ResMut<SetOrder>| o.0.push("Cleanup")).in_set(SceneBuildSet::Cleanup),
+            ),
+        );
+
+        // Run the OnEnter(SceneBuilding) schedule directly — no state machine
+        // needed, we just fire the schedule the sets are configured against.
+        app.world_mut()
+            .run_schedule(OnEnter(AppState::SceneBuilding));
+
+        assert_eq!(
+            app.world().resource::<SetOrder>().0,
+            vec![
+                "CreateRequests",
+                "ProcessWorldObjects",
+                "ProcessVehicle",
+                "ProcessSensors",
+                "SpawnPipeline",
+                "BindPipeline",
+                "Physics",
+                "Finalize",
+                "Cleanup",
             ],
         );
     }

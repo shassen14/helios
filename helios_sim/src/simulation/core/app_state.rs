@@ -51,30 +51,29 @@ pub enum SceneBuildSet {
     ProcessVehicle,
 
     /// Pass 4: Process all sensor requests and create sensor child entities.
+    /// Attaches `MeasurementModel`, `TrackedFrame`, and `SensorPublishChannel`.
     ProcessSensors,
 
-    /// Pass 5: Process "base" autonomy modules that have no other autonomy dependencies.
-    /// (Estimators, Mappers, SLAM modules).
-    ProcessBaseAutonomy,
+    /// Pass 5: Build each agent's `AutonomyPipeline` and attach
+    /// `AutonomyPipelineComponent`. Runs after `ProcessSensors` because pipeline
+    /// assembly reads the sensors' `SensorPublishChannel` to wire the DAG's inputs.
+    SpawnPipeline,
 
-    /// Pass 6: Process modules that depend on the base autonomy layer.
-    /// (Planners, Trackers).
-    ProcessDependentAutonomy,
+    /// Pass 6: Bind host-side ECS state to the freshly-spawned pipeline — the
+    /// odom-frame entity that tracks its pose estimate and the
+    /// `ControlOutputComponent` the vehicle adapter drains. Both consumers only
+    /// require `AutonomyPipelineComponent` to exist (from `SpawnPipeline`) and are
+    /// independent of each other, so they share this one pass.
+    BindPipeline,
 
-    /// Pass 7: Process modules that depend on the planners.
-    /// (Controllers).
-    ProcessControllers,
-
-    /// Pass 8: Attach all physical bodies (RigidBody, Collider).
+    /// Pass 7: Attach all physical bodies (RigidBody, Collider).
     Physics,
 
-    /// Pass 9: TODO:
+    /// Pass 8: Snapshot the static TF tree now that the full entity hierarchy
+    /// exists, so pose lookups have a complete frame graph before `Running`.
     Finalize,
 
-    /// Pass 10: Final validation checks.
-    Validation,
-
-    /// Pass 11: Remove all temporary request components.
+    /// Pass 9: Remove all temporary request components, then transition to `Running`.
     Cleanup,
 }
 

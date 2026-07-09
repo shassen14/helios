@@ -25,8 +25,8 @@ impl Plugin for EstimationPlugin {
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
             (
-                spawn_autonomy_pipeline.in_set(SceneBuildSet::ProcessBaseAutonomy),
-                spawn_odom_frames.in_set(SceneBuildSet::ProcessDependentAutonomy),
+                spawn_autonomy_pipeline.in_set(SceneBuildSet::SpawnPipeline),
+                spawn_odom_frames.in_set(SceneBuildSet::BindPipeline),
             ),
         );
         app.add_systems(

@@ -24,7 +24,7 @@ impl Plugin for ControlPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
-            spawn_control_output.in_set(SceneBuildSet::ProcessControllers),
+            spawn_control_output.in_set(SceneBuildSet::BindPipeline),
         )
         .add_systems(
             FixedUpdate,
