@@ -16,12 +16,10 @@ pub enum AppState {
     /// The scene is built. The main simulation loop is now running.
     Running,
 
-    /// The simulation is paused. Physics is stopped.
-    Paused,
-
-    /// Transitional state entered before application exit. I/O systems
-    /// (metrics, data logger) flush to disk here via `OnEnter(Flushing)`,
-    /// which Bevy guarantees to run before the next `Update` frame exits.
+    /// Terminal state entered once a run is finished (target reached, timed out,
+    /// or aborted). Report/finalize/exit work hangs off `OnEnter(Flushing)`, so
+    /// it runs exactly once after the last tick and before the app exits. Nothing
+    /// inside this crate drives the transition — a host or test harness sets it.
     Flushing,
 }
 
@@ -113,4 +111,11 @@ pub enum SimulationSet {
 
     /// Sync ground-truth state back from Avian3D after the physics step.
     StateSync,
+
+    /// Post-`StateSync` observation slot: runs last, once ground-truth state and
+    /// the oracle channels are fresh. External harnesses, data logging, and
+    /// per-tick checks read the buses here. Empty within this crate itself —
+    /// it exists so downstream consumers have a set that provably runs after
+    /// everything else in the tick.
+    Validation,
 }

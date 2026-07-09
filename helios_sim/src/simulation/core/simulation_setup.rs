@@ -129,6 +129,9 @@ fn configure_fixed_update_sets(app: &mut App) {
                 // Our system runs IMMEDIATELY AFTER the simulation.
                 SimulationSet::StateSync,
             ),
+            // Observe the fully-settled tick: ground truth and oracle channels
+            // are fresh, so external consumers read the buses here.
+            SimulationSet::Validation,
         )
             .chain(), // .chain() enforces the order of the tuples/sets
     );
@@ -241,6 +244,8 @@ mod tests {
                     .in_set(SimulationSet::BrainOutput),
                 (|mut o: ResMut<SetOrder>| o.0.push("Actuation")).in_set(SimulationSet::Actuation),
                 (|mut o: ResMut<SetOrder>| o.0.push("StateSync")).in_set(SimulationSet::StateSync),
+                (|mut o: ResMut<SetOrder>| o.0.push("Validation"))
+                    .in_set(SimulationSet::Validation),
             ),
         );
 
@@ -258,6 +263,7 @@ mod tests {
                 "BrainOutput",
                 "Actuation",
                 "StateSync",
+                "Validation",
             ],
         );
     }
