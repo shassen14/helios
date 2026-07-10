@@ -15,7 +15,7 @@ use nalgebra::Isometry3;
 /// Mirrors Avian3D physics state into [`GroundTruthState`] each tick:
 /// pose (world ENU), linear/angular velocity (world ENU), and derived
 /// linear acceleration (world ENU, finite-difference). Runs in
-/// [`SimulationSet::StateSync`] after physics has stepped.
+/// [`SimulationSet::StateSync`](crate::core::app_state::SimulationSet::StateSync) after physics has stepped.
 pub fn ground_truth_sync_system(
     mut query: Query<(
         &GlobalTransform,
@@ -54,7 +54,7 @@ pub fn ground_truth_sync_system(
 
 /// Publishes ground-truth pose and twist onto each agent's autonomy bus on
 /// the canonical [`oracle_pose_channel`] and [`oracle_twist_channel`]
-/// slots. Runs in [`SimulationSet::StateSync`] after
+/// slots. Runs in [`SimulationSet::StateSync`](crate::core::app_state::SimulationSet::StateSync) after
 /// [`ground_truth_sync_system`].
 ///
 /// Pose and twist are both published in world ENU (matching

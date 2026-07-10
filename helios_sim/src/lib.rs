@@ -1,10 +1,11 @@
 //! Bevy + Avian3D simulation host for the Helios autonomy framework.
 //!
 //! Wraps `helios_runtime` and `helios_core` in an ECS application. Provides physics,
-//! sensor simulation, config loading (TOML), visualization (Bevy gizmos + Foxglove),
-//! and the `AutonomyRegistry` that maps config strings to concrete algorithm factories.
+//! sensor simulation, config loading (TOML), scene assembly, and the
+//! `AutonomyRegistry` that maps config strings to concrete algorithm factories.
 //! Entry point: [`HeliosSimulationPlugin`], which adds every simulation
-//! sub-plugin; behavior is selected by scenario/agent config, not by profile.
+//! sub-plugin; what actually runs for an agent is decided by the nodes its
+//! `autonomy_stack` config declares.
 
 use std::path::PathBuf;
 
@@ -22,11 +23,9 @@ use crate::registry::plugin::AutonomyRegistryPlugin;
 // This prelude is for convenience for other files WITHIN the helios_sim crate.
 pub mod prelude;
 
-// This module contains all the simulation-specific logic.
 pub mod cli;
 pub mod config;
 pub mod core;
-pub mod host;
 pub mod plugins;
 pub mod registry;
 pub mod utils;

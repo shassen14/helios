@@ -12,7 +12,7 @@
 //! pass/fail into the exit code (`run()` empties the App, so the world can't be
 //! read afterward).
 
-use helios_sim::host::{HeliosHost, Presentation};
+use helios_sim::core::host::{HeliosHost, Presentation};
 use helios_test::{
     monte_carlo::seed_for_run,
     report::aggregate::{console::print, toml_writer::write},
