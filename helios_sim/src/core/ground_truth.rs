@@ -1,8 +1,8 @@
+use crate::brain_bridge::autonomy::AutonomyPipelineComponent;
 use crate::core::{
     components::GroundTruthState,
     transforms::{EnuBodyPose, EnuVector},
 };
-use crate::plugins::autonomy::AutonomyPipelineComponent;
 
 use helios_core::data::{MonotonicTime, Twist};
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};

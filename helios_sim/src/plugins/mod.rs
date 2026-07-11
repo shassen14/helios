@@ -8,9 +8,6 @@
 //! `docs/archive/helios_sim/` pending a decision to revive (control metrics and
 //! data logging migrate to the `helios_test` crate) or delete them.
 
-pub mod autonomy;
-pub mod control;
-pub mod planning;
 pub mod sensors;
 pub mod vehicles;
 pub mod world;

@@ -5,8 +5,8 @@
 
 use bevy::prelude::*;
 
+use crate::brain_bridge::autonomy::components::{AutonomyPipelineComponent, OdomFrameOf};
 use crate::core::transforms::EnuBodyPose;
-use crate::plugins::autonomy::components::{AutonomyPipelineComponent, OdomFrameOf};
 
 /// Updates each odom frame's `Transform` from the pipeline's current pose estimate.
 pub fn update_odom_frames(

@@ -38,15 +38,3 @@ impl Plugin for EstimationPlugin {
         );
     }
 }
-
-// =========================================================================
-// == AutonomyPlugin
-// =========================================================================
-
-pub struct AutonomyPlugin;
-
-impl Plugin for AutonomyPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(EstimationPlugin);
-    }
-}

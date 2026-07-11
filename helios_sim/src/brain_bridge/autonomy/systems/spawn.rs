@@ -1,4 +1,4 @@
-use crate::plugins::autonomy::components::{
+use crate::brain_bridge::autonomy::components::{
     AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf, SensorPublishChannel,
 };
 use crate::prelude::*;

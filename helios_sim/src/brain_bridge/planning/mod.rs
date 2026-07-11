@@ -7,12 +7,12 @@
 
 use bevy::prelude::*;
 
+use crate::brain_bridge::autonomy::AutonomyPipelineComponent;
 use crate::core::app_state::SimulationSet;
 use crate::core::components::GoalDispatched;
 use crate::core::events::GoalCommandEvent;
 use crate::core::sim_runtime::SimRuntime;
 use crate::core::transforms::TfTree;
-use crate::plugins::autonomy::AutonomyPipelineComponent;
 use crate::{core::components::ConfiguredMissionGoal, prelude::AppState};
 
 pub struct PlanningPlugin;

@@ -3,10 +3,10 @@ use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use bevy::prelude::*;
 use std::time::Duration;
 
+use crate::brain_bridge::autonomy::components::{AutonomyPipelineComponent, SensorPublishChannel};
 use crate::config::structs::{LidarConfig, SensorConfig};
 use crate::core::transforms::FluVector;
 use crate::core::{app_state::SimulationSet, prng::SimulationRng};
-use crate::plugins::autonomy::components::{AutonomyPipelineComponent, SensorPublishChannel};
 use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;

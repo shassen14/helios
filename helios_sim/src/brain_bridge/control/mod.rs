@@ -7,11 +7,11 @@
 use crate::{
     prelude::*,
     {
+        brain_bridge::autonomy::AutonomyPipelineComponent,
         core::{
             app_state::{AppState, SceneBuildSet, SimulationSet},
             components::{ControlOutputComponent, ControllerStateSource},
         },
-        plugins::autonomy::AutonomyPipelineComponent,
     },
 };
 

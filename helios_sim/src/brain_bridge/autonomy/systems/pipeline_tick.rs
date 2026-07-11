@@ -7,9 +7,9 @@
 
 use bevy::prelude::*;
 
+use crate::brain_bridge::autonomy::components::AutonomyPipelineComponent;
 use crate::core::sim_runtime::SimRuntime;
 use crate::core::transforms::TfTree;
-use crate::plugins::autonomy::components::AutonomyPipelineComponent;
 
 /// Ticks every agent's `AutonomyPipeline` once per `FixedUpdate`.
 pub fn run_pipeline_tick(

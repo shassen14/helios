@@ -11,10 +11,10 @@ use std::path::PathBuf;
 
 use bevy::prelude::*;
 
+use crate::brain_bridge::autonomy::EstimationPlugin;
+use crate::brain_bridge::control::ControlPlugin;
+use crate::brain_bridge::planning::PlanningPlugin;
 use crate::core::simulation_setup::SimulationSetupPlugin;
-use crate::plugins::autonomy::EstimationPlugin;
-use crate::plugins::control::ControlPlugin;
-use crate::plugins::planning::PlanningPlugin;
 use crate::plugins::sensors::HeliosSensorsPlugin;
 use crate::plugins::vehicles::HeliosVehiclesPlugin;
 use crate::plugins::world::HeliosWorldPlugin;
@@ -23,6 +23,7 @@ use crate::registry::plugin::AutonomyRegistryPlugin;
 // This prelude is for convenience for other files WITHIN the helios_sim crate.
 pub mod prelude;
 
+pub mod brain_bridge;
 pub mod cli;
 pub mod config;
 pub mod core;
