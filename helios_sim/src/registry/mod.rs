@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::Resource;
 
-use crate::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
+use crate::agents::vehicles::ackermann::adapter::AckermannOutputAdapter;
 use contexts::AdapterFactory as AdapterFactoryAlias;
 
 /// Sim-only registry for vehicle output adapters.

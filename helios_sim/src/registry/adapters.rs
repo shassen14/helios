@@ -6,8 +6,8 @@ use bevy::prelude::*;
 use helios_core::control::siso_pid::SisoPid;
 
 use super::{AdapterBuildContext, VehicleAdapterRegistry};
+use crate::agents::vehicles::ackermann::adapter::{DefaultAckermannAdapter, DualSisoPidAdapter};
 use crate::config::structs::AckermannAdapterConfig;
-use crate::plugins::vehicles::ackermann::adapter::{DefaultAckermannAdapter, DualSisoPidAdapter};
 
 pub struct DefaultAdaptersPlugin;
 

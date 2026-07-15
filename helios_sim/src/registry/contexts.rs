@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use bevy::prelude::Entity;
 
+use crate::agents::vehicles::ackermann::adapter::AckermannOutputAdapter;
 use crate::config::structs::AckermannAdapterConfig;
-use crate::plugins::vehicles::ackermann::adapter::AckermannOutputAdapter;
 
 pub type AdapterFactory = Arc<
     dyn Fn(AdapterBuildContext) -> Result<Box<dyn AckermannOutputAdapter>, String> + Send + Sync,

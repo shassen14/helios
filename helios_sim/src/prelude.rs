@@ -19,8 +19,8 @@ pub use crate::core::host::{HeliosHost, Presentation};
 pub use crate::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::core::transforms::{TfTree, TrackedFrame};
 
-pub use crate::brain_bridge::SensorPublishChannel;
-pub use crate::plugins::sensors::imu::ImuPlugin;
-pub use crate::plugins::vehicles::ackermann::{
+pub use crate::agents::sensors::imu::ImuPlugin;
+pub use crate::agents::vehicles::ackermann::{
     AckermannAdapterComponent, AckermannCarPlugin, AckermannOutputAdapter,
 };
+pub use crate::brain_bridge::SensorPublishChannel;

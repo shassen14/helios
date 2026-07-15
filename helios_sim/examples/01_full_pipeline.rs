@@ -11,9 +11,9 @@ use helios_sim::cli::Cli;
 use avian3d::prelude::*;
 use bevy::{log::LogPlugin, prelude::*};
 use helios_core::control::ControlOutput;
+use helios_sim::agents::vehicles::ackermann::AckermannActuator;
 use helios_sim::config::ConfigPlugin;
 use helios_sim::core::components::ControlOutputComponent;
-use helios_sim::plugins::vehicles::ackermann::AckermannActuator;
 use helios_sim::prelude::AppState;
 use helios_sim::HeliosSimulationPlugin;
 
