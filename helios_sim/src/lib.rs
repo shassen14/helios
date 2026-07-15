@@ -15,8 +15,8 @@ use crate::agents::sensors::HeliosSensorsPlugin;
 use crate::agents::vehicles::HeliosVehiclesPlugin;
 use crate::brain_bridge::BrainBridgePlugin;
 use crate::core::simulation_setup::SimulationSetupPlugin;
-use crate::plugins::world::HeliosWorldPlugin;
 use crate::registry::plugin::AutonomyRegistryPlugin;
+use crate::world::HeliosWorldPlugin;
 
 // This prelude is for convenience for other files WITHIN the helios_sim crate.
 pub mod prelude;
@@ -26,9 +26,9 @@ pub mod brain_bridge;
 pub mod cli;
 pub mod config;
 pub mod core;
-pub mod plugins;
 pub mod registry;
 pub mod utils;
+pub mod world;
 
 /// The main plugin that brings together all simulation subsystems.
 ///

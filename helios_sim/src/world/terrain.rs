@@ -10,8 +10,8 @@ use bevy::{
 use crate::core::app_state::AssetLoadSet;
 use crate::core::components::TerrainMedium;
 use crate::core::transforms::EnuWorldPose;
-use crate::plugins::world::objects::WorldObjectAssets;
 use crate::prelude::*;
+use crate::world::objects::WorldObjectAssets;
 use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
 // =========================================================================
