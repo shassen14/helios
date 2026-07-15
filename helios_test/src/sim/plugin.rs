@@ -6,7 +6,7 @@ use crate::{AgentId, ReportStatus, TickAction};
 use helios_core::data::MonotonicTime;
 use helios_runtime::port::PortBus;
 use helios_runtime::AutonomyPipeline;
-use helios_sim::brain_bridge::autonomy::components::{AgentIdComponent, AutonomyPipelineComponent};
+use helios_sim::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent};
 use helios_sim::prelude::{AppState, SimulationSet};
 
 use bevy::prelude::*;

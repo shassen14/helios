@@ -11,9 +11,7 @@ use std::path::PathBuf;
 
 use bevy::prelude::*;
 
-use crate::brain_bridge::autonomy::EstimationPlugin;
-use crate::brain_bridge::control::ControlPlugin;
-use crate::brain_bridge::planning::PlanningPlugin;
+use crate::brain_bridge::BrainBridgePlugin;
 use crate::core::simulation_setup::SimulationSetupPlugin;
 use crate::plugins::sensors::HeliosSensorsPlugin;
 use crate::plugins::vehicles::HeliosVehiclesPlugin;
@@ -48,9 +46,7 @@ impl Plugin for HeliosSimulationPlugin {
             HeliosWorldPlugin,
             HeliosVehiclesPlugin,
             HeliosSensorsPlugin,
-            EstimationPlugin,
-            PlanningPlugin,
-            ControlPlugin,
+            BrainBridgePlugin,
         ));
     }
 }

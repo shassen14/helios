@@ -1,6 +1,7 @@
-use crate::brain_bridge::autonomy::components::{
+use crate::brain_bridge::components::{
     AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf, SensorPublishChannel,
 };
+use crate::core::components::{ControlOutputComponent, ControllerStateSource};
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
@@ -8,6 +9,7 @@ use helios_core::data::primitives::FrameHandle;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::{build_pipeline, BodyCapabilities, Provenance, PublishedChannel};
 
+use nalgebra::Vector3;
 use std::collections::HashMap;
 
 /// Spawns the autonomy pipeline for agents with real estimation.
@@ -86,6 +88,24 @@ pub fn spawn_odom_frames(
             OdomFrameOf(agent_entity),
         ));
         info!("[OdomFrame] Spawned odom frame for '{}'", agent_name);
+    }
+}
+
+pub fn spawn_control_output(
+    mut commands: Commands,
+    agent_query: Query<Entity, With<AutonomyPipelineComponent>>,
+) {
+    for entity in &agent_query {
+        commands.entity(entity).insert((
+            ControlOutputComponent(ControlOutput::BodyVelocity {
+                linear: Vector3::zeros(),
+                angular: Vector3::zeros(),
+            }),
+            // Required by the vehicle HUD and toggled with T at runtime.
+            // GroundTruth is the safer default so the controller sees real
+            // physics state until the estimator has spun up.
+            ControllerStateSource::GroundTruth,
+        ));
     }
 }
 

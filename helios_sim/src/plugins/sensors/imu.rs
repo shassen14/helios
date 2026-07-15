@@ -5,7 +5,7 @@ use nalgebra::Vector3;
 use rand_distr::{Distribution, Normal};
 use std::time::Duration;
 
-use crate::brain_bridge::autonomy::components::AutonomyPipelineComponent;
+use crate::brain_bridge::components::AutonomyPipelineComponent;
 use crate::core::transforms::EnuBodyPose;
 use crate::core::{app_state::SimulationSet, components::GroundTruthState, prng::SimulationRng};
 use crate::prelude::*;

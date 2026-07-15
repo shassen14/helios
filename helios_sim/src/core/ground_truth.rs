@@ -1,4 +1,4 @@
-use crate::brain_bridge::autonomy::AutonomyPipelineComponent;
+use crate::brain_bridge::AutonomyPipelineComponent;
 use crate::core::{
     components::GroundTruthState,
     transforms::{EnuBodyPose, EnuVector},

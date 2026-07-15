@@ -1,13 +1,13 @@
-// helios_sim/src/simulation/plugins/autonomy/systems/pipeline_tick.rs
-//
-// `run_pipeline_tick` runs in `SimulationSet::BrainTick` to execute every node
-// in topological order. All bus slots use last-known-good semantics; consumers
-// dedupe by `Stamped::timestamp` internally where exactly-once semantics are
-// required.
+//! Advances every agent's `AutonomyPipeline` one step per `FixedUpdate`.
+//!
+//! `run_pipeline_tick` runs in `SimulationSet::BrainTick` and executes every
+//! DAG node in topological order — the whole brain, not just the estimator.
+//! All bus slots are last-known-good; consumers dedupe by `Stamped::timestamp`
+//! internally where exactly-once semantics are required.
 
 use bevy::prelude::*;
 
-use crate::brain_bridge::autonomy::components::AutonomyPipelineComponent;
+use crate::brain_bridge::components::AutonomyPipelineComponent;
 use crate::core::sim_runtime::SimRuntime;
 use crate::core::transforms::TfTree;
 
