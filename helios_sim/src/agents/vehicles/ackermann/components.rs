@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/plugins/vehicles/ackermann/components.rs
-
 use bevy::prelude::*;
 
 /// Static parameters for an Ackermann-steering vehicle.

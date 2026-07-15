@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/core/transforms/constants.rs
-//
 // Static rotation constants for ENU↔Bevy and FLU↔Bevy frame conversions.
 // Kept in a separate file to make the mathematical basis explicit.
 

@@ -1,4 +1,3 @@
-// helios_sim/src/simulation/plugins/sensors/raycasting.rs
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use bevy::prelude::*;
 use std::time::Duration;

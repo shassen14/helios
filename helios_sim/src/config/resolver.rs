@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/config/resolver.rs
-
 use super::catalog::PrefabCatalog;
 use figment::value::{Dict, Tag, Value};
 

@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/registry/plugin.rs
-//
 // Initialises the VehicleAdapterRegistry and RuntimeAutonomyRegistry resources.
 // Add this to HeliosSimulationPlugin BEFORE WorldModelPlugin so registries are
 // populated before any spawning runs.

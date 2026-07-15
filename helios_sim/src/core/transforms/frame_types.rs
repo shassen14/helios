@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/core/transforms/frame_types.rs
-//
 // Typed coordinate frame newtypes that make illegal frame conversions unrepresentable.
 // All newtypes wrap `Isometry3<f64>` or `Vector3<f64>` — no Bevy dependency here.
 //

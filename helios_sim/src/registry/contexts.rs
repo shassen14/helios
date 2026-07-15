@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/registry/contexts.rs
-//
 // Factory type aliases and build context structs for the VehicleAdapterRegistry.
 
 use std::sync::Arc;

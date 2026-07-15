@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/core/prng.rs
-
 use bevy::prelude::Resource;
 use rand_chacha::ChaCha8Rng;
 

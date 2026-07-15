@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/core/sim_runtime.rs
-//
 // SimRuntime: implements AgentRuntime over a TfTree snapshot and elapsed time.
 // Created fresh each tick by the systems that drive the AutonomyPipeline.
 

@@ -1,4 +1,3 @@
-// helios_sim/src/simulation/plugins/sensors/imu.rs
 use avian3d::prelude::Gravity;
 use bevy::prelude::*;
 use nalgebra::Vector3;

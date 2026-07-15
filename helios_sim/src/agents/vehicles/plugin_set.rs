@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/plugins/vehicles/plugin_set.rs
-//
 // HeliosVehiclesPlugin: aggregates all vehicle plugins.
 // Future: reads the scenario agent list and adds only the required vehicle plugins.
 

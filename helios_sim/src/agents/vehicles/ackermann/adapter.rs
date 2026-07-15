@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/plugins/vehicles/ackermann/adapter.rs
-
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
 use helios_core::control::{siso_pid::SisoPid, ControlOutput};

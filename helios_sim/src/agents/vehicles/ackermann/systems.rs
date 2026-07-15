@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/plugins/vehicles/ackermann/systems.rs
-
 use crate::{
     prelude::*,
     {

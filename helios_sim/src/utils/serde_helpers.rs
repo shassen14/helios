@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/utils/serde_helpers.rs
-
 pub mod vec3_f64_from_f32_array {
     use nalgebra::Vector3;
     use serde::{self, Deserialize, Deserializer, Serializer};

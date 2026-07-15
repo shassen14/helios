@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/plugins/world/object_helpers.rs
-//
 // Private helpers for world object spawning.
 
 use std::f64::consts::PI;

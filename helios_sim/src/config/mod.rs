@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/config/mod.rs
-
 //! This module handles loading, resolving, and validating all simulation
 //! configuration from disk, including the prefab catalog system.
 

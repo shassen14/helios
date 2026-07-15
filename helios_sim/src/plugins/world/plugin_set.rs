@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/plugins/world/plugin_set.rs
-//
 // HeliosWorldPlugin: aggregates all world environment plugins.
 // Future: reads `[world] type` from scenario TOML to add domain-specific plugins
 // (UnderwaterWorldPlugin, SpaceWorldPlugin, …) — added here, transparent to HeliosSimulationPlugin.

@@ -1,5 +1,3 @@
-// helios_sim/src/prelude.rs
-
 // Re-export the entire Bevy prelude for convenience.
 pub use bevy::prelude::*;
 

@@ -1,4 +1,3 @@
-// helios_sim/src/simulation/core/events.rs
 use bevy::prelude::{Entity, Message};
 use helios_core::planning::types::PlannerGoal;
 

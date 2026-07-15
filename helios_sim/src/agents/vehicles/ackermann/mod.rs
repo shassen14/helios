@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/plugins/vehicles/ackermann/mod.rs
-
 pub mod adapter;
 pub mod components;
 pub(super) mod systems;

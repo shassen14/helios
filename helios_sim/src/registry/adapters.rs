@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/registry/adapters.rs
-//
 // Registers all built-in AckermannOutputAdapter factories into VehicleAdapterRegistry.
 
 use bevy::prelude::*;

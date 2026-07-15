@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/plugins/sensors/plugin_set.rs
-//
 // HeliosSensorsPlugin: aggregates all sensor simulation plugins.
 // Future: reads scenario agent configs and adds only the required sensor plugins.
 

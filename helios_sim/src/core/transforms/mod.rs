@@ -1,4 +1,3 @@
-// helios_sim/src/simulation/core/transforms/mod.rs
 //! Coordinate frame conversion helpers and the runtime TF tree.
 //!
 //! Provides typed frame newtypes ([`EnuBodyPose`], [`EnuWorldPose`], [`FluLocalPose`],

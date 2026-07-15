@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/core/transforms/bevy_bridge.rs
-//
 // All `From`/`Into` impls between ENU/FLU typed newtypes and Bevy types.
 // This is the single source of truth for axis-swap logic. Never perform
 // manual axis swaps outside this file.

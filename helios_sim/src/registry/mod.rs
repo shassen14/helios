@@ -1,5 +1,3 @@
-// helios_sim/src/simulation/registry/mod.rs
-//
 // VehicleAdapterRegistry: sim-only registry for AckermannOutputAdapter factories.
 // All algorithm factories (estimators, mappers, controllers, etc.) live in
 // `helios_runtime::registry::AutonomyRegistry`, wrapped as `RuntimeAutonomyRegistry`.
