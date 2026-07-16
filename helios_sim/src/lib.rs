@@ -1,32 +1,34 @@
 //! Bevy + Avian3D simulation host for the Helios autonomy framework.
 //!
 //! Wraps `helios_runtime` and `helios_core` in an ECS application. Provides physics,
-//! sensor simulation, config loading (TOML), visualization (Bevy gizmos + Foxglove),
-//! and the `AutonomyRegistry` that maps config strings to concrete algorithm factories.
+//! sensor simulation, config loading (TOML), scene assembly, and the
+//! `AutonomyRegistry` that maps config strings to concrete algorithm factories.
 //! Entry point: [`HeliosSimulationPlugin`], which adds every simulation
-//! sub-plugin; behavior is selected by scenario/agent config, not by profile.
+//! sub-plugin; what actually runs for an agent is decided by the nodes its
+//! `autonomy_stack` config declares.
 
 use std::path::PathBuf;
 
 use bevy::prelude::*;
 
-use crate::simulation::core::simulation_setup::SimulationSetupPlugin;
-use crate::simulation::plugins::autonomy::EstimationPlugin;
-use crate::simulation::plugins::control::ControlPlugin;
-use crate::simulation::plugins::debugging::DebuggingPlugin;
-use crate::simulation::plugins::planning::PlanningPlugin;
-use crate::simulation::plugins::sensors::HeliosSensorsPlugin;
-use crate::simulation::plugins::vehicles::HeliosVehiclesPlugin;
-use crate::simulation::plugins::world::HeliosWorldPlugin;
-use crate::simulation::registry::plugin::AutonomyRegistryPlugin;
+use crate::agents::sensors::HeliosSensorsPlugin;
+use crate::agents::vehicles::HeliosVehiclesPlugin;
+use crate::brain_bridge::BrainBridgePlugin;
+use crate::core::simulation_setup::SimulationSetupPlugin;
+use crate::registry::plugin::AutonomyRegistryPlugin;
+use crate::world::HeliosWorldPlugin;
 
 // This prelude is for convenience for other files WITHIN the helios_sim crate.
 pub mod prelude;
 
-// This module contains all the simulation-specific logic.
+pub mod agents;
+pub mod brain_bridge;
 pub mod cli;
-pub mod host;
-pub mod simulation;
+pub mod config;
+pub mod core;
+pub mod registry;
+pub mod utils;
+pub mod world;
 
 /// The main plugin that brings together all simulation subsystems.
 ///
@@ -45,10 +47,7 @@ impl Plugin for HeliosSimulationPlugin {
             HeliosWorldPlugin,
             HeliosVehiclesPlugin,
             HeliosSensorsPlugin,
-            EstimationPlugin,
-            PlanningPlugin,
-            ControlPlugin,
-            DebuggingPlugin,
+            BrainBridgePlugin,
         ));
     }
 }

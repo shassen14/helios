@@ -19,12 +19,6 @@ medium   = "air"
 [world.atmosphere]
 gravity = [0.0, -9.81, 0.0]
 
-[debug]
-show_pose_gimbals = true
-show_path_trail   = true
-show_velocity     = true
-show_legend       = true
-
 [metrics]
 output_path = "results/control_only.csv"
 

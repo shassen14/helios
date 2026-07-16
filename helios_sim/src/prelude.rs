@@ -1,5 +1,3 @@
-// helios_sim/src/prelude.rs
-
 // Re-export the entire Bevy prelude for convenience.
 pub use bevy::prelude::*;
 
@@ -7,24 +5,31 @@ pub use bevy::prelude::*;
 // pure types like `FrameHandle`, `Dynamics`, `Measurement`, etc.
 pub use helios_core::prelude::*;
 
-// Re-export common simulationecific types for easy access in other plugins.
-pub use crate::cli::Cli;
-pub use crate::simulation::config::structs::{
-    AgentConfig, RawScenarioConfig, ScenarioConfig, SensorConfig, Vehicle,
-};
-pub use crate::simulation::config::structs::{AtmosphereConfig, TerrainConfig};
-pub use crate::simulation::core::app_state::{AppState, SceneBuildSet, SimulationSet};
-pub use crate::simulation::core::components::{
-    BoundingBox3D, SemanticLabel, TerrainMedium, WorldObjectType,
-};
-pub use crate::simulation::core::spawn_requests::SpawnAgentConfigRequest;
-pub use crate::simulation::core::transforms::{TfTree, TrackedFrame};
+// The crate's public surface: types and plugins that sim modules, `helios_test`,
+// and the examples import from here rather than reaching into deep module paths.
+pub use crate::HeliosSimulationPlugin;
 
-pub use crate::simulation::plugins::autonomy::SensorPublishChannel;
-pub use crate::simulation::plugins::sensors::imu::ImuPlugin;
-pub use crate::simulation::plugins::vehicles::ackermann::{
+pub use crate::cli::Cli;
+
+pub use crate::config::structs::{
+    AgentConfig, AtmosphereConfig, RawScenarioConfig, ScenarioConfig, SensorConfig, TerrainConfig,
+    Vehicle,
+};
+pub use crate::config::ConfigPlugin;
+
+pub use crate::core::app_state::{AppState, SceneBuildSet, SimulationSet};
+pub use crate::core::components::{
+    BoundingBox3D, ControlOutputComponent, GroundTruthState, SemanticLabel, TerrainMedium,
+    WorldObjectType,
+};
+pub use crate::core::host::{HeliosHost, Presentation};
+pub use crate::core::spawn_requests::SpawnAgentConfigRequest;
+pub use crate::core::transforms::{TfTree, TrackedFrame};
+
+pub use crate::agents::sensors::imu::ImuPlugin;
+pub use crate::agents::vehicles::ackermann::{
     AckermannAdapterComponent, AckermannCarPlugin, AckermannOutputAdapter,
 };
 
-// host types
-pub use crate::host::{HeliosHost, Presentation};
+pub use crate::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent};
+pub use crate::brain_bridge::SensorPublishChannel;
