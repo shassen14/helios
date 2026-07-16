@@ -67,13 +67,18 @@ pub fn ground_truth_sync_system(
 /// `read_fresh(max_age)` comparisons across systems work without skew.
 ///
 /// `bus.write` returns `Err(UnknownChannel)` if no node in the graph
-/// consumes the slot; that is the documented "unused channel" outcome,
-/// not an error worth surfacing, so the result is intentionally
-/// discarded.
+/// consumes the slot. For the oracle that is expected, not a bug: nothing
+/// reads `oracle/pose` or `oracle/twist` until a consumer — a mock-oracle
+/// estimator or a visualization layer — is wired into the pipeline. So instead
+/// of the crate-wide "warn loudly" rule for a dropped write, this system traces
+/// the miss once (naming the channel), then stays quiet — a real wiring bug
+/// elsewhere still screams; this known no-consumer case says its piece once and
+/// does not spam the fixed-rate tick.
 pub fn publish_oracle_channels_system(
     query: Query<(&GroundTruthState, &AutonomyPipelineComponent)>,
     time: Res<Time>,
     mut has_logged_first_tick: Local<bool>,
+    mut has_warned_no_consumer: Local<bool>,
 ) {
     let now = MonotonicTime(time.elapsed_secs_f64());
 
@@ -81,9 +86,9 @@ pub fn publish_oracle_channels_system(
     // system actually executes. Used to confirm the schedule wiring is
     // correct (system is in StateSync, run_if(Running) is satisfied) — a
     // silent run cannot otherwise be observed from outside, because the
-    // bus writes below land on slots that don't exist yet until a mock
-    // consumer is built (Phase 3). Cheap to leave in; remove if it ever
-    // becomes noise. Enable with RUST_LOG=helios_sim::oracle=trace.
+    // bus writes below land on slots that don't exist yet until a
+    // consumer is built. Cheap to leave in; remove if it ever becomes
+    // noise. Enable with RUST_LOG=helios_sim::oracle=trace.
     if !*has_logged_first_tick {
         tracing::trace!(
             target: "helios_sim::oracle",
@@ -103,8 +108,9 @@ pub fn publish_oracle_channels_system(
             producer: HOST_PRODUCER_ID,
         };
 
-        // World-frame twist matches STANDARD_INS_LAYOUT; mocks pass through
-        // without rotating. See `oracle_twist_channel` docs.
+        // Twist is published in the world frame, matching the velocity
+        // convention a passthrough estimator expects, so a mock oracle can copy
+        // it straight into a FrameAwareState without a frame rotation.
         let stamped_twist = Stamped {
             value: Twist {
                 linear: ground_truth.linear_velocity,
@@ -116,7 +122,26 @@ pub fn publish_oracle_channels_system(
         };
 
         let bus = autonomy_pipeline.0.bus();
-        let _ = bus.write(oracle_pose_channel(), stamped_pose);
-        let _ = bus.write(oracle_twist_channel(), stamped_twist);
+        let pose_result = bus.write(oracle_pose_channel(), stamped_pose);
+        let twist_result = bus.write(oracle_twist_channel(), stamped_twist);
+
+        // TODO: should check for actual error if we have more variants
+        if pose_result.is_err() && !*has_warned_no_consumer {
+            tracing::trace!(
+                target: "helios_sim::oracle",
+                channel = oracle_pose_channel().to_string(),
+                "oracle channel has no consumer; write dropped"
+            );
+            *has_warned_no_consumer = true;
+        }
+
+        if twist_result.is_err() && !*has_warned_no_consumer {
+            tracing::trace!(
+                target: "helios_sim::oracle",
+                channel = oracle_twist_channel().to_string(),
+                "oracle channel has no consumer; write dropped"
+            );
+            *has_warned_no_consumer = true;
+        }
     }
 }

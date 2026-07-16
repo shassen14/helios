@@ -97,7 +97,10 @@ mod tests {
             .add_systems(Update, (dispatch_configured_goals, count_emitted).chain());
 
         let goal = PlannerGoal::WorldPosition2D(Vector2::new(1.0, 2.0));
-        let a = app.world_mut().spawn(ConfiguredMissionGoal(goal.clone())).id();
+        let a = app
+            .world_mut()
+            .spawn(ConfiguredMissionGoal(goal.clone()))
+            .id();
         let b = app.world_mut().spawn(ConfiguredMissionGoal(goal)).id();
 
         // First tick: one event per agent, both now marked dispatched.
