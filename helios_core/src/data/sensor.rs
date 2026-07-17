@@ -72,7 +72,7 @@ pub struct GpsPosition {
 /// 3D velocity (m/s) in the ENU world frame.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct GpsVelocity {
-    pub(crate) velocity: Vector3<f64>,
+    pub velocity: Vector3<f64>,
 }
 
 /// 2D point cloud (meters) in the sensor's FLU frame.
@@ -85,7 +85,7 @@ pub struct PointCloud2D {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct LidarPoint3D {
     pub position: Point3<f64>,
-    pub(crate) intensity: Option<f32>,
+    pub intensity: Option<f32>,
 }
 
 /// 3D point cloud (meters) in the sensor's FLU frame.

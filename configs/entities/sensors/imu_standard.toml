@@ -1,4 +1,4 @@
-# configs/catalog/sensors/imu_standard.toml
+# configs/entities/sensors/imu_standard.toml
 # Corresponds to the `SensorConfig::Imu` enum variant.
 kind = "Imu"
 name = "imu_standard"
@@ -6,3 +6,8 @@ rate = 100.0
 transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
 accel_noise_stddev = [0.01, 0.01, 0.01]
 gyro_noise_stddev = [0.001, 0.001, 0.001]
+
+# Bus channels the two IMU quantities publish on. Each must match the
+# estimator's corresponding input channel in the agent's autonomy stack.
+accel_channel = "sensor.imu.accel"
+gyro_channel = "sensor.imu.gyro"

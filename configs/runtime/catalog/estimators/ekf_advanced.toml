@@ -5,6 +5,10 @@ kind = "Ekf"
 [config]
 [config.dynamics]
 type = "IntegratedImu"
+# Bus channels the predict step reads IMU data from. Must match the IMU entity's
+# `accel_channel` / `gyro_channel`.
+accel_channel = "sensor.imu.accel"
+gyro_channel = "sensor.imu.gyro"
 accel_noise_stddev = 0.02
 gyro_noise_stddev = 0.001
 accel_bias_instability = 0.005

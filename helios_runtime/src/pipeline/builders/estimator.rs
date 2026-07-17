@@ -6,7 +6,9 @@ use helios_core::{
     estimation::EstimatorInputs,
     prelude::{AngularVelocity3D, LinearAcceleration3D, SensorReading},
 };
+
 use nalgebra::DVector;
+use std::sync::Arc;
 
 pub(crate) trait EstimatorInputBuilder: Send + Sync {
     fn assemble(
@@ -30,18 +32,15 @@ pub(crate) struct IntegratedImuInputBuilder {
     required: Vec<ChannelKey>,
 }
 
-impl Default for IntegratedImuInputBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl IntegratedImuInputBuilder {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(
+        accel_channel: impl Into<Arc<str>>,
+        gyro_channel: impl Into<Arc<str>>,
+    ) -> Self {
         let accel_channel: ChannelKey =
-            SensorChannel::of::<Vec<SensorReading<LinearAcceleration3D>>>().into();
+            SensorChannel::named::<Vec<SensorReading<LinearAcceleration3D>>>(accel_channel).into();
         let gyro_channel: ChannelKey =
-            SensorChannel::of::<Vec<SensorReading<AngularVelocity3D>>>().into();
+            SensorChannel::named::<Vec<SensorReading<AngularVelocity3D>>>(gyro_channel).into();
 
         Self {
             accel_channel: accel_channel.clone(),

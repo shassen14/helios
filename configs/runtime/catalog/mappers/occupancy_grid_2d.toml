@@ -4,3 +4,6 @@ resolution = 0.5  # meters per cell
 width_m = 100.0   # rolling window width in meters (East axis)
 height_m = 100.0  # rolling window height in meters (North axis)
 pose_source = "ground_truth"  # "ground_truth" | "estimated"
+
+# Bus channel the grid integrates scans from. Must match the lidar entity's `channel`.
+scan_channel = "sensor.lidar.front"

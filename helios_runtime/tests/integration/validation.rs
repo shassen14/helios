@@ -47,6 +47,8 @@ fn imu_noise() -> IntegratedImuConfig {
         gyro_noise_stddev: 0.01,
         accel_bias_instability: 0.001,
         gyro_bias_instability: 0.001,
+        accel_channel: "sensor.imu.accel".to_string(),
+        gyro_channel: "sensor.imu.gyro".to_string(),
     }
 }
 
@@ -85,6 +87,7 @@ fn occupancy_grid() -> MapLayerConfig {
     MapLayerConfig::OccupancyGrid2D {
         rate: 10.0,
         resolution: 0.1,
+        scan_channel: "sensor.lidar.front".to_string(),
         width_m: 20.0,
         height_m: 20.0,
         pose_source: MapperPoseSourceConfig::GroundTruth,

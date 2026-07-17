@@ -27,6 +27,11 @@ pub struct Imu {
     pub gyro_entity: Entity,
     accel_noise: [Normal<f64>; 3],
     gyro_noise: [Normal<f64>; 3],
+    /// Publish-channel names resolved from `ImuConfig` at spawn. Held on the
+    /// component so the runtime tick reads them here instead of re-querying
+    /// config; the accelerometer and gyroscope publish to separate channels.
+    accel_channel: String,
+    gyro_channel: String,
 }
 
 pub struct ImuPlugin;
@@ -113,6 +118,9 @@ fn spawn_imu_sensors(
                             Normal::new(0.0, gyro_std[1] as f64).unwrap(),
                             Normal::new(0.0, gyro_std[2] as f64).unwrap(),
                         ],
+
+                        accel_channel: imu_config.get_accel_channel().to_string(),
+                        gyro_channel: imu_config.get_gyro_channel().to_string(),
                     },
                     TrackedFrame,
                     sensor_pose.to_bevy_local_transform(),
@@ -217,22 +225,42 @@ fn imu_sensor_system(
             producer: HOST_PRODUCER_ID,
         };
 
-        pipeline_comp
-            .0
-            .bus()
-            .write(
-                SensorChannel::of::<Vec<SensorReading<LinearAcceleration3D>>>().into(),
-                accel_stamped,
+        let accel_result = pipeline_comp.0.bus().write(
+            SensorChannel::named::<Vec<SensorReading<LinearAcceleration3D>>>(
+                imu.accel_channel.as_str(),
             )
-            .ok();
+            .into(),
+            accel_stamped,
+        );
 
-        pipeline_comp
-            .0
-            .bus()
-            .write(
-                SensorChannel::of::<Vec<SensorReading<AngularVelocity3D>>>().into(),
-                gyro_stamped,
+        let gyro_result = pipeline_comp.0.bus().write(
+            SensorChannel::named::<Vec<SensorReading<AngularVelocity3D>>>(
+                imu.gyro_channel.as_str(),
             )
-            .ok();
+            .into(),
+            gyro_stamped,
+        );
+
+        // A named sensor channel with no slot means the DAG was never wired
+        // to this name — the estimator's configured input channel and this
+        // sensor's config disagree. That is a config defect, so it warns
+        // (unlike the oracle channels, where a missing consumer is expected).
+        // `warn_once` keeps a fixed-rate sensor from flooding the log.
+        if accel_result.is_err() {
+            warn_once!(
+                "IMU accel channel '{}' has no slot in the autonomy DAG; readings are being \
+                 dropped. The estimator's accel input channel must match this sensor's \
+                 `accel_channel`.",
+                imu.accel_channel
+            );
+        }
+        if gyro_result.is_err() {
+            warn_once!(
+                "IMU gyro channel '{}' has no slot in the autonomy DAG; readings are being \
+                 dropped. The estimator's gyro input channel must match this sensor's \
+                 `gyro_channel`.",
+                imu.gyro_channel
+            );
+        }
     }
 }

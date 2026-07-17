@@ -121,14 +121,22 @@ fn raycasting_sensor_system(
     time: Res<Time>,
     mut rng: ResMut<SimulationRng>,
     spatial_query: SpatialQuery,
-    mut sensor_query: Query<(Entity, &mut RaycastingSensor, &GlobalTransform, &ChildOf)>,
+    mut sensor_query: Query<(
+        Entity,
+        &mut RaycastingSensor,
+        &SensorPublishChannel,
+        &GlobalTransform,
+        &ChildOf,
+    )>,
     pipeline_query: Query<&AutonomyPipelineComponent>,
 ) {
     let _span = tracing::trace_span!("sim.sensor.publish", sensor = "raycasting").entered();
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (sensor_entity, mut sensor, sensor_transform, parent) in &mut sensor_query {
+    for (sensor_entity, mut sensor, sensor_publish_channel, sensor_transform, parent) in
+        &mut sensor_query
+    {
         sensor.timer.tick(dt);
         if !sensor.timer.just_finished() {
             continue;
@@ -185,13 +193,24 @@ fn raycasting_sensor_system(
             producer: HOST_PRODUCER_ID,
         };
 
-        pipeline_comp
-            .0
-            .bus()
-            .write(
-                SensorChannel::of::<Vec<SensorReading<PointCloud2D>>>().into(),
-                stamped,
+        let scan_result = pipeline_comp.0.bus().write(
+            SensorChannel::named::<Vec<SensorReading<PointCloud2D>>>(
+                sensor_publish_channel.0.as_str(),
             )
-            .ok();
+            .into(),
+            stamped,
+        );
+
+        // A named sensor channel with no slot means the DAG was never wired
+        // to this name — the mapper's `scan_channel` and this sensor's
+        // `channel` config disagree. That is a config defect, so it warns.
+        // `warn_once` keeps a fixed-rate sensor from flooding the log.
+        if scan_result.is_err() {
+            warn_once!(
+                "scan channel '{}' has no slot in the autonomy DAG; readings are being dropped. \
+                 The mapper's `scan_channel` must match this sensor's `channel`.",
+                sensor_publish_channel.0
+            );
+        }
     }
 }

@@ -136,7 +136,10 @@ fn build_ekf(
     // --- 4. Select input builder based on dynamics kind ---
     let input_builder: Box<dyn crate::pipeline::builders::estimator::EstimatorInputBuilder> =
         match &ekf_config.dynamics {
-            EkfDynamicsConfig::IntegratedImu(_) => Box::new(IntegratedImuInputBuilder::new()),
+            EkfDynamicsConfig::IntegratedImu(imu_cfg) => Box::new(IntegratedImuInputBuilder::new(
+                imu_cfg.accel_channel.as_str(),
+                imu_cfg.gyro_channel.as_str(),
+            )),
             EkfDynamicsConfig::AckermannOdometry(_) | EkfDynamicsConfig::Quadcopter(_) => {
                 return Err(format!(
                     "No input builder implemented for dynamics kind '{dynamics_key}'"

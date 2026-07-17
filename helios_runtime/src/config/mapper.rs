@@ -16,6 +16,9 @@ pub enum MapLayerConfig {
     OccupancyGrid2D {
         rate: f32,
         resolution: f32,
+        /// Bus channel the grid integrates `Vec<SensorReading<PointCloud2D>>`
+        /// from. Must match the channel the host's scan sensor publishes on.
+        scan_channel: String,
         /// Width of the rolling window in meters (East axis).
         width_m: f32,
         /// Height of the rolling window in meters (North axis).

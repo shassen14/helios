@@ -65,7 +65,7 @@ from = "sim.catalog.agents.ackermann_car_pro"
 name = "ProCar-Baseline"
 # The agent's starting pose in the world (ENU) frame.
 # `rotation` is [roll, pitch, yaw] in degrees. 90 deg yaw is North.
-starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+starting_pose = { translation = [-10.0, 10.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose = { translation = [5.0, 5.0, 0.5] }
 
 

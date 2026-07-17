@@ -166,6 +166,14 @@ pub struct IntegratedImuConfig {
     pub accel_bias_instability: f64,
     /// Gyroscope bias instability std dev (rad/s/√Hz).
     pub gyro_bias_instability: f64,
+    /// Bus channel the predict step reads `Vec<SensorReading<LinearAcceleration3D>>`
+    /// from. Must match the accelerometer channel the host publishes on
+    /// (the sensor's `accel_channel` in sim).
+    pub accel_channel: String,
+    /// Bus channel the predict step reads `Vec<SensorReading<AngularVelocity3D>>`
+    /// from. Must match the gyroscope channel the host publishes on
+    /// (the sensor's `gyro_channel` in sim).
+    pub gyro_channel: String,
 }
 
 /// Process noise parameters for the Ackermann odometry dynamics model.

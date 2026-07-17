@@ -45,6 +45,17 @@ pub struct ImuConfig {
     /// Per-axis noise standard deviation for the gyroscope (rad/s).
     #[serde(default)]
     pub gyro_noise_stddev: [f32; 3],
+
+    /// Bus channel for `Vec<SensorReading<LinearAcceleration3D>>`. Must match the
+    /// accelerometer `input_channel` in the estimator's aiding config. Distinct
+    /// from `gyro_channel` — one IMU publishes its two quantities on two separate
+    /// channels. The name disambiguates multiple IMUs on a single agent's bus; it
+    /// need not be unique across agents, since each agent owns its own bus.
+    pub accel_channel: String,
+    /// Bus channel for `Vec<SensorReading<AngularVelocity3D>>`. Must match the
+    /// gyroscope `input_channel` in the estimator's aiding config. Same
+    /// per-agent uniqueness rule as `accel_channel`.
+    pub gyro_channel: String,
 }
 
 impl ImuConfig {
@@ -59,6 +70,13 @@ impl ImuConfig {
     }
     pub fn get_noise_stddevs(&self) -> ([f32; 3], [f32; 3]) {
         (self.accel_noise_stddev, self.gyro_noise_stddev)
+    }
+
+    pub fn get_accel_channel(&self) -> &str {
+        &self.accel_channel
+    }
+    pub fn get_gyro_channel(&self) -> &str {
+        &self.gyro_channel
     }
 }
 
