@@ -1,10 +1,3 @@
-use avian3d::prelude::Gravity;
-use bevy::prelude::*;
-use nalgebra::Vector3;
-use rand_distr::{Distribution, Normal};
-use std::time::Duration;
-
-use crate::brain_bridge::components::AutonomyPipelineComponent;
 use crate::core::transforms::EnuBodyPose;
 use crate::core::{app_state::SimulationSet, components::GroundTruthState, prng::SimulationRng};
 use crate::prelude::*;
@@ -12,9 +5,11 @@ use crate::prelude::*;
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::{AngularVelocity3D, LinearAcceleration3D};
-use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
-use helios_runtime::port::SensorChannel;
-use helios_runtime::stamped::{Health, Stamped};
+
+use avian3d::prelude::Gravity;
+use nalgebra::Vector3;
+use rand_distr::{Distribution, Normal};
+use std::time::Duration;
 
 // =========================================================================
 // == IMU Components & Plugin ==
@@ -165,7 +160,8 @@ fn imu_sensor_system(
     mut rng: ResMut<SimulationRng>,
     gravity: Res<Gravity>,
     mut sensor_query: Query<(&mut Imu, &GlobalTransform, &ChildOf)>,
-    parent_query: Query<(&GroundTruthState, &AutonomyPipelineComponent)>,
+    parent_query: Query<&GroundTruthState>,
+    mut publisher: SensorPublisher,
 ) {
     let _span = tracing::trace_span!("sim.sensor.publish", sensor = "imu").entered();
     let elapsed = time.elapsed_secs_f64();
@@ -177,7 +173,7 @@ fn imu_sensor_system(
             continue;
         }
 
-        let Ok((ground_truth, pipeline_comp)) = parent_query.get(parent.parent()) else {
+        let Ok(ground_truth) = parent_query.get(parent.parent()) else {
             continue;
         };
 
@@ -206,61 +202,14 @@ fn imu_sensor_system(
             timestamp: MonotonicTime(elapsed),
             data: LinearAcceleration3D { value: noisy_accel },
         };
-        let accel_stamped = Stamped {
-            value: vec![accel_reading],
-            timestamp: MonotonicTime(elapsed),
-            health: Health::Ok,
-            producer: HOST_PRODUCER_ID,
-        };
-
         let gyro_reading = SensorReading {
             sensor_handle: FrameHandle::from_entity(imu.gyro_entity),
             timestamp: MonotonicTime(elapsed),
             data: AngularVelocity3D { value: noisy_gyro },
         };
-        let gyro_stamped = Stamped {
-            value: vec![gyro_reading],
-            timestamp: MonotonicTime(elapsed),
-            health: Health::Ok,
-            producer: HOST_PRODUCER_ID,
-        };
 
-        let accel_result = pipeline_comp.0.bus().write(
-            SensorChannel::named::<Vec<SensorReading<LinearAcceleration3D>>>(
-                imu.accel_channel.as_str(),
-            )
-            .into(),
-            accel_stamped,
-        );
-
-        let gyro_result = pipeline_comp.0.bus().write(
-            SensorChannel::named::<Vec<SensorReading<AngularVelocity3D>>>(
-                imu.gyro_channel.as_str(),
-            )
-            .into(),
-            gyro_stamped,
-        );
-
-        // A named sensor channel with no slot means the DAG was never wired
-        // to this name — the estimator's configured input channel and this
-        // sensor's config disagree. That is a config defect, so it warns
-        // (unlike the oracle channels, where a missing consumer is expected).
-        // `warn_once` keeps a fixed-rate sensor from flooding the log.
-        if accel_result.is_err() {
-            warn_once!(
-                "IMU accel channel '{}' has no slot in the autonomy DAG; readings are being \
-                 dropped. The estimator's accel input channel must match this sensor's \
-                 `accel_channel`.",
-                imu.accel_channel
-            );
-        }
-        if gyro_result.is_err() {
-            warn_once!(
-                "IMU gyro channel '{}' has no slot in the autonomy DAG; readings are being \
-                 dropped. The estimator's gyro input channel must match this sensor's \
-                 `gyro_channel`.",
-                imu.gyro_channel
-            );
-        }
+        let agent = parent.parent();
+        publisher.publish(agent, imu.accel_channel.as_str(), vec![accel_reading]);
+        publisher.publish(agent, imu.gyro_channel.as_str(), vec![gyro_reading]);
     }
 }

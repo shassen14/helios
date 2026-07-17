@@ -1,18 +1,14 @@
-use bevy::prelude::*;
-use nalgebra::Vector3;
-use rand_distr::{Distribution, Normal};
-use std::time::Duration;
-
-use crate::brain_bridge::components::{AutonomyPipelineComponent, SensorPublishChannel};
+use crate::brain_bridge::components::SensorPublishChannel;
 use crate::core::{app_state::SimulationSet, prng::SimulationRng, transforms::EnuVector};
 use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::GpsPosition;
-use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
-use helios_runtime::port::SensorChannel;
-use helios_runtime::stamped::{Health, Stamped};
+
+use nalgebra::Vector3;
+use rand_distr::{Distribution, Normal};
+use std::time::Duration;
 
 // =========================================================================
 // == GPS Components & Plugin ==
@@ -101,7 +97,7 @@ fn gps_sensor_system(
         &SensorPublishChannel,
         &ChildOf,
     )>,
-    pipeline_query: Query<&AutonomyPipelineComponent>,
+    mut publisher: SensorPublisher,
 ) {
     let _span = tracing::trace_span!("sim.sensor.publish", sensor = "gps").entered();
     let elapsed = time.elapsed_secs_f64();
@@ -112,10 +108,6 @@ fn gps_sensor_system(
         if !gps.timer.just_finished() {
             continue;
         }
-
-        let Ok(pipeline_comp) = pipeline_query.get(parent.parent()) else {
-            continue;
-        };
 
         let true_position_bevy = sensor_global_transform.translation();
         let true_position_enu = EnuVector::from(true_position_bevy).0;
@@ -133,20 +125,7 @@ fn gps_sensor_system(
                 position: noisy_position,
             },
         };
-        let stamped = Stamped {
-            value: vec![reading],
-            timestamp: MonotonicTime(elapsed),
-            health: Health::Ok,
-            producer: HOST_PRODUCER_ID,
-        };
 
-        pipeline_comp
-            .0
-            .bus()
-            .write(
-                SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(channel.0.as_str()).into(),
-                stamped,
-            )
-            .ok();
+        publisher.publish(parent.parent(), channel.0.as_str(), vec![reading]);
     }
 }

@@ -1,9 +1,4 @@
-use bevy::prelude::*;
-use nalgebra::Vector3;
-use rand_distr::{Distribution, Normal};
-use std::time::Duration;
-
-use crate::brain_bridge::components::{AutonomyPipelineComponent, SensorPublishChannel};
+use crate::brain_bridge::components::SensorPublishChannel;
 use crate::core::transforms::EnuBodyPose;
 use crate::core::{app_state::SimulationSet, prng::SimulationRng};
 use crate::prelude::*;
@@ -11,9 +6,10 @@ use crate::prelude::*;
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::MagneticField3D;
-use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
-use helios_runtime::port::SensorChannel;
-use helios_runtime::stamped::{Health, Stamped};
+
+use nalgebra::Vector3;
+use rand_distr::{Distribution, Normal};
+use std::time::Duration;
 
 // =========================================================================
 // == Magnetometer Components & Plugin ==
@@ -121,7 +117,7 @@ fn magnetometer_sensor_system(
         &SensorPublishChannel,
         &ChildOf,
     )>,
-    pipeline_query: Query<&AutonomyPipelineComponent>,
+    mut publisher: SensorPublisher,
 ) {
     let _span = tracing::trace_span!("sim.sensor.publish", sensor = "magnetometer").entered();
     let elapsed = time.elapsed_secs_f64();
@@ -133,10 +129,6 @@ fn magnetometer_sensor_system(
         if !mag.timer.just_finished() {
             continue;
         }
-
-        let Ok(pipeline_comp) = pipeline_query.get(parent.parent()) else {
-            continue;
-        };
 
         let sensor_pose_enu = EnuBodyPose::from(sensor_global_transform).0;
         let q_sensor_from_world = sensor_pose_enu.rotation.inverse();
@@ -156,21 +148,7 @@ fn magnetometer_sensor_system(
                 value: noisy_mag_reading,
             },
         };
-        let stamped = Stamped {
-            value: vec![reading],
-            timestamp: MonotonicTime(elapsed),
-            health: Health::Ok,
-            producer: HOST_PRODUCER_ID,
-        };
 
-        pipeline_comp
-            .0
-            .bus()
-            .write(
-                SensorChannel::named::<Vec<SensorReading<MagneticField3D>>>(channel.0.as_str())
-                    .into(),
-                stamped,
-            )
-            .ok();
+        publisher.publish(parent.parent(), channel.0.as_str(), vec![reading]);
     }
 }

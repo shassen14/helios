@@ -32,4 +32,4 @@ pub use crate::agents::vehicles::ackermann::{
 };
 
 pub use crate::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent};
-pub use crate::brain_bridge::SensorPublishChannel;
+pub use crate::brain_bridge::{SensorPublishChannel, SensorPublisher};

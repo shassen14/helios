@@ -1,8 +1,4 @@
-use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
-use bevy::prelude::*;
-use std::time::Duration;
-
-use crate::brain_bridge::components::{AutonomyPipelineComponent, SensorPublishChannel};
+use crate::brain_bridge::components::SensorPublishChannel;
 use crate::config::structs::{LidarConfig, SensorConfig};
 use crate::core::transforms::FluVector;
 use crate::core::{app_state::SimulationSet, prng::SimulationRng};
@@ -10,13 +6,12 @@ use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::data::sensor::PointCloud2D;
 use helios_core::sensors::{
     lidar_2d::Lidar2DModel, RayHit, RaycastingOutput, RaycastingSensorModel,
 };
-use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
-use helios_runtime::port::SensorChannel;
-use helios_runtime::stamped::{Health, Stamped};
+
+use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
+use std::time::Duration;
 
 // =========================================================================
 // == Components & Plugin ==
@@ -128,7 +123,7 @@ fn raycasting_sensor_system(
         &GlobalTransform,
         &ChildOf,
     )>,
-    pipeline_query: Query<&AutonomyPipelineComponent>,
+    mut publisher: SensorPublisher,
 ) {
     let _span = tracing::trace_span!("sim.sensor.publish", sensor = "raycasting").entered();
     let elapsed = time.elapsed_secs_f64();
@@ -141,10 +136,6 @@ fn raycasting_sensor_system(
         if !sensor.timer.just_finished() {
             continue;
         }
-
-        let Ok(pipeline_comp) = pipeline_query.get(parent.parent()) else {
-            continue;
-        };
 
         let local_rays = sensor.model.generate_rays();
         let mut hits: Vec<RayHit> = Vec::with_capacity(local_rays.len());
@@ -186,31 +177,11 @@ fn raycasting_sensor_system(
             timestamp: MonotonicTime(elapsed),
             data: point_cloud,
         };
-        let stamped = Stamped {
-            value: vec![reading],
-            timestamp: MonotonicTime(elapsed),
-            health: Health::Ok,
-            producer: HOST_PRODUCER_ID,
-        };
 
-        let scan_result = pipeline_comp.0.bus().write(
-            SensorChannel::named::<Vec<SensorReading<PointCloud2D>>>(
-                sensor_publish_channel.0.as_str(),
-            )
-            .into(),
-            stamped,
+        publisher.publish(
+            parent.parent(),
+            sensor_publish_channel.0.as_str(),
+            vec![reading],
         );
-
-        // A named sensor channel with no slot means the DAG was never wired
-        // to this name — the mapper's `scan_channel` and this sensor's
-        // `channel` config disagree. That is a config defect, so it warns.
-        // `warn_once` keeps a fixed-rate sensor from flooding the log.
-        if scan_result.is_err() {
-            warn_once!(
-                "scan channel '{}' has no slot in the autonomy DAG; readings are being dropped. \
-                 The mapper's `scan_channel` must match this sensor's `channel`.",
-                sensor_publish_channel.0
-            );
-        }
     }
 }
