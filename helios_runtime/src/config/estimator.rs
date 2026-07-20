@@ -117,7 +117,9 @@ pub struct SensorModelConfig {
     /// Defaults to 9.81; override in deployment config for non-standard sites.
     #[serde(default = "default_gravity")]
     pub gravity: f64,
-    /// Expected magnetic field in ENU (nT). Required by `"magnetometer"`.
+    /// Expected magnetic field in ENU (µT), the filter's *believed* field.
+    /// Required by `"magnetometer"`. Must match the simulated world's
+    /// `[world.magnetic_field]` unless the mismatch is the experiment.
     pub magnetic_field_enu: Option<[f64; 3]>,
 }
 

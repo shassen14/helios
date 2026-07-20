@@ -8,7 +8,7 @@ use super::{
     pose::Pose,
     sensors::SensorConfig,
     simulation::MetricsConfig,
-    terrain::{AtmosphereConfig, TerrainConfig},
+    terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig},
     vehicle::Vehicle,
     world_object::WorldObjectPlacement,
 };
@@ -91,6 +91,11 @@ pub struct World {
     /// Declared as `[world.atmosphere]` in TOML.
     #[serde(default)]
     pub atmosphere: AtmosphereConfig,
+
+    /// The geomagnetic reference field every magnetometer measures.
+    /// Declared as `[world.magnetic_field]` in TOML.
+    #[serde(default)]
+    pub magnetic_field: MagneticFieldConfig,
 
     /// Static world objects (signs, buildings, trees, etc.).
     /// Declared with `[[world.objects]]` in TOML.

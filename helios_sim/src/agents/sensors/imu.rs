@@ -1,34 +1,112 @@
-use crate::core::transforms::EnuBodyPose;
-use crate::core::{app_state::SimulationSet, components::GroundTruthState, prng::SimulationRng};
+//! IMU sensor simulation: spawns one accelerometer and one gyroscope per
+//! configured IMU and publishes their readings through the generic
+//! state-sensor system.
+//!
+//! An IMU is one config entry but two sensors: it measures two independent
+//! physical quantities that publish on separate channels, so each spawns as
+//! its own self-contained state-sensor entity.
+
+use super::state_sensor::{publish_state_sensor, SensorTimer, StateSensor};
+
+use crate::core::app_state::SimulationSet;
+use crate::core::transforms::EnuVector;
 use crate::prelude::*;
 
-use helios_core::data::envelope::SensorReading;
-use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::{AngularVelocity3D, LinearAcceleration3D};
+use helios_core::sensors::accelerometer::AccelerometerModel;
+use helios_core::sensors::gyroscope::GyroscopeModel;
 
 use avian3d::prelude::Gravity;
-use nalgebra::Vector3;
-use rand_distr::{Distribution, Normal};
-use std::time::Duration;
+use nalgebra::{Isometry3, Vector3};
+use rand::RngCore;
 
-// =========================================================================
-// == IMU Components & Plugin ==
-// =========================================================================
-
+/// A simulated accelerometer: wraps the core forward model, which reports
+/// specific force — coordinate acceleration minus gravity, so a sensor at
+/// rest reads one g upward — in the sensor frame, with bias and per-axis
+/// noise.
+///
+/// Gravity is baked in at spawn: the model needs it every sample, but it is
+/// an environmental constant, not agent state, so the spawner captures it
+/// from the physics world once rather than the publish loop reading it every
+/// tick.
+///
+/// TODO(fidelity): `sample` reads the acceleration of the agent's origin,
+/// not of the sensor's mount point. A sensor at offset `r` on a rotating
+/// body also feels the lever-arm terms `α × r + ω × (ω × r)` — below the
+/// noise floor for near-origin mounts at gentle rates, but real on spinning
+/// platforms or long mounting arms. Modeling it needs angular acceleration
+/// in the ground-truth state and a richer core forward model.
 #[derive(Component)]
-pub struct Imu {
-    pub timer: Timer,
-    pub accel_entity: Entity,
-    pub gyro_entity: Entity,
-    accel_noise: [Normal<f64>; 3],
-    gyro_noise: [Normal<f64>; 3],
-    /// Publish-channel names resolved from `ImuConfig` at spawn. Held on the
-    /// component so the runtime tick reads them here instead of re-querying
-    /// config; the accelerometer and gyroscope publish to separate channels.
-    accel_channel: String,
-    gyro_channel: String,
+pub struct Accelerometer {
+    model: AccelerometerModel,
+    gravity_world: Vector3<f64>,
 }
 
+impl Accelerometer {
+    pub fn new(model: AccelerometerModel, gravity_world: Vector3<f64>) -> Self {
+        Self {
+            model,
+            gravity_world,
+        }
+    }
+}
+
+impl StateSensor for Accelerometer {
+    type Payload = LinearAcceleration3D;
+
+    /// Acceleration is a free vector, so only the pose's rotation matters —
+    /// inverted, because the model wants world-into-sensor and the pose's
+    /// rotation goes the other way.
+    fn sample(
+        &mut self,
+        truth: &GroundTruthState,
+        sensor_pose_world: &Isometry3<f64>,
+        rng: &mut dyn RngCore,
+    ) -> Self::Payload {
+        self.model.sample(
+            truth.linear_acceleration,
+            self.gravity_world,
+            sensor_pose_world.rotation.inverse(),
+            rng,
+        )
+    }
+}
+
+/// A simulated rate gyroscope: wraps the core forward model, which reports
+/// the agent's angular velocity in the sensor frame, with bias and per-axis
+/// noise.
+#[derive(Component)]
+pub struct Gyroscope {
+    model: GyroscopeModel,
+}
+
+impl Gyroscope {
+    pub fn new(model: GyroscopeModel) -> Self {
+        Self { model }
+    }
+}
+
+impl StateSensor for Gyroscope {
+    type Payload = AngularVelocity3D;
+
+    /// Angular velocity is a free vector, so only the pose's rotation
+    /// matters — inverted, same as the accelerometer.
+    fn sample(
+        &mut self,
+        truth: &GroundTruthState,
+        sensor_pose_world: &Isometry3<f64>,
+        rng: &mut dyn RngCore,
+    ) -> Self::Payload {
+        self.model.sample(
+            truth.angular_velocity,
+            sensor_pose_world.rotation.inverse(),
+            rng,
+        )
+    }
+}
+
+/// Registers IMU simulation: spawning during scene build, publishing both
+/// sensors through the generic state-sensor system while running.
 pub struct ImuPlugin;
 
 impl Plugin for ImuPlugin {
@@ -39,20 +117,28 @@ impl Plugin for ImuPlugin {
         )
         .add_systems(
             FixedUpdate,
-            imu_sensor_system.in_set(SimulationSet::Sensors),
+            (
+                publish_state_sensor::<Gyroscope>,
+                publish_state_sensor::<Accelerometer>,
+            )
+                .in_set(SimulationSet::Sensors),
         );
     }
 }
 
-// =========================================================================
-// == Spawning System ==
-// =========================================================================
-
+/// Spawns one accelerometer and one gyroscope child entity per IMU entry in
+/// each agent's spawn request.
+///
+/// Model construction doubles as config validation: the core models refuse a
+/// stddev with any non-positive axis, so a bad config skips the whole IMU
+/// with an error — half an IMU would be more confusing than none.
 fn spawn_imu_sensors(
     mut commands: Commands,
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
-    _gravity: Res<Gravity>,
+    gravity: Res<Gravity>,
 ) {
+    let gravity_world = EnuVector::from(gravity.0).0;
+
     for (agent_entity, agent_name, request) in &request_query {
         for sensor_config in request.0.sensors.values() {
             if let SensorConfig::Imu(imu_config) = sensor_config {
@@ -63,87 +149,68 @@ fn spawn_imu_sensors(
                     imu_config.get_rate()
                 );
 
-                let (accel_std, gyro_std) = imu_config.get_noise_stddevs();
-
-                let all_stddevs = [
-                    ("accel_x", accel_std[0] as f64),
-                    ("accel_y", accel_std[1] as f64),
-                    ("accel_z", accel_std[2] as f64),
-                    ("gyro_x", gyro_std[0] as f64),
-                    ("gyro_y", gyro_std[1] as f64),
-                    ("gyro_z", gyro_std[2] as f64),
-                ];
-                let noise_valid = all_stddevs.iter().all(|(axis, std)| {
-                    if *std <= 0.0 {
-                        error!(
-                            "IMU '{}' has invalid {} noise_stddev={}: must be > 0. Skipping sensor.",
-                            imu_config.get_name(), axis, std
-                        );
-                        false
-                    } else {
-                        true
-                    }
-                });
-                if !noise_valid {
-                    continue;
-                }
-
                 let sensor_pose = imu_config.get_relative_pose();
+                let (accel_std, gyro_std) = imu_config.get_noise_stddevs();
+                let (accel_bias, gyro_bias) = imu_config.get_biases();
 
-                let imu_entity = commands.spawn_empty().id();
-                let accel_entity = commands.spawn_empty().id();
-                let gyro_entity = commands.spawn_empty().id();
-
-                commands.entity(imu_entity).insert((
-                    Name::new(format!("{}/{}", agent_name.as_str(), imu_config.get_name())),
-                    Imu {
-                        timer: Timer::new(
-                            Duration::from_secs_f32(1.0 / imu_config.get_rate()),
-                            TimerMode::Repeating,
-                        ),
-                        accel_entity,
-                        gyro_entity,
-                        accel_noise: [
-                            Normal::new(0.0, accel_std[0] as f64).unwrap(),
-                            Normal::new(0.0, accel_std[1] as f64).unwrap(),
-                            Normal::new(0.0, accel_std[2] as f64).unwrap(),
-                        ],
-                        gyro_noise: [
-                            Normal::new(0.0, gyro_std[0] as f64).unwrap(),
-                            Normal::new(0.0, gyro_std[1] as f64).unwrap(),
-                            Normal::new(0.0, gyro_std[2] as f64).unwrap(),
-                        ],
-
-                        accel_channel: imu_config.get_accel_channel().to_string(),
-                        gyro_channel: imu_config.get_gyro_channel().to_string(),
-                    },
-                    TrackedFrame,
-                    sensor_pose.to_bevy_local_transform(),
-                ));
-
-                commands.entity(accel_entity).insert((
-                    Name::new(format!(
-                        "{}/{}/accelerometer",
+                let Some(accel_model) =
+                    AccelerometerModel::new(Vector3::from(accel_bias), Vector3::from(accel_std))
+                else {
+                    error!(
+                        "IMU '{}' on agent '{}' has invalid accel_noise_stddev {:?}: \
+                         every axis must be > 0. Skipping IMU.",
+                        imu_config.get_name(),
                         agent_name.as_str(),
-                        imu_config.get_name()
-                    )),
-                    TrackedFrame,
-                    sensor_pose.to_bevy_local_transform(),
-                ));
+                        accel_std
+                    );
+                    continue;
+                };
 
-                commands.entity(gyro_entity).insert((
-                    Name::new(format!(
-                        "{}/{}/gyroscope",
+                let Some(gyro_model) =
+                    GyroscopeModel::new(Vector3::from(gyro_bias), Vector3::from(gyro_std))
+                else {
+                    error!(
+                        "IMU '{}' on agent '{}' has invalid gyro_noise_stddev {:?}: \
+                         every axis must be > 0. Skipping IMU.",
+                        imu_config.get_name(),
                         agent_name.as_str(),
-                        imu_config.get_name()
-                    )),
-                    TrackedFrame,
-                    sensor_pose.to_bevy_local_transform(),
-                ));
+                        gyro_std
+                    );
+                    continue;
+                };
+
+                let accel_entity = commands
+                    .spawn((
+                        Name::new(format!(
+                            "{}/{}/accelerometer",
+                            agent_name.as_str(),
+                            imu_config.get_name()
+                        )),
+                        SensorPublishChannel(imu_config.get_accel_channel().to_string()),
+                        Accelerometer::new(accel_model, gravity_world),
+                        SensorTimer::from_rate(imu_config.rate),
+                        TrackedFrame,
+                        sensor_pose.to_bevy_local_transform(),
+                    ))
+                    .id();
+
+                let gyro_entity = commands
+                    .spawn((
+                        Name::new(format!(
+                            "{}/{}/gyroscope",
+                            agent_name.as_str(),
+                            imu_config.get_name()
+                        )),
+                        SensorPublishChannel(imu_config.get_gyro_channel().to_string()),
+                        Gyroscope::new(gyro_model),
+                        SensorTimer::from_rate(imu_config.rate),
+                        TrackedFrame,
+                        sensor_pose.to_bevy_local_transform(),
+                    ))
+                    .id();
 
                 commands
                     .entity(agent_entity)
-                    .add_child(imu_entity)
                     .add_child(accel_entity)
                     .add_child(gyro_entity);
             }
@@ -151,65 +218,128 @@ fn spawn_imu_sensors(
     }
 }
 
-// =========================================================================
-// == Runtime System ==
-// =========================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn imu_sensor_system(
-    time: Res<Time>,
-    mut rng: ResMut<SimulationRng>,
-    gravity: Res<Gravity>,
-    mut sensor_query: Query<(&mut Imu, &GlobalTransform, &ChildOf)>,
-    parent_query: Query<&GroundTruthState>,
-    mut publisher: SensorPublisher,
-) {
-    let _span = tracing::trace_span!("sim.sensor.publish", sensor = "imu").entered();
-    let elapsed = time.elapsed_secs_f64();
-    let dt = time.delta();
+    use std::f64::consts::FRAC_PI_2;
 
-    for (mut imu, sensor_global_transform, parent) in &mut sensor_query {
-        imu.timer.tick(dt);
-        if !imu.timer.just_finished() {
-            continue;
-        }
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
-        let Ok(ground_truth) = parent_query.get(parent.parent()) else {
-            continue;
-        };
+    /// Small enough that a sample equals its ideal value within test
+    /// tolerance, since the models refuse an exactly-zero stddev.
+    const NEGLIGIBLE_STDDEV: f64 = 1e-12;
 
-        let sensor_pose_enu = EnuBodyPose::from(sensor_global_transform).0;
-        let q_sensor_from_world = sensor_pose_enu.rotation.inverse();
+    fn accelerometer(gravity_world: Vector3<f64>) -> Accelerometer {
+        biased_accelerometer(gravity_world, Vector3::zeros())
+    }
 
-        let gravity_world_enu = Vector3::new(0.0, 0.0, gravity.0.y as f64);
-        let proper_accel_world_enu = ground_truth.linear_acceleration - gravity_world_enu;
+    fn biased_accelerometer(gravity_world: Vector3<f64>, bias: Vector3<f64>) -> Accelerometer {
+        Accelerometer::new(
+            AccelerometerModel::new(bias, Vector3::repeat(NEGLIGIBLE_STDDEV)).unwrap(),
+            gravity_world,
+        )
+    }
 
-        let perfect_accel_sensor = q_sensor_from_world * proper_accel_world_enu;
-        let perfect_gyro_sensor = q_sensor_from_world * ground_truth.angular_velocity;
+    fn gyroscope() -> Gyroscope {
+        biased_gyroscope(Vector3::zeros())
+    }
 
-        let noisy_accel = Vector3::new(
-            perfect_accel_sensor.x + imu.accel_noise[0].sample(&mut rng.0),
-            perfect_accel_sensor.y + imu.accel_noise[1].sample(&mut rng.0),
-            perfect_accel_sensor.z + imu.accel_noise[2].sample(&mut rng.0),
+    fn biased_gyroscope(bias: Vector3<f64>) -> Gyroscope {
+        Gyroscope::new(GyroscopeModel::new(bias, Vector3::repeat(NEGLIGIBLE_STDDEV)).unwrap())
+    }
+
+    /// A pose yawed +90° about world Up, so world East lands on the sensor's
+    /// -Y axis. The un-inverted rotation would give +Y — this pose is what
+    /// catches a `sample` impl passing the rotation the wrong way around.
+    fn yawed_pose() -> Isometry3<f64> {
+        Isometry3::rotation(Vector3::z() * FRAC_PI_2)
+    }
+
+    #[test]
+    fn accelerometer_at_rest_reads_the_reaction_to_gravity() {
+        let mut accel = accelerometer(Vector3::new(0.0, 0.0, -9.81));
+        let mut rng = StdRng::seed_from_u64(1);
+
+        let got = accel.sample(
+            &GroundTruthState::default(),
+            &Isometry3::identity(),
+            &mut rng,
         );
-        let noisy_gyro = Vector3::new(
-            perfect_gyro_sensor.x + imu.gyro_noise[0].sample(&mut rng.0),
-            perfect_gyro_sensor.y + imu.gyro_noise[1].sample(&mut rng.0),
-            perfect_gyro_sensor.z + imu.gyro_noise[2].sample(&mut rng.0),
+
+        assert!((got.value - Vector3::new(0.0, 0.0, 9.81)).norm() < 1e-6);
+    }
+
+    #[test]
+    fn accelerometer_sample_rotates_world_acceleration_into_the_sensor_frame() {
+        let mut accel = accelerometer(Vector3::zeros());
+        let truth = GroundTruthState {
+            linear_acceleration: Vector3::new(2.0, 0.0, 0.0),
+            ..GroundTruthState::default()
+        };
+        let mut rng = StdRng::seed_from_u64(1);
+
+        let got = accel.sample(&truth, &yawed_pose(), &mut rng);
+
+        assert!((got.value - Vector3::new(0.0, -2.0, 0.0)).norm() < 1e-6);
+    }
+
+    #[test]
+    fn accelerometer_sample_applies_the_configured_bias() {
+        let mut accel = biased_accelerometer(Vector3::zeros(), Vector3::new(0.3, 0.0, 0.0));
+        let mut rng = StdRng::seed_from_u64(1);
+
+        let got = accel.sample(
+            &GroundTruthState::default(),
+            &Isometry3::identity(),
+            &mut rng,
         );
 
-        let accel_reading = SensorReading {
-            sensor_handle: FrameHandle::from_entity(imu.accel_entity),
-            timestamp: MonotonicTime(elapsed),
-            data: LinearAcceleration3D { value: noisy_accel },
-        };
-        let gyro_reading = SensorReading {
-            sensor_handle: FrameHandle::from_entity(imu.gyro_entity),
-            timestamp: MonotonicTime(elapsed),
-            data: AngularVelocity3D { value: noisy_gyro },
-        };
+        assert!((got.value - Vector3::new(0.3, 0.0, 0.0)).norm() < 1e-6);
+    }
 
-        let agent = parent.parent();
-        publisher.publish(agent, imu.accel_channel.as_str(), vec![accel_reading]);
-        publisher.publish(agent, imu.gyro_channel.as_str(), vec![gyro_reading]);
+    #[test]
+    fn gyroscope_sample_applies_the_configured_bias() {
+        // A stationary gyro with a bias still reports a rate — the drift that
+        // dominates dead reckoning.
+        let mut gyro = biased_gyroscope(Vector3::new(0.0, 0.0, 0.02));
+        let mut rng = StdRng::seed_from_u64(1);
+
+        let got = gyro.sample(
+            &GroundTruthState::default(),
+            &Isometry3::identity(),
+            &mut rng,
+        );
+
+        assert!((got.value - Vector3::new(0.0, 0.0, 0.02)).norm() < 1e-6);
+    }
+
+    #[test]
+    fn gyroscope_sample_reads_the_world_angular_velocity() {
+        let mut gyro = gyroscope();
+        let truth = GroundTruthState {
+            angular_velocity: Vector3::new(0.1, 0.2, 0.3),
+            ..GroundTruthState::default()
+        };
+        let mut rng = StdRng::seed_from_u64(1);
+
+        let got = gyro.sample(&truth, &Isometry3::identity(), &mut rng);
+
+        assert!((got.value - Vector3::new(0.1, 0.2, 0.3)).norm() < 1e-6);
+    }
+
+    #[test]
+    fn gyroscope_sample_rotates_the_rate_into_the_sensor_frame() {
+        let mut gyro = gyroscope();
+        let truth = GroundTruthState {
+            angular_velocity: Vector3::new(1.0, 0.0, 0.0),
+            ..GroundTruthState::default()
+        };
+        let mut rng = StdRng::seed_from_u64(1);
+
+        let got = gyro.sample(&truth, &yawed_pose(), &mut rng);
+
+        assert!((got.value - Vector3::new(0.0, -1.0, 0.0)).norm() < 1e-6);
     }
 }

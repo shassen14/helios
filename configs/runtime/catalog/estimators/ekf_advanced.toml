@@ -1,5 +1,6 @@
 # configs/runtime/catalog/estimators/ekf_advanced.toml
 # Advanced EKF — ultra-low-noise IMU, pro GPS + pro magnetometer aiding.
+# Tuned for the ins_pro sensor suite.
 kind = "Ekf"
 
 [config]
@@ -26,4 +27,4 @@ model = { kind = "gps_position" }
 sensor_payload = "MagneticField3D"
 input_channel = "sensor.mag.body"
 r_diag = [0.000025, 0.000025, 0.000025]
-model = { kind = "magnetometer", magnetic_field_enu = [0.0, 1.0, 0.0] }
+model = { kind = "magnetometer", magnetic_field_enu = [0.0, 50.0, 0.0] }

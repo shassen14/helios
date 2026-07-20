@@ -76,3 +76,49 @@ impl Default for AtmosphereConfig {
         }
     }
 }
+
+/// The site's geomagnetic reference field, which every simulated magnetometer
+/// in the scenario measures. Declared in a scenario TOML as
+/// `[world.magnetic_field]`.
+///
+/// This is the *truth* field. An estimator's own believed field is configured
+/// separately, as `magnetic_field_enu` on the aiding model in its autonomy
+/// stack — they are deliberately independent knobs, so that a filter tuned for
+/// the wrong declination fails in simulation the way it would in the field.
+/// Changing one without the other is meaningful; changing one by accident is a
+/// silent bias.
+///
+/// The defaults describe a nominal mid-latitude field: 50 µT due true north
+/// with no dip. Both angles default to zero because a zeroed angle is the
+/// honest "unspecified site" answer, whereas a zeroed magnitude would be no
+/// field at all.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MagneticFieldConfig {
+    /// Angle from true north toward east, in **degrees**. Default 0.
+    #[serde(default)]
+    pub declination_degrees: f64,
+    /// Downward dip below horizontal, in **degrees**. Default 0.
+    #[serde(default)]
+    pub inclination_degrees: f64,
+    /// Total field strength in µT. Default 50.0, mid-range for Earth's surface
+    /// (roughly 25 µT near the equator to 65 µT near the poles). Must stay
+    /// consistent with every estimator's `magnetic_field_enu`.
+    #[serde(default = "default_magnetic_magnitude")]
+    pub magnitude: f64,
+}
+
+/// Nominal mid-latitude total field strength, in µT.
+fn default_magnetic_magnitude() -> f64 {
+    50.0
+}
+
+impl Default for MagneticFieldConfig {
+    fn default() -> Self {
+        Self {
+            declination_degrees: 0.0,
+            inclination_degrees: 0.0,
+            magnitude: default_magnetic_magnitude(),
+        }
+    }
+}

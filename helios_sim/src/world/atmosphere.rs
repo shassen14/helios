@@ -9,11 +9,17 @@ impl Plugin for AtmospherePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
-            (configure_gravity, spawn_sun, spawn_camera),
+            (configure_gravity, spawn_sun, spawn_camera)
+                .in_set(SceneBuildSet::ProcessWorldObjects),
         );
     }
 }
 
+/// Applies the scenario's gravity to the physics world.
+///
+/// Must run before sensors spawn: an accelerometer captures gravity at spawn
+/// time, so a later write would leave it modeling a different world than the
+/// one the physics engine simulates.
 fn configure_gravity(config: Res<ScenarioConfig>, mut gravity: ResMut<Gravity>) {
     let g = config.world.atmosphere.gravity;
     gravity.0 = Vec3::new(g[0], g[1], g[2]);

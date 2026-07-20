@@ -1,25 +1,51 @@
-use crate::brain_bridge::components::SensorPublishChannel;
-use crate::core::{app_state::SimulationSet, prng::SimulationRng, transforms::EnuVector};
+//! GPS sensor simulation: spawns receivers from agent configs and publishes
+//! noisy ENU world-position fixes through the generic state-sensor system.
+
+use super::state_sensor::{publish_state_sensor, StateSensor};
+
+use crate::core::app_state::SimulationSet;
 use crate::prelude::*;
+use crate::{
+    agents::sensors::state_sensor::SensorTimer, brain_bridge::components::SensorPublishChannel,
+};
 
-use helios_core::data::envelope::SensorReading;
-use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::GpsPosition;
+use helios_core::sensors::gps::GpsModel;
 
-use nalgebra::Vector3;
-use rand_distr::{Distribution, Normal};
-use std::time::Duration;
+use nalgebra::{Isometry3, Vector3};
+use rand::RngCore;
 
-// =========================================================================
-// == GPS Components & Plugin ==
-// =========================================================================
-
+/// A simulated GPS receiver: wraps the core forward model, which reports the
+/// sensor's ENU world position with a constant bias and per-axis noise.
 #[derive(Component)]
 pub struct Gps {
-    pub timer: Timer,
-    noise_dist: Normal<f64>,
+    model: GpsModel,
 }
 
+impl Gps {
+    pub fn new(model: GpsModel) -> Self {
+        Self { model }
+    }
+}
+
+impl StateSensor for Gps {
+    type Payload = GpsPosition;
+
+    /// A GPS observes position directly, so only the pose's translation
+    /// matters; the agent's kinematic state and the sensor's orientation go
+    /// unused.
+    fn sample(
+        &mut self,
+        _t: &GroundTruthState,
+        p: &Isometry3<f64>,
+        rng: &mut dyn RngCore,
+    ) -> GpsPosition {
+        self.model.sample(p.translation.vector, rng)
+    }
+}
+
+/// Registers GPS simulation: spawning during scene build, publishing through
+/// the generic state-sensor system while running.
 pub struct GpsPlugin;
 
 impl Plugin for GpsPlugin {
@@ -30,15 +56,16 @@ impl Plugin for GpsPlugin {
         )
         .add_systems(
             FixedUpdate,
-            gps_sensor_system.in_set(SimulationSet::Sensors),
+            publish_state_sensor::<Gps>.in_set(SimulationSet::Sensors),
         );
     }
 }
 
-// =========================================================================
-// == Spawning System ==
-// =========================================================================
-
+/// Spawns one GPS child entity per GPS entry in each agent's spawn request.
+///
+/// Model construction doubles as config validation: [`GpsModel::new`] refuses
+/// a stddev with any non-positive axis, so a bad config skips the sensor with
+/// an error instead of spawning a degenerate one.
 fn spawn_gps_sensors(
     mut commands: Commands,
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
@@ -52,26 +79,26 @@ fn spawn_gps_sensors(
                     agent_name.as_str()
                 );
 
-                let stddev = gps_config.noise_stddev[0] as f64;
-                if stddev <= 0.0 {
+                let bias = Vector3::from(gps_config.bias);
+                let stddev = Vector3::from(gps_config.noise_stddev);
+
+                let Some(model) = GpsModel::new(bias, stddev) else {
                     error!(
-                        "GPS sensor '{}' has invalid noise_stddev={}: must be > 0. Skipping sensor.",
-                        sensor_name, stddev
+                        "GPS sensor '{}' on agent '{}' has invalid noise_stddev {:?}: \
+                         every axis must be > 0. Skipping sensor.",
+                        sensor_name,
+                        agent_name.as_str(),
+                        gps_config.noise_stddev
                     );
                     continue;
-                }
+                };
 
                 let sensor_entity = commands
                     .spawn((
                         Name::new(format!("{}/{}", agent_name.as_str(), gps_config.name)),
-                        Gps {
-                            timer: Timer::new(
-                                Duration::from_secs_f32(1.0 / gps_config.rate),
-                                TimerMode::Repeating,
-                            ),
-                            noise_dist: Normal::new(0.0, stddev).unwrap(),
-                        },
                         SensorPublishChannel(gps_config.channel.clone()),
+                        Gps::new(model),
+                        SensorTimer::from_rate(gps_config.rate),
                         TrackedFrame,
                         gps_config.get_relative_pose().to_bevy_local_transform(),
                     ))
@@ -83,49 +110,40 @@ fn spawn_gps_sensors(
     }
 }
 
-// =========================================================================
-// == Runtime System ==
-// =========================================================================
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn gps_sensor_system(
-    time: Res<Time>,
-    mut rng: ResMut<SimulationRng>,
-    mut sensor_query: Query<(
-        Entity,
-        &mut Gps,
-        &GlobalTransform,
-        &SensorPublishChannel,
-        &ChildOf,
-    )>,
-    mut publisher: SensorPublisher,
-) {
-    let _span = tracing::trace_span!("sim.sensor.publish", sensor = "gps").entered();
-    let elapsed = time.elapsed_secs_f64();
-    let dt = time.delta();
+    use rand::rngs::StdRng;
+    use rand::SeedableRng;
 
-    for (sensor_entity, mut gps, sensor_global_transform, channel, parent) in &mut sensor_query {
-        gps.timer.tick(dt);
-        if !gps.timer.just_finished() {
-            continue;
-        }
+    /// Small enough that a sample equals its ideal value within test
+    /// tolerance, since the model refuses an exactly-zero stddev.
+    const NEGLIGIBLE_STDDEV: f64 = 1e-12;
 
-        let true_position_bevy = sensor_global_transform.translation();
-        let true_position_enu = EnuVector::from(true_position_bevy).0;
+    fn gps(bias: Vector3<f64>) -> Gps {
+        Gps::new(GpsModel::new(bias, Vector3::repeat(NEGLIGIBLE_STDDEV)).unwrap())
+    }
 
-        let noisy_position = Vector3::new(
-            true_position_enu.x + gps.noise_dist.sample(&mut rng.0),
-            true_position_enu.y + gps.noise_dist.sample(&mut rng.0),
-            true_position_enu.z + gps.noise_dist.sample(&mut rng.0),
-        );
+    #[test]
+    fn sample_reads_the_sensor_world_position() {
+        let mut gps = gps(Vector3::zeros());
+        let pose = Isometry3::translation(3.0, -4.0, 5.0);
+        let mut rng = StdRng::seed_from_u64(1);
 
-        let reading = SensorReading {
-            sensor_handle: FrameHandle::from_entity(sensor_entity),
-            timestamp: MonotonicTime(elapsed),
-            data: GpsPosition {
-                position: noisy_position,
-            },
-        };
+        let got = gps.sample(&GroundTruthState::default(), &pose, &mut rng);
 
-        publisher.publish(parent.parent(), channel.0.as_str(), vec![reading]);
+        assert!((got.position - Vector3::new(3.0, -4.0, 5.0)).norm() < 1e-6);
+    }
+
+    #[test]
+    fn sample_applies_the_configured_bias() {
+        let mut gps = gps(Vector3::new(1.0, 2.0, 3.0));
+        let pose = Isometry3::translation(0.0, 0.0, 0.0);
+        let mut rng = StdRng::seed_from_u64(1);
+
+        let got = gps.sample(&GroundTruthState::default(), &pose, &mut rng);
+
+        assert!((got.position - Vector3::new(1.0, 2.0, 3.0)).norm() < 1e-6);
     }
 }

@@ -6,10 +6,10 @@ use crate::utils::serde_helpers;
 
 #[derive(Deserialize, Debug, Clone, Copy, Default)]
 pub struct Pose {
-    #[serde(with = "serde_helpers::vec3_f64_from_f32_array", default)]
+    #[serde(with = "serde_helpers::vec3_from_array", default)]
     pub translation: Vector3<f64>,
 
-    #[serde(with = "serde_helpers::quat_f64_from_euler_deg_f32", default)]
+    #[serde(with = "serde_helpers::quat_from_euler_deg", default)]
     pub rotation: UnitQuaternion<f64>,
 }
 

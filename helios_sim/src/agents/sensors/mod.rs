@@ -15,5 +15,6 @@ pub mod imu;
 pub mod magnetometer;
 pub mod plugin_set;
 pub mod raycasting;
+pub mod state_sensor;
 
 pub use plugin_set::HeliosSensorsPlugin;

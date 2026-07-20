@@ -31,20 +31,29 @@ impl SensorConfig {
 /// (`LinearAcceleration3D`) and angular velocity (`AngularVelocity3D`). If the
 /// chip also has an onboard magnetometer, add a separate `Magnetometer` entry
 /// to the sensor suite — that quantity is independently configured and spawns
-/// its own `MeasurementModel`.
+/// its own sensor with its own forward model.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImuConfig {
     pub name: String,
-    pub rate: f32,
+    pub rate: f64,
     #[serde(default)]
     pub transform: Pose,
-    /// Per-axis noise standard deviation for the accelerometer (m/s²).
+    /// Constant accelerometer offset along the sensor's [X, Y, Z] FLU axes,
+    /// in m/s². Defaults to zero (a perfectly calibrated sensor).
     #[serde(default)]
-    pub accel_noise_stddev: [f32; 3],
-    /// Per-axis noise standard deviation for the gyroscope (rad/s).
+    pub accel_bias: [f64; 3],
+    /// Per-axis noise standard deviation for the accelerometer, in m/s².
     #[serde(default)]
-    pub gyro_noise_stddev: [f32; 3],
+    pub accel_noise_stddev: [f64; 3],
+    /// Constant gyroscope offset along the sensor's [X, Y, Z] FLU axes, in
+    /// rad/s. This is the drift rate a stationary gyro reports; it is the
+    /// dominant error term in dead reckoning. Defaults to zero.
+    #[serde(default)]
+    pub gyro_bias: [f64; 3],
+    /// Per-axis noise standard deviation for the gyroscope, in rad/s.
+    #[serde(default)]
+    pub gyro_noise_stddev: [f64; 3],
 
     /// Bus channel for `Vec<SensorReading<LinearAcceleration3D>>`. Must match the
     /// accelerometer `input_channel` in the estimator's aiding config. Distinct
@@ -62,14 +71,19 @@ impl ImuConfig {
     pub fn get_name(&self) -> &str {
         &self.name
     }
-    pub fn get_rate(&self) -> f32 {
+    pub fn get_rate(&self) -> f64 {
         self.rate
     }
     pub fn get_relative_pose(&self) -> Pose {
         self.transform
     }
-    pub fn get_noise_stddevs(&self) -> ([f32; 3], [f32; 3]) {
+    /// The accelerometer and gyroscope noise standard deviations, in that order.
+    pub fn get_noise_stddevs(&self) -> ([f64; 3], [f64; 3]) {
         (self.accel_noise_stddev, self.gyro_noise_stddev)
+    }
+    /// The accelerometer and gyroscope biases, in that order.
+    pub fn get_biases(&self) -> ([f64; 3], [f64; 3]) {
+        (self.accel_bias, self.gyro_bias)
     }
 
     pub fn get_accel_channel(&self) -> &str {
@@ -84,15 +98,20 @@ impl ImuConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct GpsConfig {
     pub name: String,
-    pub rate: f32,
-    #[serde(default)]
-    pub transform: Pose,
-    /// Standard deviation of noise in [East, North, Up] axes, in meters.
-    #[serde(default)]
-    pub noise_stddev: [f32; 3],
+    pub rate: f64,
     /// Bus channel name for `Vec<SensorReading<GpsPosition>>` published to the pipeline.
     /// Must match the `input_channel` in the estimator's aiding config.
     pub channel: String,
+    #[serde(default)]
+    pub transform: Pose,
+
+    /// Constant measurement offset in [East, North, Up] axes, in meters.
+    #[serde(default)]
+    pub bias: [f64; 3],
+
+    /// Standard deviation of noise in [East, North, Up] axes, in meters.
+    #[serde(default)]
+    pub noise_stddev: [f64; 3],
 }
 
 impl GpsConfig {
@@ -105,12 +124,19 @@ impl GpsConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct MagnetometerConfig {
     pub name: String,
-    pub rate: f32,
+    pub rate: f64,
     #[serde(default)]
     pub transform: Pose,
-    /// Standard deviation of noise in [X, Y, Z] body axes, in µT.
+    /// Constant measurement offset along the sensor's [X, Y, Z] FLU axes, in
+    /// µT. This models hard-iron distortion — the field of ferrous material
+    /// mounted near the sensor — which is fixed in the *sensor* frame and so
+    /// rotates with the vehicle, unlike the world's reference field. Defaults
+    /// to zero.
     #[serde(default)]
-    pub noise_stddev: [f32; 3],
+    pub bias: [f64; 3],
+    /// Standard deviation of noise along the sensor's [X, Y, Z] FLU axes, in µT.
+    #[serde(default)]
+    pub noise_stddev: [f64; 3],
     /// Bus channel name for `Vec<SensorReading<MagneticField3D>>` published to the pipeline.
     /// Must match the `input_channel` in the estimator's aiding config.
     pub channel: String,
@@ -120,7 +146,7 @@ impl MagnetometerConfig {
     pub fn get_relative_pose(&self) -> Pose {
         self.transform
     }
-    pub fn get_rate(&self) -> f32 {
+    pub fn get_rate(&self) -> f64 {
         self.rate
     }
 }
@@ -129,8 +155,12 @@ impl MagnetometerConfig {
 #[serde(tag = "type")]
 #[serde(rename_all = "PascalCase")]
 pub enum LidarConfig {
+    // The geometry and noise fields stay f32: they parameterize a raycasting
+    // model executed against the physics engine, whose spatial queries are
+    // f32-native. Only `rate` is f64 — it feeds a Duration, like every other
+    // sensor's rate.
     Lidar2D {
-        rate: f32,
+        rate: f64,
         #[serde(default)]
         transform: Pose,
         max_range: f32,
@@ -145,7 +175,7 @@ pub enum LidarConfig {
         channel: String,
     },
     Lidar3D {
-        rate: f32,
+        rate: f64,
         #[serde(default)]
         transform: Pose,
         max_range: f32,
@@ -165,7 +195,7 @@ pub enum LidarConfig {
 }
 
 impl LidarConfig {
-    pub fn get_rate(&self) -> f32 {
+    pub fn get_rate(&self) -> f64 {
         match self {
             LidarConfig::Lidar2D { rate, .. } => *rate,
             LidarConfig::Lidar3D { rate, .. } => *rate,

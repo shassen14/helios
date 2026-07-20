@@ -5,8 +5,15 @@ kind = "Imu"
 name = "imu_basic"
 rate = 100.0
 transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+# --- Noise Characteristics (sensor FLU axes) ---
+# Accelerometer in m/s², gyroscope in rad/s.
 accel_noise_stddev = [0.1, 0.1, 0.1]
 gyro_noise_stddev = [0.01, 0.01, 0.01]
+# Constant offsets in the same units. Gyro bias is the drift rate a stationary
+# unit reports and dominates dead-reckoning error; zero models a perfectly
+# calibrated part.
+accel_bias = [0.0, 0.0, 0.0]
+gyro_bias = [0.0, 0.0, 0.0]
 
 # Bus channels the two IMU quantities publish on. Each must match the
 # estimator's corresponding input channel in the agent's autonomy stack.

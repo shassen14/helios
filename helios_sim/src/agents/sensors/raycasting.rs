@@ -92,7 +92,7 @@ fn spawn_raycasting_sensors(
                     Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
                     RaycastingSensor {
                         timer: Timer::new(
-                            Duration::from_secs_f32(1.0 / lidar_config.get_rate()),
+                            Duration::from_secs_f64(1.0 / lidar_config.get_rate()),
                             TimerMode::Repeating,
                         ),
                         model: core_model,

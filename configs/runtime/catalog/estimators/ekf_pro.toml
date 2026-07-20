@@ -1,5 +1,6 @@
 # configs/runtime/catalog/estimators/ekf_pro.toml
-# Pro EKF — low-noise IMU, standard GPS + magnetometer aiding.
+# Pro EKF — low-noise IMU, standard GPS + basic magnetometer aiding.
+# Tuned for the ins_standard sensor suite.
 kind = "Ekf"
 
 [config]
@@ -26,4 +27,4 @@ model = { kind = "gps_position" }
 sensor_payload = "MagneticField3D"
 input_channel = "sensor.mag.body"
 r_diag = [25.0, 25.0, 25.0]
-model = { kind = "magnetometer", magnetic_field_enu = [0.0, 1.0, 0.0] }
+model = { kind = "magnetometer", magnetic_field_enu = [0.0, 50.0, 0.0] }

@@ -5,8 +5,10 @@
 # Root-level keys are the fields of AutonomyStack.
 # Safe to load in helios_hw without helios_sim.
 
+# ekf_advanced is the estimator whose aiding covariances match the ins_pro
+# sensor suite this profile is flown with.
 [estimators.primary]
-from = "runtime.catalog.estimators.ekf_pro"
+from = "runtime.catalog.estimators.ekf_advanced"
 
 [search_planners]
 local_path = { from = "runtime.catalog.planners.a_star" }

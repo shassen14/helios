@@ -1,8 +1,18 @@
-# helios_sim/assets/catalog/sensors/magnetometer_basic.toml
+# A basic, low-cost 3-axis magnetometer.
+# Corresponds to the `SensorConfig::Magnetometer` enum variant.
 kind = "Magnetometer"
 name = "magnetometer_basic"
 rate = 50.0
 transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
-# Noise is usually given in micro-Teslas, but here it's an arbitrary unit.
+
+# --- Noise Characteristics (µT, sensor FLU axes) ---
+# The ambient field itself is a property of the world, not of this sensor:
+# see `[world.magnetic_field]` in the scenario. Against the default 50 µT
+# field, 5 µT of noise is a signal-to-noise ratio of 10 — plausible for a
+# cheap part.
 noise_stddev = [5.0, 5.0, 5.0]
+# Hard-iron offset: the fixed field of ferrous material mounted near the
+# sensor. Zero here models a perfectly calibrated install.
+bias = [0.0, 0.0, 0.0]
+
 channel = "sensor.mag.body"

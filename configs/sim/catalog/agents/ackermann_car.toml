@@ -11,7 +11,7 @@ goal_pose     = { position = [50.0, 0.0, 0.0] }
 
 # --- Hardware Configuration ---
 vehicle  = { from = "entities.vehicles.ackermann_base" }
-sensors  = { from = "runtime.catalog.sensor_suites.ins_basic" }
+sensors  = { from = "runtime.catalog.sensor_suites.ins_standard" }
 
 # --- Software (Autonomy) Configuration ---
 # References the portable agent profile. helios_hw loads this same profile directly.
