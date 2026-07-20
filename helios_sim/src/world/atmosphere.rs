@@ -9,8 +9,7 @@ impl Plugin for AtmospherePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
-            (configure_gravity, spawn_sun, spawn_camera)
-                .in_set(SceneBuildSet::ProcessWorldObjects),
+            (configure_gravity, spawn_sun, spawn_camera).in_set(SceneBuildSet::ProcessWorldObjects),
         );
     }
 }

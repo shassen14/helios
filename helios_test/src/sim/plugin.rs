@@ -6,7 +6,9 @@ use crate::{AgentId, ReportStatus, TickAction};
 use helios_core::data::MonotonicTime;
 use helios_runtime::port::PortBus;
 use helios_runtime::AutonomyPipeline;
-use helios_sim::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent};
+use helios_sim::brain_bridge::components::{
+    AgentIdComponent, AutonomyPipelineComponent, PipelineBuildFailed,
+};
 use helios_sim::prelude::{AppState, SimulationSet};
 
 use bevy::prelude::*;
@@ -32,15 +34,39 @@ impl Plugin for TestRunnerPlugin {
 /// built and every agent's pipeline exists. Hands the runner the per-agent
 /// pipelines so it can resolve assertion targets to bus channels.
 ///
-/// An `Err` here means an assertion names a target no agent produces — a
-/// legitimate **test failure** (exit 1), not a crash: mark the verdict failed
-/// and route to `Flushing` so it flows through the normal report path.
+/// Two setup failures share one exit here, both legitimate **test failures**
+/// (exit 1) rather than crashes: an agent whose pipeline could not be
+/// assembled at all, and an assertion naming a target no agent produces.
+/// Either marks the verdict failed and routes to `Flushing`, so both flow
+/// through the normal report path.
+///
+/// The unbuilt-pipeline check has to come first, and cannot be folded into
+/// the runner: an agent with no pipeline is absent from `pairs` entirely, so
+/// the runner sees a scenario that merely has fewer agents than the author
+/// intended — and with no assertions naming it, nothing to complain about.
 fn on_pipeline_built_system(
     query: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
+    failed_query: Query<(&AgentIdComponent, &PipelineBuildFailed)>,
     mut runner: ResMut<ActiveRunner>,
     mut next_state: ResMut<NextState<AppState>>,
     mut run_verdict: ResMut<RunVerdict>,
 ) {
+    if !failed_query.is_empty() {
+        for (agent_id_comp, failure) in failed_query.iter() {
+            for err in &failure.errors {
+                let reason = format!(
+                    "agent '{}' has no autonomy pipeline: {}",
+                    agent_id_comp.0, err
+                );
+                tracing::error!("{reason}");
+                runner.0.fail_setup(reason);
+            }
+        }
+        run_verdict.set(ReportStatus::Failed);
+        next_state.set(AppState::Flushing);
+        return;
+    }
+
     // The query returns only agents with BOTH components — guaranteed by the
     // co-located insert in spawn_autonomy_pipeline (see AgentIdComponent docs).
     let mut pairs: Vec<(AgentId, &AutonomyPipeline)> = Vec::new();
@@ -54,7 +80,9 @@ fn on_pipeline_built_system(
     match runner.0.on_pipeline_built(&pairs) {
         Ok(()) => (),
         Err(e) => {
-            tracing::error!("on_pipeline_built failed: {e}");
+            let reason = format!("on_pipeline_built failed: {e}");
+            tracing::error!("{reason}");
+            runner.0.fail_setup(reason);
             run_verdict.set(ReportStatus::Failed);
             next_state.set(AppState::Flushing);
         }

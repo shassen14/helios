@@ -11,9 +11,11 @@ pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
 
 /// The agent's stable, human-meaningful identity — the bare name from `agent_config.name()` (e.g. `"rover_1"`), *not* the composite `Name`
 /// (`"rover_1/base_link"`). Written at spawn time by `spawn_autonomy_pipeline`
-/// in the same insert as `AutonomyPipelineComponent`, so the two always land
-/// together: the test bridge can query `(&AgentId, &AutonomyPipelineComponent)`
-/// and never see one without the other.
+/// onto every agent it processes, in the same insert as the outcome of the
+/// build — [`AutonomyPipelineComponent`] on success, [`PipelineBuildFailed`]
+/// on failure. So a query for `(&AgentIdComponent, &AutonomyPipelineComponent)`
+/// never sees a pipeline without its identity, and a failed agent is still
+/// nameable in a report.
 ///
 /// This is the external identity used in reports, assertion targets, and (later)
 /// determinism hashing — distinct from the Bevy `Entity`, which is an internal
@@ -24,6 +26,25 @@ pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
 // TODO: Make String Arc<str> instead
 #[derive(Component)]
 pub struct AgentIdComponent(pub String);
+
+/// Records that this agent's autonomy pipeline could not be assembled, and why.
+///
+/// The counterpart to [`AutonomyPipelineComponent`]: exactly one of the two
+/// lands on every agent. Without it, a failed build is invisible — the agent
+/// simply lacks a pipeline, and every downstream system that queries for one
+/// finds nothing and does nothing, so the run proceeds as if the agent had no
+/// autonomy to begin with.
+///
+/// The host decides what a failure means. This crate only records it, because
+/// the right response differs by host: a test harness fails the run, an
+/// interactive session might want the scene anyway to inspect it. Recording
+/// per agent rather than aborting on the first also lets a multi-agent
+/// scenario report every broken stack in one pass.
+#[derive(Component)]
+pub struct PipelineBuildFailed {
+    /// Every error `build_pipeline` reported, already rendered for display.
+    pub errors: Vec<String>,
+}
 
 /// Declares the bus channel name this sensor publishes on.
 /// Attached to GPS, magnetometer, and LiDAR sensor child entities at spawn time.

@@ -145,11 +145,7 @@ mod tests {
         biased_magnetometer(declination, inclination, Vector3::zeros())
     }
 
-    fn biased_magnetometer(
-        declination: f64,
-        inclination: f64,
-        bias: Vector3<f64>,
-    ) -> Magnetometer {
+    fn biased_magnetometer(declination: f64, inclination: f64, bias: Vector3<f64>) -> Magnetometer {
         Magnetometer::new(
             MagnetometerModel::from_reference_field(
                 declination,
@@ -171,7 +167,8 @@ mod tests {
 
     fn sample(mag: &mut Magnetometer, pose: &Isometry3<f64>) -> Vector3<f64> {
         let mut rng = StdRng::seed_from_u64(1);
-        mag.sample(&GroundTruthState::default(), pose, &mut rng).value
+        mag.sample(&GroundTruthState::default(), pose, &mut rng)
+            .value
     }
 
     #[test]

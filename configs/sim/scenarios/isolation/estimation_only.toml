@@ -1,6 +1,14 @@
-# configs/scenarios/isolation/estimation_only.toml
-# Profile: EstimationOnly — sensors + EKF estimator. No mapper, planner, or controller.
-# cargo run --example 02_estimation_only -- --scenario configs/scenarios/isolation/estimation_only.toml
+# configs/sim/scenarios/isolation/estimation_only.toml
+# Sensors + EKF estimator. No mapper, planner, path follower, or controller.
+#
+# The agent is stationary by construction — nothing commands it — so what this
+# scenario measures is estimator behavior at rest: how far the filter's pose
+# wanders from a truth that never changes. Any drift in the reported estimate
+# is the estimator's own, with no control or planning behavior mixed in.
+#
+# The subsetting lives in the agent prefab, not here: profiles compose by
+# reference and cannot have nodes removed downstream, so isolation means
+# referencing a prefab whose stack holds only an estimator.
 
 [simulation]
 profile          = "estimation_only"
@@ -16,11 +24,6 @@ medium   = "air"
 gravity = [0.0, -9.81, 0.0]
 
 [[agents]]
-from          = "sim.catalog.agents.ackermann_car_pro"
+from          = "sim.catalog.agents.ackermann_car_estimation_only"
 name          = "EstimationCar"
 starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
-goal_pose     = { translation = [10.0, 0.0, 0.5] }
-
-# No mapper, no planner, no controller — estimator only.
-[agents.autonomy_stack.estimators.primary]
-from = "runtime.catalog.estimators.ekf_advanced"

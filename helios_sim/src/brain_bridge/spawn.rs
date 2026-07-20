@@ -1,5 +1,6 @@
 use crate::brain_bridge::components::{
-    AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf, SensorPublishChannel,
+    AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf, PipelineBuildFailed,
+    SensorPublishChannel,
 };
 use crate::core::components::{ControlOutputComponent, ControllerStateSource};
 use crate::prelude::*;
@@ -68,6 +69,15 @@ pub fn spawn_autonomy_pipeline(
                         err
                     );
                 }
+                // Mark the agent so the failure outlives the log line. The
+                // agent gets no pipeline, so nothing downstream would
+                // otherwise notice it is inert.
+                commands
+                    .entity(agent_entity)
+                    .insert(AgentIdComponent(agent_config.name().to_string()))
+                    .insert(PipelineBuildFailed {
+                        errors: errors.iter().map(|e| e.to_string()).collect(),
+                    });
             }
         }
     }

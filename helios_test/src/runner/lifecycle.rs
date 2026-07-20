@@ -105,7 +105,10 @@ impl Runner {
             ));
         }
 
-        let run_status = if all_passed {
+        // A setup failure outranks the assertion tally: a run whose scene never
+        // became fit to test cannot pass, however few assertions were left to
+        // judge it.
+        let run_status = if all_passed && self.setup_failures.is_empty() {
             ReportStatus::Passed
         } else {
             ReportStatus::Failed
@@ -124,6 +127,7 @@ impl Runner {
             self.run.scenario().path().to_string(),
             master_seed,
             run_status,
+            self.setup_failures.clone(),
             simulated_duration_secs,
             wall_duration_secs,
             TerminatedBy::from(&terminated_by_reason),
@@ -199,6 +203,7 @@ mod tests {
             extractors: ExtractorTable::new(),
             states: Vec::new(),
             start_time: None,
+            setup_failures: Vec::new(),
         }
     }
 
@@ -285,6 +290,57 @@ mod tests {
 
         let mut r = runner(run_with_targets(&["agent.car.x"]), registry);
         assert_eq!(r.on_pipeline_built(&[(agent, &pipeline)]), Ok(()));
+    }
+
+    // Build the report for a run that never ticked, the way `finalize_system`
+    // does on the abort path.
+    fn finalize_aborted(r: &Runner) -> crate::report::Report {
+        r.finalize(
+            MonotonicTime(0.0),
+            0.0,
+            "run".to_string(),
+            TerminationReason::Aborted,
+            &[],
+            None,
+        )
+    }
+
+    #[test]
+    fn a_setup_failure_fails_a_run_with_no_assertions() {
+        // The regression this guards: a scenario whose agent has no pipeline
+        // usually has no assertion naming it either. Judged on assertions
+        // alone, an empty set is a vacuous pass and the run reports success
+        // for a scene that could never have been tested.
+        let mut r = runner(run_with_targets(&[]), TargetRegistry::new());
+        r.fail_setup("agent 'car' has no autonomy pipeline".to_string());
+
+        let report = finalize_aborted(&r);
+
+        assert_eq!(report.status(), &ReportStatus::Failed);
+        assert!(report.assertions().is_empty());
+    }
+
+    #[test]
+    fn a_setup_failure_is_reported_with_its_reason() {
+        // status alone tells CI a run failed; without the reason there is
+        // nothing in the report to say why, since no assertion failed.
+        let mut r = runner(run_with_targets(&[]), TargetRegistry::new());
+        r.fail_setup("first".to_string());
+        r.fail_setup("second".to_string());
+
+        let report = finalize_aborted(&r);
+
+        assert_eq!(report.setup_failures(), ["first", "second"]);
+    }
+
+    #[test]
+    fn a_clean_run_records_no_setup_failures() {
+        let r = runner(run_with_targets(&[]), TargetRegistry::new());
+
+        let report = finalize_aborted(&r);
+
+        assert_eq!(report.status(), &ReportStatus::Passed);
+        assert!(report.setup_failures().is_empty());
     }
 
     #[test]

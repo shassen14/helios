@@ -19,11 +19,7 @@ configs/
 │   ├── 00_tutorial_showcase.toml
 │   ├── simple_car_scenario.toml
 │   └── isolation/          ← Single-subsystem test scenarios
-│       ├── control_only.toml
-│       ├── estimation_only.toml
-│       ├── mapping_only.toml
-│       ├── path_tracking.toml
-│       └── planning_only.toml
+│       └── estimation_only.toml
 ├── catalog/
 │   ├── agent_profiles/     ← Portable autonomy stacks (helios_hw safe)
 │   │   ├── basic_car.toml

@@ -1,0 +1,15 @@
+# Failure-path proof: an agent whose autonomy pipeline cannot be assembled.
+#
+# The scenario gives its agent a planner with no mapper, so `build_pipeline`
+# rejects the graph and the agent is left with no pipeline. That is a run
+# FAILURE (exit 1), not a crash and not a pass — an agent with no brain cannot
+# satisfy anything the run was written to check.
+#
+# Zero assertions on purpose: the point is that the run fails even when no
+# assertion names the broken agent. Nothing here can fail *except* the missing
+# pipeline, so a pass would mean the check is gone.
+
+schema_version = "1.0"
+scenario = { from = "test/scenarios/unbuilt_pipeline.toml" }
+observation = { from = "default" }
+termination = { max_simulated_seconds = 2.0 }

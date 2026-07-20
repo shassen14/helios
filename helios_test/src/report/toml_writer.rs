@@ -58,6 +58,7 @@ mod tests {
             "sim.scenarios.parking_lot".to_string(),
             Some(42),
             ReportStatus::Failed,
+            Vec::new(),
             12.5,
             0.3,
             TerminatedBy::TimeBudget,
