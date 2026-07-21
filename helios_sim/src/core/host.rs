@@ -4,12 +4,18 @@
 //!
 //! [`HeliosHost`] is a `Plugin` that bundles the host body — windowing, physics,
 //! config loading, app state, and the autonomy pipeline — and exposes the few
-//! real variation points as constructor inputs (the [`Presentation`] mode).
-//! Drivers add it, then layer their own plugins and resources on top:
+//! real variation points as constructor inputs ([`Presentation`], which decides
+//! whether there is a window, and [`TimePolicy`], which decides how fast the
+//! clock runs). Drivers add it, then layer their own plugins and resources on
+//! top:
 //!
 //! ```ignore
 //! App::new()
-//!     .add_plugins(HeliosHost::new(cli, Presentation::Headless))
+//!     .add_plugins(HeliosHost::new(
+//!         cli,
+//!         Presentation::Headless,
+//!         TimePolicy::FastAsPossible,
+//!     ))
 //!     .add_plugins(TestRunnerPlugin) // the driver's own concern
 //!     .run();
 //! ```
@@ -42,13 +48,20 @@ pub struct HeliosHost {
     // The resolved launch config. `ConfigPlugin` reads it at startup to locate
     // the scenario file and config root.
     cli: Cli,
-    // The one axis the host body varies on: headless vs windowed.
+    // Whether the host body is headless or windowed. Selects plugins.
     presentation: Presentation,
+    // How simulated time is paced. Independent of `presentation` — it selects
+    // no plugins, only how the clock those plugins share is driven.
+    time_policy: TimePolicy,
 }
 
 impl HeliosHost {
-    pub fn new(cli: Cli, presentation: Presentation) -> Self {
-        Self { cli, presentation }
+    pub fn new(cli: Cli, presentation: Presentation, time_policy: TimePolicy) -> Self {
+        Self {
+            cli,
+            presentation,
+            time_policy,
+        }
     }
 
     fn default_plugins(&self, first: bool) -> PluginGroupBuilder {
@@ -120,9 +133,45 @@ impl Plugin for HeliosHost {
         app.insert_resource(self.cli.clone());
         app.init_state::<AppState>();
 
+        // The policy is applied here *and* published as a resource: the clamp
+        // budget it implies depends on the tick rate, which only exists once
+        // the scenario TOML is loaded, so `configure_time_pacing` finishes the
+        // job at kickoff.
+        app.insert_resource(self.time_policy);
+        apply_time_policy(app, self.time_policy);
+
         app.add_plugins(ConfigPlugin);
 
         app.add_plugins(HeliosSimulationPlugin);
+    }
+}
+
+/// Point the app's clock at the chosen pacing. Safe to call during
+/// `Plugin::build` because `DefaultPlugins` has already brought `TimePlugin`,
+/// and neither branch depends on the scenario file.
+fn apply_time_policy(app: &mut App, policy: TimePolicy) {
+    match policy {
+        // Bevy's out-of-the-box behavior; nothing to override.
+        TimePolicy::RealTime => (),
+
+        TimePolicy::Scaled(factor) => {
+            // Checked here rather than left to `set_relative_speed`, whose own
+            // panics ("tried to go back in time") don't mention the flag that
+            // caused them. Zero is rejected too: a frozen clock never reaches
+            // the run's time budget, so the sim would hang rather than fail.
+            assert!(
+                factor.is_finite() && factor > 0.0,
+                "--speed must be a finite value greater than zero, got {factor}"
+            );
+            app.world_mut()
+                .resource_mut::<Time<Virtual>>()
+                .set_relative_speed(factor);
+        }
+
+        // Nothing to do here. Detaching the clock from the wall takes a batch
+        // size derived from the tick rate, which the scenario file carries and
+        // which is not loaded yet — `configure_time_pacing` does it at kickoff.
+        TimePolicy::FastAsPossible => (),
     }
 }
 
@@ -132,24 +181,65 @@ pub enum Presentation {
     Windowed,
 }
 
+/// How simulated time is paced against the wall clock. Deliberately orthogonal
+/// to [`Presentation`]: fast-forward is as useful in a window — watching a long
+/// scenario without waiting for it — as it is headless.
+///
+/// No variant changes what a run *computes*. The fixed timestep is identical
+/// under all three, so the sim takes the same steps and produces the same
+/// numbers; only the delay before you see them differs.
+// `Eq` is absent on purpose: `Scaled` carries an `f32`.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub enum TimePolicy {
+    /// One second of simulated time per second of wall time.
+    RealTime,
+    /// Wall-paced but scaled: `n` seconds of simulated time per wall second.
+    /// The machine still has to do the work, so a factor it cannot sustain
+    /// degrades to "as fast as it manages" rather than skipping simulation.
+    Scaled(f32),
+    /// The wall clock leaves the loop entirely: simulated time advances by the
+    /// fixed timestep once per `App::update`, so a run finishes as fast as the
+    /// math allows. The pacing a test harness wants.
+    FastAsPossible,
+}
+
+impl TimePolicy {
+    /// The policy implied by the launch flags. An explicit `--speed` always
+    /// wins; otherwise the presentation decides, because the two exist for
+    /// different reasons. A window is there to be watched, so it defaults to
+    /// real time; a headless run is there to produce an answer, so it defaults
+    /// to reaching one as quickly as it can.
+    pub fn from_cli(speed: Option<f32>, presentation: Presentation) -> Self {
+        match (speed, presentation) {
+            (Some(factor), _) => TimePolicy::Scaled(factor),
+            (None, Presentation::Windowed) => TimePolicy::RealTime,
+            (None, Presentation::Headless) => TimePolicy::FastAsPossible,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use std::path::PathBuf;
 
+    use bevy::time::TimeUpdateStrategy;
+
     // A throwaway host. `default_plugins` selects plugins from `presentation`
-    // alone and never reads the `Cli` fields, so they only need to be
-    // well-formed, not meaningful.
+    // alone and reads neither the `Cli` fields nor the time policy, so those
+    // only need to be well-formed, not meaningful.
     fn host(presentation: Presentation) -> HeliosHost {
         HeliosHost::new(
             Cli {
                 scenario: PathBuf::from("unused.toml"),
                 config_root: PathBuf::from("configs"),
                 headless: true,
+                speed: None,
                 seed: None,
             },
             presentation,
+            TimePolicy::RealTime,
         )
     }
 
@@ -183,6 +273,101 @@ mod tests {
         assert!(
             !group.contains::<ScheduleRunnerPlugin>(),
             "windowed must not add a second runner"
+        );
+    }
+
+    // A minimal app carrying only the clock, so these assert what
+    // `apply_time_policy` did and nothing about the rest of the host body.
+    fn timed_app(policy: TimePolicy) -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy::time::TimePlugin);
+        apply_time_policy(&mut app, policy);
+        app
+    }
+
+    #[test]
+    fn real_time_leaves_bevys_own_pacing_untouched() {
+        let app = timed_app(TimePolicy::RealTime);
+
+        assert_eq!(
+            app.world().resource::<Time<Virtual>>().relative_speed(),
+            1.0
+        );
+        assert!(matches!(
+            app.world().resource::<TimeUpdateStrategy>(),
+            TimeUpdateStrategy::Automatic
+        ));
+    }
+
+    #[test]
+    fn scaled_speeds_up_the_virtual_clock_but_keeps_it_wall_paced() {
+        // The clock still reads the wall clock — it just multiplies what it
+        // finds there — so the update strategy must stay `Automatic`.
+        let app = timed_app(TimePolicy::Scaled(10.0));
+
+        assert_eq!(
+            app.world().resource::<Time<Virtual>>().relative_speed(),
+            10.0
+        );
+        assert!(matches!(
+            app.world().resource::<TimeUpdateStrategy>(),
+            TimeUpdateStrategy::Automatic
+        ));
+    }
+
+    #[test]
+    fn fast_as_possible_defers_to_kickoff() {
+        // Detaching the clock needs a batch size derived from the tick rate,
+        // and the scenario file carrying it is not loaded during `build`. The
+        // clock must therefore still be untouched here — `configure_time_pacing`
+        // owns this policy, and a value set now would only be a stale guess.
+        let app = timed_app(TimePolicy::FastAsPossible);
+
+        assert!(matches!(
+            app.world().resource::<TimeUpdateStrategy>(),
+            TimeUpdateStrategy::Automatic
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "--speed")]
+    fn a_zero_speed_is_refused_rather_than_freezing_the_clock() {
+        // A stopped clock never reaches the run's time budget, so accepting
+        // this would hang the run instead of failing it.
+        let _ = timed_app(TimePolicy::Scaled(0.0));
+    }
+
+    #[test]
+    fn an_explicit_speed_wins_over_the_presentation_default() {
+        // `--speed` is the author saying what they want; neither presentation
+        // may quietly substitute its own preference for it.
+        assert_eq!(
+            TimePolicy::from_cli(Some(10.0), Presentation::Headless),
+            TimePolicy::Scaled(10.0)
+        );
+        assert_eq!(
+            TimePolicy::from_cli(Some(10.0), Presentation::Windowed),
+            TimePolicy::Scaled(10.0)
+        );
+    }
+
+    #[test]
+    fn a_window_defaults_to_real_time() {
+        // A window exists to be watched, and a run that races past at CPU speed
+        // shows nothing a human can follow.
+        assert_eq!(
+            TimePolicy::from_cli(None, Presentation::Windowed),
+            TimePolicy::RealTime
+        );
+    }
+
+    #[test]
+    fn a_headless_run_defaults_to_finishing_as_fast_as_it_can() {
+        // Nobody is watching, so pacing to the wall clock buys nothing and
+        // costs a full scenario duration per run.
+        assert_eq!(
+            TimePolicy::from_cli(None, Presentation::Headless),
+            TimePolicy::FastAsPossible
         );
     }
 

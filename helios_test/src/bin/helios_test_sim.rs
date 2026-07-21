@@ -111,10 +111,18 @@ fn main() {
             scenario: scenario_path.clone(),
             config_root: args.config_root.clone(),
             headless: true,
+            // A test host is never watched, so it always runs flat out. Not
+            // `from_cli`: the pacing is the harness's own policy, not something
+            // a caller may slow down and skew the wall-clock timings with.
+            speed: None,
             seed,
         };
 
-        app.add_plugins(HeliosHost::new(cli, Presentation::Headless));
+        app.add_plugins(HeliosHost::new(
+            cli,
+            Presentation::Headless,
+            TimePolicy::FastAsPossible,
+        ));
 
         // Created out here so the bin keeps its own clone: the world's clone (below)
         // is dropped when `run()` drains the App, but this one keeps the collected

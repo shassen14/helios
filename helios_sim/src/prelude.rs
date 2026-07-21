@@ -22,7 +22,7 @@ pub use crate::core::components::{
     BoundingBox3D, ControlOutputComponent, GroundTruthState, SemanticLabel, TerrainMedium,
     WorldObjectType,
 };
-pub use crate::core::host::{HeliosHost, Presentation};
+pub use crate::core::host::{HeliosHost, Presentation, TimePolicy};
 pub use crate::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::core::transforms::{TfTree, TrackedFrame};
 

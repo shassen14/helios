@@ -19,6 +19,8 @@ use crate::run::termination::TerminationReason;
 use crate::runner::Runner;
 use crate::RunMetrics;
 
+use helios_core::data::MonotonicTime;
+
 use bevy::prelude::Resource;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -49,16 +51,24 @@ impl WallClockStart {
     }
 }
 
-/// Carries *why* the run stopped from the `tick` system (which decides it, in
-/// `FixedUpdate`) to the `finalize` system (which needs it, in a different
-/// schedule and so cannot see `tick`'s locals).
+/// Carries *why* the run stopped, and *when*, from the `tick` system (which
+/// decides both, in `FixedUpdate`) to the `finalize` system (which needs them,
+/// in a different schedule and so cannot see `tick`'s locals).
 ///
-/// `reason` is `Option` because system 1 can short-circuit straight to
-/// `Flushing` on unresolved targets — *before any tick runs* — leaving no
-/// `TerminationReason`. `finalize` must cope with that `None` rather than panic.
+/// Both fields are `Option` because system 1 can short-circuit straight to
+/// `Flushing` on a setup failure — *before any tick runs* — leaving no
+/// termination at all. `finalize` must cope with that rather than panic.
+///
+/// `terminated_at` exists because the host cannot stop the moment the runner
+/// says to. `NextState` is applied once per frame, but the fixed loop runs a
+/// whole batch of steps per frame with no way out partway, so simulated time
+/// keeps advancing after the decision. Recording the deciding instant here
+/// keeps the report pinned to the tick that ended the run rather than to
+/// wherever the clock happened to land by flush time.
 #[derive(Resource, Default)]
 pub struct RunOutcome {
     reason: Option<TerminationReason>,
+    terminated_at: Option<MonotonicTime>,
     run_name: String,
 }
 
@@ -67,7 +77,24 @@ impl RunOutcome {
         Self {
             run_name,
             reason: None,
+            terminated_at: None,
         }
+    }
+
+    /// Record the tick that ended the run. First call wins: any later step in
+    /// the same batch is past the finish line and must not move it.
+    fn terminate(&mut self, now: MonotonicTime, reason: TerminationReason) {
+        if self.reason.is_none() {
+            self.reason = Some(reason);
+            self.terminated_at = Some(now);
+        }
+    }
+
+    /// Whether the run has already been called. Steps that follow still advance
+    /// physics — the fixed loop cannot be interrupted — but the runner must not
+    /// observe them.
+    fn is_terminated(&self) -> bool {
+        self.reason.is_some()
     }
 }
 
@@ -218,6 +245,42 @@ mod tests {
 
         // `take` empties the slot — a second read finds nothing.
         assert!(collector.take().is_none());
+    }
+
+    #[test]
+    fn a_fresh_outcome_has_not_terminated() {
+        let outcome = RunOutcome::new("run".to_string());
+
+        assert!(!outcome.is_terminated());
+        assert!(outcome.terminated_at.is_none());
+    }
+
+    #[test]
+    fn terminating_records_the_deciding_tick() {
+        let mut outcome = RunOutcome::new("run".to_string());
+
+        outcome.terminate(MonotonicTime(50.0), TerminationReason::MaxSimulatedSeconds);
+
+        assert!(outcome.is_terminated());
+        assert_eq!(outcome.terminated_at, Some(MonotonicTime(50.0)));
+    }
+
+    #[test]
+    fn a_trailing_step_cannot_move_the_finish_line() {
+        // The steps left in the fixed loop's batch still call `tick_system`
+        // before the state transition lands. Were a later one to overwrite the
+        // recorded instant, the report would drift right by the batch remainder
+        // — exactly the overshoot `terminated_at` exists to prevent.
+        let mut outcome = RunOutcome::new("run".to_string());
+
+        outcome.terminate(MonotonicTime(50.0), TerminationReason::MaxSimulatedSeconds);
+        outcome.terminate(MonotonicTime(50.06), TerminationReason::Aborted);
+
+        assert_eq!(outcome.terminated_at, Some(MonotonicTime(50.0)));
+        assert!(matches!(
+            outcome.reason,
+            Some(TerminationReason::MaxSimulatedSeconds)
+        ));
     }
 
     #[test]

@@ -113,6 +113,7 @@ mod tests {
             scenario: PathBuf::from("unused.toml"),
             config_root: PathBuf::from("configs"),
             headless: true,
+            speed: None,
             seed,
         }
     }

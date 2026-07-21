@@ -98,11 +98,21 @@ fn on_pipeline_built_system(
 /// routing to `Flushing`. No host-side timeout lives here.
 fn tick_system(
     query: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
-    time: Res<Time>,
+    time: Res<Time<Fixed>>,
     mut runner: ResMut<ActiveRunner>,
     mut outcome: ResMut<RunOutcome>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
+    // The run is already over. Bevy's fixed loop runs a whole batch of steps
+    // per frame and cannot be broken out of partway, so the `Flushing` request
+    // made below doesn't take effect until the batch drains — leaving trailing
+    // steps that advance physics past the run's own stopping point. Observing
+    // them would judge continuous assertions against simulated time the run
+    // file never asked for, so the runner sits them out.
+    if outcome.is_terminated() {
+        return;
+    }
+
     // Same clock source as the brain's tick, so the time budget and the brain
     // never disagree.
     let now = MonotonicTime(time.elapsed_secs_f64());
@@ -118,7 +128,7 @@ fn tick_system(
 
     match runner.0.tick(now, &pairs) {
         TickAction::Terminate { reason } => {
-            outcome.reason = Some(reason);
+            outcome.terminate(now, reason);
             next_state.set(AppState::Flushing);
         }
         TickAction::Continue => (),
@@ -135,7 +145,11 @@ fn tick_system(
 #[allow(clippy::too_many_arguments)]
 fn finalize_system(
     query: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
-    time: Res<Time>,
+    // `Time<Fixed>`, not the generic `Time`. This system runs on a state
+    // transition, which the frame orders *before* the fixed loop — so generic
+    // `Time` here resolves to `Time<Virtual>` and reads a moment up to one
+    // frame past the tick the assertions were actually judged on.
+    time: Res<Time<Fixed>>,
     wall_start: Res<WallClockStart>,
     runner: Res<ActiveRunner>,
     outcome: Res<RunOutcome>,
@@ -144,7 +158,13 @@ fn finalize_system(
     mut verdict: ResMut<RunVerdict>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    let now = MonotonicTime(time.elapsed_secs_f64());
+    // The tick that ended the run, not the clock as it stands now — the two
+    // differ by however many steps the fixed loop had left in its batch. Falls
+    // back to the live clock only on the setup-failure path, where no tick ever
+    // ran to record one.
+    let now = outcome
+        .terminated_at
+        .unwrap_or_else(|| MonotonicTime(time.elapsed_secs_f64()));
     let wall_secs = wall_start.0.elapsed().as_secs_f64();
     let run_name = outcome.run_name.clone();
     // `None` only on the "terminated before any tick" path (system 1's
