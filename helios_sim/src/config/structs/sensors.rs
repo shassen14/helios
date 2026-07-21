@@ -35,7 +35,6 @@ impl SensorConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ImuConfig {
-    pub name: String,
     pub rate: f64,
     #[serde(default)]
     pub transform: Pose,
@@ -68,9 +67,6 @@ pub struct ImuConfig {
 }
 
 impl ImuConfig {
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
     pub fn get_rate(&self) -> f64 {
         self.rate
     }
@@ -96,8 +92,8 @@ impl ImuConfig {
 
 /// Configuration parameters for a simulated GPS sensor.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GpsConfig {
-    pub name: String,
     pub rate: f64,
     /// Bus channel name for `Vec<SensorReading<GpsPosition>>` published to the pipeline.
     /// Must match the `input_channel` in the estimator's aiding config.
@@ -122,8 +118,8 @@ impl GpsConfig {
 
 /// Configuration parameters for a simulated 3-axis magnetometer.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MagnetometerConfig {
-    pub name: String,
     pub rate: f64,
     #[serde(default)]
     pub transform: Pose,

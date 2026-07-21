@@ -1,7 +1,6 @@
 # helios_sim/assets/catalog/sensors/gps_basic.toml
 # Corresponds to the `SensorConfig::Gps` enum variant.
 kind = "Gps"
-name = "gps_basic"
 rate = 1.0
 # --- Noise Characteristics ---
 # Standard deviation in meters [East, North, Up].

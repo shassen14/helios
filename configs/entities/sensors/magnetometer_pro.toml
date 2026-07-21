@@ -1,7 +1,6 @@
 # A high-grade 3-axis magnetometer.
 # Corresponds to the `SensorConfig::Magnetometer` enum variant.
 kind = "Magnetometer"
-name = "magnetometer_pro"
 rate = 100.0
 transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
 

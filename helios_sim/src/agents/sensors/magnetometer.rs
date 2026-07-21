@@ -112,7 +112,7 @@ fn spawn_magnetometer_sensors(
 
                 let sensor_entity = commands
                     .spawn((
-                        Name::new(format!("{}/{}", agent_name.as_str(), mag_config.name)),
+                        Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
                         Magnetometer::new(mag_model),
                         SensorTimer::from_rate(mag_config.rate),
                         SensorPublishChannel(mag_config.channel.clone()),

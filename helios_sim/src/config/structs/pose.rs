@@ -5,6 +5,7 @@ use serde::Deserialize;
 use crate::utils::serde_helpers;
 
 #[derive(Deserialize, Debug, Clone, Copy, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Pose {
     #[serde(with = "serde_helpers::vec3_from_array", default)]
     pub translation: Vector3<f64>,

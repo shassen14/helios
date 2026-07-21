@@ -75,7 +75,7 @@ fn spawn_gps_sensors(
             if let SensorConfig::Gps(gps_config) = sensor_config {
                 info!(
                     "  -> Spawning GPS '{}' as child of agent '{}'",
-                    &sensor_name,
+                    sensor_name,
                     agent_name.as_str()
                 );
 
@@ -95,7 +95,7 @@ fn spawn_gps_sensors(
 
                 let sensor_entity = commands
                     .spawn((
-                        Name::new(format!("{}/{}", agent_name.as_str(), gps_config.name)),
+                        Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
                         SensorPublishChannel(gps_config.channel.clone()),
                         Gps::new(model),
                         SensorTimer::from_rate(gps_config.rate),

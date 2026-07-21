@@ -140,11 +140,11 @@ fn spawn_imu_sensors(
     let gravity_world = EnuVector::from(gravity.0).0;
 
     for (agent_entity, agent_name, request) in &request_query {
-        for sensor_config in request.0.sensors.values() {
+        for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Imu(imu_config) = sensor_config {
                 info!(
                     "  -> Spawning IMU '{}' as child of agent '{}' with rate of {:.1} Hz",
-                    imu_config.get_name(),
+                    sensor_name,
                     agent_name.as_str(),
                     imu_config.get_rate()
                 );
@@ -159,7 +159,7 @@ fn spawn_imu_sensors(
                     error!(
                         "IMU '{}' on agent '{}' has invalid accel_noise_stddev {:?}: \
                          every axis must be > 0. Skipping IMU.",
-                        imu_config.get_name(),
+                        sensor_name,
                         agent_name.as_str(),
                         accel_std
                     );
@@ -172,7 +172,7 @@ fn spawn_imu_sensors(
                     error!(
                         "IMU '{}' on agent '{}' has invalid gyro_noise_stddev {:?}: \
                          every axis must be > 0. Skipping IMU.",
-                        imu_config.get_name(),
+                        sensor_name,
                         agent_name.as_str(),
                         gyro_std
                     );
@@ -184,7 +184,7 @@ fn spawn_imu_sensors(
                         Name::new(format!(
                             "{}/{}/accelerometer",
                             agent_name.as_str(),
-                            imu_config.get_name()
+                            sensor_name
                         )),
                         SensorPublishChannel(imu_config.get_accel_channel().to_string()),
                         Accelerometer::new(accel_model, gravity_world),
@@ -199,7 +199,7 @@ fn spawn_imu_sensors(
                         Name::new(format!(
                             "{}/{}/gyroscope",
                             agent_name.as_str(),
-                            imu_config.get_name()
+                            sensor_name
                         )),
                         SensorPublishChannel(imu_config.get_gyro_channel().to_string()),
                         Gyroscope::new(gyro_model),

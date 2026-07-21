@@ -1,7 +1,6 @@
 # A basic, low-cost 3-axis magnetometer.
 # Corresponds to the `SensorConfig::Magnetometer` enum variant.
 kind = "Magnetometer"
-name = "magnetometer_basic"
 rate = 50.0
 transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
 
