@@ -3,7 +3,7 @@ use std::time::Duration;
 use avian3d::prelude::PhysicsSystems;
 use bevy::time::TimeUpdateStrategy;
 use rand::rngs::OsRng;
-use rand::SeedableRng;
+use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use super::components::GroundTruthState;
@@ -13,7 +13,7 @@ use crate::core::components::ConfiguredMissionGoal;
 use crate::core::ground_truth::publish_oracle_channels_system;
 use crate::core::ground_truth_sync_system;
 use crate::core::host::TimePolicy;
-use crate::core::prng::SimulationRng;
+use crate::core::prng::{MasterSeed, SimulationRng};
 use crate::core::transforms::build_static_tf_maps;
 use crate::prelude::*;
 
@@ -147,15 +147,24 @@ fn configure_fixed_update_sets(app: &mut App) {
 // values any earlier (as in `Plugin::build`) sees only the struct defaults, not
 // the loaded TOML — so a configured seed would never reach the RNG.
 fn initialize_simulation_resources(mut commands: Commands, config: Res<ScenarioConfig>) {
-    // A configured seed makes the run reproducible: the same seed always yields
-    // the same sequence. Without one, fall back to OS entropy, which differs
-    // from run to run and is therefore non-deterministic.
-    let rng = match config.simulation.seed {
-        Some(seed) => ChaCha8Rng::seed_from_u64(seed),
-        None => ChaCha8Rng::from_rng(&mut OsRng).expect("OS RNG failed"),
+    // Resolve to a concrete seed *before* building any generator. An absent
+    // config seed means "pick one," not "be unseeded": drawing a single u64 from
+    // OS entropy leaves a value that can be logged and replayed, where seeding a
+    // generator directly from entropy would leave nothing to quote in a bug
+    // report. Every generator below is then built from this one number, which is
+    // what makes the whole run reproducible from it alone.
+    let (seed, source) = match config.simulation.seed {
+        Some(s) => (s, "config"),
+        None => (OsRng.next_u64(), "OS entropy"),
     };
 
-    commands.insert_resource(SimulationRng(rng));
+    // Logged on every run, not just the drawn case: a bug report needs the seed
+    // quoted whichever way it was chosen, and `source` is what tells the reader
+    // whether re-running reproduces on its own or needs `--seed {seed}`.
+    info!("master seed {seed} (from {source})");
+
+    commands.insert_resource(MasterSeed(seed));
+    commands.insert_resource(SimulationRng(ChaCha8Rng::seed_from_u64(seed)));
 
     // Drive FixedUpdate at the configured rate: one tick every `1 / frequency`
     // seconds.
@@ -308,16 +317,19 @@ mod tests {
     use super::{
         configure_fixed_update_sets, configure_scene_build_sets, configure_time_pacing,
         fast_forward_max_delta, fast_forward_steps_per_update, fixed_timestep,
-        MAX_FAST_FORWARD_OVERSHOOT,
+        initialize_simulation_resources, MAX_FAST_FORWARD_OVERSHOOT,
     };
     use crate::core::app_state::{AppState, SceneBuildSet, SimulationSet};
     use crate::core::host::TimePolicy;
+    use crate::core::prng::{MasterSeed, SimulationRng};
     use crate::prelude::ScenarioConfig;
 
     use std::time::Duration;
 
     use bevy::prelude::*;
     use bevy::time::TimeUpdateStrategy;
+    use rand::{RngCore, SeedableRng};
+    use rand_chacha::ChaCha8Rng;
 
     /// Slow enough that one fixed step alone spends the whole overshoot budget
     /// *and* exceeds Bevy's 250 ms default clamp — the rate at which batching
@@ -398,6 +410,50 @@ mod tests {
         assert!(step > MAX_FAST_FORWARD_OVERSHOOT);
 
         assert_eq!(fast_forward_steps_per_update(step), 1);
+    }
+
+    // A world holding just what `initialize_simulation_resources` reads, with
+    // the seed request under test. `seed: None` is the "pick one for me" case.
+    fn seeded_world(seed: Option<u64>) -> World {
+        let mut world = World::new();
+        let mut config = ScenarioConfig::default();
+        config.simulation.seed = seed;
+        world.insert_resource(config);
+        world
+            .run_system_cached(initialize_simulation_resources)
+            .expect("initialize_simulation_resources runs against the world it declares");
+        world
+    }
+
+    #[test]
+    fn a_configured_seed_reaches_the_master_seed_resource() {
+        // The regression guard for the class of bug where a configured seed is
+        // read too early and silently lost: this system runs in
+        // `AssetLoadSet::Kickoff` precisely so the loaded TOML is visible, and
+        // nothing else in the crate proves the value survives the trip.
+        assert_eq!(seeded_world(Some(2024)).resource::<MasterSeed>().0, 2024);
+    }
+
+    #[test]
+    fn an_absent_config_seed_is_still_resolved_and_recorded() {
+        // An unseeded run must still end up with a concrete master seed — that
+        // is what makes it replayable after the fact. The drawn value is
+        // entropy, so its presence is the whole assertion available here.
+        seeded_world(None).resource::<MasterSeed>();
+    }
+
+    #[test]
+    fn the_simulation_rng_is_derived_from_the_master_seed() {
+        // Replay depends on every generator descending from the recorded seed.
+        // An RNG seeded from any other source would still produce a working
+        // run, and the log would name a seed that reproduces none of it.
+        let mut world = seeded_world(None);
+        let master = world.resource::<MasterSeed>().0;
+
+        let mut expected = ChaCha8Rng::seed_from_u64(master);
+        let actual = world.resource_mut::<SimulationRng>().0.next_u64();
+
+        assert_eq!(actual, expected.next_u64());
     }
 
     #[test]
