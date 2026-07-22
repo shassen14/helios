@@ -278,4 +278,104 @@ mod tests {
 
         assert_eq!(samples(&world, sensor), 0);
     }
+
+    // ==================================================================
+    // == Stream isolation ==
+    // ==================================================================
+
+    /// Records the values it draws, so a test can compare one sensor's stream
+    /// across two differently-populated worlds.
+    #[derive(Component)]
+    struct RecordingSensor {
+        draws: Vec<u64>,
+    }
+
+    impl StateSensor for RecordingSensor {
+        type Payload = GpsPosition;
+
+        fn sample(
+            &mut self,
+            _truth: &GroundTruthState,
+            _sensor_pose_world: &Isometry3<f64>,
+            rng: &mut dyn RngCore,
+        ) -> GpsPosition {
+            self.draws.push(rng.next_u64());
+            GpsPosition {
+                position: Vector3::zeros(),
+            }
+        }
+    }
+
+    const TEST_MASTER_SEED: u64 = 2024;
+
+    /// Enough ticks that an interleaved stream would diverge unmistakably, and
+    /// few enough to stay instant.
+    const ISOLATION_TICKS: usize = 5;
+
+    /// Spawns one recording sensor per name under a single agent, runs the
+    /// publish system until each has sampled `ISOLATION_TICKS` times, and
+    /// returns their recorded draws in the order the names were given.
+    fn draws_per_sensor(names: &[&str]) -> Vec<Vec<u64>> {
+        let mut world = World::new();
+        world.insert_resource(Time::<()>::default());
+        let agent = world.spawn(GroundTruthState::default()).id();
+
+        let mut sensors = Vec::new();
+        for name in names {
+            let sensor = world
+                .spawn((
+                    RecordingSensor { draws: Vec::new() },
+                    SensorTimer::from_rate(RATE_HZ),
+                    SensorRng::from_sensor(TEST_MASTER_SEED, name),
+                    GlobalTransform::default(),
+                    SensorPublishChannel("test.channel".to_string()),
+                    ChildOf(agent),
+                ))
+                .id();
+            sensors.push(sensor);
+        }
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems(publish_state_sensor::<RecordingSensor>);
+
+        for _ in 0..ISOLATION_TICKS {
+            advance_and_run(&mut world, &mut schedule, period());
+        }
+
+        sensors
+            .into_iter()
+            .map(|sensor| world.get::<RecordingSensor>(sensor).unwrap().draws.clone())
+            .collect()
+    }
+
+    /// The property the per-sensor RNG exists to provide, and the one a shared
+    /// generator cannot have: adding a second sensor to an agent must not
+    /// perturb the first one's noise.
+    ///
+    /// Under a single shared RNG this fails — both sensors draw from one
+    /// sequence, so whichever the query visits first takes the earlier values
+    /// and the other's readings shift. That made an unrelated scenario edit
+    /// (adding a sensor, removing one, a lidar hitting a different surface
+    /// count) silently change every other sensor's output for the whole run.
+    #[test]
+    fn a_sensors_stream_is_unaffected_by_a_sibling() {
+        let alone = draws_per_sensor(&["car_1/gps"]);
+        let with_sibling = draws_per_sensor(&["car_1/gps", "car_1/imu"]);
+
+        // Guards against a vacuous pass: if the timer never fired, both sides
+        // would be empty and compare equal while asserting nothing.
+        assert_eq!(alone[0].len(), ISOLATION_TICKS);
+
+        assert_eq!(alone[0], with_sibling[0]);
+    }
+
+    /// The companion to isolation: streams must be independent, not identical.
+    /// A derivation that ignored the sensor name would pass the test above
+    /// while giving every sensor on an agent the same noise.
+    #[test]
+    fn two_sensors_on_one_agent_draw_different_streams() {
+        let draws = draws_per_sensor(&["car_1/gps", "car_1/imu"]);
+
+        assert_ne!(draws[0], draws[1]);
+    }
 }

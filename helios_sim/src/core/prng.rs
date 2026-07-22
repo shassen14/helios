@@ -62,3 +62,65 @@ impl SensorRng {
         Self(ChaCha8Rng::seed_from_u64(hash))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use rand::RngCore;
+
+    const MASTER_SEED: u64 = 2024;
+    const SENSOR: &str = "car_1/gps";
+
+    /// The number of draws compared. Any small number works: two ChaCha streams
+    /// from different seeds diverge at the first value, so a longer prefix
+    /// would not catch anything a short one misses.
+    const PREFIX_LEN: usize = 4;
+
+    /// Compares streams by what they *produce*, not by the seed they were built
+    /// from. A test asserting on seeds would still pass if the seed never
+    /// reached the generator — which is the exact bug this project has already
+    /// shipped once, when a configured seed was read before the config loaded.
+    fn prefix(mut rng: SensorRng) -> Vec<u64> {
+        (0..PREFIX_LEN).map(|_| rng.0.next_u64()).collect()
+    }
+
+    #[test]
+    fn the_same_sensor_and_seed_reproduce_the_stream() {
+        assert_eq!(
+            prefix(SensorRng::from_sensor(MASTER_SEED, SENSOR)),
+            prefix(SensorRng::from_sensor(MASTER_SEED, SENSOR))
+        );
+    }
+
+    #[test]
+    fn different_sensors_draw_different_streams() {
+        assert_ne!(
+            prefix(SensorRng::from_sensor(MASTER_SEED, SENSOR)),
+            prefix(SensorRng::from_sensor(MASTER_SEED, "car_1/imu"))
+        );
+    }
+
+    /// The two halves of one IMU are the case worth naming. They come from a
+    /// single config entry and differ only by the suffix each spawner appends,
+    /// so a spawner that derived one seed and handed it to both children would
+    /// produce perfectly correlated accelerometer and gyroscope noise — a
+    /// defect that looks entirely plausible on a plot.
+    #[test]
+    fn an_imus_two_halves_draw_different_streams() {
+        assert_ne!(
+            prefix(SensorRng::from_sensor(MASTER_SEED, "car_1/imu/accelerometer")),
+            prefix(SensorRng::from_sensor(MASTER_SEED, "car_1/imu/gyroscope"))
+        );
+    }
+
+    /// Without this, a derivation that ignored the master seed would satisfy
+    /// every other test here while making `--seed` inert.
+    #[test]
+    fn a_different_master_seed_moves_the_stream() {
+        assert_ne!(
+            prefix(SensorRng::from_sensor(MASTER_SEED, SENSOR)),
+            prefix(SensorRng::from_sensor(MASTER_SEED + 1, SENSOR))
+        );
+    }
+}
