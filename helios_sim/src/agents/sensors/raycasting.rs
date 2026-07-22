@@ -1,5 +1,6 @@
 use crate::brain_bridge::components::SensorPublishChannel;
 use crate::config::structs::{LidarConfig, SensorConfig};
+use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::FluVector;
 use crate::core::{app_state::SimulationSet, prng::SimulationRng};
 use crate::prelude::*;
@@ -45,6 +46,7 @@ impl Plugin for RaycastingSensorPlugin {
 fn spawn_raycasting_sensors(
     mut commands: Commands,
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
+    master_seed: Res<MasterSeed>,
 ) {
     for (agent_entity, agent_name, request) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {
@@ -88,8 +90,12 @@ fn spawn_raycasting_sensors(
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
+                let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
+                let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
+
                 sensor_entity_commands.insert((
-                    Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
+                    Name::new(sensor_label),
+                    SensorPublishChannel(lidar_config.get_channel().to_string()),
                     RaycastingSensor {
                         timer: Timer::new(
                             Duration::from_secs_f64(1.0 / lidar_config.get_rate()),
@@ -97,7 +103,7 @@ fn spawn_raycasting_sensors(
                         ),
                         model: core_model,
                     },
-                    SensorPublishChannel(lidar_config.get_channel().to_string()),
+                    sensor_rng,
                     TrackedFrame,
                     lidar_config.get_relative_pose().to_bevy_local_transform(),
                 ));

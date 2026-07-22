@@ -4,6 +4,7 @@
 use super::state_sensor::{publish_state_sensor, StateSensor};
 
 use crate::core::app_state::SimulationSet;
+use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
 use crate::{
     agents::sensors::state_sensor::SensorTimer, brain_bridge::components::SensorPublishChannel,
@@ -69,6 +70,7 @@ impl Plugin for GpsPlugin {
 fn spawn_gps_sensors(
     mut commands: Commands,
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
+    master_seed: Res<MasterSeed>,
 ) {
     for (agent_entity, agent_name, request) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {
@@ -93,12 +95,16 @@ fn spawn_gps_sensors(
                     continue;
                 };
 
+                let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
+                let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
+
                 let sensor_entity = commands
                     .spawn((
-                        Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
+                        Name::new(sensor_label),
                         SensorPublishChannel(gps_config.channel.clone()),
                         Gps::new(model),
                         SensorTimer::from_rate(gps_config.rate),
+                        sensor_rng,
                         TrackedFrame,
                         gps_config.get_relative_pose().to_bevy_local_transform(),
                     ))

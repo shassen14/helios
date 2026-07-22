@@ -10,6 +10,7 @@ use super::state_sensor::{publish_state_sensor, SensorTimer, StateSensor};
 
 use crate::brain_bridge::components::SensorPublishChannel;
 use crate::core::app_state::SimulationSet;
+use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
 
 use helios_core::data::sensor::MagneticField3D;
@@ -80,6 +81,7 @@ fn spawn_magnetometer_sensors(
     mut commands: Commands,
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
     config: Res<ScenarioConfig>,
+    master_seed: Res<MasterSeed>,
 ) {
     let magnetic_field = &config.world.magnetic_field;
 
@@ -110,12 +112,16 @@ fn spawn_magnetometer_sensors(
                     continue;
                 };
 
+                let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
+                let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
+
                 let sensor_entity = commands
                     .spawn((
-                        Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
+                        Name::new(sensor_label),
+                        SensorPublishChannel(mag_config.channel.clone()),
                         Magnetometer::new(mag_model),
                         SensorTimer::from_rate(mag_config.rate),
-                        SensorPublishChannel(mag_config.channel.clone()),
+                        sensor_rng,
                         TrackedFrame,
                         mag_config.get_relative_pose().to_bevy_local_transform(),
                     ))

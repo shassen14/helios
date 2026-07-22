@@ -9,6 +9,7 @@
 use super::state_sensor::{publish_state_sensor, SensorTimer, StateSensor};
 
 use crate::core::app_state::SimulationSet;
+use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::EnuVector;
 use crate::prelude::*;
 
@@ -136,6 +137,7 @@ fn spawn_imu_sensors(
     mut commands: Commands,
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
     gravity: Res<Gravity>,
+    master_seed: Res<MasterSeed>,
 ) {
     let gravity_world = EnuVector::from(gravity.0).0;
 
@@ -179,31 +181,31 @@ fn spawn_imu_sensors(
                     continue;
                 };
 
+                let accel_label = format!("{}/{}/accelerometer", agent_name.as_str(), sensor_name);
+                let accel_rng = SensorRng::from_sensor(master_seed.0, &accel_label);
+
                 let accel_entity = commands
                     .spawn((
-                        Name::new(format!(
-                            "{}/{}/accelerometer",
-                            agent_name.as_str(),
-                            sensor_name
-                        )),
+                        Name::new(accel_label),
                         SensorPublishChannel(imu_config.get_accel_channel().to_string()),
                         Accelerometer::new(accel_model, gravity_world),
                         SensorTimer::from_rate(imu_config.rate),
+                        accel_rng,
                         TrackedFrame,
                         sensor_pose.to_bevy_local_transform(),
                     ))
                     .id();
 
+                let gyro_label = format!("{}/{}/gyroscope", agent_name.as_str(), sensor_name);
+                let gyro_rng = SensorRng::from_sensor(master_seed.0, &gyro_label);
+
                 let gyro_entity = commands
                     .spawn((
-                        Name::new(format!(
-                            "{}/{}/gyroscope",
-                            agent_name.as_str(),
-                            sensor_name
-                        )),
+                        Name::new(gyro_label),
                         SensorPublishChannel(imu_config.get_gyro_channel().to_string()),
                         Gyroscope::new(gyro_model),
                         SensorTimer::from_rate(imu_config.rate),
+                        gyro_rng,
                         TrackedFrame,
                         sensor_pose.to_bevy_local_transform(),
                     ))
