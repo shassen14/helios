@@ -62,8 +62,3 @@ impl SensorRng {
         Self(ChaCha8Rng::seed_from_u64(hash))
     }
 }
-
-/// A newtype wrapper around `ChaCha8Rng` to make it a Bevy Resource.
-/// This is the central, deterministic pseudo-random number generator for the simulation.
-#[derive(Resource)]
-pub struct SimulationRng(pub ChaCha8Rng);

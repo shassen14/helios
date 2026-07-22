@@ -1,8 +1,8 @@
 use crate::brain_bridge::components::SensorPublishChannel;
 use crate::config::structs::{LidarConfig, SensorConfig};
+use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::FluVector;
-use crate::core::{app_state::SimulationSet, prng::SimulationRng};
 use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;
@@ -120,11 +120,11 @@ fn spawn_raycasting_sensors(
 
 fn raycasting_sensor_system(
     time: Res<Time>,
-    mut rng: ResMut<SimulationRng>,
     spatial_query: SpatialQuery,
     mut sensor_query: Query<(
         Entity,
         &mut RaycastingSensor,
+        &mut SensorRng,
         &SensorPublishChannel,
         &GlobalTransform,
         &ChildOf,
@@ -135,7 +135,7 @@ fn raycasting_sensor_system(
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (sensor_entity, mut sensor, sensor_publish_channel, sensor_transform, parent) in
+    for (sensor_entity, mut sensor, mut rng, sensor_publish_channel, sensor_transform, parent) in
         &mut sensor_query
     {
         sensor.timer.tick(dt);

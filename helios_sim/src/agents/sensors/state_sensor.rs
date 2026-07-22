@@ -10,7 +10,7 @@
 //! generically; a concrete sensor contributes only a component implementing
 //! [`StateSensor`].
 
-use crate::core::prng::SimulationRng;
+use crate::core::prng::SensorRng;
 use crate::core::transforms::EnuBodyPose;
 use crate::prelude::{GroundTruthState, SensorPublishChannel, SensorPublisher};
 
@@ -22,7 +22,7 @@ use std::time::Duration;
 use bevy::ecs::component::{Component, Mutable};
 use bevy::ecs::entity::Entity;
 use bevy::ecs::hierarchy::ChildOf;
-use bevy::ecs::system::{Local, Query, Res, ResMut};
+use bevy::ecs::system::{Local, Query, Res};
 use bevy::log::warn;
 use bevy::time::{Time, Timer, TimerMode};
 use bevy::transform::components::GlobalTransform;
@@ -67,8 +67,12 @@ pub trait StateSensor: Component<Mutability = Mutable> {
     /// is the sensor's FLU frame expressed in the ENU world: its translation
     /// is the sensor's world position, and its rotation maps sensor vectors
     /// into world axes — a model that wants world-into-sensor takes the
-    /// inverse. All randomness must come from `rng` so a seeded run
-    /// reproduces exactly.
+    /// inverse.
+    ///
+    /// `rng` is this sensor's own stream, not a shared one. All randomness must
+    /// come from it: a model reaching for any other source breaks replay, and
+    /// one that draws a variable number of values per call — rather than a
+    /// fixed number — makes its own future readings depend on its past inputs.
     fn sample(
         &mut self,
         truth: &GroundTruthState,
@@ -85,17 +89,22 @@ pub trait StateSensor: Component<Mutability = Mutable> {
 /// pose, ask the sensor for a reading, and publish it on the entity's
 /// declared channel.
 ///
+/// Noise is drawn from the entity's own [`SensorRng`], so a sensor's readings
+/// depend only on its own name, its own tick count, and the run's master seed.
+/// The registrations of this system for different sensor types are unordered
+/// with respect to each other, and after this loop that no longer matters.
+///
 /// A sensor whose parent has no [`GroundTruthState`] can never produce data —
 /// that is a scene-wiring bug, so the entity is skipped with a warning, once
 /// per entity.
 pub fn publish_state_sensor<S: StateSensor>(
     time: Res<Time>,
-    mut rng: ResMut<SimulationRng>,
     truth_query: Query<&GroundTruthState>,
     mut sensor_query: Query<(
         Entity,
         &mut S,
         &mut SensorTimer,
+        &mut SensorRng,
         &GlobalTransform,
         &SensorPublishChannel,
         &ChildOf,
@@ -106,7 +115,7 @@ pub fn publish_state_sensor<S: StateSensor>(
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (entity, mut sensor, mut timer, transform, channel, parent) in &mut sensor_query {
+    for (entity, mut sensor, mut timer, mut rng, transform, channel, parent) in &mut sensor_query {
         timer.0.tick(dt);
 
         if !timer.0.just_finished() {
@@ -182,10 +191,16 @@ mod tests {
         SensorTimer::from_rate(RATE_HZ).0.duration()
     }
 
+    /// An arbitrary fixed seed. These tests assert on *when* the system samples,
+    /// never on the values it produces, so the sensor's stream only has to be
+    /// present and reproducible — hence a literal seed rather than
+    /// [`SensorRng::from_sensor`], which would couple timer tests to the seed
+    /// derivation for no gain.
+    const TEST_SEED: u64 = 0;
+
     fn world_with_sensor(parent_has_truth: bool) -> (World, Entity) {
         let mut world = World::new();
         world.insert_resource(Time::<()>::default());
-        world.insert_resource(SimulationRng(ChaCha8Rng::seed_from_u64(0)));
 
         let agent = if parent_has_truth {
             world.spawn(GroundTruthState::default()).id()
@@ -197,6 +212,7 @@ mod tests {
             .spawn((
                 CountingSensor { samples: 0 },
                 SensorTimer::from_rate(RATE_HZ),
+                SensorRng(ChaCha8Rng::seed_from_u64(TEST_SEED)),
                 GlobalTransform::default(),
                 SensorPublishChannel("test.channel".to_string()),
                 ChildOf(agent),

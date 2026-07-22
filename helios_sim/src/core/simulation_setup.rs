@@ -3,8 +3,7 @@ use std::time::Duration;
 use avian3d::prelude::PhysicsSystems;
 use bevy::time::TimeUpdateStrategy;
 use rand::rngs::OsRng;
-use rand::{RngCore, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use rand::RngCore;
 
 use super::components::GroundTruthState;
 use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
@@ -13,7 +12,7 @@ use crate::core::components::ConfiguredMissionGoal;
 use crate::core::ground_truth::publish_oracle_channels_system;
 use crate::core::ground_truth_sync_system;
 use crate::core::host::TimePolicy;
-use crate::core::prng::{MasterSeed, SimulationRng};
+use crate::core::prng::MasterSeed;
 use crate::core::transforms::build_static_tf_maps;
 use crate::prelude::*;
 
@@ -164,7 +163,6 @@ fn initialize_simulation_resources(mut commands: Commands, config: Res<ScenarioC
     info!("master seed {seed} (from {source})");
 
     commands.insert_resource(MasterSeed(seed));
-    commands.insert_resource(SimulationRng(ChaCha8Rng::seed_from_u64(seed)));
 
     // Drive FixedUpdate at the configured rate: one tick every `1 / frequency`
     // seconds.
@@ -321,15 +319,13 @@ mod tests {
     };
     use crate::core::app_state::{AppState, SceneBuildSet, SimulationSet};
     use crate::core::host::TimePolicy;
-    use crate::core::prng::{MasterSeed, SimulationRng};
+    use crate::core::prng::MasterSeed;
     use crate::prelude::ScenarioConfig;
 
     use std::time::Duration;
 
     use bevy::prelude::*;
     use bevy::time::TimeUpdateStrategy;
-    use rand::{RngCore, SeedableRng};
-    use rand_chacha::ChaCha8Rng;
 
     /// Slow enough that one fixed step alone spends the whole overshoot budget
     /// *and* exceeds Bevy's 250 ms default clamp — the rate at which batching
@@ -440,20 +436,6 @@ mod tests {
         // is what makes it replayable after the fact. The drawn value is
         // entropy, so its presence is the whole assertion available here.
         seeded_world(None).resource::<MasterSeed>();
-    }
-
-    #[test]
-    fn the_simulation_rng_is_derived_from_the_master_seed() {
-        // Replay depends on every generator descending from the recorded seed.
-        // An RNG seeded from any other source would still produce a working
-        // run, and the log would name a seed that reproduces none of it.
-        let mut world = seeded_world(None);
-        let master = world.resource::<MasterSeed>().0;
-
-        let mut expected = ChaCha8Rng::seed_from_u64(master);
-        let actual = world.resource_mut::<SimulationRng>().0.next_u64();
-
-        assert_eq!(actual, expected.next_u64());
     }
 
     #[test]
