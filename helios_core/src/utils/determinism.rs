@@ -192,7 +192,10 @@ mod tests {
 
     #[test]
     fn stable_hash_varies_with_stable_id() {
-        assert_ne!(stable_hash(42, KIND, ID), stable_hash(42, KIND, "car_1/imu"));
+        assert_ne!(
+            stable_hash(42, KIND, ID),
+            stable_hash(42, KIND, "car_1/imu")
+        );
     }
 
     /// The field separator's reason for existing. Under naive concatenation

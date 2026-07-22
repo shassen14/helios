@@ -98,8 +98,12 @@ mod tests {
         let mut rng_b = StdRng::seed_from_u64(5);
 
         assert_eq!(
-            model.sample(accel_world, gravity_world, q, &mut rng_a).value,
-            model.sample(accel_world, gravity_world, q, &mut rng_b).value
+            model
+                .sample(accel_world, gravity_world, q, &mut rng_a)
+                .value,
+            model
+                .sample(accel_world, gravity_world, q, &mut rng_b)
+                .value
         );
     }
 }

@@ -109,7 +109,10 @@ mod tests {
     #[test]
     fn an_imus_two_halves_draw_different_streams() {
         assert_ne!(
-            prefix(SensorRng::from_sensor(MASTER_SEED, "car_1/imu/accelerometer")),
+            prefix(SensorRng::from_sensor(
+                MASTER_SEED,
+                "car_1/imu/accelerometer"
+            )),
             prefix(SensorRng::from_sensor(MASTER_SEED, "car_1/imu/gyroscope"))
         );
     }

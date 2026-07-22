@@ -1,9 +1,8 @@
 run_name = "smoke"
 scenario = "sim/scenarios/00_tutorial_showcase.toml"
-master_seed = 17540659726606785873
 status = "passed"
 simulated_duration_secs = 5.0
-wall_duration_secs = 0.80804425
+wall_duration_secs = 0.792497
 assertions = []
 
 [terminated_by]

@@ -73,7 +73,10 @@ mod tests {
         let mut rng_a = StdRng::seed_from_u64(42);
         let mut rng_b = StdRng::seed_from_u64(42);
 
-        assert_eq!(noise.apply(ideal, &mut rng_a), noise.apply(ideal, &mut rng_b));
+        assert_eq!(
+            noise.apply(ideal, &mut rng_a),
+            noise.apply(ideal, &mut rng_b)
+        );
     }
 
     #[test]

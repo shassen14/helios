@@ -125,6 +125,9 @@ mod tests {
         let mut rng_a = StdRng::seed_from_u64(9);
         let mut rng_b = StdRng::seed_from_u64(9);
 
-        assert_eq!(model.sample(q, &mut rng_a).value, model.sample(q, &mut rng_b).value);
+        assert_eq!(
+            model.sample(q, &mut rng_a).value,
+            model.sample(q, &mut rng_b).value
+        );
     }
 }

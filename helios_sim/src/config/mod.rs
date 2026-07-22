@@ -15,9 +15,7 @@ use figment::{
 
 // Re-export public types
 use crate::{
-    cli::Cli,
-    prelude::AppState,
-    {config::structs::Simulation, core::app_state::AssetLoadSet},
+    cli::Cli, config::structs::Simulation, core::app_state::AssetLoadSet, prelude::AppState,
 };
 use catalog::load_catalog_from_disk;
 pub use catalog::PrefabCatalog;
@@ -42,6 +40,23 @@ impl Plugin for ConfigPlugin {
     }
 }
 
+/// Takes one raw agent value all the way to a typed [`AgentConfig`], resolving
+/// its `from` references and then checking the result against the schema.
+///
+/// The two failures are labelled distinctly because they send the reader to
+/// different files. A resolution failure means a `from` reference did not land
+/// — the referenced prefab is missing or misspelled. A deserialization failure
+/// means the reference resolved fine but the fields it produced do not match
+/// what `AgentConfig` expects, and serde's message names the offending field
+/// and the valid alternatives.
+fn resolve_agent(agent_value: &Value, catalog: &PrefabCatalog) -> Result<AgentConfig, String> {
+    let resolved_value = resolver::resolve_agent_value(agent_value, catalog)
+        .map_err(|e| format!("failed to resolve: {}", e))?;
+
+    Value::deserialize::<AgentConfig>(&resolved_value)
+        .map_err(|e| format!("failed to deserialize: {}", e))
+}
+
 fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res<PrefabCatalog>) {
     let scenario_path = &cli.scenario;
     info!("Loading scenario from: {:?}", scenario_path);
@@ -55,20 +70,33 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
 
     // 2. Resolve the raw agent values into a Vec<AgentConfig>.
     let mut resolved_agents: Vec<AgentConfig> = Vec::new();
-    for agent_value in &raw_config.agents {
-        match resolver::resolve_agent_value(agent_value, &catalog) {
-            Ok(resolved_value) => match Value::deserialize::<AgentConfig>(&resolved_value) {
-                Ok(agent_config) => {
-                    info!("Successfully resolved agent: '{}'", agent_config.name());
-                    resolved_agents.push(agent_config);
-                }
-                Err(e) => error!(
-                    "Failed to deserialize resolved agent: {}. Value was: {:?}",
-                    e, resolved_value
-                ),
-            },
-            Err(e) => error!("Failed to resolve agent: {}", e),
+    let mut failures: Vec<String> = Vec::new();
+
+    for (index, agent_value) in raw_config.agents.iter().enumerate() {
+        match resolve_agent(agent_value, &catalog) {
+            Ok(agent_config) => {
+                info!("Successfully resolved agent: '{}'", agent_config.name());
+                resolved_agents.push(agent_config);
+            }
+            // Collected rather than reported, so a scenario with several broken
+            // agents lists all of them in one run instead of one per edit.
+            // The index identifies the agent because a failed agent has no
+            // parsed name to report — that is the failure.
+            Err(e) => failures.push(format!("agents[{}]: {}", index, e)),
         }
+    }
+
+    // A partially-built scene has no valid interpretation: the scenario states
+    // what to simulate, and quietly simulating a subset answers a question
+    // nobody asked. Left non-fatal, a config typo becomes a green run over an
+    // empty world.
+    if !failures.is_empty() {
+        panic!(
+            "{} of {} agents failed to load:\n{}",
+            failures.len(),
+            raw_config.agents.len(),
+            failures.join("\n")
+        );
     }
 
     // 3. Assemble the final, complete `ScenarioConfig` resource.
@@ -104,7 +132,95 @@ fn apply_cli_overrides(sim: &mut Simulation, cli: &Cli) {
 mod tests {
     use super::*;
 
-    use std::path::PathBuf;
+    use std::{collections::HashMap, path::PathBuf};
+
+    // The smallest agent that satisfies `AgentConfig`: every field without a
+    // serde default, and nothing else. Written as TOML rather than built as a
+    // `Value` tree so the tests fail the same way a real scenario would — via
+    // the same parse and the same deserialize.
+    const MINIMAL_AGENT: &str = r#"
+        name = "test_car"
+
+        [starting_pose]
+        [goal_pose]
+
+        [vehicle]
+        kind = "Ackermann"
+        wheelbase = 2.7
+        max_steering_angle = 30.0
+        max_steering_rate = 90.0
+
+        [sensors.gps]
+        kind = "Gps"
+        rate = 10.0
+        channel = "gps/fix"
+    "#;
+
+    // Parses an agent's TOML into the raw `Value` the scenario loader hands to
+    // `resolve_agent`.
+    fn agent_value(toml: &str) -> Value {
+        Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("test agent TOML should parse")
+    }
+
+    // These agents carry no `from` references, so resolution has nothing to look
+    // up and an empty catalog is sufficient. A test needing a reference to
+    // resolve would seed this map instead.
+    fn empty_catalog() -> PrefabCatalog {
+        PrefabCatalog(HashMap::new())
+    }
+
+    #[test]
+    fn a_well_formed_agent_resolves() {
+        // Anchors the other tests: without this, a `resolve_agent` that rejected
+        // everything would satisfy both failure tests below.
+        let agent = resolve_agent(&agent_value(MINIMAL_AGENT), &empty_catalog())
+            .expect("the minimal agent should resolve");
+
+        assert_eq!(agent.name(), "test_car");
+    }
+
+    #[test]
+    fn an_unknown_sensor_field_is_rejected() {
+        // The regression guard for a config typo silently dropping an agent. A
+        // misspelled `noise_stddev` is the real instance that reached a green
+        // run: `deny_unknown_fields` caught it, and the error was discarded.
+        let typo =
+            MINIMAL_AGENT.replace("rate = 10.0", "rate = 10.0\nnoise_stdev = [0.0, 0.0, 0.0]");
+
+        let error = resolve_agent(&agent_value(&typo), &empty_catalog())
+            .expect_err("an unknown field should be rejected");
+
+        // Asserting on the field name, not the whole message: serde owns the
+        // phrasing, but the offending field is what sends the reader to the
+        // right line, and a message lacking it is useless however it is worded.
+        assert!(
+            error.contains("noise_stdev"),
+            "error should name the offending field, got: {error}"
+        );
+    }
+
+    #[test]
+    fn an_unresolvable_reference_is_rejected() {
+        // The other failure path. Worth its own test because the two are
+        // labelled differently on purpose — this one points at a missing
+        // catalog entry, not at a schema mismatch — and an implementation that
+        // collapsed them would still pass the test above.
+        let dangling = MINIMAL_AGENT.replace(
+            r#"kind = "Gps""#,
+            r#"from = "entities.sensors.does_not_exist""#,
+        );
+
+        let error = resolve_agent(&agent_value(&dangling), &empty_catalog())
+            .expect_err("a dangling reference should be rejected");
+
+        assert!(
+            error.starts_with("failed to resolve"),
+            "a missing prefab should fail resolution, not deserialization, got: {error}"
+        );
+    }
 
     // A `Cli` carrying only the seed under test; the path fields are irrelevant
     // to `apply_cli_overrides` and just need to be well-formed.
