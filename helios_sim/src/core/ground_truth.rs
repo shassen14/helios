@@ -37,8 +37,12 @@ pub fn ground_truth_sync_system(
 
     for (transform, lin_vel, ang_vel, mut ground_truth) in &mut query {
         ground_truth.pose = EnuBodyPose::from(transform).0;
-        ground_truth.angular_velocity =
+
+        let current_angular_velocity_enu =
             EnuVector::from(Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z)).0;
+
+        let angular_acceleration_enu =
+            (current_angular_velocity_enu - ground_truth.last_angular_velocity) / dt;
 
         let current_linear_velocity_enu =
             EnuVector::from(Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z)).0;
@@ -47,8 +51,11 @@ pub fn ground_truth_sync_system(
             (current_linear_velocity_enu - ground_truth.last_linear_velocity) / dt;
 
         ground_truth.linear_velocity = current_linear_velocity_enu;
+        ground_truth.angular_velocity = current_angular_velocity_enu;
         ground_truth.linear_acceleration = linear_acceleration_enu;
+        ground_truth.angular_acceleration = angular_acceleration_enu;
         ground_truth.last_linear_velocity = current_linear_velocity_enu;
+        ground_truth.last_angular_velocity = current_angular_velocity_enu;
     }
 }
 

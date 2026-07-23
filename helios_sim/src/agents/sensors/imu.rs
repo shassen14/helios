@@ -26,28 +26,37 @@ use rand::RngCore;
 /// rest reads one g upward — in the sensor frame, with bias and per-axis
 /// noise.
 ///
+/// A sensor mounted off the body origin also feels the lever-arm terms
+/// `α × r + ω × (ω × r)`, so `sample` passes the mount offset and the body's
+/// angular velocity and acceleration to the model. These are below the noise
+/// floor for a near-origin mount at gentle rates, but real on a spinning
+/// platform or a long mounting arm.
+///
 /// Gravity is baked in at spawn: the model needs it every sample, but it is
 /// an environmental constant, not agent state, so the spawner captures it
 /// from the physics world once rather than the publish loop reading it every
 /// tick.
-///
-/// TODO(fidelity): `sample` reads the acceleration of the agent's origin,
-/// not of the sensor's mount point. A sensor at offset `r` on a rotating
-/// body also feels the lever-arm terms `α × r + ω × (ω × r)` — below the
-/// noise floor for near-origin mounts at gentle rates, but real on spinning
-/// platforms or long mounting arms. Modeling it needs angular acceleration
-/// in the ground-truth state and a richer core forward model.
 #[derive(Component)]
 pub struct Accelerometer {
     model: AccelerometerModel,
     gravity_world: Vector3<f64>,
+    /// Sensor mount offset from the body origin, in the FLU body frame. Baked
+    /// in at spawn from the sensor's configured pose — a small, exact quantity,
+    /// so the lever arm never comes from differencing two large world positions
+    /// (which loses precision as the agent moves away from the world origin).
+    lever_arm_body: Vector3<f64>,
 }
 
 impl Accelerometer {
-    pub fn new(model: AccelerometerModel, gravity_world: Vector3<f64>) -> Self {
+    pub fn new(
+        model: AccelerometerModel,
+        gravity_world: Vector3<f64>,
+        lever_arm_body: Vector3<f64>,
+    ) -> Self {
         Self {
             model,
             gravity_world,
+            lever_arm_body,
         }
     }
 }
@@ -55,9 +64,11 @@ impl Accelerometer {
 impl StateSensor for Accelerometer {
     type Payload = LinearAcceleration3D;
 
-    /// Acceleration is a free vector, so only the pose's rotation matters —
-    /// inverted, because the model wants world-into-sensor and the pose's
-    /// rotation goes the other way.
+    /// The lever arm is the baked-in FLU mount offset rotated into world ENU by
+    /// the body orientation, so it stays consistent with the world-frame ω and
+    /// α feeding the model's tangential and centripetal terms. The pose's
+    /// rotation is inverted because the model wants world-into-sensor and the
+    /// pose's rotation goes the other way.
     fn sample(
         &mut self,
         truth: &GroundTruthState,
@@ -67,6 +78,9 @@ impl StateSensor for Accelerometer {
         self.model.sample(
             truth.linear_acceleration,
             self.gravity_world,
+            truth.angular_velocity,
+            truth.angular_acceleration,
+            truth.pose.rotation * self.lever_arm_body,
             sensor_pose_world.rotation.inverse(),
             rng,
         )
@@ -188,7 +202,7 @@ fn spawn_imu_sensors(
                     .spawn((
                         Name::new(accel_label),
                         SensorPublishChannel(imu_config.get_accel_channel().to_string()),
-                        Accelerometer::new(accel_model, gravity_world),
+                        Accelerometer::new(accel_model, gravity_world, sensor_pose.translation),
                         SensorTimer::from_rate(imu_config.rate),
                         accel_rng,
                         TrackedFrame,
@@ -241,6 +255,7 @@ mod tests {
         Accelerometer::new(
             AccelerometerModel::new(bias, Vector3::repeat(NEGLIGIBLE_STDDEV)).unwrap(),
             gravity_world,
+            Vector3::zeros(),
         )
     }
 
