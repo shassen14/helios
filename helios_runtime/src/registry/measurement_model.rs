@@ -8,8 +8,8 @@
 //! `ctx.model_config` so they originate from config, not external callers.
 
 use helios_core::estimation::measurement::{
-    accelerometer::AccelerometerModel, gps::GpsPositionModel, gyroscope::GyroscopeModel,
-    magnetometer::MagnetometerModel, MeasurementModel,
+    accelerometer::SpecificForceModel, gps::GpsPositionModel, gyroscope::AngularRateModel,
+    magnetometer::MagneticFieldModel, MeasurementModel,
 };
 use nalgebra::Vector3;
 
@@ -34,7 +34,7 @@ fn build_gps_position(
 fn build_accelerometer(
     ctx: MeasurementModelBuildContext,
 ) -> Result<Box<dyn MeasurementModel>, String> {
-    Ok(Box::new(AccelerometerModel {
+    Ok(Box::new(SpecificForceModel {
         agent_handle: ctx.agent_handle,
         sensor_handle: ctx.sensor_handle,
         gravity_magnitude: ctx.model_config.gravity,
@@ -42,7 +42,7 @@ fn build_accelerometer(
 }
 
 fn build_gyroscope(ctx: MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> {
-    Ok(Box::new(GyroscopeModel {
+    Ok(Box::new(AngularRateModel {
         agent_handle: ctx.agent_handle,
         sensor_handle: ctx.sensor_handle,
     }))
@@ -56,7 +56,7 @@ fn build_magnetometer(
         .magnetic_field_enu
         .ok_or("magnetometer model requires `magnetic_field_enu` in its SensorModelConfig")?;
     let field = Vector3::new(field_arr[0], field_arr[1], field_arr[2]);
-    Ok(Box::new(MagnetometerModel {
+    Ok(Box::new(MagneticFieldModel {
         agent_handle: ctx.agent_handle,
         sensor_handle: ctx.sensor_handle,
         world_magnetic_field: field,

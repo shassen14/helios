@@ -44,7 +44,7 @@ collider = "maps/starter_world2_col.glb"
 medium = "air"
 
 [world.atmosphere]
-gravity = [0.0, -9.81, 0.0]
+gravity_enu = [0.0, 0.0, -9.81]  # [east, north, up] m/s²
 sun_elevation = 45.0
 sun_azimuth = 180.0
 ambient_lux = 1500.0

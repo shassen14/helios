@@ -21,7 +21,7 @@ collider = "maps/starter_world_col.glb"
 medium   = "air"
 
 [world.atmosphere]
-gravity = [0.0, -9.81, 0.0]
+gravity_enu = [0.0, 0.0, -9.81]  # [east, north, up] m/s²
 
 [[agents]]
 from          = "sim.catalog.agents.ackermann_car_estimation_only"

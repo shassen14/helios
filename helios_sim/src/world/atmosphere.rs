@@ -1,7 +1,9 @@
-use avian3d::prelude::Gravity;
-use bevy::prelude::*;
-
+use crate::core::transforms::EnuVector;
 use crate::prelude::*;
+
+use avian3d::prelude::Gravity;
+use bevy::prelude::Vec3 as BevyVec3;
+use nalgebra::Vector3;
 
 pub struct AtmospherePlugin;
 
@@ -14,15 +16,29 @@ impl Plugin for AtmospherePlugin {
     }
 }
 
-/// Applies the scenario's gravity to the physics world.
+/// Applies the scenario's gravity to the physics world, converting it out of
+/// world ENU on the way in.
+///
+/// This is the only place the scenario's gravity crosses frames. Sensors read
+/// Avian's `Gravity` rather than the config, so they see whatever physics
+/// actually uses — which is the right dependency: a sensor should model the
+/// world being simulated, not the one that was requested.
 ///
 /// Must run before sensors spawn: an accelerometer captures gravity at spawn
 /// time, so a later write would leave it modeling a different world than the
 /// one the physics engine simulates.
 fn configure_gravity(config: Res<ScenarioConfig>, mut gravity: ResMut<Gravity>) {
-    let g = config.world.atmosphere.gravity;
-    gravity.0 = Vec3::new(g[0], g[1], g[2]);
-    info!("[Atmosphere] Gravity set to {:?}", gravity.0);
+    let g = config.world.atmosphere.gravity_enu;
+    gravity.0 = BevyVec3::from(EnuVector(Vector3::new(g[0], g[1], g[2])));
+
+    // Both frames, both labelled: the ENU triple is what the scenario author
+    // wrote and can compare against their TOML, and the Bevy triple is what
+    // physics received — so a conversion that silently lands on the wrong axis
+    // is visible in the log rather than only in the trajectory.
+    info!(
+        "[Atmosphere] Gravity: ENU [E={:.4}, N={:.4}, U={:.4}] m/s² -> Bevy {:?}",
+        g[0], g[1], g[2], gravity.0
+    );
 }
 
 fn spawn_sun(mut commands: Commands, config: Res<ScenarioConfig>) {

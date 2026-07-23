@@ -5,14 +5,31 @@ use crate::estimation::measurement::MeasurementModel;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
 use crate::ports::TfProvider;
 
+/// What the filter believes an accelerometer reports: **specific force**, the
+/// quantity an accelerometer physically senses.
+///
+/// "Specific" means *per unit mass* — as in specific heat or specific impulse —
+/// so specific force is force divided by mass and carries units of m/s². It is
+/// not measured in newtons, and the name does not imply that it is.
+///
+/// It is nonetheless **not** the kinematic acceleration `StateVariable::Ax`
+/// carries. The two never agree while gravity acts:
+///
+/// - In free fall, an accelerometer reads **zero** while kinematic
+///   acceleration is one g downward.
+/// - At rest on a table, it reads **one g upward** while kinematic
+///   acceleration is zero.
+///
+/// The model therefore predicts `a - g` rotated into the sensor frame, plus
+/// the lever-arm terms a sensor mounted off the body origin also feels.
 #[derive(Debug, Clone)]
-pub struct AccelerometerModel {
+pub struct SpecificForceModel {
     pub agent_handle: FrameHandle,
     pub sensor_handle: FrameHandle,
     pub gravity_magnitude: f64,
 }
 
-impl MeasurementModel for AccelerometerModel {
+impl MeasurementModel for SpecificForceModel {
     fn dim(&self) -> usize {
         3
     }
@@ -85,8 +102,8 @@ mod tests {
         }
     }
 
-    fn make_model() -> AccelerometerModel {
-        AccelerometerModel {
+    fn make_model() -> SpecificForceModel {
+        SpecificForceModel {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
             gravity_magnitude: 9.81,

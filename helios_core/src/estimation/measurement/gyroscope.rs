@@ -5,13 +5,22 @@ use crate::estimation::measurement::MeasurementModel;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
 use crate::ports::TfProvider;
 
+/// What the filter believes a rate gyroscope reports: the body's angular
+/// velocity, rotated into the sensor frame.
+///
+/// Unlike [`SpecificForceModel`], this one is a plain frame rotation of a state
+/// variable — angular velocity is the same quantity at every point on a rigid
+/// body, so a sensor's mounting offset contributes no extra term. Only its
+/// orientation matters.
+///
+/// [`SpecificForceModel`]: crate::estimation::measurement::accelerometer::SpecificForceModel
 #[derive(Debug, Clone)]
-pub struct GyroscopeModel {
+pub struct AngularRateModel {
     pub agent_handle: FrameHandle,
     pub sensor_handle: FrameHandle,
 }
 
-impl MeasurementModel for GyroscopeModel {
+impl MeasurementModel for AngularRateModel {
     fn dim(&self) -> usize {
         3
     }
@@ -65,8 +74,8 @@ mod tests {
         }
     }
 
-    fn make_model() -> GyroscopeModel {
-        GyroscopeModel {
+    fn make_model() -> AngularRateModel {
+        AngularRateModel {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
         }

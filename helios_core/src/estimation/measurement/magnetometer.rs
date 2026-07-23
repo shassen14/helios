@@ -9,14 +9,14 @@ use nalgebra::{DVector, Vector3};
 /// Maps a measured magnetic field vector to the filter's orientation state,
 /// providing an absolute heading reference.
 #[derive(Debug, Clone)]
-pub struct MagnetometerModel {
+pub struct MagneticFieldModel {
     pub agent_handle: FrameHandle,
     pub sensor_handle: FrameHandle,
     /// The "true" magnetic field vector in the world (ENU) frame.
     pub world_magnetic_field: Vector3<f64>,
 }
 
-impl MeasurementModel for MagnetometerModel {
+impl MeasurementModel for MagneticFieldModel {
     fn dim(&self) -> usize {
         3
     }
@@ -37,7 +37,7 @@ impl MeasurementModel for MagnetometerModel {
 
 #[cfg(test)]
 mod tests {
-    //! Tests for [`MagnetometerModel`].
+    //! Tests for [`MagneticFieldModel`].
     //!
     //! - Identity orientation: predicted field = world field.
     //! - 90° CCW yaw: a North-pointing world field appears along body +X.
@@ -71,8 +71,8 @@ mod tests {
         state.state.vector[3] = q.w;
     }
 
-    fn make_model() -> MagnetometerModel {
-        MagnetometerModel {
+    fn make_model() -> MagneticFieldModel {
+        MagneticFieldModel {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
             world_magnetic_field: Vector3::new(0.0, 1.0, 0.0),

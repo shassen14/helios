@@ -34,9 +34,24 @@ fn default_medium() -> String {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AtmosphereConfig {
-    /// Gravity vector in Bevy world space [x, y, z] m/s². Default = [0, -9.81, 0].
-    #[serde(default = "default_gravity")]
-    pub gravity: [f32; 3],
+    /// Gravity vector in world ENU `[east, north, up]`, m/s².
+    /// Default `[0, 0, -9.81]` — Earth, pointing down.
+    ///
+    /// The frame is in the name because the value cannot carry it. This field
+    /// was once declared in Bevy's Y-up frame, where Earth gravity reads
+    /// `[0, -9.81, 0]` — which is also a *valid* ENU vector meaning "9.81 m/s²
+    /// due north." A file written against the old frame would therefore load
+    /// without complaint and simulate a sideways world. Renaming the field
+    /// alongside the frame change converts that silent misreading into a
+    /// `deny_unknown_fields` failure that names the field.
+    ///
+    /// `f64` while the rest of this struct is `f32`, because the others are
+    /// rendering knobs feeding f32 Bevy APIs and this is a physical quantity
+    /// the robotics side also reasons about. An estimator declares the gravity
+    /// it believes in at f64; round-tripping this value through f32 would make
+    /// two identical declarations compare unequal.
+    #[serde(default = "default_gravity_enu")]
+    pub gravity_enu: [f64; 3],
     /// Sun elevation above the horizon in **degrees** (0 = horizon, 90 = zenith).
     #[serde(default = "default_sun_elevation")]
     pub sun_elevation: f32,
@@ -52,8 +67,8 @@ pub struct AtmosphereConfig {
     pub fog_density: f32,
 }
 
-fn default_gravity() -> [f32; 3] {
-    [0.0, -9.81, 0.0]
+fn default_gravity_enu() -> [f64; 3] {
+    [0.0, 0.0, -9.81]
 }
 fn default_sun_elevation() -> f32 {
     45.0
@@ -68,7 +83,7 @@ fn default_ambient_lux() -> f32 {
 impl Default for AtmosphereConfig {
     fn default() -> Self {
         Self {
-            gravity: default_gravity(),
+            gravity_enu: default_gravity_enu(),
             sun_elevation: default_sun_elevation(),
             sun_azimuth: default_sun_azimuth(),
             ambient_lux: default_ambient_lux(),
