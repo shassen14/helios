@@ -26,7 +26,7 @@ use crate::ports::TfProvider;
 pub struct SpecificForceModel {
     pub agent_handle: FrameHandle,
     pub sensor_handle: FrameHandle,
-    pub gravity_magnitude: f64,
+    pub gravity_world: Vector3<f64>,
 }
 
 impl MeasurementModel for SpecificForceModel {
@@ -69,8 +69,8 @@ impl MeasurementModel for SpecificForceModel {
             linear_accel_body + tangential_accel + centripetal_accel;
 
         let q_body_from_world = orientation_body_to_world.inverse();
-        let gravity_world = Vector3::new(0.0, 0.0, -self.gravity_magnitude);
-        let gravity_effect_in_body = q_body_from_world * gravity_world;
+
+        let gravity_effect_in_body = q_body_from_world * self.gravity_world;
 
         let proper_accel_in_body_frame = total_kinematic_accel_at_sensor - gravity_effect_in_body;
         let predicted_accel = rot_sensor_from_body.inverse() * proper_accel_in_body_frame;
@@ -106,7 +106,7 @@ mod tests {
         SpecificForceModel {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
-            gravity_magnitude: 9.81,
+            gravity_world: Vector3::new(0.0, 0.0, -9.81),
         }
     }
 

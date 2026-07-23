@@ -1,6 +1,7 @@
 //! Registers all built-in dynamics factories.
 
 use helios_core::estimation::dynamics::{integrated_imu::IntegratedImuModel, EstimationDynamics};
+use nalgebra::Vector3;
 
 use super::{contexts::DynamicsBuildContext, AutonomyRegistry};
 
@@ -15,8 +16,9 @@ pub(crate) fn register(registry: &mut AutonomyRegistry) {
 }
 
 fn build_integrated_imu(ctx: DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String> {
+    let g = ctx.gravity_enu;
     Ok(Box::new(IntegratedImuModel {
         agent_handle: ctx.agent_handle,
-        gravity_magnitude: ctx.gravity,
+        gravity_world: Vector3::new(g[0], g[1], g[2]),
     }))
 }

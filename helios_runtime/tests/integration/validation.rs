@@ -42,7 +42,7 @@ fn full_caps() -> CapabilitySet {
 
 fn imu_noise() -> IntegratedImuConfig {
     IntegratedImuConfig {
-        gravity: 9.81,
+        gravity_enu: [0.0, 0.0, -9.81],
         accel_noise_stddev: 0.1,
         gyro_noise_stddev: 0.01,
         accel_bias_instability: 0.001,
@@ -99,7 +99,7 @@ fn ekf_aiding_entry() -> AidingConfig {
         sensor_payload: "GpsPosition".to_string(),
         model: SensorModelConfig {
             kind: "gps_position".to_string(),
-            gravity: 9.81,
+            gravity_enu: [0.0, 0.0, -9.81],
             magnetic_field_enu: None,
         },
         input_channel: "sensor.gps.primary".to_string(),
@@ -311,7 +311,7 @@ fn validation_unknown_measurement_model_in_aiding_produces_error() {
         sensor_payload: "GpsPosition".to_string(),
         model: SensorModelConfig {
             kind: "nonexistent_model".to_string(),
-            gravity: 9.81,
+            gravity_enu: [0.0, 0.0, -9.81],
             magnetic_field_enu: None,
         },
         input_channel: "sensor.gps.primary".to_string(),
@@ -348,7 +348,7 @@ fn validation_unknown_sensor_payload_in_aiding_produces_error() {
         sensor_payload: "UnknownSensorType".to_string(),
         model: SensorModelConfig {
             kind: "gps_position".to_string(),
-            gravity: 9.81,
+            gravity_enu: [0.0, 0.0, -9.81],
             magnetic_field_enu: None,
         },
         input_channel: "sensor.unknown".to_string(),

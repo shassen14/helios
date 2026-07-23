@@ -34,10 +34,12 @@ fn build_gps_position(
 fn build_accelerometer(
     ctx: MeasurementModelBuildContext,
 ) -> Result<Box<dyn MeasurementModel>, String> {
+    let gravity_arr = ctx.model_config.gravity_enu;
+    let gravity = Vector3::new(gravity_arr[0], gravity_arr[1], gravity_arr[2]);
     Ok(Box::new(SpecificForceModel {
         agent_handle: ctx.agent_handle,
         sensor_handle: ctx.sensor_handle,
-        gravity_magnitude: ctx.model_config.gravity,
+        gravity_world: gravity,
     }))
 }
 

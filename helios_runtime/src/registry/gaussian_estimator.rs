@@ -77,12 +77,12 @@ fn build_ekf(
     }
 
     // --- 2. Build dynamics via registry (gravity sourced from dynamics config) ---
-    let gravity = ekf_config.dynamics.gravity();
+    let gravity_enu = ekf_config.dynamics.gravity_enu();
     let dynamics = registry.build_dynamics(
         dynamics_key,
         DynamicsBuildContext {
             agent_handle,
-            gravity,
+            gravity_enu,
         },
     )?;
 

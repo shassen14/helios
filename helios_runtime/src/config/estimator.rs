@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
-fn default_gravity() -> f64 {
-    9.81
+fn default_gravity_enu() -> [f64; 3] {
+    [0.0, 0.0, -9.81]
 }
 
 fn default_position_uncertainty_m() -> f64 {
@@ -113,10 +113,13 @@ pub struct AidingConfig {
 pub struct SensorModelConfig {
     /// Registry key, e.g. `"gps_position"`, `"accelerometer"`.
     pub kind: String,
-    /// Gravitational acceleration (m/s²). Required by `"accelerometer"`.
-    /// Defaults to 9.81; override in deployment config for non-standard sites.
-    #[serde(default = "default_gravity")]
-    pub gravity: f64,
+    /// The filter's *believed* gravity, world ENU `[east, north, up]` (m/s²).
+    /// Required by `"accelerometer"`. Defaults to `[0, 0, -9.81]` (Earth, down);
+    /// override for non-standard sites (high altitude, other planets, a tilted
+    /// local frame). Must match the simulated world's `[world.atmosphere]`
+    /// gravity_enu unless the mismatch is the experiment.
+    #[serde(default = "default_gravity_enu")]
+    pub gravity_enu: [f64; 3],
     /// Expected magnetic field in ENU (µT), the filter's *believed* field.
     /// Required by `"magnetometer"`. Must match the simulated world's
     /// `[world.magnetic_field]` unless the mismatch is the experiment.
@@ -141,25 +144,28 @@ impl EkfDynamicsConfig {
         }
     }
 
-    /// Gravitational acceleration used by this dynamics model.
-    pub(crate) fn gravity(&self) -> f64 {
+    /// World-frame gravity vector `[east, north, up]` (m/s²) used by this
+    /// dynamics model.
+    pub(crate) fn gravity_enu(&self) -> [f64; 3] {
         match self {
-            EkfDynamicsConfig::IntegratedImu(c) => c.gravity,
-            EkfDynamicsConfig::AckermannOdometry(_) => default_gravity(),
-            EkfDynamicsConfig::Quadcopter(_) => default_gravity(),
+            EkfDynamicsConfig::IntegratedImu(c) => c.gravity_enu,
+            EkfDynamicsConfig::AckermannOdometry(_) => default_gravity_enu(),
+            EkfDynamicsConfig::Quadcopter(_) => default_gravity_enu(),
         }
     }
 }
 
 /// Config for the IMU-integrated dynamics model.
 ///
-/// Gravity is a physical constant of the deployment site; it defaults to
-/// 9.81 m/s² and should be overridden in the scenario config for non-standard
-/// locations (e.g. high altitude, other planets).
+/// Gravity is a physical constant of the deployment site: a world ENU vector
+/// defaulting to `[0, 0, -9.81]` (Earth, down), overridden in the scenario
+/// config for non-standard locations (high altitude, other planets, a tilted
+/// local frame).
 #[derive(Debug, Deserialize, Clone)]
 pub struct IntegratedImuConfig {
-    #[serde(default = "default_gravity")]
-    pub gravity: f64,
+    /// World-frame gravity `[east, north, up]` (m/s²). See the struct doc.
+    #[serde(default = "default_gravity_enu")]
+    pub gravity_enu: [f64; 3],
     /// Velocity Random Walk: white noise std dev on accelerometer (m/s²/√Hz).
     pub accel_noise_stddev: f64,
     /// Angle Random Walk: white noise std dev on gyroscope (rad/s/√Hz).
