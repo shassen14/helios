@@ -6,58 +6,38 @@
 // cargo run --example 01_full_pipeline -- --scenario configs/scenarios/simple_car_scenario.toml --headless
 
 use clap::Parser;
-use helios_sim::cli::Cli;
-
-use avian3d::prelude::*;
-use bevy::{log::LogPlugin, prelude::*};
-use helios_core::control::ControlOutput;
 use helios_sim::agents::vehicles::ackermann::AckermannActuator;
-use helios_sim::config::ConfigPlugin;
+use helios_sim::cli::Cli;
 use helios_sim::core::components::ControlOutputComponent;
-use helios_sim::prelude::AppState;
-use helios_sim::HeliosSimulationPlugin;
+use helios_sim::core::host::{HeliosHost, Presentation, TimePolicy};
+
+use helios_core::control::ControlOutput;
+
+use avian3d::prelude::PhysicsDebugPlugin;
+use bevy::prelude::*;
 
 fn main() {
     let cli = Cli::parse();
 
-    let mut app = App::new();
-
-    if cli.headless {
-        app.add_plugins(
-            DefaultPlugins
-                .set(bevy::window::WindowPlugin {
-                    primary_window: None,
-                    exit_condition: bevy::window::ExitCondition::DontExit,
-                    ..default()
-                })
-                .disable::<bevy::winit::WinitPlugin>()
-                .set(LogPlugin {
-                    level: bevy::log::Level::INFO,
-                    filter:
-                        "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug"
-                            .to_string(),
-                    ..default()
-                }),
-        );
+    // The example only varies the two host inputs `HeliosHost` exposes; it no
+    // longer hand-assembles the plugin stack, so it can't drift out of sync with
+    // the canonical host (which is what left `TimePolicy` uninserted before).
+    let presentation = if cli.headless {
+        Presentation::Headless
     } else {
-        app.add_plugins(
-            DefaultPlugins.set(LogPlugin {
-                level: bevy::log::Level::INFO,
-                filter: "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug"
-                    .to_string(),
-                ..default()
-            }),
-        );
-    }
-    app.add_plugins(PhysicsPlugins::default())
-        .insert_resource(cli.clone());
-    if !cli.headless {
+        Presentation::Windowed
+    };
+    let time_policy = TimePolicy::from_cli(cli.speed, presentation);
+
+    let mut app = App::new();
+    app.add_plugins(HeliosHost::new(cli, presentation, time_policy));
+
+    // Collider gizmos are a watch-the-window aid; there is nothing to draw in a
+    // headless run.
+    if let Presentation::Windowed = presentation {
         app.add_plugins(PhysicsDebugPlugin);
     }
 
-    app.init_state::<AppState>();
-    app.add_plugins(ConfigPlugin);
-    app.add_plugins(HeliosSimulationPlugin);
     app.add_systems(Update, keyboard_controller);
 
     println!("Starting Helios Simulation — Full Pipeline");
