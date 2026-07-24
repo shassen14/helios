@@ -5,7 +5,6 @@ use helios_core::{
 };
 
 use crate::{
-    pipeline::autonomy_pipeline::MISSION_GOAL_INSTANCE,
     port::{ChannelKey, InternalChannel, PortBus},
     prelude::{AgentRuntime, TickContext},
 };
@@ -33,8 +32,10 @@ pub(crate) trait SearchPlannerInputBuilder: Send + Sync {
 }
 
 /// Default builder: reads `FrameAwareState @ ""`, a configurable map channel,
-/// and an optional `PlannerGoal @ "mission"` (the canonical mission slot
-/// written by `AutonomyPipeline::inject_mission_goal`).
+/// and an optional `PlannerGoal` on a configurable goal channel (the planner
+/// config's `goal_channel`, defaulting to `"mission"`). Whichever host input
+/// declares that channel — a mission dispatcher, teleop, a ground-station
+/// behavior tree — is indistinguishable to the planner.
 pub(crate) struct DefaultSearchPlannerInputBuilder {
     state_channel: ChannelKey,
     map_channel: ChannelKey,
@@ -44,11 +45,14 @@ pub(crate) struct DefaultSearchPlannerInputBuilder {
 }
 
 impl DefaultSearchPlannerInputBuilder {
-    pub(crate) fn new(map_channel: InternalChannel) -> Self {
+    /// `goal_channel` is the instance name the planner's optional `PlannerGoal`
+    /// input is keyed on, resolved from `SearchPlannerConfig`'s `goal_channel`
+    /// field at assembly time. The host writes the mission goal to this same
+    /// name, so the planner and the host input agree by construction.
+    pub(crate) fn new(map_channel: InternalChannel, goal_channel: &str) -> Self {
         let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
         let map_channel_key: ChannelKey = map_channel.into();
-        let goal_channel: ChannelKey =
-            InternalChannel::named::<PlannerGoal>(MISSION_GOAL_INSTANCE).into();
+        let goal_channel: ChannelKey = InternalChannel::named::<PlannerGoal>(goal_channel).into();
 
         Self {
             state_channel: state_channel.clone(),
@@ -86,5 +90,39 @@ impl SearchPlannerInputBuilder for DefaultSearchPlannerInputBuilder {
 
     fn optional_channels(&self) -> &[ChannelKey] {
         &self.optional
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A custom `goal_channel` reaches the builder's optional input descriptor:
+    /// the planner subscribes to `PlannerGoal` on the configured name rather
+    /// than the `"mission"` default, so renaming the mission channel in config
+    /// rewires the planner to match the host that writes it.
+    #[test]
+    fn custom_goal_channel_reaches_optional_inputs() {
+        let builder =
+            DefaultSearchPlannerInputBuilder::new(InternalChannel::named::<MapData>("occupancy"), "waypoints");
+
+        let goal: ChannelKey = InternalChannel::named::<PlannerGoal>("waypoints").into();
+
+        // The goal is an optional input on the configured channel, never required.
+        assert!(builder.optional_channels().contains(&goal));
+        assert!(!builder.required_channels().contains(&goal));
+    }
+
+    /// The optional set carries exactly the goal channel, and the required set
+    /// carries state + map — so a renamed goal channel cannot leak into the
+    /// required inputs and turn an absent goal into an `UnsatisfiedInput`.
+    #[test]
+    fn goal_is_the_only_optional_input() {
+        let builder =
+            DefaultSearchPlannerInputBuilder::new(InternalChannel::named::<MapData>("occupancy"), "mission");
+
+        assert_eq!(builder.optional_channels().len(), 1);
+        assert_eq!(&**builder.optional_channels()[0].instance(), "mission");
+        assert_eq!(builder.required_channels().len(), 2);
     }
 }

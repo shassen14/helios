@@ -185,19 +185,12 @@ fn accelerometer_forward_matches_filter_prediction() {
     }
 }
 
-/// The magnetometer pair agrees **only under an identity mount rotation**, so
-/// this case pins the sensor frame to the body frame.
-///
-/// `MagnetometerModel::ideal` reports the field in the *sensor* frame, but
-/// `MagneticFieldModel::predict_measurement` predicts it in the *body* frame and
-/// ignores the sensor extrinsic entirely. Under a rotated mount the two diverge —
-/// a genuine asymmetry with the gyroscope, which does carry the mount rotation.
-/// See §4.6 of `docs/notes/host_brain_boundary.md`: whether the filter's model
-/// should also apply the sensor rotation is an open decision. When it is settled
-/// one way, this test either gains a random mount (fix applied) or keeps the
-/// identity restriction and documents the divergence (fix declined).
+/// The magnetometer pair agrees under any mount. The filter rotates the world
+/// field through the body orientation and then the sensor extrinsic; the forward
+/// model applies the equivalent single sensor-from-world rotation — the same
+/// structure as the gyroscope case.
 #[test]
-fn magnetometer_forward_matches_filter_prediction_identity_mount() {
+fn magnetometer_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0004);
 
     for _ in 0..CASES {
@@ -206,6 +199,9 @@ fn magnetometer_forward_matches_filter_prediction_identity_mount() {
         let inclination = rng.gen_range(-FRAC_PI_2..FRAC_PI_2);
         let magnitude = rng.gen_range(20.0..70.0);
         let field_world = reference_field_enu(declination, inclination, magnitude);
+        // The extrinsic's rotation maps sensor axes -> body axes.
+        let extrinsic =
+            Isometry3::from_parts(Translation3::from(rand_vec3(&mut rng, 2.0)), rand_quat(&mut rng));
 
         let forward = MagnetometerModel::from_reference_field(
             declination,
@@ -221,7 +217,6 @@ fn magnetometer_forward_matches_filter_prediction_identity_mount() {
             world_magnetic_field: field_world,
         };
 
-        // The filter needs no TF for the magnetometer.
         let state = make_state(
             Vector3::zeros(),
             q_body_to_world,
@@ -229,10 +224,11 @@ fn magnetometer_forward_matches_filter_prediction_identity_mount() {
             Vector3::zeros(),
             Vector3::zeros(),
         );
-        let predicted = filter.predict_measurement(&state, None).unwrap();
+        let predicted = filter
+            .predict_measurement(&state, Some(&SensorInBody(extrinsic)))
+            .unwrap();
 
-        // Identity mount: sensor-from-world collapses to body-from-world.
-        let ideal = forward.ideal(q_body_to_world.inverse());
+        let ideal = forward.ideal(sensor_from_world(&extrinsic, q_body_to_world));
 
         assert_agrees("magnetometer", ideal, &predicted);
     }

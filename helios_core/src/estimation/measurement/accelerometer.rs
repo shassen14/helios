@@ -1,9 +1,9 @@
-use nalgebra::{DVector, Vector3};
-
 use crate::data::primitives::FrameHandle;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
 use crate::ports::TfProvider;
+
+use nalgebra::{DVector, Vector3};
 
 /// What the filter believes an accelerometer reports: **specific force**, the
 /// quantity an accelerometer physically senses.

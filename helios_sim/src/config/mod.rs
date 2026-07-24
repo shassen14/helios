@@ -132,6 +132,8 @@ fn apply_cli_overrides(sim: &mut Simulation, cli: &Cli) {
 mod tests {
     use super::*;
 
+    use helios_runtime::config::SearchPlannerConfig;
+
     use std::{collections::HashMap, path::PathBuf};
 
     // The smallest agent that satisfies `AgentConfig`: every field without a
@@ -220,6 +222,37 @@ mod tests {
             error.starts_with("failed to resolve"),
             "a missing prefab should fail resolution, not deserialization, got: {error}"
         );
+    }
+
+    // Parses a planner catalog snippet into the runtime's `SearchPlannerConfig`,
+    // the same type `AgentConfig` embeds — so these tests exercise the real
+    // schema and serde defaults, not a hand-built value.
+    fn planner_config(toml: &str) -> SearchPlannerConfig {
+        Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("planner TOML should deserialize")
+    }
+
+    #[test]
+    fn planner_goal_channel_defaults_to_mission() {
+        // A planner prefab that omits `goal_channel` resolves to the canonical
+        // "mission" slot at load time, so the default is a real config value in
+        // the dump rather than an invisible constant in the builder.
+        let SearchPlannerConfig::AStar { goal_channel, .. } =
+            planner_config("kind = \"AStar\"\nrate = 5.0\n");
+
+        assert_eq!(goal_channel, "mission");
+    }
+
+    #[test]
+    fn planner_goal_channel_is_read_when_present() {
+        // An explicit `goal_channel` overrides the default, which is how a stack
+        // renames the mission channel to match whichever host input writes it.
+        let SearchPlannerConfig::AStar { goal_channel, .. } =
+            planner_config("kind = \"AStar\"\nrate = 5.0\ngoal_channel = \"waypoints\"\n");
+
+        assert_eq!(goal_channel, "waypoints");
     }
 
     // A `Cli` carrying only the seed under test; the path fields are irrelevant

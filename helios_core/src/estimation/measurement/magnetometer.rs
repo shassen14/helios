@@ -21,17 +21,29 @@ impl MeasurementModel for MagneticFieldModel {
         3
     }
 
-    /// Predicts the magnetic field in the body frame by rotating the known world
-    /// field through the filter's orientation. TF is not required.
+    /// Predicts the magnetic field in the sensor frame: the known world field is
+    /// rotated through the filter's orientation into the body frame, then through
+    /// the sensor's mount into the sensor frame. TF is required — the mount
+    /// rotation comes from it — so this returns `None` when `tf` is unavailable.
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,
-        _tf: Option<&dyn TfProvider>,
+        tf: Option<&dyn TfProvider>,
     ) -> Option<DVector<f64>> {
+        let tf = tf?;
+
         let orientation_body_to_world = filter_state.get_orientation().unwrap_or_default();
         let q_body_from_world = orientation_body_to_world.inverse();
         let predicted_mag_body = q_body_from_world * self.world_magnetic_field;
-        Some(DVector::from_row_slice(predicted_mag_body.as_slice()))
+
+        let rot_sensor_from_body = tf
+            .get_transform(self.agent_handle, self.sensor_handle)
+            .unwrap_or_default()
+            .rotation;
+
+        Some(DVector::from_row_slice(
+            (rot_sensor_from_body.inverse() * predicted_mag_body).as_slice(),
+        ))
     }
 }
 
@@ -39,17 +51,37 @@ impl MeasurementModel for MagneticFieldModel {
 mod tests {
     //! Tests for [`MagneticFieldModel`].
     //!
-    //! - Identity orientation: predicted field = world field.
-    //! - 90° CCW yaw: a North-pointing world field appears along body +X.
+    //! - No TF: the sensor mount rotation is required, so the model abstains.
+    //! - Identity mount, identity orientation: predicted field = world field.
+    //! - Identity mount, 90° CCW yaw: a North-pointing world field appears along
+    //!   body +X.
+    //! - Rotated mount: the body-frame field is carried on into the sensor frame.
 
     use super::*;
     use crate::data::primitives::FrameHandle;
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use nalgebra::{UnitQuaternion, Vector3};
+    use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
+
+    /// Reports one fixed extrinsic — the sensor's pose in body axes — for every
+    /// lookup, mirroring what a real TF tree hands the model.
+    struct Mount(Isometry3<f64>);
+
+    impl TfProvider for Mount {
+        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
+            Some(self.0)
+        }
+        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
+            Some(Isometry3::identity())
+        }
+    }
+
+    fn identity_mount() -> Mount {
+        Mount(Isometry3::identity())
+    }
 
     fn make_orientation_state() -> FrameAwareState {
         let body = FrameId::Body(AGENT);
@@ -85,10 +117,19 @@ mod tests {
     }
 
     #[test]
+    fn predict_without_tf_returns_none() {
+        let model = make_model();
+        let state = make_orientation_state();
+        assert!(model.predict_measurement(&state, None).is_none());
+    }
+
+    #[test]
     fn predict_identity_orientation_returns_world_field() {
         let model = make_model();
         let state = make_orientation_state();
-        let z = model.predict_measurement(&state, None).unwrap();
+        let z = model
+            .predict_measurement(&state, Some(&identity_mount()))
+            .unwrap();
         assert!(z[0].abs() < 1e-9);
         assert!((z[1] - 1.0).abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
@@ -99,7 +140,28 @@ mod tests {
         let model = make_model();
         let mut state = make_orientation_state();
         set_yaw_90_ccw(&mut state);
-        let z = model.predict_measurement(&state, None).unwrap();
+        let z = model
+            .predict_measurement(&state, Some(&identity_mount()))
+            .unwrap();
+        assert!((z[0] - 1.0).abs() < 1e-9);
+        assert!(z[1].abs() < 1e-9);
+        assert!(z[2].abs() < 1e-9);
+    }
+
+    #[test]
+    fn predict_carries_the_field_into_a_rotated_sensor_frame() {
+        // Body is level (identity orientation), so the body-frame field is the
+        // world field — due north, body +Y. The sensor is yawed +90° about Z
+        // relative to the body (its +X axis points along body +Y), so the north
+        // field lands on the sensor's +X. This pins the mount rotation: an
+        // identity extrinsic would leave the field on +Y.
+        let model = make_model();
+        let state = make_orientation_state();
+        let mount = Mount(Isometry3::from_parts(
+            Translation3::identity(),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2),
+        ));
+        let z = model.predict_measurement(&state, Some(&mount)).unwrap();
         assert!((z[0] - 1.0).abs() < 1e-9);
         assert!(z[1].abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);

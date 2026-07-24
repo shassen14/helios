@@ -80,6 +80,7 @@ fn astar() -> SearchPlannerConfig {
         replan_on_path_deviation: false,
         deviation_tolerance_m: 3.0,
         level: "local".to_string(),
+        goal_channel: "mission".to_string(),
     }
 }
 
