@@ -62,7 +62,7 @@ impl SearchPlannerConfig {
         }
     }
 
-    pub(crate) fn get_goal_channel(&self) -> &str {
+    pub fn get_goal_channel(&self) -> &str {
         match self {
             SearchPlannerConfig::AStar { goal_channel, .. } => goal_channel.as_str(),
         }

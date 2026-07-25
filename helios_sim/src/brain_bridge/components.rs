@@ -52,6 +52,20 @@ pub struct PipelineBuildFailed {
 #[derive(Component, Clone)]
 pub struct SensorPublishChannel(pub String);
 
+/// Declares the bus channel names the host writes this agent's mission goal to.
+/// The host-input counterpart to [`SensorPublishChannel`]: that one names where a
+/// sensor *writes* its readings; this one names where the host writes the goal —
+/// the channels the agent's planners read their goal from.
+///
+/// Plural — and a `Vec` — because a stack may run several planners on distinct
+/// goal channels; one authored or clicked goal fans out to all of them. The set
+/// is deduplicated and in a stable order at spawn time, so two planners sharing
+/// the default channel collapse to one entry. Stamped alongside
+/// [`AutonomyPipelineComponent`] by `spawn_autonomy_pipeline`, and read by
+/// `forward_goal_events` to publish the goal.
+#[derive(Component)]
+pub struct MissionGoalChannels(pub Vec<String>);
+
 /// The TrajectoryPoint produced by path following this tick.
 /// Kept as a component for downstream consumers (vehicle adapters, debug gizmos).
 #[derive(Component, Default)]

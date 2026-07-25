@@ -1,31 +1,19 @@
 use crate::{
-    pipeline::{key_format::format_key_short, node::HOST_PRODUCER_ID, rate_gate::RateTimer},
+    pipeline::{key_format::format_key_short, rate_gate::RateTimer},
     port::{ChannelKey, ChannelKind, InternalChannel, PortBus},
-    prelude::{AgentRuntime, Health, PipelineNode, Stamped, TickContext},
+    prelude::{AgentRuntime, PipelineNode, Stamped, TickContext},
     BodyCapabilities, NodeId, PipelineBuildError,
 };
 
 use helios_core::{
-    frames::FrameAwareState,
-    mapping::MapData,
-    planning::types::Path,
-    prelude::{ControlOutput, PlannerGoal},
+    frames::FrameAwareState, mapping::MapData, planning::types::Path, prelude::ControlOutput,
 };
 
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-
 use tracing::{debug_span, info, trace_span};
-
-/// Canonical [`ChannelKey`] instance name for the long-lived mission goal slot.
-///
-/// `PlannerGoal @ "mission"` is a **state** channel (last-known-good, not
-/// cleared each tick). Any code writing to it — `inject_mission_goal`, a
-/// Zenoh bridge, the mission layer — must use this constant rather than a
-/// duplicated literal so the contract stays in one place.
-pub const MISSION_GOAL_INSTANCE: &str = "mission";
 
 /// Constructs a [`AutonomyPipeline`] from a set of [`PipelineNode`]s and the
 /// [`BodyCapabilities`] describing what the host body feeds the graph.
@@ -414,31 +402,6 @@ impl AutonomyPipeline {
         }
     }
 
-    /// Writes a mission goal to the canonical `PlannerGoal @ "mission"`
-    /// channel.
-    ///
-    /// This is a thin wrapper over [`PortBus::write`] for the one channel
-    /// that has a named in-process helper because of how often it's used.
-    /// Any other host-state channel uses `pipeline.bus().write(...)`
-    /// directly.
-    ///
-    /// The write is silently dropped if no node in the graph consumes the
-    /// mission channel (the bus has no slot for it). This is the documented
-    /// behavior for unused channels — see `dag_engine_plan.md` Decision 1.
-    pub fn inject_mission_goal(&self, goal: PlannerGoal, runtime: &dyn AgentRuntime) {
-        let goal_stamped = Stamped {
-            value: goal,
-            timestamp: runtime.now(),
-            health: Health::Ok,
-            producer: HOST_PRODUCER_ID,
-        };
-
-        let _ = self.bus.write(
-            InternalChannel::named::<PlannerGoal>(MISSION_GOAL_INSTANCE).into(),
-            goal_stamped,
-        );
-    }
-
     /// Iterates over every output channel produced by the graph, paired with
     /// the name of the node that produces it.
     ///
@@ -492,11 +455,5 @@ impl AutonomyPipeline {
     /// instance name. Convenience for debug visualization.
     pub fn read_any_map(&self) -> Option<Arc<Stamped<MapData>>> {
         self.bus.read_any::<MapData>()
-    }
-
-    /// Reads the currently-injected mission goal, if any.
-    pub fn read_mission_goal(&self) -> Option<Arc<Stamped<PlannerGoal>>> {
-        self.bus
-            .read(InternalChannel::named::<PlannerGoal>(MISSION_GOAL_INSTANCE).into())
     }
 }

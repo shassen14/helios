@@ -9,14 +9,14 @@
 //! [`SensorPublisher`], so there is exactly one place that constructs the
 //! envelope and one place that handles a missing channel.
 
-use std::collections::HashSet;
+use crate::prelude::AutonomyPipelineComponent;
 
-use bevy::ecs::system::SystemParam;
-use bevy::prelude::*;
 use helios_core::data::SensorReading;
 use helios_runtime::{port::SensorChannel, ChannelKey, Health, Stamped, HOST_PRODUCER_ID};
 
-use crate::prelude::AutonomyPipelineComponent;
+use bevy::ecs::system::SystemParam;
+use bevy::prelude::*;
+use std::collections::HashSet;
 
 /// Bundles the two things every sensor system needs to publish: the query
 /// that resolves an agent entity to its `AutonomyPipeline`, and a per-system

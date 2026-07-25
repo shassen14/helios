@@ -7,3 +7,7 @@ enable_path_smoothing = true
 replan_on_path_deviation = true
 deviation_tolerance_m = 3.0
 level = "local"
+# Channel the planner reads its goal from; the host writes the mission goal to
+# the same name. Planner and host input agree by this string. Omit to default
+# to "mission".
+goal_channel = "mission"

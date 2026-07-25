@@ -1,6 +1,6 @@
 use crate::brain_bridge::components::{
-    AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf, PipelineBuildFailed,
-    SensorPublishChannel,
+    AgentIdComponent, AutonomyPipelineComponent, MissionGoalChannels, OdomFrameOf,
+    PipelineBuildFailed, SensorPublishChannel,
 };
 use crate::core::components::{ControlOutputComponent, ControllerStateSource};
 use crate::prelude::*;
@@ -8,10 +8,12 @@ use crate::registry::plugin::RuntimeAutonomyRegistry;
 
 use helios_core::data::primitives::FrameHandle;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::{build_pipeline, BodyCapabilities, Provenance, PublishedChannel};
+use helios_runtime::{
+    build_pipeline, AutonomyStack, BodyCapabilities, Provenance, PublishedChannel,
+};
 
 use nalgebra::Vector3;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 /// Spawns the autonomy pipeline for agents with real estimation.
 ///
@@ -41,6 +43,10 @@ pub fn spawn_autonomy_pipeline(
 
         let host_capabilities = build_host_body_capabilities(agent_config.name());
 
+        // The distinct channels this agent's planners read their goal from; a
+        // mission goal fans out to each. Empty when the stack has no planner.
+        let goal_channels = mission_goal_channels(stack);
+
         match build_pipeline(
             stack,
             &registry.0,
@@ -52,10 +58,15 @@ pub fn spawn_autonomy_pipeline(
                 // Insert the id in the same chain as the pipeline so the test
                 // bridge's `(&AgentId, &AutonomyPipelineComponent)` query can
                 // never see one without the other.
-                commands
-                    .entity(agent_entity)
-                    .insert(AgentIdComponent(agent_config.name().to_string()))
+                let mut cmds = commands.entity(agent_entity);
+
+                cmds.insert(AgentIdComponent(agent_config.name().to_string()))
                     .insert(AutonomyPipelineComponent(pipeline));
+
+                if !goal_channels.is_empty() {
+                    cmds.insert(MissionGoalChannels(goal_channels.into_iter().collect()));
+                }
+
                 info!(
                     "[spawn_autonomy_pipeline] Built pipeline for agent '{}'",
                     agent_config.name()
@@ -165,9 +176,86 @@ fn build_host_body_capabilities(agent_name: &str) -> BodyCapabilities {
     }
 }
 
+/// The set of channels the stack's planners read their goals from.
+///
+/// A `BTreeSet` so planners sharing a channel (the common case: all on the
+/// default `"mission"`) fold to one entry, and the order is stable across runs —
+/// which the resolved-config dump and determinism hashing will want. Empty when
+/// the stack declares no planner, so there is nowhere for a goal to go.
+fn mission_goal_channels(stack: &AutonomyStack) -> BTreeSet<String> {
+    stack
+        .search_planners
+        .values()
+        .map(|p| p.get_goal_channel().to_string())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use helios_runtime::config::SearchPlannerConfig;
+
+    /// A minimal `AStar` planner whose only field that matters here is its goal
+    /// channel — the rest are defaults, present only because the variant requires
+    /// them.
+    fn astar_with_goal(goal_channel: &str) -> SearchPlannerConfig {
+        SearchPlannerConfig::AStar {
+            rate: 5.0,
+            arrival_tolerance_m: 1.5,
+            occupancy_threshold: 180,
+            max_search_depth: 50_000,
+            enable_path_smoothing: false,
+            replan_on_path_deviation: false,
+            deviation_tolerance_m: 3.0,
+            level: "local".to_string(),
+            goal_channel: goal_channel.to_string(),
+        }
+    }
+
+    /// Every planner's goal channel is collected — the mission goal fans out to
+    /// all of them, not just the first planner found.
+    #[test]
+    fn distinct_goal_channels_from_all_planners_are_collected() {
+        let stack = AutonomyStack {
+            search_planners: HashMap::from([
+                ("primary".to_string(), astar_with_goal("mission")),
+                ("secondary".to_string(), astar_with_goal("waypoints")),
+            ]),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            mission_goal_channels(&stack),
+            BTreeSet::from(["mission".to_string(), "waypoints".to_string()]),
+        );
+    }
+
+    /// Planners sharing a channel (the common case: both on the default
+    /// `"mission"`) fold to a single entry, so the host writes the goal once, not
+    /// once per planner.
+    #[test]
+    fn planners_sharing_a_goal_channel_are_deduped() {
+        let stack = AutonomyStack {
+            search_planners: HashMap::from([
+                ("primary".to_string(), astar_with_goal("mission")),
+                ("backup".to_string(), astar_with_goal("mission")),
+            ]),
+            ..Default::default()
+        };
+
+        let channels = mission_goal_channels(&stack);
+
+        assert_eq!(channels.len(), 1);
+        assert!(channels.contains("mission"));
+    }
+
+    /// A stack with no planner has nowhere for a goal to go, so the set is empty —
+    /// which is what lets `spawn_autonomy_pipeline` skip stamping the component.
+    #[test]
+    fn a_stack_with_no_planner_yields_no_channels() {
+        assert!(mission_goal_channels(&AutonomyStack::default()).is_empty());
+    }
 
     #[test]
     fn name_is_copied_from_argument() {
