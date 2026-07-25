@@ -32,3 +32,7 @@ dhat-heap = ["dhat"]
 
 [dev-dependencies]
 approx = { workspace = true }
+
+[[bin]]
+name = "helios_play"
+path = "src/bin/helios_play.rs"
