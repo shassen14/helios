@@ -368,7 +368,7 @@ pub trait ErasedStamped: Any + Send + Sync {
 
     fn timestamp(&self) -> MonotonicTime;
 
-    /// Escape hatch to a plain `dyn Any` so the typed `read`/`read_any` paths
+    /// Escape hatch to a plain `dyn Any` so the typed `read`/`read_fresh` paths
     /// can `.downcast::<Stamped<T>>()` — std only downcasts `dyn Any`, never a
     /// custom trait object.
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
@@ -461,25 +461,6 @@ impl PortBus {
         let any_arc = guard.as_ref().as_ref()?;
 
         Arc::clone(any_arc).into_any().downcast::<Stamped<T>>().ok()
-    }
-
-    /// Returns the first non-empty slot whose value downcasts to `Stamped<T>`,
-    /// ignoring the channel kind and instance name.
-    ///
-    /// Iteration order is unspecified — use this only when there is exactly
-    /// one channel of type `T` in the graph (e.g. a single planner's `Path`)
-    /// or when "any one" is acceptable (e.g. debug visualization).
-    pub(crate) fn read_any<T: Any + Send + Sync>(&self) -> Option<Arc<Stamped<T>>> {
-        for slot in self.slots.values() {
-            let guard = slot.load();
-            let Some(any_arc) = guard.as_ref().as_ref() else {
-                continue;
-            };
-            if let Ok(stamped) = Arc::clone(any_arc).into_any().downcast::<Stamped<T>>() {
-                return Some(stamped);
-            }
-        }
-        None
     }
 
     pub fn read_fresh<T: Any + Send + Sync>(

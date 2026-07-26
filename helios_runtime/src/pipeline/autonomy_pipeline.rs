@@ -5,9 +5,7 @@ use crate::{
     BodyCapabilities, NodeId, PipelineBuildError,
 };
 
-use helios_core::{
-    frames::FrameAwareState, mapping::MapData, planning::types::Path, prelude::ControlOutput,
-};
+use helios_core::{frames::FrameAwareState, prelude::ControlOutput};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -412,10 +410,12 @@ impl AutonomyPipeline {
     /// appear here. A node that declares multiple outputs yields one entry per
     /// output, all sharing the same node name.
     ///
-    /// `helios_test` is the sole consumer: it walks these pairs to build the
+    /// Two consumers today: `helios_test` walks these pairs to build the
     /// assertion-target paths (`agent.<agent>.<node>.<channel>`) that tests
-    /// reference. This is metadata about the graph's wiring — to read live
-    /// values off the bus, use [`AutonomyPipeline::bus`].
+    /// reference, and host viz walks them to discover which plural channels
+    /// (`Path`, `MapData`) a stack actually declares before reading each by key.
+    /// This is metadata about the graph's wiring — to read live values off the
+    /// bus, use [`AutonomyPipeline::bus`].
     pub fn channels(&self) -> impl Iterator<Item = (&str, &ChannelKey)> + '_ {
         self.levels.iter().flat_map(|level| {
             level.iter().flat_map(|(_, node)| {
@@ -441,19 +441,5 @@ impl AutonomyPipeline {
     /// written one this run.
     pub fn read_control(&self) -> Option<Arc<Stamped<ControlOutput>>> {
         self.bus.read(InternalChannel::of::<ControlOutput>().into())
-    }
-
-    /// Reads any [`Path`] currently on the bus, ignoring the planner instance
-    /// name. Convenience for single-planner stacks and debug visualization.
-    /// For multi-planner stacks, read the specific planner's channel via
-    /// `bus().read::<Path>(ChannelKey::named::<Path>(planner_name))`.
-    pub fn read_any_path(&self) -> Option<Arc<Stamped<Path>>> {
-        self.bus.read_any::<Path>()
-    }
-
-    /// Reads any [`MapData`] currently on the bus, ignoring the layer
-    /// instance name. Convenience for debug visualization.
-    pub fn read_any_map(&self) -> Option<Arc<Stamped<MapData>>> {
-        self.bus.read_any::<MapData>()
     }
 }

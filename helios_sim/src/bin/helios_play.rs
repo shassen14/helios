@@ -12,6 +12,7 @@
 
 use helios_sim::cli::Cli;
 use helios_sim::prelude::*;
+use helios_sim::viz::VizPlugin;
 
 use clap::Parser;
 
@@ -26,7 +27,13 @@ fn main() {
 
     let time_policy = TimePolicy::from_cli(cli.speed, presentation);
 
-    App::new()
-        .add_plugins(HeliosHost::new(cli, presentation, time_policy))
-        .run();
+    let mut app = App::new();
+
+    app.add_plugins(HeliosHost::new(cli, presentation, time_policy));
+
+    if presentation == Presentation::Windowed {
+        app.add_plugins(VizPlugin);
+    }
+
+    app.run();
 }
