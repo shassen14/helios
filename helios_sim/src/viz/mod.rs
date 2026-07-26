@@ -15,6 +15,7 @@ use crate::{
 
 use bevy::prelude::*;
 
+pub mod interaction;
 pub mod live;
 
 /// Schedule anchor for every viz system, so later interaction sets (Part C
