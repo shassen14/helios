@@ -9,7 +9,8 @@
 //! them. The resolution logic takes plain data and returns plain data — no
 //! `App`, no filesystem — which is what keeps it unit-testable.
 
-use crate::viz::interaction::actions::{handle::ActionId, registry::ActionRegistry};
+use crate::viz::interaction::actions::handle::{ActionHandle, ActionId};
+use crate::viz::interaction::actions::registry::ActionRegistry;
 
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -25,6 +26,26 @@ use std::fmt::Display;
 pub struct KeyBindings {
     /// Resolved key per action; `by_action[i]` is the key for `ActionHandle(i)`.
     by_action: Vec<KeyCode>,
+}
+
+impl KeyBindings {
+    /// The resolved key for `handle`. Infallible: the table has one entry per
+    /// registered action and a handle can only name a registered action, so its
+    /// index is always in range — the same guarantee that lets the registry's
+    /// `metadata` skip a bounds check.
+    pub(crate) fn key_for(&self, handle: ActionHandle) -> KeyCode {
+        self.by_action[handle.index()]
+    }
+}
+
+#[cfg(test)]
+impl KeyBindings {
+    /// Test-only constructor: a binding table straight from a per-handle key
+    /// vec, skipping resolution. `keys[i]` is the key for `ActionHandle(i)`, so
+    /// callers align it with the order they registered actions in.
+    pub(crate) fn from_action_keys(keys: Vec<KeyCode>) -> Self {
+        Self { by_action: keys }
+    }
 }
 
 /// A keybinding config that can't be honored — always a startup misconfiguration,

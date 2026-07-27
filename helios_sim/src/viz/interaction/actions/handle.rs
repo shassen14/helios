@@ -61,5 +61,19 @@ pub struct ActionMetadata {
 /// the index is always valid — a handle never dangles.
 ///
 /// [`ActionRegistry::register`]: super::registry::ActionRegistry::register
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct ActionHandle(pub(super) usize);
+
+impl ActionHandle {
+    /// The handle's position in the registry table, for indexing the parallel
+    /// tables built against it — `KeyBindings` and the per-frame active set.
+    ///
+    /// Exposes *reading* the index without exposing *minting* a handle: the
+    /// field stays crate-private so only [`ActionRegistry::register`] can create
+    /// one, keeping every handle backed by a real entry.
+    ///
+    /// [`ActionRegistry::register`]: super::registry::ActionRegistry::register
+    pub(crate) fn index(&self) -> usize {
+        self.0
+    }
+}

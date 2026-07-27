@@ -15,10 +15,10 @@
 //!
 //! [`channels()`]: helios_runtime::pipeline::AutonomyPipeline::channels
 
+use helios_runtime::prelude::{AutonomyPipeline, Stamped};
+
 use std::any::{Any, TypeId};
 use std::sync::Arc;
-
-use helios_runtime::prelude::{AutonomyPipeline, Stamped};
 
 /// The last-known-good value of every declared channel whose payload is `T`, in
 /// the pipeline's topological order.
@@ -38,4 +38,23 @@ pub fn declared_outputs<T: Any + Send + Sync>(pipeline: &AutonomyPipeline) -> Ve
                 .flatten()
         })
         .collect()
+}
+
+/// Whether the pipeline declares any channel carrying `T` — a pure topology
+/// question, answered from [`channels()`] without ever reading the bus.
+///
+/// This is the *capability* test, and it is deliberately distinct from
+/// [`declared_outputs`]: that one is also empty before the first value is
+/// published, so it cannot tell "this stack has no such producer" apart from
+/// "it has one that has not run yet". Use `declares_output` to decide whether an
+/// agent can *ever* produce `T` — e.g. gating a map-visibility component onto
+/// only the agents that run a mapper — and [`declared_outputs`] to read the
+/// values once you want them.
+///
+/// [`channels()`]: helios_runtime::pipeline::AutonomyPipeline::channels
+pub fn declares_output<T: Any + Send + Sync>(pipeline: &AutonomyPipeline) -> bool {
+    let want = TypeId::of::<T>();
+    pipeline
+        .channels()
+        .any(|(_node, key)| key.type_id() == want)
 }

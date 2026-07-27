@@ -40,23 +40,22 @@ mod tests {
 
     use crate::viz::interaction::actions::handle::ActionId;
     use crate::viz::interaction::actions::registry::ActionRegistry;
-    use crate::viz::interaction::{ActionRegistryPlugin, InteractionSet};
 
     use bevy::prelude::*;
 
     /// Tier-3 wiring guard: the failure this catches is someone dropping the
     /// `add_systems(Startup, register_viz_actions…)` line — the code still
-    /// compiles, but no viz action is ever declared. Booting only
-    /// `InteractionPlugin` (resource + set) plus this one system keeps the test
-    /// to the wiring it means to assert, not the whole viz layer.
+    /// compiles, but no viz action is ever declared. The test stands up only the
+    /// registry resource and this one system, deliberately *not* the whole
+    /// `ActionRegistryPlugin`: that plugin also boots the keybinding loader and
+    /// the sampler, which pull in `Cli`, `KeyBindings`, and `ButtonInput` — none
+    /// of them the thing under test, and all of them a reason for this guard to
+    /// fail for the wrong reason.
     #[test]
     fn register_viz_actions_declares_toggle_map_at_startup() {
         let mut app = App::new();
-        app.add_plugins(ActionRegistryPlugin);
-        app.add_systems(
-            Startup,
-            register_viz_actions.in_set(InteractionSet::Registration),
-        );
+        app.init_resource::<ActionRegistry>();
+        app.add_systems(Startup, register_viz_actions);
 
         // The first `update()` runs the `Startup` schedule exactly once.
         app.update();
