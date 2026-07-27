@@ -12,6 +12,7 @@
 
 use helios_sim::cli::Cli;
 use helios_sim::prelude::*;
+use helios_sim::viz::interaction::ActionRegistryPlugin;
 use helios_sim::viz::VizPlugin;
 
 use clap::Parser;
@@ -32,6 +33,7 @@ fn main() {
     app.add_plugins(HeliosHost::new(cli, presentation, time_policy));
 
     if presentation == Presentation::Windowed {
+        app.add_plugins(ActionRegistryPlugin);
         app.add_plugins(VizPlugin);
     }
 

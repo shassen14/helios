@@ -7,9 +7,12 @@
 
 use crate::{
     prelude::AppState,
-    viz::live::{
-        estimate::estimate_update_system, map::map_update_system, path::path_update_system,
-        pose::pose_update_system,
+    viz::{
+        interaction::{registration::register_viz_actions, InteractionSet},
+        live::{
+            estimate::estimate_update_system, map::map_update_system, path::path_update_system,
+            pose::pose_update_system,
+        },
     },
 };
 
@@ -41,6 +44,11 @@ impl Plugin for VizPlugin {
             )
                 .in_set(VizSet::Live)
                 .run_if(in_state(AppState::Running)),
+        );
+
+        app.add_systems(
+            Startup,
+            register_viz_actions.in_set(InteractionSet::Registration),
         );
     }
 }
