@@ -16,6 +16,7 @@ use helios_sim::viz::interaction::ActionRegistryPlugin;
 use helios_sim::viz::VizPlugin;
 
 use clap::Parser;
+use helios_sim::viz::interaction::camera::CameraPlugin;
 
 fn main() {
     let cli = Cli::parse();
@@ -35,6 +36,7 @@ fn main() {
     if presentation == Presentation::Windowed {
         app.add_plugins(ActionRegistryPlugin);
         app.add_plugins(VizPlugin);
+        app.add_plugins(CameraPlugin);
     }
 
     app.run();

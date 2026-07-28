@@ -7,6 +7,7 @@ use crate::viz::interaction::{
 use bevy::prelude::*;
 
 pub mod actions;
+pub mod camera;
 pub mod keybindings;
 pub mod registration;
 pub mod sampling;
