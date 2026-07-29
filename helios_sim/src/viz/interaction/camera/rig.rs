@@ -84,6 +84,22 @@ pub(crate) fn clamp_distance(distance: f32) -> f32 {
     distance.clamp(MIN_DISTANCE, MAX_DISTANCE)
 }
 
+/// Maps a focus shift expressed in the camera's **ground frame** (`x` =
+/// camera-right, `y` = camera-forward, both on the horizontal plane) into a
+/// world-space `Vec3`, given the current `yaw`. Lets any input source express
+/// "move the focus right/forward" without knowing the camera's heading; the
+/// caller adds the result to [`CameraRig::focus`].
+///
+/// Sign-neutral by design: a source that wants "grab the world" pan negates its
+/// own input. Shares [`rig_to_transform`]'s yaw convention — at `yaw` 0 the camera
+/// looks down `-Z` with `+X` to its right — so pan and orbit never disagree.
+pub(crate) fn ground_pan_to_world(ground: Vec2, yaw: f32) -> Vec3 {
+    let right = Vec3::new(f32::cos(yaw), 0.0, -f32::sin(yaw));
+    let forward = Vec3::new(-f32::sin(yaw), 0.0, -f32::cos(yaw));
+
+    right * ground.x + forward * ground.y
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +182,26 @@ mod tests {
         assert_eq!(clamp_distance(0.5), MIN_DISTANCE); // too close
         assert_eq!(clamp_distance(9000.0), MAX_DISTANCE); // too far
         assert_eq!(clamp_distance(50.0), 50.0); // in range, untouched
+    }
+
+    #[test]
+    fn ground_pan_maps_right_and_forward_by_yaw() {
+        // At yaw 0 the camera looks down -Z with +X to its right, so a pure
+        // camera-right shift lands on +X and a pure forward shift on -Z.
+        let right = ground_pan_to_world(Vec2::new(1.0, 0.0), 0.0);
+        assert!(close(right, Vec3::X), "right at yaw 0 -> +X, got {right:?}");
+
+        let forward = ground_pan_to_world(Vec2::new(0.0, 1.0), 0.0);
+        assert!(
+            close(forward, Vec3::new(0.0, 0.0, -1.0)),
+            "forward at yaw 0 -> -Z, got {forward:?}"
+        );
+
+        // A quarter-turn of yaw rotates "right" onto the -Z axis.
+        let turned = ground_pan_to_world(Vec2::new(1.0, 0.0), FRAC_PI_2);
+        assert!(
+            close(turned, Vec3::new(0.0, 0.0, -1.0)),
+            "right at yaw pi/2 -> -Z, got {turned:?}"
+        );
     }
 }
