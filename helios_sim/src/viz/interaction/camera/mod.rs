@@ -23,6 +23,7 @@ use crate::{
             registry::ActionRegistry,
         },
         camera::{
+            follow::{resolve_focus, retarget_on_selection},
             intent::apply_camera_intent,
             keyboard::keyboard_camera_intent,
             mouse::mouse_camera_intent,
@@ -32,6 +33,7 @@ use crate::{
     },
 };
 
+pub mod follow;
 pub mod intent;
 pub mod keyboard;
 pub mod mouse;
@@ -74,6 +76,8 @@ impl Plugin for CameraPlugin {
             (
                 keyboard_camera_intent,
                 mouse_camera_intent,
+                retarget_on_selection,
+                resolve_focus,
                 apply_camera_intent,
                 sync_camera_transform,
             )

@@ -17,6 +17,7 @@ use helios_sim::viz::VizPlugin;
 
 use clap::Parser;
 use helios_sim::viz::interaction::camera::CameraPlugin;
+use helios_sim::viz::interaction::selection::SelectionPlugin;
 
 fn main() {
     let cli = Cli::parse();
@@ -37,6 +38,7 @@ fn main() {
         app.add_plugins(ActionRegistryPlugin);
         app.add_plugins(VizPlugin);
         app.add_plugins(CameraPlugin);
+        app.add_plugins(SelectionPlugin);
     }
 
     app.run();

@@ -11,6 +11,7 @@ pub mod camera;
 pub mod keybindings;
 pub mod registration;
 pub mod sampling;
+pub mod selection;
 
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum InteractionSet {

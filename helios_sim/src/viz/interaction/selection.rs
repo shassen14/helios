@@ -1,0 +1,258 @@
+//! General object selection: click any discrete world object to mark it
+//! [`Selected`], then let independent consumers react to that one marker.
+//!
+//! Selection is deliberately *general*, not agent-only — a tree, a sign, or an
+//! agent are all selectable; the ground is not. [`Selectable`] marks the identity
+//! roots (added by [`ensure_selectable`]), and a single global observer,
+//! [`on_click_select`], resolves a raw pointer hit up to the nearest `Selectable`
+//! ancestor and moves the lone [`Selected`] marker onto it.
+//!
+//! Nothing here knows what selection is *for*: consumers intersect [`Selected`]
+//! with the components they own — the camera follows it (`retarget_on_selection`),
+//! the map toggle filters on it, and [`highlight_selection`] rings it. A consumer
+//! that owns no relevant component simply never matches, so no per-type enum is
+//! needed. Added only by `helios_play`, never the headless host.
+
+use crate::{
+    prelude::{AppState, AutonomyPipelineComponent, BoundingBox3D, WorldObjectType},
+    viz::{
+        interaction::{
+            actions::{
+                handle::{ActionHandle, ActionId, ActionMetadata, InputKind},
+                registry::ActionRegistry,
+            },
+            sampling::ActionState,
+            InteractionSet,
+        },
+        VizSet,
+    },
+};
+
+use bevy::prelude::*;
+use std::f32::consts::FRAC_PI_2;
+
+/// Wires selection into the app: the mesh-picking backend, the click observer,
+/// the deselect action, and the per-frame marker consumers this crate owns.
+pub struct SelectionPlugin;
+
+impl Plugin for SelectionPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(MeshPickingPlugin);
+
+        app.add_observer(on_click_select);
+
+        app.add_systems(
+            Startup,
+            register_selection_actions.in_set(InteractionSet::Registration),
+        );
+
+        app.add_systems(
+            Update,
+            (ensure_selectable, deselect_on_escape, highlight_selection)
+                .in_set(VizSet::Live)
+                .run_if(in_state(AppState::Running)),
+        );
+    }
+}
+
+/// Registers the `selection.deselect` action (Escape by default) so
+/// [`deselect_on_escape`] can resolve its handle at runtime.
+pub(crate) fn register_selection_actions(mut registry: ResMut<ActionRegistry>) {
+    registry.register(
+        ActionId("selection.deselect"),
+        ActionMetadata {
+            label: "Deselect",
+            group: "selection",
+            kind: InputKind::Button,
+            default_key: KeyCode::Escape,
+        },
+    );
+}
+
+/// Marks the one currently-selected entity.
+///
+/// At most one exists at a time — [`on_click_select`] clears the previous marker
+/// before setting a new one. This is the shared vocabulary every consumer reads.
+#[derive(Component)]
+pub struct Selected;
+
+/// Marks an entity as a valid selection *root*: the identity-bearing parent a raw
+/// mesh hit is resolved up to. Added by [`ensure_selectable`] to agents and world
+/// objects, never to terrain, so a ground click resolves to nothing.
+#[derive(Component)]
+pub struct Selectable;
+
+/// Global observer: resolves a left-click to the nearest [`Selectable`] and moves
+/// [`Selected`] onto it.
+///
+/// The ray hits a *mesh*, which for a glTF prop is a descendant of the entity that
+/// carries the identity, so this rises from the hit through its ancestors to the
+/// first `Selectable`. Propagation is stopped up front so the walk runs once. A
+/// click that resolves to no `Selectable` (the ground, empty space) leaves the
+/// current selection untouched.
+pub fn on_click_select(
+    mut click: On<Pointer<Click>>,
+    parents: Query<&ChildOf>,
+    selectable: Query<(), With<Selectable>>,
+    selected: Query<Entity, With<Selected>>,
+    mut commands: Commands,
+) {
+    click.propagate(false);
+
+    // didn't get a left click
+    if click.event.button != PointerButton::Primary {
+        return;
+    }
+
+    let hit = click.original_event_target();
+    let Some(root) = std::iter::once(hit)
+        .chain(parents.iter_ancestors(hit))
+        .find(|&e| selectable.contains(e))
+    else {
+        return;
+    };
+
+    for previous in &selected {
+        commands.entity(previous).remove::<Selected>();
+    }
+
+    commands.entity(root).insert(Selected);
+}
+
+/// Clears the selection when the `selection.deselect` action fires.
+pub fn deselect_on_escape(
+    state: Res<ActionState>,
+    registry: Res<ActionRegistry>,
+    selected: Query<Entity, With<Selected>>,
+    mut commands: Commands,
+    mut handle: Local<Option<ActionHandle>>,
+) {
+    // TODO: we have a bunch of hardcoded &str in ActionId to reference to
+    // I would like to have a file or maybe multiple per dir that would be
+    // the vocabulary for such actions. this way we can reference them
+    // later without possible typing errors
+    let h = *handle.get_or_insert_with(|| {
+        registry
+            .handle(ActionId("selection.deselect"))
+            .expect("selection.deselect registered at startup")
+    });
+
+    if state.is_active(h) {
+        for e in &selected {
+            commands.entity(e).remove::<Selected>();
+        }
+    }
+}
+
+/// Ground-ring color for the selected object.
+// TODO: pull from the viz config surface once it exists.
+const HIGHLIGHT_COLOR: Color = Color::srgb(1.0, 0.85, 0.2);
+/// Ring radius (m) when the object has no bounding box to size it.
+// TODO: pull from the viz config surface once it exists.
+const DEFAULT_HIGHLIGHT_RADIUS: f32 = 1.5;
+/// Fraction the ring sits outside the object's footprint.
+const HIGHLIGHT_MARGIN: f32 = 1.15;
+
+/// Draws a flat ground ring beneath the selected object, sized to its bounding
+/// box when it has one, so the current selection is visible in the scene.
+fn highlight_selection(
+    selected: Query<(&GlobalTransform, Option<&BoundingBox3D>), With<Selected>>,
+    mut gizmos: Gizmos,
+) {
+    for (transform, bbox) in &selected {
+        let radius = match bbox {
+            Some(bb) => bb.half_extents.x.max(bb.half_extents.z) * HIGHLIGHT_MARGIN,
+            None => DEFAULT_HIGHLIGHT_RADIUS,
+        };
+
+        let ring = Isometry3d::new(transform.translation(), Quat::from_rotation_x(FRAC_PI_2));
+        gizmos.circle(ring, radius, HIGHLIGHT_COLOR);
+    }
+}
+
+/// Tags agents and world objects with [`Selectable`] exactly once.
+///
+/// Keeps selection state out of the headless-shared scene build: the agents and
+/// props are spawned by the shared host, so this marker is backfilled here from a
+/// windowed-only system. `Without<Selectable>` makes it idempotent — each entity
+/// is tagged once, then drops out of the query. Mirrors `ensure_map_visible`.
+#[allow(clippy::type_complexity)]
+fn ensure_selectable(
+    query: Query<
+        Entity,
+        (
+            Without<Selectable>,
+            Or<(With<WorldObjectType>, With<AutonomyPipelineComponent>)>,
+        ),
+    >,
+    mut commands: Commands,
+) {
+    for e in &query {
+        commands.entity(e).insert(Selectable);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tier 3 wiring guard: the deselect action must be declared at startup, or
+    /// `deselect_on_escape`'s handle lookup panics on the first frame. Compiles
+    /// clean when broken (the `add_systems` line simply drops), so it needs a test.
+    #[test]
+    fn register_selection_actions_declares_deselect() {
+        let mut app = App::new();
+        app.init_resource::<ActionRegistry>();
+        app.add_systems(Startup, register_selection_actions);
+
+        app.update();
+
+        let registry = app.world().resource::<ActionRegistry>();
+        assert!(
+            registry.handle(ActionId("selection.deselect")).is_some(),
+            "register_selection_actions must declare selection.deselect at startup",
+        );
+    }
+
+    /// Tier 2: firing the deselect action strips `Selected` off the entity.
+    #[test]
+    fn deselect_removes_selected_when_the_action_is_active() {
+        let mut registry = ActionRegistry::default();
+        let handle = registry.register(
+            ActionId("selection.deselect"),
+            ActionMetadata {
+                label: "Deselect",
+                group: "selection",
+                kind: InputKind::Button,
+                default_key: KeyCode::Escape,
+            },
+        );
+
+        let mut app = App::new();
+        app.insert_resource(registry);
+        app.insert_resource(ActionState::from_active([handle]));
+        let entity = app.world_mut().spawn(Selected).id();
+
+        app.add_systems(Update, deselect_on_escape);
+        app.update();
+
+        assert!(app.world().get::<Selected>(entity).is_none());
+    }
+
+    /// Tier 2: a world object gets tagged `Selectable`, and a second run is a
+    /// no-op — the `Without<Selectable>` filter keeps it idempotent.
+    #[test]
+    fn ensure_selectable_tags_world_objects_idempotently() {
+        let mut app = App::new();
+        let entity = app.world_mut().spawn(WorldObjectType("tree".into())).id();
+
+        app.add_systems(Update, ensure_selectable);
+
+        app.update();
+        assert!(app.world().get::<Selectable>(entity).is_some());
+
+        // Second pass must not double-insert or panic.
+        app.update();
+        assert!(app.world().get::<Selectable>(entity).is_some());
+    }
+}
