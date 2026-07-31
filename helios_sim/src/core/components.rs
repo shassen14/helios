@@ -33,7 +33,9 @@ pub struct GroundTruthState {
     pub linear_velocity: Vector3<f64>,
     pub angular_velocity: Vector3<f64>,
     pub linear_acceleration: Vector3<f64>,
+    pub angular_acceleration: Vector3<f64>,
     pub last_linear_velocity: Vector3<f64>,
+    pub last_angular_velocity: Vector3<f64>,
 }
 
 impl Default for GroundTruthState {
@@ -43,7 +45,9 @@ impl Default for GroundTruthState {
             linear_velocity: Vector3::zeros(),
             angular_velocity: Vector3::zeros(),
             linear_acceleration: Vector3::zeros(),
+            angular_acceleration: Vector3::zeros(),
             last_linear_velocity: Vector3::zeros(),
+            last_angular_velocity: Vector3::zeros(),
         }
     }
 }

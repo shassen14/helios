@@ -377,11 +377,14 @@ fn build_gaussian_estimator_node(
 
     // If dynamics is IntegratedImu, declare the IMU predict-side channels
     // as external too (accel + gyro Vec<SensorReading<_>>).
-    if matches!(ekf_cfg.dynamics, EkfDynamicsConfig::IntegratedImu(_)) {
+    if let EkfDynamicsConfig::IntegratedImu(imu_cfg) = &ekf_cfg.dynamics {
         use crate::pipeline::builders::estimator::{
             EstimatorInputBuilder, IntegratedImuInputBuilder,
         };
-        let builder = IntegratedImuInputBuilder::new();
+        let builder = IntegratedImuInputBuilder::new(
+            imu_cfg.accel_channel.as_str(),
+            imu_cfg.gyro_channel.as_str(),
+        );
         external_channels.extend_from_slice(builder.required_channels());
     }
 

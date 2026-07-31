@@ -14,5 +14,5 @@ from = "entities.sensors.gps_basic"
 # We can provide an override directly here to modify the `gps_standard` template.
 # transform = { translation = [0.0, 0.0, 1.2] }
 
-[magnetometer_pro]
-from = "entities.sensors.magnetometer_pro"
+[magnetometer_basic]
+from = "entities.sensors.magnetometer_basic"

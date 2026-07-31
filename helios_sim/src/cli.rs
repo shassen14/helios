@@ -26,6 +26,13 @@ pub struct Cli {
     #[arg(long, default_value_t = false)]
     pub headless: bool,
 
+    /// Simulated-time multiplier: `1.0` is real time, `10.0` plays ten times
+    /// faster. Purely a pacing knob — it does not change what the run computes.
+    /// Omit to let the presentation decide: a window defaults to real time, a
+    /// headless run to finishing as fast as the machine allows.
+    #[arg(long)]
+    pub speed: Option<f32>,
+
     /// Master RNG seed for a reproducible run. Overrides the scenario file's
     /// `[simulation] seed`. Omit to fall back to the file value, or to OS
     /// entropy when the file leaves it unset.

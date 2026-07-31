@@ -9,5 +9,5 @@ from = "entities.sensors.imu_standard"
 [gps_standard]
 from = "entities.sensors.gps_standard"
 
-[magnetometer_pro]
-from = "entities.sensors.magnetometer_pro"
+[magnetometer_basic]
+from = "entities.sensors.magnetometer_basic"

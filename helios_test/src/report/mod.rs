@@ -21,6 +21,18 @@ pub struct Report {
     scenario: String,
     master_seed: Option<u64>,
     status: ReportStatus,
+    /// Why the run was unfit to test, if it was — an agent whose autonomy
+    /// pipeline never assembled, an assertion naming a target no agent
+    /// produces. Present only on a run that failed before it could tick, and
+    /// omitted from the TOML entirely otherwise, so a healthy report keeps its
+    /// current shape. Without it a CI reader sees `status = "failed"` with an
+    /// empty `assertions` list and no way to tell why.
+    ///
+    /// Sits ahead of `terminated_by` deliberately: TOML puts every scalar and
+    /// inline array before the first table, and the writer depends on this
+    /// struct's field order matching that.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    setup_failures: Vec<String>,
     simulated_duration_secs: f64,
     wall_duration_secs: f64,
     terminated_by: TerminatedBy,
@@ -38,6 +50,7 @@ impl Report {
         scenario: String,
         master_seed: Option<u64>,
         status: ReportStatus,
+        setup_failures: Vec<String>,
         simulated_duration_secs: f64,
         wall_duration_secs: f64,
         terminated_by: TerminatedBy,
@@ -48,6 +61,7 @@ impl Report {
             scenario,
             master_seed,
             status,
+            setup_failures,
             simulated_duration_secs,
             wall_duration_secs,
             terminated_by,
@@ -63,6 +77,12 @@ impl Report {
     /// The per-assertion lines, in run-file order.
     pub fn assertions(&self) -> &[AssertionReportEntry] {
         &self.assertions
+    }
+
+    /// Why the run was unfit to test, if it was. Empty on a run that got far
+    /// enough for its assertions to mean something.
+    pub fn setup_failures(&self) -> &[String] {
+        &self.setup_failures
     }
 
     /// Why the run stopped.

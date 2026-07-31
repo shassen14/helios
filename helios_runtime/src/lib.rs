@@ -18,7 +18,6 @@ pub mod stamped;
 pub mod validation;
 
 pub use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
-pub use crate::pipeline::autonomy_pipeline::MISSION_GOAL_INSTANCE;
 pub use crate::pipeline::build_error::PipelineBuildError;
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{AutonomyPipeline, PipelineBuilder};

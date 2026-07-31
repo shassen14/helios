@@ -1,10 +1,15 @@
 # configs/runtime/catalog/estimators/ekf_basic.toml
-# Basic EKF — high-noise IMU, basic GPS + magnetometer aiding.
+# Basic EKF — high-noise IMU, basic GPS + basic magnetometer aiding.
+# Tuned for the ins_basic sensor suite.
 kind = "Ekf"
 
 [config]
 [config.dynamics]
 type = "IntegratedImu"
+# Bus channels the predict step reads IMU data from. Must match the IMU entity's
+# `accel_channel` / `gyro_channel`.
+accel_channel = "sensor.imu.accel"
+gyro_channel = "sensor.imu.gyro"
 accel_noise_stddev = 0.8
 gyro_noise_stddev = 0.08
 accel_bias_instability = 0.1
@@ -22,4 +27,4 @@ model = { kind = "gps_position" }
 sensor_payload = "MagneticField3D"
 input_channel = "sensor.mag.body"
 r_diag = [25.0, 25.0, 25.0]
-model = { kind = "magnetometer", magnetic_field_enu = [0.0, 1.0, 0.0] }
+model = { kind = "magnetometer", magnetic_field_enu = [0.0, 50.0, 0.0] }

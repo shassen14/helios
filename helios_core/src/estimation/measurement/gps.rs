@@ -9,12 +9,12 @@ use crate::ports::TfProvider;
 ///
 /// Maps a 3D ENU position measurement to the filter's position states
 /// `(Px, Py, Pz)`, accounting for the antenna's physical offset from the body
-/// origin via the TF tree (same pattern as [`AccelerometerModel`]).
+/// origin via the TF tree (same pattern as [`SpecificForceModel`]).
 ///
 /// Note: `R` (measurement noise covariance) is **not** held here. It lives at
 /// the call site and is passed per `update`. See `algorithm_family_traits.md` §2.1.
 ///
-/// [`AccelerometerModel`]: crate::estimation::measurement::accelerometer::AccelerometerModel
+/// [`SpecificForceModel`]: crate::estimation::measurement::accelerometer::SpecificForceModel
 #[derive(Debug, Clone)]
 pub struct GpsPositionModel {
     pub agent_handle: FrameHandle,
@@ -31,7 +31,7 @@ impl MeasurementModel for GpsPositionModel {
     /// Predicts antenna position in the ENU world frame.
     ///
     /// Requires `tf` to resolve the body→antenna translation. Returns `None`
-    /// when `tf` is unavailable — same behaviour as `AccelerometerModel`.
+    /// when `tf` is unavailable — same behaviour as `SpecificForceModel`.
     ///
     /// `predicted = P_world + R(q_body→world) * antenna_offset_body`
     /// where `antenna_offset_body` comes from `tf.get_transform(agent, sensor).translation`.

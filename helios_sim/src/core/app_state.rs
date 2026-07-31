@@ -49,7 +49,10 @@ pub enum SceneBuildSet {
     ProcessVehicle,
 
     /// Pass 4: Process all sensor requests and create sensor child entities.
-    /// Attaches `MeasurementModel`, `TrackedFrame`, and `SensorPublishChannel`.
+    /// Attaches the sensor's forward model (from `helios_core::sensors`, never
+    /// a `MeasurementModel`), `TrackedFrame`, and `SensorPublishChannel`.
+    /// Runs after `ProcessWorldObjects`, which settles the environmental
+    /// constants (gravity, the magnetic field) that sensors capture at spawn.
     ProcessSensors,
 
     /// Pass 5: Build each agent's `AutonomyPipeline` and attach

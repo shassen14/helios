@@ -11,8 +11,11 @@ use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 pub struct IntegratedImuModel {
     /// The handle of the agent this model describes.
     pub agent_handle: FrameHandle,
-    /// The magnitude of gravity, used to counteract its effect during prediction.
-    pub gravity_magnitude: f64,
+    /// Gravity in the world (ENU) frame, m/s², subtracted from IMU-integrated
+    /// acceleration during prediction. A vector, not a magnitude, so the model
+    /// is correct in any world — Earth-down `[0, 0, -9.81]`, the moon, or a
+    /// tilted local frame — not only where gravity points along −Z.
+    pub gravity_world: Vector3<f64>,
 }
 
 impl EstimationDynamics for IntegratedImuModel {
@@ -43,10 +46,9 @@ impl EstimationDynamics for IntegratedImuModel {
         // --- 3. Position and Velocity Derivatives  ---
         x_dot.fixed_rows_mut::<3>(0).copy_from(&velocity_world);
         let accel_world = orientation_quat * corrected_accel_body;
-        let gravity_world = Vector3::new(0.0, 0.0, -self.gravity_magnitude);
         x_dot
             .fixed_rows_mut::<3>(3)
-            .copy_from(&(accel_world + gravity_world));
+            .copy_from(&(accel_world + self.gravity_world));
 
         // println!("raw_accel_measurement: {:?}", raw_accel_measurement);
         // println!("corrected_accel_body: {:?}", corrected_accel_body);
@@ -148,7 +150,7 @@ mod tests {
     fn make_model() -> IntegratedImuModel {
         IntegratedImuModel {
             agent_handle: AGENT,
-            gravity_magnitude: G,
+            gravity_world: Vector3::new(0.0, 0.0, -G),
         }
     }
 

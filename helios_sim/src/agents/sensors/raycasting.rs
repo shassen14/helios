@@ -1,22 +1,18 @@
-use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
-use bevy::prelude::*;
-use std::time::Duration;
-
-use crate::brain_bridge::components::{AutonomyPipelineComponent, SensorPublishChannel};
+use crate::brain_bridge::components::SensorPublishChannel;
 use crate::config::structs::{LidarConfig, SensorConfig};
+use crate::core::app_state::SimulationSet;
+use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::FluVector;
-use crate::core::{app_state::SimulationSet, prng::SimulationRng};
 use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::data::sensor::PointCloud2D;
 use helios_core::sensors::{
     lidar_2d::Lidar2DModel, RayHit, RaycastingOutput, RaycastingSensorModel,
 };
-use helios_runtime::pipeline::node::HOST_PRODUCER_ID;
-use helios_runtime::port::SensorChannel;
-use helios_runtime::stamped::{Health, Stamped};
+
+use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
+use std::time::Duration;
 
 // =========================================================================
 // == Components & Plugin ==
@@ -50,6 +46,7 @@ impl Plugin for RaycastingSensorPlugin {
 fn spawn_raycasting_sensors(
     mut commands: Commands,
     request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
+    master_seed: Res<MasterSeed>,
 ) {
     for (agent_entity, agent_name, request) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {
@@ -93,16 +90,20 @@ fn spawn_raycasting_sensors(
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
+                let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
+                let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
+
                 sensor_entity_commands.insert((
-                    Name::new(format!("{}/{}", agent_name.as_str(), sensor_name)),
+                    Name::new(sensor_label),
+                    SensorPublishChannel(lidar_config.get_channel().to_string()),
                     RaycastingSensor {
                         timer: Timer::new(
-                            Duration::from_secs_f32(1.0 / lidar_config.get_rate()),
+                            Duration::from_secs_f64(1.0 / lidar_config.get_rate()),
                             TimerMode::Repeating,
                         ),
                         model: core_model,
                     },
-                    SensorPublishChannel(lidar_config.get_channel().to_string()),
+                    sensor_rng,
                     TrackedFrame,
                     lidar_config.get_relative_pose().to_bevy_local_transform(),
                 ));
@@ -119,24 +120,28 @@ fn spawn_raycasting_sensors(
 
 fn raycasting_sensor_system(
     time: Res<Time>,
-    mut rng: ResMut<SimulationRng>,
     spatial_query: SpatialQuery,
-    mut sensor_query: Query<(Entity, &mut RaycastingSensor, &GlobalTransform, &ChildOf)>,
-    pipeline_query: Query<&AutonomyPipelineComponent>,
+    mut sensor_query: Query<(
+        Entity,
+        &mut RaycastingSensor,
+        &mut SensorRng,
+        &SensorPublishChannel,
+        &GlobalTransform,
+        &ChildOf,
+    )>,
+    mut publisher: SensorPublisher,
 ) {
     let _span = tracing::trace_span!("sim.sensor.publish", sensor = "raycasting").entered();
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (sensor_entity, mut sensor, sensor_transform, parent) in &mut sensor_query {
+    for (sensor_entity, mut sensor, mut rng, sensor_publish_channel, sensor_transform, parent) in
+        &mut sensor_query
+    {
         sensor.timer.tick(dt);
         if !sensor.timer.just_finished() {
             continue;
         }
-
-        let Ok(pipeline_comp) = pipeline_query.get(parent.parent()) else {
-            continue;
-        };
 
         let local_rays = sensor.model.generate_rays();
         let mut hits: Vec<RayHit> = Vec::with_capacity(local_rays.len());
@@ -178,20 +183,11 @@ fn raycasting_sensor_system(
             timestamp: MonotonicTime(elapsed),
             data: point_cloud,
         };
-        let stamped = Stamped {
-            value: vec![reading],
-            timestamp: MonotonicTime(elapsed),
-            health: Health::Ok,
-            producer: HOST_PRODUCER_ID,
-        };
 
-        pipeline_comp
-            .0
-            .bus()
-            .write(
-                SensorChannel::of::<Vec<SensorReading<PointCloud2D>>>().into(),
-                stamped,
-            )
-            .ok();
+        publisher.publish(
+            parent.parent(),
+            sensor_publish_channel.0.as_str(),
+            vec![reading],
+        );
     }
 }

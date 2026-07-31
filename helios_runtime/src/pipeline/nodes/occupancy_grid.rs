@@ -70,8 +70,9 @@ use crate::stamped::{Health, Stamped};
 /// Pipeline node wrapping any 2D [`Mapper`] implementation.
 ///
 /// `scan_channel` is the bus channel carrying
-/// `Vec<SensorReading<PointCloud2D>>` (typically `@ ""` unless multiple
-/// scan streams have been split). `map_channel` is the published map slot
+/// `Vec<SensorReading<PointCloud2D>>`; its instance name comes from the
+/// mapper config and must match the channel the host's scan sensor
+/// publishes on. `map_channel` is the published map slot
 /// — convention `MapData @ "local"` for rolling-window grids, `@ "global"`
 /// for SLAM-style world maps.
 pub(crate) struct OccupancyGridNode {

@@ -1,0 +1,30 @@
+# Deliberately incoherent scenario — a fixture, not a working example.
+#
+# The agent gets a search planner but no mapper, so `astar` demands a MapData
+# channel nothing produces and `build_pipeline` refuses the graph. The agent
+# ends up with no autonomy pipeline at all.
+#
+# This is the shape of failure that used to pass silently: every downstream
+# system queries for a pipeline, finds none, and does nothing, so the run
+# completed and reported a final position for an agent that was never able to
+# move. Paired with configs/test/runs/unbuilt_pipeline.toml, which asserts the
+# run now fails instead.
+
+[simulation]
+profile          = "unbuilt_pipeline"
+duration_seconds = 5.0
+seed             = 42
+
+[[world.terrains]]
+mesh     = "maps/starter_world.glb"
+collider = "maps/starter_world_col.glb"
+medium   = "air"
+
+[[agents]]
+from          = "sim.catalog.agents.ackermann_car_estimation_only"
+name          = "BrokenCar"
+starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+
+# The planner with nothing to plan over.
+[agents.autonomy_stack.search_planners.local_path]
+from = "runtime.catalog.planners.a_star"

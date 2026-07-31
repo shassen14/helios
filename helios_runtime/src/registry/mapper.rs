@@ -23,6 +23,7 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
     let MapLayerConfig::OccupancyGrid2D {
         rate,
         resolution,
+        scan_channel,
         width_m,
         height_m,
         ..
@@ -37,7 +38,8 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
         height_m as f64,
     ));
 
-    let scan_channel = SensorChannel::of::<Vec<SensorReading<PointCloud2D>>>();
+    let scan_channel =
+        SensorChannel::named::<Vec<SensorReading<PointCloud2D>>>(scan_channel.as_str());
     let map_channel = InternalChannel::named::<MapData>("local");
 
     Ok(Box::new(OccupancyGridNode::new(

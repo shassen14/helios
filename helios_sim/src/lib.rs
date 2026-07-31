@@ -28,6 +28,7 @@ pub mod config;
 pub mod core;
 pub mod registry;
 pub mod utils;
+pub mod viz;
 pub mod world;
 
 /// The main plugin that brings together all simulation subsystems.

@@ -28,6 +28,7 @@ pub struct Runner {
     extractors: ExtractorTable,
     states: Vec<AssertionState>,
     start_time: Option<MonotonicTime>,
+    setup_failures: Vec<String>,
 }
 
 impl Runner {
@@ -60,7 +61,22 @@ impl Runner {
             extractors: standard_extractors(),
             states,
             start_time: None,
+            // Filled only if the run is doomed before it ticks. Assertions
+            // cannot speak for this class of failure: a scenario whose agent
+            // has no pipeline usually has no assertion naming it either, so
+            // an assertion-only verdict reports a vacuous pass.
+            setup_failures: Vec::new(),
         })
+    }
+
+    /// Record that the run is unfit to produce a meaningful result, and why.
+    ///
+    /// Called before the first tick, by the host, for conditions no assertion
+    /// can observe. Any recorded failure forces the run's verdict to
+    /// [`ReportStatus::Failed`] in [`Self::finalize`], independent of how the
+    /// assertions land — including when there are none.
+    pub fn fail_setup(&mut self, reason: String) {
+        self.setup_failures.push(reason);
     }
 }
 

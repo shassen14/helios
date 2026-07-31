@@ -1,18 +1,35 @@
-use nalgebra::{DVector, Vector3};
-
 use crate::data::primitives::FrameHandle;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
 use crate::ports::TfProvider;
 
+use nalgebra::{DVector, Vector3};
+
+/// What the filter believes an accelerometer reports: **specific force**, the
+/// quantity an accelerometer physically senses.
+///
+/// "Specific" means *per unit mass* — as in specific heat or specific impulse —
+/// so specific force is force divided by mass and carries units of m/s². It is
+/// not measured in newtons, and the name does not imply that it is.
+///
+/// It is nonetheless **not** the kinematic acceleration `StateVariable::Ax`
+/// carries. The two never agree while gravity acts:
+///
+/// - In free fall, an accelerometer reads **zero** while kinematic
+///   acceleration is one g downward.
+/// - At rest on a table, it reads **one g upward** while kinematic
+///   acceleration is zero.
+///
+/// The model therefore predicts `a - g` rotated into the sensor frame, plus
+/// the lever-arm terms a sensor mounted off the body origin also feels.
 #[derive(Debug, Clone)]
-pub struct AccelerometerModel {
+pub struct SpecificForceModel {
     pub agent_handle: FrameHandle,
     pub sensor_handle: FrameHandle,
-    pub gravity_magnitude: f64,
+    pub gravity_world: Vector3<f64>,
 }
 
-impl MeasurementModel for AccelerometerModel {
+impl MeasurementModel for SpecificForceModel {
     fn dim(&self) -> usize {
         3
     }
@@ -52,8 +69,8 @@ impl MeasurementModel for AccelerometerModel {
             linear_accel_body + tangential_accel + centripetal_accel;
 
         let q_body_from_world = orientation_body_to_world.inverse();
-        let gravity_world = Vector3::new(0.0, 0.0, -self.gravity_magnitude);
-        let gravity_effect_in_body = q_body_from_world * gravity_world;
+
+        let gravity_effect_in_body = q_body_from_world * self.gravity_world;
 
         let proper_accel_in_body_frame = total_kinematic_accel_at_sensor - gravity_effect_in_body;
         let predicted_accel = rot_sensor_from_body.inverse() * proper_accel_in_body_frame;
@@ -85,11 +102,11 @@ mod tests {
         }
     }
 
-    fn make_model() -> AccelerometerModel {
-        AccelerometerModel {
+    fn make_model() -> SpecificForceModel {
+        SpecificForceModel {
             agent_handle: AGENT,
             sensor_handle: SENSOR,
-            gravity_magnitude: 9.81,
+            gravity_world: Vector3::new(0.0, 0.0, -9.81),
         }
     }
 

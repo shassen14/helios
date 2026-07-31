@@ -2,45 +2,48 @@
 //!
 //! Two chained systems in `SimulationSet::BrainInput`: `dispatch_configured_goals`
 //! synthesizes the authored goal once per agent, then `forward_goal_events`
-//! injects any pending `GoalCommandEvent` into the pipeline's mission slot. The
-//! planner itself is a DAG node; this is only the host→pipeline goal bridge.
+//! publishes any pending `GoalCommandEvent` to the goal channels the agent's
+//! planners read, via `HostInputPublisher`. The planner itself is a DAG node;
+//! this is only the host→pipeline goal bridge.
 
-use bevy::prelude::*;
-
-use crate::brain_bridge::components::AutonomyPipelineComponent;
+use crate::brain_bridge::components::MissionGoalChannels;
 use crate::core::components::ConfiguredMissionGoal;
 use crate::core::components::GoalDispatched;
 use crate::core::events::GoalCommandEvent;
-use crate::core::sim_runtime::SimRuntime;
-use crate::core::transforms::TfTree;
+use crate::prelude::HostInputPublisher;
 
-/// Drains pending `GoalCommandEvent`s and writes each into the target agent's
-/// pipeline mission slot. The mission slot is a host-state channel, so the
-/// value persists across ticks until overwritten.
+use helios_core::data::MonotonicTime;
+
+use bevy::prelude::*;
+
+/// Drains pending `GoalCommandEvent`s and publishes each to every goal channel
+/// the target agent declared in [`MissionGoalChannels`], via [`HostInputPublisher`].
+///
+/// One goal fans out to all of the agent's planner channels, stamped at the
+/// current tick clock. The value lands on a last-known-good bus channel, so it
+/// persists across ticks until the next goal overwrites it. An event for an
+/// agent with no [`MissionGoalChannels`] — a plannerless agent, or one whose
+/// pipeline failed to build — has nowhere to go and is dropped with a warning.
 pub fn forward_goal_events(
     mut events: MessageReader<GoalCommandEvent>,
-    pipelines: Query<&AutonomyPipelineComponent>,
-    tf_tree: Res<TfTree>,
+    mut host_inputs: HostInputPublisher,
+    goal_channels: Query<&MissionGoalChannels>,
     time: Res<Time>,
 ) {
-    if events.is_empty() {
-        return;
-    }
-
-    let runtime = SimRuntime {
-        tf: &tf_tree,
-        elapsed_secs: time.elapsed_secs_f64(),
-    };
+    let timestamp = MonotonicTime(time.elapsed_secs_f64());
 
     for event in events.read() {
-        let Ok(pipeline) = pipelines.get(event.agent) else {
+        let Ok(channels) = goal_channels.get(event.agent) else {
             warn!(
-                "[Planning] GoalCommandEvent for {:?} but agent has no AutonomyPipelineComponent",
+                "[Planning] GoalCommandEvent for {:?} but agent has no MissionGoalChannels",
                 event.agent
             );
             continue;
         };
-        pipeline.0.inject_mission_goal(event.goal.clone(), &runtime);
+
+        for channel in &channels.0 {
+            host_inputs.publish(event.agent, channel.as_str(), event.goal.clone(), timestamp);
+        }
     }
 }
 

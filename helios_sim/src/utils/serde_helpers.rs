@@ -1,4 +1,9 @@
-pub mod vec3_f64_from_f32_array {
+//! Custom (de)serialization for config types whose TOML shape differs from
+//! their runtime shape. TOML numbers are f64-native, so these helpers stay in
+//! f64 end to end — narrowing through f32 would discard file precision for
+//! nothing.
+
+pub mod vec3_from_array {
     use nalgebra::Vector3;
     use serde::{self, Deserialize, Deserializer, Serializer};
 
@@ -6,21 +11,21 @@ pub mod vec3_f64_from_f32_array {
     where
         S: Serializer,
     {
-        let arr = [vec.x as f32, vec.y as f32, vec.z as f32];
-        // Use `serialize_fixed_size_array` for arrays
-        serializer.collect_seq(arr.iter())
+        serializer.collect_seq([vec.x, vec.y, vec.z].iter())
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Vector3<f64>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let arr: [f32; 3] = Deserialize::deserialize(deserializer)?;
-        Ok(Vector3::new(arr[0] as f64, arr[1] as f64, arr[2] as f64))
+        let arr: [f64; 3] = Deserialize::deserialize(deserializer)?;
+        Ok(Vector3::from(arr))
     }
 }
 
-pub mod quat_f64_from_euler_deg_f32 {
+/// TOML expresses rotations as `[roll, pitch, yaw]` in degrees for human
+/// readability; runtime holds a quaternion in radians.
+pub mod quat_from_euler_deg {
     use nalgebra::UnitQuaternion;
     use serde::{self, Deserialize, Deserializer, Serializer};
 
@@ -28,26 +33,19 @@ pub mod quat_f64_from_euler_deg_f32 {
     where
         S: Serializer,
     {
-        // Get roll, pitch, yaw in radians
-        let euler = quat.euler_angles();
-        // Convert to degrees for serialization
-        let arr = [
-            euler.0.to_degrees() as f32, // Roll
-            euler.1.to_degrees() as f32, // Pitch
-            euler.2.to_degrees() as f32, // Yaw
-        ];
-        serializer.collect_seq(arr.iter())
+        let (roll, pitch, yaw) = quat.euler_angles();
+        serializer.collect_seq([roll.to_degrees(), pitch.to_degrees(), yaw.to_degrees()].iter())
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<UnitQuaternion<f64>, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let arr: [f32; 3] = Deserialize::deserialize(deserializer)?;
+        let [roll, pitch, yaw]: [f64; 3] = Deserialize::deserialize(deserializer)?;
         Ok(UnitQuaternion::from_euler_angles(
-            (arr[0]).to_radians() as f64, // Roll
-            (arr[1]).to_radians() as f64, // Pitch
-            (arr[2]).to_radians() as f64, // Yaw
+            roll.to_radians(),
+            pitch.to_radians(),
+            yaw.to_radians(),
         ))
     }
 }

@@ -1,0 +1,21 @@
+# =========================================================================
+# == Agent Profile: Estimation-Only Car ==
+# =========================================================================
+# Portable autonomy configuration. No vehicle, sensors, or physics.
+# Root-level keys are the fields of AutonomyStack.
+# Safe to load in helios_hw without helios_sim.
+#
+# An estimator and nothing else. Composition is by reference only — a profile
+# that carries a planner cannot have it removed downstream — so isolating the
+# estimator means declaring a stack that never had the other nodes, rather
+# than overriding a fuller profile.
+#
+# With no controller, the agent never receives a command and stays put. That
+# is the intent: what this profile exercises is what an INS does when nothing
+# moves — accelerometer bias, gyro drift, GPS noise, and the magnetometer's
+# heading reference — with no control or planning behavior mixed in.
+
+# ekf_advanced's aiding covariances match the ins_pro sensor suite this
+# profile is paired with in configs/sim/catalog/agents.
+[estimators.primary]
+from = "runtime.catalog.estimators.ekf_advanced"

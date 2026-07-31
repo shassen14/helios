@@ -42,6 +42,12 @@ fn render(report: &Report) -> String {
     // Why the run stopped, plus the simulated time it stopped at.
     lines.push(format!("[run] terminated: {}", termination_line(report)));
 
+    // Setup failures come before the assertion lines: they explain why there
+    // may be no assertion lines worth reading.
+    for reason in &report.setup_failures {
+        lines.push(format!("[setup] {reason}"));
+    }
+
     // One line per assertion, in run-file order.
     for entry in report.assertions() {
         // The left half: "[assert] <target> <op> <expected>".
@@ -155,6 +161,7 @@ mod tests {
             "sim.scenarios.parking_lot".to_string(),
             Some(42),
             ReportStatus::Failed,
+            Vec::new(),
             47.3,
             4.1,
             TerminatedBy::TimeBudget,
@@ -203,6 +210,7 @@ mod tests {
             "s".to_string(),
             None,
             ReportStatus::Failed,
+            Vec::new(),
             1.0,
             0.1,
             TerminatedBy::TimeBudget,

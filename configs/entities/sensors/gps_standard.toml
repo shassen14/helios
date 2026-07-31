@@ -1,7 +1,6 @@
 # configs/catalog/sensors/gps_standard.toml
 # Corresponds to the `SensorConfig::Gps` enum variant.
 kind = "Gps"
-name = "gps_standard"
 rate = 10.0
 # --- Noise Characteristics ---
 # Standard deviation in meters [East, North, Up].

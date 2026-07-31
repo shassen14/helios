@@ -38,7 +38,10 @@ fn build_astar(ctx: SearchPlannerBuildContext) -> Result<Box<dyn PipelineNode>, 
         level_key,
     }));
 
-    let input_builder = Box::new(DefaultSearchPlannerInputBuilder::new(ctx.map_channel));
+    let input_builder = Box::new(DefaultSearchPlannerInputBuilder::new(
+        ctx.map_channel,
+        ctx.config.get_goal_channel(),
+    ));
 
     Ok(Box::new(SearchPlannerNode::new(
         "astar",

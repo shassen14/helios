@@ -1,0 +1,22 @@
+# =========================================================================
+# == Agent Prefab: Estimation-Only Ackermann Car ==
+# =========================================================================
+# Sim-specific prefab: vehicle, sensors, and default poses.
+# Autonomy stack is defined in the portable agent profile referenced below.
+#
+# Same body and sensors as ackermann_car_pro, but an autonomy stack holding
+# only an estimator. Exists as its own prefab because a scenario cannot strip
+# nodes out of a profile it references.
+
+# --- Default Properties ---
+name = "EstimationCar"
+starting_pose = { translation = [0.0, 0.5, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose     = { translation = [0.0, 0.5, 0.0] }
+
+# --- Hardware Configuration ---
+vehicle  = { from = "entities.vehicles.ackermann_base" }
+sensors  = { from = "runtime.catalog.sensor_suites.ins_pro" }
+
+# --- Software (Autonomy) Configuration ---
+# References the portable agent profile. helios_hw loads this same profile directly.
+autonomy_stack = { from = "runtime.profiles.agent_profiles.estimation_only_car" }

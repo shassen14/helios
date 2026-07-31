@@ -21,6 +21,6 @@ pub mod node;
 pub mod nodes;
 pub mod rate_gate;
 
-pub use autonomy_pipeline::{AutonomyPipeline, PipelineBuilder, MISSION_GOAL_INSTANCE};
+pub use autonomy_pipeline::{AutonomyPipeline, PipelineBuilder};
 pub use build_error::PipelineBuildError;
 pub use node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};

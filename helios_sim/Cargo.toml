@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 # Bevy and its ecosystem
-bevy = { workspace = true }
+bevy = { workspace = true, features = ["serialize"] }
 avian3d = "0.7"
 
 # The crucial dependency on our pure core library
@@ -16,7 +16,7 @@ helios_core = { path = "../helios_core", features = ["bevy"] }
 helios_runtime = { path = "../helios_runtime" }
 nalgebra = { workspace = true, features = ["serde-serialize"] }
 serde_json = "1.0.149"
-serde = { workspace = true }
+serde = { workspace = true, features = ["rc"] }
 figment = { version = "0.10.19", features = ["toml"] }
 rand = { workspace = true }
 rand_chacha = "0.3.1"                                           # match bevy
@@ -32,3 +32,7 @@ dhat-heap = ["dhat"]
 
 [dev-dependencies]
 approx = { workspace = true }
+
+[[bin]]
+name = "helios_play"
+path = "src/bin/helios_play.rs"

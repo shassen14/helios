@@ -49,6 +49,7 @@ pub struct WorldObjectPrefab {
 /// Collider shape descriptor for a world object.
 /// Only the fields relevant to the chosen `shape` need to be present.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct WorldObjectCollider {
     /// Shape type: `"box"`, `"sphere"`, `"capsule"`, or `"cylinder"`.
     pub shape: String,

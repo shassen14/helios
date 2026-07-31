@@ -22,7 +22,7 @@ pub use crate::core::components::{
     BoundingBox3D, ControlOutputComponent, GroundTruthState, SemanticLabel, TerrainMedium,
     WorldObjectType,
 };
-pub use crate::core::host::{HeliosHost, Presentation};
+pub use crate::core::host::{HeliosHost, Presentation, TimePolicy};
 pub use crate::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::core::transforms::{TfTree, TrackedFrame};
 
@@ -32,4 +32,5 @@ pub use crate::agents::vehicles::ackermann::{
 };
 
 pub use crate::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent};
-pub use crate::brain_bridge::SensorPublishChannel;
+pub use crate::brain_bridge::HostInputPublisher;
+pub use crate::brain_bridge::{SensorPublishChannel, SensorPublisher};

@@ -18,7 +18,9 @@
 pub mod components;
 pub mod control_output;
 pub mod goal_input;
+pub mod host_input_publisher;
 pub mod odom_output;
+pub mod sensor_publisher;
 pub mod spawn;
 pub mod tick;
 
@@ -27,7 +29,9 @@ pub use components::{
 };
 pub use control_output::publish_pipeline_control;
 pub use goal_input::{dispatch_configured_goals, forward_goal_events};
+pub use host_input_publisher::HostInputPublisher;
 pub use odom_output::update_odom_frames;
+pub use sensor_publisher::SensorPublisher;
 pub use spawn::{spawn_autonomy_pipeline, spawn_control_output, spawn_odom_frames};
 pub use tick::run_pipeline_tick;
 

@@ -77,12 +77,12 @@ fn build_ekf(
     }
 
     // --- 2. Build dynamics via registry (gravity sourced from dynamics config) ---
-    let gravity = ekf_config.dynamics.gravity();
+    let gravity_enu = ekf_config.dynamics.gravity_enu();
     let dynamics = registry.build_dynamics(
         dynamics_key,
         DynamicsBuildContext {
             agent_handle,
-            gravity,
+            gravity_enu,
         },
     )?;
 
@@ -136,7 +136,10 @@ fn build_ekf(
     // --- 4. Select input builder based on dynamics kind ---
     let input_builder: Box<dyn crate::pipeline::builders::estimator::EstimatorInputBuilder> =
         match &ekf_config.dynamics {
-            EkfDynamicsConfig::IntegratedImu(_) => Box::new(IntegratedImuInputBuilder::new()),
+            EkfDynamicsConfig::IntegratedImu(imu_cfg) => Box::new(IntegratedImuInputBuilder::new(
+                imu_cfg.accel_channel.as_str(),
+                imu_cfg.gyro_channel.as_str(),
+            )),
             EkfDynamicsConfig::AckermannOdometry(_) | EkfDynamicsConfig::Quadcopter(_) => {
                 return Err(format!(
                     "No input builder implemented for dynamics kind '{dynamics_key}'"
