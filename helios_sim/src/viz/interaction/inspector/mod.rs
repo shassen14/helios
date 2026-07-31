@@ -8,7 +8,10 @@ use crate::{
     prelude::AppState,
     viz::{
         interaction::inspector::{
-            gather::{begin_inspection, gather_estimator, gather_identity, gather_pose},
+            gather::{
+                begin_inspection, gather_controller, gather_estimator, gather_identity,
+                gather_pose,
+            },
             model::InspectorModel,
             render::render_inspection,
         },
@@ -29,6 +32,7 @@ impl Plugin for InspectorPlugin {
                 gather_identity,
                 gather_pose,
                 gather_estimator,
+                gather_controller,
                 render_inspection,
             )
                 .chain()

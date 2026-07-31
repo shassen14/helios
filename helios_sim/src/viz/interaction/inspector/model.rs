@@ -112,12 +112,15 @@ pub struct FramedVec3 {
     pub frame: Frame,
 }
 
-/// Reference frame of a [`FramedVec3`]. Only ENU exists today; NED/ECEF join when a
-/// second consumer needs them. Conversion into ENU happens in gather, never here.
+/// Reference frame of a [`FramedVec3`], carried so a consumer never guesses world vs
+/// body. `Enu` is the world frame (pose, state estimate); `Flu` is the body frame
+/// (control outputs). NED/ECEF join when a consumer needs them. Any conversion into
+/// these frames happens in gather, never here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Frame {
     Enu,
+    Flu,
 }
 
 #[cfg(test)]
