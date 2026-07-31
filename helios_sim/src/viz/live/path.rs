@@ -14,8 +14,7 @@
 //! [`RobotState`]: helios_core::frames::RobotState
 
 use crate::{
-    core::transforms::EnuVector,
-    prelude::AutonomyPipelineComponent,
+    core::transforms::EnuVector, prelude::AutonomyPipelineComponent,
     viz::live::discovery::declared_outputs,
 };
 

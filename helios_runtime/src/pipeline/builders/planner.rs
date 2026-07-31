@@ -103,8 +103,10 @@ mod tests {
     /// rewires the planner to match the host that writes it.
     #[test]
     fn custom_goal_channel_reaches_optional_inputs() {
-        let builder =
-            DefaultSearchPlannerInputBuilder::new(InternalChannel::named::<MapData>("occupancy"), "waypoints");
+        let builder = DefaultSearchPlannerInputBuilder::new(
+            InternalChannel::named::<MapData>("occupancy"),
+            "waypoints",
+        );
 
         let goal: ChannelKey = InternalChannel::named::<PlannerGoal>("waypoints").into();
 
@@ -118,8 +120,10 @@ mod tests {
     /// required inputs and turn an absent goal into an `UnsatisfiedInput`.
     #[test]
     fn goal_is_the_only_optional_input() {
-        let builder =
-            DefaultSearchPlannerInputBuilder::new(InternalChannel::named::<MapData>("occupancy"), "mission");
+        let builder = DefaultSearchPlannerInputBuilder::new(
+            InternalChannel::named::<MapData>("occupancy"),
+            "mission",
+        );
 
         assert_eq!(builder.optional_channels().len(), 1);
         assert_eq!(&**builder.optional_channels()[0].instance(), "mission");

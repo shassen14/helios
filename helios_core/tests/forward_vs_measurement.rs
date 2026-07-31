@@ -116,8 +116,10 @@ fn gyroscope_forward_matches_filter_prediction() {
         let q_body_to_world = rand_quat(&mut rng);
         let omega_body = rand_vec3(&mut rng, 10.0);
         // The extrinsic's rotation maps sensor axes -> body axes.
-        let extrinsic =
-            Isometry3::from_parts(Translation3::from(rand_vec3(&mut rng, 2.0)), rand_quat(&mut rng));
+        let extrinsic = Isometry3::from_parts(
+            Translation3::from(rand_vec3(&mut rng, 2.0)),
+            rand_quat(&mut rng),
+        );
 
         let state = make_state(
             Vector3::zeros(),
@@ -200,8 +202,10 @@ fn magnetometer_forward_matches_filter_prediction() {
         let magnitude = rng.gen_range(20.0..70.0);
         let field_world = reference_field_enu(declination, inclination, magnitude);
         // The extrinsic's rotation maps sensor axes -> body axes.
-        let extrinsic =
-            Isometry3::from_parts(Translation3::from(rand_vec3(&mut rng, 2.0)), rand_quat(&mut rng));
+        let extrinsic = Isometry3::from_parts(
+            Translation3::from(rand_vec3(&mut rng, 2.0)),
+            rand_quat(&mut rng),
+        );
 
         let forward = MagnetometerModel::from_reference_field(
             declination,
@@ -294,9 +298,21 @@ fn make_state(
     state.set_variable(&StateVariable::Qy(body.clone(), world.clone()), q.j);
     state.set_variable(&StateVariable::Qz(body.clone(), world.clone()), q.k);
     state.set_variable(&StateVariable::Qw(body.clone(), world.clone()), q.w);
-    set_vec3(&mut state, StateVariable::Wx(body.clone()), angular_vel_body);
-    set_vec3(&mut state, StateVariable::Ax(body.clone()), linear_accel_body);
-    set_vec3(&mut state, StateVariable::Alphax(body.clone()), angular_accel_body);
+    set_vec3(
+        &mut state,
+        StateVariable::Wx(body.clone()),
+        angular_vel_body,
+    );
+    set_vec3(
+        &mut state,
+        StateVariable::Ax(body.clone()),
+        linear_accel_body,
+    );
+    set_vec3(
+        &mut state,
+        StateVariable::Alphax(body.clone()),
+        angular_accel_body,
+    );
 
     state
 }

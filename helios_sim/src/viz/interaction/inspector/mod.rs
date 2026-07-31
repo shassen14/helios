@@ -9,8 +9,7 @@ use crate::{
     viz::{
         interaction::inspector::{
             gather::{
-                begin_inspection, gather_controller, gather_estimator, gather_identity,
-                gather_pose,
+                begin_inspection, gather_controller, gather_estimator, gather_identity, gather_pose,
             },
             model::InspectorModel,
             render::render_inspection,
