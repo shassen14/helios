@@ -8,6 +8,7 @@ use bevy::prelude::*;
 
 pub mod actions;
 pub mod camera;
+pub mod inspector;
 pub mod keybindings;
 pub mod registration;
 pub mod sampling;
