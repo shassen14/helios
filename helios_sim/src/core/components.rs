@@ -1,18 +1,20 @@
 use bevy::prelude::*;
+use helios_core::control::commands::BodyTwist;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::{
     layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable,
 };
-use helios_core::prelude::{ControlOutput, PlannerGoal};
+use helios_core::prelude::PlannerGoal;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
 
 // --- Controller Output Component ---
 
-/// The output of the last `Controller::compute()` call.
+/// The output of the last `Controller::compute()` call — the body-frame twist
+/// command the vehicle adapter consumes.
 /// Written by `SimulationSet::BrainOutput`; read by `SimulationSet::Actuation`.
 #[derive(Component)]
-pub struct ControlOutputComponent(pub ControlOutput);
+pub struct ControlOutputComponent(pub BodyTwist);
 
 /// Selects which state estimate the controller reads. Toggled by the HUD's T key.
 #[derive(Component, Clone, Debug, PartialEq, Default)]

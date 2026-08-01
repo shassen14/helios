@@ -35,7 +35,7 @@ fn full_caps() -> CapabilitySet {
         dynamics: set(&["IntegratedImu", "AckermannOdometry"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
         mappers: set(&["OccupancyGrid2D"]),
-        controllers: set(&["Pid", "Lqr", "FeedforwardPid"]),
+        controllers: set(&["DirectVelocity"]),
         planners: set(&["AStar"]),
     }
 }
@@ -60,12 +60,8 @@ fn ekf_config() -> EstimatorConfig {
     })
 }
 
-fn pid() -> ControllerConfig {
-    ControllerConfig::Pid {
-        rate: 10.0,
-        kp: 1.0,
-        ki: 0.0,
-        kd: 0.0,
+fn direct_velocity() -> ControllerConfig {
+    ControllerConfig::DirectVelocity {
         state_source: Default::default(),
     }
 }
@@ -125,7 +121,7 @@ fn validation_valid_full_stack_passes() {
     search_planners.insert("local_planner".to_string(), astar());
 
     let mut controllers = HashMap::new();
-    controllers.insert("main_ctrl".to_string(), pid());
+    controllers.insert("main_ctrl".to_string(), direct_velocity());
 
     let mut map_layers = HashMap::new();
     map_layers.insert("local".to_string(), occupancy_grid());
@@ -215,7 +211,7 @@ fn validation_unknown_mapper_produces_error() {
 #[test]
 fn validation_unknown_controller_produces_error() {
     let mut controllers = HashMap::new();
-    controllers.insert("ctrl".to_string(), pid());
+    controllers.insert("ctrl".to_string(), direct_velocity());
     let stack = AutonomyStack {
         controllers,
         ..Default::default()
@@ -223,9 +219,9 @@ fn validation_unknown_controller_produces_error() {
     let errors = validate_autonomy_config(&stack, &empty_caps());
     assert!(
         errors.iter().any(
-            |e| matches!(e, ConfigValidationError::UnknownController { kind } if kind == "Pid")
+            |e| matches!(e, ConfigValidationError::UnknownController { kind } if kind == "DirectVelocity")
         ),
-        "Expected UnknownController for Pid"
+        "Expected UnknownController for DirectVelocity"
     );
 }
 
@@ -247,53 +243,10 @@ fn validation_unknown_planner_produces_error() {
 }
 
 #[test]
-fn validation_feedforward_pid_unknown_dynamics_key_produces_error() {
-    let mut controllers = HashMap::new();
-    controllers.insert(
-        "ffpid".to_string(),
-        ControllerConfig::FeedforwardPid {
-            dynamics_key: "MyCustomDynamics".to_string(),
-            kp: vec![1.0],
-            ki: vec![0.0],
-            kd: vec![0.0],
-            u_min: vec![],
-            u_max: vec![],
-            controlled_indices: vec![],
-            state_source: Default::default(),
-        },
-    );
-    let stack = AutonomyStack {
-        controllers,
-        ..Default::default()
-    };
-    let mut caps = full_caps();
-    caps.dynamics.clear();
-    let errors = validate_autonomy_config(&stack, &caps);
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::UnknownControllerDynamics { dynamics_key, .. }
-                if dynamics_key == "MyCustomDynamics"
-        )),
-        "Expected UnknownControllerDynamics for MyCustomDynamics"
-    );
-}
-
-#[test]
 fn validation_collects_all_errors_two_bad_controllers() {
     let mut controllers = HashMap::new();
-    controllers.insert("ctrl1".to_string(), pid());
-    controllers.insert(
-        "ctrl2".to_string(),
-        ControllerConfig::Lqr {
-            gain_matrix: vec![],
-            state_dim: 0,
-            control_dim: 0,
-            u_min: vec![],
-            u_max: vec![],
-            state_source: Default::default(),
-        },
-    );
+    controllers.insert("ctrl1".to_string(), direct_velocity());
+    controllers.insert("ctrl2".to_string(), direct_velocity());
     let stack = AutonomyStack {
         controllers,
         ..Default::default()

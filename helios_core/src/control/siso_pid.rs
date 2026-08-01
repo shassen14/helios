@@ -1,5 +1,3 @@
-// helios_core/src/control/siso_pid.rs
-//
 // Generic single-input single-output PID primitive.
 // No trait — composable by value into higher-level controllers.
 

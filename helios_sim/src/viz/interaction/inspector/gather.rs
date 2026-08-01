@@ -16,7 +16,7 @@ use crate::{
 };
 
 use helios_core::{
-    control::ControlOutput,
+    control::commands::BodyTwist,
     data::MonotonicTime,
     frames::{FrameAwareState, FrameId, StateVariable},
 };
@@ -162,37 +162,19 @@ pub fn gather_estimator(
     model.sections.push(estimator_section(&stamped.value));
 }
 
-/// Packs the controller's latest command into a Section. Pure. [`ControlOutput`] is an
-/// enum of body-FLU quantities, so unlike the ENU estimate these vectors are tagged
-/// [`Frame::Flu`], and a leading `mode` row names the active variant so a velocity
-/// command is never read as a wrench. `Raw`/`RawActuators` carry a model- or
-/// vehicle-specific vector of unknown dimension, so each element is shown as an indexed,
-/// unitless row rather than being framed or dimensioned here.
-pub fn control_section(control: &ControlOutput) -> Section {
-    let (mode, mut rows) = match control {
-        ControlOutput::BodyVelocity { linear, angular } => (
-            "body velocity",
-            vec![flu_row("linear", linear), flu_row("angular", angular)],
-        ),
-        ControlOutput::BodyAcceleration { linear, angular } => (
-            "body acceleration",
-            vec![flu_row("linear", linear), flu_row("angular", angular)],
-        ),
-        ControlOutput::Wrench { force, torque } => (
-            "wrench",
-            vec![flu_row("force", force), flu_row("torque", torque)],
-        ),
-        ControlOutput::Raw(u) => ("raw", indexed_rows(u.as_slice())),
-        ControlOutput::RawActuators(u) => ("actuators", indexed_rows(u)),
-    };
-
-    rows.insert(
-        0,
+/// Packs the controller's latest command into a Section. Pure. A [`BodyTwist`] is a
+/// pair of body-FLU vectors, so — unlike the ENU estimate — these rows are tagged
+/// [`Frame::Flu`]. A leading `mode` row names the command type, keeping the panel
+/// self-describing as more command types (wrench, rate/thrust) join the read surface.
+pub fn control_section(control: &BodyTwist) -> Section {
+    let rows = vec![
         Row {
             label: "mode".into(),
-            value: Value::Label(mode.into()),
+            value: Value::Label("body twist".into()),
         },
-    );
+        flu_row("linear", control.linear().raw()),
+        flu_row("angular", control.angular().raw()),
+    ];
 
     Section {
         id: SubsystemPath(Arc::from("controller")),
@@ -201,8 +183,8 @@ pub fn control_section(control: &ControlOutput) -> Section {
     }
 }
 
-/// A body-frame 3-vector row, tagged [`Frame::Flu`] — the shape every structured
-/// [`ControlOutput`] variant (velocity, acceleration, wrench) reduces to.
+/// A body-frame 3-vector row, tagged [`Frame::Flu`] — the shape each half of a
+/// [`BodyTwist`] (linear, angular) reduces to.
 fn flu_row(label: &'static str, v: &Vector3<f64>) -> Row {
     Row {
         label: label.into(),
@@ -211,23 +193,6 @@ fn flu_row(label: &'static str, v: &Vector3<f64>) -> Row {
             frame: Frame::Flu,
         }),
     }
-}
-
-/// One unitless row per element of a variable-length control vector, labeled by index.
-/// Used for `Raw`/`RawActuators`, whose length and meaning are model- or vehicle-specific
-/// and so cannot be framed or dimensioned at this layer.
-fn indexed_rows(values: &[f64]) -> Vec<Row> {
-    values
-        .iter()
-        .enumerate()
-        .map(|(i, &value)| Row {
-            label: format!("u{i}").into(),
-            value: Value::Scalar {
-                value,
-                kind: Dimension::Ratio,
-            },
-        })
-        .collect()
 }
 
 /// Appends the controller section for the selected subject, when it has produced a
@@ -253,6 +218,7 @@ pub fn gather_controller(
 mod tests {
     use super::*;
 
+    use helios_core::frames::conventions::FluVector;
     use helios_runtime::{
         pipeline::node::HOST_PRODUCER_ID,
         port::{InternalChannel, PortBus},
@@ -565,7 +531,7 @@ mod tests {
         assert!(model.sections.is_empty());
     }
 
-    /// A stand-in controller node: it declares the canonical `ControlOutput` output so
+    /// A stand-in controller node: it declares the canonical `BodyTwist` output so
     /// the bus allocates that slot but computes nothing. A test writes the command onto
     /// the bus directly, standing in for a real controller having produced one — exactly
     /// what `gather_controller` reads back through `read_control`.
@@ -579,7 +545,7 @@ mod tests {
                 descriptor: PortDescriptor {
                     required_inputs: Vec::new(),
                     optional_inputs: Vec::new(),
-                    outputs: vec![InternalChannel::of::<ControlOutput>().into()],
+                    outputs: vec![InternalChannel::of::<BodyTwist>().into()],
                     rate: None,
                 },
             }
@@ -601,7 +567,7 @@ mod tests {
     /// An `AutonomyPipelineComponent` whose pipeline carries the controller slot,
     /// optionally with a command already written to it (`Some` = a produced command;
     /// `None` = the no-command case a cold-start or controller-less stack presents).
-    fn pipeline_with_control(control: Option<ControlOutput>) -> AutonomyPipelineComponent {
+    fn pipeline_with_control(control: Option<BodyTwist>) -> AutonomyPipelineComponent {
         let pipeline = PipelineBuilder::new()
             .add_node(Box::new(FakeControllerNode::new()))
             .build()
@@ -611,7 +577,7 @@ mod tests {
             pipeline
                 .bus()
                 .write(
-                    InternalChannel::of::<ControlOutput>().into(),
+                    InternalChannel::of::<BodyTwist>().into(),
                     Stamped {
                         value: control,
                         timestamp: MonotonicTime(0.0),
@@ -625,16 +591,13 @@ mod tests {
         AutonomyPipelineComponent(pipeline)
     }
 
-    /// Tier 1: a structured command packs a `mode` label plus its two body-frame
+    /// Tier 1: a body twist packs a `mode` label plus its linear and angular
     /// vectors, each tagged `Frame::Flu` — the control frame, distinct from the ENU
-    /// estimate. The `mode` row is what keeps a velocity command from reading as a
-    /// wrench once several variants share the panel.
+    /// estimate. The `mode` row keeps the command self-describing once other command
+    /// types (wrench, rate/thrust) share the panel.
     #[test]
-    fn control_section_packs_body_velocity() {
-        let control = ControlOutput::BodyVelocity {
-            linear: Vector3::new(1.5, 0.0, 0.0),
-            angular: Vector3::new(0.0, 0.0, 0.3),
-        };
+    fn control_section_packs_body_twist() {
+        let control = BodyTwist::new(FluVector::new(1.5, 0.0, 0.0), FluVector::new(0.0, 0.0, 0.3));
 
         let section = control_section(&control);
 
@@ -644,7 +607,7 @@ mod tests {
             vec![
                 Row {
                     label: "mode".into(),
-                    value: Value::Label("body velocity".into()),
+                    value: Value::Label("body twist".into()),
                 },
                 Row {
                     label: "linear".into(),
@@ -664,39 +627,6 @@ mod tests {
         );
     }
 
-    /// Tier 1: a variable-length actuator vector has no frame or dimension to claim, so
-    /// it lowers to one indexed, unitless row per element under the `mode` label.
-    #[test]
-    fn control_section_indexes_raw_actuators() {
-        let control = ControlOutput::RawActuators(vec![0.8, -0.15]);
-
-        let section = control_section(&control);
-
-        assert_eq!(
-            section.rows,
-            vec![
-                Row {
-                    label: "mode".into(),
-                    value: Value::Label("actuators".into()),
-                },
-                Row {
-                    label: "u0".into(),
-                    value: Value::Scalar {
-                        value: 0.8,
-                        kind: Dimension::Ratio,
-                    },
-                },
-                Row {
-                    label: "u1".into(),
-                    value: Value::Scalar {
-                        value: -0.15,
-                        kind: Dimension::Ratio,
-                    },
-                },
-            ],
-        );
-    }
-
     /// Tier 2, "with command" direction: a selected subject whose controller has produced
     /// a command gets exactly the controller section — the intra-pipeline predicate
     /// resolving positive at runtime.
@@ -706,10 +636,10 @@ mod tests {
         app.world_mut().resource_mut::<CurrentInspection>().0 = Some(sample_shell());
         app.world_mut().spawn((
             Selected,
-            pipeline_with_control(Some(ControlOutput::BodyVelocity {
-                linear: Vector3::new(1.0, 0.0, 0.0),
-                angular: Vector3::zeros(),
-            })),
+            pipeline_with_control(Some(BodyTwist::new(
+                FluVector::new(1.0, 0.0, 0.0),
+                FluVector::zeros(),
+            ))),
         ));
         app.add_systems(Update, gather_controller);
 

@@ -48,9 +48,9 @@ pub struct BodyCapabilities {
     /// ground-truth, and `health/*` driver/sensor status. The assembler reads
     /// this to seed the pipeline's external channels.
     pub publishes: Vec<PublishedChannel>,
-    /// Whether the body consumes `ControlOutput` from the bus. This is the one
-    /// thing taken *off* the bus (a sink, not a published channel), so it can't
-    /// live in `publishes`.
+    /// Whether the body consumes the control command from the bus. This is the
+    /// one thing taken *off* the bus (a sink, not a published channel), so it
+    /// can't live in `publishes`.
     pub consumes_control: bool,
 }
 #[cfg(test)]

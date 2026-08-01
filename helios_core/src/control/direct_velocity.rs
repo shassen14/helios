@@ -1,12 +1,10 @@
-// helios_core/src/control/direct_velocity.rs
-//
 // DirectVelocityController: passes Vx and Wz from the reference TrajectoryPoint
-// directly to BodyVelocity output. Intended as the controller stage when a
-// PathFollower (e.g., PurePursuit) has already computed velocity commands.
-
-use nalgebra::Vector3;
-
-use super::{ControlInputs, ControlOutput, Controller};
+// directly through as a BodyTwist. Intended as the controller stage when a
+// PathFollower (e.g., PurePursuit) has already computed velocity commands, so the
+// controller only re-frames them into the command bus.
+use super::commands::BodyTwist;
+use super::{ControlInputs, Controller};
+use crate::frames::conventions::FluVector;
 use crate::frames::{FrameId, StateVariable};
 
 pub struct DirectVelocityController;
@@ -24,11 +22,11 @@ impl Default for DirectVelocityController {
 }
 
 impl Controller for DirectVelocityController {
-    fn compute(&mut self, _dt: f64, inputs: &ControlInputs) -> ControlOutput {
-        let zero = ControlOutput::BodyVelocity {
-            linear: Vector3::zeros(),
-            angular: Vector3::zeros(),
-        };
+    type Inputs = ControlInputs;
+    type Out = BodyTwist;
+
+    fn compute(&mut self, _dt: f64, inputs: &ControlInputs) -> BodyTwist {
+        let zero = BodyTwist::zero();
 
         let Some(reference) = &inputs.reference else {
             return zero;
@@ -45,10 +43,7 @@ impl Controller for DirectVelocityController {
             }
         }
 
-        ControlOutput::BodyVelocity {
-            linear: Vector3::new(vx, 0.0, 0.0),
-            angular: Vector3::new(0.0, 0.0, wz),
-        }
+        BodyTwist::new(FluVector::new(vx, 0.0, 0.0), FluVector::new(0.0, 0.0, wz))
     }
 
     fn reset(&mut self) {}

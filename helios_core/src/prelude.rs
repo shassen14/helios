@@ -16,7 +16,7 @@ pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
 
 // --- Control Abstractions ---
 pub use crate::control::dynamics::ControlDynamics;
-pub use crate::control::{ControlInputs, ControlOutput, Controller};
+pub use crate::control::{ControlInputs, Controller};
 
 // --- Estimation ---
 pub use crate::estimation::dynamics::EstimationDynamics;

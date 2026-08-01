@@ -1,7 +1,12 @@
 //! [`ControllerNode`] — pipeline adapter for any [`Controller`] implementation.
 //!
-//! One node type for the whole controller family today (PID, LQR, FF+PID,
-//! DirectVelocity).
+//! One node type for the whole controller family. The node is **generic over the
+//! controller `C`**: it holds the concrete controller inline (`Mutex<C>`) and
+//! publishes `C::Out`, the controller's concrete command type (e.g. `BodyTwist`).
+//! Type erasure happens one level up — the assembler boxes the monomorphized
+//! `ControllerNode<C>` as `Box<dyn PipelineNode>`. Because `Controller` carries
+//! associated types (`Inputs`, `Out`) it is not object-safe, so there is no
+//! `Box<dyn Controller>`; the DAG's typed channel *is* the command-space contract.
 //!
 //! ## Execution skeleton
 //!
@@ -9,20 +14,22 @@
 //!    On `None` (state missing — cold-start, estimator dropout), publish nothing
 //!    this tick. Downstream actuators fall back to their no-command behaviour.
 //! 2. Run [`Controller::compute`] with the assembled inputs.
-//! 3. Publish a `Stamped<ControlOutput>` on `ChannelKey::of::<ControlOutput>()`.
+//! 3. Publish a `Stamped<C::Out>` on `InternalChannel::of::<C::Out>()`.
 //!
 //! ## Cold-start vs. missing-reference
 //!
 //! `DefaultControlInputBuilder` returns `None` only when `FrameAwareState` is
 //! absent. A `Some(ControlInputs { state, reference: None })` is still passed
-//! to the controller — each implementation decides what to do (DirectVelocity
-//! emits zero velocity; PID-family controllers degrade to pure feedback).
+//! to the controller — each implementation decides what to do (e.g.
+//! `DirectVelocityController` emits a zero twist when no reference is present;
+//! a controller holding feedback state would degrade to pure feedback).
 //! Publishing a safe-zero on full cold-start belongs in a future
 //! `SafetyMonitorNode` downstream of this node, not here.
 
 use std::sync::Mutex;
 
-use helios_core::control::{ControlOutput, Controller};
+use helios_core::control::Controller;
+use helios_core::prelude::ControlInputs;
 
 use crate::pipeline::builders::controller::ControlInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
@@ -34,20 +41,25 @@ use crate::stamped::{Health, Stamped};
 /// Pipeline node wrapping any [`Controller`] implementation.
 ///
 /// Construction is via [`Self::new`]. The port descriptor's required and
-/// optional inputs are taken directly from the input builder; output is
-/// always `ControlOutput @ ""`. `rate` is `None` — controllers fire every
-/// tick (rate-limiting belongs to the actuator side if it's needed at all).
-pub(crate) struct ControllerNode {
+/// optional inputs are taken directly from the input builder; the single output
+/// is `C::Out @ ""` — the controller's concrete command type. `rate` is `None`
+/// — controllers fire every tick (rate-limiting belongs to the actuator side if
+/// it's needed at all).
+pub(crate) struct ControllerNode<C: Controller> {
     name: String,
-    controller: Mutex<Box<dyn Controller>>,
+    controller: Mutex<C>,
     input_builder: Box<dyn ControlInputBuilder>,
     descriptor: PortDescriptor,
 }
 
-impl ControllerNode {
+impl<C> ControllerNode<C>
+where
+    C: Controller<Inputs = ControlInputs>,
+    C::Out: Send + Sync + 'static,
+{
     pub(crate) fn new(
         name: impl Into<String>,
-        controller: Box<dyn Controller>,
+        controller: C,
         input_builder: Box<dyn ControlInputBuilder>,
     ) -> Self {
         let descriptor = AlgorithmNodePortDescriptor::new()
@@ -55,7 +67,7 @@ impl ControllerNode {
                 input_builder.required_channels(),
                 input_builder.optional_channels(),
             )
-            .output_internal(InternalChannel::of::<ControlOutput>())
+            .output_internal(InternalChannel::of::<C::Out>())
             .build();
         Self {
             name: name.into(),
@@ -66,7 +78,11 @@ impl ControllerNode {
     }
 }
 
-impl PipelineNode for ControllerNode {
+impl<C> PipelineNode for ControllerNode<C>
+where
+    C: Controller<Inputs = ControlInputs>,
+    C::Out: Send + Sync + 'static,
+{
     fn name(&self) -> &str {
         &self.name
     }
@@ -94,16 +110,18 @@ impl PipelineNode for ControllerNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(InternalChannel::of::<ControlOutput>().into(), stamped);
+        let _ = bus.write(InternalChannel::of::<C::Out>().into(), stamped);
     }
 }
 
 #[cfg(test)]
 mod tests {
     //! Wiring tests for [`ControllerNode`] — concrete controller behaviour
-    //! (PID gains, LQR Riccati, FF+PID pseudo-inverse) is covered in
-    //! `helios_core/src/control/`. Here we verify that `execute()`:
-    //!   - publishes a `Stamped<ControlOutput>` with correct timestamp / producer
+    //! (control laws, gains) is covered in `helios_core/src/control/`. Here we
+    //! verify that `execute()`:
+    //!   - publishes a `Stamped<C::Out>` with correct timestamp / producer
+    //!   - routes the output onto the `C::Out`-typed channel (proving the node is
+    //!     generic over the command type, not pinned to one output)
     //!   - early-returns (publishes nothing) when the input builder yields `None`
     //!   - forwards `dt` to `Controller::compute`
     //!   - mirrors the builder's required/optional channels in its descriptor
@@ -112,11 +130,12 @@ mod tests {
 
     use crate::port::ChannelKey;
 
-    use helios_core::control::ControlInputs;
+    use helios_core::control::commands::{BodyTwist, BodyWrench};
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+    use helios_core::frames::conventions::FluVector;
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 
-    use nalgebra::{Isometry3, Vector3};
+    use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};
 
     // --- Mock AgentRuntime ---
@@ -135,7 +154,11 @@ mod tests {
         }
     }
 
-    // --- Mock Controller that records dt and returns a scripted output ---
+    // --- Mock Controller that records dt and returns a scripted BodyTwist ---
+    //
+    // `Out = BodyTwist` stands in for the current controller family. A second
+    // controller below uses `Out = BodyWrench` to prove the node is generic over
+    // the command type, not wired to a single output.
 
     #[derive(Default)]
     struct MockControllerCalls {
@@ -160,14 +183,28 @@ mod tests {
     }
 
     impl Controller for ScriptedController {
-        fn compute(&mut self, dt: f64, _inputs: &ControlInputs) -> ControlOutput {
+        type Inputs = ControlInputs;
+        type Out = BodyTwist;
+
+        fn compute(&mut self, dt: f64, _inputs: &ControlInputs) -> BodyTwist {
             let mut c = self.calls.lock().unwrap();
             c.compute_calls += 1;
             c.last_dt = dt;
-            ControlOutput::BodyVelocity {
-                linear: Vector3::new(1.0, 0.0, 0.0),
-                angular: Vector3::zeros(),
-            }
+            BodyTwist::new(FluVector::new(1.0, 0.0, 0.0), FluVector::zeros())
+        }
+        fn reset(&mut self) {}
+    }
+
+    // A controller emitting a different command type, used only to show that the
+    // node monomorphizes over `C::Out` and publishes on the matching channel.
+    struct WrenchController;
+
+    impl Controller for WrenchController {
+        type Inputs = ControlInputs;
+        type Out = BodyWrench;
+
+        fn compute(&mut self, _dt: f64, _inputs: &ControlInputs) -> BodyWrench {
+            BodyWrench::zero()
         }
         fn reset(&mut self) {}
     }
@@ -229,15 +266,15 @@ mod tests {
 
     // --- Helpers ---
 
-    fn out_channel() -> ChannelKey {
-        InternalChannel::of::<ControlOutput>().into()
+    fn twist_channel() -> ChannelKey {
+        InternalChannel::of::<BodyTwist>().into()
     }
 
-    fn make_bus() -> PortBus {
+    fn make_bus(output: ChannelKey) -> PortBus {
         let descriptor = PortDescriptor {
             required_inputs: vec![],
             optional_inputs: vec![],
-            outputs: vec![out_channel()],
+            outputs: vec![output],
             rate: None,
         };
         PortBus::new(&[descriptor])
@@ -254,14 +291,14 @@ mod tests {
     // --- Tests ---
 
     #[test]
-    fn descriptor_outputs_control_output_channel() {
+    fn descriptor_outputs_the_controllers_command_channel() {
         let (controller, _calls) = ScriptedController::new();
         let node = ControllerNode::new(
             "direct_velocity",
-            Box::new(controller),
+            controller,
             Box::new(AlwaysReadyBuilder::new()),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![out_channel()]);
+        assert_eq!(node.port_descriptor().outputs, vec![twist_channel()]);
         assert!(node.port_descriptor().rate.is_none());
     }
 
@@ -272,27 +309,46 @@ mod tests {
         let expected_optional = builder.optional_channels().to_vec();
 
         let (controller, _calls) = ScriptedController::new();
-        let node = ControllerNode::new("pid", Box::new(controller), Box::new(builder));
+        let node = ControllerNode::new("direct_velocity", controller, Box::new(builder));
         assert_eq!(node.port_descriptor().required_inputs, expected_required);
         assert_eq!(node.port_descriptor().optional_inputs, expected_optional);
     }
 
     #[test]
-    fn execute_publishes_control_output_with_correct_stamp() {
+    fn execute_publishes_command_with_correct_stamp_and_value() {
         let (controller, _calls) = ScriptedController::new();
         let node = ControllerNode::new(
             "direct_velocity",
-            Box::new(controller),
+            controller,
             Box::new(AlwaysReadyBuilder::new()),
         );
-        let bus = make_bus();
+        let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
 
         let published = bus
-            .read::<ControlOutput>(out_channel())
-            .expect("node must publish ControlOutput when inputs are ready");
+            .read::<BodyTwist>(twist_channel())
+            .expect("node must publish its command when inputs are ready");
         assert!((published.timestamp.0 - 2.5).abs() < 1e-9);
         assert_eq!(published.producer, 11);
+        assert_eq!(published.value.linear(), FluVector::new(1.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn node_is_generic_over_output_type() {
+        // The same node type, monomorphized over a controller whose `Out` is
+        // `BodyWrench`, publishes on the `BodyWrench` channel — the DAG channel
+        // type follows `C::Out`, not a fixed command enum.
+        let node = ControllerNode::new(
+            "wrench",
+            WrenchController,
+            Box::new(AlwaysReadyBuilder::new()),
+        );
+        let wrench_channel: ChannelKey = InternalChannel::of::<BodyWrench>().into();
+        assert_eq!(node.port_descriptor().outputs, vec![wrench_channel.clone()]);
+
+        let bus = make_bus(wrench_channel.clone());
+        node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
+        assert!(bus.read::<BodyWrench>(wrench_channel).is_some());
     }
 
     #[test]
@@ -301,16 +357,16 @@ mod tests {
         // and the controller is never called.
         let (controller, calls) = ScriptedController::new();
         let node = ControllerNode::new(
-            "pid",
-            Box::new(controller),
+            "direct_velocity",
+            controller,
             Box::new(NeverReadyBuilder {
                 required: vec![],
                 optional: vec![],
             }),
         );
-        let bus = make_bus();
+        let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<ControlOutput>(out_channel()).is_none());
+        assert!(bus.read::<BodyTwist>(twist_channel()).is_none());
         assert_eq!(calls.lock().unwrap().compute_calls, 0);
     }
 
@@ -318,11 +374,11 @@ mod tests {
     fn execute_forwards_dt_to_controller() {
         let (controller, calls) = ScriptedController::new();
         let node = ControllerNode::new(
-            "pid",
-            Box::new(controller),
+            "direct_velocity",
+            controller,
             Box::new(AlwaysReadyBuilder::new()),
         );
-        let bus = make_bus();
+        let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(0.0, 0.02));
         node.execute(&bus, &MockRuntime, tick_at(0.02, 0.04));
 

@@ -1,19 +1,18 @@
 //! Controller abstraction layer. All types are framework-agnostic.
 //!
-//! Defines the [`Controller`] trait, [`ControlOutput`] enum, and [`TrajectoryPoint`].
-//! [`ControlDynamics`] is re-exported from `models::controls` for caller convenience.
-//! Bevy/ECS wrappers and actuator dispatch live in `helios_sim`.
+//! Defines the [`Controller`] trait and its inputs. A controller's output is a
+//! concrete typed command from [`commands`] (e.g. [`BodyTwist`](commands::BodyTwist),
+//! [`BodyWrench`](commands::BodyWrench)) chosen via the `Out` associated type —
+//! there is no output enum. [`ControlDynamics`] is re-exported from
+//! `models::controls` for caller convenience. Bevy/ECS wrappers and actuator
+//! dispatch live in `helios_sim`.
 
 pub mod commands;
 pub mod direct_velocity;
 pub mod dynamics;
-pub mod lqr;
-pub mod pid;
 pub mod siso_pid;
 
 pub use crate::control::dynamics::ControlDynamics;
-
-use nalgebra::{DVector, Vector3};
 
 use crate::{data::messages::TrajectoryPoint, frames::FrameAwareState};
 
@@ -26,44 +25,6 @@ pub struct ControlInputs {
     pub reference: Option<TrajectoryPoint>,
 }
 
-/// The typed output of any `Controller`. All vectors are in the **body FLU frame**, SI units.
-///
-/// Actuator systems in `helios_sim` are responsible for converting these to
-/// Bevy-frame forces via `transforms.rs`.
-#[derive(Clone, Debug)]
-pub enum ControlOutput {
-    /// Desired body-frame velocity (m/s forward/lateral/vertical, rad/s roll/pitch/yaw).
-    BodyVelocity {
-        linear: Vector3<f64>,
-        angular: Vector3<f64>,
-    },
-
-    /// Desired body-frame acceleration (m/s², rad/s²).
-    /// Actuator multiplies by mass/inertia to produce forces/torques.
-    BodyAcceleration {
-        linear: Vector3<f64>,
-        angular: Vector3<f64>,
-    },
-
-    /// Direct force (N) + torque (N·m) in body FLU frame.
-    /// For computed-torque / wrench control.
-    Wrench {
-        force: Vector3<f64>,
-        torque: Vector3<f64>,
-    },
-
-    /// Raw control vector in the dynamics model's control space.
-    /// Escape hatch for model-based controllers (LQR, MPC, feedforward).
-    /// Adapter in the helios_sim vehicle plugin converts this to forces.
-    Raw(DVector<f64>),
-
-    /// Explicit actuator signals for teleop / keyboard override.
-    /// Convention per vehicle type:
-    ///   Ackermann:  [throttle -1..1, steering_angle_rad]
-    ///   Quadcopter: [r0, r1, r2, r3] rotor speeds (rad/s)
-    RawActuators(Vec<f64>),
-}
-
 // =========================================================================
 // == Controller Trait ==
 // =========================================================================
@@ -74,8 +35,10 @@ pub enum ControlOutput {
 /// The trait is intentionally minimal so that any policy (learned or analytical)
 /// can implement it by storing whatever internal state it needs.
 pub trait Controller: Send + Sync {
+    type Inputs;
+    type Out;
     /// Compute a control output for the current state and time step.
-    fn compute(&mut self, dt: f64, inputs: &ControlInputs) -> ControlOutput;
+    fn compute(&mut self, dt: f64, inputs: &Self::Inputs) -> Self::Out;
 
     /// Reset all internal integrators, accumulators, and filters to zero.
     fn reset(&mut self);

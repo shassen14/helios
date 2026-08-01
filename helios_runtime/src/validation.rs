@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::config::{AutonomyStack, ControllerConfig, EstimatorConfig};
+use crate::config::{AutonomyStack, EstimatorConfig};
 
 /// Snapshot of algorithm keys registered in each family.
 ///
@@ -175,14 +175,6 @@ pub fn validate_autonomy_config(
             errors.push(ConfigValidationError::UnknownController {
                 kind: kind.to_string(),
             });
-        }
-        if let ControllerConfig::FeedforwardPid { dynamics_key, .. } = ctrl_cfg {
-            if !capabilities.dynamics.contains(dynamics_key.as_str()) {
-                errors.push(ConfigValidationError::UnknownControllerDynamics {
-                    controller_kind: kind.to_string(),
-                    dynamics_key: dynamics_key.clone(),
-                });
-            }
         }
     }
 

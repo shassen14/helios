@@ -180,7 +180,7 @@ pub(super) fn drive_ackermann_cars(
             continue;
         };
 
-        // Layer 2: adapter translates ControlOutput → AckermannCommand.
+        // Layer 2: adapter translates the BodyTwist command → AckermannCommand.
         let cmd = adapter_comp.0.adapt(
             &ctrl_output.0,
             params,
