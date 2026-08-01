@@ -3,6 +3,7 @@
 use crate::frames::conventions::Frame;
 
 use nalgebra::Vector3;
+use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
@@ -24,8 +25,30 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 /// Use [`raw`](Self::raw) / [`into_inner`](Self::into_inner) to drop the frame
 /// tag when handing components to code that operates on untyped vectors (frame
 /// conversions, TF math).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FrameVector3<F: Frame>(Vector3<f64>, PhantomData<F>);
+//
+// `#[serde(skip)]` on the phantom keeps `F` out of the serialized fields. serde's
+// derive adds a `Serialize`/`Deserialize` bound for every type parameter that
+// appears in a serialized field; skipping the phantom means `F` appears in none,
+// so no bound on `F` is inferred. The wire form is just the inner vector, and the
+// phantom is rebuilt from `Default` on read.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct FrameVector3<F: Frame>(Vector3<f64>, #[serde(skip)] PhantomData<F>);
+
+// `Clone`/`Copy` are hand-written rather than derived. `#[derive(Clone)]` on a
+// type holding `PhantomData<F>` generates `impl<F: Clone> Clone` — it constrains
+// *every* type parameter, including `F`, even though `F` lives only inside a
+// `PhantomData` and needs no bound. That over-constrained impl is then invisible
+// to generic code that knows only `F: Frame` (such as `Wrench<F>`), because
+// `F: Frame` does not imply `F: Clone`. Writing the impls by hand states the true
+// bound (`F: Frame`), which every marker satisfies. The body is `*self`: both
+// real fields (`Vector3<f64>` and `PhantomData<F>`) are already `Copy`.
+impl<F: Frame> Clone for FrameVector3<F> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<F: Frame> Copy for FrameVector3<F> {}
 
 impl<F: Frame> FrameVector3<F> {
     /// Constructs a vector from its components, tagged with frame `F`.
@@ -127,17 +150,26 @@ mod tests {
 
     #[test]
     fn neg_flips_every_component() {
-        assert_eq!(-EnuVector::new(1.0, -2.0, 3.0), EnuVector::new(-1.0, 2.0, -3.0));
+        assert_eq!(
+            -EnuVector::new(1.0, -2.0, 3.0),
+            EnuVector::new(-1.0, 2.0, -3.0)
+        );
     }
 
     #[test]
     fn mul_scales_every_component() {
-        assert_eq!(EnuVector::new(1.0, 2.0, 3.0) * 2.0, EnuVector::new(2.0, 4.0, 6.0));
+        assert_eq!(
+            EnuVector::new(1.0, 2.0, 3.0) * 2.0,
+            EnuVector::new(2.0, 4.0, 6.0)
+        );
     }
 
     #[test]
     fn div_scales_every_component() {
-        assert_eq!(EnuVector::new(2.0, 4.0, 6.0) / 2.0, EnuVector::new(1.0, 2.0, 3.0));
+        assert_eq!(
+            EnuVector::new(2.0, 4.0, 6.0) / 2.0,
+            EnuVector::new(1.0, 2.0, 3.0)
+        );
     }
 
     #[test]
