@@ -1,4 +1,3 @@
-// helios_core/src/frames/layout.rs
 use crate::data::primitives::FrameHandle;
 use crate::frames::{FrameId, StateVariable};
 

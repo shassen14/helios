@@ -5,6 +5,8 @@
 //! used by all filters). Index into `FrameAwareState` only via layout lookup — never
 //! hardcode numeric indices.
 
+pub mod conventions;
+
 use crate::data::primitives::FrameHandle;
 
 use std::hash::Hash;
