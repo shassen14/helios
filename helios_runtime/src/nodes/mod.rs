@@ -12,6 +12,7 @@
 //! UKF, ESKF, IF). `mocks` holds runtime-native test doubles that wrap no core
 //! trait.
 
+pub mod combinators;
 pub mod controller;
 pub mod gaussian_estimator;
 pub mod mocks;
