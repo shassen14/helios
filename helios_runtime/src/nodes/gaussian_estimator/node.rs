@@ -28,7 +28,7 @@ use helios_core::frames::FrameAwareState;
 use helios_core::ports::TfProvider;
 use nalgebra::DMatrix;
 
-use crate::pipeline::builders::estimator::EstimatorInputBuilder;
+use super::input::EstimatorInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};

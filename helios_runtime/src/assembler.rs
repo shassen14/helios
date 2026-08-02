@@ -38,9 +38,9 @@
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::config::AutonomyStack;
 use crate::config::{AidingConfig, EkfDynamicsConfig, EstimatorConfig, MapLayerConfig};
+use crate::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
 use crate::pipeline::autonomy_pipeline::PipelineBuilder;
 use crate::pipeline::build_error::PipelineBuildError;
-use crate::pipeline::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
 use crate::pipeline::AutonomyPipeline;
 use crate::port::{ChannelKey, InternalChannel, SensorChannel};
 use crate::registry::contexts::{
@@ -378,9 +378,7 @@ fn build_gaussian_estimator_node(
     // If dynamics is IntegratedImu, declare the IMU predict-side channels
     // as external too (accel + gyro Vec<SensorReading<_>>).
     if let EkfDynamicsConfig::IntegratedImu(imu_cfg) = &ekf_cfg.dynamics {
-        use crate::pipeline::builders::estimator::{
-            EstimatorInputBuilder, IntegratedImuInputBuilder,
-        };
+        use crate::nodes::gaussian_estimator::{EstimatorInputBuilder, IntegratedImuInputBuilder};
         let builder = IntegratedImuInputBuilder::new(
             imu_cfg.accel_channel.as_str(),
             imu_cfg.gyro_channel.as_str(),

@@ -26,17 +26,17 @@
 //! Publishing a safe-zero on full cold-start belongs in a future
 //! `SafetyMonitorNode` downstream of this node, not here.
 
-use std::sync::Mutex;
-
-use helios_core::control::Controller;
-use helios_core::prelude::ControlInputs;
-
-use crate::pipeline::builders::controller::ControlInputBuilder;
+use super::input::ControlInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{InternalChannel, PortBus, PortDescriptor};
 use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
+
+use helios_core::control::Controller;
+use helios_core::prelude::ControlInputs;
+
+use std::sync::Mutex;
 
 /// Pipeline node wrapping any [`Controller`] implementation.
 ///

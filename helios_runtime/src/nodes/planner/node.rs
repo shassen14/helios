@@ -29,7 +29,7 @@ use std::sync::Mutex;
 use helios_core::planning::types::PlannerResult;
 use helios_core::planning::SearchPlanner;
 
-use crate::pipeline::builders::planner::SearchPlannerInputBuilder;
+use super::input::SearchPlannerInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};

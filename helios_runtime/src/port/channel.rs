@@ -210,9 +210,11 @@ impl HealthChannel {
     pub fn type_id(&self) -> TypeId {
         self.type_id
     }
+
     pub fn type_name(&self) -> &'static str {
         self.type_name
     }
+
     pub fn instance(&self) -> &Arc<str> {
         &self.instance
     }

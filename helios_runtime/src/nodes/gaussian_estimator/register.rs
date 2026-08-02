@@ -1,19 +1,20 @@
 //! Registers Gaussian filter factories (EKF, UKF).
 
-use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
-use helios_core::frames::layout::{standard_ins_state_layout, STANDARD_INS_STATE_DIM};
-use helios_core::frames::{FrameId, StateVariable};
-use nalgebra::{DMatrix, Isometry3, Quaternion, Translation3, UnitQuaternion};
+use super::input::IntegratedImuInputBuilder;
+use super::node::GaussianEstimatorNode;
 
 use crate::config::{EkfDynamicsConfig, EstimatorConfig};
-use crate::pipeline::builders::estimator::IntegratedImuInputBuilder;
 use crate::pipeline::node::PipelineNode;
-use crate::pipeline::nodes::gaussian_estimator::GaussianEstimatorNode;
-
-use super::{
+use crate::registry::{
     contexts::{DynamicsBuildContext, GaussianEstimatorBuildContext},
     AutonomyRegistry,
 };
+
+use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
+use helios_core::frames::layout::{standard_ins_state_layout, STANDARD_INS_STATE_DIM};
+use helios_core::frames::{FrameId, StateVariable};
+
+use nalgebra::{DMatrix, Isometry3, Quaternion, Translation3, UnitQuaternion};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_gaussian_estimator("Ekf", build_ekf);
@@ -134,7 +135,7 @@ fn build_ekf(
     }
 
     // --- 4. Select input builder based on dynamics kind ---
-    let input_builder: Box<dyn crate::pipeline::builders::estimator::EstimatorInputBuilder> =
+    let input_builder: Box<dyn super::input::EstimatorInputBuilder> =
         match &ekf_config.dynamics {
             EkfDynamicsConfig::IntegratedImu(imu_cfg) => Box::new(IntegratedImuInputBuilder::new(
                 imu_cfg.accel_channel.as_str(),

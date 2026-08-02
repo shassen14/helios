@@ -1,11 +1,11 @@
 //! Registers built-in controller factories.
 
-use super::{contexts::ControllerBuildContext, AutonomyRegistry};
+use super::input::DefaultControlInputBuilder;
+use super::node::ControllerNode;
 
 use crate::config::ControllerConfig;
-use crate::pipeline::builders::controller::DefaultControlInputBuilder;
 use crate::pipeline::node::PipelineNode;
-use crate::pipeline::nodes::controller::ControllerNode;
+use crate::registry::{contexts::ControllerBuildContext, AutonomyRegistry};
 
 use helios_core::control::direct_velocity::DirectVelocityController;
 

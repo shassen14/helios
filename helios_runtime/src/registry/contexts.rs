@@ -7,7 +7,7 @@
 use crate::config::{
     ControllerConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig, SensorModelConfig,
 };
-use crate::pipeline::nodes::gaussian_estimator::AidingHandler;
+use crate::nodes::gaussian_estimator::AidingHandler;
 use crate::port::InternalChannel;
 
 use helios_core::data::primitives::FrameHandle;

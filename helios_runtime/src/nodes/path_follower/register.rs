@@ -1,15 +1,15 @@
 //! Registers built-in path follower factories.
 
+use super::input::DefaultPathFollowerInputBuilder;
+use super::node::PathFollowerNode;
+
+use crate::config::PathFollowingConfig;
+use crate::pipeline::node::PipelineNode;
+use crate::registry::{contexts::PathFollowerBuildContext, AutonomyRegistry};
+
 use helios_core::path_following::{
     pure_pursuit::PurePursuitPathFollower, steering_pid::SteeringPidPathFollower, PathFollower,
 };
-
-use crate::config::PathFollowingConfig;
-use crate::pipeline::builders::path_follower::DefaultPathFollowerInputBuilder;
-use crate::pipeline::node::PipelineNode;
-use crate::pipeline::nodes::path_follower::PathFollowerNode;
-
-use super::{contexts::PathFollowerBuildContext, AutonomyRegistry};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_path_follower("PurePursuit", build_pure_pursuit);

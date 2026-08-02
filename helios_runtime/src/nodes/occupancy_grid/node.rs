@@ -46,7 +46,7 @@
 //! - Per-sensor weighting / inhibit is not expressible: all readings on
 //!   the one channel are integrated equally. If that becomes a real
 //!   requirement, switch to per-sensor named channels and a handler
-//!   pattern like [`crate::pipeline::nodes::AidingHandler`].
+//!   pattern like the estimator family's `AidingHandler`.
 //!
 //! [`OccupancyGridMapper`]: helios_core::mapping::OccupancyGridMapper
 //! [`MapData`]: helios_core::mapping::MapData

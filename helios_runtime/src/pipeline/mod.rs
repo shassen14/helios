@@ -9,16 +9,15 @@
 //! the graph (cycles, unsatisfied inputs, duplicate producers) and returns
 //! either a fully wired pipeline or a list of [`PipelineBuildError`]s.
 //!
-//! Algorithm-family node implementations live under [`nodes`]; reusable
-//! per-node input/handler helpers live under [`builders`].
+//! This module is the family-agnostic engine — the DAG, its nodes' shared
+//! contracts, and the builder. Concrete algorithm-family nodes live in
+//! [`crate::nodes`].
 
 pub mod autonomy_pipeline;
 pub mod build_error;
-pub mod builders;
 pub mod descriptor;
 pub(crate) mod key_format;
 pub mod node;
-pub mod nodes;
 pub mod rate_gate;
 
 pub use autonomy_pipeline::{AutonomyPipeline, PipelineBuilder};

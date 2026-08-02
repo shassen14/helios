@@ -3,7 +3,7 @@
 use helios_core::estimation::dynamics::{integrated_imu::IntegratedImuModel, EstimationDynamics};
 use nalgebra::Vector3;
 
-use super::{contexts::DynamicsBuildContext, AutonomyRegistry};
+use crate::registry::{contexts::DynamicsBuildContext, AutonomyRegistry};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_dynamics("IntegratedImu", build_integrated_imu);

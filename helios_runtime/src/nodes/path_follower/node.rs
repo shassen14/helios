@@ -16,7 +16,7 @@
 //! 4. **Publish.** Only [`PathFollowerResult::Active`] writes a
 //!    `Stamped<TrajectoryPoint>`. All other variants leave the bus untouched
 //!    so the controller can fall back to last-known-good — matching the
-//!    no-op-on-hold convention of [`crate::pipeline::nodes::SearchPlannerNode`].
+//!    no-op-on-hold convention of `SearchPlannerNode`.
 //!
 //! ## Path-version tracking
 //!
@@ -37,7 +37,7 @@ use helios_core::data::messages::TrajectoryPoint;
 use helios_core::path_following::{PathFollower, PathFollowerResult};
 use helios_core::planning::types::Path;
 
-use crate::pipeline::builders::path_follower::PathFollowerInputBuilder;
+use super::input::PathFollowerInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};

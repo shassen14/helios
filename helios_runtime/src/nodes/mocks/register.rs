@@ -4,11 +4,11 @@
 //! integration tests *and* dev iteration use them. A mock kind is selected
 //! from TOML via the same `kind = "..."` mechanism as a real EKF.
 
+use super::mock_oracle_estimator::MockOracleEstimatorNode;
+
 use crate::config::EstimatorConfig;
 use crate::pipeline::node::PipelineNode;
-use crate::pipeline::nodes::mock_oracle_estimator::MockOracleEstimatorNode;
-
-use super::{contexts::MockEstimatorBuildContext, AutonomyRegistry};
+use crate::registry::{contexts::MockEstimatorBuildContext, AutonomyRegistry};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_mock_estimator("MockOracle", build_mock_oracle);

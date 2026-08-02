@@ -21,14 +21,6 @@
 //! ```
 
 pub mod contexts;
-mod controller;
-mod dynamics;
-mod gaussian_estimator;
-mod mapper;
-mod measurement_model;
-mod mock_estimator;
-mod path_follower;
-mod search_planner;
 
 use contexts::{
     ControllerBuildContext, DynamicsBuildContext, GaussianEstimatorBuildContext,
@@ -110,14 +102,12 @@ impl Default for AutonomyRegistry {
             mock_estimators: HashMap::new(),
         };
         // Registration order: leaf dependencies before composites.
-        dynamics::register(&mut registry);
-        measurement_model::register(&mut registry);
-        gaussian_estimator::register(&mut registry);
-        mapper::register(&mut registry);
-        controller::register(&mut registry);
-        search_planner::register(&mut registry);
-        path_follower::register(&mut registry);
-        mock_estimator::register(&mut registry);
+        crate::nodes::gaussian_estimator::register(&mut registry);
+        crate::nodes::occupancy_grid::register(&mut registry);
+        crate::nodes::controller::register(&mut registry);
+        crate::nodes::planner::register(&mut registry);
+        crate::nodes::path_follower::register(&mut registry);
+        crate::nodes::mocks::register(&mut registry);
         registry
     }
 }

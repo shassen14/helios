@@ -1,14 +1,14 @@
 //! Registers built-in search planner factories.
 
-use helios_core::planning::astar::{AStarConfig, AStarPlanner};
-use helios_core::planning::SearchPlanner;
+use super::input::DefaultSearchPlannerInputBuilder;
+use super::node::SearchPlannerNode;
 
 use crate::config::SearchPlannerConfig;
-use crate::pipeline::builders::planner::DefaultSearchPlannerInputBuilder;
 use crate::pipeline::node::PipelineNode;
-use crate::pipeline::nodes::search_planner::SearchPlannerNode;
+use crate::registry::{contexts::SearchPlannerBuildContext, AutonomyRegistry};
 
-use super::{contexts::SearchPlannerBuildContext, AutonomyRegistry};
+use helios_core::planning::astar::{AStarConfig, AStarPlanner};
+use helios_core::planning::SearchPlanner;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_search_planner("AStar", build_astar);

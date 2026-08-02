@@ -14,7 +14,7 @@ use crate::{
 /// Declares the channels it reads via [`required_channels`]/[`optional_channels`]
 /// so the node can publish them in its [`PortDescriptor`].
 ///
-/// [`SearchPlannerNode`]: crate::pipeline::nodes::search_planner::SearchPlannerNode
+/// [`SearchPlannerNode`]: super::node::SearchPlannerNode
 /// [`PortDescriptor`]: crate::port::PortDescriptor
 /// [`required_channels`]: SearchPlannerInputBuilder::required_channels
 /// [`optional_channels`]: SearchPlannerInputBuilder::optional_channels

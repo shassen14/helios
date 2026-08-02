@@ -5,12 +5,12 @@ use helios_core::data::sensor::PointCloud2D;
 use helios_core::mapping::MapData;
 use helios_core::mapping::{Mapper, OccupancyGridMapper};
 
+use super::node::OccupancyGridNode;
+
 use crate::config::MapLayerConfig;
 use crate::pipeline::node::PipelineNode;
-use crate::pipeline::nodes::occupancy_grid::OccupancyGridNode;
 use crate::port::{InternalChannel, SensorChannel};
-
-use super::{contexts::MapperBuildContext, AutonomyRegistry};
+use crate::registry::{contexts::MapperBuildContext, AutonomyRegistry};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_mapper("OccupancyGrid2D", build_occupancy_grid_2d);
