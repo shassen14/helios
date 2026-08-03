@@ -42,6 +42,7 @@ pub use self::error::PipelineAssemblyError;
 
 use self::command::{
     resolve_command_topology, selector_policy, source_channel, CommandTopology,
+    COMMAND_ARBITER_NODE,
 };
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
@@ -69,9 +70,12 @@ use std::collections::{HashMap, HashSet};
 
 /// Builds a fully-validated [`AutonomyPipeline`] from a resolved [`AutonomyStack`].
 ///
-/// Call [`crate::validation::validate_autonomy_config`] before this to catch
-/// config errors with better messages. `build_pipeline` is not a substitute
-/// for validation — it fails fast on the first factory error it hits.
+/// Runs [`crate::validation::validate_autonomy_config`] against the registry's
+/// capabilities first and short-circuits with
+/// [`PipelineAssemblyError::InvalidConfig`] if the config is invalid, so every
+/// host gets the same static checks with legible messages before assembly is
+/// attempted. Errors that need host-supplied context (an aiding channel with no
+/// `FrameHandle`, an unsatisfiable graph edge) still surface from assembly.
 ///
 /// # Parameters
 ///
@@ -92,6 +96,14 @@ pub fn build_pipeline(
     sensor_frame_handles: &HashMap<String, FrameHandle>,
     mut host_capabilities: BodyCapabilities,
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
+    // Static validation runs before any node is built: a config-level mistake
+    // (unknown kind, planner reading an absent map layer) is reported as itself
+    // rather than as a downstream factory or unsatisfied-input failure.
+    let config_errors = crate::validation::validate_autonomy_config(stack, &registry.capabilities());
+    if !config_errors.is_empty() {
+        return Err(vec![PipelineAssemblyError::InvalidConfig(config_errors)]);
+    }
+
     let mut errors: Vec<PipelineAssemblyError> = vec![];
     let mut builder = PipelineBuilder::new();
     // Channels supplied from outside the graph (sensor publishers, mission
@@ -118,7 +130,7 @@ pub fn build_pipeline(
     }
 
     // --- Map layers ---
-    for map_cfg in stack.map_layers.values() {
+    for (map_name, map_cfg) in &stack.map_layers {
         if matches!(map_cfg, MapLayerConfig::None) {
             continue;
         }
@@ -127,6 +139,7 @@ pub fn build_pipeline(
             map_cfg.get_kind_str(),
             MapperBuildContext {
                 agent_handle,
+                instance_name: map_name.clone(),
                 config: map_cfg.clone(),
             },
         ) {
@@ -159,6 +172,7 @@ pub fn build_pipeline(
             plan_cfg.get_kind_str(),
             SearchPlannerBuildContext {
                 agent_handle,
+                instance_name: planner_name.clone(),
                 config: plan_cfg.clone(),
                 map_channel,
                 path_channel,
@@ -211,11 +225,12 @@ pub fn build_pipeline(
         _ => control::autonomy::<BodyTwist>(),
     };
 
-    for ctrl_cfg in stack.controllers.values() {
+    for (controller_name, ctrl_cfg) in &stack.controllers {
         match registry.build_controller(
             ctrl_cfg.get_kind_str(),
             ControllerBuildContext {
                 agent_handle,
+                instance_name: controller_name.clone(),
                 config: ctrl_cfg.clone(),
                 output_channel: controller_output.clone(),
             },
@@ -250,7 +265,7 @@ pub fn build_pipeline(
         // inputs; the lowest is the always-available `base` fallback.
         CommandTopology::Arbitrated { preferred, base } => {
             let selector = Selector::<BodyTwist>::new(
-                "command_arbiter",
+                COMMAND_ARBITER_NODE,
                 preferred.iter().map(|s| source_channel(*s)).collect(),
                 source_channel(base),
                 control::command::<BodyTwist>(),
@@ -330,7 +345,10 @@ fn build_estimator_node(
                 .build_mock_estimator(
                     "MockOracle",
                     est_cfg.clone(),
-                    MockEstimatorBuildContext { agent_handle },
+                    MockEstimatorBuildContext {
+                        agent_handle,
+                        instance_name: instance_name.to_string(),
+                    },
                 )
                 .map_err(|reason| PipelineAssemblyError::FactoryFailure {
                     node_kind: "MockOracle".to_string(),

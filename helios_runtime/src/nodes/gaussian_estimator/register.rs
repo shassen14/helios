@@ -151,9 +151,54 @@ fn build_ekf(
     // --- 5. Assemble node ---
     let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
     Ok(Box::new(GaussianEstimatorNode::new(
-        "ekf",
+        ctx.instance_name,
         ekf,
         input_builder,
         ctx.aiding,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::config::{EkfConfig, EkfInitialStateConfig, IntegratedImuConfig};
+
+    use helios_core::data::primitives::FrameHandle;
+
+    fn config() -> EstimatorConfig {
+        EstimatorConfig::Ekf(EkfConfig {
+            dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
+                gravity_enu: [0.0, 0.0, -9.81],
+                accel_noise_stddev: 0.1,
+                gyro_noise_stddev: 0.01,
+                accel_bias_instability: 0.001,
+                gyro_bias_instability: 0.0001,
+                accel_channel: "imu/accel".to_string(),
+                gyro_channel: "imu/gyro".to_string(),
+            }),
+            aiding: vec![],
+            initial_state: EkfInitialStateConfig::default(),
+        })
+    }
+
+    fn context(instance_name: &str) -> GaussianEstimatorBuildContext {
+        GaussianEstimatorBuildContext {
+            agent_handle: FrameHandle(0),
+            instance_name: instance_name.to_string(),
+            aiding: vec![],
+        }
+    }
+
+    // The node name is the config-map key, not the kind: two `Ekf` estimators
+    // under distinct keys must yield distinct node identities.
+    #[test]
+    fn node_name_is_the_config_key_not_the_kind() {
+        let registry = AutonomyRegistry::default();
+        let primary = build_ekf(config(), context("primary"), &registry).unwrap();
+        let backup = build_ekf(config(), context("backup"), &registry).unwrap();
+
+        assert_eq!(primary.name(), "primary");
+        assert_eq!(backup.name(), "backup");
+    }
 }

@@ -24,7 +24,35 @@ fn build_mock_oracle(
         return Err("build_mock_oracle received non-MockOracle config".to_string());
     };
     Ok(Box::new(MockOracleEstimatorNode::new(
-        "mock_oracle_estimator",
+        ctx.instance_name,
         ctx.agent_handle,
     )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::config::MockOracleEstimatorConfig;
+
+    use helios_core::data::primitives::FrameHandle;
+
+    fn context(instance_name: &str) -> MockEstimatorBuildContext {
+        MockEstimatorBuildContext {
+            agent_handle: FrameHandle(0),
+            instance_name: instance_name.to_string(),
+        }
+    }
+
+    // The node name is the config-map key, not the kind: two `MockOracle`
+    // estimators under distinct keys must yield distinct node identities.
+    #[test]
+    fn node_name_is_the_config_key_not_the_kind() {
+        let config = EstimatorConfig::MockOracle(MockOracleEstimatorConfig {});
+        let truth = build_mock_oracle(config.clone(), context("truth")).unwrap();
+        let shadow = build_mock_oracle(config, context("shadow")).unwrap();
+
+        assert_eq!(truth.name(), "truth");
+        assert_eq!(shadow.name(), "shadow");
+    }
 }

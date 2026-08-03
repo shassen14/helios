@@ -259,6 +259,51 @@ fn validation_unknown_planner_produces_error() {
 }
 
 #[test]
+fn validation_planner_without_matching_map_layer_produces_error() {
+    // `astar()` reads level "local", but no map layer of that key is declared,
+    // so nothing produces the `MapData` it requires. Caught here rather than as
+    // a downstream `UnsatisfiedInput` at DAG build.
+    let mut search_planners = HashMap::new();
+    search_planners.insert("planner".to_string(), astar());
+    let stack = AutonomyStack {
+        search_planners,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::PlannerReferencesUnknownMapLayer { planner, level }
+                if planner == "planner" && level == "local"
+        )),
+        "Expected PlannerReferencesUnknownMapLayer for level 'local'"
+    );
+}
+
+#[test]
+fn validation_planner_referencing_none_map_layer_produces_error() {
+    // A layer keyed "local" but declared `None` produces no mapper node, so a
+    // planner reading level "local" still has no map producer.
+    let mut search_planners = HashMap::new();
+    search_planners.insert("planner".to_string(), astar());
+    let mut map_layers = HashMap::new();
+    map_layers.insert("local".to_string(), MapLayerConfig::None);
+    let stack = AutonomyStack {
+        search_planners,
+        map_layers,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::PlannerReferencesUnknownMapLayer { level, .. } if level == "local"
+        )),
+        "Expected PlannerReferencesUnknownMapLayer for a None-valued layer"
+    );
+}
+
+#[test]
 fn validation_collects_all_errors_two_bad_controllers() {
     let mut controllers = HashMap::new();
     controllers.insert("ctrl1".to_string(), direct_velocity());

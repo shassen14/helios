@@ -62,6 +62,7 @@ pub(crate) fn assemble(
             est_cfg.clone(),
             GaussianEstimatorBuildContext {
                 agent_handle,
+                instance_name: instance_name.to_string(),
                 aiding,
             },
         )

@@ -35,6 +35,9 @@ pub struct DynamicsBuildContext {
 /// passed here.
 pub struct GaussianEstimatorBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the estimator's config-map key, so tooling keyed on the name
+    /// distinguishes two estimators of the same kind.
+    pub(crate) instance_name: String,
     pub(crate) aiding: Vec<Box<dyn AidingHandler>>,
 }
 
@@ -53,12 +56,18 @@ pub struct MeasurementModelBuildContext {
 /// Context for building an `OccupancyGridNode` (or any `Mapper`-backed node).
 pub struct MapperBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the map layer's config-map key, so tooling keyed on the name
+    /// distinguishes two layers of the same kind.
+    pub(crate) instance_name: String,
     pub(crate) config: MapLayerConfig,
 }
 
 /// Context for building a `ControllerNode`.
 pub struct ControllerBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the controller's config-map key, so tooling keyed on the name
+    /// distinguishes two controllers of the same kind.
+    pub(crate) instance_name: String,
     pub(crate) config: ControllerConfig,
     pub(crate) output_channel: InternalChannel,
 }
@@ -66,6 +75,9 @@ pub struct ControllerBuildContext {
 /// Context for building a `SearchPlannerNode`.
 pub struct SearchPlannerBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the planner's config-map key, so tooling keyed on the name
+    /// distinguishes two planners of the same kind.
+    pub(crate) instance_name: String,
     pub(crate) config: SearchPlannerConfig,
     /// The bus channel on which the upstream mapper publishes `MapData`.
     /// Always internal (brain-produced).
@@ -87,4 +99,7 @@ pub struct PathFollowerBuildContext {
 
 pub(crate) struct MockEstimatorBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the estimator's config-map key, so tooling keyed on the name
+    /// distinguishes two mocks of the same kind.
+    pub(crate) instance_name: String,
 }

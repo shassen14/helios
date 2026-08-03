@@ -1,10 +1,15 @@
 //! Errors surfaced while assembling a pipeline from config.
 
 use crate::pipeline::build_error::PipelineBuildError;
+use crate::validation::ConfigValidationError;
 
 /// Errors that can occur while assembling a pipeline from config.
 #[derive(Debug)]
 pub enum PipelineAssemblyError {
+    /// The config failed static validation before any node was built. Carries
+    /// every [`ConfigValidationError`] found, so a caller sees all config
+    /// problems at once rather than one factory failure at a time.
+    InvalidConfig(Vec<ConfigValidationError>),
     /// The config references an algorithm or model not in the registry.
     FactoryFailure { node_kind: String, reason: String },
     /// The assembled node graph failed topological validation.
@@ -33,6 +38,16 @@ pub enum PipelineAssemblyError {
 impl std::fmt::Display for PipelineAssemblyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            PipelineAssemblyError::InvalidConfig(errs) => {
+                write!(f, "invalid config: ")?;
+                for (i, e) in errs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, "; ")?;
+                    }
+                    write!(f, "{e}")?;
+                }
+                Ok(())
+            }
             PipelineAssemblyError::FactoryFailure { node_kind, reason } => {
                 write!(f, "factory '{node_kind}' failed: {reason}")
             }

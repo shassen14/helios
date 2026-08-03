@@ -9,6 +9,11 @@ use crate::port::InternalChannel;
 
 use helios_core::control::commands::BodyTwist;
 
+/// Node name for the synthesized command arbiter. Raw identity (observability
+/// keys on it), so it is a referenced const rather than a constructor-hidden
+/// literal — the assembler is its sole synthesizer.
+pub(crate) const COMMAND_ARBITER_NODE: &str = "command_arbiter";
+
 /// How the `command` terminal is fed, resolved from the declared source set.
 pub(super) enum CommandTopology {
     None,                  // pure-perception agent: no command terminal

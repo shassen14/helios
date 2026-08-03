@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::config::{AutonomyStack, CommandSource, EstimatorConfig};
+use crate::config::{AutonomyStack, CommandSource, EstimatorConfig, MapLayerConfig};
 
 /// Snapshot of algorithm keys registered in each family.
 ///
@@ -38,6 +38,12 @@ pub enum ConfigValidationError {
     },
     UnknownPlanner {
         kind: String,
+    },
+    /// A planner's `level` names no active map layer, so nothing produces the
+    /// `MapData` it reads. The layer is either absent or declared `None`.
+    PlannerReferencesUnknownMapLayer {
+        planner: String,
+        level: String,
     },
     UnknownMeasurementModel {
         estimator_instance: String,
@@ -88,6 +94,12 @@ impl std::fmt::Display for ConfigValidationError {
             }
             ConfigValidationError::UnknownPlanner { kind } => {
                 write!(f, "Unknown planner kind '{kind}'")
+            }
+            ConfigValidationError::PlannerReferencesUnknownMapLayer { planner, level } => {
+                write!(
+                    f,
+                    "Planner '{planner}' reads map layer '{level}', but no active map layer of that name is declared"
+                )
             }
             ConfigValidationError::UnknownMeasurementModel {
                 estimator_instance,
@@ -209,11 +221,26 @@ pub fn validate_autonomy_config(
     }
 
     // Planner validation.
-    for plan_cfg in config.search_planners.values() {
+    for (instance, plan_cfg) in &config.search_planners {
         let kind = plan_cfg.get_kind_str();
         if !capabilities.planners.contains(kind) {
             errors.push(ConfigValidationError::UnknownPlanner {
                 kind: kind.to_string(),
+            });
+        }
+
+        // The planner reads its `MapData` from the channel named by `level`; the
+        // mapper of that same config-map key produces it. A `level` naming no
+        // active layer would only surface as an `UnsatisfiedInput` at DAG build.
+        let level = plan_cfg.get_level_str();
+        let layer_is_active = config
+            .map_layers
+            .get(level)
+            .is_some_and(|layer| !matches!(layer, MapLayerConfig::None));
+        if !layer_is_active {
+            errors.push(ConfigValidationError::PlannerReferencesUnknownMapLayer {
+                planner: instance.clone(),
+                level: level.to_string(),
             });
         }
     }
