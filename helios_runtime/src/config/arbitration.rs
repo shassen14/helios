@@ -45,11 +45,22 @@ fn default_teleop_max_age_s() -> f64 {
     DEFAULT_TELEOP_MAX_AGE_S
 }
 
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandSource {
     Autonomy, // → control::autonomy::<T>()
     Teleop,   // → control::teleop::<T>()
+}
+
+impl CommandSource {
+    /// The snake_case token this source deserializes from, for error messages
+    /// that echo the user's config.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CommandSource::Autonomy => "autonomy",
+            CommandSource::Teleop => "teleop",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, Default)]

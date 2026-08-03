@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use helios_runtime::{
     config::{
-        AidingConfig, AutonomyStack, ControllerConfig, EkfConfig, EkfDynamicsConfig,
-        EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig,
-        MapperPoseSourceConfig, SearchPlannerConfig, SensorModelConfig,
+        AidingConfig, AutonomyStack, CommandArbitrationConfig, CommandSource, ControllerConfig,
+        EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
+        MapLayerConfig, MapperPoseSourceConfig, SearchPlannerConfig, SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
 };
@@ -88,6 +88,21 @@ fn occupancy_grid() -> MapLayerConfig {
         width_m: 20.0,
         height_m: 20.0,
         pose_source: MapperPoseSourceConfig::GroundTruth,
+    }
+}
+
+fn stack_with_arbitration(sources: Vec<CommandSource>, with_controller: bool) -> AutonomyStack {
+    let mut controllers = HashMap::new();
+    if with_controller {
+        controllers.insert("main_ctrl".to_string(), direct_velocity());
+    }
+    AutonomyStack {
+        controllers,
+        command_arbitration: CommandArbitrationConfig {
+            sources,
+            ..Default::default()
+        },
+        ..Default::default()
     }
 }
 
@@ -330,6 +345,72 @@ fn validation_unknown_sensor_payload_in_aiding_produces_error() {
                 if payload_kind == "UnknownSensorType"
         )),
         "Expected UnknownSensorPayload for UnknownSensorType"
+    );
+}
+
+#[test]
+fn validation_autonomy_source_without_controller_errors() {
+    let stack = stack_with_arbitration(vec![CommandSource::Autonomy], false);
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ConfigValidationError::AutonomySourceWithoutController)),
+        "Expected AutonomySourceWithoutController, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_controller_not_a_command_source_errors() {
+    // Controller present, but the explicit source list omits autonomy: the
+    // controller's output is never routed to command.
+    let stack = stack_with_arbitration(vec![CommandSource::Teleop], true);
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ConfigValidationError::ControllerConfiguredButNotACommandSource)),
+        "Expected ControllerConfiguredButNotACommandSource, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_duplicate_command_source_errors() {
+    let stack = stack_with_arbitration(vec![CommandSource::Teleop, CommandSource::Teleop], false);
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::DuplicateCommandSource { source } if source == "teleop"
+        )),
+        "Expected DuplicateCommandSource for teleop, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_empty_sources_with_controller_passes() {
+    // Empty sources infers [Autonomy] when a controller exists; the guards must
+    // not over-fire.
+    let stack = stack_with_arbitration(vec![], true);
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.is_empty(),
+        "Empty sources with a controller must pass, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_explicit_autonomy_with_controller_passes() {
+    let stack = stack_with_arbitration(vec![CommandSource::Autonomy], true);
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.is_empty(),
+        "Explicit autonomy source with a controller must pass, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }
 

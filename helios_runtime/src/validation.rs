@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::config::{AutonomyStack, EstimatorConfig};
+use crate::config::{AutonomyStack, CommandSource, EstimatorConfig};
 
 /// Snapshot of algorithm keys registered in each family.
 ///
@@ -46,6 +46,18 @@ pub enum ConfigValidationError {
     UnknownSensorPayload {
         estimator_instance: String,
         payload_kind: String,
+    },
+    /// `command_arbitration` lists `autonomy` as a source, but no controller is
+    /// configured to produce the autonomy command.
+    AutonomySourceWithoutController,
+    /// A controller is configured, but `autonomy` is not among the explicitly
+    /// listed command sources, so the controller's output is never routed to
+    /// `command`.
+    ControllerConfiguredButNotACommandSource,
+    /// The same command source appears more than once in
+    /// `command_arbitration.sources`, making priority order ambiguous.
+    DuplicateCommandSource {
+        source: String,
     },
 }
 
@@ -93,6 +105,24 @@ impl std::fmt::Display for ConfigValidationError {
                 write!(
                     f,
                     "Estimator '{estimator_instance}' references unknown sensor payload '{payload_kind}'"
+                )
+            }
+            ConfigValidationError::AutonomySourceWithoutController => {
+                write!(
+                    f,
+                    "command_arbitration lists 'autonomy' as a source but no controller is configured to produce it"
+                )
+            }
+            ConfigValidationError::ControllerConfiguredButNotACommandSource => {
+                write!(
+                    f,
+                    "a controller is configured but 'autonomy' is not among command_arbitration.sources; its output is never routed to command"
+                )
+            }
+            ConfigValidationError::DuplicateCommandSource { source } => {
+                write!(
+                    f,
+                    "command_arbitration.sources lists '{source}' more than once"
                 )
             }
         }
@@ -184,6 +214,33 @@ pub fn validate_autonomy_config(
         if !capabilities.planners.contains(kind) {
             errors.push(ConfigValidationError::UnknownPlanner {
                 kind: kind.to_string(),
+            });
+        }
+    }
+
+    // Command arbitration validation.
+    let sources = &config.command_arbitration.sources;
+    let has_controller = !config.controllers.is_empty();
+    let lists_autonomy = sources.contains(&CommandSource::Autonomy);
+
+    // An explicit autonomy source with nothing to produce it.
+    if lists_autonomy && !has_controller {
+        errors.push(ConfigValidationError::AutonomySourceWithoutController);
+    }
+
+    // A controller whose output is never routed to `command`. An empty sources
+    // list infers `[Autonomy]`, so this only fires when the list is explicit
+    // and omits autonomy.
+    if has_controller && !sources.is_empty() && !lists_autonomy {
+        errors.push(ConfigValidationError::ControllerConfiguredButNotACommandSource);
+    }
+
+    // A source listed more than once makes priority order ambiguous.
+    let mut seen = HashSet::new();
+    for source in sources {
+        if !seen.insert(*source) {
+            errors.push(ConfigValidationError::DuplicateCommandSource {
+                source: source.as_str().to_string(),
             });
         }
     }
