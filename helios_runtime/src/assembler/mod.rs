@@ -35,103 +35,37 @@
 //! promoted to a registry family (`register_aiding_handler_factory`). For the
 //! current set of five built-in types, the inline match is sufficient.
 
+mod command;
+mod error;
+
+pub use self::error::PipelineAssemblyError;
+
+use self::command::{
+    resolve_command_topology, selector_policy, source_channel, CommandTopology,
+};
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
-use crate::config::AutonomyStack;
-use crate::config::{AidingConfig, EkfDynamicsConfig, EstimatorConfig, MapLayerConfig};
-use crate::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
+use crate::channels::control;
+use crate::config::{AutonomyStack, CommandSource};
+use crate::config::{EstimatorConfig, MapLayerConfig};
+use crate::nodes::combinators::Selector;
+use crate::nodes::gaussian_estimator;
+use crate::nodes::path_follower;
 use crate::pipeline::autonomy_pipeline::PipelineBuilder;
-use crate::pipeline::build_error::PipelineBuildError;
 use crate::pipeline::AutonomyPipeline;
-use crate::port::{ChannelKey, InternalChannel, SensorChannel};
+use crate::port::{ChannelKey, InternalChannel};
 use crate::registry::contexts::{
-    ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
-    MeasurementModelBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
+    ControllerBuildContext, MapperBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
     SearchPlannerBuildContext,
 };
 use crate::registry::AutonomyRegistry;
 
-use helios_core::data::envelope::SensorReading;
+use helios_core::control::commands::BodyTwist;
 use helios_core::data::primitives::FrameHandle;
-use helios_core::data::sensor::{
-    AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
-};
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::MapData;
 use helios_core::planning::types::Path;
 
-use nalgebra::DMatrix;
-use std::collections::HashMap;
-
-/// Errors that can occur while assembling a pipeline from config.
-#[derive(Debug)]
-pub enum PipelineAssemblyError {
-    /// The config references an algorithm or model not in the registry.
-    FactoryFailure { node_kind: String, reason: String },
-    /// The assembled node graph failed topological validation.
-    PipelineBuild(Vec<PipelineBuildError>),
-    /// An aiding entry names a sensor channel with no corresponding
-    /// [`FrameHandle`] in `sensor_frame_handles`.
-    UnknownSensorChannel {
-        estimator_instance: String,
-        input_channel: String,
-    },
-    /// An aiding entry names a `sensor_payload` the assembler does not
-    /// recognize. (Should be caught first by `validate_autonomy_config`.)
-    UnknownSensorPayload {
-        estimator_instance: String,
-        payload_kind: String,
-    },
-    /// `path_following` is present but no planner was configured to produce a
-    /// path, and no explicit `path_source` was given.
-    NoPathSourceForFollower,
-    /// `path_following` names a `path_source` planner key that does not exist
-    /// in `search_planners`.
-    UnknownPathSource { path_source: String },
-}
-
-impl std::fmt::Display for PipelineAssemblyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PipelineAssemblyError::FactoryFailure { node_kind, reason } => {
-                write!(f, "factory '{node_kind}' failed: {reason}")
-            }
-            PipelineAssemblyError::PipelineBuild(errs) => {
-                write!(f, "pipeline graph errors: ")?;
-                for (i, e) in errs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, "; ")?;
-                    }
-                    write!(f, "{e}")?;
-                }
-                Ok(())
-            }
-            PipelineAssemblyError::UnknownSensorChannel {
-                estimator_instance,
-                input_channel,
-            } => {
-                write!(
-                    f,
-                    "estimator '{estimator_instance}' aiding channel '{input_channel}' has no FrameHandle in sensor_frame_handles"
-                )
-            }
-            PipelineAssemblyError::UnknownSensorPayload {
-                estimator_instance,
-                payload_kind,
-            } => {
-                write!(
-                    f,
-                    "estimator '{estimator_instance}' aiding entry has unknown sensor_payload '{payload_kind}'"
-                )
-            }
-            PipelineAssemblyError::NoPathSourceForFollower => {
-                write!(f, "path_following configured but no planner produces a path and no path_source specified")
-            }
-            PipelineAssemblyError::UnknownPathSource { path_source } => {
-                write!(f, "path_following.path_source '{path_source}' does not match any key in search_planners")
-            }
-        }
-    }
-}
+use std::collections::{HashMap, HashSet};
 
 /// Builds a fully-validated [`AutonomyPipeline`] from a resolved [`AutonomyStack`].
 ///
@@ -162,7 +96,8 @@ pub fn build_pipeline(
     let mut builder = PipelineBuilder::new();
     // Channels supplied from outside the graph (sensor publishers, mission
     // layer, operator UI). Used to seed the topological sort so consumers
-    // don't trip UnsatisfiedInput.
+    // don't trip UnsatisfiedInput. Control channels are seeded per the
+    // resolved command topology below, not unconditionally.
     let mut external_channels: Vec<ChannelKey> = vec![];
 
     // --- Estimators ---
@@ -241,7 +176,7 @@ pub fn build_pipeline(
 
     // --- Path follower ---
     if let Some(pf_cfg) = &stack.path_following {
-        match resolve_path_channel(stack) {
+        match path_follower::resolve_path_channel(stack) {
             Ok(path_channel) => {
                 match registry.build_path_follower(
                     pf_cfg.get_kind_str(),
@@ -265,12 +200,24 @@ pub fn build_pipeline(
     }
 
     // --- Controllers ---
+    // Resolve how the command terminal is fed before building controllers: the
+    // controller's output channel depends on it. A lone autonomy source lets the
+    // controller write `command` directly; otherwise it writes `autonomy` and
+    // arbitration (or nothing) forwards from there.
+    let command_topology =
+        resolve_command_topology(&stack.command_arbitration, !stack.controllers.is_empty());
+    let controller_output = match &command_topology {
+        CommandTopology::Direct(CommandSource::Autonomy) => control::command::<BodyTwist>(),
+        _ => control::autonomy::<BodyTwist>(),
+    };
+
     for ctrl_cfg in stack.controllers.values() {
         match registry.build_controller(
             ctrl_cfg.get_kind_str(),
             ControllerBuildContext {
                 agent_handle,
                 config: ctrl_cfg.clone(),
+                output_channel: controller_output.clone(),
             },
         ) {
             Ok(node) => {
@@ -283,13 +230,54 @@ pub fn build_pipeline(
         }
     }
 
+    // Wire the command terminal (`command`, the channel `read_control` reads)
+    // per the resolved topology. `BodyTwist` is fixed until the actuator seam.
+    match command_topology {
+        // Pure estimator / mapper agent: nothing produces commands.
+        CommandTopology::None => {}
+
+        // A single source owns `command` outright — no arbiter. An autonomy
+        // source already writes `command` (see `controller_output`); a teleop
+        // source is host-published, so seed the slot for the host to write into.
+        CommandTopology::Direct(source) => {
+            if source == CommandSource::Teleop {
+                external_channels.push(control::command::<BodyTwist>().into());
+            }
+        }
+
+        // Two or more sources contend: a `Selector` forwards the winner to
+        // `command`. The higher-priority sources are freshness-gated `preferred`
+        // inputs; the lowest is the always-available `base` fallback.
+        CommandTopology::Arbitrated { preferred, base } => {
+            let selector = Selector::<BodyTwist>::new(
+                "command_arbiter",
+                preferred.iter().map(|s| source_channel(*s)).collect(),
+                source_channel(base),
+                control::command::<BodyTwist>(),
+                selector_policy(&stack.command_arbitration),
+            );
+            builder = builder.add_node(Box::new(selector));
+
+            // Host-published sources (teleop) are seeded so a bus slot exists
+            // for the host to write into and the topological sort is satisfied.
+            // They are optional selector inputs, so they stay unsatisfied-safe
+            // when no host publishes them.
+            for source in preferred.iter().copied().chain(std::iter::once(base)) {
+                if source == CommandSource::Teleop {
+                    external_channels.push(control::teleop::<BodyTwist>().into());
+                }
+            }
+        }
+    }
+
     if !errors.is_empty() {
         return Err(errors);
     }
 
-    // Deduplicate external channels before handing to the builder.
-    external_channels.sort_by_key(|k| format!("{k:?}"));
-    external_channels.dedup();
+    // Deduplicate external channels before handing to the builder, keeping
+    // insertion order so the resolved-config dump is stable.
+    let mut seen = HashSet::new();
+    external_channels.retain(|key| seen.insert(key.clone()));
 
     host_capabilities
         .publishes
@@ -319,7 +307,7 @@ fn build_estimator_node(
     // particle will need particle-count / resampling). Adding a new
     // family means a new `registry/<family>.rs` and a new arm here.
     match est_cfg {
-        EstimatorConfig::Ekf(ekf_cfg) => build_gaussian_estimator_node(
+        EstimatorConfig::Ekf(ekf_cfg) => gaussian_estimator::assemble(
             instance_name,
             est_cfg,
             ekf_cfg,
@@ -352,155 +340,4 @@ fn build_estimator_node(
     }
 }
 
-fn build_gaussian_estimator_node(
-    instance_name: &str,
-    est_cfg: &EstimatorConfig,
-    ekf_cfg: &crate::config::EkfConfig,
-    agent_handle: FrameHandle,
-    sensor_frame_handles: &HashMap<String, FrameHandle>,
-    registry: &AutonomyRegistry,
-    external_channels: &mut Vec<ChannelKey>,
-) -> Result<Box<dyn crate::pipeline::node::PipelineNode>, PipelineAssemblyError> {
-    // Build aiding handlers from the aiding list in EkfConfig.
-    let mut aiding: Vec<Box<dyn AidingHandler>> = vec![];
-    for aid in &ekf_cfg.aiding {
-        let handler = build_aiding_handler(
-            instance_name,
-            aid,
-            agent_handle,
-            sensor_frame_handles,
-            registry,
-        )?;
-        external_channels.push(handler.channel().clone());
-        aiding.push(handler);
-    }
 
-    // If dynamics is IntegratedImu, declare the IMU predict-side channels
-    // as external too (accel + gyro Vec<SensorReading<_>>).
-    if let EkfDynamicsConfig::IntegratedImu(imu_cfg) = &ekf_cfg.dynamics {
-        use crate::nodes::gaussian_estimator::{EstimatorInputBuilder, IntegratedImuInputBuilder};
-        let builder = IntegratedImuInputBuilder::new(
-            imu_cfg.accel_channel.as_str(),
-            imu_cfg.gyro_channel.as_str(),
-        );
-        external_channels.extend_from_slice(builder.required_channels());
-    }
-
-    registry
-        .build_gaussian_estimator(
-            est_cfg.get_kind_str(),
-            est_cfg.clone(),
-            GaussianEstimatorBuildContext {
-                agent_handle,
-                aiding,
-            },
-        )
-        .map_err(|reason| PipelineAssemblyError::FactoryFailure {
-            node_kind: est_cfg.get_kind_str().to_string(),
-            reason,
-        })
-}
-
-fn build_aiding_handler(
-    instance_name: &str,
-    aid: &AidingConfig,
-    agent_handle: FrameHandle,
-    sensor_frame_handles: &HashMap<String, FrameHandle>,
-    registry: &AutonomyRegistry,
-) -> Result<Box<dyn AidingHandler>, PipelineAssemblyError> {
-    let sensor_handle = sensor_frame_handles
-        .get(&aid.input_channel)
-        .copied()
-        .ok_or_else(|| PipelineAssemblyError::UnknownSensorChannel {
-            estimator_instance: instance_name.to_string(),
-            input_channel: aid.input_channel.clone(),
-        })?;
-
-    let model = registry
-        .build_measurement_model(
-            &aid.model.kind,
-            MeasurementModelBuildContext {
-                agent_handle,
-                sensor_handle,
-                model_config: aid.model.clone(),
-            },
-        )
-        .map_err(|reason| PipelineAssemblyError::FactoryFailure {
-            node_kind: aid.model.kind.clone(),
-            reason,
-        })?;
-
-    let r = DMatrix::from_diagonal(&nalgebra::DVector::from_vec(aid.r_diag.clone()));
-
-    // Dispatch on sensor_payload to construct the correctly-typed handler.
-    // This list mirrors KNOWN_SENSOR_PAYLOADS in validation.rs and the
-    // SensorPayload impls in helios_core::data::sensor.
-    //
-    // If third-party SensorPayload types become a real need, promote this to a
-    // registry family: `register_aiding_handler_factory("MyType", factory)`.
-    let channel = build_aiding_channel(aid)?;
-
-    let handler: Box<dyn AidingHandler> = match aid.sensor_payload.as_str() {
-        "GpsPosition" => Box::new(TypedAidingHandler::<GpsPosition>::new(channel, model, r)),
-        "GpsVelocity" => Box::new(TypedAidingHandler::<GpsVelocity>::new(channel, model, r)),
-        "LinearAcceleration3D" => Box::new(TypedAidingHandler::<LinearAcceleration3D>::new(
-            channel, model, r,
-        )),
-        "AngularVelocity3D" => Box::new(TypedAidingHandler::<AngularVelocity3D>::new(
-            channel, model, r,
-        )),
-        "MagneticField3D" => Box::new(TypedAidingHandler::<MagneticField3D>::new(
-            channel, model, r,
-        )),
-        other => {
-            return Err(PipelineAssemblyError::UnknownSensorPayload {
-                estimator_instance: instance_name.to_string(),
-                payload_kind: other.to_string(),
-            });
-        }
-    };
-
-    Ok(handler)
-}
-
-/// Constructs the bus [`SensorChannel`] for a sensor reading channel, typed
-/// by `sensor_payload`. The channel encodes both the Rust type and the
-/// instance qualifier from `input_channel`.
-fn build_aiding_channel(aid: &AidingConfig) -> Result<SensorChannel, PipelineAssemblyError> {
-    let q = aid.input_channel.as_str();
-    let key = match aid.sensor_payload.as_str() {
-        "GpsPosition" => SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(q),
-        "GpsVelocity" => SensorChannel::named::<Vec<SensorReading<GpsVelocity>>>(q),
-        "LinearAcceleration3D" => {
-            SensorChannel::named::<Vec<SensorReading<LinearAcceleration3D>>>(q)
-        }
-        "AngularVelocity3D" => SensorChannel::named::<Vec<SensorReading<AngularVelocity3D>>>(q),
-        "MagneticField3D" => SensorChannel::named::<Vec<SensorReading<MagneticField3D>>>(q),
-        _ => unreachable!("caller already validated sensor_payload"),
-    };
-    Ok(key)
-}
-
-/// Determines the path channel the `PathFollowerNode` should read from.
-///
-/// Uses `PathFollowingConfig::path_source` if set; otherwise, falls back to
-/// the single planner's key. Errors if multiple planners exist and no
-/// explicit source is given.
-fn resolve_path_channel(stack: &AutonomyStack) -> Result<InternalChannel, PipelineAssemblyError> {
-    // Use an explicit path_source if configured.
-    // TODO: add `path_source: Option<String>` to PathFollowingConfig to
-    // support multi-planner stacks without ambiguity.
-    // For now: auto-select the single planner, error if there are multiple.
-    match stack.search_planners.len() {
-        0 => Err(PipelineAssemblyError::NoPathSourceForFollower),
-        1 => {
-            let planner_name = stack.search_planners.keys().next().unwrap();
-            Ok(InternalChannel::named::<Path>(planner_name.as_str()))
-        }
-        _ => {
-            // Multiple planners: cannot auto-select. Caller should add
-            // `path_source` to PathFollowingConfig (tracked as follow-up).
-            Err(PipelineAssemblyError::NoPathSourceForFollower)
-        }
-    }
-}

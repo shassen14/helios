@@ -60,6 +60,7 @@ pub struct MapperBuildContext {
 pub struct ControllerBuildContext {
     pub agent_handle: FrameHandle,
     pub(crate) config: ControllerConfig,
+    pub(crate) output_channel: InternalChannel,
 }
 
 /// Context for building a `SearchPlannerNode`.

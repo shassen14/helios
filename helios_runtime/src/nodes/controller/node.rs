@@ -14,7 +14,8 @@
 //!    On `None` (state missing — cold-start, estimator dropout), publish nothing
 //!    this tick. Downstream actuators fall back to their no-command behaviour.
 //! 2. Run [`Controller::compute`] with the assembled inputs.
-//! 3. Publish a `Stamped<C::Out>` on `InternalChannel::of::<C::Out>()`.
+//! 3. Publish a `Stamped<C::Out>` on the caller-supplied output channel (the
+//!    assembler routes it to the command selector's autonomy input).
 //!
 //! ## Cold-start vs. missing-reference
 //!
@@ -29,7 +30,7 @@
 use super::input::ControlInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{InternalChannel, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
 use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
@@ -42,14 +43,15 @@ use std::sync::Mutex;
 ///
 /// Construction is via [`Self::new`]. The port descriptor's required and
 /// optional inputs are taken directly from the input builder; the single output
-/// is `C::Out @ ""` — the controller's concrete command type. `rate` is `None`
-/// — controllers fire every tick (rate-limiting belongs to the actuator side if
-/// it's needed at all).
+/// is the caller-supplied channel, typed `C::Out` — the controller's concrete
+/// command type. `rate` is `None` — controllers fire every tick (rate-limiting
+/// belongs to the actuator side if it's needed at all).
 pub(crate) struct ControllerNode<C: Controller> {
     name: String,
     controller: Mutex<C>,
     input_builder: Box<dyn ControlInputBuilder>,
     descriptor: PortDescriptor,
+    output_key: ChannelKey,
 }
 
 impl<C> ControllerNode<C>
@@ -61,19 +63,22 @@ where
         name: impl Into<String>,
         controller: C,
         input_builder: Box<dyn ControlInputBuilder>,
+        output: InternalChannel,
     ) -> Self {
         let descriptor = AlgorithmNodePortDescriptor::new()
             .inputs_from_slices(
                 input_builder.required_channels(),
                 input_builder.optional_channels(),
             )
-            .output_internal(InternalChannel::of::<C::Out>())
+            .output_internal(output.clone())
             .build();
+
         Self {
             name: name.into(),
             controller: Mutex::new(controller),
             input_builder,
             descriptor,
+            output_key: output.into(),
         }
     }
 }
@@ -110,7 +115,7 @@ where
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(InternalChannel::of::<C::Out>().into(), stamped);
+        let _ = bus.write(self.output_key.clone(), stamped);
     }
 }
 
@@ -297,6 +302,7 @@ mod tests {
             "direct_velocity",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
+            InternalChannel::of::<BodyTwist>(),
         );
         assert_eq!(node.port_descriptor().outputs, vec![twist_channel()]);
         assert!(node.port_descriptor().rate.is_none());
@@ -309,7 +315,12 @@ mod tests {
         let expected_optional = builder.optional_channels().to_vec();
 
         let (controller, _calls) = ScriptedController::new();
-        let node = ControllerNode::new("direct_velocity", controller, Box::new(builder));
+        let node = ControllerNode::new(
+            "direct_velocity",
+            controller,
+            Box::new(builder),
+            InternalChannel::of::<BodyTwist>(),
+        );
         assert_eq!(node.port_descriptor().required_inputs, expected_required);
         assert_eq!(node.port_descriptor().optional_inputs, expected_optional);
     }
@@ -321,6 +332,7 @@ mod tests {
             "direct_velocity",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
+            InternalChannel::of::<BodyTwist>(),
         );
         let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
@@ -336,14 +348,15 @@ mod tests {
     #[test]
     fn node_is_generic_over_output_type() {
         // The same node type, monomorphized over a controller whose `Out` is
-        // `BodyWrench`, publishes on the `BodyWrench` channel — the DAG channel
-        // type follows `C::Out`, not a fixed command enum.
+        // `BodyWrench`, publishes on a `BodyWrench`-typed channel — the output
+        // slot is caller-supplied but its payload type must match `C::Out`.
+        let wrench_channel: ChannelKey = InternalChannel::of::<BodyWrench>().into();
         let node = ControllerNode::new(
             "wrench",
             WrenchController,
             Box::new(AlwaysReadyBuilder::new()),
+            InternalChannel::of::<BodyWrench>(),
         );
-        let wrench_channel: ChannelKey = InternalChannel::of::<BodyWrench>().into();
         assert_eq!(node.port_descriptor().outputs, vec![wrench_channel.clone()]);
 
         let bus = make_bus(wrench_channel.clone());
@@ -363,6 +376,7 @@ mod tests {
                 required: vec![],
                 optional: vec![],
             }),
+            InternalChannel::of::<BodyTwist>(),
         );
         let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
@@ -377,6 +391,7 @@ mod tests {
             "direct_velocity",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
+            InternalChannel::of::<BodyTwist>(),
         );
         let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(0.0, 0.02));

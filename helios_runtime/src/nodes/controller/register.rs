@@ -27,5 +27,6 @@ fn build_direct_velocity(ctx: ControllerBuildContext) -> Result<Box<dyn Pipeline
         "direct_velocity",
         controller,
         input_builder,
+        ctx.output_channel,
     )))
 }

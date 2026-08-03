@@ -135,6 +135,7 @@ fn validation_valid_full_stack_passes() {
         search_planners,
         path_following: None,
         controllers,
+        command_arbitration: Default::default(),
     };
 
     let errors = validate_autonomy_config(&stack, &full_caps());

@@ -1,4 +1,5 @@
 use crate::{
+    channels::control,
     pipeline::{key_format::format_key_short, rate_gate::RateTimer},
     port::{ChannelKey, ChannelKind, InternalChannel, PortBus},
     prelude::{AgentRuntime, PipelineNode, Stamped, TickContext},
@@ -240,7 +241,15 @@ impl PipelineBuilder {
             .iter()
             .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));
 
-        let bus = PortBus::new(descriptor_iter);
+        let mut bus = PortBus::new(descriptor_iter);
+
+        // `command` is the one channel with an out-of-graph consumer: a
+        // control-consuming body reads it back through `read_control`. Guarantee
+        // its slot so a teleop-only stack (no controller, no in-graph producer)
+        // can still have the host's command land instead of dropping.
+        if self.capabilities.consumes_control {
+            bus.ensure_slot(control::command::<BodyTwist>().into());
+        }
 
         // One timer per node, indexed by NodeId (which matches level-major
         // iteration order below).
@@ -449,6 +458,6 @@ impl AutonomyPipeline {
     /// being morphology-specific. Read other command channels by name via
     /// [`bus`](Self::bus)`().read::<T>(key)` in the meantime.
     pub fn read_control(&self) -> Option<Arc<Stamped<BodyTwist>>> {
-        self.bus.read(InternalChannel::of::<BodyTwist>().into())
+        self.bus.read(control::command::<BodyTwist>().into())
     }
 }
