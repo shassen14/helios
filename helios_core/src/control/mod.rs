@@ -7,6 +7,9 @@
 //! `models::controls` for caller convenience. Bevy/ECS wrappers and actuator
 //! dispatch live in `helios_sim`.
 
+pub mod actuation_model;
+pub mod actuators;
+pub mod allocation;
 pub mod commands;
 pub mod direct_velocity;
 pub mod dynamics;
