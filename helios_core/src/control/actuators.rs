@@ -119,25 +119,17 @@ pub enum ActuatorCommandError {
     },
 
     /// A setpoint named an actuator the model does not declare.
-    UnknownActuator {
-        actuator: ActuatorId,
-    },
+    UnknownActuator { actuator: ActuatorId },
 
     /// A declared actuator received no setpoint. The command must be total.
-    MissingActuator {
-        actuator: ActuatorId,
-    },
+    MissingActuator { actuator: ActuatorId },
 
     /// A setpoint value was `NaN` or infinite.
-    NonFinite {
-        actuator: ActuatorId,
-    },
+    NonFinite { actuator: ActuatorId },
 
     /// Two or more setpoints named the same actuator. The `Vec` cannot prevent
     /// this, so validation rejects it rather than let the applier pick arbitrarily.
-    DuplicateActuator {
-        actuator: ActuatorId,
-    },
+    DuplicateActuator { actuator: ActuatorId },
 }
 
 /// One actuator's commanded value: *which* actuator, and *what* to do.
@@ -203,6 +195,7 @@ pub enum SetpointValue {
     Force(f64),
     Torque(f64),
     Position(f64),
+    Velocity(f64),
 }
 
 impl SetpointValue {
@@ -212,6 +205,7 @@ impl SetpointValue {
             SetpointValue::Force(_) => SetpointKind::Force,
             SetpointValue::Torque(_) => SetpointKind::Torque,
             SetpointValue::Position(_) => SetpointKind::Position,
+            SetpointValue::Velocity(_) => SetpointKind::Velocity,
         }
     }
 
@@ -220,7 +214,10 @@ impl SetpointValue {
     /// is legitimately below zero.
     pub fn scalar(&self) -> f64 {
         match self {
-            SetpointValue::Force(v) | SetpointValue::Torque(v) | SetpointValue::Position(v) => *v,
+            SetpointValue::Force(v)
+            | SetpointValue::Torque(v)
+            | SetpointValue::Position(v)
+            | SetpointValue::Velocity(v) => *v,
         }
     }
 }
@@ -235,6 +232,7 @@ pub enum SetpointKind {
     Force,
     Torque,
     Position,
+    Velocity,
 }
 
 #[cfg(test)]
