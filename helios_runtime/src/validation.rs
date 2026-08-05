@@ -54,6 +54,10 @@ pub enum ConfigValidationError {
         estimator_instance: String,
         payload_kind: String,
     },
+    UnknownAllocator {
+        kind: String,
+    },
+
     /// `command_arbitration` lists `autonomy` as a source, but no controller is
     /// configured to produce the autonomy command.
     AutonomySourceWithoutController,
@@ -119,6 +123,9 @@ impl std::fmt::Display for ConfigValidationError {
                     f,
                     "Estimator '{estimator_instance}' references unknown sensor payload '{payload_kind}'"
                 )
+            }
+            ConfigValidationError::UnknownAllocator { kind } => {
+                write!(f, "Unknown allocator kind '{kind}'")
             }
             ConfigValidationError::AutonomySourceWithoutController => {
                 write!(
@@ -216,6 +223,16 @@ pub fn validate_autonomy_config(
         let kind = ctrl_cfg.get_kind_str();
         if !capabilities.controllers.contains(kind) {
             errors.push(ConfigValidationError::UnknownController {
+                kind: kind.to_string(),
+            });
+        }
+    }
+
+    // Allocator validation.
+    for alloc_cfg in config.allocators.values() {
+        let kind = alloc_cfg.get_kind_str();
+        if !capabilities.allocators.contains(kind) {
+            errors.push(ConfigValidationError::UnknownAllocator {
                 kind: kind.to_string(),
             });
         }

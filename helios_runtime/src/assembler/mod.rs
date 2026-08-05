@@ -55,8 +55,8 @@ use crate::pipeline::autonomy_pipeline::PipelineBuilder;
 use crate::pipeline::AutonomyPipeline;
 use crate::port::{ChannelKey, InternalChannel};
 use crate::registry::contexts::{
-    ControllerBuildContext, MapperBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
-    SearchPlannerBuildContext,
+    AllocatorBuildContext, ControllerBuildContext, MapperBuildContext, MockEstimatorBuildContext,
+    PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 use crate::registry::AutonomyRegistry;
 
@@ -99,7 +99,8 @@ pub fn build_pipeline(
     // Static validation runs before any node is built: a config-level mistake
     // (unknown kind, planner reading an absent map layer) is reported as itself
     // rather than as a downstream factory or unsatisfied-input failure.
-    let config_errors = crate::validation::validate_autonomy_config(stack, &registry.capabilities());
+    let config_errors =
+        crate::validation::validate_autonomy_config(stack, &registry.capabilities());
     if !config_errors.is_empty() {
         return Err(vec![PipelineAssemblyError::InvalidConfig(config_errors)]);
     }
@@ -285,6 +286,33 @@ pub fn build_pipeline(
         }
     }
 
+    // --- Allocators ---
+    // The allocator is a *consumer* of `command` (unlike the controllers /
+    // arbiter above, which produce it) and produces the `actuators` terminal.
+    // Both channels are graph-internal, so nothing is seeded onto
+    // `external_channels`.
+    for (allocator_name, alloc_cfg) in &stack.allocators {
+        // Input is `command` at `BodyTwist` because `KinematicAckermannAllocator`
+        // consumes `BodyTwist`. A non-`BodyTwist` allocator will source its input
+        // type from config; that generalization waits for the first such impl.
+        match registry.build_allocator(
+            alloc_cfg.get_kind_str(),
+            AllocatorBuildContext {
+                agent_handle,
+                instance_name: allocator_name.clone(),
+                config: alloc_cfg.clone(),
+                input_channel: control::command::<BodyTwist>(),
+                output_channel: control::actuators(),
+            },
+        ) {
+            Ok(node) => builder = builder.add_node(node),
+            Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
+                node_kind: alloc_cfg.get_kind_str().to_string(),
+                reason,
+            }),
+        }
+    }
+
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -357,5 +385,3 @@ fn build_estimator_node(
         }
     }
 }
-
-

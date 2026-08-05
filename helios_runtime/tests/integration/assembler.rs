@@ -4,8 +4,9 @@ use std::collections::HashMap;
 
 use helios_runtime::channels::control;
 use helios_runtime::config::{
-    AutonomyStack, CommandArbitrationConfig, CommandSource, EkfConfig, EkfDynamicsConfig,
-    EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig, SearchPlannerConfig,
+    AllocatorConfig, AutonomyStack, CommandArbitrationConfig, CommandSource, EkfConfig,
+    EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig,
+    SearchPlannerConfig,
 };
 use helios_runtime::port::ChannelKey;
 use helios_runtime::prelude::{Health, Stamped};
@@ -13,8 +14,10 @@ use helios_runtime::{
     build_pipeline, AutonomyRegistry, BodyCapabilities, ConfigValidationError, PipelineAssemblyError,
 };
 
+use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
 use helios_core::control::commands::BodyTwist;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+use helios_core::frames::conventions::FluVector;
 
 use crate::common::MockRuntime;
 
@@ -25,6 +28,16 @@ fn teleop_body() -> BodyCapabilities {
         publishes: vec![],
         consumes_control: true,
     }
+}
+
+/// The setpoint an [`ActuatorCommand`] carries for `id`, failing if absent.
+fn setpoint_value(cmd: &ActuatorCommand, id: &str) -> SetpointValue {
+    cmd.setpoints()
+        .iter()
+        .find(|sp| sp.actuator() == &ActuatorId::new(id))
+        .expect("actuator present in command")
+        .value()
+        .clone()
 }
 
 // =========================================================================
@@ -244,6 +257,93 @@ fn two_map_layers_of_one_kind_publish_to_distinct_channels() {
     assert!(
         names.contains(&"local") && names.contains(&"global"),
         "both map-layer nodes must be present, got {names:?}"
+    );
+}
+
+// =========================================================================
+// == Allocator: converts the `command` terminal into the actuator terminal ==
+// =========================================================================
+
+#[test]
+fn allocator_converts_command_into_the_actuator_terminal() {
+    // A teleop source feeds `command`; an allocator sits downstream and converts
+    // it into the `actuators` terminal. This exercises the whole seam through the
+    // assembler: the allocator must be wired to *read* `command` and *write* the
+    // terminal, and `read_actuators` must surface the result. It is the assembler
+    // counterpart to the allocator node's own wiring tests.
+    let mut allocators = HashMap::new();
+    allocators.insert(
+        "ackermann".to_string(),
+        AllocatorConfig::KinematicAckermann {
+            wheelbase: 2.0,
+            wheel_radius: 0.3,
+            drive: "drive_motor".to_string(),
+            steer: "steer_servo".to_string(),
+        },
+    );
+
+    let stack = AutonomyStack {
+        allocators,
+        command_arbitration: CommandArbitrationConfig {
+            sources: vec![CommandSource::Teleop],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        FrameHandle(0),
+        &HashMap::new(),
+        teleop_body(),
+    )
+    .expect("allocator + teleop stack must build");
+
+    // The node carries its config-map key, not its kind.
+    let names: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
+    assert!(
+        names.contains(&"ackermann"),
+        "allocator node must be present under its config key, got {names:?}"
+    );
+
+    // Cold-start: nothing on `command`, so the terminal is empty.
+    assert!(
+        pipeline.read_actuators().is_none(),
+        "no command published yet → no actuator terminal"
+    );
+
+    // Host publishes a straight-ahead twist (vx = 6 m/s, no yaw).
+    let command_key: ChannelKey = control::command::<BodyTwist>().into();
+    pipeline
+        .bus()
+        .write(
+            command_key,
+            Stamped {
+                value: BodyTwist::new(FluVector::new(6.0, 0.0, 0.0), FluVector::zeros()),
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("host write to `command` must succeed");
+
+    pipeline.tick(&MockRuntime, 0.1);
+
+    let actuators = pipeline
+        .read_actuators()
+        .expect("allocator must publish the actuator terminal after a command");
+
+    // Bicycle inverse on the configured actuator ids: straight drive centers the
+    // steer and scales wheel speed by vx / r. (The math itself is covered in
+    // helios_core; here we only assert the command flows to the right ids.)
+    assert_eq!(
+        setpoint_value(&actuators.value, "steer_servo"),
+        SetpointValue::Position(0.0)
+    );
+    assert_eq!(
+        setpoint_value(&actuators.value, "drive_motor"),
+        SetpointValue::Velocity(6.0 / 0.3)
     );
 }
 

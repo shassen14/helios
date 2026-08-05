@@ -6,7 +6,10 @@ use crate::{
     BodyCapabilities, NodeId, PipelineBuildError,
 };
 
-use helios_core::{control::commands::BodyTwist, frames::FrameAwareState};
+use helios_core::{
+    control::{actuators::ActuatorCommand, commands::BodyTwist},
+    frames::FrameAwareState,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -459,5 +462,16 @@ impl AutonomyPipeline {
     /// [`bus`](Self::bus)`().read::<T>(key)` in the meantime.
     pub fn read_control(&self) -> Option<Arc<Stamped<BodyTwist>>> {
         self.bus.read(control::command::<BodyTwist>().into())
+    }
+
+    /// Reads the pipeline's actuator terminal — the per-actuator command the
+    /// allocator produces, and the host relay consumes.
+    ///
+    /// Unlike [`read_control`](Self::read_control), this is morphology-neutral:
+    /// [`ActuatorCommand`] is the one universal type every host applies,
+    /// whatever the vehicle. Returns `None` during cold-start (before the
+    /// allocator's first output) and when no allocator node is in the graph.
+    pub fn read_actuators(&self) -> Option<Arc<Stamped<ActuatorCommand>>> {
+        self.bus.read(control::actuators().into())
     }
 }

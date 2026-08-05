@@ -152,6 +152,7 @@ fn validation_valid_full_stack_passes() {
         search_planners,
         path_following: None,
         controllers,
+        allocators: Default::default(),
         command_arbitration: Default::default(),
     };
 

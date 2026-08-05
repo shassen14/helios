@@ -1,11 +1,16 @@
 //! Control-channel *role* constructors.
 //!
 //! Unlike the *pinned* oracle channels (a fixed name bound to one fixed type
-//! forever), a control role fixes the *name* but leaves the *type* to the
+//! forever), a *command* role fixes the *name* but leaves the *type* to the
 //! morphology: "the command the arbiter reads" is `BodyTwist` for a ground
-//! vehicle and, after the actuator seam, `Wrench` for others. So every
-//! constructor here is generic over `T` — it binds a reserved role string to
+//! vehicle and `Wrench` for a free-flyer. So [`autonomy`], [`teleop`], and
+//! [`command`] are generic over `T` — each binds a reserved role string to
 //! whatever payload type the caller's morphology uses.
+//!
+//! The *actuator terminal* ([`actuators`]) is the exception: the whole point of
+//! the actuator seam is that everything downstream of the allocator speaks one
+//! universal type, [`ActuatorCommand`], regardless of morphology. So it is not
+//! generic — the role and the type are both fixed.
 //!
 //! All roles are `Internal` kind: brain-produced, or host-injected intent the
 //! brain then arbitrates — never sensor or oracle data. Each returns the kinded
@@ -16,11 +21,14 @@
 //! The role strings live as consts so a producer and a consumer can't drift on
 //! a typo.
 
+use helios_core::control::actuators::ActuatorCommand;
+
 use crate::port::InternalChannel;
 
 const ROLE_AUTONOMY: &str = "autonomy";
 const ROLE_TELEOP: &str = "teleop";
 const ROLE_COMMAND: &str = "command";
+const ROLE_ACTUATORS: &str = "actuators";
 
 /// The autonomy stack's command.
 ///
@@ -46,13 +54,24 @@ where
 /// The command the downstream consumer reads.
 ///
 /// Plural role (Internal). Written by the arbiter (or a lone command source),
-/// read by the arbiter's consumer — the read surface today, the allocator once
-/// the actuator seam lands.
+/// read by the allocator, which converts it into the [`actuators`] terminal.
 pub fn command<T>() -> InternalChannel
 where
     T: 'static,
 {
     InternalChannel::named::<T>(ROLE_COMMAND)
+}
+
+/// The per-actuator terminal: the pipeline's final control output.
+///
+/// Singular fixed type (Internal). Written by the allocator, read by the host
+/// relay (and by [`AutonomyPipeline::read_actuators`]). Unlike the command
+/// roles above, this is not generic — the seam pins it to [`ActuatorCommand`]
+/// so every host consumes one universal command type.
+///
+/// [`AutonomyPipeline::read_actuators`]: crate::pipeline::AutonomyPipeline::read_actuators
+pub fn actuators() -> InternalChannel {
+    InternalChannel::named::<ActuatorCommand>(ROLE_ACTUATORS)
 }
 
 #[cfg(test)]
@@ -67,6 +86,19 @@ mod tests {
     fn roles_are_internal_kind() {
         let key: ChannelKey = autonomy::<BodyTwist>().into();
         assert_eq!(key.kind(), ChannelKind::Internal);
+        let terminal: ChannelKey = actuators().into();
+        assert_eq!(terminal.kind(), ChannelKind::Internal);
+    }
+
+    #[test]
+    fn actuator_terminal_is_its_own_role() {
+        // The terminal must not share the `command` role: it carries its own
+        // reserved name, so it stays distinct even from a same-typed `command`.
+        // (Regression guard against the terminal being wired to ROLE_COMMAND.)
+        assert_ne!(
+            actuators(),
+            command::<helios_core::control::actuators::ActuatorCommand>()
+        );
     }
 
     #[test]

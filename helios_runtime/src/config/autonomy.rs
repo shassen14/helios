@@ -1,5 +1,5 @@
 use super::{
-    CommandArbitrationConfig, ControllerConfig, EstimatorConfig, MapLayerConfig,
+    AllocatorConfig, CommandArbitrationConfig, ControllerConfig, EstimatorConfig, MapLayerConfig,
     PathFollowingConfig, SearchPlannerConfig,
 };
 
@@ -29,6 +29,9 @@ pub struct AutonomyStack {
 
     #[serde(default)]
     pub controllers: HashMap<String, ControllerConfig>,
+
+    #[serde(default)]
+    pub allocators: HashMap<String, AllocatorConfig>,
 
     /// Command-arbitration tuning (teleop-vs-autonomy freshness). Defaults apply
     /// when the `[command_arbitration]` section is omitted, so a stack with no
