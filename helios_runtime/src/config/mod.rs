@@ -5,6 +5,7 @@
 //! These structs are TOML-deserializable and contain zero Bevy or simulation types.
 
 mod agent;
+mod allocator;
 mod arbitration;
 mod autonomy;
 mod controller;
@@ -14,6 +15,7 @@ mod path_following;
 mod planner;
 
 pub use agent::AgentBaseConfig;
+pub use allocator::AllocatorConfig;
 pub use arbitration::{ArbitrationPolicyConfig, CommandArbitrationConfig, CommandSource};
 pub use autonomy::AutonomyStack;
 pub use controller::ControllerConfig;

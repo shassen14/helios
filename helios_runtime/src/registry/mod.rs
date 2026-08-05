@@ -30,6 +30,7 @@ use contexts::{
 
 use crate::config::EstimatorConfig;
 use crate::pipeline::node::PipelineNode;
+use crate::registry::contexts::AllocatorBuildContext;
 use crate::validation::CapabilitySet;
 
 use helios_core::estimation::dynamics::EstimationDynamics;
@@ -60,6 +61,9 @@ type MapperFactory =
 type ControllerFactory =
     Box<dyn Fn(ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
+type AllocatorFactory =
+    Box<dyn Fn(AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
+
 type SearchPlannerFactory =
     Box<dyn Fn(SearchPlannerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
@@ -83,6 +87,7 @@ pub struct AutonomyRegistry {
     gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
     mappers: HashMap<String, MapperFactory>,
     controllers: HashMap<String, ControllerFactory>,
+    allocators: HashMap<String, AllocatorFactory>,
     search_planners: HashMap<String, SearchPlannerFactory>,
     path_followers: HashMap<String, PathFollowerFactory>,
     // mocks
@@ -97,6 +102,7 @@ impl Default for AutonomyRegistry {
             gaussian_estimators: HashMap::new(),
             mappers: HashMap::new(),
             controllers: HashMap::new(),
+            allocators: HashMap::new(),
             search_planners: HashMap::new(),
             path_followers: HashMap::new(),
             mock_estimators: HashMap::new(),
@@ -108,6 +114,7 @@ impl Default for AutonomyRegistry {
         crate::nodes::planner::register(&mut registry);
         crate::nodes::path_follower::register(&mut registry);
         crate::nodes::mocks::register(&mut registry);
+        crate::nodes::allocator::register(&mut registry);
         registry
     }
 }
@@ -174,6 +181,17 @@ impl AutonomyRegistry {
             + 'static,
     ) {
         self.controllers.insert(key.into(), Box::new(factory));
+    }
+
+    pub(crate) fn register_allocator(
+        &mut self,
+        key: impl Into<String>,
+        factory: impl Fn(AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.allocators.insert(key.into(), Box::new(factory));
     }
 
     pub(crate) fn register_search_planner(
@@ -266,6 +284,16 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No controller factory registered for '{key}'"))?(ctx)
     }
 
+    pub(crate) fn build_allocator(
+        &self,
+        key: &str,
+        ctx: AllocatorBuildContext,
+    ) -> Result<Box<dyn PipelineNode>, String> {
+        self.allocators
+            .get(key)
+            .ok_or_else(|| format!("No allocator factory registered for '{key}'"))?(ctx)
+    }
+
     pub(crate) fn build_search_planner(
         &self,
         key: &str,
@@ -309,6 +337,7 @@ impl AutonomyRegistry {
             mappers: self.mappers.keys().cloned().collect(),
             controllers: self.controllers.keys().cloned().collect(),
             planners: self.search_planners.keys().cloned().collect(),
+            allocators: self.allocators.keys().cloned().collect(),
         }
     }
 }

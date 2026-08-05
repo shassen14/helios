@@ -5,7 +5,8 @@
 //! resolves the agent-specific values and passes them here.
 
 use crate::config::{
-    ControllerConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig, SensorModelConfig,
+    AllocatorConfig, ControllerConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig,
+    SensorModelConfig,
 };
 use crate::nodes::gaussian_estimator::AidingHandler;
 use crate::port::InternalChannel;
@@ -69,6 +70,20 @@ pub struct ControllerBuildContext {
     /// distinguishes two controllers of the same kind.
     pub(crate) instance_name: String,
     pub(crate) config: ControllerConfig,
+    pub(crate) output_channel: InternalChannel,
+}
+
+/// Context for building an `AllocatorNode`.
+pub struct AllocatorBuildContext {
+    pub agent_handle: FrameHandle,
+    /// Node name: the allocator's config-map key, so tooling keyed on the name
+    /// distinguishes two allocators of the same kind.
+    pub(crate) instance_name: String,
+    pub(crate) config: AllocatorConfig,
+    /// The bus channel carrying the vehicle-level command this allocator
+    /// consumes (e.g. `control::command::<BodyTwist>()`).
+    pub(crate) input_channel: InternalChannel,
+    /// The bus channel on which this node publishes its `ActuatorCommand`.
     pub(crate) output_channel: InternalChannel,
 }
 

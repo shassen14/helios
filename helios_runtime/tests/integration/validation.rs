@@ -23,6 +23,7 @@ fn empty_caps() -> CapabilitySet {
         mappers: Default::default(),
         controllers: Default::default(),
         planners: Default::default(),
+        allocators: Default::default(),
     }
 }
 
@@ -37,6 +38,7 @@ fn full_caps() -> CapabilitySet {
         mappers: set(&["OccupancyGrid2D"]),
         controllers: set(&["DirectVelocity"]),
         planners: set(&["AStar"]),
+        allocators: set(&["KinematicAckermann"]),
     }
 }
 

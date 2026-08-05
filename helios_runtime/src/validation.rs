@@ -14,6 +14,7 @@ pub struct CapabilitySet {
     pub mappers: HashSet<String>,
     pub controllers: HashSet<String>,
     pub planners: HashSet<String>,
+    pub allocators: HashSet<String>,
 }
 
 /// Structured validation failure.

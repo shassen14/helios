@@ -13,17 +13,34 @@ use crate::control::actuators::ActuatorCommand;
 
 /// Maps a vehicle-level command onto per-actuator setpoints.
 ///
-/// - `In` — the incoming command this allocator consumes, e.g. a
-///   [`BodyTwist`](crate::control::commands::BodyTwist).
-/// - `Inputs` — extra per-tick feedback an allocator needs; `()` for the stateless
-///   feedforward maps most kinematic allocators are.
+/// Three sources feed an allocation, and the type parameters name two of them:
 ///
-/// `allocate` takes `&mut self` so a stateful allocator (slew limiting, an
-/// integrator) can carry state between ticks; a pure feedforward map ignores it.
-/// The returned command is *raw* — clamping to each actuator's limit, the sign
-/// convention, and the fail-safe belong to the host via the
+/// - `self` — what is *intrinsic* to the allocator: fixed geometry (wheelbase,
+///   wheel radius, the actuator ids) and, for a stateful allocator, its memory of
+///   its own past outputs.
+/// - `In` — the command being converted, i.e. *what the vehicle should do*, e.g. a
+///   [`BodyTwist`](crate::control::commands::BodyTwist).
+/// - `Inputs` — the current measured/estimated vehicle state the conversion
+///   depends on but the allocator neither owns nor produces, read fresh each tick.
+///
+/// The test for `Inputs`: does the math read a quantity that changes tick-to-tick,
+/// comes from a sensor or estimator, and is *not* the command? Fixed → `self`; the
+/// setpoint → `In`; the allocator's own history → `self`; current world state →
+/// `Inputs`.
+///
+/// A pure feedforward inverse — the Ackermann bicycle model, which inverts
+/// idealized kinematics from the command and fixed geometry alone — never reads
+/// vehicle state, so its `Inputs` is `()`. Allocators that must *react* to
+/// conditions carry a non-`()` `Inputs`: a traction-limited drive needs current
+/// wheel speeds to bound slip; an over-actuated vehicle (more actuators than
+/// degrees of freedom) resolves the redundancy against current effector state.
+///
+/// `allocate` takes `&mut self` so a stateful allocator (slew limiting against its
+/// last output, an integrator) can carry state between ticks; a pure feedforward
+/// map ignores it. The returned command is *raw* — clamping to each actuator's
+/// limit, the sign convention, and the fail-safe belong to the host via the
 /// [`ActuationModel`](crate::control::actuation_model::ActuationModel), never here.
-pub trait Allocator {
+pub trait Allocator: Send + Sync {
     type In;
     type Inputs;
 
