@@ -220,6 +220,7 @@ mod tests {
 
     use helios_core::frames::conventions::FluVector;
     use helios_runtime::{
+        channels::control,
         pipeline::node::HOST_PRODUCER_ID,
         port::{InternalChannel, PortBus},
         prelude::{
@@ -545,7 +546,7 @@ mod tests {
                 descriptor: PortDescriptor {
                     required_inputs: Vec::new(),
                     optional_inputs: Vec::new(),
-                    outputs: vec![InternalChannel::of::<BodyTwist>().into()],
+                    outputs: vec![control::command::<BodyTwist>().into()],
                     rate: None,
                 },
             }
@@ -577,7 +578,7 @@ mod tests {
             pipeline
                 .bus()
                 .write(
-                    InternalChannel::of::<BodyTwist>().into(),
+                    control::command::<BodyTwist>().into(),
                     Stamped {
                         value: control,
                         timestamp: MonotonicTime(0.0),
