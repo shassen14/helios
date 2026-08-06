@@ -20,6 +20,7 @@ use helios_core::{
     data::MonotonicTime,
     frames::{FrameAwareState, FrameId, StateVariable},
 };
+use helios_runtime::channels::control;
 
 use bevy::prelude::*;
 use nalgebra::Vector3;
@@ -197,8 +198,9 @@ fn flu_row(label: &'static str, v: &Vector3<f64>) -> Row {
 
 /// Appends the controller section for the selected subject, when it has produced a
 /// command. Mirrors [`gather_estimator`]: `With<AutonomyPipelineComponent>` is the
-/// inter-subject predicate, and `read_control` is the intra-pipeline one — `None` (no
-/// controller node, or one that has not yet fired) contributes nothing.
+/// inter-subject predicate, and a by-name read of the `command` channel is the
+/// intra-pipeline one — `None` (no controller node, or one that has not yet fired)
+/// contributes nothing.
 pub fn gather_controller(
     selected: Query<&AutonomyPipelineComponent, With<Selected>>,
     mut out: ResMut<CurrentInspection>,
@@ -207,7 +209,11 @@ pub fn gather_controller(
         return;
     };
 
-    let Some(stamped) = pipeline.0.read_control() else {
+    let Some(stamped) = pipeline
+        .0
+        .bus()
+        .read::<BodyTwist>(control::command::<BodyTwist>().into())
+    else {
         return;
     };
 
@@ -535,7 +541,7 @@ mod tests {
     /// A stand-in controller node: it declares the canonical `BodyTwist` output so
     /// the bus allocates that slot but computes nothing. A test writes the command onto
     /// the bus directly, standing in for a real controller having produced one — exactly
-    /// what `gather_controller` reads back through `read_control`.
+    /// what `gather_controller` reads back by name off the `command` channel.
     struct FakeControllerNode {
         descriptor: PortDescriptor,
     }
@@ -657,7 +663,7 @@ mod tests {
     }
 
     /// Tier 2, "no command" direction: a pipeline whose controller has not produced a
-    /// command (`read_control` is `None`) contributes no section. A pipeline with no
+    /// command (no `command` on the bus) contributes no section. A pipeline with no
     /// controller node at all hits this same branch, so this covers both absence cases
     /// Part A treats alike.
     #[test]

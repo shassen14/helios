@@ -252,14 +252,11 @@ pub fn build_pipeline(
         // Pure estimator / mapper agent: nothing produces commands.
         CommandTopology::None => {}
 
-        // A single source owns `command` outright — no arbiter. An autonomy
-        // source already writes `command` (see `controller_output`); a teleop
-        // source is host-published, so seed the slot for the host to write into.
-        CommandTopology::Direct(source) => {
-            if source == CommandSource::Teleop {
-                external_channels.push(control::command::<BodyTwist>().into());
-            }
-        }
+        // A lone internal source (autonomy) already writes `command` through its
+        // retargeted producer (see `controller_output`), so there is nothing to
+        // synthesize or seed. A lone host source never reaches this arm — it
+        // resolves to `Arbitrated` and is relayed below.
+        CommandTopology::Direct(_) => {}
 
         // Two or more sources contend: a `Selector` forwards the winner to
         // `command`. The higher-priority sources are freshness-gated `preferred`
@@ -274,10 +271,12 @@ pub fn build_pipeline(
             );
             builder = builder.add_node(Box::new(selector));
 
-            // Host-published sources (teleop) are seeded so a bus slot exists
-            // for the host to write into and the topological sort is satisfied.
-            // They are optional selector inputs, so they stay unsatisfied-safe
-            // when no host publishes them.
+            // Seed each host-published source (teleop) so a bus slot exists for
+            // the host to write into and the topological sort is satisfied —
+            // whether the source is an optional `preferred` input or the required
+            // `base` of a lone-teleop relay. An absent publisher then yields no
+            // `command` (the actuator deadman substitutes safe state), never a
+            // build error.
             for source in preferred.iter().copied().chain(std::iter::once(base)) {
                 if source == CommandSource::Teleop {
                     external_channels.push(control::teleop::<BodyTwist>().into());

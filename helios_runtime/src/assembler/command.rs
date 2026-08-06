@@ -16,12 +16,19 @@ pub(crate) const COMMAND_ARBITER_NODE: &str = "command_arbiter";
 
 /// How the `command` terminal is fed, resolved from the declared source set.
 pub(super) enum CommandTopology {
-    None,                  // pure-perception agent: no command terminal
-    Direct(CommandSource), // 1 source writes `command` itself
+    /// Pure-perception agent: nothing produces a `command` terminal.
+    None,
+    /// One internal source writes `command` itself — its producer node is
+    /// retargeted onto the terminal, so no arbiter is synthesized. Autonomy
+    /// only; a lone host source cannot be retargeted and takes `Arbitrated`.
+    Direct(CommandSource),
+    /// A synthesized `Selector` feeds `command`. Covers two-or-more contending
+    /// sources and the degenerate lone-host-source relay (`preferred` empty,
+    /// `base` the single host channel, forwarded verbatim).
     Arbitrated {
         preferred: Vec<CommandSource>,
         base: CommandSource,
-    }, // 2 +
+    },
 }
 
 /// Resolves the arbitration config into a topology. An empty source set infers
@@ -32,11 +39,18 @@ pub(super) fn resolve_command_topology(
 ) -> CommandTopology {
     // Highest authority is first; the lowest-priority source is the always-
     // available `base` fallback and the rest are freshness-gated `preferred`.
-    // No declared sources infers autonomy-only when a controller exists, and
-    // no command terminal otherwise.
+    // No declared sources infers autonomy-only when a controller exists, and no
+    // command terminal otherwise. A lone source forks on kind: an internal
+    // source (autonomy) writes `command` directly; a host source (teleop) cannot
+    // be retargeted, so it relays through a one-input `Selector` (`Arbitrated`
+    // with an empty `preferred`).
     match arb.sources.as_slice() {
         [] if has_controller => CommandTopology::Direct(CommandSource::Autonomy),
         [] => CommandTopology::None,
+        [one] if one.is_host_published() => CommandTopology::Arbitrated {
+            preferred: Vec::new(),
+            base: *one,
+        },
         [one] => CommandTopology::Direct(*one),
         [preferred @ .., base] => CommandTopology::Arbitrated {
             preferred: preferred.to_vec(),
@@ -91,12 +105,32 @@ mod tests {
     }
 
     #[test]
-    fn single_teleop_source_is_direct() {
-        // Teleop-only: no controller required, teleop writes `command` itself.
+    fn single_teleop_source_relays_through_selector() {
+        // Teleop is host-published: it cannot be retargeted onto `command` the
+        // way an internal controller is, so even alone it resolves to a one-input
+        // `Selector` relay — `Arbitrated` with an empty `preferred` and teleop as
+        // the sole `base`. A `Direct` here would leave the host writing `teleop`
+        // while the allocator read an empty `command`, and the agent would not move.
         let topology = resolve_command_topology(&config(vec![CommandSource::Teleop]), false);
+        match topology {
+            CommandTopology::Arbitrated { preferred, base } => {
+                assert!(preferred.is_empty());
+                assert_eq!(base, CommandSource::Teleop);
+            }
+            _ => panic!("expected an Arbitrated relay for a lone teleop source"),
+        }
+    }
+
+    #[test]
+    fn single_autonomy_source_is_direct() {
+        // The internal-source half of the lone-source fork: autonomy's producer
+        // is a DAG node retargeted onto `command`, so no arbiter is synthesized.
+        // This asymmetry with a lone teleop source is the whole point of
+        // `CommandSource::is_host_published`.
+        let topology = resolve_command_topology(&config(vec![CommandSource::Autonomy]), true);
         assert!(matches!(
             topology,
-            CommandTopology::Direct(CommandSource::Teleop)
+            CommandTopology::Direct(CommandSource::Autonomy)
         ));
     }
 

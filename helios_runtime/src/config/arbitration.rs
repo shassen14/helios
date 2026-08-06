@@ -10,9 +10,10 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct CommandArbitrationConfig {
     /// Command sources in priority order, highest authority first. The count
-    /// picks the topology: empty infers `[Autonomy]` when a controller exists
-    /// (else a build error); one source writes `command` directly with no
-    /// arbiter; two or more insert a `Selector`.
+    /// and kind pick the topology: empty infers `[Autonomy]` when a controller
+    /// exists (else a build error); a lone internal source (autonomy) writes
+    /// `command` directly with no arbiter; a lone host source (teleop) or two or
+    /// more sources insert a `Selector`.
     #[serde(default)]
     pub sources: Vec<CommandSource>,
 
@@ -59,6 +60,22 @@ impl CommandSource {
         match self {
             CommandSource::Autonomy => "autonomy",
             CommandSource::Teleop => "teleop",
+        }
+    }
+
+    /// Whether this source's command arrives from outside the DAG (the host)
+    /// rather than from an internal producer node.
+    ///
+    /// This is the fork in command-terminal topology. An internal source
+    /// (autonomy — its controller is a DAG node) can be retargeted to write
+    /// `command` directly, so alone it needs no arbiter. A host-published source
+    /// (teleop) is written from beyond the graph and cannot be retargeted, so
+    /// even alone it needs a synthesized `Selector` relaying its channel onto
+    /// `command`. See `assembler::command::resolve_command_topology`.
+    pub fn is_host_published(self) -> bool {
+        match self {
+            CommandSource::Autonomy => false,
+            CommandSource::Teleop => true,
         }
     }
 }
