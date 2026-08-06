@@ -4,9 +4,10 @@ use std::collections::HashMap;
 
 use helios_runtime::{
     config::{
-        AidingConfig, AutonomyStack, CommandArbitrationConfig, CommandSource, ControllerConfig,
-        EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
-        MapLayerConfig, MapperPoseSourceConfig, SearchPlannerConfig, SensorModelConfig,
+        AidingConfig, AllocatorConfig, AutonomyStack, CommandArbitrationConfig, CommandSource,
+        ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig,
+        IntegratedImuConfig, MapLayerConfig, MapperPoseSourceConfig, SearchPlannerConfig,
+        SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
 };
@@ -100,6 +101,39 @@ fn stack_with_arbitration(sources: Vec<CommandSource>, with_controller: bool) ->
     }
     AutonomyStack {
         controllers,
+        command_arbitration: CommandArbitrationConfig {
+            sources,
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+fn ackermann_allocator() -> AllocatorConfig {
+    AllocatorConfig::KinematicAckermann {
+        wheelbase: 2.0,
+        wheel_radius: 0.3,
+        drive: "drive".to_string(),
+        steer: "steer".to_string(),
+    }
+}
+
+fn stack_with_allocators(
+    count: usize,
+    with_controller: bool,
+    sources: Vec<CommandSource>,
+) -> AutonomyStack {
+    let mut allocators = HashMap::new();
+    for i in 0..count {
+        allocators.insert(format!("alloc_{i}"), ackermann_allocator());
+    }
+    let mut controllers = HashMap::new();
+    if with_controller {
+        controllers.insert("main_ctrl".to_string(), direct_velocity());
+    }
+    AutonomyStack {
+        controllers,
+        allocators,
         command_arbitration: CommandArbitrationConfig {
             sources,
             ..Default::default()
@@ -458,6 +492,63 @@ fn validation_explicit_autonomy_with_controller_passes() {
     assert!(
         errors.is_empty(),
         "Explicit autonomy source with a controller must pass, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_allocator_without_command_source_errors() {
+    // An allocator with no controller and no teleop source has nothing producing
+    // the `command` it consumes.
+    let stack = stack_with_allocators(1, false, vec![]);
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, ConfigValidationError::AllocatorWithoutCommandSource)),
+        "Expected AllocatorWithoutCommandSource, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_allocator_with_controller_passes() {
+    // A controller produces `command`, so the allocator's input is satisfied.
+    let stack = stack_with_allocators(1, true, vec![]);
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.is_empty(),
+        "Allocator with a controller must pass, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_allocator_with_teleop_source_passes() {
+    // A host-published teleop source also produces `command`, so an allocator
+    // with no controller is still satisfiable.
+    let stack = stack_with_allocators(1, false, vec![CommandSource::Teleop]);
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        !errors
+            .iter()
+            .any(|e| matches!(e, ConfigValidationError::AllocatorWithoutCommandSource)),
+        "Teleop source must satisfy the allocator's command input, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_multiple_allocators_errors() {
+    // Two allocators collide on the single actuator terminal.
+    let stack = stack_with_allocators(2, true, vec![]);
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::MultipleAllocators { count } if *count == 2
+        )),
+        "Expected MultipleAllocators {{ count: 2 }}, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }

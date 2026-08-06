@@ -70,6 +70,18 @@ pub enum ConfigValidationError {
     DuplicateCommandSource {
         source: String,
     },
+
+    /// An allocator is configured, but nothing produces the `command` it
+    /// consumes — no controller and no teleop source — so the actuator terminal
+    /// has no input. The terminal-side twin of `AutonomySourceWithoutController`.
+    AllocatorWithoutCommandSource,
+    /// More than one allocator is configured. The actuator terminal is a single
+    /// canonical channel; every allocator writes the same key, so two collide.
+    /// Exactly one allocator owns the terminal (its `ActuatorCommand` must be
+    /// total over the body's actuators).
+    MultipleAllocators {
+        count: usize,
+    },
 }
 
 impl std::fmt::Display for ConfigValidationError {
@@ -143,6 +155,18 @@ impl std::fmt::Display for ConfigValidationError {
                 write!(
                     f,
                     "command_arbitration.sources lists '{source}' more than once"
+                )
+            }
+            ConfigValidationError::AllocatorWithoutCommandSource => {
+                write!(
+                    f,
+                    "an allocator is configured but nothing produces the 'command' it consumes (no controller and no teleop source)"
+                )
+            }
+            ConfigValidationError::MultipleAllocators { count } => {
+                write!(
+                    f,
+                    "{count} allocators are configured, but the actuator terminal is a single channel that exactly one allocator may own"
                 )
             }
         }
@@ -288,6 +312,27 @@ pub fn validate_autonomy_config(
                 source: source.as_str().to_string(),
             });
         }
+    }
+
+    // Allocator cross-field checks. The per-kind check above rejects unknown
+    // allocators; these two catch a well-formed allocator wired into a graph
+    // that can't feed or hold it, which would otherwise surface late as an
+    // UnsatisfiedInput / duplicate-producer failure at DAG build.
+
+    // The allocator consumes `command`; `command` is produced only by a
+    // controller or a host-published teleop source. With neither, its input is
+    // unsatisfiable. Mirrors the assembler's `CommandTopology::None` case.
+    let command_is_produced = has_controller || sources.contains(&CommandSource::Teleop);
+    if !config.allocators.is_empty() && !command_is_produced {
+        errors.push(ConfigValidationError::AllocatorWithoutCommandSource);
+    }
+
+    // The actuator terminal is one canonical channel keyed only by type, so two
+    // allocators write the same slot. Exactly one may own it.
+    if config.allocators.len() > 1 {
+        errors.push(ConfigValidationError::MultipleAllocators {
+            count: config.allocators.len(),
+        });
     }
 
     errors

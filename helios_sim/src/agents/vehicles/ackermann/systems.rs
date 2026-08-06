@@ -1,18 +1,16 @@
 use crate::{
-    prelude::*,
-    {
-        core::{
-            components::{ControlOutputComponent, GroundTruthState},
-            transforms::{EnuBodyPose, FluVector},
-        },
-        registry::{AdapterBuildContext, VehicleAdapterRegistry},
+    agents::vehicles::ackermann::components::ActuationModelComponent,
+    core::{
+        components::{ControlOutputComponent, GroundTruthState},
+        transforms::{EnuBodyPose, FluVector},
     },
+    prelude::*,
 };
 use avian3d::prelude::*;
 use nalgebra::Vector3 as NaVec3;
 
 use super::{
-    adapter::{AckermannAdapterComponent, DefaultAckermannAdapter},
+    adapter::AckermannAdapterComponent,
     components::{AckermannActuator, AckermannCommand, AckermannParameters},
     AckermannAssets,
 };
@@ -33,44 +31,26 @@ pub(super) fn setup_ackermann_assets(
 pub(super) fn process_ackermann_logic(
     mut commands: Commands,
     request_query: Query<(Entity, &SpawnAgentConfigRequest)>,
-    registry: Res<VehicleAdapterRegistry>,
 ) {
     for (entity, request) in &request_query {
         if let Vehicle::Ackermann {
             wheelbase,
-            max_steering_angle,
+            wheel_radius,
+            actuation,
             actuator,
-            adapter: adapter_cfg,
             ..
         } = &request.0.vehicle
         {
-            let adapter_key = adapter_cfg.kind_str();
-            let ctx = AdapterBuildContext {
-                agent_entity: entity,
-                adapter_cfg: adapter_cfg.clone(),
-            };
-            let adapter_box = match registry.build_adapter(adapter_key, ctx) {
-                Ok(a) => a,
-                Err(e) => {
-                    error!(
-                        "Ackermann adapter '{}' failed for {:?}: {}. Falling back to Default.",
-                        adapter_key, entity, e
-                    );
-                    Box::new(DefaultAckermannAdapter)
-                }
-            };
-
             commands.entity(entity).insert((
                 AckermannParameters {
                     wheelbase: *wheelbase as f64,
-                    max_steering_angle: max_steering_angle.to_radians(),
+                    wheel_radius: *wheel_radius,
                 },
                 AckermannActuator {
-                    max_force: actuator.max_force,
-                    max_torque: actuator.max_torque,
-                    max_speed: actuator.max_speed,
+                    l0_force_gain: actuator.l0_force_gain,
+                    l0_yaw_gain: actuator.l0_yaw_gain,
                 },
-                AckermannAdapterComponent(adapter_box),
+                ActuationModelComponent(actuation.clone()),
                 TrackedFrame,
             ));
         }

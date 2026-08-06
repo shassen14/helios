@@ -2,11 +2,11 @@ use crate::brain_bridge::components::{
     AgentIdComponent, AutonomyPipelineComponent, MissionGoalChannels, OdomFrameOf,
     PipelineBuildFailed, SensorPublishChannel,
 };
-use crate::core::components::{ControlOutputComponent, ControllerStateSource};
+use crate::core::components::{ActuatorCommandComponent, ControllerStateSource};
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
-use helios_core::control::commands::BodyTwist;
+use helios_core::control::actuators::ActuatorCommand;
 use helios_core::data::primitives::FrameHandle;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::{
@@ -112,13 +112,13 @@ pub fn spawn_odom_frames(
     }
 }
 
-pub fn spawn_control_output(
+pub fn spawn_actuator_command(
     mut commands: Commands,
     agent_query: Query<Entity, With<AutonomyPipelineComponent>>,
 ) {
     for entity in &agent_query {
         commands.entity(entity).insert((
-            ControlOutputComponent(BodyTwist::zero()),
+            ActuatorCommandComponent(ActuatorCommand::new(vec![])),
             // Required by the vehicle HUD and toggled with T at runtime.
             // GroundTruth is the safer default so the controller sees real
             // physics state until the estimator has spun up.

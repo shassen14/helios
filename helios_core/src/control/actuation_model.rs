@@ -6,7 +6,9 @@
 //! checks a command against, and what the host reads to know each actuator's
 //! saturation limit, fail-safe value, and sign convention.
 
-use crate::control::actuators::{ActuatorId, SetpointKind, SetpointValue};
+use crate::control::actuators::{
+    ActuatorCommand, ActuatorId, ActuatorSetpoint, SetpointKind, SetpointValue,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +21,44 @@ pub struct ActuationModel {
 impl ActuationModel {
     pub fn new(actuators: Vec<ActuatorSpec>) -> Self {
         Self { actuators }
+    }
+
+    /// Enforce this body's actuator contract on a command, yielding one that is
+    /// always safe to apply.
+    ///
+    /// Unlike [`ActuatorCommand::validate`](crate::control::actuators::ActuatorCommand::validate),
+    /// which *reports* whether a command is well-formed, `resolve` never fails —
+    /// it is the fail-safe the host applies every tick, including when the command
+    /// never passed validation (a cold-start empty command, a stale command after
+    /// a pipeline stall, a buggy allocator). The result is therefore always *total*
+    /// over the model: exactly one setpoint per declared actuator, in declaration
+    /// order.
+    ///
+    /// For each declared actuator, the matching setpoint is used only when it is
+    /// genuinely applicable — its value speaks the actuator's declared command
+    /// space and is finite; when it is missing, of the wrong kind, or non-finite,
+    /// the actuator's `safe_state` is substituted. An applicable value is passed
+    /// through [`ActuatorSpec::enforce`], which applies the sign convention and
+    /// clamps to the saturation limit. Setpoints naming actuators this body does
+    /// not declare are simply never looked up, so they drop out.
+    pub fn resolve(&self, command: &ActuatorCommand) -> ActuatorCommand {
+        let setpoints = self
+            .actuators
+            .iter()
+            .map(|spec| {
+                let value = command
+                    .setpoints()
+                    .iter()
+                    .find(|sp| sp.actuator() == spec.id())
+                    .map(|sp| sp.value())
+                    .filter(|v| v.kind() == spec.kind() && v.scalar().is_finite())
+                    .map(|v| spec.enforce(v.scalar()))
+                    .unwrap_or_else(|| spec.safe_state.clone());
+                ActuatorSetpoint::new(spec.id.clone(), value)
+            })
+            .collect();
+
+        ActuatorCommand::new(setpoints)
     }
 
     /// The spec for one actuator by id, or `None` if this body has no such
@@ -61,6 +101,22 @@ impl ActuatorSpec {
 
     pub fn id(&self) -> &ActuatorId {
         &self.id
+    }
+
+    /// Coerce a raw commanded scalar into a setpoint this actuator can safely
+    /// accept: apply the sign convention, then clamp to the symmetric saturation
+    /// bound `|value| ≤ limit`. The `.abs()` on `limit` guards the clamp — a
+    /// negative limit in config would otherwise make `min > max` and panic. The
+    /// result carries this actuator's declared command space.
+    fn enforce(&self, scalar: f64) -> SetpointValue {
+        let signed = match self.sign {
+            SignConvention::Normal => scalar,
+            SignConvention::Inverted => -scalar,
+        };
+
+        let bound = self.limit.abs();
+
+        self.kind.value(signed.clamp(-bound, bound))
     }
 }
 
@@ -223,5 +279,133 @@ mod tests {
         let json = serde_json::to_string(&model).expect("serialize");
         let back: ActuationModel = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(model, back);
+    }
+
+    // The resolved command is total, so every declared actuator is present; this
+    // pulls one out by id to assert on its value.
+    fn value_for<'a>(command: &'a ActuatorCommand, id: &str) -> &'a SetpointValue {
+        command
+            .setpoints()
+            .iter()
+            .find(|sp| sp.actuator() == &ActuatorId::new(id))
+            .map(|sp| sp.value())
+            .expect("resolve produces a total command, so the actuator must be present")
+    }
+
+    #[test]
+    fn resolve_is_total_and_ordered_dropping_unknowns() {
+        // Steer first, an undeclared actuator in the middle, drive last: resolve
+        // must return exactly the model's actuators, in the model's declaration
+        // order (drive, steer), and drop the ghost.
+        let cmd = ActuatorCommand::new(vec![
+            setpoint("steer", SetpointValue::Position(0.1)),
+            setpoint("headlights", SetpointValue::Force(1.0)),
+            setpoint("drive", SetpointValue::Torque(5.0)),
+        ]);
+        let resolved = car_model().resolve(&cmd);
+        let ids: Vec<&ActuatorId> = resolved
+            .setpoints()
+            .iter()
+            .map(|sp| sp.actuator())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![&ActuatorId::new("drive"), &ActuatorId::new("steer")]
+        );
+    }
+
+    #[test]
+    fn in_range_command_passes_through_unchanged() {
+        let cmd = ActuatorCommand::new(vec![
+            setpoint("drive", SetpointValue::Torque(10.0)),
+            setpoint("steer", SetpointValue::Position(0.2)),
+        ]);
+        let resolved = car_model().resolve(&cmd);
+        assert_eq!(value_for(&resolved, "drive"), &SetpointValue::Torque(10.0));
+        assert_eq!(value_for(&resolved, "steer"), &SetpointValue::Position(0.2));
+    }
+
+    #[test]
+    fn over_limit_value_is_clamped_symmetrically() {
+        // Drive limit is 100; both a large positive and a large negative torque
+        // saturate at ±100.
+        let over = car_model().resolve(&ActuatorCommand::new(vec![
+            setpoint("drive", SetpointValue::Torque(500.0)),
+            setpoint("steer", SetpointValue::Position(0.0)),
+        ]));
+        assert_eq!(value_for(&over, "drive"), &SetpointValue::Torque(100.0));
+
+        let under = car_model().resolve(&ActuatorCommand::new(vec![
+            setpoint("drive", SetpointValue::Torque(-500.0)),
+            setpoint("steer", SetpointValue::Position(0.0)),
+        ]));
+        assert_eq!(value_for(&under, "drive"), &SetpointValue::Torque(-100.0));
+    }
+
+    #[test]
+    fn missing_actuator_falls_back_to_safe_state() {
+        // Steer omitted entirely: resolve fills it with the spec's safe_state.
+        let cmd = ActuatorCommand::new(vec![setpoint("drive", SetpointValue::Torque(10.0))]);
+        let resolved = car_model().resolve(&cmd);
+        assert_eq!(value_for(&resolved, "steer"), &SetpointValue::Position(0.0));
+    }
+
+    #[test]
+    fn wrong_kind_setpoint_falls_back_to_safe_state() {
+        // Drive is torque-commanded; a Force is the wrong command space, so resolve
+        // refuses to relabel it and drops to safe_state rather than apply it.
+        let cmd = ActuatorCommand::new(vec![
+            setpoint("drive", SetpointValue::Force(50.0)),
+            setpoint("steer", SetpointValue::Position(0.0)),
+        ]);
+        let resolved = car_model().resolve(&cmd);
+        assert_eq!(value_for(&resolved, "drive"), &SetpointValue::Torque(0.0));
+    }
+
+    #[test]
+    fn non_finite_value_falls_back_to_safe_state() {
+        // NaN survives `clamp` unchanged, so resolve must reject it up front and
+        // substitute safe_state rather than pass a NaN torque to physics.
+        let cmd = ActuatorCommand::new(vec![
+            setpoint("drive", SetpointValue::Torque(f64::NAN)),
+            setpoint("steer", SetpointValue::Position(0.0)),
+        ]);
+        let resolved = car_model().resolve(&cmd);
+        assert_eq!(value_for(&resolved, "drive"), &SetpointValue::Torque(0.0));
+    }
+
+    #[test]
+    fn empty_command_resolves_to_all_safe_states() {
+        // The cold-start / stalled-pipeline case: no setpoints at all yields every
+        // actuator's fail-safe value.
+        let resolved = car_model().resolve(&ActuatorCommand::new(vec![]));
+        assert_eq!(value_for(&resolved, "drive"), &SetpointValue::Torque(0.0));
+        assert_eq!(value_for(&resolved, "steer"), &SetpointValue::Position(0.0));
+    }
+
+    #[test]
+    fn inverted_sign_negates_before_clamping() {
+        // A drive whose positive direction is inverted: the sign flips first, then
+        // the flipped value is clamped to the same symmetric ±limit.
+        let inverted_drive = ActuatorSpec {
+            id: ActuatorId::new("drive"),
+            kind: SetpointKind::Torque,
+            limit: 100.0,
+            safe_state: SetpointValue::Torque(0.0),
+            sign: SignConvention::Inverted,
+        };
+        let model = ActuationModel::new(vec![inverted_drive, steer_spec()]);
+
+        let in_range = model.resolve(&ActuatorCommand::new(vec![
+            setpoint("drive", SetpointValue::Torque(10.0)),
+            setpoint("steer", SetpointValue::Position(0.0)),
+        ]));
+        assert_eq!(value_for(&in_range, "drive"), &SetpointValue::Torque(-10.0));
+
+        let clamped = model.resolve(&ActuatorCommand::new(vec![
+            setpoint("drive", SetpointValue::Torque(500.0)),
+            setpoint("steer", SetpointValue::Position(0.0)),
+        ]));
+        assert_eq!(value_for(&clamped, "drive"), &SetpointValue::Torque(-100.0));
     }
 }

@@ -14,7 +14,7 @@ gravity_enu = [0.0, 0.0, -9.81]  # [east, north, up] m/s²
 from = "sim.catalog.agents.ackermann_car"
 name = "SuperTruck-01"
 starting_pose = { translation = [20.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
-vehicle = { from = "entities.vehicles.ackermann_truck" }
+vehicle = { from = "entities.vehicles.ackermann_base" }
 
 [agents.autonomy_stack.controllers]
 path_follower = { from = "runtime.catalog.controllers.pid_aggressive" }

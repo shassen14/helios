@@ -1,3 +1,4 @@
+use helios_core::control::actuation_model::ActuationModel;
 use serde::Deserialize;
 
 // =========================================================================
@@ -59,90 +60,27 @@ impl Default for AckermannPhysicsConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AckermannActuatorConfig {
-    #[serde(default = "AckermannActuatorConfig::default_max_force")]
-    pub max_force: f32, // N
-    #[serde(default = "AckermannActuatorConfig::default_max_torque")]
-    pub max_torque: f32, // N·m
-    #[serde(default = "AckermannActuatorConfig::default_max_speed")]
-    pub max_speed: f32, // m/s
+    #[serde(default = "AckermannActuatorConfig::default_l0_force_gain")]
+    pub l0_force_gain: f32,
+    #[serde(default = "AckermannActuatorConfig::default_l0_yaw_gain")]
+    pub l0_yaw_gain: f32,
 }
 
 impl AckermannActuatorConfig {
-    fn default_max_force() -> f32 {
-        5000.0
+    fn default_l0_force_gain() -> f32 {
+        1.0
     }
-    fn default_max_torque() -> f32 {
-        2500.0
-    }
-    fn default_max_speed() -> f32 {
-        20.0
+
+    fn default_l0_yaw_gain() -> f32 {
+        1.0
     }
 }
 
 impl Default for AckermannActuatorConfig {
     fn default() -> Self {
         Self {
-            max_force: Self::default_max_force(),
-            max_torque: Self::default_max_torque(),
-            max_speed: Self::default_max_speed(),
-        }
-    }
-}
-
-// =========================================================================
-// == Adapter Config ==
-// =========================================================================
-
-/// Gains for a single SISO PID channel in an adapter.
-#[derive(Debug, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct SisoPidConfig {
-    pub kp: f64,
-    pub ki: f64,
-    pub kd: f64,
-    /// Maximum absolute integral accumulator value. 0.0 = unclamped.
-    #[serde(default)]
-    pub integral_clamp: f64,
-}
-
-/// Selects which `AckermannOutputAdapter` implementation to use per vehicle.
-/// The `kind` field in TOML drives registry lookup.
-///
-/// ```toml
-/// [adapter]
-/// kind = "DualSisoPid"
-///
-/// [adapter.longitudinal]
-/// kp = 2000.0
-/// ki = 100.0
-/// kd = 200.0
-/// integral_clamp = 0.5
-///
-/// [adapter.lateral]
-/// kp = 5000.0
-/// ki = 0.0
-/// kd = 500.0
-/// integral_clamp = 0.5
-/// ```
-#[derive(Debug, Deserialize, Clone, Default)]
-#[serde(tag = "kind")]
-#[serde(rename_all = "PascalCase")]
-pub enum AckermannAdapterConfig {
-    /// Open-loop, no feedback. Good for teleop and quick prototyping.
-    #[default]
-    Default,
-    /// Two SISO PIDs: longitudinal (speed error → throttle) + lateral (yaw rate error → torque).
-    DualSisoPid {
-        longitudinal: SisoPidConfig,
-        lateral: SisoPidConfig,
-    },
-}
-
-impl AckermannAdapterConfig {
-    pub fn kind_str(&self) -> &str {
-        match self {
-            Self::Default => "Default",
-            Self::DualSisoPid { .. } => "DualSisoPid",
+            l0_force_gain: Self::default_l0_force_gain(),
+            l0_yaw_gain: Self::default_l0_yaw_gain(),
         }
     }
 }
@@ -157,18 +95,12 @@ impl AckermannAdapterConfig {
 pub enum Vehicle {
     Ackermann {
         wheelbase: f32,
-        max_steering_angle: f32, // degrees
-        max_steering_rate: f32,  // degrees/sec
+        wheel_radius: f32,
+        actuation: ActuationModel,
         #[serde(default)]
         physics: AckermannPhysicsConfig,
         #[serde(default)]
         actuator: AckermannActuatorConfig,
-        #[serde(default)]
-        adapter: AckermannAdapterConfig,
-    },
-    Quadcopter {
-        rotor_thrust_coefficient: f32,
-        rotor_drag_coefficient: f32,
     },
 }
 
@@ -176,7 +108,6 @@ impl Vehicle {
     pub fn get_kind_str(&self) -> &str {
         match self {
             Vehicle::Ackermann { .. } => "Ackermann",
-            Vehicle::Quadcopter { .. } => "Quadcopter",
         }
     }
 }

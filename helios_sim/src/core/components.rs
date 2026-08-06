@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use helios_core::control::commands::BodyTwist;
+use helios_core::control::actuators::ActuatorCommand;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::{
     layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable,
@@ -8,13 +8,14 @@ use helios_core::prelude::PlannerGoal;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
 
-// --- Controller Output Component ---
+// --- Actuator Command Component ---
 
-/// The output of the last `Controller::compute()` call — the body-frame twist
-/// command the vehicle adapter consumes.
-/// Written by `SimulationSet::BrainOutput`; read by `SimulationSet::Actuation`.
+/// The pipeline's latest actuator-terminal output — the per-actuator setpoints
+/// (`ActuatorCommand`) the allocator node produces. Written by
+/// `SimulationSet::BrainOutput`; read by the vehicle plugin in
+/// `SimulationSet::Actuation`, which applies each setpoint to physics.
 #[derive(Component)]
-pub struct ControlOutputComponent(pub BodyTwist);
+pub struct ActuatorCommandComponent(pub ActuatorCommand);
 
 /// Selects which state estimate the controller reads. Toggled by the HUD's T key.
 #[derive(Component, Clone, Debug, PartialEq, Default)]

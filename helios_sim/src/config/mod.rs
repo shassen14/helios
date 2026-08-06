@@ -149,8 +149,21 @@ mod tests {
         [vehicle]
         kind = "Ackermann"
         wheelbase = 2.7
-        max_steering_angle = 30.0
-        max_steering_rate = 90.0
+        wheel_radius = 0.3
+
+        [[vehicle.actuation.actuators]]
+        id = "drive"
+        kind = "Velocity"
+        limit = 40.0
+        safe_state = { Velocity = 0.0 }
+        sign = "Normal"
+
+        [[vehicle.actuation.actuators]]
+        id = "steer"
+        kind = "Position"
+        limit = 0.61
+        safe_state = { Position = 0.0 }
+        sign = "Normal"
 
         [sensors.gps]
         kind = "Gps"

@@ -235,6 +235,20 @@ pub enum SetpointKind {
     Velocity,
 }
 
+impl SetpointKind {
+    /// Attach a scalar to this command space, the inverse of
+    /// [`SetpointValue::kind`]. The exhaustive, wildcard-free match means a new
+    /// [`SetpointValue`] variant fails to compile here until it is handled.
+    pub fn value(&self, scalar: f64) -> SetpointValue {
+        match self {
+            SetpointKind::Force => SetpointValue::Force(scalar),
+            SetpointKind::Torque => SetpointValue::Torque(scalar),
+            SetpointKind::Position => SetpointValue::Position(scalar),
+            SetpointKind::Velocity => SetpointValue::Velocity(scalar),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
