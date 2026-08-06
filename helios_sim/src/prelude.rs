@@ -27,9 +27,7 @@ pub use crate::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::core::transforms::{TfTree, TrackedFrame};
 
 pub use crate::agents::sensors::imu::ImuPlugin;
-pub use crate::agents::vehicles::ackermann::{
-    AckermannAdapterComponent, AckermannCarPlugin, AckermannOutputAdapter,
-};
+pub use crate::agents::vehicles::ackermann::AckermannCarPlugin;
 
 pub use crate::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent};
 pub use crate::brain_bridge::HostInputPublisher;

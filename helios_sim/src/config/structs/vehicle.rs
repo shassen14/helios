@@ -54,9 +54,13 @@ impl Default for AckermannPhysicsConfig {
 // == Actuator Config ==
 // =========================================================================
 
-/// Actuator saturation limits for an Ackermann vehicle.
-/// With the open-loop pipeline, `max_force` is an absolute physical force limit (N),
-/// not a P-controller gain. It must exceed the static friction threshold to move the car.
+/// Wrench gains for the L0 arcade shim (`drive_ackermann_cars`).
+///
+/// These scale a resolved setpoint into a chassis wrench: `l0_force_gain` turns
+/// the drive velocity into a forward force, `l0_yaw_gain` turns the steer angle
+/// into a yaw torque. They are an open-loop feedforward, not a controller — see
+/// the open-loop-speed limitation in `docs/4_action/ackermann_actuation.md` — and
+/// are retired wholesale when L1 dynamic actuation replaces the shim.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct AckermannActuatorConfig {

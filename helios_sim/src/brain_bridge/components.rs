@@ -67,7 +67,7 @@ pub struct SensorPublishChannel(pub String);
 pub struct MissionGoalChannels(pub Vec<String>);
 
 /// The TrajectoryPoint produced by path following this tick.
-/// Kept as a component for downstream consumers (vehicle adapters, debug gizmos).
+/// Kept as a component for downstream consumers (the vehicle plugin, future viz).
 #[derive(Component, Default)]
 pub struct PathFollowingOutputComponent(pub Option<TrajectoryPoint>);
 

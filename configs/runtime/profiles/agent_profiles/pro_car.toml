@@ -24,3 +24,13 @@ state_source = "ground_truth"
 
 [controllers]
 path_follower = { from = "runtime.catalog.controllers.direct_velocity" }
+
+# Converts the controller's BodyTwist command into the per-actuator terminal
+# (drive velocity + steer angle) that the host applies. `drive`/`steer` name  the
+# actuators declared in the vehicle's [actuation] contract.
+[allocators.wheels]
+kind = "KinematicAckermann"
+wheelbase = 2.5
+wheel_radius = 0.3
+drive = "drive"
+steer = "steer"

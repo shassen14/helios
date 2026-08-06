@@ -142,8 +142,8 @@ pub fn spawn_actuator_command(
 ///
 /// - `name`: cloned from `agent_name`; used by error messages
 ///   (`PipelineBuildError::UnsatisfiedBodyCapabilities`) and the DAG dump.
-/// - `consumes_control`: hardcoded `true` — every sim agent has an
-///   actuation adapter (`AckermannAdapterComponent` etc.). Becomes a
+/// - `consumes_control`: hardcoded `true` — every sim agent has a vehicle
+///   plugin that applies the pipeline's actuator command to physics. Becomes a
 ///   parameter (or moves to `AgentConfig`) once passive observer agents,
 ///   log-playback agents, or hw-passive Zenoh-bridge nodes exist.
 /// - `publishes`: only the two oracle channels — `oracle/pose` (world ENU)

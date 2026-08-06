@@ -1,19 +1,21 @@
+use super::{
+    components::{AckermannActuator, AckermannParameters},
+    AckermannAssets,
+};
+
 use crate::{
     agents::vehicles::ackermann::components::ActuationModelComponent,
     core::{
-        components::{ControlOutputComponent, GroundTruthState},
+        components::GroundTruthState,
         transforms::{EnuBodyPose, FluVector},
     },
     prelude::*,
 };
+
+use helios_core::control::actuators::SetpointValue;
+
 use avian3d::prelude::*;
 use nalgebra::Vector3 as NaVec3;
-
-use super::{
-    adapter::AckermannAdapterComponent,
-    components::{AckermannActuator, AckermannCommand, AckermannParameters},
-    AckermannAssets,
-};
 
 pub(super) fn setup_ackermann_assets(
     mut commands: Commands,
@@ -28,6 +30,7 @@ pub(super) fn setup_ackermann_assets(
     });
 }
 
+#[allow(irrefutable_let_patterns)]
 pub(super) fn process_ackermann_logic(
     mut commands: Commands,
     request_query: Query<(Entity, &SpawnAgentConfigRequest)>,
@@ -57,6 +60,7 @@ pub(super) fn process_ackermann_logic(
     }
 }
 
+#[allow(irrefutable_let_patterns)]
 pub(super) fn attach_ackermann_physics(
     mut commands: Commands,
     query: Query<
@@ -123,86 +127,75 @@ pub(super) fn attach_ackermann_physics(
     }
 }
 
-/// RUNTIME: Reads `ControlOutputComponent`, runs the adapter (Layer 2) to get an
-/// `AckermannCommand`, then applies forces/torques via dumb kinematic mapping (Layer 3).
+/// Applies the pipeline's latest actuator command to physics.
 ///
-/// No embedded P controllers — passive damping is handled by Avian3D physics parameters.
-#[allow(clippy::type_complexity)]
+/// `resolve` first enforces the body's actuator contract — clamping to each
+/// actuator's limit, applying its sign convention, and substituting the
+/// fail-safe value for any missing, wrong-kind, or non-finite setpoint — so the
+/// command reaching this system is always safe to apply directly.
+///
+/// This is the L0 arcade shim: a single rigid body, so the per-actuator
+/// setpoints are folded into one chassis wrench rather than driven through
+/// articulated wheel joints. It interprets by command space — a `Velocity`
+/// (the drive) becomes forward force, a `Position` (the steer angle) becomes
+/// yaw torque — then rotates that FLU wrench into world space and applies it as
+/// a `ConstantForce`/`ConstantTorque`. Passive damping is left to Avian3D.
+///
+/// The velocity → force map is open-loop feedforward: steady-state speed is set
+/// by force balancing drag and friction, not by the command, so actual speed
+/// only approximates the requested velocity and no single gain tracks it across
+/// the range. Closing that loop needs a brain-side speed controller emitting a
+/// force setpoint; that is the next fidelity rung, not something this shim does.
 pub(super) fn drive_ackermann_cars(
     mut commands: Commands,
-    time: Res<Time>,
     mut query: Query<(
         Entity,
         &Transform,
-        &LinearVelocity,
-        &AngularVelocity,
-        &AckermannParameters,
         &AckermannActuator,
-        &Mass,
-        &mut AckermannAdapterComponent,
-        Option<&ControlOutputComponent>,
+        &ActuationModelComponent,
+        Option<&ActuatorCommandComponent>,
     )>,
 ) {
-    let dt = time.delta_secs();
-    for (
-        entity,
-        transform,
-        lin_vel,
-        ang_vel,
-        params,
-        actuator,
-        mass,
-        mut adapter_comp,
-        ctrl_output_opt,
-    ) in &mut query
-    {
-        let Some(ctrl_output) = ctrl_output_opt else {
+    for (entity, transform, actuator, model, cmd_opt) in &mut query {
+        let Some(cmd) = cmd_opt else {
             continue;
         };
 
-        // Layer 2: adapter translates the BodyTwist command → AckermannCommand.
-        let cmd = adapter_comp.0.adapt(
-            &ctrl_output.0,
-            params,
-            actuator,
-            transform,
-            lin_vel,
-            ang_vel,
-            mass.0,
-            dt,
-        );
+        let resolved = model.0.resolve(&cmd.0);
 
-        // Capture before consuming in Layer 3 (persisted for the debug HUD).
-        let throttle_norm = cmd.throttle_norm;
-        let steering_torque_norm = cmd.steering_torque_norm;
+        // Fold the resolved per-actuator setpoints into a single chassis wrench in
+        // the body FLU frame (+X forward, +Z yaw-up). Interpreting by command
+        // space is the L0 single-body shim: drive velocity → forward force, steer
+        // angle → yaw torque. A force/torque setpoint has no place in this map and
+        // is warned-and-ignored; the articulated model that drives per-wheel joints
+        // is the next rung of the fidelity ladder.
+        let mut force_flu = NaVec3::zeros();
+        let mut torque_flu = NaVec3::zeros();
 
-        // Layer 3: pure linear map — adapter has already resolved all kinematics.
+        for sp in resolved.setpoints() {
+            match sp.value() {
+                SetpointValue::Velocity(v) => force_flu.x += v * actuator.l0_force_gain as f64,
+                SetpointValue::Position(v) => torque_flu.z += v * actuator.l0_yaw_gain as f64,
+                SetpointValue::Force(_) | SetpointValue::Torque(_) => {
+                    warn!(
+                        actuator = ?sp.actuator(),
+                        "L0 Ackermann shim received a force/torque setpoint it cannot apply; ignoring"
+                    );
+                }
+            }
+        }
 
-        // Force: throttle_norm * max_force (FLU +X = Forward).
-        let force_flu = NaVec3::new(
-            cmd.throttle_norm as f64 * actuator.max_force as f64,
-            0.0,
-            0.0,
-        );
+        // Rotate both the FLU force and torque into Bevy world space before
+        // handing them to Avian; conversions stay confined to `FluVector`.
         let force_bevy_local = Vec3::from(FluVector(force_flu));
         let force_world = transform.rotation * force_bevy_local;
 
-        // Torque: steering_torque_norm * max_torque (FLU +Z = Yaw-up).
-        let torque_flu = NaVec3::new(
-            0.0,
-            0.0,
-            cmd.steering_torque_norm as f64 * actuator.max_torque as f64,
-        );
         let torque_bevy_local = Vec3::from(FluVector(torque_flu));
         let torque_world = transform.rotation * torque_bevy_local;
 
         commands.entity(entity).insert((
             ConstantForce::new(force_world.x, force_world.y, force_world.z),
             ConstantTorque::new(torque_world.x, torque_world.y, torque_world.z),
-            AckermannCommand {
-                throttle_norm,
-                steering_torque_norm,
-            },
         ));
     }
 }

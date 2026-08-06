@@ -3,35 +3,35 @@
 
 kind = "Ackermann"
 wheelbase = 2.5
-max_steering_angle = 35.0  # degrees
-max_steering_rate  = 140.0 # degrees/sec
+wheel_radius = 0.3
 
 # Rigid-body physics applied to the Avian3D RigidBody.
-# max_force must exceed static friction: mass * 9.81 * friction ≈ 10,300 N for defaults.
 [physics]
-mass             = 1500.0  # kg
-friction         = 0.7
-linear_damping   = 1.0   # cuts passive coast distance when braking
-angular_damping  = 1.5   # gentle yaw decay; prevents spin-out without killing turns
+mass = 1500.0         # kg
+friction = 0.7
+linear_damping = 1.0  # cuts passive coast distance when braking
+angular_damping = 1.5 # gentle yaw decay; prevents spin-out without killing turns
 
-# Actuator saturation limits. Physical force/torque maximums, not gains.
+# L0 arcade-shim wrench gains: open-loop feedforward that scales a resolved
+# setpoint into a chassis wrench (drive velocity -> forward force, steer angle ->
+# yaw torque). Not a controller, so steady-state speed only approximates the
+# command; retired when L1 dynamic actuation lands. See
+# docs/4_action/ackermann_actuation.md.
 [actuator]
-max_force  = 22000.0  # N
-max_torque = 10000.0  # N·m
-max_speed  = 20.0     # m/s
+l0_force_gain = 1200.0
+l0_yaw_gain = 16400.0
 
-# Output adapter: closed-loop speed + yaw-rate PIDs pairing with a BodyVelocity controller.
-[adapter]
-kind = "DualSisoPid"
 
-[adapter.longitudinal]   # gains in N / (m/s)
-kp             = 8000.0
-ki             = 100.0
-kd             = 200.0
-integral_clamp = 30.0
+[[actuation.actuators]]
+id = "drive"
+kind = "Velocity"
+limit = 66.7                    # rad/s wheel speed (≈ 20 m/s at r = 0.3)
+safe_state = { Velocity = 0.0 }
+sign = "Normal"
 
-[adapter.lateral]        # gains in N·m / (rad/s)
-kp             = 8000.0
-ki             = 1.0
-kd             = 0.0
-integral_clamp = 0.5
+[[actuation.actuators]]
+id = "steer"
+kind = "Position"
+limit = 0.61                    # rad (≈ 35°)
+safe_state = { Position = 0.0 }
+sign = "Normal"
