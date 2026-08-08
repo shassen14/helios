@@ -70,8 +70,6 @@ impl Allocator for KinematicAckermannAllocator {
 mod tests {
     use super::*;
 
-    use crate::frames::conventions::FluVector;
-
     const WHEELBASE: f64 = 2.0;
     const WHEEL_RADIUS: f64 = 0.3;
 
@@ -85,7 +83,7 @@ mod tests {
     }
 
     fn twist(vx: f64, wz: f64) -> BodyTwist {
-        BodyTwist::new(FluVector::new(vx, 0.0, 0.0), FluVector::new(0.0, 0.0, wz))
+        BodyTwist::unicycle(vx, wz)
     }
 
     // The setpoint for one actuator, failing if the command omits it.

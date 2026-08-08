@@ -1,11 +1,3 @@
-use crate::viz::interaction::{
-    actions::registry::ActionRegistry,
-    keybindings::load_keybindings,
-    sampling::{sample_actions, ActionState},
-};
-
-use bevy::prelude::*;
-
 pub mod actions;
 pub mod camera;
 pub mod inspector;
@@ -13,6 +5,15 @@ pub mod keybindings;
 pub mod registration;
 pub mod sampling;
 pub mod selection;
+pub mod teleop;
+
+use crate::viz::interaction::{
+    actions::registry::ActionRegistry,
+    keybindings::load_keybindings,
+    sampling::{sample_actions, ActionState},
+};
+
+use bevy::prelude::*;
 
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum InteractionSet {

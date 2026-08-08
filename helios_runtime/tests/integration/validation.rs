@@ -37,7 +37,7 @@ fn full_caps() -> CapabilitySet {
         dynamics: set(&["IntegratedImu", "AckermannOdometry"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
         mappers: set(&["OccupancyGrid2D"]),
-        controllers: set(&["DirectVelocity"]),
+        controllers: set(&["DirectTwist"]),
         planners: set(&["AStar"]),
         allocators: set(&["KinematicAckermann"]),
     }
@@ -63,8 +63,8 @@ fn ekf_config() -> EstimatorConfig {
     })
 }
 
-fn direct_velocity() -> ControllerConfig {
-    ControllerConfig::DirectVelocity {
+fn direct_twist() -> ControllerConfig {
+    ControllerConfig::DirectTwist {
         state_source: Default::default(),
     }
 }
@@ -97,7 +97,7 @@ fn occupancy_grid() -> MapLayerConfig {
 fn stack_with_arbitration(sources: Vec<CommandSource>, with_controller: bool) -> AutonomyStack {
     let mut controllers = HashMap::new();
     if with_controller {
-        controllers.insert("main_ctrl".to_string(), direct_velocity());
+        controllers.insert("main_ctrl".to_string(), direct_twist());
     }
     AutonomyStack {
         controllers,
@@ -129,7 +129,7 @@ fn stack_with_allocators(
     }
     let mut controllers = HashMap::new();
     if with_controller {
-        controllers.insert("main_ctrl".to_string(), direct_velocity());
+        controllers.insert("main_ctrl".to_string(), direct_twist());
     }
     AutonomyStack {
         controllers,
@@ -172,7 +172,7 @@ fn validation_valid_full_stack_passes() {
     search_planners.insert("local_planner".to_string(), astar());
 
     let mut controllers = HashMap::new();
-    controllers.insert("main_ctrl".to_string(), direct_velocity());
+    controllers.insert("main_ctrl".to_string(), direct_twist());
 
     let mut map_layers = HashMap::new();
     map_layers.insert("local".to_string(), occupancy_grid());
@@ -264,7 +264,7 @@ fn validation_unknown_mapper_produces_error() {
 #[test]
 fn validation_unknown_controller_produces_error() {
     let mut controllers = HashMap::new();
-    controllers.insert("ctrl".to_string(), direct_velocity());
+    controllers.insert("ctrl".to_string(), direct_twist());
     let stack = AutonomyStack {
         controllers,
         ..Default::default()
@@ -272,9 +272,9 @@ fn validation_unknown_controller_produces_error() {
     let errors = validate_autonomy_config(&stack, &empty_caps());
     assert!(
         errors.iter().any(
-            |e| matches!(e, ConfigValidationError::UnknownController { kind } if kind == "DirectVelocity")
+            |e| matches!(e, ConfigValidationError::UnknownController { kind } if kind == "DirectTwist")
         ),
-        "Expected UnknownController for DirectVelocity"
+        "Expected UnknownController for DirectTwist"
     );
 }
 
@@ -343,8 +343,8 @@ fn validation_planner_referencing_none_map_layer_produces_error() {
 #[test]
 fn validation_collects_all_errors_two_bad_controllers() {
     let mut controllers = HashMap::new();
-    controllers.insert("ctrl1".to_string(), direct_velocity());
-    controllers.insert("ctrl2".to_string(), direct_velocity());
+    controllers.insert("ctrl1".to_string(), direct_twist());
+    controllers.insert("ctrl2".to_string(), direct_twist());
     let stack = AutonomyStack {
         controllers,
         ..Default::default()

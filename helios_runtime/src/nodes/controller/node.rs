@@ -22,7 +22,7 @@
 //! `DefaultControlInputBuilder` returns `None` only when `FrameAwareState` is
 //! absent. A `Some(ControlInputs { state, reference: None })` is still passed
 //! to the controller — each implementation decides what to do (e.g.
-//! `DirectVelocityController` emits a zero twist when no reference is present;
+//! `DirectTwistController` emits a zero twist when no reference is present;
 //! a controller holding feedback state would degrade to pure feedback).
 //! Publishing a safe-zero on full cold-start belongs in a future
 //! `SafetyMonitorNode` downstream of this node, not here.
@@ -299,7 +299,7 @@ mod tests {
     fn descriptor_outputs_the_controllers_command_channel() {
         let (controller, _calls) = ScriptedController::new();
         let node = ControllerNode::new(
-            "direct_velocity",
+            "direct_twist",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
             InternalChannel::of::<BodyTwist>(),
@@ -316,7 +316,7 @@ mod tests {
 
         let (controller, _calls) = ScriptedController::new();
         let node = ControllerNode::new(
-            "direct_velocity",
+            "direct_twist",
             controller,
             Box::new(builder),
             InternalChannel::of::<BodyTwist>(),
@@ -329,7 +329,7 @@ mod tests {
     fn execute_publishes_command_with_correct_stamp_and_value() {
         let (controller, _calls) = ScriptedController::new();
         let node = ControllerNode::new(
-            "direct_velocity",
+            "direct_twist",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
             InternalChannel::of::<BodyTwist>(),
@@ -370,7 +370,7 @@ mod tests {
         // and the controller is never called.
         let (controller, calls) = ScriptedController::new();
         let node = ControllerNode::new(
-            "direct_velocity",
+            "direct_twist",
             controller,
             Box::new(NeverReadyBuilder {
                 required: vec![],
@@ -388,7 +388,7 @@ mod tests {
     fn execute_forwards_dt_to_controller() {
         let (controller, calls) = ScriptedController::new();
         let node = ControllerNode::new(
-            "direct_velocity",
+            "direct_twist",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
             InternalChannel::of::<BodyTwist>(),

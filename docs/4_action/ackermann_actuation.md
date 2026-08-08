@@ -7,7 +7,7 @@ The autonomy pipeline ends at an **actuator terminal** — a per-actuator
 host; the host is a transducer from setpoints to physics.
 
 ```
-ControllerNode (DirectVelocity)              helios_runtime
+ControllerNode (DirectTwist)                 helios_runtime
     │  BodyTwist  @ "command"
     ▼
 AllocatorNode<KinematicAckermann>            helios_runtime

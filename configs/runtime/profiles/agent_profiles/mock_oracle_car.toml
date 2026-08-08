@@ -25,4 +25,4 @@ max_lateral_acceleration = 2.0
 state_source = "ground_truth"
 
 [controllers]
-path_follower = { from = "runtime.catalog.controllers.direct_velocity" }
+path_follower = { from = "runtime.catalog.controllers.direct_twist" }

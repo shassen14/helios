@@ -1,2 +1,2 @@
-kind = "DirectVelocity"
+kind = "DirectTwist"
 state_source = "ground_truth"

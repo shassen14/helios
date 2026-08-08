@@ -11,7 +11,7 @@ pub mod actuation_model;
 pub mod actuators;
 pub mod allocation;
 pub mod commands;
-pub mod direct_velocity;
+pub mod direct_twist;
 pub mod dynamics;
 pub mod siso_pid;
 

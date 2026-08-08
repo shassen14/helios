@@ -1,6 +1,6 @@
 //! Spatial velocity command (linear + angular).
 
-use crate::frames::conventions::{Frame, FrameVector3};
+use crate::frames::conventions::{Flu, FluVector, Frame, FrameVector3};
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg, Sub};
@@ -96,6 +96,23 @@ impl<F: Frame> Twist<F> {
     /// The angular velocity (rad/s), in frame `F`.
     pub fn angular(&self) -> FrameVector3<F> {
         self.angular
+    }
+}
+
+impl Twist<Flu> {
+    /// A nonholonomic ground vehicle's command: a forward speed (`surge`, m/s) on
+    /// +X and a yaw rate (`yaw`, rad/s) on +Z, with the other four
+    /// spatial-velocity DOF — lateral, vertical, roll, pitch — structurally zero.
+    ///
+    /// This is the planar drive shared by Ackermann and differential-drive
+    /// bodies: they steer by turning, never by translating sideways, so lateral
+    /// velocity is not merely unset but unactuated. Defined only for the body
+    /// [`Flu`] frame, where forward is +X and a positive yaw rate turns left.
+    pub fn unicycle(surge: f64, yaw: f64) -> Self {
+        Self::new(
+            FluVector::new(surge, 0.0, 0.0),
+            FluVector::new(0.0, 0.0, yaw),
+        )
     }
 }
 
@@ -199,6 +216,24 @@ mod tests {
         let t = twist(1.0, 2.0, 3.0, 4.0, 5.0, 6.0);
         assert_eq!(t.linear(), FluVector::new(1.0, 2.0, 3.0));
         assert_eq!(t.angular(), FluVector::new(4.0, 5.0, 6.0));
+    }
+
+    #[test]
+    fn unicycle_places_surge_on_x_and_yaw_on_z() {
+        assert_eq!(BodyTwist::unicycle(2.0, 0.5), twist(2.0, 0.0, 0.0, 0.0, 0.0, 0.5));
+    }
+
+    #[test]
+    fn unicycle_leaves_the_other_four_dof_zero() {
+        // No sway or heave in the linear part, no roll or pitch in the angular.
+        let t = BodyTwist::unicycle(3.0, -1.0);
+        assert_eq!(t.linear(), FluVector::new(3.0, 0.0, 0.0));
+        assert_eq!(t.angular(), FluVector::new(0.0, 0.0, -1.0));
+    }
+
+    #[test]
+    fn unicycle_zero_inputs_is_the_zero_twist() {
+        assert_eq!(BodyTwist::unicycle(0.0, 0.0), BodyTwist::zero());
     }
 
     #[test]

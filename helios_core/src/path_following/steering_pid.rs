@@ -5,7 +5,7 @@
 // index along the path and emits TrajectoryPoints for the controller stage.
 //
 // Use this as a diagnostic: if this produces correct steering through the
-// PathFollowing → DirectVelocity → DualSisoPid chain, the wiring is correct
+// PathFollowing → DirectTwist → DualSisoPid chain, the wiring is correct
 // and any issues with PurePursuit are in that algorithm's geometry.
 
 use nalgebra::Vector2;

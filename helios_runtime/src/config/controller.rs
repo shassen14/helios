@@ -12,10 +12,11 @@ pub enum ControllerStateSourceConfig {
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum ControllerConfig {
-    /// Passes Vx and Wz directly from the PathFollower reference to a BodyTwist.
-    /// Use this when a PathFollower (e.g., PurePursuit) has already computed
-    /// velocity commands and no additional feedback is needed.
-    DirectVelocity {
+    /// Passes the PathFollower reference's body-frame velocity through to a
+    /// BodyTwist unchanged. Use this when a PathFollower (e.g., PurePursuit) has
+    /// already computed velocity commands and no additional feedback is needed;
+    /// whichever velocity DOF the reference carries pass through.
+    DirectTwist {
         #[serde(default)]
         state_source: ControllerStateSourceConfig,
     },
@@ -24,13 +25,13 @@ pub enum ControllerConfig {
 impl ControllerConfig {
     pub(crate) fn get_kind_str(&self) -> &str {
         match self {
-            ControllerConfig::DirectVelocity { .. } => "DirectVelocity",
+            ControllerConfig::DirectTwist { .. } => "DirectTwist",
         }
     }
 
     pub fn state_source(&self) -> ControllerStateSourceConfig {
         match self {
-            ControllerConfig::DirectVelocity { state_source, .. } => *state_source,
+            ControllerConfig::DirectTwist { state_source, .. } => *state_source,
         }
     }
 }
