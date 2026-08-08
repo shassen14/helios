@@ -25,6 +25,15 @@ state_source = "ground_truth"
 [controllers]
 path_follower = { from = "runtime.catalog.controllers.direct_twist" }
 
+[teleop]
+kind = "Twist"
+surge = 5.0    # matches path_following.max_speed_m_s, so teleop tops out where autonomy does
+yaw = 1.0      # rad/s at full stick
+
+[command_arbitration]
+sources = ["teleop", "autonomy"]
+teleop_max_age_s = 0.5
+
 # Converts the controller's BodyTwist command into the per-actuator terminal
 # (drive velocity + steer angle) that the host applies. `drive`/`steer` name  the
 # actuators declared in the vehicle's [actuation] contract.
