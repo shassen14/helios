@@ -29,6 +29,7 @@ const ROLE_AUTONOMY: &str = "autonomy";
 const ROLE_TELEOP: &str = "teleop";
 const ROLE_COMMAND: &str = "command";
 const ROLE_ACTUATORS: &str = "actuators";
+const ROLE_INTENT: &str = "intent";
 
 /// The autonomy stack's command.
 ///
@@ -74,6 +75,18 @@ pub fn actuators() -> InternalChannel {
     InternalChannel::named::<ActuatorCommand>(ROLE_ACTUATORS)
 }
 
+/// The operator's raw motion intent, before scaling or framing.
+///
+/// Plural role (Internal). Written by the host as dimensionless per-axis
+/// deflection, read by the teleop mapper node, which scales it into a command
+/// `T`. Generic for the same reason the command roles are: the role fixes the
+/// name, the payload follows the morphology — `TwistIntent` for a velocity body,
+/// a future `SurfaceIntent` for a plane — never the command type itself, so it
+/// stays distinct from [`teleop`] on the same payload.
+pub fn intent<T: 'static>() -> InternalChannel {
+    InternalChannel::named::<T>(ROLE_INTENT)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,6 +119,10 @@ mod tests {
         assert_ne!(autonomy::<BodyTwist>(), teleop::<BodyTwist>());
         assert_ne!(teleop::<BodyTwist>(), command::<BodyTwist>());
         assert_ne!(autonomy::<BodyTwist>(), command::<BodyTwist>());
+        // Intent is the host's pre-scaling ingress, never a command role: it must
+        // not collide with `teleop` even when both carry the same payload type.
+        assert_ne!(intent::<BodyTwist>(), teleop::<BodyTwist>());
+        assert_ne!(intent::<BodyTwist>(), command::<BodyTwist>());
     }
 
     #[test]

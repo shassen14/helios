@@ -13,6 +13,8 @@ use crate::core::events::GoalCommandEvent;
 use crate::prelude::HostInputPublisher;
 
 use helios_core::data::MonotonicTime;
+use helios_core::prelude::PlannerGoal;
+use helios_runtime::port::InternalChannel;
 
 use bevy::prelude::*;
 
@@ -42,7 +44,12 @@ pub fn forward_goal_events(
         };
 
         for channel in &channels.0 {
-            host_inputs.publish(event.agent, channel.as_str(), event.goal.clone(), timestamp);
+            host_inputs.publish(
+                event.agent,
+                InternalChannel::named::<PlannerGoal>(channel.as_str()),
+                event.goal.clone(),
+                timestamp,
+            );
         }
     }
 }

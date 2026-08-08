@@ -42,15 +42,17 @@ pub use self::error::PipelineAssemblyError;
 
 use self::command::{
     resolve_command_topology, selector_policy, source_channel, CommandTopology,
-    COMMAND_ARBITER_NODE,
+    COMMAND_ARBITER_NODE, TELEOP_MAPPER_NODE,
 };
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
+use crate::config::TeleopMapperConfig;
 use crate::config::{AutonomyStack, CommandSource};
 use crate::config::{EstimatorConfig, MapLayerConfig};
 use crate::nodes::combinators::Selector;
 use crate::nodes::gaussian_estimator;
 use crate::nodes::path_follower;
+use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
 use crate::pipeline::autonomy_pipeline::PipelineBuilder;
 use crate::pipeline::AutonomyPipeline;
 use crate::port::{ChannelKey, InternalChannel};
@@ -60,7 +62,7 @@ use crate::registry::contexts::{
 };
 use crate::registry::AutonomyRegistry;
 
-use helios_core::control::commands::BodyTwist;
+use helios_core::control::commands::{BodyTwist, TwistIntent};
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::MapData;
@@ -270,18 +272,47 @@ pub fn build_pipeline(
                 selector_policy(&stack.command_arbitration),
             );
             builder = builder.add_node(Box::new(selector));
+        }
+    }
 
-            // Seed each host-published source (teleop) so a bus slot exists for
-            // the host to write into and the topological sort is satisfied —
-            // whether the source is an optional `preferred` input or the required
-            // `base` of a lone-teleop relay. An absent publisher then yields no
-            // `command` (the actuator deadman substitutes safe state), never a
-            // build error.
-            for source in preferred.iter().copied().chain(std::iter::once(base)) {
-                if source == CommandSource::Teleop {
-                    external_channels.push(control::teleop::<BodyTwist>().into());
-                }
+    if stack
+        .command_arbitration
+        .sources
+        .contains(&CommandSource::Teleop)
+    {
+        match &stack.teleop {
+            Some(TeleopMapperConfig::Twist {
+                surge,
+                sway,
+                heave,
+                roll,
+                pitch,
+                yaw,
+            }) => {
+                let node = TwistTeleopNode::new(
+                    TELEOP_MAPPER_NODE,
+                    control::intent::<TwistIntent>(),
+                    control::teleop::<BodyTwist>(),
+                    TwistScale {
+                        surge: *surge,
+                        sway: *sway,
+                        heave: *heave,
+                        roll: *roll,
+                        pitch: *pitch,
+                        yaw: *yaw,
+                    },
+                );
+
+                builder = builder.add_node(Box::new(node));
+
+                external_channels.push(control::intent::<TwistIntent>().into());
             }
+            None => errors.push(PipelineAssemblyError::FactoryFailure {
+                node_kind: "TeleopMapper".to_string(),
+                reason: "teleop is a declared command source but no
+  [teleop] mapper config was provided"
+                    .to_string(),
+            }),
         }
     }
 

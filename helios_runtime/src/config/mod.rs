@@ -13,6 +13,7 @@ mod estimator;
 mod mapper;
 mod path_following;
 mod planner;
+mod teleop;
 
 pub use agent::AgentBaseConfig;
 pub use allocator::AllocatorConfig;
@@ -28,3 +29,4 @@ pub use estimator::{
 pub use mapper::{MapLayerConfig, MapperPoseSourceConfig};
 pub use path_following::PathFollowingConfig;
 pub use planner::SearchPlannerConfig;
+pub use teleop::TeleopMapperConfig;

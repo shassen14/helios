@@ -6,7 +6,7 @@ use helios_runtime::channels::control;
 use helios_runtime::config::{
     AllocatorConfig, AutonomyStack, CommandArbitrationConfig, CommandSource, EkfConfig,
     EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig,
-    SearchPlannerConfig,
+    SearchPlannerConfig, TeleopMapperConfig,
 };
 use helios_runtime::port::ChannelKey;
 use helios_runtime::prelude::{Health, Stamped};
@@ -15,11 +15,24 @@ use helios_runtime::{
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
-use helios_core::control::commands::BodyTwist;
+use helios_core::control::commands::{BodyTwist, TwistIntent};
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::frames::conventions::FluVector;
 
 use crate::common::MockRuntime;
+
+/// A car's teleop mapper tuning: only surge and yaw are active. Required on any
+/// stack that declares a `Teleop` command source.
+fn twist_teleop() -> TeleopMapperConfig {
+    TeleopMapperConfig::Twist {
+        surge: 4.0,
+        sway: 0.0,
+        heave: 0.0,
+        roll: 0.0,
+        pitch: 0.0,
+        yaw: 1.0,
+    }
+}
 
 /// A body with no autonomy stack, declaring only that it consumes control.
 fn teleop_body() -> BodyCapabilities {
@@ -50,6 +63,7 @@ fn teleop_only_stack_builds_without_a_controller() {
     // direct topology (no arbiter) in which the host publishes `command`
     // itself. Nothing in the brain produces commands.
     let stack = AutonomyStack {
+        teleop: Some(twist_teleop()),
         command_arbitration: CommandArbitrationConfig {
             sources: vec![CommandSource::Teleop],
             ..Default::default()
@@ -79,6 +93,7 @@ fn teleop_only_command_is_host_published_not_brain_produced() {
     // This proves `command` is a real host-published slot and that nothing in
     // the brain fabricates a command.
     let stack = AutonomyStack {
+        teleop: Some(twist_teleop()),
         command_arbitration: CommandArbitrationConfig {
             sources: vec![CommandSource::Teleop],
             ..Default::default()
@@ -120,6 +135,58 @@ fn teleop_only_command_is_host_published_not_brain_produced() {
         pipeline.read_control().is_some(),
         "read_control must reflect the host-published command"
     );
+}
+
+#[test]
+fn teleop_intent_is_mapped_into_the_command() {
+    // The commit-3 path proper: the host publishes normalised intent, and the
+    // synthesized teleop mapper node scales it into a `BodyTwist` on `command`.
+    // Writing intent and ticking must make `read_control` reflect the *scaled*
+    // twist — proof the mapper is a real brain node fed by host intent, not a
+    // host-published command.
+    let stack = AutonomyStack {
+        teleop: Some(twist_teleop()),
+        command_arbitration: CommandArbitrationConfig {
+            sources: vec![CommandSource::Teleop],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        FrameHandle(0),
+        &HashMap::new(),
+        teleop_body(),
+    )
+    .expect("teleop stack with a mapper config must build");
+
+    let intent_key: ChannelKey = control::intent::<TwistIntent>().into();
+    pipeline
+        .bus()
+        .write(
+            intent_key,
+            Stamped {
+                value: TwistIntent {
+                    surge: 1.0,
+                    ..TwistIntent::neutral()
+                },
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("host write to `intent` must succeed");
+
+    pipeline.tick(&MockRuntime, 0.1);
+
+    let command = pipeline
+        .read_control()
+        .expect("the mapper must publish a command derived from the intent");
+    // surge 1.0 × the car's 4.0 surge scale, with the other five DOF at zero.
+    assert_eq!(command.value.linear(), FluVector::new(4.0, 0.0, 0.0));
+    assert_eq!(command.value.angular(), FluVector::new(0.0, 0.0, 0.0));
 }
 
 // =========================================================================
@@ -284,6 +351,7 @@ fn allocator_converts_command_into_the_actuator_terminal() {
 
     let stack = AutonomyStack {
         allocators,
+        teleop: Some(twist_teleop()),
         command_arbitration: CommandArbitrationConfig {
             sources: vec![CommandSource::Teleop],
             ..Default::default()

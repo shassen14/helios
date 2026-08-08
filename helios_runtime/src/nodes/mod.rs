@@ -20,3 +20,4 @@ pub mod mocks;
 pub mod occupancy_grid;
 pub mod path_follower;
 pub mod planner;
+pub mod teleop;

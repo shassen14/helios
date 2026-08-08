@@ -14,6 +14,8 @@ use helios_core::control::commands::BodyTwist;
 /// literal — the assembler is its sole synthesizer.
 pub(crate) const COMMAND_ARBITER_NODE: &str = "command_arbiter";
 
+pub(crate) const TELEOP_MAPPER_NODE: &str = "teleop_mapper";
+
 /// How the `command` terminal is fed, resolved from the declared source set.
 pub(super) enum CommandTopology {
     /// Pure-perception agent: nothing produces a `command` terminal.

@@ -66,6 +66,9 @@ pub struct SensorPublishChannel(pub String);
 #[derive(Component)]
 pub struct MissionGoalChannels(pub Vec<String>);
 
+#[derive(Component)]
+pub struct TeleopControlled;
+
 /// The TrajectoryPoint produced by path following this tick.
 /// Kept as a component for downstream consumers (the vehicle plugin, future viz).
 #[derive(Component, Default)]

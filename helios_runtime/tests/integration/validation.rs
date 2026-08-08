@@ -187,6 +187,7 @@ fn validation_valid_full_stack_passes() {
         path_following: None,
         controllers,
         allocators: Default::default(),
+        teleop: None,
         command_arbitration: Default::default(),
     };
 
