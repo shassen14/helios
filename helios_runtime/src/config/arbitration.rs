@@ -62,22 +62,6 @@ impl CommandSource {
             CommandSource::Teleop => "teleop",
         }
     }
-
-    /// Whether this source's command arrives from outside the DAG (the host)
-    /// rather than from an internal producer node.
-    ///
-    /// This is the fork in command-terminal topology. An internal source
-    /// (autonomy — its controller is a DAG node) can be retargeted to write
-    /// `command` directly, so alone it needs no arbiter. A host-published source
-    /// (teleop) is written from beyond the graph and cannot be retargeted, so
-    /// even alone it needs a synthesized `Selector` relaying its channel onto
-    /// `command`. See `assembler::command::resolve_command_topology`.
-    pub fn is_host_published(self) -> bool {
-        match self {
-            CommandSource::Autonomy => false,
-            CommandSource::Teleop => true,
-        }
-    }
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, Default)]

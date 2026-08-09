@@ -217,15 +217,21 @@ pub fn build_pipeline(
     }
 
     // --- Controllers ---
-    // Resolve how the command terminal is fed before building controllers: the
-    // controller's output channel depends on it. A lone autonomy source lets the
-    // controller write `command` directly; otherwise it writes `autonomy` and
-    // arbitration (or nothing) forwards from there.
+    // Resolve how the command terminal is fed before building the producers: each
+    // producer's output channel depends on it. When a source is the lone `Direct`
+    // source it writes `command` itself; otherwise it writes its own role channel
+    // (`autonomy` / `teleop`) and arbitration (or nothing) forwards from there.
+    // The controller and the teleop mapper are symmetric internal producers, so
+    // both retarget the same way.
     let command_topology =
         resolve_command_topology(&stack.command_arbitration, !stack.controllers.is_empty());
     let controller_output = match &command_topology {
         CommandTopology::Direct(CommandSource::Autonomy) => control::command::<BodyTwist>(),
         _ => control::autonomy::<BodyTwist>(),
+    };
+    let teleop_output = match &command_topology {
+        CommandTopology::Direct(CommandSource::Teleop) => control::command::<BodyTwist>(),
+        _ => control::teleop::<BodyTwist>(),
     };
 
     for (controller_name, ctrl_cfg) in &stack.controllers {
@@ -254,10 +260,9 @@ pub fn build_pipeline(
         // Pure estimator / mapper agent: nothing produces commands.
         CommandTopology::None => {}
 
-        // A lone internal source (autonomy) already writes `command` through its
-        // retargeted producer (see `controller_output`), so there is nothing to
-        // synthesize or seed. A lone host source never reaches this arm — it
-        // resolves to `Arbitrated` and is relayed below.
+        // A lone source of either kind already writes `command` through its
+        // retargeted producer — the controller via `controller_output`, the
+        // teleop mapper via `teleop_output` — so there is nothing to synthesize.
         CommandTopology::Direct(_) => {}
 
         // Two or more sources contend: a `Selector` forwards the winner to
@@ -292,7 +297,7 @@ pub fn build_pipeline(
                 let node = TwistTeleopNode::new(
                     TELEOP_MAPPER_NODE,
                     control::intent::<TwistIntent>(),
-                    control::teleop::<BodyTwist>(),
+                    teleop_output.clone(),
                     TwistScale {
                         surge: *surge,
                         sway: *sway,
