@@ -144,29 +144,48 @@ pub fn deselect_on_escape(
     }
 }
 
-/// Ground-ring color for the selected object.
-// TODO: pull from the viz config surface once it exists.
-const HIGHLIGHT_COLOR: Color = Color::srgb(1.0, 0.85, 0.2);
-/// Ring radius (m) when the object has no bounding box to size it.
-// TODO: pull from the viz config surface once it exists.
-const DEFAULT_HIGHLIGHT_RADIUS: f32 = 1.5;
-/// Fraction the ring sits outside the object's footprint.
-const HIGHLIGHT_MARGIN: f32 = 1.15;
+/// Look of the selection ring drawn by [`highlight_selection`]. A `Resource`, not
+/// per-entity state: this is one operator preference for the whole session — the
+/// ring looks the same on every selectable — whereas *which* entity is ringed is
+/// the per-entity [`Selected`] marker. Defaults reproduce the values that were
+/// compiled in before the tuning surface existed.
+#[derive(Resource, Debug, Clone)]
+pub struct SelectionTuning {
+    /// Color of the ground ring.
+    pub highlight_color: Color,
+    /// Ring radius (meters) for a selected object with no bounding box to size it.
+    pub highlight_radius: f32,
+    /// Fraction the ring sits outside a bounded object's footprint — `1.15` rings
+    /// it 15% wider than its half-extent so the outline reads as around, not on,
+    /// the object. Unitless; multiplies the bounding-box extent.
+    pub highlight_margin: f32,
+}
+
+impl Default for SelectionTuning {
+    fn default() -> Self {
+        Self {
+            highlight_color: Color::srgb(1.0, 0.85, 0.2),
+            highlight_radius: 1.5,
+            highlight_margin: 1.15,
+        }
+    }
+}
 
 /// Draws a flat ground ring beneath the selected object, sized to its bounding
 /// box when it has one, so the current selection is visible in the scene.
 fn highlight_selection(
+    tuning: Res<SelectionTuning>,
     selected: Query<(&GlobalTransform, Option<&BoundingBox3D>), With<Selected>>,
     mut gizmos: Gizmos,
 ) {
     for (transform, bbox) in &selected {
         let radius = match bbox {
-            Some(bb) => bb.half_extents.x.max(bb.half_extents.z) * HIGHLIGHT_MARGIN,
-            None => DEFAULT_HIGHLIGHT_RADIUS,
+            Some(bb) => bb.half_extents.x.max(bb.half_extents.z) * tuning.highlight_margin,
+            None => tuning.highlight_radius,
         };
 
         let ring = Isometry3d::new(transform.translation(), Quat::from_rotation_x(FRAC_PI_2));
-        gizmos.circle(ring, radius, HIGHLIGHT_COLOR);
+        gizmos.circle(ring, radius, tuning.highlight_color);
     }
 }
 

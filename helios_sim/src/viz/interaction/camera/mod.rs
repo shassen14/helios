@@ -27,8 +27,9 @@ use crate::{
             intent::apply_camera_intent,
             keyboard::{keyboard_camera_intent, CameraKeyboardTuning},
             mouse::{mouse_camera_intent, CameraMouseTuning},
-            rig::{rig_to_transform, CameraRig},
+            rig::{rig_to_transform, CameraRig, CameraRigTuning},
         },
+        selection::SelectionTuning,
         InteractionSet,
     },
 };
@@ -54,6 +55,8 @@ impl Plugin for CameraPlugin {
         app.init_resource::<CameraDriveIntent>();
         app.init_resource::<CameraKeyboardTuning>();
         app.init_resource::<CameraMouseTuning>();
+        app.init_resource::<CameraRigTuning>();
+        app.init_resource::<SelectionTuning>();
 
         app.add_systems(
             OnEnter(AppState::SceneBuilding),

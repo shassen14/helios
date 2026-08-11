@@ -11,22 +11,35 @@
 use bevy::prelude::*;
 use std::f32::consts::FRAC_PI_2;
 
-/// Angular margin (radians) held between the camera's pitch and straight
-/// up/down. At exactly vertical the view direction lines up with the `Vec3::Y`
-/// up-vector and `looking_at` has no way to resolve roll; this margin keeps the
-/// rig clear of that singular pose.
-// TODO: pull from the viz config surface once it exists.
-const PITCH_EPS: f32 = 0.05;
+/// Bounds the rig clamps against, read by
+/// [`apply_camera_intent`](super::intent::apply_camera_intent) on every write to
+/// the rig. A `Resource`, not per-camera state: these are one operator preference
+/// for the session, whereas [`CameraRig`] is per-camera view state. Defaults
+/// reproduce the values that were compiled in before the tuning surface existed.
+#[derive(Resource, Debug, Clone)]
+pub struct CameraRigTuning {
+    /// Angular margin (radians) held between the camera's pitch and straight
+    /// up/down. At exactly vertical the view direction lines up with the `Vec3::Y`
+    /// up-vector and `looking_at` cannot resolve roll; this margin keeps the rig
+    /// clear of that singular pose.
+    pub pitch_eps: f32,
+    /// Closest the camera may orbit to its focus (meters). Zero or negative would
+    /// place the camera on, or behind, the focus point.
+    pub min_distance: f32,
+    /// Farthest the camera may orbit from its focus (meters), kept inside the
+    /// render far-plane so the scene never clips out.
+    pub max_distance: f32,
+}
 
-/// Closest the camera may orbit to its focus (meters). Zero or negative would
-/// place the camera on, or behind, the focus point.
-// TODO: pull from the viz config surface.
-const MIN_DISTANCE: f32 = 2.0;
-
-/// Farthest the camera may orbit from its focus (meters), kept inside the render
-/// far-plane so the scene never clips out.
-// TODO: pull from the viz config surface.
-const MAX_DISTANCE: f32 = 500.0;
+impl Default for CameraRigTuning {
+    fn default() -> Self {
+        Self {
+            pitch_eps: 0.05,
+            min_distance: 2.0,
+            max_distance: 500.0,
+        }
+    }
+}
 
 /// Orbit-camera state: the point the camera looks at (`focus`) and its position
 /// as an offset from that point in spherical coordinates — `distance` out, `yaw`
@@ -48,6 +61,25 @@ pub struct CameraRig {
     pub(crate) pitch: f32,
 }
 
+impl CameraRigTuning {
+    /// Clamps a proposed pitch to just shy of vertical in both directions (by
+    /// [`pitch_eps`](Self::pitch_eps)), keeping the view direction off the up-vector.
+    ///
+    /// Apply this on every *write* to [`CameraRig::pitch`], not at read time, so the
+    /// stored rig never holds an out-of-range value — state and rendered view stay
+    /// in agreement.
+    pub(crate) fn clamp_pitch(&self, pitch: f32) -> f32 {
+        let max_angle: f32 = FRAC_PI_2 - self.pitch_eps;
+        pitch.clamp(-max_angle, max_angle)
+    }
+
+    /// Clamps a proposed orbit distance to `[min_distance, max_distance]` — near
+    /// enough to stay outside the focus, far enough to stay inside the far-plane.
+    pub(crate) fn clamp_distance(&self, distance: f32) -> f32 {
+        distance.clamp(self.min_distance, self.max_distance)
+    }
+}
+
 /// Turns the rig's spherical state into a world `Transform`, positioned
 /// `distance` from `focus` and aimed back at it.
 ///
@@ -64,24 +96,6 @@ pub(crate) fn rig_to_transform(rig: &CameraRig) -> Transform {
     let camera_position = rig.focus + Vec3::new(x, y, z);
 
     Transform::from_translation(camera_position).looking_at(rig.focus, Vec3::Y)
-}
-
-/// Clamps a proposed pitch to just shy of vertical in both directions (see
-/// [`PITCH_EPS`]), keeping the view direction off the up-vector.
-///
-/// Apply this on every *write* to [`CameraRig::pitch`], not at read time, so the
-/// stored rig never holds an out-of-range value — state and rendered view stay
-/// in agreement.
-pub(crate) fn clamp_pitch(pitch: f32) -> f32 {
-    let max_angle: f32 = FRAC_PI_2 - PITCH_EPS;
-
-    pitch.clamp(-max_angle, max_angle)
-}
-
-/// Clamps a proposed orbit distance to `[MIN_DISTANCE, MAX_DISTANCE]` — near
-/// enough to stay outside the focus, far enough to stay inside the far-plane.
-pub(crate) fn clamp_distance(distance: f32) -> f32 {
-    distance.clamp(MIN_DISTANCE, MAX_DISTANCE)
 }
 
 /// Maps a focus shift expressed in the camera's **ground frame** (`x` =
@@ -171,17 +185,35 @@ mod tests {
 
     #[test]
     fn pitch_saturates_just_below_vertical() {
-        let limit = FRAC_PI_2 - PITCH_EPS;
-        assert_eq!(clamp_pitch(2.0), limit); // past +vertical
-        assert_eq!(clamp_pitch(-2.0), -limit); // past -vertical
-        assert_eq!(clamp_pitch(0.3), 0.3); // in range, untouched
+        let tuning = CameraRigTuning::default();
+        let limit = FRAC_PI_2 - tuning.pitch_eps;
+        assert_eq!(tuning.clamp_pitch(2.0), limit); // past +vertical
+        assert_eq!(tuning.clamp_pitch(-2.0), -limit); // past -vertical
+        assert_eq!(tuning.clamp_pitch(0.3), 0.3); // in range, untouched
     }
 
     #[test]
     fn distance_saturates_to_its_bounds() {
-        assert_eq!(clamp_distance(0.5), MIN_DISTANCE); // too close
-        assert_eq!(clamp_distance(9000.0), MAX_DISTANCE); // too far
-        assert_eq!(clamp_distance(50.0), 50.0); // in range, untouched
+        let tuning = CameraRigTuning::default();
+        assert_eq!(tuning.clamp_distance(0.5), tuning.min_distance); // too close
+        assert_eq!(tuning.clamp_distance(9000.0), tuning.max_distance); // too far
+        assert_eq!(tuning.clamp_distance(50.0), 50.0); // in range, untouched
+    }
+
+    /// The clamps read their bounds off the tuning, not a compiled-in constant —
+    /// a non-default tuning must move the saturation points. This is the whole
+    /// reason the values became config, so it gets its own guard against a
+    /// regression to a literal.
+    #[test]
+    fn clamps_track_non_default_bounds() {
+        let tuning = CameraRigTuning {
+            pitch_eps: 0.5,
+            min_distance: 10.0,
+            max_distance: 20.0,
+        };
+        assert_eq!(tuning.clamp_distance(5.0), 10.0); // clamped up to min
+        assert_eq!(tuning.clamp_distance(50.0), 20.0); // clamped down to max
+        assert_eq!(tuning.clamp_pitch(2.0), FRAC_PI_2 - 0.5); // margin follows pitch_eps
     }
 
     #[test]
