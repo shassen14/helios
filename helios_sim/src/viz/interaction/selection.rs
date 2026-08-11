@@ -22,6 +22,7 @@ use crate::{
                 registry::ActionRegistry,
             },
             sampling::ActionState,
+            tuning::{require_positive, InteractionTuningError},
             InteractionSet,
         },
         VizSet,
@@ -29,6 +30,7 @@ use crate::{
 };
 
 use bevy::prelude::*;
+use serde::Deserialize;
 use std::f32::consts::FRAC_PI_2;
 
 /// Wires selection into the app: the mesh-picking backend, the click observer,
@@ -144,6 +146,14 @@ pub fn deselect_on_escape(
     }
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct SelectionTuningFile {
+    pub highlight_color: Option<[f32; 3]>,
+    pub highlight_radius: Option<f32>,
+    pub highlight_margin: Option<f32>,
+}
+
 /// Look of the selection ring drawn by [`highlight_selection`]. A `Resource`, not
 /// per-entity state: this is one operator preference for the whole session — the
 /// ring looks the same on every selectable — whereas *which* entity is ringed is
@@ -168,6 +178,32 @@ impl Default for SelectionTuning {
             highlight_radius: 1.5,
             highlight_margin: 1.15,
         }
+    }
+}
+
+impl SelectionTuning {
+    /// Overlays sparse overrides onto [`Default`], packing the `[r, g, b]` triple
+    /// into an sRGB [`Color`], and rejects a non-positive radius or a margin below
+    /// `1.0` (which would ring the object *inside* its own footprint).
+    pub(crate) fn resolve(overrides: &SelectionTuningFile) -> Result<Self, InteractionTuningError> {
+        let mut t = Self::default();
+        if let Some([r, g, b]) = overrides.highlight_color {
+            t.highlight_color = Color::srgb(r, g, b);
+        }
+        if let Some(v) = overrides.highlight_radius {
+            t.highlight_radius = v;
+        }
+        if let Some(v) = overrides.highlight_margin {
+            t.highlight_margin = v;
+        }
+
+        require_positive("selection.highlight_radius", t.highlight_radius)?;
+        if t.highlight_margin < 1.0 {
+            return Err(InteractionTuningError::MarginTooSmall {
+                value: t.highlight_margin,
+            });
+        }
+        Ok(t)
     }
 }
 
@@ -273,5 +309,53 @@ mod tests {
         // Second pass must not double-insert or panic.
         app.update();
         assert!(app.world().get::<Selectable>(entity).is_some());
+    }
+
+    /// A file with no overrides resolves to exactly the compiled-in defaults.
+    #[test]
+    fn empty_file_resolves_to_defaults() {
+        let t = SelectionTuning::resolve(&SelectionTuningFile::default()).unwrap();
+        let d = SelectionTuning::default();
+        assert_eq!(t.highlight_color, d.highlight_color);
+        assert_eq!(t.highlight_radius, d.highlight_radius);
+        assert_eq!(t.highlight_margin, d.highlight_margin);
+    }
+
+    /// The `[r, g, b]` triple packs into an sRGB color; the numeric fields pass
+    /// through unchanged.
+    #[test]
+    fn overrides_pack_color_and_pass_through_numbers() {
+        let file = SelectionTuningFile {
+            highlight_color: Some([0.1, 0.2, 0.3]),
+            highlight_radius: Some(4.0),
+            highlight_margin: Some(1.5),
+        };
+        let t = SelectionTuning::resolve(&file).unwrap();
+        assert_eq!(t.highlight_color, Color::srgb(0.1, 0.2, 0.3));
+        assert_eq!(t.highlight_radius, 4.0);
+        assert_eq!(t.highlight_margin, 1.5);
+    }
+
+    /// A margin below 1.0 would draw the ring inside the object's footprint and is
+    /// rejected.
+    #[test]
+    fn margin_below_one_is_rejected() {
+        let file = SelectionTuningFile {
+            highlight_margin: Some(0.5),
+            ..Default::default()
+        };
+        let err = SelectionTuning::resolve(&file).unwrap_err();
+        assert!(matches!(err, InteractionTuningError::MarginTooSmall { .. }));
+    }
+
+    /// A non-positive fallback radius is rejected.
+    #[test]
+    fn non_positive_radius_is_rejected() {
+        let file = SelectionTuningFile {
+            highlight_radius: Some(0.0),
+            ..Default::default()
+        };
+        let err = SelectionTuning::resolve(&file).unwrap_err();
+        assert!(matches!(err, InteractionTuningError::NonPositive { .. }));
     }
 }

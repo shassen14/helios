@@ -99,7 +99,10 @@ mod tests {
         let mut reg = ActionRegistry::default();
         let surge = axis_pair(&mut reg, "t.surge_neg", "t.surge_pos");
         let held = surge.positive;
-        let actions = TeleopActions { surge: Some(surge), ..default() };
+        let actions = TeleopActions {
+            surge: Some(surge),
+            ..default()
+        };
 
         let state = ActionState::from_active([held]);
         let intent = teleop_intent(&state, &actions);
@@ -112,7 +115,10 @@ mod tests {
         let mut reg = ActionRegistry::default();
         let yaw = axis_pair(&mut reg, "t.yaw_neg", "t.yaw_pos");
         let held = yaw.negative;
-        let actions = TeleopActions { yaw: Some(yaw), ..default() };
+        let actions = TeleopActions {
+            yaw: Some(yaw),
+            ..default()
+        };
 
         let state = ActionState::from_active([held]);
         let intent = teleop_intent(&state, &actions);
@@ -125,7 +131,10 @@ mod tests {
         let mut reg = ActionRegistry::default();
         let surge = axis_pair(&mut reg, "t.surge_neg", "t.surge_pos");
         let (neg, pos) = (surge.negative, surge.positive);
-        let actions = TeleopActions { surge: Some(surge), ..default() };
+        let actions = TeleopActions {
+            surge: Some(surge),
+            ..default()
+        };
 
         let state = ActionState::from_active([neg, pos]);
         let intent = teleop_intent(&state, &actions);
@@ -140,13 +149,22 @@ mod tests {
         let mut reg = ActionRegistry::default();
         let surge = axis_pair(&mut reg, "t.surge_neg", "t.surge_pos");
         let held = surge.positive;
-        let actions = TeleopActions { surge: Some(surge), ..default() };
+        let actions = TeleopActions {
+            surge: Some(surge),
+            ..default()
+        };
 
         let state = ActionState::from_active([held]);
         let intent = teleop_intent(&state, &actions);
 
         assert_eq!(
-            [intent.sway, intent.heave, intent.roll, intent.pitch, intent.yaw],
+            [
+                intent.sway,
+                intent.heave,
+                intent.roll,
+                intent.pitch,
+                intent.yaw
+            ],
             [0.0; 5],
         );
     }

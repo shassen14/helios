@@ -1,9 +1,19 @@
 use crate::viz::interaction::{
     camera::{CameraActions, CameraDriveIntent},
     sampling::ActionState,
+    tuning::{require_positive, InteractionTuningError},
 };
 
 use bevy::prelude::*;
+use serde::Deserialize;
+
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct CameraKeyboardTuningFile {
+    pub orbit_rate_deg: Option<f32>,
+    pub pitch_rate_deg: Option<f32>,
+    pub zoom_rate: Option<f32>,
+}
 
 /// Per-second gains for keyboard camera control, read by
 /// [`keyboard_camera_intent`]. A `Resource`, not per-camera state: these are one
@@ -26,6 +36,30 @@ impl Default for CameraKeyboardTuning {
             pitch_rate: 1.0,
             zoom_rate: 25.0,
         }
+    }
+}
+
+impl CameraKeyboardTuning {
+    pub(crate) fn resolve(
+        overrides: &CameraKeyboardTuningFile,
+    ) -> Result<Self, InteractionTuningError> {
+        let mut t: CameraKeyboardTuning = Self::default();
+
+        if let Some(deg) = overrides.orbit_rate_deg {
+            t.orbit_rate = deg.to_radians();
+        }
+        if let Some(deg) = overrides.pitch_rate_deg {
+            t.pitch_rate = deg.to_radians();
+        }
+        if let Some(v) = overrides.zoom_rate {
+            t.zoom_rate = v;
+        }
+
+        require_positive("camera.keyboard.orbit_rate", t.orbit_rate)?;
+        require_positive("camera.keyboard.pitch_rate", t.pitch_rate)?;
+        require_positive("camera.keyboard.zoom_rate", t.zoom_rate)?;
+
+        Ok(t)
     }
 }
 
@@ -59,4 +93,64 @@ pub(super) fn keyboard_camera_intent(
     intent.yaw_delta += yaw_input * tuning.orbit_rate * dt;
     intent.pitch_delta += pitch_input * tuning.pitch_rate * dt;
     intent.zoom_delta += zoom_input * tuning.zoom_rate * dt;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::f32::consts::{FRAC_PI_2, PI};
+
+    /// The sparse-overlay contract: a file that names nothing resolves to exactly
+    /// the compiled-in defaults, so an absent field can never move a value.
+    #[test]
+    fn empty_file_resolves_to_defaults() {
+        let t = CameraKeyboardTuning::resolve(&CameraKeyboardTuningFile::default()).unwrap();
+        let d = CameraKeyboardTuning::default();
+        assert_eq!(t.orbit_rate, d.orbit_rate);
+        assert_eq!(t.pitch_rate, d.pitch_rate);
+        assert_eq!(t.zoom_rate, d.zoom_rate);
+    }
+
+    /// The angular rates are authored in degrees and stored in radians; the
+    /// un-overridden linear rate stays put.
+    #[test]
+    fn angular_rates_convert_from_degrees() {
+        let file = CameraKeyboardTuningFile {
+            orbit_rate_deg: Some(90.0),
+            pitch_rate_deg: Some(180.0),
+            ..Default::default()
+        };
+        let t = CameraKeyboardTuning::resolve(&file).unwrap();
+        assert!(
+            (t.orbit_rate - FRAC_PI_2).abs() < 1e-6,
+            "got {}",
+            t.orbit_rate
+        );
+        assert!((t.pitch_rate - PI).abs() < 1e-6, "got {}", t.pitch_rate);
+        assert_eq!(t.zoom_rate, CameraKeyboardTuning::default().zoom_rate);
+    }
+
+    /// A linear rate (m/s) passes through untouched — no conversion applied.
+    #[test]
+    fn zoom_rate_passes_through() {
+        let file = CameraKeyboardTuningFile {
+            zoom_rate: Some(50.0),
+            ..Default::default()
+        };
+        let t = CameraKeyboardTuning::resolve(&file).unwrap();
+        assert_eq!(t.zoom_rate, 50.0);
+    }
+
+    /// A non-positive rate is a startup misconfiguration, surfaced as an error the
+    /// loader turns into a panic — never silently accepted.
+    #[test]
+    fn non_positive_rate_is_rejected() {
+        let file = CameraKeyboardTuningFile {
+            zoom_rate: Some(0.0),
+            ..Default::default()
+        };
+        let err = CameraKeyboardTuning::resolve(&file).unwrap_err();
+        assert!(matches!(err, InteractionTuningError::NonPositive { .. }));
+    }
 }

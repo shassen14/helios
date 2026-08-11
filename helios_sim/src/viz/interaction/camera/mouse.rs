@@ -1,8 +1,20 @@
 use crate::viz::interaction::camera::{CameraDriveIntent, TargetRequest};
+use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 
 use bevy::input::gestures::PinchGesture;
 use bevy::input::mouse::{MouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
+use serde::Deserialize;
+
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct CameraMouseTuningFile {
+    pub orbit_sensitivity_deg: Option<f32>,
+    pub pan_sensitivity: Option<f32>,
+    pub zoom_per_line: Option<f32>,
+    pub zoom_per_pixel: Option<f32>,
+    pub zoom_per_pinch: Option<f32>,
+}
 
 /// Per-pixel / per-notch gains for mouse and trackpad camera control, read by
 /// [`mouse_camera_intent`]. A `Resource`, not per-camera state: these are one
@@ -31,6 +43,36 @@ impl Default for CameraMouseTuning {
             zoom_per_pixel: 0.05,
             zoom_per_pinch: 40.0,
         }
+    }
+}
+
+impl CameraMouseTuning {
+    pub(crate) fn resolve(
+        overrides: &CameraMouseTuningFile,
+    ) -> Result<Self, InteractionTuningError> {
+        let mut t = Self::default();
+        if let Some(deg) = overrides.orbit_sensitivity_deg {
+            t.orbit_sensitivity = deg.to_radians();
+        }
+        if let Some(v) = overrides.pan_sensitivity {
+            t.pan_sensitivity = v;
+        }
+        if let Some(v) = overrides.zoom_per_line {
+            t.zoom_per_line = v;
+        }
+        if let Some(v) = overrides.zoom_per_pixel {
+            t.zoom_per_pixel = v;
+        }
+        if let Some(v) = overrides.zoom_per_pinch {
+            t.zoom_per_pinch = v;
+        }
+
+        require_positive("camera.mouse.orbit_sensitivity", t.orbit_sensitivity)?;
+        require_positive("camera.mouse.pan_sensitivity", t.pan_sensitivity)?;
+        require_positive("camera.mouse.zoom_per_line", t.zoom_per_line)?;
+        require_positive("camera.mouse.zoom_per_pixel", t.zoom_per_pixel)?;
+        require_positive("camera.mouse.zoom_per_pinch", t.zoom_per_pinch)?;
+        Ok(t)
     }
 }
 
@@ -99,8 +141,9 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<MouseButton>>()
             .press(MouseButton::Left);
-        app.world_mut()
-            .write_message(MouseMotion { delta: Vec2::new(10.0, 0.0) });
+        app.world_mut().write_message(MouseMotion {
+            delta: Vec2::new(10.0, 0.0),
+        });
 
         app.update();
 
@@ -132,5 +175,44 @@ mod tests {
             "got {}",
             intent.zoom_delta
         );
+    }
+
+    /// A file with no overrides resolves to exactly the compiled-in defaults.
+    #[test]
+    fn empty_file_resolves_to_defaults() {
+        let t = CameraMouseTuning::resolve(&CameraMouseTuningFile::default()).unwrap();
+        let d = CameraMouseTuning::default();
+        assert_eq!(t.orbit_sensitivity, d.orbit_sensitivity);
+        assert_eq!(t.pan_sensitivity, d.pan_sensitivity);
+        assert_eq!(t.zoom_per_pinch, d.zoom_per_pinch);
+    }
+
+    /// The one angular gain is authored in degrees per pixel and stored in radians;
+    /// the linear gains pass through unchanged.
+    #[test]
+    fn orbit_sensitivity_converts_from_degrees() {
+        let file = CameraMouseTuningFile {
+            orbit_sensitivity_deg: Some(90.0),
+            zoom_per_line: Some(3.0),
+            ..Default::default()
+        };
+        let t = CameraMouseTuning::resolve(&file).unwrap();
+        assert!(
+            (t.orbit_sensitivity - std::f32::consts::FRAC_PI_2).abs() < 1e-6,
+            "got {}",
+            t.orbit_sensitivity
+        );
+        assert_eq!(t.zoom_per_line, 3.0);
+    }
+
+    /// A non-positive gain is rejected rather than silently accepted.
+    #[test]
+    fn non_positive_gain_is_rejected() {
+        let file = CameraMouseTuningFile {
+            pan_sensitivity: Some(-1.0),
+            ..Default::default()
+        };
+        let err = CameraMouseTuning::resolve(&file).unwrap_err();
+        assert!(matches!(err, InteractionTuningError::NonPositive { .. }));
     }
 }

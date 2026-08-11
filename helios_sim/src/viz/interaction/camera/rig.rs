@@ -9,7 +9,18 @@
 //! crossing.
 
 use bevy::prelude::*;
+use serde::Deserialize;
 use std::f32::consts::FRAC_PI_2;
+
+use crate::viz::interaction::tuning::InteractionTuningError;
+
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct CameraRigTuningFile {
+    pub pitch_eps_deg: Option<f32>,
+    pub min_distance: Option<f32>,
+    pub max_distance: Option<f32>,
+}
 
 /// Bounds the rig clamps against, read by
 /// [`apply_camera_intent`](super::intent::apply_camera_intent) on every write to
@@ -38,6 +49,35 @@ impl Default for CameraRigTuning {
             min_distance: 2.0,
             max_distance: 500.0,
         }
+    }
+}
+
+impl CameraRigTuning {
+    pub(crate) fn resolve(overrides: &CameraRigTuningFile) -> Result<Self, InteractionTuningError> {
+        let mut t: CameraRigTuning = Self::default();
+
+        if let Some(deg) = overrides.pitch_eps_deg {
+            t.pitch_eps = deg.to_radians();
+        }
+        if let Some(v) = overrides.min_distance {
+            t.min_distance = v;
+        }
+        if let Some(v) = overrides.max_distance {
+            t.max_distance = v;
+        }
+
+        if t.min_distance <= 0.0 || t.min_distance >= t.max_distance {
+            return Err(InteractionTuningError::DistanceRange {
+                min: t.min_distance,
+                max: t.max_distance,
+            });
+        }
+        if t.pitch_eps <= 0.0 || t.pitch_eps >= FRAC_PI_2 {
+            return Err(InteractionTuningError::PitchEps {
+                value_rad: t.pitch_eps,
+            });
+        }
+        Ok(t)
     }
 }
 
@@ -235,5 +275,58 @@ mod tests {
             close(turned, Vec3::new(0.0, 0.0, -1.0)),
             "right at yaw pi/2 -> -Z, got {turned:?}"
         );
+    }
+
+    /// A file with no overrides resolves to exactly the compiled-in defaults.
+    #[test]
+    fn empty_file_resolves_to_defaults() {
+        let t = CameraRigTuning::resolve(&CameraRigTuningFile::default()).unwrap();
+        let d = CameraRigTuning::default();
+        assert_eq!(t.pitch_eps, d.pitch_eps);
+        assert_eq!(t.min_distance, d.min_distance);
+        assert_eq!(t.max_distance, d.max_distance);
+    }
+
+    /// `pitch_eps` is authored in degrees and stored in radians; distances pass
+    /// through as meters.
+    #[test]
+    fn pitch_eps_converts_and_distances_pass_through() {
+        let file = CameraRigTuningFile {
+            pitch_eps_deg: Some(30.0),
+            min_distance: Some(5.0),
+            max_distance: Some(100.0),
+        };
+        let t = CameraRigTuning::resolve(&file).unwrap();
+        assert!(
+            (t.pitch_eps - 30f32.to_radians()).abs() < 1e-6,
+            "got {}",
+            t.pitch_eps
+        );
+        assert_eq!(t.min_distance, 5.0);
+        assert_eq!(t.max_distance, 100.0);
+    }
+
+    /// A distance range that isn't strictly increasing and above zero is rejected.
+    #[test]
+    fn inverted_distance_bounds_are_rejected() {
+        let file = CameraRigTuningFile {
+            min_distance: Some(100.0),
+            max_distance: Some(50.0),
+            ..Default::default()
+        };
+        let err = CameraRigTuning::resolve(&file).unwrap_err();
+        assert!(matches!(err, InteractionTuningError::DistanceRange { .. }));
+    }
+
+    /// A pitch margin at or past vertical leaves no room below the singularity and
+    /// is rejected.
+    #[test]
+    fn pitch_eps_past_vertical_is_rejected() {
+        let file = CameraRigTuningFile {
+            pitch_eps_deg: Some(90.0),
+            ..Default::default()
+        };
+        let err = CameraRigTuning::resolve(&file).unwrap_err();
+        assert!(matches!(err, InteractionTuningError::PitchEps { .. }));
     }
 }

@@ -107,15 +107,30 @@ pub(crate) struct TeleopActions {
 /// Runs once at `Startup` in `InteractionSet::Registration`, a sibling of the
 /// camera's registration. Each motion is an [`InputKind::Axis`], sampled while its
 /// key is held — what continuous driving needs.
-pub(crate) fn register_teleop_actions(mut registry: ResMut<ActionRegistry>, mut commands: Commands) {
+pub(crate) fn register_teleop_actions(
+    mut registry: ResMut<ActionRegistry>,
+    mut commands: Commands,
+) {
     let surge = AxisPair {
-        negative: registry.register(ActionId("teleop.surge_back"), axis("Drive back", KeyCode::ArrowDown)),
-        positive: registry.register(ActionId("teleop.surge_forward"), axis("Drive forward", KeyCode::ArrowUp)),
+        negative: registry.register(
+            ActionId("teleop.surge_back"),
+            axis("Drive back", KeyCode::ArrowDown),
+        ),
+        positive: registry.register(
+            ActionId("teleop.surge_forward"),
+            axis("Drive forward", KeyCode::ArrowUp),
+        ),
     };
     // Yaw is left-positive (+Z, FLU), so the left key is the positive handle.
     let yaw = AxisPair {
-        negative: registry.register(ActionId("teleop.yaw_right"), axis("Turn right", KeyCode::ArrowRight)),
-        positive: registry.register(ActionId("teleop.yaw_left"), axis("Turn left", KeyCode::ArrowLeft)),
+        negative: registry.register(
+            ActionId("teleop.yaw_right"),
+            axis("Turn right", KeyCode::ArrowRight),
+        ),
+        positive: registry.register(
+            ActionId("teleop.yaw_left"),
+            axis("Turn left", KeyCode::ArrowLeft),
+        ),
     };
 
     commands.insert_resource(TeleopActions {

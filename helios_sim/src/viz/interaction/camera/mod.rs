@@ -25,11 +25,10 @@ use crate::{
         camera::{
             follow::{resolve_focus, retarget_on_selection},
             intent::apply_camera_intent,
-            keyboard::{keyboard_camera_intent, CameraKeyboardTuning},
-            mouse::{mouse_camera_intent, CameraMouseTuning},
-            rig::{rig_to_transform, CameraRig, CameraRigTuning},
+            keyboard::keyboard_camera_intent,
+            mouse::mouse_camera_intent,
+            rig::{rig_to_transform, CameraRig},
         },
-        selection::SelectionTuning,
         InteractionSet,
     },
 };
@@ -53,10 +52,6 @@ pub struct CameraPlugin;
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraDriveIntent>();
-        app.init_resource::<CameraKeyboardTuning>();
-        app.init_resource::<CameraMouseTuning>();
-        app.init_resource::<CameraRigTuning>();
-        app.init_resource::<SelectionTuning>();
 
         app.add_systems(
             OnEnter(AppState::SceneBuilding),

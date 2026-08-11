@@ -6,11 +6,13 @@ pub mod registration;
 pub mod sampling;
 pub mod selection;
 pub mod teleop;
+pub mod tuning;
 
 use crate::viz::interaction::{
     actions::registry::ActionRegistry,
     keybindings::load_keybindings,
     sampling::{sample_actions, ActionState},
+    tuning::load_interaction_tuning,
 };
 
 use bevy::prelude::*;
@@ -38,6 +40,10 @@ impl Plugin for ActionRegistryPlugin {
         // that it runs after this set, keeping this reusable input infrastructure
         // ignorant of viz — knowledge flows one way, matching the dependency.
         app.add_systems(Startup, load_keybindings.in_set(InteractionSet::KeyBinding));
+        app.add_systems(
+            Startup,
+            load_interaction_tuning.in_set(InteractionSet::KeyBinding),
+        );
         app.add_systems(Update, sample_actions.in_set(InteractionSet::Sampling));
     }
 }
