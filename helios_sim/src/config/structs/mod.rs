@@ -1,4 +1,5 @@
 mod autonomy;
+mod camera;
 mod pose;
 mod scenario;
 mod sensors;
@@ -8,6 +9,7 @@ mod vehicle;
 pub mod world_object;
 
 pub use autonomy::*;
+pub use camera::*;
 pub use pose::*;
 pub use scenario::*;
 pub use sensors::*;

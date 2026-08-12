@@ -4,6 +4,8 @@ use helios_runtime::config::{AgentBaseConfig, AutonomyStack};
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::config::structs::CameraVantage;
+
 use super::{
     pose::Pose,
     sensors::SensorConfig,
@@ -27,6 +29,9 @@ pub struct ScenarioConfig {
     pub metrics: MetricsConfig,
 
     #[serde(default)]
+    pub camera: CameraVantage,
+
+    #[serde(default)]
     pub agents: Vec<AgentConfig>,
 }
 
@@ -39,6 +44,8 @@ pub struct RawScenarioConfig {
     pub world: World,
     #[serde(default)]
     pub metrics: MetricsConfig,
+    #[serde(default)]
+    pub camera: CameraVantage,
     #[serde(default)]
     pub agents: Vec<Value>,
 }

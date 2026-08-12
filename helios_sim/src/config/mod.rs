@@ -104,6 +104,7 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
         simulation: raw_config.simulation,
         world: raw_config.world,
         metrics: raw_config.metrics,
+        camera: raw_config.camera,
         agents: resolved_agents,
     };
 

@@ -12,6 +12,7 @@ use bevy::prelude::*;
 use serde::Deserialize;
 use std::f32::consts::FRAC_PI_2;
 
+use crate::config::structs::CameraVantage;
 use crate::viz::interaction::tuning::InteractionTuningError;
 
 #[derive(Deserialize, Default)]
@@ -99,6 +100,56 @@ pub struct CameraRig {
     /// Elevation above the horizontal (XZ) plane, in radians. Positive lifts the
     /// camera up and over the focus.
     pub(crate) pitch: f32,
+}
+
+impl CameraRig {
+    /// Seed a rig from a scenario's [`CameraVantage`]: convert authored degrees
+    /// to radians, orbit the world origin, and validate the framing. A bad
+    /// vantage is a startup misconfiguration, surfaced as an `Err` the spawner
+    /// turns into a panic — never a silent bad view.
+    ///
+    /// This is where the scenario's pure data becomes viz runtime state, so the
+    /// deg→rad conversion and the `CameraRig` construction stay on the `viz` side
+    /// of the boundary and `config` needs no view types.
+    pub(crate) fn from_vantage(vantage: &CameraVantage) -> Result<Self, CameraVantageError> {
+        if vantage.distance <= 0.0 {
+            return Err(CameraVantageError::NonPositiveDistance(vantage.distance));
+        }
+        let pitch = vantage.pitch_deg.to_radians();
+        if pitch <= 0.0 || pitch >= FRAC_PI_2 {
+            return Err(CameraVantageError::PitchOutOfRange { value_rad: pitch });
+        }
+
+        Ok(Self {
+            focus: Vec3::ZERO,
+            distance: vantage.distance,
+            yaw: vantage.yaw_deg.to_radians(),
+            pitch,
+        })
+    }
+}
+
+/// A `[camera]` block whose values cannot produce a usable rig.
+#[derive(Debug)]
+pub enum CameraVantageError {
+    NonPositiveDistance(f32),
+    PitchOutOfRange { value_rad: f32 },
+}
+
+impl std::fmt::Display for CameraVantageError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NonPositiveDistance(v) => {
+                write!(f, "camera.distance must be positive, got {v}")
+            }
+            Self::PitchOutOfRange { value_rad } => {
+                write!(
+                    f,
+                    "camera.pitch_deg must be in (0, 90), got {value_rad} rad"
+                )
+            }
+        }
+    }
 }
 
 impl CameraRigTuning {
@@ -197,6 +248,62 @@ mod tests {
             "got {:?}",
             t.translation
         );
+    }
+
+    #[test]
+    fn default_vantage_reproduces_the_seed_rig() {
+        // A scenario that omits `[camera]` must open on the historical view, so
+        // the default vantage has to convert to the same place as the seed rig
+        // above. Degrees round-trip through radians, so compare the rendered
+        // position, not the raw fields.
+        let rig = CameraRig::from_vantage(&CameraVantage::default())
+            .expect("the default vantage is valid");
+        let t = rig_to_transform(&rig);
+        assert!(
+            close(t.translation, Vec3::new(-30.0, 25.0, 30.0)),
+            "got {:?}",
+            t.translation
+        );
+    }
+
+    #[test]
+    fn vantage_converts_degrees_to_radians() {
+        let rig = CameraRig::from_vantage(&CameraVantage {
+            distance: 10.0,
+            pitch_deg: 45.0,
+            yaw_deg: 90.0,
+        })
+        .expect("valid vantage");
+        assert!(
+            (rig.pitch - FRAC_PI_2 / 2.0).abs() < 1e-6,
+            "got {}",
+            rig.pitch
+        );
+        assert!((rig.yaw - FRAC_PI_2).abs() < 1e-6, "got {}", rig.yaw);
+    }
+
+    #[test]
+    fn non_positive_distance_is_rejected() {
+        let result = CameraRig::from_vantage(&CameraVantage {
+            distance: 0.0,
+            ..Default::default()
+        });
+        assert!(matches!(
+            result,
+            Err(CameraVantageError::NonPositiveDistance(_))
+        ));
+    }
+
+    #[test]
+    fn pitch_past_vertical_is_rejected() {
+        let result = CameraRig::from_vantage(&CameraVantage {
+            pitch_deg: 90.0,
+            ..Default::default()
+        });
+        assert!(matches!(
+            result,
+            Err(CameraVantageError::PitchOutOfRange { .. })
+        ));
     }
 
     #[test]
