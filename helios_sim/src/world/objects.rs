@@ -10,7 +10,7 @@ use bevy::{
 use super::object_helpers::{
     build_collider, placement_to_bevy_transform, spawn_object_trimesh_colliders, GltfObjectMeta,
 };
-use crate::config::structs::world_object::WorldObjectPrefab;
+use crate::config::structs::WorldObjectPrefab;
 use crate::config::PrefabCatalog;
 use crate::core::app_state::AssetLoadSet;
 use crate::core::components::{BoundingBox3D, SemanticLabel, WorldObjectType};

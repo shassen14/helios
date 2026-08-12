@@ -1,19 +1,31 @@
+//! Typed representations of the scenario TOML — the vocabulary the `config`
+//! loader deserializes and every subsystem reads.
+//!
+//! One curated facade: every submodule is private and this file re-exports the
+//! exact public surface, so a type is always named `config::structs::Thing`,
+//! never through a submodule path. Moving a type between files never breaks a
+//! caller.
+
 mod autonomy;
 mod camera;
 mod pose;
 mod scenario;
 mod sensors;
-pub mod simulation;
-pub mod terrain;
+mod simulation;
+mod terrain;
 mod vehicle;
-pub mod world_object;
+mod world_object;
 
+// The whole `helios_runtime` config vocabulary is surfaced here unchanged. The
+// glob *is* the curation ("expose all of runtime config under this facade"), not
+// an omission — the one place a `*` re-export is intentional.
 pub use autonomy::*;
-pub use camera::*;
-pub use pose::*;
-pub use scenario::*;
-pub use sensors::*;
+
+pub use camera::CameraVantage;
+pub use pose::Pose;
+pub use scenario::{AgentConfig, RawScenarioConfig, ScenarioConfig, Simulation, World};
+pub use sensors::{GpsConfig, ImuConfig, LidarConfig, MagnetometerConfig, SensorConfig};
 pub use simulation::MetricsConfig;
-pub use terrain::{AtmosphereConfig, TerrainConfig};
-pub use vehicle::*;
+pub use terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig};
+pub use vehicle::{AckermannActuatorConfig, AckermannPhysicsConfig, Vehicle};
 pub use world_object::{WorldObjectCollider, WorldObjectPlacement, WorldObjectPrefab};
