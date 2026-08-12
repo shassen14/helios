@@ -7,7 +7,7 @@
 // specifies more. DOF the reference omits stay zero.
 use super::commands::BodyTwist;
 use super::{ControlInputs, Controller};
-use crate::frames::conventions::FluVector;
+use crate::frames::quantities::FluVector;
 use crate::frames::{FrameId, StateVariable};
 
 pub struct DirectTwistController;

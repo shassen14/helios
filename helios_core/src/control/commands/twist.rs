@@ -1,6 +1,7 @@
 //! Spatial velocity command (linear + angular).
 
-use crate::frames::conventions::{Flu, FluVector, Frame, FrameVector3};
+use crate::frames::conventions::{Flu, Frame};
+use crate::frames::quantities::{FluVector, FreeVector};
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg, Sub};
@@ -42,26 +43,27 @@ use std::ops::{Add, Mul, Neg, Sub};
 ///
 /// ```compile_fail
 /// use helios_core::control::commands::Twist;
-/// use helios_core::frames::conventions::{Enu, Flu, FrameVector3};
+/// use helios_core::frames::conventions::{Enu, Flu};
+/// use helios_core::frames::quantities::FreeVector;
 ///
-/// let world: Twist<Enu> = Twist::new(FrameVector3::zeros(), FrameVector3::zeros());
-/// let body: Twist<Flu> = Twist::new(FrameVector3::zeros(), FrameVector3::zeros());
+/// let world: Twist<Enu> = Twist::new(FreeVector::zeros(), FreeVector::zeros());
+/// let body: Twist<Flu> = Twist::new(FreeVector::zeros(), FreeVector::zeros());
 /// let _ = world + body; // frames differ — does not compile
 /// ```
 //
 // `#[serde(bound = "")]` erases the bounds serde would otherwise infer. `F`
-// appears in the serialized fields (`FrameVector3<F>`), so serde's derive would
-// add `F: Serialize`/`F: Deserialize` — but those are wrong: `FrameVector3<F>` is
+// appears in the serialized fields (`FreeVector<F>`), so serde's derive would
+// add `F: Serialize`/`F: Deserialize` — but those are wrong: `FreeVector<F>` is
 // (de)serializable for *every* `F: Frame`. The empty bound drops serde's guess,
 // leaving only the struct's own `F: Frame`.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct Twist<F: Frame> {
-    linear: FrameVector3<F>,
-    angular: FrameVector3<F>,
+    linear: FreeVector<F>,
+    angular: FreeVector<F>,
 }
 
-// Hand-written for the same reason as `FrameVector3`: `#[derive(Clone)]`/`Copy`
+// Hand-written for the same reason as `FreeVector`: `#[derive(Clone)]`/`Copy`
 // would constrain `F: Clone`/`F: Copy`, which generic callers over `F: Frame`
 // cannot satisfy. The honest bound is `F: Frame`; the body is `*self` because
 // every field is already `Copy`.
@@ -75,7 +77,7 @@ impl<F: Frame> Copy for Twist<F> {}
 
 impl<F: Frame> Twist<F> {
     /// Constructs a twist from a linear and an angular velocity, both in frame `F`.
-    pub fn new(linear: FrameVector3<F>, angular: FrameVector3<F>) -> Self {
+    pub fn new(linear: FreeVector<F>, angular: FreeVector<F>) -> Self {
         Self { linear, angular }
     }
 
@@ -83,18 +85,18 @@ impl<F: Frame> Twist<F> {
     /// summation.
     pub fn zero() -> Self {
         Self {
-            linear: FrameVector3::zeros(),
-            angular: FrameVector3::zeros(),
+            linear: FreeVector::zeros(),
+            angular: FreeVector::zeros(),
         }
     }
 
     /// The linear velocity (m/s), in frame `F`.
-    pub fn linear(&self) -> FrameVector3<F> {
+    pub fn linear(&self) -> FreeVector<F> {
         self.linear
     }
 
     /// The angular velocity (rad/s), in frame `F`.
-    pub fn angular(&self) -> FrameVector3<F> {
+    pub fn angular(&self) -> FreeVector<F> {
         self.angular
     }
 }
@@ -153,7 +155,7 @@ impl<F: Frame> Default for Twist<F> {
 #[cfg(test)]
 mod tests {
     use crate::control::commands::BodyTwist;
-    use crate::frames::conventions::FluVector;
+    use crate::frames::quantities::FluVector;
 
     /// Builds a body-frame twist from linear `(vx, vy, vz)` and angular
     /// `(wx, wy, wz)`.

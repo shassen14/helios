@@ -224,7 +224,7 @@ pub fn gather_controller(
 mod tests {
     use super::*;
 
-    use helios_core::frames::conventions::FluVector;
+    use helios_core::frames::quantities::FluVector;
     use helios_runtime::{
         channels::control,
         pipeline::node::HOST_PRODUCER_ID,

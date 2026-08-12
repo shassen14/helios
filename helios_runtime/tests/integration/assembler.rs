@@ -17,7 +17,7 @@ use helios_runtime::{
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
 use helios_core::control::commands::{BodyTwist, TwistIntent};
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::frames::conventions::FluVector;
+use helios_core::frames::quantities::FluVector;
 
 use crate::common::MockRuntime;
 

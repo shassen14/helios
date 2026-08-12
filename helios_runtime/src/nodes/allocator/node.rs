@@ -93,7 +93,7 @@ mod tests {
     };
     use helios_core::control::commands::BodyTwist;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-    use helios_core::frames::conventions::FluVector;
+    use helios_core::frames::quantities::FluVector;
 
     use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};

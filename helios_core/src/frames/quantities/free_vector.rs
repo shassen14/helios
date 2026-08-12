@@ -1,4 +1,4 @@
-//! Frame-tagged 3-vector.
+//! Frame-tagged free vector.
 
 use crate::frames::conventions::Frame;
 
@@ -7,7 +7,13 @@ use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
-/// A 3-vector whose components are known at compile time to be in frame `F`.
+/// A free vector (velocity, force, displacement) known at compile time to be in
+/// frame `F`.
+///
+/// "Free" means it has magnitude and direction but no anchor point, so under a
+/// transform it rotates but does **not** translate (`R·v`, no `t`). That is what
+/// separates it from [`Point`](super::point::Point), whose position *does*
+/// translate — the type is the record of which transform law applies.
 ///
 /// Wraps a plain [`nalgebra::Vector3<f64>`]; the [`PhantomData`] carries the
 /// frame and costs nothing at runtime. Arithmetic is frame-preserving and only
@@ -15,7 +21,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 /// compile:
 ///
 /// ```compile_fail
-/// use helios_core::frames::conventions::{EnuVector, FluVector};
+/// use helios_core::frames::quantities::{EnuVector, FluVector};
 ///
 /// let world = EnuVector::new(1.0, 0.0, 0.0);
 /// let body = FluVector::new(0.0, 1.0, 0.0);
@@ -32,7 +38,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 // so no bound on `F` is inferred. The wire form is just the inner vector, and the
 // phantom is rebuilt from `Default` on read.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct FrameVector3<F: Frame>(Vector3<f64>, #[serde(skip)] PhantomData<F>);
+pub struct FreeVector<F: Frame>(Vector3<f64>, #[serde(skip)] PhantomData<F>);
 
 // `Clone`/`Copy` are hand-written rather than derived. `#[derive(Clone)]` on a
 // type holding `PhantomData<F>` generates `impl<F: Clone> Clone` — it constrains
@@ -42,15 +48,15 @@ pub struct FrameVector3<F: Frame>(Vector3<f64>, #[serde(skip)] PhantomData<F>);
 // `F: Frame` does not imply `F: Clone`. Writing the impls by hand states the true
 // bound (`F: Frame`), which every marker satisfies. The body is `*self`: both
 // real fields (`Vector3<f64>` and `PhantomData<F>`) are already `Copy`.
-impl<F: Frame> Clone for FrameVector3<F> {
+impl<F: Frame> Clone for FreeVector<F> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<F: Frame> Copy for FrameVector3<F> {}
+impl<F: Frame> Copy for FreeVector<F> {}
 
-impl<F: Frame> FrameVector3<F> {
+impl<F: Frame> FreeVector<F> {
     /// Constructs a vector from its components, tagged with frame `F`.
     pub fn new(x: f64, y: f64, z: f64) -> Self {
         Self(Vector3::new(x, y, z), PhantomData)
@@ -69,17 +75,17 @@ impl<F: Frame> FrameVector3<F> {
         Self::new(0.0, 0.0, 0.0)
     }
 
-    /// The first component (E for [`Enu`](super::Enu), F for [`Flu`](super::Flu)).
+    /// The first component (E for [`Enu`](crate::frames::conventions::Enu), F for [`Flu`](crate::frames::conventions::Flu)).
     pub fn x(&self) -> f64 {
         self.0.x
     }
 
-    /// The second component (N for [`Enu`](super::Enu), L for [`Flu`](super::Flu)).
+    /// The second component (N for [`Enu`](crate::frames::conventions::Enu), L for [`Flu`](crate::frames::conventions::Flu)).
     pub fn y(&self) -> f64 {
         self.0.y
     }
 
-    /// The third component (U for both [`Enu`](super::Enu) and [`Flu`](super::Flu)).
+    /// The third component (U for both [`Enu`](crate::frames::conventions::Enu) and [`Flu`](crate::frames::conventions::Flu)).
     pub fn z(&self) -> f64 {
         self.0.z
     }
@@ -95,35 +101,35 @@ impl<F: Frame> FrameVector3<F> {
     }
 }
 
-impl<F: Frame> Add for FrameVector3<F> {
+impl<F: Frame> Add for FreeVector<F> {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         Self(self.0 + rhs.0, PhantomData)
     }
 }
 
-impl<F: Frame> Sub for FrameVector3<F> {
+impl<F: Frame> Sub for FreeVector<F> {
     type Output = Self;
     fn sub(self, rhs: Self) -> Self {
         Self(self.0 - rhs.0, PhantomData)
     }
 }
 
-impl<F: Frame> Neg for FrameVector3<F> {
+impl<F: Frame> Neg for FreeVector<F> {
     type Output = Self;
     fn neg(self) -> Self {
         Self(-self.0, PhantomData)
     }
 }
 
-impl<F: Frame> Mul<f64> for FrameVector3<F> {
+impl<F: Frame> Mul<f64> for FreeVector<F> {
     type Output = Self;
     fn mul(self, scalar: f64) -> Self {
         Self(self.0 * scalar, PhantomData)
     }
 }
 
-impl<F: Frame> Div<f64> for FrameVector3<F> {
+impl<F: Frame> Div<f64> for FreeVector<F> {
     type Output = Self;
     fn div(self, scalar: f64) -> Self {
         Self(self.0 / scalar, PhantomData)
@@ -132,7 +138,7 @@ impl<F: Frame> Div<f64> for FrameVector3<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::frames::conventions::EnuVector;
+    use crate::frames::quantities::EnuVector;
 
     use nalgebra::Vector3;
 

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use helios_core::{
     control::commands::{BodyTwist, TwistIntent},
-    frames::conventions::FluVector,
+    frames::quantities::FluVector,
 };
 
 use crate::{

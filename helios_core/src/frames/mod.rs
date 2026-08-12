@@ -6,6 +6,7 @@
 //! hardcode numeric indices.
 
 pub mod conventions;
+pub mod quantities;
 
 use crate::data::primitives::FrameHandle;
 

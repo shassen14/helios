@@ -137,7 +137,7 @@ mod tests {
 
     use helios_core::control::commands::{BodyTwist, BodyWrench};
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-    use helios_core::frames::conventions::FluVector;
+    use helios_core::frames::quantities::FluVector;
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 
     use nalgebra::Isometry3;

@@ -1,6 +1,7 @@
 //! Spatial force command (force + torque).
 
-use crate::frames::conventions::{Frame, FrameVector3};
+use crate::frames::conventions::Frame;
+use crate::frames::quantities::FreeVector;
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg, Sub};
@@ -38,26 +39,27 @@ use std::ops::{Add, Mul, Neg, Sub};
 ///
 /// ```compile_fail
 /// use helios_core::control::commands::Wrench;
-/// use helios_core::frames::conventions::{Enu, Flu, FrameVector3};
+/// use helios_core::frames::conventions::{Enu, Flu};
+/// use helios_core::frames::quantities::FreeVector;
 ///
-/// let world: Wrench<Enu> = Wrench::new(FrameVector3::zeros(), FrameVector3::zeros());
-/// let body: Wrench<Flu> = Wrench::new(FrameVector3::zeros(), FrameVector3::zeros());
+/// let world: Wrench<Enu> = Wrench::new(FreeVector::zeros(), FreeVector::zeros());
+/// let body: Wrench<Flu> = Wrench::new(FreeVector::zeros(), FreeVector::zeros());
 /// let _ = world + body; // frames differ — does not compile
 /// ```
 //
 // `#[serde(bound = "")]` erases the bounds serde would otherwise infer. `F`
-// appears in the serialized fields (`FrameVector3<F>`), so serde's derive would
-// add `F: Serialize`/`F: Deserialize` — but those are wrong: `FrameVector3<F>` is
+// appears in the serialized fields (`FreeVector<F>`), so serde's derive would
+// add `F: Serialize`/`F: Deserialize` — but those are wrong: `FreeVector<F>` is
 // (de)serializable for *every* `F: Frame`. The empty bound drops serde's guess,
 // leaving only the struct's own `F: Frame`.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct Wrench<F: Frame> {
-    force: FrameVector3<F>,
-    torque: FrameVector3<F>,
+    force: FreeVector<F>,
+    torque: FreeVector<F>,
 }
 
-// Hand-written for the same reason as `FrameVector3`: `#[derive(Clone)]`/`Copy`
+// Hand-written for the same reason as `FreeVector`: `#[derive(Clone)]`/`Copy`
 // would constrain `F: Clone`/`F: Copy`, which generic callers over `F: Frame`
 // cannot satisfy. The honest bound is `F: Frame`; the body is `*self` because
 // every field is already `Copy`.
@@ -71,7 +73,7 @@ impl<F: Frame> Copy for Wrench<F> {}
 
 impl<F: Frame> Wrench<F> {
     /// Constructs a wrench from a force and a torque, both in frame `F`.
-    pub fn new(force: FrameVector3<F>, torque: FrameVector3<F>) -> Self {
+    pub fn new(force: FreeVector<F>, torque: FreeVector<F>) -> Self {
         Self { force, torque }
     }
 
@@ -79,18 +81,18 @@ impl<F: Frame> Wrench<F> {
     /// summation.
     pub fn zero() -> Self {
         Self {
-            force: FrameVector3::zeros(),
-            torque: FrameVector3::zeros(),
+            force: FreeVector::zeros(),
+            torque: FreeVector::zeros(),
         }
     }
 
     /// The force component (N), in frame `F`.
-    pub fn force(&self) -> FrameVector3<F> {
+    pub fn force(&self) -> FreeVector<F> {
         self.force
     }
 
     /// The torque component (N·m), in frame `F`.
-    pub fn torque(&self) -> FrameVector3<F> {
+    pub fn torque(&self) -> FreeVector<F> {
         self.torque
     }
 }
@@ -132,7 +134,7 @@ impl<F: Frame> Default for Wrench<F> {
 #[cfg(test)]
 mod tests {
     use crate::control::commands::BodyWrench;
-    use crate::frames::conventions::FluVector;
+    use crate::frames::quantities::FluVector;
 
     /// Builds a body-frame wrench from force `(fx, fy, fz)` and torque
     /// `(tx, ty, tz)`.
