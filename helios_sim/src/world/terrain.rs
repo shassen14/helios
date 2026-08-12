@@ -82,7 +82,7 @@ fn start_terrain_asset_loading(
     config: Res<ScenarioConfig>,
     asset_server: Res<AssetServer>,
 ) {
-    for (idx, terrain) in config.world.terrains.iter().enumerate() {
+    for (idx, terrain) in config.common.world.terrains.iter().enumerate() {
         let scene = asset_server.load(GltfAssetLabel::Scene(0).from_asset(terrain.mesh.clone()));
         info!(
             "[Terrain] Loading visual mesh for tile {}: {:?}",
@@ -104,7 +104,7 @@ fn start_terrain_asset_loading(
         });
     }
 
-    if config.world.terrains.is_empty() {
+    if config.common.world.terrains.is_empty() {
         warn!("[Terrain] No [[world.terrains]] defined — scene will have no ground.");
     }
 }
@@ -142,7 +142,7 @@ fn spawn_terrain_tiles(
     meshes: Res<Assets<Mesh>>,
 ) {
     for entry in &terrain_assets.entries {
-        let terrain_cfg = &config.world.terrains[entry.config_idx];
+        let terrain_cfg = &config.common.world.terrains[entry.config_idx];
         let transform = terrain_transform(terrain_cfg.position, terrain_cfg.orientation_degrees);
 
         // Spawn the visual scene entity.

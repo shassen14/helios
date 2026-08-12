@@ -83,7 +83,7 @@ fn spawn_magnetometer_sensors(
     config: Res<ScenarioConfig>,
     master_seed: Res<MasterSeed>,
 ) {
-    let magnetic_field = &config.world.magnetic_field;
+    let magnetic_field = &config.common.world.magnetic_field;
 
     for (agent_entity, agent_name, request) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {

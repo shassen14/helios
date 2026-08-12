@@ -11,7 +11,7 @@ const KIND: &str = "sensor";
 
 /// The seed this run actually used, resolved once at startup.
 ///
-/// Distinct from `config.simulation.seed`, which is an `Option` because it is a
+/// Distinct from `config.common.simulation.seed`, which is an `Option` because it is a
 /// *request*: `None` means "pick one for me." By the time this resource exists
 /// that choice has been made, so it is never optional. A run drawing its seed
 /// from OS entropy is reproducible only because the drawn value is materialized

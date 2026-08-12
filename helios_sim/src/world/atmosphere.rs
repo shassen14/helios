@@ -28,7 +28,7 @@ impl Plugin for AtmospherePlugin {
 /// time, so a later write would leave it modeling a different world than the
 /// one the physics engine simulates.
 fn configure_gravity(config: Res<ScenarioConfig>, mut gravity: ResMut<Gravity>) {
-    let g = config.world.atmosphere.gravity_enu;
+    let g = config.common.world.atmosphere.gravity_enu;
     gravity.0 = BevyVec3::from(EnuVector(Vector3::new(g[0], g[1], g[2])));
 
     // Both frames, both labelled: the ENU triple is what the scenario author
@@ -42,7 +42,7 @@ fn configure_gravity(config: Res<ScenarioConfig>, mut gravity: ResMut<Gravity>) 
 }
 
 fn spawn_sun(mut commands: Commands, config: Res<ScenarioConfig>) {
-    let atmos = &config.world.atmosphere;
+    let atmos = &config.common.world.atmosphere;
     let light_transform = sun_transform(atmos.sun_elevation, atmos.sun_azimuth);
     commands.spawn((
         DirectionalLight {

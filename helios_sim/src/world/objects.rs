@@ -78,7 +78,7 @@ fn start_object_asset_loading(
     catalog: Res<PrefabCatalog>,
     asset_server: Res<AssetServer>,
 ) {
-    for placement in &config.world.objects {
+    for placement in &config.common.world.objects {
         if assets.prefabs.contains_key(&placement.prefab) {
             continue;
         }
@@ -135,7 +135,7 @@ fn spawn_world_objects(
     gltf_meshes: Res<Assets<GltfMesh>>,
     meshes: Res<Assets<Mesh>>,
 ) {
-    for (idx, placement) in config.world.objects.iter().enumerate() {
+    for (idx, placement) in config.common.world.objects.iter().enumerate() {
         let Some(prefab) = assets.prefabs.get(&placement.prefab) else {
             error!(
                 "[WorldObjects] Skipping placement #{} — prefab '{}' was not loaded.",

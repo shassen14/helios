@@ -99,16 +99,15 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
         );
     }
 
-    // 3. Assemble the final, complete `ScenarioConfig` resource.
+    // 3. Assemble the final, complete `ScenarioConfig` resource. Every
+    //    non-agent field rides across in the one `common` move; only the agents
+    //    needed the resolve step above.
     let mut final_config = ScenarioConfig {
-        simulation: raw_config.simulation,
-        world: raw_config.world,
-        metrics: raw_config.metrics,
-        camera: raw_config.camera,
+        common: raw_config.common,
         agents: resolved_agents,
     };
 
-    apply_cli_overrides(&mut final_config.simulation, &cli);
+    apply_cli_overrides(&mut final_config.common.simulation, &cli);
 
     // 4. Insert the single, unified config as a resource.
     commands.insert_resource(final_config);

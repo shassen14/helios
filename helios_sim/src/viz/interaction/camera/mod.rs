@@ -93,7 +93,7 @@ impl Plugin for CameraPlugin {
 /// [`CameraTarget::Fixed`]: its focus is a free world point until a follow
 /// retargets it.
 fn spawn_camera(mut commands: Commands, config: Res<ScenarioConfig>) {
-    let rig = match CameraRig::from_vantage(&config.camera) {
+    let rig = match CameraRig::from_vantage(&config.common.camera) {
         Ok(rig) => rig,
         Err(e) => panic!("camera vantage config: {e}"),
     };

@@ -23,7 +23,9 @@ pub use autonomy::*;
 
 pub use camera::CameraVantage;
 pub use pose::Pose;
-pub use scenario::{AgentConfig, RawScenarioConfig, ScenarioConfig, Simulation, World};
+pub use scenario::{
+    AgentConfig, RawScenarioConfig, ScenarioCommon, ScenarioConfig, Simulation, World,
+};
 pub use sensors::{GpsConfig, ImuConfig, LidarConfig, MagnetometerConfig, SensorConfig};
 pub use simulation::MetricsConfig;
 pub use terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig};
