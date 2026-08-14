@@ -9,6 +9,7 @@ pub mod control;
 pub mod data;
 pub mod estimation;
 pub mod frames;
+pub mod manifold;
 pub mod mapping;
 pub mod path_following;
 pub mod planning;
