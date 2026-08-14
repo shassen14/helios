@@ -278,7 +278,6 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
 
         commands.spawn((
             Name::new(format!("{}/base_link", agent_config.name())),
-            TrackedFrame,
             GroundTruthState {
                 pose: start_isometry,
                 ..default()

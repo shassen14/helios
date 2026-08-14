@@ -13,8 +13,8 @@
 //!    or more accurate.
 //! 4. Re-export from this `mod.rs`.
 
+use crate::data::{ports::TfProvider, MonotonicTime};
 use crate::frames::FrameAwareState;
-use crate::ports::TfProvider;
 use nalgebra::{DMatrix, DVector};
 
 /// Mathematical model of a sensor: `z = h(x) + v`.
@@ -36,6 +36,7 @@ pub trait MeasurementModel: Send + Sync {
         &self,
         state: &FrameAwareState,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     ) -> Option<DVector<f64>>;
 
     /// Measurement Jacobian `H = ∂h/∂x` of shape `(dim(), state.dim())`.
@@ -43,11 +44,16 @@ pub trait MeasurementModel: Send + Sync {
     /// Default impl computes `H` via central finite differences on
     /// [`predict_measurement`] using adaptive epsilon `ε = 1e-5 · (1 + |xᵢ|)`.
     /// Override for analytic Jacobians where performance or accuracy matters.
-    fn jacobian(&self, state: &FrameAwareState, tf: Option<&dyn TfProvider>) -> DMatrix<f64> {
+    fn jacobian(
+        &self,
+        state: &FrameAwareState,
+        tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
+    ) -> DMatrix<f64> {
         let m = self.dim();
         let n = state.dim();
         let mut h = DMatrix::zeros(m, n);
-        let Some(z_base) = self.predict_measurement(state, tf) else {
+        let Some(z_base) = self.predict_measurement(state, tf, at) else {
             return h;
         };
         if z_base.nrows() != m {
@@ -57,7 +63,7 @@ pub trait MeasurementModel: Send + Sync {
             let eps = 1e-5 * (1.0 + state.state.vector[j].abs());
             let mut perturbed = state.clone();
             perturbed.state.vector[j] += eps;
-            if let Some(z_pert) = self.predict_measurement(&perturbed, tf) {
+            if let Some(z_pert) = self.predict_measurement(&perturbed, tf, at) {
                 if z_pert.nrows() == m {
                     let col = (z_pert - &z_base) / eps;
                     h.column_mut(j).copy_from(&col);

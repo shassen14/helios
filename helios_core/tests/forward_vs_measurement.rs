@@ -18,14 +18,16 @@
 //! truth. Cases are drawn from a seeded RNG, so the property is checked over
 //! many random poses, rates, mounts, and fields while staying reproducible.
 
+use helios_core::data::ports::TfProvider;
 use helios_core::data::primitives::FrameHandle;
+use helios_core::data::MonotonicTime;
 use helios_core::estimation::measurement::accelerometer::SpecificForceModel;
 use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
 use helios_core::estimation::measurement::MeasurementModel;
+use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-use helios_core::ports::TfProvider;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gps::GpsModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
@@ -39,6 +41,7 @@ use rand::{Rng, SeedableRng};
 
 const AGENT: FrameHandle = FrameHandle(1);
 const SENSOR: FrameHandle = FrameHandle(2);
+const AT: MonotonicTime = MonotonicTime(0.0);
 
 /// Random cases per sensor. Large enough to exercise the frame conventions
 /// across the pose/rate space; small enough to stay a fast unit-style test.
@@ -57,12 +60,17 @@ const TOL: f64 = 1e-9;
 struct SensorInBody(Isometry3<f64>);
 
 impl TfProvider for SensorInBody {
-    fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
-        Some(self.0)
-    }
-
-    fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
-        Some(Isometry3::identity())
+    fn get_transform(
+        &self,
+        _from: FrameId,
+        _to: FrameId,
+        _at: MonotonicTime,
+    ) -> Option<ErasedTransform> {
+        Some(ErasedTransform::from_parts(
+            self.0,
+            Convention::Flu,
+            Convention::Flu,
+        ))
     }
 }
 
@@ -92,7 +100,7 @@ fn gps_forward_matches_filter_prediction() {
             Vector3::zeros(),
         );
         let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)))
+            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
             .unwrap();
 
         // Forward: the antenna observes its own world position directly.
@@ -129,7 +137,7 @@ fn gyroscope_forward_matches_filter_prediction() {
             Vector3::zeros(),
         );
         let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)))
+            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
             .unwrap();
 
         let ideal = forward.ideal(
@@ -169,7 +177,7 @@ fn accelerometer_forward_matches_filter_prediction() {
             alpha_body,
         );
         let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)))
+            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
             .unwrap();
 
         // Forward: the same kinematics rotated into world axes. Rotation
@@ -229,7 +237,7 @@ fn magnetometer_forward_matches_filter_prediction() {
             Vector3::zeros(),
         );
         let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)))
+            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
             .unwrap();
 
         let ideal = forward.ideal(sensor_from_world(&extrinsic, q_body_to_world));

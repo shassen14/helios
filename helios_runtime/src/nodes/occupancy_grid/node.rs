@@ -32,8 +32,8 @@
 //! Sensor pose is composed from `FrameAwareState`'s pose (whatever the
 //! upstream estimator publishes — real EKF, future
 //! `GroundTruthEstimatorNode`, …) so the map lives in the estimator's
-//! frame. Reading `runtime.world_pose(sensor_handle)` directly would
-//! anchor the map to physics ground-truth and create a frame mismatch
+//! frame. Reading the sensor's ground-truth world pose from the host
+//! runtime directly would anchor the map to physics ground-truth and create a frame mismatch
 //! whenever the estimator drifts.
 //!
 //! ## Known gaps
@@ -58,7 +58,9 @@ use atomic_float::AtomicF64;
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::data::sensor::PointCloud2D;
-use helios_core::frames::FrameAwareState;
+use helios_core::data::MonotonicTime;
+use helios_core::frames::conventions::Flu;
+use helios_core::frames::{FrameAwareState, FrameId};
 use helios_core::mapping::Mapper;
 
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
@@ -167,11 +169,20 @@ impl PipelineNode for OccupancyGridNode {
             let batch_ts = stamped_scans.timestamp.0;
             if batch_ts > self.last_integrated_ts.load(Ordering::Relaxed) {
                 for reading in stamped_scans.value.iter() {
-                    let Some(sensor_in_agent) =
-                        runtime.get_transform(self.agent_handle, reading.sensor_handle)
-                    else {
+                    let Some(erased) = runtime.get_transform(
+                        FrameId::Body(self.agent_handle),
+                        FrameId::Sensor(reading.sensor_handle),
+                        MonotonicTime(batch_ts),
+                    ) else {
                         continue;
                     };
+
+                    let Ok(tf_sensor_in_agent) = erased.typed::<Flu, Flu>() else {
+                        continue;
+                    };
+
+                    let sensor_in_agent = tf_sensor_in_agent.into_inner();
+
                     let sensor_world_pose = robot_world_pose * sensor_in_agent;
                     mapper.integrate_scan_2d(&sensor_world_pose, &reading.data);
                 }
@@ -212,6 +223,7 @@ mod tests {
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::data::sensor::PointCloud2D;
+    use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use helios_core::mapping::{MapData, Mapper};
     use nalgebra::{Isometry3, Point2, Translation3, UnitQuaternion};
@@ -240,13 +252,16 @@ mod tests {
     impl AgentRuntime for MockRuntime {
         fn get_transform(
             &self,
-            _agent: FrameHandle,
-            sensor: FrameHandle,
-        ) -> Option<Isometry3<f64>> {
-            self.agent_to_sensor.get(&sensor.0).copied()
-        }
-        fn world_pose(&self, _: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+            _from: FrameId,
+            to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            let FrameId::Sensor(sensor) = to else {
+                return None;
+            };
+            self.agent_to_sensor
+                .get(&sensor.0)
+                .map(|iso| ErasedTransform::from_parts(*iso, Convention::Flu, Convention::Flu))
         }
         fn now(&self) -> MonotonicTime {
             MonotonicTime(0.0)

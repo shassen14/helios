@@ -12,7 +12,7 @@ use crate::{
     prelude::*,
 };
 
-use helios_core::control::actuators::SetpointValue;
+use helios_core::{control::actuators::SetpointValue, frames::transforms::Convention};
 
 use avian3d::prelude::*;
 use nalgebra::Vector3 as NaVec3;
@@ -54,7 +54,7 @@ pub(super) fn process_ackermann_logic(
                     l0_yaw_gain: actuator.l0_yaw_gain,
                 },
                 ActuationModelComponent(actuation.clone()),
-                TrackedFrame,
+                TrackedFrame(Convention::Flu),
             ));
         }
     }

@@ -1,10 +1,11 @@
 // helios_core/src/estimation/filters/ekf.rs
 
+use crate::data::ports::TfProvider;
+use crate::data::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
 use crate::frames::FrameAwareState;
-use crate::ports::TfProvider;
 use crate::utils::integrators::RK4;
 use nalgebra::{DMatrix, DVector};
 
@@ -133,13 +134,14 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         model: &dyn MeasurementModel,
         r: &DMatrix<f64>,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     ) {
         let m = model.dim();
         if z.nrows() != m || r.nrows() != m || r.ncols() != m {
             return;
         }
 
-        let Some(z_pred) = model.predict_measurement(&self.state, tf) else {
+        let Some(z_pred) = model.predict_measurement(&self.state, tf, at) else {
             return;
         };
         if z_pred.nrows() != m {
@@ -147,7 +149,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         }
 
         let p_priori = &self.state.covariance;
-        let h_jac = model.jacobian(&self.state, tf);
+        let h_jac = model.jacobian(&self.state, tf, at);
         let y = z - &z_pred;
 
         let s = &h_jac * p_priori * h_jac.transpose() + r;
@@ -181,23 +183,32 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::ports::TfProvider;
+    use crate::data::MonotonicTime;
     use crate::estimation::measurement::MeasurementModel;
     use crate::estimation::EstimatorInputs;
+    use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::ports::TfProvider;
     use nalgebra::{DMatrix, DVector, Isometry3};
 
     // --- Test Fixtures ---
 
+    const AT: MonotonicTime = MonotonicTime(0.0);
+
     struct IdentityTf;
 
     impl TfProvider for IdentityTf {
-        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
-        }
-        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
     }
 
@@ -244,6 +255,7 @@ mod tests {
             &self,
             state: &FrameAwareState,
             _tf: Option<&dyn TfProvider>,
+            _at: MonotonicTime,
         ) -> Option<DVector<f64>> {
             Some(DVector::from_row_slice(&[
                 state.state.vector[0],
@@ -251,7 +263,12 @@ mod tests {
             ]))
         }
 
-        fn jacobian(&self, state: &FrameAwareState, _tf: Option<&dyn TfProvider>) -> DMatrix<f64> {
+        fn jacobian(
+            &self,
+            state: &FrameAwareState,
+            _tf: Option<&dyn TfProvider>,
+            _at: MonotonicTime,
+        ) -> DMatrix<f64> {
             let n = state.dim();
             let mut h = DMatrix::zeros(2, n);
             h[(0, 0)] = 1.0;
@@ -336,7 +353,7 @@ mod tests {
         let model = Position2DMeasurement;
         let r = gps_r();
 
-        ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf));
+        ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
 
         let px = ekf.state().state.vector[0];
         assert!(px > 0.0, "state should correct toward measurement (px > 0)");
@@ -351,7 +368,7 @@ mod tests {
         let r = gps_r();
         let p00_before = ekf.state().covariance[(0, 0)];
 
-        ekf.update(&gps_z(0.0, 0.0), &model, &r, Some(&tf));
+        ekf.update(&gps_z(0.0, 0.0), &model, &r, Some(&tf), AT);
 
         let p00_after = ekf.state().covariance[(0, 0)];
         assert!(p00_after < p00_before);
@@ -366,7 +383,7 @@ mod tests {
         let bad_r = DMatrix::identity(3, 3) * 0.1;
         let px_before = ekf.state().state.vector[0];
 
-        ekf.update(&gps_z(5.0, 0.0), &model, &bad_r, Some(&tf));
+        ekf.update(&gps_z(5.0, 0.0), &model, &bad_r, Some(&tf), AT);
 
         assert_eq!(ekf.state().state.vector[0], px_before);
     }
@@ -384,7 +401,7 @@ mod tests {
 
         for _ in 0..50 {
             ekf.predict(0.1, &EstimatorInputs { control: u.clone() });
-            ekf.update(&gps_z(true_px, 0.0), &model, &r, Some(&tf));
+            ekf.update(&gps_z(true_px, 0.0), &model, &r, Some(&tf), AT);
         }
 
         let px = ekf.state().state.vector[0];

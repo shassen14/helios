@@ -122,21 +122,29 @@ mod tests {
     //! silent when no intent is present.
 
     use super::*;
+    use helios_core::frames::transforms::{Convention, ErasedTransform};
+    use helios_core::frames::FrameId;
 
     use crate::Health;
 
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+    use helios_core::data::primitives::MonotonicTime;
 
     use nalgebra::Isometry3;
 
     struct MockRuntime;
 
     impl AgentRuntime for MockRuntime {
-        fn get_transform(&self, _: FrameHandle, _: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
-        }
-        fn world_pose(&self, _: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _: FrameId,
+            _: FrameId,
+            _: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
         fn now(&self) -> MonotonicTime {
             MonotonicTime(0.0)

@@ -1,9 +1,11 @@
 use nalgebra::DVector;
 
+use crate::data::ports::TfProvider;
 use crate::data::primitives::FrameHandle;
+use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
+use crate::frames::conventions::Flu;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
-use crate::ports::TfProvider;
 
 /// A measurement model for a standard GPS sensor that provides 3D position.
 ///
@@ -39,15 +41,25 @@ impl MeasurementModel for GpsPositionModel {
         &self,
         filter_state: &FrameAwareState,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     ) -> Option<DVector<f64>> {
         let tf = tf?;
         let body_position_world = filter_state.get_vector3(&StateVariable::Px(FrameId::World))?;
         let body_orientation_world = filter_state.get_orientation().unwrap_or_default();
 
-        let tf_sensor_from_body = tf
-            .get_transform(self.agent_handle, self.sensor_handle)
-            .unwrap_or_default();
-        let antenna_offset_body = tf_sensor_from_body.translation.vector;
+        let erased = tf.get_transform(
+            FrameId::Body(self.agent_handle),
+            FrameId::Sensor(self.sensor_handle),
+            at,
+        )?;
+
+        let Ok(tf_sensor_from_body) = erased.typed::<Flu, Flu>() else {
+            return None;
+        };
+
+        let iso = tf_sensor_from_body.into_inner();
+
+        let antenna_offset_body = iso.translation.vector;
 
         let antenna_offset_world = body_orientation_world * antenna_offset_body;
         let predicted_antenna_position_world = body_position_world + antenna_offset_world;
@@ -69,22 +81,31 @@ mod tests {
     //! - Default finite-diff Jacobian has the correct shape and identity position columns.
 
     use super::*;
+    use crate::data::ports::TfProvider;
     use crate::data::primitives::FrameHandle;
+    use crate::data::MonotonicTime;
+    use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::ports::TfProvider;
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
+    const AT: MonotonicTime = MonotonicTime(0.0);
 
     struct FixedTf(Isometry3<f64>);
 
     impl TfProvider for FixedTf {
-        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(self.0)
-        }
-        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                self.0,
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
     }
 
@@ -123,7 +144,7 @@ mod tests {
     fn predict_without_tf_returns_none() {
         let model = make_model();
         let state = make_state(3.0, 4.0, 5.0);
-        assert!(model.predict_measurement(&state, None).is_none());
+        assert!(model.predict_measurement(&state, None, AT).is_none());
     }
 
     #[test]
@@ -131,7 +152,7 @@ mod tests {
         let model = make_model();
         let state = make_state(3.0, 4.0, 5.0);
         let tf = FixedTf(Isometry3::identity());
-        let z = model.predict_measurement(&state, Some(&tf)).unwrap();
+        let z = model.predict_measurement(&state, Some(&tf), AT).unwrap();
         assert!((z[0] - 3.0).abs() < 1e-9);
         assert!((z[1] - 4.0).abs() < 1e-9);
         assert!((z[2] - 5.0).abs() < 1e-9);
@@ -145,7 +166,7 @@ mod tests {
         let offset =
             Isometry3::from_parts(Translation3::new(0.5, 0.0, 0.1), UnitQuaternion::identity());
         let tf = FixedTf(offset);
-        let z = model.predict_measurement(&state, Some(&tf)).unwrap();
+        let z = model.predict_measurement(&state, Some(&tf), AT).unwrap();
         assert!((z[0] - 1.5).abs() < 1e-9);
         assert!((z[1] - 2.0).abs() < 1e-9);
         assert!((z[2] - 3.1).abs() < 1e-9);
@@ -156,7 +177,7 @@ mod tests {
         let model = make_model();
         let state = make_state(0.0, 0.0, 0.0);
         let tf = FixedTf(Isometry3::identity());
-        let h = model.jacobian(&state, Some(&tf));
+        let h = model.jacobian(&state, Some(&tf), AT);
         assert_eq!(h.nrows(), 3);
         assert_eq!(h.ncols(), state.dim());
         assert!((h[(0, 0)] - 1.0).abs() < 1e-4);

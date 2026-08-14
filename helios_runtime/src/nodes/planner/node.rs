@@ -129,9 +129,10 @@ mod tests {
     //!   - is a no-op on `PlannerResult::PathStillValid` (and other Hold variants)
 
     use super::*;
+    use helios_core::frames::transforms::{Convention, ErasedTransform};
 
     use helios_core::data::messages::TrajectoryPoint;
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+    use helios_core::data::primitives::MonotonicTime;
     use helios_core::frames::{FrameId, RobotState, StateVariable};
     use helios_core::mapping::MapData;
     use helios_core::planning::types::Path;
@@ -145,11 +146,17 @@ mod tests {
     struct MockRuntime;
 
     impl AgentRuntime for MockRuntime {
-        fn get_transform(&self, _: FrameHandle, _: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
-        }
-        fn world_pose(&self, _: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _: FrameId,
+            _: FrameId,
+            _: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
         fn now(&self) -> MonotonicTime {
             MonotonicTime(0.0)

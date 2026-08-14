@@ -8,6 +8,7 @@ use crate::registry::plugin::RuntimeAutonomyRegistry;
 
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::data::primitives::FrameHandle;
+use helios_core::frames::transforms::Convention;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::config::CommandSource;
 use helios_runtime::{
@@ -111,7 +112,11 @@ pub fn spawn_odom_frames(
         let agent_name = request.0.name();
         commands.spawn((
             Name::new(format!("{}/odom", agent_name)),
-            TrackedFrame,
+            // ENU because the estimator's world frame is ENU. This is a property
+            // of the estimation stack, not the vehicle — every agent's odom shares
+            // it regardless of body convention. A future NED-world estimator would
+            // make this configurable at the estimator layer, not per vehicle.
+            TrackedFrame(Convention::Enu),
             Transform::IDENTITY,
             GlobalTransform::IDENTITY,
             OdomFrameOf(agent_entity),

@@ -1,6 +1,7 @@
 //! Frame-tagged free vector.
 
 use crate::frames::conventions::Frame;
+use crate::frames::transforms::Transform;
 
 use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
@@ -99,6 +100,33 @@ impl<F: Frame> FreeVector<F> {
     pub fn into_inner(self) -> Vector3<f64> {
         self.0
     }
+
+    /// Re-expresses this vector in frame `To` under only the transform's
+    /// rotational part, `R·v` — a free vector rotates but never translates.
+    ///
+    /// Forwards through the transform's [`rotation`](Transform::rotation), so the
+    /// translation `t` is structurally out of reach: there is no path by which
+    /// `reexpress` adds a translation to a free vector, which is the whole point
+    /// of the [`Point`](super::Point)/`FreeVector` split. The transform's
+    /// `F → To` pair must match this vector's frame or it does not compile.
+    ///
+    /// The affine, translation-applying operation is [`Transform::act`], and it
+    /// accepts only a [`Point`](super::Point). Handing it a free vector — the one
+    /// way you could "translate a velocity" — does not compile:
+    ///
+    /// ```compile_fail
+    /// use helios_core::frames::conventions::{Enu, Flu};
+    /// use helios_core::frames::quantities::FluVector;
+    /// use helios_core::frames::transforms::Transform;
+    /// use nalgebra::Isometry3;
+    ///
+    /// let t = Transform::<Flu, Enu>::from_isometry(Isometry3::identity());
+    /// let v = FluVector::new(1.0, 0.0, 0.0);
+    /// let _ = t.act(v); // `act` wants a `Point<Flu>`, not a `FreeVector` — no compile
+    /// ```
+    pub fn reexpress<To: Frame>(self, transform: &Transform<F, To>) -> FreeVector<To> {
+        transform.rotation().act(self)
+    }
 }
 
 impl<F: Frame> Add for FreeVector<F> {
@@ -138,9 +166,28 @@ impl<F: Frame> Div<f64> for FreeVector<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::frames::quantities::EnuVector;
+    use crate::frames::conventions::{Enu, Flu};
+    use crate::frames::quantities::{EnuVector, FluVector};
+    use crate::frames::transforms::{Rotation, Transform};
 
-    use nalgebra::Vector3;
+    use nalgebra::{Translation3, UnitQuaternion, Vector3};
+    use std::f64::consts::FRAC_PI_2;
+
+    /// A quarter turn about +Z paired with a +10 shift along X, read `Flu → Enu`.
+    /// The translation is present precisely so a correct free-vector re-expression
+    /// must ignore it.
+    fn turn_and_shift() -> Transform<Flu, Enu> {
+        let rotation = Rotation::from_unit_quaternion(UnitQuaternion::from_axis_angle(
+            &Vector3::z_axis(),
+            FRAC_PI_2,
+        ));
+        Transform::from_parts(rotation, Translation3::new(10.0, 0.0, 0.0))
+    }
+
+    /// Floats through a quaternion are not bit-exact; compare within tolerance.
+    fn close(a: Vector3<f64>, b: Vector3<f64>) -> bool {
+        (a - b).norm() < 1e-9
+    }
 
     #[test]
     fn add_is_componentwise() {
@@ -193,5 +240,14 @@ mod tests {
     #[test]
     fn zeros_is_all_zero() {
         assert_eq!(EnuVector::zeros(), EnuVector::new(0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn reexpress_rotates_without_translating() {
+        // Forwards through the transform's rotational part only: Flu +X under a
+        // quarter turn about +Z lands on Enu +Y, and the transform's +10 X shift
+        // is ignored because a free vector has no anchor to move.
+        let rotated = FluVector::new(1.0, 0.0, 0.0).reexpress(&turn_and_shift());
+        assert!(close(rotated.into_inner(), Vector3::new(0.0, 1.0, 0.0)));
     }
 }

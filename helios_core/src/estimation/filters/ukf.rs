@@ -1,11 +1,12 @@
-use nalgebra::{Cholesky, DMatrix, DVector};
-
+use crate::data::ports::TfProvider;
+use crate::data::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
 use crate::frames::FrameAwareState;
-use crate::ports::TfProvider;
 use crate::utils::integrators::RK4;
+
+use nalgebra::{Cholesky, DMatrix, DVector};
 
 /// Configuration parameters for the UKF's sigma point generation.
 #[derive(Debug, Clone, Copy)]
@@ -158,6 +159,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         model: &dyn MeasurementModel,
         r: &DMatrix<f64>,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     ) {
         let m = model.dim();
         if z.nrows() != m || r.nrows() != m || r.ncols() != m {
@@ -177,7 +179,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
                 .vector
                 .copy_from(&self.sigma_buf.column(i));
 
-            if let Some(z_point) = model.predict_measurement(&self.scratch_state, tf) {
+            if let Some(z_point) = model.predict_measurement(&self.scratch_state, tf, at) {
                 if z_point.nrows() == m {
                     measurement_points.column_mut(i).copy_from(&z_point);
                 }
@@ -224,21 +226,30 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::ports::TfProvider;
+    use crate::data::MonotonicTime;
     use crate::estimation::measurement::MeasurementModel;
     use crate::estimation::EstimatorInputs;
+    use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::ports::TfProvider;
     use nalgebra::{DMatrix, DVector, Isometry3};
+
+    const AT: MonotonicTime = MonotonicTime(0.0);
 
     struct IdentityTf;
 
     impl TfProvider for IdentityTf {
-        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
-        }
-        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
     }
 
@@ -270,6 +281,7 @@ mod tests {
             &self,
             state: &FrameAwareState,
             _tf: Option<&dyn TfProvider>,
+            _at: MonotonicTime,
         ) -> Option<DVector<f64>> {
             Some(DVector::from_row_slice(&[
                 state.state.vector[0],
@@ -277,7 +289,12 @@ mod tests {
             ]))
         }
 
-        fn jacobian(&self, state: &FrameAwareState, _tf: Option<&dyn TfProvider>) -> DMatrix<f64> {
+        fn jacobian(
+            &self,
+            state: &FrameAwareState,
+            _tf: Option<&dyn TfProvider>,
+            _at: MonotonicTime,
+        ) -> DMatrix<f64> {
             let n = state.dim();
             let mut h = DMatrix::zeros(2, n);
             h[(0, 0)] = 1.0;
@@ -345,7 +362,7 @@ mod tests {
         let model = Position2DMeasurement;
         let r = gps_r();
 
-        ukf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf));
+        ukf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
 
         let px = ukf.state().state.vector[0];
         assert!(px > 0.0);
@@ -360,7 +377,7 @@ mod tests {
         let r = gps_r();
         let p00_before = ukf.state().covariance[(0, 0)];
 
-        ukf.update(&gps_z(0.0, 0.0), &model, &r, Some(&tf));
+        ukf.update(&gps_z(0.0, 0.0), &model, &r, Some(&tf), AT);
 
         let p00_after = ukf.state().covariance[(0, 0)];
         assert!(p00_after < p00_before);
@@ -377,7 +394,7 @@ mod tests {
 
         for _ in 0..50 {
             ukf.predict(0.1, &EstimatorInputs { control: u.clone() });
-            ukf.update(&gps_z(true_px, 0.0), &model, &r, Some(&tf));
+            ukf.update(&gps_z(true_px, 0.0), &model, &r, Some(&tf), AT);
         }
 
         let px = ukf.state().state.vector[0];

@@ -11,9 +11,10 @@
 //!
 //! Neither implementation is visible to `helios_runtime`; the trait is the only coupling point.
 
-use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::ports::TfProvider;
-use nalgebra::Isometry3;
+use helios_core::data::ports::TfProvider;
+use helios_core::data::primitives::MonotonicTime;
+use helios_core::frames::transforms::ErasedTransform;
+use helios_core::frames::FrameId;
 
 /// The only external interface [`AutonomyPipeline`](crate::pipeline::AutonomyPipeline)
 /// uses to query world state.
@@ -24,18 +25,26 @@ use nalgebra::Isometry3;
 ///
 /// # Implementing for a New Host
 ///
-/// 1. Implement `get_transform`, `world_pose`, and `now`.
+/// 1. Implement `get_transform` and `now`.
 /// 2. Pass a reference to your implementation into pipeline methods that accept
 ///    `runtime: &dyn AgentRuntime`.
 ///
 /// Do not store world state in `helios_runtime` structs — the runtime is the only
 /// sanctioned read path for external world state.
 pub trait AgentRuntime: Send + Sync {
-    /// Returns the transform from `from` frame to `to` frame in ENU world coordinates.
-    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>>;
-
-    /// Returns the world (ENU) pose of a sensor or agent frame.
-    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>>;
+    /// Returns the transform from `from` frame to `to` frame as an
+    /// [`ErasedTransform`] — a raw isometry tagged with the axis convention of
+    /// each end. The host is the source of truth for those conventions (per-frame
+    /// registration in sim, calibration on hardware); it does not assume a global
+    /// convention such as ENU. The caller crosses the erased transform with
+    /// [`ErasedTransform::typed`] to recover a compile-time-checked transform,
+    /// which fails loudly if the stamped conventions don't match what it expects.
+    fn get_transform(
+        &self,
+        from: FrameId,
+        to: FrameId,
+        at: MonotonicTime,
+    ) -> Option<ErasedTransform>;
 
     /// Current monotonic time in seconds.
     fn now(&self) -> MonotonicTime;
@@ -46,11 +55,12 @@ pub trait AgentRuntime: Send + Sync {
 pub(crate) struct TfProviderAdapter<'a>(pub &'a dyn AgentRuntime);
 
 impl TfProvider for TfProviderAdapter<'_> {
-    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>> {
-        self.0.get_transform(from, to)
-    }
-
-    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>> {
-        self.0.world_pose(frame)
+    fn get_transform(
+        &self,
+        from: FrameId,
+        to: FrameId,
+        at: MonotonicTime,
+    ) -> Option<ErasedTransform> {
+        self.0.get_transform(from, to, at)
     }
 }

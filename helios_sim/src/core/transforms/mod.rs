@@ -14,7 +14,8 @@ mod frame_types;
 pub use frame_types::{EnuBodyPose, EnuVector, EnuWorldPose, FluLocalPose, FluVector};
 
 use bevy::prelude::{GlobalTransform, *};
-use helios_core::prelude::{FrameHandle, TfProvider};
+use helios_core::frames::transforms::{Convention, ErasedTransform};
+use helios_core::frames::FrameId;
 use nalgebra::Isometry3;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,7 +26,7 @@ use std::sync::Arc;
 
 /// A Bevy component to mark any entity that should be tracked by the TF system.
 #[derive(Component)]
-pub struct TrackedFrame;
+pub struct TrackedFrame(pub Convention);
 
 /// A single named frame's pose snapshot, published to TopicBus after each
 /// physics step so Foxglove can plot any frame's trajectory over time.
@@ -61,6 +62,8 @@ pub struct TfTree {
     // For fast, internal lookups using the entity ID.
     transforms_to_world: HashMap<Entity, Isometry3<f64>>,
 
+    frame_conventions: HashMap<Entity, Convention>,
+
     // Parent-relative poses in ENU (FLU for sensor children).
     local_transforms: HashMap<Entity, Isometry3<f64>>,
 
@@ -78,6 +81,16 @@ pub struct TfTree {
 }
 
 impl TfTree {
+    pub fn erased(&self, from: FrameId, to: FrameId) -> Option<ErasedTransform> {
+        let (from_pose, from_conv) = self.resolve(from)?;
+
+        let (to_pose, to_conv) = self.resolve(to)?;
+
+        let iso = from_pose.inverse() * to_pose;
+
+        Some(ErasedTransform::from_parts(iso, from_conv, to_conv))
+    }
+
     /// Looks up the world pose of a frame by its name.
     pub fn lookup_by_name(&self, frame_name: &str) -> Option<Isometry3<f64>> {
         let entity = self.name_to_entity.get(frame_name)?;
@@ -120,24 +133,25 @@ impl TfTree {
         let pose_to_world = self.lookup_by_name(to_frame)?;
         Some(pose_from_world.inverse() * pose_to_world)
     }
-}
 
-impl TfProvider for TfTree {
-    fn get_transform(
-        &self,
-        from_frame: FrameHandle,
-        to_frame: FrameHandle,
-    ) -> Option<Isometry3<f64>> {
-        let from_entity = Entity::from_bits(from_frame.0);
-        let to_entity = Entity::from_bits(to_frame.0);
-        let pose_from_world = self.transforms_to_world.get(&from_entity)?;
-        let pose_to_world = self.transforms_to_world.get(&to_entity)?;
-        Some(pose_from_world.inverse() * pose_to_world)
-    }
+    fn resolve(&self, frame: FrameId) -> Option<(Isometry3<f64>, Convention)> {
+        match frame {
+            FrameId::World => Some((Isometry3::identity(), Convention::Enu)),
+            FrameId::Body(handle) => {
+                let entity = Entity::from_bits(handle.0);
+                let iso = self.transforms_to_world.get(&entity)?;
+                let convention = self.frame_conventions.get(&entity)?;
 
-    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>> {
-        let entity = Entity::from_bits(frame.0);
-        self.transforms_to_world.get(&entity).copied()
+                Some((*iso, *convention))
+            }
+            FrameId::Sensor(handle) => {
+                let entity = Entity::from_bits(handle.0);
+                let iso = self.transforms_to_world.get(&entity)?;
+                let convention = self.frame_conventions.get(&entity)?;
+
+                Some((*iso, *convention))
+            }
+        }
     }
 }
 
@@ -179,7 +193,10 @@ fn resolve_local_iso(
 /// Runs in `SimulationSet::Precomputation`.
 pub fn tf_tree_structural_system(
     mut tf_tree: ResMut<TfTree>,
-    added_query: Query<(Entity, &GlobalTransform, Option<&ChildOf>), Added<TrackedFrame>>,
+    added_query: Query<
+        (Entity, &GlobalTransform, Option<&ChildOf>, &TrackedFrame),
+        Added<TrackedFrame>,
+    >,
     all_transforms: Query<&GlobalTransform>,
     mut removed: RemovedComponents<TrackedFrame>,
 ) {
@@ -187,6 +204,7 @@ pub fn tf_tree_structural_system(
         tf_tree.transforms_to_world.remove(&entity);
         tf_tree.local_transforms.remove(&entity);
         tf_tree.parent_map.remove(&entity);
+        tf_tree.frame_conventions.remove(&entity);
     }
 
     if added_query.is_empty() {
@@ -194,17 +212,20 @@ pub fn tf_tree_structural_system(
     }
 
     // Pass 1: world pose + parent link for every newly tracked entity.
-    for (entity, gt, child_of) in &added_query {
+    for (entity, gt, child_of, tracked) in &added_query {
         tf_tree
             .transforms_to_world
             .insert(entity, EnuBodyPose::from(gt).0);
+
         tf_tree
             .parent_map
             .insert(entity, child_of.map(|c| c.parent()));
+
+        tf_tree.frame_conventions.insert(entity, tracked.0);
     }
 
     // Pass 2: local pose — requires pass 1 complete so parent world poses are present.
-    for (entity, _, child_of) in &added_query {
+    for (entity, _, child_of, _) in &added_query {
         let world_iso = tf_tree.transforms_to_world[&entity];
         let local_iso = resolve_local_iso(&tf_tree, &all_transforms, child_of, world_iso);
         tf_tree.local_transforms.insert(entity, local_iso);

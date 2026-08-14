@@ -15,25 +15,25 @@
 //! 3. **Publish.** Snapshot the filter state and write `FrameAwareState @ ""`
 //!    on the bus.
 
-use std::marker::PhantomData;
-use std::sync::atomic::Ordering;
-use std::sync::Mutex;
-
-use atomic_float::AtomicF64;
-use helios_core::data::envelope::SensorReading;
-use helios_core::data::sensor::SensorPayload;
-use helios_core::estimation::measurement::MeasurementModel;
-use helios_core::estimation::GaussianStateEstimator;
-use helios_core::frames::FrameAwareState;
-use helios_core::ports::TfProvider;
-use nalgebra::DMatrix;
-
 use super::input::EstimatorInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};
 use crate::runtime::{AgentRuntime, TfProviderAdapter};
 use crate::stamped::{Health, Stamped};
+
+use helios_core::data::envelope::SensorReading;
+use helios_core::data::ports::TfProvider;
+use helios_core::data::sensor::SensorPayload;
+use helios_core::estimation::measurement::MeasurementModel;
+use helios_core::estimation::GaussianStateEstimator;
+use helios_core::frames::FrameAwareState;
+
+use atomic_float::AtomicF64;
+use nalgebra::DMatrix;
+use std::marker::PhantomData;
+use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 
 /// Per-channel aiding handler: reads one sensor channel from the bus and feeds
 /// each reading into a [`GaussianStateEstimator`] via its measurement model.
@@ -140,7 +140,13 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
                 continue;
             }
             let z = stamped.value[idx].data.to_measurement_vector();
-            estimator.update(&z, &*self.model, &self.r, tf);
+            estimator.update(
+                &z,
+                &*self.model,
+                &self.r,
+                tf,
+                helios_core::data::MonotonicTime(reading_ts),
+            );
             if reading_ts > max_applied {
                 max_applied = reading_ts;
             }
@@ -245,6 +251,7 @@ mod tests {
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::data::sensor::LinearAcceleration3D;
     use helios_core::estimation::EstimatorInputs;
+    use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector, Isometry3};
     use std::sync::Mutex as StdMutex;
@@ -256,11 +263,17 @@ mod tests {
     }
 
     impl AgentRuntime for MockRuntime {
-        fn get_transform(&self, _: FrameHandle, _: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
-        }
-        fn world_pose(&self, _: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _: FrameId,
+            _: FrameId,
+            _: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
         fn now(&self) -> MonotonicTime {
             MonotonicTime(self.now)
@@ -303,6 +316,7 @@ mod tests {
             _model: &dyn MeasurementModel,
             _r: &DMatrix<f64>,
             _tf: Option<&dyn TfProvider>,
+            _at: MonotonicTime,
         ) {
             self.counts.lock().unwrap().update_calls += 1;
         }
@@ -323,6 +337,7 @@ mod tests {
             &self,
             _state: &FrameAwareState,
             _tf: Option<&dyn TfProvider>,
+            _at: MonotonicTime,
         ) -> Option<DVector<f64>> {
             Some(DVector::zeros(3))
         }

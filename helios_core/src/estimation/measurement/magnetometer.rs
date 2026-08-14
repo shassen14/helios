@@ -1,6 +1,7 @@
 use crate::{
-    data::primitives::FrameHandle, estimation::measurement::MeasurementModel,
-    frames::FrameAwareState, ports::TfProvider,
+    data::{ports::TfProvider, primitives::FrameHandle, MonotonicTime},
+    estimation::measurement::MeasurementModel,
+    frames::{conventions::Flu, FrameAwareState, FrameId},
 };
 use nalgebra::{DVector, Vector3};
 
@@ -29,6 +30,7 @@ impl MeasurementModel for MagneticFieldModel {
         &self,
         filter_state: &FrameAwareState,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     ) -> Option<DVector<f64>> {
         let tf = tf?;
 
@@ -36,10 +38,19 @@ impl MeasurementModel for MagneticFieldModel {
         let q_body_from_world = orientation_body_to_world.inverse();
         let predicted_mag_body = q_body_from_world * self.world_magnetic_field;
 
-        let rot_sensor_from_body = tf
-            .get_transform(self.agent_handle, self.sensor_handle)
-            .unwrap_or_default()
-            .rotation;
+        let erased = tf.get_transform(
+            FrameId::Body(self.agent_handle),
+            FrameId::Sensor(self.sensor_handle),
+            at,
+        )?;
+
+        let Ok(tf_sensor_from_body) = erased.typed::<Flu, Flu>() else {
+            return None;
+        };
+
+        let iso = tf_sensor_from_body.into_inner();
+
+        let rot_sensor_from_body = iso.rotation;
 
         Some(DVector::from_row_slice(
             (rot_sensor_from_body.inverse() * predicted_mag_body).as_slice(),
@@ -59,23 +70,32 @@ mod tests {
 
     use super::*;
     use crate::data::primitives::FrameHandle;
+    use crate::data::MonotonicTime;
+    use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
+    const AT: MonotonicTime = MonotonicTime(0.0);
 
     /// Reports one fixed extrinsic — the sensor's pose in body axes — for every
     /// lookup, mirroring what a real TF tree hands the model.
     struct Mount(Isometry3<f64>);
 
     impl TfProvider for Mount {
-        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(self.0)
-        }
-        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                self.0,
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
     }
 
@@ -120,7 +140,7 @@ mod tests {
     fn predict_without_tf_returns_none() {
         let model = make_model();
         let state = make_orientation_state();
-        assert!(model.predict_measurement(&state, None).is_none());
+        assert!(model.predict_measurement(&state, None, AT).is_none());
     }
 
     #[test]
@@ -128,7 +148,7 @@ mod tests {
         let model = make_model();
         let state = make_orientation_state();
         let z = model
-            .predict_measurement(&state, Some(&identity_mount()))
+            .predict_measurement(&state, Some(&identity_mount()), AT)
             .unwrap();
         assert!(z[0].abs() < 1e-9);
         assert!((z[1] - 1.0).abs() < 1e-9);
@@ -141,7 +161,7 @@ mod tests {
         let mut state = make_orientation_state();
         set_yaw_90_ccw(&mut state);
         let z = model
-            .predict_measurement(&state, Some(&identity_mount()))
+            .predict_measurement(&state, Some(&identity_mount()), AT)
             .unwrap();
         assert!((z[0] - 1.0).abs() < 1e-9);
         assert!(z[1].abs() < 1e-9);
@@ -161,7 +181,7 @@ mod tests {
             Translation3::identity(),
             UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2),
         ));
-        let z = model.predict_measurement(&state, Some(&mount)).unwrap();
+        let z = model.predict_measurement(&state, Some(&mount), AT).unwrap();
         assert!((z[0] - 1.0).abs() < 1e-9);
         assert!(z[1].abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);

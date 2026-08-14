@@ -2,6 +2,7 @@
 
 use crate::frames::conventions::Frame;
 use crate::frames::quantities::FreeVector;
+use crate::frames::transforms::Transform;
 
 use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
@@ -103,6 +104,19 @@ impl<F: Frame> Point<F> {
     pub fn into_inner(self) -> Vector3<f64> {
         self.0
     }
+
+    /// Re-expresses this point in frame `To` under the transform's full affine
+    /// law, `R·p + t` — a location both rotates and translates.
+    ///
+    /// Forwards to [`Transform::act`], which owns the math; this method is the
+    /// point-side spelling of the same crossing. The transform's `F → To` pair
+    /// must match this point's frame, so re-expressing through the wrong edge
+    /// does not compile. The affine `t` is applied here precisely because the
+    /// receiver is a [`Point`]; [`FreeVector::reexpress`](super::FreeVector::reexpress)
+    /// drops it.
+    pub fn reexpress<To: Frame>(self, transform: &Transform<F, To>) -> Point<To> {
+        transform.act(self)
+    }
 }
 
 // Point − Point → FreeVector: the displacement from `rhs` to `self`. The result
@@ -136,10 +150,34 @@ impl<F: Frame> Sub<FreeVector<F>> for Point<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::frames::conventions::Enu;
+    use crate::frames::conventions::{Enu, Flu};
     use crate::frames::quantities::{FreeVector, Point};
+    use crate::frames::transforms::{Rotation, Transform};
 
-    use nalgebra::Vector3;
+    use nalgebra::{Translation3, UnitQuaternion, Vector3};
+    use std::f64::consts::FRAC_PI_2;
+
+    /// A quarter turn about +Z paired with a +10 shift along X, read `Flu → Enu`.
+    fn turn_and_shift() -> Transform<Flu, Enu> {
+        let rotation = Rotation::from_unit_quaternion(UnitQuaternion::from_axis_angle(
+            &Vector3::z_axis(),
+            FRAC_PI_2,
+        ));
+        Transform::from_parts(rotation, Translation3::new(10.0, 0.0, 0.0))
+    }
+
+    /// A pure +10 shift along X, no rotation, read `Flu → Enu`.
+    fn shift_x() -> Transform<Flu, Enu> {
+        Transform::from_parts(
+            Rotation::from_unit_quaternion(UnitQuaternion::identity()),
+            Translation3::new(10.0, 0.0, 0.0),
+        )
+    }
+
+    /// Floats through an isometry are not bit-exact; compare within tolerance.
+    fn close(a: Vector3<f64>, b: Vector3<f64>) -> bool {
+        (a - b).norm() < 1e-9
+    }
 
     #[test]
     fn point_minus_point_is_a_free_vector() {
@@ -185,5 +223,31 @@ mod tests {
     fn accessors_report_each_coordinate() {
         let p = Point::<Enu>::new(1.0, 2.0, 3.0);
         assert_eq!((p.x(), p.y(), p.z()), (1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn reexpress_applies_rotation_and_translation() {
+        // Forwards to `Transform::act`: Flu (1,0,0) rotates a quarter turn to
+        // (0,1,0), then shifts +10 in X, landing at Enu (10,1,0) — the full
+        // affine law `R·p + t`.
+        let mapped = Point::<Flu>::new(1.0, 0.0, 0.0).reexpress(&turn_and_shift());
+        assert!(close(mapped.into_inner(), Vector3::new(10.0, 1.0, 0.0)));
+    }
+
+    #[test]
+    fn reexpress_translates_a_point_but_not_a_free_vector() {
+        // The done-bar for the affine/linear split, witnessed at the `reexpress`
+        // layer. Under one translation-only transform the point moves by exactly
+        // `t = (10,0,0)` while an identically-valued free vector is unchanged, so
+        // the two re-expressions differ by precisely `t`.
+        let t = shift_x();
+        let point = Point::<Flu>::new(1.0, 2.0, 3.0).reexpress(&t);
+        let vector = FreeVector::<Flu>::new(1.0, 2.0, 3.0).reexpress(&t);
+        assert!(close(point.into_inner(), Vector3::new(11.0, 2.0, 3.0)));
+        assert!(close(vector.into_inner(), Vector3::new(1.0, 2.0, 3.0)));
+        assert!(close(
+            point.into_inner() - vector.into_inner(),
+            Vector3::new(10.0, 0.0, 0.0)
+        ));
     }
 }

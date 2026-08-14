@@ -1,27 +1,36 @@
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::{DMatrix, DVector, Isometry3};
 
-use helios_core::data::primitives::FrameHandle;
+use helios_core::data::ports::TfProvider;
+use helios_core::data::MonotonicTime;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
 use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::{EstimatorInputs, GaussianStateEstimator};
+use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-use helios_core::ports::TfProvider;
 use helios_core::prelude::EstimationDynamics;
 
 // =========================================================================
 // == Fixtures (duplicated from test modules — benches are separate) ==
 // =========================================================================
 
+const AT: MonotonicTime = MonotonicTime(0.0);
+
 struct IdentityTf;
 
 impl TfProvider for IdentityTf {
-    fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
-        Some(Isometry3::identity())
-    }
-    fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
-        Some(Isometry3::identity())
+    fn get_transform(
+        &self,
+        _from: FrameId,
+        _to: FrameId,
+        _at: MonotonicTime,
+    ) -> Option<ErasedTransform> {
+        Some(ErasedTransform::from_parts(
+            Isometry3::identity(),
+            Convention::Flu,
+            Convention::Flu,
+        ))
     }
 }
 
@@ -65,6 +74,7 @@ impl MeasurementModel for Position2DMeasurement {
         &self,
         state: &FrameAwareState,
         _tf: Option<&dyn TfProvider>,
+        _at: MonotonicTime,
     ) -> Option<DVector<f64>> {
         Some(DVector::from_row_slice(&[
             state.state.vector[0],
@@ -72,7 +82,12 @@ impl MeasurementModel for Position2DMeasurement {
         ]))
     }
 
-    fn jacobian(&self, state: &FrameAwareState, _tf: Option<&dyn TfProvider>) -> DMatrix<f64> {
+    fn jacobian(
+        &self,
+        state: &FrameAwareState,
+        _tf: Option<&dyn TfProvider>,
+        _at: MonotonicTime,
+    ) -> DMatrix<f64> {
         let n = state.dim();
         let mut h = DMatrix::zeros(2, n);
         h[(0, 0)] = 1.0;
@@ -139,7 +154,7 @@ fn bench_ekf(c: &mut Criterion) {
 
     group.bench_function("update", |b| {
         let mut ekf = make_ekf();
-        b.iter(|| ekf.update(&z, &model, &r, Some(&tf)));
+        b.iter(|| ekf.update(&z, &model, &r, Some(&tf), AT));
     });
 
     group.finish();
@@ -162,7 +177,7 @@ fn bench_ukf(c: &mut Criterion) {
 
     group.bench_function("update", |b| {
         let mut ukf = make_ukf();
-        b.iter(|| ukf.update(&z, &model, &r, Some(&tf)));
+        b.iter(|| ukf.update(&z, &model, &r, Some(&tf), AT));
     });
 
     group.finish();

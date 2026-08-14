@@ -170,6 +170,7 @@ mod tests {
     //!    `mock_catalog.md §2.1`.
 
     use super::*;
+    use helios_core::frames::transforms::{Convention, ErasedTransform};
     use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
     use crate::pipeline::autonomy_pipeline::PipelineBuilder;
     use crate::pipeline::build_error::PipelineBuildError;
@@ -185,11 +186,17 @@ mod tests {
     }
 
     impl AgentRuntime for MockRuntime {
-        fn get_transform(&self, _: FrameHandle, _: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
-        }
-        fn world_pose(&self, _: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _: FrameId,
+            _: FrameId,
+            _: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
         fn now(&self) -> MonotonicTime {
             MonotonicTime(self.now)

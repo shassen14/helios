@@ -4,9 +4,10 @@
 //! information-form filters. Concrete implementations live in [`filters`].
 use nalgebra::{DMatrix, DVector};
 
+use crate::data::ports::TfProvider;
+use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::FrameAwareState;
-use crate::ports::TfProvider;
 
 /// Predict-side inputs for a Gaussian estimator.
 ///
@@ -58,6 +59,7 @@ pub trait GaussianStateEstimator: Send + Sync {
         model: &dyn MeasurementModel,
         r: &DMatrix<f64>,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     );
 
     /// Current best state estimate `(x, P, t)`.

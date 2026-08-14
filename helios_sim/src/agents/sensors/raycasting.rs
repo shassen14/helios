@@ -7,6 +7,7 @@ use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+use helios_core::frames::transforms::Convention;
 use helios_core::sensors::{
     lidar_2d::Lidar2DModel, RayHit, RaycastingOutput, RaycastingSensorModel,
 };
@@ -104,7 +105,7 @@ fn spawn_raycasting_sensors(
                         model: core_model,
                     },
                     sensor_rng,
-                    TrackedFrame,
+                    TrackedFrame(Convention::Flu),
                     lidar_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 

@@ -1,7 +1,9 @@
+use crate::data::ports::TfProvider;
 use crate::data::primitives::FrameHandle;
+use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
+use crate::frames::conventions::Flu;
 use crate::frames::{FrameAwareState, FrameId, StateVariable};
-use crate::ports::TfProvider;
 
 use nalgebra::{DVector, Vector3};
 
@@ -42,15 +44,25 @@ impl MeasurementModel for SpecificForceModel {
         &self,
         filter_state: &FrameAwareState,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     ) -> Option<DVector<f64>> {
         let tf = tf?;
         let body_frame = FrameId::Body(self.agent_handle);
 
-        let tf_sensor_from_body = tf
-            .get_transform(self.agent_handle, self.sensor_handle)
-            .unwrap_or_default();
-        let r_body_to_sensor = tf_sensor_from_body.translation.vector;
-        let rot_sensor_from_body = tf_sensor_from_body.rotation;
+        let erased = tf.get_transform(
+            FrameId::Body(self.agent_handle),
+            FrameId::Sensor(self.sensor_handle),
+            at,
+        )?;
+
+        let Ok(tf_sensor_from_body) = erased.typed::<Flu, Flu>() else {
+            return None;
+        };
+
+        let iso = tf_sensor_from_body.into_inner();
+
+        let r_body_to_sensor = iso.translation.vector;
+        let rot_sensor_from_body = iso.rotation;
 
         let linear_accel_body = filter_state
             .get_vector3(&StateVariable::Ax(body_frame.clone()))
@@ -84,21 +96,31 @@ impl MeasurementModel for SpecificForceModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::ports::TfProvider;
     use crate::data::primitives::FrameHandle;
+    use crate::data::MonotonicTime;
+    use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::ports::TfProvider;
+
     use nalgebra::Isometry3;
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
+    const AT: MonotonicTime = MonotonicTime(0.0);
 
     struct IdentityTf;
     impl TfProvider for IdentityTf {
-        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
-        }
-        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
     }
 
@@ -134,7 +156,7 @@ mod tests {
     fn predict_without_tf_returns_none() {
         let model = make_model();
         let state = make_state();
-        assert!(model.predict_measurement(&state, None).is_none());
+        assert!(model.predict_measurement(&state, None, AT).is_none());
     }
 
     #[test]
@@ -142,7 +164,7 @@ mod tests {
         let model = make_model();
         let state = make_state();
         let tf = IdentityTf;
-        assert!(model.predict_measurement(&state, Some(&tf)).is_some());
+        assert!(model.predict_measurement(&state, Some(&tf), AT).is_some());
     }
 
     #[test]
@@ -150,7 +172,7 @@ mod tests {
         let model = make_model();
         let state = make_state();
         let tf = IdentityTf;
-        let h = model.jacobian(&state, Some(&tf));
+        let h = model.jacobian(&state, Some(&tf), AT);
         assert_eq!(h.nrows(), 3);
         assert_eq!(h.ncols(), state.dim());
     }
