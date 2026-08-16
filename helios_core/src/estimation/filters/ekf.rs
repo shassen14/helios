@@ -104,7 +104,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         // or just the calculated Jacobian `A` from the continuous model. We will use `A`.
         // --- 2. Calculate State Transition and Noise Input Matrices--
         // A = ∂f/∂x, B = ∂f/∂u
-        let (a_jac, _b_jac) = dynamics.calculate_jacobian(x_old, &inputs.control, t_old);
+        let (a_jac, _b_jac) = dynamics.jacobian(x_old, &inputs.control, t_old);
 
         // F ≈ I + A*dt (no identity allocation). F propagates the covariance, so
         // it is a tangent-space map (t × t) — the identity add walks tangent dims.
@@ -233,14 +233,23 @@ mod tests {
             0
         }
 
-        fn get_derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
+        fn schema(&self) -> std::sync::Arc<crate::estimation::schema::StateSchema> {
+            std::sync::Arc::new(crate::estimation::schema::StateSchema::degenerate(&[
+                StateVariable::Px(FrameId::World),
+                StateVariable::Py(FrameId::World),
+                StateVariable::Vx(FrameId::World),
+                StateVariable::Vy(FrameId::World),
+            ]))
+        }
+
+        fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
             let mut xdot = DVector::zeros(4);
             xdot[0] = x[2];
             xdot[1] = x[3];
             xdot
         }
 
-        fn calculate_jacobian(
+        fn jacobian(
             &self,
             _x: &DVector<f64>,
             _u: &DVector<f64>,

@@ -303,7 +303,16 @@ mod tests {
             0
         }
 
-        fn get_derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
+        fn schema(&self) -> std::sync::Arc<crate::estimation::schema::StateSchema> {
+            std::sync::Arc::new(crate::estimation::schema::StateSchema::degenerate(&[
+                StateVariable::Px(FrameId::World),
+                StateVariable::Py(FrameId::World),
+                StateVariable::Vx(FrameId::World),
+                StateVariable::Vy(FrameId::World),
+            ]))
+        }
+
+        fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
             let mut xdot = DVector::zeros(4);
             xdot[0] = x[2];
             xdot[1] = x[3];
