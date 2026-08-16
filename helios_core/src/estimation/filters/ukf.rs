@@ -48,7 +48,7 @@ impl UnscentedKalmanFilter {
         dynamics_model: Box<dyn EstimationDynamics>,
         params: UkfParams,
     ) -> Self {
-        let n = initial_state.dim();
+        let n = initial_state.storage_dim();
         let lambda = params.alpha.powi(2) * (n as f64 + params.kappa) - n as f64;
 
         let mut weights_m = DVector::from_element(2 * n + 1, 0.5 / (n as f64 + lambda));
@@ -80,7 +80,7 @@ impl UnscentedKalmanFilter {
         state: &FrameAwareState,
         params: &UkfParams,
     ) {
-        let n = state.dim();
+        let n = state.storage_dim();
         let lambda = params.alpha.powi(2) * (n as f64 + params.kappa) - n as f64;
 
         let cholesky_option = Cholesky::new(state.covariance.clone());
@@ -90,16 +90,16 @@ impl UnscentedKalmanFilter {
             let scale = (n as f64 + lambda).sqrt();
             let scaled_l = l_matrix * scale;
 
-            sigma_buf.column_mut(0).copy_from(&state.state.vector);
+            sigma_buf.column_mut(0).copy_from(&state.mean);
             for i in 0..n {
-                let col_pos = &state.state.vector + scaled_l.column(i);
-                let col_neg = &state.state.vector - scaled_l.column(i);
+                let col_pos = &state.mean + scaled_l.column(i);
+                let col_neg = &state.mean - scaled_l.column(i);
                 sigma_buf.column_mut(i + 1).copy_from(&col_pos);
                 sigma_buf.column_mut(i + n + 1).copy_from(&col_neg);
             }
         } else {
             for i in 0..(2 * n + 1) {
-                sigma_buf.column_mut(i).copy_from(&state.state.vector);
+                sigma_buf.column_mut(i).copy_from(&state.mean);
             }
         }
     }
@@ -107,7 +107,7 @@ impl UnscentedKalmanFilter {
 
 impl GaussianStateEstimator for UnscentedKalmanFilter {
     fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) {
-        let n = self.state.dim();
+        let n = self.state.storage_dim();
 
         // --- 1. Generate Sigma Points into self.sigma_buf ---
         Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params);
@@ -119,7 +119,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
             let propagated = self.dynamics_model.propagate(
                 &point,
                 &inputs.control,
-                self.state.state.timestamp,
+                self.state.timestamp,
                 dt,
                 &RK4,
             );
@@ -139,9 +139,9 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         self.p_pred_buf += &self.process_noise_q * dt;
 
         // --- 4. Update the state ---
-        self.state.state.vector = x_pred;
+        self.state.mean = x_pred;
         self.state.covariance.copy_from(&self.p_pred_buf);
-        self.state.state.timestamp += dt;
+        self.state.timestamp += dt;
 
         // Symmetrize covariance in-place (no allocation).
         for i in 0..n {
@@ -166,7 +166,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
             return;
         }
 
-        let n = self.state.dim();
+        let n = self.state.storage_dim();
 
         // Regenerate sigma points from the predicted state.
         Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params);
@@ -175,8 +175,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         let mut measurement_points = DMatrix::zeros(m, 2 * n + 1);
         for i in 0..(2 * n + 1) {
             self.scratch_state
-                .state
-                .vector
+                .mean
                 .copy_from(&self.sigma_buf.column(i));
 
             if let Some(z_point) = model.predict_measurement(&self.scratch_state, tf, at) {
@@ -196,7 +195,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
 
         let mut t_cov = DMatrix::zeros(n, m);
         for i in 0..(2 * n + 1) {
-            let diff_x = self.sigma_buf.column(i) - &self.state.state.vector;
+            let diff_x = self.sigma_buf.column(i) - &self.state.mean;
             let diff_z = measurement_points.column(i) - &z_pred;
             t_cov += self.weights_c[i] * &diff_x * diff_z.transpose();
         }
@@ -206,7 +205,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         };
 
         let k_gain = t_cov * s_inv;
-        self.state.state.vector += &k_gain * (z - z_pred);
+        self.state.mean += &k_gain * (z - z_pred);
         self.state.covariance -= &k_gain * s_cov * k_gain.transpose();
 
         for i in 0..n {
@@ -284,8 +283,8 @@ mod tests {
             _at: MonotonicTime,
         ) -> Option<DVector<f64>> {
             Some(DVector::from_row_slice(&[
-                state.state.vector[0],
-                state.state.vector[1],
+                state.mean[0],
+                state.mean[1],
             ]))
         }
 
@@ -295,7 +294,7 @@ mod tests {
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
         ) -> DMatrix<f64> {
-            let n = state.dim();
+            let n = state.storage_dim();
             let mut h = DMatrix::zeros(2, n);
             h[(0, 0)] = 1.0;
             h[(1, 1)] = 1.0;
@@ -311,8 +310,8 @@ mod tests {
             StateVariable::Vy(FrameId::World),
         ];
         let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-        state.state.vector[0] = initial_px;
-        state.state.vector[2] = vx;
+        state.mean[0] = initial_px;
+        state.mean[2] = vx;
 
         let q = DMatrix::identity(4, 4) * 0.01;
         let params = UkfParams {
@@ -339,7 +338,7 @@ mod tests {
 
         ukf.predict(1.0, &EstimatorInputs { control: u });
 
-        let px = ukf.state().state.vector[0];
+        let px = ukf.state().mean[0];
         assert!((px - 1.0).abs() < 0.05);
     }
 
@@ -364,7 +363,7 @@ mod tests {
 
         ukf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
 
-        let px = ukf.state().state.vector[0];
+        let px = ukf.state().mean[0];
         assert!(px > 0.0);
         assert!(px < 5.0);
     }
@@ -397,7 +396,7 @@ mod tests {
             ukf.update(&gps_z(true_px, 0.0), &model, &r, Some(&tf), AT);
         }
 
-        let px = ukf.state().state.vector[0];
+        let px = ukf.state().mean[0];
         assert!((px - true_px).abs() < 0.1);
     }
 }

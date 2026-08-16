@@ -7,9 +7,13 @@ use super::{StateBlock, TangentNoise};
 
 use nalgebra::{DMatrix, DVector};
 
+#[derive(Debug)]
 pub struct EuclideanBlock {
     dim: usize,
-    process_noise: TangentNoise,
+    /// Tangent-space process noise, or `None` for a block that never propagates
+    /// (state that is read or overwritten but never predicted). `None` composes
+    /// to a zero `Q` block and avoids a Cholesky of the zero matrix.
+    process_noise: Option<TangentNoise>,
     initial_value: DVector<f64>,
     initial_covariance: DMatrix<f64>,
 }
@@ -31,7 +35,24 @@ impl EuclideanBlock {
 
         Self {
             dim,
-            process_noise,
+            process_noise: Some(process_noise),
+            initial_value,
+            initial_covariance,
+        }
+    }
+
+    /// A block that never propagates: an initial value and covariance with no
+    /// process noise (`process_noise()` is `None`, composing to a zero `Q`
+    /// block). For state that is read or overwritten but never predicted, so a
+    /// Cholesky of a zero noise matrix is never attempted.
+    pub fn without_noise(initial_value: DVector<f64>, initial_covariance: DMatrix<f64>) -> Self {
+        let dim = initial_value.len();
+        assert_eq!(initial_covariance.nrows(), dim, "init-cov dim ≠ state dim");
+        assert_eq!(initial_covariance.ncols(), dim, "init-cov not square");
+
+        Self {
+            dim,
+            process_noise: None,
             initial_value,
             initial_covariance,
         }
@@ -47,9 +68,10 @@ impl StateBlock for EuclideanBlock {
         self.dim
     }
 
-    fn process_noise(&self) -> TangentNoise {
+    fn process_noise(&self) -> Option<TangentNoise> {
         self.process_noise.clone()
     }
+
     fn initial_value(&self) -> DVector<f64> {
         self.initial_value.clone()
     }
@@ -118,6 +140,19 @@ mod tests {
         let init_cov = DMatrix::from_row_slice(2, 2, &[2.0, 0.0, 0.0, 3.0]);
         let b = EuclideanBlock::new(noise, init.clone(), init_cov.clone());
 
+        assert_eq!(b.initial_value(), init);
+        assert_eq!(b.initial_covariance(), init_cov);
+    }
+
+    #[test]
+    fn without_noise_contributes_no_process_noise() {
+        let init = DVector::from_vec(vec![1.0, 2.0]);
+        let init_cov = DMatrix::identity(2, 2);
+        let b = EuclideanBlock::without_noise(init.clone(), init_cov.clone());
+
+        assert!(b.process_noise().is_none());
+        assert_eq!(b.storage_dim(), 2);
+        assert_eq!(b.tangent_dim(), 2);
         assert_eq!(b.initial_value(), init);
         assert_eq!(b.initial_covariance(), init_cov);
     }

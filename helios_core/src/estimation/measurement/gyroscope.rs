@@ -144,6 +144,6 @@ mod tests {
         let tf = IdentityTf;
         let h = model.jacobian(&state, Some(&tf), AT);
         assert_eq!(h.nrows(), 3);
-        assert_eq!(h.ncols(), state.dim());
+        assert_eq!(h.ncols(), state.storage_dim());
     }
 }

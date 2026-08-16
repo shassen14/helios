@@ -1,5 +1,3 @@
-// helios_core/src/planning/astar/smoothing.rs
-
 //! String-pull path smoothing and [`TrajectoryPoint`] construction.
 //!
 //! ## String-pull algorithm
@@ -28,7 +26,7 @@
 use nalgebra::Vector2;
 
 use crate::data::messages::TrajectoryPoint;
-use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::frames::{FrameId, RobotState, StateVariable};
 
 use super::grid_space::OccupancyGridSpace;
 
@@ -97,12 +95,12 @@ pub(super) fn make_waypoint(world_x: f64, world_y: f64, time: f64) -> Trajectory
         StateVariable::Py(FrameId::World),
         StateVariable::Pz(FrameId::World),
     ];
-    let mut state = FrameAwareState::new(layout, 0.0, time);
-    state.state.vector[0] = world_x;
-    state.state.vector[1] = world_y;
-    state.state.vector[2] = 0.0;
+    let mut state = RobotState::new(layout, time);
+    state.vector[0] = world_x;
+    state.vector[1] = world_y;
+    state.vector[2] = 0.0;
     TrajectoryPoint {
-        state: state.state,
+        state,
         state_dot: None,
         time,
     }

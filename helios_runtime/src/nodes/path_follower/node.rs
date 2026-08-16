@@ -177,7 +177,7 @@ mod tests {
 
     use helios_core::data::messages::TrajectoryPoint;
     use helios_core::data::primitives::MonotonicTime;
-    use helios_core::frames::{FrameId, RobotState, StateVariable};
+    use helios_core::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
     use helios_core::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::planning::types::Path;
 
@@ -277,7 +277,7 @@ mod tests {
             _tick: &TickContext,
         ) -> Option<PathFollowerInputs> {
             Some(PathFollowerInputs {
-                state: RobotState::new(vec![StateVariable::Px(FrameId::World)], 0.0),
+                state: FrameAwareState::new(vec![StateVariable::Px(FrameId::World)], 1.0, 0.0),
             })
         }
         fn required_channels(&self) -> &[ChannelKey] {

@@ -24,12 +24,12 @@ pub mod pure_pursuit;
 pub mod steering_pid;
 
 use crate::data::messages::TrajectoryPoint;
-use crate::frames::RobotState;
+use crate::frames::FrameAwareState;
 use crate::planning::types::Path;
 
 /// Bus-sourced inputs for one [`PathFollower::compute`] call.
 pub struct PathFollowerInputs {
-    pub state: RobotState,
+    pub state: FrameAwareState,
 }
 
 /// The outcome of one [`PathFollower::compute`] call.

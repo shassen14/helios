@@ -1,7 +1,7 @@
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::data::messages::TrajectoryPoint;
 use crate::data::primitives::FrameHandle;
-use crate::frames::{FrameId, RobotState, StateVariable};
+use crate::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
 use nalgebra::{DVector, Vector2};
 // Plan: output (velocity.x, angle.z)
@@ -42,7 +42,7 @@ impl PurePursuitPathFollower {
         }
     }
 
-    fn calculate_lookahead_index(&mut self, state: &RobotState, lookahead_distance: f64) {
+    fn calculate_lookahead_index(&mut self, state: &FrameAwareState, lookahead_distance: f64) {
         let Some(path) = &self.path else {
             return;
         };

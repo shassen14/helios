@@ -129,9 +129,9 @@ mod tests {
             StateVariable::Qw(body.clone(), world.clone()),
         ];
         let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-        state.state.vector[0] = px;
-        state.state.vector[1] = py;
-        state.state.vector[2] = pz;
+        state.mean[0] = px;
+        state.mean[1] = py;
+        state.mean[2] = pz;
         state
     }
 
@@ -179,7 +179,7 @@ mod tests {
         let tf = FixedTf(Isometry3::identity());
         let h = model.jacobian(&state, Some(&tf), AT);
         assert_eq!(h.nrows(), 3);
-        assert_eq!(h.ncols(), state.dim());
+        assert_eq!(h.ncols(), state.storage_dim());
         assert!((h[(0, 0)] - 1.0).abs() < 1e-4);
         assert!((h[(1, 1)] - 1.0).abs() < 1e-4);
         assert!((h[(2, 2)] - 1.0).abs() < 1e-4);

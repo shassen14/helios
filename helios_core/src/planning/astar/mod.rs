@@ -362,7 +362,7 @@ mod tests {
     use nalgebra::{DMatrix, Isometry3, Vector2};
     use std::collections::HashMap;
 
-    use crate::frames::{FrameId, RobotState, StateVariable};
+    use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::mapping::MapData;
     use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
     use crate::planning::SearchPlanner;
@@ -390,16 +390,16 @@ mod tests {
     }
 
     /// Build a minimal world-frame state with only `[Px, Py, Pz]`.
-    fn make_state(x: f64, y: f64) -> RobotState {
+    fn make_state(x: f64, y: f64) -> FrameAwareState {
         let layout = vec![
             StateVariable::Px(FrameId::World),
             StateVariable::Py(FrameId::World),
             StateVariable::Pz(FrameId::World),
         ];
-        let mut state = RobotState::new(layout, 0.0);
-        state.vector[0] = x;
-        state.vector[1] = y;
-        state.vector[2] = 0.0;
+        let mut state = FrameAwareState::new(layout, 1.0, 0.0);
+        state.mean[0] = x;
+        state.mean[1] = y;
+        state.mean[2] = 0.0;
         state
     }
 

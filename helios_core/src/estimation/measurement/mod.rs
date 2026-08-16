@@ -51,7 +51,7 @@ pub trait MeasurementModel: Send + Sync {
         at: MonotonicTime,
     ) -> DMatrix<f64> {
         let m = self.dim();
-        let n = state.dim();
+        let n = state.storage_dim();
         let mut h = DMatrix::zeros(m, n);
         let Some(z_base) = self.predict_measurement(state, tf, at) else {
             return h;
@@ -60,9 +60,9 @@ pub trait MeasurementModel: Send + Sync {
             return h;
         }
         for j in 0..n {
-            let eps = 1e-5 * (1.0 + state.state.vector[j].abs());
+            let eps = 1e-5 * (1.0 + state.mean[j].abs());
             let mut perturbed = state.clone();
-            perturbed.state.vector[j] += eps;
+            perturbed.mean[j] += eps;
             if let Some(z_pert) = self.predict_measurement(&perturbed, tf, at) {
                 if z_pert.nrows() == m {
                     let col = (z_pert - &z_base) / eps;

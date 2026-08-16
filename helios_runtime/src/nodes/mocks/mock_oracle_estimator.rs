@@ -374,12 +374,12 @@ mod tests {
             };
             let idx = out
                 .value
-                .state
-                .layout
+                .schema
+                .layout()
                 .iter()
                 .position(pred)
                 .expect("layout has Vx/Vy/Vz(World)");
-            out.value.state.vector[idx]
+            out.value.mean[idx]
         };
 
         assert!((world_v('x') - 2.0).abs() < 1e-9);

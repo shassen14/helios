@@ -49,7 +49,7 @@ impl PathFollowerInputBuilder for DefaultPathFollowerInputBuilder {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;
 
         Some(PathFollowerInputs {
-            state: state_stamped.value.state.clone(),
+            state: state_stamped.value.clone(),
         })
     }
 

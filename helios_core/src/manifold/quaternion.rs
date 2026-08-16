@@ -13,6 +13,7 @@ use super::{StateBlock, TangentNoise};
 
 use nalgebra::{DMatrix, DVector};
 
+#[derive(Debug)]
 pub struct QuaternionBlock {
     process_noise: TangentNoise,
     initial_value: DVector<f64>,
@@ -57,12 +58,14 @@ impl StateBlock for QuaternionBlock {
         4
     }
 
-    fn process_noise(&self) -> TangentNoise {
-        self.process_noise.clone()
+    fn process_noise(&self) -> Option<TangentNoise> {
+        Some(self.process_noise.clone())
     }
+
     fn initial_value(&self) -> DVector<f64> {
         self.initial_value.clone()
     }
+
     fn initial_covariance(&self) -> DMatrix<f64> {
         self.initial_covariance.clone()
     }

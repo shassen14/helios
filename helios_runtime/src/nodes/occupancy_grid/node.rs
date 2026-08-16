@@ -373,9 +373,9 @@ mod tests {
             StateVariable::Qw(FrameId::Body(AGENT), FrameId::World),
         ];
         let mut s = FrameAwareState::new(layout, 1.0, 0.0);
-        s.state.vector[0] = x;
+        s.mean[0] = x;
         // Identity quaternion: (0, 0, 0, 1).
-        s.state.vector[6] = 1.0;
+        s.mean[6] = 1.0;
         s
     }
 

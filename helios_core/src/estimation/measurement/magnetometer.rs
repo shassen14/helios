@@ -117,10 +117,10 @@ mod tests {
 
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
         let q = UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2);
-        state.state.vector[0] = q.i;
-        state.state.vector[1] = q.j;
-        state.state.vector[2] = q.k;
-        state.state.vector[3] = q.w;
+        state.mean[0] = q.i;
+        state.mean[1] = q.j;
+        state.mean[2] = q.k;
+        state.mean[3] = q.w;
     }
 
     fn make_model() -> MagneticFieldModel {

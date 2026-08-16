@@ -133,7 +133,7 @@ mod tests {
 
     use helios_core::data::messages::TrajectoryPoint;
     use helios_core::data::primitives::MonotonicTime;
-    use helios_core::frames::{FrameId, RobotState, StateVariable};
+    use helios_core::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
     use helios_core::mapping::MapData;
     use helios_core::planning::types::Path;
     use helios_core::planning::SearchPlannerInputs;
@@ -216,7 +216,7 @@ mod tests {
             _tick: &TickContext,
         ) -> Option<SearchPlannerInputs> {
             Some(SearchPlannerInputs {
-                state: RobotState::new(vec![StateVariable::Px(FrameId::World)], 0.0),
+                state: FrameAwareState::new(vec![StateVariable::Px(FrameId::World)], 1.0, 0.0),
                 map: MapData::OccupancyGrid2D {
                     origin: Isometry3::identity(),
                     resolution: 1.0,

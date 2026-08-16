@@ -6,15 +6,15 @@
 //! hardcode numeric indices.
 
 pub mod conventions;
+pub mod layout;
 pub mod quantities;
 pub mod transforms;
 
-use crate::data::primitives::FrameHandle;
-
-use std::hash::Hash;
+use crate::{data::primitives::FrameHandle, estimation::schema::StateSchema};
 
 use nalgebra::{DMatrix, DVector, Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
+use std::{hash::Hash, sync::Arc};
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -274,47 +274,249 @@ impl RobotState {
         ))
     }
 }
-/// The "smart" state object used zby filters. It bundles the state vector
-/// with its schema (the layout), covariance, and timestamp.
+/// Below this quaternion norm the state is treated as degenerate and left
+/// as-is rather than divided through, which would yield `NaN`.
+const MIN_QUATERNION_NORM: f64 = 1e-9;
+
+/// The "smart" state object used by filters. It bundles the state estimate
+/// (`mean`) with its schema, covariance, and timestamp.
 #[derive(Debug, Clone, Serialize)]
 pub struct FrameAwareState {
-    pub state: RobotState,
-    /// The covariance matrix `P`.
+    #[serde(skip)]
+    pub schema: Arc<StateSchema>,
+    pub mean: DVector<f64>,
     pub covariance: DMatrix<f64>,
+    pub timestamp: f64,
 }
 
 impl FrameAwareState {
-    pub fn new(layout: Vec<StateVariable>, initial_covariance_val: f64, timestamp: f64) -> Self {
-        let dim = layout.len();
+    pub fn from_schema(schema: Arc<StateSchema>, timestamp: f64) -> Self {
         Self {
-            state: RobotState::new(layout, timestamp),
-            covariance: DMatrix::identity(dim, dim) * initial_covariance_val,
+            mean: schema.initial_value().clone(),
+            covariance: schema.initial_covariance().clone(),
+            schema,
+            timestamp,
         }
     }
 
-    pub fn dim(&self) -> usize {
-        self.state.dim()
+    pub fn new(layout: Vec<StateVariable>, initial_covariance_val: f64, timestamp: f64) -> Self {
+        let schema = Arc::new(StateSchema::degenerate(&layout));
+        let dim = layout.len();
+        Self {
+            mean: schema.initial_value().clone(),
+            covariance: DMatrix::identity(dim, dim) * initial_covariance_val,
+            schema,
+            timestamp,
+        }
     }
 
-    pub fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
-        self.state.set_variable(var, value)
+    /// Retracts the mean in place by a tangent-space correction: `mean ⊞= delta`.
+    /// The manifold-aware replacement for `mean += delta`; reduces to addition
+    /// while every block is Euclidean.
+    pub fn oplus_assign(&mut self, delta: &DVector<f64>) {
+        self.mean = self.schema.oplus(self.mean.as_view(), delta.as_view());
     }
 
+    pub fn storage_dim(&self) -> usize {
+        self.schema.storage_dim()
+    }
+
+    pub fn tangent_dim(&self) -> usize {
+        self.schema.tangent_dim()
+    }
+
+    pub fn schema(&self) -> &Arc<StateSchema> {
+        &self.schema
+    }
+
+    fn find_idx(&self, var: &StateVariable) -> Option<usize> {
+        self.schema.storage_offset_of(var)
+    }
+
+    // --- Named quantity extractors (temporary) ---
+    //
+    // These pull specific physical quantities out of the state by matching
+    // `StateVariable` names. They bake quantity-specific knowledge into the
+    // state type and are a stopgap: state access moves to typed frame-quantity
+    // lookups, at which point these hand-rolled getters are removed. Kept for
+    // now so existing callers keep working unchanged.
+
+    /// Extracts a contiguous 3D vector starting at `start_variable` (its X
+    /// component), e.g. `Px` yields `(Px, Py, Pz)`. `None` unless all three are
+    /// present and contiguous in the layout.
     pub fn get_vector3(&self, start_variable: &StateVariable) -> Option<Vector3<f64>> {
-        self.state.get_vector3(start_variable)
+        let (expected_y, expected_z) = match start_variable {
+            StateVariable::Px(id) => (StateVariable::Py(id.clone()), StateVariable::Pz(id.clone())),
+            StateVariable::Vx(id) => (StateVariable::Vy(id.clone()), StateVariable::Vz(id.clone())),
+            StateVariable::Ax(id) => (StateVariable::Ay(id.clone()), StateVariable::Az(id.clone())),
+            StateVariable::Wx(id) => (StateVariable::Wy(id.clone()), StateVariable::Wz(id.clone())),
+            StateVariable::Alphax(id) => (
+                StateVariable::Alphay(id.clone()),
+                StateVariable::Alphaz(id.clone()),
+            ),
+            StateVariable::MagX(id) => (
+                StateVariable::MagY(id.clone()),
+                StateVariable::MagZ(id.clone()),
+            ),
+            _ => return None,
+        };
+
+        let start_idx = self.find_idx(start_variable)?;
+        let layout = self.schema.layout();
+        if layout.get(start_idx + 1) == Some(&expected_y)
+            && layout.get(start_idx + 2) == Some(&expected_z)
+        {
+            Some(self.mean.fixed_rows::<3>(start_idx).into())
+        } else {
+            None
+        }
     }
 
+    /// The four quaternion component indices, only if all are present and
+    /// contiguous in `Qx, Qy, Qz, Qw` order. Shared by the orientation reader
+    /// and the normalizer.
+    fn quaternion_indices(&self) -> Option<(usize, usize, usize, usize)> {
+        let (mut xi, mut yi, mut zi, mut wi) = (None, None, None, None);
+        for (i, var) in self.schema.layout().iter().enumerate() {
+            match var {
+                StateVariable::Qx(_, _) => xi = Some(i),
+                StateVariable::Qy(_, _) => yi = Some(i),
+                StateVariable::Qz(_, _) => zi = Some(i),
+                StateVariable::Qw(_, _) => wi = Some(i),
+                _ => {}
+            }
+        }
+        let (xi, yi, zi, wi) = (xi?, yi?, zi?, wi?);
+        (yi == xi + 1 && zi == yi + 1 && wi == zi + 1).then_some((xi, yi, zi, wi))
+    }
+
+    /// The orientation quaternion, or `None` if the four components are not
+    /// present and contiguous. `nalgebra`'s `Quaternion` is `(w, i, j, k)`.
     pub(crate) fn get_orientation(&self) -> Option<UnitQuaternion<f64>> {
-        self.state.get_orientation()
+        let (xi, yi, zi, wi) = self.quaternion_indices()?;
+        Some(UnitQuaternion::from_quaternion(Quaternion::new(
+            self.mean[wi],
+            self.mean[xi],
+            self.mean[yi],
+            self.mean[zi],
+        )))
     }
 
+    /// Renormalizes the quaternion components in place. No-op if no quaternion
+    /// is present or the norm is degenerate. Called after each predict/update to
+    /// undo the drift Euclidean `+` introduces on the placeholder rotation block.
     pub(crate) fn normalize_quaternion(&mut self) {
-        self.state.normalize_quaternion();
+        let Some((xi, yi, zi, wi)) = self.quaternion_indices() else {
+            return;
+        };
+        let norm = (self.mean[xi].powi(2)
+            + self.mean[yi].powi(2)
+            + self.mean[zi].powi(2)
+            + self.mean[wi].powi(2))
+        .sqrt();
+        if norm > MIN_QUATERNION_NORM {
+            for k in [xi, yi, zi, wi] {
+                self.mean[k] /= norm;
+            }
+        }
     }
 
+    /// The full world-frame 6-DOF pose, or `None` if either the world position
+    /// or the orientation is missing.
     pub fn get_pose_isometry(&self) -> Option<Isometry3<f64>> {
-        self.state.get_pose_isometry()
+        let position = self.get_vector3(&StateVariable::Px(FrameId::World))?;
+        let orientation = self.get_orientation()?;
+        Some(Isometry3::from_parts(
+            Translation3::from(position),
+            orientation,
+        ))
+    }
+
+    /// Sets one named component. Returns `true` if the variable is in the
+    /// layout and was written, `false` (a no-op) if absent.
+    pub fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
+        match self.find_idx(var) {
+            Some(idx) => {
+                self.mean[idx] = value;
+                true
+            }
+            None => false,
+        }
     }
 }
 
-pub mod layout;
+#[cfg(test)]
+mod frame_aware_state_tests {
+    use super::*;
+
+    fn pose_layout() -> Vec<StateVariable> {
+        vec![
+            StateVariable::Px(FrameId::World),
+            StateVariable::Py(FrameId::World),
+            StateVariable::Pz(FrameId::World),
+            StateVariable::Qx(FrameId::World, FrameId::World),
+            StateVariable::Qy(FrameId::World, FrameId::World),
+            StateVariable::Qz(FrameId::World, FrameId::World),
+            StateVariable::Qw(FrameId::World, FrameId::World),
+        ]
+    }
+
+    #[test]
+    fn new_seeds_identity_quaternion() {
+        let s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
+        assert_eq!(s.get_orientation().unwrap(), UnitQuaternion::identity());
+    }
+
+    #[test]
+    fn set_and_get_vector3_round_trip() {
+        let mut s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
+        s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
+        s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
+        s.set_variable(&StateVariable::Pz(FrameId::World), 3.0);
+
+        let p = s.get_vector3(&StateVariable::Px(FrameId::World)).unwrap();
+        assert_eq!(p, Vector3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn set_variable_absent_is_noop() {
+        let mut s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
+        assert!(!s.set_variable(&StateVariable::Vx(FrameId::World), 9.0));
+    }
+
+    #[test]
+    fn normalize_quaternion_rescales_to_unit() {
+        let mut s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
+        // Overwrite the seeded identity with a non-unit (0,0,0,2); norm 2 → 1.
+        s.set_variable(&StateVariable::Qw(FrameId::World, FrameId::World), 2.0);
+        s.normalize_quaternion();
+        // Qw is the seventh slot (index 6).
+        assert!((s.mean[6] - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn oplus_assign_is_addition_for_degenerate_state() {
+        let mut s = FrameAwareState::new(
+            vec![
+                StateVariable::Px(FrameId::World),
+                StateVariable::Py(FrameId::World),
+            ],
+            1.0,
+            0.0,
+        );
+        s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
+        s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
+
+        s.oplus_assign(&DVector::from_vec(vec![0.5, -0.5]));
+        assert_eq!(s.mean, DVector::from_vec(vec![1.5, 1.5]));
+    }
+
+    #[test]
+    fn from_schema_takes_initial_value() {
+        let schema = Arc::new(StateSchema::degenerate(&pose_layout()));
+        let s = FrameAwareState::from_schema(schema.clone(), 5.0);
+
+        assert_eq!(&s.mean, schema.initial_value());
+        assert_eq!(s.timestamp, 5.0);
+    }
+}

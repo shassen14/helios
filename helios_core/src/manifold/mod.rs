@@ -20,11 +20,13 @@
 pub mod euclidean;
 pub mod quaternion;
 
+use std::fmt::Debug;
+
 use nalgebra::{DMatrix, DVector, DVectorView};
 use rand::Rng;
 use rand_distr::StandardNormal;
 
-pub trait StateBlock {
+pub trait StateBlock: Debug + Send + Sync {
     fn storage_dim(&self) -> usize;
 
     fn tangent_dim(&self) -> usize;
@@ -37,7 +39,7 @@ pub trait StateBlock {
         y.into_owned() - x
     }
 
-    fn process_noise(&self) -> TangentNoise;
+    fn process_noise(&self) -> Option<TangentNoise>;
 
     fn initial_value(&self) -> DVector<f64>;
 

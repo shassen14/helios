@@ -78,7 +78,7 @@ impl SearchPlannerInputBuilder for DefaultSearchPlannerInputBuilder {
             .map(|s| s.value.clone());
 
         Some(SearchPlannerInputs {
-            state: state_stamped.value.state.clone(),
+            state: state_stamped.value.clone(),
             map: map_stamped.value.clone(),
             goal,
         })

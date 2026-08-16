@@ -31,8 +31,8 @@ impl ExtendedKalmanFilter {
         process_noise_q: DMatrix<f64>,
         dynamics_model: Box<dyn EstimationDynamics>,
     ) -> Self {
-        assert_eq!(initial_state.dim(), process_noise_q.nrows());
-        assert_eq!(initial_state.dim(), process_noise_q.ncols());
+        assert_eq!(initial_state.storage_dim(), process_noise_q.nrows());
+        assert_eq!(initial_state.storage_dim(), process_noise_q.ncols());
 
         Self {
             state: initial_state,
@@ -44,7 +44,7 @@ impl ExtendedKalmanFilter {
     /// Enforces physical properties on the covariance matrix to prevent divergence.
     /// Called at the end of every predict and update step.
     fn ensure_covariance_health(&mut self) {
-        let dim = self.state.dim();
+        let dim = self.state.storage_dim();
         let p = &mut self.state.covariance;
         let min_variance = 1e-9;
 
@@ -81,9 +81,9 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 
         // --- 1. Get current state and dynamics model ---
         let dynamics = &self.dynamics_model;
-        let x_old = &self.state.state.vector;
+        let x_old = &self.state.mean;
         let p_old = &self.state.covariance;
-        let t_old = self.state.state.timestamp;
+        let t_old = self.state.timestamp;
 
         let u_sized = if inputs.control.nrows() == dynamics.get_control_dim() {
             &inputs.control
@@ -106,7 +106,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 
         // F ≈ I + A*dt (no identity allocation).
         let mut f_k = &a_jac * dt;
-        for i in 0..self.state.dim() {
+        for i in 0..self.state.storage_dim() {
             f_k[(i, i)] += 1.0;
         }
 
@@ -120,9 +120,9 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         let p_new = &f_k * p_with_noise * f_k.transpose();
 
         // --- 5. Update the filter's internal state ---
-        self.state.state.vector = x_new;
+        self.state.mean = x_new;
         self.state.covariance = p_new;
-        self.state.state.timestamp += dt;
+        self.state.timestamp += dt;
 
         self.ensure_covariance_health();
         self.state.normalize_quaternion();
@@ -160,11 +160,11 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
         let correction = &k_gain * &y;
 
-        self.state.state.vector += correction;
+        self.state.mean += correction;
 
         // Joseph form: (I - KH) P (I - KH)^T + K R K^T, no identity allocation.
         let mut i_kh = -(&k_gain * &h_jac);
-        let n = self.state.dim();
+        let n = self.state.storage_dim();
         for i in 0..n {
             i_kh[(i, i)] += 1.0;
         }
@@ -258,8 +258,8 @@ mod tests {
             _at: MonotonicTime,
         ) -> Option<DVector<f64>> {
             Some(DVector::from_row_slice(&[
-                state.state.vector[0],
-                state.state.vector[1],
+                state.mean[0],
+                state.mean[1],
             ]))
         }
 
@@ -269,7 +269,7 @@ mod tests {
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
         ) -> DMatrix<f64> {
-            let n = state.dim();
+            let n = state.storage_dim();
             let mut h = DMatrix::zeros(2, n);
             h[(0, 0)] = 1.0;
             h[(1, 1)] = 1.0;
@@ -285,13 +285,13 @@ mod tests {
             StateVariable::Vy(FrameId::World),
         ];
         let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-        state.state.vector[2] = vx;
+        state.mean[2] = vx;
         state
     }
 
     fn make_ekf(initial_px: f64, vx: f64) -> ExtendedKalmanFilter {
         let mut state = make_state_with_velocity(vx);
-        state.state.vector[0] = initial_px;
+        state.mean[0] = initial_px;
         let q = DMatrix::identity(4, 4) * 0.01;
         ExtendedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D))
     }
@@ -313,23 +313,23 @@ mod tests {
 
         ekf.predict(1.0, &EstimatorInputs { control: u });
 
-        let px = ekf.state().state.vector[0];
+        let px = ekf.state().mean[0];
         assert!(
             (px - 1.0).abs() < 0.05,
             "px should advance ≈ vx*dt = 1.0, got {px}"
         );
-        assert!(ekf.state().state.vector[1].abs() < 1e-9);
+        assert!(ekf.state().mean[1].abs() < 1e-9);
     }
 
     #[test]
     fn predict_zero_dt_is_noop() {
         let mut ekf = make_ekf(5.0, 2.0);
         let u = DVector::zeros(0);
-        let px_before = ekf.state().state.vector[0];
+        let px_before = ekf.state().mean[0];
 
         ekf.predict(0.0, &EstimatorInputs { control: u });
 
-        assert_eq!(ekf.state().state.vector[0], px_before);
+        assert_eq!(ekf.state().mean[0], px_before);
     }
 
     #[test]
@@ -355,7 +355,7 @@ mod tests {
 
         ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
 
-        let px = ekf.state().state.vector[0];
+        let px = ekf.state().mean[0];
         assert!(px > 0.0, "state should correct toward measurement (px > 0)");
         assert!(px < 5.0, "state should not overshoot measurement");
     }
@@ -381,11 +381,11 @@ mod tests {
         let model = Position2DMeasurement;
         // Wrong-sized R (3x3 instead of 2x2) — must be silently skipped.
         let bad_r = DMatrix::identity(3, 3) * 0.1;
-        let px_before = ekf.state().state.vector[0];
+        let px_before = ekf.state().mean[0];
 
         ekf.update(&gps_z(5.0, 0.0), &model, &bad_r, Some(&tf), AT);
 
-        assert_eq!(ekf.state().state.vector[0], px_before);
+        assert_eq!(ekf.state().mean[0], px_before);
     }
 
     // --- Convergence Test ---
@@ -404,7 +404,7 @@ mod tests {
             ekf.update(&gps_z(true_px, 0.0), &model, &r, Some(&tf), AT);
         }
 
-        let px = ekf.state().state.vector[0];
+        let px = ekf.state().mean[0];
         assert!(
             (px - true_px).abs() < 0.1,
             "EKF should converge near {true_px} m, got {px}"
