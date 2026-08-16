@@ -48,17 +48,19 @@ impl UnscentedKalmanFilter {
         dynamics_model: Box<dyn EstimationDynamics>,
         params: UkfParams,
     ) -> Self {
-        let n = initial_state.storage_dim();
-        let lambda = params.alpha.powi(2) * (n as f64 + params.kappa) - n as f64;
+        let s = initial_state.storage_dim();
+        let t = initial_state.tangent_dim();
 
-        let mut weights_m = DVector::from_element(2 * n + 1, 0.5 / (n as f64 + lambda));
-        let mut weights_c = DVector::from_element(2 * n + 1, 0.5 / (n as f64 + lambda));
-        weights_m[0] = lambda / (n as f64 + lambda);
+        let lambda = params.alpha.powi(2) * (t as f64 + params.kappa) - t as f64;
+
+        let mut weights_m = DVector::from_element(2 * t + 1, 0.5 / (t as f64 + lambda));
+        let mut weights_c = DVector::from_element(2 * t + 1, 0.5 / (t as f64 + lambda));
+        weights_m[0] = lambda / (t as f64 + lambda);
         weights_c[0] = weights_m[0] + (1.0 - params.alpha.powi(2) + params.beta);
 
-        let sigma_buf = DMatrix::zeros(n, 2 * n + 1);
-        let propagated_buf = DMatrix::zeros(n, 2 * n + 1);
-        let p_pred_buf = DMatrix::zeros(n, n);
+        let sigma_buf = DMatrix::zeros(s, 2 * t + 1);
+        let propagated_buf = DMatrix::zeros(s, 2 * t + 1);
+        let p_pred_buf = DMatrix::zeros(t, t);
         let scratch_state = initial_state.clone();
 
         Self {
@@ -75,30 +77,51 @@ impl UnscentedKalmanFilter {
         }
     }
 
+    /// Fills `sigma_buf` (`s` rows × `2t+1` cols) with sigma points: the mean
+    /// plus one pair per tangent axis, straddling the mean along the ± Cholesky
+    /// directions of the covariance.
+    ///
+    /// The two spaces meet here. `t = tangent_dim` sets how many axes the
+    /// covariance has, hence how many point pairs (`2t+1` total). Each sigma
+    /// point is a POINT in storage space (`s` long); each Cholesky column is a
+    /// TANGENT step (`t` long). Straddling is `oplus`, never `+`: the step is
+    /// retracted onto the manifold, so it stays correct once a block is curved.
     fn fill_sigma_points(
         sigma_buf: &mut DMatrix<f64>,
         state: &FrameAwareState,
         params: &UkfParams,
     ) {
-        let n = state.storage_dim();
-        let lambda = params.alpha.powi(2) * (n as f64 + params.kappa) - n as f64;
+        let t = state.tangent_dim();
+
+        let lambda = params.alpha.powi(2) * (t as f64 + params.kappa) - t as f64;
 
         let cholesky_option = Cholesky::new(state.covariance.clone());
 
         if let Some(cholesky_result) = cholesky_option {
+            // Columns of the scaled Cholesky factor are the ± perturbation steps,
+            // one per tangent axis. Each column is a tangent vector (length t).
             let l_matrix = cholesky_result.l_dirty();
-            let scale = (n as f64 + lambda).sqrt();
+            let scale = (t as f64 + lambda).sqrt();
             let scaled_l = l_matrix * scale;
 
+            // Column 0 is the mean itself (a point, length s).
             sigma_buf.column_mut(0).copy_from(&state.mean);
-            for i in 0..n {
-                let col_pos = &state.mean + scaled_l.column(i);
-                let col_neg = &state.mean - scaled_l.column(i);
-                sigma_buf.column_mut(i + 1).copy_from(&col_pos);
-                sigma_buf.column_mut(i + n + 1).copy_from(&col_neg);
+            for i in 0..t {
+                // Retract the mean by ± the i-th tangent step to get the pair of
+                // sigma points straddling it (points, length s).
+                let step = scaled_l.column(i);
+                let neg_step = -step;
+
+                let sigma_plus = state.schema().oplus(state.mean.as_view(), step);
+                let sigma_minus = state
+                    .schema()
+                    .oplus(state.mean.as_view(), neg_step.as_view());
+
+                sigma_buf.column_mut(i + 1).copy_from(&sigma_plus);
+                sigma_buf.column_mut(i + t + 1).copy_from(&sigma_minus);
             }
         } else {
-            for i in 0..(2 * n + 1) {
+            for i in 0..(2 * t + 1) {
                 sigma_buf.column_mut(i).copy_from(&state.mean);
             }
         }
@@ -107,14 +130,14 @@ impl UnscentedKalmanFilter {
 
 impl GaussianStateEstimator for UnscentedKalmanFilter {
     fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) {
-        let n = self.state.storage_dim();
+        let t = self.state.tangent_dim();
 
         // --- 1. Generate Sigma Points into self.sigma_buf ---
         Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params);
 
         // --- 2. Propagate each point through the NON-LINEAR dynamics model ---
         self.propagated_buf.fill(0.0);
-        for i in 0..(2 * n + 1) {
+        for i in 0..(2 * t + 1) {
             let point = self.sigma_buf.column(i).into_owned();
             let propagated = self.dynamics_model.propagate(
                 &point,
@@ -127,14 +150,22 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         }
 
         // --- 3. Recover the predicted mean and covariance ---
-        // Predicted mean: x_pred = sum(w_m * propagated_point
+        // Predicted mean: the weighted average of the propagated points. A point
+        // in storage space (length s). Linear averaging is exact while blocks are
+        // Euclidean; a curved block needs an iterative mean instead.
         let x_pred = &self.propagated_buf * &self.weights_m;
 
-        // Predicted covariance (reuse p_pred_buf to avoid allocation).
+        // Predicted covariance (t × t), reusing p_pred_buf to avoid allocation.
+        // Each propagated point's deviation from the mean is point ⊟ point, a
+        // tangent vector (length t) — hence ominus, not `-`. Its weighted outer
+        // products accumulate the covariance in tangent space.
         self.p_pred_buf.fill(0.0);
-        for i in 0..(2 * n + 1) {
-            let diff = self.propagated_buf.column(i) - &x_pred;
-            self.p_pred_buf += self.weights_c[i] * &diff * diff.transpose();
+        for i in 0..(2 * t + 1) {
+            let deviation = self
+                .state
+                .schema()
+                .ominus(self.propagated_buf.column(i), x_pred.as_view());
+            self.p_pred_buf += self.weights_c[i] * &deviation * deviation.transpose();
         }
         self.p_pred_buf += &self.process_noise_q * dt;
 
@@ -144,8 +175,8 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         self.state.timestamp += dt;
 
         // Symmetrize covariance in-place (no allocation).
-        for i in 0..n {
-            for j in (i + 1)..n {
+        for i in 0..t {
+            for j in (i + 1)..t {
                 let avg = (self.state.covariance[(i, j)] + self.state.covariance[(j, i)]) * 0.5;
                 self.state.covariance[(i, j)] = avg;
                 self.state.covariance[(j, i)] = avg;
@@ -166,17 +197,15 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
             return;
         }
 
-        let n = self.state.storage_dim();
+        let t = self.state.tangent_dim();
 
         // Regenerate sigma points from the predicted state.
         Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params);
 
         // Propagate sigma points through the (non-linear) measurement model.
-        let mut measurement_points = DMatrix::zeros(m, 2 * n + 1);
-        for i in 0..(2 * n + 1) {
-            self.scratch_state
-                .mean
-                .copy_from(&self.sigma_buf.column(i));
+        let mut measurement_points = DMatrix::zeros(m, 2 * t + 1);
+        for i in 0..(2 * t + 1) {
+            self.scratch_state.mean.copy_from(&self.sigma_buf.column(i));
 
             if let Some(z_point) = model.predict_measurement(&self.scratch_state, tf, at) {
                 if z_point.nrows() == m {
@@ -185,31 +214,45 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
             }
         }
 
+        // Predicted measurement and its innovation covariance (m × m). The
+        // measurement lives in ordinary Euclidean space, not on the state
+        // manifold, so its deviations are plain subtraction — never ominus.
         let z_pred = &measurement_points * &self.weights_m;
-        let mut s_cov = DMatrix::zeros(m, m);
-        for i in 0..(2 * n + 1) {
-            let diff = measurement_points.column(i) - &z_pred;
-            s_cov += self.weights_c[i] * &diff * diff.transpose();
+        let mut innovation_cov = DMatrix::zeros(m, m);
+        for i in 0..(2 * t + 1) {
+            let meas_dev = measurement_points.column(i) - &z_pred;
+            innovation_cov += self.weights_c[i] * &meas_dev * meas_dev.transpose();
         }
-        s_cov += r;
+        innovation_cov += r;
 
-        let mut t_cov = DMatrix::zeros(n, m);
-        for i in 0..(2 * n + 1) {
-            let diff_x = self.sigma_buf.column(i) - &self.state.mean;
-            let diff_z = measurement_points.column(i) - &z_pred;
-            t_cov += self.weights_c[i] * &diff_x * diff_z.transpose();
+        // Cross-covariance between state error and measurement (t × m): how a
+        // deviation in tangent space co-varies with one in measurement space.
+        // The state side is point ⊟ point (ominus, tangent); the measurement
+        // side stays Euclidean. This asymmetry is the whole point.
+        let mut cross_cov = DMatrix::zeros(t, m);
+        for i in 0..(2 * t + 1) {
+            let state_dev = self
+                .state
+                .schema()
+                .ominus(self.sigma_buf.column(i), self.state.mean.as_view());
+
+            let meas_dev = measurement_points.column(i) - &z_pred;
+            cross_cov += self.weights_c[i] * &state_dev * meas_dev.transpose();
         }
 
-        let Some(s_inv) = s_cov.clone().try_inverse() else {
+        let Some(s_inv) = innovation_cov.clone().try_inverse() else {
             return;
         };
 
-        let k_gain = t_cov * s_inv;
-        self.state.mean += &k_gain * (z - z_pred);
-        self.state.covariance -= &k_gain * s_cov * k_gain.transpose();
+        // Kalman gain (t × m). The correction K·innovation is a tangent vector
+        // (length t); retract it onto the mean with ⊞, not `+`.
+        let k_gain = cross_cov * s_inv;
+        let correction = &k_gain * (z - z_pred);
+        self.state.oplus_assign(&correction);
+        self.state.covariance -= &k_gain * innovation_cov * k_gain.transpose();
 
-        for i in 0..n {
-            for j in (i + 1)..n {
+        for i in 0..t {
+            for j in (i + 1)..t {
                 let avg = (self.state.covariance[(i, j)] + self.state.covariance[(j, i)]) * 0.5;
                 self.state.covariance[(i, j)] = avg;
                 self.state.covariance[(j, i)] = avg;
@@ -282,10 +325,7 @@ mod tests {
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
         ) -> Option<DVector<f64>> {
-            Some(DVector::from_row_slice(&[
-                state.mean[0],
-                state.mean[1],
-            ]))
+            Some(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
         }
 
         fn jacobian(

@@ -1,5 +1,3 @@
-// helios_core/src/estimation/filters/ekf.rs
-
 use crate::data::ports::TfProvider;
 use crate::data::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
@@ -7,6 +5,7 @@ use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
 use crate::frames::FrameAwareState;
 use crate::utils::integrators::RK4;
+
 use nalgebra::{DMatrix, DVector};
 
 /// A concrete implementation of an Extended Kalman Filter.
@@ -31,8 +30,8 @@ impl ExtendedKalmanFilter {
         process_noise_q: DMatrix<f64>,
         dynamics_model: Box<dyn EstimationDynamics>,
     ) -> Self {
-        assert_eq!(initial_state.storage_dim(), process_noise_q.nrows());
-        assert_eq!(initial_state.storage_dim(), process_noise_q.ncols());
+        assert_eq!(initial_state.tangent_dim(), process_noise_q.nrows());
+        assert_eq!(initial_state.tangent_dim(), process_noise_q.ncols());
 
         Self {
             state: initial_state,
@@ -44,7 +43,9 @@ impl ExtendedKalmanFilter {
     /// Enforces physical properties on the covariance matrix to prevent divergence.
     /// Called at the end of every predict and update step.
     fn ensure_covariance_health(&mut self) {
-        let dim = self.state.storage_dim();
+        // The covariance lives in tangent space (t × t), so every index here is
+        // a tangent dimension, not a stored-vector slot.
+        let dim = self.state.tangent_dim();
         let p = &mut self.state.covariance;
         let min_variance = 1e-9;
 
@@ -92,7 +93,8 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         };
 
         // --- 2. Predict the next state vector using numerical integration ---
-        // x_pred = f(x, u, t)
+        // x_pred = f(x, u, t). A point in storage space (length s); the dynamics
+        // model owns its own retraction, so this is a direct assignment, not ⊞.
         let x_new = dynamics.propagate(x_old, u_sized, t_old, dt, &RK4);
 
         // --- 3. Linearize the dynamics by calculating the state transition matrix (Jacobian F) ---
@@ -104,9 +106,10 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         // A = ∂f/∂x, B = ∂f/∂u
         let (a_jac, _b_jac) = dynamics.calculate_jacobian(x_old, &inputs.control, t_old);
 
-        // F ≈ I + A*dt (no identity allocation).
+        // F ≈ I + A*dt (no identity allocation). F propagates the covariance, so
+        // it is a tangent-space map (t × t) — the identity add walks tangent dims.
         let mut f_k = &a_jac * dt;
-        for i in 0..self.state.storage_dim() {
+        for i in 0..self.state.tangent_dim() {
             f_k[(i, i)] += 1.0;
         }
 
@@ -125,6 +128,9 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         self.state.timestamp += dt;
 
         self.ensure_covariance_health();
+        // Euclidean ⊞ adds the quaternion componentwise, so the mean can drift
+        // off the unit sphere; renormalize until the rotation block retracts on
+        // its own manifold and keeps itself unit.
         self.state.normalize_quaternion();
     }
 
@@ -148,23 +154,26 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
             return;
         }
 
-        let p_priori = &self.state.covariance;
+        let p_priori = self.state.covariance.clone();
         let h_jac = model.jacobian(&self.state, tf, at);
         let y = z - &z_pred;
 
-        let s = &h_jac * p_priori * h_jac.transpose() + r;
+        let s = &h_jac * &p_priori * h_jac.transpose() + r;
         let Some(s_inv) = s.try_inverse() else {
             return;
         };
 
+        // Kalman gain (t × m). The correction K·y is a tangent vector (length t);
+        // retract it onto the mean with ⊞, not `+`.
         let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
         let correction = &k_gain * &y;
 
-        self.state.mean += correction;
+        self.state.oplus_assign(&correction);
 
         // Joseph form: (I - KH) P (I - KH)^T + K R K^T, no identity allocation.
+        // All tangent-space (t × t); the identity add walks tangent dims.
         let mut i_kh = -(&k_gain * &h_jac);
-        let n = self.state.storage_dim();
+        let n = self.state.tangent_dim();
         for i in 0..n {
             i_kh[(i, i)] += 1.0;
         }
@@ -172,6 +181,9 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         self.state.covariance = p_post;
 
         self.ensure_covariance_health();
+        // ⊞ has already applied the correction; renormalize because the
+        // Euclidean quaternion block adds componentwise and can leave the unit
+        // sphere. Redundant once the rotation block retracts on its own manifold.
         self.state.normalize_quaternion();
     }
 
@@ -257,10 +269,7 @@ mod tests {
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
         ) -> Option<DVector<f64>> {
-            Some(DVector::from_row_slice(&[
-                state.mean[0],
-                state.mean[1],
-            ]))
+            Some(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
         }
 
         fn jacobian(
