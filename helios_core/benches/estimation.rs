@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::{DMatrix, DVector, Isometry3};
 
@@ -6,6 +8,7 @@ use helios_core::data::MonotonicTime;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
 use helios_core::estimation::measurement::MeasurementModel;
+use helios_core::estimation::schema::StateSchema;
 use helios_core::estimation::{EstimatorInputs, GaussianStateEstimator};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
@@ -42,14 +45,23 @@ impl EstimationDynamics for ConstantVelocity2D {
         0
     }
 
-    fn get_derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
+    fn schema(&self) -> Arc<StateSchema> {
+        Arc::new(StateSchema::degenerate(&[
+            StateVariable::Px(FrameId::World),
+            StateVariable::Py(FrameId::World),
+            StateVariable::Vx(FrameId::World),
+            StateVariable::Vy(FrameId::World),
+        ]))
+    }
+
+    fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
         let mut xdot = DVector::zeros(4);
         xdot[0] = x[2];
         xdot[1] = x[3];
         xdot
     }
 
-    fn calculate_jacobian(
+    fn jacobian(
         &self,
         _x: &DVector<f64>,
         _u: &DVector<f64>,
@@ -76,10 +88,7 @@ impl MeasurementModel for Position2DMeasurement {
         _tf: Option<&dyn TfProvider>,
         _at: MonotonicTime,
     ) -> Option<DVector<f64>> {
-        Some(DVector::from_row_slice(&[
-            state.state.vector[0],
-            state.state.vector[1],
-        ]))
+        Some(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
     }
 
     fn jacobian(
@@ -88,7 +97,7 @@ impl MeasurementModel for Position2DMeasurement {
         _tf: Option<&dyn TfProvider>,
         _at: MonotonicTime,
     ) -> DMatrix<f64> {
-        let n = state.dim();
+        let n = state.tangent_dim();
         let mut h = DMatrix::zeros(2, n);
         h[(0, 0)] = 1.0;
         h[(1, 1)] = 1.0;
@@ -104,7 +113,7 @@ fn make_state() -> FrameAwareState {
         StateVariable::Vy(FrameId::World),
     ];
     let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-    state.state.vector[2] = 1.0; // vx = 1.0 m/s
+    state.set_variable(&StateVariable::Vx(FrameId::World), 1.0); // vx = 1.0 m/s
     state
 }
 

@@ -19,7 +19,6 @@ use helios_runtime::{
 fn empty_caps() -> CapabilitySet {
     CapabilitySet {
         gaussian_estimators: Default::default(),
-        dynamics: Default::default(),
         measurement_models: Default::default(),
         mappers: Default::default(),
         controllers: Default::default(),
@@ -34,7 +33,6 @@ fn full_caps() -> CapabilitySet {
     }
     CapabilitySet {
         gaussian_estimators: set(&["Ekf"]),
-        dynamics: set(&["IntegratedImu", "AckermannOdometry"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
         mappers: set(&["OccupancyGrid2D"]),
         controllers: set(&["DirectTwist"]),
@@ -217,27 +215,6 @@ fn validation_unknown_estimator_produces_error() {
             ConfigValidationError::UnknownGaussianEstimator { kind, .. } if kind == "Ekf"
         )),
         "Expected UnknownGaussianEstimator for Ekf"
-    );
-}
-
-#[test]
-fn validation_unknown_dynamics_produces_error() {
-    let mut estimators = HashMap::new();
-    estimators.insert("primary".to_string(), ekf_config());
-
-    let stack = AutonomyStack {
-        estimators,
-        ..Default::default()
-    };
-    let mut caps = full_caps();
-    caps.dynamics.clear();
-    let errors = validate_autonomy_config(&stack, &caps);
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::UnknownDynamics { kind } if kind == "IntegratedImu"
-        )),
-        "Expected UnknownDynamics for IntegratedImu"
     );
 }
 
@@ -451,9 +428,10 @@ fn validation_controller_not_a_command_source_errors() {
     let stack = stack_with_arbitration(vec![CommandSource::Teleop], true);
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(e, ConfigValidationError::ControllerConfiguredButNotACommandSource)),
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::ControllerConfiguredButNotACommandSource
+        )),
         "Expected ControllerConfiguredButNotACommandSource, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );

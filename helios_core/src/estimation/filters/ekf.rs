@@ -408,6 +408,111 @@ mod tests {
 
     // --- Convergence Test ---
 
+    // --- Golden Trajectory (freeze-forward regression) ---
+    //
+    // Drives the real `IntegratedImuModel` through the EKF predict loop and
+    // freezes the resulting mean and covariance diagonal to the bit. There is no
+    // pre-refactor baseline to compare against, so this captures *current*
+    // behavior: its job is to fire the moment a change to the schema plumbing,
+    // the RK4 propagation, or the covariance update perturbs the trajectory that
+    // was not meant to change. When a change legitimately moves these numbers
+    // (e.g. the quaternion tangent block dropping 4→3 dims), re-harvest the
+    // literals in the same run and commit the new values deliberately.
+
+    /// Builds the frozen 16-state INS EKF and runs a fixed control script,
+    /// returning the final `(mean, covariance-diagonal)`. Every input here is a
+    /// hardcoded constant so the run is fully deterministic.
+    fn run_golden_ins_trajectory() -> (DVector<f64>, DVector<f64>) {
+        use crate::data::primitives::FrameHandle;
+        use crate::estimation::dynamics::integrated_imu::IntegratedImuModel;
+        use nalgebra::Vector3;
+
+        // Distinct per-block variances so a transposed Q or P₀ block cannot hide
+        // behind a shared value.
+        let model = IntegratedImuModel::new(
+            FrameHandle(7),
+            Vector3::new(0.0, 0.0, -9.81),
+            0.04,     // accel_noise_var
+            0.0025,   // gyro_noise_var
+            0.0001,   // accel_bias_var
+            0.000001, // gyro_bias_var
+            0.5,      // pos_var
+            0.02,     // ori_var
+        );
+
+        let schema = model.schema();
+        let q = schema.process_noise().clone();
+        let initial_state = FrameAwareState::from_schema(schema, 0.0);
+        let mut ekf = ExtendedKalmanFilter::new(initial_state, q, Box::new(model));
+
+        // Constant IMU: 0.5 m/s² forward, gravity-compensated on Z, 0.15 rad/s yaw.
+        let control = DVector::from_row_slice(&[0.5, 0.0, 9.81, 0.0, 0.0, 0.15]);
+        let inputs = EstimatorInputs { control };
+
+        let dt = 0.02;
+        for _ in 0..50 {
+            ekf.predict(dt, &inputs);
+        }
+
+        let state = ekf.state();
+        (state.mean.clone(), state.covariance.diagonal())
+    }
+
+    #[test]
+    fn golden_ins_trajectory_is_frozen() {
+        // Full-precision literals harvested from a captured run. f64's shortest
+        // round-trippable text form reparses to the identical bits, so `==` here
+        // is an exact comparison, not an approximate one.
+        let expected_mean = [
+            0.24953160142126202,
+            0.01248594503126783,
+            0.0,
+            0.49812710824531004,
+            0.03742974021319026,
+            0.0,
+            0.0,
+            0.0,
+            0.07492970727274119,
+            0.9971888181122076,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ];
+        let expected_cov_diag = [
+            6.0144822755614324,
+            6.0254566112943975,
+            1.7649038960417855,
+            33.14751985825398,
+            33.22691636994827,
+            2.120809565454974,
+            0.27204802416636203,
+            0.27204802416636203,
+            0.2710188494014054,
+            0.024084783412809015,
+            1.0001000000500073,
+            1.0001000000500073,
+            1.0001000000500073,
+            1.0000010000500095,
+            1.0000010000500095,
+            1.0000010000500095,
+        ];
+
+        let (mean, cov_diag) = run_golden_ins_trajectory();
+
+        for (i, &want) in expected_mean.iter().enumerate() {
+            assert_eq!(mean[i], want, "mean[{i}] drifted from frozen golden");
+        }
+        for (i, &want) in expected_cov_diag.iter().enumerate() {
+            assert_eq!(
+                cov_diag[i], want,
+                "covariance diagonal[{i}] drifted from frozen golden"
+            );
+        }
+    }
+
     #[test]
     fn filter_converges_to_true_position() {
         let mut ekf = make_ekf(0.0, 0.0);

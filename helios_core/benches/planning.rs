@@ -1,7 +1,7 @@
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::{DMatrix, Isometry3, Vector2};
 
-use helios_core::frames::{FrameId, RobotState, StateVariable};
+use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::mapping::MapData;
 use helios_core::planning::astar::{AStarConfig, AStarPlanner};
 use helios_core::planning::types::PlannerGoal;
@@ -25,16 +25,15 @@ fn bench_config() -> AStarConfig {
     }
 }
 
-fn make_state(x: f64, y: f64) -> RobotState {
+fn make_state(x: f64, y: f64) -> FrameAwareState {
     let layout = vec![
         StateVariable::Px(FrameId::World),
         StateVariable::Py(FrameId::World),
         StateVariable::Pz(FrameId::World),
     ];
-    let mut state = RobotState::new(layout, 0.0);
-    state.vector[0] = x;
-    state.vector[1] = y;
-    state.vector[2] = 0.0;
+    let mut state = FrameAwareState::new(layout, 1.0, 0.0);
+    state.set_variable(&StateVariable::Px(FrameId::World), x);
+    state.set_variable(&StateVariable::Py(FrameId::World), y);
     state
 }
 
