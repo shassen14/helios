@@ -534,14 +534,13 @@ mod tests {
         );
     }
 
-    // --- Config-driven augmentation: construction + inspection (never stepped) ---
+    // --- Config-driven augmentation: construction + inspection ---
     //
-    // These prove the augmentation seam: a config-declared bias block composes
-    // onto the frozen 16-state INS schema and yields a constructable EKF. The
-    // filters here are *never* `predict`ed. A live augmented predict needs a
-    // schema-sized dynamics — the INS model is schema-blind at 16, so stepping a
-    // 19-dim state would mismatch — which is separate, later work. What is under
-    // test is composition and construction, exactly what this milestone scopes.
+    // These prove the composition seam: a config-declared bias block composes
+    // onto the frozen 16-state INS schema and yields a constructable EKF whose
+    // dimensions, layout, P₀, and Q are the base corner plus the appended block.
+    // They inspect the built filter without stepping it; the live-predict tests
+    // further down drive the same augmented filter through `predict`.
 
     /// Magnetometer hard-iron bias tuning for the augmentation tests. Both are
     /// standard deviations (squared into `P₀` / `Q` by the descriptor), chosen
@@ -688,5 +687,116 @@ mod tests {
             augmented_ins_ekf(&[s9, s10]).state().tangent_dim(),
             base_dim + 2 * MAG_BIAS_DOF
         );
+    }
+
+    // --- Config-driven augmentation: live predict (the sizing proof) ---
+    //
+    // Because `IntegratedImuModel::{derivatives,jacobian}` size to the input
+    // state rather than a fixed 16, a composed 19-dim state propagates through
+    // `predict` unchanged. Two properties pin the generalization down: the base
+    // sub-vector evolves bit-for-bit like the standalone 16-state filter (the
+    // appended block is inert on the base trajectory, since the dynamics reads
+    // and writes only base offsets), and the bias block behaves as a random
+    // walk — its mean holds at the prior forever and its covariance grows only
+    // through its own Q.
+
+    /// Fixed predict script shared by the live-augmentation tests: the same
+    /// constant IMU as the golden trajectory (0.5 m/s² forward, gravity-
+    /// compensated Z, 0.15 rad/s yaw) over a fixed step count, so the base
+    /// evolution being compared against is the well-exercised one.
+    const AUG_PREDICT_STEPS: usize = 50;
+    const AUG_PREDICT_DT: f64 = 0.02;
+
+    /// Absolute tolerance on the accumulated bias variance. The block-diagonal
+    /// covariance recursion makes `P_bias = P₀ + N·Q·dt` exact in real
+    /// arithmetic; the only slack is `ensure_covariance_health`'s per-step
+    /// 1e-12 diagonal regularization (≈ N·1e-12 total), which this bound clears
+    /// by orders of magnitude while staying far below the growth it checks.
+    const BIAS_COV_TOL: f64 = 1e-9;
+
+    fn imu_control_script() -> DVector<f64> {
+        DVector::from_row_slice(&[0.5, 0.0, 9.81, 0.0, 0.0, 0.15])
+    }
+
+    /// The un-augmented 16-state INS EKF, same tuning as [`augmented_ins_ekf`],
+    /// for a side-by-side base-trajectory comparison.
+    fn base_ins_ekf() -> ExtendedKalmanFilter {
+        let model = ins_model();
+        let schema = model.schema();
+        let state = FrameAwareState::from_schema(schema.clone(), 0.0);
+        ExtendedKalmanFilter::new(state, schema.process_noise().clone(), Box::new(model))
+    }
+
+    #[test]
+    fn augmented_predict_leaves_base_subvector_bit_identical() {
+        use crate::data::primitives::FrameHandle;
+
+        let base_dim = ins_model().schema().tangent_dim();
+        let sensor = FrameId::Sensor(FrameHandle(9));
+        let mut base = base_ins_ekf();
+        let mut aug = augmented_ins_ekf(&[sensor]);
+
+        // `predict` only borrows its inputs, so one immutable script drives both.
+        let inputs = EstimatorInputs {
+            control: imu_control_script(),
+        };
+        for _ in 0..AUG_PREDICT_STEPS {
+            base.predict(AUG_PREDICT_DT, &inputs);
+            aug.predict(AUG_PREDICT_DT, &inputs);
+        }
+
+        // The 16 base slots reached the exact same bits as the standalone filter:
+        // the trailing bias slots never enter the base derivative computation, so
+        // augmentation cannot perturb the base trajectory.
+        for i in 0..base_dim {
+            assert_eq!(
+                aug.state().mean[i],
+                base.state().mean[i],
+                "augmented base slot {i} diverged from the un-augmented filter"
+            );
+        }
+
+        // Zero-derivative bias states are a random walk whose mean stays put: the
+        // prior is zero, so every slot must read exactly zero after the run.
+        for k in 0..MAG_BIAS_DOF {
+            assert_eq!(
+                aug.state().mean[base_dim + k],
+                0.0,
+                "bias mean slot {k} drifted; a random-walk mean must hold at its prior"
+            );
+        }
+    }
+
+    #[test]
+    fn augmented_predict_grows_bias_covariance_by_process_noise() {
+        use crate::data::primitives::FrameHandle;
+
+        let base_dim = ins_model().schema().tangent_dim();
+        let sensor = FrameId::Sensor(FrameHandle(9));
+        let mut aug = augmented_ins_ekf(&[sensor]);
+
+        let inputs = EstimatorInputs {
+            control: imu_control_script(),
+        };
+        for _ in 0..AUG_PREDICT_STEPS {
+            aug.predict(AUG_PREDICT_DT, &inputs);
+        }
+
+        // The dynamics Jacobian is block-diagonal with an identity bias block
+        // (zero bias derivative → zero Jacobian column → F_bias = I), and both P₀
+        // and Q are block-diagonal, so the bias covariance never couples to the
+        // base and its variance accumulates linearly at Q·dt per step.
+        let p0_bias = MAG_BIAS_INIT_UNCERTAINTY * MAG_BIAS_INIT_UNCERTAINTY;
+        let q_bias = MAG_BIAS_RANDOM_WALK * MAG_BIAS_RANDOM_WALK;
+        let expected = p0_bias + (AUG_PREDICT_STEPS as f64) * q_bias * AUG_PREDICT_DT;
+
+        for k in 0..MAG_BIAS_DOF {
+            let d = base_dim + k;
+            let got = aug.state().covariance[(d, d)];
+            assert!(
+                (got - expected).abs() < BIAS_COV_TOL,
+                "bias variance {k}: expected P₀ + N·Q·dt = {expected}, got {got}"
+            );
+        }
     }
 }

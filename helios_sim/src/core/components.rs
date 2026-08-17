@@ -1,9 +1,8 @@
 use bevy::prelude::*;
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::data::primitives::FrameHandle;
-use helios_core::frames::{
-    layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable,
-};
+use helios_core::estimation::dynamics::integrated_imu::ins_state_layout;
+use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::prelude::PlannerGoal;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
@@ -65,7 +64,7 @@ impl GroundTruthState {
     ) -> FrameAwareState {
         let body_frame = FrameId::Body(agent_handle);
         let world_frame = FrameId::World;
-        let layout = standard_ins_state_layout(agent_handle);
+        let layout = ins_state_layout(agent_handle);
         let mut state = FrameAwareState::new(layout, 1e-6, timestamp);
         let t = &self.pose.translation;
         state.set_variable(&StateVariable::Px(FrameId::World), t.x);

@@ -4,6 +4,8 @@
 //! and optionally overrides `jacobian`. The default `propagate` implementation
 //! delegates to an `Integrator` (prefer RK4). Concrete models: `integrated_imu`.
 
+pub mod integrated_imu;
+
 use crate::data::primitives::{Control, State};
 use crate::estimation::schema::StateSchema;
 use crate::utils::integrators::Integrator;
@@ -123,13 +125,10 @@ pub trait EstimationDynamics: Debug + Send + Sync {
         };
 
         // Define the closure f(x, t) for the integrator, capturing the current control input 'u'.
-        let func = |func_x: &State, func_t: f64| -> State {
-            self.derivatives(func_x, u_actual, func_t)
-        };
+        let func =
+            |func_x: &State, func_t: f64| -> State { self.derivatives(func_x, u_actual, func_t) };
 
         // Perform the integration step.
         integrator.step(&func, x, t, t + dt)
     }
 }
-
-pub mod integrated_imu;

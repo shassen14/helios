@@ -46,7 +46,7 @@ use crate::stamped::{Health, Stamped};
 
 use helios_core::data::messages::Twist;
 use helios_core::data::primitives::FrameHandle;
-use helios_core::frames::layout::standard_ins_state_layout;
+use helios_core::estimation::dynamics::integrated_imu::ins_state_layout;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 
 use nalgebra::Isometry3;
@@ -55,7 +55,7 @@ pub(crate) struct MockOracleEstimatorNode {
     name: String,
     agent_handle: FrameHandle,
     descriptor: PortDescriptor,
-    /// Cached at construction. `standard_ins_state_layout` allocates;
+    /// Cached at construction. `ins_state_layout` allocates;
     /// rebuilding it per tick at 200 Hz × N agents would be wasteful and
     /// the layout never changes for the lifetime of the node.
     layout: Vec<StateVariable>,
@@ -72,7 +72,7 @@ impl MockOracleEstimatorNode {
             name: name.into(),
             agent_handle,
             descriptor,
-            layout: standard_ins_state_layout(agent_handle),
+            layout: ins_state_layout(agent_handle),
         }
     }
 }

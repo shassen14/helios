@@ -6,7 +6,6 @@
 //! hardcode numeric indices.
 
 pub mod conventions;
-pub mod layout;
 pub mod quantities;
 pub mod transforms;
 

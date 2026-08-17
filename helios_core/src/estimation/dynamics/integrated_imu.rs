@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::data::primitives::{Control, FrameHandle, State};
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::schema::{SchemaBlock, StateSchema};
-use crate::frames::layout::STANDARD_INS_STATE_DIM;
 use crate::frames::{FrameId, StateVariable};
 use crate::manifold::euclidean::EuclideanBlock;
 use crate::manifold::quaternion::QuaternionBlock;
@@ -87,6 +86,30 @@ impl IntegratedImuModel {
     }
 }
 
+/// Returns the standard 16-dimensional state vector layout used for high-fidelity
+/// inertial navigation system (INS) filters.
+///
+/// The state is composed of:
+/// - Position (3) in World Frame
+/// - Velocity (3) in World Frame
+/// - Orientation (4, Quaternion) from World to Body Frame
+/// - Accelerometer Bias (3) in Body Frame
+/// - Gyroscope Bias (3) in Body Frame
+///
+/// # Arguments
+/// * `agent_handle`: The unique handle for the agent (body) whose state is being defined.
+pub fn ins_state_layout(agent_handle: FrameHandle) -> Vec<StateVariable> {
+    let body = FrameId::Body(agent_handle);
+    let world = FrameId::World;
+
+    let mut layout = position_vars(&world);
+    layout.extend(velocity_vars(&world));
+    layout.extend(orientation_vars(&body, &world));
+    layout.extend(accel_bias_vars(&body));
+    layout.extend(gyro_bias_vars(&body));
+    layout
+}
+
 fn compose_ins_schema(
     agent_handle: FrameHandle,
     accel_noise_var: f64, // = accel_noise_stddev²
@@ -113,11 +136,7 @@ fn compose_ins_schema(
                 DVector::zeros(3),
                 p0(pos_var, 3),
             )),
-            variables: vec![
-                StateVariable::Px(world.clone()),
-                StateVariable::Py(world.clone()),
-                StateVariable::Pz(world.clone()),
-            ],
+            variables: position_vars(&world),
             sensor: None,
         },
         // 2. Velocity (World) — Q from accel white noise.
@@ -127,11 +146,7 @@ fn compose_ins_schema(
                 DVector::zeros(3),
                 p0(default_p0, 3),
             )),
-            variables: vec![
-                StateVariable::Vx(world.clone()),
-                StateVariable::Vy(world.clone()),
-                StateVariable::Vz(world.clone()),
-            ],
+            variables: velocity_vars(&world),
             sensor: None,
         },
         // 3. Orientation (Body from World) — placeholder 4/4 quaternion
@@ -142,12 +157,7 @@ fn compose_ins_schema(
                 DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
                 p0(ori_var, 4),
             )),
-            variables: vec![
-                StateVariable::Qx(body.clone(), world.clone()),
-                StateVariable::Qy(body.clone(), world.clone()),
-                StateVariable::Qz(body.clone(), world.clone()),
-                StateVariable::Qw(body.clone(), world.clone()),
-            ],
+            variables: orientation_vars(&body, &world),
             sensor: None,
         },
         // 4. Accel bias (Body) — Q from bias instability.
@@ -157,11 +167,7 @@ fn compose_ins_schema(
                 DVector::zeros(3),
                 p0(default_p0, 3),
             )),
-            variables: vec![
-                StateVariable::Ax(body.clone()),
-                StateVariable::Ay(body.clone()),
-                StateVariable::Az(body.clone()),
-            ],
+            variables: accel_bias_vars(&body),
             sensor: None,
         },
         // 5. Gyro bias (Body) — Q from bias instability.
@@ -171,16 +177,53 @@ fn compose_ins_schema(
                 DVector::zeros(3),
                 p0(default_p0, 3),
             )),
-            variables: vec![
-                StateVariable::Wx(body.clone()),
-                StateVariable::Wy(body.clone()),
-                StateVariable::Wz(body.clone()),
-            ],
+            variables: gyro_bias_vars(&body),
             sensor: None,
         },
     ];
 
     StateSchema::compose(blocks)
+}
+
+fn position_vars(world: &FrameId) -> Vec<StateVariable> {
+    vec![
+        StateVariable::Px(world.clone()),
+        StateVariable::Py(world.clone()),
+        StateVariable::Pz(world.clone()),
+    ]
+}
+
+fn velocity_vars(world: &FrameId) -> Vec<StateVariable> {
+    vec![
+        StateVariable::Vx(world.clone()),
+        StateVariable::Vy(world.clone()),
+        StateVariable::Vz(world.clone()),
+    ]
+}
+
+fn orientation_vars(body: &FrameId, world: &FrameId) -> Vec<StateVariable> {
+    vec![
+        StateVariable::Qx(body.clone(), world.clone()),
+        StateVariable::Qy(body.clone(), world.clone()),
+        StateVariable::Qz(body.clone(), world.clone()),
+        StateVariable::Qw(body.clone(), world.clone()),
+    ]
+}
+
+fn accel_bias_vars(body: &FrameId) -> Vec<StateVariable> {
+    vec![
+        StateVariable::Ax(body.clone()),
+        StateVariable::Ay(body.clone()),
+        StateVariable::Az(body.clone()),
+    ]
+}
+
+fn gyro_bias_vars(body: &FrameId) -> Vec<StateVariable> {
+    vec![
+        StateVariable::Wx(body.clone()),
+        StateVariable::Wy(body.clone()),
+        StateVariable::Wz(body.clone()),
+    ]
 }
 
 impl EstimationDynamics for IntegratedImuModel {
@@ -194,7 +237,7 @@ impl EstimationDynamics for IntegratedImuModel {
     }
 
     fn derivatives(&self, x: &State, u: &Control, _t: f64) -> State {
-        let mut x_dot = DVector::zeros(STANDARD_INS_STATE_DIM);
+        let mut x_dot = DVector::zeros(x.nrows());
 
         // --- 1. Extract state variables and inputs  ---
         let q = self.quat_off;
@@ -249,10 +292,11 @@ impl EstimationDynamics for IntegratedImuModel {
 
     fn jacobian(&self, x: &State, u: &Control, t: f64) -> (DMatrix<f64>, DMatrix<f64>) {
         // --- Numerical Differentiation for the Dynamics Jacobians A and B ---
+        let state_dim = x.nrows();
 
         let control_dim = self.get_control_dim();
-        let mut a_jac = DMatrix::zeros(STANDARD_INS_STATE_DIM, STANDARD_INS_STATE_DIM);
-        let mut b_jac = DMatrix::zeros(STANDARD_INS_STATE_DIM, control_dim);
+        let mut a_jac = DMatrix::zeros(state_dim, state_dim);
+        let mut b_jac = DMatrix::zeros(state_dim, control_dim);
 
         let epsilon = 1e-7; // A small perturbation value
 
@@ -260,7 +304,7 @@ impl EstimationDynamics for IntegratedImuModel {
         let x_dot_base = self.derivatives(x, u, t);
 
         // --- 2. Calculate Jacobian A (w.r.t. state x) ---
-        for j in 0..STANDARD_INS_STATE_DIM {
+        for j in 0..state_dim {
             // Create a copy of the state vector to perturb.
             let mut x_perturbed = x.clone();
             x_perturbed[j] += epsilon;
@@ -333,11 +377,10 @@ mod tests {
 
     /// Builds a 16-element state vector with the identity quaternion at indices 6-9.
     ///
-    /// Index layout mirrors [`standard_ins_state_layout`](crate::frames::layout::standard_ins_state_layout):
-    /// 0-2 position, 3-5 velocity, 6-9 quaternion (Qx, Qy, Qz, Qw),
-    /// 10-12 accel bias, 13-15 gyro bias.
+    /// Index layout mirrors [`ins_state_layout`]: 0-2 position, 3-5 velocity,
+    /// 6-9 quaternion (Qx, Qy, Qz, Qw), 10-12 accel bias, 13-15 gyro bias.
     fn identity_state() -> DVector<f64> {
-        let mut x = DVector::zeros(STANDARD_INS_STATE_DIM);
+        let mut x = DVector::zeros(ins_state_layout(AGENT).len());
         x[9] = 1.0; // Qw = 1 → identity quaternion
         x
     }
@@ -359,6 +402,15 @@ mod tests {
         let schema = make_model().schema();
         assert_eq!(schema.storage_dim(), 16);
         assert_eq!(schema.tangent_dim(), 16);
+    }
+
+    #[test]
+    fn schema_layout_matches_ins_state_layout() {
+        // Single-source guard: the composed schema's block ordering and the
+        // standalone `ins_state_layout` are built from the same per-block groups
+        // in the same order, so neither can drift from the other unnoticed.
+        let schema = make_model().schema();
+        assert_eq!(schema.layout(), ins_state_layout(AGENT).as_slice());
     }
 
     #[test]
@@ -415,9 +467,12 @@ mod tests {
         let model = IntegratedImuModel::new(
             AGENT,
             Vector3::new(0.0, 0.0, -G),
-            0.1, 0.1, 0.1, 0.1, // noise values irrelevant to P₀
-            7.0,                // pos_var → position block
-            9.0,                // ori_var → orientation block
+            0.1,
+            0.1,
+            0.1,
+            0.1, // noise values irrelevant to P₀
+            7.0, // pos_var → position block
+            9.0, // ori_var → orientation block
         );
         let schema = model.schema();
         let p0 = schema.initial_covariance();
@@ -523,9 +578,10 @@ mod tests {
         let u = DVector::zeros(6);
         let (a_jac, b_jac) = model.jacobian(&x, &u, 0.0);
 
-        assert_eq!(a_jac.nrows(), STANDARD_INS_STATE_DIM, "A rows");
-        assert_eq!(a_jac.ncols(), STANDARD_INS_STATE_DIM, "A cols");
-        assert_eq!(b_jac.nrows(), STANDARD_INS_STATE_DIM, "B rows");
+        let dim = ins_state_layout(AGENT).len();
+        assert_eq!(a_jac.nrows(), dim, "A rows");
+        assert_eq!(a_jac.ncols(), dim, "A cols");
+        assert_eq!(b_jac.nrows(), dim, "B rows");
         assert_eq!(b_jac.ncols(), 6, "B cols = control_dim (ax,ay,az,wx,wy,wz)");
     }
 
