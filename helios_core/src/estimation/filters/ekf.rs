@@ -533,4 +533,160 @@ mod tests {
             "EKF should converge near {true_px} m, got {px}"
         );
     }
+
+    // --- Config-driven augmentation: construction + inspection (never stepped) ---
+    //
+    // These prove the augmentation seam: a config-declared bias block composes
+    // onto the frozen 16-state INS schema and yields a constructable EKF. The
+    // filters here are *never* `predict`ed. A live augmented predict needs a
+    // schema-sized dynamics — the INS model is schema-blind at 16, so stepping a
+    // 19-dim state would mismatch — which is separate, later work. What is under
+    // test is composition and construction, exactly what this milestone scopes.
+
+    /// Magnetometer hard-iron bias tuning for the augmentation tests. Both are
+    /// standard deviations (squared into `P₀` / `Q` by the descriptor), chosen
+    /// distinct from every base INS block variance so a misplaced value cannot
+    /// hide behind a shared number.
+    const MAG_BIAS_INIT_UNCERTAINTY: f64 = 0.3;
+    const MAG_BIAS_RANDOM_WALK: f64 = 0.02;
+    /// Degrees of freedom in one magnetometer hard-iron bias block.
+    const MAG_BIAS_DOF: usize = 3;
+
+    /// The frozen 16-state INS model, same tuning as the golden trajectory so its
+    /// base schema is the well-exercised one.
+    fn ins_model() -> crate::estimation::dynamics::integrated_imu::IntegratedImuModel {
+        use crate::data::primitives::FrameHandle;
+        use nalgebra::Vector3;
+
+        crate::estimation::dynamics::integrated_imu::IntegratedImuModel::new(
+            FrameHandle(7),
+            Vector3::new(0.0, 0.0, -9.81),
+            0.04,     // accel_noise_var
+            0.0025,   // gyro_noise_var
+            0.0001,   // accel_bias_var
+            0.000001, // gyro_bias_var
+            0.5,      // pos_var
+            0.02,     // ori_var
+        )
+    }
+
+    fn mag_bias_block(sensor: FrameId) -> crate::estimation::schema::SchemaBlock {
+        crate::estimation::augmentation::augmentation_block(
+            crate::estimation::augmentation::MAGNETOMETER_BIAS,
+            sensor,
+            MAG_BIAS_INIT_UNCERTAINTY,
+            MAG_BIAS_RANDOM_WALK,
+        )
+        .expect("well-formed magnetometer-bias block builds")
+    }
+
+    /// Builds an EKF whose state is the INS base augmented with one bias block
+    /// per `bias_sensors` entry. Construction only — the returned filter must not
+    /// be stepped (see the module note above).
+    fn augmented_ins_ekf(bias_sensors: &[FrameId]) -> ExtendedKalmanFilter {
+        use std::sync::Arc;
+
+        let model = ins_model();
+        let base = model.schema();
+        let blocks = bias_sensors.iter().cloned().map(mag_bias_block).collect();
+        let augmented = Arc::new(base.extended(blocks));
+        let state = FrameAwareState::from_schema(augmented.clone(), 0.0);
+        ExtendedKalmanFilter::new(state, augmented.process_noise().clone(), Box::new(model))
+    }
+
+    #[test]
+    fn augmented_ins_ekf_constructs_and_carries_the_bias_block() {
+        use crate::data::primitives::FrameHandle;
+        use std::sync::Arc;
+
+        let model = ins_model();
+        let base = model.schema();
+        let base_dim = base.tangent_dim();
+        let sensor = FrameId::Sensor(FrameHandle(9));
+
+        let augmented = Arc::new(base.extended(vec![mag_bias_block(sensor.clone())]));
+        let state = FrameAwareState::from_schema(augmented.clone(), 0.0);
+
+        // The construction seam: `ExtendedKalmanFilter::new`'s only assertion is
+        // `tangent_dim == Q dims`, which the composed schema satisfies. Reaching
+        // the next line without a panic is itself the proof that a 19-dim
+        // augmented schema builds a filter.
+        let ekf = ExtendedKalmanFilter::new(
+            state,
+            augmented.process_noise().clone(),
+            Box::new(model),
+        );
+        let state = ekf.state();
+
+        // Dimension grew by exactly the 3-DOF bias block, in both spaces.
+        assert_eq!(state.tangent_dim(), base_dim + MAG_BIAS_DOF);
+        assert_eq!(state.storage_dim(), base_dim + MAG_BIAS_DOF);
+
+        // The bias variables are appended after the base, tagged with the sensor,
+        // and the first sits exactly at the base boundary.
+        let layout = state.schema().layout();
+        assert_eq!(
+            &layout[base_dim..],
+            &[
+                StateVariable::MagBiasX(sensor.clone()),
+                StateVariable::MagBiasY(sensor.clone()),
+                StateVariable::MagBiasZ(sensor.clone()),
+            ]
+        );
+        assert_eq!(
+            state
+                .schema()
+                .storage_offset_of(&StateVariable::MagBiasX(sensor.clone())),
+            Some(base_dim)
+        );
+
+        // P₀ (the state's covariance): base corner byte-identical to the
+        // un-augmented schema; bias corner = init_uncertainty² isotropic.
+        let p = &state.covariance;
+        let base_p = base.initial_covariance();
+        for i in 0..base_dim {
+            for j in 0..base_dim {
+                assert_eq!(p[(i, j)], base_p[(i, j)], "P₀ base corner changed at ({i},{j})");
+            }
+        }
+        for k in 0..MAG_BIAS_DOF {
+            let d = base_dim + k;
+            assert_eq!(p[(d, d)], MAG_BIAS_INIT_UNCERTAINTY * MAG_BIAS_INIT_UNCERTAINTY);
+        }
+
+        // Q (the composed process noise fed to the filter): same story.
+        let q = augmented.process_noise();
+        let base_q = base.process_noise();
+        for i in 0..base_dim {
+            for j in 0..base_dim {
+                assert_eq!(q[(i, j)], base_q[(i, j)], "Q base corner changed at ({i},{j})");
+            }
+        }
+        for k in 0..MAG_BIAS_DOF {
+            let d = base_dim + k;
+            assert_eq!(q[(d, d)], MAG_BIAS_RANDOM_WALK * MAG_BIAS_RANDOM_WALK);
+        }
+    }
+
+    #[test]
+    fn augmentation_changes_ekf_dimension_by_block_size() {
+        use crate::data::primitives::FrameHandle;
+
+        // Distinct sensors so the two bias blocks are independent, not aliased.
+        let s9 = FrameId::Sensor(FrameHandle(9));
+        let s10 = FrameId::Sensor(FrameHandle(10));
+        let base_dim = ins_model().schema().tangent_dim();
+
+        // Cardinality is a load-time property (a Vec length): each added block
+        // shifts the state dimension by exactly its size, none required at build.
+        assert_eq!(augmented_ins_ekf(&[]).state().tangent_dim(), base_dim);
+        assert_eq!(
+            augmented_ins_ekf(&[s9.clone()]).state().tangent_dim(),
+            base_dim + MAG_BIAS_DOF
+        );
+        assert_eq!(
+            augmented_ins_ekf(&[s9, s10]).state().tangent_dim(),
+            base_dim + 2 * MAG_BIAS_DOF
+        );
+    }
 }
