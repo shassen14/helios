@@ -30,7 +30,7 @@ use std::sync::Arc;
 /// One block in a composed schema: the manifold [`StateBlock`], the ordered
 /// [`StateVariable`]s naming its stored slots, and the sensor frame it is tied
 /// to (if any). `variables.len()` must equal `block.storage_dim()`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SchemaBlock {
     pub block: Arc<dyn StateBlock>,
 
@@ -164,6 +164,22 @@ impl StateSchema {
             variables: layout.to_vec(),
             sensor: None,
         }])
+    }
+
+    /// Returns a new schema with `extra` blocks appended after this schema's own,
+    /// re-baking every offset / `P₀` / `Q` table. The base schema is left
+    /// unchanged; block clones are shallow (each is an `Arc` bump).
+    ///
+    /// The augmentation path: a base state (pose, velocity) gains per-device
+    /// nuisance blocks (sensor biases) without the base's dynamics knowing they
+    /// exist. Placement is inherited from [`compose`](Self::compose) — the new
+    /// blocks land in a fresh diagonal corner past the base, and the base's rows
+    /// and columns come out byte-identical — so this method never re-derives the
+    /// baking math, it re-runs it over the longer block list.
+    pub fn extended(&self, extra: Vec<SchemaBlock>) -> StateSchema {
+        let mut combined = self.blocks.clone();
+        combined.extend(extra);
+        StateSchema::compose(combined)
     }
 
     /// Retracts `x` (storage space) by `delta` (tangent space), walking each
@@ -366,5 +382,124 @@ mod tests {
             ],
             sensor: None,
         }]);
+    }
+
+    // Augmentation prior std-dev and random-walk for the extended-schema tests.
+    // Kept distinct from the base blocks' 0.1 / 0.5 so the new diagonal corner is
+    // unmistakably the augmentation's and not a base value bleeding across.
+    const AUG_INIT_UNCERTAINTY: f64 = 0.25;
+    const AUG_RANDOM_WALK: f64 = 0.02;
+
+    fn mag_sensor() -> FrameId {
+        FrameId::Sensor(crate::data::primitives::FrameHandle(3))
+    }
+
+    fn mag_bias_block() -> SchemaBlock {
+        crate::estimation::augmentation::augmentation_block(
+            crate::estimation::augmentation::MAGNETOMETER_BIAS,
+            mag_sensor(),
+            AUG_INIT_UNCERTAINTY,
+            AUG_RANDOM_WALK,
+        )
+        .expect("well-formed magnetometer-bias block builds")
+    }
+
+    #[test]
+    fn extended_appends_block_and_grows_both_dims_by_its_size() {
+        let base = pos_vel_schema();
+        let base_storage = base.storage_dim();
+        let base_tangent = base.tangent_dim();
+
+        let extended = base.extended(vec![mag_bias_block()]);
+
+        // A 3-DOF Euclidean block grows storage and tangent equally.
+        assert_eq!(extended.storage_dim(), base_storage + 3);
+        assert_eq!(extended.tangent_dim(), base_tangent + 3);
+    }
+
+    #[test]
+    fn extended_layout_ends_with_the_augmentation_variables() {
+        let base = pos_vel_schema();
+        let base_storage = base.storage_dim();
+
+        let extended = base.extended(vec![mag_bias_block()]);
+
+        // The base names are untouched at the front …
+        assert_eq!(&extended.layout()[..base_storage], base.layout());
+        // … and the three bias vars, tagged with the sensor, are appended.
+        assert_eq!(
+            &extended.layout()[base_storage..],
+            &[
+                StateVariable::MagBiasX(mag_sensor()),
+                StateVariable::MagBiasY(mag_sensor()),
+                StateVariable::MagBiasZ(mag_sensor()),
+            ]
+        );
+    }
+
+    #[test]
+    fn extended_first_bias_slot_sits_at_the_base_boundary() {
+        let base = pos_vel_schema();
+        let base_storage = base.storage_dim();
+
+        let extended = base.extended(vec![mag_bias_block()]);
+
+        assert_eq!(
+            extended.storage_offset_of(&StateVariable::MagBiasX(mag_sensor())),
+            Some(base_storage)
+        );
+    }
+
+    #[test]
+    fn extended_puts_augmentation_on_a_disjoint_diagonal_corner() {
+        let base = pos_vel_schema();
+        // Euclidean throughout, so storage and tangent indices coincide.
+        let boundary = base.tangent_dim();
+
+        let extended = base.extended(vec![mag_bias_block()]);
+        let p = extended.initial_covariance();
+        let q = extended.process_noise();
+
+        // The base corner is byte-identical to the un-extended schema's tables.
+        let (bp, bq) = (base.initial_covariance(), base.process_noise());
+        for i in 0..boundary {
+            for j in 0..boundary {
+                assert_eq!(p[(i, j)], bp[(i, j)], "P base corner changed at ({i},{j})");
+                assert_eq!(q[(i, j)], bq[(i, j)], "Q base corner changed at ({i},{j})");
+            }
+        }
+
+        // The augmentation corner carries init_uncertainty² on P and
+        // random_walk² on Q, isotropic on the diagonal.
+        for k in 0..3 {
+            let d = boundary + k;
+            assert_eq!(p[(d, d)], AUG_INIT_UNCERTAINTY * AUG_INIT_UNCERTAINTY);
+            assert_eq!(q[(d, d)], AUG_RANDOM_WALK * AUG_RANDOM_WALK);
+        }
+
+        // No correlation is introduced between the base and the augmentation:
+        // every off-diagonal cross term stays zero in both tables.
+        for i in 0..boundary {
+            for k in 0..3 {
+                let d = boundary + k;
+                assert_eq!(p[(i, d)], 0.0);
+                assert_eq!(p[(d, i)], 0.0);
+                assert_eq!(q[(i, d)], 0.0);
+                assert_eq!(q[(d, i)], 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn extended_leaves_the_base_schema_untouched() {
+        let base = pos_vel_schema();
+        let base_storage = base.storage_dim();
+
+        let _extended = base.extended(vec![mag_bias_block()]);
+
+        // `extended` takes `&self` and clones; the original is unchanged and
+        // still usable afterward.
+        assert_eq!(base.storage_dim(), base_storage);
+        assert_eq!(base.layout().len(), base_storage);
     }
 }

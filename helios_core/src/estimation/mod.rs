@@ -3,6 +3,7 @@
 //! Defines [`GaussianStateEstimator`], the trait shared by EKF, UKF, ESKF, and
 //! information-form filters. Concrete implementations live in [`filters`].
 
+pub mod augmentation;
 pub mod dynamics;
 pub mod filters;
 pub mod measurement;

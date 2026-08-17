@@ -65,6 +65,10 @@ pub enum StateVariable {
     MagX(FrameId),
     MagY(FrameId),
     MagZ(FrameId),
+    // --- Bias ---
+    MagBiasX(FrameId),
+    MagBiasY(FrameId),
+    MagBiasZ(FrameId),
 }
 
 #[derive(Debug, Clone, Serialize)]
