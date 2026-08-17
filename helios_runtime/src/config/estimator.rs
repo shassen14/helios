@@ -143,16 +143,6 @@ impl EkfDynamicsConfig {
             EkfDynamicsConfig::Quadcopter(_) => "Quadcopter",
         }
     }
-
-    /// World-frame gravity vector `[east, north, up]` (m/s²) used by this
-    /// dynamics model.
-    pub(crate) fn gravity_enu(&self) -> [f64; 3] {
-        match self {
-            EkfDynamicsConfig::IntegratedImu(c) => c.gravity_enu,
-            EkfDynamicsConfig::AckermannOdometry(_) => default_gravity_enu(),
-            EkfDynamicsConfig::Quadcopter(_) => default_gravity_enu(),
-        }
-    }
 }
 
 /// Config for the IMU-integrated dynamics model.

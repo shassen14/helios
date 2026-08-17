@@ -18,7 +18,6 @@
 //! consume them.
 
 mod assemble;
-mod dynamics;
 mod input;
 mod measurement;
 mod node;
@@ -31,7 +30,6 @@ pub(crate) use node::{AidingHandler, TypedAidingHandler};
 use crate::registry::AutonomyRegistry;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
-    dynamics::register(registry);
     measurement::register(registry);
     register::register(registry);
 }

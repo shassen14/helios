@@ -9,7 +9,6 @@ use crate::config::{AutonomyStack, CommandSource, EstimatorConfig, MapLayerConfi
 /// families have implementations.
 pub struct CapabilitySet {
     pub gaussian_estimators: HashSet<String>,
-    pub dynamics: HashSet<String>,
     pub measurement_models: HashSet<String>,
     pub mappers: HashSet<String>,
     pub controllers: HashSet<String>,
@@ -24,15 +23,8 @@ pub enum ConfigValidationError {
         instance: String,
         kind: String,
     },
-    UnknownDynamics {
-        kind: String,
-    },
     UnknownController {
         kind: String,
-    },
-    UnknownControllerDynamics {
-        controller_kind: String,
-        dynamics_key: String,
     },
     UnknownMapper {
         kind: String,
@@ -93,19 +85,9 @@ impl std::fmt::Display for ConfigValidationError {
                     "Unknown Gaussian estimator kind '{kind}' in estimator '{instance}'"
                 )
             }
-            ConfigValidationError::UnknownDynamics { kind } => {
-                write!(f, "Unknown dynamics kind '{kind}'")
-            }
             ConfigValidationError::UnknownController { kind } => {
                 write!(f, "Unknown controller kind '{kind}'")
             }
-            ConfigValidationError::UnknownControllerDynamics {
-                controller_kind,
-                dynamics_key,
-            } => write!(
-                f,
-                "Controller '{controller_kind}' references unknown dynamics_key '{dynamics_key}'"
-            ),
             ConfigValidationError::UnknownMapper { kind } => {
                 write!(f, "Unknown mapper kind '{kind}'")
             }
@@ -207,13 +189,6 @@ pub fn validate_autonomy_config(
 
         // Validate dynamics and aiding for EKF configs.
         if let EstimatorConfig::Ekf(ekf) = est_cfg {
-            let dyn_kind = ekf.dynamics.get_kind_str();
-            if !capabilities.dynamics.contains(dyn_kind) {
-                errors.push(ConfigValidationError::UnknownDynamics {
-                    kind: dyn_kind.to_string(),
-                });
-            }
-
             for aiding in &ekf.aiding {
                 if !capabilities.measurement_models.contains(&aiding.model.kind) {
                     errors.push(ConfigValidationError::UnknownMeasurementModel {

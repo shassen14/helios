@@ -13,17 +13,6 @@ use crate::port::InternalChannel;
 
 use helios_core::data::primitives::FrameHandle;
 
-/// Context for building a dynamics model (e.g. `IntegratedImuModel`).
-///
-/// `gravity_enu` is the world-frame gravity vector `[east, north, up]` (m/s²),
-/// sourced from the dynamics config (`EkfDynamicsConfig::gravity_enu()`) by the
-/// gaussian estimator factory — callers outside the assembler should not need
-/// to supply it independently.
-pub struct DynamicsBuildContext {
-    pub agent_handle: FrameHandle,
-    pub(crate) gravity_enu: [f64; 3],
-}
-
 /// Context for building a complete `GaussianEstimatorNode`.
 ///
 /// The host derives `agent_handle` from its entity system

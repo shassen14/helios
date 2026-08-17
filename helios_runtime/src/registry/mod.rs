@@ -23,9 +23,9 @@
 pub mod contexts;
 
 use contexts::{
-    ControllerBuildContext, DynamicsBuildContext, GaussianEstimatorBuildContext,
-    MapperBuildContext, MeasurementModelBuildContext, MockEstimatorBuildContext,
-    PathFollowerBuildContext, SearchPlannerBuildContext,
+    ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
+    MeasurementModelBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
+    SearchPlannerBuildContext,
 };
 
 use crate::config::EstimatorConfig;
@@ -33,13 +33,9 @@ use crate::pipeline::node::PipelineNode;
 use crate::registry::contexts::AllocatorBuildContext;
 use crate::validation::CapabilitySet;
 
-use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::measurement::MeasurementModel;
 
 use std::collections::HashMap;
-
-type DynamicsFactory =
-    Box<dyn Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String> + Send + Sync>;
 
 type MeasurementModelFactory = Box<
     dyn Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> + Send + Sync,
@@ -82,7 +78,6 @@ type MockEstimatorFactory = Box<
 /// function. Keys match the `kind` strings used in TOML config (e.g. `"Ekf"`,
 /// `"AStar"`, `"PurePursuit"`).
 pub struct AutonomyRegistry {
-    dynamics: HashMap<String, DynamicsFactory>,
     measurement_models: HashMap<String, MeasurementModelFactory>,
     gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
     mappers: HashMap<String, MapperFactory>,
@@ -97,7 +92,6 @@ pub struct AutonomyRegistry {
 impl Default for AutonomyRegistry {
     fn default() -> Self {
         let mut registry = Self {
-            dynamics: HashMap::new(),
             measurement_models: HashMap::new(),
             gaussian_estimators: HashMap::new(),
             mappers: HashMap::new(),
@@ -121,17 +115,6 @@ impl Default for AutonomyRegistry {
 
 impl AutonomyRegistry {
     // --- Registration ---
-
-    pub(crate) fn register_dynamics(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.dynamics.insert(key.into(), Box::new(factory));
-    }
 
     pub(crate) fn register_measurement_model(
         &mut self,
@@ -229,16 +212,6 @@ impl AutonomyRegistry {
 
     // --- Build ---
 
-    pub(crate) fn build_dynamics(
-        &self,
-        key: &str,
-        ctx: DynamicsBuildContext,
-    ) -> Result<Box<dyn EstimationDynamics>, String> {
-        self.dynamics
-            .get(key)
-            .ok_or_else(|| format!("No dynamics factory registered for '{key}'"))?(ctx)
-    }
-
     pub(crate) fn build_measurement_model(
         &self,
         key: &str,
@@ -332,7 +305,6 @@ impl AutonomyRegistry {
     pub fn capabilities(&self) -> CapabilitySet {
         CapabilitySet {
             gaussian_estimators: self.gaussian_estimators.keys().cloned().collect(),
-            dynamics: self.dynamics.keys().cloned().collect(),
             measurement_models: self.measurement_models.keys().cloned().collect(),
             mappers: self.mappers.keys().cloned().collect(),
             controllers: self.controllers.keys().cloned().collect(),

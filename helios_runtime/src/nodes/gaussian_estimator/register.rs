@@ -4,17 +4,15 @@ use super::input::IntegratedImuInputBuilder;
 use super::node::GaussianEstimatorNode;
 
 use crate::config::{EkfDynamicsConfig, EstimatorConfig};
+use crate::nodes::gaussian_estimator::EstimatorInputBuilder;
 use crate::pipeline::node::PipelineNode;
-use crate::registry::{
-    contexts::{DynamicsBuildContext, GaussianEstimatorBuildContext},
-    AutonomyRegistry,
-};
+use crate::registry::{contexts::GaussianEstimatorBuildContext, AutonomyRegistry};
 
+use helios_core::estimation::dynamics::{integrated_imu::IntegratedImuModel, EstimationDynamics};
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
-use helios_core::frames::layout::{standard_ins_state_layout, STANDARD_INS_STATE_DIM};
-use helios_core::frames::{FrameId, StateVariable};
+use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 
-use nalgebra::{DMatrix, Isometry3, Quaternion, Translation3, UnitQuaternion};
+use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_gaussian_estimator("Ekf", build_ekf);
@@ -25,72 +23,53 @@ pub(crate) fn register(registry: &mut AutonomyRegistry) {
 fn build_ekf(
     config: EstimatorConfig,
     ctx: GaussianEstimatorBuildContext,
-    registry: &AutonomyRegistry,
+    _registry: &AutonomyRegistry,
 ) -> Result<Box<dyn PipelineNode>, String> {
     let EstimatorConfig::Ekf(ekf_config) = config else {
         return Err("build_ekf received non-Ekf config".to_string());
     };
 
     let agent_handle = ctx.agent_handle;
-    let dim = STANDARD_INS_STATE_DIM;
 
-    // --- 1. Build Q process-noise matrix from dynamics config ---
-    let mut q = DMatrix::<f64>::zeros(dim, dim);
-    let dynamics_key = ekf_config.dynamics.get_kind_str();
-
-    match &ekf_config.dynamics {
-        EkfDynamicsConfig::IntegratedImu(n) => {
-            let an = n.accel_noise_stddev.powi(2);
-            let gn = n.gyro_noise_stddev.powi(2);
-            let ab = n.accel_bias_instability.powi(2);
-            let gb = n.gyro_bias_instability.powi(2);
-            q[(3, 3)] = an;
-            q[(4, 4)] = an;
-            q[(5, 5)] = an;
-            q[(6, 6)] = gn;
-            q[(7, 7)] = gn;
-            q[(8, 8)] = gn;
-            q[(9, 9)] = gn;
-            q[(10, 10)] = ab;
-            q[(11, 11)] = ab;
-            q[(12, 12)] = ab;
-            q[(13, 13)] = gb;
-            q[(14, 14)] = gb;
-            q[(15, 15)] = gb;
-        }
-        EkfDynamicsConfig::AckermannOdometry(n) => {
-            let v = n.velocity_stddev.powi(2);
-            let w = n.yaw_rate_stddev.powi(2);
-            q[(3, 3)] = v;
-            q[(5, 5)] = w;
-        }
-        EkfDynamicsConfig::Quadcopter(n) => {
-            let f = n.force_stddev.powi(2);
-            let t = n.torque_stddev.powi(2);
-            q[(3, 3)] = f;
-            q[(4, 4)] = f;
-            q[(5, 5)] = f;
-            q[(6, 6)] = t;
-            q[(7, 7)] = t;
-            q[(8, 8)] = t;
-            q[(9, 9)] = t;
-        }
-    }
-
-    // --- 2. Build dynamics via registry (gravity sourced from dynamics config) ---
-    let gravity_enu = ekf_config.dynamics.gravity_enu();
-    let dynamics = registry.build_dynamics(
-        dynamics_key,
-        DynamicsBuildContext {
-            agent_handle,
-            gravity_enu,
-        },
-    )?;
-
-    // --- 3. Seed initial state from EkfInitialStateConfig ---
     let init = &ekf_config.initial_state;
-    let state_layout = standard_ins_state_layout(agent_handle);
-    let mut initial_state = helios_core::frames::FrameAwareState::new(state_layout, 1.0, 0.0);
+
+    let (dynamics, input_builder): (Box<dyn EstimationDynamics>, Box<dyn EstimatorInputBuilder>) =
+        match &ekf_config.dynamics {
+            EkfDynamicsConfig::IntegratedImu(c) => (
+                Box::new(IntegratedImuModel::new(
+                    agent_handle,
+                    Vector3::from_column_slice(&c.gravity_enu),
+                    c.accel_noise_stddev.powi(2),
+                    c.gyro_noise_stddev.powi(2),
+                    c.accel_bias_instability.powi(2),
+                    c.gyro_bias_instability.powi(2),
+                    init.position_uncertainty_m.powi(2),
+                    init.orientation_uncertainty_deg.to_radians().powi(2),
+                )),
+                Box::new(IntegratedImuInputBuilder::new(
+                    c.accel_channel.as_str(),
+                    c.gyro_channel.as_str(),
+                )),
+            ),
+            EkfDynamicsConfig::AckermannOdometry(_) | EkfDynamicsConfig::Quadcopter(_) => {
+                return Err(format!(
+                    "EKF dynamics kind '{}' is not yet implemented",
+                    ekf_config.dynamics.get_kind_str()
+                ));
+            }
+        };
+
+    // The dynamics model is the single author of its state shape: process
+    // noise (Q) and initial covariance (P₀) are both baked into the schema from
+    // the variances passed to `new` above, so we read them back rather than
+    // rebuilding them here.
+    let schema = dynamics.schema();
+    let q = schema.process_noise().clone();
+
+    // Seed the initial state from the schema (mean = zeros + identity
+    // orientation, covariance = P₀), then overwrite only the mean pose with this
+    // scenario's starting position/heading — the one thing the schema can't know.
+    let mut initial_state = FrameAwareState::from_schema(schema, 0.0);
 
     let yaw = init.heading_deg.to_radians();
     let iso = Isometry3::from_parts(
@@ -116,39 +95,6 @@ fn build_ekf(
     initial_state.set_variable(&StateVariable::Qz(body.clone(), world.clone()), q_rot.k);
     initial_state.set_variable(&StateVariable::Qw(body, world), q_rot.w);
 
-    // Apply configured initial covariance.
-    let pos_var = init.position_uncertainty_m.powi(2);
-    let ori_var = init.orientation_uncertainty_deg.to_radians().powi(2);
-    for (i, var) in initial_state.state.layout.iter().enumerate() {
-        match var {
-            StateVariable::Px(_) | StateVariable::Py(_) | StateVariable::Pz(_) => {
-                initial_state.covariance[(i, i)] = pos_var;
-            }
-            StateVariable::Qx(_, _)
-            | StateVariable::Qy(_, _)
-            | StateVariable::Qz(_, _)
-            | StateVariable::Qw(_, _) => {
-                initial_state.covariance[(i, i)] = ori_var;
-            }
-            _ => {}
-        }
-    }
-
-    // --- 4. Select input builder based on dynamics kind ---
-    let input_builder: Box<dyn super::input::EstimatorInputBuilder> =
-        match &ekf_config.dynamics {
-            EkfDynamicsConfig::IntegratedImu(imu_cfg) => Box::new(IntegratedImuInputBuilder::new(
-                imu_cfg.accel_channel.as_str(),
-                imu_cfg.gyro_channel.as_str(),
-            )),
-            EkfDynamicsConfig::AckermannOdometry(_) | EkfDynamicsConfig::Quadcopter(_) => {
-                return Err(format!(
-                    "No input builder implemented for dynamics kind '{dynamics_key}'"
-                ));
-            }
-        };
-
-    // --- 5. Assemble node ---
     let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
     Ok(Box::new(GaussianEstimatorNode::new(
         ctx.instance_name,
@@ -162,24 +108,31 @@ fn build_ekf(
 mod tests {
     use super::*;
 
-    use crate::config::{EkfConfig, EkfInitialStateConfig, IntegratedImuConfig};
+    use crate::config::{
+        AckermannProcessNoiseConfig, EkfConfig, EkfInitialStateConfig, IntegratedImuConfig,
+        QuadcopterProcessNoiseConfig,
+    };
 
     use helios_core::data::primitives::FrameHandle;
 
-    fn config() -> EstimatorConfig {
+    fn ekf_config_with(dynamics: EkfDynamicsConfig) -> EstimatorConfig {
         EstimatorConfig::Ekf(EkfConfig {
-            dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
-                gravity_enu: [0.0, 0.0, -9.81],
-                accel_noise_stddev: 0.1,
-                gyro_noise_stddev: 0.01,
-                accel_bias_instability: 0.001,
-                gyro_bias_instability: 0.0001,
-                accel_channel: "imu/accel".to_string(),
-                gyro_channel: "imu/gyro".to_string(),
-            }),
+            dynamics,
             aiding: vec![],
             initial_state: EkfInitialStateConfig::default(),
         })
+    }
+
+    fn config() -> EstimatorConfig {
+        ekf_config_with(EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
+            gravity_enu: [0.0, 0.0, -9.81],
+            accel_noise_stddev: 0.1,
+            gyro_noise_stddev: 0.01,
+            accel_bias_instability: 0.001,
+            gyro_bias_instability: 0.0001,
+            accel_channel: "imu/accel".to_string(),
+            gyro_channel: "imu/gyro".to_string(),
+        }))
     }
 
     fn context(instance_name: &str) -> GaussianEstimatorBuildContext {
@@ -200,5 +153,48 @@ mod tests {
 
         assert_eq!(primary.name(), "primary");
         assert_eq!(backup.name(), "backup");
+    }
+
+    // Only the IntegratedImu dynamics kind is wired; the other two must be
+    // rejected with an error, never panic, so a misconfigured stack fails at
+    // build time with a legible message instead of at runtime.
+    #[test]
+    fn unimplemented_dynamics_kinds_return_err() {
+        let registry = AutonomyRegistry::default();
+
+        let ackermann = ekf_config_with(EkfDynamicsConfig::AckermannOdometry(
+            AckermannProcessNoiseConfig {
+                velocity_stddev: 0.1,
+                yaw_rate_stddev: 0.01,
+            },
+        ));
+        let quadcopter = ekf_config_with(EkfDynamicsConfig::Quadcopter(
+            QuadcopterProcessNoiseConfig {
+                force_stddev: 0.1,
+                torque_stddev: 0.01,
+            },
+        ));
+
+        assert!(build_ekf(ackermann, context("a"), &registry).is_err());
+        assert!(build_ekf(quadcopter, context("q"), &registry).is_err());
+    }
+
+    // A non-default initial pose + uncertainty must build cleanly: this drives
+    // the `pos_var` / `ori_var` values through the schema's P₀ and the EKF's
+    // `tangent_dim == Q.nrows()` assert without a dimension mismatch.
+    #[test]
+    fn custom_initial_state_builds() {
+        let registry = AutonomyRegistry::default();
+
+        let EstimatorConfig::Ekf(mut ekf) = config() else {
+            unreachable!("config() is an Ekf");
+        };
+        ekf.initial_state.x = 5.0;
+        ekf.initial_state.heading_deg = 90.0;
+        ekf.initial_state.position_uncertainty_m = 3.0;
+        ekf.initial_state.orientation_uncertainty_deg = 10.0;
+
+        let node = build_ekf(EstimatorConfig::Ekf(ekf), context("custom"), &registry);
+        assert!(node.is_ok());
     }
 }

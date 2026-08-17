@@ -33,9 +33,8 @@ pub use crate::config::{
     SensorModelConfig, UkfConfig,
 };
 pub use crate::registry::contexts::{
-    ControllerBuildContext, DynamicsBuildContext, GaussianEstimatorBuildContext,
-    MapperBuildContext, MeasurementModelBuildContext, PathFollowerBuildContext,
-    SearchPlannerBuildContext,
+    ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
+    MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 pub use crate::registry::AutonomyRegistry;
 pub use crate::runtime::AgentRuntime;
