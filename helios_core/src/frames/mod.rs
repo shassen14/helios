@@ -361,6 +361,10 @@ impl FrameAwareState {
                 StateVariable::MagY(id.clone()),
                 StateVariable::MagZ(id.clone()),
             ),
+            StateVariable::MagBiasX(id) => (
+                StateVariable::MagBiasY(id.clone()),
+                StateVariable::MagBiasZ(id.clone()),
+            ),
             _ => return None,
         };
 

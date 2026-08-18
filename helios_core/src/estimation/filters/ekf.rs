@@ -799,4 +799,85 @@ mod tests {
             );
         }
     }
+
+    // --- Config-driven augmentation: live update (the observability proof) ---
+    //
+    // Predict alone leaves the bias a random walk (mean fixed, variance growing).
+    // What certifies M2 is that the *update* observes it: a magnetometer reading
+    // consistent with a nonzero true bias must both pull the bias estimate off its
+    // zero prior toward that truth and shrink its variance. This is only possible
+    // because `MagneticFieldModel::predict_measurement` reads the bias slots, so
+    // the finite-difference Jacobian grows identity columns over them and the
+    // Kalman gain carries a nonzero correction into the appended block.
+
+    /// Isotropic magnetometer measurement variance for the update test — small
+    /// relative to the bias prior (`MAG_BIAS_INIT_UNCERTAINTY²`), so a persistent
+    /// innovation is attributed largely to the poorly-known bias rather than the
+    /// tightly-held attitude.
+    const MAG_MEASUREMENT_VAR: f64 = 0.01;
+    /// Update count for the convergence test — enough repeated readings for the
+    /// bias estimate to move clearly off its prior.
+    const MAG_UPDATE_STEPS: usize = 100;
+
+    #[test]
+    fn augmented_update_drives_bias_toward_truth() {
+        use crate::data::primitives::FrameHandle;
+        use crate::estimation::measurement::magnetometer::MagneticFieldModel;
+        use nalgebra::Vector3;
+
+        let base_dim = ins_model().schema().tangent_dim();
+        let sensor_handle = FrameHandle(9);
+        let sensor = FrameId::Sensor(sensor_handle);
+        let mut ekf = augmented_ins_ekf(&[sensor.clone()]);
+
+        let model = MagneticFieldModel {
+            agent_handle: FrameHandle(7),
+            sensor_handle,
+            world_magnetic_field: Vector3::new(0.2, 0.4, -0.3),
+        };
+        let r = DMatrix::identity(3, 3) * MAG_MEASUREMENT_VAR;
+
+        // The reading a stationary sensor with hard-iron bias `b_true` produces:
+        // evaluate the model's own prediction on a copy of the initial state whose
+        // bias slots hold the truth. Feeding this constant reading back to the
+        // filter (whose bias starts at zero) is a persistent, consistent innovation.
+        let b_true = Vector3::new(0.15, -0.1, 0.08);
+        let mut truth_state = ekf.state().clone();
+        truth_state.set_variable(&StateVariable::MagBiasX(sensor.clone()), b_true.x);
+        truth_state.set_variable(&StateVariable::MagBiasY(sensor.clone()), b_true.y);
+        truth_state.set_variable(&StateVariable::MagBiasZ(sensor.clone()), b_true.z);
+        let z = model
+            .predict_measurement(&truth_state, Some(&IdentityTf), AT)
+            .expect("mag prediction under identity TF is defined");
+
+        let p0_bias = MAG_BIAS_INIT_UNCERTAINTY * MAG_BIAS_INIT_UNCERTAINTY;
+        for _ in 0..MAG_UPDATE_STEPS {
+            ekf.update(&z, &model, &r, Some(&IdentityTf), AT);
+        }
+
+        let state = ekf.state();
+        let b_est = Vector3::new(
+            state.mean[base_dim],
+            state.mean[base_dim + 1],
+            state.mean[base_dim + 2],
+        );
+
+        // The estimate moved off the zero prior toward the truth: its error is
+        // strictly smaller than the initial error (the whole of `b_true`).
+        assert!(
+            (b_est - b_true).norm() < b_true.norm(),
+            "bias estimate {b_est:?} did not move toward truth {b_true:?}"
+        );
+
+        // Every bias variance shrank below the prior — the update extracted
+        // information about the block, which is the observability claim.
+        for k in 0..MAG_BIAS_DOF {
+            let d = base_dim + k;
+            let var = state.covariance[(d, d)];
+            assert!(
+                var < p0_bias,
+                "bias variance {k} = {var} did not drop below prior {p0_bias}"
+            );
+        }
+    }
 }

@@ -1,7 +1,7 @@
 use crate::{
     data::{ports::TfProvider, primitives::FrameHandle, MonotonicTime},
     estimation::measurement::MeasurementModel,
-    frames::{conventions::Flu, FrameAwareState, FrameId},
+    frames::{conventions::Flu, FrameAwareState, FrameId, StateVariable},
 };
 use nalgebra::{DVector, Vector3};
 
@@ -52,9 +52,13 @@ impl MeasurementModel for MagneticFieldModel {
 
         let rot_sensor_from_body = iso.rotation;
 
-        Some(DVector::from_row_slice(
-            (rot_sensor_from_body.inverse() * predicted_mag_body).as_slice(),
-        ))
+        let sensor = FrameId::Sensor(self.sensor_handle);
+        let bias = filter_state
+            .get_vector3(&StateVariable::MagBiasX(sensor))
+            .unwrap_or_else(Vector3::zeros);
+        let predicted_sensor = rot_sensor_from_body.inverse() * predicted_mag_body + bias;
+
+        Some(DVector::from_row_slice(predicted_sensor.as_slice()))
     }
 }
 
@@ -67,6 +71,11 @@ mod tests {
     //! - Identity mount, 90° CCW yaw: a North-pointing world field appears along
     //!   body +X.
     //! - Rotated mount: the body-frame field is carried on into the sensor frame.
+    //! - Bias block present: the estimated hard-iron bias adds into the sensor-
+    //!   frame prediction, and the measurement Jacobian carries identity columns
+    //!   over the bias slots.
+    //! - Bias block absent: an un-augmented state predicts exactly as before —
+    //!   the bias read falls back to zero.
 
     use super::*;
     use crate::data::primitives::FrameHandle;
@@ -131,6 +140,30 @@ mod tests {
         }
     }
 
+    /// A state carrying the orientation quaternion followed by a magnetometer
+    /// hard-iron bias block for `SENSOR`, the bias initialised to `bias`.
+    /// Orientation is identity, so the field prediction isolates the bias term.
+    fn make_augmented_state(bias: Vector3<f64>) -> FrameAwareState {
+        let body = FrameId::Body(AGENT);
+        let world = FrameId::World;
+        let sensor = FrameId::Sensor(SENSOR);
+        let layout = vec![
+            StateVariable::Qx(body.clone(), world.clone()),
+            StateVariable::Qy(body.clone(), world.clone()),
+            StateVariable::Qz(body.clone(), world.clone()),
+            StateVariable::Qw(body.clone(), world.clone()),
+            StateVariable::MagBiasX(sensor.clone()),
+            StateVariable::MagBiasY(sensor.clone()),
+            StateVariable::MagBiasZ(sensor.clone()),
+        ];
+        let mut state = FrameAwareState::new(layout, 1.0, 0.0);
+        state.set_variable(&StateVariable::Qw(body, world), 1.0);
+        state.set_variable(&StateVariable::MagBiasX(sensor.clone()), bias.x);
+        state.set_variable(&StateVariable::MagBiasY(sensor.clone()), bias.y);
+        state.set_variable(&StateVariable::MagBiasZ(sensor), bias.z);
+        state
+    }
+
     #[test]
     fn dim_is_three() {
         assert_eq!(make_model().dim(), 3);
@@ -185,5 +218,64 @@ mod tests {
         assert!((z[0] - 1.0).abs() < 1e-9);
         assert!(z[1].abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
+    }
+
+    #[test]
+    fn predict_adds_the_estimated_bias_when_the_block_is_present() {
+        // An augmented state carries a per-sensor hard-iron bias. With identity
+        // orientation and identity mount the field prediction is the world field
+        // itself, so the measurement is that field plus the bias, component-wise.
+        let model = make_model();
+        let bias = Vector3::new(0.1, -0.2, 0.05);
+        let state = make_augmented_state(bias);
+        let z = model
+            .predict_measurement(&state, Some(&identity_mount()), AT)
+            .unwrap();
+        assert!((z[0] - bias.x).abs() < 1e-9);
+        assert!((z[1] - (1.0 + bias.y)).abs() < 1e-9);
+        assert!((z[2] - bias.z).abs() < 1e-9);
+    }
+
+    #[test]
+    fn predict_without_a_bias_block_is_unchanged() {
+        // The un-augmented state has no bias slots, so the bias read abstains and
+        // the prediction is the bare world field — bit-identical to the model
+        // before hard-iron estimation existed. This pins the zero-fallback that
+        // keeps the base (16-state) filter's behaviour frozen.
+        let model = make_model();
+        let state = make_orientation_state();
+        let z = model
+            .predict_measurement(&state, Some(&identity_mount()), AT)
+            .unwrap();
+        assert!(z[0].abs() < 1e-9);
+        assert!((z[1] - 1.0).abs() < 1e-9);
+        assert!(z[2].abs() < 1e-9);
+    }
+
+    #[test]
+    fn jacobian_carries_identity_over_the_bias_columns() {
+        // The bias enters the prediction additively (z = h(x) + b), so ∂z/∂b is
+        // the identity. Because the default finite-difference Jacobian sizes to
+        // the full state and perturbs every slot, those identity columns appear
+        // with no analytic override — and that is exactly what makes the appended
+        // bias block observable to the filter's update.
+        let model = make_model();
+        let sensor = FrameId::Sensor(SENSOR);
+        let state = make_augmented_state(Vector3::zeros());
+        let off = state
+            .schema()
+            .storage_offset_of(&StateVariable::MagBiasX(sensor))
+            .expect("augmented state carries the bias block");
+        let h = model.jacobian(&state, Some(&identity_mount()), AT);
+        for r in 0..3 {
+            for c in 0..3 {
+                let expected = if r == c { 1.0 } else { 0.0 };
+                assert!(
+                    (h[(r, off + c)] - expected).abs() < 1e-6,
+                    "bias Jacobian block[{r}][{c}] = {}, expected {expected}",
+                    h[(r, off + c)]
+                );
+            }
+        }
     }
 }
