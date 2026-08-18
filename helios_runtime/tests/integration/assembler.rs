@@ -4,11 +4,11 @@ use std::collections::HashMap;
 
 use helios_runtime::channels::control;
 use helios_runtime::config::{
-    AllocatorConfig, AutonomyStack, CommandArbitrationConfig, CommandSource, EkfConfig,
-    EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig,
-    SearchPlannerConfig, TeleopMapperConfig,
+    AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandArbitrationConfig,
+    CommandSource, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig,
+    IntegratedImuConfig, MapLayerConfig, SearchPlannerConfig, SensorModelConfig, TeleopMapperConfig,
 };
-use helios_runtime::port::ChannelKey;
+use helios_runtime::port::{ChannelKey, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
     build_pipeline, AutonomyRegistry, BodyCapabilities, ConfigValidationError, PipelineAssemblyError,
@@ -16,8 +16,14 @@ use helios_runtime::{
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
 use helios_core::control::commands::{BodyTwist, TwistIntent};
+use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+use helios_core::data::sensor::MagneticField3D;
+use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::frames::quantities::FluVector;
+use helios_core::frames::{FrameId, StateVariable};
+
+use nalgebra::Vector3;
 
 use crate::common::MockRuntime;
 
@@ -470,5 +476,223 @@ fn build_pipeline_rejects_invalid_config_before_assembly() {
                 ))
         )),
         "expected InvalidConfig carrying PlannerReferencesUnknownMapLayer, got {errors:?}"
+    );
+}
+
+// =========================================================================
+// == Augmentation exit-proof: a config-declared mag-bias block converges   ==
+// =========================================================================
+
+#[test]
+fn declared_mag_bias_augmentation_is_observed_end_to_end() {
+    // The full augmentation path end-to-end through `build_pipeline`: an
+    // `EkfConfig` that declares a magnetometer aiding *and* a `magnetometer_bias`
+    // augmentation is assembled, then driven with biased readings. This exercises
+    // the correctness crux the mechanism exists for — the augmentation `sensor`
+    // and the `MagneticFieldModel`'s `sensor_handle` must resolve to the *same*
+    // `FrameHandle` through `sensor_frame_handles`, or the appended `MagBias`
+    // slots carry a `FrameId` the model never reads and the block rides inert.
+    // Here they agree, so the bias state absorbs the injected offset and its
+    // variance collapses below the prior.
+    const AGENT: FrameHandle = FrameHandle(0);
+    const MAG_SENSOR: FrameHandle = FrameHandle(7);
+    const MAG_CHANNEL: &str = "mag/primary";
+
+    // North-pointing world field (ENU, µT) and a purely vertical hard-iron bias.
+    // A Z bias against a horizontal field is unconfounded with heading — no
+    // rotation of a horizontal field yields a Z component — so it is cleanly
+    // observable rather than smeared into an orientation error.
+    let world_field = [0.0, 1.0, 0.0];
+    let true_bias_z = 3.0;
+
+    let ekf = EkfConfig {
+        dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
+            gravity_enu: [0.0, 0.0, -9.81],
+            accel_noise_stddev: 0.1,
+            gyro_noise_stddev: 0.01,
+            accel_bias_instability: 0.001,
+            gyro_bias_instability: 0.0001,
+            // Never published here, so the predict step is skipped and the
+            // trajectory stays frozen — every mag residual flows into the update.
+            accel_channel: "imu/accel".to_string(),
+            gyro_channel: "imu/gyro".to_string(),
+        }),
+        aiding: vec![AidingConfig {
+            sensor_payload: "MagneticField3D".to_string(),
+            model: SensorModelConfig {
+                kind: "magnetometer".to_string(),
+                gravity_enu: [0.0, 0.0, -9.81],
+                magnetic_field_enu: Some(world_field),
+            },
+            input_channel: MAG_CHANNEL.to_string(),
+            r_diag: vec![0.25, 0.25, 0.25],
+        }],
+        augmentation: vec![AugmentationConfig {
+            kind: MAGNETOMETER_BIAS.to_string(),
+            // Must string-match the aiding input_channel above: that shared key
+            // is what ties the block's FrameId::Sensor to the model observing it.
+            sensor: MAG_CHANNEL.to_string(),
+            init_uncertainty: 5.0,
+            random_walk: 0.01,
+        }],
+        initial_state: EkfInitialStateConfig {
+            // Pin orientation tightly so the residual lands on the bias, not on a
+            // spurious tilt (belt-and-suspenders with the Z-bias choice above).
+            orientation_uncertainty_deg: 1.0,
+            ..Default::default()
+        },
+    };
+
+    let mut estimators = HashMap::new();
+    estimators.insert("nav_ekf".to_string(), EstimatorConfig::Ekf(ekf));
+    let stack = AutonomyStack {
+        estimators,
+        ..Default::default()
+    };
+
+    let mut sensor_frame_handles = HashMap::new();
+    sensor_frame_handles.insert(MAG_CHANNEL.to_string(), MAG_SENSOR);
+
+    let body = BodyCapabilities {
+        name: "rover".to_string(),
+        publishes: vec![],
+        consumes_control: false,
+    };
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AGENT,
+        &sensor_frame_handles,
+        body,
+    )
+    .expect("mag-bias augmentation stack must build");
+
+    // Drive: publish the same biased reading each tick with a strictly
+    // increasing timestamp. The node dedups by per-reading timestamp, so a
+    // repeated stamp would be dropped and nothing would converge.
+    let mag_key: ChannelKey =
+        SensorChannel::named::<Vec<SensorReading<MagneticField3D>>>(MAG_CHANNEL).into();
+    let measured = Vector3::new(world_field[0], world_field[1], world_field[2] + true_bias_z);
+    let dt = 0.05;
+    for i in 1..=40 {
+        let t = MonotonicTime(i as f64 * dt);
+        pipeline
+            .bus()
+            .write(
+                mag_key.clone(),
+                Stamped {
+                    value: vec![SensorReading {
+                        sensor_handle: MAG_SENSOR,
+                        timestamp: t,
+                        data: MagneticField3D { value: measured },
+                    }],
+                    timestamp: t,
+                    health: Health::Ok,
+                    producer: 0,
+                },
+            )
+            .expect("host write to the mag channel must succeed");
+        pipeline.tick(&MockRuntime, dt);
+    }
+
+    let state = pipeline
+        .read_state()
+        .expect("the estimator must publish a state");
+    let sensor = FrameId::Sensor(MAG_SENSOR);
+
+    // The appended block exists and the base grew by exactly 3 storage dims.
+    assert_eq!(
+        state.value.schema().storage_dim(),
+        19,
+        "16-state INS base + 3-DOF mag-bias block"
+    );
+    let off = state
+        .value
+        .schema()
+        .storage_offset_of(&StateVariable::MagBiasX(sensor.clone()))
+        .expect("the mag-bias block must be present in the published schema");
+
+    // Mean moved from 0 toward the injected +3 µT offset.
+    let bias = state
+        .value
+        .get_vector3(&StateVariable::MagBiasX(sensor))
+        .expect("the bias block reads back as a vector");
+    assert!(
+        (bias.z - true_bias_z).abs() < 0.5,
+        "estimated bias_z {} must converge toward the true {true_bias_z} µT",
+        bias.z
+    );
+
+    // Variance collapsed well below the 5 µT prior (25 µT²): the block was
+    // genuinely updated, not merely carried through predict.
+    let var_z = state.value.covariance[(off + 2, off + 2)];
+    assert!(
+        var_z < 1.0,
+        "bias_z variance {var_z} must shrink below the prior 25 µT²"
+    );
+}
+
+#[test]
+fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
+    // The dual of the exit-proof: an EKF with no augmentation block must publish
+    // the bare 16-state INS shape with no MagBias slots — the build_pipeline-level
+    // echo of the builder-level guarantee in register.rs. This freezes the "empty
+    // augmentation ⇒ base filter shape unchanged" contract at the config front
+    // door.
+    let ekf = EkfConfig {
+        dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
+            gravity_enu: [0.0, 0.0, -9.81],
+            accel_noise_stddev: 0.1,
+            gyro_noise_stddev: 0.01,
+            accel_bias_instability: 0.001,
+            gyro_bias_instability: 0.0001,
+            accel_channel: "imu/accel".to_string(),
+            gyro_channel: "imu/gyro".to_string(),
+        }),
+        aiding: vec![],
+        augmentation: vec![],
+        initial_state: EkfInitialStateConfig::default(),
+    };
+
+    let mut estimators = HashMap::new();
+    estimators.insert("nav_ekf".to_string(), EstimatorConfig::Ekf(ekf));
+    let stack = AutonomyStack {
+        estimators,
+        ..Default::default()
+    };
+
+    let body = BodyCapabilities {
+        name: "rover".to_string(),
+        publishes: vec![],
+        consumes_control: false,
+    };
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        FrameHandle(0),
+        &HashMap::new(),
+        body,
+    )
+    .expect("un-augmented stack must build");
+
+    pipeline.tick(&MockRuntime, 0.05);
+
+    let state = pipeline
+        .read_state()
+        .expect("the estimator must publish a state");
+    assert_eq!(
+        state.value.schema().storage_dim(),
+        16,
+        "bare INS base, no augmentation"
+    );
+    assert!(
+        state
+            .value
+            .schema()
+            .storage_offset_of(&StateVariable::MagBiasX(FrameId::Sensor(FrameHandle(7))))
+            .is_none(),
+        "no augmentation ⇒ no MagBias slots"
     );
 }
