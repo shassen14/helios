@@ -413,7 +413,9 @@ mod tests {
     /// hardcoded constant so the run is fully deterministic.
     fn run_golden_ins_trajectory() -> (DVector<f64>, DVector<f64>) {
         use crate::data::primitives::FrameHandle;
-        use crate::estimation::dynamics::integrated_imu::IntegratedImuModel;
+        use crate::estimation::dynamics::integrated_imu::{
+            ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
+        };
         use nalgebra::Vector3;
 
         // Distinct per-block variances so a transposed Q or P₀ block cannot hide
@@ -421,12 +423,19 @@ mod tests {
         let model = IntegratedImuModel::new(
             FrameHandle(7),
             Vector3::new(0.0, 0.0, -9.81),
-            0.04,     // accel_noise_var
-            0.0025,   // gyro_noise_var
-            0.0001,   // accel_bias_var
-            0.000001, // gyro_bias_var
-            0.5,      // pos_var
-            0.02,     // ori_var
+            ImuProcessNoise {
+                accel_noise_var: 0.04,
+                gyro_noise_var: 0.0025,
+                accel_bias_var: 0.0001,
+                gyro_bias_var: 0.000001,
+            },
+            ImuInitialUncertainty {
+                pos_var: 0.5,
+                vel_var: 1.0,
+                ori_var: 0.02,
+                accel_bias_var: 1.0,
+                gyro_bias_var: 1.0,
+            },
         );
 
         let schema = model.schema();
@@ -672,17 +681,25 @@ mod tests {
     /// base schema is the well-exercised one.
     fn ins_model() -> crate::estimation::dynamics::integrated_imu::IntegratedImuModel {
         use crate::data::primitives::FrameHandle;
+        use crate::estimation::dynamics::integrated_imu::{ImuInitialUncertainty, ImuProcessNoise};
         use nalgebra::Vector3;
 
         crate::estimation::dynamics::integrated_imu::IntegratedImuModel::new(
             FrameHandle(7),
             Vector3::new(0.0, 0.0, -9.81),
-            0.04,     // accel_noise_var
-            0.0025,   // gyro_noise_var
-            0.0001,   // accel_bias_var
-            0.000001, // gyro_bias_var
-            0.5,      // pos_var
-            0.02,     // ori_var
+            ImuProcessNoise {
+                accel_noise_var: 0.04,
+                gyro_noise_var: 0.0025,
+                accel_bias_var: 0.0001,
+                gyro_bias_var: 0.000001,
+            },
+            ImuInitialUncertainty {
+                pos_var: 0.5,
+                vel_var: 1.0,
+                ori_var: 0.02,
+                accel_bias_var: 1.0,
+                gyro_bias_var: 1.0,
+            },
         )
     }
 

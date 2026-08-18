@@ -48,6 +48,8 @@ fn imu_noise() -> IntegratedImuConfig {
         gyro_noise_stddev: 0.01,
         accel_bias_instability: 0.001,
         gyro_bias_instability: 0.001,
+        accel_bias_uncertainty_mps2: 0.1,
+        gyro_bias_uncertainty_radps: 0.01,
         accel_channel: "sensor.imu.accel".to_string(),
         gyro_channel: "sensor.imu.gyro".to_string(),
     }

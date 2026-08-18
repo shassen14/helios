@@ -12,6 +12,18 @@ fn default_orientation_uncertainty_deg() -> f64 {
     180.0
 }
 
+fn default_velocity_uncertainty_mps() -> f64 {
+    1.0
+}
+
+fn default_accel_bias_uncertainty_mps2() -> f64 {
+    0.1
+}
+
+fn default_gyro_bias_uncertainty_radps() -> f64 {
+    0.01
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind", content = "config")]
 #[serde(rename_all = "PascalCase")]
@@ -96,6 +108,11 @@ pub struct EkfInitialStateConfig {
     pub position_uncertainty_m: f64,
     #[serde(default = "default_orientation_uncertainty_deg")]
     pub orientation_uncertainty_deg: f64,
+    /// Prior std dev on the initial velocity estimate (m/s). Kinematic, so it sits
+    /// here with position/orientation rather than in a dynamics-specific config.
+    /// Squared onto the velocity block's `P₀`.
+    #[serde(default = "default_velocity_uncertainty_mps")]
+    pub velocity_uncertainty_mps: f64,
 }
 
 impl Default for EkfInitialStateConfig {
@@ -107,6 +124,7 @@ impl Default for EkfInitialStateConfig {
             heading_deg: 0.0,
             position_uncertainty_m: default_position_uncertainty_m(),
             orientation_uncertainty_deg: default_orientation_uncertainty_deg(),
+            velocity_uncertainty_mps: default_velocity_uncertainty_mps(),
         }
     }
 }
@@ -197,6 +215,16 @@ pub struct IntegratedImuConfig {
     pub accel_bias_instability: f64,
     /// Gyroscope bias instability std dev (rad/s/√Hz).
     pub gyro_bias_instability: f64,
+    /// Prior std dev on the initial accel-bias estimate at cold start (m/s²).
+    /// Squared onto the accel-bias block's `P₀`. Distinct from
+    /// `accel_bias_instability`, which is that block's process noise (`Q`).
+    #[serde(default = "default_accel_bias_uncertainty_mps2")]
+    pub accel_bias_uncertainty_mps2: f64,
+    /// Prior std dev on the initial gyro-bias estimate at cold start (rad/s).
+    /// Squared onto the gyro-bias block's `P₀`. A too-large value seeds attitude
+    /// error outside the filter's linear regime, so it is not a free knob.
+    #[serde(default = "default_gyro_bias_uncertainty_radps")]
+    pub gyro_bias_uncertainty_radps: f64,
     /// Bus channel the predict step reads `Vec<SensorReading<LinearAcceleration3D>>`
     /// from. Must match the accelerometer channel the host publishes on
     /// (the sensor's `accel_channel` in sim).

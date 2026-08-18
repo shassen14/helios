@@ -8,7 +8,10 @@ use crate::nodes::gaussian_estimator::EstimatorInputBuilder;
 use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::GaussianEstimatorBuildContext, AutonomyRegistry};
 
-use helios_core::estimation::dynamics::{integrated_imu::IntegratedImuModel, EstimationDynamics};
+use helios_core::estimation::dynamics::integrated_imu::{
+    ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
+};
+use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 
@@ -40,12 +43,19 @@ fn build_ekf(
                 Box::new(IntegratedImuModel::new(
                     agent_handle,
                     Vector3::from_column_slice(&c.gravity_enu),
-                    c.accel_noise_stddev.powi(2),
-                    c.gyro_noise_stddev.powi(2),
-                    c.accel_bias_instability.powi(2),
-                    c.gyro_bias_instability.powi(2),
-                    init.position_uncertainty_m.powi(2),
-                    init.orientation_uncertainty_deg.to_radians().powi(2),
+                    ImuProcessNoise {
+                        accel_noise_var: c.accel_noise_stddev.powi(2),
+                        gyro_noise_var: c.gyro_noise_stddev.powi(2),
+                        accel_bias_var: c.accel_bias_instability.powi(2),
+                        gyro_bias_var: c.gyro_bias_instability.powi(2),
+                    },
+                    ImuInitialUncertainty {
+                        pos_var: init.position_uncertainty_m.powi(2),
+                        vel_var: init.velocity_uncertainty_mps.powi(2),
+                        ori_var: init.orientation_uncertainty_deg.to_radians().powi(2),
+                        accel_bias_var: c.accel_bias_uncertainty_mps2.powi(2),
+                        gyro_bias_var: c.gyro_bias_uncertainty_radps.powi(2),
+                    },
                 )),
                 Box::new(IntegratedImuInputBuilder::new(
                     c.accel_channel.as_str(),
@@ -151,6 +161,8 @@ mod tests {
             gyro_noise_stddev: 0.01,
             accel_bias_instability: 0.001,
             gyro_bias_instability: 0.0001,
+            accel_bias_uncertainty_mps2: 0.1,
+            gyro_bias_uncertainty_radps: 0.01,
             accel_channel: "imu/accel".to_string(),
             gyro_channel: "imu/gyro".to_string(),
         }))

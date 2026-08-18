@@ -39,26 +39,50 @@ pub struct IntegratedImuModel {
     gyro_bias_off: usize,
 }
 
+/// Process-noise (`Q`) variances for the INS dynamics, one per driven block.
+/// Each is a variance — the square of the corresponding IMU noise or bias-
+/// instability standard deviation.
+#[derive(Debug, Clone, Copy)]
+pub struct ImuProcessNoise {
+    /// Accelerometer white-noise variance, driving the velocity block.
+    pub accel_noise_var: f64,
+    /// Gyroscope white-noise variance, driving the orientation block.
+    pub gyro_noise_var: f64,
+    /// Accelerometer bias-instability variance, driving the accel-bias block.
+    pub accel_bias_var: f64,
+    /// Gyroscope bias-instability variance, driving the gyro-bias block.
+    pub gyro_bias_var: f64,
+}
+
+/// Initial-covariance (`P₀`) variances for the INS state, one per block. Each is
+/// a variance — the square of a standard deviation in that block's units.
+///
+/// Every block is stated explicitly; there is no inherited fallback. A block left
+/// at a meaningless prior (e.g. a gyro-bias std of 1 rad/s) seeds an error far
+/// outside the filter's linear regime, so each value is the caller's to choose
+/// per sensor grade.
+#[derive(Debug, Clone, Copy)]
+pub struct ImuInitialUncertainty {
+    /// Position variance (m²).
+    pub pos_var: f64,
+    /// Velocity variance ((m/s)²).
+    pub vel_var: f64,
+    /// Orientation variance (rad²), in the 3-DOF tangent.
+    pub ori_var: f64,
+    /// Accelerometer-bias variance ((m/s²)²).
+    pub accel_bias_var: f64,
+    /// Gyroscope-bias variance ((rad/s)²).
+    pub gyro_bias_var: f64,
+}
+
 impl IntegratedImuModel {
     pub fn new(
         agent_handle: FrameHandle,
         gravity_world: Vector3<f64>,
-        accel_noise_var: f64, // = accel_noise_stddev²
-        gyro_noise_var: f64,  // = gyro_noise_stddev²
-        accel_bias_var: f64,  // = accel_bias_instability²
-        gyro_bias_var: f64,   // = gyro_bias_instability²
-        pos_var: f64,         // = position_uncertainty_m²
-        ori_var: f64,         // = orientation_uncertainty_rad²
+        noise: ImuProcessNoise,
+        initial_uncertainty: ImuInitialUncertainty,
     ) -> Self {
-        let schema = Arc::new(compose_ins_schema(
-            agent_handle,
-            accel_noise_var,
-            gyro_noise_var,
-            accel_bias_var,
-            gyro_bias_var,
-            pos_var,
-            ori_var,
-        ));
+        let schema = Arc::new(compose_ins_schema(agent_handle, noise, initial_uncertainty));
 
         let off = |v: &StateVariable| {
             schema
@@ -112,29 +136,24 @@ pub fn ins_state_layout(agent_handle: FrameHandle) -> Vec<StateVariable> {
 
 fn compose_ins_schema(
     agent_handle: FrameHandle,
-    accel_noise_var: f64, // = accel_noise_stddev²
-    gyro_noise_var: f64,  // = gyro_noise_stddev²
-    accel_bias_var: f64,  // = accel_bias_instability²
-    gyro_bias_var: f64,   // = gyro_bias_instability²
-    pos_var: f64,         // = position_uncertainty_m²
-    ori_var: f64,         // = orientation_uncertainty_rad²
+    noise: ImuProcessNoise,
+    initial: ImuInitialUncertainty,
 ) -> StateSchema {
     let body = FrameId::Body(agent_handle);
     let world = FrameId::World;
 
-    let noise = |var: f64, n: usize| {
+    let noise_block = |var: f64, n: usize| {
         TangentNoise::from_variances(DVector::from_element(n, var))
             .expect("positive variance is positive-definite")
     };
     let p0 = |var: f64, n: usize| DMatrix::identity(n, n) * var;
 
-    let default_p0 = 1.0;
-
     let blocks = vec![
+        // 1. Position (World) — no process noise; P₀ from config.
         SchemaBlock {
             block: Arc::new(EuclideanBlock::without_noise(
                 DVector::zeros(3),
-                p0(pos_var, 3),
+                p0(initial.pos_var, 3),
             )),
             variables: position_vars(&world),
             sensor: None,
@@ -142,9 +161,9 @@ fn compose_ins_schema(
         // 2. Velocity (World) — Q from accel white noise.
         SchemaBlock {
             block: Arc::new(EuclideanBlock::new(
-                noise(accel_noise_var, 3),
+                noise_block(noise.accel_noise_var, 3),
                 DVector::zeros(3),
-                p0(default_p0, 3),
+                p0(initial.vel_var, 3),
             )),
             variables: velocity_vars(&world),
             sensor: None,
@@ -153,9 +172,9 @@ fn compose_ins_schema(
         //    block. Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
         SchemaBlock {
             block: Arc::new(QuaternionBlock::new(
-                noise(gyro_noise_var, 3),
+                noise_block(noise.gyro_noise_var, 3),
                 DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
-                p0(ori_var, 3),
+                p0(initial.ori_var, 3),
             )),
             variables: orientation_vars(&body, &world),
             sensor: None,
@@ -163,9 +182,9 @@ fn compose_ins_schema(
         // 4. Accel bias (Body) — Q from bias instability.
         SchemaBlock {
             block: Arc::new(EuclideanBlock::new(
-                noise(accel_bias_var, 3),
+                noise_block(noise.accel_bias_var, 3),
                 DVector::zeros(3),
-                p0(default_p0, 3),
+                p0(initial.accel_bias_var, 3),
             )),
             variables: accel_bias_vars(&body),
             sensor: None,
@@ -173,9 +192,9 @@ fn compose_ins_schema(
         // 5. Gyro bias (Body) — Q from bias instability.
         SchemaBlock {
             block: Arc::new(EuclideanBlock::new(
-                noise(gyro_bias_var, 3),
+                noise_block(noise.gyro_bias_var, 3),
                 DVector::zeros(3),
-                p0(default_p0, 3),
+                p0(initial.gyro_bias_var, 3),
             )),
             variables: gyro_bias_vars(&body),
             sensor: None,
@@ -295,7 +314,7 @@ mod tests {
     //! Tests for [`IntegratedImuModel`].
     //!
     //! Properties validated:
-    //! - Schema: 16 storage / 16 tangent dims, each block at its INS offset, and
+    //! - Schema: 16 storage / 15 tangent dims, each block at its INS offset, and
     //!   Q / P₀ placed per config per block (position carries no process noise).
     //! - Derivatives: position rate = velocity, gravity correctly subtracts from
     //!   IMU acceleration, accel/gyro biases subtract from raw measurements.
@@ -317,12 +336,19 @@ mod tests {
         IntegratedImuModel::new(
             AGENT,
             Vector3::new(0.0, 0.0, -G),
-            0.1_f64.powi(2),    // accel_noise_var
-            0.01_f64.powi(2),   // gyro_noise_var
-            0.001_f64.powi(2),  // accel_bias_var
-            0.0001_f64.powi(2), // gyro_bias_var
-            1.0,                // pos_var
-            1.0,                // ori_var
+            ImuProcessNoise {
+                accel_noise_var: 0.1_f64.powi(2),
+                gyro_noise_var: 0.01_f64.powi(2),
+                accel_bias_var: 0.001_f64.powi(2),
+                gyro_bias_var: 0.0001_f64.powi(2),
+            },
+            ImuInitialUncertainty {
+                pos_var: 1.0,
+                vel_var: 1.0,
+                ori_var: 1.0,
+                accel_bias_var: 1.0,
+                gyro_bias_var: 1.0,
+            },
         )
     }
 
@@ -404,12 +430,19 @@ mod tests {
         let model = IntegratedImuModel::new(
             AGENT,
             Vector3::new(0.0, 0.0, -G),
-            2.0, // accel_noise_var → velocity block
-            3.0, // gyro_noise_var  → orientation block
-            4.0, // accel_bias_var  → accel-bias block
-            5.0, // gyro_bias_var   → gyro-bias block
-            1.0, // pos_var (P₀ only)
-            1.0, // ori_var (P₀ only)
+            ImuProcessNoise {
+                accel_noise_var: 2.0, // → velocity block
+                gyro_noise_var: 3.0,  // → orientation block
+                accel_bias_var: 4.0,  // → accel-bias block
+                gyro_bias_var: 5.0,   // → gyro-bias block
+            },
+            ImuInitialUncertainty {
+                pos_var: 1.0, // P₀ only, irrelevant to this Q test
+                vel_var: 1.0,
+                ori_var: 1.0,
+                accel_bias_var: 1.0,
+                gyro_bias_var: 1.0,
+            },
         );
         let schema = model.schema();
         let q = schema.process_noise();
@@ -432,29 +465,37 @@ mod tests {
 
     #[test]
     fn schema_initial_covariance_matches_config_per_block() {
-        // pos_var and ori_var come from config; velocity and biases fall back to
-        // the inherited default of 1.0 (a standing config gap, reproduced here so
-        // the numbers match the pre-schema estimator exactly).
+        // Every block's P₀ is independently config-driven — there is no inherited
+        // fallback. Distinct values per block so a misplaced or transposed P₀ can't
+        // hide behind a shared number.
         let model = IntegratedImuModel::new(
             AGENT,
             Vector3::new(0.0, 0.0, -G),
-            0.1,
-            0.1,
-            0.1,
-            0.1, // noise values irrelevant to P₀
-            7.0, // pos_var → position block
-            9.0, // ori_var → orientation block
+            ImuProcessNoise {
+                accel_noise_var: 0.1,
+                gyro_noise_var: 0.1,
+                accel_bias_var: 0.1,
+                gyro_bias_var: 0.1, // noise values irrelevant to P₀
+            },
+            ImuInitialUncertainty {
+                pos_var: 7.0,        // → position block
+                vel_var: 6.0,        // → velocity block
+                ori_var: 9.0,        // → orientation block
+                accel_bias_var: 4.0, // → accel-bias block
+                gyro_bias_var: 5.0,  // → gyro-bias block
+            },
         );
         let schema = model.schema();
         let p0 = schema.initial_covariance();
 
         // P₀ is tangent-sized (15×15): orientation occupies 3 tangent rows (6..9),
-        // and the two bias blocks fill the remaining 9..15.
+        // so every block after it sits one row lower than its storage offset.
         let expected = [
-            (0..3, 7.0),  // position
-            (3..6, 1.0),  // velocity default
-            (6..9, 9.0),  // orientation (3-wide tangent)
-            (9..15, 1.0), // both bias blocks default
+            (0..3, 7.0),   // position
+            (3..6, 6.0),   // velocity
+            (6..9, 9.0),   // orientation (3-wide tangent)
+            (9..12, 4.0),  // accel bias
+            (12..15, 5.0), // gyro bias
         ];
         for (range, value) in expected {
             for i in range {
