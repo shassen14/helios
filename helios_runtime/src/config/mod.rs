@@ -22,9 +22,9 @@ pub use autonomy::AutonomyStack;
 pub use controller::ControllerConfig;
 pub use controller::ControllerStateSourceConfig;
 pub use estimator::{
-    AckermannProcessNoiseConfig, AidingConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig,
-    EstimatorConfig, IntegratedImuConfig, MockOracleEstimatorConfig, QuadcopterProcessNoiseConfig,
-    SensorModelConfig, UkfConfig,
+    AckermannProcessNoiseConfig, AidingConfig, AugmentationConfig, EkfConfig, EkfDynamicsConfig,
+    EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MockOracleEstimatorConfig,
+    QuadcopterProcessNoiseConfig, SensorModelConfig, UkfConfig,
 };
 pub use mapper::{MapLayerConfig, MapperPoseSourceConfig};
 pub use path_following::PathFollowingConfig;

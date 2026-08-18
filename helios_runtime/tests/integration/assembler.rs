@@ -214,6 +214,7 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
                 gyro_channel: "imu/gyro".to_string(),
             }),
             aiding: vec![],
+            augmentation: vec![],
             initial_state: EkfInitialStateConfig::default(),
         }),
     );
@@ -283,6 +284,7 @@ fn two_map_layers_of_one_kind_publish_to_distinct_channels() {
                 gyro_channel: "imu/gyro".to_string(),
             }),
             aiding: vec![],
+            augmentation: vec![],
             initial_state: EkfInitialStateConfig::default(),
         }),
     );

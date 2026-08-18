@@ -4,10 +4,10 @@ use std::collections::HashMap;
 
 use helios_runtime::{
     config::{
-        AidingConfig, AllocatorConfig, AutonomyStack, CommandArbitrationConfig, CommandSource,
-        ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig,
-        IntegratedImuConfig, MapLayerConfig, MapperPoseSourceConfig, SearchPlannerConfig,
-        SensorModelConfig,
+        AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandArbitrationConfig,
+        CommandSource, ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig,
+        EstimatorConfig, IntegratedImuConfig, MapLayerConfig, MapperPoseSourceConfig,
+        SearchPlannerConfig, SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
 };
@@ -57,6 +57,7 @@ fn ekf_config() -> EstimatorConfig {
     EstimatorConfig::Ekf(EkfConfig {
         dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
         aiding: vec![],
+        augmentation: vec![],
         initial_state: EkfInitialStateConfig::default(),
     })
 }
@@ -353,6 +354,7 @@ fn validation_unknown_measurement_model_in_aiding_produces_error() {
         EstimatorConfig::Ekf(EkfConfig {
             dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
             aiding: vec![bad_aiding],
+            augmentation: vec![],
             initial_state: EkfInitialStateConfig::default(),
         }),
     );
@@ -390,6 +392,7 @@ fn validation_unknown_sensor_payload_in_aiding_produces_error() {
         EstimatorConfig::Ekf(EkfConfig {
             dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
             aiding: vec![bad_aiding],
+            augmentation: vec![],
             initial_state: EkfInitialStateConfig::default(),
         }),
     );
@@ -540,6 +543,7 @@ fn validation_valid_aiding_entry_passes() {
         EstimatorConfig::Ekf(EkfConfig {
             dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
             aiding: vec![ekf_aiding_entry()],
+            augmentation: vec![],
             initial_state: EkfInitialStateConfig::default(),
         }),
     );
@@ -551,6 +555,87 @@ fn validation_valid_aiding_entry_passes() {
     assert!(
         errors.is_empty(),
         "Valid aiding entry must pass, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+fn mag_bias_augmentation(sensor: &str) -> AugmentationConfig {
+    AugmentationConfig {
+        kind: helios_core::estimation::augmentation::MAGNETOMETER_BIAS.to_string(),
+        sensor: sensor.to_string(),
+        init_uncertainty: 5.0,
+        random_walk: 0.01,
+    }
+}
+
+// An augmentation whose `sensor` matches no aiding channel is unobservable —
+// nothing ever updates its state columns. The validator must flag it rather
+// than let it become a silent runtime no-op.
+#[test]
+fn validation_augmentation_without_aiding_source_produces_error() {
+    let mut estimators = HashMap::new();
+    estimators.insert(
+        "primary".to_string(),
+        EstimatorConfig::Ekf(EkfConfig {
+            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
+            aiding: vec![], // no source feeds the augmentation's sensor
+            augmentation: vec![mag_bias_augmentation("sensor.mag.primary")],
+            initial_state: EkfInitialStateConfig::default(),
+        }),
+    );
+    let stack = AutonomyStack {
+        estimators,
+        ..Default::default()
+    };
+
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::AugmentationHasNoAidingSource { sensor, .. }
+                if sensor == "sensor.mag.primary"
+        )),
+        "expected AugmentationHasNoAidingSource, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+// With an aiding entry on the same channel the augmentation names, the block is
+// observable and the lint stays silent.
+#[test]
+fn validation_augmentation_with_matching_aiding_source_passes() {
+    let mag_aiding = AidingConfig {
+        sensor_payload: "MagneticField3D".to_string(),
+        model: SensorModelConfig {
+            kind: "magnetometer".to_string(),
+            gravity_enu: [0.0, 0.0, -9.81],
+            magnetic_field_enu: Some([22.0, 5.0, -42.0]),
+        },
+        input_channel: "sensor.mag.primary".to_string(),
+        r_diag: vec![0.04, 0.04, 0.04],
+    };
+
+    let mut estimators = HashMap::new();
+    estimators.insert(
+        "primary".to_string(),
+        EstimatorConfig::Ekf(EkfConfig {
+            dynamics: EkfDynamicsConfig::IntegratedImu(imu_noise()),
+            aiding: vec![mag_aiding],
+            augmentation: vec![mag_bias_augmentation("sensor.mag.primary")],
+            initial_state: EkfInitialStateConfig::default(),
+        }),
+    );
+    let stack = AutonomyStack {
+        estimators,
+        ..Default::default()
+    };
+
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        !errors
+            .iter()
+            .any(|e| matches!(e, ConfigValidationError::AugmentationHasNoAidingSource { .. })),
+        "matched aiding source must satisfy the lint, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }

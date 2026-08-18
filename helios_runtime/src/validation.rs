@@ -46,6 +46,15 @@ pub enum ConfigValidationError {
         estimator_instance: String,
         payload_kind: String,
     },
+    /// An augmentation declares a `sensor` that no aiding entry feeds. The
+    /// appended nuisance block would ride through predict untouched — never
+    /// observed, a silent no-op that only inflates the state. A block is
+    /// observable only through an aiding source on its own sensor channel.
+    AugmentationHasNoAidingSource {
+        estimator_instance: String,
+        kind: String,
+        sensor: String,
+    },
     UnknownAllocator {
         kind: String,
     },
@@ -116,6 +125,16 @@ impl std::fmt::Display for ConfigValidationError {
                 write!(
                     f,
                     "Estimator '{estimator_instance}' references unknown sensor payload '{payload_kind}'"
+                )
+            }
+            ConfigValidationError::AugmentationHasNoAidingSource {
+                estimator_instance,
+                kind,
+                sensor,
+            } => {
+                write!(
+                    f,
+                    "Estimator '{estimator_instance}' augmentation '{kind}' names sensor '{sensor}', but no aiding entry feeds that channel; the block would never be observed"
                 )
             }
             ConfigValidationError::UnknownAllocator { kind } => {
@@ -201,6 +220,24 @@ pub fn validate_autonomy_config(
                     errors.push(ConfigValidationError::UnknownSensorPayload {
                         estimator_instance: instance.clone(),
                         payload_kind: aiding.sensor_payload.clone(),
+                    });
+                }
+            }
+
+            // Each augmentation is observed only through an aiding source on the
+            // same sensor channel; without one the appended block has no
+            // measurement touching its columns and rides inertly. Catch it here
+            // rather than let it be a silent runtime no-op.
+            for aug in &ekf.augmentation {
+                let has_aiding_source = ekf
+                    .aiding
+                    .iter()
+                    .any(|aiding| aiding.input_channel == aug.sensor);
+                if !has_aiding_source {
+                    errors.push(ConfigValidationError::AugmentationHasNoAidingSource {
+                        estimator_instance: instance.clone(),
+                        kind: aug.kind.clone(),
+                        sensor: aug.sensor.clone(),
                     });
                 }
             }

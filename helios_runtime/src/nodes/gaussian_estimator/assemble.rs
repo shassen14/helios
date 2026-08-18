@@ -15,6 +15,9 @@ use helios_core::data::primitives::FrameHandle;
 use helios_core::data::sensor::{
     AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
 };
+use helios_core::estimation::augmentation::augmentation_block;
+use helios_core::estimation::schema::SchemaBlock;
+use helios_core::frames::FrameId;
 
 use nalgebra::DMatrix;
 use std::collections::HashMap;
@@ -56,6 +59,14 @@ pub(crate) fn assemble(
         external_channels.extend_from_slice(builder.required_channels());
     }
 
+    // Turn each declared augmentation into a schema block, tied to the same
+    // sensor FrameHandle its aiding source resolves to. Reusing the aiding
+    // channel resolution (below) is what guarantees the appended bias slots
+    // carry the FrameId the measurement model reads back — a mismatch would
+    // leave the block inert, never observed. The `sensor`-has-an-aiding-source
+    // requirement itself is enforced earlier by `validate_autonomy_config`.
+    let augmentation_blocks = build_augmentation_blocks(instance_name, ekf_cfg, sensor_frame_handles)?;
+
     registry
         .build_gaussian_estimator(
             est_cfg.get_kind_str(),
@@ -64,12 +75,54 @@ pub(crate) fn assemble(
                 agent_handle,
                 instance_name: instance_name.to_string(),
                 aiding,
+                augmentation_blocks,
             },
         )
         .map_err(|reason| PipelineAssemblyError::FactoryFailure {
             node_kind: est_cfg.get_kind_str().to_string(),
             reason,
         })
+}
+
+/// Resolves every `[[augmentation]]` entry into a [`SchemaBlock`], each tagged
+/// with the `FrameId::Sensor` its `sensor` channel resolves to.
+///
+/// The sensor string is looked up in the same `sensor_frame_handles` map the
+/// aiding handlers use, so the block and the aiding sensor share one handle. An
+/// unresolvable `sensor` is an [`UnknownSensorChannel`], and a bad `kind` or
+/// noise is an [`AugmentationFailure`] — both build-time faults, never a panic.
+///
+/// [`UnknownSensorChannel`]: PipelineAssemblyError::UnknownSensorChannel
+/// [`AugmentationFailure`]: PipelineAssemblyError::AugmentationFailure
+fn build_augmentation_blocks(
+    instance_name: &str,
+    ekf_cfg: &EkfConfig,
+    sensor_frame_handles: &HashMap<String, FrameHandle>,
+) -> Result<Vec<SchemaBlock>, PipelineAssemblyError> {
+    let mut blocks = Vec::with_capacity(ekf_cfg.augmentation.len());
+    for aug in &ekf_cfg.augmentation {
+        let sensor_handle = sensor_frame_handles
+            .get(&aug.sensor)
+            .copied()
+            .ok_or_else(|| PipelineAssemblyError::UnknownSensorChannel {
+                estimator_instance: instance_name.to_string(),
+                input_channel: aug.sensor.clone(),
+            })?;
+
+        let block = augmentation_block(
+            &aug.kind,
+            FrameId::Sensor(sensor_handle),
+            aug.init_uncertainty,
+            aug.random_walk,
+        )
+        .map_err(|reason| PipelineAssemblyError::AugmentationFailure {
+            estimator_instance: instance_name.to_string(),
+            reason: reason.to_string(),
+        })?;
+
+        blocks.push(block);
+    }
+    Ok(blocks)
 }
 
 fn build_aiding_handler(

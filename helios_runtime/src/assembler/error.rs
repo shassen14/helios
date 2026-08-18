@@ -27,6 +27,13 @@ pub enum PipelineAssemblyError {
         estimator_instance: String,
         payload_kind: String,
     },
+    /// An augmentation entry could not be turned into a state block: its `kind`
+    /// matches no registered augmentation, or its noise parameters are invalid.
+    /// `reason` carries the underlying `AugmentationError`'s message.
+    AugmentationFailure {
+        estimator_instance: String,
+        reason: String,
+    },
     /// `path_following` is present but no planner was configured to produce a
     /// path, and no explicit `path_source` was given.
     NoPathSourceForFollower,
@@ -77,6 +84,15 @@ impl std::fmt::Display for PipelineAssemblyError {
                 write!(
                     f,
                     "estimator '{estimator_instance}' aiding entry has unknown sensor_payload '{payload_kind}'"
+                )
+            }
+            PipelineAssemblyError::AugmentationFailure {
+                estimator_instance,
+                reason,
+            } => {
+                write!(
+                    f,
+                    "estimator '{estimator_instance}' augmentation failed: {reason}"
                 )
             }
             PipelineAssemblyError::NoPathSourceForFollower => {

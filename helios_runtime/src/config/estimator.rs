@@ -37,7 +37,40 @@ pub struct EkfConfig {
     #[serde(default)]
     pub aiding: Vec<AidingConfig>,
     #[serde(default)]
+    pub augmentation: Vec<AugmentationConfig>,
+    #[serde(default)]
     pub initial_state: EkfInitialStateConfig,
+}
+
+/// One online-estimated per-sensor nuisance block appended to the EKF state.
+///
+/// The filter solves for this parameter alongside the trajectory instead of
+/// trusting a fixed factory value — online calibration; the same block, frozen
+/// after convergence, is the offline-calibration result.
+///
+/// `sensor` must name an aiding entry's `input_channel`: that aiding source is
+/// what makes the block observable, because its measurement is the only thing
+/// that touches these state columns. The two also share a resolved
+/// `FrameHandle` — the assembler routes `sensor` through the same handle map the
+/// aiding handler uses, so the appended `MagBias` slots carry the exact
+/// `FrameId` the measurement model reads back. An augmentation with no matching
+/// aiding source is inert (it rides through predict but is never updated); the
+/// validator rejects that case rather than let it be a silent no-op.
+#[derive(Debug, Deserialize, Clone)]
+pub struct AugmentationConfig {
+    /// Augmentation kind, matched against the reserved kind strings in
+    /// `helios_core::estimation::augmentation` (e.g. `MAGNETOMETER_BIAS`). An
+    /// unrecognized value is a build-time error, not a panic.
+    pub kind: String,
+    /// The aiding `input_channel` whose sensor this block calibrates — the join
+    /// key that ties the block's `FrameId::Sensor` to the model that observes it.
+    pub sensor: String,
+    /// Prior standard deviation on each axis (block units, e.g. µT for
+    /// magnetometer bias). Squared onto the diagonal of the block's `P₀`.
+    pub init_uncertainty: f64,
+    /// Per-axis process-noise standard deviation driving how fast the estimate
+    /// may drift; forms the block's `Q`.
+    pub random_walk: f64,
 }
 
 /// Initial mean and covariance parameters for EKF cold-start.
