@@ -4,4 +4,5 @@
 //! Both implement the `StateEstimator` trait from the parent `estimation` module.
 
 pub mod ekf;
+pub mod linearization;
 pub mod ukf;

@@ -1,6 +1,7 @@
 use crate::data::ports::TfProvider;
 use crate::data::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
+use crate::estimation::filters::linearization::tangent_state_transition;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
 use crate::frames::FrameAwareState;
@@ -97,21 +98,12 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         // model owns its own retraction, so this is a direct assignment, not ⊞.
         let x_new = dynamics.propagate(x_old, u_sized, t_old, dt, &RK4);
 
-        // --- 3. Linearize the dynamics by calculating the state transition matrix (Jacobian F) ---
-        // For an EKF with a discrete time step, we often use an approximation:
-        // F_k ≈ I + A * dt
-        // But a more accurate way is to use the full matrix exponential if possible,
-        // or just the calculated Jacobian `A` from the continuous model. We will use `A`.
-        // --- 2. Calculate State Transition and Noise Input Matrices--
-        // A = ∂f/∂x, B = ∂f/∂u
-        let (a_jac, _b_jac) = dynamics.jacobian(x_old, &inputs.control, t_old);
-
-        // F ≈ I + A*dt (no identity allocation). F propagates the covariance, so
-        // it is a tangent-space map (t × t) — the identity add walks tangent dims.
-        let mut f_k = &a_jac * dt;
-        for i in 0..self.state.tangent_dim() {
-            f_k[(i, i)] += 1.0;
-        }
+        // --- 3. Linearize the dynamics into the state-transition matrix F ---
+        // F is the discrete tangent-space transition (t × t) about the current
+        // state. It already includes the time step — F ≈ I + A·dt — because it
+        // finite-differences `propagate`, which folds in `dt`. So no identity is
+        // added here; doing so would double-count the state's contribution to P.
+        let f_k = tangent_state_transition(dynamics.as_ref(), x_old, u_sized, t_old, dt, &RK4);
 
         // --- 4. Predict the next covariance matrix ---
         // The correct approach is to apply the process noise `Q` *before* the main propagation.
@@ -128,10 +120,6 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         self.state.timestamp += dt;
 
         self.ensure_covariance_health();
-        // Euclidean ⊞ adds the quaternion componentwise, so the mean can drift
-        // off the unit sphere; renormalize until the rotation block retracts on
-        // its own manifold and keeps itself unit.
-        self.state.normalize_quaternion();
     }
 
     fn update(
@@ -181,10 +169,6 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         self.state.covariance = p_post;
 
         self.ensure_covariance_health();
-        // ⊞ has already applied the correction; renormalize because the
-        // Euclidean quaternion block adds componentwise and can leave the unit
-        // sphere. Redundant once the rotation block retracts on its own manifold.
-        self.state.normalize_quaternion();
     }
 
     fn state(&self) -> &FrameAwareState {
@@ -610,11 +594,8 @@ mod tests {
         // `tangent_dim == Q dims`, which the composed schema satisfies. Reaching
         // the next line without a panic is itself the proof that a 19-dim
         // augmented schema builds a filter.
-        let ekf = ExtendedKalmanFilter::new(
-            state,
-            augmented.process_noise().clone(),
-            Box::new(model),
-        );
+        let ekf =
+            ExtendedKalmanFilter::new(state, augmented.process_noise().clone(), Box::new(model));
         let state = ekf.state();
 
         // Dimension grew by exactly the 3-DOF bias block, in both spaces.
@@ -645,12 +626,19 @@ mod tests {
         let base_p = base.initial_covariance();
         for i in 0..base_dim {
             for j in 0..base_dim {
-                assert_eq!(p[(i, j)], base_p[(i, j)], "P₀ base corner changed at ({i},{j})");
+                assert_eq!(
+                    p[(i, j)],
+                    base_p[(i, j)],
+                    "P₀ base corner changed at ({i},{j})"
+                );
             }
         }
         for k in 0..MAG_BIAS_DOF {
             let d = base_dim + k;
-            assert_eq!(p[(d, d)], MAG_BIAS_INIT_UNCERTAINTY * MAG_BIAS_INIT_UNCERTAINTY);
+            assert_eq!(
+                p[(d, d)],
+                MAG_BIAS_INIT_UNCERTAINTY * MAG_BIAS_INIT_UNCERTAINTY
+            );
         }
 
         // Q (the composed process noise fed to the filter): same story.
@@ -658,7 +646,11 @@ mod tests {
         let base_q = base.process_noise();
         for i in 0..base_dim {
             for j in 0..base_dim {
-                assert_eq!(q[(i, j)], base_q[(i, j)], "Q base corner changed at ({i},{j})");
+                assert_eq!(
+                    q[(i, j)],
+                    base_q[(i, j)],
+                    "Q base corner changed at ({i},{j})"
+                );
             }
         }
         for k in 0..MAG_BIAS_DOF {

@@ -243,6 +243,32 @@ impl StateSchema {
     pub fn storage_offset_of(&self, var: &StateVariable) -> Option<usize> {
         self.layout.iter().position(|v| v == var)
     }
+
+    /// The start index of `var` in **tangent** (error / covariance) space.
+    ///
+    /// Distinct from [`storage_offset_of`](Self::storage_offset_of): a block may
+    /// store more components than it has tangent dimensions (a quaternion stores
+    /// 4, moves on a 3-D tangent), so the two offsets diverge for every variable
+    /// past the first such block. Index a covariance or a tangent-sized error
+    /// vector through here — never through the storage offset.
+    ///
+    /// `None` if `var` is absent, or if it names a stored component with no
+    /// tangent coordinate of its own — the quaternion's scalar `Qw`, which is
+    /// carried by the mean but not parameterised in the error state.
+    pub fn tangent_offset_of(&self, var: &StateVariable) -> Option<usize> {
+        self.blocks.iter().enumerate().find_map(|(i, block)| {
+            // `?` bails out of *this* block when `var` isn't one of its names,
+            // letting `find_map` move on; a name is unique across the schema, so
+            // at most one block ever matches.
+            let j = block.variables.iter().position(|v| v == var)?;
+            // Within a block, storage index `j` is the tangent index too — except
+            // where storage outruns the tangent (Qw sits at j = 3 of a 3-D
+            // tangent). There, refuse rather than return a wrong-but-plausible
+            // slot: a silent off-by-one in a covariance index is the exact bug
+            // the storage/tangent split exists to prevent.
+            (j < block.block.tangent_dim()).then_some(self.tangent_offsets[i] + j)
+        })
+    }
 }
 
 #[cfg(test)]
