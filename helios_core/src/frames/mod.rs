@@ -277,9 +277,6 @@ impl RobotState {
         ))
     }
 }
-/// Below this quaternion norm the state is treated as degenerate and left
-/// as-is rather than divided through, which would yield `NaN`.
-const MIN_QUATERNION_NORM: f64 = 1e-9;
 
 /// The "smart" state object used by filters. It bundles the state estimate
 /// (`mean`) with its schema, covariance, and timestamp.
@@ -409,25 +406,6 @@ impl FrameAwareState {
         )))
     }
 
-    /// Renormalizes the quaternion components in place. No-op if no quaternion
-    /// is present or the norm is degenerate. Called after each predict/update to
-    /// undo the drift Euclidean `+` introduces on the placeholder rotation block.
-    pub(crate) fn normalize_quaternion(&mut self) {
-        let Some((xi, yi, zi, wi)) = self.quaternion_indices() else {
-            return;
-        };
-        let norm = (self.mean[xi].powi(2)
-            + self.mean[yi].powi(2)
-            + self.mean[zi].powi(2)
-            + self.mean[wi].powi(2))
-        .sqrt();
-        if norm > MIN_QUATERNION_NORM {
-            for k in [xi, yi, zi, wi] {
-                self.mean[k] /= norm;
-            }
-        }
-    }
-
     /// The full world-frame 6-DOF pose, or `None` if either the world position
     /// or the orientation is missing.
     pub fn get_pose_isometry(&self) -> Option<Isometry3<f64>> {
@@ -489,16 +467,6 @@ mod frame_aware_state_tests {
     fn set_variable_absent_is_noop() {
         let mut s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
         assert!(!s.set_variable(&StateVariable::Vx(FrameId::World), 9.0));
-    }
-
-    #[test]
-    fn normalize_quaternion_rescales_to_unit() {
-        let mut s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
-        // Overwrite the seeded identity with a non-unit (0,0,0,2); norm 2 → 1.
-        s.set_variable(&StateVariable::Qw(FrameId::World, FrameId::World), 2.0);
-        s.normalize_quaternion();
-        // Qw is the seventh slot (index 6).
-        assert!((s.mean[6] - 1.0).abs() < 1e-12);
     }
 
     #[test]

@@ -607,10 +607,13 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         19,
         "16-state INS base + 3-DOF mag-bias block"
     );
-    let off = state
+    // The covariance is tangent-indexed, so the bias block's variance is found at
+    // its *tangent* offset (which sits below the storage offset, the SO(3) block
+    // spending one fewer tangent DOF than stored component).
+    let tangent_off = state
         .value
         .schema()
-        .storage_offset_of(&StateVariable::MagBiasX(sensor.clone()))
+        .tangent_offset_of(&StateVariable::MagBiasX(sensor.clone()))
         .expect("the mag-bias block must be present in the published schema");
 
     // Mean moved from 0 toward the injected +3 µT offset.
@@ -626,7 +629,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
 
     // Variance collapsed well below the 5 µT prior (25 µT²): the block was
     // genuinely updated, not merely carried through predict.
-    let var_z = state.value.covariance[(off + 2, off + 2)];
+    let var_z = state.value.covariance[(tangent_off + 2, tangent_off + 2)];
     assert!(
         var_z < 1.0,
         "bias_z variance {var_z} must shrink below the prior 25 µT²"

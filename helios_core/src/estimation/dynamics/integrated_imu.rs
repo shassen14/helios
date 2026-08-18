@@ -149,13 +149,13 @@ fn compose_ins_schema(
             variables: velocity_vars(&world),
             sensor: None,
         },
-        // 3. Orientation (Body from World) — placeholder 4/4 quaternion
+        // 3. Orientation (Body from World) — 4/3 quaternion
         //    block. Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
         SchemaBlock {
             block: Arc::new(QuaternionBlock::new(
-                noise(gyro_noise_var, 4),
+                noise(gyro_noise_var, 3),
                 DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
-                p0(ori_var, 4),
+                p0(ori_var, 3),
             )),
             variables: orientation_vars(&body, &world),
             sensor: None,
@@ -285,55 +285,6 @@ impl EstimationDynamics for IntegratedImuModel {
 
         x_dot
     }
-
-    // Since this model is intended for an EKF, providing the Jacobian is crucial.
-    // As it's highly complex, we will use the numerical finite differencing method.
-    // The EKF itself can call this, or a generic helper can be created.
-
-    fn jacobian(&self, x: &State, u: &Control, t: f64) -> (DMatrix<f64>, DMatrix<f64>) {
-        // --- Numerical Differentiation for the Dynamics Jacobians A and B ---
-        let state_dim = x.nrows();
-
-        let control_dim = self.get_control_dim();
-        let mut a_jac = DMatrix::zeros(state_dim, state_dim);
-        let mut b_jac = DMatrix::zeros(state_dim, control_dim);
-
-        let epsilon = 1e-7; // A small perturbation value
-
-        // 1. Calculate the baseline state derivative with the current state and control.
-        let x_dot_base = self.derivatives(x, u, t);
-
-        // --- 2. Calculate Jacobian A (w.r.t. state x) ---
-        for j in 0..state_dim {
-            // Create a copy of the state vector to perturb.
-            let mut x_perturbed = x.clone();
-            x_perturbed[j] += epsilon;
-
-            // Calculate the derivative with the perturbed state.
-            let x_dot_perturbed = self.derivatives(&x_perturbed, u, t);
-
-            // Approximate the partial derivative column: (f(x+h) - f(x)) / h
-            let derivative_column = (x_dot_perturbed - &x_dot_base) / epsilon;
-
-            a_jac.column_mut(j).copy_from(&derivative_column);
-        }
-
-        // --- 3. Calculate Jacobian B (w.r.t. control u) ---
-        for j in 0..control_dim {
-            // Create a copy of the control vector to perturb.
-            let mut u_perturbed = u.clone();
-            u_perturbed[j] += epsilon;
-
-            // Calculate the derivative with the perturbed control.
-            let x_dot_perturbed = self.derivatives(x, &u_perturbed, t);
-
-            let derivative_column = (x_dot_perturbed - &x_dot_base) / epsilon;
-
-            b_jac.column_mut(j).copy_from(&derivative_column);
-        }
-
-        (a_jac, b_jac)
-    }
 }
 
 // NOTE: The `propagate` method from the trait uses the above `derivatives`
@@ -395,13 +346,13 @@ mod tests {
     // ── Schema ───────────────────────────────────────────────────────────────
 
     #[test]
-    fn schema_has_sixteen_storage_and_tangent_dims() {
-        // Euclidean-inert: the placeholder quaternion block keeps storage and
-        // tangent equal (16 = 16). The real error-state form later drops tangent
-        // to 15, and this assertion changes with it.
+    fn schema_has_sixteen_storage_and_fifteen_tangent_dims() {
+        // The orientation is a proper SO(3) error-state block: 4 stored quaternion
+        // components but only 3 tangent DOF, so storage (16) outruns tangent (15).
+        // Every covariance-space quantity lives in the 15-D tangent.
         let schema = make_model().schema();
         assert_eq!(schema.storage_dim(), 16);
-        assert_eq!(schema.tangent_dim(), 16);
+        assert_eq!(schema.tangent_dim(), 15);
     }
 
     #[test]
@@ -428,6 +379,24 @@ mod tests {
     }
 
     #[test]
+    fn schema_tangent_offsets_shift_below_the_orientation_block() {
+        // The tangent twin of the storage-offset test, and the crux of the SO(3)
+        // flip: storage and tangent agree up to and including orientation (both at
+        // 6), then diverge — orientation spends 3 tangent rows against 4 stored, so
+        // every block after it sits one row lower in tangent than in storage.
+        let schema = make_model().schema();
+        let body = FrameId::Body(AGENT);
+        let world = FrameId::World;
+
+        let off = |v: &StateVariable| schema.tangent_offset_of(v).unwrap();
+        assert_eq!(off(&StateVariable::Px(world.clone())), 0); // agrees with storage
+        assert_eq!(off(&StateVariable::Vx(world.clone())), 3); // agrees with storage
+        assert_eq!(off(&StateVariable::Qx(body.clone(), world.clone())), 6); // last agreement
+        assert_eq!(off(&StateVariable::Ax(body.clone())), 9); // storage 10 → tangent 9
+        assert_eq!(off(&StateVariable::Wx(body.clone())), 12); // storage 13 → tangent 12
+    }
+
+    #[test]
     fn schema_process_noise_matches_config_per_block() {
         // Distinct variances so a mis-placed block can't hide behind a shared
         // value. Position carries no process noise; every other block's Q is the
@@ -445,12 +414,14 @@ mod tests {
         let schema = model.schema();
         let q = schema.process_noise();
 
+        // Q is tangent-sized (15×15): the orientation block is 3 wide here, not 4,
+        // so every block after it sits one row lower than its storage offset.
         let expected = [
             (0..3, 0.0),   // position: no process noise
             (3..6, 2.0),   // velocity
-            (6..10, 3.0),  // orientation (4-wide placeholder)
-            (10..13, 4.0), // accel bias
-            (13..16, 5.0), // gyro bias
+            (6..9, 3.0),   // orientation (3-wide tangent)
+            (9..12, 4.0),  // accel bias
+            (12..15, 5.0), // gyro bias
         ];
         for (range, value) in expected {
             for i in range {
@@ -477,11 +448,13 @@ mod tests {
         let schema = model.schema();
         let p0 = schema.initial_covariance();
 
+        // P₀ is tangent-sized (15×15): orientation occupies 3 tangent rows (6..9),
+        // and the two bias blocks fill the remaining 9..15.
         let expected = [
-            (0..3, 7.0),   // position
-            (3..6, 1.0),   // velocity default
-            (6..10, 9.0),  // orientation
-            (10..16, 1.0), // both bias blocks default
+            (0..3, 7.0),  // position
+            (3..6, 1.0),  // velocity default
+            (6..9, 9.0),  // orientation (3-wide tangent)
+            (9..15, 1.0), // both bias blocks default
         ];
         for (range, value) in expected {
             for i in range {

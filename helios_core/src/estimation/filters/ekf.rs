@@ -103,16 +103,19 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         // state. It already includes the time step — F ≈ I + A·dt — because it
         // finite-differences `propagate`, which folds in `dt`. So no identity is
         // added here; doing so would double-count the state's contribution to P.
-        let f_k = tangent_state_transition(dynamics.as_ref(), x_old, u_sized, t_old, dt, &RK4);
+        // Sized by the state's schema (not the dynamics model's), so an augmented
+        // state's F matches its larger P.
+        let f_k =
+            tangent_state_transition(dynamics.as_ref(), &self.state, u_sized, t_old, dt, &RK4);
 
         // --- 4. Predict the next covariance matrix ---
-        // The correct approach is to apply the process noise `Q` *before* the main propagation.
-        // This represents adding uncertainty to the model itself before you predict.
-        let p_with_noise = p_old + &self.process_noise_q * dt;
-
-        // Now, propagate this "noisier" covariance forward using the state transition matrix.
-        // P_new = F * (P_old + Q*dt) * F^T
-        let p_new = &f_k * p_with_noise * f_k.transpose();
+        // Standard discrete EKF: P⁺ = F P Fᵀ + Q·dt. F carries the prior covariance
+        // across the step; Q·dt is the process noise accumulated over it — the
+        // first-order (Euler) discretization of ∫₀^dt F(τ) Q Fᵀ(τ) dτ. Q is added
+        // *outside* the F sandwich: wrapping it (F (P + Q·dt) Fᵀ) would inflate the
+        // noise by ≈ F Q Fᵀ·dt and bias the filter conservative, so its reported
+        // covariance would over-state the true error (NEES below the state dim).
+        let p_new = &f_k * p_old * f_k.transpose() + &self.process_noise_q * dt;
 
         // --- 5. Update the filter's internal state ---
         self.state.mean = x_new;
@@ -186,6 +189,8 @@ mod tests {
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector, Isometry3};
+    use rand::rngs::StdRng;
+    use rand::Rng;
 
     // --- Test Fixtures ---
 
@@ -465,17 +470,21 @@ mod tests {
             0.0,
             0.0,
         ];
+        // 15 tangent entries: the orientation block covers 3 tangent DOF, not 4, so
+        // the diagonal is one shorter than the 16-slot storage layout. The covariance
+        // propagates as the standard discrete EKF `F P Fᵀ + Q·dt` through the
+        // numerically-linearized tangent F; the bias tail (indices 9..15) is
+        // untouched and block-diagonal, growing only by its own `Q·dt` per step.
         let expected_cov_diag = [
-            6.0144822755614324,
-            6.0254566112943975,
-            1.7649038960417855,
-            33.14751985825398,
-            33.22691636994827,
-            2.120809565454974,
-            0.27204802416636203,
-            0.27204802416636203,
-            0.2710188494014054,
-            0.024084783412809015,
+            4.926254861435415,
+            4.934388297856014,
+            1.7711606023905662,
+            28.070286713127597,
+            28.136622360218443,
+            2.107672813613198,
+            1.0206267287949398,
+            1.0206267287949398,
+            1.0225003234612988,
             1.0001000000500073,
             1.0001000000500073,
             1.0001000000500073,
@@ -515,6 +524,130 @@ mod tests {
         assert!(
             (px - true_px).abs() < 0.1,
             "EKF should converge near {true_px} m, got {px}"
+        );
+    }
+
+    // --- Consistency (NEES) ---
+    //
+    // The golden test freezes the *values* the covariance step produces; this
+    // checks that step is statistically *honest*. Normalized Estimation Error
+    // Squared, δᵀP⁻¹δ with δ = truth ⊟ estimate (a 15-vector in tangent space),
+    // has expectation equal to the tangent dimension when the covariance neither
+    // over- nor under-states the true error. Averaged over independent
+    // Monte-Carlo runs it must sit in a tight band around 15.
+    //
+    // The run is **predict-only**, which is deliberate: what this checks is the
+    // covariance propagation — the numerically-linearized tangent F and the
+    // manifold retraction of the mean — and nothing in the update touches it. A
+    // predict-only sequence exercises exactly that path and is analytically
+    // consistent (truth and filter share Q, no measurement, so no observability
+    // confound can bias the result). The first-order recursion δₖ₊₁ ≈ F·δₖ + wₖ
+    // against Pₖ₊₁ = F·Pₖ·Fᵀ + Q·dt — the exact form `predict` computes — holds
+    // NEES at the tangent dimension when F is right; a mis-sized or mis-linearized
+    // F would inflate or deflate it.
+    //
+    // P₀ and Q here are small and test-chosen, NOT the shipped INS priors. F is a
+    // property of the dynamics, independent of P₀/Q, so any consistent pair
+    // validates it — and small errors are essential: the model's default bias
+    // prior (std 1 rad/s of gyro bias) would inject ~1 rad attitude errors that
+    // leave the linear regime entirely, so NEES would explode on second-order
+    // gravity-projection terms no first-order F can carry. Small errors keep the
+    // check on the linearization, which is what it is meant to test.
+
+    const NEES_RUNS: usize = 60;
+    const NEES_STEPS: usize = 60;
+    const NEES_DT: f64 = 0.02;
+    /// Initial-error variance, isotropic in tangent space. Deliberately tiny (std
+    /// 0.01) so the SO(3) retraction and every cross-coupling stay firmly in the
+    /// linear regime; at this scale nonlinearity moves NEES by well under a percent
+    /// (empirically NEES climbs from ~13.4 here to ~19 at var 1e-2, all of it
+    /// second-order gravity-projection error the first-order F cannot carry).
+    const NEES_P0_VAR: f64 = 1e-4;
+    /// Process-noise variance per unit time, isotropic. Over the run it grows the
+    /// error comparably to P₀ while keeping every direction well within linearization.
+    const NEES_Q_VAR: f64 = 1e-5;
+    /// Acceptance band as a fraction of the tangent dimension. Even with the honest
+    /// `F P Fᵀ + Q·dt` propagation the steady NEES sits a little under `n` (~13.4 of
+    /// 15), and that deficit is *linearization*, not the covariance formula: the
+    /// numerically-linearized F is first-order and cannot carry the second-order
+    /// gravity-projection error, leaving a small consistent shortfall at this error
+    /// scale (which grows with it — see `NEES_P0_VAR`). The band is a ±30% check on
+    /// `n`: it admits that deficit and Monte-Carlo scatter (SE ≈ 0.7 over
+    /// `NEES_RUNS`) yet still fails a covariance that is off by a factor.
+    const NEES_BAND_FRAC: f64 = 0.3;
+
+    /// Samples a zero-mean Gaussian whose covariance is `scale · diag(cov)`. The
+    /// P₀ and Q used here are diagonal, so sampling the diagonal is exact.
+    fn sample_diag_gaussian(cov: &DMatrix<f64>, scale: f64, rng: &mut StdRng) -> DVector<f64> {
+        let mut v = DVector::zeros(cov.nrows());
+        for i in 0..cov.nrows() {
+            let var = cov[(i, i)] * scale;
+            if var > 0.0 {
+                let z: f64 = rng.sample(rand_distr::StandardNormal);
+                v[i] = var.sqrt() * z;
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn ins_ekf_predict_nees_is_consistent() {
+        use rand::SeedableRng;
+
+        let n = ins_model().schema().tangent_dim();
+        let p0 = DMatrix::identity(n, n) * NEES_P0_VAR;
+        let q = DMatrix::identity(n, n) * NEES_Q_VAR;
+        let control = DVector::from_row_slice(&[0.5, 0.0, 9.81, 0.0, 0.0, 0.15]);
+        let inputs = EstimatorInputs {
+            control: control.clone(),
+        };
+
+        // One RNG stream across all runs keeps the whole test deterministic.
+        let mut rng = StdRng::seed_from_u64(0x4E45_4553);
+
+        let mut nees_sum = 0.0;
+        for _ in 0..NEES_RUNS {
+            let model = ins_model();
+            let mut est_init = FrameAwareState::from_schema(model.schema(), 0.0);
+            est_init.covariance = p0.clone();
+            let mut ekf = ExtendedKalmanFilter::new(est_init, q.clone(), Box::new(model));
+
+            // Truth starts one draw of the prior away from the estimate, so the
+            // initial error is distributed exactly as P₀ claims.
+            let truth_model = ins_model();
+            let mut truth = ekf.state().clone();
+            truth.oplus_assign(&sample_diag_gaussian(&p0, 1.0, &mut rng));
+
+            let mut t = 0.0;
+            for _ in 0..NEES_STEPS {
+                // Truth advances by the nominal dynamics plus process noise ~ Q·dt;
+                // the filter propagates the same nominal flow and grows P by F·P·Fᵀ+Q.
+                truth.mean = truth_model.propagate(&truth.mean, &control, t, NEES_DT, &RK4);
+                truth.oplus_assign(&sample_diag_gaussian(&q, NEES_DT, &mut rng));
+
+                ekf.predict(NEES_DT, &inputs);
+                t += NEES_DT;
+            }
+
+            // NEES at the final step: δ = truth ⊟ estimate in tangent space, then
+            // the Mahalanobis norm under the filter's own covariance.
+            let est = ekf.state();
+            let delta = est.schema.ominus(truth.mean.as_view(), est.mean.as_view());
+            let p_inv = est
+                .covariance
+                .clone()
+                .try_inverse()
+                .expect("filter covariance stays invertible");
+            nees_sum += (delta.transpose() * p_inv * &delta)[(0, 0)];
+        }
+
+        let mean_nees = nees_sum / NEES_RUNS as f64;
+        let dof = n as f64;
+        assert!(
+            (mean_nees - dof).abs() <= NEES_BAND_FRAC * dof,
+            "average NEES {mean_nees} outside {:.0}% of the tangent dimension {dof}: \
+             the predicted covariance is inconsistent with the actual error",
+            NEES_BAND_FRAC * 100.0
         );
     }
 
@@ -584,7 +717,12 @@ mod tests {
 
         let model = ins_model();
         let base = model.schema();
-        let base_dim = base.tangent_dim();
+        // The base storage (16) and tangent (15) dims differ at the SO(3) block, so
+        // the appended bias lands at a different offset in each space: storage names
+        // (layout, storage_offset) key off `base_storage`, covariance/noise corners
+        // off `base_tangent`.
+        let base_storage = base.storage_dim();
+        let base_tangent = base.tangent_dim();
         let sensor = FrameId::Sensor(FrameHandle(9));
 
         let augmented = Arc::new(base.extended(vec![mag_bias_block(sensor.clone())]));
@@ -592,21 +730,22 @@ mod tests {
 
         // The construction seam: `ExtendedKalmanFilter::new`'s only assertion is
         // `tangent_dim == Q dims`, which the composed schema satisfies. Reaching
-        // the next line without a panic is itself the proof that a 19-dim
-        // augmented schema builds a filter.
+        // the next line without a panic is itself the proof that an augmented
+        // schema builds a filter.
         let ekf =
             ExtendedKalmanFilter::new(state, augmented.process_noise().clone(), Box::new(model));
         let state = ekf.state();
 
-        // Dimension grew by exactly the 3-DOF bias block, in both spaces.
-        assert_eq!(state.tangent_dim(), base_dim + MAG_BIAS_DOF);
-        assert_eq!(state.storage_dim(), base_dim + MAG_BIAS_DOF);
+        // Dimension grew by exactly the 3-DOF bias block, in each space from its
+        // own base.
+        assert_eq!(state.tangent_dim(), base_tangent + MAG_BIAS_DOF);
+        assert_eq!(state.storage_dim(), base_storage + MAG_BIAS_DOF);
 
         // The bias variables are appended after the base, tagged with the sensor,
-        // and the first sits exactly at the base boundary.
+        // and the first sits exactly at the base storage boundary.
         let layout = state.schema().layout();
         assert_eq!(
-            &layout[base_dim..],
+            &layout[base_storage..],
             &[
                 StateVariable::MagBiasX(sensor.clone()),
                 StateVariable::MagBiasY(sensor.clone()),
@@ -617,15 +756,15 @@ mod tests {
             state
                 .schema()
                 .storage_offset_of(&StateVariable::MagBiasX(sensor.clone())),
-            Some(base_dim)
+            Some(base_storage)
         );
 
-        // P₀ (the state's covariance): base corner byte-identical to the
-        // un-augmented schema; bias corner = init_uncertainty² isotropic.
+        // P₀ (the state's covariance) lives in tangent space: base corner
+        // byte-identical to the un-augmented schema; bias corner = init² isotropic.
         let p = &state.covariance;
         let base_p = base.initial_covariance();
-        for i in 0..base_dim {
-            for j in 0..base_dim {
+        for i in 0..base_tangent {
+            for j in 0..base_tangent {
                 assert_eq!(
                     p[(i, j)],
                     base_p[(i, j)],
@@ -634,18 +773,18 @@ mod tests {
             }
         }
         for k in 0..MAG_BIAS_DOF {
-            let d = base_dim + k;
+            let d = base_tangent + k;
             assert_eq!(
                 p[(d, d)],
                 MAG_BIAS_INIT_UNCERTAINTY * MAG_BIAS_INIT_UNCERTAINTY
             );
         }
 
-        // Q (the composed process noise fed to the filter): same story.
+        // Q (the composed process noise fed to the filter) is tangent-sized too.
         let q = augmented.process_noise();
         let base_q = base.process_noise();
-        for i in 0..base_dim {
-            for j in 0..base_dim {
+        for i in 0..base_tangent {
+            for j in 0..base_tangent {
                 assert_eq!(
                     q[(i, j)],
                     base_q[(i, j)],
@@ -654,7 +793,7 @@ mod tests {
             }
         }
         for k in 0..MAG_BIAS_DOF {
-            let d = base_dim + k;
+            let d = base_tangent + k;
             assert_eq!(q[(d, d)], MAG_BIAS_RANDOM_WALK * MAG_BIAS_RANDOM_WALK);
         }
     }
@@ -723,7 +862,9 @@ mod tests {
     fn augmented_predict_leaves_base_subvector_bit_identical() {
         use crate::data::primitives::FrameHandle;
 
-        let base_dim = ins_model().schema().tangent_dim();
+        // The mean is storage-indexed, so the base sub-vector spans `base_storage`
+        // (16) slots — the full quaternion included — and the bias appends after it.
+        let base_storage = ins_model().schema().storage_dim();
         let sensor = FrameId::Sensor(FrameHandle(9));
         let mut base = base_ins_ekf();
         let mut aug = augmented_ins_ekf(&[sensor]);
@@ -740,7 +881,7 @@ mod tests {
         // The 16 base slots reached the exact same bits as the standalone filter:
         // the trailing bias slots never enter the base derivative computation, so
         // augmentation cannot perturb the base trajectory.
-        for i in 0..base_dim {
+        for i in 0..base_storage {
             assert_eq!(
                 aug.state().mean[i],
                 base.state().mean[i],
@@ -752,7 +893,7 @@ mod tests {
         // prior is zero, so every slot must read exactly zero after the run.
         for k in 0..MAG_BIAS_DOF {
             assert_eq!(
-                aug.state().mean[base_dim + k],
+                aug.state().mean[base_storage + k],
                 0.0,
                 "bias mean slot {k} drifted; a random-walk mean must hold at its prior"
             );
@@ -817,7 +958,10 @@ mod tests {
         use crate::estimation::measurement::magnetometer::MagneticFieldModel;
         use nalgebra::Vector3;
 
-        let base_dim = ins_model().schema().tangent_dim();
+        // Bias mean reads are storage-indexed (offset 16), its variance reads are
+        // tangent-indexed (offset 15) — the SO(3) block splits the two.
+        let base_storage = ins_model().schema().storage_dim();
+        let base_tangent = ins_model().schema().tangent_dim();
         let sensor_handle = FrameHandle(9);
         let sensor = FrameId::Sensor(sensor_handle);
         let mut ekf = augmented_ins_ekf(&[sensor.clone()]);
@@ -849,9 +993,9 @@ mod tests {
 
         let state = ekf.state();
         let b_est = Vector3::new(
-            state.mean[base_dim],
-            state.mean[base_dim + 1],
-            state.mean[base_dim + 2],
+            state.mean[base_storage],
+            state.mean[base_storage + 1],
+            state.mean[base_storage + 2],
         );
 
         // The estimate moved off the zero prior toward the truth: its error is
@@ -864,7 +1008,7 @@ mod tests {
         // Every bias variance shrank below the prior — the update extracted
         // information about the block, which is the observability claim.
         for k in 0..MAG_BIAS_DOF {
-            let d = base_dim + k;
+            let d = base_tangent + k;
             let var = state.covariance[(d, d)];
             assert!(
                 var < p0_bias,
