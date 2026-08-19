@@ -130,9 +130,11 @@ impl Quantity {
     }
 }
 
-/// One block in a composed schema: the manifold [`StateBlock`], the ordered
-/// [`StateVariable`]s naming its stored slots, and the sensor frame it is tied
-/// to (if any). `variables.len()` must equal `block.storage_dim()`.
+/// One block in a composed schema: the manifold [`StateBlock`] that retracts it,
+/// paired with the [`Quantity`] that gives it meaning. The quantity is the single
+/// source of the block's identity — its frame(s) and, via [`Quantity::variables`],
+/// the ordered [`StateVariable`] names of its stored slots. Those names must number
+/// exactly `block.storage_dim()`, a match [`StateSchema::compose`] asserts.
 #[derive(Debug, Clone)]
 pub struct SchemaBlock {
     pub block: Arc<dyn StateBlock>,
@@ -395,6 +397,126 @@ mod tests {
 
     fn noise(var: f64) -> Option<TangentNoise> {
         Some(TangentNoise::from_variances(DVector::from_element(3, var)).unwrap())
+    }
+
+    // ── Quantity: names and manifold selection ───────────────────────────────
+
+    #[test]
+    fn variables_spells_each_kind_in_order() {
+        // `Quantity::variables` is the single source of a block's stored names, so
+        // each kind's exact ordered spelling is pinned here rather than left to
+        // transitive coverage. A reordering or a wrong axis tag would silently
+        // desync every name lookup built on top of it.
+        let f = FrameId::World;
+        let b = FrameId::Body(crate::data::primitives::FrameHandle(2));
+
+        use StateVariable::*;
+        assert_eq!(
+            Quantity::Position(f.clone()).variables(),
+            vec![Px(f.clone()), Py(f.clone()), Pz(f.clone())]
+        );
+        assert_eq!(
+            Quantity::Velocity(f.clone()).variables(),
+            vec![Vx(f.clone()), Vy(f.clone()), Vz(f.clone())]
+        );
+        assert_eq!(
+            Quantity::Acceleration(f.clone()).variables(),
+            vec![Ax(f.clone()), Ay(f.clone()), Az(f.clone())]
+        );
+        assert_eq!(
+            Quantity::AngularVelocity(f.clone()).variables(),
+            vec![Wx(f.clone()), Wy(f.clone()), Wz(f.clone())]
+        );
+        assert_eq!(
+            Quantity::AngularAcceleration(f.clone()).variables(),
+            vec![Alphax(f.clone()), Alphay(f.clone()), Alphaz(f.clone())]
+        );
+        assert_eq!(
+            Quantity::Mag(f.clone()).variables(),
+            vec![MagX(f.clone()), MagY(f.clone()), MagZ(f.clone())]
+        );
+        assert_eq!(
+            Quantity::MagBias(f.clone()).variables(),
+            vec![
+                MagBiasX(f.clone()),
+                MagBiasY(f.clone()),
+                MagBiasZ(f.clone())
+            ]
+        );
+        // Orientation stores four scalars in x, y, z, w order — w last, matching
+        // the identity-quaternion seed `[0, 0, 0, 1]`.
+        assert_eq!(
+            Quantity::Orientation {
+                from: b.clone(),
+                to: f.clone()
+            }
+            .variables(),
+            vec![
+                Qx(b.clone(), f.clone()),
+                Qy(b.clone(), f.clone()),
+                Qz(b.clone(), f.clone()),
+                Qw(b.clone(), f.clone()),
+            ]
+        );
+    }
+
+    #[test]
+    fn manifold_orientation_is_a_four_three_quaternion_block() {
+        // The one curved kind: four stored components against a three-DOF tangent.
+        let block = Quantity::Orientation {
+            from: FrameId::Body(crate::data::primitives::FrameHandle(2)),
+            to: FrameId::World,
+        }
+        .manifold(
+            noise(0.1),
+            DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+            DMatrix::identity(3, 3),
+        );
+        assert_eq!(block.storage_dim(), 4);
+        assert_eq!(block.tangent_dim(), 3);
+    }
+
+    #[test]
+    fn manifold_flat_kind_is_an_equal_dim_euclidean_block() {
+        // Every non-orientation kind is Euclidean: storage and tangent coincide.
+        let block = Quantity::Velocity(FrameId::World).manifold(
+            noise(0.5),
+            DVector::zeros(3),
+            DMatrix::identity(3, 3),
+        );
+        assert_eq!(block.storage_dim(), 3);
+        assert_eq!(block.tangent_dim(), 3);
+    }
+
+    #[test]
+    fn manifold_flat_kind_without_noise_carries_no_process_noise() {
+        // `None` on a flat kind routes to `EuclideanBlock::without_noise`: a fixed
+        // prior with no random walk (a position seeded from GPS, say).
+        let block = Quantity::Position(FrameId::World).manifold(
+            None,
+            DVector::zeros(3),
+            DMatrix::identity(3, 3),
+        );
+        assert!(block.process_noise().is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "orientation block requires process noise")]
+    fn manifold_orientation_without_noise_panics() {
+        // A quaternion retraction has no positive-definite zero-noise covariance, so
+        // a noiseless orientation is impossible, not a recoverable default. This is
+        // the branch deliberately chosen over a silent `unwrap_or_else` fallback:
+        // passing `None` here is a construction-time programming error and must
+        // panic rather than fabricate zero process noise.
+        Quantity::Orientation {
+            from: FrameId::Body(crate::data::primitives::FrameHandle(2)),
+            to: FrameId::World,
+        }
+        .manifold(
+            None,
+            DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+            DMatrix::identity(3, 3),
+        );
     }
 
     fn pos_vel_schema() -> StateSchema {
