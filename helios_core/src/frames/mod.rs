@@ -9,9 +9,19 @@ pub mod conventions;
 pub mod quantities;
 pub mod transforms;
 
-use crate::{data::primitives::FrameHandle, estimation::schema::StateSchema};
+use crate::{
+    data::primitives::FrameHandle,
+    estimation::schema::{Quantity, StateSchema},
+    frames::{
+        conventions::Frame,
+        quantities::{FreeVector, Point},
+        transforms::{Rotation, Transform},
+    },
+};
 
-use nalgebra::{DMatrix, DVector, Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
+use nalgebra::{
+    DMatrix, DVector, Isometry3, Quaternion, Translation, Translation3, UnitQuaternion, Vector3,
+};
 use serde::{Deserialize, Serialize};
 use std::{hash::Hash, sync::Arc};
 
@@ -344,6 +354,121 @@ impl FrameAwareState {
         self.schema.storage_offset_of(var)
     }
 
+    // --- Typed block extractors ---
+    //
+    // Read one whole state block by its `Quantity` and hand back the Layer-3
+    // carrier for that kind — `Point<F>` for a position, `FreeVector<F>` for a
+    // rate, `Rotation<A, B>` for an orientation. Each locates its block through
+    // `StateSchema::storage_offset_of_block`, so there is no name scan and no
+    // contiguity check: a block owns a contiguous slice by construction, unlike
+    // the by-name `get_vector3` below.
+    //
+    // The convention type parameter (`F`, or `A`/`B`) is *caller-asserted and
+    // unchecked*: the schema stores only a block's `FrameId` identity, never its
+    // axis convention, so nothing here verifies that the requested frame really
+    // is expressed in `F`. That check arrives once the schema carries the
+    // convention; until then the turbofish is a promise the caller keeps.
+    //
+    // Every extractor returns `None` when no block of that exact `Quantity` — the
+    // kind *and* its frame identity — is in the schema. Asking a state that holds
+    // only `Position(World)` for `position::<F>(some_body)` yields `None`.
+
+    /// The position of `id`'s frame, as a `Point` in convention `F`.
+    pub fn position<F: Frame>(&self, id: FrameId) -> Option<Point<F>> {
+        let vec = self.block_vector3(&Quantity::Position(id))?;
+
+        Some(Point::from_raw(vec))
+    }
+
+    /// The linear velocity of `id`'s frame, as a `FreeVector` in convention `F`.
+    pub fn velocity<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3(&Quantity::Velocity(id))?;
+
+        Some(FreeVector::from_raw(vec))
+    }
+
+    /// The linear acceleration of `id`'s frame, as a `FreeVector` in convention `F`.
+    pub fn acceleration<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3(&Quantity::Acceleration(id))?;
+
+        Some(FreeVector::from_raw(vec))
+    }
+
+    /// The angular velocity of `id`'s frame, as a `FreeVector` in convention `F`.
+    pub fn angular_velocity<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3(&Quantity::AngularVelocity(id))?;
+
+        Some(FreeVector::from_raw(vec))
+    }
+
+    /// The angular acceleration of `id`'s frame, as a `FreeVector` in convention `F`.
+    pub fn angular_acceleration<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3(&Quantity::AngularAcceleration(id))?;
+        Some(FreeVector::from_raw(vec))
+    }
+
+    /// The magnetometer bias for sensor `id`, as a `FreeVector` in convention `F`.
+    pub fn mag_bias<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3(&Quantity::MagBias(id))?;
+        Some(FreeVector::from_raw(vec))
+    }
+
+    /// The `from → to` orientation, as a `Rotation<A, B>`.
+    ///
+    /// The block stores four scalars in `[Qx, Qy, Qz, Qw]` order while
+    /// `nalgebra::Quaternion::new` takes `(w, i, j, k)`, so `w` is read from the
+    /// fourth slot and the vector part from the first three. The stored mean is
+    /// unit by the orientation block's own retraction, but `from_quaternion`
+    /// normalizes defensively before it is tagged.
+    pub fn orientation<A: Frame, B: Frame>(
+        &self,
+        from: FrameId,
+        to: FrameId,
+    ) -> Option<Rotation<A, B>> {
+        let off = self
+            .schema
+            .storage_offset_of_block(&Quantity::Orientation { from, to })?;
+
+        let q = Quaternion::new(
+            self.mean[off + 3],
+            self.mean[off],
+            self.mean[off + 1],
+            self.mean[off + 2],
+        );
+
+        let u_q = UnitQuaternion::from_quaternion(q);
+
+        Some(Rotation::from_unit_quaternion(u_q))
+    }
+
+    /// The full rigid pose of `body` expressed in `reference`, as a
+    /// `Transform<A, B>`. Pure composition of two block reads — the `body →
+    /// reference` [`orientation`](Self::orientation) and the body origin's
+    /// [`position`](Self::position) *in the reference frame* (its translation) —
+    /// so it needs no block of its own; there is no stored pose block. `None` if
+    /// either the orientation or the reference-frame position is absent.
+    pub fn pose<A: Frame, B: Frame>(
+        &self,
+        body: FrameId,
+        reference: FrameId,
+    ) -> Option<Transform<A, B>> {
+        let rotation = self.orientation::<A, B>(body, reference.clone())?;
+        let pos = self.position::<B>(reference)?;
+
+        let t = Transform::from_parts(rotation, Translation::from(pos.into_inner()));
+
+        Some(t)
+    }
+
+    /// Shared slice-and-copy for the flat (three-scalar) block extractors: the
+    /// block's storage offset, then its three contiguous mean rows as a raw
+    /// `Vector3`. The public extractors wrap the result in their typed carrier.
+    fn block_vector3(&self, quantity: &Quantity) -> Option<Vector3<f64>> {
+        let offset = self.schema.storage_offset_of_block(quantity)?;
+
+        Some(self.mean.fixed_rows::<3>(offset).into())
+    }
+
     // --- Named quantity extractors (temporary) ---
     //
     // These pull specific physical quantities out of the state by matching
@@ -504,5 +629,152 @@ mod frame_aware_state_tests {
 
         assert_eq!(&s.mean, schema.initial_value());
         assert_eq!(s.timestamp, 5.0);
+    }
+}
+
+#[cfg(test)]
+mod block_extractor_tests {
+    use super::*;
+    use crate::estimation::schema::SchemaBlock;
+    use crate::frames::conventions::{Enu, Flu};
+    use crate::manifold::TangentNoise;
+
+    fn body() -> FrameId {
+        FrameId::Body(FrameHandle(1))
+    }
+
+    // Isotropic 3-DOF process noise. Its value is irrelevant to a read test, but
+    // a block must carry *some* noise to build — an orientation block refuses
+    // `None` — so every block here is seeded with the same nonzero variance.
+    fn noise() -> Option<TangentNoise> {
+        Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap())
+    }
+
+    // A composed (non-degenerate) schema: position + velocity in World, then a
+    // body → World orientation. The block extractors key off `Quantity`, so the
+    // state must be built through `compose`; a `degenerate` schema is a single
+    // `Quantity::Raw` block and would match none of them. The orientation seeds
+    // an identity quaternion `[0, 0, 0, 1]`, the flat blocks seed zeros; each
+    // test overwrites the slots it reads.
+    fn composed_state() -> FrameAwareState {
+        let schema = StateSchema::compose(vec![
+            SchemaBlock::new(
+                Quantity::Position(FrameId::World),
+                noise(),
+                DVector::zeros(3),
+                DMatrix::identity(3, 3),
+            ),
+            SchemaBlock::new(
+                Quantity::Velocity(FrameId::World),
+                noise(),
+                DVector::zeros(3),
+                DMatrix::identity(3, 3),
+            ),
+            SchemaBlock::new(
+                Quantity::Orientation {
+                    from: body(),
+                    to: FrameId::World,
+                },
+                noise(),
+                DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+                DMatrix::identity(3, 3),
+            ),
+        ]);
+        FrameAwareState::from_schema(Arc::new(schema), 0.0)
+    }
+
+    #[test]
+    fn position_reads_its_block() {
+        let mut s = composed_state();
+        s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
+        s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
+        s.set_variable(&StateVariable::Pz(FrameId::World), 3.0);
+
+        let p = s.position::<Enu>(FrameId::World).unwrap();
+        assert_eq!(p.raw(), &Vector3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn velocity_reads_the_second_block_at_its_offset() {
+        // Velocity sits *after* position in storage, so a correct read proves the
+        // extractor honors the block's offset rather than reading from the top.
+        let mut s = composed_state();
+        s.set_variable(&StateVariable::Vx(FrameId::World), 4.0);
+        s.set_variable(&StateVariable::Vy(FrameId::World), 5.0);
+        s.set_variable(&StateVariable::Vz(FrameId::World), 6.0);
+
+        let v = s.velocity::<Enu>(FrameId::World).unwrap();
+        assert_eq!(v.raw(), &Vector3::new(4.0, 5.0, 6.0));
+    }
+
+    #[test]
+    fn block_extractor_agrees_with_the_by_name_reader() {
+        // The new block path and the legacy `get_vector3` must resolve to the same
+        // slot; this pins that equivalence while both coexist during migration.
+        let mut s = composed_state();
+        s.set_variable(&StateVariable::Px(FrameId::World), 7.0);
+        s.set_variable(&StateVariable::Py(FrameId::World), 8.0);
+        s.set_variable(&StateVariable::Pz(FrameId::World), 9.0);
+
+        let via_block = s.position::<Enu>(FrameId::World).unwrap();
+        let via_name = s.get_vector3(&StateVariable::Px(FrameId::World)).unwrap();
+        assert_eq!(via_block.raw(), &via_name);
+    }
+
+    #[test]
+    fn orientation_reads_and_reorders_the_quaternion() {
+        // A 180° rotation about Z has the exact quaternion (w, x, y, z) =
+        // (0, 0, 0, 1), stored as [Qx, Qy, Qz, Qw] = [0, 0, 1, 0]. Clean scalars
+        // let the reorder (w from the last slot) be checked without tolerance.
+        let mut s = composed_state();
+        s.set_variable(&StateVariable::Qx(body(), FrameId::World), 0.0);
+        s.set_variable(&StateVariable::Qy(body(), FrameId::World), 0.0);
+        s.set_variable(&StateVariable::Qz(body(), FrameId::World), 1.0);
+        s.set_variable(&StateVariable::Qw(body(), FrameId::World), 0.0);
+
+        let r = s.orientation::<Flu, Enu>(body(), FrameId::World).unwrap();
+        let expected = UnitQuaternion::from_quaternion(Quaternion::new(0.0, 0.0, 0.0, 1.0));
+        assert!(quat_eq(&r.into_inner(), &expected));
+    }
+
+    #[test]
+    fn pose_composes_position_and_orientation() {
+        let mut s = composed_state();
+        s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
+        s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
+        s.set_variable(&StateVariable::Pz(FrameId::World), 3.0);
+        s.set_variable(&StateVariable::Qz(body(), FrameId::World), 1.0);
+        s.set_variable(&StateVariable::Qw(body(), FrameId::World), 0.0);
+
+        let pose = s.pose::<Flu, Enu>(body(), FrameId::World).unwrap();
+        let iso = pose.into_inner();
+
+        // Translation is the reference-frame position …
+        assert_eq!(iso.translation.vector, Vector3::new(1.0, 2.0, 3.0));
+        // … and the rotation is the body → reference orientation.
+        let expected = UnitQuaternion::from_quaternion(Quaternion::new(0.0, 0.0, 0.0, 1.0));
+        assert!(quat_eq(&iso.rotation, &expected));
+    }
+
+    #[test]
+    fn absent_kind_is_none() {
+        // No acceleration block was composed, so the read finds nothing.
+        let s = composed_state();
+        assert!(s.acceleration::<Enu>(FrameId::World).is_none());
+    }
+
+    #[test]
+    fn wrong_frame_identity_is_none() {
+        // Position exists only for World; the same kind under a different frame
+        // identity is a different block, and is absent.
+        let s = composed_state();
+        assert!(s.position::<Flu>(body()).is_none());
+    }
+
+    // Quaternion equality up to the double cover: `q` and `-q` are the same
+    // rotation, so compare the coordinate vectors allowing for a sign flip.
+    fn quat_eq(a: &UnitQuaternion<f64>, b: &UnitQuaternion<f64>) -> bool {
+        let (a, b) = (a.into_inner().coords, b.into_inner().coords);
+        (a - b).norm() < 1e-12 || (a + b).norm() < 1e-12
     }
 }

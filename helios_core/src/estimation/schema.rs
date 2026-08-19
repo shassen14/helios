@@ -400,6 +400,13 @@ impl StateSchema {
             (j < block.block.tangent_dim()).then_some(self.tangent_offsets[i] + j)
         })
     }
+
+    pub fn storage_offset_of_block(&self, quantity: &Quantity) -> Option<usize> {
+        self.blocks
+            .iter()
+            .position(|b| &b.quantity == quantity)
+            .map(|i| self.storage_offsets[i])
+    }
 }
 
 #[cfg(test)]
