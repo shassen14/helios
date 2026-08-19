@@ -7,8 +7,8 @@
 //! of trusting a fixed factory value. Estimating those terms while the vehicle
 //! runs is online calibration; the same block, frozen after convergence, is the
 //! offline-calibration result. Each block is tied to the sensor frame it
-//! describes ([`SchemaBlock::sensor`]), so two magnetometers on one vehicle get
-//! two independent bias blocks that never alias.
+//! describes (carried in its [`Quantity::MagBias`] identity), so two
+//! magnetometers on one vehicle get two independent bias blocks that never alias.
 //!
 //! [`augmentation_block`] maps a config-declared augmentation kind to the
 //! [`SchemaBlock`] that realizes it, ready for [`StateSchema::compose`] to bake
@@ -17,12 +17,12 @@
 //! [`StateSchema::compose`]: crate::estimation::schema::StateSchema::compose
 
 use crate::{
-    estimation::schema::SchemaBlock,
-    frames::{FrameId, StateVariable},
-    manifold::{euclidean::EuclideanBlock, TangentNoise},
+    estimation::schema::{Quantity, SchemaBlock},
+    frames::FrameId,
+    manifold::TangentNoise,
 };
 
-use std::{fmt::Display, sync::Arc};
+use std::fmt::Display;
 
 use nalgebra::{DMatrix, DVector};
 
@@ -61,9 +61,9 @@ impl Display for AugmentationError {
 /// * `kind` — the augmentation to instantiate; matched against the reserved kind
 ///   strings (e.g. [`MAGNETOMETER_BIAS`]). An unrecognized value is a
 ///   [`AugmentationError::UnknownKind`], not a panic.
-/// * `sensor` — the frame the estimated parameter belongs to. Every
-///   [`StateVariable`] in the block is tagged with it, and it is stored as
-///   [`SchemaBlock::sensor`], so blocks for distinct sensors stay independent.
+/// * `sensor` — the frame the estimated parameter belongs to. It is carried in the
+///   block's [`Quantity`] identity, from which every [`StateVariable`] name is
+///   derived tagged with it, so blocks for distinct sensors stay independent.
 /// * `init_uncertainty` — prior standard deviation on each axis (block units).
 ///   Squared onto the diagonal of the block's initial covariance `P₀`.
 /// * `random_walk` — per-axis process-noise standard deviation driving how fast
@@ -79,12 +79,6 @@ pub fn augmentation_block(
 ) -> Result<SchemaBlock, AugmentationError> {
     match kind {
         MAGNETOMETER_BIAS => {
-            let variables = vec![
-                StateVariable::MagBiasX(sensor.clone()),
-                StateVariable::MagBiasY(sensor.clone()),
-                StateVariable::MagBiasZ(sensor.clone()),
-            ];
-
             let noise = TangentNoise::from_std_devs(DVector::from_element(3, random_walk))
                 .ok_or(AugmentationError::InvalidNoise)?;
 
@@ -93,13 +87,12 @@ pub fn augmentation_block(
                 init_uncertainty * init_uncertainty,
             ));
 
-            let block = EuclideanBlock::new(noise, DVector::zeros(3), p0);
-
-            Ok(SchemaBlock {
-                block: Arc::new(block),
-                variables,
-                sensor: Some(sensor),
-            })
+            Ok(SchemaBlock::new(
+                Quantity::MagBias(sensor),
+                Some(noise),
+                DVector::zeros(3),
+                p0,
+            ))
         }
         _ => Err(AugmentationError::UnknownKind(kind.to_owned())),
     }
@@ -109,6 +102,7 @@ pub fn augmentation_block(
 mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
+    use crate::frames::StateVariable;
 
     const INIT_UNCERTAINTY: f64 = 0.5;
     const RANDOM_WALK: f64 = 0.01;
@@ -131,7 +125,7 @@ mod tests {
     fn mag_bias_variables_are_tagged_with_the_sensor_frame() {
         let block = mag_block();
         assert_eq!(
-            block.variables,
+            block.variables(),
             vec![
                 StateVariable::MagBiasX(sensor_frame()),
                 StateVariable::MagBiasY(sensor_frame()),
@@ -142,7 +136,7 @@ mod tests {
 
     #[test]
     fn mag_bias_records_its_owning_sensor() {
-        assert_eq!(mag_block().sensor, Some(sensor_frame()));
+        assert_eq!(mag_block().quantity, Quantity::MagBias(sensor_frame()));
     }
 
     #[test]
@@ -150,7 +144,7 @@ mod tests {
         let block = mag_block();
         assert_eq!(block.block.storage_dim(), 3);
         assert_eq!(block.block.tangent_dim(), 3);
-        assert_eq!(block.variables.len(), block.block.storage_dim());
+        assert_eq!(block.variables().len(), block.block.storage_dim());
     }
 
     #[test]

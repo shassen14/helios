@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use crate::data::primitives::{Control, FrameHandle, State};
 use crate::estimation::dynamics::EstimationDynamics;
-use crate::estimation::schema::{SchemaBlock, StateSchema};
+use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
 use crate::frames::{FrameId, StateVariable};
-use crate::manifold::euclidean::EuclideanBlock;
-use crate::manifold::quaternion::QuaternionBlock;
 use crate::manifold::TangentNoise;
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 
@@ -126,12 +124,22 @@ pub fn ins_state_layout(agent_handle: FrameHandle) -> Vec<StateVariable> {
     let body = FrameId::Body(agent_handle);
     let world = FrameId::World;
 
-    let mut layout = position_vars(&world);
-    layout.extend(velocity_vars(&world));
-    layout.extend(orientation_vars(&body, &world));
-    layout.extend(accel_bias_vars(&body));
-    layout.extend(gyro_bias_vars(&body));
-    layout
+    // Same per-block quantities, in the same order, that `compose_ins_schema`
+    // builds; the layout is their concatenated variable names. Single-sourced
+    // against `Quantity` so the two can never drift apart.
+    [
+        Quantity::Position(world.clone()),
+        Quantity::Velocity(world.clone()),
+        Quantity::Orientation {
+            from: body.clone(),
+            to: world.clone(),
+        },
+        Quantity::Acceleration(body.clone()),
+        Quantity::AngularVelocity(body.clone()),
+    ]
+    .iter()
+    .flat_map(Quantity::variables)
+    .collect()
 }
 
 fn compose_ins_schema(
@@ -150,99 +158,51 @@ fn compose_ins_schema(
 
     let blocks = vec![
         // 1. Position (World) — no process noise; P₀ from config.
-        SchemaBlock {
-            block: Arc::new(EuclideanBlock::without_noise(
-                DVector::zeros(3),
-                p0(initial.pos_var, 3),
-            )),
-            variables: position_vars(&world),
-            sensor: None,
-        },
+        SchemaBlock::new(
+            Quantity::Position(world.clone()),
+            None,
+            DVector::zeros(3),
+            p0(initial.pos_var, 3),
+        ),
         // 2. Velocity (World) — Q from accel white noise.
-        SchemaBlock {
-            block: Arc::new(EuclideanBlock::new(
-                noise_block(noise.accel_noise_var, 3),
-                DVector::zeros(3),
-                p0(initial.vel_var, 3),
-            )),
-            variables: velocity_vars(&world),
-            sensor: None,
-        },
-        // 3. Orientation (Body from World) — 4/3 quaternion
-        //    block. Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
-        SchemaBlock {
-            block: Arc::new(QuaternionBlock::new(
-                noise_block(noise.gyro_noise_var, 3),
-                DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
-                p0(initial.ori_var, 3),
-            )),
-            variables: orientation_vars(&body, &world),
-            sensor: None,
-        },
-        // 4. Accel bias (Body) — Q from bias instability.
-        SchemaBlock {
-            block: Arc::new(EuclideanBlock::new(
-                noise_block(noise.accel_bias_var, 3),
-                DVector::zeros(3),
-                p0(initial.accel_bias_var, 3),
-            )),
-            variables: accel_bias_vars(&body),
-            sensor: None,
-        },
-        // 5. Gyro bias (Body) — Q from bias instability.
-        SchemaBlock {
-            block: Arc::new(EuclideanBlock::new(
-                noise_block(noise.gyro_bias_var, 3),
-                DVector::zeros(3),
-                p0(initial.gyro_bias_var, 3),
-            )),
-            variables: gyro_bias_vars(&body),
-            sensor: None,
-        },
+        SchemaBlock::new(
+            Quantity::Velocity(world.clone()),
+            Some(noise_block(noise.accel_noise_var, 3)),
+            DVector::zeros(3),
+            p0(initial.vel_var, 3),
+        ),
+        // 3. Orientation (Body from World) — 4/3 quaternion block.
+        //    Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
+        SchemaBlock::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Some(noise_block(noise.gyro_noise_var, 3)),
+            DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+            p0(initial.ori_var, 3),
+        ),
+        // 4. Accel bias (Body) — Q from bias instability. Carried under the
+        //    acceleration quantity: no true body acceleration is estimated, so
+        //    these slots hold the accelerometer bias. A dedicated bias quantity
+        //    would remove that aliasing.
+        SchemaBlock::new(
+            Quantity::Acceleration(body.clone()),
+            Some(noise_block(noise.accel_bias_var, 3)),
+            DVector::zeros(3),
+            p0(initial.accel_bias_var, 3),
+        ),
+        // 5. Gyro bias (Body) — Q from bias instability. Carried under the
+        //    angular-velocity quantity, for the same reason as the accel bias.
+        SchemaBlock::new(
+            Quantity::AngularVelocity(body.clone()),
+            Some(noise_block(noise.gyro_bias_var, 3)),
+            DVector::zeros(3),
+            p0(initial.gyro_bias_var, 3),
+        ),
     ];
 
     StateSchema::compose(blocks)
-}
-
-fn position_vars(world: &FrameId) -> Vec<StateVariable> {
-    vec![
-        StateVariable::Px(world.clone()),
-        StateVariable::Py(world.clone()),
-        StateVariable::Pz(world.clone()),
-    ]
-}
-
-fn velocity_vars(world: &FrameId) -> Vec<StateVariable> {
-    vec![
-        StateVariable::Vx(world.clone()),
-        StateVariable::Vy(world.clone()),
-        StateVariable::Vz(world.clone()),
-    ]
-}
-
-fn orientation_vars(body: &FrameId, world: &FrameId) -> Vec<StateVariable> {
-    vec![
-        StateVariable::Qx(body.clone(), world.clone()),
-        StateVariable::Qy(body.clone(), world.clone()),
-        StateVariable::Qz(body.clone(), world.clone()),
-        StateVariable::Qw(body.clone(), world.clone()),
-    ]
-}
-
-fn accel_bias_vars(body: &FrameId) -> Vec<StateVariable> {
-    vec![
-        StateVariable::Ax(body.clone()),
-        StateVariable::Ay(body.clone()),
-        StateVariable::Az(body.clone()),
-    ]
-}
-
-fn gyro_bias_vars(body: &FrameId) -> Vec<StateVariable> {
-    vec![
-        StateVariable::Wx(body.clone()),
-        StateVariable::Wy(body.clone()),
-        StateVariable::Wz(body.clone()),
-    ]
 }
 
 impl EstimationDynamics for IntegratedImuModel {

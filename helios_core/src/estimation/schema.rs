@@ -21,11 +21,114 @@
 
 use crate::{
     frames::{FrameId, StateVariable},
-    manifold::{euclidean::EuclideanBlock, StateBlock},
+    manifold::{euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise},
 };
 
 use nalgebra::{DMatrix, DVector, DVectorView};
 use std::sync::Arc;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Quantity {
+    Position(FrameId),
+    Velocity(FrameId),
+    Acceleration(FrameId),
+    AngularVelocity(FrameId),
+    AngularAcceleration(FrameId),
+    Mag(FrameId),
+    MagBias(FrameId),
+    Orientation {
+        from: FrameId,
+        to: FrameId,
+    },
+
+    /// A type-erased bridge block: an arbitrary heterogeneous layout with no
+    /// single semantic quantity, realized as one flat Euclidean block. The only
+    /// carrier for states that predate schema ownership (simulation ground
+    /// truth, mocks, tests) built via [`StateSchema::degenerate`]. Temporary —
+    /// it is retired together with `degenerate` once every producer of state
+    /// carries a real, dynamics-authored schema.
+    Raw(Vec<StateVariable>),
+}
+
+impl Quantity {
+    pub fn variables(&self) -> Vec<StateVariable> {
+        match self {
+            Quantity::Position(f) => vec![
+                StateVariable::Px(f.clone()),
+                StateVariable::Py(f.clone()),
+                StateVariable::Pz(f.clone()),
+            ],
+            Quantity::Velocity(f) => vec![
+                StateVariable::Vx(f.clone()),
+                StateVariable::Vy(f.clone()),
+                StateVariable::Vz(f.clone()),
+            ],
+            Quantity::Acceleration(f) => vec![
+                StateVariable::Ax(f.clone()),
+                StateVariable::Ay(f.clone()),
+                StateVariable::Az(f.clone()),
+            ],
+            Quantity::AngularVelocity(f) => vec![
+                StateVariable::Wx(f.clone()),
+                StateVariable::Wy(f.clone()),
+                StateVariable::Wz(f.clone()),
+            ],
+            Quantity::AngularAcceleration(f) => vec![
+                StateVariable::Alphax(f.clone()),
+                StateVariable::Alphay(f.clone()),
+                StateVariable::Alphaz(f.clone()),
+            ],
+            Quantity::Mag(f) => vec![
+                StateVariable::MagX(f.clone()),
+                StateVariable::MagY(f.clone()),
+                StateVariable::MagZ(f.clone()),
+            ],
+            Quantity::Orientation { from, to } => {
+                vec![
+                    StateVariable::Qx(from.clone(), to.clone()),
+                    StateVariable::Qy(from.clone(), to.clone()),
+                    StateVariable::Qz(from.clone(), to.clone()),
+                    StateVariable::Qw(from.clone(), to.clone()),
+                ]
+            }
+            Quantity::MagBias(f) => vec![
+                StateVariable::MagBiasX(f.clone()),
+                StateVariable::MagBiasY(f.clone()),
+                StateVariable::MagBiasZ(f.clone()),
+            ],
+            Quantity::Raw(vars) => vars.clone(),
+        }
+    }
+
+    /// Builds this quantity's manifold block: a [`QuaternionBlock`] for
+    /// [`Orientation`](Quantity::Orientation), a [`EuclideanBlock`] for every
+    /// other (flat) kind. `noise` is the tangent-space process noise, already
+    /// validated by the caller; `None` means the block carries no process noise
+    /// (a fixed prior — e.g. a position seeded from GPS with no random walk).
+    ///
+    /// # Panics
+    /// An orientation block requires process noise: there is no positive-definite
+    /// zero-noise covariance, so a quaternion retraction cannot be built noiseless.
+    /// Passing `None` for an [`Orientation`](Quantity::Orientation) is therefore a
+    /// construction-time programming error, not a recoverable one.
+    pub fn manifold(
+        &self,
+        noise: Option<TangentNoise>,
+        x0: DVector<f64>,
+        p0: DMatrix<f64>,
+    ) -> Arc<dyn StateBlock> {
+        match self {
+            Quantity::Orientation { .. } => {
+                let noise = noise.expect("an orientation block requires process noise");
+                Arc::new(QuaternionBlock::new(noise, x0, p0))
+            }
+            _ => match noise {
+                Some(noise) => Arc::new(EuclideanBlock::new(noise, x0, p0)),
+                None => Arc::new(EuclideanBlock::without_noise(x0, p0)),
+            },
+        }
+    }
+}
 
 /// One block in a composed schema: the manifold [`StateBlock`], the ordered
 /// [`StateVariable`]s naming its stored slots, and the sensor frame it is tied
@@ -33,10 +136,23 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub struct SchemaBlock {
     pub block: Arc<dyn StateBlock>,
+    pub quantity: Quantity,
+}
 
-    pub variables: Vec<StateVariable>,
+impl SchemaBlock {
+    pub fn new(
+        quantity: Quantity,
+        noise: Option<TangentNoise>,
+        x0: DVector<f64>,
+        p0: DMatrix<f64>,
+    ) -> Self {
+        let block = quantity.manifold(noise, x0, p0);
+        Self { block, quantity }
+    }
 
-    pub sensor: Option<FrameId>,
+    pub fn variables(&self) -> Vec<StateVariable> {
+        self.quantity.variables()
+    }
 }
 
 /// The immutable shape of a state estimate: its ordered blocks plus the offset,
@@ -91,11 +207,12 @@ impl StateSchema {
 
         for entry in &blocks {
             let (sd, td) = (entry.block.storage_dim(), entry.block.tangent_dim());
+            let variables = entry.variables();
             assert_eq!(
-                entry.variables.len(),
+                variables.len(),
                 sd,
                 "schema block variable count ({}) ≠ storage_dim ({})",
-                entry.variables.len(),
+                variables.len(),
                 sd
             );
 
@@ -103,7 +220,7 @@ impl StateSchema {
             tangent_offsets.push(t_off);
 
             // Storage-space contributions: names and the initial mean slice.
-            layout.extend(entry.variables.iter().cloned());
+            layout.extend(variables);
             initial_value
                 .rows_mut(s_off, sd)
                 .copy_from(&entry.block.initial_value());
@@ -158,12 +275,12 @@ impl StateSchema {
             }
         }
 
-        let block = EuclideanBlock::without_noise(initial_value, DMatrix::zeros(dim, dim));
-        Self::compose(vec![SchemaBlock {
-            block: Arc::new(block),
-            variables: layout.to_vec(),
-            sensor: None,
-        }])
+        Self::compose(vec![SchemaBlock::new(
+            Quantity::Raw(layout.to_vec()),
+            None,
+            initial_value,
+            DMatrix::zeros(dim, dim),
+        )])
     }
 
     /// Returns a new schema with `extra` blocks appended after this schema's own,
@@ -260,7 +377,7 @@ impl StateSchema {
             // `?` bails out of *this* block when `var` isn't one of its names,
             // letting `find_map` move on; a name is unique across the schema, so
             // at most one block ever matches.
-            let j = block.variables.iter().position(|v| v == var)?;
+            let j = block.variables().iter().position(|v| v == var)?;
             // Within a block, storage index `j` is the tangent index too — except
             // where storage outruns the tangent (Qw sits at j = 3 of a 3-D
             // tangent). There, refuse rather than return a wrong-but-plausible
@@ -276,41 +393,32 @@ mod tests {
     use super::*;
     use crate::manifold::TangentNoise;
 
-    fn euclid(dim: usize, noise_var: f64, init: f64) -> Arc<dyn StateBlock> {
-        Arc::new(EuclideanBlock::new(
-            TangentNoise::from_variances(DVector::from_element(dim, noise_var)).unwrap(),
-            DVector::from_element(dim, init),
-            DMatrix::identity(dim, dim),
-        ))
+    fn noise(var: f64) -> Option<TangentNoise> {
+        Some(TangentNoise::from_variances(DVector::from_element(3, var)).unwrap())
     }
 
     fn pos_vel_schema() -> StateSchema {
         StateSchema::compose(vec![
-            SchemaBlock {
-                block: euclid(3, 0.1, 0.0),
-                variables: vec![
-                    StateVariable::Px(FrameId::World),
-                    StateVariable::Py(FrameId::World),
-                    StateVariable::Pz(FrameId::World),
-                ],
-                sensor: None,
-            },
-            SchemaBlock {
-                block: euclid(2, 0.5, 0.0),
-                variables: vec![
-                    StateVariable::Vx(FrameId::World),
-                    StateVariable::Vy(FrameId::World),
-                ],
-                sensor: None,
-            },
+            SchemaBlock::new(
+                Quantity::Position(FrameId::World),
+                noise(0.1),
+                DVector::zeros(3),
+                DMatrix::identity(3, 3),
+            ),
+            SchemaBlock::new(
+                Quantity::Velocity(FrameId::World),
+                noise(0.5),
+                DVector::zeros(3),
+                DMatrix::identity(3, 3),
+            ),
         ])
     }
 
     #[test]
     fn dims_and_layout_agree() {
         let s = pos_vel_schema();
-        assert_eq!(s.storage_dim(), 5);
-        assert_eq!(s.tangent_dim(), 5);
+        assert_eq!(s.storage_dim(), 6);
+        assert_eq!(s.tangent_dim(), 6);
         assert_eq!(s.layout().len(), s.storage_dim());
     }
 
@@ -336,8 +444,8 @@ mod tests {
     fn oplus_ominus_round_trip() {
         // The trait law lifted to the whole schema: x ⊞ (y ⊟ x) == y.
         let s = pos_vel_schema();
-        let x = DVector::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0]);
-        let y = DVector::from_vec(vec![-1.0, 0.5, 9.0, 2.0, -2.0]);
+        let x = DVector::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+        let y = DVector::from_vec(vec![-1.0, 0.5, 9.0, 2.0, -2.0, 7.0]);
 
         let delta = s.ominus(y.as_view(), x.as_view());
         let recovered = s.oplus(x.as_view(), delta.as_view());
@@ -399,15 +507,15 @@ mod tests {
     #[test]
     #[should_panic(expected = "storage_dim")]
     fn compose_rejects_variable_count_mismatch() {
-        // Block stores three components but only two variables are named.
-        StateSchema::compose(vec![SchemaBlock {
-            block: euclid(3, 0.1, 0.0),
-            variables: vec![
-                StateVariable::Px(FrameId::World),
-                StateVariable::Py(FrameId::World),
-            ],
-            sensor: None,
-        }]);
+        // `Position` names three slots, but a 2-D initial value builds a 2-D
+        // block — the wrong-sized value desyncs storage_dim from the derived
+        // variable count, which `compose` must reject.
+        StateSchema::compose(vec![SchemaBlock::new(
+            Quantity::Position(FrameId::World),
+            None,
+            DVector::zeros(2),
+            DMatrix::zeros(2, 2),
+        )]);
     }
 
     // Augmentation prior std-dev and random-walk for the extended-schema tests.
