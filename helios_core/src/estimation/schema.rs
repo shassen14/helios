@@ -36,6 +36,8 @@ pub enum Quantity {
     AngularAcceleration(FrameId),
     Mag(FrameId),
     MagBias(FrameId),
+    AccelBias(FrameId),
+    GyroBias(FrameId),
     Orientation {
         from: FrameId,
         to: FrameId,
@@ -95,6 +97,16 @@ impl Quantity {
                 StateVariable::MagBiasX(f.clone()),
                 StateVariable::MagBiasY(f.clone()),
                 StateVariable::MagBiasZ(f.clone()),
+            ],
+            Quantity::AccelBias(f) => vec![
+                StateVariable::AccelBiasX(f.clone()),
+                StateVariable::AccelBiasY(f.clone()),
+                StateVariable::AccelBiasZ(f.clone()),
+            ],
+            Quantity::GyroBias(f) => vec![
+                StateVariable::GyroBiasX(f.clone()),
+                StateVariable::GyroBiasY(f.clone()),
+                StateVariable::GyroBiasZ(f.clone()),
             ],
             Quantity::Raw(vars) => vars.clone(),
         }
@@ -441,6 +453,24 @@ mod tests {
                 MagBiasX(f.clone()),
                 MagBiasY(f.clone()),
                 MagBiasZ(f.clone())
+            ]
+        );
+        // Sensor biases carry their own names, distinct from the kinematic
+        // `Acceleration`/`AngularVelocity` quantities they perturb.
+        assert_eq!(
+            Quantity::AccelBias(f.clone()).variables(),
+            vec![
+                AccelBiasX(f.clone()),
+                AccelBiasY(f.clone()),
+                AccelBiasZ(f.clone())
+            ]
+        );
+        assert_eq!(
+            Quantity::GyroBias(f.clone()).variables(),
+            vec![
+                GyroBiasX(f.clone()),
+                GyroBiasY(f.clone()),
+                GyroBiasZ(f.clone())
             ]
         );
         // Orientation stores four scalars in x, y, z, w order — w last, matching

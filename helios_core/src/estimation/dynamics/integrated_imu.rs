@@ -92,8 +92,8 @@ impl IntegratedImuModel {
         let pos_off = off(&StateVariable::Px(world.clone()));
         let vel_off = off(&StateVariable::Vx(world.clone()));
         let quat_off = off(&StateVariable::Qx(body.clone(), world.clone()));
-        let accel_bias_off = off(&StateVariable::Ax(body.clone()));
-        let gyro_bias_off = off(&StateVariable::Wx(body.clone()));
+        let accel_bias_off = off(&StateVariable::AccelBiasX(body.clone()));
+        let gyro_bias_off = off(&StateVariable::GyroBiasX(body.clone()));
 
         Self {
             agent_handle,
@@ -134,8 +134,8 @@ pub fn ins_state_layout(agent_handle: FrameHandle) -> Vec<StateVariable> {
             from: body.clone(),
             to: world.clone(),
         },
-        Quantity::Acceleration(body.clone()),
-        Quantity::AngularVelocity(body.clone()),
+        Quantity::AccelBias(body.clone()),
+        Quantity::GyroBias(body.clone()),
     ]
     .iter()
     .flat_map(Quantity::variables)
@@ -182,20 +182,19 @@ fn compose_ins_schema(
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             p0(initial.ori_var, 3),
         ),
-        // 4. Accel bias (Body) — Q from bias instability. Carried under the
-        //    acceleration quantity: no true body acceleration is estimated, so
-        //    these slots hold the accelerometer bias. A dedicated bias quantity
-        //    would remove that aliasing.
+        // 4. Accel bias (Body) — Q from bias instability. A sensor error term
+        //    distinct from any true body acceleration, so it carries its own
+        //    quantity rather than borrowing `Acceleration`.
         SchemaBlock::new(
-            Quantity::Acceleration(body.clone()),
+            Quantity::AccelBias(body.clone()),
             Some(noise_block(noise.accel_bias_var, 3)),
             DVector::zeros(3),
             p0(initial.accel_bias_var, 3),
         ),
-        // 5. Gyro bias (Body) — Q from bias instability. Carried under the
-        //    angular-velocity quantity, for the same reason as the accel bias.
+        // 5. Gyro bias (Body) — Q from bias instability. Its own quantity, for
+        //    the same reason as the accel bias.
         SchemaBlock::new(
-            Quantity::AngularVelocity(body.clone()),
+            Quantity::GyroBias(body.clone()),
             Some(noise_block(noise.gyro_bias_var, 3)),
             DVector::zeros(3),
             p0(initial.gyro_bias_var, 3),
@@ -360,8 +359,8 @@ mod tests {
         assert_eq!(off(&StateVariable::Px(world.clone())), 0);
         assert_eq!(off(&StateVariable::Vx(world.clone())), 3);
         assert_eq!(off(&StateVariable::Qx(body.clone(), world.clone())), 6);
-        assert_eq!(off(&StateVariable::Ax(body.clone())), 10);
-        assert_eq!(off(&StateVariable::Wx(body.clone())), 13);
+        assert_eq!(off(&StateVariable::AccelBiasX(body.clone())), 10);
+        assert_eq!(off(&StateVariable::GyroBiasX(body.clone())), 13);
     }
 
     #[test]
@@ -378,8 +377,8 @@ mod tests {
         assert_eq!(off(&StateVariable::Px(world.clone())), 0); // agrees with storage
         assert_eq!(off(&StateVariable::Vx(world.clone())), 3); // agrees with storage
         assert_eq!(off(&StateVariable::Qx(body.clone(), world.clone())), 6); // last agreement
-        assert_eq!(off(&StateVariable::Ax(body.clone())), 9); // storage 10 → tangent 9
-        assert_eq!(off(&StateVariable::Wx(body.clone())), 12); // storage 13 → tangent 12
+        assert_eq!(off(&StateVariable::AccelBiasX(body.clone())), 9); // storage 10 → tangent 9
+        assert_eq!(off(&StateVariable::GyroBiasX(body.clone())), 12); // storage 13 → tangent 12
     }
 
     #[test]

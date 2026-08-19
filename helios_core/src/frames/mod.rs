@@ -68,6 +68,17 @@ pub enum StateVariable {
     MagBiasX(FrameId),
     MagBiasY(FrameId),
     MagBiasZ(FrameId),
+    // Accelerometer / gyroscope biases carry their own names rather than
+    // borrowing `Ax`/`Wx`: those denote *true* body-frame kinematic acceleration
+    // and angular velocity (what a specific-force or rate model predicts), a
+    // distinct quantity from the sensor error the filter estimates. Sharing one
+    // name would let a kinematics reader silently pick up the bias instead.
+    AccelBiasX(FrameId),
+    AccelBiasY(FrameId),
+    AccelBiasZ(FrameId),
+    GyroBiasX(FrameId),
+    GyroBiasY(FrameId),
+    GyroBiasZ(FrameId),
 }
 
 #[derive(Debug, Clone, Serialize)]
