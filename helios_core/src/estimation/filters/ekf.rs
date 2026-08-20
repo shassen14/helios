@@ -149,14 +149,24 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         let h_jac = model.jacobian(&self.state, tf, at);
         let y = z - &z_pred;
 
+        // Innovation covariance S = H P Hᵀ + R (m × m), symmetric positive-definite
+        // by construction.
         let s = &h_jac * &p_priori * h_jac.transpose() + r;
-        let Some(s_inv) = s.try_inverse() else {
+
+        // Factor S once and SOLVE for the gain below, rather than forming S⁻¹:
+        // cheaper, better-conditioned, and — because S is SPD — a failed Cholesky is
+        // a genuine signal that P has lost positive-definiteness. A general inverse
+        // masks that: it happily inverts an indefinite matrix and lets a corrupt
+        // covariance propagate.
+        let Some(s_chol) = s.cholesky() else {
             return;
         };
 
-        // Kalman gain (t × m). The correction K·y is a tangent vector (length t);
-        // retract it onto the mean with ⊞, not `+`.
-        let k_gain = &self.state.covariance * h_jac.transpose() * s_inv;
+        // Kalman gain K = P Hᵀ S⁻¹ (t × m), obtained without ever forming S⁻¹. S is
+        // symmetric, so Kᵀ = S⁻¹(H P): solve S·Kᵀ = H·P for Kᵀ (m × t), then
+        // transpose. The correction K·y is a tangent vector (length t); retract it
+        // onto the mean with ⊞, not `+`.
+        let k_gain = s_chol.solve(&(&h_jac * &p_priori)).transpose();
         let correction = &k_gain * &y;
 
         self.state.oplus_assign(&correction);
@@ -281,6 +291,32 @@ mod tests {
             h[(0, 0)] = 1.0;
             h[(1, 1)] = 1.0;
             h
+        }
+    }
+
+    /// 3D position measurement on the INS state: z = [px, py, pz], read straight
+    /// from the position block at the head of the layout. `R` is held by the test.
+    /// Deliberately supplies no `jacobian` override, so the update exercises the
+    /// default numerical tangent H — the same code path the shipped models use.
+    #[derive(Debug, Clone)]
+    struct InsPositionMeasurement;
+
+    impl MeasurementModel for InsPositionMeasurement {
+        fn dim(&self) -> usize {
+            3
+        }
+
+        fn predict_measurement(
+            &self,
+            state: &FrameAwareState,
+            _tf: Option<&dyn TfProvider>,
+            _at: MonotonicTime,
+        ) -> Option<DVector<f64>> {
+            Some(DVector::from_row_slice(&[
+                state.mean[0],
+                state.mean[1],
+                state.mean[2],
+            ]))
         }
     }
 
@@ -584,6 +620,12 @@ mod tests {
     /// `n`: it admits that deficit and Monte-Carlo scatter (SE ≈ 0.7 over
     /// `NEES_RUNS`) yet still fails a covariance that is off by a factor.
     const NEES_BAND_FRAC: f64 = 0.3;
+    /// Position-measurement noise variance for the update-path NEES check,
+    /// isotropic in the 3 position axes. Comparable to the initial/process error
+    /// scale so the measurement is informative yet keeps every direction well
+    /// inside the linear regime — position is a linear function of the state, so
+    /// its numerical H is exact and adds no nonlinearity of its own.
+    const NEES_UPDATE_R_VAR: f64 = 1e-4;
 
     /// Samples a zero-mean Gaussian whose covariance is `scale · diag(cov)`. The
     /// P₀ and Q used here are diagonal, so sampling the diagonal is exact.
@@ -656,6 +698,88 @@ mod tests {
             (mean_nees - dof).abs() <= NEES_BAND_FRAC * dof,
             "average NEES {mean_nees} outside {:.0}% of the tangent dimension {dof}: \
              the predicted covariance is inconsistent with the actual error",
+            NEES_BAND_FRAC * 100.0
+        );
+    }
+
+    // The predict-only check above isolates the covariance *propagation*. This one
+    // closes the loop with a measurement, so it grades the *update*: the Kalman gain
+    // (now a Cholesky solve), the ⊞ retraction of the correction onto the mean, and
+    // the Joseph downdate of P. Same tiny-error regime and same ±30% band — the only
+    // difference is that each step feeds a noisy position of the truth back in. The
+    // measurement corrupts truth by exactly the R the filter is told to use: a
+    // cleaner-than-R measurement would make the filter over-trust it and bias NEES
+    // low, so matching the two is what keeps the check honest. Position observes only
+    // 3 of 15 tangent directions, but consistency is not observability — an honest
+    // filter keeps NEES at the tangent dimension whether or not a direction is seen,
+    // and the position update also shrinks the correlated velocity error through the
+    // cross-covariance, so both blocks stay consistent, not just the measured one.
+
+    #[test]
+    fn ins_ekf_update_nees_is_consistent() {
+        use rand::SeedableRng;
+
+        let n = ins_model().schema().tangent_dim();
+        let p0 = DMatrix::identity(n, n) * NEES_P0_VAR;
+        let q = DMatrix::identity(n, n) * NEES_Q_VAR;
+        let r = DMatrix::identity(3, 3) * NEES_UPDATE_R_VAR;
+        let control = DVector::from_row_slice(&[0.5, 0.0, 9.81, 0.0, 0.0, 0.15]);
+        let inputs = EstimatorInputs {
+            control: control.clone(),
+        };
+        let meas_model = InsPositionMeasurement;
+
+        // A distinct seed from the predict-only test so the two share no stream.
+        let mut rng = StdRng::seed_from_u64(0x5550_4441);
+
+        let mut nees_sum = 0.0;
+        for _ in 0..NEES_RUNS {
+            let model = ins_model();
+            let mut est_init = FrameAwareState::from_schema(model.schema(), 0.0);
+            est_init.covariance = p0.clone();
+            let mut ekf = ExtendedKalmanFilter::new(est_init, q.clone(), Box::new(model));
+
+            // Truth starts one draw of the prior away from the estimate.
+            let truth_model = ins_model();
+            let mut truth = ekf.state().clone();
+            truth.oplus_assign(&sample_diag_gaussian(&p0, 1.0, &mut rng));
+
+            let mut t = 0.0;
+            for _ in 0..NEES_STEPS {
+                // Predict: nominal flow + process noise on truth, F P Fᵀ + Q·dt on
+                // the filter — identical to the predict-only test.
+                truth.mean = truth_model.propagate(&truth.mean, &control, t, NEES_DT, &RK4);
+                truth.oplus_assign(&sample_diag_gaussian(&q, NEES_DT, &mut rng));
+                ekf.predict(NEES_DT, &inputs);
+
+                // Update: measure the true position, corrupted by exactly R.
+                let z_noise = sample_diag_gaussian(&r, 1.0, &mut rng);
+                let z = DVector::from_row_slice(&[
+                    truth.mean[0] + z_noise[0],
+                    truth.mean[1] + z_noise[1],
+                    truth.mean[2] + z_noise[2],
+                ]);
+                ekf.update(&z, &meas_model, &r, None, AT);
+
+                t += NEES_DT;
+            }
+
+            let est = ekf.state();
+            let delta = est.schema.ominus(truth.mean.as_view(), est.mean.as_view());
+            let p_inv = est
+                .covariance
+                .clone()
+                .try_inverse()
+                .expect("filter covariance stays invertible");
+            nees_sum += (delta.transpose() * p_inv * &delta)[(0, 0)];
+        }
+
+        let mean_nees = nees_sum / NEES_RUNS as f64;
+        let dof = n as f64;
+        assert!(
+            (mean_nees - dof).abs() <= NEES_BAND_FRAC * dof,
+            "average NEES {mean_nees} outside {:.0}% of the tangent dimension {dof}: \
+             the post-update covariance is inconsistent with the actual error",
             NEES_BAND_FRAC * 100.0
         );
     }

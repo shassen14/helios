@@ -240,13 +240,20 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
             cross_cov += self.weights_c[i] * &state_dev * meas_dev.transpose();
         }
 
-        let Some(s_inv) = innovation_cov.clone().try_inverse() else {
+        // Factor the innovation covariance S and SOLVE for the gain rather than
+        // forming S⁻¹: cheaper, better-conditioned, and a failed Cholesky (S not SPD)
+        // signals a degenerate sigma-point spread and skips the update — the same
+        // guard the old inverse's None branch gave. Clone because S (innovation_cov)
+        // is reused in the covariance downdate below.
+        let Some(s_chol) = innovation_cov.clone().cholesky() else {
             return;
         };
 
-        // Kalman gain (t × m). The correction K·innovation is a tangent vector
-        // (length t); retract it onto the mean with ⊞, not `+`.
-        let k_gain = cross_cov * s_inv;
+        // Kalman gain K = P_xz S⁻¹ (t × m), with P_xz the state–measurement cross-
+        // covariance (`cross_cov`). S is symmetric, so Kᵀ = S⁻¹ P_xzᵀ: solve
+        // S·Kᵀ = cross_covᵀ, then transpose. The correction K·innovation is a tangent
+        // vector (length t); retract it onto the mean with ⊞, not `+`.
+        let k_gain = s_chol.solve(&cross_cov.transpose()).transpose();
         let correction = &k_gain * (z - z_pred);
         self.state.oplus_assign(&correction);
         self.state.covariance -= &k_gain * innovation_cov * k_gain.transpose();
