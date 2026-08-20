@@ -4,7 +4,8 @@ use crate::data::primitives::{Control, FrameHandle, State};
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
 use crate::frames::{FrameId, StateVariable};
-use crate::manifold::TangentNoise;
+use crate::manifold::{StateBlock, TangentNoise};
+use crate::utils::integrators::Integrator;
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 
 /// A dynamics model that integrates raw IMU measurements (as control inputs)
@@ -35,6 +36,7 @@ pub struct IntegratedImuModel {
     quat_off: usize,
     accel_bias_off: usize,
     gyro_bias_off: usize,
+    orientation_block: Arc<dyn StateBlock>,
 }
 
 /// Process-noise (`Q`) variances for the INS dynamics, one per driven block.
@@ -94,6 +96,13 @@ impl IntegratedImuModel {
         let quat_off = off(&StateVariable::Qx(body.clone(), world.clone()));
         let accel_bias_off = off(&StateVariable::AccelBiasX(body.clone()));
         let gyro_bias_off = off(&StateVariable::GyroBiasX(body.clone()));
+        let orientation_block = schema
+            .block_of(&Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            })
+            .expect("orientation block is in the schema we just built")
+            .clone();
 
         Self {
             agent_handle,
@@ -104,6 +113,7 @@ impl IntegratedImuModel {
             quat_off,
             accel_bias_off,
             gyro_bias_off,
+            orientation_block,
         }
     }
 }
@@ -263,10 +273,40 @@ impl EstimationDynamics for IntegratedImuModel {
 
         x_dot
     }
-}
 
-// NOTE: The `propagate` method from the trait uses the above `derivatives`
-// with an integrator like RK4, so it does not need to be reimplemented.
+    fn propagate(
+        &self,
+        x: &State,
+        u: &Control,
+        t: f64,
+        dt: f64,
+        integrator: &dyn Integrator<f64>,
+    ) -> State {
+        // ω_body is constant across the step: the gyro-bias derivative is zero and
+        // u is held constant, so orientation advances by one closed-form retraction
+        // rather than an integrated one — only position and velocity need RK4.
+        let omega_body = u.fixed_rows::<3>(3) - x.fixed_rows::<3>(self.gyro_bias_off);
+
+        // Orientation lives on SO(3), so it cannot be stepped by the componentwise
+        // integrator below — a weighted sum of unit quaternions leaves the sphere.
+        // Advance it by the block's own retraction, q ⊞ (ω·dt). The convention
+        // (scalar-order unpack, right-multiply by exp(ω·dt)) lives once, in
+        // QuaternionBlock::oplus; here we only name the increment and the block it
+        // moves, so the mean advances by the same map the covariance's F linearizes.
+        let delta = DVector::from_column_slice((omega_body * dt).as_slice());
+        let moved = self
+            .orientation_block
+            .oplus(x.rows(self.quat_off, 4), delta.as_view());
+
+        // Translation via RK4. Its own quaternion rows drift off the unit sphere,
+        // but they are overwritten with `moved` below and never read back.
+        let func = |x_tau: &State, tau: f64| -> State { self.derivatives(x_tau, u, tau) };
+        let mut x_next = integrator.step(&func, x, t, t + dt);
+
+        x_next.fixed_rows_mut::<4>(self.quat_off).copy_from(&moved);
+        x_next
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -594,5 +634,74 @@ mod tests {
                 x_next[idx]
             );
         }
+    }
+
+    #[test]
+    fn propagate_keeps_orientation_on_the_unit_sphere() {
+        // The property the manifold propagation buys us: the orientation mean
+        // advances by the block's SO(3) retraction (q ⊞ ω·dt), so it stays unit
+        // *by construction* — there is no renormalization step to lean on. Spin
+        // under a constant body-frame rate for many steps and read the stored
+        // quaternion components RAW; routing them through `UnitQuaternion` would
+        // normalize away exactly the drift this test exists to catch.
+        let model = make_model();
+        let mut x = identity_state();
+
+        let mut u = DVector::zeros(6);
+        u[5] = 0.5; // wz: 0.5 rad/s yaw about body +Z
+
+        let dt = 0.01;
+        for _ in 0..1000 {
+            x = model.propagate(&x, &u, 0.0, dt, &RK4);
+        }
+
+        // Quaternion at 6-9 (Qx, Qy, Qz, Qw), mirroring `identity_state`.
+        let (qx, qy, qz, qw) = (x[6], x[7], x[8], x[9]);
+        let norm = (qx * qx + qy * qy + qz * qz + qw * qw).sqrt();
+        assert!(
+            (norm - 1.0).abs() < 1e-12,
+            "‖q‖ drifted off the unit sphere to {norm} over 1000 steps"
+        );
+
+        // Guard against a vacuous pass: the orientation must actually have moved,
+        // or "still unit" would be trivially true for an unchanged identity.
+        assert!(
+            qz.abs() > 0.1,
+            "orientation never rotated (qz = {qz}); the norm check would be vacuous"
+        );
+    }
+
+    #[test]
+    fn propagate_rotates_orientation_by_the_expected_angle() {
+        // Orientation depends only on ω (it is decoupled from accel and gravity in
+        // the propagation), and a constant ω makes every step's increment share an
+        // axis, so the steps compose to the single rotation exp(ω·T). The net yaw
+        // must therefore equal wz·T — a correctness check on top of the unit-norm
+        // property, proving the retraction rotates by the right amount, not merely
+        // that it stays unit.
+        let model = make_model();
+        let mut x = identity_state();
+
+        let wz = 0.5;
+        let dt = 0.01;
+        let steps = 1000;
+        let mut u = DVector::zeros(6);
+        u[5] = wz;
+
+        for _ in 0..steps {
+            x = model.propagate(&x, &u, 0.0, dt, &RK4);
+        }
+
+        let final_rot = UnitQuaternion::from_quaternion(Quaternion::new(x[9], x[6], x[7], x[8]));
+        let expected_rot =
+            UnitQuaternion::from_scaled_axis(Vector3::new(0.0, 0.0, wz * dt * steps as f64));
+
+        // `angle_to` is the geodesic distance on SO(3): wrap-safe past π and blind
+        // to the quaternion double cover, so it compares the rotations themselves.
+        let residual = final_rot.angle_to(&expected_rot);
+        assert!(
+            residual < 1e-9,
+            "net rotation off by {residual} rad from the expected wz·T yaw"
+        );
     }
 }

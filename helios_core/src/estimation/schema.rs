@@ -407,6 +407,13 @@ impl StateSchema {
             .position(|b| &b.quantity == quantity)
             .map(|i| self.storage_offsets[i])
     }
+
+    pub fn block_of(&self, quantity: &Quantity) -> Option<&Arc<dyn StateBlock>> {
+        self.blocks
+            .iter()
+            .find(|b| &b.quantity == quantity)
+            .map(|b| &b.block)
+    }
 }
 
 #[cfg(test)]
