@@ -10,9 +10,8 @@
 //! 1. Read `oracle/pose`. If absent → cold-start, return (downstream sees the
 //!    last-known-good `FrameAwareState` from the previous tick, if any).
 //! 2. Read `oracle/twist` (optional).
-//! 3. Build a `FrameAwareState` on the standard INS layout from the pose
-//!    and twist; bias slots are zero-filled — this node has no way to know
-//!    them.
+//! 3. Build a `FrameAwareState` on the kinematic carrier schema from the pose
+//!    and twist — position, linear/angular velocity, and attitude.
 //! 4. Publish on `Internal<FrameAwareState>` (default-named slot).
 //!
 //! ## Body capability requirement
@@ -22,17 +21,13 @@
 //! [`PipelineBuildError::UnsatisfiedBodyCapabilities`]. This is the
 //! type-level fence from `body_contract.md §9`.
 //!
-//! ## Known wart: zero-filled bias slots
+//! ## Schema
 //!
-//! The standard INS layout includes accel- and gyro-bias entries. Real EKFs
-//! estimate these online; this mock has no source of truth for them and
-//! writes zeros. Consumers that read bias slots (none today, but possible
-//! in the future) will see structurally valid but meaningless values.
-//!
-//! Tracked: `rollout_plan.md` Phase 11 — estimator output channel split.
-//! Once `FrameAwareState` is decomposed into per-quantity channels
-//! (`Pose`, `Velocity`, `PoseCovariance`, `ImuBias`), this node will simply
-//! omit the bias channel.
+//! The published state uses the kinematic carrier schema — exactly the
+//! quantities a pose + twist truth source expresses, and no more. Unlike a real
+//! INS estimate it carries no sensor-bias blocks: this node has no source of
+//! truth for biases, so rather than zero-fill meaningless slots it simply does
+//! not declare them.
 //!
 //! [`PipelineBuildError::UnsatisfiedBodyCapabilities`]:
 //!     crate::pipeline::build_error::PipelineBuildError::UnsatisfiedBodyCapabilities
@@ -46,19 +41,22 @@ use crate::stamped::{Health, Stamped};
 
 use helios_core::data::messages::Twist;
 use helios_core::data::primitives::FrameHandle;
-use helios_core::estimation::dynamics::integrated_imu::ins_state_layout;
+use helios_core::estimation::carrier::kinematic_carrier_schema;
+use helios_core::estimation::schema::StateSchema;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 
 use nalgebra::Isometry3;
+use std::sync::Arc;
 
 pub(crate) struct MockOracleEstimatorNode {
     name: String,
     agent_handle: FrameHandle,
     descriptor: PortDescriptor,
-    /// Cached at construction. `ins_state_layout` allocates;
-    /// rebuilding it per tick at 200 Hz × N agents would be wasteful and
-    /// the layout never changes for the lifetime of the node.
-    layout: Vec<StateVariable>,
+    /// The composed kinematic carrier schema, cached at construction and shared into
+    /// every published state by `Arc` clone. Composing it allocates and the
+    /// shape never changes for the node's lifetime, so building it once and
+    /// re-pointing each tick's state at it avoids rebuilding at 200 Hz × N agents.
+    schema: Arc<StateSchema>,
 }
 
 impl MockOracleEstimatorNode {
@@ -72,7 +70,7 @@ impl MockOracleEstimatorNode {
             name: name.into(),
             agent_handle,
             descriptor,
-            layout: ins_state_layout(agent_handle),
+            schema: Arc::new(kinematic_carrier_schema(agent_handle)),
         }
     }
 }
@@ -98,14 +96,14 @@ impl PipelineNode for MockOracleEstimatorNode {
             .read::<Twist>(oracle_twist_channel())
             .map(|s| s.value.clone());
 
-        let mut state = FrameAwareState::new(self.layout.clone(), 0.0, tick.now.0);
+        let mut state = FrameAwareState::from_schema(self.schema.clone(), tick.now.0);
 
         write_pose_into(&mut state, &pose_stamped.value, self.agent_handle);
 
         if let Some(t) = twist {
-            // oracle/twist is world ENU and the standard INS layout's
-            // velocity slots are world too — straight passthrough.
-            write_world_velocity_into(&mut state, &t);
+            // oracle/twist and the carrier's velocity blocks are both world ENU —
+            // straight passthrough of linear and angular velocity.
+            write_world_twist_into(&mut state, &t);
         }
 
         let stamped = Stamped {
@@ -144,19 +142,20 @@ fn write_pose_into(state: &mut FrameAwareState, pose: &Isometry3<f64>, agent: Fr
     );
 }
 
-/// Writes the world-frame linear velocity from `twist` into the state's
-/// world-frame velocity slots (Vx/Vy/Vz in `FrameId::World`).
+/// Writes the world-frame twist into the state's world-frame velocity blocks:
+/// linear into `Vx/Vy/Vz(World)` and angular into `Wx/Wy/Wz(World)`.
 ///
-/// The standard INS layout has no instantaneous angular velocity slots —
-/// `Wx/Wy/Wz(Body)` in that layout represent **gyro biases**, not angular
-/// velocity. So `twist.angular` is dropped here on purpose. Once the
-/// estimator-output split lands (Phase 11), angular velocity gets its own
-/// channel and a downstream consumer can read it directly from
-/// `oracle/twist` instead of routing it through `FrameAwareState`.
-fn write_world_velocity_into(state: &mut FrameAwareState, twist: &Twist) {
+/// The oracle reports both linear and angular velocity in the world (ENU) frame,
+/// and the carrier schema carries a matching world-frame angular-velocity block,
+/// so `twist.angular` passes straight through rather than being dropped.
+fn write_world_twist_into(state: &mut FrameAwareState, twist: &Twist) {
     state.set_variable(&StateVariable::Vx(FrameId::World), twist.linear.x);
     state.set_variable(&StateVariable::Vy(FrameId::World), twist.linear.y);
     state.set_variable(&StateVariable::Vz(FrameId::World), twist.linear.z);
+
+    state.set_variable(&StateVariable::Wx(FrameId::World), twist.angular.x);
+    state.set_variable(&StateVariable::Wy(FrameId::World), twist.angular.y);
+    state.set_variable(&StateVariable::Wz(FrameId::World), twist.angular.z);
 }
 
 #[cfg(test)]
@@ -170,6 +169,7 @@ mod tests {
     //!    `mock_catalog.md §2.1`.
 
     use super::*;
+    use helios_core::frames::conventions::{Enu, Flu};
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
     use crate::pipeline::autonomy_pipeline::PipelineBuilder;
@@ -311,8 +311,9 @@ mod tests {
             .expect("node must publish FrameAwareState");
         let recovered = published
             .value
-            .get_pose_isometry()
-            .expect("standard layout includes pose");
+            .pose::<Flu, Enu>(FrameId::Body(agent), FrameId::World)
+            .expect("standard schema includes pose")
+            .into_inner();
         let dx = (recovered.translation.vector - pose.translation.vector).norm();
         assert!(
             dx < 1e-9,
@@ -321,9 +322,9 @@ mod tests {
     }
 
     #[test]
-    fn republishes_world_velocity_into_state_world_slots() {
-        // oracle/twist is already world-frame; mock just passes it through
-        // into the world-frame velocity slots of FrameAwareState.
+    fn republishes_world_twist_into_state_world_slots() {
+        // oracle/twist is already world-frame; mock passes both linear and
+        // angular velocity straight through into the state's world-frame blocks.
         let agent = FrameHandle(1);
         let node = MockOracleEstimatorNode::new("mock", agent);
         let bus = make_bus_with_oracle_producer(&node);
@@ -341,9 +342,6 @@ mod tests {
 
         let twist = Twist {
             linear: Vector3::new(2.0, -1.0, 0.5),
-            // angular has no slot in the standard INS layout — see
-            // write_world_velocity_into's doc. Set non-zero anyway to
-            // make sure execute() doesn't blow up on it.
             angular: Vector3::new(0.0, 0.0, 0.3),
         };
         bus.write(
@@ -363,28 +361,20 @@ mod tests {
             .read::<FrameAwareState>(state_channel())
             .expect("must publish");
 
-        // Lookup-by-pattern avoids hardcoding the index — the layout's
-        // ordering is not a stable contract.
-        let world_v = |axis: char| {
-            let pred: fn(&StateVariable) -> bool = match axis {
-                'x' => |v| matches!(v, StateVariable::Vx(FrameId::World)),
-                'y' => |v| matches!(v, StateVariable::Vy(FrameId::World)),
-                'z' => |v| matches!(v, StateVariable::Vz(FrameId::World)),
-                _ => unreachable!(),
-            };
-            let idx = out
-                .value
-                .schema
-                .layout()
-                .iter()
-                .position(pred)
-                .expect("layout has Vx/Vy/Vz(World)");
-            out.value.mean[idx]
-        };
+        // Read back by typed block extractor — no index or layout ordering assumed.
+        let v = out
+            .value
+            .velocity::<Enu>(FrameId::World)
+            .expect("carrier has a world linear-velocity block");
+        assert!((v.x() - 2.0).abs() < 1e-9);
+        assert!((v.y() - -1.0).abs() < 1e-9);
+        assert!((v.z() - 0.5).abs() < 1e-9);
 
-        assert!((world_v('x') - 2.0).abs() < 1e-9);
-        assert!((world_v('y') - -1.0).abs() < 1e-9);
-        assert!((world_v('z') - 0.5).abs() < 1e-9);
+        let w = out
+            .value
+            .angular_velocity::<Enu>(FrameId::World)
+            .expect("carrier has a world angular-velocity block");
+        assert!((w.z() - 0.3).abs() < 1e-9);
     }
 
     #[test]

@@ -5,7 +5,8 @@ use crate::data::primitives::FrameHandle;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::conventions::Flu;
-use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::frames::quantities::FreeVector;
+use crate::frames::{FrameAwareState, FrameId};
 
 /// What the filter believes a rate gyroscope reports: the body's angular
 /// velocity, rotated into the sensor frame.
@@ -55,7 +56,8 @@ impl MeasurementModel for AngularRateModel {
         let rot_sensor_from_body = iso.rotation;
 
         let angular_vel_body = filter_state
-            .get_vector3(&StateVariable::Wx(body_frame.clone()))
+            .angular_velocity::<Flu>(body_frame.clone())
+            .map(FreeVector::into_inner)
             .unwrap_or_default();
 
         let predicted_gyro = rot_sensor_from_body.inverse() * angular_vel_body;
@@ -71,9 +73,11 @@ mod tests {
     use crate::data::ports::TfProvider;
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
+    use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::frames::{FrameAwareState, FrameId};
     use nalgebra::Isometry3;
+    use std::sync::Arc;
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
@@ -102,19 +106,12 @@ mod tests {
         }
     }
 
+    // A composed kinematic state. The gyroscope reads *body*-frame angular
+    // velocity, which the carrier (world-frame angular velocity only) does not
+    // hold, so the read falls back to zero — the test pins shape and TF-gating,
+    // not the rate value.
     fn make_state() -> FrameAwareState {
-        let body = FrameId::Body(AGENT);
-        let world = FrameId::World;
-        let layout = vec![
-            StateVariable::Px(world.clone()),
-            StateVariable::Py(world.clone()),
-            StateVariable::Pz(world.clone()),
-            StateVariable::Qx(body.clone(), world.clone()),
-            StateVariable::Qy(body.clone(), world.clone()),
-            StateVariable::Qz(body.clone(), world.clone()),
-            StateVariable::Qw(body.clone(), world.clone()),
-        ];
-        FrameAwareState::new(layout, 1.0, 0.0)
+        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0)
     }
 
     #[test]
@@ -144,6 +141,7 @@ mod tests {
         let tf = IdentityTf;
         let h = model.jacobian(&state, Some(&tf), AT);
         assert_eq!(h.nrows(), 3);
-        assert_eq!(h.ncols(), state.storage_dim());
+        // H is tangent-sized: a quaternion block spends one fewer column than it stores.
+        assert_eq!(h.ncols(), state.tangent_dim());
     }
 }

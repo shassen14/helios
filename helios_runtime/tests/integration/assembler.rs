@@ -20,7 +20,8 @@ use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::MagneticField3D;
 use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
-use helios_core::frames::quantities::FluVector;
+use helios_core::frames::conventions::Flu;
+use helios_core::frames::quantities::{FluVector, FreeVector};
 use helios_core::frames::{FrameId, StateVariable};
 
 use nalgebra::Vector3;
@@ -625,7 +626,8 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     // Mean moved from 0 toward the injected +3 µT offset.
     let bias = state
         .value
-        .get_vector3(&StateVariable::MagBiasX(sensor))
+        .mag_bias::<Flu>(sensor)
+        .map(FreeVector::into_inner)
         .expect("the bias block reads back as a vector");
     assert!(
         (bias.z - true_bias_z).abs() < 0.5,

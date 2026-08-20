@@ -4,6 +4,7 @@
 //! information-form filters. Concrete implementations live in [`filters`].
 
 pub mod augmentation;
+pub mod carrier;
 pub mod dynamics;
 pub mod filters;
 pub mod measurement;

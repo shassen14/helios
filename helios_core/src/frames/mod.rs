@@ -360,8 +360,8 @@ impl FrameAwareState {
     // carrier for that kind — `Point<F>` for a position, `FreeVector<F>` for a
     // rate, `Rotation<A, B>` for an orientation. Each locates its block through
     // `StateSchema::storage_offset_of_block`, so there is no name scan and no
-    // contiguity check: a block owns a contiguous slice by construction, unlike
-    // the by-name `get_vector3` below.
+    // contiguity check: a block owns a contiguous slice by construction, which is
+    // what lets these replace the older by-name, scan-and-check readers entirely.
     //
     // The convention type parameter (`F`, or `A`/`B`) is *caller-asserted and
     // unchecked*: the schema stores only a block's `FrameId` identity, never its
@@ -469,90 +469,6 @@ impl FrameAwareState {
         Some(self.mean.fixed_rows::<3>(offset).into())
     }
 
-    // --- Named quantity extractors (temporary) ---
-    //
-    // These pull specific physical quantities out of the state by matching
-    // `StateVariable` names. They bake quantity-specific knowledge into the
-    // state type and are a stopgap: state access moves to typed frame-quantity
-    // lookups, at which point these hand-rolled getters are removed. Kept for
-    // now so existing callers keep working unchanged.
-
-    /// Extracts a contiguous 3D vector starting at `start_variable` (its X
-    /// component), e.g. `Px` yields `(Px, Py, Pz)`. `None` unless all three are
-    /// present and contiguous in the layout.
-    pub fn get_vector3(&self, start_variable: &StateVariable) -> Option<Vector3<f64>> {
-        let (expected_y, expected_z) = match start_variable {
-            StateVariable::Px(id) => (StateVariable::Py(id.clone()), StateVariable::Pz(id.clone())),
-            StateVariable::Vx(id) => (StateVariable::Vy(id.clone()), StateVariable::Vz(id.clone())),
-            StateVariable::Ax(id) => (StateVariable::Ay(id.clone()), StateVariable::Az(id.clone())),
-            StateVariable::Wx(id) => (StateVariable::Wy(id.clone()), StateVariable::Wz(id.clone())),
-            StateVariable::Alphax(id) => (
-                StateVariable::Alphay(id.clone()),
-                StateVariable::Alphaz(id.clone()),
-            ),
-            StateVariable::MagX(id) => (
-                StateVariable::MagY(id.clone()),
-                StateVariable::MagZ(id.clone()),
-            ),
-            StateVariable::MagBiasX(id) => (
-                StateVariable::MagBiasY(id.clone()),
-                StateVariable::MagBiasZ(id.clone()),
-            ),
-            _ => return None,
-        };
-
-        let start_idx = self.find_idx(start_variable)?;
-        let layout = self.schema.layout();
-        if layout.get(start_idx + 1) == Some(&expected_y)
-            && layout.get(start_idx + 2) == Some(&expected_z)
-        {
-            Some(self.mean.fixed_rows::<3>(start_idx).into())
-        } else {
-            None
-        }
-    }
-
-    /// The four quaternion component indices, only if all are present and
-    /// contiguous in `Qx, Qy, Qz, Qw` order. Shared by the orientation reader
-    /// and the normalizer.
-    fn quaternion_indices(&self) -> Option<(usize, usize, usize, usize)> {
-        let (mut xi, mut yi, mut zi, mut wi) = (None, None, None, None);
-        for (i, var) in self.schema.layout().iter().enumerate() {
-            match var {
-                StateVariable::Qx(_, _) => xi = Some(i),
-                StateVariable::Qy(_, _) => yi = Some(i),
-                StateVariable::Qz(_, _) => zi = Some(i),
-                StateVariable::Qw(_, _) => wi = Some(i),
-                _ => {}
-            }
-        }
-        let (xi, yi, zi, wi) = (xi?, yi?, zi?, wi?);
-        (yi == xi + 1 && zi == yi + 1 && wi == zi + 1).then_some((xi, yi, zi, wi))
-    }
-
-    /// The orientation quaternion, or `None` if the four components are not
-    /// present and contiguous. `nalgebra`'s `Quaternion` is `(w, i, j, k)`.
-    pub(crate) fn get_orientation(&self) -> Option<UnitQuaternion<f64>> {
-        let (xi, yi, zi, wi) = self.quaternion_indices()?;
-        Some(UnitQuaternion::from_quaternion(Quaternion::new(
-            self.mean[wi],
-            self.mean[xi],
-            self.mean[yi],
-            self.mean[zi],
-        )))
-    }
-
-    /// The full world-frame 6-DOF pose, or `None` if either the world position
-    /// or the orientation is missing.
-    pub fn get_pose_isometry(&self) -> Option<Isometry3<f64>> {
-        let position = self.get_vector3(&StateVariable::Px(FrameId::World))?;
-        let orientation = self.get_orientation()?;
-        Some(Isometry3::from_parts(
-            Translation3::from(position),
-            orientation,
-        ))
-    }
-
     /// Sets one named component. Returns `true` if the variable is in the
     /// layout and was written, `false` (a no-op) if absent.
     pub fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
@@ -585,18 +501,24 @@ mod frame_aware_state_tests {
     #[test]
     fn new_seeds_identity_quaternion() {
         let s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
-        assert_eq!(s.get_orientation().unwrap(), UnitQuaternion::identity());
+        // The degenerate constructor seeds `Qw` to 1.0 so the state holds a valid
+        // identity quaternion rather than an all-zero non-rotation.
+        let qw = s
+            .schema
+            .storage_offset_of(&StateVariable::Qw(FrameId::World, FrameId::World))
+            .unwrap();
+        assert_eq!(s.mean[qw], 1.0);
     }
 
     #[test]
-    fn set_and_get_vector3_round_trip() {
+    fn set_variable_writes_reach_the_mean() {
         let mut s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
         s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
         s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
         s.set_variable(&StateVariable::Pz(FrameId::World), 3.0);
 
-        let p = s.get_vector3(&StateVariable::Px(FrameId::World)).unwrap();
-        assert_eq!(p, Vector3::new(1.0, 2.0, 3.0));
+        // `Px` heads the layout, so the three position slots are the first rows.
+        assert_eq!(s.mean.fixed_rows::<3>(0), Vector3::new(1.0, 2.0, 3.0));
     }
 
     #[test]
@@ -705,20 +627,6 @@ mod block_extractor_tests {
 
         let v = s.velocity::<Enu>(FrameId::World).unwrap();
         assert_eq!(v.raw(), &Vector3::new(4.0, 5.0, 6.0));
-    }
-
-    #[test]
-    fn block_extractor_agrees_with_the_by_name_reader() {
-        // The new block path and the legacy `get_vector3` must resolve to the same
-        // slot; this pins that equivalence while both coexist during migration.
-        let mut s = composed_state();
-        s.set_variable(&StateVariable::Px(FrameId::World), 7.0);
-        s.set_variable(&StateVariable::Py(FrameId::World), 8.0);
-        s.set_variable(&StateVariable::Pz(FrameId::World), 9.0);
-
-        let via_block = s.position::<Enu>(FrameId::World).unwrap();
-        let via_name = s.get_vector3(&StateVariable::Px(FrameId::World)).unwrap();
-        assert_eq!(via_block.raw(), &via_name);
     }
 
     #[test]

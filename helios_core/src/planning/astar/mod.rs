@@ -38,7 +38,8 @@ mod smoothing;
 
 use nalgebra::Vector2;
 
-use crate::frames::{FrameId, StateVariable};
+use crate::frames::conventions::Enu;
+use crate::frames::FrameId;
 use crate::mapping::MapData;
 use crate::planning::SearchPlannerInputs;
 
@@ -161,8 +162,8 @@ impl SearchPlanner for AStarPlanner {
         }
 
         // Robot 2D position from world-frame state.
-        let robot_pos = match inputs.state.get_vector3(&StateVariable::Px(FrameId::World)) {
-            Some(p) => Vector2::new(p.x, p.y),
+        let robot_pos = match inputs.state.position::<Enu>(FrameId::World) {
+            Some(p) => Vector2::new(p.x(), p.y()),
             None => {
                 return PlannerResult::Error("AStarPlanner: state missing world position".into())
             }
@@ -316,9 +317,9 @@ impl SearchPlanner for AStarPlanner {
 
         // Deviation check (optional).
         if self.config.replan_on_path_deviation {
-            if let Some(robot_pos) = inputs.state.get_vector3(&StateVariable::Px(FrameId::World)) {
+            if let Some(robot_pos) = inputs.state.position::<Enu>(FrameId::World) {
                 if let Some(path) = &self.cached_path {
-                    let robot_2d = Vector2::new(robot_pos.x, robot_pos.y);
+                    let robot_2d = Vector2::new(robot_pos.x(), robot_pos.y());
                     let min_dist = path
                         .waypoints
                         .iter()
@@ -359,10 +360,12 @@ impl AStarPlanner {
 
 #[cfg(test)]
 mod tests {
-    use nalgebra::{DMatrix, Isometry3, Vector2};
+    use nalgebra::{DMatrix, DVector, Isometry3, Vector2};
     use std::collections::HashMap;
+    use std::sync::Arc;
 
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
+    use crate::frames::{FrameAwareState, FrameId};
     use crate::mapping::MapData;
     use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
     use crate::planning::SearchPlanner;
@@ -389,18 +392,15 @@ mod tests {
         }
     }
 
-    /// Build a minimal world-frame state with only `[Px, Py, Pz]`.
+    /// Build a minimal world-frame state carrying only a `Position(World)` block.
     fn make_state(x: f64, y: f64) -> FrameAwareState {
-        let layout = vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-            StateVariable::Pz(FrameId::World),
-        ];
-        let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-        state.mean[0] = x;
-        state.mean[1] = y;
-        state.mean[2] = 0.0;
-        state
+        let schema = StateSchema::compose(vec![SchemaBlock::new(
+            Quantity::Position(FrameId::World),
+            None,
+            DVector::from_vec(vec![x, y, 0.0]),
+            DMatrix::zeros(3, 3),
+        )]);
+        FrameAwareState::from_schema(Arc::new(schema), 0.0)
     }
 
     /// All-zero `nrows × ncols` grid anchored at the world origin.

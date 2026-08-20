@@ -1,6 +1,7 @@
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::data::messages::TrajectoryPoint;
 use crate::data::primitives::FrameHandle;
+use crate::frames::conventions::{Enu, Flu};
 use crate::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
 use nalgebra::{DVector, Vector2};
@@ -47,8 +48,8 @@ impl PurePursuitPathFollower {
             return;
         };
 
-        let agent_pos = match state.get_vector3(&StateVariable::Px(FrameId::World)) {
-            Some(p) => Vector2::new(p.x, p.y),
+        let agent_pos = match state.position::<Enu>(FrameId::World) {
+            Some(p) => Vector2::new(p.x(), p.y()),
             None => return,
         };
 
@@ -82,8 +83,8 @@ impl PathFollower for PurePursuitPathFollower {
         let lookahead_distance: f64 = match self.lookahead_time {
             Some(t) => {
                 let speed = state
-                    .get_vector3(&StateVariable::Vx(FrameId::World))
-                    .map(|v| v.xy().norm())
+                    .velocity::<Enu>(FrameId::World)
+                    .map(|v| v.raw().xy().norm())
                     .unwrap_or(0.0);
                 (speed * t).max(self.lookahead_distance)
             }
@@ -96,16 +97,18 @@ impl PathFollower for PurePursuitPathFollower {
             return PathFollowerResult::NoPath;
         };
 
-        let agent_pos = match state.get_vector3(&StateVariable::Px(FrameId::World)) {
-            Some(p) => Vector2::new(p.x, p.y),
+        let agent_pos = match state.position::<Enu>(FrameId::World) {
+            Some(p) => Vector2::new(p.x(), p.y()),
             None => {
                 return PathFollowerResult::Error(
                     "Could not abstract agent information".to_string(),
                 )
             }
         };
-        let agent_orientation = match state.get_orientation() {
-            Some(o) => o,
+        let agent_orientation = match state
+            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
+        {
+            Some(o) => o.into_inner(),
             None => {
                 return PathFollowerResult::Error(
                     "Could not abstract agent information".to_string(),

@@ -11,7 +11,7 @@
 //! ## Execution skeleton
 //!
 //! 1. **Resolve robot pose.** Read `FrameAwareState @ ""`; pull
-//!    `get_pose_isometry()`. `None` → cold-start, skip the tick.
+//!    the body→World `pose(...)`. `None` → cold-start, skip the tick.
 //! 2. **Recenter.** Hand the robot pose to [`Mapper::recenter`].
 //! 3. **Integrate scans.** Read the scan channel; for each reading, look up
 //!    the static `agent → sensor` transform via the runtime, compose
@@ -59,7 +59,7 @@ use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::data::sensor::PointCloud2D;
 use helios_core::data::MonotonicTime;
-use helios_core::frames::conventions::Flu;
+use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::{FrameAwareState, FrameId};
 use helios_core::mapping::Mapper;
 
@@ -146,7 +146,11 @@ impl PipelineNode for OccupancyGridNode {
         else {
             return;
         };
-        let Some(robot_world_pose) = stamped_state.value.get_pose_isometry() else {
+        let Some(robot_world_pose) = stamped_state
+            .value
+            .pose::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
+            .map(|t| t.into_inner())
+        else {
             return;
         };
 
@@ -223,10 +227,12 @@ mod tests {
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::data::sensor::PointCloud2D;
+    use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use helios_core::mapping::{MapData, Mapper};
     use nalgebra::{Isometry3, Point2, Translation3, UnitQuaternion};
+    use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
     // --- Mock AgentRuntime ---
@@ -363,19 +369,11 @@ mod tests {
     }
 
     fn make_state_at(x: f64) -> FrameAwareState {
-        let layout = vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-            StateVariable::Pz(FrameId::World),
-            StateVariable::Qx(FrameId::Body(AGENT), FrameId::World),
-            StateVariable::Qy(FrameId::Body(AGENT), FrameId::World),
-            StateVariable::Qz(FrameId::Body(AGENT), FrameId::World),
-            StateVariable::Qw(FrameId::Body(AGENT), FrameId::World),
-        ];
-        let mut s = FrameAwareState::new(layout, 1.0, 0.0);
-        s.mean[0] = x;
-        // Identity quaternion: (0, 0, 0, 1).
-        s.mean[6] = 1.0;
+        // The kinematic carrier already holds a `Position(World)` block and an
+        // identity `Body(AGENT) → World` attitude, which is all the node's pose
+        // read needs; seed the world-x position.
+        let mut s = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0);
+        s.set_variable(&StateVariable::Px(FrameId::World), x);
         s
     }
 

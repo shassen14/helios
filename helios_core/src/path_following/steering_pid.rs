@@ -14,6 +14,7 @@ use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::siso_pid::SisoPid;
 use crate::data::messages::TrajectoryPoint;
 use crate::data::primitives::FrameHandle;
+use crate::frames::conventions::{Enu, Flu};
 use crate::frames::{FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
 
@@ -85,12 +86,14 @@ impl PathFollower for SteeringPidPathFollower {
             return PathFollowerResult::NoPath;
         }
 
-        let agent_pos = match state.get_vector3(&StateVariable::Px(FrameId::World)) {
-            Some(p) => Vector2::new(p.x, p.y),
+        let agent_pos = match state.position::<Enu>(FrameId::World) {
+            Some(p) => Vector2::new(p.x(), p.y()),
             None => return PathFollowerResult::Error("missing agent position".into()),
         };
-        let orientation = match state.get_orientation() {
-            Some(q) => q,
+        let orientation = match state
+            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
+        {
+            Some(q) => q.into_inner(),
             None => return PathFollowerResult::Error("missing agent orientation".into()),
         };
         let (_, _, current_yaw) = orientation.euler_angles();

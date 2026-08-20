@@ -1,7 +1,12 @@
 use crate::{
     data::{ports::TfProvider, primitives::FrameHandle, MonotonicTime},
     estimation::measurement::MeasurementModel,
-    frames::{conventions::Flu, FrameAwareState, FrameId, StateVariable},
+    frames::{
+        conventions::{Enu, Flu},
+        quantities::FreeVector,
+        transforms::Rotation,
+        FrameAwareState, FrameId,
+    },
 };
 use nalgebra::{DVector, Vector3};
 
@@ -34,7 +39,10 @@ impl MeasurementModel for MagneticFieldModel {
     ) -> Option<DVector<f64>> {
         let tf = tf?;
 
-        let orientation_body_to_world = filter_state.get_orientation().unwrap_or_default();
+        let orientation_body_to_world = filter_state
+            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
+            .map(Rotation::into_inner)
+            .unwrap_or_default();
         let q_body_from_world = orientation_body_to_world.inverse();
         let predicted_mag_body = q_body_from_world * self.world_magnetic_field;
 
@@ -54,7 +62,8 @@ impl MeasurementModel for MagneticFieldModel {
 
         let sensor = FrameId::Sensor(self.sensor_handle);
         let bias = filter_state
-            .get_vector3(&StateVariable::MagBiasX(sensor))
+            .mag_bias::<Flu>(sensor)
+            .map(FreeVector::into_inner)
             .unwrap_or_else(Vector3::zeros);
         let predicted_sensor = rot_sensor_from_body.inverse() * predicted_mag_body + bias;
 
@@ -80,10 +89,33 @@ mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
+    use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
+    use crate::manifold::TangentNoise;
+    use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
+    use std::sync::Arc;
+
+    // Isotropic 3-DOF noise; an orientation block cannot be built noiseless, and
+    // the value is irrelevant to these prediction tests (none runs a predict step).
+    fn noise() -> Option<TangentNoise> {
+        Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap())
+    }
+
+    // The body → World orientation block, seeded to the identity quaternion
+    // `[x, y, z, w] = [0, 0, 0, 1]`.
+    fn orientation_block() -> SchemaBlock {
+        SchemaBlock::new(
+            Quantity::Orientation {
+                from: FrameId::Body(AGENT),
+                to: FrameId::World,
+            },
+            noise(),
+            DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+            DMatrix::identity(3, 3),
+        )
+    }
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
@@ -113,23 +145,17 @@ mod tests {
     }
 
     fn make_orientation_state() -> FrameAwareState {
-        let body = FrameId::Body(AGENT);
-        let world = FrameId::World;
-        let layout = vec![
-            StateVariable::Qx(body.clone(), world.clone()),
-            StateVariable::Qy(body.clone(), world.clone()),
-            StateVariable::Qz(body.clone(), world.clone()),
-            StateVariable::Qw(body.clone(), world.clone()),
-        ];
-        FrameAwareState::new(layout, 1.0, 0.0)
+        let schema = StateSchema::compose(vec![orientation_block()]);
+        FrameAwareState::from_schema(Arc::new(schema), 0.0)
     }
 
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
         let q = UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2);
-        state.mean[0] = q.i;
-        state.mean[1] = q.j;
-        state.mean[2] = q.k;
-        state.mean[3] = q.w;
+        let (body, world) = (FrameId::Body(AGENT), FrameId::World);
+        state.set_variable(&StateVariable::Qx(body.clone(), world.clone()), q.i);
+        state.set_variable(&StateVariable::Qy(body.clone(), world.clone()), q.j);
+        state.set_variable(&StateVariable::Qz(body.clone(), world.clone()), q.k);
+        state.set_variable(&StateVariable::Qw(body, world), q.w);
     }
 
     fn make_model() -> MagneticFieldModel {
@@ -144,20 +170,17 @@ mod tests {
     /// hard-iron bias block for `SENSOR`, the bias initialised to `bias`.
     /// Orientation is identity, so the field prediction isolates the bias term.
     fn make_augmented_state(bias: Vector3<f64>) -> FrameAwareState {
-        let body = FrameId::Body(AGENT);
-        let world = FrameId::World;
         let sensor = FrameId::Sensor(SENSOR);
-        let layout = vec![
-            StateVariable::Qx(body.clone(), world.clone()),
-            StateVariable::Qy(body.clone(), world.clone()),
-            StateVariable::Qz(body.clone(), world.clone()),
-            StateVariable::Qw(body.clone(), world.clone()),
-            StateVariable::MagBiasX(sensor.clone()),
-            StateVariable::MagBiasY(sensor.clone()),
-            StateVariable::MagBiasZ(sensor.clone()),
-        ];
-        let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-        state.set_variable(&StateVariable::Qw(body, world), 1.0);
+        let schema = StateSchema::compose(vec![
+            orientation_block(),
+            SchemaBlock::new(
+                Quantity::MagBias(sensor.clone()),
+                noise(),
+                DVector::zeros(3),
+                DMatrix::identity(3, 3),
+            ),
+        ]);
+        let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
         state.set_variable(&StateVariable::MagBiasX(sensor.clone()), bias.x);
         state.set_variable(&StateVariable::MagBiasY(sensor.clone()), bias.y);
         state.set_variable(&StateVariable::MagBiasZ(sensor), bias.z);
@@ -255,16 +278,19 @@ mod tests {
     #[test]
     fn jacobian_carries_identity_over_the_bias_columns() {
         // The bias enters the prediction additively (z = h(x) + b), so ∂z/∂b is
-        // the identity. Because the default finite-difference Jacobian sizes to
-        // the full state and perturbs every slot, those identity columns appear
-        // with no analytic override — and that is exactly what makes the appended
-        // bias block observable to the filter's update.
+        // the identity. Because the default finite-difference Jacobian perturbs
+        // every tangent slot, those identity columns appear with no analytic
+        // override — and that is exactly what makes the appended bias block
+        // observable to the filter's update. H is tangent-indexed, so the bias
+        // columns sit at the block's *tangent* offset (below its storage offset,
+        // the orientation block ahead of it spending one fewer tangent than it
+        // stores).
         let model = make_model();
         let sensor = FrameId::Sensor(SENSOR);
         let state = make_augmented_state(Vector3::zeros());
         let off = state
             .schema()
-            .storage_offset_of(&StateVariable::MagBiasX(sensor))
+            .tangent_offset_of(&StateVariable::MagBiasX(sensor))
             .expect("augmented state carries the bias block");
         let h = model.jacobian(&state, Some(&identity_mount()), AT);
         for r in 0..3 {

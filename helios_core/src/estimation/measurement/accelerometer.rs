@@ -2,8 +2,10 @@ use crate::data::ports::TfProvider;
 use crate::data::primitives::FrameHandle;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
-use crate::frames::conventions::Flu;
-use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::frames::conventions::{Enu, Flu};
+use crate::frames::quantities::FreeVector;
+use crate::frames::transforms::Rotation;
+use crate::frames::{FrameAwareState, FrameId};
 
 use nalgebra::{DVector, Vector3};
 
@@ -65,15 +67,21 @@ impl MeasurementModel for SpecificForceModel {
         let rot_sensor_from_body = iso.rotation;
 
         let linear_accel_body = filter_state
-            .get_vector3(&StateVariable::Ax(body_frame.clone()))
+            .acceleration::<Flu>(body_frame.clone())
+            .map(FreeVector::into_inner)
             .unwrap_or_default();
         let angular_vel_body = filter_state
-            .get_vector3(&StateVariable::Wx(body_frame.clone()))
+            .angular_velocity::<Flu>(body_frame.clone())
+            .map(FreeVector::into_inner)
             .unwrap_or_default();
         let angular_accel_body = filter_state
-            .get_vector3(&StateVariable::Alphax(body_frame.clone()))
+            .angular_acceleration::<Flu>(body_frame.clone())
+            .map(FreeVector::into_inner)
             .unwrap_or_default();
-        let orientation_body_to_world = filter_state.get_orientation().unwrap_or_default();
+        let orientation_body_to_world = filter_state
+            .orientation::<Flu, Enu>(body_frame.clone(), FrameId::World)
+            .map(Rotation::into_inner)
+            .unwrap_or_default();
 
         let tangential_accel = angular_accel_body.cross(&r_body_to_sensor);
         let centripetal_accel = angular_vel_body.cross(&angular_vel_body.cross(&r_body_to_sensor));
@@ -99,10 +107,12 @@ mod tests {
     use crate::data::ports::TfProvider;
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
+    use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::frames::{FrameAwareState, FrameId};
 
     use nalgebra::Isometry3;
+    use std::sync::Arc;
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
@@ -132,19 +142,11 @@ mod tests {
         }
     }
 
+    // A composed kinematic state carrying the orientation the model reads. Its
+    // body-frame acceleration and angular-acceleration reads have no block here
+    // and fall back to zero, as they do against a real INS estimate.
     fn make_state() -> FrameAwareState {
-        let body = FrameId::Body(AGENT);
-        let world = FrameId::World;
-        let layout = vec![
-            StateVariable::Px(world.clone()),
-            StateVariable::Py(world.clone()),
-            StateVariable::Pz(world.clone()),
-            StateVariable::Qx(body.clone(), world.clone()),
-            StateVariable::Qy(body.clone(), world.clone()),
-            StateVariable::Qz(body.clone(), world.clone()),
-            StateVariable::Qw(body.clone(), world.clone()),
-        ];
-        FrameAwareState::new(layout, 1.0, 0.0)
+        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0)
     }
 
     #[test]
@@ -174,6 +176,7 @@ mod tests {
         let tf = IdentityTf;
         let h = model.jacobian(&state, Some(&tf), AT);
         assert_eq!(h.nrows(), 3);
-        assert_eq!(h.ncols(), state.storage_dim());
+        // H is tangent-sized: a quaternion block spends one fewer column than it stores.
+        assert_eq!(h.ncols(), state.tangent_dim());
     }
 }

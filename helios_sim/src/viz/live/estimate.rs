@@ -12,6 +12,10 @@
 
 use bevy::prelude::*;
 
+use helios_core::data::primitives::FrameHandle;
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::FrameId;
+
 use crate::{core::transforms::EnuBodyPose, prelude::AutonomyPipelineComponent};
 
 /// Axis-triad length for the estimate gizmo. Deliberately shorter than the
@@ -20,13 +24,17 @@ use crate::{core::transforms::EnuBodyPose, prelude::AutonomyPipelineComponent};
 // TODO: pull the triad length from viz config once that surface exists.
 const ESTIMATE_TRIAD_LEN: f32 = 3.0;
 
-pub fn estimate_update_system(query: Query<&AutonomyPipelineComponent>, mut gizmos: Gizmos) {
-    for pipeline in &query {
-        let Some(iso) = pipeline
-            .0
-            .read_state()
-            .and_then(|st| st.value.get_pose_isometry())
-        else {
+pub fn estimate_update_system(
+    query: Query<(Entity, &AutonomyPipelineComponent)>,
+    mut gizmos: Gizmos,
+) {
+    for (agent, pipeline) in &query {
+        let body = FrameId::Body(FrameHandle::from_entity(agent));
+        let Some(iso) = pipeline.0.read_state().and_then(|st| {
+            st.value
+                .pose::<Flu, Enu>(body.clone(), FrameId::World)
+                .map(|t| t.into_inner())
+        }) else {
             continue;
         };
 

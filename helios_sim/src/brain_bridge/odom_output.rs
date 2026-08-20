@@ -5,6 +5,10 @@
 
 use bevy::prelude::*;
 
+use helios_core::data::primitives::FrameHandle;
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::FrameId;
+
 use crate::brain_bridge::components::{AutonomyPipelineComponent, OdomFrameOf};
 use crate::core::transforms::EnuBodyPose;
 
@@ -25,11 +29,12 @@ pub fn update_odom_frames(
             continue;
         };
 
-        if let Some(iso) = pipeline
-            .0
-            .read_state()
-            .and_then(|st| st.value.get_pose_isometry())
-        {
+        let body = FrameId::Body(FrameHandle::from_entity(odom_of.0));
+        if let Some(iso) = pipeline.0.read_state().and_then(|st| {
+            st.value
+                .pose::<Flu, Enu>(body.clone(), FrameId::World)
+                .map(|t| t.into_inner())
+        }) {
             *transform = Transform::from(EnuBodyPose(iso));
         }
     }

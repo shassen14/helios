@@ -18,7 +18,11 @@ use crate::{
 use helios_core::{
     control::commands::BodyTwist,
     data::MonotonicTime,
-    frames::{FrameAwareState, FrameId, StateVariable},
+    frames::{
+        conventions::Enu,
+        quantities::{FreeVector, Point},
+        FrameAwareState, FrameId,
+    },
 };
 use helios_runtime::channels::control;
 
@@ -112,8 +116,8 @@ pub fn gather_pose(
 /// the components pass straight through tagged [`Frame::Enu`]. Position and velocity
 /// are each optional: a layout that omits one simply drops that row.
 pub fn estimator_section(state: &FrameAwareState) -> Section {
-    let position = state.get_vector3(&StateVariable::Px(FrameId::World));
-    let velocity = state.get_vector3(&StateVariable::Vx(FrameId::World));
+    let position = state.position::<Enu>(FrameId::World).map(Point::into_inner);
+    let velocity = state.velocity::<Enu>(FrameId::World).map(FreeVector::into_inner);
 
     let mut rows = Vec::new();
     if let Some(p) = position {
@@ -224,7 +228,10 @@ pub fn gather_controller(
 mod tests {
     use super::*;
 
+    use helios_core::estimation::schema::{Quantity, SchemaBlock, StateSchema};
     use helios_core::frames::quantities::FluVector;
+    use helios_core::frames::StateVariable;
+    use nalgebra::{DMatrix, DVector};
     use helios_runtime::{
         channels::control,
         pipeline::node::HOST_PRODUCER_ID,
@@ -381,15 +388,14 @@ mod tests {
     /// A minimal state carrying only World-frame position and velocity — enough to
     /// exercise the estimator section without the full 16-state INS layout.
     fn state_with(position: [f64; 3], velocity: [f64; 3]) -> FrameAwareState {
-        let layout = vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-            StateVariable::Pz(FrameId::World),
-            StateVariable::Vx(FrameId::World),
-            StateVariable::Vy(FrameId::World),
-            StateVariable::Vz(FrameId::World),
-        ];
-        let mut state = FrameAwareState::new(layout, 0.0, 0.0);
+        let flat = |quantity: Quantity| {
+            SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3))
+        };
+        let schema = StateSchema::compose(vec![
+            flat(Quantity::Position(FrameId::World)),
+            flat(Quantity::Velocity(FrameId::World)),
+        ]);
+        let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
         state.set_variable(&StateVariable::Px(FrameId::World), position[0]);
         state.set_variable(&StateVariable::Py(FrameId::World), position[1]);
         state.set_variable(&StateVariable::Pz(FrameId::World), position[2]);

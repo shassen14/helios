@@ -4,8 +4,10 @@ use crate::data::ports::TfProvider;
 use crate::data::primitives::FrameHandle;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
-use crate::frames::conventions::Flu;
-use crate::frames::{FrameAwareState, FrameId, StateVariable};
+use crate::frames::conventions::{Enu, Flu};
+use crate::frames::quantities::Point;
+use crate::frames::transforms::Rotation;
+use crate::frames::{FrameAwareState, FrameId};
 
 /// A measurement model for a standard GPS sensor that provides 3D position.
 ///
@@ -44,8 +46,13 @@ impl MeasurementModel for GpsPositionModel {
         at: MonotonicTime,
     ) -> Option<DVector<f64>> {
         let tf = tf?;
-        let body_position_world = filter_state.get_vector3(&StateVariable::Px(FrameId::World))?;
-        let body_orientation_world = filter_state.get_orientation().unwrap_or_default();
+        let body_position_world = filter_state
+            .position::<Enu>(FrameId::World)
+            .map(Point::into_inner)?;
+        let body_orientation_world = filter_state
+            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
+            .map(Rotation::into_inner)
+            .unwrap_or_default();
 
         let erased = tf.get_transform(
             FrameId::Body(self.agent_handle),
@@ -84,9 +91,11 @@ mod tests {
     use crate::data::ports::TfProvider;
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
+    use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
+    use std::sync::Arc;
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
@@ -116,22 +125,15 @@ mod tests {
         }
     }
 
+    // A composed kinematic state with the world position seeded. The GPS model
+    // reads the position block (present) and the orientation block (present); the
+    // world-frame antenna position it predicts is that position plus the rotated
+    // lever arm.
     fn make_state(px: f64, py: f64, pz: f64) -> FrameAwareState {
-        let body = FrameId::Body(AGENT);
-        let world = FrameId::World;
-        let layout = vec![
-            StateVariable::Px(world.clone()),
-            StateVariable::Py(world.clone()),
-            StateVariable::Pz(world.clone()),
-            StateVariable::Qx(body.clone(), world.clone()),
-            StateVariable::Qy(body.clone(), world.clone()),
-            StateVariable::Qz(body.clone(), world.clone()),
-            StateVariable::Qw(body.clone(), world.clone()),
-        ];
-        let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-        state.mean[0] = px;
-        state.mean[1] = py;
-        state.mean[2] = pz;
+        let mut state = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0);
+        state.set_variable(&StateVariable::Px(FrameId::World), px);
+        state.set_variable(&StateVariable::Py(FrameId::World), py);
+        state.set_variable(&StateVariable::Pz(FrameId::World), pz);
         state
     }
 
@@ -179,7 +181,9 @@ mod tests {
         let tf = FixedTf(Isometry3::identity());
         let h = model.jacobian(&state, Some(&tf), AT);
         assert_eq!(h.nrows(), 3);
-        assert_eq!(h.ncols(), state.storage_dim());
+        // H maps a tangent-space error to the measurement, so its column count is
+        // the tangent dimension (a quaternion block spends one fewer than it stores).
+        assert_eq!(h.ncols(), state.tangent_dim());
         assert!((h[(0, 0)] - 1.0).abs() < 1e-4);
         assert!((h[(1, 1)] - 1.0).abs() < 1e-4);
         assert!((h[(2, 2)] - 1.0).abs() < 1e-4);

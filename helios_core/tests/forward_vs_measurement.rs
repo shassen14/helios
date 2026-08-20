@@ -26,8 +26,10 @@ use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
 use helios_core::estimation::measurement::MeasurementModel;
+use helios_core::estimation::schema::{Quantity, SchemaBlock, StateSchema};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+use helios_core::manifold::TangentNoise;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gps::GpsModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
@@ -35,9 +37,10 @@ use helios_core::sensors::magnetometer::MagnetometerModel;
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use nalgebra::{DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
+use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::sync::Arc;
 
 const AGENT: FrameHandle = FrameHandle(1);
 const SENSOR: FrameHandle = FrameHandle(2);
@@ -267,10 +270,10 @@ fn reference_field_enu(declination: f64, inclination: f64, magnitude: f64) -> Ve
     )
 }
 
-/// Builds a filter state carrying every slot the four models read: world
+/// Builds a filter state carrying every block the four models read: world
 /// position, the body→world orientation, and the body-frame angular velocity,
-/// linear acceleration, and angular acceleration. Each group is laid out
-/// contiguously so `get_vector3` / `get_orientation` can find it.
+/// linear acceleration, and angular acceleration. Each is a composed
+/// [`Quantity`] block, so the models' typed block reads resolve against it.
 fn make_state(
     position_world: Vector3<f64>,
     q_body_to_world: UnitQuaternion<f64>,
@@ -280,25 +283,27 @@ fn make_state(
 ) -> FrameAwareState {
     let world = FrameId::World;
     let body = FrameId::Body(AGENT);
-    let layout = vec![
-        StateVariable::Px(world.clone()),
-        StateVariable::Py(world.clone()),
-        StateVariable::Pz(world.clone()),
-        StateVariable::Qx(body.clone(), world.clone()),
-        StateVariable::Qy(body.clone(), world.clone()),
-        StateVariable::Qz(body.clone(), world.clone()),
-        StateVariable::Qw(body.clone(), world.clone()),
-        StateVariable::Wx(body.clone()),
-        StateVariable::Wy(body.clone()),
-        StateVariable::Wz(body.clone()),
-        StateVariable::Ax(body.clone()),
-        StateVariable::Ay(body.clone()),
-        StateVariable::Az(body.clone()),
-        StateVariable::Alphax(body.clone()),
-        StateVariable::Alphay(body.clone()),
-        StateVariable::Alphaz(body.clone()),
-    ];
-    let mut state = FrameAwareState::new(layout, 1.0, 0.0);
+
+    // Flat kinematic blocks carry no process noise; the orientation block must
+    // (a quaternion retraction has no zero-noise covariance), and its value is
+    // irrelevant to this prediction-only test.
+    let flat = |quantity: Quantity| SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3));
+    let schema = StateSchema::compose(vec![
+        flat(Quantity::Position(world.clone())),
+        SchemaBlock::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap()),
+            DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+            DMatrix::identity(3, 3),
+        ),
+        flat(Quantity::AngularVelocity(body.clone())),
+        flat(Quantity::Acceleration(body.clone())),
+        flat(Quantity::AngularAcceleration(body.clone())),
+    ]);
+    let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
 
     set_vec3(&mut state, StateVariable::Px(world.clone()), position_world);
     let q = q_body_to_world.quaternion();
@@ -325,8 +330,8 @@ fn make_state(
     state
 }
 
-/// Writes a 3-vector into the `x`/`y`/`z` slots that follow `x_variable` in the
-/// layout, matching the contiguity `get_vector3` expects.
+/// Writes a 3-vector into the `x`/`y`/`z` slots named from `x_variable`, each
+/// set by name through the schema.
 fn set_vec3(state: &mut FrameAwareState, x_variable: StateVariable, value: Vector3<f64>) {
     let (y_variable, z_variable) = match &x_variable {
         StateVariable::Px(id) => (StateVariable::Py(id.clone()), StateVariable::Pz(id.clone())),
