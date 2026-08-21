@@ -324,7 +324,7 @@ impl SearchPlanner for AStarPlanner {
                         .waypoints
                         .iter()
                         .map(|wp| {
-                            let wp2d = Vector2::new(wp.state.vector[0], wp.state.vector[1]);
+                            let wp2d = Vector2::new(wp.x(), wp.y());
                             (robot_2d - wp2d).norm()
                         })
                         .fold(f64::INFINITY, f64::min);
@@ -492,8 +492,8 @@ mod tests {
                 assert!(!path.waypoints.is_empty());
                 let last = path.waypoints.last().unwrap();
                 // Last waypoint should be at or near the goal cell centre.
-                assert!((last.state.vector[0] - 9.5).abs() < 1.0);
-                assert!((last.state.vector[1] - 9.5).abs() < 1.0);
+                assert!((last.x() - 9.5).abs() < 1.0);
+                assert!((last.y() - 9.5).abs() < 1.0);
             }
             other => panic!("expected Path, got {:?}", std::mem::discriminant(&other)),
         }

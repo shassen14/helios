@@ -7,11 +7,10 @@
 //! planner's first output or when the stack has no planner; the iterator is
 //! simply empty.
 //!
-//! Each waypoint is a full [`RobotState`], not a bare point (the real consumer,
-//! the path follower, needs heading and feed-forward), so the position is
-//! pulled out per waypoint and converted through the sole ENU→Bevy helper.
+//! Each waypoint is a [`Point<Enu>`] — a pure ENU world-frame position — so its
+//! coordinates convert straight through the sole ENU→Bevy helper.
 //!
-//! [`RobotState`]: helios_core::frames::RobotState
+//! [`Point<Enu>`]: helios_core::frames::quantities::Point
 
 use crate::{
     core::transforms::EnuVector, prelude::AutonomyPipelineComponent,
@@ -19,10 +18,7 @@ use crate::{
 };
 
 use bevy::{color, prelude::*};
-use helios_core::{
-    frames::{FrameId, StateVariable},
-    prelude::Path,
-};
+use helios_core::prelude::Path;
 
 /// Path polyline color. Amber, chosen to sit clear of the red/green/blue axes
 /// of the pose triads it is drawn among.
@@ -41,8 +37,7 @@ pub fn path_update_system(query: Query<&AutonomyPipelineComponent>, mut gizmos: 
                 .value
                 .waypoints
                 .iter()
-                .filter_map(|wp| wp.state.get_vector3(&StateVariable::Px(FrameId::World)))
-                .map(|v| Vec3::from(EnuVector(v)))
+                .map(|wp| Vec3::from(EnuVector(*wp.raw())))
                 .collect();
 
             gizmos.linestrip(waypoints, PATH_COLOR);

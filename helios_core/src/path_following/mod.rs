@@ -24,6 +24,8 @@ pub mod pure_pursuit;
 pub mod steering_pid;
 
 use crate::data::messages::TrajectoryPoint;
+use crate::frames::conventions::Enu;
+use crate::frames::quantities::Point;
 use crate::frames::FrameAwareState;
 use crate::planning::types::Path;
 
@@ -90,7 +92,7 @@ pub trait PathFollower: Send + Sync {
     /// and debugging. Returns `None` when no path has been set.
     ///
     /// [`compute`]: PathFollower::compute
-    fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint>;
+    fn get_lookahead_waypoint(&self) -> Option<&Point<Enu>>;
 
     /// Reset all internal state, including the stored path and progress cursor.
     ///

@@ -177,6 +177,8 @@ mod tests {
 
     use helios_core::data::messages::TrajectoryPoint;
     use helios_core::data::primitives::MonotonicTime;
+    use helios_core::frames::conventions::Enu;
+    use helios_core::frames::quantities::Point;
     use helios_core::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
     use helios_core::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::planning::types::Path;
@@ -249,7 +251,7 @@ mod tests {
         fn set_path(&mut self, _path: Path) {
             self.calls.lock().unwrap().set_path_calls += 1;
         }
-        fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint> {
+        fn get_lookahead_waypoint(&self) -> Option<&Point<Enu>> {
             None
         }
         fn reset(&mut self) {}
@@ -350,7 +352,14 @@ mod tests {
         }
     }
 
-    fn dummy_waypoint() -> TrajectoryPoint {
+    /// A single geometric path waypoint (ENU position only).
+    fn dummy_waypoint() -> Point<Enu> {
+        Point::new(0.0, 0.0, 0.0)
+    }
+
+    /// The follower's *output* reference — still a `TrajectoryPoint` carrying a
+    /// body-frame twist setpoint, unlike the geometric path waypoints above.
+    fn dummy_reference() -> TrajectoryPoint {
         TrajectoryPoint {
             state: RobotState::new(vec![StateVariable::Px(FrameId::World)], 0.0),
             state_dot: None,
@@ -400,7 +409,7 @@ mod tests {
     #[test]
     fn execute_publishes_trajectory_point_on_active() {
         let (follower, _calls) =
-            ScriptedFollower::new(PathFollowerResult::Active(dummy_waypoint()));
+            ScriptedFollower::new(PathFollowerResult::Active(dummy_reference()));
         let node = PathFollowerNode::new(
             "pure_pursuit",
             Box::new(follower),
@@ -469,7 +478,7 @@ mod tests {
     #[test]
     fn execute_early_returns_when_input_builder_returns_none() {
         // Cold-start: state missing → follower never called, nothing published.
-        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::Active(dummy_waypoint()));
+        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::Active(dummy_reference()));
         let node = PathFollowerNode::new(
             "pure_pursuit",
             Box::new(follower),
@@ -538,7 +547,7 @@ mod tests {
 
     #[test]
     fn execute_forwards_dt_to_follower() {
-        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::Active(dummy_waypoint()));
+        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::Active(dummy_reference()));
         let node = PathFollowerNode::new(
             "pure_pursuit",
             Box::new(follower),

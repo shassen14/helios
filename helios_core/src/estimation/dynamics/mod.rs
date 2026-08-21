@@ -39,9 +39,18 @@ pub trait EstimationDynamics: Debug + Send + Sync {
     /// (Optional) Calculates the Jacobian matrices of the dynamics function `f(x, u, t)`.
     /// Jacobian A = ∂f/∂x (how state derivatives change with state)
     /// Jacobian B = ∂f/∂u (how state derivatives change with control input)
-    /// Useful for linear controllers (LQR), Kalman Filters (EKF), and stability analysis.
+    /// Useful for linear controllers (LQR — its `B` block) and stability analysis.
     /// The default implementation approximates both by numerical finite
     /// differencing; models with an analytic Jacobian may override it.
+    ///
+    /// **This is NOT the estimator's linearization.** It is a *continuous*,
+    /// *storage-space* `A`/`B` pair. The Gaussian filters propagate covariance
+    /// with a *discrete*, *tangent-space* state transition `F` computed by
+    /// `filters::linearization::tangent_state_transition`, which finite-differences
+    /// `propagate` on the manifold and never calls this method. The two differ in
+    /// both time-discretization and coordinate space
+    /// (storage vs tangent — a curved block stores more numbers than it has DOF),
+    /// so this `A` must not be wired into an EKF/UKF as its `F`.
     ///
     /// # Arguments
     /// * `x`: State vector (`State`) at which to linearize.

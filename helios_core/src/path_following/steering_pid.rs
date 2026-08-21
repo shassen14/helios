@@ -15,6 +15,7 @@ use crate::control::siso_pid::SisoPid;
 use crate::data::messages::TrajectoryPoint;
 use crate::data::primitives::FrameHandle;
 use crate::frames::conventions::{Enu, Flu};
+use crate::frames::quantities::Point;
 use crate::frames::{FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
 
@@ -52,13 +53,8 @@ impl SteeringPidPathFollower {
     fn advance_lookahead(&mut self, agent_pos: Vector2<f64>) {
         let Some(path) = &self.path else { return };
         while self.lookahead_index + 1 < path.waypoints.len() {
-            let path_pos = match path.waypoints[self.lookahead_index]
-                .state
-                .get_vector3(&StateVariable::Px(FrameId::World))
-            {
-                Some(p) => Vector2::new(p.x, p.y),
-                None => return,
-            };
+            let wp = path.waypoints[self.lookahead_index];
+            let path_pos = Vector2::new(wp.x(), wp.y());
             if (agent_pos - path_pos).norm() < self.lookahead_distance {
                 self.lookahead_index += 1;
             } else {
@@ -104,9 +100,8 @@ impl PathFollower for SteeringPidPathFollower {
             .path
             .as_ref()
             .and_then(|p| p.waypoints.get(self.lookahead_index))
-            .and_then(|wp| wp.state.get_vector3(&StateVariable::Px(FrameId::World)))
         {
-            Some(p) => Vector2::new(p.x, p.y),
+            Some(wp) => Vector2::new(wp.x(), wp.y()),
             None => return PathFollowerResult::Error("missing waypoint position".into()),
         };
 
@@ -145,7 +140,7 @@ impl PathFollower for SteeringPidPathFollower {
         self.heading_pid.reset();
     }
 
-    fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint> {
+    fn get_lookahead_waypoint(&self) -> Option<&Point<Enu>> {
         self.path
             .as_ref()
             .and_then(|p| p.waypoints.get(self.lookahead_index))

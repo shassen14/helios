@@ -1,4 +1,4 @@
-//! String-pull path smoothing and [`TrajectoryPoint`] construction.
+//! String-pull path smoothing and waypoint construction.
 //!
 //! ## String-pull algorithm
 //!
@@ -19,16 +19,16 @@
 //!
 //! ## Waypoint format
 //!
-//! Each waypoint is a [`TrajectoryPoint`] whose state vector encodes
-//! `[Px(World), Py(World), Pz(World)]`.  Downstream controllers and
-//! visualisers rely on this layout; do not change it without updating callers.
-
-use nalgebra::Vector2;
-
-use crate::data::messages::TrajectoryPoint;
-use crate::frames::{FrameId, RobotState, StateVariable};
+//! Each waypoint is a [`Point<Enu>`]: a pure ENU world-frame position. A path
+//! is geometry only — no time, velocity, or heading — so the followers and
+//! visualisers read the position directly off the typed point.
 
 use super::grid_space::OccupancyGridSpace;
+
+use crate::frames::conventions::Enu;
+use crate::frames::quantities::Point;
+
+use nalgebra::Vector2;
 
 // =========================================================================
 // == String-pull smoothing ==
@@ -36,7 +36,7 @@ use super::grid_space::OccupancyGridSpace;
 
 /// Remove redundant waypoints using Bresenham line-of-sight tests.
 ///
-/// Returns a new `Vec<TrajectoryPoint>` containing only the waypoints that
+/// Returns a new `Vec<Point<Enu>>` containing only the waypoints that
 /// cannot be skipped without crossing an obstacle.  If there are ≤ 2
 /// waypoints the input is returned unchanged.
 ///
@@ -44,10 +44,7 @@ use super::grid_space::OccupancyGridSpace;
 /// [`OccupancyGridSpace::world_to_cell`]; waypoints that fall outside the
 /// map are silently dropped from the cell list (they will not be used as
 /// LOS anchors or probes).
-pub(super) fn smooth_path(
-    waypoints: &[TrajectoryPoint],
-    space: &OccupancyGridSpace,
-) -> Vec<TrajectoryPoint> {
+pub(super) fn smooth_path(waypoints: &[Point<Enu>], space: &OccupancyGridSpace) -> Vec<Point<Enu>> {
     if waypoints.len() <= 2 {
         return waypoints.to_vec();
     }
@@ -55,7 +52,7 @@ pub(super) fn smooth_path(
     let cells: Vec<(usize, usize)> = waypoints
         .iter()
         .filter_map(|wp| {
-            let pos = Vector2::new(wp.state.vector[0], wp.state.vector[1]);
+            let pos = Vector2::new(wp.x(), wp.y());
             space.world_to_cell(pos)
         })
         .collect();
@@ -84,26 +81,13 @@ pub(super) fn smooth_path(
 // == Waypoint construction ==
 // =========================================================================
 
-/// Build a [`TrajectoryPoint`] at `(world_x, world_y, 0.0)` in the ENU
-/// world frame, timestamped at `time`.
+/// Build a waypoint at `(world_x, world_y, world_z)` in the ENU world frame.
 ///
-/// The state layout is `[Px(World), Py(World), Pz(World)]`.  Velocity
-/// (`state_dot`) is left as `None`; the planner does not assign target speeds.
-pub(super) fn make_waypoint(world_x: f64, world_y: f64, time: f64) -> TrajectoryPoint {
-    let layout = vec![
-        StateVariable::Px(FrameId::World),
-        StateVariable::Py(FrameId::World),
-        StateVariable::Pz(FrameId::World),
-    ];
-    let mut state = RobotState::new(layout, time);
-    state.vector[0] = world_x;
-    state.vector[1] = world_y;
-    state.vector[2] = 0.0;
-    TrajectoryPoint {
-        state,
-        state_dot: None,
-        time,
-    }
+/// A waypoint is a [`Point<Enu>`] — position only. The planner emits no
+/// velocity, heading, or timing; a path is geometry, and any dynamics belong
+/// to a trajectory produced by a later optimizer, not to this string-pull.
+pub(super) fn make_waypoint(world_x: f64, world_y: f64, world_z: f64) -> Point<Enu> {
+    Point::new(world_x, world_y, world_z)
 }
 
 // =========================================================================
@@ -129,8 +113,8 @@ mod tests {
         }
     }
 
-    /// Shorthand: build a waypoint at `(x, y)` timestamped at `t=0`.
-    fn wp(x: f64, y: f64) -> TrajectoryPoint {
+    /// Shorthand: build a waypoint at `(x, y)` on the ground plane (`z = 0`).
+    fn wp(x: f64, y: f64) -> Point<Enu> {
         make_waypoint(x, y, 0.0)
     }
 

@@ -2,6 +2,7 @@ use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::data::messages::TrajectoryPoint;
 use crate::data::primitives::FrameHandle;
 use crate::frames::conventions::{Enu, Flu};
+use crate::frames::quantities::Point;
 use crate::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
 use nalgebra::{DVector, Vector2};
@@ -57,13 +58,10 @@ impl PurePursuitPathFollower {
         // forward to determine the index to look at that is
         // at least lookahead_distance away or the end of the path
         while self.lookahead_index + 1 < path.waypoints.len() {
-            let path_pos = match &path.waypoints[self.lookahead_index]
-                .state
-                .get_vector3(&StateVariable::Px(FrameId::World))
-            {
-                Some(p) => Vector2::new(p.x, p.y),
-                None => return,
-            };
+            let path_pos = Vector2::new(
+                path.waypoints[self.lookahead_index].x(),
+                path.waypoints[self.lookahead_index].y(),
+            );
 
             let distance = (agent_pos - path_pos).norm();
 
@@ -105,30 +103,22 @@ impl PathFollower for PurePursuitPathFollower {
                 )
             }
         };
-        let agent_orientation = match state
-            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
-        {
-            Some(o) => o.into_inner(),
-            None => {
-                return PathFollowerResult::Error(
-                    "Could not abstract agent information".to_string(),
-                )
-            }
-        };
+        let agent_orientation =
+            match state.orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World) {
+                Some(o) => o.into_inner(),
+                None => {
+                    return PathFollowerResult::Error(
+                        "Could not abstract agent information".to_string(),
+                    )
+                }
+            };
 
         let (_, _, agent_yaw) = agent_orientation.euler_angles();
 
-        let lookahead_pos = match path.waypoints[self.lookahead_index]
-            .state
-            .get_vector3(&StateVariable::Px(FrameId::World))
-        {
-            Some(p) => Vector2::new(p.x, p.y),
-            None => {
-                return PathFollowerResult::Error(
-                    "Could not abstract waypoint information".to_string(),
-                )
-            }
-        };
+        let lookahead_pos = Vector2::new(
+            path.waypoints[self.lookahead_index].x(),
+            path.waypoints[self.lookahead_index].y(),
+        );
 
         let delta = lookahead_pos - agent_pos;
         let distance = delta.norm();
@@ -170,7 +160,7 @@ impl PathFollower for PurePursuitPathFollower {
         self.lookahead_index = 0;
     }
 
-    fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint> {
+    fn get_lookahead_waypoint(&self) -> Option<&Point<Enu>> {
         self.path
             .as_ref()
             .map(|p| &p.waypoints[self.lookahead_index])
@@ -179,5 +169,50 @@ impl PathFollower for PurePursuitPathFollower {
     fn reset(&mut self) {
         self.path = None;
         self.lookahead_index = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::planning::types::Path;
+
+    fn follower() -> PurePursuitPathFollower {
+        // Only the path plumbing is exercised here; the tuning values are
+        // arbitrary and the lookahead accessor ignores the agent handle.
+        PurePursuitPathFollower::new(1.0, None, 0.5, 0.1, 2.0, 1.0, FrameHandle(0))
+    }
+
+    fn path_of(waypoints: Vec<Point<Enu>>) -> Path {
+        Path {
+            waypoints,
+            timestamp: 0.0,
+            level_key: "global".into(),
+        }
+    }
+
+    /// After `set_path`, the lookahead cursor starts at the first waypoint and the
+    /// typed `Point<Enu>` handed back carries the exact planned coordinates: the
+    /// position round-trips through the follower's storage unchanged. This is the
+    /// regression guard for the waypoint carrier being a typed point rather than a
+    /// layout-indexed `RobotState`.
+    #[test]
+    fn lookahead_waypoint_round_trips_planned_position() {
+        let waypoints = vec![
+            Point::<Enu>::new(1.0, 2.0, 0.0),
+            Point::<Enu>::new(3.0, 4.0, 0.0),
+        ];
+        let mut f = follower();
+        f.set_path(path_of(waypoints.clone()));
+
+        let wp = f.get_lookahead_waypoint().expect("a path was set");
+        assert_eq!(*wp, waypoints[0]);
+        assert_eq!((wp.x(), wp.y(), wp.z()), (1.0, 2.0, 0.0));
+    }
+
+    /// With no path set, there is no lookahead waypoint to report.
+    #[test]
+    fn no_lookahead_waypoint_before_set_path() {
+        assert!(follower().get_lookahead_waypoint().is_none());
     }
 }

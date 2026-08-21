@@ -131,9 +131,10 @@ mod tests {
     use super::*;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
 
-    use helios_core::data::messages::TrajectoryPoint;
     use helios_core::data::primitives::MonotonicTime;
-    use helios_core::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
+    use helios_core::frames::conventions::Enu;
+    use helios_core::frames::quantities::Point;
+    use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use helios_core::mapping::MapData;
     use helios_core::planning::types::Path;
     use helios_core::planning::SearchPlannerInputs;
@@ -284,13 +285,8 @@ mod tests {
     }
 
     fn dummy_path() -> Path {
-        let wp = TrajectoryPoint {
-            state: RobotState::new(vec![StateVariable::Px(FrameId::World)], 0.0),
-            state_dot: None,
-            time: 0.0,
-        };
         Path {
-            waypoints: vec![wp],
+            waypoints: vec![Point::<Enu>::new(0.0, 0.0, 0.0)],
             timestamp: 0.0,
             level_key: "global".into(),
         }
