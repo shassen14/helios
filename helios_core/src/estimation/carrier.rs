@@ -27,17 +27,17 @@ use nalgebra::{DMatrix, DVector};
 /// that construction invariant. Flat blocks take `None` and carry none.
 const CARRIER_ORIENTATION_NOISE_VAR: f64 = 1.0;
 
-/// The kinematic state a pose + twist truth source expresses: world-frame
-/// position, linear velocity, and angular velocity, plus the body → world
+/// The kinematic state a pose + twist reference source expresses: odom-frame
+/// position, linear velocity, and angular velocity, plus the body → odom
 /// attitude. Every block is composed by [`Quantity`], so a consumer reads it by
 /// typed block extractor exactly as it would a filtering estimate.
 ///
-/// It carries no sensor-bias or acceleration blocks — a truth source has no
+/// It carries no sensor-bias or acceleration blocks — a reference source has no
 /// biases and a pose + twist source measures no acceleration. Angular velocity
-/// is in the world (ENU) frame, matching how a ground-truth source reports it.
+/// is in the odom (ENU) frame, matching how the estimate reports it.
 pub fn kinematic_carrier_schema(agent_handle: FrameHandle) -> StateSchema {
     let body = FrameId::Body(agent_handle);
-    let world = FrameId::World;
+    let odom = FrameId::Odom(agent_handle);
 
     // A flat, certain block: no process noise, zero initial covariance.
     let flat = |quantity: Quantity| {
@@ -45,12 +45,12 @@ pub fn kinematic_carrier_schema(agent_handle: FrameHandle) -> StateSchema {
     };
 
     StateSchema::compose(vec![
-        flat(Quantity::Position(world.clone())),
-        flat(Quantity::Velocity(world.clone())),
+        flat(Quantity::Position(odom.clone())),
+        flat(Quantity::Velocity(odom.clone())),
         SchemaBlock::new(
             Quantity::Orientation {
                 from: body,
-                to: world.clone(),
+                to: odom.clone(),
             },
             Some(
                 TangentNoise::from_variances(DVector::from_element(
@@ -62,7 +62,7 @@ pub fn kinematic_carrier_schema(agent_handle: FrameHandle) -> StateSchema {
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::zeros(3, 3),
         ),
-        flat(Quantity::AngularVelocity(world)),
+        flat(Quantity::AngularVelocity(odom)),
     ])
 }
 
@@ -94,7 +94,7 @@ mod tests {
         // The orientation block seeds the identity quaternion, readable back as
         // the identity rotation.
         let r = s
-            .orientation::<Flu, Enu>(FrameId::Body(AGENT), FrameId::World)
+            .orientation::<Flu, Enu>(FrameId::Body(AGENT), FrameId::Odom(AGENT))
             .expect("carrier holds the attitude block");
         assert!((r.into_inner().angle()).abs() < 1e-12);
         // A carrier is certain: its covariance is all zeros.
@@ -104,22 +104,22 @@ mod tests {
     #[test]
     fn every_kinematic_quantity_reads_back() {
         let mut s = carrier();
-        s.set_variable(&StateVariable::Vx(FrameId::World), 2.0);
-        s.set_variable(&StateVariable::Wz(FrameId::World), 0.3);
+        s.set_variable(&StateVariable::Vx(FrameId::Odom(AGENT)), 2.0);
+        s.set_variable(&StateVariable::Wz(FrameId::Odom(AGENT)), 0.3);
 
         assert_eq!(
-            s.velocity::<Enu>(FrameId::World).unwrap().x(),
+            s.velocity::<Enu>(FrameId::Odom(AGENT)).unwrap().x(),
             2.0,
-            "world linear velocity reads back"
+            "odom linear velocity reads back"
         );
         assert_eq!(
-            s.angular_velocity::<Enu>(FrameId::World).unwrap().z(),
+            s.angular_velocity::<Enu>(FrameId::Odom(AGENT)).unwrap().z(),
             0.3,
-            "world angular velocity reads back"
+            "odom angular velocity reads back"
         );
         assert!(
-            s.position::<Enu>(FrameId::World).is_some(),
-            "world position block is present"
+            s.position::<Enu>(FrameId::Odom(AGENT)).is_some(),
+            "odom position block is present"
         );
     }
 }

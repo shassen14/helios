@@ -21,7 +21,7 @@ use helios_core::{
     frames::{
         conventions::Enu,
         quantities::{FreeVector, Point},
-        FrameAwareState, FrameId,
+        FrameAwareState,
     },
 };
 use helios_runtime::channels::control;
@@ -111,13 +111,20 @@ pub fn gather_pose(
     model.sections.push(pose_section(EnuBodyPose::from(gt)));
 }
 
-/// Packs the ego state estimate into a Section. Pure — the estimate is already in
-/// the World ENU frame, so unlike [`pose_section`] there is no frame conversion here;
-/// the components pass straight through tagged [`Frame::Enu`]. Position and velocity
-/// are each optional: a layout that omits one simply drops that row.
+/// Packs the ego state estimate into a Section. Pure — the estimate's kinematics
+/// are already in its reference (odom) ENU frame, so unlike [`pose_section`] there
+/// is no frame conversion here; the components pass straight through tagged
+/// [`Frame::Enu`]. Position and velocity are each optional: a layout that omits one
+/// simply drops that row.
 pub fn estimator_section(state: &FrameAwareState) -> Section {
-    let position = state.position::<Enu>(FrameId::World).map(Point::into_inner);
-    let velocity = state.velocity::<Enu>(FrameId::World).map(FreeVector::into_inner);
+    let frame = state.reference_frame();
+    let position = frame
+        .clone()
+        .and_then(|f| state.position::<Enu>(f))
+        .map(Point::into_inner);
+    let velocity = frame
+        .and_then(|f| state.velocity::<Enu>(f))
+        .map(FreeVector::into_inner);
 
     let mut rows = Vec::new();
     if let Some(p) = position {
@@ -230,7 +237,7 @@ mod tests {
 
     use helios_core::estimation::schema::{Quantity, SchemaBlock, StateSchema};
     use helios_core::frames::quantities::FluVector;
-    use helios_core::frames::StateVariable;
+    use helios_core::frames::{FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector};
     use helios_runtime::{
         channels::control,

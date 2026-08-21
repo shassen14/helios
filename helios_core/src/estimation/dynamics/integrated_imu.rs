@@ -90,16 +90,16 @@ impl IntegratedImuModel {
                 .expect("variable is in the schema we just built")
         };
 
-        let (body, world) = (FrameId::Body(agent_handle), FrameId::World);
-        let pos_off = off(&StateVariable::Px(world.clone()));
-        let vel_off = off(&StateVariable::Vx(world.clone()));
-        let quat_off = off(&StateVariable::Qx(body.clone(), world.clone()));
+        let (body, odom) = (FrameId::Body(agent_handle), FrameId::Odom(agent_handle));
+        let pos_off = off(&StateVariable::Px(odom.clone()));
+        let vel_off = off(&StateVariable::Vx(odom.clone()));
+        let quat_off = off(&StateVariable::Qx(body.clone(), odom.clone()));
         let accel_bias_off = off(&StateVariable::AccelBiasX(body.clone()));
         let gyro_bias_off = off(&StateVariable::GyroBiasX(body.clone()));
         let orientation_block = schema
             .block_of(&Quantity::Orientation {
                 from: body.clone(),
-                to: world.clone(),
+                to: odom.clone(),
             })
             .expect("orientation block is in the schema we just built")
             .clone();
@@ -122,9 +122,9 @@ impl IntegratedImuModel {
 /// inertial navigation system (INS) filters.
 ///
 /// The state is composed of:
-/// - Position (3) in World Frame
-/// - Velocity (3) in World Frame
-/// - Orientation (4, Quaternion) from World to Body Frame
+/// - Position (3) in Odom Frame
+/// - Velocity (3) in Odom Frame
+/// - Orientation (4, Quaternion) from Body to Odom Frame
 /// - Accelerometer Bias (3) in Body Frame
 /// - Gyroscope Bias (3) in Body Frame
 ///
@@ -132,17 +132,17 @@ impl IntegratedImuModel {
 /// * `agent_handle`: The unique handle for the agent (body) whose state is being defined.
 pub fn ins_state_layout(agent_handle: FrameHandle) -> Vec<StateVariable> {
     let body = FrameId::Body(agent_handle);
-    let world = FrameId::World;
+    let odom = FrameId::Odom(agent_handle);
 
     // Same per-block quantities, in the same order, that `compose_ins_schema`
     // builds; the layout is their concatenated variable names. Single-sourced
     // against `Quantity` so the two can never drift apart.
     [
-        Quantity::Position(world.clone()),
-        Quantity::Velocity(world.clone()),
+        Quantity::Position(odom.clone()),
+        Quantity::Velocity(odom.clone()),
         Quantity::Orientation {
             from: body.clone(),
-            to: world.clone(),
+            to: odom.clone(),
         },
         Quantity::AccelBias(body.clone()),
         Quantity::GyroBias(body.clone()),
@@ -158,7 +158,7 @@ fn compose_ins_schema(
     initial: ImuInitialUncertainty,
 ) -> StateSchema {
     let body = FrameId::Body(agent_handle);
-    let world = FrameId::World;
+    let odom = FrameId::Odom(agent_handle);
 
     let noise_block = |var: f64, n: usize| {
         TangentNoise::from_variances(DVector::from_element(n, var))
@@ -167,26 +167,26 @@ fn compose_ins_schema(
     let p0 = |var: f64, n: usize| DMatrix::identity(n, n) * var;
 
     let blocks = vec![
-        // 1. Position (World) — no process noise; P₀ from config.
+        // 1. Position (Odom) — no process noise; P₀ from config.
         SchemaBlock::new(
-            Quantity::Position(world.clone()),
+            Quantity::Position(odom.clone()),
             None,
             DVector::zeros(3),
             p0(initial.pos_var, 3),
         ),
-        // 2. Velocity (World) — Q from accel white noise.
+        // 2. Velocity (Odom) — Q from accel white noise.
         SchemaBlock::new(
-            Quantity::Velocity(world.clone()),
+            Quantity::Velocity(odom.clone()),
             Some(noise_block(noise.accel_noise_var, 3)),
             DVector::zeros(3),
             p0(initial.vel_var, 3),
         ),
-        // 3. Orientation (Body from World) — 4/3 quaternion block.
+        // 3. Orientation (Body from Odom) — 4/3 quaternion block.
         //    Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
         SchemaBlock::new(
             Quantity::Orientation {
                 from: body.clone(),
-                to: world.clone(),
+                to: odom.clone(),
             },
             Some(noise_block(noise.gyro_noise_var, 3)),
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
@@ -393,12 +393,12 @@ mod tests {
     fn schema_places_each_block_at_its_ins_offset() {
         let schema = make_model().schema();
         let body = FrameId::Body(AGENT);
-        let world = FrameId::World;
+        let odom = FrameId::Odom(AGENT);
 
         let off = |v: &StateVariable| schema.storage_offset_of(v).unwrap();
-        assert_eq!(off(&StateVariable::Px(world.clone())), 0);
-        assert_eq!(off(&StateVariable::Vx(world.clone())), 3);
-        assert_eq!(off(&StateVariable::Qx(body.clone(), world.clone())), 6);
+        assert_eq!(off(&StateVariable::Px(odom.clone())), 0);
+        assert_eq!(off(&StateVariable::Vx(odom.clone())), 3);
+        assert_eq!(off(&StateVariable::Qx(body.clone(), odom.clone())), 6);
         assert_eq!(off(&StateVariable::AccelBiasX(body.clone())), 10);
         assert_eq!(off(&StateVariable::GyroBiasX(body.clone())), 13);
     }
@@ -411,12 +411,12 @@ mod tests {
         // every block after it sits one row lower in tangent than in storage.
         let schema = make_model().schema();
         let body = FrameId::Body(AGENT);
-        let world = FrameId::World;
+        let odom = FrameId::Odom(AGENT);
 
         let off = |v: &StateVariable| schema.tangent_offset_of(v).unwrap();
-        assert_eq!(off(&StateVariable::Px(world.clone())), 0); // agrees with storage
-        assert_eq!(off(&StateVariable::Vx(world.clone())), 3); // agrees with storage
-        assert_eq!(off(&StateVariable::Qx(body.clone(), world.clone())), 6); // last agreement
+        assert_eq!(off(&StateVariable::Px(odom.clone())), 0); // agrees with storage
+        assert_eq!(off(&StateVariable::Vx(odom.clone())), 3); // agrees with storage
+        assert_eq!(off(&StateVariable::Qx(body.clone(), odom.clone())), 6); // last agreement
         assert_eq!(off(&StateVariable::AccelBiasX(body.clone())), 9); // storage 10 → tangent 9
         assert_eq!(off(&StateVariable::GyroBiasX(body.clone())), 12); // storage 13 → tangent 12
     }

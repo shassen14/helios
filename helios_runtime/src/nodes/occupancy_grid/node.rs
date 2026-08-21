@@ -148,7 +148,7 @@ impl PipelineNode for OccupancyGridNode {
         };
         let Some(robot_world_pose) = stamped_state
             .value
-            .pose::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
+            .pose::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::Odom(self.agent_handle))
             .map(|t| t.into_inner())
         else {
             return;
@@ -369,11 +369,11 @@ mod tests {
     }
 
     fn make_state_at(x: f64) -> FrameAwareState {
-        // The kinematic carrier already holds a `Position(World)` block and an
-        // identity `Body(AGENT) → World` attitude, which is all the node's pose
-        // read needs; seed the world-x position.
+        // The kinematic carrier already holds a `Position(Odom)` block and an
+        // identity `Body(AGENT) → Odom` attitude, which is all the node's pose
+        // read needs; seed the odom-x position.
         let mut s = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0);
-        s.set_variable(&StateVariable::Px(FrameId::World), x);
+        s.set_variable(&StateVariable::Px(FrameId::Odom(AGENT)), x);
         s
     }
 

@@ -101,9 +101,9 @@ impl PipelineNode for MockOracleEstimatorNode {
         write_pose_into(&mut state, &pose_stamped.value, self.agent_handle);
 
         if let Some(t) = twist {
-            // oracle/twist and the carrier's velocity blocks are both world ENU —
+            // oracle/twist and the odom velocity blocks are both ENU —
             // straight passthrough of linear and angular velocity.
-            write_world_twist_into(&mut state, &t);
+            write_world_twist_into(&mut state, &t, self.agent_handle);
         }
 
         let stamped = Stamped {
@@ -118,44 +118,50 @@ impl PipelineNode for MockOracleEstimatorNode {
 }
 
 fn write_pose_into(state: &mut FrameAwareState, pose: &Isometry3<f64>, agent: FrameHandle) {
-    // Position in world frame.
-    state.set_variable(&StateVariable::Px(FrameId::World), pose.translation.x);
-    state.set_variable(&StateVariable::Py(FrameId::World), pose.translation.y);
-    state.set_variable(&StateVariable::Pz(FrameId::World), pose.translation.z);
+    let odom = FrameId::Odom(agent);
 
-    // Body→world orientation as a quaternion.
+    // Position in the estimate's odom frame. The oracle is a perfect estimator:
+    // it reports truth, but publishes it into the same odom-frame estimate slot
+    // the real filter fills, so downstream consumers read one frame.
+    state.set_variable(&StateVariable::Px(odom.clone()), pose.translation.x);
+    state.set_variable(&StateVariable::Py(odom.clone()), pose.translation.y);
+    state.set_variable(&StateVariable::Pz(odom.clone()), pose.translation.z);
+
+    // Body→odom orientation as a quaternion.
     state.set_variable(
-        &StateVariable::Qx(FrameId::Body(agent), FrameId::World),
+        &StateVariable::Qx(FrameId::Body(agent), odom.clone()),
         pose.rotation.i,
     );
     state.set_variable(
-        &StateVariable::Qy(FrameId::Body(agent), FrameId::World),
+        &StateVariable::Qy(FrameId::Body(agent), odom.clone()),
         pose.rotation.j,
     );
     state.set_variable(
-        &StateVariable::Qz(FrameId::Body(agent), FrameId::World),
+        &StateVariable::Qz(FrameId::Body(agent), odom.clone()),
         pose.rotation.k,
     );
     state.set_variable(
-        &StateVariable::Qw(FrameId::Body(agent), FrameId::World),
+        &StateVariable::Qw(FrameId::Body(agent), odom),
         pose.rotation.w,
     );
 }
 
-/// Writes the world-frame twist into the state's world-frame velocity blocks:
-/// linear into `Vx/Vy/Vz(World)` and angular into `Wx/Wy/Wz(World)`.
+/// Writes the twist into the estimate's velocity blocks: linear into
+/// `Vx/Vy/Vz(Odom)` and angular into `Wx/Wy/Wz(Odom)`.
 ///
-/// The oracle reports both linear and angular velocity in the world (ENU) frame,
-/// and the carrier schema carries a matching world-frame angular-velocity block,
-/// so `twist.angular` passes straight through rather than being dropped.
-fn write_world_twist_into(state: &mut FrameAwareState, twist: &Twist) {
-    state.set_variable(&StateVariable::Vx(FrameId::World), twist.linear.x);
-    state.set_variable(&StateVariable::Vy(FrameId::World), twist.linear.y);
-    state.set_variable(&StateVariable::Vz(FrameId::World), twist.linear.z);
+/// The oracle reports both linear and angular velocity in the ENU frame, and the
+/// odom-frame estimate is ENU-aligned, so `twist.angular` passes straight through
+/// rather than being dropped.
+fn write_world_twist_into(state: &mut FrameAwareState, twist: &Twist, agent: FrameHandle) {
+    let odom = FrameId::Odom(agent);
 
-    state.set_variable(&StateVariable::Wx(FrameId::World), twist.angular.x);
-    state.set_variable(&StateVariable::Wy(FrameId::World), twist.angular.y);
-    state.set_variable(&StateVariable::Wz(FrameId::World), twist.angular.z);
+    state.set_variable(&StateVariable::Vx(odom.clone()), twist.linear.x);
+    state.set_variable(&StateVariable::Vy(odom.clone()), twist.linear.y);
+    state.set_variable(&StateVariable::Vz(odom.clone()), twist.linear.z);
+
+    state.set_variable(&StateVariable::Wx(odom.clone()), twist.angular.x);
+    state.set_variable(&StateVariable::Wy(odom.clone()), twist.angular.y);
+    state.set_variable(&StateVariable::Wz(odom), twist.angular.z);
 }
 
 #[cfg(test)]
@@ -311,7 +317,7 @@ mod tests {
             .expect("node must publish FrameAwareState");
         let recovered = published
             .value
-            .pose::<Flu, Enu>(FrameId::Body(agent), FrameId::World)
+            .pose::<Flu, Enu>(FrameId::Body(agent), FrameId::Odom(agent))
             .expect("standard schema includes pose")
             .into_inner();
         let dx = (recovered.translation.vector - pose.translation.vector).norm();
@@ -323,8 +329,8 @@ mod tests {
 
     #[test]
     fn republishes_world_twist_into_state_world_slots() {
-        // oracle/twist is already world-frame; mock passes both linear and
-        // angular velocity straight through into the state's world-frame blocks.
+        // oracle/twist is already ENU; mock passes both linear and angular
+        // velocity straight through into the estimate's odom-frame blocks.
         let agent = FrameHandle(1);
         let node = MockOracleEstimatorNode::new("mock", agent);
         let bus = make_bus_with_oracle_producer(&node);
@@ -364,16 +370,16 @@ mod tests {
         // Read back by typed block extractor — no index or layout ordering assumed.
         let v = out
             .value
-            .velocity::<Enu>(FrameId::World)
-            .expect("carrier has a world linear-velocity block");
+            .velocity::<Enu>(FrameId::Odom(agent))
+            .expect("carrier has an odom linear-velocity block");
         assert!((v.x() - 2.0).abs() < 1e-9);
         assert!((v.y() - -1.0).abs() < 1e-9);
         assert!((v.z() - 0.5).abs() < 1e-9);
 
         let w = out
             .value
-            .angular_velocity::<Enu>(FrameId::World)
-            .expect("carrier has a world angular-velocity block");
+            .angular_velocity::<Enu>(FrameId::Odom(agent))
+            .expect("carrier has an odom angular-velocity block");
         assert!((w.z() - 0.3).abs() < 1e-9);
     }
 

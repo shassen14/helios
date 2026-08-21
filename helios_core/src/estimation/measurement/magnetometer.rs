@@ -40,7 +40,10 @@ impl MeasurementModel for MagneticFieldModel {
         let tf = tf?;
 
         let orientation_body_to_world = filter_state
-            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
+            .orientation::<Flu, Enu>(
+                FrameId::Body(self.agent_handle),
+                FrameId::Odom(self.agent_handle),
+            )
             .map(Rotation::into_inner)
             .unwrap_or_default();
         let q_body_from_world = orientation_body_to_world.inverse();
@@ -109,7 +112,7 @@ mod tests {
         SchemaBlock::new(
             Quantity::Orientation {
                 from: FrameId::Body(AGENT),
-                to: FrameId::World,
+                to: FrameId::Odom(AGENT),
             },
             noise(),
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
@@ -151,7 +154,7 @@ mod tests {
 
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
         let q = UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2);
-        let (body, world) = (FrameId::Body(AGENT), FrameId::World);
+        let (body, world) = (FrameId::Body(AGENT), FrameId::Odom(AGENT));
         state.set_variable(&StateVariable::Qx(body.clone(), world.clone()), q.i);
         state.set_variable(&StateVariable::Qy(body.clone(), world.clone()), q.j);
         state.set_variable(&StateVariable::Qz(body.clone(), world.clone()), q.k);

@@ -82,12 +82,12 @@ impl PathFollower for SteeringPidPathFollower {
             return PathFollowerResult::NoPath;
         }
 
-        let agent_pos = match state.position::<Enu>(FrameId::World) {
+        let agent_pos = match state.position::<Enu>(FrameId::Odom(self.agent_handle)) {
             Some(p) => Vector2::new(p.x(), p.y()),
             None => return PathFollowerResult::Error("missing agent position".into()),
         };
         let orientation = match state
-            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
+            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::Odom(self.agent_handle))
         {
             Some(q) => q.into_inner(),
             None => return PathFollowerResult::Error("missing agent orientation".into()),

@@ -29,10 +29,11 @@ pub fn estimate_update_system(
     mut gizmos: Gizmos,
 ) {
     for (agent, pipeline) in &query {
-        let body = FrameId::Body(FrameHandle::from_entity(agent));
+        let handle = FrameHandle::from_entity(agent);
+        let body = FrameId::Body(handle);
         let Some(iso) = pipeline.0.read_state().and_then(|st| {
             st.value
-                .pose::<Flu, Enu>(body.clone(), FrameId::World)
+                .pose::<Flu, Enu>(body.clone(), FrameId::Odom(handle))
                 .map(|t| t.into_inner())
         }) else {
             continue;

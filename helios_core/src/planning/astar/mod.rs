@@ -39,7 +39,6 @@ mod smoothing;
 use nalgebra::Vector2;
 
 use crate::frames::conventions::Enu;
-use crate::frames::FrameId;
 use crate::mapping::MapData;
 use crate::planning::SearchPlannerInputs;
 
@@ -161,12 +160,15 @@ impl SearchPlanner for AStarPlanner {
             self.last_plan_time = f64::NEG_INFINITY;
         }
 
-        // Robot 2D position from world-frame state.
-        let robot_pos = match inputs.state.position::<Enu>(FrameId::World) {
+        // Robot 2D position, read in whatever frame the estimate declares — the
+        // planner has no agent handle of its own, so it asks the state.
+        let robot_pos = match inputs
+            .state
+            .reference_frame()
+            .and_then(|frame| inputs.state.position::<Enu>(frame))
+        {
             Some(p) => Vector2::new(p.x(), p.y()),
-            None => {
-                return PlannerResult::Error("AStarPlanner: state missing world position".into())
-            }
+            None => return PlannerResult::Error("AStarPlanner: state missing position".into()),
         };
 
         let goal_pos = goal.position_2d();
@@ -317,7 +319,11 @@ impl SearchPlanner for AStarPlanner {
 
         // Deviation check (optional).
         if self.config.replan_on_path_deviation {
-            if let Some(robot_pos) = inputs.state.position::<Enu>(FrameId::World) {
+            if let Some(robot_pos) = inputs
+                .state
+                .reference_frame()
+                .and_then(|frame| inputs.state.position::<Enu>(frame))
+            {
                 if let Some(path) = &self.cached_path {
                     let robot_2d = Vector2::new(robot_pos.x(), robot_pos.y());
                     let min_dist = path

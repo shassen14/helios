@@ -414,6 +414,18 @@ impl StateSchema {
             .find(|b| &b.quantity == quantity)
             .map(|b| &b.block)
     }
+
+    /// The frame this estimate's kinematics are expressed in, taken from the
+    /// position block. A consumer that has no agent handle of its own (a
+    /// planner reading "the robot's position") asks the estimate what frame it
+    /// speaks, rather than hardcoding one — so the same reader works whether the
+    /// estimate is an odom-frame filter output or a world-frame reference.
+    pub fn reference_frame(&self) -> Option<FrameId> {
+        self.blocks.iter().find_map(|b| match &b.quantity {
+            Quantity::Position(frame) => Some(frame.clone()),
+            _ => None,
+        })
+    }
 }
 
 #[cfg(test)]

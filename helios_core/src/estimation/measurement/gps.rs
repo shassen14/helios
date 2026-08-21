@@ -47,10 +47,13 @@ impl MeasurementModel for GpsPositionModel {
     ) -> Option<DVector<f64>> {
         let tf = tf?;
         let body_position_world = filter_state
-            .position::<Enu>(FrameId::World)
+            .position::<Enu>(FrameId::Odom(self.agent_handle))
             .map(Point::into_inner)?;
         let body_orientation_world = filter_state
-            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World)
+            .orientation::<Flu, Enu>(
+                FrameId::Body(self.agent_handle),
+                FrameId::Odom(self.agent_handle),
+            )
             .map(Rotation::into_inner)
             .unwrap_or_default();
 
@@ -131,9 +134,9 @@ mod tests {
     // lever arm.
     fn make_state(px: f64, py: f64, pz: f64) -> FrameAwareState {
         let mut state = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0);
-        state.set_variable(&StateVariable::Px(FrameId::World), px);
-        state.set_variable(&StateVariable::Py(FrameId::World), py);
-        state.set_variable(&StateVariable::Pz(FrameId::World), pz);
+        state.set_variable(&StateVariable::Px(FrameId::Odom(AGENT)), px);
+        state.set_variable(&StateVariable::Py(FrameId::Odom(AGENT)), py);
+        state.set_variable(&StateVariable::Pz(FrameId::Odom(AGENT)), pz);
         state
     }
 

@@ -137,6 +137,10 @@ impl TfTree {
     fn resolve(&self, frame: FrameId) -> Option<(Isometry3<f64>, Convention)> {
         match frame {
             FrameId::World => Some((Isometry3::identity(), Convention::Enu)),
+            // Odom is the estimator's reference frame. With no map→odom
+            // correction yet, it is coincident with world (identity, ENU); the
+            // world→odom drift lives in the estimate values, not this edge.
+            FrameId::Odom(_) => Some((Isometry3::identity(), Convention::Enu)),
             FrameId::Body(handle) => {
                 let entity = Entity::from_bits(handle.0);
                 let iso = self.transforms_to_world.get(&entity)?;

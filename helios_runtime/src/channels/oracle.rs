@@ -31,10 +31,9 @@ pub fn oracle_pose_channel() -> ChannelKey {
 ///
 /// Payload: [`Twist`] expressed in **world ENU**. `linear` is the body
 /// origin's translational velocity in world; `angular` is the body's
-/// angular velocity expressed in world. This matches the
-/// `STANDARD_INS_LAYOUT` convention (velocity entries live in `FrameId::World`)
-/// so passthrough mocks don't have to rotate before writing into a
-/// `FrameAwareState`.
+/// angular velocity expressed in world. The estimate's odom frame is
+/// ENU-aligned to world, so passthrough mocks write these straight into the
+/// odom-frame velocity blocks of a `FrameAwareState` without rotating.
 ///
 /// Published by the sim host's `publish_oracle_channels_system`. Only mock
 /// nodes may declare this as an input.

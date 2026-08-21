@@ -106,17 +106,17 @@ fn build_ekf(
     );
 
     let body = FrameId::Body(agent_handle);
-    let world = FrameId::World;
+    let odom = FrameId::Odom(agent_handle);
 
-    initial_state.set_variable(&StateVariable::Px(FrameId::World), iso.translation.x);
-    initial_state.set_variable(&StateVariable::Py(FrameId::World), iso.translation.y);
-    initial_state.set_variable(&StateVariable::Pz(FrameId::World), iso.translation.z);
+    initial_state.set_variable(&StateVariable::Px(odom.clone()), iso.translation.x);
+    initial_state.set_variable(&StateVariable::Py(odom.clone()), iso.translation.y);
+    initial_state.set_variable(&StateVariable::Pz(odom.clone()), iso.translation.z);
 
     let q_rot = iso.rotation.quaternion();
-    initial_state.set_variable(&StateVariable::Qx(body.clone(), world.clone()), q_rot.i);
-    initial_state.set_variable(&StateVariable::Qy(body.clone(), world.clone()), q_rot.j);
-    initial_state.set_variable(&StateVariable::Qz(body.clone(), world.clone()), q_rot.k);
-    initial_state.set_variable(&StateVariable::Qw(body, world), q_rot.w);
+    initial_state.set_variable(&StateVariable::Qx(body.clone(), odom.clone()), q_rot.i);
+    initial_state.set_variable(&StateVariable::Qy(body.clone(), odom.clone()), q_rot.j);
+    initial_state.set_variable(&StateVariable::Qz(body.clone(), odom.clone()), q_rot.k);
+    initial_state.set_variable(&StateVariable::Qw(body, odom), q_rot.w);
 
     let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
     Ok(Box::new(GaussianEstimatorNode::new(

@@ -49,7 +49,7 @@ impl PurePursuitPathFollower {
             return;
         };
 
-        let agent_pos = match state.position::<Enu>(FrameId::World) {
+        let agent_pos = match state.position::<Enu>(FrameId::Odom(self.agent_handle)) {
             Some(p) => Vector2::new(p.x(), p.y()),
             None => return,
         };
@@ -81,7 +81,7 @@ impl PathFollower for PurePursuitPathFollower {
         let lookahead_distance: f64 = match self.lookahead_time {
             Some(t) => {
                 let speed = state
-                    .velocity::<Enu>(FrameId::World)
+                    .velocity::<Enu>(FrameId::Odom(self.agent_handle))
                     .map(|v| v.raw().xy().norm())
                     .unwrap_or(0.0);
                 (speed * t).max(self.lookahead_distance)
@@ -95,7 +95,7 @@ impl PathFollower for PurePursuitPathFollower {
             return PathFollowerResult::NoPath;
         };
 
-        let agent_pos = match state.position::<Enu>(FrameId::World) {
+        let agent_pos = match state.position::<Enu>(FrameId::Odom(self.agent_handle)) {
             Some(p) => Vector2::new(p.x(), p.y()),
             None => {
                 return PathFollowerResult::Error(
@@ -104,7 +104,7 @@ impl PathFollower for PurePursuitPathFollower {
             }
         };
         let agent_orientation =
-            match state.orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::World) {
+            match state.orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::Odom(self.agent_handle)) {
                 Some(o) => o.into_inner(),
                 None => {
                     return PathFollowerResult::Error(

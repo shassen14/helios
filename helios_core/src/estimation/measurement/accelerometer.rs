@@ -79,7 +79,7 @@ impl MeasurementModel for SpecificForceModel {
             .map(FreeVector::into_inner)
             .unwrap_or_default();
         let orientation_body_to_world = filter_state
-            .orientation::<Flu, Enu>(body_frame.clone(), FrameId::World)
+            .orientation::<Flu, Enu>(body_frame.clone(), FrameId::Odom(self.agent_handle))
             .map(Rotation::into_inner)
             .unwrap_or_default();
 

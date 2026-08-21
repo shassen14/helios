@@ -29,10 +29,11 @@ pub fn update_odom_frames(
             continue;
         };
 
-        let body = FrameId::Body(FrameHandle::from_entity(odom_of.0));
+        let handle = FrameHandle::from_entity(odom_of.0);
+        let body = FrameId::Body(handle);
         if let Some(iso) = pipeline.0.read_state().and_then(|st| {
             st.value
-                .pose::<Flu, Enu>(body.clone(), FrameId::World)
+                .pose::<Flu, Enu>(body.clone(), FrameId::Odom(handle))
                 .map(|t| t.into_inner())
         }) {
             *transform = Transform::from(EnuBodyPose(iso));

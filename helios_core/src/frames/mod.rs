@@ -31,6 +31,7 @@ pub enum FrameId {
     /// The global ENU simulation frame. The ultimate source of truth.
     #[default]
     World,
+    Odom(FrameHandle),
     /// The origin of a rigid body, where dynamics are typically calculated.
     /// Identified by the agent's unique FrameHandle.
     Body(FrameHandle),
@@ -348,6 +349,14 @@ impl FrameAwareState {
 
     pub fn schema(&self) -> &Arc<StateSchema> {
         &self.schema
+    }
+
+    /// The frame this state's kinematics are expressed in (its position block's
+    /// frame). A handle-less consumer reads position in this frame rather than
+    /// naming one, so the reader is agnostic to whether the producer is an
+    /// odom-frame filter or a world-frame reference.
+    pub fn reference_frame(&self) -> Option<FrameId> {
+        self.schema.reference_frame()
     }
 
     fn find_idx(&self, var: &StateVariable) -> Option<usize> {

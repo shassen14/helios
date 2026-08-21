@@ -281,7 +281,9 @@ fn make_state(
     linear_accel_body: Vector3<f64>,
     angular_accel_body: Vector3<f64>,
 ) -> FrameAwareState {
-    let world = FrameId::World;
+    // The estimate's kinematics live in the odom frame; the seeded values are the
+    // world-frame truth (odom is world-aligned with no drift in this test).
+    let world = FrameId::Odom(AGENT);
     let body = FrameId::Body(AGENT);
 
     // Flat kinematic blocks carry no process noise; the orientation block must
