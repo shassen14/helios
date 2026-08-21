@@ -14,6 +14,7 @@ use helios_core::estimation::dynamics::integrated_imu::{
 use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+use helios_core::state::{Component, Quantity};
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use std::sync::Arc;
@@ -108,15 +109,15 @@ fn build_ekf(
     let body = FrameId::Body(agent_handle);
     let odom = FrameId::Odom(agent_handle);
 
-    initial_state.set_variable(&StateVariable::Px(odom.clone()), iso.translation.x);
-    initial_state.set_variable(&StateVariable::Py(odom.clone()), iso.translation.y);
-    initial_state.set_variable(&StateVariable::Pz(odom.clone()), iso.translation.z);
+    initial_state.set_variable(&StateVariable::new(Quantity::Position(odom.clone()), Component::X), iso.translation.x);
+    initial_state.set_variable(&StateVariable::new(Quantity::Position(odom.clone()), Component::Y), iso.translation.y);
+    initial_state.set_variable(&StateVariable::new(Quantity::Position(odom.clone()), Component::Z), iso.translation.z);
 
     let q_rot = iso.rotation.quaternion();
-    initial_state.set_variable(&StateVariable::Qx(body.clone(), odom.clone()), q_rot.i);
-    initial_state.set_variable(&StateVariable::Qy(body.clone(), odom.clone()), q_rot.j);
-    initial_state.set_variable(&StateVariable::Qz(body.clone(), odom.clone()), q_rot.k);
-    initial_state.set_variable(&StateVariable::Qw(body, odom), q_rot.w);
+    initial_state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: odom.clone() }, Component::X), q_rot.i);
+    initial_state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: odom.clone() }, Component::Y), q_rot.j);
+    initial_state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: odom.clone() }, Component::Z), q_rot.k);
+    initial_state.set_variable(&StateVariable::new(Quantity::Orientation { from: body, to: odom }, Component::W), q_rot.w);
 
     let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
     Ok(Box::new(GaussianEstimatorNode::new(
@@ -312,7 +313,7 @@ mod tests {
         assert_eq!(state.schema().storage_dim(), 19, "16 base + 3 bias");
         assert!(state
             .schema()
-            .storage_offset_of(&StateVariable::MagBiasX(sensor))
+            .storage_offset_of(&StateVariable::new(Quantity::MagBias(sensor), Component::X))
             .is_some());
     }
 
@@ -325,7 +326,10 @@ mod tests {
         assert_eq!(state.schema().storage_dim(), 16);
         assert!(state
             .schema()
-            .storage_offset_of(&StateVariable::MagBiasX(FrameId::Sensor(FrameHandle(7))))
+            .storage_offset_of(&StateVariable::new(
+                Quantity::MagBias(FrameId::Sensor(FrameHandle(7))),
+                Component::X,
+            ))
             .is_none());
     }
 }

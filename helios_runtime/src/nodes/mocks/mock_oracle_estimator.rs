@@ -44,6 +44,7 @@ use helios_core::data::primitives::FrameHandle;
 use helios_core::estimation::carrier::kinematic_carrier_schema;
 use helios_core::estimation::schema::StateSchema;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+use helios_core::state::{Component, Quantity};
 
 use nalgebra::Isometry3;
 use std::sync::Arc;
@@ -123,25 +124,25 @@ fn write_pose_into(state: &mut FrameAwareState, pose: &Isometry3<f64>, agent: Fr
     // Position in the estimate's odom frame. The oracle is a perfect estimator:
     // it reports truth, but publishes it into the same odom-frame estimate slot
     // the real filter fills, so downstream consumers read one frame.
-    state.set_variable(&StateVariable::Px(odom.clone()), pose.translation.x);
-    state.set_variable(&StateVariable::Py(odom.clone()), pose.translation.y);
-    state.set_variable(&StateVariable::Pz(odom.clone()), pose.translation.z);
+    state.set_variable(&StateVariable::new(Quantity::Position(odom.clone()), Component::X), pose.translation.x);
+    state.set_variable(&StateVariable::new(Quantity::Position(odom.clone()), Component::Y), pose.translation.y);
+    state.set_variable(&StateVariable::new(Quantity::Position(odom.clone()), Component::Z), pose.translation.z);
 
     // Body→odom orientation as a quaternion.
     state.set_variable(
-        &StateVariable::Qx(FrameId::Body(agent), odom.clone()),
+        &StateVariable::new(Quantity::Orientation { from: FrameId::Body(agent), to: odom.clone() }, Component::X),
         pose.rotation.i,
     );
     state.set_variable(
-        &StateVariable::Qy(FrameId::Body(agent), odom.clone()),
+        &StateVariable::new(Quantity::Orientation { from: FrameId::Body(agent), to: odom.clone() }, Component::Y),
         pose.rotation.j,
     );
     state.set_variable(
-        &StateVariable::Qz(FrameId::Body(agent), odom.clone()),
+        &StateVariable::new(Quantity::Orientation { from: FrameId::Body(agent), to: odom.clone() }, Component::Z),
         pose.rotation.k,
     );
     state.set_variable(
-        &StateVariable::Qw(FrameId::Body(agent), odom),
+        &StateVariable::new(Quantity::Orientation { from: FrameId::Body(agent), to: odom }, Component::W),
         pose.rotation.w,
     );
 }
@@ -155,13 +156,13 @@ fn write_pose_into(state: &mut FrameAwareState, pose: &Isometry3<f64>, agent: Fr
 fn write_world_twist_into(state: &mut FrameAwareState, twist: &Twist, agent: FrameHandle) {
     let odom = FrameId::Odom(agent);
 
-    state.set_variable(&StateVariable::Vx(odom.clone()), twist.linear.x);
-    state.set_variable(&StateVariable::Vy(odom.clone()), twist.linear.y);
-    state.set_variable(&StateVariable::Vz(odom.clone()), twist.linear.z);
+    state.set_variable(&StateVariable::new(Quantity::Velocity(odom.clone()), Component::X), twist.linear.x);
+    state.set_variable(&StateVariable::new(Quantity::Velocity(odom.clone()), Component::Y), twist.linear.y);
+    state.set_variable(&StateVariable::new(Quantity::Velocity(odom.clone()), Component::Z), twist.linear.z);
 
-    state.set_variable(&StateVariable::Wx(odom.clone()), twist.angular.x);
-    state.set_variable(&StateVariable::Wy(odom.clone()), twist.angular.y);
-    state.set_variable(&StateVariable::Wz(odom), twist.angular.z);
+    state.set_variable(&StateVariable::new(Quantity::AngularVelocity(odom.clone()), Component::X), twist.angular.x);
+    state.set_variable(&StateVariable::new(Quantity::AngularVelocity(odom.clone()), Component::Y), twist.angular.y);
+    state.set_variable(&StateVariable::new(Quantity::AngularVelocity(odom), Component::Z), twist.angular.z);
 }
 
 #[cfg(test)]

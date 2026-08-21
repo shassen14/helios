@@ -278,10 +278,11 @@ mod tests {
     use crate::data::ports::TfProvider;
     use crate::data::MonotonicTime;
     use crate::estimation::measurement::MeasurementModel;
+    use crate::estimation::schema::{SchemaBlock, StateSchema};
     use crate::estimation::EstimatorInputs;
-    use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId};
+    use crate::state::Quantity;
     use nalgebra::{DMatrix, DVector, Isometry3};
 
     const AT: MonotonicTime = MonotonicTime(0.0);

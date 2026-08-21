@@ -1,4 +1,5 @@
-use helios_core::estimation::schema::{Quantity, SchemaBlock, StateSchema};
+use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+use helios_core::state::{Component, Quantity};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::mapping::MapData;
 
@@ -35,8 +36,8 @@ fn make_state(x: f64, y: f64) -> FrameAwareState {
         DMatrix::identity(3, 3),
     )]));
     let mut state = FrameAwareState::from_schema(schema, 0.0);
-    state.set_variable(&StateVariable::Px(FrameId::World), x);
-    state.set_variable(&StateVariable::Py(FrameId::World), y);
+    state.set_variable(&StateVariable::new(Quantity::Position(FrameId::World), Component::X), x);
+    state.set_variable(&StateVariable::new(Quantity::Position(FrameId::World), Component::Y), y);
     state
 }
 

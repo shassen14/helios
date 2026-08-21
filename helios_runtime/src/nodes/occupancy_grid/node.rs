@@ -230,6 +230,7 @@ mod tests {
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+    use helios_core::state::{Component, Quantity};
     use helios_core::mapping::{MapData, Mapper};
     use nalgebra::{Isometry3, Point2, Translation3, UnitQuaternion};
     use std::sync::Arc;
@@ -373,7 +374,7 @@ mod tests {
         // identity `Body(AGENT) → Odom` attitude, which is all the node's pose
         // read needs; seed the odom-x position.
         let mut s = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0);
-        s.set_variable(&StateVariable::Px(FrameId::Odom(AGENT)), x);
+        s.set_variable(&StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::X), x);
         s
     }
 

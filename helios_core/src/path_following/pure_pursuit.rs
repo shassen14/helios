@@ -5,6 +5,7 @@ use crate::frames::conventions::{Enu, Flu};
 use crate::frames::quantities::Point;
 use crate::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
 use crate::planning::types::Path;
+use crate::state::{Component, Quantity};
 use nalgebra::{DVector, Vector2};
 // Plan: output (velocity.x, angle.z)
 //          dot (accel.x, ang_vel.z) -> curvature, but fails
@@ -138,8 +139,8 @@ impl PathFollower for PurePursuitPathFollower {
 
         let body_handle = FrameId::Body(self.agent_handle);
         let layout = vec![
-            StateVariable::Vx(body_handle.clone()),
-            StateVariable::Wz(body_handle.clone()),
+            StateVariable::new(Quantity::Velocity(body_handle.clone()), Component::X),
+            StateVariable::new(Quantity::AngularVelocity(body_handle.clone()), Component::Z),
         ];
 
         let mut state_desired = RobotState::new(layout, state.timestamp);

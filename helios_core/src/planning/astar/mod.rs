@@ -268,7 +268,7 @@ impl SearchPlanner for AStarPlanner {
             .iter()
             .map(|&(row, col)| {
                 let wp = space.cell_to_world_center(row, col);
-                make_waypoint(wp.x, wp.y, now)
+                make_waypoint(wp.x, wp.y, 0.0)
             })
             .collect();
 
@@ -370,12 +370,13 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
+    use crate::estimation::schema::{SchemaBlock, StateSchema};
     use crate::frames::{FrameAwareState, FrameId};
     use crate::mapping::MapData;
     use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
     use crate::planning::SearchPlanner;
     use crate::planning::SearchPlannerInputs;
+    use crate::state::Quantity;
 
     use super::{AStarConfig, AStarPlanner};
 
@@ -504,6 +505,27 @@ mod tests {
             other => panic!("expected Path, got {:?}", std::mem::discriminant(&other)),
         }
         assert_eq!(planner.status(), PlannerStatus::Active);
+    }
+
+    /// Regression: every waypoint's `z` is the ground plane (0.0), never the
+    /// planning timestamp. A path is pure geometry, so the `now` passed to
+    /// `plan()` must not leak into a coordinate slot. The non-zero `now` is what
+    /// makes this observable — a `now = 0.0` plan would pass even when `now`
+    /// were mis-wired into `z`.
+    #[test]
+    fn plan_waypoints_carry_ground_z_not_timestamp() {
+        let mut planner = AStarPlanner::new(default_config());
+        let inputs = make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)));
+        let result = planner.plan(7.0, &inputs);
+        match result {
+            PlannerResult::Path(path) => {
+                assert!(!path.waypoints.is_empty());
+                for wp in &path.waypoints {
+                    assert_eq!(wp.z(), 0.0, "waypoint z must be ground, not the timestamp");
+                }
+            }
+            other => panic!("expected Path, got {:?}", std::mem::discriminant(&other)),
+        }
     }
 
     /// Cell (0,0) surrounded by obstacles on its three reachable neighbours →

@@ -14,9 +14,10 @@
 //! which is why it is a free function and not a `StateSchema` constructor.
 
 use crate::data::primitives::FrameHandle;
-use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
+use crate::estimation::schema::{SchemaBlock, StateSchema};
 use crate::frames::FrameId;
 use crate::manifold::TangentNoise;
+use crate::state::Quantity;
 
 use nalgebra::{DMatrix, DVector};
 
@@ -71,6 +72,7 @@ mod tests {
     use super::*;
     use crate::frames::conventions::{Enu, Flu};
     use crate::frames::{FrameAwareState, StateVariable};
+    use crate::state::Component;
     use std::sync::Arc;
 
     const AGENT: FrameHandle = FrameHandle(1);
@@ -104,8 +106,8 @@ mod tests {
     #[test]
     fn every_kinematic_quantity_reads_back() {
         let mut s = carrier();
-        s.set_variable(&StateVariable::Vx(FrameId::Odom(AGENT)), 2.0);
-        s.set_variable(&StateVariable::Wz(FrameId::Odom(AGENT)), 0.3);
+        s.set_variable(&StateVariable::new(Quantity::Velocity(FrameId::Odom(AGENT)), Component::X), 2.0);
+        s.set_variable(&StateVariable::new(Quantity::AngularVelocity(FrameId::Odom(AGENT)), Component::Z), 0.3);
 
         assert_eq!(
             s.velocity::<Enu>(FrameId::Odom(AGENT)).unwrap().x(),

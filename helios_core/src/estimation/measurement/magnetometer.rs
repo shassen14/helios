@@ -92,10 +92,11 @@ mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
-    use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
+    use crate::estimation::schema::{SchemaBlock, StateSchema};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::manifold::TangentNoise;
+    use crate::state::{Component, Quantity};
     use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;
@@ -155,10 +156,10 @@ mod tests {
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
         let q = UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2);
         let (body, world) = (FrameId::Body(AGENT), FrameId::Odom(AGENT));
-        state.set_variable(&StateVariable::Qx(body.clone(), world.clone()), q.i);
-        state.set_variable(&StateVariable::Qy(body.clone(), world.clone()), q.j);
-        state.set_variable(&StateVariable::Qz(body.clone(), world.clone()), q.k);
-        state.set_variable(&StateVariable::Qw(body, world), q.w);
+        state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::X), q.i);
+        state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::Y), q.j);
+        state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::Z), q.k);
+        state.set_variable(&StateVariable::new(Quantity::Orientation { from: body, to: world }, Component::W), q.w);
     }
 
     fn make_model() -> MagneticFieldModel {
@@ -184,9 +185,9 @@ mod tests {
             ),
         ]);
         let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
-        state.set_variable(&StateVariable::MagBiasX(sensor.clone()), bias.x);
-        state.set_variable(&StateVariable::MagBiasY(sensor.clone()), bias.y);
-        state.set_variable(&StateVariable::MagBiasZ(sensor), bias.z);
+        state.set_variable(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X), bias.x);
+        state.set_variable(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::Y), bias.y);
+        state.set_variable(&StateVariable::new(Quantity::MagBias(sensor), Component::Z), bias.z);
         state
     }
 
@@ -293,7 +294,7 @@ mod tests {
         let state = make_augmented_state(Vector3::zeros());
         let off = state
             .schema()
-            .tangent_offset_of(&StateVariable::MagBiasX(sensor))
+            .tangent_offset_of(&StateVariable::new(Quantity::MagBias(sensor), Component::X))
             .expect("augmented state carries the bias block");
         let h = model.jacobian(&state, Some(&identity_mount()), AT);
         for r in 0..3 {

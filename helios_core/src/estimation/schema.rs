@@ -22,111 +22,38 @@
 use crate::{
     frames::{FrameId, StateVariable},
     manifold::{euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise},
+    state::Quantity,
 };
 
 use nalgebra::{DMatrix, DVector, DVectorView};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Quantity {
-    Position(FrameId),
-    Velocity(FrameId),
-    Acceleration(FrameId),
-    AngularVelocity(FrameId),
-    AngularAcceleration(FrameId),
-    Mag(FrameId),
-    MagBias(FrameId),
-    AccelBias(FrameId),
-    GyroBias(FrameId),
-    Orientation { from: FrameId, to: FrameId },
-}
-
-impl Quantity {
-    pub fn variables(&self) -> Vec<StateVariable> {
-        match self {
-            Quantity::Position(f) => vec![
-                StateVariable::Px(f.clone()),
-                StateVariable::Py(f.clone()),
-                StateVariable::Pz(f.clone()),
-            ],
-            Quantity::Velocity(f) => vec![
-                StateVariable::Vx(f.clone()),
-                StateVariable::Vy(f.clone()),
-                StateVariable::Vz(f.clone()),
-            ],
-            Quantity::Acceleration(f) => vec![
-                StateVariable::Ax(f.clone()),
-                StateVariable::Ay(f.clone()),
-                StateVariable::Az(f.clone()),
-            ],
-            Quantity::AngularVelocity(f) => vec![
-                StateVariable::Wx(f.clone()),
-                StateVariable::Wy(f.clone()),
-                StateVariable::Wz(f.clone()),
-            ],
-            Quantity::AngularAcceleration(f) => vec![
-                StateVariable::Alphax(f.clone()),
-                StateVariable::Alphay(f.clone()),
-                StateVariable::Alphaz(f.clone()),
-            ],
-            Quantity::Mag(f) => vec![
-                StateVariable::MagX(f.clone()),
-                StateVariable::MagY(f.clone()),
-                StateVariable::MagZ(f.clone()),
-            ],
-            Quantity::Orientation { from, to } => {
-                vec![
-                    StateVariable::Qx(from.clone(), to.clone()),
-                    StateVariable::Qy(from.clone(), to.clone()),
-                    StateVariable::Qz(from.clone(), to.clone()),
-                    StateVariable::Qw(from.clone(), to.clone()),
-                ]
-            }
-            Quantity::MagBias(f) => vec![
-                StateVariable::MagBiasX(f.clone()),
-                StateVariable::MagBiasY(f.clone()),
-                StateVariable::MagBiasZ(f.clone()),
-            ],
-            Quantity::AccelBias(f) => vec![
-                StateVariable::AccelBiasX(f.clone()),
-                StateVariable::AccelBiasY(f.clone()),
-                StateVariable::AccelBiasZ(f.clone()),
-            ],
-            Quantity::GyroBias(f) => vec![
-                StateVariable::GyroBiasX(f.clone()),
-                StateVariable::GyroBiasY(f.clone()),
-                StateVariable::GyroBiasZ(f.clone()),
-            ],
+/// Builds this quantity's manifold block: a [`QuaternionBlock`] for
+/// [`Orientation`](Quantity::Orientation), a [`EuclideanBlock`] for every
+/// other (flat) kind. `noise` is the tangent-space process noise, already
+/// validated by the caller; `None` means the block carries no process noise
+/// (a fixed prior — e.g. a position seeded from GPS with no random walk).
+///
+/// # Panics
+/// An orientation block requires process noise: there is no positive-definite
+/// zero-noise covariance, so a quaternion retraction cannot be built noiseless.
+/// Passing `None` for an [`Orientation`](Quantity::Orientation) is therefore a
+/// construction-time programming error, not a recoverable one.
+fn block_for(
+    quantity: &Quantity,
+    noise: Option<TangentNoise>,
+    x0: DVector<f64>,
+    p0: DMatrix<f64>,
+) -> Arc<dyn StateBlock> {
+    match quantity {
+        Quantity::Orientation { .. } => {
+            let noise = noise.expect("an orientation block requires process noise");
+            Arc::new(QuaternionBlock::new(noise, x0, p0))
         }
-    }
-
-    /// Builds this quantity's manifold block: a [`QuaternionBlock`] for
-    /// [`Orientation`](Quantity::Orientation), a [`EuclideanBlock`] for every
-    /// other (flat) kind. `noise` is the tangent-space process noise, already
-    /// validated by the caller; `None` means the block carries no process noise
-    /// (a fixed prior — e.g. a position seeded from GPS with no random walk).
-    ///
-    /// # Panics
-    /// An orientation block requires process noise: there is no positive-definite
-    /// zero-noise covariance, so a quaternion retraction cannot be built noiseless.
-    /// Passing `None` for an [`Orientation`](Quantity::Orientation) is therefore a
-    /// construction-time programming error, not a recoverable one.
-    pub fn manifold(
-        &self,
-        noise: Option<TangentNoise>,
-        x0: DVector<f64>,
-        p0: DMatrix<f64>,
-    ) -> Arc<dyn StateBlock> {
-        match self {
-            Quantity::Orientation { .. } => {
-                let noise = noise.expect("an orientation block requires process noise");
-                Arc::new(QuaternionBlock::new(noise, x0, p0))
-            }
-            _ => match noise {
-                Some(noise) => Arc::new(EuclideanBlock::new(noise, x0, p0)),
-                None => Arc::new(EuclideanBlock::without_noise(x0, p0)),
-            },
-        }
+        _ => match noise {
+            Some(noise) => Arc::new(EuclideanBlock::new(noise, x0, p0)),
+            None => Arc::new(EuclideanBlock::without_noise(x0, p0)),
+        },
     }
 }
 
@@ -148,7 +75,7 @@ impl SchemaBlock {
         x0: DVector<f64>,
         p0: DMatrix<f64>,
     ) -> Self {
-        let block = quantity.manifold(noise, x0, p0);
+        let block = block_for(&quantity, noise, x0, p0);
         Self { block, quantity }
     }
 
@@ -390,6 +317,7 @@ impl StateSchema {
 mod tests {
     use super::*;
     use crate::manifold::TangentNoise;
+    use crate::state::Component;
 
     fn noise(var: f64) -> Option<TangentNoise> {
         Some(TangentNoise::from_variances(DVector::from_element(3, var)).unwrap())
@@ -406,70 +334,44 @@ mod tests {
         let f = FrameId::World;
         let b = FrameId::Body(crate::data::primitives::FrameHandle(2));
 
-        use StateVariable::*;
-        assert_eq!(
-            Quantity::Position(f.clone()).variables(),
-            vec![Px(f.clone()), Py(f.clone()), Pz(f.clone())]
-        );
-        assert_eq!(
-            Quantity::Velocity(f.clone()).variables(),
-            vec![Vx(f.clone()), Vy(f.clone()), Vz(f.clone())]
-        );
-        assert_eq!(
-            Quantity::Acceleration(f.clone()).variables(),
-            vec![Ax(f.clone()), Ay(f.clone()), Az(f.clone())]
-        );
-        assert_eq!(
-            Quantity::AngularVelocity(f.clone()).variables(),
-            vec![Wx(f.clone()), Wy(f.clone()), Wz(f.clone())]
-        );
-        assert_eq!(
-            Quantity::AngularAcceleration(f.clone()).variables(),
-            vec![Alphax(f.clone()), Alphay(f.clone()), Alphaz(f.clone())]
-        );
-        assert_eq!(
-            Quantity::Mag(f.clone()).variables(),
-            vec![MagX(f.clone()), MagY(f.clone()), MagZ(f.clone())]
-        );
-        assert_eq!(
-            Quantity::MagBias(f.clone()).variables(),
+        // A block's stored names are `StateVariable { quantity, component }` for
+        // each of the quantity's components. Every flat kind spells x, y, z;
+        // orientation adds w last.
+        let flat = |q: &Quantity| {
             vec![
-                MagBiasX(f.clone()),
-                MagBiasY(f.clone()),
-                MagBiasZ(f.clone())
+                StateVariable::new(q.clone(), Component::X),
+                StateVariable::new(q.clone(), Component::Y),
+                StateVariable::new(q.clone(), Component::Z),
             ]
-        );
-        // Sensor biases carry their own names, distinct from the kinematic
-        // `Acceleration`/`AngularVelocity` quantities they perturb.
-        assert_eq!(
-            Quantity::AccelBias(f.clone()).variables(),
-            vec![
-                AccelBiasX(f.clone()),
-                AccelBiasY(f.clone()),
-                AccelBiasZ(f.clone())
-            ]
-        );
-        assert_eq!(
-            Quantity::GyroBias(f.clone()).variables(),
-            vec![
-                GyroBiasX(f.clone()),
-                GyroBiasY(f.clone()),
-                GyroBiasZ(f.clone())
-            ]
-        );
+        };
+
+        for kind in [
+            Quantity::Position(f.clone()),
+            Quantity::Velocity(f.clone()),
+            Quantity::Acceleration(f.clone()),
+            Quantity::AngularVelocity(f.clone()),
+            Quantity::AngularAcceleration(f.clone()),
+            Quantity::Mag(f.clone()),
+            Quantity::MagBias(f.clone()),
+            Quantity::AccelBias(f.clone()),
+            Quantity::GyroBias(f.clone()),
+        ] {
+            assert_eq!(kind.variables(), flat(&kind));
+        }
+
         // Orientation stores four scalars in x, y, z, w order — w last, matching
         // the identity-quaternion seed `[0, 0, 0, 1]`.
+        let orientation = Quantity::Orientation {
+            from: b.clone(),
+            to: f.clone(),
+        };
         assert_eq!(
-            Quantity::Orientation {
-                from: b.clone(),
-                to: f.clone()
-            }
-            .variables(),
+            orientation.variables(),
             vec![
-                Qx(b.clone(), f.clone()),
-                Qy(b.clone(), f.clone()),
-                Qz(b.clone(), f.clone()),
-                Qw(b.clone(), f.clone()),
+                StateVariable::new(orientation.clone(), Component::X),
+                StateVariable::new(orientation.clone(), Component::Y),
+                StateVariable::new(orientation.clone(), Component::Z),
+                StateVariable::new(orientation.clone(), Component::W),
             ]
         );
     }
@@ -477,11 +379,13 @@ mod tests {
     #[test]
     fn manifold_orientation_is_a_four_three_quaternion_block() {
         // The one curved kind: four stored components against a three-DOF tangent.
-        let block = Quantity::Orientation {
+        let quantity = Quantity::Orientation {
             from: FrameId::Body(crate::data::primitives::FrameHandle(2)),
             to: FrameId::World,
-        }
-        .manifold(
+        };
+
+        let block = block_for(
+            &quantity,
             noise(0.1),
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::identity(3, 3),
@@ -493,7 +397,10 @@ mod tests {
     #[test]
     fn manifold_flat_kind_is_an_equal_dim_euclidean_block() {
         // Every non-orientation kind is Euclidean: storage and tangent coincide.
-        let block = Quantity::Velocity(FrameId::World).manifold(
+        let quantity = Quantity::Velocity(FrameId::World);
+
+        let block = block_for(
+            &quantity,
             noise(0.5),
             DVector::zeros(3),
             DMatrix::identity(3, 3),
@@ -506,11 +413,8 @@ mod tests {
     fn manifold_flat_kind_without_noise_carries_no_process_noise() {
         // `None` on a flat kind routes to `EuclideanBlock::without_noise`: a fixed
         // prior with no random walk (a position seeded from GPS, say).
-        let block = Quantity::Position(FrameId::World).manifold(
-            None,
-            DVector::zeros(3),
-            DMatrix::identity(3, 3),
-        );
+        let quantity = Quantity::Position(FrameId::World);
+        let block = block_for(&quantity, None, DVector::zeros(3), DMatrix::identity(3, 3));
         assert!(block.process_noise().is_none());
     }
 
@@ -522,11 +426,13 @@ mod tests {
         // the branch deliberately chosen over a silent `unwrap_or_else` fallback:
         // passing `None` here is a construction-time programming error and must
         // panic rather than fabricate zero process noise.
-        Quantity::Orientation {
+        let quantity = Quantity::Orientation {
             from: FrameId::Body(crate::data::primitives::FrameHandle(2)),
             to: FrameId::World,
-        }
-        .manifold(
+        };
+
+        block_for(
+            &quantity,
             None,
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::identity(3, 3),
@@ -592,15 +498,15 @@ mod tests {
     fn storage_offset_of_finds_names() {
         let s = pos_vel_schema();
         assert_eq!(
-            s.storage_offset_of(&StateVariable::Px(FrameId::World)),
+            s.storage_offset_of(&StateVariable::new(Quantity::Position(FrameId::World), Component::X)),
             Some(0)
         );
         assert_eq!(
-            s.storage_offset_of(&StateVariable::Vx(FrameId::World)),
+            s.storage_offset_of(&StateVariable::new(Quantity::Velocity(FrameId::World), Component::X)),
             Some(3)
         );
         assert_eq!(
-            s.storage_offset_of(&StateVariable::Az(FrameId::World)),
+            s.storage_offset_of(&StateVariable::new(Quantity::Acceleration(FrameId::World), Component::Z)),
             None
         );
     }
@@ -665,9 +571,9 @@ mod tests {
         assert_eq!(
             &extended.layout()[base_storage..],
             &[
-                StateVariable::MagBiasX(mag_sensor()),
-                StateVariable::MagBiasY(mag_sensor()),
-                StateVariable::MagBiasZ(mag_sensor()),
+                StateVariable::new(Quantity::MagBias(mag_sensor()), Component::X),
+                StateVariable::new(Quantity::MagBias(mag_sensor()), Component::Y),
+                StateVariable::new(Quantity::MagBias(mag_sensor()), Component::Z),
             ]
         );
     }
@@ -680,7 +586,7 @@ mod tests {
         let extended = base.extended(vec![mag_bias_block()]);
 
         assert_eq!(
-            extended.storage_offset_of(&StateVariable::MagBiasX(mag_sensor())),
+            extended.storage_offset_of(&StateVariable::new(Quantity::MagBias(mag_sensor()), Component::X)),
             Some(base_storage)
         );
     }

@@ -8,7 +8,8 @@
 use super::commands::BodyTwist;
 use super::{ControlInputs, Controller};
 use crate::frames::quantities::FluVector;
-use crate::frames::{FrameId, StateVariable};
+use crate::frames::FrameId;
+use crate::state::{Component, Quantity};
 
 pub struct DirectTwistController;
 
@@ -42,13 +43,13 @@ impl Controller for DirectTwistController {
 
         for (i, var) in reference.state.layout.iter().enumerate() {
             let value = reference.state.vector[i];
-            match var {
-                StateVariable::Vx(FrameId::Body(_)) => vx = value,
-                StateVariable::Vy(FrameId::Body(_)) => vy = value,
-                StateVariable::Vz(FrameId::Body(_)) => vz = value,
-                StateVariable::Wx(FrameId::Body(_)) => wx = value,
-                StateVariable::Wy(FrameId::Body(_)) => wy = value,
-                StateVariable::Wz(FrameId::Body(_)) => wz = value,
+            match (var.quantity(), var.component()) {
+                (Quantity::Velocity(FrameId::Body(_)), Component::X) => vx = value,
+                (Quantity::Velocity(FrameId::Body(_)), Component::Y) => vy = value,
+                (Quantity::Velocity(FrameId::Body(_)), Component::Z) => vz = value,
+                (Quantity::AngularVelocity(FrameId::Body(_)), Component::X) => wx = value,
+                (Quantity::AngularVelocity(FrameId::Body(_)), Component::Y) => wy = value,
+                (Quantity::AngularVelocity(FrameId::Body(_)), Component::Z) => wz = value,
                 _ => {}
             }
         }

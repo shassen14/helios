@@ -26,7 +26,8 @@ use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
 use helios_core::estimation::measurement::MeasurementModel;
-use helios_core::estimation::schema::{Quantity, SchemaBlock, StateSchema};
+use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+use helios_core::state::{Component, Quantity};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::manifold::TangentNoise;
@@ -307,25 +308,25 @@ fn make_state(
     ]);
     let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
 
-    set_vec3(&mut state, StateVariable::Px(world.clone()), position_world);
+    set_vec3(&mut state, StateVariable::new(Quantity::Position(world.clone()), Component::X), position_world);
     let q = q_body_to_world.quaternion();
-    state.set_variable(&StateVariable::Qx(body.clone(), world.clone()), q.i);
-    state.set_variable(&StateVariable::Qy(body.clone(), world.clone()), q.j);
-    state.set_variable(&StateVariable::Qz(body.clone(), world.clone()), q.k);
-    state.set_variable(&StateVariable::Qw(body.clone(), world.clone()), q.w);
+    state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::X), q.i);
+    state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::Y), q.j);
+    state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::Z), q.k);
+    state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::W), q.w);
     set_vec3(
         &mut state,
-        StateVariable::Wx(body.clone()),
+        StateVariable::new(Quantity::AngularVelocity(body.clone()), Component::X),
         angular_vel_body,
     );
     set_vec3(
         &mut state,
-        StateVariable::Ax(body.clone()),
+        StateVariable::new(Quantity::Acceleration(body.clone()), Component::X),
         linear_accel_body,
     );
     set_vec3(
         &mut state,
-        StateVariable::Alphax(body.clone()),
+        StateVariable::new(Quantity::AngularAcceleration(body.clone()), Component::X),
         angular_accel_body,
     );
 
@@ -335,16 +336,17 @@ fn make_state(
 /// Writes a 3-vector into the `x`/`y`/`z` slots named from `x_variable`, each
 /// set by name through the schema.
 fn set_vec3(state: &mut FrameAwareState, x_variable: StateVariable, value: Vector3<f64>) {
-    let (y_variable, z_variable) = match &x_variable {
-        StateVariable::Px(id) => (StateVariable::Py(id.clone()), StateVariable::Pz(id.clone())),
-        StateVariable::Wx(id) => (StateVariable::Wy(id.clone()), StateVariable::Wz(id.clone())),
-        StateVariable::Ax(id) => (StateVariable::Ay(id.clone()), StateVariable::Az(id.clone())),
-        StateVariable::Alphax(id) => (
-            StateVariable::Alphay(id.clone()),
-            StateVariable::Alphaz(id.clone()),
-        ),
-        other => panic!("set_vec3 called with a non-vector start variable: {other:?}"),
-    };
+    // The x/y/z slots share one quantity and differ only by component, so the
+    // siblings are the same quantity re-tagged. Callers always pass the X slot.
+    assert_eq!(
+        x_variable.component(),
+        &Component::X,
+        "set_vec3 expects the X-component start variable"
+    );
+    let quantity = x_variable.quantity().clone();
+    let y_variable = StateVariable::new(quantity.clone(), Component::Y);
+    let z_variable = StateVariable::new(quantity, Component::Z);
+
     state.set_variable(&x_variable, value.x);
     state.set_variable(&y_variable, value.y);
     state.set_variable(&z_variable, value.z);

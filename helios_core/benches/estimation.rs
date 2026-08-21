@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
+use helios_core::state::{Component, Quantity};
 use nalgebra::{DMatrix, DVector, Isometry3};
 
 use helios_core::data::ports::TfProvider;
@@ -8,7 +9,7 @@ use helios_core::data::MonotonicTime;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
 use helios_core::estimation::measurement::MeasurementModel;
-use helios_core::estimation::schema::{Quantity, SchemaBlock, StateSchema};
+use helios_core::estimation::schema::{SchemaBlock, StateSchema};
 use helios_core::estimation::{EstimatorInputs, GaussianStateEstimator};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
@@ -118,7 +119,7 @@ impl MeasurementModel for Position2DMeasurement {
 fn make_state() -> FrameAwareState {
     // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
     let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
-    state.set_variable(&StateVariable::Vx(FrameId::World), 1.0); // vx = 1.0 m/s
+    state.set_variable(&StateVariable::new(Quantity::Velocity(FrameId::World), Component::X), 1.0); // vx = 1.0 m/s
     state
 }
 

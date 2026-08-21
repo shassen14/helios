@@ -23,6 +23,7 @@ use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::frames::conventions::Flu;
 use helios_core::frames::quantities::{FluVector, FreeVector};
 use helios_core::frames::{FrameId, StateVariable};
+use helios_core::state::{Component, Quantity};
 
 use nalgebra::Vector3;
 
@@ -620,7 +621,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     let tangent_off = state
         .value
         .schema()
-        .tangent_offset_of(&StateVariable::MagBiasX(sensor.clone()))
+        .tangent_offset_of(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X))
         .expect("the mag-bias block must be present in the published schema");
 
     // Mean moved from 0 toward the injected +3 µT offset.
@@ -704,7 +705,10 @@ fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
         state
             .value
             .schema()
-            .storage_offset_of(&StateVariable::MagBiasX(FrameId::Sensor(FrameHandle(7))))
+            .storage_offset_of(&StateVariable::new(
+                Quantity::MagBias(FrameId::Sensor(FrameHandle(7))),
+                Component::X,
+            ))
             .is_none(),
         "no augmentation ⇒ no MagBias slots"
     );

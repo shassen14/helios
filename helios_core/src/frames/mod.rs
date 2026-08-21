@@ -11,19 +11,20 @@ pub mod transforms;
 
 use crate::{
     data::primitives::FrameHandle,
-    estimation::schema::{Quantity, StateSchema},
+    estimation::schema::StateSchema,
     frames::{
         conventions::Frame,
         quantities::{FreeVector, Point},
         transforms::{Rotation, Transform},
     },
+    state::{Component, Quantity},
 };
 
-use nalgebra::{
-    DMatrix, DVector, Isometry3, Quaternion, Translation, Translation3, UnitQuaternion, Vector3,
-};
+use nalgebra::{DMatrix, DVector, Quaternion, Translation, UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
 use std::{hash::Hash, sync::Arc};
+
+pub use crate::state::StateVariable;
 
 /// A unique, hashable identifier for any coordinate frame in the simulation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
@@ -40,59 +41,7 @@ pub enum FrameId {
     Sensor(FrameHandle),
 }
 
-/// An enum that defines every possible variable that can exist in a state vector.
-/// The FrameId specifies which frame the variable is expressed in.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum StateVariable {
-    // --- Cartesian Position ---
-    Px(FrameId),
-    Py(FrameId),
-    Pz(FrameId),
-    // --- Cartesian Velocity ---
-    Vx(FrameId),
-    Vy(FrameId),
-    Vz(FrameId),
-    // --- Cartesian Acceleration ---
-    Ax(FrameId),
-    Ay(FrameId),
-    Az(FrameId),
-    // --- Orientation (as a quaternion) ---
-    // Represents the rotation FROM the first frame TO the second frame.
-    // e.g., Qx(from: Body, to: World)
-    Qx(FrameId, FrameId),
-    Qy(FrameId, FrameId),
-    Qz(FrameId, FrameId),
-    Qw(FrameId, FrameId),
-    // --- Angular Velocity ---
-    Wx(FrameId),
-    Wy(FrameId),
-    Wz(FrameId),
-    // --- Angular Acceleration --
-    Alphax(FrameId),
-    Alphay(FrameId),
-    Alphaz(FrameId),
-    // --- Magnetic Field ---
-    MagX(FrameId),
-    MagY(FrameId),
-    MagZ(FrameId),
-    // --- Bias ---
-    MagBiasX(FrameId),
-    MagBiasY(FrameId),
-    MagBiasZ(FrameId),
-    // Accelerometer / gyroscope biases carry their own names rather than
-    // borrowing `Ax`/`Wx`: those denote *true* body-frame kinematic acceleration
-    // and angular velocity (what a specific-force or rate model predicts), a
-    // distinct quantity from the sensor error the filter estimates. Sharing one
-    // name would let a kinematics reader silently pick up the bias instead.
-    AccelBiasX(FrameId),
-    AccelBiasY(FrameId),
-    AccelBiasZ(FrameId),
-    GyroBiasX(FrameId),
-    GyroBiasY(FrameId),
-    GyroBiasZ(FrameId),
-}
-
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct RobotState {
     /// The ordered "schema" of the state vector.
     pub layout: Vec<StateVariable>,
@@ -109,8 +58,11 @@ impl RobotState {
         // Find the quaternion part of the state and initialize it to identity (0,0,0,1).
         // This is critical to prevent NaN values from an invalid zero quaternion.
         for (i, var) in layout.iter().enumerate() {
-            // Using `matches!` is a clean way to check the enum variant without caring about its contents.
-            if matches!(var, StateVariable::Qw(_, _)) {
+            // The identity seed lives in the W slot of whichever orientation the
+            // layout carries; the frames it maps between don't matter here.
+            if matches!(var.quantity(), Quantity::Orientation { .. })
+                && matches!(var.component(), Component::W)
+            {
                 vector[i] = 1.0; // Set the 'w' component to 1.
                                  // Note: This assumes only one quaternion in the state. For more complex
                                  // states, this logic would need to be more robust.
@@ -123,180 +75,6 @@ impl RobotState {
             vector,
             timestamp,
         }
-    }
-
-    /// Returns the dimension (number of rows) of the state vector.
-    pub(crate) fn dim(&self) -> usize {
-        self.layout.len()
-    }
-
-    /// Finds the index of a specific `StateVariable` in the layout.
-    pub(crate) fn find_idx(&self, var: &StateVariable) -> Option<usize> {
-        self.layout.iter().position(|v| v == var)
-    }
-
-    /// Sets a single state variable by name. Returns `true` if the variable was found
-    /// in the layout and written; `false` if it is absent (a no-op in that case).
-    pub(crate) fn set_variable(&mut self, var: &StateVariable, value: f64) -> bool {
-        if let Some(idx) = self.find_idx(var) {
-            self.vector[idx] = value;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Extracts a 3D vector from the state vector based on a starting `StateVariable`.
-    ///
-    /// For example, providing `StateVariable::Px(frame_id)` will attempt to find `Px`, `Py`,
-    /// and `Pz` for that frame and return them as a `Vector3`.
-    ///
-    /// # Arguments
-    /// * `start_variable`: The `StateVariable` representing the X-component of the desired vector.
-    ///
-    /// # Returns
-    /// * `Some(Vector3<f64>)` if all three components (X, Y, Z) are found contiguously.
-    /// * `None` if any of the components are missing or not in order.
-    pub fn get_vector3(&self, start_variable: &StateVariable) -> Option<Vector3<f64>> {
-        // Determine the expected Y and Z variables based on the provided X variable.
-        let (expected_y, expected_z) = match start_variable {
-            StateVariable::Px(id) => (StateVariable::Py(id.clone()), StateVariable::Pz(id.clone())),
-            StateVariable::Vx(id) => (StateVariable::Vy(id.clone()), StateVariable::Vz(id.clone())),
-            StateVariable::Ax(id) => (StateVariable::Ay(id.clone()), StateVariable::Az(id.clone())),
-            StateVariable::Wx(id) => (StateVariable::Wy(id.clone()), StateVariable::Wz(id.clone())),
-            StateVariable::Alphax(id) => (
-                StateVariable::Alphay(id.clone()),
-                StateVariable::Alphaz(id.clone()),
-            ),
-            StateVariable::MagX(id) => (
-                StateVariable::MagY(id.clone()),
-                StateVariable::MagZ(id.clone()),
-            ),
-            _ => return None, // Not a valid start of a 3D vector
-        };
-
-        // Find the starting index.
-        let start_idx = self.find_idx(start_variable)?;
-
-        // Check if the next two elements match the expected Y and Z variables.
-        // Also ensures we don't read past the end of the layout vector.
-        if self.layout.get(start_idx + 1) == Some(&expected_y)
-            && self.layout.get(start_idx + 2) == Some(&expected_z)
-        {
-            // If they match, we can safely slice the state vector.
-            // `fixed_rows` provides a view into the DVector without copying.
-            let vec_slice = self.vector.fixed_rows::<3>(start_idx);
-            Some(vec_slice.into()) // Convert the slice into an owned Vector3
-        } else {
-            None // The state layout is not as expected.
-        }
-    }
-
-    /// Extracts the orientation quaternion from the state vector.
-    ///
-    /// It searches for the `Qw` component and assumes that `Qx`, `Qy`, and `Qz`
-    /// precede it in the state layout.
-    ///
-    /// # Returns
-    /// * `Some(UnitQuaternion<f64>)` if a valid quaternion is found.
-    /// * `None` if the quaternion components are not found contiguously.
-    pub(crate) fn get_orientation(&self) -> Option<UnitQuaternion<f64>> {
-        // We can find any of the quaternion components to start, but searching for
-        // Qw is often convenient as it's the last one.
-        let mut qx_idx = None;
-        let mut qy_idx = None;
-        let mut qz_idx = None;
-        let mut qw_idx = None;
-
-        // Find the indices of all four components.
-        for (i, var) in self.layout.iter().enumerate() {
-            match var {
-                StateVariable::Qx(_, _) => qx_idx = Some(i),
-                StateVariable::Qy(_, _) => qy_idx = Some(i),
-                StateVariable::Qz(_, _) => qz_idx = Some(i),
-                StateVariable::Qw(_, _) => qw_idx = Some(i),
-                _ => {}
-            }
-        }
-
-        // Ensure all four were found.
-        let (qx_idx, qy_idx, qz_idx, qw_idx) = (qx_idx?, qy_idx?, qz_idx?, qw_idx?);
-
-        // A robust check to ensure they are contiguous (e.g., [..., Qx, Qy, Qz, Qw, ...])
-        // This makes the layout more flexible than assuming a fixed order.
-        if qy_idx == qx_idx + 1 && qz_idx == qy_idx + 1 && qw_idx == qz_idx + 1 {
-            // All components are contiguous, extract them.
-            // Note: nalgebra's `Quaternion` constructor is `(w, i, j, k)`.
-            // The `UnitQuaternion` constructor from a `Quaternion` handles normalization.
-            let quat = UnitQuaternion::from_quaternion(Quaternion::new(
-                self.vector[qw_idx], // w
-                self.vector[qx_idx], // x
-                self.vector[qy_idx], // y
-                self.vector[qz_idx], // z
-            ));
-            Some(quat)
-        } else {
-            // The quaternion components in the state layout are not contiguous.
-            None
-        }
-    }
-
-    /// Normalizes the quaternion components in the state vector in-place.
-    /// Must be called after every predict and update step to prevent quaternion drift.
-    /// No-op if no quaternion is present or if the norm is near zero (degenerate state).
-    pub(crate) fn normalize_quaternion(&mut self) {
-        let mut qx_idx = None;
-        let mut qy_idx = None;
-        let mut qz_idx = None;
-        let mut qw_idx = None;
-        for (i, var) in self.layout.iter().enumerate() {
-            match var {
-                StateVariable::Qx(_, _) => qx_idx = Some(i),
-                StateVariable::Qy(_, _) => qy_idx = Some(i),
-                StateVariable::Qz(_, _) => qz_idx = Some(i),
-                StateVariable::Qw(_, _) => qw_idx = Some(i),
-                _ => {}
-            }
-        }
-        if let (Some(xi), Some(yi), Some(zi), Some(wi)) = (qx_idx, qy_idx, qz_idx, qw_idx) {
-            let norm = (self.vector[xi].powi(2)
-                + self.vector[yi].powi(2)
-                + self.vector[zi].powi(2)
-                + self.vector[wi].powi(2))
-            .sqrt();
-            if norm > 1e-9 {
-                self.vector[xi] /= norm;
-                self.vector[yi] /= norm;
-                self.vector[zi] /= norm;
-                self.vector[wi] /= norm;
-            }
-        }
-    }
-
-    /// Extracts the full 6-DOF pose (position and orientation) from the state vector.
-    ///
-    /// This method composes the results of `get_vector3` for position and
-    /// `get_orientation` for the quaternion into a single `nalgebra::Isometry3`.
-    ///
-    /// # Returns
-    /// * `Some(Isometry3<f64>)` if both the world-frame position and the orientation
-    ///   quaternion are found in the state vector.
-    /// * `None` if either the position or orientation components are missing.
-    pub(crate) fn get_pose_isometry(&self) -> Option<Isometry3<f64>> {
-        // 1. Get the position vector from the state.
-        // We specifically look for position in the World frame.
-        let position = self.get_vector3(&StateVariable::Px(FrameId::World))?;
-
-        // 2. Get the orientation quaternion from the state.
-        let orientation = self.get_orientation()?;
-
-        // 3. If both were successful, combine them into an Isometry3.
-        // The `?` operator above will cause the function to return `None`
-        // automatically if either `get_vector3` or `get_orientation` fail.
-        Some(Isometry3::from_parts(
-            Translation3::from(position),
-            orientation,
-        ))
     }
 }
 
@@ -520,7 +298,13 @@ mod frame_aware_state_tests {
         // `Qw` reads back as 1.0 rather than an all-zero non-rotation.
         let qw = s
             .schema
-            .storage_offset_of(&StateVariable::Qw(FrameId::World, FrameId::World))
+            .storage_offset_of(&StateVariable::new(
+                Quantity::Orientation {
+                    from: FrameId::World,
+                    to: FrameId::World,
+                },
+                Component::W,
+            ))
             .unwrap();
         assert_eq!(s.mean[qw], 1.0);
     }
@@ -528,9 +312,18 @@ mod frame_aware_state_tests {
     #[test]
     fn set_variable_writes_reach_the_mean() {
         let mut s = pose_state();
-        s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
-        s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
-        s.set_variable(&StateVariable::Pz(FrameId::World), 3.0);
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            1.0,
+        );
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            2.0,
+        );
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::Z),
+            3.0,
+        );
 
         // The position block heads the layout, so its three slots are the first rows.
         assert_eq!(s.mean.fixed_rows::<3>(0), Vector3::new(1.0, 2.0, 3.0));
@@ -539,7 +332,10 @@ mod frame_aware_state_tests {
     #[test]
     fn set_variable_absent_is_noop() {
         let mut s = pose_state();
-        assert!(!s.set_variable(&StateVariable::Vx(FrameId::World), 9.0));
+        assert!(!s.set_variable(
+            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::X),
+            9.0
+        ));
     }
 
     #[test]
@@ -554,8 +350,14 @@ mod frame_aware_state_tests {
             )])),
             0.0,
         );
-        s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
-        s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            1.0,
+        );
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            2.0,
+        );
 
         s.oplus_assign(&DVector::from_vec(vec![0.5, -0.5, 0.0]));
         assert_eq!(s.mean, DVector::from_vec(vec![1.5, 1.5, 0.0]));
@@ -624,9 +426,18 @@ mod block_extractor_tests {
     #[test]
     fn position_reads_its_block() {
         let mut s = composed_state();
-        s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
-        s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
-        s.set_variable(&StateVariable::Pz(FrameId::World), 3.0);
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            1.0,
+        );
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            2.0,
+        );
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::Z),
+            3.0,
+        );
 
         let p = s.position::<Enu>(FrameId::World).unwrap();
         assert_eq!(p.raw(), &Vector3::new(1.0, 2.0, 3.0));
@@ -637,9 +448,18 @@ mod block_extractor_tests {
         // Velocity sits *after* position in storage, so a correct read proves the
         // extractor honors the block's offset rather than reading from the top.
         let mut s = composed_state();
-        s.set_variable(&StateVariable::Vx(FrameId::World), 4.0);
-        s.set_variable(&StateVariable::Vy(FrameId::World), 5.0);
-        s.set_variable(&StateVariable::Vz(FrameId::World), 6.0);
+        s.set_variable(
+            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::X),
+            4.0,
+        );
+        s.set_variable(
+            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::Y),
+            5.0,
+        );
+        s.set_variable(
+            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::Z),
+            6.0,
+        );
 
         let v = s.velocity::<Enu>(FrameId::World).unwrap();
         assert_eq!(v.raw(), &Vector3::new(4.0, 5.0, 6.0));
@@ -651,10 +471,46 @@ mod block_extractor_tests {
         // (0, 0, 0, 1), stored as [Qx, Qy, Qz, Qw] = [0, 0, 1, 0]. Clean scalars
         // let the reorder (w from the last slot) be checked without tolerance.
         let mut s = composed_state();
-        s.set_variable(&StateVariable::Qx(body(), FrameId::World), 0.0);
-        s.set_variable(&StateVariable::Qy(body(), FrameId::World), 0.0);
-        s.set_variable(&StateVariable::Qz(body(), FrameId::World), 1.0);
-        s.set_variable(&StateVariable::Qw(body(), FrameId::World), 0.0);
+        s.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body(),
+                    to: FrameId::World,
+                },
+                Component::X,
+            ),
+            0.0,
+        );
+        s.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body(),
+                    to: FrameId::World,
+                },
+                Component::Y,
+            ),
+            0.0,
+        );
+        s.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body(),
+                    to: FrameId::World,
+                },
+                Component::Z,
+            ),
+            1.0,
+        );
+        s.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body(),
+                    to: FrameId::World,
+                },
+                Component::W,
+            ),
+            0.0,
+        );
 
         let r = s.orientation::<Flu, Enu>(body(), FrameId::World).unwrap();
         let expected = UnitQuaternion::from_quaternion(Quaternion::new(0.0, 0.0, 0.0, 1.0));
@@ -664,11 +520,38 @@ mod block_extractor_tests {
     #[test]
     fn pose_composes_position_and_orientation() {
         let mut s = composed_state();
-        s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
-        s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
-        s.set_variable(&StateVariable::Pz(FrameId::World), 3.0);
-        s.set_variable(&StateVariable::Qz(body(), FrameId::World), 1.0);
-        s.set_variable(&StateVariable::Qw(body(), FrameId::World), 0.0);
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            1.0,
+        );
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            2.0,
+        );
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::World), Component::Z),
+            3.0,
+        );
+        s.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body(),
+                    to: FrameId::World,
+                },
+                Component::Z,
+            ),
+            1.0,
+        );
+        s.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body(),
+                    to: FrameId::World,
+                },
+                Component::W,
+            ),
+            0.0,
+        );
 
         let pose = s.pose::<Flu, Enu>(body(), FrameId::World).unwrap();
         let iso = pose.into_inner();

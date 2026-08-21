@@ -17,6 +17,7 @@ use crate::data::primitives::FrameHandle;
 use crate::frames::conventions::{Enu, Flu};
 use crate::frames::quantities::Point;
 use crate::frames::{FrameId, RobotState, StateVariable};
+use crate::state::{Component, Quantity};
 use crate::planning::types::Path;
 
 pub struct SteeringPidPathFollower {
@@ -120,8 +121,8 @@ impl PathFollower for SteeringPidPathFollower {
 
         let body_id = FrameId::Body(self.agent_handle);
         let layout = vec![
-            StateVariable::Vx(body_id.clone()),
-            StateVariable::Wz(body_id.clone()),
+            StateVariable::new(Quantity::Velocity(body_id.clone()), Component::X),
+            StateVariable::new(Quantity::AngularVelocity(body_id.clone()), Component::Z),
         ];
         let mut ref_state = RobotState::new(layout, state.timestamp);
         ref_state.vector[0] = self.cruise_speed;

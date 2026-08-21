@@ -181,6 +181,7 @@ mod tests {
     use helios_core::frames::conventions::Enu;
     use helios_core::frames::quantities::Point;
     use helios_core::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
+    use helios_core::state::{Component, Quantity};
     use helios_core::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::planning::types::Path;
 
@@ -366,7 +367,7 @@ mod tests {
     /// body-frame twist setpoint, unlike the geometric path waypoints above.
     fn dummy_reference() -> TrajectoryPoint {
         TrajectoryPoint {
-            state: RobotState::new(vec![StateVariable::Px(FrameId::World)], 0.0),
+            state: RobotState::new(vec![StateVariable::new(Quantity::Position(FrameId::World), Component::X)], 0.0),
             state_dot: None,
             time: 0.0,
         }

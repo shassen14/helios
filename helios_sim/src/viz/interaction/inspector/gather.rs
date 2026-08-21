@@ -235,10 +235,10 @@ pub fn gather_controller(
 mod tests {
     use super::*;
 
-    use helios_core::estimation::schema::{Quantity, SchemaBlock, StateSchema};
+    use helios_core::estimation::schema::{SchemaBlock, StateSchema};
     use helios_core::frames::quantities::FluVector;
     use helios_core::frames::{FrameId, StateVariable};
-    use nalgebra::{DMatrix, DVector};
+    use helios_core::state::{Component, Quantity};
     use helios_runtime::{
         channels::control,
         pipeline::node::HOST_PRODUCER_ID,
@@ -248,6 +248,7 @@ mod tests {
             TickContext,
         },
     };
+    use nalgebra::{DMatrix, DVector};
 
     use nalgebra::Isometry3;
 
@@ -403,12 +404,12 @@ mod tests {
             flat(Quantity::Velocity(FrameId::World)),
         ]);
         let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
-        state.set_variable(&StateVariable::Px(FrameId::World), position[0]);
-        state.set_variable(&StateVariable::Py(FrameId::World), position[1]);
-        state.set_variable(&StateVariable::Pz(FrameId::World), position[2]);
-        state.set_variable(&StateVariable::Vx(FrameId::World), velocity[0]);
-        state.set_variable(&StateVariable::Vy(FrameId::World), velocity[1]);
-        state.set_variable(&StateVariable::Vz(FrameId::World), velocity[2]);
+        state.set_variable(&StateVariable::new(Quantity::Position(FrameId::World), Component::X), position[0]);
+        state.set_variable(&StateVariable::new(Quantity::Position(FrameId::World), Component::Y), position[1]);
+        state.set_variable(&StateVariable::new(Quantity::Position(FrameId::World), Component::Z), position[2]);
+        state.set_variable(&StateVariable::new(Quantity::Velocity(FrameId::World), Component::X), velocity[0]);
+        state.set_variable(&StateVariable::new(Quantity::Velocity(FrameId::World), Component::Y), velocity[1]);
+        state.set_variable(&StateVariable::new(Quantity::Velocity(FrameId::World), Component::Z), velocity[2]);
         state
     }
 

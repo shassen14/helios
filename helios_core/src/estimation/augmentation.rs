@@ -17,9 +17,7 @@
 //! [`StateSchema::compose`]: crate::estimation::schema::StateSchema::compose
 
 use crate::{
-    estimation::schema::{Quantity, SchemaBlock},
-    frames::FrameId,
-    manifold::TangentNoise,
+    estimation::schema::SchemaBlock, frames::FrameId, manifold::TangentNoise, state::Quantity,
 };
 
 use std::fmt::Display;
@@ -46,7 +44,10 @@ impl Display for AugmentationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::UnknownKind(kind) => {
-                write!(f, "unknown augmentation kind '{kind}'; no such block is registered")
+                write!(
+                    f,
+                    "unknown augmentation kind '{kind}'; no such block is registered"
+                )
             }
             Self::InvalidNoise => write!(
                 f,
@@ -103,6 +104,7 @@ mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
     use crate::frames::StateVariable;
+    use crate::state::Component;
 
     const INIT_UNCERTAINTY: f64 = 0.5;
     const RANDOM_WALK: f64 = 0.01;
@@ -127,9 +129,9 @@ mod tests {
         assert_eq!(
             block.variables(),
             vec![
-                StateVariable::MagBiasX(sensor_frame()),
-                StateVariable::MagBiasY(sensor_frame()),
-                StateVariable::MagBiasZ(sensor_frame()),
+                StateVariable::new(Quantity::MagBias(sensor_frame()), Component::X),
+                StateVariable::new(Quantity::MagBias(sensor_frame()), Component::Y),
+                StateVariable::new(Quantity::MagBias(sensor_frame()), Component::Z),
             ]
         );
     }

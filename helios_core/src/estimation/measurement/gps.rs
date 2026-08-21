@@ -97,6 +97,7 @@ mod tests {
     use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::state::{Component, Quantity};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;
 
@@ -134,9 +135,9 @@ mod tests {
     // lever arm.
     fn make_state(px: f64, py: f64, pz: f64) -> FrameAwareState {
         let mut state = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0);
-        state.set_variable(&StateVariable::Px(FrameId::Odom(AGENT)), px);
-        state.set_variable(&StateVariable::Py(FrameId::Odom(AGENT)), py);
-        state.set_variable(&StateVariable::Pz(FrameId::Odom(AGENT)), pz);
+        state.set_variable(&StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::X), px);
+        state.set_variable(&StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::Y), py);
+        state.set_variable(&StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::Z), pz);
         state
     }
 
