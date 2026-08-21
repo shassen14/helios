@@ -1,8 +1,5 @@
 use bevy::prelude::*;
 use helios_core::control::actuators::ActuatorCommand;
-use helios_core::data::primitives::FrameHandle;
-use helios_core::estimation::dynamics::integrated_imu::ins_state_layout;
-use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::prelude::PlannerGoal;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
@@ -51,46 +48,6 @@ impl Default for GroundTruthState {
             last_linear_velocity: Vector3::zeros(),
             last_angular_velocity: Vector3::zeros(),
         }
-    }
-}
-
-impl GroundTruthState {
-    /// Converts physics ground truth into a `FrameAwareState` using the standard INS
-    /// layout. The layout matches what the EKF produces — including its odom reference
-    /// frame — so the controller sees an identical type. The oracle reports truth, but
-    /// publishes it into the same odom-frame estimate slot the real filter fills.
-    pub fn to_frame_aware_state(
-        &self,
-        agent_handle: FrameHandle,
-        timestamp: f64,
-    ) -> FrameAwareState {
-        let body_frame = FrameId::Body(agent_handle);
-        let odom_frame = FrameId::Odom(agent_handle);
-        let layout = ins_state_layout(agent_handle);
-        let mut state = FrameAwareState::new(layout, 1e-6, timestamp);
-        let t = &self.pose.translation;
-        state.set_variable(&StateVariable::Px(odom_frame.clone()), t.x);
-        state.set_variable(&StateVariable::Py(odom_frame.clone()), t.y);
-        state.set_variable(&StateVariable::Pz(odom_frame.clone()), t.z);
-        let v = &self.linear_velocity;
-        state.set_variable(&StateVariable::Vx(odom_frame.clone()), v.x);
-        state.set_variable(&StateVariable::Vy(odom_frame.clone()), v.y);
-        state.set_variable(&StateVariable::Vz(odom_frame.clone()), v.z);
-        let q = self.pose.rotation.quaternion();
-        state.set_variable(
-            &StateVariable::Qx(body_frame.clone(), odom_frame.clone()),
-            q.i,
-        );
-        state.set_variable(
-            &StateVariable::Qy(body_frame.clone(), odom_frame.clone()),
-            q.j,
-        );
-        state.set_variable(
-            &StateVariable::Qz(body_frame.clone(), odom_frame.clone()),
-            q.k,
-        );
-        state.set_variable(&StateVariable::Qw(body_frame, odom_frame), q.w);
-        state
     }
 }
 

@@ -279,8 +279,9 @@ mod tests {
     use crate::data::MonotonicTime;
     use crate::estimation::measurement::MeasurementModel;
     use crate::estimation::EstimatorInputs;
+    use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
     use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::frames::{FrameAwareState, FrameId};
     use nalgebra::{DMatrix, DVector, Isometry3};
 
     const AT: MonotonicTime = MonotonicTime(0.0);
@@ -302,27 +303,40 @@ mod tests {
         }
     }
 
+    /// 3D constant-velocity dynamics: state = [px, py, pz, vx, vy, vz]. The Z
+    /// axis carries no velocity in these tests (vz stays 0), so pz is constant —
+    /// the model is 3D only because [`Quantity`] blocks are 3D, not because the
+    /// motion is.
     #[derive(Debug, Clone)]
-    struct ConstantVelocity2D;
+    struct ConstantVelocity3D;
 
-    impl EstimationDynamics for ConstantVelocity2D {
+    impl EstimationDynamics for ConstantVelocity3D {
         fn get_control_dim(&self) -> usize {
             0
         }
 
-        fn schema(&self) -> std::sync::Arc<crate::estimation::schema::StateSchema> {
-            std::sync::Arc::new(crate::estimation::schema::StateSchema::degenerate(&[
-                StateVariable::Px(FrameId::World),
-                StateVariable::Py(FrameId::World),
-                StateVariable::Vx(FrameId::World),
-                StateVariable::Vy(FrameId::World),
+        fn schema(&self) -> std::sync::Arc<StateSchema> {
+            std::sync::Arc::new(StateSchema::compose(vec![
+                SchemaBlock::new(
+                    Quantity::Position(FrameId::World),
+                    None,
+                    DVector::zeros(3),
+                    DMatrix::identity(3, 3),
+                ),
+                SchemaBlock::new(
+                    Quantity::Velocity(FrameId::World),
+                    None,
+                    DVector::zeros(3),
+                    DMatrix::identity(3, 3),
+                ),
             ]))
         }
 
         fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-            let mut xdot = DVector::zeros(4);
-            xdot[0] = x[2];
-            xdot[1] = x[3];
+            let mut xdot = DVector::zeros(6);
+            xdot[0] = x[3];
+            xdot[1] = x[4];
+            xdot[2] = x[5];
             xdot
         }
     }
@@ -359,24 +373,19 @@ mod tests {
     }
 
     fn make_ukf(initial_px: f64, vx: f64) -> UnscentedKalmanFilter {
-        let layout = vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-            StateVariable::Vx(FrameId::World),
-            StateVariable::Vy(FrameId::World),
-        ];
-        let mut state = FrameAwareState::new(layout, 1.0, 0.0);
+        // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
+        let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
         state.mean[0] = initial_px;
-        state.mean[2] = vx;
+        state.mean[3] = vx;
 
-        let q = DMatrix::identity(4, 4) * 0.01;
+        let q = DMatrix::identity(6, 6) * 0.01;
         let params = UkfParams {
             alpha: 1e-3,
             beta: 2.0,
             kappa: 0.0,
         };
 
-        UnscentedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D), params)
+        UnscentedKalmanFilter::new(state, q, Box::new(ConstantVelocity3D), params)
     }
 
     fn gps_r() -> DMatrix<f64> {

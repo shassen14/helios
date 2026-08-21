@@ -8,7 +8,7 @@ use helios_core::data::MonotonicTime;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
 use helios_core::estimation::measurement::MeasurementModel;
-use helios_core::estimation::schema::StateSchema;
+use helios_core::estimation::schema::{Quantity, SchemaBlock, StateSchema};
 use helios_core::estimation::{EstimatorInputs, GaussianStateEstimator};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
@@ -38,26 +38,35 @@ impl TfProvider for IdentityTf {
 }
 
 #[derive(Debug, Clone)]
-struct ConstantVelocity2D;
+struct ConstantVelocity3D;
 
-impl EstimationDynamics for ConstantVelocity2D {
+impl EstimationDynamics for ConstantVelocity3D {
     fn get_control_dim(&self) -> usize {
         0
     }
 
     fn schema(&self) -> Arc<StateSchema> {
-        Arc::new(StateSchema::degenerate(&[
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-            StateVariable::Vx(FrameId::World),
-            StateVariable::Vy(FrameId::World),
+        Arc::new(StateSchema::compose(vec![
+            SchemaBlock::new(
+                Quantity::Position(FrameId::World),
+                None,
+                DVector::zeros(3),
+                DMatrix::identity(3, 3),
+            ),
+            SchemaBlock::new(
+                Quantity::Velocity(FrameId::World),
+                None,
+                DVector::zeros(3),
+                DMatrix::identity(3, 3),
+            ),
         ]))
     }
 
     fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-        let mut xdot = DVector::zeros(4);
-        xdot[0] = x[2];
-        xdot[1] = x[3];
+        let mut xdot = DVector::zeros(6);
+        xdot[0] = x[3];
+        xdot[1] = x[4];
+        xdot[2] = x[5];
         xdot
     }
 
@@ -67,10 +76,11 @@ impl EstimationDynamics for ConstantVelocity2D {
         _u: &DVector<f64>,
         _t: f64,
     ) -> (DMatrix<f64>, DMatrix<f64>) {
-        let mut a = DMatrix::zeros(4, 4);
-        a[(0, 2)] = 1.0;
-        a[(1, 3)] = 1.0;
-        (a, DMatrix::zeros(4, 0))
+        let mut a = DMatrix::zeros(6, 6);
+        a[(0, 3)] = 1.0;
+        a[(1, 4)] = 1.0;
+        a[(2, 5)] = 1.0;
+        (a, DMatrix::zeros(6, 0))
     }
 }
 
@@ -106,32 +116,27 @@ impl MeasurementModel for Position2DMeasurement {
 }
 
 fn make_state() -> FrameAwareState {
-    let layout = vec![
-        StateVariable::Px(FrameId::World),
-        StateVariable::Py(FrameId::World),
-        StateVariable::Vx(FrameId::World),
-        StateVariable::Vy(FrameId::World),
-    ];
-    let mut state = FrameAwareState::new(layout, 1.0, 0.0);
+    // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
+    let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
     state.set_variable(&StateVariable::Vx(FrameId::World), 1.0); // vx = 1.0 m/s
     state
 }
 
 fn make_ekf() -> ExtendedKalmanFilter {
     let state = make_state();
-    let q = DMatrix::identity(4, 4) * 0.01;
-    ExtendedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D))
+    let q = DMatrix::identity(6, 6) * 0.01;
+    ExtendedKalmanFilter::new(state, q, Box::new(ConstantVelocity3D))
 }
 
 fn make_ukf() -> UnscentedKalmanFilter {
     let state = make_state();
-    let q = DMatrix::identity(4, 4) * 0.01;
+    let q = DMatrix::identity(6, 6) * 0.01;
     let params = UkfParams {
         alpha: 1e-3,
         beta: 2.0,
         kappa: 0.0,
     };
-    UnscentedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D), params)
+    UnscentedKalmanFilter::new(state, q, Box::new(ConstantVelocity3D), params)
 }
 
 fn gps_z(x: f64, y: f64) -> DVector<f64> {

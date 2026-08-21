@@ -252,7 +252,8 @@ mod tests {
     use helios_core::data::sensor::LinearAcceleration3D;
     use helios_core::estimation::EstimatorInputs;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+    use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::frames::{FrameAwareState, FrameId};
     use nalgebra::{DMatrix, DVector, Isometry3};
     use std::sync::Mutex as StdMutex;
 
@@ -296,9 +297,12 @@ mod tests {
 
     impl MockEstimator {
         fn new() -> Self {
-            let layout = vec![StateVariable::Px(FrameId::World)];
+            // A placeholder kinematic state; this mock never reads its contents.
             Self {
-                state: FrameAwareState::new(layout, 1.0, 0.0),
+                state: FrameAwareState::from_schema(
+                    std::sync::Arc::new(kinematic_carrier_schema(FrameHandle(0))),
+                    0.0,
+                ),
                 counts: StdMutex::new(Default::default()),
             }
         }

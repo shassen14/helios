@@ -321,17 +321,6 @@ impl FrameAwareState {
         }
     }
 
-    pub fn new(layout: Vec<StateVariable>, initial_covariance_val: f64, timestamp: f64) -> Self {
-        let schema = Arc::new(StateSchema::degenerate(&layout));
-        let dim = layout.len();
-        Self {
-            mean: schema.initial_value().clone(),
-            covariance: DMatrix::identity(dim, dim) * initial_covariance_val,
-            schema,
-            timestamp,
-        }
-    }
-
     /// Retracts the mean in place by a tangent-space correction: `mean ⊞= delta`.
     /// The manifold-aware replacement for `mean += delta`; reduces to addition
     /// while every block is Euclidean.
@@ -494,24 +483,41 @@ impl FrameAwareState {
 #[cfg(test)]
 mod frame_aware_state_tests {
     use super::*;
+    use crate::estimation::schema::SchemaBlock;
+    use crate::manifold::TangentNoise;
 
-    fn pose_layout() -> Vec<StateVariable> {
-        vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-            StateVariable::Pz(FrameId::World),
-            StateVariable::Qx(FrameId::World, FrameId::World),
-            StateVariable::Qy(FrameId::World, FrameId::World),
-            StateVariable::Qz(FrameId::World, FrameId::World),
-            StateVariable::Qw(FrameId::World, FrameId::World),
-        ]
+    // A composed position + orientation state in World, built from real
+    // `Quantity` blocks via `compose`. The orientation block seeds the identity
+    // quaternion `[0, 0, 0, 1]`; the position block seeds zeros.
+    fn pose_schema() -> Arc<StateSchema> {
+        Arc::new(StateSchema::compose(vec![
+            SchemaBlock::new(
+                Quantity::Position(FrameId::World),
+                None,
+                DVector::zeros(3),
+                DMatrix::identity(3, 3),
+            ),
+            SchemaBlock::new(
+                Quantity::Orientation {
+                    from: FrameId::World,
+                    to: FrameId::World,
+                },
+                Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap()),
+                DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+                DMatrix::identity(3, 3),
+            ),
+        ]))
+    }
+
+    fn pose_state() -> FrameAwareState {
+        FrameAwareState::from_schema(pose_schema(), 0.0)
     }
 
     #[test]
-    fn new_seeds_identity_quaternion() {
-        let s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
-        // The degenerate constructor seeds `Qw` to 1.0 so the state holds a valid
-        // identity quaternion rather than an all-zero non-rotation.
+    fn seeds_identity_quaternion() {
+        let s = pose_state();
+        // The orientation block seeds the identity quaternion `[0, 0, 0, 1]`, so
+        // `Qw` reads back as 1.0 rather than an all-zero non-rotation.
         let qw = s
             .schema
             .storage_offset_of(&StateVariable::Qw(FrameId::World, FrameId::World))
@@ -521,41 +527,43 @@ mod frame_aware_state_tests {
 
     #[test]
     fn set_variable_writes_reach_the_mean() {
-        let mut s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
+        let mut s = pose_state();
         s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
         s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
         s.set_variable(&StateVariable::Pz(FrameId::World), 3.0);
 
-        // `Px` heads the layout, so the three position slots are the first rows.
+        // The position block heads the layout, so its three slots are the first rows.
         assert_eq!(s.mean.fixed_rows::<3>(0), Vector3::new(1.0, 2.0, 3.0));
     }
 
     #[test]
     fn set_variable_absent_is_noop() {
-        let mut s = FrameAwareState::new(pose_layout(), 1.0, 0.0);
+        let mut s = pose_state();
         assert!(!s.set_variable(&StateVariable::Vx(FrameId::World), 9.0));
     }
 
     #[test]
-    fn oplus_assign_is_addition_for_degenerate_state() {
-        let mut s = FrameAwareState::new(
-            vec![
-                StateVariable::Px(FrameId::World),
-                StateVariable::Py(FrameId::World),
-            ],
-            1.0,
+    fn oplus_assign_is_addition_for_a_euclidean_block() {
+        // A position block is Euclidean, so `oplus_assign` reduces to `mean += delta`.
+        let mut s = FrameAwareState::from_schema(
+            Arc::new(StateSchema::compose(vec![SchemaBlock::new(
+                Quantity::Position(FrameId::World),
+                None,
+                DVector::zeros(3),
+                DMatrix::identity(3, 3),
+            )])),
             0.0,
         );
         s.set_variable(&StateVariable::Px(FrameId::World), 1.0);
         s.set_variable(&StateVariable::Py(FrameId::World), 2.0);
 
-        s.oplus_assign(&DVector::from_vec(vec![0.5, -0.5]));
-        assert_eq!(s.mean, DVector::from_vec(vec![1.5, 1.5]));
+        s.oplus_assign(&DVector::from_vec(vec![0.5, -0.5, 0.0]));
+        assert_eq!(s.mean, DVector::from_vec(vec![1.5, 1.5, 0.0]));
     }
 
     #[test]
     fn from_schema_takes_initial_value() {
-        let schema = Arc::new(StateSchema::degenerate(&pose_layout()));
+        let schema = pose_schema();
         let s = FrameAwareState::from_schema(schema.clone(), 5.0);
 
         assert_eq!(&s.mean, schema.initial_value());
@@ -581,12 +589,11 @@ mod block_extractor_tests {
         Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap())
     }
 
-    // A composed (non-degenerate) schema: position + velocity in World, then a
-    // body → World orientation. The block extractors key off `Quantity`, so the
-    // state must be built through `compose`; a `degenerate` schema is a single
-    // `Quantity::Raw` block and would match none of them. The orientation seeds
-    // an identity quaternion `[0, 0, 0, 1]`, the flat blocks seed zeros; each
-    // test overwrites the slots it reads.
+    // A composed schema: position + velocity in World, then a body → World
+    // orientation. The block extractors key off `Quantity`, so the state is
+    // built through `compose`. The orientation seeds an identity quaternion
+    // `[0, 0, 0, 1]`, the flat blocks seed zeros; each test overwrites the
+    // slots it reads.
     fn composed_state() -> FrameAwareState {
         let schema = StateSchema::compose(vec![
             SchemaBlock::new(

@@ -38,18 +38,7 @@ pub enum Quantity {
     MagBias(FrameId),
     AccelBias(FrameId),
     GyroBias(FrameId),
-    Orientation {
-        from: FrameId,
-        to: FrameId,
-    },
-
-    /// A type-erased bridge block: an arbitrary heterogeneous layout with no
-    /// single semantic quantity, realized as one flat Euclidean block. The only
-    /// carrier for states that predate schema ownership (simulation ground
-    /// truth, mocks, tests) built via [`StateSchema::degenerate`]. Temporary —
-    /// it is retired together with `degenerate` once every producer of state
-    /// carries a real, dynamics-authored schema.
-    Raw(Vec<StateVariable>),
+    Orientation { from: FrameId, to: FrameId },
 }
 
 impl Quantity {
@@ -108,7 +97,6 @@ impl Quantity {
                 StateVariable::GyroBiasY(f.clone()),
                 StateVariable::GyroBiasZ(f.clone()),
             ],
-            Quantity::Raw(vars) => vars.clone(),
         }
     }
 
@@ -265,36 +253,6 @@ impl StateSchema {
             initial_covariance,
             process_noise,
         }
-    }
-
-    /// Builds a flat, all-Euclidean schema over `layout` — the staging path for
-    /// states that carry no dynamics model (simulation ground truth, mocks,
-    /// tests). Every variable is one axis of a single Euclidean block, so
-    /// retraction reduces to `x + δ` and there is no process noise.
-    ///
-    /// Any `Qw` slot is seeded to `1.0` so a freshly built state holds a valid
-    /// identity quaternion rather than an all-zero one, which is not a rotation
-    /// and propagates `NaN`.
-    ///
-    /// This is a temporary bridge: it lets call sites that predate schema
-    /// ownership keep constructing state from a bare layout. It is retired once
-    /// every producer of state carries a real, dynamics-authored schema.
-    pub fn degenerate(layout: &[StateVariable]) -> Self {
-        let dim = layout.len();
-
-        let mut initial_value = DVector::zeros(dim);
-        for (i, var) in layout.iter().enumerate() {
-            if matches!(var, StateVariable::Qw(_, _)) {
-                initial_value[i] = 1.0;
-            }
-        }
-
-        Self::compose(vec![SchemaBlock::new(
-            Quantity::Raw(layout.to_vec()),
-            None,
-            initial_value,
-            DMatrix::zeros(dim, dim),
-        )])
     }
 
     /// Returns a new schema with `extra` blocks appended after this schema's own,
@@ -644,41 +602,6 @@ mod tests {
         assert_eq!(
             s.storage_offset_of(&StateVariable::Az(FrameId::World)),
             None
-        );
-    }
-
-    #[test]
-    fn degenerate_seeds_identity_quaternion_and_no_noise() {
-        let layout = vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Qx(FrameId::World, FrameId::World),
-            StateVariable::Qy(FrameId::World, FrameId::World),
-            StateVariable::Qz(FrameId::World, FrameId::World),
-            StateVariable::Qw(FrameId::World, FrameId::World),
-        ];
-        let s = StateSchema::degenerate(&layout);
-
-        assert_eq!(s.storage_dim(), 5);
-        // Qw is the last slot, seeded to 1.0; everything else 0.0.
-        assert_eq!(s.initial_value()[4], 1.0);
-        assert_eq!(s.initial_value()[0], 0.0);
-        // No block contributed process noise.
-        assert_eq!(s.process_noise(), &DMatrix::zeros(5, 5));
-    }
-
-    #[test]
-    fn degenerate_oplus_is_addition() {
-        let layout = vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-        ];
-        let s = StateSchema::degenerate(&layout);
-        let x = DVector::from_vec(vec![1.0, 2.0]);
-        let d = DVector::from_vec(vec![0.5, -0.5]);
-
-        assert_eq!(
-            s.oplus(x.as_view(), d.as_view()),
-            DVector::from_vec(vec![1.5, 1.5])
         );
     }
 

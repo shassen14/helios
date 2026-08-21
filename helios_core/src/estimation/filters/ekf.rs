@@ -197,6 +197,7 @@ mod tests {
     use crate::estimation::measurement::MeasurementModel;
     use crate::estimation::EstimatorInputs;
     use crate::frames::transforms::{Convention, ErasedTransform};
+    use crate::estimation::schema::{Quantity, SchemaBlock, StateSchema};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector, Isometry3};
     use rand::rngs::StdRng;
@@ -223,28 +224,40 @@ mod tests {
         }
     }
 
-    /// 2D constant-velocity dynamics: state = [px, py, vx, vy].
+    /// 3D constant-velocity dynamics: state = [px, py, pz, vx, vy, vz]. The Z
+    /// axis carries no velocity in these tests (vz stays 0), so pz is constant —
+    /// the model is 3D only because [`Quantity`] blocks are 3D, not because the
+    /// motion is.
     #[derive(Debug, Clone)]
-    struct ConstantVelocity2D;
+    struct ConstantVelocity3D;
 
-    impl EstimationDynamics for ConstantVelocity2D {
+    impl EstimationDynamics for ConstantVelocity3D {
         fn get_control_dim(&self) -> usize {
             0
         }
 
-        fn schema(&self) -> std::sync::Arc<crate::estimation::schema::StateSchema> {
-            std::sync::Arc::new(crate::estimation::schema::StateSchema::degenerate(&[
-                StateVariable::Px(FrameId::World),
-                StateVariable::Py(FrameId::World),
-                StateVariable::Vx(FrameId::World),
-                StateVariable::Vy(FrameId::World),
+        fn schema(&self) -> std::sync::Arc<StateSchema> {
+            std::sync::Arc::new(StateSchema::compose(vec![
+                SchemaBlock::new(
+                    Quantity::Position(FrameId::World),
+                    None,
+                    DVector::zeros(3),
+                    DMatrix::identity(3, 3),
+                ),
+                SchemaBlock::new(
+                    Quantity::Velocity(FrameId::World),
+                    None,
+                    DVector::zeros(3),
+                    DMatrix::identity(3, 3),
+                ),
             ]))
         }
 
         fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-            let mut xdot = DVector::zeros(4);
-            xdot[0] = x[2];
-            xdot[1] = x[3];
+            let mut xdot = DVector::zeros(6);
+            xdot[0] = x[3];
+            xdot[1] = x[4];
+            xdot[2] = x[5];
             xdot
         }
 
@@ -254,10 +267,11 @@ mod tests {
             _u: &DVector<f64>,
             _t: f64,
         ) -> (DMatrix<f64>, DMatrix<f64>) {
-            let mut a = DMatrix::zeros(4, 4);
-            a[(0, 2)] = 1.0;
-            a[(1, 3)] = 1.0;
-            (a, DMatrix::zeros(4, 0))
+            let mut a = DMatrix::zeros(6, 6);
+            a[(0, 3)] = 1.0;
+            a[(1, 4)] = 1.0;
+            a[(2, 5)] = 1.0;
+            (a, DMatrix::zeros(6, 0))
         }
     }
 
@@ -321,22 +335,17 @@ mod tests {
     }
 
     fn make_state_with_velocity(vx: f64) -> FrameAwareState {
-        let layout = vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-            StateVariable::Vx(FrameId::World),
-            StateVariable::Vy(FrameId::World),
-        ];
-        let mut state = FrameAwareState::new(layout, 1.0, 0.0);
-        state.mean[2] = vx;
+        // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
+        let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
+        state.mean[3] = vx;
         state
     }
 
     fn make_ekf(initial_px: f64, vx: f64) -> ExtendedKalmanFilter {
         let mut state = make_state_with_velocity(vx);
         state.mean[0] = initial_px;
-        let q = DMatrix::identity(4, 4) * 0.01;
-        ExtendedKalmanFilter::new(state, q, Box::new(ConstantVelocity2D))
+        let q = DMatrix::identity(6, 6) * 0.01;
+        ExtendedKalmanFilter::new(state, q, Box::new(ConstantVelocity3D))
     }
 
     fn gps_r() -> DMatrix<f64> {

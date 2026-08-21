@@ -1,8 +1,10 @@
-use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
-use nalgebra::{DMatrix, Isometry3, Vector2};
-
+use helios_core::estimation::schema::{Quantity, SchemaBlock, StateSchema};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::mapping::MapData;
+
+use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
+use nalgebra::{DMatrix, DVector, Isometry3, Vector2};
+use std::sync::Arc;
 use helios_core::planning::astar::{AStarConfig, AStarPlanner};
 use helios_core::planning::types::PlannerGoal;
 use helios_core::planning::SearchPlanner;
@@ -26,12 +28,13 @@ fn bench_config() -> AStarConfig {
 }
 
 fn make_state(x: f64, y: f64) -> FrameAwareState {
-    let layout = vec![
-        StateVariable::Px(FrameId::World),
-        StateVariable::Py(FrameId::World),
-        StateVariable::Pz(FrameId::World),
-    ];
-    let mut state = FrameAwareState::new(layout, 1.0, 0.0);
+    let schema = Arc::new(StateSchema::compose(vec![SchemaBlock::new(
+        Quantity::Position(FrameId::World),
+        None,
+        DVector::zeros(3),
+        DMatrix::identity(3, 3),
+    )]));
+    let mut state = FrameAwareState::from_schema(schema, 0.0);
     state.set_variable(&StateVariable::Px(FrameId::World), x);
     state.set_variable(&StateVariable::Py(FrameId::World), y);
     state

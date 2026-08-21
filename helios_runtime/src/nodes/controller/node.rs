@@ -137,9 +137,10 @@ mod tests {
     use crate::port::ChannelKey;
 
     use helios_core::control::commands::{BodyTwist, BodyWrench};
-    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+    use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::quantities::FluVector;
-    use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+    use helios_core::frames::{FrameAwareState, FrameId};
 
     use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};
@@ -243,7 +244,11 @@ mod tests {
             _tick: &TickContext,
         ) -> Option<ControlInputs> {
             Some(ControlInputs {
-                state: FrameAwareState::new(vec![StateVariable::Px(FrameId::World)], 1.0, 0.0),
+                // A placeholder kinematic state; this mock never reads its contents.
+                state: FrameAwareState::from_schema(
+                    std::sync::Arc::new(kinematic_carrier_schema(FrameHandle(0))),
+                    0.0,
+                ),
                 reference: None,
             })
         }
