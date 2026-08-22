@@ -8,6 +8,7 @@ use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::ControllerBuildContext, AutonomyRegistry};
 
 use helios_core::control::direct_twist::DirectTwistController;
+use helios_core::control::BodyTwistRef;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_controller("DirectTwist", build_direct_twist);
@@ -21,7 +22,7 @@ fn build_direct_twist(ctx: ControllerBuildContext) -> Result<Box<dyn PipelineNod
     let ControllerConfig::DirectTwist { .. } = ctx.config;
 
     let controller = DirectTwistController::new();
-    let input_builder = Box::new(DefaultControlInputBuilder::new());
+    let input_builder = Box::new(DefaultControlInputBuilder::<BodyTwistRef>::new());
 
     Ok(Box::new(ControllerNode::new(
         ctx.instance_name,

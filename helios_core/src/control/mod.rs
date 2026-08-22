@@ -13,19 +13,21 @@ pub mod allocation;
 pub mod commands;
 pub mod direct_twist;
 pub mod dynamics;
+pub mod reference;
 pub mod siso_pid;
 
 pub use crate::control::dynamics::ControlDynamics;
+pub use reference::{BodyTwistRef, ControlReference};
 
-use crate::{data::messages::TrajectoryPoint, frames::FrameAwareState};
+use crate::frames::FrameAwareState;
 
 // =========================================================================
 // == Core Data Types ==
 // =========================================================================
 
-pub struct ControlInputs {
+pub struct ControlInputs<R: ControlReference> {
     pub state: FrameAwareState,
-    pub reference: Option<TrajectoryPoint>,
+    pub reference: Option<R>,
 }
 
 // =========================================================================

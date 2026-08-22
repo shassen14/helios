@@ -1,4 +1,3 @@
-use helios_core::data::messages::TrajectoryPoint;
 use helios_runtime::pipeline::AutonomyPipeline;
 
 use bevy::prelude::{Component, Entity};
@@ -68,11 +67,6 @@ pub struct MissionGoalChannels(pub Vec<String>);
 
 #[derive(Component)]
 pub struct TeleopControlled;
-
-/// The TrajectoryPoint produced by path following this tick.
-/// Kept as a component for downstream consumers (the vehicle plugin, future viz).
-#[derive(Component, Default)]
-pub struct PathFollowingOutputComponent(pub Option<TrajectoryPoint>);
 
 /// Marker on a virtual "odom frame" entity that links it back to its agent.
 ///

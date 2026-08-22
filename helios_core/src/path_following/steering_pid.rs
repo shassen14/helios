@@ -2,23 +2,23 @@
 //
 // SteeringPidPathFollower: heading-error path follower implemented as a PathFollower.
 // Same PID logic as the old SteeringPidController, but advances its own lookahead
-// index along the path and emits TrajectoryPoints for the controller stage.
+// index along the path and emits body-twist references for the controller stage.
 //
 // Use this as a diagnostic: if this produces correct steering through the
 // PathFollowing → DirectTwist → DualSisoPid chain, the wiring is correct
 // and any issues with PurePursuit are in that algorithm's geometry.
 
-use nalgebra::Vector2;
-
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
+use crate::control::commands::BodyTwist;
 use crate::control::siso_pid::SisoPid;
-use crate::data::messages::TrajectoryPoint;
+use crate::control::BodyTwistRef;
 use crate::data::primitives::FrameHandle;
 use crate::frames::conventions::{Enu, Flu};
 use crate::frames::quantities::Point;
-use crate::frames::{FrameId, RobotState, StateVariable};
-use crate::state::{Component, Quantity};
+use crate::frames::FrameId;
 use crate::planning::types::Path;
+
+use nalgebra::Vector2;
 
 pub struct SteeringPidPathFollower {
     heading_pid: SisoPid,
@@ -76,7 +76,13 @@ fn normalize_angle(a: f64) -> f64 {
 }
 
 impl PathFollower for SteeringPidPathFollower {
-    fn compute(&mut self, dt: f64, inputs: &PathFollowerInputs) -> PathFollowerResult {
+    type Reference = BodyTwistRef;
+
+    fn compute(
+        &mut self,
+        dt: f64,
+        inputs: &PathFollowerInputs,
+    ) -> PathFollowerResult<BodyTwistRef> {
         let state = &inputs.state;
 
         if self.path.is_none() {
@@ -87,9 +93,10 @@ impl PathFollower for SteeringPidPathFollower {
             Some(p) => Vector2::new(p.x(), p.y()),
             None => return PathFollowerResult::Error("missing agent position".into()),
         };
-        let orientation = match state
-            .orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::Odom(self.agent_handle))
-        {
+        let orientation = match state.orientation::<Flu, Enu>(
+            FrameId::Body(self.agent_handle),
+            FrameId::Odom(self.agent_handle),
+        ) {
             Some(q) => q.into_inner(),
             None => return PathFollowerResult::Error("missing agent orientation".into()),
         };
@@ -119,20 +126,11 @@ impl PathFollower for SteeringPidPathFollower {
         let heading_error = normalize_angle(desired_yaw - current_yaw);
         let wz = self.heading_pid.update(heading_error, dt);
 
-        let body_id = FrameId::Body(self.agent_handle);
-        let layout = vec![
-            StateVariable::new(Quantity::Velocity(body_id.clone()), Component::X),
-            StateVariable::new(Quantity::AngularVelocity(body_id.clone()), Component::Z),
-        ];
-        let mut ref_state = RobotState::new(layout, state.timestamp);
-        ref_state.vector[0] = self.cruise_speed;
-        ref_state.vector[1] = wz;
+        let body_twist = BodyTwist::unicycle(self.cruise_speed, wz);
 
-        PathFollowerResult::Active(TrajectoryPoint {
-            state: ref_state,
-            state_dot: None,
-            time: state.timestamp,
-        })
+        let reference = BodyTwistRef::new(body_twist);
+
+        PathFollowerResult::Active(reference)
     }
 
     fn set_path(&mut self, path: Path) {

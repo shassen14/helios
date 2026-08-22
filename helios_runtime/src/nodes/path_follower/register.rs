@@ -7,6 +7,7 @@ use crate::config::PathFollowingConfig;
 use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::PathFollowerBuildContext, AutonomyRegistry};
 
+use helios_core::control::BodyTwistRef;
 use helios_core::path_following::{
     pure_pursuit::PurePursuitPathFollower, steering_pid::SteeringPidPathFollower, PathFollower,
 };
@@ -30,7 +31,7 @@ fn build_pure_pursuit(ctx: PathFollowerBuildContext) -> Result<Box<dyn PipelineN
         return Err("build_pure_pursuit received wrong config variant".to_string());
     };
 
-    let follower: Box<dyn PathFollower> = Box::new(PurePursuitPathFollower::new(
+    let follower: Box<dyn PathFollower<Reference = BodyTwistRef>> = Box::new(PurePursuitPathFollower::new(
         lookahead_distance_m,
         lookahead_time_s,
         goal_radius,
@@ -63,7 +64,7 @@ fn build_steering_pid(ctx: PathFollowerBuildContext) -> Result<Box<dyn PipelineN
         return Err("build_steering_pid received wrong config variant".to_string());
     };
 
-    let follower: Box<dyn PathFollower> = Box::new(SteeringPidPathFollower::new(
+    let follower: Box<dyn PathFollower<Reference = BodyTwistRef>> = Box::new(SteeringPidPathFollower::new(
         kp,
         ki,
         kd,

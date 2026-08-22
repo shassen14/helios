@@ -35,7 +35,6 @@ use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
 use helios_core::control::Controller;
-use helios_core::prelude::ControlInputs;
 
 use std::sync::Mutex;
 
@@ -49,20 +48,20 @@ use std::sync::Mutex;
 pub(crate) struct ControllerNode<C: Controller> {
     name: String,
     controller: Mutex<C>,
-    input_builder: Box<dyn ControlInputBuilder>,
+    input_builder: Box<dyn ControlInputBuilder<Output = C::Inputs>>,
     descriptor: PortDescriptor,
     output_key: ChannelKey,
 }
 
 impl<C> ControllerNode<C>
 where
-    C: Controller<Inputs = ControlInputs>,
+    C: Controller,
     C::Out: Send + Sync + 'static,
 {
     pub(crate) fn new(
         name: impl Into<String>,
         controller: C,
-        input_builder: Box<dyn ControlInputBuilder>,
+        input_builder: Box<dyn ControlInputBuilder<Output = C::Inputs>>,
         output: InternalChannel,
     ) -> Self {
         let descriptor = AlgorithmNodePortDescriptor::new()
@@ -85,7 +84,7 @@ where
 
 impl<C> PipelineNode for ControllerNode<C>
 where
-    C: Controller<Inputs = ControlInputs>,
+    C: Controller,
     C::Out: Send + Sync + 'static,
 {
     fn name(&self) -> &str {
@@ -137,6 +136,7 @@ mod tests {
     use crate::port::ChannelKey;
 
     use helios_core::control::commands::{BodyTwist, BodyWrench};
+    use helios_core::control::{BodyTwistRef, ControlInputs};
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::quantities::FluVector;
@@ -196,10 +196,10 @@ mod tests {
     }
 
     impl Controller for ScriptedController {
-        type Inputs = ControlInputs;
+        type Inputs = ControlInputs<BodyTwistRef>;
         type Out = BodyTwist;
 
-        fn compute(&mut self, dt: f64, _inputs: &ControlInputs) -> BodyTwist {
+        fn compute(&mut self, dt: f64, _inputs: &ControlInputs<BodyTwistRef>) -> BodyTwist {
             let mut c = self.calls.lock().unwrap();
             c.compute_calls += 1;
             c.last_dt = dt;
@@ -213,10 +213,10 @@ mod tests {
     struct WrenchController;
 
     impl Controller for WrenchController {
-        type Inputs = ControlInputs;
+        type Inputs = ControlInputs<BodyTwistRef>;
         type Out = BodyWrench;
 
-        fn compute(&mut self, _dt: f64, _inputs: &ControlInputs) -> BodyWrench {
+        fn compute(&mut self, _dt: f64, _inputs: &ControlInputs<BodyTwistRef>) -> BodyWrench {
             BodyWrench::zero()
         }
         fn reset(&mut self) {}
@@ -237,12 +237,14 @@ mod tests {
         }
     }
     impl ControlInputBuilder for AlwaysReadyBuilder {
+        type Output = ControlInputs<BodyTwistRef>;
+
         fn assemble(
             &self,
             _bus: &PortBus,
             _runtime: &dyn AgentRuntime,
             _tick: &TickContext,
-        ) -> Option<ControlInputs> {
+        ) -> Option<ControlInputs<BodyTwistRef>> {
             Some(ControlInputs {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
@@ -265,12 +267,14 @@ mod tests {
         optional: Vec<ChannelKey>,
     }
     impl ControlInputBuilder for NeverReadyBuilder {
+        type Output = ControlInputs<BodyTwistRef>;
+
         fn assemble(
             &self,
             _bus: &PortBus,
             _runtime: &dyn AgentRuntime,
             _tick: &TickContext,
-        ) -> Option<ControlInputs> {
+        ) -> Option<ControlInputs<BodyTwistRef>> {
             None
         }
         fn required_channels(&self) -> &[ChannelKey] {

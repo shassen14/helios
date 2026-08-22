@@ -3,60 +3,69 @@ use crate::{
     prelude::{AgentRuntime, TickContext},
 };
 use helios_core::{
-    data::messages::TrajectoryPoint, frames::FrameAwareState, prelude::ControlInputs,
+    control::{ControlInputs, ControlReference},
+    frames::FrameAwareState,
 };
 
+use std::marker::PhantomData;
+
 pub(crate) trait ControlInputBuilder: Send + Sync {
+    type Output;
+
     fn assemble(
         &self,
         bus: &PortBus,
         runtime: &dyn AgentRuntime,
         tick: &TickContext,
-    ) -> Option<ControlInputs>;
+    ) -> Option<Self::Output>;
 
     fn required_channels(&self) -> &[ChannelKey];
 
     fn optional_channels(&self) -> &[ChannelKey];
 }
 
-pub(crate) struct DefaultControlInputBuilder {
+pub(crate) struct DefaultControlInputBuilder<R> {
     state_channel: ChannelKey,
     reference_channel: ChannelKey,
     required: Vec<ChannelKey>,
     optional: Vec<ChannelKey>,
+    _reference: PhantomData<fn() -> R>,
 }
 
-impl Default for DefaultControlInputBuilder {
+impl<R: ControlReference> Default for DefaultControlInputBuilder<R> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl DefaultControlInputBuilder {
+impl<R: ControlReference> DefaultControlInputBuilder<R> {
     pub(crate) fn new() -> Self {
         let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
-        let reference_channel: ChannelKey = InternalChannel::of::<TrajectoryPoint>().into();
+        let reference_channel: ChannelKey = InternalChannel::of::<R>().into();
 
         Self {
             state_channel: state_channel.clone(),
             reference_channel: reference_channel.clone(),
             required: vec![state_channel],
             optional: vec![reference_channel],
+            _reference: PhantomData,
         }
     }
 }
 
-impl ControlInputBuilder for DefaultControlInputBuilder {
+impl<R: ControlReference + Clone> ControlInputBuilder for DefaultControlInputBuilder<R> {
+    type Output = ControlInputs<R>;
+
     fn assemble(
         &self,
         bus: &PortBus,
         _runtime: &dyn AgentRuntime,
         _tick: &TickContext,
-    ) -> Option<ControlInputs> {
+    ) -> Option<ControlInputs<R>> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;
 
         let reference = bus
-            .read::<TrajectoryPoint>(self.reference_channel.clone())
+            .read::<R>(self.reference_channel.clone())
             .map(|stamped| stamped.value.clone());
 
         Some(ControlInputs {

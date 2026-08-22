@@ -2,7 +2,7 @@
 
 // --- Core Abstractions (The main contracts of the library) ---
 pub use crate::data::envelope::SensorReading;
-pub use crate::data::messages::{Odometry, TrajectoryPoint, Twist};
+pub use crate::data::messages::{Odometry, Twist};
 pub use crate::data::ports::TfProvider;
 pub use crate::data::primitives::{FrameHandle, MonotonicTime};
 pub use crate::data::sensor::SensorPayload;

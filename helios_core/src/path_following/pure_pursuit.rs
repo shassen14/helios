@@ -1,12 +1,12 @@
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
-use crate::data::messages::TrajectoryPoint;
+use crate::control::commands::BodyTwist;
+use crate::control::BodyTwistRef;
 use crate::data::primitives::FrameHandle;
 use crate::frames::conventions::{Enu, Flu};
 use crate::frames::quantities::Point;
-use crate::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
+use crate::frames::{FrameAwareState, FrameId};
 use crate::planning::types::Path;
-use crate::state::{Component, Quantity};
-use nalgebra::{DVector, Vector2};
+use nalgebra::Vector2;
 // Plan: output (velocity.x, angle.z)
 //          dot (accel.x, ang_vel.z) -> curvature, but fails
 
@@ -76,7 +76,12 @@ impl PurePursuitPathFollower {
 }
 
 impl PathFollower for PurePursuitPathFollower {
-    fn compute(&mut self, _dt: f64, inputs: &PathFollowerInputs) -> PathFollowerResult {
+    type Reference = BodyTwistRef;
+    fn compute(
+        &mut self,
+        _dt: f64,
+        inputs: &PathFollowerInputs,
+    ) -> PathFollowerResult<BodyTwistRef> {
         let state = &inputs.state;
 
         let lookahead_distance: f64 = match self.lookahead_time {
@@ -104,15 +109,17 @@ impl PathFollower for PurePursuitPathFollower {
                 )
             }
         };
-        let agent_orientation =
-            match state.orientation::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::Odom(self.agent_handle)) {
-                Some(o) => o.into_inner(),
-                None => {
-                    return PathFollowerResult::Error(
-                        "Could not abstract agent information".to_string(),
-                    )
-                }
-            };
+        let agent_orientation = match state.orientation::<Flu, Enu>(
+            FrameId::Body(self.agent_handle),
+            FrameId::Odom(self.agent_handle),
+        ) {
+            Some(o) => o.into_inner(),
+            None => {
+                return PathFollowerResult::Error(
+                    "Could not abstract agent information".to_string(),
+                )
+            }
+        };
 
         let (_, _, agent_yaw) = agent_orientation.euler_angles();
 
@@ -137,23 +144,11 @@ impl PathFollower for PurePursuitPathFollower {
 
         let angular_velocity_desired = forward_velocity_desired * curvature;
 
-        let body_handle = FrameId::Body(self.agent_handle);
-        let layout = vec![
-            StateVariable::new(Quantity::Velocity(body_handle.clone()), Component::X),
-            StateVariable::new(Quantity::AngularVelocity(body_handle.clone()), Component::Z),
-        ];
+        let body_twist = BodyTwist::unicycle(forward_velocity_desired, angular_velocity_desired);
 
-        let mut state_desired = RobotState::new(layout, state.timestamp);
-        state_desired.vector[0] = forward_velocity_desired;
-        state_desired.vector[1] = angular_velocity_desired;
+        let reference = BodyTwistRef::new(body_twist);
 
-        let point_desired = TrajectoryPoint {
-            state: state_desired,
-            state_dot: Some(DVector::from_vec(vec![0.0, curvature])),
-            time: state.timestamp,
-        };
-
-        PathFollowerResult::Active(point_desired)
+        PathFollowerResult::Active(reference)
     }
 
     fn set_path(&mut self, path: Path) {
@@ -196,7 +191,7 @@ mod tests {
     /// typed `Point<Enu>` handed back carries the exact planned coordinates: the
     /// position round-trips through the follower's storage unchanged. This is the
     /// regression guard for the waypoint carrier being a typed point rather than a
-    /// layout-indexed `RobotState`.
+    /// layout-indexed state vector.
     #[test]
     fn lookahead_waypoint_round_trips_planned_position() {
         let waypoints = vec![

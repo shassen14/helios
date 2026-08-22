@@ -17,7 +17,7 @@ use crate::{
         quantities::{FreeVector, Point},
         transforms::{Rotation, Transform},
     },
-    state::{Component, Quantity},
+    state::Quantity,
 };
 
 use nalgebra::{DMatrix, DVector, Quaternion, Translation, UnitQuaternion, Vector3};
@@ -39,43 +39,6 @@ pub enum FrameId {
     /// The specific origin of a sensor component.
     /// Identified by the sensor's own unique FrameHandle.
     Sensor(FrameHandle),
-}
-
-#[derive(Debug, Clone)]
-pub struct RobotState {
-    /// The ordered "schema" of the state vector.
-    pub layout: Vec<StateVariable>,
-    /// The actual numerical data vector `x`.
-    pub vector: DVector<f64>,
-    /// The timestamp of the last update.
-    pub(crate) timestamp: f64,
-}
-
-impl RobotState {
-    pub fn new(layout: Vec<StateVariable>, timestamp: f64) -> Self {
-        let mut vector = DVector::zeros(layout.len());
-
-        // Find the quaternion part of the state and initialize it to identity (0,0,0,1).
-        // This is critical to prevent NaN values from an invalid zero quaternion.
-        for (i, var) in layout.iter().enumerate() {
-            // The identity seed lives in the W slot of whichever orientation the
-            // layout carries; the frames it maps between don't matter here.
-            if matches!(var.quantity(), Quantity::Orientation { .. })
-                && matches!(var.component(), Component::W)
-            {
-                vector[i] = 1.0; // Set the 'w' component to 1.
-                                 // Note: This assumes only one quaternion in the state. For more complex
-                                 // states, this logic would need to be more robust.
-                break;
-            }
-        }
-
-        Self {
-            layout,
-            vector,
-            timestamp,
-        }
-    }
 }
 
 /// The "smart" state object used by filters. It bundles the state estimate
@@ -263,6 +226,7 @@ mod frame_aware_state_tests {
     use super::*;
     use crate::estimation::schema::SchemaBlock;
     use crate::manifold::TangentNoise;
+    use crate::state::Component;
 
     // A composed position + orientation state in World, built from real
     // `Quantity` blocks via `compose`. The orientation block seeds the identity
@@ -379,6 +343,7 @@ mod block_extractor_tests {
     use crate::estimation::schema::SchemaBlock;
     use crate::frames::conventions::{Enu, Flu};
     use crate::manifold::TangentNoise;
+    use crate::state::Component;
 
     fn body() -> FrameId {
         FrameId::Body(FrameHandle(1))

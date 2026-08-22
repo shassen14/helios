@@ -14,7 +14,7 @@
 //!    [`PathFollowerInputs`] (state from the bus). `None` ⇒ cold-start, skip.
 //! 3. **Compute.** Run [`PathFollower::compute`] with `dt` and the inputs.
 //! 4. **Publish.** Only [`PathFollowerResult::Active`] writes a
-//!    `Stamped<TrajectoryPoint>`. All other variants leave the bus untouched
+//!    `Stamped<R>` (the follower's reference type). All other variants leave the bus untouched
 //!    so the controller can fall back to last-known-good — matching the
 //!    no-op-on-hold convention of `SearchPlannerNode`.
 //!
@@ -33,7 +33,7 @@
 
 use std::sync::Mutex;
 
-use helios_core::data::messages::TrajectoryPoint;
+use helios_core::control::ControlReference;
 use helios_core::path_following::{PathFollower, PathFollowerResult};
 use helios_core::planning::types::Path;
 
@@ -47,8 +47,8 @@ use crate::stamped::{Health, Stamped};
 /// Mutable per-tick state: the follower itself and the bus timestamp of the
 /// most-recently-applied path. Held behind one [`Mutex`] so the two fields are
 /// always updated together.
-struct FollowerState {
-    follower: Box<dyn PathFollower>,
+struct FollowerState<R: ControlReference> {
+    follower: Box<dyn PathFollower<Reference = R>>,
     /// Bus [`Stamped::timestamp`] of the last `Path` we called `set_path` on.
     /// `None` = no path has ever been applied (cold start).
     last_path_timestamp: Option<f64>,
@@ -57,27 +57,27 @@ struct FollowerState {
 /// Pipeline node wrapping any [`PathFollower`] implementation.
 ///
 /// The port descriptor adds `path_channel` to whatever the input builder
-/// requires, declares `TrajectoryPoint @ ""` as its single output, and uses
+/// requires, declares the reference type `R @ ""` as its single output, and uses
 /// `rate: None` — the follower fires every tick (controller rate).
-pub(crate) struct PathFollowerNode {
+pub(crate) struct PathFollowerNode<R: ControlReference> {
     name: String,
-    state: Mutex<FollowerState>,
+    state: Mutex<FollowerState<R>>,
     input_builder: Box<dyn PathFollowerInputBuilder>,
     path_channel: ChannelKey,
     descriptor: PortDescriptor,
 }
 
-impl PathFollowerNode {
+impl<R: ControlReference> PathFollowerNode<R> {
     /// Build a node from a follower, an input builder, and the bus channel the
     /// upstream planner publishes [`Path`] on.
     ///
     /// `required_inputs` = builder requirements ∪ `[path_channel]`.
     /// `optional_inputs` mirrors the builder.
-    /// `outputs` = `[TrajectoryPoint @ ""]`.
+    /// `outputs` = `[R @ ""]`.
     /// `rate` = `None`.
     pub(crate) fn new(
         name: impl Into<String>,
-        follower: Box<dyn PathFollower>,
+        follower: Box<dyn PathFollower<Reference = R>>,
         input_builder: Box<dyn PathFollowerInputBuilder>,
         path_channel: InternalChannel,
     ) -> Self {
@@ -88,7 +88,7 @@ impl PathFollowerNode {
         let builder_required = input_builder.required_channels();
         let mut builder = AlgorithmNodePortDescriptor::new()
             .inputs_from_slices(builder_required, input_builder.optional_channels())
-            .output_internal(InternalChannel::of::<TrajectoryPoint>());
+            .output_internal(InternalChannel::of::<R>());
         if !builder_required.contains(&path_channel_key) {
             builder = builder.input_internal(path_channel.clone());
         }
@@ -106,7 +106,7 @@ impl PathFollowerNode {
     }
 }
 
-impl PipelineNode for PathFollowerNode {
+impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
     fn name(&self) -> &str {
         &self.name
     }
@@ -145,18 +145,18 @@ impl PipelineNode for PathFollowerNode {
         // 4. Publish only on Active. All other variants (GoalReached, NoPath,
         //    Error) leave the bus untouched so the controller falls back to
         //    last-known-good — same convention as SearchPlannerNode.
-        let trajectory_point = match result {
-            PathFollowerResult::Active(tp) => tp,
+        let reference = match result {
+            PathFollowerResult::Active(reference) => reference,
             _ => return,
         };
 
         let stamped = Stamped {
-            value: trajectory_point,
+            value: reference,
             timestamp: tick.now,
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(InternalChannel::of::<TrajectoryPoint>().into(), stamped);
+        let _ = bus.write(InternalChannel::of::<R>().into(), stamped);
     }
 }
 
@@ -167,7 +167,7 @@ mod tests {
     //! `helios_core/src/path_following/`. Here we verify that `execute()`:
     //!   - calls `set_path` exactly once per distinct bus-timestamp on `path_channel`
     //!   - never calls `set_path` when the path timestamp is unchanged
-    //!   - publishes a `Stamped<TrajectoryPoint>` only on `Active`
+    //!   - publishes a `Stamped<BodyTwistRef>` only on `Active`
     //!   - is a no-op on `NoPath` / `GoalReached` / `Error`
     //!   - early-returns when the input builder yields `None`
     //!   - declares `path_channel` in its required inputs
@@ -175,13 +175,13 @@ mod tests {
     use super::*;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
 
-    use helios_core::data::messages::TrajectoryPoint;
+    use helios_core::control::commands::BodyTwist;
+    use helios_core::control::BodyTwistRef;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::conventions::Enu;
     use helios_core::frames::quantities::Point;
-    use helios_core::frames::{FrameAwareState, FrameId, RobotState, StateVariable};
-    use helios_core::state::{Component, Quantity};
+    use helios_core::frames::{FrameAwareState, FrameId};
     use helios_core::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::planning::types::Path;
 
@@ -221,11 +221,11 @@ mod tests {
 
     struct ScriptedFollower {
         calls: Arc<StdMutex<FollowerCalls>>,
-        result: StdMutex<PathFollowerResult>,
+        result: StdMutex<PathFollowerResult<BodyTwistRef>>,
     }
 
     impl ScriptedFollower {
-        fn new(result: PathFollowerResult) -> (Self, Arc<StdMutex<FollowerCalls>>) {
+        fn new(result: PathFollowerResult<BodyTwistRef>) -> (Self, Arc<StdMutex<FollowerCalls>>) {
             let calls = Arc::new(StdMutex::new(FollowerCalls::default()));
             (
                 Self {
@@ -238,7 +238,9 @@ mod tests {
     }
 
     impl PathFollower for ScriptedFollower {
-        fn compute(&mut self, dt: f64, _inputs: &PathFollowerInputs) -> PathFollowerResult {
+        type Reference = BodyTwistRef;
+
+        fn compute(&mut self, dt: f64, _inputs: &PathFollowerInputs) -> PathFollowerResult<BodyTwistRef> {
             let mut c = self.calls.lock().unwrap();
             c.compute_calls += 1;
             c.last_dt = dt;
@@ -328,12 +330,12 @@ mod tests {
     }
 
     fn out_channel() -> ChannelKey {
-        InternalChannel::of::<TrajectoryPoint>().into()
+        InternalChannel::of::<BodyTwistRef>().into()
     }
 
     fn make_bus() -> PortBus {
         // Two descriptors: one that "produces" the path channel (so the bus
-        // allocates a slot for it), and one that outputs the TrajectoryPoint
+        // allocates a slot for it), and one that outputs the BodyTwistRef
         // the node under test will publish.
         let path_producer = PortDescriptor {
             required_inputs: vec![],
@@ -363,14 +365,10 @@ mod tests {
         Point::new(0.0, 0.0, 0.0)
     }
 
-    /// The follower's *output* reference — still a `TrajectoryPoint` carrying a
-    /// body-frame twist setpoint, unlike the geometric path waypoints above.
-    fn dummy_reference() -> TrajectoryPoint {
-        TrajectoryPoint {
-            state: RobotState::new(vec![StateVariable::new(Quantity::Position(FrameId::World), Component::X)], 0.0),
-            state_dot: None,
-            time: 0.0,
-        }
+    /// The follower's *output* reference — a body-frame twist setpoint, unlike
+    /// the geometric path waypoints above.
+    fn dummy_reference() -> BodyTwistRef {
+        BodyTwistRef::new(BodyTwist::zero())
     }
 
     fn dummy_path() -> Path {
@@ -428,8 +426,8 @@ mod tests {
         node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
 
         let published = bus
-            .read::<TrajectoryPoint>(out_channel())
-            .expect("node must publish TrajectoryPoint on Active");
+            .read::<BodyTwistRef>(out_channel())
+            .expect("node must publish BodyTwistRef on Active");
         assert!((published.timestamp.0 - 2.5).abs() < 1e-9);
         assert_eq!(published.producer, 13);
     }
@@ -446,7 +444,7 @@ mod tests {
         let bus = make_bus();
         publish_path(&bus, 1.0);
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<TrajectoryPoint>(out_channel()).is_none());
+        assert!(bus.read::<BodyTwistRef>(out_channel()).is_none());
     }
 
     #[test]
@@ -462,7 +460,7 @@ mod tests {
         // No path published — follower still gets called (state was ready)
         // and reports NoPath; bus should remain empty.
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<TrajectoryPoint>(out_channel()).is_none());
+        assert!(bus.read::<BodyTwistRef>(out_channel()).is_none());
     }
 
     #[test]
@@ -478,7 +476,7 @@ mod tests {
         let bus = make_bus();
         publish_path(&bus, 1.0);
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<TrajectoryPoint>(out_channel()).is_none());
+        assert!(bus.read::<BodyTwistRef>(out_channel()).is_none());
     }
 
     #[test]
@@ -497,7 +495,7 @@ mod tests {
         let bus = make_bus();
         publish_path(&bus, 1.0);
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<TrajectoryPoint>(out_channel()).is_none());
+        assert!(bus.read::<BodyTwistRef>(out_channel()).is_none());
         assert_eq!(calls.lock().unwrap().compute_calls, 0);
     }
 
