@@ -2,9 +2,8 @@
 // through as a BodyTwist, applying no control law. Intended as the controller
 // stage when a PathFollower (e.g., PurePursuit) has already computed velocity
 // commands, so the controller only re-frames them onto the command bus.
-use super::commands::BodyTwist;
-use super::{ControlInputs, Controller};
-use crate::control::BodyTwistRef;
+use crate::control::commands::BodyTwist;
+use crate::control::{BodyTwistRef, ControlInputs, Controller};
 
 pub struct DirectTwistController;
 

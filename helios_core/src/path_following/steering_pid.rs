@@ -10,7 +10,7 @@
 
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::commands::BodyTwist;
-use crate::control::siso_pid::SisoPid;
+use crate::control::kernels::siso_pid::SisoPid;
 use crate::control::BodyTwistRef;
 use crate::data::primitives::FrameHandle;
 use crate::frames::conventions::{Enu, Flu};

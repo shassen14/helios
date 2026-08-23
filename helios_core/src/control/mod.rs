@@ -11,10 +11,11 @@ pub mod actuation_model;
 pub mod actuators;
 pub mod allocation;
 pub mod commands;
-pub mod direct_twist;
+pub mod controllers;
 pub mod dynamics;
+pub mod kernels;
+pub mod measurement;
 pub mod reference;
-pub mod siso_pid;
 
 pub use crate::control::dynamics::ControlDynamics;
 pub use reference::{BodyTwistRef, ControlReference};
