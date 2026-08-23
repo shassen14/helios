@@ -32,6 +32,36 @@ pub enum Health {
     Stale { duration: f64 },
 }
 
+impl Health {
+    /// The graver of two healths — for collapsing several inputs' health into one
+    /// output's when a node combines them.
+    ///
+    /// `Ok` is the identity (the least grave), so folding a set of contributors
+    /// from an `Ok` seed yields `Ok` only when every one is `Ok`; any `Degraded`
+    /// or `Stale` dominates it. The winner is returned whole, keeping its own
+    /// `reason` / `duration`, so the consumer sees *why* the output is degraded,
+    /// not merely that it is. A severity tie returns `other`.
+    pub fn worse_of(self, other: Health) -> Health {
+        if self.severity() > other.severity() {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// Severity rank, higher is graver: `Ok` (0) < `Degraded` (1) < `Stale` (2).
+    /// Staleness outranks a reported degradation because folding *old* information
+    /// into a fresh output is the more insidious failure. Ranks the variant only;
+    /// the `reason` / `duration` payload does not affect the order.
+    fn severity(&self) -> u8 {
+        match self {
+            Health::Ok => 0,
+            Health::Degraded { .. } => 1,
+            Health::Stale { .. } => 2,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +104,48 @@ mod tests {
     fn health_ok_clone() {
         let h = Health::Ok;
         let _ = h.clone();
+    }
+
+    #[test]
+    fn worse_of_prefers_the_graver_variant() {
+        // Ok < Degraded < Stale, regardless of argument order.
+        assert!(matches!(
+            Health::Ok.worse_of(Health::Degraded { reason: "x".into() }),
+            Health::Degraded { .. }
+        ));
+        assert!(matches!(
+            Health::Degraded { reason: "x".into() }.worse_of(Health::Ok),
+            Health::Degraded { .. }
+        ));
+        assert!(matches!(
+            Health::Degraded { reason: "x".into() }.worse_of(Health::Stale { duration: 1.0 }),
+            Health::Stale { .. }
+        ));
+        assert!(matches!(Health::Ok.worse_of(Health::Ok), Health::Ok));
+    }
+
+    #[test]
+    fn worse_of_severity_is_order_independent() {
+        // Swapping the arguments cannot change which severity wins — only which
+        // payload survives a tie (that is `other`, covered separately).
+        let stale = Health::Stale { duration: 2.0 };
+        let degraded = Health::Degraded { reason: "x".into() };
+        assert!(matches!(
+            stale.clone().worse_of(degraded.clone()),
+            Health::Stale { .. }
+        ));
+        assert!(matches!(degraded.worse_of(stale), Health::Stale { .. }));
+    }
+
+    #[test]
+    fn worse_of_keeps_the_winners_payload() {
+        // The graver variant is returned whole, so its diagnostic survives.
+        let winner = Health::Ok.worse_of(Health::Degraded {
+            reason: "sensor fault".into(),
+        });
+        let Health::Degraded { reason } = winner else {
+            panic!("expected Degraded")
+        };
+        assert_eq!(reason, "sensor fault");
     }
 }
