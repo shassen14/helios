@@ -1,10 +1,15 @@
 use crate::control::{commands::DriveForce, BodyTwistRef, ControlInputs, Controller};
 
-/// Longitudinal feedforward: the drive force that *should* hold the reference
-/// speed against the plant's known resistances, computed open-loop from the
-/// reference alone.
+/// Road-load feedforward: the drive force that *should* hold the reference
+/// speed against a ground vehicle's known resistances, computed open-loop from
+/// the reference alone.
 ///
-/// Where [`LongitudinalVelocityController`](super::longitudinal_velocity::LongitudinalVelocityController)
+/// "Road load" is the standard term for a ground vehicle's steady tractive
+/// resistance — the rolling and aerodynamic terms below. That model is what makes
+/// this feedforward morphology-specific: it inverts a *car's* plant, not a generic
+/// longitudinal one, which is why it names the plant rather than the axis.
+///
+/// Where [`LongitudinalVelocityController`](crate::control::controllers::feedback::longitudinal_velocity::LongitudinalVelocityController)
 /// reacts to error — it waits for the vehicle to be off-speed, then corrects —
 /// this reacts to *intent*: given the target speed it precomputes the effort to
 /// sustain it, before any error appears. It is the inverse plant map, the dual of
@@ -27,7 +32,7 @@ use crate::control::{commands::DriveForce, BodyTwistRef, ControlInputs, Controll
 /// Acceleration feedforward (`m · a_ref`) is out of scope: [`BodyTwistRef`] carries
 /// a velocity, not an acceleration, so there is no `a_ref` to invert. That waits on
 /// a reference type that carries the derivative.
-pub struct LongitudinalFeedforward {
+pub struct RoadLoadFeedforward {
     /// Rolling-resistance magnitude, in newtons — the speed-independent force
     /// opposing motion.
     c_roll: f64,
@@ -36,7 +41,7 @@ pub struct LongitudinalFeedforward {
     c_drag: f64,
 }
 
-impl Controller for LongitudinalFeedforward {
+impl Controller for RoadLoadFeedforward {
     type Inputs = ControlInputs<BodyTwistRef>;
     type Out = DriveForce;
 
@@ -63,8 +68,8 @@ mod tests {
 
     // Tests build the struct directly; a registry-facing constructor is the
     // controller factory's concern, not this leaf's.
-    fn feedforward(c_roll: f64, c_drag: f64) -> LongitudinalFeedforward {
-        LongitudinalFeedforward { c_roll, c_drag }
+    fn feedforward(c_roll: f64, c_drag: f64) -> RoadLoadFeedforward {
+        RoadLoadFeedforward { c_roll, c_drag }
     }
 
     // Feedforward never reads the estimate, so an empty state suffices — the point

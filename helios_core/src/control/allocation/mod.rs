@@ -7,7 +7,7 @@
 //! supplies its own implementation ([`ackermann`] for a steered car); the trait
 //! is only the shared shape.
 
-pub mod ackermann;
+pub mod wheeled;
 
 use crate::control::actuators::ActuatorCommand;
 

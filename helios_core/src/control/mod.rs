@@ -18,34 +18,5 @@ pub mod measurement;
 pub mod reference;
 
 pub use crate::control::dynamics::ControlDynamics;
+pub use controllers::{ControlInputs, Controller};
 pub use reference::{BodyTwistRef, ControlReference};
-
-use crate::frames::FrameAwareState;
-
-// =========================================================================
-// == Core Data Types ==
-// =========================================================================
-
-pub struct ControlInputs<R: ControlReference> {
-    pub state: FrameAwareState,
-    pub reference: Option<R>,
-}
-
-// =========================================================================
-// == Controller Trait ==
-// =========================================================================
-
-/// A stateful, mutable controller that maps state estimates to control outputs.
-///
-/// Implementations include PID, LQR, feedforward-PID, MPC, and RL policies.
-/// The trait is intentionally minimal so that any policy (learned or analytical)
-/// can implement it by storing whatever internal state it needs.
-pub trait Controller: Send + Sync {
-    type Inputs;
-    type Out;
-    /// Compute a control output for the current state and time step.
-    fn compute(&mut self, dt: f64, inputs: &Self::Inputs) -> Self::Out;
-
-    /// Reset all internal integrators, accumulators, and filters to zero.
-    fn reset(&mut self);
-}

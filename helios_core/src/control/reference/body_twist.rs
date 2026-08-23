@@ -1,9 +1,8 @@
 use crate::control::commands::BodyTwist;
+use crate::control::reference::ControlReference;
 
-use std::any::Any;
-
-pub trait ControlReference: Any + Send + Sync {}
-
+/// A body-frame twist reference: the linear/angular velocity a controller should
+/// track, already expressed in the body frame (no frame projection needed).
 #[derive(Clone)]
 pub struct BodyTwistRef(BodyTwist);
 

@@ -1,0 +1,10 @@
+//! Allocators for driven-wheel vehicles.
+//!
+//! Everything here assumes actuation through a wheel: [`ackermann`] inverts the
+//! bicycle steering geometry, and [`drive_torque`] converts a longitudinal drive
+//! force into a wheel torque via the wheel radius. A car, ATV, motorcycle, or
+//! holonomic wheeled platform composes its actuation from members of this module;
+//! non-wheeled morphologies (multirotor, thruster) live in sibling modules.
+
+pub mod ackermann;
+pub mod drive_torque;

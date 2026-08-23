@@ -4,7 +4,7 @@ use crate::{
 };
 
 use helios_core::control::{
-    actuators::ActuatorId, allocation::ackermann::KinematicAckermannAllocator,
+    actuators::ActuatorId, allocation::wheeled::ackermann::KinematicAckermannAllocator,
 };
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
