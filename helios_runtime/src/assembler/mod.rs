@@ -42,14 +42,14 @@ pub use self::error::PipelineAssemblyError;
 
 use self::command::{
     resolve_command_topology, selector_policy, source_channel, CommandTopology,
-    COMMAND_ARBITER_NODE, TELEOP_MAPPER_NODE,
+    COMMAND_ARBITER_NODE, COMMAND_SUM_NODE, TELEOP_MAPPER_NODE,
 };
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
 use crate::config::TeleopMapperConfig;
-use crate::config::{AutonomyStack, CommandSource};
+use crate::config::{AllocatorConfig, AutonomyStack, CommandSource, CommandSpace, FoldRole};
 use crate::config::{EstimatorConfig, MapLayerConfig};
-use crate::nodes::combinators::Selector;
+use crate::nodes::combinators::{Selector, Sum};
 use crate::nodes::gaussian_estimator;
 use crate::nodes::path_follower;
 use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
@@ -62,7 +62,7 @@ use crate::registry::contexts::{
 };
 use crate::registry::AutonomyRegistry;
 
-use helios_core::control::commands::{BodyTwist, TwistIntent};
+use helios_core::control::commands::{BodyTwist, DriveForce, TwistIntent};
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::MapData;
@@ -216,7 +216,100 @@ pub fn build_pipeline(
         }
     }
 
-    // --- Controllers ---
+    // --- Controllers + command terminal ---
+    // The allocator defines the command seam, so the terminal's type is its
+    // command space: peek any allocator (validation has already checked they
+    // agree) to choose how the terminal is wired and what `T` the allocator reads.
+    // No allocator ⇒ the body-twist terminal, which also covers pure-perception
+    // and controllers-without-allocator stacks.
+    let command_space = stack
+        .allocators
+        .values()
+        .next()
+        .map(AllocatorConfig::command_space);
+
+    builder = match command_space {
+        Some(CommandSpace::DriveForce) => {
+            wire_drive_force_terminal(stack, registry, agent_handle, builder, &mut errors)
+        }
+        _ => wire_body_twist_terminal(
+            stack,
+            registry,
+            agent_handle,
+            builder,
+            &mut errors,
+            &mut external_channels,
+        ),
+    };
+
+    // --- Allocators ---
+    // The allocator is a *consumer* of `command` (unlike the controllers / fold /
+    // arbiter above, which produce it) and produces the `actuators` terminal. Both
+    // channels are graph-internal, so nothing is seeded onto `external_channels`.
+    //
+    // The command channel's type is the allocator's command space, matched to how
+    // the terminal above was wired. Erased to an `InternalChannel` here, so the
+    // loop is one shape regardless of `T`.
+    let command_channel = match command_space {
+        Some(CommandSpace::DriveForce) => control::command::<DriveForce>(),
+        _ => control::command::<BodyTwist>(),
+    };
+
+    for (allocator_name, alloc_cfg) in &stack.allocators {
+        match registry.build_allocator(
+            alloc_cfg.get_kind_str(),
+            AllocatorBuildContext {
+                agent_handle,
+                instance_name: allocator_name.clone(),
+                config: alloc_cfg.clone(),
+                input_channel: command_channel.clone(),
+                output_channel: control::actuators(),
+            },
+        ) {
+            Ok(node) => builder = builder.add_node(node),
+            Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
+                node_kind: alloc_cfg.get_kind_str().to_string(),
+                reason,
+            }),
+        }
+    }
+
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    // Deduplicate external channels before handing to the builder, keeping
+    // insertion order so the resolved-config dump is stable.
+    let mut seen = HashSet::new();
+    external_channels.retain(|key| seen.insert(key.clone()));
+
+    host_capabilities
+        .publishes
+        .extend(external_channels.into_iter().map(|key| PublishedChannel {
+            key,
+            provenance: Provenance::Exact,
+        }));
+
+    builder
+        .with_body_capabilities(host_capabilities)
+        .build()
+        .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
+}
+
+// --- Internals ---
+
+/// Wires the body-twist command terminal: the controller / teleop / arbiter path
+/// that predates the command-space split. Moved here verbatim so the vouched
+/// ground-vehicle path is unchanged; the drive-force terminal is a sibling, not a
+/// rewrite of this.
+fn wire_body_twist_terminal(
+    stack: &AutonomyStack,
+    registry: &AutonomyRegistry,
+    agent_handle: FrameHandle,
+    mut builder: PipelineBuilder,
+    errors: &mut Vec<PipelineAssemblyError>,
+    external_channels: &mut Vec<ChannelKey>,
+) -> PipelineBuilder {
     // Resolve how the command terminal is fed before building the producers: each
     // producer's output channel depends on it. When a source is the lone `Direct`
     // source it writes `command` itself; otherwise it writes its own role channel
@@ -321,56 +414,68 @@ pub fn build_pipeline(
         }
     }
 
-    // --- Allocators ---
-    // The allocator is a *consumer* of `command` (unlike the controllers /
-    // arbiter above, which produce it) and produces the `actuators` terminal.
-    // Both channels are graph-internal, so nothing is seeded onto
-    // `external_channels`.
-    for (allocator_name, alloc_cfg) in &stack.allocators {
-        // Input is `command` at `BodyTwist` because `KinematicAckermannAllocator`
-        // consumes `BodyTwist`. A non-`BodyTwist` allocator will source its input
-        // type from config; that generalization waits for the first such impl.
-        match registry.build_allocator(
-            alloc_cfg.get_kind_str(),
-            AllocatorBuildContext {
+    builder
+}
+
+/// Wires the autonomy-only longitudinal command terminal for a [`DriveForce`]
+/// stack. Each controller writes its own instance-named contribution channel, and
+/// a [`Sum`] folds them into the `command` terminal — a feedback and a feedforward
+/// leg composing without clobbering. Feedback legs are the fold's `required`
+/// inputs (read fresh); feedforward legs are `optional` (folded last-known-good).
+/// No teleop, no arbiter: those await the arbiter's own command-space generalization.
+fn wire_drive_force_terminal(
+    stack: &AutonomyStack,
+    registry: &AutonomyRegistry,
+    agent_handle: FrameHandle,
+    mut builder: PipelineBuilder,
+    errors: &mut Vec<PipelineAssemblyError>,
+) -> PipelineBuilder {
+    let mut required: Vec<InternalChannel> = vec![];
+    let mut optional: Vec<InternalChannel> = vec![];
+
+    for (controller_name, ctrl_cfg) in &stack.controllers {
+        // Distinct channel per producer (the planner precedent): a shared output
+        // would clobber, since the bus keeps only the last write.
+        let contribution = InternalChannel::named::<DriveForce>(controller_name.as_str());
+
+        match registry.build_controller(
+            ctrl_cfg.get_kind_str(),
+            ControllerBuildContext {
                 agent_handle,
-                instance_name: allocator_name.clone(),
-                config: alloc_cfg.clone(),
-                input_channel: control::command::<BodyTwist>(),
-                output_channel: control::actuators(),
+                instance_name: controller_name.clone(),
+                config: ctrl_cfg.clone(),
+                output_channel: contribution.clone(),
             },
         ) {
-            Ok(node) => builder = builder.add_node(node),
+            Ok(node) => {
+                builder = builder.add_node(node);
+                match ctrl_cfg.fold_role() {
+                    FoldRole::Feedback => required.push(contribution),
+                    FoldRole::Feedforward => optional.push(contribution),
+                }
+            }
             Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
-                node_kind: alloc_cfg.get_kind_str().to_string(),
+                node_kind: ctrl_cfg.get_kind_str().to_string(),
                 reason,
             }),
         }
     }
 
-    if !errors.is_empty() {
-        return Err(errors);
+    // No controllers ⇒ no fold: leave `command` unwritten so the allocator's
+    // unsatisfied input surfaces as a loud build error rather than a silent
+    // no-command. A degenerate stack is validation's job to reject.
+    if !stack.controllers.is_empty() {
+        let sum = Sum::<DriveForce>::new(
+            COMMAND_SUM_NODE,
+            required,
+            optional,
+            control::command::<DriveForce>(),
+        );
+        builder = builder.add_node(Box::new(sum));
     }
 
-    // Deduplicate external channels before handing to the builder, keeping
-    // insertion order so the resolved-config dump is stable.
-    let mut seen = HashSet::new();
-    external_channels.retain(|key| seen.insert(key.clone()));
-
-    host_capabilities
-        .publishes
-        .extend(external_channels.into_iter().map(|key| PublishedChannel {
-            key,
-            provenance: Provenance::Exact,
-        }));
-
     builder
-        .with_body_capabilities(host_capabilities)
-        .build()
-        .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
 }
-
-// --- Internals ---
 
 fn build_estimator_node(
     instance_name: &str,

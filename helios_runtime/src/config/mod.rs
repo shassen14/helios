@@ -8,6 +8,7 @@ mod agent;
 mod allocator;
 mod arbitration;
 mod autonomy;
+mod command_space;
 mod controller;
 mod estimator;
 mod mapper;
@@ -19,8 +20,10 @@ pub use agent::AgentBaseConfig;
 pub use allocator::AllocatorConfig;
 pub use arbitration::{ArbitrationPolicyConfig, CommandArbitrationConfig, CommandSource};
 pub use autonomy::AutonomyStack;
+pub use command_space::CommandSpace;
 pub use controller::ControllerConfig;
 pub use controller::ControllerStateSourceConfig;
+pub use controller::FoldRole;
 pub use estimator::{
     AckermannProcessNoiseConfig, AidingConfig, AugmentationConfig, EkfConfig, EkfDynamicsConfig,
     EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MockOracleEstimatorConfig,

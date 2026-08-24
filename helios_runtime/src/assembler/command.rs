@@ -16,6 +16,13 @@ pub(crate) const COMMAND_ARBITER_NODE: &str = "command_arbiter";
 
 pub(crate) const TELEOP_MAPPER_NODE: &str = "teleop_mapper";
 
+/// Node name for the synthesized command fold. The dual of the arbiter: where the
+/// arbiter *selects* one source, this *sums* a stack's feedback and feedforward
+/// legs into the `command` terminal. Raw identity for observability, so a
+/// referenced const, like [`COMMAND_ARBITER_NODE`] — the assembler alone
+/// synthesizes it.
+pub(crate) const COMMAND_SUM_NODE: &str = "command_sum";
+
 /// How the `command` terminal is fed, resolved from the declared source set.
 pub(super) enum CommandTopology {
     /// Pure-perception agent: nothing produces a `command` terminal.

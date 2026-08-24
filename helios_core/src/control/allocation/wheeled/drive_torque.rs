@@ -32,6 +32,15 @@ pub struct WheelTorqueAllocator {
     drive: ActuatorId,
 }
 
+impl WheelTorqueAllocator {
+    pub fn new(wheel_radius: f64, drive: ActuatorId) -> Self {
+        Self {
+            wheel_radius,
+            drive,
+        }
+    }
+}
+
 impl Allocator for WheelTorqueAllocator {
     type In = DriveForce;
     type Inputs = ();

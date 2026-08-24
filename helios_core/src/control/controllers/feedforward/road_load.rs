@@ -41,6 +41,12 @@ pub struct RoadLoadFeedforward {
     c_drag: f64,
 }
 
+impl RoadLoadFeedforward {
+    pub fn new(c_roll: f64, c_drag: f64) -> Self {
+        Self { c_drag, c_roll }
+    }
+}
+
 impl Controller for RoadLoadFeedforward {
     type Inputs = ControlInputs<BodyTwistRef>;
     type Out = DriveForce;
