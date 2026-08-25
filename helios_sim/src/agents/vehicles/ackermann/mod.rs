@@ -1,7 +1,7 @@
 pub mod components;
 pub(super) mod systems;
 
-pub use components::{AckermannActuator, AckermannParameters};
+pub use components::AckermannActuator;
 
 use crate::core::app_state::{AppState, SceneBuildSet, SimulationSet};
 use bevy::prelude::*;

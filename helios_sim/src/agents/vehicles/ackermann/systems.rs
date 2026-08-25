@@ -1,10 +1,8 @@
-use super::{
-    components::{AckermannActuator, AckermannParameters},
-    AckermannAssets,
-};
+use super::{components::AckermannActuator, AckermannAssets};
 
 use crate::{
     agents::vehicles::ackermann::components::ActuationModelComponent,
+    config::structs::{CollisionConfig, PlantConfig, TopologyConfig},
     core::{
         components::GroundTruthState,
         transforms::{EnuBodyPose, FluVector},
@@ -36,65 +34,63 @@ pub(super) fn process_ackermann_logic(
     request_query: Query<(Entity, &SpawnAgentConfigRequest)>,
 ) {
     for (entity, request) in &request_query {
-        if let Vehicle::Ackermann {
-            wheelbase,
-            wheel_radius,
-            actuation,
-            actuator,
+        if let PlantConfig::L0Shim {
+            l0_force_gain,
+            l0_yaw_gain,
             ..
-        } = &request.0.vehicle
+        } = &request.0.vehicle.plant
         {
             commands.entity(entity).insert((
-                AckermannParameters {
-                    wheelbase: *wheelbase as f64,
-                    wheel_radius: *wheel_radius,
-                },
                 AckermannActuator {
-                    l0_force_gain: actuator.l0_force_gain,
-                    l0_yaw_gain: actuator.l0_yaw_gain,
+                    l0_force_gain: *l0_force_gain,
+                    l0_yaw_gain: *l0_yaw_gain,
                 },
-                ActuationModelComponent(actuation.clone()),
+                ActuationModelComponent(request.0.vehicle.actuation.clone()),
                 TrackedFrame(Convention::Flu),
             ));
         }
     }
 }
 
-#[allow(irrefutable_let_patterns)]
+#[allow(clippy::type_complexity)]
 pub(super) fn attach_ackermann_physics(
     mut commands: Commands,
     query: Query<
-        (
-            Entity,
-            &Name,
-            &GroundTruthState,
-            &AckermannParameters,
-            &SpawnAgentConfigRequest,
-        ),
-        Without<RigidBody>,
+        (Entity, &Name, &GroundTruthState, &SpawnAgentConfigRequest),
+        (With<AckermannActuator>, Without<RigidBody>),
     >,
     assets: Res<AckermannAssets>,
 ) {
-    for (entity, name, ground_truth, _params, request) in &query {
+    for (entity, name, ground_truth, request) in &query {
         let start_transform_bevy = Transform::from(EnuBodyPose(ground_truth.pose));
 
-        // Read physics config from TOML; fall back to defaults if variant doesn't match.
-        let physics = if let Vehicle::Ackermann { physics, .. } = &request.0.vehicle {
-            physics.clone()
-        } else {
-            Default::default()
-        };
+        // Source the rigid body from the embodiment axes: mass from topology,
+        // passive damping from the L0 plant shim, collider dims + contact
+        // friction from collision.
+        let (
+            TopologyConfig::RigidBodyWithMount { mass },
+            PlantConfig::L0Shim {
+                linear_damping,
+                angular_damping,
+                ..
+            },
+            CollisionConfig::Cuboid { x, y, z, friction },
+        ) = (
+            &request.0.vehicle.topology,
+            &request.0.vehicle.plant,
+            &request.0.vehicle.collision,
+        );
 
         let mut entity_commands = commands.entity(entity);
         entity_commands
             .insert((
                 start_transform_bevy,
                 RigidBody::Dynamic,
-                Collider::cuboid(1.8, 0.8, 4.0),
-                Mass(physics.mass),
-                Friction::new(physics.friction),
-                LinearDamping(physics.linear_damping),
-                AngularDamping(physics.angular_damping),
+                Collider::cuboid(*x, *y, *z),
+                Mass(*mass),
+                Friction::new(*friction),
+                LinearDamping(*linear_damping),
+                AngularDamping(*angular_damping),
                 SleepingDisabled,
                 LinearVelocity::default(),
                 AngularVelocity::default(),

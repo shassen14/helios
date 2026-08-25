@@ -1,117 +1,59 @@
 use helios_core::control::actuation_model::ActuationModel;
 use serde::Deserialize;
 
-// =========================================================================
-// == Physics Config ==
-// =========================================================================
-
-/// Rigid-body physics parameters for an Ackermann vehicle.
-/// Applied to the Avian3D `RigidBody` in `attach_ackermann_physics`.
-#[derive(Debug, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct AckermannPhysicsConfig {
-    /// Vehicle mass in kg. Must exceed friction threshold to move: mass * 9.81 * friction.
-    #[serde(default = "AckermannPhysicsConfig::default_mass")]
-    pub mass: f32,
-    /// Avian3D surface friction coefficient.
-    #[serde(default = "AckermannPhysicsConfig::default_friction")]
-    pub friction: f32,
-    /// Avian3D linear velocity damping (passive drag). 0 = no damping.
-    #[serde(default = "AckermannPhysicsConfig::default_linear_damping")]
-    pub linear_damping: f32,
-    /// Avian3D angular velocity damping (passive yaw decay). 0 = no damping.
-    #[serde(default = "AckermannPhysicsConfig::default_angular_damping")]
-    pub angular_damping: f32,
-}
-
-impl AckermannPhysicsConfig {
-    fn default_mass() -> f32 {
-        1500.0
-    }
-    fn default_friction() -> f32 {
-        0.7
-    }
-    fn default_linear_damping() -> f32 {
-        0.0
-    }
-    fn default_angular_damping() -> f32 {
-        0.0
-    }
-}
-
-impl Default for AckermannPhysicsConfig {
-    fn default() -> Self {
-        Self {
-            mass: Self::default_mass(),
-            friction: Self::default_friction(),
-            linear_damping: Self::default_linear_damping(),
-            angular_damping: Self::default_angular_damping(),
-        }
-    }
-}
-
-// =========================================================================
-// == Actuator Config ==
-// =========================================================================
-
-/// Wrench gains for the L0 arcade shim (`drive_ackermann_cars`).
-///
-/// These scale a resolved setpoint into a chassis wrench: `l0_force_gain` turns
-/// the drive velocity into a forward force, `l0_yaw_gain` turns the steer angle
-/// into a yaw torque. They are an open-loop feedforward, not a controller — see
-/// the open-loop-speed limitation in `docs/4_action/ackermann_actuation.md` — and
-/// are retired wholesale when L1 dynamic actuation replaces the shim.
-#[derive(Debug, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct AckermannActuatorConfig {
-    #[serde(default = "AckermannActuatorConfig::default_l0_force_gain")]
-    pub l0_force_gain: f32,
-    #[serde(default = "AckermannActuatorConfig::default_l0_yaw_gain")]
-    pub l0_yaw_gain: f32,
-}
-
-impl AckermannActuatorConfig {
-    fn default_l0_force_gain() -> f32 {
-        1.0
-    }
-
-    fn default_l0_yaw_gain() -> f32 {
-        1.0
-    }
-}
-
-impl Default for AckermannActuatorConfig {
-    fn default() -> Self {
-        Self {
-            l0_force_gain: Self::default_l0_force_gain(),
-            l0_yaw_gain: Self::default_l0_yaw_gain(),
-        }
-    }
-}
-
-// =========================================================================
-// == Vehicle Enum ==
-// =========================================================================
-
+/// Body structure: which rigid bodies the solver integrates and the frames
+/// things mount to. `RigidBodyWithMount` is the general single-body case (one
+/// solver body plus, in future, named mount frames) shared by every
+/// non-articulated agent; articulated bodies get their own variant.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
-#[serde(rename_all = "PascalCase")]
-pub enum Vehicle {
-    Ackermann {
-        wheelbase: f32,
-        wheel_radius: f32,
-        actuation: ActuationModel,
-        #[serde(default)]
-        physics: AckermannPhysicsConfig,
-        #[serde(default)]
-        actuator: AckermannActuatorConfig,
+#[serde(deny_unknown_fields)]
+pub enum TopologyConfig {
+    RigidBodyWithMount { mass: f32 },
+}
+
+/// Plant fidelity: how setpoints and state become forces on the body.
+///
+/// `L0Shim` is the arcade shim — open-loop feedforward gains that scale a
+/// resolved setpoint into a chassis wrench, plus passive damping that stands in
+/// for a real resistive force. It is retired wholesale when a raycast/dynamic
+/// plant supplies real forces.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum PlantConfig {
+    L0Shim {
+        l0_force_gain: f32,
+        l0_yaw_gain: f32,
+        linear_damping: f32,
+        angular_damping: f32,
     },
 }
 
-impl Vehicle {
-    pub fn get_kind_str(&self) -> &str {
-        match self {
-            Vehicle::Ackermann { .. } => "Ackermann",
-        }
-    }
+/// Physics collider shape and contact material — the geometry the solver
+/// collides, distinct from the visual mesh and from any perception geometry.
+/// `Cuboid` dims are full side lengths in the Bevy body frame (x = width,
+/// y = height, z = length), construction-space, not ENU.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum CollisionConfig {
+    Cuboid {
+        x: f32,
+        y: f32,
+        z: f32,
+        friction: f32,
+    },
+}
+
+/// One agent body, decomposed into independent embodiment axes. Each axis is a
+/// tagged enum keyed on its own `kind`, so a new agent type extends an axis
+/// rather than reshaping this struct.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Vehicle {
+    pub topology: TopologyConfig,
+    pub plant: PlantConfig,
+    pub collision: CollisionConfig,
+    pub actuation: ActuationModel,
 }

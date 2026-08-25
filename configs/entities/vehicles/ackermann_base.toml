@@ -1,26 +1,34 @@
 # Base Ackermann vehicle body. The vouched `pro_car` (00_tutorial_showcase)
 # inherits this via `sim.catalog.agents.ackermann_car_pro`.
 
-kind = "Ackermann"
-wheelbase = 2.5
-wheel_radius = 0.3
+# Single rigid body plus (future) named mount frames — the general single-body
+# topology, shared by any non-articulated agent. Mass is the only field the L0
+# path consumes today; mount frames and inertia arrive with the raycast plant.
+[topology]
+kind = "RigidBodyWithMount"
+mass = 1500.0            # kg
 
-# Rigid-body physics applied to the Avian3D RigidBody.
-[physics]
-mass = 1500.0         # kg
-friction = 0.7
-linear_damping = 1.0  # cuts passive coast distance when braking
-angular_damping = 1.5 # gentle yaw decay; prevents spin-out without killing turns
-
-# L0 arcade-shim wrench gains: open-loop feedforward that scales a resolved
-# setpoint into a chassis wrench (drive velocity -> forward force, steer angle ->
-# yaw torque). Not a controller, so steady-state speed only approximates the
-# command; retired when L1 dynamic actuation lands. See
-# docs/4_action/ackermann_actuation.md.
-[actuator]
+# L0 arcade shim: open-loop feedforward wrench gains (drive velocity -> forward
+# force, steer angle -> yaw torque) plus the passive damping that stands in for a
+# real resistive force. Not a controller, so steady-state speed only approximates
+# the command; the whole shim is retired when the raycast plant supplies real
+# forces.
+[plant]
+kind = "L0Shim"
 l0_force_gain = 1200.0
 l0_yaw_gain = 16400.0
+linear_damping = 1.0     # cuts passive coast distance when braking
+angular_damping = 1.5    # gentle yaw decay; prevents spin-out without killing turns
 
+# Physics collider and contact material. Full side lengths in the Bevy body frame
+# (x = width, y = height, z = length); this is construction-space, not ENU. The
+# collider is distinct from the visual mesh and from any future perception mesh.
+[collision]
+kind = "Cuboid"
+x = 1.8
+y = 0.8
+z = 4.0
+friction = 0.7
 
 [[actuation.actuators]]
 id = "drive"
