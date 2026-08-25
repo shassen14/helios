@@ -5,24 +5,26 @@ use std::collections::HashMap;
 use helios_runtime::channels::control;
 use helios_runtime::config::{
     AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandArbitrationConfig,
-    CommandSource, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig,
-    IntegratedImuConfig, MapLayerConfig, SearchPlannerConfig, SensorModelConfig, TeleopMapperConfig,
+    CommandSource, ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig,
+    EstimatorConfig, IntegratedImuConfig, MapLayerConfig, SearchPlannerConfig, SensorModelConfig,
+    TeleopMapperConfig,
 };
-use helios_runtime::port::{ChannelKey, SensorChannel};
+use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
     build_pipeline, AutonomyRegistry, BodyCapabilities, ConfigValidationError, PipelineAssemblyError,
+    Provenance, PublishedChannel,
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
-use helios_core::control::commands::{BodyTwist, TwistIntent};
+use helios_core::control::commands::{BodyTwist, DriveForce, TwistIntent};
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::MagneticField3D;
 use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::frames::conventions::Flu;
 use helios_core::frames::quantities::{FluVector, FreeVector};
-use helios_core::frames::{FrameId, StateVariable};
+use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::state::{Component, Quantity};
 
 use nalgebra::Vector3;
@@ -426,6 +428,168 @@ fn allocator_converts_command_into_the_actuator_terminal() {
     assert_eq!(
         setpoint_value(&actuators.value, "drive_motor"),
         SetpointValue::Velocity(6.0 / 0.3)
+    );
+}
+
+// =========================================================================
+// == DriveForce command space: FB + FF fold into the wheel-torque terminal ==
+// =========================================================================
+// The command-space counterpart to the BodyTwist tests above. The allocator
+// kind (WheelTorque) makes DriveForce the command space, so the assembler takes
+// its DriveForce branch: each controller writes an instance-named contribution,
+// a synthesized fold sums them into `command`, and the allocator converts that to
+// the actuator terminal. These exercise that branch end-to-end through
+// build_pipeline — the assembler counterpart to the Sum and WheelTorque unit
+// tests.
+
+/// A longitudinal speed feedback controller: emits DriveForce, folds as feedback.
+fn longitudinal_velocity() -> ControllerConfig {
+    ControllerConfig::LongitudinalVelocity {
+        state_source: Default::default(),
+        proportional_gain: 1.0,
+        integral_gain: 0.0,
+        derivative_gain: 0.0,
+    }
+}
+
+/// A road-load feedforward controller: emits DriveForce, folds as feedforward.
+fn road_load() -> ControllerConfig {
+    ControllerConfig::RoadLoad {
+        c_roll: 0.01,
+        c_drag: 0.3,
+    }
+}
+
+/// A DriveForce stack: a feedback leg and a feedforward leg folded into a
+/// wheel-torque allocator. The drive actuator id is `drive`; τ = F · r with
+/// r = 0.3.
+fn drive_force_stack() -> AutonomyStack {
+    let mut controllers = HashMap::new();
+    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
+    controllers.insert("road_load".to_string(), road_load());
+
+    let mut allocators = HashMap::new();
+    allocators.insert(
+        "wheels".to_string(),
+        AllocatorConfig::WheelTorque {
+            wheel_radius: 0.3,
+            drive: "drive".to_string(),
+        },
+    );
+
+    AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    }
+}
+
+/// A body that advertises `FrameAwareState` on the bus. The controllers require
+/// state, so an oracle-style body publishing it satisfies the build without an
+/// estimator node — keeping these tests focused on the DriveForce wiring.
+fn state_publishing_body() -> BodyCapabilities {
+    BodyCapabilities {
+        name: "oracle_state".to_string(),
+        publishes: vec![PublishedChannel {
+            key: InternalChannel::of::<FrameAwareState>().into(),
+            provenance: Provenance::Exact,
+        }],
+        consumes_control: true,
+    }
+}
+
+#[test]
+fn drive_force_stack_builds_both_controllers_and_the_allocator() {
+    // Command-space dispatch on the allocator kind: both controllers and the
+    // wheel-torque allocator are present under their config keys, each built by
+    // its registry factory (the step-4 factories) through the DriveForce branch.
+    let pipeline = build_pipeline(
+        &drive_force_stack(),
+        &AutonomyRegistry::default(),
+        FrameHandle(0),
+        &HashMap::new(),
+        state_publishing_body(),
+    )
+    .expect("DriveForce stack must build");
+
+    let names: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
+    assert!(
+        names.contains(&"speed_ctrl"),
+        "feedback controller must be present under its config key, got {names:?}"
+    );
+    assert!(
+        names.contains(&"road_load"),
+        "feedforward controller must be present under its config key, got {names:?}"
+    );
+    assert!(
+        names.contains(&"wheels"),
+        "wheel-torque allocator must be present under its config key, got {names:?}"
+    );
+
+    // Cold-start: nothing folded yet, so the terminal is empty.
+    assert!(
+        pipeline.read_actuators().is_none(),
+        "no contributions folded yet → no actuator terminal"
+    );
+}
+
+#[test]
+fn feedback_and_feedforward_fold_into_the_wheel_torque_terminal() {
+    // The headline of the DriveForce branch: the two legs sum into `command` and
+    // the allocator converts that force to a wheel torque. State is never written
+    // to the bus, so the controller nodes cold-start and publish nothing; we
+    // inject their contributions directly to test the fold + allocator wiring the
+    // assembler built, independent of the control math (covered in helios_core).
+    let pipeline = build_pipeline(
+        &drive_force_stack(),
+        &AutonomyRegistry::default(),
+        FrameHandle(0),
+        &HashMap::new(),
+        state_publishing_body(),
+    )
+    .expect("DriveForce stack must build");
+
+    // Each controller writes an instance-named DriveForce contribution; those are
+    // exactly the channels the synthesized fold reads.
+    let feedback: ChannelKey = InternalChannel::named::<DriveForce>("speed_ctrl").into();
+    let feedforward: ChannelKey = InternalChannel::named::<DriveForce>("road_load").into();
+    pipeline
+        .bus()
+        .write(
+            feedback,
+            Stamped {
+                value: DriveForce::new(100.0),
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("write to the feedback contribution channel must succeed");
+    pipeline
+        .bus()
+        .write(
+            feedforward,
+            Stamped {
+                value: DriveForce::new(50.0),
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("write to the feedforward contribution channel must succeed");
+
+    pipeline.tick(&MockRuntime, 0.1);
+
+    let actuators = pipeline
+        .read_actuators()
+        .expect("the fold → allocator must publish the terminal after contributions");
+
+    // τ = (100 + 50) N · 0.3 m = 45 N·m on the drive actuator. The sum is folded
+    // in the pipeline, the radius scaling in the allocator; asserting the same
+    // arithmetic the code runs keeps the float comparison exact.
+    assert_eq!(
+        setpoint_value(&actuators.value, "drive"),
+        SetpointValue::Torque((100.0 + 50.0) * 0.3)
     );
 }
 

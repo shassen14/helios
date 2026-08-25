@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use helios_runtime::{
     config::{
         AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandArbitrationConfig,
-        CommandSource, ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig,
+        CommandSource, CommandSpace, ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig,
         EstimatorConfig, IntegratedImuConfig, MapLayerConfig, MapperPoseSourceConfig,
         SearchPlannerConfig, SensorModelConfig,
     },
@@ -35,9 +35,9 @@ fn full_caps() -> CapabilitySet {
         gaussian_estimators: set(&["Ekf"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
         mappers: set(&["OccupancyGrid2D"]),
-        controllers: set(&["DirectTwist"]),
+        controllers: set(&["DirectTwist", "LongitudinalVelocity", "RoadLoad"]),
         planners: set(&["AStar"]),
-        allocators: set(&["KinematicAckermann"]),
+        allocators: set(&["KinematicAckermann", "WheelTorque"]),
     }
 }
 
@@ -116,6 +116,33 @@ fn ackermann_allocator() -> AllocatorConfig {
         wheel_radius: 0.3,
         drive: "drive".to_string(),
         steer: "steer".to_string(),
+    }
+}
+
+// The DriveForce command space: a longitudinal feedback controller and a
+// road-load feedforward controller both emit `DriveForce`; the wheel-torque
+// allocator consumes it.
+
+fn longitudinal_velocity() -> ControllerConfig {
+    ControllerConfig::LongitudinalVelocity {
+        state_source: Default::default(),
+        proportional_gain: 1.0,
+        integral_gain: 0.0,
+        derivative_gain: 0.0,
+    }
+}
+
+fn road_load() -> ControllerConfig {
+    ControllerConfig::RoadLoad {
+        c_roll: 0.01,
+        c_drag: 0.3,
+    }
+}
+
+fn wheel_torque_allocator() -> AllocatorConfig {
+    AllocatorConfig::WheelTorque {
+        wheel_radius: 0.3,
+        drive: "drive".to_string(),
     }
 }
 
@@ -533,6 +560,60 @@ fn validation_multiple_allocators_errors() {
             ConfigValidationError::MultipleAllocators { count } if *count == 2
         )),
         "Expected MultipleAllocators {{ count: 2 }}, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_controller_command_space_mismatch_errors() {
+    // A DriveForce controller feeding a BodyTwist allocator: the controller's
+    // contribution would land in a slot the allocator never reads. Caught at load
+    // rather than as a downstream UnsatisfiedInput at DAG build.
+    let mut controllers = HashMap::new();
+    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
+    let mut allocators = HashMap::new();
+    allocators.insert("alloc".to_string(), ackermann_allocator());
+    let stack = AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::ControllerCommandSpaceMismatch {
+                controller,
+                controller_space,
+                allocator_space,
+            } if controller == "speed_ctrl"
+                && *controller_space == CommandSpace::DriveForce
+                && *allocator_space == CommandSpace::BodyTwist
+        )),
+        "Expected ControllerCommandSpaceMismatch for speed_ctrl, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_matching_drive_force_stack_passes() {
+    // The whole DriveForce path: a longitudinal feedback leg and a road-load
+    // feedforward leg, both DriveForce, folded into the wheel-torque allocator
+    // that consumes DriveForce. No mismatch, and the stack validates clean.
+    let mut controllers = HashMap::new();
+    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
+    controllers.insert("road_load".to_string(), road_load());
+    let mut allocators = HashMap::new();
+    allocators.insert("alloc".to_string(), wheel_torque_allocator());
+    let stack = AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.is_empty(),
+        "Matching DriveForce stack must produce no errors, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }

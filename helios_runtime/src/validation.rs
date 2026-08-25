@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::config::{AutonomyStack, CommandSource, EstimatorConfig, MapLayerConfig};
+use crate::config::{AutonomyStack, CommandSource, CommandSpace, EstimatorConfig, MapLayerConfig};
 
 /// Snapshot of algorithm keys registered in each family.
 ///
@@ -82,6 +82,19 @@ pub enum ConfigValidationError {
     /// total over the body's actuators).
     MultipleAllocators {
         count: usize,
+    },
+
+    /// A controller emits a different command space than the allocator consumes.
+    /// The allocator defines the command seam, and the assembler instantiates the
+    /// `command` channel as one concrete `command::<T>()`; a controller speaking a
+    /// different space writes a slot the allocator never reads. The DAG erases the
+    /// type at the channel boundary, so this would otherwise surface late as an
+    /// `UnsatisfiedInput` (the allocator's input unfilled, the controller's
+    /// contribution an orphan). Caught here at load time instead.
+    ControllerCommandSpaceMismatch {
+        controller: String,
+        controller_space: CommandSpace,
+        allocator_space: CommandSpace,
     },
 }
 
@@ -168,6 +181,16 @@ impl std::fmt::Display for ConfigValidationError {
                 write!(
                     f,
                     "{count} allocators are configured, but the actuator terminal is a single channel that exactly one allocator may own"
+                )
+            }
+            ConfigValidationError::ControllerCommandSpaceMismatch {
+                controller,
+                controller_space,
+                allocator_space,
+            } => {
+                write!(
+                    f,
+                    "controller '{controller}' emits {controller_space:?} but the allocator's command space is {allocator_space:?}; every controller feeding the allocator must speak its command space"
                 )
             }
         }
@@ -345,6 +368,26 @@ pub fn validate_autonomy_config(
         errors.push(ConfigValidationError::MultipleAllocators {
             count: config.allocators.len(),
         });
+    }
+
+    // Command-space agreement. Every controller writes its contribution into the
+    // fold that feeds the allocator's `command` input; the allocator defines the
+    // seam, so each controller must speak its space or its output lands in a slot
+    // nothing reads. Only meaningful against a single allocator's space — the
+    // `MultipleAllocators` check above already rejects len > 1, and an empty
+    // allocator set has no seam — so the match binds exactly one.
+    if let [allocator] = config.allocators.values().collect::<Vec<_>>().as_slice() {
+        let allocator_space = allocator.command_space();
+        for (name, ctrl_cfg) in &config.controllers {
+            let controller_space = ctrl_cfg.command_space();
+            if allocator_space != controller_space {
+                errors.push(ConfigValidationError::ControllerCommandSpaceMismatch {
+                    controller: name.clone(),
+                    controller_space,
+                    allocator_space,
+                });
+            }
+        }
     }
 
     errors
