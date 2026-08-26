@@ -146,10 +146,23 @@ mod tests {
         [starting_pose]
         [goal_pose]
 
-        [vehicle]
-        kind = "Ackermann"
-        wheelbase = 2.7
-        wheel_radius = 0.3
+        [vehicle.topology]
+        kind = "RigidBodyWithMount"
+        mass = 1500.0
+
+        [vehicle.plant]
+        kind = "L0Shim"
+        l0_force_gain = 1200.0
+        l0_yaw_gain = 16400.0
+        linear_damping = 1.0
+        angular_damping = 1.5
+
+        [vehicle.collision]
+        kind = "Cuboid"
+        x = 1.8
+        y = 0.8
+        z = 4.0
+        friction = 0.7
 
         [[vehicle.actuation.actuators]]
         id = "drive"

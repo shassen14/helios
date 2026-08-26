@@ -1,13 +1,9 @@
-pub mod components;
 pub(super) mod systems;
 
-pub use components::AckermannActuator;
-
 use crate::core::app_state::{AppState, SceneBuildSet, SimulationSet};
+
 use bevy::prelude::*;
-use systems::{
-    attach_ackermann_physics, drive_ackermann_cars, process_ackermann_logic, setup_ackermann_assets,
-};
+use systems::{attach_ackermann_visual, drive_ackermann_cars, setup_ackermann_assets};
 
 /// Shared mesh/material handles — created once at scene setup, reused for every car.
 #[derive(Resource)]
@@ -18,6 +14,10 @@ pub(super) struct AckermannAssets {
     pub(super) wheel_material: Handle<StandardMaterial>,
 }
 
+/// The L0 car family: shared visual assets, the residual cosmetic visual, and the
+/// L0 plant apply. Body construction (topology/plant/collision) is the generic
+/// `build_embodiment` dispatch in `HeliosVehiclesPlugin`, keyed on config `kind`s
+/// this family registers; this plugin owns only what is still car-specific.
 pub struct AckermannCarPlugin;
 
 impl Plugin for AckermannCarPlugin {
@@ -25,10 +25,7 @@ impl Plugin for AckermannCarPlugin {
         app.add_systems(OnEnter(AppState::SceneBuilding), setup_ackermann_assets)
             .add_systems(
                 OnEnter(AppState::SceneBuilding),
-                (
-                    process_ackermann_logic.in_set(SceneBuildSet::ProcessVehicle),
-                    attach_ackermann_physics.in_set(SceneBuildSet::Physics),
-                ),
+                attach_ackermann_visual.in_set(SceneBuildSet::Physics),
             )
             .add_systems(
                 FixedUpdate,

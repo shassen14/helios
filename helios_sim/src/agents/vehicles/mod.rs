@@ -9,6 +9,9 @@
 //! [`HeliosVehiclesPlugin`] adds them all.
 
 pub mod ackermann;
+pub mod builders;
+pub mod components;
+pub mod embodiment;
 pub mod plugin_set;
 
 pub use plugin_set::HeliosVehiclesPlugin;

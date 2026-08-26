@@ -29,5 +29,7 @@ pub use scenario::{
 pub use sensors::{GpsConfig, ImuConfig, LidarConfig, MagnetometerConfig, SensorConfig};
 pub use simulation::MetricsConfig;
 pub use terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig};
-pub use vehicle::{CollisionConfig, PlantConfig, TopologyConfig, Vehicle};
+pub use vehicle::{
+    CollisionConfig, PlantConfig, TopologyConfig, Vehicle, CUBOID, L0_SHIM, RIGID_BODY_WITH_MOUNT,
+};
 pub use world_object::{WorldObjectCollider, WorldObjectPlacement, WorldObjectPrefab};
