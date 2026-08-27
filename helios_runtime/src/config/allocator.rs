@@ -16,6 +16,9 @@ pub enum AllocatorConfig {
         wheel_radius: f64,
         drive: String,
     },
+    SteerPosition {
+        steer: String,
+    },
 }
 
 impl AllocatorConfig {
@@ -23,6 +26,7 @@ impl AllocatorConfig {
         match self {
             AllocatorConfig::KinematicAckermann { .. } => "KinematicAckermann",
             AllocatorConfig::WheelTorque { .. } => "WheelTorque",
+            AllocatorConfig::SteerPosition { .. } => "SteerPosition",
         }
     }
 
@@ -33,6 +37,7 @@ impl AllocatorConfig {
         match self {
             AllocatorConfig::KinematicAckermann { .. } => CommandSpace::BodyTwist,
             AllocatorConfig::WheelTorque { .. } => CommandSpace::DriveForce,
+            AllocatorConfig::SteerPosition { .. } => CommandSpace::SteerAngle,
         }
     }
 }

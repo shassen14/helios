@@ -9,6 +9,7 @@ use crate::registry::{contexts::ControllerBuildContext, AutonomyRegistry};
 
 use helios_core::control::controllers::direct_twist::DirectTwistController;
 use helios_core::control::controllers::feedback::longitudinal_velocity::LongitudinalVelocityController;
+use helios_core::control::controllers::feedforward::bicycle_steer::BicycleSteerFeedforward;
 use helios_core::control::controllers::feedforward::road_load::RoadLoadFeedforward;
 use helios_core::control::kernels::siso_pid::SisoPid;
 use helios_core::control::BodyTwistRef;
@@ -18,6 +19,7 @@ pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_controller("DirectTwist", build_direct_twist);
     registry.register_controller("LongitudinalVelocity", build_longitudinal_velocity);
     registry.register_controller("RoadLoad", build_road_load);
+    registry.register_controller("BicycleSteer", build_bicycle_steer);
 }
 
 fn build_direct_twist(ctx: ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String> {
@@ -92,6 +94,25 @@ fn build_road_load(ctx: ControllerBuildContext) -> Result<Box<dyn PipelineNode>,
     };
 
     let controller = RoadLoadFeedforward::new(c_roll, c_drag);
+    let input_builder = Box::new(DefaultControlInputBuilder::<BodyTwistRef>::new());
+
+    Ok(Box::new(ControllerNode::new(
+        ctx.instance_name,
+        controller,
+        input_builder,
+        ctx.output_channel,
+    )))
+}
+
+fn build_bicycle_steer(ctx: ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String> {
+    let received_kind = ctx.config.get_kind_str().to_string();
+    let ControllerConfig::BicycleSteer { wheelbase } = ctx.config else {
+        return Err(format!(
+            "BicycleSteer controller factory received a `{received_kind}` config",
+        ));
+    };
+
+    let controller = BicycleSteerFeedforward::new(wheelbase);
     let input_builder = Box::new(DefaultControlInputBuilder::<BodyTwistRef>::new());
 
     Ok(Box::new(ControllerNode::new(

@@ -35,9 +35,9 @@ fn full_caps() -> CapabilitySet {
         gaussian_estimators: set(&["Ekf"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
         mappers: set(&["OccupancyGrid2D"]),
-        controllers: set(&["DirectTwist", "LongitudinalVelocity", "RoadLoad"]),
+        controllers: set(&["DirectTwist", "LongitudinalVelocity", "RoadLoad", "BicycleSteer"]),
         planners: set(&["AStar"]),
-        allocators: set(&["KinematicAckermann", "WheelTorque"]),
+        allocators: set(&["KinematicAckermann", "WheelTorque", "SteerPosition"]),
     }
 }
 
@@ -143,6 +143,19 @@ fn wheel_torque_allocator() -> AllocatorConfig {
     AllocatorConfig::WheelTorque {
         wheel_radius: 0.3,
         drive: "drive".to_string(),
+    }
+}
+
+// The SteerAngle command space: a bicycle-steer feedforward controller emits
+// `SteerAngle`; the steer-position allocator consumes it.
+
+fn bicycle_steer() -> ControllerConfig {
+    ControllerConfig::BicycleSteer { wheelbase: 2.0 }
+}
+
+fn steer_position_allocator() -> AllocatorConfig {
+    AllocatorConfig::SteerPosition {
+        steer: "steer".to_string(),
     }
 }
 
@@ -614,6 +627,59 @@ fn validation_matching_drive_force_stack_passes() {
     assert!(
         errors.is_empty(),
         "Matching DriveForce stack must produce no errors, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_matching_steer_angle_stack_passes() {
+    // The SteerAngle path: a bicycle-steer feedforward leg emitting `SteerAngle`,
+    // folded into the steer-position allocator that consumes it. The steer twin of
+    // the DriveForce stack — one command space, controller and allocator agree.
+    let mut controllers = HashMap::new();
+    controllers.insert("steer_ff".to_string(), bicycle_steer());
+    let mut allocators = HashMap::new();
+    allocators.insert("alloc".to_string(), steer_position_allocator());
+    let stack = AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.is_empty(),
+        "Matching SteerAngle stack must produce no errors, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_steer_controller_with_drive_allocator_mismatch_errors() {
+    // A SteerAngle controller feeding a DriveForce allocator: the bicycle-steer
+    // leg's contribution would land in a slot the wheel-torque allocator never
+    // reads. The mirror of the DriveForce-vs-BodyTwist mismatch, on the new space.
+    let mut controllers = HashMap::new();
+    controllers.insert("steer_ff".to_string(), bicycle_steer());
+    let mut allocators = HashMap::new();
+    allocators.insert("alloc".to_string(), wheel_torque_allocator());
+    let stack = AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::ControllerCommandSpaceMismatch {
+                controller,
+                controller_space,
+                allocator_space,
+            } if controller == "steer_ff"
+                && *controller_space == CommandSpace::SteerAngle
+                && *allocator_space == CommandSpace::DriveForce
+        )),
+        "Expected ControllerCommandSpaceMismatch for steer_ff, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }

@@ -62,13 +62,14 @@ use crate::registry::contexts::{
 };
 use crate::registry::AutonomyRegistry;
 
-use helios_core::control::commands::{BodyTwist, DriveForce, TwistIntent};
+use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::MapData;
 use helios_core::planning::types::Path;
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Add;
 
 /// Builds a fully-validated [`AutonomyPipeline`] from a resolved [`AutonomyStack`].
 ///
@@ -230,7 +231,10 @@ pub fn build_pipeline(
 
     builder = match command_space {
         Some(CommandSpace::DriveForce) => {
-            wire_drive_force_terminal(stack, registry, agent_handle, builder, &mut errors)
+            wire_sum_terminal::<DriveForce>(stack, registry, agent_handle, builder, &mut errors)
+        }
+        Some(CommandSpace::SteerAngle) => {
+            wire_sum_terminal::<SteerAngle>(stack, registry, agent_handle, builder, &mut errors)
         }
         _ => wire_body_twist_terminal(
             stack,
@@ -252,6 +256,7 @@ pub fn build_pipeline(
     // loop is one shape regardless of `T`.
     let command_channel = match command_space {
         Some(CommandSpace::DriveForce) => control::command::<DriveForce>(),
+        Some(CommandSpace::SteerAngle) => control::command::<SteerAngle>(),
         _ => control::command::<BodyTwist>(),
     };
 
@@ -417,26 +422,36 @@ fn wire_body_twist_terminal(
     builder
 }
 
-/// Wires the autonomy-only longitudinal command terminal for a [`DriveForce`]
-/// stack. Each controller writes its own instance-named contribution channel, and
-/// a [`Sum`] folds them into the `command` terminal — a feedback and a feedforward
+/// Wires the autonomy-only command terminal for a single-command-space stack,
+/// folding every controller's contribution into one `command` of type `T`.
+///
+/// Each controller writes its own instance-named contribution channel, and a
+/// [`Sum`] folds them into the `command` terminal — a feedback and a feedforward
 /// leg composing without clobbering. Feedback legs are the fold's `required`
 /// inputs (read fresh); feedforward legs are `optional` (folded last-known-good).
 /// No teleop, no arbiter: those await the arbiter's own command-space generalization.
-fn wire_drive_force_terminal(
+///
+/// `T` is the allocator's command space — [`DriveForce`] for the longitudinal
+/// drive terminal, [`SteerAngle`] for the steer terminal. The body-twist stack
+/// keeps its own richer arbiter path in [`wire_body_twist_terminal`], so it is
+/// not one of the `T`s folded here.
+fn wire_sum_terminal<T>(
     stack: &AutonomyStack,
     registry: &AutonomyRegistry,
     agent_handle: FrameHandle,
     mut builder: PipelineBuilder,
     errors: &mut Vec<PipelineAssemblyError>,
-) -> PipelineBuilder {
+) -> PipelineBuilder
+where
+    T: Send + Sync + Clone + Add<Output = T> + 'static,
+{
     let mut required: Vec<InternalChannel> = vec![];
     let mut optional: Vec<InternalChannel> = vec![];
 
     for (controller_name, ctrl_cfg) in &stack.controllers {
         // Distinct channel per producer (the planner precedent): a shared output
         // would clobber, since the bus keeps only the last write.
-        let contribution = InternalChannel::named::<DriveForce>(controller_name.as_str());
+        let contribution = InternalChannel::named::<T>(controller_name.as_str());
 
         match registry.build_controller(
             ctrl_cfg.get_kind_str(),
@@ -465,11 +480,11 @@ fn wire_drive_force_terminal(
     // unsatisfied input surfaces as a loud build error rather than a silent
     // no-command. A degenerate stack is validation's job to reject.
     if !stack.controllers.is_empty() {
-        let sum = Sum::<DriveForce>::new(
+        let sum = Sum::<T>::new(
             COMMAND_SUM_NODE,
             required,
             optional,
-            control::command::<DriveForce>(),
+            control::command::<T>(),
         );
         builder = builder.add_node(Box::new(sum));
     }

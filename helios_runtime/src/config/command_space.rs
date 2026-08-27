@@ -31,4 +31,6 @@ pub enum CommandSpace {
     /// `commands::DriveForce` — a scalar longitudinal drive force. The command
     /// space of the wheel-torque allocator.
     DriveForce,
+
+    SteerAngle,
 }

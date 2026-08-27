@@ -33,6 +33,9 @@ pub enum ControllerConfig {
         c_roll: f64,
         c_drag: f64,
     },
+    BicycleSteer {
+        wheelbase: f64,
+    },
 }
 
 impl ControllerConfig {
@@ -41,6 +44,7 @@ impl ControllerConfig {
             ControllerConfig::DirectTwist { .. } => "DirectTwist",
             ControllerConfig::LongitudinalVelocity { .. } => "LongitudinalVelocity",
             ControllerConfig::RoadLoad { .. } => "RoadLoad",
+            ControllerConfig::BicycleSteer { .. } => "BicycleSteer",
         }
     }
 
@@ -54,6 +58,7 @@ impl ControllerConfig {
             ControllerConfig::DirectTwist { .. } => CommandSpace::BodyTwist,
             ControllerConfig::LongitudinalVelocity { .. } => CommandSpace::DriveForce,
             ControllerConfig::RoadLoad { .. } => CommandSpace::DriveForce,
+            ControllerConfig::BicycleSteer { .. } => CommandSpace::SteerAngle,
         }
     }
 
@@ -69,6 +74,7 @@ impl ControllerConfig {
             ControllerConfig::DirectTwist { .. } => FoldRole::Feedback,
             ControllerConfig::LongitudinalVelocity { .. } => FoldRole::Feedback,
             ControllerConfig::RoadLoad { .. } => FoldRole::Feedforward,
+            ControllerConfig::BicycleSteer { .. } => FoldRole::Feedforward,
         }
     }
 
@@ -77,6 +83,7 @@ impl ControllerConfig {
             ControllerConfig::DirectTwist { state_source, .. } => Some(*state_source),
             ControllerConfig::LongitudinalVelocity { state_source, .. } => Some(*state_source),
             ControllerConfig::RoadLoad { .. } => None,
+            ControllerConfig::BicycleSteer { .. } => None,
         }
     }
 }
