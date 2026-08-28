@@ -21,9 +21,9 @@
 /// A command type that can flow through the `command` channel.
 ///
 /// Each variant corresponds to a `helios_core::control::commands` type of the
-/// same name. Compared for equality by validation to enforce that every
-/// controller feeding an allocator speaks the allocator's command space.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// same name. Validation uses it to enforce that every controller speaks a
+/// command space some allocator consumes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CommandSpace {
     /// `commands::BodyTwist` — a body-frame velocity (linear + angular). The
     /// command space of the kinematic Ackermann allocator.

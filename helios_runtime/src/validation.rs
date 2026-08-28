@@ -1,6 +1,8 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::config::{AutonomyStack, CommandSource, CommandSpace, EstimatorConfig, MapLayerConfig};
+use crate::config::{
+    AutonomyStack, CommandSource, CommandSpace, ControllerConfig, EstimatorConfig, MapLayerConfig,
+};
 
 /// Snapshot of algorithm keys registered in each family.
 ///
@@ -77,17 +79,19 @@ pub enum ConfigValidationError {
     /// has no input. The terminal-side twin of `AutonomySourceWithoutController`.
     AllocatorWithoutCommandSource,
 
-    /// A controller emits a different command space than the allocator consumes.
-    /// The allocator defines the command seam, and the assembler instantiates the
-    /// `command` channel as one concrete `command::<T>()`; a controller speaking a
-    /// different space writes a slot the allocator never reads. The DAG erases the
-    /// type at the channel boundary, so this would otherwise surface late as an
-    /// `UnsatisfiedInput` (the allocator's input unfilled, the controller's
-    /// contribution an orphan). Caught here at load time instead.
+    /// A controller emits a command space no allocator consumes. Each allocator
+    /// defines a command seam, and the assembler instantiates one `command::<T>()`
+    /// channel per space in use; a controller whose space matches no allocator
+    /// writes a slot nothing reads. A decoupled stack has several seams at once,
+    /// so validity is set membership: the controller's space must be one that some
+    /// allocator consumes. The DAG erases the type at the channel boundary, so an
+    /// orphaned contribution would otherwise surface late as an `UnsatisfiedInput`.
+    /// Caught here at load time instead. `available_spaces` is the sorted set of
+    /// spaces the stack's allocators consume, for a message that names the options.
     ControllerCommandSpaceMismatch {
         controller: String,
         controller_space: CommandSpace,
-        allocator_space: CommandSpace,
+        available_spaces: Vec<CommandSpace>,
     },
 
     /// Two or more allocators name the same actuator. Decoupled control merges
@@ -184,11 +188,16 @@ impl std::fmt::Display for ConfigValidationError {
             ConfigValidationError::ControllerCommandSpaceMismatch {
                 controller,
                 controller_space,
-                allocator_space,
+                available_spaces,
             } => {
+                let available = available_spaces
+                    .iter()
+                    .map(|space| format!("{space:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 write!(
                     f,
-                    "controller '{controller}' emits {controller_space:?} but the allocator's command space is {allocator_space:?}; every controller feeding the allocator must speak its command space"
+                    "controller '{controller}' emits {controller_space:?}, but no allocator consumes that space (allocators consume: {available}); every controller must speak a space some allocator consumes"
                 )
             }
 
@@ -407,21 +416,32 @@ pub fn validate_autonomy_config(
     }
 
     // Command-space agreement. Every controller writes its contribution into the
-    // fold that feeds the allocator's `command` input; the allocator defines the
-    // seam, so each controller must speak its space or its output lands in a slot
-    // nothing reads. This binds only the single-allocator case — one seam, one
-    // space to match against. A multi-allocator stack has several seams at once,
-    // and matching each controller against the set of allocator spaces is a
-    // wider check not yet performed here; an empty allocator set has no seam.
-    if let [allocator] = config.allocators.values().collect::<Vec<_>>().as_slice() {
-        let allocator_space = allocator.command_space();
-        for (name, ctrl_cfg) in &config.controllers {
+    // fold that feeds an allocator's `command` input; each allocator defines a
+    // seam, so a controller must speak a space some allocator consumes or its
+    // output lands in a slot nothing reads. A decoupled stack has several seams at
+    // once — one per space its allocators consume — so agreement is set
+    // membership, not equality against a lone allocator. With a single allocator
+    // the set is one element and this is the old exact-match. An empty allocator
+    // set has no seam, so there is nothing to disagree with.
+    //
+    // The available-space set is sorted so a mismatch names the options in a
+    // stable order regardless of the source HashMap's iteration.
+    let allocator_spaces: BTreeSet<CommandSpace> = config
+        .allocators
+        .values()
+        .map(|allocator| allocator.command_space())
+        .collect();
+    if !allocator_spaces.is_empty() {
+        let available_spaces: Vec<CommandSpace> = allocator_spaces.iter().copied().collect();
+        let controllers_by_name: BTreeMap<&String, &ControllerConfig> =
+            config.controllers.iter().collect();
+        for (name, ctrl_cfg) in controllers_by_name {
             let controller_space = ctrl_cfg.command_space();
-            if allocator_space != controller_space {
+            if !allocator_spaces.contains(&controller_space) {
                 errors.push(ConfigValidationError::ControllerCommandSpaceMismatch {
                     controller: name.clone(),
                     controller_space,
-                    allocator_space,
+                    available_spaces: available_spaces.clone(),
                 });
             }
         }

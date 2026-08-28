@@ -638,10 +638,10 @@ fn validation_controller_command_space_mismatch_errors() {
             ConfigValidationError::ControllerCommandSpaceMismatch {
                 controller,
                 controller_space,
-                allocator_space,
+                available_spaces,
             } if controller == "speed_ctrl"
                 && *controller_space == CommandSpace::DriveForce
-                && *allocator_space == CommandSpace::BodyTwist
+                && available_spaces.as_slice() == [CommandSpace::BodyTwist]
         )),
         "Expected ControllerCommandSpaceMismatch for speed_ctrl, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
@@ -714,12 +714,47 @@ fn validation_steer_controller_with_drive_allocator_mismatch_errors() {
             ConfigValidationError::ControllerCommandSpaceMismatch {
                 controller,
                 controller_space,
-                allocator_space,
+                available_spaces,
             } if controller == "steer_ff"
                 && *controller_space == CommandSpace::SteerAngle
-                && *allocator_space == CommandSpace::DriveForce
+                && available_spaces.as_slice() == [CommandSpace::DriveForce]
         )),
         "Expected ControllerCommandSpaceMismatch for steer_ff, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_controller_matching_no_allocator_space_errors() {
+    // A decoupled stack with two seams: a wheel-torque allocator (DriveForce) and
+    // a steer-position allocator (SteerAngle). A BodyTwist controller matches
+    // neither, so its contribution would orphan. Agreement is set membership now,
+    // and the error reports the whole available set (sorted, so the message is
+    // stable regardless of allocator-map iteration order).
+    let mut controllers = HashMap::new();
+    controllers.insert("twist_ctrl".to_string(), direct_twist());
+    let mut allocators = HashMap::new();
+    allocators.insert("drive_alloc".to_string(), wheel_torque_allocator());
+    allocators.insert("steer_alloc".to_string(), steer_position_allocator());
+    let stack = AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::ControllerCommandSpaceMismatch {
+                controller,
+                controller_space,
+                available_spaces,
+            } if controller == "twist_ctrl"
+                && *controller_space == CommandSpace::BodyTwist
+                && available_spaces.as_slice()
+                    == [CommandSpace::DriveForce, CommandSpace::SteerAngle]
+        )),
+        "Expected ControllerCommandSpaceMismatch for twist_ctrl, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }
