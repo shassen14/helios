@@ -74,10 +74,14 @@ pub enum ConfigValidationError {
         source: String,
     },
 
-    /// An allocator is configured, but nothing produces the `command` it
-    /// consumes — no controller and no teleop source — so the actuator terminal
-    /// has no input. The terminal-side twin of `AutonomySourceWithoutController`.
-    AllocatorWithoutCommandSource,
+    /// An allocator consumes a command space nothing produces — no controller
+    /// emits it and, for a body twist, no teleop source supplies it — so that
+    /// allocator's `command` input is unfilled. Checked per space, since decoupled
+    /// control opens one seam per space an allocator consumes. The terminal-side
+    /// twin of `AutonomySourceWithoutController`.
+    AllocatorWithoutCommandSource {
+        space: CommandSpace,
+    },
 
     /// A controller emits a command space no allocator consumes. Each allocator
     /// defines a command seam, and the assembler instantiates one `command::<T>()`
@@ -179,10 +183,10 @@ impl std::fmt::Display for ConfigValidationError {
                     "command_arbitration.sources lists '{source}' more than once"
                 )
             }
-            ConfigValidationError::AllocatorWithoutCommandSource => {
+            ConfigValidationError::AllocatorWithoutCommandSource { space } => {
                 write!(
                     f,
-                    "an allocator is configured but nothing produces the 'command' it consumes (no controller and no teleop source)"
+                    "an allocator consumes the {space:?} command space, but nothing produces it (no controller emits {space:?})"
                 )
             }
             ConfigValidationError::ControllerCommandSpaceMismatch {
@@ -373,12 +377,35 @@ pub fn validate_autonomy_config(
     // each of which would otherwise surface late and cryptically at DAG build
     // (an UnsatisfiedInput, or two writers racing one terminal slot).
 
-    // The allocator consumes `command`; `command` is produced only by a
-    // controller or a host-published teleop source. With neither, its input is
-    // unsatisfiable. Mirrors the assembler's `CommandTopology::None` case.
-    let command_is_produced = has_controller || sources.contains(&CommandSource::Teleop);
-    if !config.allocators.is_empty() && !command_is_produced {
-        errors.push(ConfigValidationError::AllocatorWithoutCommandSource);
+    // Both remaining checks turn on which command spaces the stack's allocators
+    // consume, so gather that set once. It is a BTreeSet so anything derived from
+    // it — the per-space producer errors below, the available-space list in a
+    // mismatch — comes out ordered, stable across the source HashMap's iteration.
+    let allocator_spaces: BTreeSet<CommandSpace> = config
+        .allocators
+        .values()
+        .map(|allocator| allocator.command_space())
+        .collect();
+
+    // Each allocator consumes its space's `command::<T>()` channel, fed by a
+    // same-space fold of controllers — plus, for a body twist alone, a teleop
+    // source. A space with an allocator but no producer leaves that allocator's
+    // input unsatisfiable: the per-space form of the old single-producer check,
+    // now that decoupled control opens one seam per space. Teleop produces only a
+    // body twist today (the teleop mapper is body-twist-only), so it satisfies the
+    // `BodyTwist` space and no other. Mirrors the assembler's `CommandTopology::None`.
+    let teleop_present = sources.contains(&CommandSource::Teleop);
+    let controller_spaces: HashSet<CommandSpace> = config
+        .controllers
+        .values()
+        .map(|controller| controller.command_space())
+        .collect();
+    for space in &allocator_spaces {
+        let produced = controller_spaces.contains(space)
+            || (*space == CommandSpace::BodyTwist && teleop_present);
+        if !produced {
+            errors.push(ConfigValidationError::AllocatorWithoutCommandSource { space: *space });
+        }
     }
 
     // Decoupled control lets several allocators coexist, each owning a disjoint
@@ -422,15 +449,8 @@ pub fn validate_autonomy_config(
     // once — one per space its allocators consume — so agreement is set
     // membership, not equality against a lone allocator. With a single allocator
     // the set is one element and this is the old exact-match. An empty allocator
-    // set has no seam, so there is nothing to disagree with.
-    //
-    // The available-space set is sorted so a mismatch names the options in a
-    // stable order regardless of the source HashMap's iteration.
-    let allocator_spaces: BTreeSet<CommandSpace> = config
-        .allocators
-        .values()
-        .map(|allocator| allocator.command_space())
-        .collect();
+    // set has no seam, so there is nothing to disagree with. `allocator_spaces`
+    // (gathered above) is sorted, so a mismatch names the options stably.
     if !allocator_spaces.is_empty() {
         let available_spaces: Vec<CommandSpace> = allocator_spaces.iter().copied().collect();
         let controllers_by_name: BTreeMap<&String, &ControllerConfig> =

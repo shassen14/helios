@@ -523,13 +523,16 @@ fn validation_explicit_autonomy_with_controller_passes() {
 #[test]
 fn validation_allocator_without_command_source_errors() {
     // An allocator with no controller and no teleop source has nothing producing
-    // the `command` it consumes.
+    // the `command` it consumes. The allocator is a body-twist Ackermann, so the
+    // unsatisfied space is `BodyTwist`.
     let stack = stack_with_allocators(1, false, vec![]);
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(e, ConfigValidationError::AllocatorWithoutCommandSource)),
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::AllocatorWithoutCommandSource { space }
+                if *space == CommandSpace::BodyTwist
+        )),
         "Expected AllocatorWithoutCommandSource, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
@@ -556,8 +559,73 @@ fn validation_allocator_with_teleop_source_passes() {
     assert!(
         !errors
             .iter()
-            .any(|e| matches!(e, ConfigValidationError::AllocatorWithoutCommandSource)),
+            .any(|e| matches!(e, ConfigValidationError::AllocatorWithoutCommandSource { .. })),
         "Teleop source must satisfy the allocator's command input, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_allocator_space_without_matching_controller_errors() {
+    // The crux of the per-space check: two seams, only one fed. A DriveForce
+    // wheel-torque allocator and a SteerAngle steer-position allocator, but only a
+    // SteerAngle controller. The old blunt check saw *a* controller and passed;
+    // the DriveForce allocator's `command` input is nonetheless unsatisfiable.
+    let mut controllers = HashMap::new();
+    controllers.insert("steer_ff".to_string(), bicycle_steer());
+    let mut allocators = HashMap::new();
+    allocators.insert("drive_alloc".to_string(), wheel_torque_allocator());
+    allocators.insert("steer_alloc".to_string(), steer_position_allocator());
+    let stack = AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    // The unfed DriveForce space errors; the fed SteerAngle space does not.
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::AllocatorWithoutCommandSource { space }
+                if *space == CommandSpace::DriveForce
+        )),
+        "Expected AllocatorWithoutCommandSource for DriveForce, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+    assert!(
+        !errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::AllocatorWithoutCommandSource { space }
+                if *space == CommandSpace::SteerAngle
+        )),
+        "SteerAngle space is fed by the bicycle-steer controller, got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_teleop_does_not_satisfy_a_non_body_twist_allocator_errors() {
+    // Teleop's mapper emits only a body twist, so a teleop source satisfies the
+    // BodyTwist space alone. A DriveForce allocator with teleop but no DriveForce
+    // controller is still unfed.
+    let mut allocators = HashMap::new();
+    allocators.insert("drive_alloc".to_string(), wheel_torque_allocator());
+    let stack = AutonomyStack {
+        allocators,
+        command_arbitration: CommandArbitrationConfig {
+            sources: vec![CommandSource::Teleop],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::AllocatorWithoutCommandSource { space }
+                if *space == CommandSpace::DriveForce
+        )),
+        "Teleop must not satisfy a DriveForce allocator, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }
