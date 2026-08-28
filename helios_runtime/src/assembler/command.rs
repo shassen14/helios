@@ -3,7 +3,7 @@
 //! policy onto their runtime channel / `Selector` equivalents.
 
 use crate::channels::control;
-use crate::config::{ArbitrationPolicyConfig, CommandArbitrationConfig, CommandSource};
+use crate::config::{ArbitrationPolicyConfig, CommandArbitrationConfig, CommandSource, CommandSpace};
 use crate::nodes::combinators::SelectorPolicy;
 use crate::port::InternalChannel;
 
@@ -22,6 +22,25 @@ pub(crate) const TELEOP_MAPPER_NODE: &str = "teleop_mapper";
 /// referenced const, like [`COMMAND_ARBITER_NODE`] — the assembler alone
 /// synthesizes it.
 pub(crate) const COMMAND_SUM_NODE: &str = "command_sum";
+
+pub(crate) const COMMAND_SUM_DRIVE_FORCE_NODE: &str = "command_sum_drive_force";
+
+pub(crate) const COMMAND_SUM_STEER_ANGLE_NODE: &str = "command_sum_steer_angle";
+
+/// The [`COMMAND_SUM_NODE`] name specialized to one command space. A decoupled
+/// stack folds each space its allocators consume into its own `Sum`, so the fold
+/// nodes need distinct names or the DAG rejects the second as a duplicate. Like
+/// [`source_channel`], the mapping and its literals live here, with the other
+/// synthesized command-seam identities. `BodyTwist` never reaches a `Sum` — its
+/// terminal is the arbiter path — so it maps to the base name as a total-match
+/// fallback that no live wiring exercises.
+pub(crate) fn command_sum_node_name(space: CommandSpace) -> &'static str {
+    match space {
+        CommandSpace::DriveForce => COMMAND_SUM_DRIVE_FORCE_NODE,
+        CommandSpace::SteerAngle => COMMAND_SUM_STEER_ANGLE_NODE,
+        CommandSpace::BodyTwist => COMMAND_SUM_NODE,
+    }
+}
 
 /// How the `command` terminal is fed, resolved from the declared source set.
 pub(super) enum CommandTopology {

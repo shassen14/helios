@@ -17,7 +17,7 @@ use helios_runtime::{
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
-use helios_core::control::commands::{BodyTwist, DriveForce, TwistIntent};
+use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::MagneticField3D;
@@ -590,6 +590,144 @@ fn feedback_and_feedforward_fold_into_the_wheel_torque_terminal() {
     assert_eq!(
         setpoint_value(&actuators.value, "drive"),
         SetpointValue::Torque((100.0 + 50.0) * 0.3)
+    );
+}
+
+// =========================================================================
+// == Decoupled: two allocators, two command spaces, one merged terminal ==
+// =========================================================================
+// The E3 headline. A car's longitudinal and lateral degrees of freedom are
+// separate seams: a DriveForce leg folds into a wheel-torque allocator, a
+// SteerAngle leg into a steer-position allocator, and one `Merge` unions the two
+// partial commands into the single actuator terminal. This is what the old
+// single-space assembler (and the >1-allocator validation ban) could not build.
+
+/// A bicycle-steer feedforward controller: emits SteerAngle, folds as feedforward.
+fn bicycle_steer() -> ControllerConfig {
+    ControllerConfig::BicycleSteer { wheelbase: 2.0 }
+}
+
+/// A decoupled car stack: a DriveForce leg into a wheel-torque allocator (drive
+/// actuator `drive`, τ = F · r, r = 0.3) and a SteerAngle leg into a steer-position
+/// allocator (steer actuator `steer`, identity angle → position). The two
+/// allocators own disjoint actuators, so a `Merge` unions their partials.
+fn decoupled_car_stack() -> AutonomyStack {
+    let mut controllers = HashMap::new();
+    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
+    controllers.insert("steer_ff".to_string(), bicycle_steer());
+
+    let mut allocators = HashMap::new();
+    allocators.insert(
+        "drive_wheels".to_string(),
+        AllocatorConfig::WheelTorque {
+            wheel_radius: 0.3,
+            drive: "drive".to_string(),
+        },
+    );
+    allocators.insert(
+        "steer_axle".to_string(),
+        AllocatorConfig::SteerPosition {
+            steer: "steer".to_string(),
+        },
+    );
+
+    AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn decoupled_stack_builds_both_spaces_and_both_allocators() {
+    // Two command spaces coexist: the assembler wires one Sum per space and one
+    // allocator per space, each present under its config key. What the old
+    // single-space assembler could not express.
+    let pipeline = build_pipeline(
+        &decoupled_car_stack(),
+        &AutonomyRegistry::default(),
+        FrameHandle(0),
+        &HashMap::new(),
+        state_publishing_body(),
+    )
+    .expect("decoupled two-allocator stack must build");
+
+    let names: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
+    for expected in ["speed_ctrl", "steer_ff", "drive_wheels", "steer_axle"] {
+        assert!(
+            names.contains(&expected),
+            "`{expected}` must be present under its config key, got {names:?}"
+        );
+    }
+
+    // Cold-start: neither space has folded, so the merged terminal is empty.
+    assert!(
+        pipeline.read_actuators().is_none(),
+        "no contributions folded yet → no actuator terminal"
+    );
+}
+
+#[test]
+fn decoupled_legs_merge_into_one_actuator_terminal() {
+    // The headline: a DriveForce contribution and a SteerAngle contribution flow
+    // through their own folds and allocators, and the merge unions the two partial
+    // commands into one terminal carrying *both* actuators. State is never written,
+    // so the controllers cold-start and publish nothing; we inject their
+    // contributions directly to test the fold → allocator → merge wiring the
+    // assembler built, independent of the control math (covered in helios_core).
+    let pipeline = build_pipeline(
+        &decoupled_car_stack(),
+        &AutonomyRegistry::default(),
+        FrameHandle(0),
+        &HashMap::new(),
+        state_publishing_body(),
+    )
+    .expect("decoupled two-allocator stack must build");
+
+    // Each leg's instance-named contribution — exactly the channels its space's
+    // fold reads.
+    let drive_leg: ChannelKey = InternalChannel::named::<DriveForce>("speed_ctrl").into();
+    let steer_leg: ChannelKey = InternalChannel::named::<SteerAngle>("steer_ff").into();
+    pipeline
+        .bus()
+        .write(
+            drive_leg,
+            Stamped {
+                value: DriveForce::new(100.0),
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("write to the drive contribution channel must succeed");
+    pipeline
+        .bus()
+        .write(
+            steer_leg,
+            Stamped {
+                value: SteerAngle::new(0.2),
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("write to the steer contribution channel must succeed");
+
+    pipeline.tick(&MockRuntime, 0.1);
+
+    let actuators = pipeline
+        .read_actuators()
+        .expect("the two folds → allocators → merge must publish the terminal");
+
+    // Both actuators are present in the one merged command: τ = 100 N · 0.3 m on
+    // `drive`, and the identity steer lift → Position(0.2) on `steer`.
+    assert_eq!(
+        setpoint_value(&actuators.value, "drive"),
+        SetpointValue::Torque(100.0 * 0.3)
+    );
+    assert_eq!(
+        setpoint_value(&actuators.value, "steer"),
+        SetpointValue::Position(0.2)
     );
 }
 
