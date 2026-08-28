@@ -12,6 +12,7 @@ pub mod ackermann;
 pub mod builders;
 pub mod components;
 pub mod embodiment;
+pub mod mounts;
 pub mod plugin_set;
 
 pub use plugin_set::HeliosVehiclesPlugin;

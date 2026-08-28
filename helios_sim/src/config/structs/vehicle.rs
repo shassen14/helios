@@ -1,17 +1,37 @@
+use super::Pose;
+
 use helios_core::control::actuation_model::ActuationModel;
+
 use serde::Deserialize;
 
 pub const RIGID_BODY_WITH_MOUNT: &str = "RigidBodyWithMount";
 
+/// A named attachment point on a body — a wheel hub, a sensor boom, a hardpoint.
+/// Pure pose in the body's FLU frame: a mount says *where*, never *what* mounts
+/// there or *what role* it plays. Downstream axes resolve that by `name` — the
+/// visual anchors a part to it, the plant reads which mounts steer or drive — so
+/// a mount carries no geometry or role of its own.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct MountConfig {
+    pub name: String,
+    pub pose: Pose,
+}
+
 /// Body structure: which rigid bodies the solver integrates and the frames
 /// things mount to. `RigidBodyWithMount` is the general single-body case (one
-/// solver body plus, in future, named mount frames) shared by every
-/// non-articulated agent; articulated bodies get their own variant.
+/// solver body plus zero or more named mount frames) shared by every
+/// non-articulated agent; articulated bodies get their own variant. Mounts are
+/// optional — an agent that attaches nothing declares none.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
 pub enum TopologyConfig {
-    RigidBodyWithMount { mass: f32 },
+    RigidBodyWithMount {
+        mass: f32,
+        #[serde(default, rename = "mount")]
+        mounts: Vec<MountConfig>,
+    },
 }
 
 impl TopologyConfig {
@@ -110,6 +130,32 @@ mod tests {
     fn topology_kind_str_matches_serde_tag() {
         let cfg: TopologyConfig = parse("kind = \"RigidBodyWithMount\"\nmass = 1500.0");
         assert_eq!(cfg.kind_str(), RIGID_BODY_WITH_MOUNT);
+    }
+
+    // `[[mount]]` renames to the `mounts` field and each entry nests a `Pose`.
+    // Parsing here is the guard that the rename and the nested pose table stay
+    // wired; the pose's own array/degree decoding is tested where `Pose` lives.
+    #[test]
+    fn topology_parses_mount_list() {
+        let cfg: TopologyConfig = parse(
+            "kind = \"RigidBodyWithMount\"\n\
+             mass = 1500.0\n\
+             [[mount]]\n\
+             name = \"wheel_fl\"\n\
+             pose = { translation = [1.3, 0.75, 0.0], rotation = [0.0, 0.0, 0.0] }",
+        );
+        let TopologyConfig::RigidBodyWithMount { mounts, .. } = cfg;
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].name, "wheel_fl");
+    }
+
+    // A body that declares no `[[mount]]` still parses — the field defaults to an
+    // empty list, which is what the L0 car relies on today.
+    #[test]
+    fn topology_mounts_default_to_empty() {
+        let cfg: TopologyConfig = parse("kind = \"RigidBodyWithMount\"\nmass = 1500.0");
+        let TopologyConfig::RigidBodyWithMount { mounts, .. } = cfg;
+        assert!(mounts.is_empty());
     }
 
     #[test]
