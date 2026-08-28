@@ -40,4 +40,12 @@ impl AllocatorConfig {
             AllocatorConfig::SteerPosition { .. } => CommandSpace::SteerAngle,
         }
     }
+
+    pub(crate) fn actuator_ids(&self) -> Vec<&str> {
+        match self {
+            AllocatorConfig::KinematicAckermann { drive, steer, .. } => vec![drive, steer],
+            AllocatorConfig::WheelTorque { drive, .. } => vec![drive],
+            AllocatorConfig::SteerPosition { steer } => vec![steer],
+        }
+    }
 }

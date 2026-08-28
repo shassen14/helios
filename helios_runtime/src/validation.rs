@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::config::{AutonomyStack, CommandSource, CommandSpace, EstimatorConfig, MapLayerConfig};
 
@@ -76,13 +76,6 @@ pub enum ConfigValidationError {
     /// consumes — no controller and no teleop source — so the actuator terminal
     /// has no input. The terminal-side twin of `AutonomySourceWithoutController`.
     AllocatorWithoutCommandSource,
-    /// More than one allocator is configured. The actuator terminal is a single
-    /// canonical channel; every allocator writes the same key, so two collide.
-    /// Exactly one allocator owns the terminal (its `ActuatorCommand` must be
-    /// total over the body's actuators).
-    MultipleAllocators {
-        count: usize,
-    },
 
     /// A controller emits a different command space than the allocator consumes.
     /// The allocator defines the command seam, and the assembler instantiates the
@@ -95,6 +88,17 @@ pub enum ConfigValidationError {
         controller: String,
         controller_space: CommandSpace,
         allocator_space: CommandSpace,
+    },
+
+    /// Two or more allocators name the same actuator. Decoupled control merges
+    /// several allocators' outputs into one terminal command by unioning their
+    /// disjoint actuator sets; a shared actuator breaks that disjointness, so the
+    /// merge would keep one allocator's setpoint and silently drop the other's.
+    /// Each allocator config declares the actuators it drives, so the collision
+    /// is caught here at load rather than as a dropped setpoint at runtime.
+    AllocatorActuatorConflict {
+        actuator: String,
+        allocators: Vec<String>,
     },
 }
 
@@ -177,12 +181,6 @@ impl std::fmt::Display for ConfigValidationError {
                     "an allocator is configured but nothing produces the 'command' it consumes (no controller and no teleop source)"
                 )
             }
-            ConfigValidationError::MultipleAllocators { count } => {
-                write!(
-                    f,
-                    "{count} allocators are configured, but the actuator terminal is a single channel that exactly one allocator may own"
-                )
-            }
             ConfigValidationError::ControllerCommandSpaceMismatch {
                 controller,
                 controller_space,
@@ -191,6 +189,17 @@ impl std::fmt::Display for ConfigValidationError {
                 write!(
                     f,
                     "controller '{controller}' emits {controller_space:?} but the allocator's command space is {allocator_space:?}; every controller feeding the allocator must speak its command space"
+                )
+            }
+
+            ConfigValidationError::AllocatorActuatorConflict {
+                actuator,
+                allocators,
+            } => {
+                let allocators = allocators.join(", ");
+                write!(
+                    f,
+                    "actuator '{actuator}' is claimed by more than one allocator ({allocators}); each actuator must be owned by exactly one"
                 )
             }
         }
@@ -350,9 +359,10 @@ pub fn validate_autonomy_config(
     }
 
     // Allocator cross-field checks. The per-kind check above rejects unknown
-    // allocators; these two catch a well-formed allocator wired into a graph
-    // that can't feed or hold it, which would otherwise surface late as an
-    // UnsatisfiedInput / duplicate-producer failure at DAG build.
+    // allocators; these catch a well-formed allocator wired into a graph that
+    // can't feed it or that fights another allocator for the same actuator,
+    // each of which would otherwise surface late and cryptically at DAG build
+    // (an UnsatisfiedInput, or two writers racing one terminal slot).
 
     // The allocator consumes `command`; `command` is produced only by a
     // controller or a host-published teleop source. With neither, its input is
@@ -362,20 +372,47 @@ pub fn validate_autonomy_config(
         errors.push(ConfigValidationError::AllocatorWithoutCommandSource);
     }
 
-    // The actuator terminal is one canonical channel keyed only by type, so two
-    // allocators write the same slot. Exactly one may own it.
-    if config.allocators.len() > 1 {
-        errors.push(ConfigValidationError::MultipleAllocators {
-            count: config.allocators.len(),
-        });
+    // Decoupled control lets several allocators coexist, each owning a disjoint
+    // set of actuators that a downstream merge unions into the one terminal
+    // command. That union is only well-defined if no two allocators claim the
+    // same actuator: a double-claimed actuator would take its setpoint from
+    // whichever allocator the merge saw first, silently dropping the other. Each
+    // allocator config names the actuators it drives, so this half of the
+    // partition — disjointness — is checkable here. The other half, totality
+    // (every physical actuator is claimed by some allocator), needs the body's
+    // actuation model and so is the host's to check at spawn.
+    //
+    // A BTreeMap and the per-conflict sort keep the emitted errors ordered by
+    // actuator, then by allocator name, so the report is stable across runs
+    // regardless of the source HashMap's iteration order.
+    let mut actuator_to_allocators: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for (allocator, cfg) in &config.allocators {
+        for actuator in cfg.actuator_ids() {
+            actuator_to_allocators
+                .entry(actuator)
+                .or_default()
+                .push(allocator.to_string());
+        }
+    }
+
+    for (actuator, allocators) in &actuator_to_allocators {
+        if allocators.len() > 1 {
+            let mut a = allocators.clone();
+            a.sort();
+            errors.push(ConfigValidationError::AllocatorActuatorConflict {
+                actuator: actuator.to_string(),
+                allocators: a,
+            });
+        }
     }
 
     // Command-space agreement. Every controller writes its contribution into the
     // fold that feeds the allocator's `command` input; the allocator defines the
     // seam, so each controller must speak its space or its output lands in a slot
-    // nothing reads. Only meaningful against a single allocator's space — the
-    // `MultipleAllocators` check above already rejects len > 1, and an empty
-    // allocator set has no seam — so the match binds exactly one.
+    // nothing reads. This binds only the single-allocator case — one seam, one
+    // space to match against. A multi-allocator stack has several seams at once,
+    // and matching each controller against the set of allocator spaces is a
+    // wider check not yet performed here; an empty allocator set has no seam.
     if let [allocator] = config.allocators.values().collect::<Vec<_>>().as_slice() {
         let allocator_space = allocator.command_space();
         for (name, ctrl_cfg) in &config.controllers {

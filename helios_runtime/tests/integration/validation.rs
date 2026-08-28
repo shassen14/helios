@@ -563,16 +563,56 @@ fn validation_allocator_with_teleop_source_passes() {
 }
 
 #[test]
-fn validation_multiple_allocators_errors() {
-    // Two allocators collide on the single actuator terminal.
-    let stack = stack_with_allocators(2, true, vec![]);
+fn validation_allocators_sharing_an_actuator_error() {
+    // Multiple allocators are legal, but not two that claim the same actuator:
+    // the terminal merge unions disjoint actuator sets, so a shared `drive` would
+    // silently drop one allocator's setpoint. Two wheel-torque allocators both
+    // driving `drive` collide. The claimant list is sorted, so the assertion —
+    // and the emitted error — is stable regardless of HashMap iteration order.
+    let mut controllers = HashMap::new();
+    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
+    let mut allocators = HashMap::new();
+    allocators.insert("front_axle".to_string(), wheel_torque_allocator());
+    allocators.insert("rear_axle".to_string(), wheel_torque_allocator());
+    let stack = AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    };
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            ConfigValidationError::MultipleAllocators { count } if *count == 2
+            ConfigValidationError::AllocatorActuatorConflict { actuator, allocators }
+                if actuator == "drive"
+                    && allocators.as_slice() == ["front_axle".to_string(), "rear_axle".to_string()]
         )),
-        "Expected MultipleAllocators {{ count: 2 }}, got: {:?}",
+        "Expected AllocatorActuatorConflict for 'drive' claimed by [front_axle, rear_axle], got: {:?}",
+        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn validation_disjoint_multiple_allocators_pass() {
+    // The decoupled car: a wheel-torque allocator owning `drive` and a
+    // steer-position allocator owning `steer`, each fed by its own controller.
+    // Two allocators, disjoint actuators, no shared terminal — legal now that the
+    // single-allocator restriction is gone. The stack validates clean.
+    let mut controllers = HashMap::new();
+    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
+    controllers.insert("steer_ff".to_string(), bicycle_steer());
+    let mut allocators = HashMap::new();
+    allocators.insert("drive_alloc".to_string(), wheel_torque_allocator());
+    allocators.insert("steer_alloc".to_string(), steer_position_allocator());
+    let stack = AutonomyStack {
+        controllers,
+        allocators,
+        ..Default::default()
+    };
+    let errors = validate_autonomy_config(&stack, &full_caps());
+    assert!(
+        errors.is_empty(),
+        "Disjoint multiple allocators must pass, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }
