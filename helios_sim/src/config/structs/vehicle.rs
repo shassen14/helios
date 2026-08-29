@@ -42,7 +42,56 @@ impl TopologyConfig {
     }
 }
 
+/// Suspension geometry and spring-damper constants, shared by every wheel.
+/// SI throughout; lengths in m, `stiffness` N/m, `damping` N·s/m.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct SuspensionConfig {
+    pub rest_length: f32,
+    pub wheel_radius: f32,
+    pub stiffness: f32,
+    pub damping: f32,
+    pub max_travel: f32,
+    pub ray_margin: f32,
+}
+
+/// Friction-circle tire constants, shared by every wheel. Cornering stiffness
+/// splits front/rear so their ratio sets the understeer balance; `rolling_resistance`
+/// is dimensionless, `low_speed_threshold` in m/s and must be > 0 (it divides the
+/// low-speed regularizer — enforced at load, not here).
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct TireConfig {
+    pub cornering_stiffness_front: f32,
+    pub cornering_stiffness_rear: f32,
+    pub rolling_resistance: f32,
+    pub low_speed_threshold: f32,
+}
+
+/// One wheel: the mount frame it rides on (matched by `name`, pose single-sourced
+/// on that `[[mount]]`), its axle, and its roles. Carries no offset of its own.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct WheelConfig {
+    pub mount: String,
+    pub axle: AxleConfig,
+    #[serde(default)]
+    pub steer: bool,
+    #[serde(default)]
+    pub drive: bool,
+}
+
+/// Which axle a wheel belongs to — selects the front/rear cornering stiffness.
+/// Deserializes from the bare string an author writes (`axle = "Front"`).
+#[derive(Debug, Deserialize, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub enum AxleConfig {
+    Front,
+    Rear,
+}
+
 pub const L0_SHIM: &str = "L0Shim";
+pub const RAYCAST_WHEELS: &str = "RaycastWheels";
 
 /// Plant fidelity: how setpoints and state become forces on the body.
 ///
@@ -60,12 +109,19 @@ pub enum PlantConfig {
         linear_damping: f32,
         angular_damping: f32,
     },
+    RaycastWheels {
+        suspension: SuspensionConfig,
+        tire: TireConfig,
+        #[serde(rename = "wheel")]
+        wheels: Vec<WheelConfig>,
+    },
 }
 
 impl PlantConfig {
     pub fn kind_str(&self) -> &'static str {
         match self {
             PlantConfig::L0Shim { .. } => L0_SHIM,
+            PlantConfig::RaycastWheels { .. } => RAYCAST_WHEELS,
         }
     }
 }
@@ -170,10 +226,55 @@ mod tests {
         assert_eq!(cfg.kind_str(), L0_SHIM);
     }
 
+    // The plant's second tag must round-trip the same way L0's does — the guard
+    // that `RAYCAST_WHEELS` and the `RaycastWheels` variant name never drift.
     #[test]
-    fn collision_kind_str_matches_serde_tag() {
-        let cfg: CollisionConfig =
-            parse("kind = \"Cuboid\"\nx = 1.0\ny = 1.0\nz = 1.0\nfriction = 0.5");
-        assert_eq!(cfg.kind_str(), CUBOID);
+    fn plant_raycast_kind_str_matches_serde_tag() {
+        let cfg: PlantConfig = parse(RAYCAST_WHEELS_TOML);
+        assert_eq!(cfg.kind_str(), RAYCAST_WHEELS);
     }
+
+    // The nested sub-tables and the `[[wheel]]` -> `wheels` rename stay wired, and
+    // each row lands with its mount, axle, and roles. The tire/suspension scalars
+    // are decoded by serde and not re-asserted here.
+    #[test]
+    fn plant_parses_raycast_wheel_rows() {
+        let cfg: PlantConfig = parse(RAYCAST_WHEELS_TOML);
+        let PlantConfig::RaycastWheels { wheels, .. } = cfg else {
+            panic!("expected RaycastWheels");
+        };
+        assert_eq!(wheels.len(), 2);
+        assert_eq!(wheels[0].mount, "wheel_fl");
+        assert!(matches!(wheels[0].axle, AxleConfig::Front));
+        assert!(wheels[0].steer);
+        assert!(!wheels[0].drive);
+        assert!(matches!(wheels[1].axle, AxleConfig::Rear));
+        assert!(wheels[1].drive);
+    }
+
+    // A front steering wheel and a rear drive wheel — exercises both axles, both
+    // roles, and the sub-tables in one fixture.
+    const RAYCAST_WHEELS_TOML: &str = "kind = \"RaycastWheels\"\n\
+         [suspension]\n\
+         rest_length = 0.40\n\
+         wheel_radius = 0.30\n\
+         stiffness = 50000.0\n\
+         damping = 4000.0\n\
+         max_travel = 0.20\n\
+         ray_margin = 0.10\n\
+         [tire]\n\
+         cornering_stiffness_front = 80000.0\n\
+         cornering_stiffness_rear = 60000.0\n\
+         rolling_resistance = 0.015\n\
+         low_speed_threshold = 1.0\n\
+         [[wheel]]\n\
+         mount = \"wheel_fl\"\n\
+         axle = \"Front\"\n\
+         steer = true\n\
+         drive = false\n\
+         [[wheel]]\n\
+         mount = \"wheel_rl\"\n\
+         axle = \"Rear\"\n\
+         steer = false\n\
+         drive = true";
 }
