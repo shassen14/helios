@@ -15,5 +15,40 @@
 pub mod l0_shim;
 pub mod raycast_wheels;
 
-pub use l0_shim::{L0ShimPlant, L0ShimWrench};
+pub use l0_shim::L0ShimPlant;
 pub use raycast_wheels::{Axle, RaycastWheelPlant, SuspensionParams, TireParams, Wheel, WheelRay};
+
+use crate::control::{actuators::ActuatorId, commands::BodyWrench};
+
+/// What every plant returns: the body-frame wrench to apply, and the actuators
+/// whose setpoint the plant could not honour.
+///
+/// It is shared across the fidelity ladder — each rung folds a command into a
+/// wrench differently, but they all report their result in this one shape, so
+/// the host applies forces and surfaces unsupported actuators the same way
+/// regardless of which plant is installed. What lands in [`unsupported`] is
+/// plant-specific: the setpoint kinds a given rung cannot apply (see each
+/// plant's `accepts`), and the actuators are named in the order the command
+/// listed them.
+///
+/// [`unsupported`]: PlantWrench::unsupported
+pub struct PlantWrench {
+    wrench: BodyWrench,
+    unsupported: Vec<ActuatorId>,
+}
+
+impl PlantWrench {
+    /// The folded body-frame ([`Flu`](crate::frames::conventions::Flu)) wrench
+    /// the host rotates into world space and applies to the chassis.
+    pub fn wrench(&self) -> BodyWrench {
+        self.wrench
+    }
+
+    /// Actuators whose setpoint the plant could not apply — a command-space
+    /// mismatch between the actuation contract and the installed plant (a config
+    /// or wiring error). Each contributes nothing to the wrench; the host warns
+    /// on them, one per actuator, in the command's actuator order.
+    pub fn unsupported(&self) -> &[ActuatorId] {
+        &self.unsupported
+    }
+}

@@ -1,6 +1,7 @@
-use crate::control::actuators::{ActuatorCommand, ActuatorId, SetpointKind, SetpointValue};
+use crate::control::actuators::{ActuatorCommand, SetpointKind, SetpointValue};
 use crate::control::commands::BodyWrench;
 use crate::frames::quantities::FluVector;
+use crate::plant::PlantWrench;
 
 use nalgebra::Vector3;
 
@@ -47,7 +48,7 @@ impl L0ShimPlant {
     /// A `Force` or `Torque` setpoint has no place in this open-loop map — the
     /// shim derives force from *velocity*, not from a force setpoint — so it
     /// contributes nothing to the wrench and its actuator is reported in
-    /// [`unsupported`](L0ShimWrench::unsupported) for the host to surface. The
+    /// [`unsupported`](PlantWrench::unsupported) for the host to surface. The
     /// articulated plant that consumes wheel torques directly is the next rung
     /// of the fidelity ladder.
     ///
@@ -55,7 +56,7 @@ impl L0ShimPlant {
     /// [`ActuationModel::resolve`](crate::control::actuation_model::ActuationModel::resolve)):
     /// every value is finite and speaks its actuator's declared command space,
     /// so the fold never guards against `NaN` or substitutes a fail-safe.
-    pub fn fold(&self, command: &ActuatorCommand) -> L0ShimWrench {
+    pub fn fold(&self, command: &ActuatorCommand) -> PlantWrench {
         let mut force = Vector3::zeros();
         let mut torque = Vector3::zeros();
         let mut unsupported = Vec::new();
@@ -70,7 +71,7 @@ impl L0ShimPlant {
             }
         }
 
-        L0ShimWrench {
+        PlantWrench {
             wrench: BodyWrench::new(FluVector::from_raw(force), FluVector::from_raw(torque)),
             unsupported,
         }
@@ -92,32 +93,11 @@ impl L0ShimPlant {
     }
 }
 
-/// The result of folding a command through an [`L0ShimPlant`]: the chassis
-/// wrench, plus any actuators whose setpoint the shim could not apply.
-pub struct L0ShimWrench {
-    wrench: BodyWrench,
-    unsupported: Vec<ActuatorId>,
-}
-
-impl L0ShimWrench {
-    /// The folded body-frame wrench the host applies to the chassis.
-    pub fn wrench(&self) -> BodyWrench {
-        self.wrench
-    }
-
-    /// Actuators whose command space this shim cannot apply — a `Force` or
-    /// `Torque` setpoint reaching an L0 car, which is a wiring or config
-    /// mismatch. Each contributes nothing to the wrench; the host warns on them.
-    pub fn unsupported(&self) -> &[ActuatorId] {
-        &self.unsupported
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::control::actuators::ActuatorSetpoint;
+    use crate::control::actuators::{ActuatorId, ActuatorSetpoint};
 
     fn setpoint(id: &str, value: SetpointValue) -> ActuatorSetpoint {
         ActuatorSetpoint::new(ActuatorId::new(id), value)
