@@ -7,5 +7,7 @@
 //! dynamic plants replace it without changing this module's role.
 
 pub mod l0_shim;
+pub mod raycast_wheels;
 
 pub use l0_shim::{L0ShimPlant, L0ShimWrench};
+pub use raycast_wheels::{Axle, RaycastWheelPlant, SuspensionParams, TireParams, Wheel, WheelRay};
