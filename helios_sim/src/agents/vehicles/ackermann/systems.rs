@@ -69,7 +69,7 @@ pub(super) fn attach_ackermann_visual(
 /// applies it as a `ConstantForce`/`ConstantTorque`, warning on any setpoint the
 /// shim reports it cannot apply. Passive damping is left to Avian3D.
 ///
-/// [`L0ShimPlant`]: helios_core::control::plant::L0ShimPlant
+/// [`L0ShimPlant`]: helios_core::plant::L0ShimPlant
 pub(super) fn drive_ackermann_cars(
     mut commands: Commands,
     mut query: Query<(

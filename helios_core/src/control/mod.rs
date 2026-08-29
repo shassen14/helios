@@ -15,7 +15,6 @@ pub mod controllers;
 pub mod dynamics;
 pub mod kernels;
 pub mod measurement;
-pub mod plant;
 pub mod reference;
 
 pub use crate::control::dynamics::ControlDynamics;

@@ -2,7 +2,7 @@ use crate::agents::vehicles::components::ActuationModelComponent;
 use crate::config::structs::PlantConfig;
 use crate::registry::contexts::PlantBuildContext;
 
-use helios_core::control::plant::L0ShimPlant;
+use helios_core::plant::L0ShimPlant;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
