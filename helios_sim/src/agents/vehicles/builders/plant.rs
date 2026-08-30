@@ -113,6 +113,7 @@ mod tests {
                 commands: &mut commands,
                 config: &config,
                 actuation,
+                mounts: &[],
             };
             build_l0_shim(&mut ctx)
         };

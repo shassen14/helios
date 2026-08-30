@@ -50,6 +50,7 @@ pub(super) fn build_embodiment(
             commands: &mut commands,
             config: &vehicle.plant,
             actuation: &vehicle.actuation,
+            mounts: vehicle.topology.mounts(),
         };
         if let Err(e) = builder(&mut ctx) {
             panic!("plant build failed: {e}");

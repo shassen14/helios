@@ -40,6 +40,12 @@ impl TopologyConfig {
             TopologyConfig::RigidBodyWithMount { .. } => RIGID_BODY_WITH_MOUNT,
         }
     }
+
+    pub fn mounts(&self) -> &[MountConfig] {
+        match self {
+            TopologyConfig::RigidBodyWithMount { mounts, .. } => mounts,
+        }
+    }
 }
 
 /// Suspension geometry and spring-damper constants, shared by every wheel.

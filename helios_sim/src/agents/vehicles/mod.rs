@@ -14,5 +14,6 @@ pub mod components;
 pub mod embodiment;
 pub mod mounts;
 pub mod plugin_set;
+pub mod raycast;
 
 pub use plugin_set::HeliosVehiclesPlugin;

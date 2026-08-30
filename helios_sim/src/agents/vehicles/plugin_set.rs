@@ -4,6 +4,7 @@
 use super::ackermann::AckermannCarPlugin;
 use super::builders::{build_cuboid, build_l0_shim, build_rigid_body_with_mount};
 use super::embodiment::build_embodiment;
+use crate::agents::vehicles::raycast::RaycastCarPlugin;
 use crate::config::structs::{CUBOID, L0_SHIM, RIGID_BODY_WITH_MOUNT};
 use crate::core::app_state::{AppState, SceneBuildSet};
 use crate::registry::embodiment::EmbodimentRegistry;
@@ -32,6 +33,7 @@ impl Plugin for HeliosVehiclesPlugin {
             OnEnter(AppState::SceneBuilding),
             build_embodiment.in_set(SceneBuildSet::ProcessVehicle),
         )
-        .add_plugins(AckermannCarPlugin);
+        .add_plugins(AckermannCarPlugin)
+        .add_plugins(RaycastCarPlugin);
     }
 }

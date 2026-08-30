@@ -1,4 +1,4 @@
-use crate::config::structs::{CollisionConfig, PlantConfig, TopologyConfig};
+use crate::config::structs::{CollisionConfig, MountConfig, PlantConfig, TopologyConfig};
 
 use helios_core::control::actuation_model::ActuationModel;
 
@@ -19,6 +19,7 @@ pub struct PlantBuildContext<'a, 'w, 's> {
     pub commands: &'a mut Commands<'w, 's>,
     pub config: &'a PlantConfig,
     pub actuation: &'a ActuationModel,
+    pub mounts: &'a [MountConfig],
 }
 
 pub struct CollisionBuildContext<'a, 'w, 's> {
