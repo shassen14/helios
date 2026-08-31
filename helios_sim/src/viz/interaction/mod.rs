@@ -1,5 +1,6 @@
 pub mod actions;
 pub mod camera;
+pub mod goal;
 pub mod inspector;
 pub mod keybindings;
 pub mod registration;
