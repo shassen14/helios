@@ -19,9 +19,15 @@ use nalgebra::Vector3;
 /// not track the commanded speed (steady-state speed is set by force-balancing
 /// drag and friction, not by the command), so actual speed only approximates
 /// what was asked. Closing that loop is a brain-side speed controller emitting a
-/// force setpoint, not something this shim does. It is retired wholesale when a
-/// raycast or dynamic plant supplies real per-wheel forces; until then it is
-/// what lets an arcade car drive with no wheel articulation.
+/// force setpoint, not something this shim does. It is the fidelity ladder's
+/// cheapest rung, not scaffolding torn out when a richer plant lands: a per-wheel
+/// dynamic plant sits *above* it without displacing it, because a physics-free
+/// chassis stays useful where tire dynamics are irrelevant — many agents at fleet
+/// scale, isolating the plant as a suspect when the brain misbehaves, or bringing
+/// a pipeline up over bare ground with nothing to tune. It is what lets an arcade
+/// car drive with no wheel articulation; whether it is ever removed turns on
+/// whether anything still wants a physics-free plant, not on a higher rung merely
+/// existing.
 pub struct L0ShimPlant {
     /// Newtons of forward force per unit of commanded drive velocity (m/s).
     force_gain: f64,

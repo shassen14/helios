@@ -1,0 +1,24 @@
+# =========================================================================
+# == Agent Prefab: Raycast Car ==
+# =========================================================================
+# Sim-specific prefab: the L1 raycast vehicle body, the ins_pro sensor suite
+# plus a lidar, and default poses. The autonomy stack is the portable
+# raycast_car profile, which helios_hw could load directly.
+
+name = "RaycastCar"
+starting_pose = { translation = [0.0, 0.5, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose     = { translation = [0.0, 0.5, 0.0] }
+
+# --- Hardware Configuration ---
+vehicle        = { from = "entities.vehicles.raycast_car" }
+# --- Software (Autonomy) Configuration ---
+autonomy_stack = { from = "runtime.profiles.agent_profiles.raycast_car" }
+
+# The ins_pro INS suite (IMU + GPS + magnetometer) plus a lidar that feeds the
+# occupancy grid the profile's A* planner reads. This table stays last: every
+# top-level key must precede it, or it would parse as a sensor entry.
+[sensors]
+from = "runtime.catalog.sensor_suites.ins_pro"
+
+[sensors.lidar]
+from = "entities.sensors.lidar2d"

@@ -1,0 +1,77 @@
+# =========================================================================
+# == Agent Profile: Raycast Car ==
+# =========================================================================
+# Portable autonomy for the L1 raycast car. No vehicle, sensors, or physics.
+# Root-level keys are the fields of AutonomyStack. Safe to load in helios_hw.
+#
+# Estimator, planner, and path follower are identical to `pro_car`. What
+# differs is the control stanza: the L0 car's single KinematicAckermann
+# allocator over a BodyTwist is replaced by a DECOUPLED stack — an independent
+# drive leg and steer leg — because the raycast plant applies Torque and
+# Position, not a body velocity.
+
+# ekf_advanced matches the ins_pro sensor suite this profile is flown with.
+[estimators.primary]
+from = "runtime.catalog.estimators.ekf_advanced"
+
+[search_planners]
+local_path = { from = "runtime.catalog.planners.a_star" }
+
+# The A* planner reads the occupancy grid published on the `local` layer; the
+# grid is built by the lidar the sim prefab mounts. Without this layer the
+# planner's map input is unsatisfiable and the pipeline fails validation.
+[map_layers.local]
+from = "runtime.catalog.mappers.occupancy_grid_2d"
+
+[path_following]
+kind = "PurePursuit"
+max_speed_m_s = 5.0
+min_speed_m_s = 0.5
+lookahead_distance_m = 4.0
+goal_radius = 3.0
+max_lateral_acceleration = 3.0
+state_source = "ground_truth"
+
+# --- Control: decoupled drive + steer legs ---
+# PurePursuit emits one BodyTwistRef reference; both controllers below consume
+# it. The drive leg reads its forward-speed component, the steer leg its
+# curvature — no extra reference plumbing.
+
+# Drive leg (feedback): closes forward speed to a DriveForce. The assembler
+# folds this (and any same-space feedforward) into the DriveForce command that
+# the WheelTorque allocator consumes.
+# TUNING: gains map a speed error (m/s) to a body force (N). Start gentle;
+# `state_source = "ground_truth"` isolates control tuning from estimator noise —
+# flip to "estimated" once it drives clean.
+[controllers.drive_speed]
+kind = "LongitudinalVelocity"
+state_source = "ground_truth"
+proportional_gain = 1000.0
+integral_gain = 100.0
+derivative_gain = 0.0
+
+# Steer leg (feedforward): inverts the bicycle model, turning the reference
+# curvature into a SteerAngle. Reference-only — the cross-track/heading feedback
+# lives in the PurePursuit path follower, not here.
+[controllers.steer_ff]
+kind = "BicycleSteer"
+wheelbase = 2.5
+
+# Drive allocator: DriveForce → wheel Torque (τ = F · wheel_radius). `drive`
+# names the actuator in the vehicle's [actuation] contract. wheel_radius must
+# match the plant's suspension.wheel_radius.
+[allocators.drive]
+kind = "WheelTorque"
+wheel_radius = 0.3
+drive = "drive"
+
+# Steer allocator: SteerAngle → steer Position (pass-through).
+[allocators.steer]
+kind = "SteerPosition"
+steer = "steer"
+
+# Autonomy only for first bring-up. Teleop produces a BodyTwist, which no leg of
+# a decoupled Torque/Position stack consumes; wiring it needs the deferred
+# per-morphology teleop mapping. Re-add a [teleop] source once that lands.
+[command_arbitration]
+sources = ["autonomy"]

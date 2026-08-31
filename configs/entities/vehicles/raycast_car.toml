@@ -1,0 +1,112 @@
+# L1 raycast car body. A four-corner chassis on spring-damper suspension whose
+# wheels find the ground by ray, so weight transfer, per-surface grip, and
+# understeer emerge from the model. The fidelity rung above `ackermann_base`
+# (the L0 arcade car); it drives from wheel Torque and steers from a Position
+# angle, where the L0 car drove from Velocity.
+
+# One rigid body plus four named wheel mount frames. The plant reads each mount
+# by name to place its suspension ray and apply the wheel's ground force; the
+# offsets here are the single source for that geometry.
+#
+# Poses are body FLU: translation = [forward, left, up] in metres. Wheelbase
+# 2.5 m (front axle +1.25, rear −1.25); track 1.5 m (left +0.75, right −0.75);
+# mounts sit 0.1 m below the chassis origin.
+#
+# TUNING: the mount `up` (z), the spawn height, `suspension.rest_length`, and
+# the terrain surface height must be dialled together so each wheel's downward
+# ray (length rest_length + wheel_radius + ray_margin) reaches the ground with a
+# small static compression — not zero (car floats, no grip) and not past
+# max_travel (springs slam solid). This is the first thing to check if the car
+# launches or sinks at spawn.
+[topology]
+kind = "RigidBodyWithMount"
+mass = 1500.0            # kg
+
+[[topology.mount]]
+name = "wheel_fl"
+pose = { translation = [1.25, 0.75, -0.1] }
+
+[[topology.mount]]
+name = "wheel_fr"
+pose = { translation = [1.25, -0.75, -0.1] }
+
+[[topology.mount]]
+name = "wheel_rl"
+pose = { translation = [-1.25, 0.75, -0.1] }
+
+[[topology.mount]]
+name = "wheel_rr"
+pose = { translation = [-1.25, -0.75, -0.1] }
+
+# L1 raycast plant: per-wheel spring-damper suspension + friction-circle tire.
+# Unlike the L0 shim it adds no passive damping — the tire model produces real
+# rolling resistance, so damping here would double-count it. Every value below
+# is a TUNING starting point.
+[plant]
+kind = "RaycastWheels"
+
+[plant.suspension]
+rest_length = 0.20      # m, uncompressed mount-to-hub at full droop
+wheel_radius = 0.30     # m; hub-to-ground at zero compression = rest_length + this
+stiffness = 50000.0     # N/m — must hold mass/4 ≈ 3.7 kN at a compression < max_travel
+damping = 4000.0        # N·s/m
+max_travel = 0.20       # m before the suspension bottoms out
+ray_margin = 0.10       # m the ray still reports a hit past full droop before airborne
+
+[plant.tire]
+cornering_stiffness_front = 80000.0   # N/rad — front/rear ratio sets understeer balance
+cornering_stiffness_rear = 60000.0    # N/rad
+rolling_resistance = 0.015            # fraction of normal load opposing motion
+low_speed_threshold = 1.0             # m/s; must be > 0 (fades lateral force at a standstill)
+
+[[plant.wheel]]
+mount = "wheel_fl"
+axle = "Front"
+steer = true
+drive = false
+
+[[plant.wheel]]
+mount = "wheel_fr"
+axle = "Front"
+steer = true
+drive = false
+
+[[plant.wheel]]
+mount = "wheel_rl"
+axle = "Rear"
+steer = false
+drive = true
+
+[[plant.wheel]]
+mount = "wheel_rr"
+axle = "Rear"
+steer = false
+drive = true
+
+# Physics collider and contact material. Full side lengths in the Bevy body
+# frame (x = width, y = height, z = length); construction-space, not ENU. The
+# collider is the obstacle backstop — the raycast plant floats the chassis on
+# its wheel springs above it.
+[collision]
+kind = "Cuboid"
+x = 1.8
+y = 0.8
+z = 4.0
+friction = 0.7
+
+# Drive is a wheel Torque (N·m), not a wheel speed: the WheelTorqueAllocator
+# emits τ = drive_force · wheel_radius and the plant turns it back into a ground
+# force. Steer is unchanged from the L0 car — a Position angle.
+[[actuation.actuators]]
+id = "drive"
+kind = "Torque"
+limit = 2000.0                  # N·m — allows a body force up to limit / wheel_radius ≈ 6.7 kN
+safe_state = { Torque = 0.0 }
+sign = "Normal"
+
+[[actuation.actuators]]
+id = "steer"
+kind = "Position"
+limit = 0.61                    # rad (≈ 35°)
+safe_state = { Position = 0.0 }
+sign = "Normal"
