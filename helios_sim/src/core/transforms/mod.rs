@@ -8,9 +8,11 @@
 //! (e.g. `v.y = physics.z`) anywhere else in the codebase — every such swap is a latent bug.
 
 mod bevy_bridge;
+mod body_twist;
 mod constants;
 mod frame_types;
 
+pub use body_twist::enu_twist_to_body_flu;
 pub use frame_types::{EnuBodyPose, EnuVector, EnuWorldPose, FluLocalPose, FluVector};
 
 use bevy::prelude::{GlobalTransform, *};

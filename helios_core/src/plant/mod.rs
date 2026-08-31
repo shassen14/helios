@@ -16,7 +16,9 @@ pub mod l0_shim;
 pub mod raycast_wheels;
 
 pub use l0_shim::L0ShimPlant;
-pub use raycast_wheels::{Axle, RaycastWheelPlant, SuspensionParams, TireParams, Wheel, WheelRay};
+pub use raycast_wheels::{
+    Axle, RaycastWheelPlant, SuspensionParams, TireParams, Wheel, WheelContact, WheelRay,
+};
 
 use crate::control::{actuators::ActuatorId, commands::BodyWrench};
 
@@ -38,6 +40,22 @@ pub struct PlantWrench {
 }
 
 impl PlantWrench {
+    /// A plant's folded result: the body-frame wrench to apply and the actuators
+    /// whose setpoint it could not honour. The one door every plant constructs
+    /// through, so the shape's invariants live in a single place.
+    pub fn new(wrench: BodyWrench, unsupported: Vec<ActuatorId>) -> Self {
+        Self {
+            wrench,
+            unsupported,
+        }
+    }
+
+    /// A plant contributing nothing this tick: a zero wrench and no unsupported
+    /// actuators — the result an idle or fully airborne body folds to.
+    pub fn zero() -> Self {
+        Self::new(BodyWrench::zero(), Vec::new())
+    }
+
     /// The folded body-frame ([`Flu`](crate::frames::conventions::Flu)) wrench
     /// the host rotates into world space and applies to the chassis.
     pub fn wrench(&self) -> BodyWrench {

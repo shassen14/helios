@@ -9,6 +9,7 @@
 //! [`HeliosVehiclesPlugin`] adds them all.
 
 pub mod ackermann;
+pub mod actuation;
 pub mod builders;
 pub mod components;
 pub mod embodiment;

@@ -160,10 +160,10 @@ impl RaycastWheelPlant {
             torque += wheel.offset.raw().cross(&wheel_force);
         }
 
-        PlantWrench {
-            wrench: BodyWrench::new(FluVector::from_raw(force), FluVector::from_raw(torque)),
+        PlantWrench::new(
+            BodyWrench::new(FluVector::from_raw(force), FluVector::from_raw(torque)),
             unsupported,
-        }
+        )
     }
 
     /// Whether this plant can apply a setpoint of the given command space.

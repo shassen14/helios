@@ -71,10 +71,10 @@ impl L0ShimPlant {
             }
         }
 
-        PlantWrench {
-            wrench: BodyWrench::new(FluVector::from_raw(force), FluVector::from_raw(torque)),
+        PlantWrench::new(
+            BodyWrench::new(FluVector::from_raw(force), FluVector::from_raw(torque)),
             unsupported,
-        }
+        )
     }
 
     /// Whether this shim can apply a setpoint of the given command space.
