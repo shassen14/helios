@@ -94,6 +94,22 @@ y = 0.8
 z = 4.0
 friction = 0.7
 
+# Cosmetic mesh, read by the visual axis — never by the solver. The chassis box
+# mirrors the collision dims; a wheel cylinder is drawn at each mount frame, so
+# `radius` tracks `suspension.wheel_radius` (0.30) to sit on the ground the ray
+# finds. `width` is the tyre's axial thickness. Colours are linear sRGBA; the
+# chassis alpha (0.35) is translucent so the wheels tucked under it stay visible.
+#
+# `wheel.drop` lowers the drawn hub below its mount: the mount is the suspension
+# strut top (ray origin), and the tyre hangs beneath it, so a wheel drawn at the
+# mount sits up inside the body. 0.30 ≈ rest_length + ray_margin, placing the hub
+# near full droop so the wheel clears the chassis bottom. VISUAL tuning only — it
+# does not move the physics mount.
+[visual]
+kind = "WheeledPrimitives"
+chassis = { x = 1.8, y = 0.8, z = 4.0, color = [0.2, 0.4, 0.8, 0.35] }
+wheel = { radius = 0.30, width = 0.20, drop = 0.30, color = [0.05, 0.05, 0.05, 1.0] }
+
 # Drive is a wheel Torque (N·m), not a wheel speed: the WheelTorqueAllocator
 # emits τ = drive_force · wheel_radius and the plant turns it back into a ground
 # force. Steer is unchanged from the L0 car — a Position angle.

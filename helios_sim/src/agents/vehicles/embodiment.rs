@@ -1,14 +1,18 @@
 use crate::core::transforms::EnuBodyPose;
 use crate::prelude::*;
-use crate::registry::contexts::{CollisionBuildContext, PlantBuildContext, TopologyBuildContext};
+use crate::registry::contexts::{
+    CollisionBuildContext, PlantBuildContext, TopologyBuildContext, VisualBuildContext,
+};
 use crate::registry::embodiment::EmbodimentRegistry;
 
 use avian3d::prelude::RigidBody;
 
 /// Generic body assembly: for each freshly-spawned agent, look up and run its
-/// per-axis builders — topology, then plant, then collision — from the
-/// [`EmbodimentRegistry`], keyed on each `[section]`'s `kind`. Topology runs first
-/// as the build-dependency root; later axes will read frames it deposits.
+/// per-axis builders — topology, then plant, then collision, then visual — from
+/// the [`EmbodimentRegistry`], keyed on each `[section]`'s `kind`. Topology runs
+/// first as the build-dependency root; the plant and visual axes both read the
+/// mount frames it declares (by config, since the mount entities are still queued
+/// on the shared command buffer during this pass).
 ///
 /// Runs in `ProcessVehicle`. `Without<RigidBody>` makes it idempotent — the
 /// topology builder inserts the body, so a built agent is skipped on any re-run,
@@ -18,6 +22,8 @@ use avian3d::prelude::RigidBody;
 pub(super) fn build_embodiment(
     mut commands: Commands,
     registry: Res<EmbodimentRegistry>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     query: Query<(Entity, &GroundTruthState, &SpawnAgentConfigRequest), Without<RigidBody>>,
 ) {
     for (entity, ground_truth, request) in &query {
@@ -68,6 +74,23 @@ pub(super) fn build_embodiment(
         };
         if let Err(e) = builder(&mut ctx) {
             panic!("collision build failed: {e}");
+        }
+
+        // Visual — cosmetic only, and last: nothing else reads what it spawns.
+        let kind = vehicle.visual.kind_str();
+        let Some(builder) = registry.visual(kind) else {
+            panic!("no visual builder registered for kind `{kind}`");
+        };
+        let mut ctx = VisualBuildContext {
+            entity,
+            commands: &mut commands,
+            config: &vehicle.visual,
+            mounts: vehicle.topology.mounts(),
+            meshes: &mut meshes,
+            materials: &mut materials,
+        };
+        if let Err(e) = builder(&mut ctx) {
+            panic!("visual build failed: {e}");
         }
     }
 }

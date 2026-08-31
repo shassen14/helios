@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use super::contexts::{CollisionBuildContext, PlantBuildContext, TopologyBuildContext};
+use super::contexts::{
+    CollisionBuildContext, PlantBuildContext, TopologyBuildContext, VisualBuildContext,
+};
 
 use bevy::prelude::*;
 
@@ -11,6 +13,7 @@ use bevy::prelude::*;
 pub type TopologyBuilder = fn(&mut TopologyBuildContext) -> Result<(), String>;
 pub type PlantBuilder = fn(&mut PlantBuildContext) -> Result<(), String>;
 pub type CollisionBuilder = fn(&mut CollisionBuildContext) -> Result<(), String>;
+pub type VisualBuilder = fn(&mut VisualBuildContext) -> Result<(), String>;
 
 /// Maps each embodiment axis's `kind` string to the builder that constructs it.
 ///
@@ -23,6 +26,7 @@ pub struct EmbodimentRegistry {
     topology: HashMap<String, TopologyBuilder>,
     plant: HashMap<String, PlantBuilder>,
     collision: HashMap<String, CollisionBuilder>,
+    visual: HashMap<String, VisualBuilder>,
 }
 
 impl EmbodimentRegistry {
@@ -38,6 +42,10 @@ impl EmbodimentRegistry {
         self.collision.insert(kind.to_string(), builder);
     }
 
+    pub fn register_visual(&mut self, kind: &str, builder: VisualBuilder) {
+        self.visual.insert(kind.to_string(), builder);
+    }
+
     pub fn topology(&self, kind: &str) -> Option<TopologyBuilder> {
         self.topology.get(kind).copied()
     }
@@ -48,6 +56,10 @@ impl EmbodimentRegistry {
 
     pub fn collision(&self, kind: &str) -> Option<CollisionBuilder> {
         self.collision.get(kind).copied()
+    }
+
+    pub fn visual(&self, kind: &str) -> Option<VisualBuilder> {
+        self.visual.get(kind).copied()
     }
 }
 

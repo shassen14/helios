@@ -30,7 +30,8 @@ pub use sensors::{GpsConfig, ImuConfig, LidarConfig, MagnetometerConfig, SensorC
 pub use simulation::MetricsConfig;
 pub use terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig};
 pub use vehicle::{
-    AxleConfig, CollisionConfig, MountConfig, PlantConfig, SuspensionConfig, TireConfig,
-    TopologyConfig, Vehicle, WheelConfig, CUBOID, L0_SHIM, RAYCAST_WHEELS, RIGID_BODY_WITH_MOUNT,
+    AxleConfig, BoxVisual, CollisionConfig, MountConfig, PlantConfig, SuspensionConfig, TireConfig,
+    TopologyConfig, Vehicle, VisualConfig, WheelConfig, WheelVisual, CUBOID, L0_SHIM,
+    RAYCAST_WHEELS, RIGID_BODY_WITH_MOUNT, WHEELED_PRIMITIVES,
 };
 pub use world_object::{WorldObjectCollider, WorldObjectPlacement, WorldObjectPrefab};

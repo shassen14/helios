@@ -158,6 +158,62 @@ impl CollisionConfig {
     }
 }
 
+pub const WHEELED_PRIMITIVES: &str = "WheeledPrimitives";
+
+/// Cosmetic body geometry — what the agent looks like, never what the solver
+/// collides or what a sensor perceives. Deliberately its own axis: a visual mesh
+/// can differ from the collider and from the plant's contact geometry (a
+/// low-poly wheel over a cylinder collider over a single suspension ray).
+/// `WheeledPrimitives` draws a chassis box plus one wheel cylinder per mount
+/// frame, the primitive stand-in until a mesh-asset variant lands.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum VisualConfig {
+    WheeledPrimitives {
+        chassis: BoxVisual,
+        wheel: WheelVisual,
+    },
+}
+
+impl VisualConfig {
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            VisualConfig::WheeledPrimitives { .. } => WHEELED_PRIMITIVES,
+        }
+    }
+}
+
+/// The chassis box: full side lengths in the Bevy body frame (x = width,
+/// y = height, z = length), construction-space, matching the collision cuboid's
+/// convention. A separate value from `[collision]` on purpose — the drawn body
+/// and the collider are independent axes. `color` is linear sRGBA; an alpha below
+/// 1.0 renders translucent (so the wheels tucked under the body stay visible).
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct BoxVisual {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub color: [f32; 4],
+}
+
+/// One wheel drawn as a cylinder: `radius` and axle-axis `width`, both in metres,
+/// `color` linear sRGBA. `drop` lowers the drawn hub below its mount frame: the
+/// mount is the suspension pickup (strut top / ray origin), and the wheel centre
+/// hangs roughly the rest suspension extension beneath it, so a wheel drawn at
+/// the mount would sit up inside the body. `radius`/`drop` relate to the plant's
+/// `suspension` values but are authored independently — the visual is a
+/// projection of the body, not a reader of the plant.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct WheelVisual {
+    pub radius: f32,
+    pub width: f32,
+    pub drop: f32,
+    pub color: [f32; 4],
+}
+
 /// One agent body, decomposed into independent embodiment axes. Each axis is a
 /// tagged enum keyed on its own `kind`, so a new agent type extends an axis
 /// rather than reshaping this struct.
@@ -167,6 +223,7 @@ pub struct Vehicle {
     pub topology: TopologyConfig,
     pub plant: PlantConfig,
     pub collision: CollisionConfig,
+    pub visual: VisualConfig,
     pub actuation: ActuationModel,
 }
 
@@ -257,6 +314,30 @@ mod tests {
         assert!(matches!(wheels[1].axle, AxleConfig::Rear));
         assert!(wheels[1].drive);
     }
+
+    #[test]
+    fn visual_kind_str_matches_serde_tag() {
+        let cfg: VisualConfig = parse(VISUAL_TOML);
+        assert_eq!(cfg.kind_str(), WHEELED_PRIMITIVES);
+    }
+
+    // The chassis and wheel sub-tables decode into their dims structs, including the
+    // color array and the wheel `drop`. The scalars are plain serde and not
+    // re-asserted exhaustively — this is the guard that the nested-table shape stays
+    // wired, not a value check.
+    #[test]
+    fn visual_parses_chassis_and_wheel_dims() {
+        let cfg: VisualConfig = parse(VISUAL_TOML);
+        let VisualConfig::WheeledPrimitives { chassis, wheel } = cfg;
+        assert_eq!(chassis.z, 4.0);
+        assert_eq!(chassis.color[3], 0.35);
+        assert_eq!(wheel.radius, 0.3);
+        assert_eq!(wheel.drop, 0.3);
+    }
+
+    const VISUAL_TOML: &str = "kind = \"WheeledPrimitives\"\n\
+         chassis = { x = 1.8, y = 0.8, z = 4.0, color = [0.2, 0.4, 0.8, 0.35] }\n\
+         wheel = { radius = 0.3, width = 0.2, drop = 0.3, color = [0.05, 0.05, 0.05, 1.0] }";
 
     // A front steering wheel and a rear drive wheel — exercises both axles, both
     // roles, and the sub-tables in one fixture.

@@ -4,8 +4,9 @@
 use super::ackermann::AckermannCarPlugin;
 use super::builders::{build_cuboid, build_l0_shim, build_rigid_body_with_mount};
 use super::embodiment::build_embodiment;
+use crate::agents::vehicles::builders::build_wheeled_primitives;
 use crate::agents::vehicles::raycast::RaycastCarPlugin;
-use crate::config::structs::{CUBOID, L0_SHIM, RIGID_BODY_WITH_MOUNT};
+use crate::config::structs::{CUBOID, L0_SHIM, RIGID_BODY_WITH_MOUNT, WHEELED_PRIMITIVES};
 use crate::core::app_state::{AppState, SceneBuildSet};
 use crate::registry::embodiment::EmbodimentRegistry;
 
@@ -27,6 +28,7 @@ impl Plugin for HeliosVehiclesPlugin {
             registry.register_topology(RIGID_BODY_WITH_MOUNT, build_rigid_body_with_mount);
             registry.register_plant(L0_SHIM, build_l0_shim);
             registry.register_collision(CUBOID, build_cuboid);
+            registry.register_visual(WHEELED_PRIMITIVES, build_wheeled_primitives);
         }
 
         app.add_systems(

@@ -5,7 +5,9 @@
 pub mod collision;
 pub mod plant;
 pub mod topology;
+pub mod visual;
 
 pub use collision::build_cuboid;
 pub use plant::{build_l0_shim, L0ShimPlantComponent};
 pub use topology::build_rigid_body_with_mount;
+pub use visual::build_wheeled_primitives;
