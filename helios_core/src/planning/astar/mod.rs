@@ -160,6 +160,15 @@ impl SearchPlanner for AStarPlanner {
             self.last_plan_time = f64::NEG_INFINITY;
         }
 
+        // Arrival latches for a fixed goal: once reached, stay reached until the
+        // goal changes. An inertial body coasting past `arrival_tolerance_m` must
+        // not trigger a replan — a fresh path would reset the follower's own
+        // arrival latch and drive the body back toward the goal, so it never
+        // rests. Re-engaging motion is the job of a new goal, not a drift.
+        if self.status == PlannerStatus::GoalReached {
+            return PlannerResult::GoalReached;
+        }
+
         // Robot 2D position, read in whatever frame the estimate declares — the
         // planner has no agent handle of its own, so it asks the state.
         let robot_pos = match inputs
@@ -453,6 +462,31 @@ mod tests {
         let inputs = make_inputs(5.0, 5.0, clear_map(20, 20, 1.0), Some(goal_2d(5.1, 5.0)));
         let result = planner.plan(0.0, &inputs);
         assert!(matches!(result, PlannerResult::GoalReached));
+        assert_eq!(planner.status(), PlannerStatus::GoalReached);
+    }
+
+    /// Once arrived, the planner stays `GoalReached` for the same goal even after
+    /// the robot drifts well outside `arrival_tolerance_m` — it does not replan a
+    /// path back. An inertial body that overshoots must be left to rest; a fresh
+    /// path here would reset the follower's latch and drive it back. Re-engaging
+    /// motion is the job of a new goal, which resets `status` to `Idle`.
+    #[test]
+    fn arrival_latches_and_does_not_replan_on_drift() {
+        let mut planner = AStarPlanner::new(default_config());
+        let goal = Some(goal_2d(5.0, 5.0));
+        let map = clear_map(20, 20, 1.0);
+
+        // Reach the goal (distance 0 < 0.5 m tolerance).
+        let arrived = planner.plan(0.0, &make_inputs(5.0, 5.0, map.clone(), goal.clone()));
+        assert!(matches!(arrived, PlannerResult::GoalReached));
+
+        // Drift 3 m away, same goal, rate gate open. Latched → still GoalReached,
+        // never a Path.
+        let drifted = planner.plan(100.0, &make_inputs(8.0, 5.0, map, goal));
+        assert!(
+            matches!(drifted, PlannerResult::GoalReached),
+            "latched planner replanned after the robot drifted outside arrival tolerance"
+        );
         assert_eq!(planner.status(), PlannerStatus::GoalReached);
     }
 

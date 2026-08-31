@@ -19,6 +19,12 @@ pub struct PurePursuitPathFollower {
     max_lateral_acceleration: f64,
     path: Option<Path>,
     lookahead_index: usize,
+    /// Latches once the agent first reaches `goal_radius` of the final waypoint.
+    /// While set, `compute` returns the stop reference regardless of the agent's
+    /// current position — an inertial body coasting back outside the radius does
+    /// not re-arm driving. Cleared only by `set_path`/`reset`, so a completed
+    /// path stays completed until the planner issues a new one.
+    arrived: bool,
     agent_handle: FrameHandle,
 }
 
@@ -41,6 +47,7 @@ impl PurePursuitPathFollower {
             max_lateral_acceleration,
             path: None,
             lookahead_index: 0,
+            arrived: false,
             agent_handle,
         }
     }
@@ -82,6 +89,13 @@ impl PathFollower for PurePursuitPathFollower {
         _dt: f64,
         inputs: &PathFollowerInputs,
     ) -> PathFollowerResult<BodyTwistRef> {
+        // A completed path stays completed: once arrived, hold the stop reference
+        // no matter where the body has since drifted, so an inertial vehicle that
+        // coasts past the goal does not re-arm and drive back.
+        if self.arrived {
+            return PathFollowerResult::GoalReached(BodyTwistRef::new(BodyTwist::zero()));
+        }
+
         let state = &inputs.state;
 
         let lookahead_distance: f64 = match self.lookahead_time {
@@ -132,7 +146,8 @@ impl PathFollower for PurePursuitPathFollower {
         let distance = delta.norm();
 
         if distance <= self.goal_radius {
-            return PathFollowerResult::GoalReached;
+            self.arrived = true;
+            return PathFollowerResult::GoalReached(BodyTwistRef::new(BodyTwist::zero()));
         }
 
         let lookahead_yaw = delta.y.atan2(delta.x);
@@ -154,6 +169,7 @@ impl PathFollower for PurePursuitPathFollower {
     fn set_path(&mut self, path: Path) {
         self.path = Some(path);
         self.lookahead_index = 0;
+        self.arrived = false;
     }
 
     fn get_lookahead_waypoint(&self) -> Option<&Point<Enu>> {
@@ -165,13 +181,20 @@ impl PathFollower for PurePursuitPathFollower {
     fn reset(&mut self) {
         self.path = None;
         self.lookahead_index = 0;
+        self.arrived = false;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::manifold::TangentNoise;
     use crate::planning::types::Path;
+    use crate::state::Quantity;
+
+    use nalgebra::{DMatrix, DVector};
+    use std::sync::Arc;
 
     fn follower() -> PurePursuitPathFollower {
         // Only the path plumbing is exercised here; the tuning values are
@@ -184,6 +207,61 @@ mod tests {
             waypoints,
             timestamp: 0.0,
             level_key: "global".into(),
+        }
+    }
+
+    // Orientation blocks refuse `None` noise, so seed every block with the same
+    // isotropic 3-DOF variance; its value is irrelevant to a geometry test.
+    fn noise3() -> Option<TangentNoise> {
+        Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap())
+    }
+
+    /// A state carrying `handle`'s Odom position `(x, y, 0)` and an identity
+    /// Body→Odom orientation — the two blocks `compute` reads to locate the agent.
+    fn inputs_at(handle: FrameHandle, x: f64, y: f64) -> PathFollowerInputs {
+        let schema = StateSchema::compose(vec![
+            SchemaBlock::new(
+                Quantity::Position(FrameId::Odom(handle)),
+                noise3(),
+                DVector::from_vec(vec![x, y, 0.0]),
+                DMatrix::identity(3, 3),
+            ),
+            SchemaBlock::new(
+                Quantity::Orientation {
+                    from: FrameId::Body(handle),
+                    to: FrameId::Odom(handle),
+                },
+                noise3(),
+                DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+                DMatrix::identity(3, 3),
+            ),
+        ]);
+        PathFollowerInputs {
+            state: FrameAwareState::from_schema(Arc::new(schema), 0.0),
+        }
+    }
+
+    /// Arrival latches: once the agent first reaches `goal_radius` of the final
+    /// waypoint, the follower keeps returning `GoalReached` (the stop reference)
+    /// even after the body drifts well outside the radius. Without the latch an
+    /// inertial vehicle that coasts past the goal re-arms `Active` and drives
+    /// back, oscillating — the drift call below would return `Active`.
+    #[test]
+    fn arrival_latches_and_does_not_rearm_on_drift() {
+        let handle = FrameHandle(7);
+        // goal_radius = 1.0; a single-waypoint path at the origin.
+        let mut f = PurePursuitPathFollower::new(1.0, None, 1.0, 0.1, 2.0, 1.0, handle);
+        f.set_path(path_of(vec![Point::<Enu>::new(0.0, 0.0, 0.0)]));
+
+        // Inside the radius (0.5 m) → arrives and returns a stop.
+        let arrived = f.compute(0.1, &inputs_at(handle, 0.5, 0.0));
+        assert!(matches!(arrived, PathFollowerResult::GoalReached(_)));
+
+        // Drifted 5 m away — well outside the radius. Latched → still GoalReached,
+        // and the carried reference is the zero-twist stop, not a drive-back.
+        match f.compute(0.1, &inputs_at(handle, 5.0, 0.0)) {
+            PathFollowerResult::GoalReached(r) => assert_eq!(*r.twist(), BodyTwist::zero()),
+            _ => panic!("latched follower re-armed after drifting outside goal_radius"),
         }
     }
 

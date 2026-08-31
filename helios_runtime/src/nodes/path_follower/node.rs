@@ -142,12 +142,16 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
         // 3. Compute the reference.
         let result = state.follower.compute(tick.dt, &inputs);
 
-        // 4. Publish only on Active. All other variants (GoalReached, NoPath,
-        //    Error) leave the bus untouched so the controller falls back to
-        //    last-known-good — same convention as SearchPlannerNode.
+        // 4. Publish the reference on Active and on GoalReached. GoalReached
+        //    carries a terminal "park here" setpoint from the follower, so it
+        //    must reach the bus for the vehicle to stop at the goal rather than
+        //    coast on its last command. NoPath/Error leave the bus untouched so
+        //    the controller falls back to last-known-good — the transient-hold
+        //    convention shared with SearchPlannerNode.
         let reference = match result {
-            PathFollowerResult::Active(reference) => reference,
-            _ => return,
+            PathFollowerResult::Active(reference)
+            | PathFollowerResult::GoalReached(reference) => reference,
+            PathFollowerResult::NoPath | PathFollowerResult::Error(_) => return,
         };
 
         let stamped = Stamped {
@@ -168,7 +172,8 @@ mod tests {
     //!   - calls `set_path` exactly once per distinct bus-timestamp on `path_channel`
     //!   - never calls `set_path` when the path timestamp is unchanged
     //!   - publishes a `Stamped<BodyTwistRef>` only on `Active`
-    //!   - is a no-op on `NoPath` / `GoalReached` / `Error`
+    //!   - publishes the carried stop reference on `GoalReached`
+    //!   - is a no-op on `NoPath` / `Error`
     //!   - early-returns when the input builder yields `None`
     //!   - declares `path_channel` in its required inputs
 
@@ -247,7 +252,7 @@ mod tests {
             // clone the scripted result each call
             match &*self.result.lock().unwrap() {
                 PathFollowerResult::Active(tp) => PathFollowerResult::Active(tp.clone()),
-                PathFollowerResult::GoalReached => PathFollowerResult::GoalReached,
+                PathFollowerResult::GoalReached(tp) => PathFollowerResult::GoalReached(tp.clone()),
                 PathFollowerResult::NoPath => PathFollowerResult::NoPath,
                 PathFollowerResult::Error(s) => PathFollowerResult::Error(s.clone()),
             }
@@ -433,8 +438,12 @@ mod tests {
     }
 
     #[test]
-    fn execute_no_op_on_goal_reached() {
-        let (follower, _calls) = ScriptedFollower::new(PathFollowerResult::GoalReached);
+    fn execute_publishes_stop_on_goal_reached() {
+        // The follower carries a "park here" reference (a real follower makes this
+        // a zero body twist). The node must forward it — not hold last-known-good —
+        // or the controller keeps tracking the last nonzero velocity and overshoots.
+        let stop = BodyTwistRef::new(BodyTwist::zero());
+        let (follower, _calls) = ScriptedFollower::new(PathFollowerResult::GoalReached(stop));
         let node = PathFollowerNode::new(
             "pure_pursuit",
             Box::new(follower),
@@ -443,8 +452,15 @@ mod tests {
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
-        node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<BodyTwistRef>(out_channel()).is_none());
+
+        node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
+
+        let published = bus
+            .read::<BodyTwistRef>(out_channel())
+            .expect("GoalReached must publish an explicit stop, not hold last-known-good");
+        assert_eq!(*published.value.twist(), BodyTwist::zero());
+        assert!((published.timestamp.0 - 2.5).abs() < 1e-9);
+        assert_eq!(published.producer, 13);
     }
 
     #[test]

@@ -27,6 +27,11 @@ pub struct SteeringPidPathFollower {
     lookahead_distance: f64,
     path: Option<Path>,
     lookahead_index: usize,
+    /// Latches once the agent first reaches `goal_radius` of the final waypoint.
+    /// While set, `compute` returns the stop reference regardless of the agent's
+    /// current position, so an inertial body coasting back outside the radius
+    /// does not re-arm driving. Cleared only by `set_path`/`reset`.
+    arrived: bool,
     agent_handle: FrameHandle,
 }
 
@@ -47,6 +52,7 @@ impl SteeringPidPathFollower {
             lookahead_distance,
             path: None,
             lookahead_index: 0,
+            arrived: false,
             agent_handle,
         }
     }
@@ -83,6 +89,12 @@ impl PathFollower for SteeringPidPathFollower {
         dt: f64,
         inputs: &PathFollowerInputs,
     ) -> PathFollowerResult<BodyTwistRef> {
+        // A completed path stays completed: once arrived, hold the stop reference
+        // regardless of where the body has since drifted.
+        if self.arrived {
+            return PathFollowerResult::GoalReached(BodyTwistRef::new(BodyTwist::zero()));
+        }
+
         let state = &inputs.state;
 
         if self.path.is_none() {
@@ -116,8 +128,9 @@ impl PathFollower for SteeringPidPathFollower {
         let dist = (lookahead_pos - agent_pos).norm();
 
         if dist < self.goal_radius {
+            self.arrived = true;
             self.heading_pid.reset();
-            return PathFollowerResult::GoalReached;
+            return PathFollowerResult::GoalReached(BodyTwistRef::new(BodyTwist::zero()));
         }
 
         let delta = lookahead_pos - agent_pos;
@@ -136,6 +149,7 @@ impl PathFollower for SteeringPidPathFollower {
     fn set_path(&mut self, path: Path) {
         self.path = Some(path);
         self.lookahead_index = 0;
+        self.arrived = false;
         self.heading_pid.reset();
     }
 
@@ -148,6 +162,7 @@ impl PathFollower for SteeringPidPathFollower {
     fn reset(&mut self) {
         self.path = None;
         self.lookahead_index = 0;
+        self.arrived = false;
         self.heading_pid.reset();
     }
 }

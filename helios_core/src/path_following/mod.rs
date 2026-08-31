@@ -41,10 +41,15 @@ pub enum PathFollowerResult<R: ControlReference> {
     /// a reference point for the controller this tick.
     Active(R),
 
-    /// The robot is within `goal_radius` of the final waypoint. The controller
-    /// should stop issuing commands. Call [`PathFollower::set_path`] to begin
-    /// a new path.
-    GoalReached,
+    /// The robot is within `goal_radius` of the final waypoint. The variant
+    /// carries the terminal reference the controller should now track — a
+    /// "park here" setpoint the follower builds from the goal and its own
+    /// reference semantics (a zero body twist for a velocity follower). Unlike
+    /// [`NoPath`](Self::NoPath) / [`Error`](Self::Error), which hold
+    /// last-known-good, this reference is published, so the vehicle stops at the
+    /// goal instead of coasting on its last command. Call
+    /// [`PathFollower::set_path`] to begin a new path.
+    GoalReached(R),
 
     /// No path has been set yet. Expected at startup and after goal reached
     /// while waiting for the next plan. The controller should hold its last
