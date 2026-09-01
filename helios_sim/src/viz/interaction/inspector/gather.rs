@@ -16,7 +16,11 @@ use crate::{
 };
 
 use helios_core::{
-    control::commands::BodyTwist,
+    control::{
+        actuators::{ActuatorCommand, SetpointValue},
+        commands::BodyTwist,
+        reference::BodyTwistRef,
+    },
     data::MonotonicTime,
     frames::{
         conventions::Enu,
@@ -231,10 +235,119 @@ pub fn gather_controller(
     model.sections.push(control_section(&stamped.value));
 }
 
+/// Packs the resolved guidance reference into a Section. Pure. A [`BodyTwistRef`]
+/// wraps a body-FLU twist, so — like [`control_section`], unlike the ENU estimate —
+/// its rows are tagged [`Frame::Flu`]. This is the *post-arbitration* reference the
+/// controllers actually track: the teleop twist while the drive keys are held, the
+/// path follower's otherwise. The leading `mode` row keeps it self-describing beside
+/// the command section.
+pub fn reference_section(reference: &BodyTwistRef) -> Section {
+    let twist = reference.twist();
+
+    let rows = vec![
+        Row {
+            label: "mode".into(),
+            value: Value::Label("body twist reference".into()),
+        },
+        flu_row("linear", twist.linear().raw()),
+        flu_row("angular", twist.angular().raw()),
+    ];
+
+    Section {
+        id: SubsystemPath(Arc::from("reference")),
+        title: "Reference".into(),
+        rows,
+    }
+}
+
+/// Appends the reference section when the guidance seam has a resolved value. Mirrors
+/// [`gather_controller`]: `With<AutonomyPipelineComponent>` is the inter-subject
+/// predicate, and a by-name read of the resolved `reference` channel is the
+/// intra-pipeline one — a stack with no guidance output, or one that has not yet
+/// produced a reference, contributes nothing.
+pub fn gather_reference(
+    selected: Query<&AutonomyPipelineComponent, With<Selected>>,
+    mut out: ResMut<CurrentInspection>,
+) {
+    let (Some(model), Ok(pipeline)) = (&mut out.0, selected.single()) else {
+        return;
+    };
+
+    let Some(stamped) = pipeline
+        .0
+        .bus()
+        .read::<BodyTwistRef>(control::reference::<BodyTwistRef>().into())
+    else {
+        return;
+    };
+
+    model.sections.push(reference_section(&stamped.value));
+}
+
+/// Packs the actuator terminal into a Section. Pure. One row per actuator, labeled by
+/// its declared id, with the [`SetpointValue`] variant fixing the row's [`Dimension`]
+/// via [`setpoint_dimension`]. This is the one control section every embodiment shares:
+/// [`ActuatorCommand`] is the pipeline's morphology-neutral terminal, so a decoupled car
+/// (drive torque + steer position) reads here even though it never writes a `BodyTwist`
+/// command — the reason [`control_section`] is silent for it.
+pub fn actuator_section(command: &ActuatorCommand) -> Section {
+    let rows = command
+        .setpoints()
+        .iter()
+        .map(|sp| Row {
+            label: sp.actuator().as_str().to_owned().into(),
+            value: Value::Scalar {
+                value: sp.value().scalar(),
+                kind: setpoint_dimension(sp.value()),
+            },
+        })
+        .collect();
+
+    Section {
+        id: SubsystemPath(Arc::from("actuators")),
+        title: "Actuators".into(),
+        rows,
+    }
+}
+
+/// Maps an actuator command space to its display dimension. `Position` is the one
+/// ambiguous case — radians for a revolute actuator (steer), metres for a prismatic —
+/// resolved to `Angle` because the only Position actuator today is steer. When a
+/// linear-position actuator appears this must key off the actuator's declared unit,
+/// not the setpoint variant, which cannot tell the two apart.
+fn setpoint_dimension(value: &SetpointValue) -> Dimension {
+    match value {
+        SetpointValue::Torque(_) => Dimension::Torque,
+        SetpointValue::Force(_) => Dimension::Force,
+        SetpointValue::Velocity(_) => Dimension::Velocity,
+        SetpointValue::Position(_) => Dimension::Angle,
+    }
+}
+
+/// Appends the actuator section once the pipeline has produced a terminal command.
+/// Reads through the canonical `read_actuators` accessor rather than by name — the
+/// terminal is a canonical output — and so is silent before the allocator's first
+/// output, or when the graph carries no allocator at all.
+pub fn gather_actuators(
+    selected: Query<&AutonomyPipelineComponent, With<Selected>>,
+    mut out: ResMut<CurrentInspection>,
+) {
+    let (Some(model), Ok(pipeline)) = (&mut out.0, selected.single()) else {
+        return;
+    };
+
+    let Some(stamped) = pipeline.0.read_actuators() else {
+        return;
+    };
+
+    model.sections.push(actuator_section(&stamped.value));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
     use helios_core::estimation::schema::{SchemaBlock, StateSchema};
     use helios_core::frames::quantities::FluVector;
     use helios_core::frames::{FrameId, StateVariable};
@@ -705,6 +818,295 @@ mod tests {
         app.world_mut()
             .spawn((Selected, pipeline_with_control(None)));
         app.add_systems(Update, gather_controller);
+
+        app.update();
+
+        let model = app
+            .world()
+            .resource::<CurrentInspection>()
+            .0
+            .clone()
+            .unwrap();
+        assert!(model.sections.is_empty());
+    }
+
+    /// Tier 1: the resolved reference packs a `mode` label plus its linear and angular
+    /// vectors, each tagged `Frame::Flu` — the body frame the controllers track in,
+    /// mirroring `control_section`. The label distinguishes it from the command once
+    /// both share the panel.
+    #[test]
+    fn reference_section_packs_body_twist() {
+        let reference = BodyTwistRef::new(BodyTwist::new(
+            FluVector::new(2.0, 0.0, 0.0),
+            FluVector::new(0.0, 0.0, 0.5),
+        ));
+
+        let section = reference_section(&reference);
+
+        assert_eq!(section.id, SubsystemPath(Arc::from("reference")));
+        assert_eq!(
+            section.rows,
+            vec![
+                Row {
+                    label: "mode".into(),
+                    value: Value::Label("body twist reference".into()),
+                },
+                Row {
+                    label: "linear".into(),
+                    value: Value::Vector(FramedVec3 {
+                        value: [2.0, 0.0, 0.0],
+                        frame: Frame::Flu,
+                    }),
+                },
+                Row {
+                    label: "angular".into(),
+                    value: Value::Vector(FramedVec3 {
+                        value: [0.0, 0.0, 0.5],
+                        frame: Frame::Flu,
+                    }),
+                },
+            ],
+        );
+    }
+
+    /// Tier 1: the actuator terminal packs one row per setpoint, labeled by actuator id,
+    /// with the command space mapped to a display dimension — torque stays `Torque`, and
+    /// the car's steer `Position` resolves to `Angle` (the documented revolute default).
+    #[test]
+    fn actuator_section_packs_a_row_per_setpoint() {
+        let command = ActuatorCommand::new(vec![
+            ActuatorSetpoint::new(ActuatorId::new("drive"), SetpointValue::Torque(150.0)),
+            ActuatorSetpoint::new(ActuatorId::new("steer"), SetpointValue::Position(0.1)),
+        ]);
+
+        let section = actuator_section(&command);
+
+        assert_eq!(section.id, SubsystemPath(Arc::from("actuators")));
+        assert_eq!(
+            section.rows,
+            vec![
+                Row {
+                    label: "drive".into(),
+                    value: Value::Scalar {
+                        value: 150.0,
+                        kind: Dimension::Torque,
+                    },
+                },
+                Row {
+                    label: "steer".into(),
+                    value: Value::Scalar {
+                        value: 0.1,
+                        kind: Dimension::Angle,
+                    },
+                },
+            ],
+        );
+    }
+
+    /// A stand-in node declaring the resolved `reference` channel as its output so the
+    /// bus allocates that slot; a test writes the reference directly, standing in for the
+    /// selector having resolved one — exactly what `gather_reference` reads back.
+    struct FakeReferenceNode {
+        descriptor: PortDescriptor,
+    }
+
+    impl FakeReferenceNode {
+        fn new() -> Self {
+            Self {
+                descriptor: PortDescriptor {
+                    required_inputs: Vec::new(),
+                    optional_inputs: Vec::new(),
+                    outputs: vec![control::reference::<BodyTwistRef>().into()],
+                    rate: None,
+                },
+            }
+        }
+    }
+
+    impl PipelineNode for FakeReferenceNode {
+        fn name(&self) -> &str {
+            "fake_reference"
+        }
+
+        fn port_descriptor(&self) -> &PortDescriptor {
+            &self.descriptor
+        }
+
+        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+    }
+
+    /// An `AutonomyPipelineComponent` whose pipeline carries the reference slot,
+    /// optionally with a value already written (`Some` = a resolved reference; `None` =
+    /// the cold-start / no-guidance case).
+    fn pipeline_with_reference(reference: Option<BodyTwistRef>) -> AutonomyPipelineComponent {
+        let pipeline = PipelineBuilder::new()
+            .add_node(Box::new(FakeReferenceNode::new()))
+            .build()
+            .expect("a single-node pipeline builds");
+
+        if let Some(reference) = reference {
+            pipeline
+                .bus()
+                .write(
+                    control::reference::<BodyTwistRef>().into(),
+                    Stamped {
+                        value: reference,
+                        timestamp: MonotonicTime(0.0),
+                        health: Health::Ok,
+                        producer: HOST_PRODUCER_ID,
+                    },
+                )
+                .expect("the reference slot exists on the bus");
+        }
+
+        AutonomyPipelineComponent(pipeline)
+    }
+
+    /// Tier 2, "with reference" direction: a selected subject whose guidance seam has a
+    /// resolved reference gets exactly the reference section.
+    #[test]
+    fn gather_reference_appends_a_section_when_a_reference_is_present() {
+        let mut app = inspector_app();
+        app.world_mut().resource_mut::<CurrentInspection>().0 = Some(sample_shell());
+        app.world_mut().spawn((
+            Selected,
+            pipeline_with_reference(Some(BodyTwistRef::new(BodyTwist::new(
+                FluVector::new(1.0, 0.0, 0.0),
+                FluVector::zeros(),
+            )))),
+        ));
+        app.add_systems(Update, gather_reference);
+
+        app.update();
+
+        let model = app
+            .world()
+            .resource::<CurrentInspection>()
+            .0
+            .clone()
+            .unwrap();
+        assert_eq!(model.sections.len(), 1);
+        assert_eq!(model.sections[0].id, SubsystemPath(Arc::from("reference")));
+    }
+
+    /// Tier 2, "no reference" direction: a pipeline with no resolved reference on the bus
+    /// contributes no section — the guard against a silently empty panel.
+    #[test]
+    fn gather_reference_is_silent_without_a_reference() {
+        let mut app = inspector_app();
+        app.world_mut().resource_mut::<CurrentInspection>().0 = Some(sample_shell());
+        app.world_mut()
+            .spawn((Selected, pipeline_with_reference(None)));
+        app.add_systems(Update, gather_reference);
+
+        app.update();
+
+        let model = app
+            .world()
+            .resource::<CurrentInspection>()
+            .0
+            .clone()
+            .unwrap();
+        assert!(model.sections.is_empty());
+    }
+
+    /// A stand-in node declaring the `actuators` terminal as its output so the bus
+    /// allocates that slot; a test writes an `ActuatorCommand` directly, standing in for
+    /// the allocator having produced one — what `gather_actuators` reads through
+    /// `read_actuators`.
+    struct FakeActuatorNode {
+        descriptor: PortDescriptor,
+    }
+
+    impl FakeActuatorNode {
+        fn new() -> Self {
+            Self {
+                descriptor: PortDescriptor {
+                    required_inputs: Vec::new(),
+                    optional_inputs: Vec::new(),
+                    outputs: vec![control::actuators().into()],
+                    rate: None,
+                },
+            }
+        }
+    }
+
+    impl PipelineNode for FakeActuatorNode {
+        fn name(&self) -> &str {
+            "fake_actuator"
+        }
+
+        fn port_descriptor(&self) -> &PortDescriptor {
+            &self.descriptor
+        }
+
+        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+    }
+
+    /// An `AutonomyPipelineComponent` whose pipeline carries the actuators terminal,
+    /// optionally with a command already written (`Some` = a produced terminal command;
+    /// `None` = the cold-start / no-allocator case).
+    fn pipeline_with_actuators(command: Option<ActuatorCommand>) -> AutonomyPipelineComponent {
+        let pipeline = PipelineBuilder::new()
+            .add_node(Box::new(FakeActuatorNode::new()))
+            .build()
+            .expect("a single-node pipeline builds");
+
+        if let Some(command) = command {
+            pipeline
+                .bus()
+                .write(
+                    control::actuators().into(),
+                    Stamped {
+                        value: command,
+                        timestamp: MonotonicTime(0.0),
+                        health: Health::Ok,
+                        producer: HOST_PRODUCER_ID,
+                    },
+                )
+                .expect("the actuators slot exists on the bus");
+        }
+
+        AutonomyPipelineComponent(pipeline)
+    }
+
+    /// Tier 2, "with command" direction: a selected subject whose allocator has produced
+    /// a terminal command gets exactly the actuators section.
+    #[test]
+    fn gather_actuators_appends_a_section_when_a_command_is_present() {
+        let mut app = inspector_app();
+        app.world_mut().resource_mut::<CurrentInspection>().0 = Some(sample_shell());
+        app.world_mut().spawn((
+            Selected,
+            pipeline_with_actuators(Some(ActuatorCommand::new(vec![ActuatorSetpoint::new(
+                ActuatorId::new("drive"),
+                SetpointValue::Torque(10.0),
+            )]))),
+        ));
+        app.add_systems(Update, gather_actuators);
+
+        app.update();
+
+        let model = app
+            .world()
+            .resource::<CurrentInspection>()
+            .0
+            .clone()
+            .unwrap();
+        assert_eq!(model.sections.len(), 1);
+        assert_eq!(model.sections[0].id, SubsystemPath(Arc::from("actuators")));
+    }
+
+    /// Tier 2, "no command" direction: a pipeline with no terminal command on the bus
+    /// contributes no section. A pipeline with no allocator node at all hits this same
+    /// branch, so this covers both absence cases alike.
+    #[test]
+    fn gather_actuators_is_silent_without_a_command() {
+        let mut app = inspector_app();
+        app.world_mut().resource_mut::<CurrentInspection>().0 = Some(sample_shell());
+        app.world_mut()
+            .spawn((Selected, pipeline_with_actuators(None)));
+        app.add_systems(Update, gather_actuators);
 
         app.update();
 

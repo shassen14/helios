@@ -164,6 +164,10 @@ impl ActuatorId {
     pub fn new(id: impl Into<Arc<str>>) -> Self {
         Self(id.into())
     }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl Serialize for ActuatorId {

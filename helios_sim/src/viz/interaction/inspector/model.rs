@@ -102,6 +102,8 @@ pub enum Dimension {
     AngularRate,
     Time,
     Ratio,
+    Torque,
+    Force,
 }
 
 /// A 3-vector plus the frame it lives in, carried as *data* — the runtime shadow of

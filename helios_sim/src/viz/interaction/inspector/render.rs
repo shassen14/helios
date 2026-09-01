@@ -19,6 +19,23 @@ const ROW_INDENT: f32 = 12.0;
 const TITLE_FONT_SIZE: f32 = 18.0;
 const TITLE_COLOR: Color = Color::srgb(0.62, 0.80, 1.0);
 
+/// The panel's text font, relative to the asset root (`helios_sim/assets/`). Bevy's
+/// default embedded font only covers ASCII, so `°` and the `·` in `N·m` render as the
+/// missing-glyph box; this face carries the Latin-1 Supplement block those need. Drop
+/// a redistributable TTF (DejaVu Sans, Noto Sans, Inter) at this path.
+const UI_FONT_PATH: &str = "fonts/DejaVuSans.ttf";
+
+/// Handle to the panel font, loaded once at startup and kept alive as a resource so
+/// the asset server does not drop it. Cloned onto every `TextFont` the panel spawns.
+#[derive(Resource)]
+pub struct InspectorFont(pub Handle<Font>);
+
+/// Requests the panel font at startup, before the first frame draws, so the handle is
+/// ready when [`render_inspection`] first spawns text and is requested exactly once.
+pub fn load_inspector_font(asset_server: Res<AssetServer>, mut commands: Commands) {
+    commands.insert_resource(InspectorFont(asset_server.load(UI_FONT_PATH)));
+}
+
 /// Marks the panel's UI root so the previous frame's panel can be found and
 /// despawned before the next is drawn.
 #[derive(Component)]
@@ -32,6 +49,7 @@ pub struct InspectorPanelRoot;
 /// nodes.
 pub fn render_inspection(
     model: Res<CurrentInspection>,
+    font: Option<Res<InspectorFont>>,
     old: Query<Entity, With<InspectorPanelRoot>>,
     mut commands: Commands,
 ) {
@@ -39,6 +57,13 @@ pub fn render_inspection(
         commands.entity(e).despawn();
     }
     let Some(m) = &model.0 else { return };
+
+    // Fall back to Bevy's default face when the font resource is absent — before the
+    // asset resolves, or in a headless/test app that loads no assets. The panel draws
+    // either way; only the `°`/`·` glyphs depend on the loaded face.
+    let font_source = font
+        .map(|f| FontSource::Handle(f.0.clone()))
+        .unwrap_or_default();
 
     commands
         .spawn((
@@ -64,6 +89,7 @@ pub fn render_inspection(
                         group.spawn((
                             Text::new(section.title.clone()),
                             TextFont {
+                                font: font_source.clone(),
                                 font_size: FontSize::Px(TITLE_FONT_SIZE),
                                 ..default()
                             },
@@ -77,11 +103,17 @@ pub fn render_inspection(
                             })
                             .with_children(|rows| {
                                 for row in &section.rows {
-                                    rows.spawn(Text::new(format!(
-                                        "{}: {}",
-                                        row.label,
-                                        format_value(&row.value)
-                                    )));
+                                    rows.spawn((
+                                        Text::new(format!(
+                                            "{}: {}",
+                                            row.label,
+                                            format_value(&row.value)
+                                        )),
+                                        TextFont {
+                                            font: font_source.clone(),
+                                            ..default()
+                                        },
+                                    ));
                                 }
                             });
                     });
@@ -101,6 +133,11 @@ fn format_value(v: &Value) -> String {
             value,
             kind: Velocity,
         } => format!("{} m/s", signed(*value, 2)),
+        Value::Scalar {
+            value,
+            kind: Torque,
+        } => format!("{} N·m", signed(*value, 2)),
+        Value::Scalar { value, kind: Force } => format!("{} N", signed(*value, 2)),
         Value::Scalar { value, .. } => signed(*value, 3),
         Value::Vector(fv) => format!(
             "[{}, {}, {}] {:?}",
@@ -155,6 +192,29 @@ mod tests {
             kind: Dimension::Velocity,
         };
         assert_eq!(format_value(&v), " 1.40 m/s");
+    }
+
+    /// Tier 1: a torque carries its SI unit (N·m) on one line — the drive-actuator
+    /// analogue of the velocity guard, and a check that the `·` (U+00B7) survives to
+    /// the string intact (its rendering then depends only on the loaded font).
+    #[test]
+    fn torque_renders_with_newton_metres() {
+        let v = Value::Scalar {
+            value: 12.0,
+            kind: Dimension::Torque,
+        };
+        assert_eq!(format_value(&v), " 12.00 N·m");
+    }
+
+    /// Tier 1: a force carries its SI unit (N) on one line. A negative value keeps the
+    /// unit and takes the sign column with no width change.
+    #[test]
+    fn force_renders_in_newtons() {
+        let v = Value::Scalar {
+            value: -220.0,
+            kind: Dimension::Force,
+        };
+        assert_eq!(format_value(&v), "-220.00 N");
     }
 
     /// Tier 1: a dimension without a bespoke arm falls through to a plain scalar.
