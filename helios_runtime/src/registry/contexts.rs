@@ -99,6 +99,11 @@ pub struct PathFollowerBuildContext {
     /// The bus channel on which the upstream planner publishes `Path`.
     /// Always internal (brain-produced).
     pub(crate) path_channel: InternalChannel,
+    /// The reference channel the follower publishes its guidance setpoint on.
+    /// The assembler sets this to the autonomy contender role when teleop also
+    /// drives the seam, or to the resolved reference the controllers read when
+    /// the follower is the lone source. Always internal (brain-produced).
+    pub(crate) output_channel: InternalChannel,
 }
 
 // ------- Mocks --------

@@ -57,38 +57,43 @@ struct FollowerState<R: ControlReference> {
 /// Pipeline node wrapping any [`PathFollower`] implementation.
 ///
 /// The port descriptor adds `path_channel` to whatever the input builder
-/// requires, declares the reference type `R @ ""` as its single output, and uses
-/// `rate: None` — the follower fires every tick (controller rate).
+/// requires, declares the reference type `R` on its caller-supplied output
+/// channel as its single output, and uses `rate: None` — the follower fires
+/// every tick (controller rate).
 pub(crate) struct PathFollowerNode<R: ControlReference> {
     name: String,
     state: Mutex<FollowerState<R>>,
     input_builder: Box<dyn PathFollowerInputBuilder>,
     path_channel: ChannelKey,
+    output_channel: ChannelKey,
     descriptor: PortDescriptor,
 }
 
 impl<R: ControlReference> PathFollowerNode<R> {
-    /// Build a node from a follower, an input builder, and the bus channel the
-    /// upstream planner publishes [`Path`] on.
+    /// Build a node from a follower, an input builder, the bus channel the
+    /// upstream planner publishes [`Path`] on, and the reference channel the
+    /// follower publishes its setpoint on.
     ///
     /// `required_inputs` = builder requirements ∪ `[path_channel]`.
     /// `optional_inputs` mirrors the builder.
-    /// `outputs` = `[R @ ""]`.
+    /// `outputs` = `[output_channel]`.
     /// `rate` = `None`.
     pub(crate) fn new(
         name: impl Into<String>,
         follower: Box<dyn PathFollower<Reference = R>>,
         input_builder: Box<dyn PathFollowerInputBuilder>,
         path_channel: InternalChannel,
+        output_channel: InternalChannel,
     ) -> Self {
         let path_channel_key: ChannelKey = path_channel.clone().into();
+        let output_channel_key: ChannelKey = output_channel.clone().into();
 
         // Avoid silently double-declaring if a future builder ever includes
         // the path channel itself.
         let builder_required = input_builder.required_channels();
         let mut builder = AlgorithmNodePortDescriptor::new()
             .inputs_from_slices(builder_required, input_builder.optional_channels())
-            .output_internal(InternalChannel::of::<R>());
+            .output_internal(output_channel);
         if !builder_required.contains(&path_channel_key) {
             builder = builder.input_internal(path_channel.clone());
         }
@@ -101,6 +106,7 @@ impl<R: ControlReference> PathFollowerNode<R> {
             }),
             input_builder,
             path_channel: path_channel_key,
+            output_channel: output_channel_key,
             descriptor,
         }
     }
@@ -160,7 +166,7 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(InternalChannel::of::<R>().into(), stamped);
+        let _ = bus.write(self.output_channel.clone(), stamped);
     }
 }
 
@@ -334,8 +340,12 @@ mod tests {
         path_channel().into()
     }
 
+    fn out_channel_internal() -> InternalChannel {
+        InternalChannel::of::<BodyTwistRef>()
+    }
+
     fn out_channel() -> ChannelKey {
-        InternalChannel::of::<BodyTwistRef>().into()
+        out_channel_internal().into()
     }
 
     fn make_bus() -> PortBus {
@@ -406,6 +416,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
+            out_channel_internal(),
         );
         assert_eq!(node.port_descriptor().outputs, vec![out_channel()]);
         assert!(node.port_descriptor().rate.is_none());
@@ -424,6 +435,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
+            out_channel_internal(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -438,6 +450,62 @@ mod tests {
     }
 
     #[test]
+    fn execute_publishes_to_its_configured_output_channel_not_a_hardcoded_one() {
+        // Regression: the node must write the reference to the *same* channel its
+        // descriptor declares as output, which the assembler names (`reference`).
+        // A write hardcoded to a different slot is invisible — the bus allocates
+        // the declared slot, controllers read it and find it empty, and the
+        // vehicle never moves even though every node builds and ticks cleanly.
+        let named_output = InternalChannel::named::<BodyTwistRef>("reference");
+        let named_key: ChannelKey = named_output.clone().into();
+
+        let (follower, _calls) =
+            ScriptedFollower::new(PathFollowerResult::Active(dummy_reference()));
+        let node = PathFollowerNode::new(
+            "pure_pursuit",
+            Box::new(follower),
+            Box::new(AlwaysReadyBuilder::new()),
+            path_channel(),
+            named_output,
+        );
+
+        // A bus carrying both the named slot the node is configured to write and
+        // the old unnamed slot, so we can assert the write lands on the former and
+        // never the latter.
+        let named_producer = PortDescriptor {
+            required_inputs: vec![],
+            optional_inputs: vec![],
+            outputs: vec![named_key.clone()],
+            rate: None,
+        };
+        let unnamed_producer = PortDescriptor {
+            required_inputs: vec![],
+            optional_inputs: vec![],
+            outputs: vec![out_channel()],
+            rate: None,
+        };
+        let path_producer = PortDescriptor {
+            required_inputs: vec![],
+            optional_inputs: vec![],
+            outputs: vec![path_channel_key()],
+            rate: None,
+        };
+        let bus = PortBus::new(&[named_producer, unnamed_producer, path_producer]);
+        publish_path(&bus, 1.0);
+
+        node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
+
+        assert!(
+            bus.read::<BodyTwistRef>(named_key).is_some(),
+            "follower must publish to its configured (named) output channel"
+        );
+        assert!(
+            bus.read::<BodyTwistRef>(out_channel()).is_none(),
+            "nothing must reach the old hardcoded unnamed slot"
+        );
+    }
+
+    #[test]
     fn execute_publishes_stop_on_goal_reached() {
         // The follower carries a "park here" reference (a real follower makes this
         // a zero body twist). The node must forward it — not hold last-known-good —
@@ -449,6 +517,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
+            out_channel_internal(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -471,6 +540,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
+            out_channel_internal(),
         );
         let bus = make_bus();
         // No path published — follower still gets called (state was ready)
@@ -488,6 +558,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
+            out_channel_internal(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -507,6 +578,7 @@ mod tests {
                 optional: vec![],
             }),
             path_channel(),
+            out_channel_internal(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -523,6 +595,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
+            out_channel_internal(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -538,6 +611,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
+            out_channel_internal(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -556,6 +630,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
+            out_channel_internal(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -573,6 +648,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
+            out_channel_internal(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);

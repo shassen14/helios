@@ -47,6 +47,7 @@ fn build_pure_pursuit(ctx: PathFollowerBuildContext) -> Result<Box<dyn PipelineN
         follower,
         input_builder,
         ctx.path_channel,
+        ctx.output_channel,
     )))
 }
 
@@ -80,5 +81,6 @@ fn build_steering_pid(ctx: PathFollowerBuildContext) -> Result<Box<dyn PipelineN
         follower,
         input_builder,
         ctx.path_channel,
+        ctx.output_channel,
     )))
 }

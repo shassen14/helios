@@ -41,8 +41,7 @@ mod error;
 pub use self::error::PipelineAssemblyError;
 
 use self::command::{
-    command_sum_node_name, resolve_command_topology, selector_policy, source_channel,
-    CommandTopology, COMMAND_ARBITER_NODE, TELEOP_MAPPER_NODE,
+    command_sum_node_name, selector_policy, REFERENCE_ARBITER_NODE, TELEOP_MAPPER_NODE,
 };
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
@@ -64,6 +63,7 @@ use crate::registry::AutonomyRegistry;
 
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
+use helios_core::control::BodyTwistRef;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::MapData;
@@ -201,8 +201,30 @@ pub fn build_pipeline(
         }
     }
 
-    // --- Path follower ---
+    // --- Path follower + guidance reference seam ---
+    // The guidance reference is the single-signal seam where teleop and autonomy
+    // are arbitrated — below all planning, above the controllers that track it.
+    // The follower (autonomy) and the teleop mapper each write their own contender
+    // role; a `Selector` resolves the fresher onto the resolved `reference` channel
+    // the controllers read. Arbitration is synthesized only when *both* contend: a
+    // lone source (a follower with no teleop, or teleop with no follower) writes
+    // the resolved `reference` directly and no arbiter is needed — the analog of a
+    // lone `Direct` command source. The seam type is `BodyTwistRef`, the only
+    // reference type today; when a second appears, derive it from the follower's
+    // declared reference rather than hard-coding it here.
+    let teleop_contends = stack
+        .command_arbitration
+        .sources
+        .contains(&CommandSource::Teleop);
+    let arbitrate_reference = teleop_contends && stack.path_following.is_some();
+
     if let Some(pf_cfg) = &stack.path_following {
+        let follower_output = if arbitrate_reference {
+            control::reference_autonomy::<BodyTwistRef>()
+        } else {
+            control::reference::<BodyTwistRef>()
+        };
+
         match path_follower::resolve_path_channel(stack) {
             Ok(path_channel) => {
                 match registry.build_path_follower(
@@ -211,6 +233,7 @@ pub fn build_pipeline(
                         agent_handle,
                         config: pf_cfg.clone(),
                         path_channel,
+                        output_channel: follower_output,
                     },
                 ) {
                     Ok(node) => {
@@ -226,14 +249,74 @@ pub fn build_pipeline(
         }
     }
 
+    // Teleop guidance ingress + reference arbiter. Teleop enters at the top of the
+    // tracking layer, substituting for the follower's instantaneous output. Its
+    // mapper scales the host's `intent` into a `BodyTwistRef` — onto the teleop
+    // contender role when a follower also contends, else onto the resolved
+    // `reference` directly. When both contend the arbiter picks the fresher of the
+    // two onto `reference`; neutral intent publishes nothing, so the follower
+    // reclaims the seam by freshness with no explicit release.
+    if teleop_contends {
+        let teleop_output = if arbitrate_reference {
+            control::reference_teleop::<BodyTwistRef>()
+        } else {
+            control::reference::<BodyTwistRef>()
+        };
+
+        match &stack.teleop {
+            Some(TeleopMapperConfig::Twist {
+                surge,
+                sway,
+                heave,
+                roll,
+                pitch,
+                yaw,
+            }) => {
+                let mapper = TwistTeleopNode::new(
+                    TELEOP_MAPPER_NODE,
+                    control::intent::<TwistIntent>(),
+                    teleop_output,
+                    TwistScale {
+                        surge: *surge,
+                        sway: *sway,
+                        heave: *heave,
+                        roll: *roll,
+                        pitch: *pitch,
+                        yaw: *yaw,
+                    },
+                );
+                builder = builder.add_node(Box::new(mapper));
+                external_channels.push(control::intent::<TwistIntent>().into());
+
+                if arbitrate_reference {
+                    let arbiter = Selector::<BodyTwistRef>::new(
+                        REFERENCE_ARBITER_NODE,
+                        vec![control::reference_teleop::<BodyTwistRef>()],
+                        control::reference_autonomy::<BodyTwistRef>(),
+                        control::reference::<BodyTwistRef>(),
+                        selector_policy(&stack.command_arbitration),
+                    );
+                    builder = builder.add_node(Box::new(arbiter));
+                }
+            }
+            None => errors.push(PipelineAssemblyError::FactoryFailure {
+                node_kind: "TeleopMapper".to_string(),
+                reason: "teleop is a declared command source but no [teleop] mapper \
+                         config was provided"
+                    .to_string(),
+            }),
+        }
+    }
+
     // --- Controllers + command terminal ---
     // Each allocator consumes one command space, so the terminal is wired per
     // space the stack's allocators consume. A decoupled stack opens several seams
     // — a drive space and a steer space — and each gets its own `Sum` fold of the
     // controllers speaking it. The body-twist path is the default: it serves the
-    // body-twist allocator and every no-sum-space stack (pure-perception, teleop-
-    // only, controllers-without-allocator), which is why the branch turns on the
-    // presence of a sum space, not on the allocator set being non-empty.
+    // body-twist allocator and every no-sum-space stack (pure-perception,
+    // controllers-without-allocator), which is why the branch turns on the
+    // presence of a sum space, not on the allocator set being non-empty. Teleop is
+    // arbitrated at the reference seam above, so it no longer factors in here.
     let allocator_spaces: BTreeSet<CommandSpace> = stack
         .allocators
         .values()
@@ -269,14 +352,7 @@ pub fn build_pipeline(
         }
         b
     } else {
-        wire_body_twist_terminal(
-            stack,
-            registry,
-            agent_handle,
-            builder,
-            &mut errors,
-            &mut external_channels,
-        )
+        wire_body_twist_terminal(stack, registry, agent_handle, builder, &mut errors)
     };
 
     // --- Allocators + actuator merge ---
@@ -358,35 +434,24 @@ pub fn build_pipeline(
 
 // --- Internals ---
 
-/// Wires the body-twist command terminal: the controller / teleop / arbiter path
-/// that predates the command-space split. Moved here verbatim so the vouched
-/// ground-vehicle path is unchanged; the drive-force terminal is a sibling, not a
-/// rewrite of this.
+/// Wires the body-twist command terminal for a coupled morphology: one command
+/// space fed directly by the autonomy controllers. This serves a body-twist
+/// allocator and every no-sum-space stack (pure-perception, controllers without
+/// an allocator).
+///
+/// Teleop no longer enters here — it is arbitrated one layer up at the guidance
+/// reference seam — so this path is autonomy-only. Each controller writes the
+/// `command` terminal directly; a pure-perception stack has no controller and so
+/// wires nothing. A coupled stack that folds multiple contributions would grow a
+/// `Sum` here, the way the decoupled spaces do; the shipped coupled path is a
+/// single controller, so none is synthesized yet.
 fn wire_body_twist_terminal(
     stack: &AutonomyStack,
     registry: &AutonomyRegistry,
     agent_handle: FrameHandle,
     mut builder: PipelineBuilder,
     errors: &mut Vec<PipelineAssemblyError>,
-    external_channels: &mut Vec<ChannelKey>,
 ) -> PipelineBuilder {
-    // Resolve how the command terminal is fed before building the producers: each
-    // producer's output channel depends on it. When a source is the lone `Direct`
-    // source it writes `command` itself; otherwise it writes its own role channel
-    // (`autonomy` / `teleop`) and arbitration (or nothing) forwards from there.
-    // The controller and the teleop mapper are symmetric internal producers, so
-    // both retarget the same way.
-    let command_topology =
-        resolve_command_topology(&stack.command_arbitration, !stack.controllers.is_empty());
-    let controller_output = match &command_topology {
-        CommandTopology::Direct(CommandSource::Autonomy) => control::command::<BodyTwist>(),
-        _ => control::autonomy::<BodyTwist>(),
-    };
-    let teleop_output = match &command_topology {
-        CommandTopology::Direct(CommandSource::Teleop) => control::command::<BodyTwist>(),
-        _ => control::teleop::<BodyTwist>(),
-    };
-
     for (controller_name, ctrl_cfg) in &stack.controllers {
         match registry.build_controller(
             ctrl_cfg.get_kind_str(),
@@ -394,7 +459,7 @@ fn wire_body_twist_terminal(
                 agent_handle,
                 instance_name: controller_name.clone(),
                 config: ctrl_cfg.clone(),
-                output_channel: controller_output.clone(),
+                output_channel: control::command::<BodyTwist>(),
             },
         ) {
             Ok(node) => {
@@ -403,73 +468,6 @@ fn wire_body_twist_terminal(
             Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
                 node_kind: ctrl_cfg.get_kind_str().to_string(),
                 reason,
-            }),
-        }
-    }
-
-    // Wire the command terminal (`command`, the channel `read_control` reads)
-    // per the resolved topology. `BodyTwist` is fixed until the actuator seam.
-    match command_topology {
-        // Pure estimator / mapper agent: nothing produces commands.
-        CommandTopology::None => {}
-
-        // A lone source of either kind already writes `command` through its
-        // retargeted producer — the controller via `controller_output`, the
-        // teleop mapper via `teleop_output` — so there is nothing to synthesize.
-        CommandTopology::Direct(_) => {}
-
-        // Two or more sources contend: a `Selector` forwards the winner to
-        // `command`. The higher-priority sources are freshness-gated `preferred`
-        // inputs; the lowest is the always-available `base` fallback.
-        CommandTopology::Arbitrated { preferred, base } => {
-            let selector = Selector::<BodyTwist>::new(
-                COMMAND_ARBITER_NODE,
-                preferred.iter().map(|s| source_channel(*s)).collect(),
-                source_channel(base),
-                control::command::<BodyTwist>(),
-                selector_policy(&stack.command_arbitration),
-            );
-            builder = builder.add_node(Box::new(selector));
-        }
-    }
-
-    if stack
-        .command_arbitration
-        .sources
-        .contains(&CommandSource::Teleop)
-    {
-        match &stack.teleop {
-            Some(TeleopMapperConfig::Twist {
-                surge,
-                sway,
-                heave,
-                roll,
-                pitch,
-                yaw,
-            }) => {
-                let node = TwistTeleopNode::new(
-                    TELEOP_MAPPER_NODE,
-                    control::intent::<TwistIntent>(),
-                    teleop_output.clone(),
-                    TwistScale {
-                        surge: *surge,
-                        sway: *sway,
-                        heave: *heave,
-                        roll: *roll,
-                        pitch: *pitch,
-                        yaw: *yaw,
-                    },
-                );
-
-                builder = builder.add_node(Box::new(node));
-
-                external_channels.push(control::intent::<TwistIntent>().into());
-            }
-            None => errors.push(PipelineAssemblyError::FactoryFailure {
-                node_kind: "TeleopMapper".to_string(),
-                reason: "teleop is a declared command source but no
-  [teleop] mapper config was provided"
-                    .to_string(),
             }),
         }
     }

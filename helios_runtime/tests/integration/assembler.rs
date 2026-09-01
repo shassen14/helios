@@ -17,7 +17,8 @@ use helios_runtime::{
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
-use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
+use helios_core::control::commands::{DriveForce, SteerAngle, TwistIntent};
+use helios_core::control::BodyTwistRef;
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::data::sensor::MagneticField3D;
@@ -64,14 +65,14 @@ fn setpoint_value(cmd: &ActuatorCommand, id: &str) -> SetpointValue {
 }
 
 // =========================================================================
-// == Teleop-only: a single teleop source drives `command` with no autonomy ==
+// == Teleop-only: a lone teleop source drives the `reference` seam directly ==
 // =========================================================================
 
 #[test]
 fn teleop_only_stack_builds_without_a_controller() {
-    // `sources = ["teleop"]` and no controllers: the assembler must resolve a
-    // direct topology (no arbiter) in which the host publishes `command`
-    // itself. Nothing in the brain produces commands.
+    // `sources = ["teleop"]`, no follower and no controllers: teleop is the lone
+    // guidance source, so its mapper writes the resolved `reference` directly and
+    // no arbiter is synthesized. The stack must still build.
     let stack = AutonomyStack {
         teleop: Some(twist_teleop()),
         command_arbitration: CommandArbitrationConfig {
@@ -97,11 +98,10 @@ fn teleop_only_stack_builds_without_a_controller() {
 }
 
 #[test]
-fn teleop_only_command_is_host_published_not_brain_produced() {
-    // The headline capability: with no autonomy controller, `read_control`
-    // stays empty until the host writes `command`, then reflects that write.
-    // This proves `command` is a real host-published slot and that nothing in
-    // the brain fabricates a command.
+fn teleop_reference_is_intent_driven_not_free_running() {
+    // The mapper is a brain node fed by host intent, not a free-running source:
+    // with no intent on the bus the resolved `reference` slot stays empty, so
+    // nothing is fabricated until the host actually publishes intent.
     let stack = AutonomyStack {
         teleop: Some(twist_teleop()),
         command_arbitration: CommandArbitrationConfig {
@@ -120,40 +120,22 @@ fn teleop_only_command_is_host_published_not_brain_produced() {
     )
     .expect("teleop-only stack must build");
 
-    assert!(
-        pipeline.read_control().is_none(),
-        "no source has published yet, so there must be no command"
-    );
-
-    let command_key: ChannelKey = control::command::<BodyTwist>().into();
-    pipeline
-        .bus()
-        .write(
-            command_key,
-            Stamped {
-                value: BodyTwist::zero(),
-                timestamp: MonotonicTime(0.0),
-                health: Health::Ok,
-                producer: 0,
-            },
-        )
-        .expect("host write to `command` must succeed");
+    let reference_key: ChannelKey = control::reference::<BodyTwistRef>().into();
 
     pipeline.tick(&MockRuntime, 0.1);
-
     assert!(
-        pipeline.read_control().is_some(),
-        "read_control must reflect the host-published command"
+        pipeline.bus().read::<BodyTwistRef>(reference_key).is_none(),
+        "no intent has been published, so the mapper must fabricate no reference"
     );
 }
 
 #[test]
-fn teleop_intent_is_mapped_into_the_command() {
-    // The commit-3 path proper: the host publishes normalised intent, and the
-    // synthesized teleop mapper node scales it into a `BodyTwist` on `command`.
-    // Writing intent and ticking must make `read_control` reflect the *scaled*
-    // twist — proof the mapper is a real brain node fed by host intent, not a
-    // host-published command.
+fn teleop_intent_is_mapped_into_the_reference() {
+    // The core teleop capability: the host publishes normalised intent, and the
+    // synthesized mapper scales it into a `BodyTwistRef` on the resolved
+    // `reference` seam — the same guidance reference a follower would emit.
+    // Writing intent and ticking must make `reference` reflect the *scaled* twist,
+    // proving the mapper is a real brain node fed by host intent.
     let stack = AutonomyStack {
         teleop: Some(twist_teleop()),
         command_arbitration: CommandArbitrationConfig {
@@ -191,12 +173,20 @@ fn teleop_intent_is_mapped_into_the_command() {
 
     pipeline.tick(&MockRuntime, 0.1);
 
-    let command = pipeline
-        .read_control()
-        .expect("the mapper must publish a command derived from the intent");
+    let reference_key: ChannelKey = control::reference::<BodyTwistRef>().into();
+    let reference = pipeline
+        .bus()
+        .read::<BodyTwistRef>(reference_key)
+        .expect("the mapper must publish a reference derived from the intent");
     // surge 1.0 × the car's 4.0 surge scale, with the other five DOF at zero.
-    assert_eq!(command.value.linear(), FluVector::new(4.0, 0.0, 0.0));
-    assert_eq!(command.value.angular(), FluVector::new(0.0, 0.0, 0.0));
+    assert_eq!(
+        reference.value.twist().linear(),
+        FluVector::new(4.0, 0.0, 0.0)
+    );
+    assert_eq!(
+        reference.value.twist().angular(),
+        FluVector::new(0.0, 0.0, 0.0)
+    );
 }
 
 // =========================================================================

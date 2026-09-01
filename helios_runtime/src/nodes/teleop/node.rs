@@ -2,12 +2,14 @@
 //!
 //! Reads a normalised [`TwistIntent`] (dimensionless per-axis deflection the host
 //! publishes from a device) and scales each axis by a per-DOF magnitude into a
-//! [`BodyTwist`] for the command arbiter. It is the control-input dual of a
-//! forward sensor model: the host does the device read it alone can do, this node
-//! owns the portable mapping, so the same mapping runs in sim and on hardware.
+//! [`BodyTwistRef`] for the reference arbiter — a human is a hand-operated path
+//! follower, so its output is the same guidance reference the follower emits, not
+//! a command. It is the control-input dual of a forward sensor model: the host
+//! does the device read it alone can do, this node owns the portable mapping, so
+//! the same mapping runs in sim and on hardware.
 //!
 //! Runtime-native — it wraps no `helios_core` trait and closes no error loop: an
-//! input in, a command out, open-loop. The subspace a body drives is data, not
+//! input in, a reference out, open-loop. The subspace a body drives is data, not
 //! type — a car's `sway`/`heave`/`roll`/`pitch` scale is zero, so its output
 //! occupies the unicycle subspace with no special-casing here.
 
@@ -15,6 +17,7 @@ use std::sync::Arc;
 
 use helios_core::{
     control::commands::{BodyTwist, TwistIntent},
+    control::reference::BodyTwistRef,
     frames::quantities::FluVector,
 };
 
@@ -37,8 +40,8 @@ pub(crate) struct TwistScale {
     pub yaw: f64,
 }
 
-/// Scales [`TwistIntent`] on `intent_key` into a [`BodyTwist`] on `output` by a
-/// fixed [`TwistScale`]. Stateless; construct via [`Self::new`].
+/// Scales [`TwistIntent`] on `intent_key` into a [`BodyTwistRef`] on `output` by
+/// a fixed [`TwistScale`]. Stateless; construct via [`Self::new`].
 pub(crate) struct TwistTeleopNode {
     name: Arc<str>,
     descriptor: PortDescriptor,
@@ -100,8 +103,10 @@ impl PipelineNode for TwistTeleopNode {
             FluVector::new(i.roll * s.roll, i.pitch * s.pitch, i.yaw * s.yaw),
         );
 
+        let twist_ref = BodyTwistRef::new(twist);
+
         let stamped = Stamped {
-            value: twist,
+            value: twist_ref,
             timestamp: intent.timestamp,
             health: intent.health.clone(),
             producer: tick.node_id,
@@ -168,7 +173,7 @@ mod tests {
         TwistTeleopNode::new(
             "teleop_mapper",
             InternalChannel::of::<TwistIntent>(),
-            InternalChannel::of::<BodyTwist>(),
+            InternalChannel::of::<BodyTwistRef>(),
             scale,
         )
     }
@@ -178,7 +183,7 @@ mod tests {
     }
 
     fn output_key() -> ChannelKey {
-        InternalChannel::of::<BodyTwist>().into()
+        InternalChannel::of::<BodyTwistRef>().into()
     }
 
     fn bus_for(node: &TwistTeleopNode) -> PortBus {
@@ -222,9 +227,9 @@ mod tests {
 
         node.execute(&bus, &MockRuntime, tick_at(1.0));
 
-        let out = bus.read::<BodyTwist>(output_key()).unwrap();
-        assert_eq!(out.value.linear(), FluVector::new(4.0, 0.0, 0.0));
-        assert_eq!(out.value.angular(), FluVector::new(0.0, 0.0, 1.0));
+        let out = bus.read::<BodyTwistRef>(output_key()).unwrap();
+        assert_eq!(out.value.twist().linear(), FluVector::new(4.0, 0.0, 0.0));
+        assert_eq!(out.value.twist().angular(), FluVector::new(0.0, 0.0, 1.0));
     }
 
     #[test]
@@ -248,9 +253,9 @@ mod tests {
 
         node.execute(&bus, &MockRuntime, tick_at(1.0));
 
-        let out = bus.read::<BodyTwist>(output_key()).unwrap();
-        assert_eq!(out.value.linear(), FluVector::new(4.0, 0.0, 0.0));
-        assert_eq!(out.value.angular(), FluVector::new(0.0, 0.0, 1.0));
+        let out = bus.read::<BodyTwistRef>(output_key()).unwrap();
+        assert_eq!(out.value.twist().linear(), FluVector::new(4.0, 0.0, 0.0));
+        assert_eq!(out.value.twist().angular(), FluVector::new(0.0, 0.0, 1.0));
     }
 
     #[test]
@@ -271,7 +276,7 @@ mod tests {
 
         node.execute(&bus, &MockRuntime, tick_at(10.0));
 
-        let out = bus.read::<BodyTwist>(output_key()).unwrap();
+        let out = bus.read::<BodyTwistRef>(output_key()).unwrap();
         assert!((out.timestamp.0 - 3.0).abs() < 1e-9);
         assert_eq!(out.producer, 7);
     }
@@ -285,7 +290,7 @@ mod tests {
 
         node.execute(&bus, &MockRuntime, tick_at(1.0));
 
-        assert!(bus.read::<BodyTwist>(output_key()).is_none());
+        assert!(bus.read::<BodyTwistRef>(output_key()).is_none());
     }
 
     #[test]
@@ -305,8 +310,8 @@ mod tests {
 
         node.execute(&bus, &MockRuntime, tick_at(1.0));
 
-        let out = bus.read::<BodyTwist>(output_key()).unwrap();
-        assert_eq!(out.value.linear(), FluVector::new(4.0, 0.0, 0.0));
+        let out = bus.read::<BodyTwistRef>(output_key()).unwrap();
+        assert_eq!(out.value.twist().linear(), FluVector::new(4.0, 0.0, 0.0));
     }
 
     #[test]

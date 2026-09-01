@@ -1,4 +1,5 @@
 use crate::{
+    channels::control,
     port::{ChannelKey, InternalChannel, PortBus},
     prelude::{AgentRuntime, TickContext},
 };
@@ -41,7 +42,7 @@ impl<R: ControlReference> Default for DefaultControlInputBuilder<R> {
 impl<R: ControlReference> DefaultControlInputBuilder<R> {
     pub(crate) fn new() -> Self {
         let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
-        let reference_channel: ChannelKey = InternalChannel::of::<R>().into();
+        let reference_channel: ChannelKey = control::reference::<R>().into();
 
         Self {
             state_channel: state_channel.clone(),
