@@ -99,7 +99,7 @@ steer = "steer"
 # controllers track. Releasing the drive keys lets the teleop reference age out,
 # so the follower reclaims the seam with no explicit release. Listed highest-
 # authority first.
-[command_arbitration]
+[reference_arbitration]
 sources = ["autonomy", "teleop"]
 
 # Teleop mapper: normalized operator intent (per-axis deflection in [-1, 1]) →

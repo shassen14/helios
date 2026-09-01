@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use helios_runtime::channels::control;
 use helios_runtime::config::{
-    AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandArbitrationConfig,
-    CommandSource, ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig,
-    EstimatorConfig, IntegratedImuConfig, MapLayerConfig, SearchPlannerConfig, SensorModelConfig,
+    AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, ControllerConfig, EkfConfig,
+    EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig,
+    ReferenceArbitrationConfig, ReferenceSource, SearchPlannerConfig, SensorModelConfig,
     TeleopMapperConfig,
 };
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
@@ -75,8 +75,8 @@ fn teleop_only_stack_builds_without_a_controller() {
     // no arbiter is synthesized. The stack must still build.
     let stack = AutonomyStack {
         teleop: Some(twist_teleop()),
-        command_arbitration: CommandArbitrationConfig {
-            sources: vec![CommandSource::Teleop],
+        reference_arbitration: ReferenceArbitrationConfig {
+            sources: vec![ReferenceSource::Teleop],
             ..Default::default()
         },
         ..Default::default()
@@ -104,8 +104,8 @@ fn teleop_reference_is_intent_driven_not_free_running() {
     // nothing is fabricated until the host actually publishes intent.
     let stack = AutonomyStack {
         teleop: Some(twist_teleop()),
-        command_arbitration: CommandArbitrationConfig {
-            sources: vec![CommandSource::Teleop],
+        reference_arbitration: ReferenceArbitrationConfig {
+            sources: vec![ReferenceSource::Teleop],
             ..Default::default()
         },
         ..Default::default()
@@ -138,8 +138,8 @@ fn teleop_intent_is_mapped_into_the_reference() {
     // proving the mapper is a real brain node fed by host intent.
     let stack = AutonomyStack {
         teleop: Some(twist_teleop()),
-        command_arbitration: CommandArbitrationConfig {
-            sources: vec![CommandSource::Teleop],
+        reference_arbitration: ReferenceArbitrationConfig {
+            sources: vec![ReferenceSource::Teleop],
             ..Default::default()
         },
         ..Default::default()

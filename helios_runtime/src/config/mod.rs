@@ -18,7 +18,7 @@ mod teleop;
 
 pub use agent::AgentBaseConfig;
 pub use allocator::AllocatorConfig;
-pub use arbitration::{ArbitrationPolicyConfig, CommandArbitrationConfig, CommandSource};
+pub use arbitration::{ArbitrationPolicyConfig, ReferenceArbitrationConfig, ReferenceSource};
 pub use autonomy::AutonomyStack;
 pub use command_space::CommandSpace;
 pub use controller::ControllerConfig;

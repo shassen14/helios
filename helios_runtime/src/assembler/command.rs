@@ -7,7 +7,7 @@
 //! fed by its autonomy `Sum` fold. What remains here is the fold-node vocabulary
 //! and the policy translation the reference arbiter reuses.
 
-use crate::config::{ArbitrationPolicyConfig, CommandArbitrationConfig, CommandSpace};
+use crate::config::{ArbitrationPolicyConfig, CommandSpace, ReferenceArbitrationConfig};
 use crate::nodes::combinators::SelectorPolicy;
 
 /// Node name for the synthesized teleop mapper (`Intent → reference`). Raw
@@ -49,7 +49,7 @@ pub(crate) fn command_sum_node_name(space: CommandSpace) -> &'static str {
 
 /// Translates the configured arbitration policy into the runtime policy the
 /// reference `Selector` applies.
-pub(super) fn selector_policy(arb: &CommandArbitrationConfig) -> SelectorPolicy {
+pub(super) fn selector_policy(arb: &ReferenceArbitrationConfig) -> SelectorPolicy {
     match arb.policy {
         ArbitrationPolicyConfig::FreshnessOverride => SelectorPolicy::FreshnessOverride {
             max_age: arb.teleop_max_age_s,
@@ -65,7 +65,7 @@ mod tests {
     fn freshness_policy_carries_the_configured_max_age() {
         // The reference arbiter reuses this translation, so the configured
         // teleop max-age must reach the runtime `Selector` policy verbatim.
-        let arb = CommandArbitrationConfig {
+        let arb = ReferenceArbitrationConfig {
             teleop_max_age_s: 0.25,
             ..Default::default()
         };

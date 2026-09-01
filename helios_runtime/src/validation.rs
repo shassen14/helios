@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::config::{
-    AutonomyStack, CommandSource, CommandSpace, ControllerConfig, EstimatorConfig, MapLayerConfig,
+    AutonomyStack, CommandSpace, ControllerConfig, EstimatorConfig, MapLayerConfig, ReferenceSource,
 };
 
 /// Snapshot of algorithm keys registered in each family.
@@ -61,16 +61,16 @@ pub enum ConfigValidationError {
         kind: String,
     },
 
-    /// `command_arbitration` lists `autonomy` as a source, but no controller is
+    /// `reference_arbitration` lists `autonomy` as a source, but no controller is
     /// configured to produce the autonomy command.
     AutonomySourceWithoutController,
     /// A controller is configured, but `autonomy` is not among the explicitly
-    /// listed command sources, so the controller's output is never routed to
+    /// listed reference sources, so the controller's output is never routed to
     /// `command`.
-    ControllerConfiguredButNotACommandSource,
-    /// The same command source appears more than once in
-    /// `command_arbitration.sources`, making priority order ambiguous.
-    DuplicateCommandSource {
+    ControllerConfiguredButNotAReferenceSource,
+    /// The same reference source appears more than once in
+    /// `reference_arbitration.sources`, making priority order ambiguous.
+    DuplicateReferenceSource {
         source: String,
     },
 
@@ -168,19 +168,19 @@ impl std::fmt::Display for ConfigValidationError {
             ConfigValidationError::AutonomySourceWithoutController => {
                 write!(
                     f,
-                    "command_arbitration lists 'autonomy' as a source but no controller is configured to produce it"
+                    "reference_arbitration lists 'autonomy' as a source but no controller is configured to produce it"
                 )
             }
-            ConfigValidationError::ControllerConfiguredButNotACommandSource => {
+            ConfigValidationError::ControllerConfiguredButNotAReferenceSource => {
                 write!(
                     f,
-                    "a controller is configured but 'autonomy' is not among command_arbitration.sources; its output is never routed to command"
+                    "a controller is configured but 'autonomy' is not among reference_arbitration.sources; its output is never routed to command"
                 )
             }
-            ConfigValidationError::DuplicateCommandSource { source } => {
+            ConfigValidationError::DuplicateReferenceSource { source } => {
                 write!(
                     f,
-                    "command_arbitration.sources lists '{source}' more than once"
+                    "reference_arbitration.sources lists '{source}' more than once"
                 )
             }
             ConfigValidationError::AllocatorWithoutCommandSource { space } => {
@@ -344,10 +344,10 @@ pub fn validate_autonomy_config(
         }
     }
 
-    // Command arbitration validation.
-    let sources = &config.command_arbitration.sources;
+    // Reference arbitration validation.
+    let sources = &config.reference_arbitration.sources;
     let has_controller = !config.controllers.is_empty();
-    let lists_autonomy = sources.contains(&CommandSource::Autonomy);
+    let lists_autonomy = sources.contains(&ReferenceSource::Autonomy);
 
     // An explicit autonomy source with nothing to produce it.
     if lists_autonomy && !has_controller {
@@ -358,14 +358,14 @@ pub fn validate_autonomy_config(
     // list infers `[Autonomy]`, so this only fires when the list is explicit
     // and omits autonomy.
     if has_controller && !sources.is_empty() && !lists_autonomy {
-        errors.push(ConfigValidationError::ControllerConfiguredButNotACommandSource);
+        errors.push(ConfigValidationError::ControllerConfiguredButNotAReferenceSource);
     }
 
     // A source listed more than once makes priority order ambiguous.
     let mut seen = HashSet::new();
     for source in sources {
         if !seen.insert(*source) {
-            errors.push(ConfigValidationError::DuplicateCommandSource {
+            errors.push(ConfigValidationError::DuplicateReferenceSource {
                 source: source.as_str().to_string(),
             });
         }
@@ -394,7 +394,7 @@ pub fn validate_autonomy_config(
     // now that decoupled control opens one seam per space. Teleop produces only a
     // body twist today (the teleop mapper is body-twist-only), so it satisfies the
     // `BodyTwist` space and no other. Mirrors the assembler's `CommandTopology::None`.
-    let teleop_present = sources.contains(&CommandSource::Teleop);
+    let teleop_present = sources.contains(&ReferenceSource::Teleop);
     let controller_spaces: HashSet<CommandSpace> = config
         .controllers
         .values()

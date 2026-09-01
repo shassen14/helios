@@ -4,10 +4,10 @@ use std::collections::HashMap;
 
 use helios_runtime::{
     config::{
-        AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandArbitrationConfig,
-        CommandSource, CommandSpace, ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig,
-        EstimatorConfig, IntegratedImuConfig, MapLayerConfig, MapperPoseSourceConfig,
-        SearchPlannerConfig, SensorModelConfig,
+        AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandSpace,
+        ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig,
+        IntegratedImuConfig, MapLayerConfig, MapperPoseSourceConfig, ReferenceArbitrationConfig,
+        ReferenceSource, SearchPlannerConfig, SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
 };
@@ -95,14 +95,14 @@ fn occupancy_grid() -> MapLayerConfig {
     }
 }
 
-fn stack_with_arbitration(sources: Vec<CommandSource>, with_controller: bool) -> AutonomyStack {
+fn stack_with_arbitration(sources: Vec<ReferenceSource>, with_controller: bool) -> AutonomyStack {
     let mut controllers = HashMap::new();
     if with_controller {
         controllers.insert("main_ctrl".to_string(), direct_twist());
     }
     AutonomyStack {
         controllers,
-        command_arbitration: CommandArbitrationConfig {
+        reference_arbitration: ReferenceArbitrationConfig {
             sources,
             ..Default::default()
         },
@@ -154,7 +154,7 @@ fn steer_position_allocator() -> AllocatorConfig {
 fn stack_with_allocators(
     count: usize,
     with_controller: bool,
-    sources: Vec<CommandSource>,
+    sources: Vec<ReferenceSource>,
 ) -> AutonomyStack {
     let mut allocators = HashMap::new();
     for i in 0..count {
@@ -168,7 +168,7 @@ fn stack_with_allocators(
     AutonomyStack {
         controllers,
         allocators,
-        command_arbitration: CommandArbitrationConfig {
+        reference_arbitration: ReferenceArbitrationConfig {
             sources,
             ..Default::default()
         },
@@ -222,7 +222,7 @@ fn validation_valid_full_stack_passes() {
         controllers,
         allocators: Default::default(),
         teleop: None,
-        command_arbitration: Default::default(),
+        reference_arbitration: Default::default(),
     };
 
     let errors = validate_autonomy_config(&stack, &full_caps());
@@ -448,7 +448,7 @@ fn validation_unknown_sensor_payload_in_aiding_produces_error() {
 
 #[test]
 fn validation_autonomy_source_without_controller_errors() {
-    let stack = stack_with_arbitration(vec![CommandSource::Autonomy], false);
+    let stack = stack_with_arbitration(vec![ReferenceSource::Autonomy], false);
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
         errors
@@ -460,31 +460,31 @@ fn validation_autonomy_source_without_controller_errors() {
 }
 
 #[test]
-fn validation_controller_not_a_command_source_errors() {
+fn validation_controller_not_a_reference_source_errors() {
     // Controller present, but the explicit source list omits autonomy: the
     // controller's output is never routed to command.
-    let stack = stack_with_arbitration(vec![CommandSource::Teleop], true);
+    let stack = stack_with_arbitration(vec![ReferenceSource::Teleop], true);
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            ConfigValidationError::ControllerConfiguredButNotACommandSource
+            ConfigValidationError::ControllerConfiguredButNotAReferenceSource
         )),
-        "Expected ControllerConfiguredButNotACommandSource, got: {:?}",
+        "Expected ControllerConfiguredButNotAReferenceSource, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }
 
 #[test]
-fn validation_duplicate_command_source_errors() {
-    let stack = stack_with_arbitration(vec![CommandSource::Teleop, CommandSource::Teleop], false);
+fn validation_duplicate_reference_source_errors() {
+    let stack = stack_with_arbitration(vec![ReferenceSource::Teleop, ReferenceSource::Teleop], false);
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            ConfigValidationError::DuplicateCommandSource { source } if source == "teleop"
+            ConfigValidationError::DuplicateReferenceSource { source } if source == "teleop"
         )),
-        "Expected DuplicateCommandSource for teleop, got: {:?}",
+        "Expected DuplicateReferenceSource for teleop, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }
@@ -504,7 +504,7 @@ fn validation_empty_sources_with_controller_passes() {
 
 #[test]
 fn validation_explicit_autonomy_with_controller_passes() {
-    let stack = stack_with_arbitration(vec![CommandSource::Autonomy], true);
+    let stack = stack_with_arbitration(vec![ReferenceSource::Autonomy], true);
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
         errors.is_empty(),
@@ -590,8 +590,8 @@ fn validation_teleop_does_not_satisfy_a_non_body_twist_allocator_errors() {
     allocators.insert("drive_alloc".to_string(), wheel_torque_allocator());
     let stack = AutonomyStack {
         allocators,
-        command_arbitration: CommandArbitrationConfig {
-            sources: vec![CommandSource::Teleop],
+        reference_arbitration: ReferenceArbitrationConfig {
+            sources: vec![ReferenceSource::Teleop],
             ..Default::default()
         },
         ..Default::default()

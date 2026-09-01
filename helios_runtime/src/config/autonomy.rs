@@ -1,6 +1,6 @@
 use super::{
-    AllocatorConfig, CommandArbitrationConfig, ControllerConfig, EstimatorConfig, MapLayerConfig,
-    PathFollowingConfig, SearchPlannerConfig, TeleopMapperConfig,
+    AllocatorConfig, ControllerConfig, EstimatorConfig, MapLayerConfig, PathFollowingConfig,
+    ReferenceArbitrationConfig, SearchPlannerConfig, TeleopMapperConfig,
 };
 
 use serde::Deserialize;
@@ -36,9 +36,9 @@ pub struct AutonomyStack {
     #[serde(default)]
     pub teleop: Option<TeleopMapperConfig>,
 
-    /// Command-arbitration tuning (teleop-vs-autonomy freshness). Defaults apply
-    /// when the `[command_arbitration]` section is omitted, so a stack with no
+    /// Reference-arbitration tuning (teleop-vs-autonomy freshness). Defaults apply
+    /// when the `[reference_arbitration]` section is omitted, so a stack with no
     /// teleop source never has to mention it.
     #[serde(default)]
-    pub command_arbitration: CommandArbitrationConfig,
+    pub reference_arbitration: ReferenceArbitrationConfig,
 }

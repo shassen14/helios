@@ -46,7 +46,7 @@ use self::command::{
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
 use crate::config::TeleopMapperConfig;
-use crate::config::{AllocatorConfig, AutonomyStack, CommandSource, CommandSpace, FoldRole};
+use crate::config::{AllocatorConfig, AutonomyStack, CommandSpace, FoldRole, ReferenceSource};
 use crate::config::{EstimatorConfig, MapLayerConfig};
 use crate::nodes::combinators::{Merge, Selector, Sum};
 use crate::nodes::gaussian_estimator;
@@ -213,9 +213,9 @@ pub fn build_pipeline(
     // reference type today; when a second appears, derive it from the follower's
     // declared reference rather than hard-coding it here.
     let teleop_contends = stack
-        .command_arbitration
+        .reference_arbitration
         .sources
-        .contains(&CommandSource::Teleop);
+        .contains(&ReferenceSource::Teleop);
     let arbitrate_reference = teleop_contends && stack.path_following.is_some();
 
     if let Some(pf_cfg) = &stack.path_following {
@@ -294,7 +294,7 @@ pub fn build_pipeline(
                         vec![control::reference_teleop::<BodyTwistRef>()],
                         control::reference_autonomy::<BodyTwistRef>(),
                         control::reference::<BodyTwistRef>(),
-                        selector_policy(&stack.command_arbitration),
+                        selector_policy(&stack.reference_arbitration),
                     );
                     builder = builder.add_node(Box::new(arbiter));
                 }

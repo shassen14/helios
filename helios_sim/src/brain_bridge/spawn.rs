@@ -10,7 +10,7 @@ use helios_core::control::actuators::ActuatorCommand;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::transforms::Convention;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::config::CommandSource;
+use helios_runtime::config::ReferenceSource;
 use helios_runtime::{
     build_pipeline, AutonomyStack, BodyCapabilities, Provenance, PublishedChannel,
 };
@@ -69,9 +69,9 @@ pub fn spawn_autonomy_pipeline(
                     cmds.insert(MissionGoalChannels(goal_channels.into_iter().collect()));
                 }
                 if stack
-                    .command_arbitration
+                    .reference_arbitration
                     .sources
-                    .contains(&CommandSource::Teleop)
+                    .contains(&ReferenceSource::Teleop)
                 {
                     cmds.insert(TeleopControlled);
                 }
