@@ -96,25 +96,17 @@ pub enum AxleConfig {
     Rear,
 }
 
-pub const L0_SHIM: &str = "L0Shim";
 pub const RAYCAST_WHEELS: &str = "RaycastWheels";
 
 /// Plant fidelity: how setpoints and state become forces on the body.
 ///
-/// `L0Shim` is the arcade shim — open-loop feedforward gains that scale a
-/// resolved setpoint into a chassis wrench, plus passive damping that stands in
-/// for a real resistive force. It is retired wholesale when a raycast/dynamic
-/// plant supplies real forces.
+/// `RaycastWheels` is the four-corner raycast model — per-wheel spring-damper
+/// suspension and a friction-circle tire, so weight transfer and per-surface
+/// grip emerge from the model rather than a scalar gain.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(deny_unknown_fields)]
 pub enum PlantConfig {
-    L0Shim {
-        l0_force_gain: f32,
-        l0_yaw_gain: f32,
-        linear_damping: f32,
-        angular_damping: f32,
-    },
     RaycastWheels {
         suspension: SuspensionConfig,
         tire: TireConfig,
@@ -126,7 +118,6 @@ pub enum PlantConfig {
 impl PlantConfig {
     pub fn kind_str(&self) -> &'static str {
         match self {
-            PlantConfig::L0Shim { .. } => L0_SHIM,
             PlantConfig::RaycastWheels { .. } => RAYCAST_WHEELS,
         }
     }
@@ -269,7 +260,7 @@ mod tests {
     }
 
     // A body that declares no `[[mount]]` still parses — the field defaults to an
-    // empty list, which is what the L0 car relies on today.
+    // empty list, the shape a single-body agent with no wheel frames relies on.
     #[test]
     fn topology_mounts_default_to_empty() {
         let cfg: TopologyConfig = parse("kind = \"RigidBodyWithMount\"\nmass = 1500.0");
@@ -277,20 +268,8 @@ mod tests {
         assert!(mounts.is_empty());
     }
 
-    #[test]
-    fn plant_kind_str_matches_serde_tag() {
-        let cfg: PlantConfig = parse(
-            "kind = \"L0Shim\"\n\
-             l0_force_gain = 1.0\n\
-             l0_yaw_gain = 1.0\n\
-             linear_damping = 0.0\n\
-             angular_damping = 0.0",
-        );
-        assert_eq!(cfg.kind_str(), L0_SHIM);
-    }
-
-    // The plant's second tag must round-trip the same way L0's does — the guard
-    // that `RAYCAST_WHEELS` and the `RaycastWheels` variant name never drift.
+    // The plant tag must round-trip: `RAYCAST_WHEELS` and the `RaycastWheels`
+    // variant name are two forms of one literal and must never drift apart.
     #[test]
     fn plant_raycast_kind_str_matches_serde_tag() {
         let cfg: PlantConfig = parse(RAYCAST_WHEELS_TOML);

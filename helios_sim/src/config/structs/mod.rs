@@ -31,7 +31,7 @@ pub use simulation::MetricsConfig;
 pub use terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig};
 pub use vehicle::{
     AxleConfig, BoxVisual, CollisionConfig, MountConfig, PlantConfig, SuspensionConfig, TireConfig,
-    TopologyConfig, Vehicle, VisualConfig, WheelConfig, WheelVisual, CUBOID, L0_SHIM,
-    RAYCAST_WHEELS, RIGID_BODY_WITH_MOUNT, WHEELED_PRIMITIVES,
+    TopologyConfig, Vehicle, VisualConfig, WheelConfig, WheelVisual, CUBOID, RAYCAST_WHEELS,
+    RIGID_BODY_WITH_MOUNT, WHEELED_PRIMITIVES,
 };
 pub use world_object::{WorldObjectCollider, WorldObjectPlacement, WorldObjectPrefab};

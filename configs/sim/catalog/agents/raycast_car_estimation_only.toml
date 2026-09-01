@@ -1,0 +1,25 @@
+# =========================================================================
+# == Agent Prefab: Estimation-Only Raycast Car ==
+# =========================================================================
+# Sim-specific prefab: the L1 raycast vehicle body and the ins_pro sensor
+# suite, paired with an autonomy stack holding only an estimator.
+#
+# Same body and sensors as raycast_car, but the estimation_only_car profile —
+# no planner, mapper, path follower, or controller. Exists as its own prefab
+# because a scenario cannot strip nodes out of a profile it references. With no
+# controller the car is never commanded and sits at rest on its suspension, so
+# what this exercises is the INS at a standstill.
+
+name = "EstimationRaycastCar"
+starting_pose = { translation = [0.0, 0.5, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose     = { translation = [0.0, 0.5, 0.0] }
+
+# --- Hardware Configuration ---
+vehicle        = { from = "entities.vehicles.raycast_car" }
+# --- Software (Autonomy) Configuration ---
+autonomy_stack = { from = "runtime.profiles.agent_profiles.estimation_only_car" }
+
+# The ins_pro INS suite (IMU + GPS + magnetometer) the estimator aids on. No
+# lidar: with no mapper or planner there is nothing to consume a scan.
+[sensors]
+from = "runtime.catalog.sensor_suites.ins_pro"

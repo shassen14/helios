@@ -56,10 +56,10 @@ ambient_lux = 1500.0
 # agent prefab with only minimal, instance-specific overrides.
 
 [[agents]]
-# Inherit all properties from the `ackermann_car_pro` prefab. This prefab
-# defines the vehicle type, a professional-grade sensor suite, and a
+# Inherit all properties from the `raycast_car` prefab. This prefab defines the
+# L1 raycast vehicle body, a professional-grade sensor suite plus a lidar, and a
 # matching EKF tune.
-from = "sim.catalog.agents.ackermann_car_pro"
+from = "sim.catalog.agents.raycast_car"
 
 # Any key at this level is a direct override of the prefab's top-level keys.
 name = "ProCar-Baseline"

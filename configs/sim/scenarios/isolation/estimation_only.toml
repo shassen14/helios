@@ -24,6 +24,6 @@ medium   = "air"
 gravity_enu = [0.0, 0.0, -9.81]  # [east, north, up] m/s²
 
 [[agents]]
-from          = "sim.catalog.agents.ackermann_car_estimation_only"
+from          = "sim.catalog.agents.raycast_car_estimation_only"
 name          = "EstimationCar"
 starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }

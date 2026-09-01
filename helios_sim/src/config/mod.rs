@@ -151,11 +151,27 @@ mod tests {
         mass = 1500.0
 
         [vehicle.plant]
-        kind = "L0Shim"
-        l0_force_gain = 1200.0
-        l0_yaw_gain = 16400.0
-        linear_damping = 1.0
-        angular_damping = 1.5
+        kind = "RaycastWheels"
+
+        [vehicle.plant.suspension]
+        rest_length = 0.20
+        wheel_radius = 0.30
+        stiffness = 50000.0
+        damping = 4000.0
+        max_travel = 0.20
+        ray_margin = 0.10
+
+        [vehicle.plant.tire]
+        cornering_stiffness_front = 80000.0
+        cornering_stiffness_rear = 60000.0
+        rolling_resistance = 0.015
+        low_speed_threshold = 1.0
+
+        [[vehicle.plant.wheel]]
+        mount = "wheel_rl"
+        axle = "Rear"
+        steer = false
+        drive = true
 
         [vehicle.collision]
         kind = "Cuboid"
@@ -164,11 +180,16 @@ mod tests {
         z = 4.0
         friction = 0.7
 
+        [vehicle.visual]
+        kind = "WheeledPrimitives"
+        chassis = { x = 1.8, y = 0.8, z = 4.0, color = [0.2, 0.4, 0.8, 0.35] }
+        wheel = { radius = 0.3, width = 0.2, drop = 0.3, color = [0.05, 0.05, 0.05, 1.0] }
+
         [[vehicle.actuation.actuators]]
         id = "drive"
-        kind = "Velocity"
-        limit = 40.0
-        safe_state = { Velocity = 0.0 }
+        kind = "Torque"
+        limit = 2000.0
+        safe_state = { Torque = 0.0 }
         sign = "Normal"
 
         [[vehicle.actuation.actuators]]

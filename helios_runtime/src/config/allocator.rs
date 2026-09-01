@@ -6,12 +6,6 @@ use serde::Deserialize;
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum AllocatorConfig {
-    KinematicAckermann {
-        wheelbase: f64,
-        wheel_radius: f64,
-        drive: String,
-        steer: String,
-    },
     WheelTorque {
         wheel_radius: f64,
         drive: String,
@@ -24,7 +18,6 @@ pub enum AllocatorConfig {
 impl AllocatorConfig {
     pub(crate) fn get_kind_str(&self) -> &str {
         match self {
-            AllocatorConfig::KinematicAckermann { .. } => "KinematicAckermann",
             AllocatorConfig::WheelTorque { .. } => "WheelTorque",
             AllocatorConfig::SteerPosition { .. } => "SteerPosition",
         }
@@ -35,7 +28,6 @@ impl AllocatorConfig {
     /// `command` channel, the fold, and this allocator's input around.
     pub(crate) fn command_space(&self) -> CommandSpace {
         match self {
-            AllocatorConfig::KinematicAckermann { .. } => CommandSpace::BodyTwist,
             AllocatorConfig::WheelTorque { .. } => CommandSpace::DriveForce,
             AllocatorConfig::SteerPosition { .. } => CommandSpace::SteerAngle,
         }
@@ -43,7 +35,6 @@ impl AllocatorConfig {
 
     pub(crate) fn actuator_ids(&self) -> Vec<&str> {
         match self {
-            AllocatorConfig::KinematicAckermann { drive, steer, .. } => vec![drive, steer],
             AllocatorConfig::WheelTorque { drive, .. } => vec![drive],
             AllocatorConfig::SteerPosition { steer } => vec![steer],
         }

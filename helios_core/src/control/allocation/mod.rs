@@ -4,8 +4,8 @@
 //! whatever a family speaks) onto an [`ActuatorCommand`]: one native setpoint per
 //! physical actuator. It is the last brain-side node; everything downstream is
 //! the host relaying setpoints to hardware or the sim. Each vehicle family
-//! supplies its own implementation ([`ackermann`] for a steered car); the trait
-//! is only the shared shape.
+//! supplies its own implementation ([`wheeled::drive_torque`] for a driven car
+//! wheel); the trait is only the shared shape.
 
 pub mod wheeled;
 
@@ -28,9 +28,9 @@ use crate::control::actuators::ActuatorCommand;
 /// setpoint → `In`; the allocator's own history → `self`; current world state →
 /// `Inputs`.
 ///
-/// A pure feedforward inverse — the Ackermann bicycle model, which inverts
-/// idealized kinematics from the command and fixed geometry alone — never reads
-/// vehicle state, so its `Inputs` is `()`. Allocators that must *react* to
+/// A pure feedforward lift — the wheel-torque drive, which scales a commanded
+/// force to a wheel torque from fixed geometry alone — never reads vehicle
+/// state, so its `Inputs` is `()`. Allocators that must *react* to
 /// conditions carry a non-`()` `Inputs`: a traction-limited drive needs current
 /// wheel speeds to bound slip; an over-actuated vehicle (more actuators than
 /// degrees of freedom) resolves the redundancy against current effector state.

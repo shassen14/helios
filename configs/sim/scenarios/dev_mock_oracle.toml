@@ -31,13 +31,13 @@ sun_azimuth = 180.0
 ambient_lux = 1500.0
 
 [[agents]]
-from = "sim.catalog.agents.ackermann_car_pro"
+from = "sim.catalog.agents.raycast_car"
 name = "MockOraclePro"
 starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 goal_pose = { translation = [100.0, 50.0, 0.5] }
 
-# Add the lidar (the pro prefab doesn't include one by default) so the
-# occupancy grid mapper has a scan source.
+# The raycast prefab already mounts a lidar; this re-states it explicitly so the
+# occupancy grid mapper's scan source is visible in the scenario.
 [agents.sensors.lidar]
 from = "entities.sensors.lidar2d"
 
@@ -46,7 +46,7 @@ from = "entities.sensors.lidar2d"
 from = "runtime.catalog.mappers.occupancy_grid_2d"
 
 # === The only real Phase 3 change: swap the estimator for MockOracle. ===
-# Deep-merge override of the estimator field inherited from ackermann_car_pro.
+# Deep-merge override of the estimator field inherited from raycast_car.
 # Because MockOracle's config is empty, no further keys are needed.
 [agents.autonomy_stack.estimators.primary]
 from = "runtime.catalog.estimators.mock_oracle"

@@ -1,11 +1,11 @@
 //! The L1 raycast wheel plant: a per-wheel suspension-and-tire map from
 //! wheel-ground contacts and an actuator command to a body-frame wrench.
 //!
-//! It sits one rung above [`L0ShimPlant`](super::l0_shim::L0ShimPlant) on the
-//! fidelity ladder. Where the shim folds a command straight into one chassis
-//! wrench, this plant carries each wheel's geometry and lets the ground it
-//! stands on shape the forces — so weight transfer, per-surface grip, and
-//! understeer emerge from the model rather than being faked.
+//! It is the floor of the fidelity ladder. Rather than folding a command
+//! straight into one chassis wrench, this plant carries each wheel's geometry
+//! and lets the ground it stands on shape the forces — so weight transfer,
+//! per-surface grip, and understeer emerge from the model rather than being
+//! faked.
 //!
 //! It runs in two phases split across the core/host boundary, mirroring a
 //! world sensor: the plant generates one downward suspension ray per wheel
@@ -98,7 +98,7 @@ impl RaycastWheelPlant {
     /// applied off-centre, weight transfer, pitch/roll, and grip-limited
     /// cornering emerge from the geometry rather than being modelled separately.
     ///
-    /// The command is read by command space, as [`L0ShimPlant::fold`] reads it:
+    /// The command is read by command space:
     /// `Torque` setpoints are the drive torque, summed and then split evenly
     /// across the drive wheels; a `Position` setpoint is the steer angle,
     /// applied to the steer wheels to rotate their tyre-force basis. A
@@ -113,8 +113,6 @@ impl RaycastWheelPlant {
     /// [`ActuationModel::resolve`](crate::control::actuation_model::ActuationModel::resolve)):
     /// every value is finite and speaks its actuator's declared space, so the
     /// fold never guards against `NaN`.
-    ///
-    /// [`L0ShimPlant::fold`]: super::l0_shim::L0ShimPlant::fold
     pub fn compute_wrench(
         &self,
         contacts: &[Option<WheelContact>],

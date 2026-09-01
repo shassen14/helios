@@ -8,14 +8,12 @@
 //! forward force it computes is integrated by the host's physics engine; the
 //! plant supplies the forces, the integrator supplies the motion.
 //!
-//! Fidelity is a ladder: [`L0ShimPlant`] is the crudest rung, folding a command
-//! straight into one chassis wrench; richer per-wheel dynamic plants replace it
-//! without changing this module's role.
+//! Fidelity is a ladder: [`RaycastWheelPlant`] is the rung in place today, a
+//! per-wheel suspension-and-tire model. A cruder single-wrench rung or a richer
+//! multi-body plant slots in beside it without changing this module's role.
 
-pub mod l0_shim;
 pub mod raycast_wheels;
 
-pub use l0_shim::L0ShimPlant;
 pub use raycast_wheels::{
     Axle, RaycastWheelPlant, SuspensionParams, TireParams, Wheel, WheelContact, WheelRay,
 };

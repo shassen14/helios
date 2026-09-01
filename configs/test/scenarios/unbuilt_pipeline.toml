@@ -21,7 +21,7 @@ collider = "maps/starter_world_col.glb"
 medium   = "air"
 
 [[agents]]
-from          = "sim.catalog.agents.ackermann_car_estimation_only"
+from          = "sim.catalog.agents.raycast_car_estimation_only"
 name          = "BrokenCar"
 starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 

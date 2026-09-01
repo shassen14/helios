@@ -37,7 +37,7 @@ fn full_caps() -> CapabilitySet {
         mappers: set(&["OccupancyGrid2D"]),
         controllers: set(&["DirectTwist", "LongitudinalVelocity", "RoadLoad", "BicycleSteer"]),
         planners: set(&["AStar"]),
-        allocators: set(&["KinematicAckermann", "WheelTorque", "SteerPosition"]),
+        allocators: set(&["WheelTorque", "SteerPosition"]),
     }
 }
 
@@ -110,15 +110,6 @@ fn stack_with_arbitration(sources: Vec<CommandSource>, with_controller: bool) ->
     }
 }
 
-fn ackermann_allocator() -> AllocatorConfig {
-    AllocatorConfig::KinematicAckermann {
-        wheelbase: 2.0,
-        wheel_radius: 0.3,
-        drive: "drive".to_string(),
-        steer: "steer".to_string(),
-    }
-}
-
 // The DriveForce command space: a longitudinal feedback controller and a
 // road-load feedforward controller both emit `DriveForce`; the wheel-torque
 // allocator consumes it.
@@ -166,11 +157,12 @@ fn stack_with_allocators(
 ) -> AutonomyStack {
     let mut allocators = HashMap::new();
     for i in 0..count {
-        allocators.insert(format!("alloc_{i}"), ackermann_allocator());
+        allocators.insert(format!("alloc_{i}"), wheel_torque_allocator());
     }
     let mut controllers = HashMap::new();
     if with_controller {
-        controllers.insert("main_ctrl".to_string(), direct_twist());
+        // A DriveForce controller, matching the wheel-torque allocator's space.
+        controllers.insert("main_ctrl".to_string(), longitudinal_velocity());
     }
     AutonomyStack {
         controllers,
@@ -523,15 +515,15 @@ fn validation_explicit_autonomy_with_controller_passes() {
 #[test]
 fn validation_allocator_without_command_source_errors() {
     // An allocator with no controller and no teleop source has nothing producing
-    // the `command` it consumes. The allocator is a body-twist Ackermann, so the
-    // unsatisfied space is `BodyTwist`.
+    // the `command` it consumes. The allocator is a wheel-torque drive, so the
+    // unsatisfied space is `DriveForce`.
     let stack = stack_with_allocators(1, false, vec![]);
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
         errors.iter().any(|e| matches!(
             e,
             ConfigValidationError::AllocatorWithoutCommandSource { space }
-                if *space == CommandSpace::BodyTwist
+                if *space == CommandSpace::DriveForce
         )),
         "Expected AllocatorWithoutCommandSource, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
@@ -546,21 +538,6 @@ fn validation_allocator_with_controller_passes() {
     assert!(
         errors.is_empty(),
         "Allocator with a controller must pass, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn validation_allocator_with_teleop_source_passes() {
-    // A host-published teleop source also produces `command`, so an allocator
-    // with no controller is still satisfiable.
-    let stack = stack_with_allocators(1, false, vec![CommandSource::Teleop]);
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        !errors
-            .iter()
-            .any(|e| matches!(e, ConfigValidationError::AllocatorWithoutCommandSource { .. })),
-        "Teleop source must satisfy the allocator's command input, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }
@@ -681,37 +658,6 @@ fn validation_disjoint_multiple_allocators_pass() {
     assert!(
         errors.is_empty(),
         "Disjoint multiple allocators must pass, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn validation_controller_command_space_mismatch_errors() {
-    // A DriveForce controller feeding a BodyTwist allocator: the controller's
-    // contribution would land in a slot the allocator never reads. Caught at load
-    // rather than as a downstream UnsatisfiedInput at DAG build.
-    let mut controllers = HashMap::new();
-    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
-    let mut allocators = HashMap::new();
-    allocators.insert("alloc".to_string(), ackermann_allocator());
-    let stack = AutonomyStack {
-        controllers,
-        allocators,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::ControllerCommandSpaceMismatch {
-                controller,
-                controller_space,
-                available_spaces,
-            } if controller == "speed_ctrl"
-                && *controller_space == CommandSpace::DriveForce
-                && available_spaces.as_slice() == [CommandSpace::BodyTwist]
-        )),
-        "Expected ControllerCommandSpaceMismatch for speed_ctrl, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }
