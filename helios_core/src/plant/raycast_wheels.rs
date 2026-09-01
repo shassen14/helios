@@ -278,7 +278,14 @@ impl RaycastWheelPlant {
             Axle::Front => self.tire.cornering_stiffness_front,
             Axle::Rear => self.tire.cornering_stiffness_rear,
         };
-        let slip_angle = speed_lat.atan2(speed_long);
+        // `speed_long.abs()`: the slip angle is measured against the direction of
+        // travel, whichever way the wheel rolls. The longitudinal sign is already
+        // carried by `force_long`; feeding a signed `speed_long` here would read a
+        // straight reverse (`speed_long < 0`, `speed_lat ≈ 0`) as `atan2(0, −) = π`
+        // — a phantom 180° slip that fabricates an enormous lateral force, saturates
+        // the friction circle, and starves reverse traction. Taking the magnitude
+        // keeps the linear tyre model in its small-angle regime in both directions.
+        let slip_angle = speed_lat.atan2(speed_long.abs());
         let mut force_lat = -cornering_stiffness * slip_angle * self.speed_saturation(speed);
 
         // Friction circle: one grip budget μ·N shared between the two, scaled
@@ -671,6 +678,27 @@ mod tests {
             out.wrench().force().y() < 0.0,
             "a leftward slide must produce a rightward (−y) restoring force"
         );
+    }
+
+    #[test]
+    fn straight_reverse_keeps_full_longitudinal_traction() {
+        // Regression: a wheel rolling straight backward (v_long < 0, v_lat = 0) has
+        // no slip. A signed longitudinal speed once read this as atan2(0, −v) = π —
+        // a phantom 180° slip whose enormous lateral force saturated the friction
+        // circle and scaled the reverse drive force to near zero. Keying the slip
+        // angle off |v_long| makes reverse traction symmetric with forward.
+        let plant = one_wheel_at_origin(Axle::Rear, true, false);
+
+        // −300 N·m → F = −1000 N, inside the μN = 5000 budget so long as no phantom
+        // lateral force eats it. The velocity is a full 2 m/s reverse, well past the
+        // low-speed fade, which is exactly where the old bug bit hardest.
+        let out = plant.compute_wrench(
+            &[Some(contact(1.0))],
+            twist(-2.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            &drive_cmd(-300.0),
+        );
+
+        vec_close(out.wrench().force(), FluVector::new(-1000.0, 0.0, 5000.0));
     }
 
     #[test]

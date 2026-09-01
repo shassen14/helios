@@ -56,6 +56,7 @@ fn build_longitudinal_velocity(
         proportional_gain,
         integral_gain,
         derivative_gain,
+        integral_clamp,
         ..
     } = ctx.config
     else {
@@ -64,7 +65,8 @@ fn build_longitudinal_velocity(
         ));
     };
 
-    let pid = SisoPid::new(proportional_gain, integral_gain, derivative_gain);
+    let pid = SisoPid::new(proportional_gain, integral_gain, derivative_gain)
+        .with_integral_clamp(integral_clamp);
     let controller = LongitudinalVelocityController::new(pid, FrameId::Body(ctx.agent_handle));
     let input_builder = Box::new(DefaultControlInputBuilder::<BodyTwistRef>::new());
 

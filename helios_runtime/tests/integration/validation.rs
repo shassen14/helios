@@ -120,6 +120,7 @@ fn longitudinal_velocity() -> ControllerConfig {
         proportional_gain: 1.0,
         integral_gain: 0.0,
         derivative_gain: 0.0,
+        integral_clamp: 0.0,
     }
 }
 

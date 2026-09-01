@@ -28,6 +28,11 @@ pub enum ControllerConfig {
         proportional_gain: f64,
         integral_gain: f64,
         derivative_gain: f64,
+        /// Symmetric bound on the integral accumulator (anti-windup). Omitted or
+        /// `0.0` leaves the integrator unclamped; a positive value caps the
+        /// integral's force authority at `integral_gain · integral_clamp`.
+        #[serde(default)]
+        integral_clamp: f64,
     },
     RoadLoad {
         c_roll: f64,
