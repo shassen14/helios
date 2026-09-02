@@ -504,9 +504,19 @@ mod tests {
 
     #[test]
     fn golden_ins_trajectory_is_frozen() {
-        // Full-precision literals harvested from a captured run. f64's shortest
-        // round-trippable text form reparses to the identical bits, so `==` here
-        // is an exact comparison, not an approximate one.
+        // Full-precision literals harvested from a captured run. The literals
+        // reparse to their exact bits, but the *trajectory* that produced them is
+        // computed, not stored, and its last bits are not portable: a different
+        // FPU, libm, or fused-multiply-add contraction lands the final ULP
+        // elsewhere, so another machine's run differs from these by a few ULP on
+        // noise, not regression. The golden is therefore held to a tight tolerance —
+        // orders of magnitude below any real algorithmic drift, well above
+        // cross-platform ULP wobble. `REL_TOL` bounds the large covariance entries;
+        // `ABS_TOL` floors the comparison for the near-zero mean components a
+        // relative bound cannot judge.
+        const REL_TOL: f64 = 1e-12;
+        const ABS_TOL: f64 = 1e-12;
+
         let expected_mean = [
             0.24953160142126202,
             0.012485945031268028,
@@ -550,14 +560,19 @@ mod tests {
 
         let (mean, cov_diag) = run_golden_ins_trajectory();
 
+        let frozen = |got: f64, want: f64, what: &str, i: usize| {
+            let tol = ABS_TOL + REL_TOL * want.abs();
+            assert!(
+                (got - want).abs() <= tol,
+                "{what}[{i}] drifted from frozen golden: got {got}, want {want}"
+            );
+        };
+
         for (i, &want) in expected_mean.iter().enumerate() {
-            assert_eq!(mean[i], want, "mean[{i}] drifted from frozen golden");
+            frozen(mean[i], want, "mean", i);
         }
         for (i, &want) in expected_cov_diag.iter().enumerate() {
-            assert_eq!(
-                cov_diag[i], want,
-                "covariance diagonal[{i}] drifted from frozen golden"
-            );
+            frozen(cov_diag[i], want, "covariance diagonal", i);
         }
     }
 
