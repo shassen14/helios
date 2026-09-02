@@ -134,6 +134,7 @@ mod tests {
         world.insert_resource(Assets::<StandardMaterial>::default());
         let entity = world.spawn_empty().id();
 
+        #[allow(clippy::type_complexity)]
         let mut state: SystemState<(
             Commands,
             ResMut<Assets<Mesh>>,

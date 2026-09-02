@@ -26,6 +26,10 @@ pub struct RaycastWheelPlantComponent(pub RaycastWheelPlant);
 /// resistance, so adding damping here would double-count it. A bad threshold, an
 /// unresolved mount, or an actuation kind the plant cannot apply fails the spawn.
 pub fn build_raycast_wheels(ctx: &mut PlantBuildContext) -> Result<(), String> {
+    // `RaycastWheels` is the only plant variant today, so the pattern is
+    // irrefutable; the `else` guards the seam for the fidelity variants to come,
+    // when this builder must reject a config meant for a different plant.
+    #[allow(irrefutable_let_patterns)]
     let PlantConfig::RaycastWheels {
         suspension,
         tire,

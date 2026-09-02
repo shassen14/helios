@@ -963,7 +963,9 @@ mod tests {
         // shifts the state dimension by exactly its size, none required at build.
         assert_eq!(augmented_ins_ekf(&[]).state().tangent_dim(), base_dim);
         assert_eq!(
-            augmented_ins_ekf(&[s9.clone()]).state().tangent_dim(),
+            augmented_ins_ekf(std::slice::from_ref(&s9))
+                .state()
+                .tangent_dim(),
             base_dim + MAG_BIAS_DOF
         );
         assert_eq!(
@@ -1116,7 +1118,7 @@ mod tests {
         let base_tangent = ins_model().schema().tangent_dim();
         let sensor_handle = FrameHandle(9);
         let sensor = FrameId::Sensor(sensor_handle);
-        let mut ekf = augmented_ins_ekf(&[sensor.clone()]);
+        let mut ekf = augmented_ins_ekf(std::slice::from_ref(&sensor));
 
         let model = MagneticFieldModel {
             agent_handle: FrameHandle(7),

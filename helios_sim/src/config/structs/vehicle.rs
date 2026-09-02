@@ -282,7 +282,9 @@ mod tests {
     #[test]
     fn plant_parses_raycast_wheel_rows() {
         let cfg: PlantConfig = parse(RAYCAST_WHEELS_TOML);
-        let PlantConfig::RaycastWheels { wheels, .. } = cfg else {
+        #[allow(irrefutable_let_patterns)]
+        let PlantConfig::RaycastWheels { wheels, .. } = cfg
+        else {
             panic!("expected RaycastWheels");
         };
         assert_eq!(wheels.len(), 2);

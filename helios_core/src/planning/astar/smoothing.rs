@@ -57,7 +57,7 @@ pub(super) fn smooth_path(waypoints: &[Point<Enu>], space: &OccupancyGridSpace) 
         })
         .collect();
 
-    let mut smoothed = vec![waypoints[0].clone()];
+    let mut smoothed = vec![waypoints[0]];
     let mut anchor = 0usize;
 
     while anchor < cells.len() - 1 {
@@ -70,7 +70,7 @@ pub(super) fn smooth_path(waypoints: &[Point<Enu>], space: &OccupancyGridSpace) 
                 furthest = probe;
             }
         }
-        smoothed.push(waypoints[furthest].clone());
+        smoothed.push(waypoints[furthest]);
         anchor = furthest;
     }
 

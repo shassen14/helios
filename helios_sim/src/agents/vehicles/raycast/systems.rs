@@ -26,6 +26,7 @@ const WHEEL_FRICTION: f64 = 0.9;
 /// twist, and the command into a chassis wrench the shared tail applies. Disjoint by
 /// query from the L0 shim's applier, so both share `SimulationSet::Actuation` with
 /// no ordering between them.
+#[allow(clippy::type_complexity)]
 pub(super) fn drive_raycast_cars(
     mut commands: Commands,
     spatial_query: SpatialQuery,

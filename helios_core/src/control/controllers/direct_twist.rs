@@ -25,7 +25,7 @@ impl Controller for DirectTwistController {
 
     fn compute(&mut self, _dt: f64, inputs: &ControlInputs<BodyTwistRef>) -> BodyTwist {
         match &inputs.reference {
-            Some(reference) => reference.twist().clone(),
+            Some(reference) => *reference.twist(),
             None => BodyTwist::zero(),
         }
     }
