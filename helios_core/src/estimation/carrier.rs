@@ -106,8 +106,17 @@ mod tests {
     #[test]
     fn every_kinematic_quantity_reads_back() {
         let mut s = carrier();
-        s.set_variable(&StateVariable::new(Quantity::Velocity(FrameId::Odom(AGENT)), Component::X), 2.0);
-        s.set_variable(&StateVariable::new(Quantity::AngularVelocity(FrameId::Odom(AGENT)), Component::Z), 0.3);
+        s.set_variable(
+            &StateVariable::new(Quantity::Velocity(FrameId::Odom(AGENT)), Component::X),
+            2.0,
+        );
+        s.set_variable(
+            &StateVariable::new(
+                Quantity::AngularVelocity(FrameId::Odom(AGENT)),
+                Component::Z,
+            ),
+            0.3,
+        );
 
         assert_eq!(
             s.velocity::<Enu>(FrameId::Odom(AGENT)).unwrap().x(),

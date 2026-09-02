@@ -48,7 +48,10 @@ pub(crate) fn apply_body_wrench(
     wrench: &PlantWrench,
 ) {
     for actuator in wrench.unsupported() {
-        warn!(?actuator, "plant received a setpoint kind it cannot apply; ignoring");
+        warn!(
+            ?actuator,
+            "plant received a setpoint kind it cannot apply; ignoring"
+        );
     }
 
     let w = wrench.wrench();
@@ -129,10 +132,7 @@ mod tests {
     // unsupported actuators — a known wrench to check the tail's rotation against.
     fn normal_load_wrench() -> PlantWrench {
         PlantWrench::new(
-            BodyWrench::new(
-                CoreFluVector::new(0.0, 0.0, 5000.0),
-                CoreFluVector::zeros(),
-            ),
+            BodyWrench::new(CoreFluVector::new(0.0, 0.0, 5000.0), CoreFluVector::zeros()),
             Vec::new(),
         )
     }
@@ -157,14 +157,29 @@ mod tests {
             .entity(entity)
             .get::<ConstantForce>()
             .expect("the tail inserts a ConstantForce");
-        assert!(force.0.x.abs() < 1e-3, "no lateral force, got {}", force.0.x);
-        assert!((force.0.y - 5000.0).abs() < 1e-3, "FLU +Z maps to Bevy +Y, got {}", force.0.y);
-        assert!(force.0.z.abs() < 1e-3, "no fore-aft force, got {}", force.0.z);
+        assert!(
+            force.0.x.abs() < 1e-3,
+            "no lateral force, got {}",
+            force.0.x
+        );
+        assert!(
+            (force.0.y - 5000.0).abs() < 1e-3,
+            "FLU +Z maps to Bevy +Y, got {}",
+            force.0.y
+        );
+        assert!(
+            force.0.z.abs() < 1e-3,
+            "no fore-aft force, got {}",
+            force.0.z
+        );
 
         let torque = world
             .entity(entity)
             .get::<ConstantTorque>()
             .expect("the tail inserts a ConstantTorque");
-        assert!(torque.0.length() < 1e-3, "a force at the CoM makes no torque, got {torque:?}");
+        assert!(
+            torque.0.length() < 1e-3,
+            "a force at the CoM makes no torque, got {torque:?}"
+        );
     }
 }

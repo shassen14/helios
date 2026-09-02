@@ -159,18 +159,30 @@ mod tests {
         // not a restart back to 2.
         let mut c = LongitudinalVelocityController::new(SisoPid::new(0.0, 1.0, 0.0), body());
 
-        assert_eq!(c.compute(1.0, &inputs(Some(2.0), 0.0)), DriveForce::new(2.0));
+        assert_eq!(
+            c.compute(1.0, &inputs(Some(2.0), 0.0)),
+            DriveForce::new(2.0)
+        );
         assert_eq!(c.compute(1.0, &inputs(None, 0.0)), DriveForce::zero());
-        assert_eq!(c.compute(1.0, &inputs(Some(2.0), 0.0)), DriveForce::new(4.0));
+        assert_eq!(
+            c.compute(1.0, &inputs(Some(2.0), 0.0)),
+            DriveForce::new(4.0)
+        );
     }
 
     #[test]
     fn reset_clears_the_integrator() {
         let mut c = LongitudinalVelocityController::new(SisoPid::new(0.0, 1.0, 0.0), body());
 
-        assert_eq!(c.compute(1.0, &inputs(Some(2.0), 0.0)), DriveForce::new(2.0));
+        assert_eq!(
+            c.compute(1.0, &inputs(Some(2.0), 0.0)),
+            DriveForce::new(2.0)
+        );
         c.reset();
         // After reset the accumulator is empty, so the same tick reads as the first.
-        assert_eq!(c.compute(1.0, &inputs(Some(2.0), 0.0)), DriveForce::new(2.0));
+        assert_eq!(
+            c.compute(1.0, &inputs(Some(2.0), 0.0)),
+            DriveForce::new(2.0)
+        );
     }
 }

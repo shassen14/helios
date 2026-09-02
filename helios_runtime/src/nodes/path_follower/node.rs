@@ -155,8 +155,9 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
         //    the controller falls back to last-known-good — the transient-hold
         //    convention shared with SearchPlannerNode.
         let reference = match result {
-            PathFollowerResult::Active(reference)
-            | PathFollowerResult::GoalReached(reference) => reference,
+            PathFollowerResult::Active(reference) | PathFollowerResult::GoalReached(reference) => {
+                reference
+            }
             PathFollowerResult::NoPath | PathFollowerResult::Error(_) => return,
         };
 
@@ -251,7 +252,11 @@ mod tests {
     impl PathFollower for ScriptedFollower {
         type Reference = BodyTwistRef;
 
-        fn compute(&mut self, dt: f64, _inputs: &PathFollowerInputs) -> PathFollowerResult<BodyTwistRef> {
+        fn compute(
+            &mut self,
+            dt: f64,
+            _inputs: &PathFollowerInputs,
+        ) -> PathFollowerResult<BodyTwistRef> {
             let mut c = self.calls.lock().unwrap();
             c.compute_calls += 1;
             c.last_dt = dt;
@@ -569,7 +574,8 @@ mod tests {
     #[test]
     fn execute_early_returns_when_input_builder_returns_none() {
         // Cold-start: state missing → follower never called, nothing published.
-        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::Active(dummy_reference()));
+        let (follower, calls) =
+            ScriptedFollower::new(PathFollowerResult::Active(dummy_reference()));
         let node = PathFollowerNode::new(
             "pure_pursuit",
             Box::new(follower),
@@ -642,7 +648,8 @@ mod tests {
 
     #[test]
     fn execute_forwards_dt_to_follower() {
-        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::Active(dummy_reference()));
+        let (follower, calls) =
+            ScriptedFollower::new(PathFollowerResult::Active(dummy_reference()));
         let node = PathFollowerNode::new(
             "pure_pursuit",
             Box::new(follower),

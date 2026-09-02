@@ -11,12 +11,7 @@ use nalgebra::Isometry3;
 pub struct MockRuntime;
 
 impl AgentRuntime for MockRuntime {
-    fn get_transform(
-        &self,
-        _: FrameId,
-        _: FrameId,
-        _: MonotonicTime,
-    ) -> Option<ErasedTransform> {
+    fn get_transform(&self, _: FrameId, _: FrameId, _: MonotonicTime) -> Option<ErasedTransform> {
         Some(ErasedTransform::from_parts(
             Isometry3::identity(),
             Convention::Flu,

@@ -244,9 +244,9 @@ impl RaycastWheelPlant {
         // Compression rate: the mount velocity along body-up (+Z). A mount moving
         // down (−Z) compresses the spring, hence the leading minus.
         let compression_rate = -mount_velocity.z;
-        let normal_load =
-            (self.suspension.stiffness * compression + self.suspension.damping * compression_rate)
-                .max(0.0);
+        let normal_load = (self.suspension.stiffness * compression
+            + self.suspension.damping * compression_rate)
+            .max(0.0);
         if normal_load <= 0.0 {
             return None;
         }
@@ -270,7 +270,8 @@ impl RaycastWheelPlant {
         // resistance directed against travel (and vanishing at a standstill via
         // the same saturation that fades lateral force).
         let drive = if wheel.is_drive { drive_torque } else { 0.0 };
-        let rolling = self.tire.rolling_resistance * normal_load * self.speed_saturation(speed_long);
+        let rolling =
+            self.tire.rolling_resistance * normal_load * self.speed_saturation(speed_long);
         let mut force_long = drive / self.suspension.wheel_radius - rolling;
 
         // Lateral: cornering stiffness times slip angle, faded to zero at crawl.
@@ -579,7 +580,12 @@ mod tests {
     // wheel's output reads straight off `compute_wrench`.
     fn one_wheel_at_origin(axle: Axle, is_drive: bool, is_steer: bool) -> RaycastWheelPlant {
         RaycastWheelPlant::new(
-            vec![Wheel::new(Point::new(0.0, 0.0, 0.0), axle, is_drive, is_steer)],
+            vec![Wheel::new(
+                Point::new(0.0, 0.0, 0.0),
+                axle,
+                is_drive,
+                is_steer,
+            )],
             force_suspension(),
             force_tire(),
         )
@@ -628,7 +634,12 @@ mod tests {
         // and nothing else: force is pure normal load, and because the mount is
         // off-centre that load makes a moment r × F about the centre of mass.
         let plant = RaycastWheelPlant::new(
-            vec![Wheel::new(Point::new(-1.4, 0.8, -0.3), Axle::Rear, false, false)],
+            vec![Wheel::new(
+                Point::new(-1.4, 0.8, -0.3),
+                Axle::Rear,
+                false,
+                false,
+            )],
             force_suspension(),
             force_tire(),
         );
@@ -673,7 +684,10 @@ mod tests {
         );
 
         let expected_lat = -80_000.0 * std::f64::consts::FRAC_PI_4;
-        vec_close(out.wrench().force(), FluVector::new(0.0, expected_lat, 5000.0));
+        vec_close(
+            out.wrench().force(),
+            FluVector::new(0.0, expected_lat, 5000.0),
+        );
         assert!(
             out.wrench().force().y() < 0.0,
             "a leftward slide must produce a rightward (−y) restoring force"
@@ -708,7 +722,12 @@ mod tests {
         // of mass does not have. The lateral force is therefore nonzero — a slip
         // computed from centre-of-mass velocity alone would be exactly zero here.
         let plant = RaycastWheelPlant::new(
-            vec![Wheel::new(Point::new(2.0, 0.0, 0.0), Axle::Front, false, false)],
+            vec![Wheel::new(
+                Point::new(2.0, 0.0, 0.0),
+                Axle::Front,
+                false,
+                false,
+            )],
             force_suspension(),
             force_tire(),
         );
@@ -720,7 +739,10 @@ mod tests {
         );
 
         let expected_lat = -80_000.0 * (2.0_f64).atan2(10.0);
-        vec_close(out.wrench().force(), FluVector::new(0.0, expected_lat, 5000.0));
+        vec_close(
+            out.wrench().force(),
+            FluVector::new(0.0, expected_lat, 5000.0),
+        );
         assert!(
             out.wrench().force().y().abs() > 1.0,
             "yaw-induced lateral force must be nonzero; a centre-of-mass slip would give 0"
@@ -744,8 +766,14 @@ mod tests {
 
         let f = out.wrench().force();
         let planar = (f.x() * f.x() + f.y() * f.y()).sqrt();
-        assert!(close(planar, 2500.0), "planar force should clamp to μN = 2500, got {planar}");
-        assert!(close(f.z(), 5000.0), "normal load is outside the circle and unchanged");
+        assert!(
+            close(planar, 2500.0),
+            "planar force should clamp to μN = 2500, got {planar}"
+        );
+        assert!(
+            close(f.z(), 5000.0),
+            "normal load is outside the circle and unchanged"
+        );
         // Direction preserved: the clamp scales both components equally, so the
         // longitudinal:lateral ratio matches the unclamped forces.
         let raw_long = 1000.0;
@@ -763,7 +791,10 @@ mod tests {
 
         let straight =
             steered.compute_wrench(&[Some(contact(1.0))], BodyTwist::zero(), &drive_cmd(300.0));
-        vec_close(straight.wrench().force(), FluVector::new(1000.0, 0.0, 5000.0));
+        vec_close(
+            straight.wrench().force(),
+            FluVector::new(1000.0, 0.0, 5000.0),
+        );
 
         let turned = steered.compute_wrench(
             &[Some(contact(1.0))],

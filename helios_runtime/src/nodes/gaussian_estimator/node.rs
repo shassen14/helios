@@ -250,9 +250,9 @@ mod tests {
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::data::sensor::LinearAcceleration3D;
+    use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::EstimatorInputs;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::{FrameAwareState, FrameId};
     use nalgebra::{DMatrix, DVector, Isometry3};
     use std::sync::Mutex as StdMutex;

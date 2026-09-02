@@ -904,9 +904,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            state
-                .schema()
-                .storage_offset_of(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X)),
+            state.schema().storage_offset_of(&StateVariable::new(
+                Quantity::MagBias(sensor.clone()),
+                Component::X
+            )),
             Some(base_storage)
         );
 
@@ -1130,9 +1131,18 @@ mod tests {
         // filter (whose bias starts at zero) is a persistent, consistent innovation.
         let b_true = Vector3::new(0.15, -0.1, 0.08);
         let mut truth_state = ekf.state().clone();
-        truth_state.set_variable(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X), b_true.x);
-        truth_state.set_variable(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::Y), b_true.y);
-        truth_state.set_variable(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::Z), b_true.z);
+        truth_state.set_variable(
+            &StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X),
+            b_true.x,
+        );
+        truth_state.set_variable(
+            &StateVariable::new(Quantity::MagBias(sensor.clone()), Component::Y),
+            b_true.y,
+        );
+        truth_state.set_variable(
+            &StateVariable::new(Quantity::MagBias(sensor.clone()), Component::Z),
+            b_true.z,
+        );
         let z = model
             .predict_measurement(&truth_state, Some(&IdentityTf), AT)
             .expect("mag prediction under identity TF is defined");

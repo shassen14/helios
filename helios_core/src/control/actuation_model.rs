@@ -95,6 +95,25 @@ pub struct ActuatorSpec {
 }
 
 impl ActuatorSpec {
+    /// Construct a spec directly. Production bodies deserialize their actuation
+    /// model from the entity file; this is for programmatic construction — a
+    /// hand-built body, or a test.
+    pub fn new(
+        id: ActuatorId,
+        kind: SetpointKind,
+        limit: f64,
+        safe_state: SetpointValue,
+        sign: SignConvention,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            limit,
+            safe_state,
+            sign,
+        }
+    }
+
     pub fn kind(&self) -> SetpointKind {
         self.kind
     }

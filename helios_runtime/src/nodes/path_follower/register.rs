@@ -31,15 +31,16 @@ fn build_pure_pursuit(ctx: PathFollowerBuildContext) -> Result<Box<dyn PipelineN
         return Err("build_pure_pursuit received wrong config variant".to_string());
     };
 
-    let follower: Box<dyn PathFollower<Reference = BodyTwistRef>> = Box::new(PurePursuitPathFollower::new(
-        lookahead_distance_m,
-        lookahead_time_s,
-        goal_radius,
-        min_speed_m_s,
-        max_speed_m_s,
-        max_lateral_acceleration,
-        ctx.agent_handle,
-    ));
+    let follower: Box<dyn PathFollower<Reference = BodyTwistRef>> =
+        Box::new(PurePursuitPathFollower::new(
+            lookahead_distance_m,
+            lookahead_time_s,
+            goal_radius,
+            min_speed_m_s,
+            max_speed_m_s,
+            max_lateral_acceleration,
+            ctx.agent_handle,
+        ));
 
     let input_builder = Box::new(DefaultPathFollowerInputBuilder::new());
     Ok(Box::new(PathFollowerNode::new(
@@ -65,15 +66,16 @@ fn build_steering_pid(ctx: PathFollowerBuildContext) -> Result<Box<dyn PipelineN
         return Err("build_steering_pid received wrong config variant".to_string());
     };
 
-    let follower: Box<dyn PathFollower<Reference = BodyTwistRef>> = Box::new(SteeringPidPathFollower::new(
-        kp,
-        ki,
-        kd,
-        cruise_speed,
-        goal_radius,
-        lookahead_distance_m,
-        ctx.agent_handle,
-    ));
+    let follower: Box<dyn PathFollower<Reference = BodyTwistRef>> =
+        Box::new(SteeringPidPathFollower::new(
+            kp,
+            ki,
+            kd,
+            cruise_speed,
+            goal_radius,
+            lookahead_distance_m,
+            ctx.agent_handle,
+        ));
 
     let input_builder = Box::new(DefaultPathFollowerInputBuilder::new());
     Ok(Box::new(PathFollowerNode::new(

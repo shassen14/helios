@@ -1,15 +1,15 @@
 use helios_core::estimation::schema::{SchemaBlock, StateSchema};
-use helios_core::state::{Component, Quantity};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::mapping::MapData;
+use helios_core::state::{Component, Quantity};
 
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
-use nalgebra::{DMatrix, DVector, Isometry3, Vector2};
-use std::sync::Arc;
 use helios_core::planning::astar::{AStarConfig, AStarPlanner};
 use helios_core::planning::types::PlannerGoal;
 use helios_core::planning::SearchPlanner;
 use helios_core::planning::SearchPlannerInputs;
+use nalgebra::{DMatrix, DVector, Isometry3, Vector2};
+use std::sync::Arc;
 
 // =========================================================================
 // == Fixtures ==
@@ -36,8 +36,14 @@ fn make_state(x: f64, y: f64) -> FrameAwareState {
         DMatrix::identity(3, 3),
     )]));
     let mut state = FrameAwareState::from_schema(schema, 0.0);
-    state.set_variable(&StateVariable::new(Quantity::Position(FrameId::World), Component::X), x);
-    state.set_variable(&StateVariable::new(Quantity::Position(FrameId::World), Component::Y), y);
+    state.set_variable(
+        &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+        x,
+    );
+    state.set_variable(
+        &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+        y,
+    );
     state
 }
 

@@ -12,7 +12,8 @@ use helios_core::frames::transforms::Convention;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::config::ReferenceSource;
 use helios_runtime::{
-    build_pipeline, AutonomyStack, BodyCapabilities, Provenance, PublishedChannel,
+    build_pipeline, check_actuation_agreement, AutonomyStack, BodyCapabilities, Provenance,
+    PublishedChannel,
 };
 
 use std::collections::{BTreeSet, HashMap};
@@ -32,6 +33,23 @@ pub fn spawn_autonomy_pipeline(
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
         let agent_handle = FrameHandle::from_entity(agent_entity);
+
+        if let Err(mismatches) = check_actuation_agreement(stack, &agent_config.vehicle.actuation) {
+            for mismatch in &mismatches {
+                error!(
+                    "[spawn_autonomy_pipeline] Agent '{}': {}",
+                    agent_config.name(),
+                    mismatch
+                );
+            }
+            commands
+                .entity(agent_entity)
+                .insert(AgentIdComponent(agent_config.name().to_string()))
+                .insert(PipelineBuildFailed {
+                    errors: mismatches.iter().map(|m| m.to_string()).collect(),
+                });
+            continue;
+        }
 
         let sensor_frame_handles: HashMap<String, FrameHandle> = children
             .iter()

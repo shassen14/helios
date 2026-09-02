@@ -178,7 +178,11 @@ mod tests {
         let (world, body) = build(&wheeled(0.3), &mounts);
         let kids = children(&world, body);
 
-        assert_eq!(kids.len(), mounts.len() + 1, "chassis + one wheel per mount");
+        assert_eq!(
+            kids.len(),
+            mounts.len() + 1,
+            "chassis + one wheel per mount"
+        );
         // Requiring Mesh3d also asserts every child is renderable — a stray
         // non-mesh child would fail the count.
         let with_mesh = kids
@@ -219,13 +223,22 @@ mod tests {
             .expect("a wheel child offset from the origin");
 
         let close = |a: Vec3, b: Vec3| (a - b).length() < 1e-5;
-        assert!(close(wheel.translation, expected.translation), "placed below the mount");
+        assert!(
+            close(wheel.translation, expected.translation),
+            "placed below the mount"
+        );
         // The drop lowers the hub: FLU up (+z) maps to Bevy up (+y), so the wheel
         // sits below where the bare mount would place it.
-        assert!(wheel.translation.y < mount_only.translation.y, "hangs below the mount");
+        assert!(
+            wheel.translation.y < mount_only.translation.y,
+            "hangs below the mount"
+        );
         // Equal rotations up to the quaternion double cover: |dot| ≈ 1. Compared by
         // dot, not `angle_between` (whose acos is float-noisy near identity).
         let expected_rot = expected.rotation * Quat::from_rotation_z(FRAC_PI_2);
-        assert!(wheel.rotation.dot(expected_rot).abs() > 1.0 - 1e-6, "laid on its side");
+        assert!(
+            wheel.rotation.dot(expected_rot).abs() > 1.0 - 1e-6,
+            "laid on its side"
+        );
     }
 }

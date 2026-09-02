@@ -1,10 +1,6 @@
 //! Frame-tagged rigid transform (SE(3)).
 
-use crate::frames::{
-    conventions::Frame,
-    quantities::Point,
-    transforms::rotation::Rotation,
-};
+use crate::frames::{conventions::Frame, quantities::Point, transforms::rotation::Rotation};
 
 use nalgebra::{Isometry3, Point3, Translation3};
 use std::any::type_name;
@@ -47,7 +43,11 @@ impl<From: Frame, To: Frame> Copy for Transform<From, To> {}
 impl<From: Frame, To: Frame> fmt::Debug for Transform<From, To> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Transform")
-            .field(&format_args!("{} -> {}", type_name::<From>(), type_name::<To>()))
+            .field(&format_args!(
+                "{} -> {}",
+                type_name::<From>(),
+                type_name::<To>()
+            ))
             .field(&self.0)
             .finish()
     }
@@ -165,8 +165,14 @@ mod tests {
         let t = shift_x();
         let moved_point = t.act(Point::<Flu>::new(1.0, 2.0, 3.0));
         let moved_vector = t.rotation().act(FreeVector::<Flu>::new(1.0, 2.0, 3.0));
-        assert!(close(moved_point.into_inner(), Vector3::new(11.0, 2.0, 3.0)));
-        assert!(close(moved_vector.into_inner(), Vector3::new(1.0, 2.0, 3.0)));
+        assert!(close(
+            moved_point.into_inner(),
+            Vector3::new(11.0, 2.0, 3.0)
+        ));
+        assert!(close(
+            moved_vector.into_inner(),
+            Vector3::new(1.0, 2.0, 3.0)
+        ));
     }
 
     #[test]
@@ -197,6 +203,9 @@ mod tests {
         let t = turn_and_shift();
         let v = FreeVector::<Flu>::new(1.0, 0.0, 0.0);
         let via_transform = t.rotation().act(v);
-        assert!(close(via_transform.into_inner(), Vector3::new(0.0, 1.0, 0.0)));
+        assert!(close(
+            via_transform.into_inner(),
+            Vector3::new(0.0, 1.0, 0.0)
+        ));
     }
 }

@@ -222,7 +222,10 @@ mod tests {
 
     #[test]
     fn unicycle_places_surge_on_x_and_yaw_on_z() {
-        assert_eq!(BodyTwist::unicycle(2.0, 0.5), twist(2.0, 0.0, 0.0, 0.0, 0.0, 0.5));
+        assert_eq!(
+            BodyTwist::unicycle(2.0, 0.5),
+            twist(2.0, 0.0, 0.0, 0.0, 0.0, 0.5)
+        );
     }
 
     #[test]

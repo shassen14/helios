@@ -498,15 +498,24 @@ mod tests {
     fn storage_offset_of_finds_names() {
         let s = pos_vel_schema();
         assert_eq!(
-            s.storage_offset_of(&StateVariable::new(Quantity::Position(FrameId::World), Component::X)),
+            s.storage_offset_of(&StateVariable::new(
+                Quantity::Position(FrameId::World),
+                Component::X
+            )),
             Some(0)
         );
         assert_eq!(
-            s.storage_offset_of(&StateVariable::new(Quantity::Velocity(FrameId::World), Component::X)),
+            s.storage_offset_of(&StateVariable::new(
+                Quantity::Velocity(FrameId::World),
+                Component::X
+            )),
             Some(3)
         );
         assert_eq!(
-            s.storage_offset_of(&StateVariable::new(Quantity::Acceleration(FrameId::World), Component::Z)),
+            s.storage_offset_of(&StateVariable::new(
+                Quantity::Acceleration(FrameId::World),
+                Component::Z
+            )),
             None
         );
     }
@@ -586,7 +595,10 @@ mod tests {
         let extended = base.extended(vec![mag_bias_block()]);
 
         assert_eq!(
-            extended.storage_offset_of(&StateVariable::new(Quantity::MagBias(mag_sensor()), Component::X)),
+            extended.storage_offset_of(&StateVariable::new(
+                Quantity::MagBias(mag_sensor()),
+                Component::X
+            )),
             Some(base_storage)
         );
     }

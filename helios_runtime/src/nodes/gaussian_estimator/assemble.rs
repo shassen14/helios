@@ -65,7 +65,8 @@ pub(crate) fn assemble(
     // carry the FrameId the measurement model reads back — a mismatch would
     // leave the block inert, never observed. The `sensor`-has-an-aiding-source
     // requirement itself is enforced earlier by `validate_autonomy_config`.
-    let augmentation_blocks = build_augmentation_blocks(instance_name, ekf_cfg, sensor_frame_handles)?;
+    let augmentation_blocks =
+        build_augmentation_blocks(instance_name, ekf_cfg, sensor_frame_handles)?;
 
     registry
         .build_gaussian_estimator(

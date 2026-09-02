@@ -148,7 +148,10 @@ impl PipelineNode for OccupancyGridNode {
         };
         let Some(robot_world_pose) = stamped_state
             .value
-            .pose::<Flu, Enu>(FrameId::Body(self.agent_handle), FrameId::Odom(self.agent_handle))
+            .pose::<Flu, Enu>(
+                FrameId::Body(self.agent_handle),
+                FrameId::Odom(self.agent_handle),
+            )
             .map(|t| t.into_inner())
         else {
             return;
@@ -230,8 +233,8 @@ mod tests {
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-    use helios_core::state::{Component, Quantity};
     use helios_core::mapping::{MapData, Mapper};
+    use helios_core::state::{Component, Quantity};
     use nalgebra::{Isometry3, Point2, Translation3, UnitQuaternion};
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
@@ -374,7 +377,10 @@ mod tests {
         // identity `Body(AGENT) → Odom` attitude, which is all the node's pose
         // read needs; seed the odom-x position.
         let mut s = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0);
-        s.set_variable(&StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::X), x);
+        s.set_variable(
+            &StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::X),
+            x,
+        );
         s
     }
 

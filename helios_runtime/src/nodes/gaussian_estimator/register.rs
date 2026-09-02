@@ -109,15 +109,60 @@ fn build_ekf(
     let body = FrameId::Body(agent_handle);
     let odom = FrameId::Odom(agent_handle);
 
-    initial_state.set_variable(&StateVariable::new(Quantity::Position(odom.clone()), Component::X), iso.translation.x);
-    initial_state.set_variable(&StateVariable::new(Quantity::Position(odom.clone()), Component::Y), iso.translation.y);
-    initial_state.set_variable(&StateVariable::new(Quantity::Position(odom.clone()), Component::Z), iso.translation.z);
+    initial_state.set_variable(
+        &StateVariable::new(Quantity::Position(odom.clone()), Component::X),
+        iso.translation.x,
+    );
+    initial_state.set_variable(
+        &StateVariable::new(Quantity::Position(odom.clone()), Component::Y),
+        iso.translation.y,
+    );
+    initial_state.set_variable(
+        &StateVariable::new(Quantity::Position(odom.clone()), Component::Z),
+        iso.translation.z,
+    );
 
     let q_rot = iso.rotation.quaternion();
-    initial_state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: odom.clone() }, Component::X), q_rot.i);
-    initial_state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: odom.clone() }, Component::Y), q_rot.j);
-    initial_state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: odom.clone() }, Component::Z), q_rot.k);
-    initial_state.set_variable(&StateVariable::new(Quantity::Orientation { from: body, to: odom }, Component::W), q_rot.w);
+    initial_state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: odom.clone(),
+            },
+            Component::X,
+        ),
+        q_rot.i,
+    );
+    initial_state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: odom.clone(),
+            },
+            Component::Y,
+        ),
+        q_rot.j,
+    );
+    initial_state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: odom.clone(),
+            },
+            Component::Z,
+        ),
+        q_rot.k,
+    );
+    initial_state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body,
+                to: odom,
+            },
+            Component::W,
+        ),
+        q_rot.w,
+    );
 
     let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
     Ok(Box::new(GaussianEstimatorNode::new(
@@ -267,8 +312,12 @@ mod tests {
     /// schema is the composed state we assert on.
     fn published_state(augmentation_blocks: Vec<SchemaBlock>) -> FrameAwareState {
         let registry = AutonomyRegistry::default();
-        let node = build_ekf(config(), context_with("aug", augmentation_blocks), &registry)
-            .expect("augmented EKF must build");
+        let node = build_ekf(
+            config(),
+            context_with("aug", augmentation_blocks),
+            &registry,
+        )
+        .expect("augmented EKF must build");
 
         // A bus carrying the node's state output plus every channel it reads
         // (left empty → predict is skipped, cold start).

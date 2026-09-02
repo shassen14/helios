@@ -248,12 +248,22 @@ mod tests {
         let bus = bus_for(&node);
         bus.write(
             drive,
-            stamped(vec![sp("drive", SetpointValue::Velocity(3.0))], 1.0, Health::Ok, 1),
+            stamped(
+                vec![sp("drive", SetpointValue::Velocity(3.0))],
+                1.0,
+                Health::Ok,
+                1,
+            ),
         )
         .unwrap();
         bus.write(
             steer,
-            stamped(vec![sp("steer", SetpointValue::Position(0.2))], 1.0, Health::Ok, 2),
+            stamped(
+                vec![sp("steer", SetpointValue::Position(0.2))],
+                1.0,
+                Health::Ok,
+                2,
+            ),
         )
         .unwrap();
 
@@ -279,7 +289,12 @@ mod tests {
         let bus = bus_for(&node);
         bus.write(
             drive,
-            stamped(vec![sp("drive", SetpointValue::Velocity(3.0))], 1.0, Health::Ok, 1),
+            stamped(
+                vec![sp("drive", SetpointValue::Velocity(3.0))],
+                1.0,
+                Health::Ok,
+                1,
+            ),
         )
         .unwrap();
 
@@ -297,12 +312,22 @@ mod tests {
         let bus = bus_for(&node);
         bus.write(
             drive,
-            stamped(vec![sp("drive", SetpointValue::Velocity(3.0))], 1.0, Health::Ok, 1),
+            stamped(
+                vec![sp("drive", SetpointValue::Velocity(3.0))],
+                1.0,
+                Health::Ok,
+                1,
+            ),
         )
         .unwrap();
         bus.write(
             steer,
-            stamped(vec![sp("drive", SetpointValue::Velocity(9.0))], 1.0, Health::Ok, 2),
+            stamped(
+                vec![sp("drive", SetpointValue::Velocity(9.0))],
+                1.0,
+                Health::Ok,
+                2,
+            ),
         )
         .unwrap();
 
@@ -325,12 +350,22 @@ mod tests {
         let bus = bus_for(&node);
         bus.write(
             drive,
-            stamped(vec![sp("drive", SetpointValue::Velocity(3.0))], 1.0, Health::Ok, 1),
+            stamped(
+                vec![sp("drive", SetpointValue::Velocity(3.0))],
+                1.0,
+                Health::Ok,
+                1,
+            ),
         )
         .unwrap();
         bus.write(
             steer,
-            stamped(vec![sp("steer", SetpointValue::Position(0.2))], 1.0, Health::Ok, 2),
+            stamped(
+                vec![sp("steer", SetpointValue::Position(0.2))],
+                1.0,
+                Health::Ok,
+                2,
+            ),
         )
         .unwrap();
 
@@ -349,7 +384,12 @@ mod tests {
         let bus = bus_for(&node);
         bus.write(
             drive,
-            stamped(vec![sp("drive", SetpointValue::Velocity(3.0))], 1.0, Health::Ok, 1),
+            stamped(
+                vec![sp("drive", SetpointValue::Velocity(3.0))],
+                1.0,
+                Health::Ok,
+                1,
+            ),
         )
         .unwrap();
         bus.write(

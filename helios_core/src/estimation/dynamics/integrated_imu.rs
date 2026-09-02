@@ -92,11 +92,29 @@ impl IntegratedImuModel {
         };
 
         let (body, odom) = (FrameId::Body(agent_handle), FrameId::Odom(agent_handle));
-        let pos_off = off(&StateVariable::new(Quantity::Position(odom.clone()), Component::X));
-        let vel_off = off(&StateVariable::new(Quantity::Velocity(odom.clone()), Component::X));
-        let quat_off = off(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: odom.clone() }, Component::X));
-        let accel_bias_off = off(&StateVariable::new(Quantity::AccelBias(body.clone()), Component::X));
-        let gyro_bias_off = off(&StateVariable::new(Quantity::GyroBias(body.clone()), Component::X));
+        let pos_off = off(&StateVariable::new(
+            Quantity::Position(odom.clone()),
+            Component::X,
+        ));
+        let vel_off = off(&StateVariable::new(
+            Quantity::Velocity(odom.clone()),
+            Component::X,
+        ));
+        let quat_off = off(&StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: odom.clone(),
+            },
+            Component::X,
+        ));
+        let accel_bias_off = off(&StateVariable::new(
+            Quantity::AccelBias(body.clone()),
+            Component::X,
+        ));
+        let gyro_bias_off = off(&StateVariable::new(
+            Quantity::GyroBias(body.clone()),
+            Component::X,
+        ));
         let orientation_block = schema
             .block_of(&Quantity::Orientation {
                 from: body.clone(),
@@ -397,11 +415,44 @@ mod tests {
         let odom = FrameId::Odom(AGENT);
 
         let off = |v: &StateVariable| schema.storage_offset_of(v).unwrap();
-        assert_eq!(off(&StateVariable::new(Quantity::Position(odom.clone()), Component::X)), 0);
-        assert_eq!(off(&StateVariable::new(Quantity::Velocity(odom.clone()), Component::X)), 3);
-        assert_eq!(off(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: odom.clone() }, Component::X)), 6);
-        assert_eq!(off(&StateVariable::new(Quantity::AccelBias(body.clone()), Component::X)), 10);
-        assert_eq!(off(&StateVariable::new(Quantity::GyroBias(body.clone()), Component::X)), 13);
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::Position(odom.clone()),
+                Component::X
+            )),
+            0
+        );
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::Velocity(odom.clone()),
+                Component::X
+            )),
+            3
+        );
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::Orientation {
+                    from: body.clone(),
+                    to: odom.clone()
+                },
+                Component::X
+            )),
+            6
+        );
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::AccelBias(body.clone()),
+                Component::X
+            )),
+            10
+        );
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::GyroBias(body.clone()),
+                Component::X
+            )),
+            13
+        );
     }
 
     #[test]
@@ -415,11 +466,44 @@ mod tests {
         let odom = FrameId::Odom(AGENT);
 
         let off = |v: &StateVariable| schema.tangent_offset_of(v).unwrap();
-        assert_eq!(off(&StateVariable::new(Quantity::Position(odom.clone()), Component::X)), 0); // agrees with storage
-        assert_eq!(off(&StateVariable::new(Quantity::Velocity(odom.clone()), Component::X)), 3); // agrees with storage
-        assert_eq!(off(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: odom.clone() }, Component::X)), 6); // last agreement
-        assert_eq!(off(&StateVariable::new(Quantity::AccelBias(body.clone()), Component::X)), 9); // storage 10 → tangent 9
-        assert_eq!(off(&StateVariable::new(Quantity::GyroBias(body.clone()), Component::X)), 12); // storage 13 → tangent 12
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::Position(odom.clone()),
+                Component::X
+            )),
+            0
+        ); // agrees with storage
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::Velocity(odom.clone()),
+                Component::X
+            )),
+            3
+        ); // agrees with storage
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::Orientation {
+                    from: body.clone(),
+                    to: odom.clone()
+                },
+                Component::X
+            )),
+            6
+        ); // last agreement
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::AccelBias(body.clone()),
+                Component::X
+            )),
+            9
+        ); // storage 10 → tangent 9
+        assert_eq!(
+            off(&StateVariable::new(
+                Quantity::GyroBias(body.clone()),
+                Component::X
+            )),
+            12
+        ); // storage 13 → tangent 12
     }
 
     #[test]

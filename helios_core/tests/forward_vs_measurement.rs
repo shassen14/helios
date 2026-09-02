@@ -27,7 +27,6 @@ use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
 use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::schema::{SchemaBlock, StateSchema};
-use helios_core::state::{Component, Quantity};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::manifold::TangentNoise;
@@ -35,6 +34,7 @@ use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gps::GpsModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
 use helios_core::sensors::magnetometer::MagnetometerModel;
+use helios_core::state::{Component, Quantity};
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
@@ -290,7 +290,9 @@ fn make_state(
     // Flat kinematic blocks carry no process noise; the orientation block must
     // (a quaternion retraction has no zero-noise covariance), and its value is
     // irrelevant to this prediction-only test.
-    let flat = |quantity: Quantity| SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3));
+    let flat = |quantity: Quantity| {
+        SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3))
+    };
     let schema = StateSchema::compose(vec![
         flat(Quantity::Position(world.clone())),
         SchemaBlock::new(
@@ -308,12 +310,52 @@ fn make_state(
     ]);
     let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
 
-    set_vec3(&mut state, StateVariable::new(Quantity::Position(world.clone()), Component::X), position_world);
+    set_vec3(
+        &mut state,
+        StateVariable::new(Quantity::Position(world.clone()), Component::X),
+        position_world,
+    );
     let q = q_body_to_world.quaternion();
-    state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::X), q.i);
-    state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::Y), q.j);
-    state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::Z), q.k);
-    state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::W), q.w);
+    state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Component::X,
+        ),
+        q.i,
+    );
+    state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Component::Y,
+        ),
+        q.j,
+    );
+    state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Component::Z,
+        ),
+        q.k,
+    );
+    state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Component::W,
+        ),
+        q.w,
+    );
     set_vec3(
         &mut state,
         StateVariable::new(Quantity::AngularVelocity(body.clone()), Component::X),

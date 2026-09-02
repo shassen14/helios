@@ -156,10 +156,46 @@ mod tests {
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
         let q = UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2);
         let (body, world) = (FrameId::Body(AGENT), FrameId::Odom(AGENT));
-        state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::X), q.i);
-        state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::Y), q.j);
-        state.set_variable(&StateVariable::new(Quantity::Orientation { from: body.clone(), to: world.clone() }, Component::Z), q.k);
-        state.set_variable(&StateVariable::new(Quantity::Orientation { from: body, to: world }, Component::W), q.w);
+        state.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body.clone(),
+                    to: world.clone(),
+                },
+                Component::X,
+            ),
+            q.i,
+        );
+        state.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body.clone(),
+                    to: world.clone(),
+                },
+                Component::Y,
+            ),
+            q.j,
+        );
+        state.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body.clone(),
+                    to: world.clone(),
+                },
+                Component::Z,
+            ),
+            q.k,
+        );
+        state.set_variable(
+            &StateVariable::new(
+                Quantity::Orientation {
+                    from: body,
+                    to: world,
+                },
+                Component::W,
+            ),
+            q.w,
+        );
     }
 
     fn make_model() -> MagneticFieldModel {
@@ -185,9 +221,18 @@ mod tests {
             ),
         ]);
         let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
-        state.set_variable(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X), bias.x);
-        state.set_variable(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::Y), bias.y);
-        state.set_variable(&StateVariable::new(Quantity::MagBias(sensor), Component::Z), bias.z);
+        state.set_variable(
+            &StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X),
+            bias.x,
+        );
+        state.set_variable(
+            &StateVariable::new(Quantity::MagBias(sensor.clone()), Component::Y),
+            bias.y,
+        );
+        state.set_variable(
+            &StateVariable::new(Quantity::MagBias(sensor), Component::Z),
+            bias.z,
+        );
         state
     }
 

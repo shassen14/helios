@@ -35,7 +35,12 @@ fn full_caps() -> CapabilitySet {
         gaussian_estimators: set(&["Ekf"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
         mappers: set(&["OccupancyGrid2D"]),
-        controllers: set(&["DirectTwist", "LongitudinalVelocity", "RoadLoad", "BicycleSteer"]),
+        controllers: set(&[
+            "DirectTwist",
+            "LongitudinalVelocity",
+            "RoadLoad",
+            "BicycleSteer",
+        ]),
         planners: set(&["AStar"]),
         allocators: set(&["WheelTorque", "SteerPosition"]),
     }
@@ -477,7 +482,10 @@ fn validation_controller_not_a_reference_source_errors() {
 
 #[test]
 fn validation_duplicate_reference_source_errors() {
-    let stack = stack_with_arbitration(vec![ReferenceSource::Teleop, ReferenceSource::Teleop], false);
+    let stack = stack_with_arbitration(
+        vec![ReferenceSource::Teleop, ReferenceSource::Teleop],
+        false,
+    );
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
         errors.iter().any(|e| matches!(
@@ -871,9 +879,10 @@ fn validation_augmentation_with_matching_aiding_source_passes() {
 
     let errors = validate_autonomy_config(&stack, &full_caps());
     assert!(
-        !errors
-            .iter()
-            .any(|e| matches!(e, ConfigValidationError::AugmentationHasNoAidingSource { .. })),
+        !errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::AugmentationHasNoAidingSource { .. }
+        )),
         "matched aiding source must satisfy the lint, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );

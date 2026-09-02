@@ -119,7 +119,10 @@ impl MeasurementModel for Position2DMeasurement {
 fn make_state() -> FrameAwareState {
     // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
     let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
-    state.set_variable(&StateVariable::new(Quantity::Velocity(FrameId::World), Component::X), 1.0); // vx = 1.0 m/s
+    state.set_variable(
+        &StateVariable::new(Quantity::Velocity(FrameId::World), Component::X),
+        1.0,
+    ); // vx = 1.0 m/s
     state
 }
 

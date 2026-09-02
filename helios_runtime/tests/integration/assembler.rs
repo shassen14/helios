@@ -12,8 +12,8 @@ use helios_runtime::config::{
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
-    build_pipeline, AutonomyRegistry, BodyCapabilities, ConfigValidationError, PipelineAssemblyError,
-    Provenance, PublishedChannel,
+    build_pipeline, AutonomyRegistry, BodyCapabilities, ConfigValidationError,
+    PipelineAssemblyError, Provenance, PublishedChannel,
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
@@ -826,7 +826,10 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     let tangent_off = state
         .value
         .schema()
-        .tangent_offset_of(&StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X))
+        .tangent_offset_of(&StateVariable::new(
+            Quantity::MagBias(sensor.clone()),
+            Component::X,
+        ))
         .expect("the mag-bias block must be present in the published schema");
 
     // Mean moved from 0 toward the injected +3 µT offset.
