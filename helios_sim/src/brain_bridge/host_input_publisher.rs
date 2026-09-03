@@ -59,7 +59,7 @@ impl HostInputPublisher<'_, '_> {
     pub fn publish<T: Send + Sync + 'static>(
         &mut self,
         agent: Entity,
-        channel: &str,
+        channel: InternalChannel,
         value: T,
         timestamp: MonotonicTime,
     ) {
@@ -77,13 +77,13 @@ impl HostInputPublisher<'_, '_> {
         let write_result = pipeline
             .0
             .bus()
-            .write(InternalChannel::named::<T>(channel).into(), stamped_message);
+            .write(channel.clone().into(), stamped_message);
 
-        if write_result.is_err() && self.warned_channels.insert(channel.to_string()) {
+        if write_result.is_err() && self.warned_channels.insert(channel.instance().to_string()) {
             warn!(
                 "Channel '{}' has no slot in the autonomy DAG; the host input is being \
                  dropped.",
-                channel
+                channel.instance()
             );
         }
     }
@@ -113,7 +113,7 @@ mod tests {
 
         publisher.publish(
             agent,
-            "mission",
+            InternalChannel::named::<PlannerGoal>("mission"),
             PlannerGoal::WorldPosition2D(Vector2::new(1.0, 2.0)),
             MonotonicTime(0.0),
         );

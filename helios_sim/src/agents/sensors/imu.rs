@@ -14,6 +14,7 @@ use crate::core::transforms::EnuVector;
 use crate::prelude::*;
 
 use helios_core::data::sensor::{AngularVelocity3D, LinearAcceleration3D};
+use helios_core::frames::transforms::Convention;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
 
@@ -205,7 +206,7 @@ fn spawn_imu_sensors(
                         Accelerometer::new(accel_model, gravity_world, sensor_pose.translation),
                         SensorTimer::from_rate(imu_config.rate),
                         accel_rng,
-                        TrackedFrame,
+                        TrackedFrame(Convention::Flu),
                         sensor_pose.to_bevy_local_transform(),
                     ))
                     .id();
@@ -220,7 +221,7 @@ fn spawn_imu_sensors(
                         Gyroscope::new(gyro_model),
                         SensorTimer::from_rate(imu_config.rate),
                         gyro_rng,
-                        TrackedFrame,
+                        TrackedFrame(Convention::Flu),
                         sensor_pose.to_bevy_local_transform(),
                     ))
                     .id();

@@ -1,3 +1,5 @@
+use crate::config::CommandSpace;
+
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Clone, Copy, Default)]
@@ -12,67 +14,102 @@ pub enum ControllerStateSourceConfig {
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum ControllerConfig {
-    Pid {
-        rate: f32,
-        kp: f32,
-        ki: f32,
-        kd: f32,
+    /// Passes the PathFollower reference's body-frame velocity through to a
+    /// BodyTwist unchanged. Use this when a PathFollower (e.g., PurePursuit) has
+    /// already computed velocity commands and no additional feedback is needed;
+    /// whichever velocity DOF the reference carries pass through.
+    DirectTwist {
         #[serde(default)]
         state_source: ControllerStateSourceConfig,
     },
-    Lqr {
-        /// Flat, row-major K matrix (control_dim × state_dim elements).
-        gain_matrix: Vec<f64>,
-        state_dim: usize,
-        control_dim: usize,
-        #[serde(default)]
-        u_min: Vec<f64>,
-        #[serde(default)]
-        u_max: Vec<f64>,
+    LongitudinalVelocity {
         #[serde(default)]
         state_source: ControllerStateSourceConfig,
+        proportional_gain: f64,
+        integral_gain: f64,
+        derivative_gain: f64,
+        /// Symmetric bound on the integral accumulator (anti-windup). Omitted or
+        /// `0.0` leaves the integrator unclamped; a positive value caps the
+        /// integral's force authority at `integral_gain · integral_clamp`.
+        #[serde(default)]
+        integral_clamp: f64,
     },
-    FeedforwardPid {
-        /// Key into `dynamics_factories` — must match a registered ControlDynamics name.
-        dynamics_key: String,
-        kp: Vec<f64>,
-        ki: Vec<f64>,
-        kd: Vec<f64>,
-        #[serde(default)]
-        u_min: Vec<f64>,
-        #[serde(default)]
-        u_max: Vec<f64>,
-        /// Indices of state vector components that each PID channel tracks.
-        #[serde(default)]
-        controlled_indices: Vec<usize>,
-        #[serde(default)]
-        state_source: ControllerStateSourceConfig,
+    RoadLoad {
+        c_roll: f64,
+        c_drag: f64,
     },
-    /// Passes Vx and Wz directly from the PathFollower reference to BodyVelocity.
-    /// Use this when a PathFollower (e.g., PurePursuit) has already computed
-    /// velocity commands and no additional feedback is needed.
-    DirectVelocity {
-        #[serde(default)]
-        state_source: ControllerStateSourceConfig,
+    BicycleSteer {
+        wheelbase: f64,
     },
 }
 
 impl ControllerConfig {
     pub(crate) fn get_kind_str(&self) -> &str {
         match self {
-            ControllerConfig::Pid { .. } => "Pid",
-            ControllerConfig::Lqr { .. } => "Lqr",
-            ControllerConfig::FeedforwardPid { .. } => "FeedforwardPid",
-            ControllerConfig::DirectVelocity { .. } => "DirectVelocity",
+            ControllerConfig::DirectTwist { .. } => "DirectTwist",
+            ControllerConfig::LongitudinalVelocity { .. } => "LongitudinalVelocity",
+            ControllerConfig::RoadLoad { .. } => "RoadLoad",
+            ControllerConfig::BicycleSteer { .. } => "BicycleSteer",
         }
     }
 
-    pub fn state_source(&self) -> ControllerStateSourceConfig {
+    /// The command space this controller emits. Every controller feeding a given
+    /// allocator must agree with the allocator's [`command_space`]; validation
+    /// enforces it, since the DAG erases the type at the channel boundary.
+    ///
+    /// [`command_space`]: crate::config::AllocatorConfig::command_space
+    pub(crate) fn command_space(&self) -> CommandSpace {
         match self {
-            ControllerConfig::Pid { state_source, .. } => *state_source,
-            ControllerConfig::Lqr { state_source, .. } => *state_source,
-            ControllerConfig::FeedforwardPid { state_source, .. } => *state_source,
-            ControllerConfig::DirectVelocity { state_source, .. } => *state_source,
+            ControllerConfig::DirectTwist { .. } => CommandSpace::BodyTwist,
+            ControllerConfig::LongitudinalVelocity { .. } => CommandSpace::DriveForce,
+            ControllerConfig::RoadLoad { .. } => CommandSpace::DriveForce,
+            ControllerConfig::BicycleSteer { .. } => CommandSpace::SteerAngle,
         }
     }
+
+    /// Where this controller's contribution sits in the command fold: a feedback
+    /// leg the fold requires fresh, or a feedforward leg it folds in when present.
+    /// The assembler uses this to place each controller's channel into the summing
+    /// node's `required` vs `optional` set — see [`FoldRole`].
+    pub(crate) fn fold_role(&self) -> FoldRole {
+        match self {
+            // A passthrough of the reference twist; it never feeds a fold (its
+            // command space is `BodyTwist`), so the value is moot — classed with
+            // the feedback legs it resembles in reading the estimate.
+            ControllerConfig::DirectTwist { .. } => FoldRole::Feedback,
+            ControllerConfig::LongitudinalVelocity { .. } => FoldRole::Feedback,
+            ControllerConfig::RoadLoad { .. } => FoldRole::Feedforward,
+            ControllerConfig::BicycleSteer { .. } => FoldRole::Feedforward,
+        }
+    }
+
+    pub fn state_source(&self) -> Option<ControllerStateSourceConfig> {
+        match self {
+            ControllerConfig::DirectTwist { state_source, .. } => Some(*state_source),
+            ControllerConfig::LongitudinalVelocity { state_source, .. } => Some(*state_source),
+            ControllerConfig::RoadLoad { .. } => None,
+            ControllerConfig::BicycleSteer { .. } => None,
+        }
+    }
+}
+
+/// How a controller's output enters the command fold. Like [`CommandSpace`], a
+/// derived dispatch tag computed from the controller kind, never parsed from TOML.
+///
+/// The two variants are exactly the summing node's two input classes:
+/// - `Feedback` → a `required` input: presence-gated (a fold missing it publishes
+///   nothing) and ordered by the topological sort, so it is read fresh this tick.
+///   A correction that acts on a stale error is worse than none.
+/// - `Feedforward` → an `optional` input: folded in when present, read
+///   last-known-good, tolerant of being a tick old — fine for a slowly varying
+///   open-loop term.
+///
+/// This is deliberately *not* inferred from [`state_source`](ControllerConfig::state_source):
+/// "reads the estimate" and "must be fresh" are different properties. A
+/// gravity-compensation feedforward reads state yet still folds as feedforward, so
+/// the two must not be conflated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoldRole {
+    Feedback,
+    Feedforward,
 }

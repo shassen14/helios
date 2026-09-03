@@ -15,6 +15,7 @@ use crate::agents::sensors::HeliosSensorsPlugin;
 use crate::agents::vehicles::HeliosVehiclesPlugin;
 use crate::brain_bridge::BrainBridgePlugin;
 use crate::core::simulation_setup::SimulationSetupPlugin;
+use crate::registry::embodiment::EmbodimentRegistryPlugin;
 use crate::registry::plugin::AutonomyRegistryPlugin;
 use crate::world::HeliosWorldPlugin;
 
@@ -45,6 +46,7 @@ impl Plugin for HeliosSimulationPlugin {
         app.add_plugins((
             SimulationSetupPlugin,
             AutonomyRegistryPlugin,
+            EmbodimentRegistryPlugin,
             HeliosWorldPlugin,
             HeliosVehiclesPlugin,
             HeliosSensorsPlugin,

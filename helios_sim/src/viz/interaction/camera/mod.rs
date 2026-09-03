@@ -92,14 +92,10 @@ impl Plugin for CameraPlugin {
 /// is already correct, before [`sync_camera_transform`] first runs. Starts in
 /// [`CameraTarget::Fixed`]: its focus is a free world point until a follow
 /// retargets it.
-fn spawn_camera(mut commands: Commands) {
-    // Seed vantage: reproduces the (-30, 25, 30) starting view.
-    // TODO: pull from the viz config surface once it exists.
-    let rig = CameraRig {
-        focus: Vec3::ZERO,
-        distance: 49.24,
-        pitch: 0.532,
-        yaw: -0.785,
+fn spawn_camera(mut commands: Commands, config: Res<ScenarioConfig>) {
+    let rig = match CameraRig::from_vantage(&config.common.camera) {
+        Ok(rig) => rig,
+        Err(e) => panic!("camera vantage config: {e}"),
     };
 
     let transform = rig_to_transform(&rig);

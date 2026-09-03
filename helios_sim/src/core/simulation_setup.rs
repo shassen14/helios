@@ -152,7 +152,7 @@ fn initialize_simulation_resources(mut commands: Commands, config: Res<ScenarioC
     // generator directly from entropy would leave nothing to quote in a bug
     // report. Every generator below is then built from this one number, which is
     // what makes the whole run reproducible from it alone.
-    let (seed, source) = match config.simulation.seed {
+    let (seed, source) = match config.common.simulation.seed {
         Some(s) => (s, "config"),
         None => (OsRng.next_u64(), "OS entropy"),
     };
@@ -167,7 +167,7 @@ fn initialize_simulation_resources(mut commands: Commands, config: Res<ScenarioC
     // Drive FixedUpdate at the configured rate: one tick every `1 / frequency`
     // seconds.
     commands.insert_resource(Time::<Fixed>::from_duration(fixed_timestep(
-        config.simulation.frequency_hz,
+        config.common.simulation.frequency_hz,
     )));
 }
 
@@ -200,7 +200,7 @@ fn configure_time_pacing(
         return;
     }
 
-    let step = fixed_timestep(config.simulation.frequency_hz);
+    let step = fixed_timestep(config.common.simulation.frequency_hz);
     let steps_per_update = fast_forward_steps_per_update(step);
 
     // Takes the wall clock out of the loop: `time_system` synthesizes a delta
@@ -278,7 +278,6 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
 
         commands.spawn((
             Name::new(format!("{}/base_link", agent_config.name())),
-            TrackedFrame,
             GroundTruthState {
                 pose: start_isometry,
                 ..default()
@@ -336,7 +335,7 @@ mod tests {
     fn pacing_world(frequency_hz: f64, policy: TimePolicy) -> World {
         let mut world = World::new();
         let mut config = ScenarioConfig::default();
-        config.simulation.frequency_hz = frequency_hz;
+        config.common.simulation.frequency_hz = frequency_hz;
         world.insert_resource(config);
         world.insert_resource(policy);
         world.insert_resource(Time::<Virtual>::default());
@@ -413,7 +412,7 @@ mod tests {
     fn seeded_world(seed: Option<u64>) -> World {
         let mut world = World::new();
         let mut config = ScenarioConfig::default();
-        config.simulation.seed = seed;
+        config.common.simulation.seed = seed;
         world.insert_resource(config);
         world
             .run_system_cached(initialize_simulation_resources)

@@ -12,7 +12,7 @@
 //!   goes.
 
 use super::{MetricsCollector, RunMetadata};
-use crate::metrics::{final_pos_e_id, final_pos_n_id, RunMetrics};
+use crate::metrics::{final_pos_e_id, final_pos_n_id, final_speed_id, RunMetrics};
 
 use helios_sim::core::components::GroundTruthState;
 use helios_sim::prelude::AppState;
@@ -59,11 +59,23 @@ fn summarize_metrics_system(
     // Replaced once producers emit their own named scalars to a telemetry sink.
     let t = &ground_truth.pose.translation;
 
+    // Planar ground speed, not the full 3-D norm: the raycast chassis floats on
+    // ray-springs, so a settled body still has a small vertical suspension bob.
+    // Ground speed in the ENU plane is what "stopped driving" means; the z bob
+    // is suspension noise that must not leak into the at-rest check.
+    let speed = ground_truth.linear_velocity.xy().norm();
+
     let mut run_metrics = RunMetrics::new(metadata.run_index, metadata.seed);
     run_metrics.insert(final_pos_e_id(), t.x);
     run_metrics.insert(final_pos_n_id(), t.y);
+    run_metrics.insert(final_speed_id(), speed);
 
     collector.store(run_metrics);
 
-    tracing::info!(final_e = t.x, final_n = t.y, "run metrics summarized");
+    tracing::info!(
+        final_e = t.x,
+        final_n = t.y,
+        final_speed = speed,
+        "run metrics summarized"
+    );
 }

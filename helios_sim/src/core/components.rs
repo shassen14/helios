@@ -1,18 +1,17 @@
 use bevy::prelude::*;
-use helios_core::data::primitives::FrameHandle;
-use helios_core::frames::{
-    layout::standard_ins_state_layout, FrameAwareState, FrameId, StateVariable,
-};
-use helios_core::prelude::{ControlOutput, PlannerGoal};
+use helios_core::control::actuators::ActuatorCommand;
+use helios_core::prelude::PlannerGoal;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
 
-// --- Controller Output Component ---
+// --- Actuator Command Component ---
 
-/// The output of the last `Controller::compute()` call.
-/// Written by `SimulationSet::BrainOutput`; read by `SimulationSet::Actuation`.
+/// The pipeline's latest actuator-terminal output — the per-actuator setpoints
+/// (`ActuatorCommand`) the allocator node produces. Written by
+/// `SimulationSet::BrainOutput`; read by the vehicle plugin in
+/// `SimulationSet::Actuation`, which applies each setpoint to physics.
 #[derive(Component)]
-pub struct ControlOutputComponent(pub ControlOutput);
+pub struct ActuatorCommandComponent(pub ActuatorCommand);
 
 /// Selects which state estimate the controller reads. Toggled by the HUD's T key.
 #[derive(Component, Clone, Debug, PartialEq, Default)]
@@ -25,7 +24,7 @@ pub enum ControllerStateSource {
 // --- Agent State Components ---
 
 /// The perfect, physics-driven ground truth state of an agent.
-/// Written by the StateSync system; read by sensors, vehicle adapters, and
+/// Written by the StateSync system; read by sensors, the vehicle plugin, and
 /// the ground-truth (oracle) publisher.
 #[derive(Component, Clone, Debug, Serialize)]
 pub struct GroundTruthState {
@@ -49,44 +48,6 @@ impl Default for GroundTruthState {
             last_linear_velocity: Vector3::zeros(),
             last_angular_velocity: Vector3::zeros(),
         }
-    }
-}
-
-impl GroundTruthState {
-    /// Converts physics ground truth into a `FrameAwareState` using the standard INS layout.
-    /// The layout matches what the EKF produces, so the controller sees an identical type.
-    pub fn to_frame_aware_state(
-        &self,
-        agent_handle: FrameHandle,
-        timestamp: f64,
-    ) -> FrameAwareState {
-        let body_frame = FrameId::Body(agent_handle);
-        let world_frame = FrameId::World;
-        let layout = standard_ins_state_layout(agent_handle);
-        let mut state = FrameAwareState::new(layout, 1e-6, timestamp);
-        let t = &self.pose.translation;
-        state.set_variable(&StateVariable::Px(FrameId::World), t.x);
-        state.set_variable(&StateVariable::Py(FrameId::World), t.y);
-        state.set_variable(&StateVariable::Pz(FrameId::World), t.z);
-        let v = &self.linear_velocity;
-        state.set_variable(&StateVariable::Vx(FrameId::World), v.x);
-        state.set_variable(&StateVariable::Vy(FrameId::World), v.y);
-        state.set_variable(&StateVariable::Vz(FrameId::World), v.z);
-        let q = self.pose.rotation.quaternion();
-        state.set_variable(
-            &StateVariable::Qx(body_frame.clone(), world_frame.clone()),
-            q.i,
-        );
-        state.set_variable(
-            &StateVariable::Qy(body_frame.clone(), world_frame.clone()),
-            q.j,
-        );
-        state.set_variable(
-            &StateVariable::Qz(body_frame.clone(), world_frame.clone()),
-            q.k,
-        );
-        state.set_variable(&StateVariable::Qw(body_frame, world_frame), q.w);
-        state
     }
 }
 

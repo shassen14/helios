@@ -1,5 +1,5 @@
 use crate::viz::interaction::camera::{
-    rig::{clamp_distance, clamp_pitch, ground_pan_to_world, CameraRig},
+    rig::{ground_pan_to_world, CameraRig, CameraRigTuning},
     CameraDriveIntent, CameraTarget, TargetRequest,
 };
 
@@ -16,6 +16,7 @@ use bevy::prelude::*;
 /// (they orbit *around* the focus); a pan shift is oriented by the current `yaw`
 /// before it moves `focus`, and a pan while following drops back to `Fixed`.
 pub(super) fn apply_camera_intent(
+    tuning: Res<CameraRigTuning>,
     mut query: Query<(&mut CameraRig, &mut CameraTarget)>,
     mut intent: ResMut<CameraDriveIntent>,
 ) {
@@ -35,8 +36,8 @@ pub(super) fn apply_camera_intent(
         let pan = ground_pan_to_world(intent.pan_delta, rig.yaw);
 
         rig.yaw += intent.yaw_delta;
-        rig.pitch = clamp_pitch(rig.pitch + intent.pitch_delta);
-        rig.distance = clamp_distance(rig.distance + intent.zoom_delta);
+        rig.pitch = tuning.clamp_pitch(rig.pitch + intent.pitch_delta);
+        rig.distance = tuning.clamp_distance(rig.distance + intent.zoom_delta);
         rig.focus += pan;
 
         if intent.target_request == TargetRequest::ReleaseToFixed {

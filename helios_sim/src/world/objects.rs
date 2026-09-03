@@ -10,7 +10,7 @@ use bevy::{
 use super::object_helpers::{
     build_collider, placement_to_bevy_transform, spawn_object_trimesh_colliders, GltfObjectMeta,
 };
-use crate::config::structs::world_object::WorldObjectPrefab;
+use crate::config::structs::WorldObjectPrefab;
 use crate::config::PrefabCatalog;
 use crate::core::app_state::AssetLoadSet;
 use crate::core::components::{BoundingBox3D, SemanticLabel, WorldObjectType};
@@ -78,7 +78,7 @@ fn start_object_asset_loading(
     catalog: Res<PrefabCatalog>,
     asset_server: Res<AssetServer>,
 ) {
-    for placement in &config.world.objects {
+    for placement in &config.common.world.objects {
         if assets.prefabs.contains_key(&placement.prefab) {
             continue;
         }
@@ -135,7 +135,7 @@ fn spawn_world_objects(
     gltf_meshes: Res<Assets<GltfMesh>>,
     meshes: Res<Assets<Mesh>>,
 ) {
-    for (idx, placement) in config.world.objects.iter().enumerate() {
+    for (idx, placement) in config.common.world.objects.iter().enumerate() {
         let Some(prefab) = assets.prefabs.get(&placement.prefab) else {
             error!(
                 "[WorldObjects] Skipping placement #{} — prefab '{}' was not loaded.",

@@ -62,7 +62,7 @@ pub enum SceneBuildSet {
 
     /// Pass 6: Bind host-side ECS state to the freshly-spawned pipeline — the
     /// odom-frame entity that tracks its pose estimate and the
-    /// `ControlOutputComponent` the vehicle adapter drains. Both consumers only
+    /// `ActuatorCommandComponent` the vehicle plugin drains. Both consumers only
     /// require `AutonomyPipelineComponent` to exist (from `SpawnPipeline`) and are
     /// independent of each other, so they share this one pass.
     BindPipeline,
@@ -104,11 +104,11 @@ pub enum SimulationSet {
     /// describes data direction (into the pipeline), not temporal order.
     BrainInput,
 
-    /// Pipeline → host output glue: copies `pipeline.read_control()` into
-    /// `ControlOutputComponent` for the vehicle adapter to consume.
+    /// Pipeline → host output glue: copies `pipeline.read_actuators()` into
+    /// `ActuatorCommandComponent` for the vehicle plugin to apply.
     BrainOutput,
 
-    /// Convert control commands into physical forces (vehicle adapter → Avian3D
+    /// Apply the actuator command as physical forces (vehicle plugin → Avian3D
     /// `ExternalForce` / `ExternalTorque`).
     Actuation,
 

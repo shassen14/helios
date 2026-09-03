@@ -5,23 +5,14 @@
 //! resolves the agent-specific values and passes them here.
 
 use crate::config::{
-    ControllerConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig, SensorModelConfig,
+    AllocatorConfig, ControllerConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig,
+    SensorModelConfig,
 };
-use crate::pipeline::nodes::gaussian_estimator::AidingHandler;
+use crate::nodes::gaussian_estimator::AidingHandler;
 use crate::port::InternalChannel;
 
 use helios_core::data::primitives::FrameHandle;
-
-/// Context for building a dynamics model (e.g. `IntegratedImuModel`).
-///
-/// `gravity_enu` is the world-frame gravity vector `[east, north, up]` (m/s²),
-/// sourced from the dynamics config (`EkfDynamicsConfig::gravity_enu()`) by the
-/// gaussian estimator factory — callers outside the assembler should not need
-/// to supply it independently.
-pub struct DynamicsBuildContext {
-    pub agent_handle: FrameHandle,
-    pub(crate) gravity_enu: [f64; 3],
-}
+use helios_core::estimation::schema::SchemaBlock;
 
 /// Context for building a complete `GaussianEstimatorNode`.
 ///
@@ -35,7 +26,11 @@ pub struct DynamicsBuildContext {
 /// passed here.
 pub struct GaussianEstimatorBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the estimator's config-map key, so tooling keyed on the name
+    /// distinguishes two estimators of the same kind.
+    pub(crate) instance_name: String,
     pub(crate) aiding: Vec<Box<dyn AidingHandler>>,
+    pub(crate) augmentation_blocks: Vec<SchemaBlock>,
 }
 
 /// Context for building a `MeasurementModel`.
@@ -53,18 +48,42 @@ pub struct MeasurementModelBuildContext {
 /// Context for building an `OccupancyGridNode` (or any `Mapper`-backed node).
 pub struct MapperBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the map layer's config-map key, so tooling keyed on the name
+    /// distinguishes two layers of the same kind.
+    pub(crate) instance_name: String,
     pub(crate) config: MapLayerConfig,
 }
 
 /// Context for building a `ControllerNode`.
 pub struct ControllerBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the controller's config-map key, so tooling keyed on the name
+    /// distinguishes two controllers of the same kind.
+    pub(crate) instance_name: String,
     pub(crate) config: ControllerConfig,
+    pub(crate) output_channel: InternalChannel,
+}
+
+/// Context for building an `AllocatorNode`.
+pub struct AllocatorBuildContext {
+    pub agent_handle: FrameHandle,
+    /// Node name: the allocator's config-map key, so tooling keyed on the name
+    /// distinguishes two allocators of the same kind.
+    pub(crate) instance_name: String,
+    pub(crate) config: AllocatorConfig,
+    /// The bus channel carrying the vehicle-level command this allocator
+    /// consumes (e.g. `control::command::<BodyTwist>()`).
+    pub(crate) input_channel: InternalChannel,
+    /// The bus channel on which this node publishes its `ActuatorCommand`.
+    pub(crate) output_channel: InternalChannel,
 }
 
 /// Context for building a `SearchPlannerNode`.
 pub struct SearchPlannerBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the planner's config-map key, so tooling keyed on the name
+    /// distinguishes two planners of the same kind.
+    pub(crate) instance_name: String,
     pub(crate) config: SearchPlannerConfig,
     /// The bus channel on which the upstream mapper publishes `MapData`.
     /// Always internal (brain-produced).
@@ -80,10 +99,18 @@ pub struct PathFollowerBuildContext {
     /// The bus channel on which the upstream planner publishes `Path`.
     /// Always internal (brain-produced).
     pub(crate) path_channel: InternalChannel,
+    /// The reference channel the follower publishes its guidance setpoint on.
+    /// The assembler sets this to the autonomy contender role when teleop also
+    /// drives the seam, or to the resolved reference the controllers read when
+    /// the follower is the lone source. Always internal (brain-produced).
+    pub(crate) output_channel: InternalChannel,
 }
 
 // ------- Mocks --------
 
 pub(crate) struct MockEstimatorBuildContext {
     pub agent_handle: FrameHandle,
+    /// Node name: the estimator's config-map key, so tooling keyed on the name
+    /// distinguishes two mocks of the same kind.
+    pub(crate) instance_name: String,
 }

@@ -12,6 +12,18 @@ fn default_orientation_uncertainty_deg() -> f64 {
     180.0
 }
 
+fn default_velocity_uncertainty_mps() -> f64 {
+    1.0
+}
+
+fn default_accel_bias_uncertainty_mps2() -> f64 {
+    0.1
+}
+
+fn default_gyro_bias_uncertainty_radps() -> f64 {
+    0.01
+}
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind", content = "config")]
 #[serde(rename_all = "PascalCase")]
@@ -37,7 +49,40 @@ pub struct EkfConfig {
     #[serde(default)]
     pub aiding: Vec<AidingConfig>,
     #[serde(default)]
+    pub augmentation: Vec<AugmentationConfig>,
+    #[serde(default)]
     pub initial_state: EkfInitialStateConfig,
+}
+
+/// One online-estimated per-sensor nuisance block appended to the EKF state.
+///
+/// The filter solves for this parameter alongside the trajectory instead of
+/// trusting a fixed factory value — online calibration; the same block, frozen
+/// after convergence, is the offline-calibration result.
+///
+/// `sensor` must name an aiding entry's `input_channel`: that aiding source is
+/// what makes the block observable, because its measurement is the only thing
+/// that touches these state columns. The two also share a resolved
+/// `FrameHandle` — the assembler routes `sensor` through the same handle map the
+/// aiding handler uses, so the appended `MagBias` slots carry the exact
+/// `FrameId` the measurement model reads back. An augmentation with no matching
+/// aiding source is inert (it rides through predict but is never updated); the
+/// validator rejects that case rather than let it be a silent no-op.
+#[derive(Debug, Deserialize, Clone)]
+pub struct AugmentationConfig {
+    /// Augmentation kind, matched against the reserved kind strings in
+    /// `helios_core::estimation::augmentation` (e.g. `MAGNETOMETER_BIAS`). An
+    /// unrecognized value is a build-time error, not a panic.
+    pub kind: String,
+    /// The aiding `input_channel` whose sensor this block calibrates — the join
+    /// key that ties the block's `FrameId::Sensor` to the model that observes it.
+    pub sensor: String,
+    /// Prior standard deviation on each axis (block units, e.g. µT for
+    /// magnetometer bias). Squared onto the diagonal of the block's `P₀`.
+    pub init_uncertainty: f64,
+    /// Per-axis process-noise standard deviation driving how fast the estimate
+    /// may drift; forms the block's `Q`.
+    pub random_walk: f64,
 }
 
 /// Initial mean and covariance parameters for EKF cold-start.
@@ -63,6 +108,11 @@ pub struct EkfInitialStateConfig {
     pub position_uncertainty_m: f64,
     #[serde(default = "default_orientation_uncertainty_deg")]
     pub orientation_uncertainty_deg: f64,
+    /// Prior std dev on the initial velocity estimate (m/s). Kinematic, so it sits
+    /// here with position/orientation rather than in a dynamics-specific config.
+    /// Squared onto the velocity block's `P₀`.
+    #[serde(default = "default_velocity_uncertainty_mps")]
+    pub velocity_uncertainty_mps: f64,
 }
 
 impl Default for EkfInitialStateConfig {
@@ -74,6 +124,7 @@ impl Default for EkfInitialStateConfig {
             heading_deg: 0.0,
             position_uncertainty_m: default_position_uncertainty_m(),
             orientation_uncertainty_deg: default_orientation_uncertainty_deg(),
+            velocity_uncertainty_mps: default_velocity_uncertainty_mps(),
         }
     }
 }
@@ -143,16 +194,6 @@ impl EkfDynamicsConfig {
             EkfDynamicsConfig::Quadcopter(_) => "Quadcopter",
         }
     }
-
-    /// World-frame gravity vector `[east, north, up]` (m/s²) used by this
-    /// dynamics model.
-    pub(crate) fn gravity_enu(&self) -> [f64; 3] {
-        match self {
-            EkfDynamicsConfig::IntegratedImu(c) => c.gravity_enu,
-            EkfDynamicsConfig::AckermannOdometry(_) => default_gravity_enu(),
-            EkfDynamicsConfig::Quadcopter(_) => default_gravity_enu(),
-        }
-    }
 }
 
 /// Config for the IMU-integrated dynamics model.
@@ -174,6 +215,16 @@ pub struct IntegratedImuConfig {
     pub accel_bias_instability: f64,
     /// Gyroscope bias instability std dev (rad/s/√Hz).
     pub gyro_bias_instability: f64,
+    /// Prior std dev on the initial accel-bias estimate at cold start (m/s²).
+    /// Squared onto the accel-bias block's `P₀`. Distinct from
+    /// `accel_bias_instability`, which is that block's process noise (`Q`).
+    #[serde(default = "default_accel_bias_uncertainty_mps2")]
+    pub accel_bias_uncertainty_mps2: f64,
+    /// Prior std dev on the initial gyro-bias estimate at cold start (rad/s).
+    /// Squared onto the gyro-bias block's `P₀`. A too-large value seeds attitude
+    /// error outside the filter's linear regime, so it is not a free knob.
+    #[serde(default = "default_gyro_bias_uncertainty_radps")]
+    pub gyro_bias_uncertainty_radps: f64,
     /// Bus channel the predict step reads `Vec<SensorReading<LinearAcceleration3D>>`
     /// from. Must match the accelerometer channel the host publishes on
     /// (the sensor's `accel_channel` in sim).

@@ -49,6 +49,9 @@ impl AccelerometerModel {
     }
 
     /// Full measurement: the ideal specific force perturbed by bias and noise.
+    // Each parameter is an irreducible physical input to the forward model;
+    // bundling them would only exist to satisfy the lint.
+    #[allow(clippy::too_many_arguments)]
     pub fn sample(
         &self,
         accel_world: Vector3<f64>,

@@ -1,9 +1,10 @@
+use super::{
+    AllocatorConfig, ControllerConfig, EstimatorConfig, MapLayerConfig, PathFollowingConfig,
+    ReferenceArbitrationConfig, SearchPlannerConfig, TeleopMapperConfig,
+};
+
 use serde::Deserialize;
 use std::collections::HashMap;
-
-use super::{
-    ControllerConfig, EstimatorConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig,
-};
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -28,4 +29,16 @@ pub struct AutonomyStack {
 
     #[serde(default)]
     pub controllers: HashMap<String, ControllerConfig>,
+
+    #[serde(default)]
+    pub allocators: HashMap<String, AllocatorConfig>,
+
+    #[serde(default)]
+    pub teleop: Option<TeleopMapperConfig>,
+
+    /// Reference-arbitration tuning (teleop-vs-autonomy freshness). Defaults apply
+    /// when the `[reference_arbitration]` section is omitted, so a stack with no
+    /// teleop source never has to mention it.
+    #[serde(default)]
+    pub reference_arbitration: ReferenceArbitrationConfig,
 }

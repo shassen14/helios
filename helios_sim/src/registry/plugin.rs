@@ -1,11 +1,9 @@
-// Initialises the VehicleAdapterRegistry and RuntimeAutonomyRegistry resources.
-// Add this to HeliosSimulationPlugin BEFORE WorldModelPlugin so registries are
-// populated before any spawning runs.
-
-use bevy::prelude::*;
+// Initialises the RuntimeAutonomyRegistry resource. Add this to
+// HeliosSimulationPlugin BEFORE WorldModelPlugin so the registry is populated
+// before any spawning runs.
 use helios_runtime::registry::AutonomyRegistry;
 
-use super::{adapters::DefaultAdaptersPlugin, VehicleAdapterRegistry};
+use bevy::prelude::*;
 
 /// Wraps the portable `helios_runtime::AutonomyRegistry` as a Bevy resource.
 ///
@@ -17,8 +15,6 @@ pub struct AutonomyRegistryPlugin;
 
 impl Plugin for AutonomyRegistryPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<VehicleAdapterRegistry>()
-            .init_resource::<RuntimeAutonomyRegistry>()
-            .add_plugins(DefaultAdaptersPlugin);
+        app.init_resource::<RuntimeAutonomyRegistry>();
     }
 }

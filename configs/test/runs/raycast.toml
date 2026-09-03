@@ -1,0 +1,26 @@
+# Raycast car acceptance run — the L1 inertial car's seed → drive → rest chain.
+#
+# Like acceptance.toml, this carries zero assertions: the things under test are
+# the summarizer's final-position and final-speed metrics, read off
+# GroundTruthState, not a bus assertion target.
+#   - final_pos_e / final_pos_n  → where the car came to rest
+#   - final_speed                → planar ground speed at that instant; ~0
+#     confirms the car actually stopped (the arrival latches held) rather than
+#     being sampled mid-coast.
+#
+# Unlike the L0 arcade car, the raycast car is inertial: it coasts past the goal
+# and settles a stopping-distance away. This run makes that offset a measurable
+# number (final_pos vs the scenario's goal_pose) so any future approach-decel
+# work has a concrete before/after.
+
+schema_version = "1.0"
+
+# Resolved relative to --config-root (default "configs").
+scenario = { from = "sim/scenarios/raycast_car_scenario.toml" }
+
+# Carried but unused (observation presets aren't resolved yet).
+observation = { from = "default" }
+
+# Long enough to reach the goal and let the suspension settle at rest before
+# the metrics are sampled.
+termination = { max_simulated_seconds = 60.0 }

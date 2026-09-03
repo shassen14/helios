@@ -19,7 +19,7 @@ pub use crate::config::ConfigPlugin;
 
 pub use crate::core::app_state::{AppState, SceneBuildSet, SimulationSet};
 pub use crate::core::components::{
-    BoundingBox3D, ControlOutputComponent, GroundTruthState, SemanticLabel, TerrainMedium,
+    ActuatorCommandComponent, BoundingBox3D, GroundTruthState, SemanticLabel, TerrainMedium,
     WorldObjectType,
 };
 pub use crate::core::host::{HeliosHost, Presentation, TimePolicy};
@@ -27,9 +27,6 @@ pub use crate::core::spawn_requests::SpawnAgentConfigRequest;
 pub use crate::core::transforms::{TfTree, TrackedFrame};
 
 pub use crate::agents::sensors::imu::ImuPlugin;
-pub use crate::agents::vehicles::ackermann::{
-    AckermannAdapterComponent, AckermannCarPlugin, AckermannOutputAdapter,
-};
 
 pub use crate::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent};
 pub use crate::brain_bridge::HostInputPublisher;

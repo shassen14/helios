@@ -1,0 +1,11 @@
+//! The built-in embodiment axis builders — one `kind` per file, each a plain fn
+//! the `EmbodimentRegistry` dispatches on. These are morphology-general (a drone
+//! reuses `RigidBodyWithMount`), so they live above any one vehicle family.
+
+pub mod collision;
+pub mod topology;
+pub mod visual;
+
+pub use collision::build_cuboid;
+pub use topology::build_rigid_body_with_mount;
+pub use visual::build_wheeled_primitives;

@@ -99,15 +99,15 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
         );
     }
 
-    // 3. Assemble the final, complete `ScenarioConfig` resource.
+    // 3. Assemble the final, complete `ScenarioConfig` resource. Every
+    //    non-agent field rides across in the one `common` move; only the agents
+    //    needed the resolve step above.
     let mut final_config = ScenarioConfig {
-        simulation: raw_config.simulation,
-        world: raw_config.world,
-        metrics: raw_config.metrics,
+        common: raw_config.common,
         agents: resolved_agents,
     };
 
-    apply_cli_overrides(&mut final_config.simulation, &cli);
+    apply_cli_overrides(&mut final_config.common.simulation, &cli);
 
     // 4. Insert the single, unified config as a resource.
     commands.insert_resource(final_config);
@@ -146,11 +146,58 @@ mod tests {
         [starting_pose]
         [goal_pose]
 
-        [vehicle]
-        kind = "Ackermann"
-        wheelbase = 2.7
-        max_steering_angle = 30.0
-        max_steering_rate = 90.0
+        [vehicle.topology]
+        kind = "RigidBodyWithMount"
+        mass = 1500.0
+
+        [vehicle.plant]
+        kind = "RaycastWheels"
+
+        [vehicle.plant.suspension]
+        rest_length = 0.20
+        wheel_radius = 0.30
+        stiffness = 50000.0
+        damping = 4000.0
+        max_travel = 0.20
+        ray_margin = 0.10
+
+        [vehicle.plant.tire]
+        cornering_stiffness_front = 80000.0
+        cornering_stiffness_rear = 60000.0
+        rolling_resistance = 0.015
+        low_speed_threshold = 1.0
+
+        [[vehicle.plant.wheel]]
+        mount = "wheel_rl"
+        axle = "Rear"
+        steer = false
+        drive = true
+
+        [vehicle.collision]
+        kind = "Cuboid"
+        x = 1.8
+        y = 0.8
+        z = 4.0
+        friction = 0.7
+
+        [vehicle.visual]
+        kind = "WheeledPrimitives"
+        chassis = { x = 1.8, y = 0.8, z = 4.0, color = [0.2, 0.4, 0.8, 0.35] }
+        wheel = { radius = 0.3, width = 0.2, drop = 0.3, color = [0.05, 0.05, 0.05, 1.0] }
+
+        [[vehicle.actuation.actuators]]
+        id = "drive"
+        kind = "Torque"
+        limit = 2000.0
+        safe_state = { Torque = 0.0 }
+        sign = "Normal"
+
+        [[vehicle.actuation.actuators]]
+        id = "steer"
+        kind = "Position"
+        limit = 0.61
+        safe_state = { Position = 0.0 }
+        sign = "Normal"
 
         [sensors.gps]
         kind = "Gps"

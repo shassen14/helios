@@ -9,7 +9,7 @@ use bevy::{
 };
 use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
-use crate::config::structs::world_object::WorldObjectCollider;
+use crate::config::structs::WorldObjectCollider;
 use crate::core::transforms::EnuWorldPose;
 
 #[derive(serde::Deserialize)]

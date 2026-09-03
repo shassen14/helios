@@ -1,6 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::config::{AutonomyStack, ControllerConfig, EstimatorConfig};
+use crate::config::{
+    AutonomyStack, CommandSpace, ControllerConfig, EstimatorConfig, MapLayerConfig, ReferenceSource,
+};
 
 /// Snapshot of algorithm keys registered in each family.
 ///
@@ -9,11 +11,11 @@ use crate::config::{AutonomyStack, ControllerConfig, EstimatorConfig};
 /// families have implementations.
 pub struct CapabilitySet {
     pub gaussian_estimators: HashSet<String>,
-    pub dynamics: HashSet<String>,
     pub measurement_models: HashSet<String>,
     pub mappers: HashSet<String>,
     pub controllers: HashSet<String>,
     pub planners: HashSet<String>,
+    pub allocators: HashSet<String>,
 }
 
 /// Structured validation failure.
@@ -23,21 +25,20 @@ pub enum ConfigValidationError {
         instance: String,
         kind: String,
     },
-    UnknownDynamics {
-        kind: String,
-    },
     UnknownController {
         kind: String,
-    },
-    UnknownControllerDynamics {
-        controller_kind: String,
-        dynamics_key: String,
     },
     UnknownMapper {
         kind: String,
     },
     UnknownPlanner {
         kind: String,
+    },
+    /// A planner's `level` names no active map layer, so nothing produces the
+    /// `MapData` it reads. The layer is either absent or declared `None`.
+    PlannerReferencesUnknownMapLayer {
+        planner: String,
+        level: String,
     },
     UnknownMeasurementModel {
         estimator_instance: String,
@@ -46,6 +47,66 @@ pub enum ConfigValidationError {
     UnknownSensorPayload {
         estimator_instance: String,
         payload_kind: String,
+    },
+    /// An augmentation declares a `sensor` that no aiding entry feeds. The
+    /// appended nuisance block would ride through predict untouched — never
+    /// observed, a silent no-op that only inflates the state. A block is
+    /// observable only through an aiding source on its own sensor channel.
+    AugmentationHasNoAidingSource {
+        estimator_instance: String,
+        kind: String,
+        sensor: String,
+    },
+    UnknownAllocator {
+        kind: String,
+    },
+
+    /// `reference_arbitration` lists `autonomy` as a source, but no controller is
+    /// configured to produce the autonomy command.
+    AutonomySourceWithoutController,
+    /// A controller is configured, but `autonomy` is not among the explicitly
+    /// listed reference sources, so the controller's output is never routed to
+    /// `command`.
+    ControllerConfiguredButNotAReferenceSource,
+    /// The same reference source appears more than once in
+    /// `reference_arbitration.sources`, making priority order ambiguous.
+    DuplicateReferenceSource {
+        source: String,
+    },
+
+    /// An allocator consumes a command space nothing produces — no controller
+    /// emits it and, for a body twist, no teleop source supplies it — so that
+    /// allocator's `command` input is unfilled. Checked per space, since decoupled
+    /// control opens one seam per space an allocator consumes. The terminal-side
+    /// twin of `AutonomySourceWithoutController`.
+    AllocatorWithoutCommandSource {
+        space: CommandSpace,
+    },
+
+    /// A controller emits a command space no allocator consumes. Each allocator
+    /// defines a command seam, and the assembler instantiates one `command::<T>()`
+    /// channel per space in use; a controller whose space matches no allocator
+    /// writes a slot nothing reads. A decoupled stack has several seams at once,
+    /// so validity is set membership: the controller's space must be one that some
+    /// allocator consumes. The DAG erases the type at the channel boundary, so an
+    /// orphaned contribution would otherwise surface late as an `UnsatisfiedInput`.
+    /// Caught here at load time instead. `available_spaces` is the sorted set of
+    /// spaces the stack's allocators consume, for a message that names the options.
+    ControllerCommandSpaceMismatch {
+        controller: String,
+        controller_space: CommandSpace,
+        available_spaces: Vec<CommandSpace>,
+    },
+
+    /// Two or more allocators name the same actuator. Decoupled control merges
+    /// several allocators' outputs into one terminal command by unioning their
+    /// disjoint actuator sets; a shared actuator breaks that disjointness, so the
+    /// merge would keep one allocator's setpoint and silently drop the other's.
+    /// Each allocator config declares the actuators it drives, so the collision
+    /// is caught here at load rather than as a dropped setpoint at runtime.
+    AllocatorActuatorConflict {
+        actuator: String,
+        allocators: Vec<String>,
     },
 }
 
@@ -58,24 +119,20 @@ impl std::fmt::Display for ConfigValidationError {
                     "Unknown Gaussian estimator kind '{kind}' in estimator '{instance}'"
                 )
             }
-            ConfigValidationError::UnknownDynamics { kind } => {
-                write!(f, "Unknown dynamics kind '{kind}'")
-            }
             ConfigValidationError::UnknownController { kind } => {
                 write!(f, "Unknown controller kind '{kind}'")
             }
-            ConfigValidationError::UnknownControllerDynamics {
-                controller_kind,
-                dynamics_key,
-            } => write!(
-                f,
-                "Controller '{controller_kind}' references unknown dynamics_key '{dynamics_key}'"
-            ),
             ConfigValidationError::UnknownMapper { kind } => {
                 write!(f, "Unknown mapper kind '{kind}'")
             }
             ConfigValidationError::UnknownPlanner { kind } => {
                 write!(f, "Unknown planner kind '{kind}'")
+            }
+            ConfigValidationError::PlannerReferencesUnknownMapLayer { planner, level } => {
+                write!(
+                    f,
+                    "Planner '{planner}' reads map layer '{level}', but no active map layer of that name is declared"
+                )
             }
             ConfigValidationError::UnknownMeasurementModel {
                 estimator_instance,
@@ -93,6 +150,69 @@ impl std::fmt::Display for ConfigValidationError {
                 write!(
                     f,
                     "Estimator '{estimator_instance}' references unknown sensor payload '{payload_kind}'"
+                )
+            }
+            ConfigValidationError::AugmentationHasNoAidingSource {
+                estimator_instance,
+                kind,
+                sensor,
+            } => {
+                write!(
+                    f,
+                    "Estimator '{estimator_instance}' augmentation '{kind}' names sensor '{sensor}', but no aiding entry feeds that channel; the block would never be observed"
+                )
+            }
+            ConfigValidationError::UnknownAllocator { kind } => {
+                write!(f, "Unknown allocator kind '{kind}'")
+            }
+            ConfigValidationError::AutonomySourceWithoutController => {
+                write!(
+                    f,
+                    "reference_arbitration lists 'autonomy' as a source but no controller is configured to produce it"
+                )
+            }
+            ConfigValidationError::ControllerConfiguredButNotAReferenceSource => {
+                write!(
+                    f,
+                    "a controller is configured but 'autonomy' is not among reference_arbitration.sources; its output is never routed to command"
+                )
+            }
+            ConfigValidationError::DuplicateReferenceSource { source } => {
+                write!(
+                    f,
+                    "reference_arbitration.sources lists '{source}' more than once"
+                )
+            }
+            ConfigValidationError::AllocatorWithoutCommandSource { space } => {
+                write!(
+                    f,
+                    "an allocator consumes the {space:?} command space, but nothing produces it (no controller emits {space:?})"
+                )
+            }
+            ConfigValidationError::ControllerCommandSpaceMismatch {
+                controller,
+                controller_space,
+                available_spaces,
+            } => {
+                let available = available_spaces
+                    .iter()
+                    .map(|space| format!("{space:?}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                write!(
+                    f,
+                    "controller '{controller}' emits {controller_space:?}, but no allocator consumes that space (allocators consume: {available}); every controller must speak a space some allocator consumes"
+                )
+            }
+
+            ConfigValidationError::AllocatorActuatorConflict {
+                actuator,
+                allocators,
+            } => {
+                let allocators = allocators.join(", ");
+                write!(
+                    f,
+                    "actuator '{actuator}' is claimed by more than one allocator ({allocators}); each actuator must be owned by exactly one"
                 )
             }
         }
@@ -133,13 +253,6 @@ pub fn validate_autonomy_config(
 
         // Validate dynamics and aiding for EKF configs.
         if let EstimatorConfig::Ekf(ekf) = est_cfg {
-            let dyn_kind = ekf.dynamics.get_kind_str();
-            if !capabilities.dynamics.contains(dyn_kind) {
-                errors.push(ConfigValidationError::UnknownDynamics {
-                    kind: dyn_kind.to_string(),
-                });
-            }
-
             for aiding in &ekf.aiding {
                 if !capabilities.measurement_models.contains(&aiding.model.kind) {
                     errors.push(ConfigValidationError::UnknownMeasurementModel {
@@ -152,6 +265,24 @@ pub fn validate_autonomy_config(
                     errors.push(ConfigValidationError::UnknownSensorPayload {
                         estimator_instance: instance.clone(),
                         payload_kind: aiding.sensor_payload.clone(),
+                    });
+                }
+            }
+
+            // Each augmentation is observed only through an aiding source on the
+            // same sensor channel; without one the appended block has no
+            // measurement touching its columns and rides inertly. Catch it here
+            // rather than let it be a silent runtime no-op.
+            for aug in &ekf.augmentation {
+                let has_aiding_source = ekf
+                    .aiding
+                    .iter()
+                    .any(|aiding| aiding.input_channel == aug.sensor);
+                if !has_aiding_source {
+                    errors.push(ConfigValidationError::AugmentationHasNoAidingSource {
+                        estimator_instance: instance.clone(),
+                        kind: aug.kind.clone(),
+                        sensor: aug.sensor.clone(),
                     });
                 }
             }
@@ -176,23 +307,163 @@ pub fn validate_autonomy_config(
                 kind: kind.to_string(),
             });
         }
-        if let ControllerConfig::FeedforwardPid { dynamics_key, .. } = ctrl_cfg {
-            if !capabilities.dynamics.contains(dynamics_key.as_str()) {
-                errors.push(ConfigValidationError::UnknownControllerDynamics {
-                    controller_kind: kind.to_string(),
-                    dynamics_key: dynamics_key.clone(),
-                });
-            }
+    }
+
+    // Allocator validation.
+    for alloc_cfg in config.allocators.values() {
+        let kind = alloc_cfg.get_kind_str();
+        if !capabilities.allocators.contains(kind) {
+            errors.push(ConfigValidationError::UnknownAllocator {
+                kind: kind.to_string(),
+            });
         }
     }
 
     // Planner validation.
-    for plan_cfg in config.search_planners.values() {
+    for (instance, plan_cfg) in &config.search_planners {
         let kind = plan_cfg.get_kind_str();
         if !capabilities.planners.contains(kind) {
             errors.push(ConfigValidationError::UnknownPlanner {
                 kind: kind.to_string(),
             });
+        }
+
+        // The planner reads its `MapData` from the channel named by `level`; the
+        // mapper of that same config-map key produces it. A `level` naming no
+        // active layer would only surface as an `UnsatisfiedInput` at DAG build.
+        let level = plan_cfg.get_level_str();
+        let layer_is_active = config
+            .map_layers
+            .get(level)
+            .is_some_and(|layer| !matches!(layer, MapLayerConfig::None));
+        if !layer_is_active {
+            errors.push(ConfigValidationError::PlannerReferencesUnknownMapLayer {
+                planner: instance.clone(),
+                level: level.to_string(),
+            });
+        }
+    }
+
+    // Reference arbitration validation.
+    let sources = &config.reference_arbitration.sources;
+    let has_controller = !config.controllers.is_empty();
+    let lists_autonomy = sources.contains(&ReferenceSource::Autonomy);
+
+    // An explicit autonomy source with nothing to produce it.
+    if lists_autonomy && !has_controller {
+        errors.push(ConfigValidationError::AutonomySourceWithoutController);
+    }
+
+    // A controller whose output is never routed to `command`. An empty sources
+    // list infers `[Autonomy]`, so this only fires when the list is explicit
+    // and omits autonomy.
+    if has_controller && !sources.is_empty() && !lists_autonomy {
+        errors.push(ConfigValidationError::ControllerConfiguredButNotAReferenceSource);
+    }
+
+    // A source listed more than once makes priority order ambiguous.
+    let mut seen = HashSet::new();
+    for source in sources {
+        if !seen.insert(*source) {
+            errors.push(ConfigValidationError::DuplicateReferenceSource {
+                source: source.as_str().to_string(),
+            });
+        }
+    }
+
+    // Allocator cross-field checks. The per-kind check above rejects unknown
+    // allocators; these catch a well-formed allocator wired into a graph that
+    // can't feed it or that fights another allocator for the same actuator,
+    // each of which would otherwise surface late and cryptically at DAG build
+    // (an UnsatisfiedInput, or two writers racing one terminal slot).
+
+    // Both remaining checks turn on which command spaces the stack's allocators
+    // consume, so gather that set once. It is a BTreeSet so anything derived from
+    // it — the per-space producer errors below, the available-space list in a
+    // mismatch — comes out ordered, stable across the source HashMap's iteration.
+    let allocator_spaces: BTreeSet<CommandSpace> = config
+        .allocators
+        .values()
+        .map(|allocator| allocator.command_space())
+        .collect();
+
+    // Each allocator consumes its space's `command::<T>()` channel, fed by a
+    // same-space fold of controllers — plus, for a body twist alone, a teleop
+    // source. A space with an allocator but no producer leaves that allocator's
+    // input unsatisfiable: the per-space form of the old single-producer check,
+    // now that decoupled control opens one seam per space. Teleop produces only a
+    // body twist today (the teleop mapper is body-twist-only), so it satisfies the
+    // `BodyTwist` space and no other. Mirrors the assembler's `CommandTopology::None`.
+    let teleop_present = sources.contains(&ReferenceSource::Teleop);
+    let controller_spaces: HashSet<CommandSpace> = config
+        .controllers
+        .values()
+        .map(|controller| controller.command_space())
+        .collect();
+    for space in &allocator_spaces {
+        let produced = controller_spaces.contains(space)
+            || (*space == CommandSpace::BodyTwist && teleop_present);
+        if !produced {
+            errors.push(ConfigValidationError::AllocatorWithoutCommandSource { space: *space });
+        }
+    }
+
+    // Decoupled control lets several allocators coexist, each owning a disjoint
+    // set of actuators that a downstream merge unions into the one terminal
+    // command. That union is only well-defined if no two allocators claim the
+    // same actuator: a double-claimed actuator would take its setpoint from
+    // whichever allocator the merge saw first, silently dropping the other. Each
+    // allocator config names the actuators it drives, so this half of the
+    // partition — disjointness — is checkable here. The other half, totality
+    // (every physical actuator is claimed by some allocator), needs the body's
+    // actuation model and so is the host's to check at spawn.
+    //
+    // A BTreeMap and the per-conflict sort keep the emitted errors ordered by
+    // actuator, then by allocator name, so the report is stable across runs
+    // regardless of the source HashMap's iteration order.
+    let mut actuator_to_allocators: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for (allocator, cfg) in &config.allocators {
+        for actuator in cfg.actuator_ids() {
+            actuator_to_allocators
+                .entry(actuator)
+                .or_default()
+                .push(allocator.to_string());
+        }
+    }
+
+    for (actuator, allocators) in &actuator_to_allocators {
+        if allocators.len() > 1 {
+            let mut a = allocators.clone();
+            a.sort();
+            errors.push(ConfigValidationError::AllocatorActuatorConflict {
+                actuator: actuator.to_string(),
+                allocators: a,
+            });
+        }
+    }
+
+    // Command-space agreement. Every controller writes its contribution into the
+    // fold that feeds an allocator's `command` input; each allocator defines a
+    // seam, so a controller must speak a space some allocator consumes or its
+    // output lands in a slot nothing reads. A decoupled stack has several seams at
+    // once — one per space its allocators consume — so agreement is set
+    // membership, not equality against a lone allocator. With a single allocator
+    // the set is one element and this is the old exact-match. An empty allocator
+    // set has no seam, so there is nothing to disagree with. `allocator_spaces`
+    // (gathered above) is sorted, so a mismatch names the options stably.
+    if !allocator_spaces.is_empty() {
+        let available_spaces: Vec<CommandSpace> = allocator_spaces.iter().copied().collect();
+        let controllers_by_name: BTreeMap<&String, &ControllerConfig> =
+            config.controllers.iter().collect();
+        for (name, ctrl_cfg) in controllers_by_name {
+            let controller_space = ctrl_cfg.command_space();
+            if !allocator_spaces.contains(&controller_space) {
+                errors.push(ConfigValidationError::ControllerCommandSpaceMismatch {
+                    controller: name.clone(),
+                    controller_space,
+                    available_spaces: available_spaces.clone(),
+                });
+            }
         }
     }
 

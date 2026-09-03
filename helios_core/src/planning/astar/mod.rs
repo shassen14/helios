@@ -38,7 +38,7 @@ mod smoothing;
 
 use nalgebra::Vector2;
 
-use crate::frames::{FrameId, StateVariable};
+use crate::frames::conventions::Enu;
 use crate::mapping::MapData;
 use crate::planning::SearchPlannerInputs;
 
@@ -160,12 +160,24 @@ impl SearchPlanner for AStarPlanner {
             self.last_plan_time = f64::NEG_INFINITY;
         }
 
-        // Robot 2D position from world-frame state.
-        let robot_pos = match inputs.state.get_vector3(&StateVariable::Px(FrameId::World)) {
-            Some(p) => Vector2::new(p.x, p.y),
-            None => {
-                return PlannerResult::Error("AStarPlanner: state missing world position".into())
-            }
+        // Arrival latches for a fixed goal: once reached, stay reached until the
+        // goal changes. An inertial body coasting past `arrival_tolerance_m` must
+        // not trigger a replan — a fresh path would reset the follower's own
+        // arrival latch and drive the body back toward the goal, so it never
+        // rests. Re-engaging motion is the job of a new goal, not a drift.
+        if self.status == PlannerStatus::GoalReached {
+            return PlannerResult::GoalReached;
+        }
+
+        // Robot 2D position, read in whatever frame the estimate declares — the
+        // planner has no agent handle of its own, so it asks the state.
+        let robot_pos = match inputs
+            .state
+            .reference_frame()
+            .and_then(|frame| inputs.state.position::<Enu>(frame))
+        {
+            Some(p) => Vector2::new(p.x(), p.y()),
+            None => return PlannerResult::Error("AStarPlanner: state missing position".into()),
         };
 
         let goal_pos = goal.position_2d();
@@ -265,7 +277,7 @@ impl SearchPlanner for AStarPlanner {
             .iter()
             .map(|&(row, col)| {
                 let wp = space.cell_to_world_center(row, col);
-                make_waypoint(wp.x, wp.y, now)
+                make_waypoint(wp.x, wp.y, 0.0)
             })
             .collect();
 
@@ -316,14 +328,18 @@ impl SearchPlanner for AStarPlanner {
 
         // Deviation check (optional).
         if self.config.replan_on_path_deviation {
-            if let Some(robot_pos) = inputs.state.get_vector3(&StateVariable::Px(FrameId::World)) {
+            if let Some(robot_pos) = inputs
+                .state
+                .reference_frame()
+                .and_then(|frame| inputs.state.position::<Enu>(frame))
+            {
                 if let Some(path) = &self.cached_path {
-                    let robot_2d = Vector2::new(robot_pos.x, robot_pos.y);
+                    let robot_2d = Vector2::new(robot_pos.x(), robot_pos.y());
                     let min_dist = path
                         .waypoints
                         .iter()
                         .map(|wp| {
-                            let wp2d = Vector2::new(wp.state.vector[0], wp.state.vector[1]);
+                            let wp2d = Vector2::new(wp.x(), wp.y());
                             (robot_2d - wp2d).norm()
                         })
                         .fold(f64::INFINITY, f64::min);
@@ -359,14 +375,17 @@ impl AStarPlanner {
 
 #[cfg(test)]
 mod tests {
-    use nalgebra::{DMatrix, Isometry3, Vector2};
+    use nalgebra::{DMatrix, DVector, Isometry3, Vector2};
     use std::collections::HashMap;
+    use std::sync::Arc;
 
-    use crate::frames::{FrameId, RobotState, StateVariable};
+    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::frames::{FrameAwareState, FrameId};
     use crate::mapping::MapData;
     use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
     use crate::planning::SearchPlanner;
     use crate::planning::SearchPlannerInputs;
+    use crate::state::Quantity;
 
     use super::{AStarConfig, AStarPlanner};
 
@@ -389,18 +408,15 @@ mod tests {
         }
     }
 
-    /// Build a minimal world-frame state with only `[Px, Py, Pz]`.
-    fn make_state(x: f64, y: f64) -> RobotState {
-        let layout = vec![
-            StateVariable::Px(FrameId::World),
-            StateVariable::Py(FrameId::World),
-            StateVariable::Pz(FrameId::World),
-        ];
-        let mut state = RobotState::new(layout, 0.0);
-        state.vector[0] = x;
-        state.vector[1] = y;
-        state.vector[2] = 0.0;
-        state
+    /// Build a minimal world-frame state carrying only a `Position(World)` block.
+    fn make_state(x: f64, y: f64) -> FrameAwareState {
+        let schema = StateSchema::compose(vec![SchemaBlock::new(
+            Quantity::Position(FrameId::World),
+            None,
+            DVector::from_vec(vec![x, y, 0.0]),
+            DMatrix::zeros(3, 3),
+        )]);
+        FrameAwareState::from_schema(Arc::new(schema), 0.0)
     }
 
     /// All-zero `nrows × ncols` grid anchored at the world origin.
@@ -449,6 +465,31 @@ mod tests {
         assert_eq!(planner.status(), PlannerStatus::GoalReached);
     }
 
+    /// Once arrived, the planner stays `GoalReached` for the same goal even after
+    /// the robot drifts well outside `arrival_tolerance_m` — it does not replan a
+    /// path back. An inertial body that overshoots must be left to rest; a fresh
+    /// path here would reset the follower's latch and drive it back. Re-engaging
+    /// motion is the job of a new goal, which resets `status` to `Idle`.
+    #[test]
+    fn arrival_latches_and_does_not_replan_on_drift() {
+        let mut planner = AStarPlanner::new(default_config());
+        let goal = Some(goal_2d(5.0, 5.0));
+        let map = clear_map(20, 20, 1.0);
+
+        // Reach the goal (distance 0 < 0.5 m tolerance).
+        let arrived = planner.plan(0.0, &make_inputs(5.0, 5.0, map.clone(), goal.clone()));
+        assert!(matches!(arrived, PlannerResult::GoalReached));
+
+        // Drift 3 m away, same goal, rate gate open. Latched → still GoalReached,
+        // never a Path.
+        let drifted = planner.plan(100.0, &make_inputs(8.0, 5.0, map, goal));
+        assert!(
+            matches!(drifted, PlannerResult::GoalReached),
+            "latched planner replanned after the robot drifted outside arrival tolerance"
+        );
+        assert_eq!(planner.status(), PlannerStatus::GoalReached);
+    }
+
     /// Non-OccupancyGrid2D map variant → `Error`.
     #[test]
     fn plan_wrong_map_type() {
@@ -492,12 +533,33 @@ mod tests {
                 assert!(!path.waypoints.is_empty());
                 let last = path.waypoints.last().unwrap();
                 // Last waypoint should be at or near the goal cell centre.
-                assert!((last.state.vector[0] - 9.5).abs() < 1.0);
-                assert!((last.state.vector[1] - 9.5).abs() < 1.0);
+                assert!((last.x() - 9.5).abs() < 1.0);
+                assert!((last.y() - 9.5).abs() < 1.0);
             }
             other => panic!("expected Path, got {:?}", std::mem::discriminant(&other)),
         }
         assert_eq!(planner.status(), PlannerStatus::Active);
+    }
+
+    /// Regression: every waypoint's `z` is the ground plane (0.0), never the
+    /// planning timestamp. A path is pure geometry, so the `now` passed to
+    /// `plan()` must not leak into a coordinate slot. The non-zero `now` is what
+    /// makes this observable — a `now = 0.0` plan would pass even when `now`
+    /// were mis-wired into `z`.
+    #[test]
+    fn plan_waypoints_carry_ground_z_not_timestamp() {
+        let mut planner = AStarPlanner::new(default_config());
+        let inputs = make_inputs(0.5, 0.5, clear_map(10, 10, 1.0), Some(goal_2d(9.5, 9.5)));
+        let result = planner.plan(7.0, &inputs);
+        match result {
+            PlannerResult::Path(path) => {
+                assert!(!path.waypoints.is_empty());
+                for wp in &path.waypoints {
+                    assert_eq!(wp.z(), 0.0, "waypoint z must be ground, not the timestamp");
+                }
+            }
+            other => panic!("expected Path, got {:?}", std::mem::discriminant(&other)),
+        }
     }
 
     /// Cell (0,0) surrounded by obstacles on its three reachable neighbours →

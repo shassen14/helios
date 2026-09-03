@@ -12,7 +12,7 @@ pub mod astar;
 pub mod search_space;
 pub mod types;
 
-use crate::frames::RobotState;
+use crate::frames::FrameAwareState;
 use crate::mapping::MapData;
 use types::{PlannerGoal, PlannerResult};
 
@@ -42,7 +42,7 @@ pub trait SearchPlanner: Send + Sync {
 }
 
 pub struct SearchPlannerInputs {
-    pub state: RobotState,
+    pub state: FrameAwareState,
     pub map: MapData,
     pub goal: Option<PlannerGoal>,
 }

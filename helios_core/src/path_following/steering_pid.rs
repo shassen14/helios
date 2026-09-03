@@ -2,20 +2,23 @@
 //
 // SteeringPidPathFollower: heading-error path follower implemented as a PathFollower.
 // Same PID logic as the old SteeringPidController, but advances its own lookahead
-// index along the path and emits TrajectoryPoints for the controller stage.
+// index along the path and emits body-twist references for the controller stage.
 //
 // Use this as a diagnostic: if this produces correct steering through the
-// PathFollowing → DirectVelocity → DualSisoPid chain, the wiring is correct
+// PathFollowing → DirectTwist → DualSisoPid chain, the wiring is correct
 // and any issues with PurePursuit are in that algorithm's geometry.
 
-use nalgebra::Vector2;
-
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
-use crate::control::siso_pid::SisoPid;
-use crate::data::messages::TrajectoryPoint;
+use crate::control::commands::BodyTwist;
+use crate::control::kernels::siso_pid::SisoPid;
+use crate::control::BodyTwistRef;
 use crate::data::primitives::FrameHandle;
-use crate::frames::{FrameId, RobotState, StateVariable};
+use crate::frames::conventions::{Enu, Flu};
+use crate::frames::quantities::Point;
+use crate::frames::FrameId;
 use crate::planning::types::Path;
+
+use nalgebra::Vector2;
 
 pub struct SteeringPidPathFollower {
     heading_pid: SisoPid,
@@ -24,6 +27,11 @@ pub struct SteeringPidPathFollower {
     lookahead_distance: f64,
     path: Option<Path>,
     lookahead_index: usize,
+    /// Latches once the agent first reaches `goal_radius` of the final waypoint.
+    /// While set, `compute` returns the stop reference regardless of the agent's
+    /// current position, so an inertial body coasting back outside the radius
+    /// does not re-arm driving. Cleared only by `set_path`/`reset`.
+    arrived: bool,
     agent_handle: FrameHandle,
 }
 
@@ -44,6 +52,7 @@ impl SteeringPidPathFollower {
             lookahead_distance,
             path: None,
             lookahead_index: 0,
+            arrived: false,
             agent_handle,
         }
     }
@@ -51,13 +60,8 @@ impl SteeringPidPathFollower {
     fn advance_lookahead(&mut self, agent_pos: Vector2<f64>) {
         let Some(path) = &self.path else { return };
         while self.lookahead_index + 1 < path.waypoints.len() {
-            let path_pos = match path.waypoints[self.lookahead_index]
-                .state
-                .get_vector3(&StateVariable::Px(FrameId::World))
-            {
-                Some(p) => Vector2::new(p.x, p.y),
-                None => return,
-            };
+            let wp = path.waypoints[self.lookahead_index];
+            let path_pos = Vector2::new(wp.x(), wp.y());
             if (agent_pos - path_pos).norm() < self.lookahead_distance {
                 self.lookahead_index += 1;
             } else {
@@ -78,19 +82,34 @@ fn normalize_angle(a: f64) -> f64 {
 }
 
 impl PathFollower for SteeringPidPathFollower {
-    fn compute(&mut self, dt: f64, inputs: &PathFollowerInputs) -> PathFollowerResult {
+    type Reference = BodyTwistRef;
+
+    fn compute(
+        &mut self,
+        dt: f64,
+        inputs: &PathFollowerInputs,
+    ) -> PathFollowerResult<BodyTwistRef> {
+        // A completed path stays completed: once arrived, hold the stop reference
+        // regardless of where the body has since drifted.
+        if self.arrived {
+            return PathFollowerResult::GoalReached(BodyTwistRef::new(BodyTwist::zero()));
+        }
+
         let state = &inputs.state;
 
         if self.path.is_none() {
             return PathFollowerResult::NoPath;
         }
 
-        let agent_pos = match state.get_vector3(&StateVariable::Px(FrameId::World)) {
-            Some(p) => Vector2::new(p.x, p.y),
+        let agent_pos = match state.position::<Enu>(FrameId::Odom(self.agent_handle)) {
+            Some(p) => Vector2::new(p.x(), p.y()),
             None => return PathFollowerResult::Error("missing agent position".into()),
         };
-        let orientation = match state.get_orientation() {
-            Some(q) => q,
+        let orientation = match state.orientation::<Flu, Enu>(
+            FrameId::Body(self.agent_handle),
+            FrameId::Odom(self.agent_handle),
+        ) {
+            Some(q) => q.into_inner(),
             None => return PathFollowerResult::Error("missing agent orientation".into()),
         };
         let (_, _, current_yaw) = orientation.euler_angles();
@@ -101,17 +120,17 @@ impl PathFollower for SteeringPidPathFollower {
             .path
             .as_ref()
             .and_then(|p| p.waypoints.get(self.lookahead_index))
-            .and_then(|wp| wp.state.get_vector3(&StateVariable::Px(FrameId::World)))
         {
-            Some(p) => Vector2::new(p.x, p.y),
+            Some(wp) => Vector2::new(wp.x(), wp.y()),
             None => return PathFollowerResult::Error("missing waypoint position".into()),
         };
 
         let dist = (lookahead_pos - agent_pos).norm();
 
         if dist < self.goal_radius {
+            self.arrived = true;
             self.heading_pid.reset();
-            return PathFollowerResult::GoalReached;
+            return PathFollowerResult::GoalReached(BodyTwistRef::new(BodyTwist::zero()));
         }
 
         let delta = lookahead_pos - agent_pos;
@@ -120,29 +139,21 @@ impl PathFollower for SteeringPidPathFollower {
         let heading_error = normalize_angle(desired_yaw - current_yaw);
         let wz = self.heading_pid.update(heading_error, dt);
 
-        let body_id = FrameId::Body(self.agent_handle);
-        let layout = vec![
-            StateVariable::Vx(body_id.clone()),
-            StateVariable::Wz(body_id.clone()),
-        ];
-        let mut ref_state = RobotState::new(layout, state.timestamp);
-        ref_state.vector[0] = self.cruise_speed;
-        ref_state.vector[1] = wz;
+        let body_twist = BodyTwist::unicycle(self.cruise_speed, wz);
 
-        PathFollowerResult::Active(TrajectoryPoint {
-            state: ref_state,
-            state_dot: None,
-            time: state.timestamp,
-        })
+        let reference = BodyTwistRef::new(body_twist);
+
+        PathFollowerResult::Active(reference)
     }
 
     fn set_path(&mut self, path: Path) {
         self.path = Some(path);
         self.lookahead_index = 0;
+        self.arrived = false;
         self.heading_pid.reset();
     }
 
-    fn get_lookahead_waypoint(&self) -> Option<&TrajectoryPoint> {
+    fn get_lookahead_waypoint(&self) -> Option<&Point<Enu>> {
         self.path
             .as_ref()
             .and_then(|p| p.waypoints.get(self.lookahead_index))
@@ -151,6 +162,7 @@ impl PathFollower for SteeringPidPathFollower {
     fn reset(&mut self) {
         self.path = None;
         self.lookahead_index = 0;
+        self.arrived = false;
         self.heading_pid.reset();
     }
 }

@@ -1,7 +1,11 @@
+use crate::data::ports::TfProvider;
 use crate::data::primitives::FrameHandle;
+use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
-use crate::frames::{FrameAwareState, FrameId, StateVariable};
-use crate::ports::TfProvider;
+use crate::frames::conventions::{Enu, Flu};
+use crate::frames::quantities::FreeVector;
+use crate::frames::transforms::Rotation;
+use crate::frames::{FrameAwareState, FrameId};
 
 use nalgebra::{DVector, Vector3};
 
@@ -42,26 +46,42 @@ impl MeasurementModel for SpecificForceModel {
         &self,
         filter_state: &FrameAwareState,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     ) -> Option<DVector<f64>> {
         let tf = tf?;
         let body_frame = FrameId::Body(self.agent_handle);
 
-        let tf_sensor_from_body = tf
-            .get_transform(self.agent_handle, self.sensor_handle)
-            .unwrap_or_default();
-        let r_body_to_sensor = tf_sensor_from_body.translation.vector;
-        let rot_sensor_from_body = tf_sensor_from_body.rotation;
+        let erased = tf.get_transform(
+            FrameId::Body(self.agent_handle),
+            FrameId::Sensor(self.sensor_handle),
+            at,
+        )?;
+
+        let Ok(tf_sensor_from_body) = erased.typed::<Flu, Flu>() else {
+            return None;
+        };
+
+        let iso = tf_sensor_from_body.into_inner();
+
+        let r_body_to_sensor = iso.translation.vector;
+        let rot_sensor_from_body = iso.rotation;
 
         let linear_accel_body = filter_state
-            .get_vector3(&StateVariable::Ax(body_frame.clone()))
+            .acceleration::<Flu>(body_frame.clone())
+            .map(FreeVector::into_inner)
             .unwrap_or_default();
         let angular_vel_body = filter_state
-            .get_vector3(&StateVariable::Wx(body_frame.clone()))
+            .angular_velocity::<Flu>(body_frame.clone())
+            .map(FreeVector::into_inner)
             .unwrap_or_default();
         let angular_accel_body = filter_state
-            .get_vector3(&StateVariable::Alphax(body_frame.clone()))
+            .angular_acceleration::<Flu>(body_frame.clone())
+            .map(FreeVector::into_inner)
             .unwrap_or_default();
-        let orientation_body_to_world = filter_state.get_orientation().unwrap_or_default();
+        let orientation_body_to_world = filter_state
+            .orientation::<Flu, Enu>(body_frame.clone(), FrameId::Odom(self.agent_handle))
+            .map(Rotation::into_inner)
+            .unwrap_or_default();
 
         let tangential_accel = angular_accel_body.cross(&r_body_to_sensor);
         let centripetal_accel = angular_vel_body.cross(&angular_vel_body.cross(&r_body_to_sensor));
@@ -84,21 +104,33 @@ impl MeasurementModel for SpecificForceModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::ports::TfProvider;
     use crate::data::primitives::FrameHandle;
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::ports::TfProvider;
+    use crate::data::MonotonicTime;
+    use crate::estimation::carrier::kinematic_carrier_schema;
+    use crate::frames::transforms::{Convention, ErasedTransform};
+    use crate::frames::{FrameAwareState, FrameId};
+
     use nalgebra::Isometry3;
+    use std::sync::Arc;
 
     const AGENT: FrameHandle = FrameHandle(1);
     const SENSOR: FrameHandle = FrameHandle(2);
+    const AT: MonotonicTime = MonotonicTime(0.0);
 
     struct IdentityTf;
     impl TfProvider for IdentityTf {
-        fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
-        }
-        fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
-            Some(Isometry3::identity())
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            Some(ErasedTransform::from_parts(
+                Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
         }
     }
 
@@ -110,19 +142,11 @@ mod tests {
         }
     }
 
+    // A composed kinematic state carrying the orientation the model reads. Its
+    // body-frame acceleration and angular-acceleration reads have no block here
+    // and fall back to zero, as they do against a real INS estimate.
     fn make_state() -> FrameAwareState {
-        let body = FrameId::Body(AGENT);
-        let world = FrameId::World;
-        let layout = vec![
-            StateVariable::Px(world.clone()),
-            StateVariable::Py(world.clone()),
-            StateVariable::Pz(world.clone()),
-            StateVariable::Qx(body.clone(), world.clone()),
-            StateVariable::Qy(body.clone(), world.clone()),
-            StateVariable::Qz(body.clone(), world.clone()),
-            StateVariable::Qw(body.clone(), world.clone()),
-        ];
-        FrameAwareState::new(layout, 1.0, 0.0)
+        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0)
     }
 
     #[test]
@@ -134,7 +158,7 @@ mod tests {
     fn predict_without_tf_returns_none() {
         let model = make_model();
         let state = make_state();
-        assert!(model.predict_measurement(&state, None).is_none());
+        assert!(model.predict_measurement(&state, None, AT).is_none());
     }
 
     #[test]
@@ -142,7 +166,7 @@ mod tests {
         let model = make_model();
         let state = make_state();
         let tf = IdentityTf;
-        assert!(model.predict_measurement(&state, Some(&tf)).is_some());
+        assert!(model.predict_measurement(&state, Some(&tf), AT).is_some());
     }
 
     #[test]
@@ -150,8 +174,9 @@ mod tests {
         let model = make_model();
         let state = make_state();
         let tf = IdentityTf;
-        let h = model.jacobian(&state, Some(&tf));
+        let h = model.jacobian(&state, Some(&tf), AT);
         assert_eq!(h.nrows(), 3);
-        assert_eq!(h.ncols(), state.dim());
+        // H is tangent-sized: a quaternion block spends one fewer column than it stores.
+        assert_eq!(h.ncols(), state.tangent_dim());
     }
 }

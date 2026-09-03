@@ -1,11 +1,10 @@
 // SimRuntime: implements AgentRuntime over a TfTree snapshot and elapsed time.
 // Created fresh each tick by the systems that drive the AutonomyPipeline.
 
-use bevy::prelude::Entity;
-use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::prelude::TfProvider;
+use helios_core::data::primitives::MonotonicTime;
+use helios_core::frames::transforms::ErasedTransform;
+use helios_core::frames::FrameId;
 use helios_runtime::runtime::AgentRuntime;
-use nalgebra::Isometry3;
 
 use crate::core::transforms::TfTree;
 
@@ -16,12 +15,15 @@ pub struct SimRuntime<'a> {
 }
 
 impl AgentRuntime for SimRuntime<'_> {
-    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>> {
-        self.tf.get_transform(from, to)
-    }
+    fn get_transform(
+        &self,
+        from: FrameId,
+        to: FrameId,
+        at: MonotonicTime,
+    ) -> Option<ErasedTransform> {
+        debug_assert!(at.0 <= self.elapsed_secs);
 
-    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>> {
-        self.tf.lookup_by_entity(Entity::from_bits(frame.0))
+        self.tf.erased(from, to)
     }
 
     fn now(&self) -> MonotonicTime {

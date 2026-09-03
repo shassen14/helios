@@ -14,6 +14,11 @@ accel_noise_stddev = 0.2
 gyro_noise_stddev = 0.01
 accel_bias_instability = 0.05
 gyro_bias_instability = 0.005
+# Initial bias uncertainty: prior std dev on each bias at cold start (P₀),
+# distinct from the *_instability random-walk (Q) above. Grade-scaled with the
+# IMU.
+accel_bias_uncertainty_mps2 = 0.1
+gyro_bias_uncertainty_radps = 0.01
 
 # GPS aiding — r_diag = noise_stddev² for gps_standard [0.4, 0.4, 0.8]
 [[config.aiding]]

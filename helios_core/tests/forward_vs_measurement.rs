@@ -18,27 +18,34 @@
 //! truth. Cases are drawn from a seeded RNG, so the property is checked over
 //! many random poses, rates, mounts, and fields while staying reproducible.
 
+use helios_core::data::ports::TfProvider;
 use helios_core::data::primitives::FrameHandle;
+use helios_core::data::MonotonicTime;
 use helios_core::estimation::measurement::accelerometer::SpecificForceModel;
 use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
 use helios_core::estimation::measurement::MeasurementModel;
+use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-use helios_core::ports::TfProvider;
+use helios_core::manifold::TangentNoise;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gps::GpsModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
 use helios_core::sensors::magnetometer::MagnetometerModel;
+use helios_core::state::{Component, Quantity};
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
-use nalgebra::{DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
+use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::sync::Arc;
 
 const AGENT: FrameHandle = FrameHandle(1);
 const SENSOR: FrameHandle = FrameHandle(2);
+const AT: MonotonicTime = MonotonicTime(0.0);
 
 /// Random cases per sensor. Large enough to exercise the frame conventions
 /// across the pose/rate space; small enough to stay a fast unit-style test.
@@ -57,12 +64,17 @@ const TOL: f64 = 1e-9;
 struct SensorInBody(Isometry3<f64>);
 
 impl TfProvider for SensorInBody {
-    fn get_transform(&self, _from: FrameHandle, _to: FrameHandle) -> Option<Isometry3<f64>> {
-        Some(self.0)
-    }
-
-    fn world_pose(&self, _frame: FrameHandle) -> Option<Isometry3<f64>> {
-        Some(Isometry3::identity())
+    fn get_transform(
+        &self,
+        _from: FrameId,
+        _to: FrameId,
+        _at: MonotonicTime,
+    ) -> Option<ErasedTransform> {
+        Some(ErasedTransform::from_parts(
+            self.0,
+            Convention::Flu,
+            Convention::Flu,
+        ))
     }
 }
 
@@ -92,7 +104,7 @@ fn gps_forward_matches_filter_prediction() {
             Vector3::zeros(),
         );
         let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)))
+            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
             .unwrap();
 
         // Forward: the antenna observes its own world position directly.
@@ -129,7 +141,7 @@ fn gyroscope_forward_matches_filter_prediction() {
             Vector3::zeros(),
         );
         let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)))
+            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
             .unwrap();
 
         let ideal = forward.ideal(
@@ -169,7 +181,7 @@ fn accelerometer_forward_matches_filter_prediction() {
             alpha_body,
         );
         let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)))
+            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
             .unwrap();
 
         // Forward: the same kinematics rotated into world axes. Rotation
@@ -229,7 +241,7 @@ fn magnetometer_forward_matches_filter_prediction() {
             Vector3::zeros(),
         );
         let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)))
+            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
             .unwrap();
 
         let ideal = forward.ideal(sensor_from_world(&extrinsic, q_body_to_world));
@@ -259,10 +271,10 @@ fn reference_field_enu(declination: f64, inclination: f64, magnitude: f64) -> Ve
     )
 }
 
-/// Builds a filter state carrying every slot the four models read: world
+/// Builds a filter state carrying every block the four models read: world
 /// position, the body→world orientation, and the body-frame angular velocity,
-/// linear acceleration, and angular acceleration. Each group is laid out
-/// contiguously so `get_vector3` / `get_orientation` can find it.
+/// linear acceleration, and angular acceleration. Each is a composed
+/// [`Quantity`] block, so the models' typed block reads resolve against it.
 fn make_state(
     position_world: Vector3<f64>,
     q_body_to_world: UnitQuaternion<f64>,
@@ -270,66 +282,113 @@ fn make_state(
     linear_accel_body: Vector3<f64>,
     angular_accel_body: Vector3<f64>,
 ) -> FrameAwareState {
-    let world = FrameId::World;
+    // The estimate's kinematics live in the odom frame; the seeded values are the
+    // world-frame truth (odom is world-aligned with no drift in this test).
+    let world = FrameId::Odom(AGENT);
     let body = FrameId::Body(AGENT);
-    let layout = vec![
-        StateVariable::Px(world.clone()),
-        StateVariable::Py(world.clone()),
-        StateVariable::Pz(world.clone()),
-        StateVariable::Qx(body.clone(), world.clone()),
-        StateVariable::Qy(body.clone(), world.clone()),
-        StateVariable::Qz(body.clone(), world.clone()),
-        StateVariable::Qw(body.clone(), world.clone()),
-        StateVariable::Wx(body.clone()),
-        StateVariable::Wy(body.clone()),
-        StateVariable::Wz(body.clone()),
-        StateVariable::Ax(body.clone()),
-        StateVariable::Ay(body.clone()),
-        StateVariable::Az(body.clone()),
-        StateVariable::Alphax(body.clone()),
-        StateVariable::Alphay(body.clone()),
-        StateVariable::Alphaz(body.clone()),
-    ];
-    let mut state = FrameAwareState::new(layout, 1.0, 0.0);
 
-    set_vec3(&mut state, StateVariable::Px(world.clone()), position_world);
-    let q = q_body_to_world.quaternion();
-    state.set_variable(&StateVariable::Qx(body.clone(), world.clone()), q.i);
-    state.set_variable(&StateVariable::Qy(body.clone(), world.clone()), q.j);
-    state.set_variable(&StateVariable::Qz(body.clone(), world.clone()), q.k);
-    state.set_variable(&StateVariable::Qw(body.clone(), world.clone()), q.w);
+    // Flat kinematic blocks carry no process noise; the orientation block must
+    // (a quaternion retraction has no zero-noise covariance), and its value is
+    // irrelevant to this prediction-only test.
+    let flat = |quantity: Quantity| {
+        SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3))
+    };
+    let schema = StateSchema::compose(vec![
+        flat(Quantity::Position(world.clone())),
+        SchemaBlock::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap()),
+            DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+            DMatrix::identity(3, 3),
+        ),
+        flat(Quantity::AngularVelocity(body.clone())),
+        flat(Quantity::Acceleration(body.clone())),
+        flat(Quantity::AngularAcceleration(body.clone())),
+    ]);
+    let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+
     set_vec3(
         &mut state,
-        StateVariable::Wx(body.clone()),
+        StateVariable::new(Quantity::Position(world.clone()), Component::X),
+        position_world,
+    );
+    let q = q_body_to_world.quaternion();
+    state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Component::X,
+        ),
+        q.i,
+    );
+    state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Component::Y,
+        ),
+        q.j,
+    );
+    state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Component::Z,
+        ),
+        q.k,
+    );
+    state.set_variable(
+        &StateVariable::new(
+            Quantity::Orientation {
+                from: body.clone(),
+                to: world.clone(),
+            },
+            Component::W,
+        ),
+        q.w,
+    );
+    set_vec3(
+        &mut state,
+        StateVariable::new(Quantity::AngularVelocity(body.clone()), Component::X),
         angular_vel_body,
     );
     set_vec3(
         &mut state,
-        StateVariable::Ax(body.clone()),
+        StateVariable::new(Quantity::Acceleration(body.clone()), Component::X),
         linear_accel_body,
     );
     set_vec3(
         &mut state,
-        StateVariable::Alphax(body.clone()),
+        StateVariable::new(Quantity::AngularAcceleration(body.clone()), Component::X),
         angular_accel_body,
     );
 
     state
 }
 
-/// Writes a 3-vector into the `x`/`y`/`z` slots that follow `x_variable` in the
-/// layout, matching the contiguity `get_vector3` expects.
+/// Writes a 3-vector into the `x`/`y`/`z` slots named from `x_variable`, each
+/// set by name through the schema.
 fn set_vec3(state: &mut FrameAwareState, x_variable: StateVariable, value: Vector3<f64>) {
-    let (y_variable, z_variable) = match &x_variable {
-        StateVariable::Px(id) => (StateVariable::Py(id.clone()), StateVariable::Pz(id.clone())),
-        StateVariable::Wx(id) => (StateVariable::Wy(id.clone()), StateVariable::Wz(id.clone())),
-        StateVariable::Ax(id) => (StateVariable::Ay(id.clone()), StateVariable::Az(id.clone())),
-        StateVariable::Alphax(id) => (
-            StateVariable::Alphay(id.clone()),
-            StateVariable::Alphaz(id.clone()),
-        ),
-        other => panic!("set_vec3 called with a non-vector start variable: {other:?}"),
-    };
+    // The x/y/z slots share one quantity and differ only by component, so the
+    // siblings are the same quantity re-tagged. Callers always pass the X slot.
+    assert_eq!(
+        x_variable.component(),
+        &Component::X,
+        "set_vec3 expects the X-component start variable"
+    );
+    let quantity = x_variable.quantity().clone();
+    let y_variable = StateVariable::new(quantity.clone(), Component::Y);
+    let z_variable = StateVariable::new(quantity, Component::Z);
+
     state.set_variable(&x_variable, value.x);
     state.set_variable(&y_variable, value.y);
     state.set_variable(&z_variable, value.z);

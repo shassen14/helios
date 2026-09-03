@@ -9,10 +9,11 @@ use crate::{
     viz::{
         interaction::inspector::{
             gather::{
-                begin_inspection, gather_controller, gather_estimator, gather_identity, gather_pose,
+                begin_inspection, gather_actuators, gather_controller, gather_estimator,
+                gather_identity, gather_pose, gather_reference,
             },
             model::InspectorModel,
-            render::render_inspection,
+            render::{load_inspector_font, render_inspection},
         },
         VizSet,
     },
@@ -24,6 +25,14 @@ impl Plugin for InspectorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CurrentInspection>();
 
+        // Load the panel font once, only when an asset backend is present. The real
+        // host always has one (DefaultPlugins); the bare wiring-test app has none and
+        // the renderer falls back to the default face.
+        app.add_systems(
+            Startup,
+            load_inspector_font.run_if(resource_exists::<AssetServer>),
+        );
+
         app.add_systems(
             Update,
             (
@@ -32,6 +41,8 @@ impl Plugin for InspectorPlugin {
                 gather_pose,
                 gather_estimator,
                 gather_controller,
+                gather_reference,
+                gather_actuators,
                 render_inspection,
             )
                 .chain()

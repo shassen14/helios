@@ -5,18 +5,18 @@
 //! serves exactly one of them:
 //!
 //! - **ingress** — host state and intent flow *in*. [`spawn`] assembles the
-//!   pipeline and its odom/control components at scene-build; [`goal_input`]
+//!   pipeline and its odom/actuator components at scene-build; [`goal_input`]
 //!   feeds the mission goal each tick.
 //! - **tick** — [`tick`] advances every pipeline one step per `FixedUpdate`.
-//! - **egress** — pipeline results flow *out*. [`control_output`] copies the
-//!   latest control into the actuation component; [`odom_output`] writes the
-//!   pose estimate onto the odom frame.
+//! - **egress** — pipeline results flow *out*. [`actuator_output`] copies the
+//!   latest actuator command into the actuation component; [`odom_output`]
+//!   writes the pose estimate onto the odom frame.
 //!
 //! Each runtime module is named for the `SimulationSet` it runs in, so this
 //! module list mirrors the schedule. [`BrainBridgePlugin`] registers them all.
 
+pub mod actuator_output;
 pub mod components;
-pub mod control_output;
 pub mod goal_input;
 pub mod host_input_publisher;
 pub mod odom_output;
@@ -24,15 +24,15 @@ pub mod sensor_publisher;
 pub mod spawn;
 pub mod tick;
 
+pub use actuator_output::publish_pipeline_actuators;
 pub use components::{
     AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf, SensorPublishChannel,
 };
-pub use control_output::publish_pipeline_control;
 pub use goal_input::{dispatch_configured_goals, forward_goal_events};
 pub use host_input_publisher::HostInputPublisher;
 pub use odom_output::update_odom_frames;
 pub use sensor_publisher::SensorPublisher;
-pub use spawn::{spawn_autonomy_pipeline, spawn_control_output, spawn_odom_frames};
+pub use spawn::{spawn_actuator_command, spawn_autonomy_pipeline, spawn_odom_frames};
 pub use tick::run_pipeline_tick;
 
 use crate::core::events::GoalCommandEvent;
@@ -49,14 +49,14 @@ pub struct BrainBridgePlugin;
 impl Plugin for BrainBridgePlugin {
     fn build(&self, app: &mut App) {
         // Scene-build spawns. `SpawnPipeline` runs first (assembly reads the
-        // sensors' channels), then odom + control bind to the fresh pipeline.
-        // Odom and control are independent, so they share the `BindPipeline` pass.
+        // sensors' channels), then odom + actuator-command bind to the fresh
+        // pipeline. Both are independent, so they share the `BindPipeline` pass.
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
             (
                 spawn_autonomy_pipeline.in_set(SceneBuildSet::SpawnPipeline),
                 spawn_odom_frames.in_set(SceneBuildSet::BindPipeline),
-                spawn_control_output.in_set(SceneBuildSet::BindPipeline),
+                spawn_actuator_command.in_set(SceneBuildSet::BindPipeline),
             ),
         );
 
@@ -83,10 +83,10 @@ impl Plugin for BrainBridgePlugin {
                 .run_if(in_state(AppState::Running)),
         );
 
-        // Control egress.
+        // Actuator egress.
         app.add_systems(
             FixedUpdate,
-            publish_pipeline_control
+            publish_pipeline_actuators
                 .in_set(SimulationSet::BrainOutput)
                 .run_if(in_state(AppState::Running)),
         );

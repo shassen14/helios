@@ -1,15 +1,12 @@
-// helios_core/src/planning/types.rs
-//
 // Core planning data types: Path, PlannerGoal, PlannerResult, PlannerStatus.
+use crate::frames::{conventions::Enu, quantities::Point};
 
 use nalgebra::{Isometry3, Vector2};
-
-use crate::data::messages::TrajectoryPoint;
 
 /// A planned path: an ordered sequence of trajectory waypoints.
 #[derive(Clone)]
 pub struct Path {
-    pub waypoints: Vec<TrajectoryPoint>,
+    pub waypoints: Vec<Point<Enu>>,
     pub timestamp: f64,
     /// "global" | "local" | custom string matching PipelineLevel.
     pub level_key: String,

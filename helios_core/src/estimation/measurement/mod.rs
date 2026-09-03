@@ -13,8 +13,8 @@
 //!    or more accurate.
 //! 4. Re-export from this `mod.rs`.
 
+use crate::data::{ports::TfProvider, MonotonicTime};
 use crate::frames::FrameAwareState;
-use crate::ports::TfProvider;
 use nalgebra::{DMatrix, DVector};
 
 /// Mathematical model of a sensor: `z = h(x) + v`.
@@ -36,28 +36,56 @@ pub trait MeasurementModel: Send + Sync {
         &self,
         state: &FrameAwareState,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     ) -> Option<DVector<f64>>;
 
-    /// Measurement Jacobian `H = ∂h/∂x` of shape `(dim(), state.dim())`.
+    /// Measurement Jacobian `H = ∂h/∂δx` of shape `(dim(), tangent_dim)`.
     ///
-    /// Default impl computes `H` via central finite differences on
-    /// [`predict_measurement`] using adaptive epsilon `ε = 1e-5 · (1 + |xᵢ|)`.
-    /// Override for analytic Jacobians where performance or accuracy matters.
-    fn jacobian(&self, state: &FrameAwareState, tf: Option<&dyn TfProvider>) -> DMatrix<f64> {
+    /// Columns live in **tangent** (error) space, not stored-component space, so
+    /// `H` lines up with the covariance `P` and the transition `F` the filter
+    /// carries. The two differ wherever a block stores more numbers than it has
+    /// degrees of freedom — an orientation block is 4 stored, 3 tangent — so a
+    /// per-storage-component perturbation would be both mis-sized and off the
+    /// manifold.
+    ///
+    /// Default impl finite-differences [`predict_measurement`]: each column `j`
+    /// nudges the `j`-th tangent coordinate by `ε` and retracts onto the manifold
+    /// with `oplus`, then differences the prediction. One step size scales the
+    /// whole Jacobian, `ε = 1e-5 · (1 + ‖x‖∞)` — the tangent-space analog of the
+    /// crate's adaptive rule, since a tangent index has no single stored
+    /// component to scale against. Override for analytic Jacobians where
+    /// performance or accuracy matters; an override returns the same shape.
+    fn jacobian(
+        &self,
+        state: &FrameAwareState,
+        tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
+    ) -> DMatrix<f64> {
+        // Rows = measurement length; columns = tangent (error) DOF, not stored
+        // components — H must match P and F, which are tangent-indexed.
         let m = self.dim();
-        let n = state.dim();
+        let n = state.tangent_dim();
         let mut h = DMatrix::zeros(m, n);
-        let Some(z_base) = self.predict_measurement(state, tf) else {
+
+        let Some(z_base) = self.predict_measurement(state, tf, at) else {
             return h;
         };
+
         if z_base.nrows() != m {
             return h;
         }
+
+        let eps = 1e-5 * (1.0 + state.mean.amax());
         for j in 0..n {
-            let eps = 1e-5 * (1.0 + state.state.vector[j].abs());
+            // Bump the j-th tangent coordinate and retract onto the manifold, so
+            // an orientation perturbation rotates the quaternion instead of
+            // pushing it off the unit sphere.
+            let mut delta = DVector::zeros(n);
+            delta[j] = eps;
             let mut perturbed = state.clone();
-            perturbed.state.vector[j] += eps;
-            if let Some(z_pert) = self.predict_measurement(&perturbed, tf) {
+            perturbed.oplus_assign(&delta);
+
+            if let Some(z_pert) = self.predict_measurement(&perturbed, tf, at) {
                 if z_pert.nrows() == m {
                     let col = (z_pert - &z_base) / eps;
                     h.column_mut(j).copy_from(&col);

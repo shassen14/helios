@@ -1,12 +1,15 @@
-use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
-use nalgebra::{DMatrix, Isometry3, Vector2};
-
-use helios_core::frames::{FrameId, RobotState, StateVariable};
+use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::mapping::MapData;
+use helios_core::state::{Component, Quantity};
+
+use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use helios_core::planning::astar::{AStarConfig, AStarPlanner};
 use helios_core::planning::types::PlannerGoal;
 use helios_core::planning::SearchPlanner;
 use helios_core::planning::SearchPlannerInputs;
+use nalgebra::{DMatrix, DVector, Isometry3, Vector2};
+use std::sync::Arc;
 
 // =========================================================================
 // == Fixtures ==
@@ -25,16 +28,22 @@ fn bench_config() -> AStarConfig {
     }
 }
 
-fn make_state(x: f64, y: f64) -> RobotState {
-    let layout = vec![
-        StateVariable::Px(FrameId::World),
-        StateVariable::Py(FrameId::World),
-        StateVariable::Pz(FrameId::World),
-    ];
-    let mut state = RobotState::new(layout, 0.0);
-    state.vector[0] = x;
-    state.vector[1] = y;
-    state.vector[2] = 0.0;
+fn make_state(x: f64, y: f64) -> FrameAwareState {
+    let schema = Arc::new(StateSchema::compose(vec![SchemaBlock::new(
+        Quantity::Position(FrameId::World),
+        None,
+        DVector::zeros(3),
+        DMatrix::identity(3, 3),
+    )]));
+    let mut state = FrameAwareState::from_schema(schema, 0.0);
+    state.set_variable(
+        &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+        x,
+    );
+    state.set_variable(
+        &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+        y,
+    );
     state
 }
 

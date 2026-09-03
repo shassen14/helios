@@ -1,6 +1,7 @@
-use super::primitives::FrameHandle;
-
-use nalgebra::Isometry3;
+use crate::{
+    data::MonotonicTime,
+    frames::{transforms::ErasedTransform, FrameId},
+};
 
 /// Abstraction over any system that can answer transform queries between coordinate frames.
 ///
@@ -8,9 +9,10 @@ use nalgebra::Isometry3;
 /// as a hardware-clock-backed calibration tree. Filters receive `&dyn TfProvider` via
 /// `FilterContext` — they never depend on the concrete host type.
 pub trait TfProvider {
-    fn get_transform(&self, from: FrameHandle, to: FrameHandle) -> Option<Isometry3<f64>>;
-
-    /// Returns the world (ENU) pose of a frame directly from physics.
-    /// Use this to bypass the estimator entirely (e.g. ground-truth mapping).
-    fn world_pose(&self, frame: FrameHandle) -> Option<Isometry3<f64>>;
+    fn get_transform(
+        &self,
+        from: FrameId,
+        to: FrameId,
+        at: MonotonicTime,
+    ) -> Option<ErasedTransform>;
 }

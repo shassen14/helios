@@ -2,11 +2,20 @@
 //!
 //! Defines [`GaussianStateEstimator`], the trait shared by EKF, UKF, ESKF, and
 //! information-form filters. Concrete implementations live in [`filters`].
-use nalgebra::{DMatrix, DVector};
 
+pub mod augmentation;
+pub mod carrier;
+pub mod dynamics;
+pub mod filters;
+pub mod measurement;
+pub mod schema;
+
+use crate::data::ports::TfProvider;
+use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::FrameAwareState;
-use crate::ports::TfProvider;
+
+use nalgebra::{DMatrix, DVector};
 
 /// Predict-side inputs for a Gaussian estimator.
 ///
@@ -58,12 +67,9 @@ pub trait GaussianStateEstimator: Send + Sync {
         model: &dyn MeasurementModel,
         r: &DMatrix<f64>,
         tf: Option<&dyn TfProvider>,
+        at: MonotonicTime,
     );
 
     /// Current best state estimate `(x, P, t)`.
     fn state(&self) -> &FrameAwareState;
 }
-
-pub mod dynamics;
-pub mod filters;
-pub mod measurement;

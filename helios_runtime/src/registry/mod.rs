@@ -21,32 +21,21 @@
 //! ```
 
 pub mod contexts;
-mod controller;
-mod dynamics;
-mod gaussian_estimator;
-mod mapper;
-mod measurement_model;
-mod mock_estimator;
-mod path_follower;
-mod search_planner;
 
 use contexts::{
-    ControllerBuildContext, DynamicsBuildContext, GaussianEstimatorBuildContext,
-    MapperBuildContext, MeasurementModelBuildContext, MockEstimatorBuildContext,
-    PathFollowerBuildContext, SearchPlannerBuildContext,
+    ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
+    MeasurementModelBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
+    SearchPlannerBuildContext,
 };
 
 use crate::config::EstimatorConfig;
 use crate::pipeline::node::PipelineNode;
+use crate::registry::contexts::AllocatorBuildContext;
 use crate::validation::CapabilitySet;
 
-use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::measurement::MeasurementModel;
 
 use std::collections::HashMap;
-
-type DynamicsFactory =
-    Box<dyn Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String> + Send + Sync>;
 
 type MeasurementModelFactory = Box<
     dyn Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> + Send + Sync,
@@ -68,6 +57,9 @@ type MapperFactory =
 type ControllerFactory =
     Box<dyn Fn(ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
+type AllocatorFactory =
+    Box<dyn Fn(AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
+
 type SearchPlannerFactory =
     Box<dyn Fn(SearchPlannerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
@@ -86,11 +78,11 @@ type MockEstimatorFactory = Box<
 /// function. Keys match the `kind` strings used in TOML config (e.g. `"Ekf"`,
 /// `"AStar"`, `"PurePursuit"`).
 pub struct AutonomyRegistry {
-    dynamics: HashMap<String, DynamicsFactory>,
     measurement_models: HashMap<String, MeasurementModelFactory>,
     gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
     mappers: HashMap<String, MapperFactory>,
     controllers: HashMap<String, ControllerFactory>,
+    allocators: HashMap<String, AllocatorFactory>,
     search_planners: HashMap<String, SearchPlannerFactory>,
     path_followers: HashMap<String, PathFollowerFactory>,
     // mocks
@@ -100,41 +92,29 @@ pub struct AutonomyRegistry {
 impl Default for AutonomyRegistry {
     fn default() -> Self {
         let mut registry = Self {
-            dynamics: HashMap::new(),
             measurement_models: HashMap::new(),
             gaussian_estimators: HashMap::new(),
             mappers: HashMap::new(),
             controllers: HashMap::new(),
+            allocators: HashMap::new(),
             search_planners: HashMap::new(),
             path_followers: HashMap::new(),
             mock_estimators: HashMap::new(),
         };
         // Registration order: leaf dependencies before composites.
-        dynamics::register(&mut registry);
-        measurement_model::register(&mut registry);
-        gaussian_estimator::register(&mut registry);
-        mapper::register(&mut registry);
-        controller::register(&mut registry);
-        search_planner::register(&mut registry);
-        path_follower::register(&mut registry);
-        mock_estimator::register(&mut registry);
+        crate::nodes::gaussian_estimator::register(&mut registry);
+        crate::nodes::occupancy_grid::register(&mut registry);
+        crate::nodes::controller::register(&mut registry);
+        crate::nodes::planner::register(&mut registry);
+        crate::nodes::path_follower::register(&mut registry);
+        crate::nodes::mocks::register(&mut registry);
+        crate::nodes::allocator::register(&mut registry);
         registry
     }
 }
 
 impl AutonomyRegistry {
     // --- Registration ---
-
-    pub(crate) fn register_dynamics(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(DynamicsBuildContext) -> Result<Box<dyn EstimationDynamics>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.dynamics.insert(key.into(), Box::new(factory));
-    }
 
     pub(crate) fn register_measurement_model(
         &mut self,
@@ -186,6 +166,17 @@ impl AutonomyRegistry {
         self.controllers.insert(key.into(), Box::new(factory));
     }
 
+    pub(crate) fn register_allocator(
+        &mut self,
+        key: impl Into<String>,
+        factory: impl Fn(AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.allocators.insert(key.into(), Box::new(factory));
+    }
+
     pub(crate) fn register_search_planner(
         &mut self,
         key: impl Into<String>,
@@ -220,16 +211,6 @@ impl AutonomyRegistry {
     }
 
     // --- Build ---
-
-    pub(crate) fn build_dynamics(
-        &self,
-        key: &str,
-        ctx: DynamicsBuildContext,
-    ) -> Result<Box<dyn EstimationDynamics>, String> {
-        self.dynamics
-            .get(key)
-            .ok_or_else(|| format!("No dynamics factory registered for '{key}'"))?(ctx)
-    }
 
     pub(crate) fn build_measurement_model(
         &self,
@@ -276,6 +257,16 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No controller factory registered for '{key}'"))?(ctx)
     }
 
+    pub(crate) fn build_allocator(
+        &self,
+        key: &str,
+        ctx: AllocatorBuildContext,
+    ) -> Result<Box<dyn PipelineNode>, String> {
+        self.allocators
+            .get(key)
+            .ok_or_else(|| format!("No allocator factory registered for '{key}'"))?(ctx)
+    }
+
     pub(crate) fn build_search_planner(
         &self,
         key: &str,
@@ -314,11 +305,11 @@ impl AutonomyRegistry {
     pub fn capabilities(&self) -> CapabilitySet {
         CapabilitySet {
             gaussian_estimators: self.gaussian_estimators.keys().cloned().collect(),
-            dynamics: self.dynamics.keys().cloned().collect(),
             measurement_models: self.measurement_models.keys().cloned().collect(),
             mappers: self.mappers.keys().cloned().collect(),
             controllers: self.controllers.keys().cloned().collect(),
             planners: self.search_planners.keys().cloned().collect(),
+            allocators: self.allocators.keys().cloned().collect(),
         }
     }
 }

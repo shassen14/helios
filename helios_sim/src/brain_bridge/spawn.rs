@@ -1,18 +1,21 @@
 use crate::brain_bridge::components::{
     AgentIdComponent, AutonomyPipelineComponent, MissionGoalChannels, OdomFrameOf,
-    PipelineBuildFailed, SensorPublishChannel,
+    PipelineBuildFailed, SensorPublishChannel, TeleopControlled,
 };
-use crate::core::components::{ControlOutputComponent, ControllerStateSource};
+use crate::core::components::{ActuatorCommandComponent, ControllerStateSource};
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
+use helios_core::control::actuators::ActuatorCommand;
 use helios_core::data::primitives::FrameHandle;
+use helios_core::frames::transforms::Convention;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
+use helios_runtime::config::ReferenceSource;
 use helios_runtime::{
-    build_pipeline, AutonomyStack, BodyCapabilities, Provenance, PublishedChannel,
+    build_pipeline, check_actuation_agreement, AutonomyStack, BodyCapabilities, Provenance,
+    PublishedChannel,
 };
 
-use nalgebra::Vector3;
 use std::collections::{BTreeSet, HashMap};
 
 /// Spawns the autonomy pipeline for agents with real estimation.
@@ -30,6 +33,23 @@ pub fn spawn_autonomy_pipeline(
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
         let agent_handle = FrameHandle::from_entity(agent_entity);
+
+        if let Err(mismatches) = check_actuation_agreement(stack, &agent_config.vehicle.actuation) {
+            for mismatch in &mismatches {
+                error!(
+                    "[spawn_autonomy_pipeline] Agent '{}': {}",
+                    agent_config.name(),
+                    mismatch
+                );
+            }
+            commands
+                .entity(agent_entity)
+                .insert(AgentIdComponent(agent_config.name().to_string()))
+                .insert(PipelineBuildFailed {
+                    errors: mismatches.iter().map(|m| m.to_string()).collect(),
+                });
+            continue;
+        }
 
         let sensor_frame_handles: HashMap<String, FrameHandle> = children
             .iter()
@@ -65,6 +85,13 @@ pub fn spawn_autonomy_pipeline(
 
                 if !goal_channels.is_empty() {
                     cmds.insert(MissionGoalChannels(goal_channels.into_iter().collect()));
+                }
+                if stack
+                    .reference_arbitration
+                    .sources
+                    .contains(&ReferenceSource::Teleop)
+                {
+                    cmds.insert(TeleopControlled);
                 }
 
                 info!(
@@ -103,7 +130,11 @@ pub fn spawn_odom_frames(
         let agent_name = request.0.name();
         commands.spawn((
             Name::new(format!("{}/odom", agent_name)),
-            TrackedFrame,
+            // ENU because the estimator's world frame is ENU. This is a property
+            // of the estimation stack, not the vehicle — every agent's odom shares
+            // it regardless of body convention. A future NED-world estimator would
+            // make this configurable at the estimator layer, not per vehicle.
+            TrackedFrame(Convention::Enu),
             Transform::IDENTITY,
             GlobalTransform::IDENTITY,
             OdomFrameOf(agent_entity),
@@ -112,16 +143,13 @@ pub fn spawn_odom_frames(
     }
 }
 
-pub fn spawn_control_output(
+pub fn spawn_actuator_command(
     mut commands: Commands,
     agent_query: Query<Entity, With<AutonomyPipelineComponent>>,
 ) {
     for entity in &agent_query {
         commands.entity(entity).insert((
-            ControlOutputComponent(ControlOutput::BodyVelocity {
-                linear: Vector3::zeros(),
-                angular: Vector3::zeros(),
-            }),
+            ActuatorCommandComponent(ActuatorCommand::new(vec![])),
             // Required by the vehicle HUD and toggled with T at runtime.
             // GroundTruth is the safer default so the controller sees real
             // physics state until the estimator has spun up.
@@ -145,8 +173,8 @@ pub fn spawn_control_output(
 ///
 /// - `name`: cloned from `agent_name`; used by error messages
 ///   (`PipelineBuildError::UnsatisfiedBodyCapabilities`) and the DAG dump.
-/// - `consumes_control`: hardcoded `true` — every sim agent has an
-///   actuation adapter (`AckermannAdapterComponent` etc.). Becomes a
+/// - `consumes_control`: hardcoded `true` — every sim agent has a vehicle
+///   plugin that applies the pipeline's actuator command to physics. Becomes a
 ///   parameter (or moves to `AgentConfig`) once passive observer agents,
 ///   log-playback agents, or hw-passive Zenoh-bridge nodes exist.
 /// - `publishes`: only the two oracle channels — `oracle/pose` (world ENU)

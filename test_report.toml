@@ -1,8 +1,8 @@
-run_name = "smoke"
-scenario = "sim/scenarios/00_tutorial_showcase.toml"
+run_name = "raycast"
+scenario = "sim/scenarios/raycast_car_scenario.toml"
 status = "passed"
-simulated_duration_secs = 5.0
-wall_duration_secs = 0.7851235
+simulated_duration_secs = 60.0
+wall_duration_secs = 8.496362917
 assertions = []
 
 [terminated_by]

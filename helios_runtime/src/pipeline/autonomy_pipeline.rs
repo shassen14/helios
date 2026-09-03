@@ -1,11 +1,15 @@
 use crate::{
+    channels::control,
     pipeline::{key_format::format_key_short, rate_gate::RateTimer},
     port::{ChannelKey, ChannelKind, InternalChannel, PortBus},
     prelude::{AgentRuntime, PipelineNode, Stamped, TickContext},
     BodyCapabilities, NodeId, PipelineBuildError,
 };
 
-use helios_core::{frames::FrameAwareState, prelude::ControlOutput};
+use helios_core::{
+    control::{actuators::ActuatorCommand, commands::BodyTwist},
+    frames::FrameAwareState,
+};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -240,7 +244,15 @@ impl PipelineBuilder {
             .iter()
             .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));
 
-        let bus = PortBus::new(descriptor_iter);
+        let mut bus = PortBus::new(descriptor_iter);
+
+        // `command` is the one channel with an out-of-graph consumer: a
+        // control-consuming body reads it back through `read_control`. Guarantee
+        // its slot so a teleop-only stack (no controller, no in-graph producer)
+        // can still have the host's command land instead of dropping.
+        if self.capabilities.consumes_control {
+            bus.ensure_slot(control::command::<BodyTwist>().into());
+        }
 
         // One timer per node, indexed by NodeId (which matches level-major
         // iteration order below).
@@ -439,7 +451,27 @@ impl AutonomyPipeline {
 
     /// Reads the current control output, if any controller node has
     /// written one this run.
-    pub fn read_control(&self) -> Option<Arc<Stamped<ControlOutput>>> {
-        self.bus.read(InternalChannel::of::<ControlOutput>().into())
+    ///
+    /// This canonical accessor names one concrete command type. Today that is
+    /// [`BodyTwist`] — the command the current controller family emits — so it is
+    /// morphology-specific: a controller whose `Out` is not `BodyTwist` publishes
+    /// fine on the bus (the node is generic over `C::Out`) but is not visible
+    /// through this accessor. The actuator terminal makes the canonical control
+    /// output a single universal command type, at which point this accessor stops
+    /// being morphology-specific. Read other command channels by name via
+    /// [`bus`](Self::bus)`().read::<T>(key)` in the meantime.
+    pub fn read_control(&self) -> Option<Arc<Stamped<BodyTwist>>> {
+        self.bus.read(control::command::<BodyTwist>().into())
+    }
+
+    /// Reads the pipeline's actuator terminal — the per-actuator command the
+    /// allocator produces, and the host relay consumes.
+    ///
+    /// Unlike [`read_control`](Self::read_control), this is morphology-neutral:
+    /// [`ActuatorCommand`] is the one universal type every host applies,
+    /// whatever the vehicle. Returns `None` during cold-start (before the
+    /// allocator's first output) and when no allocator node is in the graph.
+    pub fn read_actuators(&self) -> Option<Arc<Stamped<ActuatorCommand>>> {
+        self.bus.read(control::actuators().into())
     }
 }

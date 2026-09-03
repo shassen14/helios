@@ -9,6 +9,7 @@ pub mod body;
 pub mod channels;
 pub mod config;
 pub mod diagnostics;
+pub mod nodes;
 pub mod pipeline;
 pub mod port;
 pub mod prelude;
@@ -17,7 +18,9 @@ pub mod runtime;
 pub mod stamped;
 pub mod validation;
 
-pub use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
+pub use crate::body::{
+    check_actuation_agreement, ActuatorKindMismatch, BodyCapabilities, Provenance, PublishedChannel,
+};
 pub use crate::pipeline::build_error::PipelineBuildError;
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{AutonomyPipeline, PipelineBuilder};
@@ -32,9 +35,8 @@ pub use crate::config::{
     SensorModelConfig, UkfConfig,
 };
 pub use crate::registry::contexts::{
-    ControllerBuildContext, DynamicsBuildContext, GaussianEstimatorBuildContext,
-    MapperBuildContext, MeasurementModelBuildContext, PathFollowerBuildContext,
-    SearchPlannerBuildContext,
+    ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
+    MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 pub use crate::registry::AutonomyRegistry;
 pub use crate::runtime::AgentRuntime;

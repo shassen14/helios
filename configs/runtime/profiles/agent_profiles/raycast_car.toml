@@ -1,0 +1,113 @@
+# =========================================================================
+# == Agent Profile: Raycast Car ==
+# =========================================================================
+# Portable autonomy for the L1 raycast car. No vehicle, sensors, or physics.
+# Root-level keys are the fields of AutonomyStack. Safe to load in helios_hw.
+#
+# Estimator, planner, and path follower are identical to `pro_car`. What
+# differs is the control stanza: the L0 car's single KinematicAckermann
+# allocator over a BodyTwist is replaced by a DECOUPLED stack — an independent
+# drive leg and steer leg — because the raycast plant applies Torque and
+# Position, not a body velocity.
+
+# ekf_advanced matches the ins_pro sensor suite this profile is flown with.
+[estimators.primary]
+from = "runtime.catalog.estimators.ekf_advanced"
+
+[search_planners]
+local_path = { from = "runtime.catalog.planners.a_star" }
+
+# The A* planner reads the occupancy grid published on the `local` layer; the
+# grid is built by the lidar the sim prefab mounts. Without this layer the
+# planner's map input is unsatisfiable and the pipeline fails validation.
+[map_layers.local]
+from = "runtime.catalog.mappers.occupancy_grid_2d"
+
+[path_following]
+kind = "PurePursuit"
+max_speed_m_s = 5.0
+min_speed_m_s = 0.5
+lookahead_distance_m = 4.0
+goal_radius = 3.0
+max_lateral_acceleration = 3.0
+state_source = "ground_truth"
+
+# --- Control: decoupled drive + steer legs ---
+# PurePursuit emits one BodyTwistRef reference; both controllers below consume
+# it. The drive leg reads its forward-speed component, the steer leg its
+# curvature — no extra reference plumbing.
+
+# Drive leg (feedback): closes forward speed to a DriveForce. The assembler
+# folds this (and the road-load feedforward below) into the DriveForce command
+# that the WheelTorque allocator consumes.
+# TUNING: gains map a speed error (m/s) to a body force (N). The proportional
+# gain owns the buildup off the line — raise it for a snappier launch until the
+# tyre slips (friction budget μ·N) or the loop rings. The integral is small and
+# clamped: the feedforward already holds the steady rolling force, so the
+# integrator only trims residuals and must not bank a large reservoir, which is
+# what made reverse lag after a forward run. integral_clamp caps the accumulator;
+# I-force authority = integral_gain · integral_clamp ≈ 300 N here.
+# `state_source = "ground_truth"` isolates control tuning from estimator noise —
+# flip to "estimated" once it drives clean.
+[controllers.drive_speed]
+kind = "LongitudinalVelocity"
+state_source = "ground_truth"
+proportional_gain = 3000.0
+integral_gain = 30.0
+derivative_gain = 0.0
+integral_clamp = 10.0
+
+# Drive leg (feedforward): the open-loop road-load force that holds the reference
+# speed against the car's own resistances, computed from the reference alone. It
+# folds into the same DriveForce command as the feedback leg (Sum). Its job is
+# steady-state, not transient — it carries the constant rolling hold so the
+# feedback integral doesn't have to, which is what lets the integral stay low and
+# clamped without the car sagging below speed. It does NOT speed the buildup off
+# the line; that is the proportional gain's job.
+# TUNING: c_roll matches the plant's steady rolling resistance
+# (rolling_resistance · mass · g = 0.015 · 1500 · 9.81 ≈ 221 N). c_drag is 0
+# because the raycast plant models no aerodynamic drag; give it a value only if a
+# chassis-drag term is added to the plant, so the inverse map stays honest.
+[controllers.drive_ff]
+kind = "RoadLoad"
+c_roll = 220.0
+c_drag = 0.0
+
+# Steer leg (feedforward): inverts the bicycle model, turning the reference
+# curvature into a SteerAngle. Reference-only — the cross-track/heading feedback
+# lives in the PurePursuit path follower, not here.
+[controllers.steer_ff]
+kind = "BicycleSteer"
+wheelbase = 2.5
+
+# Drive allocator: DriveForce → wheel Torque (τ = F · wheel_radius). `drive`
+# names the actuator in the vehicle's [actuation] contract. wheel_radius must
+# match the plant's suspension.wheel_radius.
+[allocators.drive]
+kind = "WheelTorque"
+wheel_radius = 0.3
+drive = "drive"
+
+# Steer allocator: SteerAngle → steer Position (pass-through).
+[allocators.steer]
+kind = "SteerPosition"
+steer = "steer"
+
+# Autonomy and teleop both contend for the guidance reference seam. The path
+# follower writes the autonomy contender; the teleop mapper below writes the
+# teleop contender; a freshness selector picks the fresher onto the reference the
+# controllers track. Releasing the drive keys lets the teleop reference age out,
+# so the follower reclaims the seam with no explicit release. Listed highest-
+# authority first.
+[reference_arbitration]
+sources = ["autonomy", "teleop"]
+
+# Teleop mapper: normalized operator intent (per-axis deflection in [-1, 1]) →
+# a BodyTwistRef, scaled per DOF. A car drives only forward speed and turn rate,
+# so it names surge (m/s) and yaw (rad/s); the other four axes default to 0.0 —
+# an honest statement the body cannot drive them, not a dead field. Default keys:
+# ↑/↓ surge, ←/→ yaw.
+[teleop]
+kind = "Twist"
+surge = 5.0  # peak forward speed at full deflection, m/s (matches max_speed_m_s)
+yaw = 1.0    # peak turn rate at full deflection, rad/s

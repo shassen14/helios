@@ -4,6 +4,8 @@ use helios_runtime::config::{AgentBaseConfig, AutonomyStack};
 use serde::Deserialize;
 use std::collections::HashMap;
 
+use crate::config::structs::CameraVantage;
+
 use super::{
     pose::Pose,
     sensors::SensorConfig,
@@ -14,31 +16,51 @@ use super::{
 };
 
 /// The primary Bevy resource holding all configuration for a simulation run.
+///
+/// Everything except `agents` lives in [`ScenarioCommon`], flattened in so the
+/// TOML shape is unchanged (`[simulation]`, `[world]`, … stay top-level) while
+/// the loader moves the whole shared block across in one step. `agents` is the
+/// sole field that differs from [`RawScenarioConfig`]: here it is typed, there
+/// it is still unresolved. (`deny_unknown_fields` cannot combine with
+/// `flatten`; unknown-key rejection lives in the nested `[simulation]`/`[world]`
+/// structs, which is where a real typo lands anyway.)
 #[derive(Resource, Debug, Deserialize, Default)]
-#[serde(deny_unknown_fields)]
 pub struct ScenarioConfig {
-    #[serde(default)]
-    pub simulation: Simulation,
-
-    #[serde(default)]
-    pub world: World,
-
-    #[serde(default)]
-    pub metrics: MetricsConfig,
+    #[serde(flatten)]
+    pub common: ScenarioCommon,
 
     #[serde(default)]
     pub agents: Vec<AgentConfig>,
 }
 
-/// Temporary helper for the initial file-loading step before agent prefab resolution.
-#[derive(Deserialize)]
-pub struct RawScenarioConfig {
+/// Every scenario field that is identical before and after agent resolution —
+/// all of it but the agents. Both [`ScenarioConfig`] and [`RawScenarioConfig`]
+/// embed this with `#[serde(flatten)]`, so a new top-level block is declared
+/// here once and both structs plus the loader's assembly step pick it up with
+/// no further edits.
+#[derive(Debug, Deserialize, Default)]
+pub struct ScenarioCommon {
     #[serde(default)]
     pub simulation: Simulation,
+
     #[serde(default)]
     pub world: World,
+
     #[serde(default)]
     pub metrics: MetricsConfig,
+
+    #[serde(default)]
+    pub camera: CameraVantage,
+}
+
+/// Temporary helper for the initial file-loading step before agent prefab
+/// resolution: identical to [`ScenarioConfig`] but for `agents`, which are
+/// still opaque `figment::Value`s awaiting `from`-reference resolution.
+#[derive(Deserialize)]
+pub struct RawScenarioConfig {
+    #[serde(flatten)]
+    pub common: ScenarioCommon,
+
     #[serde(default)]
     pub agents: Vec<Value>,
 }
