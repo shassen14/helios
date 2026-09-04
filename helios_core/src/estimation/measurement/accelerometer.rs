@@ -2,10 +2,12 @@ use crate::data::ports::TfProvider;
 use crate::data::primitives::FrameHandle;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
+use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
 use crate::frames::conventions::{Enu, Flu};
 use crate::frames::quantities::FreeVector;
-use crate::frames::transforms::Rotation;
+use crate::frames::transforms::{Convention, Rotation};
 use crate::frames::{FrameAwareState, FrameId};
+use crate::state::Quantity;
 
 use nalgebra::{DVector, Vector3};
 
@@ -36,6 +38,19 @@ pub struct SpecificForceModel {
 impl MeasurementModel for SpecificForceModel {
     fn dim(&self) -> usize {
         3
+    }
+
+    /// One block: specific force in the sensor frame (FLU). Specific force is
+    /// its own quantity, distinct from the state's kinematic `Acceleration`, so
+    /// the construction-time agreement check never conflates the two.
+    fn schema(&self) -> MeasurementSchema {
+        let frame = FrameId::Sensor(self.sensor_handle);
+        let blocks = vec![MeasurementSchemaBlock::new(
+            Quantity::SpecificForce(frame),
+            Convention::Flu,
+        )];
+
+        MeasurementSchema::compose(blocks)
     }
 
     /// Predicts the proper acceleration measured by an accelerometer in its sensor frame.
@@ -108,8 +123,10 @@ mod tests {
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
+    use crate::estimation::schema::BlockConvention;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId};
+    use crate::state::Quantity;
 
     use nalgebra::Isometry3;
     use std::sync::Arc;
@@ -152,6 +169,21 @@ mod tests {
     #[test]
     fn dim_is_three() {
         assert_eq!(make_model().dim(), 3);
+    }
+
+    #[test]
+    fn schema_matches_dim_and_tags_the_sensor_frame_specific_force() {
+        let schema = make_model().schema();
+        assert_eq!(schema.dim(), make_model().dim());
+        assert_eq!(schema.blocks().len(), 1);
+        let block = &schema.blocks()[0];
+        // Specific force, not kinematic acceleration — its own quantity, so the
+        // agreement check never mistakes it for the state's Acceleration block.
+        assert_eq!(
+            block.quantity(),
+            &Quantity::SpecificForce(FrameId::Sensor(SENSOR))
+        );
+        assert_eq!(block.convention(), &BlockConvention::Single(Convention::Flu));
     }
 
     #[test]

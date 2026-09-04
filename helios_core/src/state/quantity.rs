@@ -8,6 +8,7 @@ pub enum Quantity {
     Position(FrameId),
     Velocity(FrameId),
     Acceleration(FrameId),
+    SpecificForce(FrameId),
     AngularVelocity(FrameId),
     AngularAcceleration(FrameId),
     Mag(FrameId),

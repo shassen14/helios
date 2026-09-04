@@ -251,9 +251,11 @@ mod tests {
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::data::sensor::LinearAcceleration3D;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
     use helios_core::estimation::EstimatorInputs;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId};
+    use helios_core::state::Quantity;
     use nalgebra::{DMatrix, DVector, Isometry3};
     use std::sync::Mutex as StdMutex;
 
@@ -336,6 +338,15 @@ mod tests {
     impl MeasurementModel for OnePassModel {
         fn dim(&self) -> usize {
             3
+        }
+        // A plumbing mock: it predicts a zero 3-vector to exercise the node's
+        // tick/update path, not any real measurement. Its schema is just some
+        // 3-DOF world-frame block so the shape agrees with `dim`.
+        fn schema(&self) -> MeasurementSchema {
+            MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
+                Quantity::Position(FrameId::World),
+                Convention::Enu,
+            )])
         }
         fn predict_measurement(
             &self,

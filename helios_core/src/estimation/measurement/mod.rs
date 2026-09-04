@@ -14,6 +14,7 @@
 //! 4. Re-export from this `mod.rs`.
 
 use crate::data::{ports::TfProvider, MonotonicTime};
+use crate::estimation::schema::MeasurementSchema;
 use crate::frames::FrameAwareState;
 use nalgebra::{DMatrix, DVector};
 
@@ -97,6 +98,17 @@ pub trait MeasurementModel: Send + Sync {
 
     /// Dimension of the measurement vector `z`.
     fn dim(&self) -> usize;
+
+    /// The measurement's typed shape: the ordered blocks the model predicts and
+    /// the axis convention each is expressed in.
+    ///
+    /// The measurement analogue of a dynamics model's
+    /// [`StateSchema`](crate::estimation::schema::StateSchema) — it names every
+    /// component of `z` and the frame it lives in, so an estimator can verify at
+    /// construction that model and state agree on conventions at the `h(x)`
+    /// seam. `schema().dim()` equals [`dim`](Self::dim); the two coexist only
+    /// until callers move off the bare length.
+    fn schema(&self) -> MeasurementSchema;
 }
 
 pub mod accelerometer;

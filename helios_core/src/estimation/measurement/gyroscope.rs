@@ -4,9 +4,12 @@ use crate::data::ports::TfProvider;
 use crate::data::primitives::FrameHandle;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
+use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
 use crate::frames::conventions::Flu;
 use crate::frames::quantities::FreeVector;
+use crate::frames::transforms::Convention;
 use crate::frames::{FrameAwareState, FrameId};
+use crate::state::Quantity;
 
 /// What the filter believes a rate gyroscope reports: the body's angular
 /// velocity, rotated into the sensor frame.
@@ -26,6 +29,18 @@ pub struct AngularRateModel {
 impl MeasurementModel for AngularRateModel {
     fn dim(&self) -> usize {
         3
+    }
+
+    /// One block: the body's angular velocity resolved in the sensor frame
+    /// (FLU) — exactly what `predict_measurement` returns.
+    fn schema(&self) -> MeasurementSchema {
+        let frame = FrameId::Sensor(self.sensor_handle);
+        let blocks = vec![MeasurementSchemaBlock::new(
+            Quantity::AngularVelocity(frame),
+            Convention::Flu,
+        )];
+
+        MeasurementSchema::compose(blocks)
     }
 
     /// Predicts angular velocity in the sensor frame.
@@ -74,6 +89,7 @@ mod tests {
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
+    use crate::estimation::schema::BlockConvention;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId};
     use nalgebra::Isometry3;
@@ -117,6 +133,21 @@ mod tests {
     #[test]
     fn dim_is_three() {
         assert_eq!(make_model().dim(), 3);
+    }
+
+    #[test]
+    fn schema_matches_dim_and_tags_the_sensor_frame_angular_velocity() {
+        let schema = make_model().schema();
+        // The typed shape agrees with the bare length it will eventually replace.
+        assert_eq!(schema.dim(), make_model().dim());
+        // One block: angular velocity in the sensor frame, expressed FLU.
+        assert_eq!(schema.blocks().len(), 1);
+        let block = &schema.blocks()[0];
+        assert_eq!(
+            block.quantity(),
+            &Quantity::AngularVelocity(FrameId::Sensor(SENSOR))
+        );
+        assert_eq!(block.convention(), &BlockConvention::Single(Convention::Flu));
     }
 
     #[test]

@@ -4,10 +4,12 @@ use crate::data::ports::TfProvider;
 use crate::data::primitives::FrameHandle;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
+use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
 use crate::frames::conventions::{Enu, Flu};
 use crate::frames::quantities::Point;
-use crate::frames::transforms::Rotation;
+use crate::frames::transforms::{Convention, Rotation};
 use crate::frames::{FrameAwareState, FrameId};
+use crate::state::Quantity;
 
 /// A measurement model for a standard GPS sensor that provides 3D position.
 ///
@@ -32,6 +34,17 @@ impl MeasurementModel for GpsPositionModel {
         3
     }
 
+    /// One block: antenna position in the agent's odom frame (ENU), keyed by the
+    /// agent handle — the same `FrameId` the state carries — not the sensor.
+    fn schema(&self) -> MeasurementSchema {
+        let frame = FrameId::Odom(self.agent_handle);
+        let blocks = vec![MeasurementSchemaBlock::new(
+            Quantity::Position(frame),
+            Convention::Enu,
+        )];
+
+        MeasurementSchema::compose(blocks)
+    }
     /// Predicts antenna position in the ENU world frame.
     ///
     /// Requires `tf` to resolve the body→antenna translation. Returns `None`
@@ -95,6 +108,7 @@ mod tests {
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
+    use crate::estimation::schema::BlockConvention;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::state::{Component, Quantity};
@@ -154,6 +168,18 @@ mod tests {
     #[test]
     fn dim_is_three() {
         assert_eq!(make_model().dim(), 3);
+    }
+
+    #[test]
+    fn schema_matches_dim_and_tags_the_odom_frame_position() {
+        let schema = make_model().schema();
+        assert_eq!(schema.dim(), make_model().dim());
+        assert_eq!(schema.blocks().len(), 1);
+        let block = &schema.blocks()[0];
+        // Position in the agent's odom frame (ENU), keyed by AGENT — the same
+        // FrameId the state carries, so the agreement check lines up.
+        assert_eq!(block.quantity(), &Quantity::Position(FrameId::Odom(AGENT)));
+        assert_eq!(block.convention(), &BlockConvention::Single(Convention::Enu));
     }
 
     #[test]

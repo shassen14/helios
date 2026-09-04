@@ -278,7 +278,7 @@ mod tests {
     use crate::data::ports::TfProvider;
     use crate::data::MonotonicTime;
     use crate::estimation::measurement::MeasurementModel;
-    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
+    use crate::estimation::schema::{MeasurementSchema, StateSchema, StateSchemaBlock};
     use crate::estimation::EstimatorInputs;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId};
@@ -350,6 +350,14 @@ mod tests {
     impl MeasurementModel for Position2DMeasurement {
         fn dim(&self) -> usize {
             2
+        }
+
+        // A 2D position observes only x and y. A `Position` quantity is a whole
+        // 3-vector, so no honest block yields dim 2 — partial-component
+        // measurements are not yet expressible as a schema block. The update
+        // tests never ask this mock for a schema, so the gap is recorded, not hit.
+        fn schema(&self) -> MeasurementSchema {
+            unimplemented!("2D (partial-component) position measurement has no MeasurementSchema block yet")
         }
 
         fn predict_measurement(

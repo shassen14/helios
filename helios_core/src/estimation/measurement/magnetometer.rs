@@ -1,12 +1,16 @@
 use crate::{
     data::{ports::TfProvider, primitives::FrameHandle, MonotonicTime},
-    estimation::measurement::MeasurementModel,
+    estimation::{
+        measurement::MeasurementModel,
+        schema::{MeasurementSchema, MeasurementSchemaBlock},
+    },
     frames::{
         conventions::{Enu, Flu},
         quantities::FreeVector,
-        transforms::Rotation,
+        transforms::{Convention, Rotation},
         FrameAwareState, FrameId,
     },
+    state::Quantity,
 };
 use nalgebra::{DVector, Vector3};
 
@@ -25,6 +29,17 @@ pub struct MagneticFieldModel {
 impl MeasurementModel for MagneticFieldModel {
     fn dim(&self) -> usize {
         3
+    }
+
+    /// One block: the magnetic field resolved in the sensor frame (FLU).
+    fn schema(&self) -> MeasurementSchema {
+        let frame = FrameId::Sensor(self.sensor_handle);
+        let blocks = vec![MeasurementSchemaBlock::new(
+            Quantity::Mag(frame),
+            Convention::Flu,
+        )];
+
+        MeasurementSchema::compose(blocks)
     }
 
     /// Predicts the magnetic field in the sensor frame: the known world field is
@@ -92,7 +107,7 @@ mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
-    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
+    use crate::estimation::schema::{BlockConvention, StateSchema, StateSchemaBlock};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::manifold::TangentNoise;
@@ -240,6 +255,16 @@ mod tests {
     #[test]
     fn dim_is_three() {
         assert_eq!(make_model().dim(), 3);
+    }
+
+    #[test]
+    fn schema_matches_dim_and_tags_the_sensor_frame_field() {
+        let schema = make_model().schema();
+        assert_eq!(schema.dim(), make_model().dim());
+        assert_eq!(schema.blocks().len(), 1);
+        let block = &schema.blocks()[0];
+        assert_eq!(block.quantity(), &Quantity::Mag(FrameId::Sensor(SENSOR)));
+        assert_eq!(block.convention(), &BlockConvention::Single(Convention::Flu));
     }
 
     #[test]

@@ -193,9 +193,10 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 mod tests {
     use super::*;
     use crate::data::ports::TfProvider;
+    use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
     use crate::estimation::measurement::MeasurementModel;
-    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
+    use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock};
     use crate::estimation::EstimatorInputs;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
@@ -288,6 +289,14 @@ mod tests {
             2
         }
 
+        // A 2D position observes only x and y. A `Position` quantity is a whole
+        // 3-vector, so no honest block yields dim 2 — partial-component
+        // measurements are not yet expressible as a schema block. The update
+        // tests never ask this mock for a schema, so the gap is recorded, not hit.
+        fn schema(&self) -> MeasurementSchema {
+            unimplemented!("2D (partial-component) position measurement has no MeasurementSchema block yet")
+        }
+
         fn predict_measurement(
             &self,
             state: &FrameAwareState,
@@ -321,6 +330,16 @@ mod tests {
     impl MeasurementModel for InsPositionMeasurement {
         fn dim(&self) -> usize {
             3
+        }
+
+        // Reads the INS position block at the head of the layout — position in
+        // the agent's odom frame (ENU). `ins_model` keys the agent as
+        // `FrameHandle(7)`, so the block names that same frame.
+        fn schema(&self) -> MeasurementSchema {
+            MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
+                Quantity::Position(FrameId::Odom(FrameHandle(7))),
+                Convention::Enu,
+            )])
         }
 
         fn predict_measurement(
