@@ -241,12 +241,14 @@ mod tests {
             std::sync::Arc::new(StateSchema::compose(vec![
                 SchemaBlock::new(
                     Quantity::Position(FrameId::World),
+                    Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),
                 ),
                 SchemaBlock::new(
                     Quantity::Velocity(FrameId::World),
+                    Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),

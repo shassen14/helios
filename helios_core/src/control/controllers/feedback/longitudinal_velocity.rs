@@ -62,6 +62,7 @@ mod tests {
     use crate::control::commands::BodyTwist;
     use crate::data::primitives::FrameHandle;
     use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::frames::transforms::Convention;
     use crate::frames::FrameAwareState;
     use crate::manifold::TangentNoise;
     use crate::state::Quantity;
@@ -83,6 +84,7 @@ mod tests {
     fn state_with_forward_speed(vx: f64) -> FrameAwareState {
         let schema = StateSchema::compose(vec![SchemaBlock::new(
             Quantity::Velocity(body()),
+            Convention::Flu,
             noise(),
             DVector::from_vec(vec![vx, 0.0, 0.0]),
             DMatrix::identity(3, 3),
@@ -139,6 +141,7 @@ mod tests {
         // fabricated measurement.
         let schema = StateSchema::compose(vec![SchemaBlock::new(
             Quantity::Position(FrameId::Odom(FrameHandle(1))),
+            Convention::Enu,
             noise(),
             DVector::zeros(3),
             DMatrix::identity(3, 3),

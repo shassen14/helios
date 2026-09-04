@@ -15,6 +15,7 @@
 
 use crate::data::primitives::FrameHandle;
 use crate::estimation::schema::{SchemaBlock, StateSchema};
+use crate::frames::transforms::Convention;
 use crate::frames::FrameId;
 use crate::manifold::TangentNoise;
 use crate::state::Quantity;
@@ -41,18 +42,24 @@ pub fn kinematic_carrier_schema(agent_handle: FrameHandle) -> StateSchema {
     let odom = FrameId::Odom(agent_handle);
 
     // A flat, certain block: no process noise, zero initial covariance.
-    let flat = |quantity: Quantity| {
-        SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3))
+    let flat = |quantity: Quantity, convention: Convention| {
+        SchemaBlock::new(
+            quantity,
+            convention,
+            None,
+            DVector::zeros(3),
+            DMatrix::zeros(3, 3),
+        )
     };
 
     StateSchema::compose(vec![
-        flat(Quantity::Position(odom.clone())),
-        flat(Quantity::Velocity(odom.clone())),
-        SchemaBlock::new(
-            Quantity::Orientation {
-                from: body,
-                to: odom.clone(),
-            },
+        flat(Quantity::Position(odom.clone()), Convention::Enu),
+        flat(Quantity::Velocity(odom.clone()), Convention::Enu),
+        SchemaBlock::orientation(
+            body,
+            odom.clone(),
+            Convention::Flu,
+            Convention::Enu,
             Some(
                 TangentNoise::from_variances(DVector::from_element(
                     3,
@@ -63,7 +70,7 @@ pub fn kinematic_carrier_schema(agent_handle: FrameHandle) -> StateSchema {
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::zeros(3, 3),
         ),
-        flat(Quantity::AngularVelocity(odom)),
+        flat(Quantity::AngularVelocity(odom), Convention::Enu),
     ])
 }
 

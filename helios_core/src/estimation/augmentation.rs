@@ -17,7 +17,10 @@
 //! [`StateSchema::compose`]: crate::estimation::schema::StateSchema::compose
 
 use crate::{
-    estimation::schema::SchemaBlock, frames::FrameId, manifold::TangentNoise, state::Quantity,
+    estimation::schema::SchemaBlock,
+    frames::{transforms::Convention, FrameId},
+    manifold::TangentNoise,
+    state::Quantity,
 };
 
 use std::fmt::Display;
@@ -90,6 +93,7 @@ pub fn augmentation_block(
 
             Ok(SchemaBlock::new(
                 Quantity::MagBias(sensor),
+                Convention::Flu,
                 Some(noise),
                 DVector::zeros(3),
                 p0,

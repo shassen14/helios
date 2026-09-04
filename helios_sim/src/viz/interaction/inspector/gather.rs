@@ -350,6 +350,7 @@ mod tests {
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
     use helios_core::estimation::schema::{SchemaBlock, StateSchema};
     use helios_core::frames::quantities::FluVector;
+    use helios_core::frames::transforms::Convention;
     use helios_core::frames::{FrameId, StateVariable};
     use helios_core::state::{Component, Quantity};
     use helios_runtime::{
@@ -509,12 +510,18 @@ mod tests {
     /// A minimal state carrying only World-frame position and velocity — enough to
     /// exercise the estimator section without the full 16-state INS layout.
     fn state_with(position: [f64; 3], velocity: [f64; 3]) -> FrameAwareState {
-        let flat = |quantity: Quantity| {
-            SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3))
+        let flat = |quantity: Quantity, convention: Convention| {
+            SchemaBlock::new(
+                quantity,
+                convention,
+                None,
+                DVector::zeros(3),
+                DMatrix::zeros(3, 3),
+            )
         };
         let schema = StateSchema::compose(vec![
-            flat(Quantity::Position(FrameId::World)),
-            flat(Quantity::Velocity(FrameId::World)),
+            flat(Quantity::Position(FrameId::World), Convention::Enu),
+            flat(Quantity::Velocity(FrameId::World), Convention::Enu),
         ]);
         let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
         state.set_variable(

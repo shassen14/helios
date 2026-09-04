@@ -20,7 +20,7 @@
 //! moment a curved block enters.
 
 use crate::{
-    frames::{FrameId, StateVariable},
+    frames::{transforms::Convention, FrameId, StateVariable},
     manifold::{euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise},
     state::Quantity,
 };
@@ -58,30 +58,114 @@ fn block_for(
 }
 
 /// One block in a composed schema: the manifold [`StateBlock`] that retracts it,
-/// paired with the [`Quantity`] that gives it meaning. The quantity is the single
-/// source of the block's identity — its frame(s) and, via [`Quantity::variables`],
-/// the ordered [`StateVariable`] names of its stored slots. Those names must number
-/// exactly `block.storage_dim()`, a match [`StateSchema::compose`] asserts.
+/// the [`Quantity`] that gives it meaning, and the [`BlockConvention`] its stored
+/// components are expressed in. The quantity is the single source of the block's
+/// identity — its frame(s) and, via [`Quantity::variables`], the ordered
+/// [`StateVariable`] names of its stored slots. Those names must number exactly
+/// `block.storage_dim()`, a match [`StateSchema::compose`] asserts. The convention
+/// is producer-declared: whoever composes the block states the axis layout, so a
+/// downstream extractor can check the frame it asks for against the one stored.
 #[derive(Debug, Clone)]
 pub struct SchemaBlock {
-    pub block: Arc<dyn StateBlock>,
-    pub quantity: Quantity,
+    pub(crate) block: Arc<dyn StateBlock>,
+    pub(crate) quantity: Quantity,
+    pub(crate) convention: BlockConvention,
 }
 
 impl SchemaBlock {
+    /// Builds a flat (Euclidean) block for `quantity`, tagging it with the one
+    /// axis `convention` its components are expressed in — every kinematic and
+    /// bias quantity lives in exactly one, so a bare [`Convention`] suffices and
+    /// is stored as [`BlockConvention::Single`]. `noise` is the tangent-space
+    /// process noise, or `None` for a fixed prior with no random walk.
+    ///
+    /// # Panics
+    /// Rejects [`Orientation`](Quantity::Orientation): a rotation is a map
+    /// *between* two conventions and cannot be described by a single one. Build it
+    /// through [`orientation`](Self::orientation) instead. Passing an orientation
+    /// here is a construction-time programming error, caught at startup.
     pub fn new(
         quantity: Quantity,
+        convention: Convention,
         noise: Option<TangentNoise>,
         x0: DVector<f64>,
         p0: DMatrix<f64>,
     ) -> Self {
+        assert!(
+            !matches!(quantity, Quantity::Orientation { .. }),
+            "SchemaBlock::new builds Euclidean blocks; use SchemaBlock::orientation for an orientation block",
+        );
+
         let block = block_for(&quantity, noise, x0, p0);
-        Self { block, quantity }
+        Self {
+            block,
+            quantity,
+            convention: BlockConvention::Single(convention),
+        }
+    }
+
+    /// Builds the orientation (quaternion) block for the `from → to` rotation,
+    /// recording the axis convention of *each* endpoint: `from_conv` for the
+    /// source frame, `to_conv` for the target. An orientation is a map between two
+    /// conventions, so it stores a [`BlockConvention::Pair`] rather than a single
+    /// tag. This is the only constructor that builds a
+    /// [`Quantity::Orientation`]; taking the two frames and their two conventions
+    /// together makes an arity mismatch (a rotation tagged with one convention)
+    /// unrepresentable, which is why [`new`](Self::new) can reject orientations
+    /// outright.
+    pub fn orientation(
+        from: FrameId,
+        to: FrameId,
+        from_conv: Convention,
+        to_conv: Convention,
+        noise: Option<TangentNoise>,
+        x0: DVector<f64>,
+        p0: DMatrix<f64>,
+    ) -> Self {
+        let quantity = Quantity::Orientation { from, to };
+
+        let convention = BlockConvention::Pair {
+            from: from_conv,
+            to: to_conv,
+        };
+
+        let block = block_for(&quantity, noise, x0, p0);
+
+        Self {
+            block,
+            quantity,
+            convention,
+        }
+    }
+
+    pub fn quantity(&self) -> &Quantity {
+        &self.quantity
+    }
+
+    /// The axis convention(s) this block's stored components are expressed in —
+    /// one for a flat block, one per endpoint for an orientation.
+    pub fn convention(&self) -> &BlockConvention {
+        &self.convention
     }
 
     pub fn variables(&self) -> Vec<StateVariable> {
         self.quantity.variables()
     }
+}
+
+/// The axis convention(s) a schema block's components are expressed in.
+///
+/// A flat block (position, velocity, a bias) lives in one convention; an
+/// orientation is a rotation *between* two frames and so carries one convention
+/// per endpoint. The variant is fixed by the block's [`Quantity`]: every kind is
+/// [`Single`](Self::Single) except [`Orientation`](Quantity::Orientation), which
+/// is [`Pair`](Self::Pair). The `Pair`'s `from` / `to` align with the quantity's
+/// `from` / `to` frames, so a checked extractor reading `orientation::<A, B>`
+/// verifies `A` against `from` and `B` against `to`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockConvention {
+    Single(Convention),
+    Pair { from: Convention, to: Convention },
 }
 
 /// The immutable shape of a state estimate: its ordered blocks plus the offset,
@@ -439,16 +523,81 @@ mod tests {
         );
     }
 
+    // ── SchemaBlock: convention tagging and the constructor split ─────────────
+
+    #[test]
+    fn new_tags_a_flat_block_with_a_single_convention() {
+        // A flat kind has one axis convention; `new` records it as `Single` and
+        // hands it back verbatim through `convention()`.
+        let block = SchemaBlock::new(
+            Quantity::Velocity(FrameId::World),
+            Convention::Enu,
+            noise(0.5),
+            DVector::zeros(3),
+            DMatrix::identity(3, 3),
+        );
+        assert_eq!(block.convention(), &BlockConvention::Single(Convention::Enu));
+    }
+
+    #[test]
+    fn orientation_tags_each_endpoint_as_a_pair() {
+        // A rotation is a map between two frames, so its convention is a `Pair`:
+        // `from_conv` for the source (body → FLU), `to_conv` for the target
+        // (odom → ENU), each landing on the matching side.
+        let handle = crate::data::primitives::FrameHandle(2);
+        let block = SchemaBlock::orientation(
+            FrameId::Body(handle),
+            FrameId::Odom(handle),
+            Convention::Flu,
+            Convention::Enu,
+            noise(0.1),
+            DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+            DMatrix::identity(3, 3),
+        );
+        assert_eq!(
+            block.convention(),
+            &BlockConvention::Pair {
+                from: Convention::Flu,
+                to: Convention::Enu,
+            }
+        );
+        // It really is the curved block: four stored components, three-DOF tangent.
+        assert_eq!(block.block.storage_dim(), 4);
+        assert_eq!(block.block.tangent_dim(), 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "use SchemaBlock::orientation")]
+    fn new_rejects_an_orientation_quantity() {
+        // The guard: `new` builds Euclidean blocks and stores one convention, so
+        // handing it an orientation would silently pair a quaternion block with a
+        // `Single` tag — the exact mismatch `BlockConvention` exists to stop.
+        // Orientations must go through `SchemaBlock::orientation`.
+        let handle = crate::data::primitives::FrameHandle(2);
+        SchemaBlock::new(
+            Quantity::Orientation {
+                from: FrameId::Body(handle),
+                to: FrameId::Odom(handle),
+            },
+            Convention::Enu,
+            noise(0.1),
+            DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
+            DMatrix::identity(3, 3),
+        );
+    }
+
     fn pos_vel_schema() -> StateSchema {
         StateSchema::compose(vec![
             SchemaBlock::new(
                 Quantity::Position(FrameId::World),
+                Convention::Enu,
                 noise(0.1),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             SchemaBlock::new(
                 Quantity::Velocity(FrameId::World),
+                Convention::Enu,
                 noise(0.5),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
@@ -528,6 +677,7 @@ mod tests {
         // variable count, which `compose` must reject.
         StateSchema::compose(vec![SchemaBlock::new(
             Quantity::Position(FrameId::World),
+            Convention::Enu,
             None,
             DVector::zeros(2),
             DMatrix::zeros(2, 2),

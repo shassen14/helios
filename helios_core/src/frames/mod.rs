@@ -225,6 +225,7 @@ impl FrameAwareState {
 mod frame_aware_state_tests {
     use super::*;
     use crate::estimation::schema::SchemaBlock;
+    use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
     use crate::state::Component;
 
@@ -235,15 +236,16 @@ mod frame_aware_state_tests {
         Arc::new(StateSchema::compose(vec![
             SchemaBlock::new(
                 Quantity::Position(FrameId::World),
+                Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
-                Quantity::Orientation {
-                    from: FrameId::World,
-                    to: FrameId::World,
-                },
+            SchemaBlock::orientation(
+                FrameId::World,
+                FrameId::World,
+                Convention::Enu,
+                Convention::Enu,
                 Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap()),
                 DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
                 DMatrix::identity(3, 3),
@@ -308,6 +310,7 @@ mod frame_aware_state_tests {
         let mut s = FrameAwareState::from_schema(
             Arc::new(StateSchema::compose(vec![SchemaBlock::new(
                 Quantity::Position(FrameId::World),
+                Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
@@ -342,6 +345,7 @@ mod block_extractor_tests {
     use super::*;
     use crate::estimation::schema::SchemaBlock;
     use crate::frames::conventions::{Enu, Flu};
+    use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
     use crate::state::Component;
 
@@ -365,21 +369,23 @@ mod block_extractor_tests {
         let schema = StateSchema::compose(vec![
             SchemaBlock::new(
                 Quantity::Position(FrameId::World),
+                Convention::Enu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             SchemaBlock::new(
                 Quantity::Velocity(FrameId::World),
+                Convention::Enu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
-                Quantity::Orientation {
-                    from: body(),
-                    to: FrameId::World,
-                },
+            SchemaBlock::orientation(
+                body(),
+                FrameId::World,
+                Convention::Flu,
+                Convention::Enu,
                 noise(),
                 DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
                 DMatrix::identity(3, 3),

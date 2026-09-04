@@ -62,6 +62,7 @@ mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
     use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
     use crate::state::Quantity;
 
@@ -95,21 +96,23 @@ mod tests {
         let schema = StateSchema::compose(vec![
             SchemaBlock::new(
                 Quantity::Position(odom()),
+                Convention::Enu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             SchemaBlock::new(
                 Quantity::Velocity(odom()),
+                Convention::Enu,
                 noise(),
                 DVector::from_vec(vec![v.x, v.y, v.z]),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
-                Quantity::Orientation {
-                    from: body(),
-                    to: odom(),
-                },
+            SchemaBlock::orientation(
+                body(),
+                odom(),
+                Convention::Flu,
+                Convention::Enu,
                 noise(),
                 q,
                 DMatrix::identity(3, 3),
@@ -160,6 +163,7 @@ mod tests {
         // returned directly, with no orientation block present at all.
         let schema = StateSchema::compose(vec![SchemaBlock::new(
             Quantity::Velocity(body()),
+            Convention::Flu,
             noise(),
             DVector::from_vec(vec![3.0, 0.0, 0.0]),
             DMatrix::identity(3, 3),
@@ -173,6 +177,7 @@ mod tests {
         // Only a position block: nothing to project.
         let schema = StateSchema::compose(vec![SchemaBlock::new(
             Quantity::Position(odom()),
+            Convention::Enu,
             noise(),
             DVector::zeros(3),
             DMatrix::identity(3, 3),
@@ -188,12 +193,14 @@ mod tests {
         let schema = StateSchema::compose(vec![
             SchemaBlock::new(
                 Quantity::Position(odom()),
+                Convention::Enu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             SchemaBlock::new(
                 Quantity::Velocity(odom()),
+                Convention::Enu,
                 noise(),
                 DVector::from_vec(vec![1.0, 0.0, 0.0]),
                 DMatrix::identity(3, 3),

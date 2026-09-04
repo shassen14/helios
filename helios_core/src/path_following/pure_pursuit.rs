@@ -189,6 +189,7 @@ impl PathFollower for PurePursuitPathFollower {
 mod tests {
     use super::*;
     use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
     use crate::planning::types::Path;
     use crate::state::Quantity;
@@ -222,15 +223,16 @@ mod tests {
         let schema = StateSchema::compose(vec![
             SchemaBlock::new(
                 Quantity::Position(FrameId::Odom(handle)),
+                Convention::Enu,
                 noise3(),
                 DVector::from_vec(vec![x, y, 0.0]),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
-                Quantity::Orientation {
-                    from: FrameId::Body(handle),
-                    to: FrameId::Odom(handle),
-                },
+            SchemaBlock::orientation(
+                FrameId::Body(handle),
+                FrameId::Odom(handle),
+                Convention::Flu,
+                Convention::Enu,
                 noise3(),
                 DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
                 DMatrix::identity(3, 3),

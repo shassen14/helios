@@ -110,11 +110,11 @@ mod tests {
     // The body → World orientation block, seeded to the identity quaternion
     // `[x, y, z, w] = [0, 0, 0, 1]`.
     fn orientation_block() -> SchemaBlock {
-        SchemaBlock::new(
-            Quantity::Orientation {
-                from: FrameId::Body(AGENT),
-                to: FrameId::Odom(AGENT),
-            },
+        SchemaBlock::orientation(
+            FrameId::Body(AGENT),
+            FrameId::Odom(AGENT),
+            Convention::Flu,
+            Convention::Enu,
             noise(),
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::identity(3, 3),
@@ -215,6 +215,7 @@ mod tests {
             orientation_block(),
             SchemaBlock::new(
                 Quantity::MagBias(sensor.clone()),
+                Convention::Flu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),

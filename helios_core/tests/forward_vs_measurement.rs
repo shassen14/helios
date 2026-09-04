@@ -290,23 +290,29 @@ fn make_state(
     // Flat kinematic blocks carry no process noise; the orientation block must
     // (a quaternion retraction has no zero-noise covariance), and its value is
     // irrelevant to this prediction-only test.
-    let flat = |quantity: Quantity| {
-        SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3))
+    let flat = |quantity: Quantity, convention: Convention| {
+        SchemaBlock::new(
+            quantity,
+            convention,
+            None,
+            DVector::zeros(3),
+            DMatrix::zeros(3, 3),
+        )
     };
     let schema = StateSchema::compose(vec![
-        flat(Quantity::Position(world.clone())),
-        SchemaBlock::new(
-            Quantity::Orientation {
-                from: body.clone(),
-                to: world.clone(),
-            },
+        flat(Quantity::Position(world.clone()), Convention::Enu),
+        SchemaBlock::orientation(
+            body.clone(),
+            world.clone(),
+            Convention::Flu,
+            Convention::Enu,
             Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap()),
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::identity(3, 3),
         ),
-        flat(Quantity::AngularVelocity(body.clone())),
-        flat(Quantity::Acceleration(body.clone())),
-        flat(Quantity::AngularAcceleration(body.clone())),
+        flat(Quantity::AngularVelocity(body.clone()), Convention::Flu),
+        flat(Quantity::Acceleration(body.clone()), Convention::Flu),
+        flat(Quantity::AngularAcceleration(body.clone()), Convention::Flu),
     ]);
     let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
 

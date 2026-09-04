@@ -380,6 +380,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::frames::transforms::Convention;
     use crate::frames::{FrameAwareState, FrameId};
     use crate::mapping::MapData;
     use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
@@ -412,6 +413,7 @@ mod tests {
     fn make_state(x: f64, y: f64) -> FrameAwareState {
         let schema = StateSchema::compose(vec![SchemaBlock::new(
             Quantity::Position(FrameId::World),
+            Convention::Enu,
             None,
             DVector::from_vec(vec![x, y, 0.0]),
             DMatrix::zeros(3, 3),

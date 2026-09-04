@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::data::primitives::{Control, FrameHandle, State};
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::schema::{SchemaBlock, StateSchema};
+use crate::frames::transforms::Convention;
 use crate::frames::{FrameId, StateVariable};
 use crate::manifold::{StateBlock, TangentNoise};
 use crate::state::{Component, Quantity};
@@ -189,6 +190,7 @@ fn compose_ins_schema(
         // 1. Position (Odom) — no process noise; P₀ from config.
         SchemaBlock::new(
             Quantity::Position(odom.clone()),
+            Convention::Enu,
             None,
             DVector::zeros(3),
             p0(initial.pos_var, 3),
@@ -196,17 +198,18 @@ fn compose_ins_schema(
         // 2. Velocity (Odom) — Q from accel white noise.
         SchemaBlock::new(
             Quantity::Velocity(odom.clone()),
+            Convention::Enu,
             Some(noise_block(noise.accel_noise_var, 3)),
             DVector::zeros(3),
             p0(initial.vel_var, 3),
         ),
         // 3. Orientation (Body from Odom) — 4/3 quaternion block.
         //    Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
-        SchemaBlock::new(
-            Quantity::Orientation {
-                from: body.clone(),
-                to: odom.clone(),
-            },
+        SchemaBlock::orientation(
+            body.clone(),
+            odom.clone(),
+            Convention::Flu,
+            Convention::Enu,
             Some(noise_block(noise.gyro_noise_var, 3)),
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             p0(initial.ori_var, 3),
@@ -216,6 +219,7 @@ fn compose_ins_schema(
         //    quantity rather than borrowing `Acceleration`.
         SchemaBlock::new(
             Quantity::AccelBias(body.clone()),
+            Convention::Flu,
             Some(noise_block(noise.accel_bias_var, 3)),
             DVector::zeros(3),
             p0(initial.accel_bias_var, 3),
@@ -224,6 +228,7 @@ fn compose_ins_schema(
         //    the same reason as the accel bias.
         SchemaBlock::new(
             Quantity::GyroBias(body.clone()),
+            Convention::Flu,
             Some(noise_block(noise.gyro_bias_var, 3)),
             DVector::zeros(3),
             p0(initial.gyro_bias_var, 3),
