@@ -16,7 +16,7 @@ use helios_core::data::sensor::{
     AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
 };
 use helios_core::estimation::augmentation::augmentation_block;
-use helios_core::estimation::schema::SchemaBlock;
+use helios_core::estimation::schema::StateSchemaBlock;
 use helios_core::frames::FrameId;
 
 use nalgebra::DMatrix;
@@ -85,7 +85,7 @@ pub(crate) fn assemble(
         })
 }
 
-/// Resolves every `[[augmentation]]` entry into a [`SchemaBlock`], each tagged
+/// Resolves every `[[augmentation]]` entry into a [`StateSchemaBlock`], each tagged
 /// with the `FrameId::Sensor` its `sensor` channel resolves to.
 ///
 /// The sensor string is looked up in the same `sensor_frame_handles` map the
@@ -99,7 +99,7 @@ fn build_augmentation_blocks(
     instance_name: &str,
     ekf_cfg: &EkfConfig,
     sensor_frame_handles: &HashMap<String, FrameHandle>,
-) -> Result<Vec<SchemaBlock>, PipelineAssemblyError> {
+) -> Result<Vec<StateSchemaBlock>, PipelineAssemblyError> {
     let mut blocks = Vec::with_capacity(ekf_cfg.augmentation.len());
     for aug in &ekf_cfg.augmentation {
         let sensor_handle = sensor_frame_handles

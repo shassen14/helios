@@ -188,7 +188,7 @@ impl PathFollower for PurePursuitPathFollower {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
     use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
     use crate::planning::types::Path;
@@ -221,14 +221,14 @@ mod tests {
     /// Body→Odom orientation — the two blocks `compute` reads to locate the agent.
     fn inputs_at(handle: FrameHandle, x: f64, y: f64) -> PathFollowerInputs {
         let schema = StateSchema::compose(vec![
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Position(FrameId::Odom(handle)),
                 Convention::Enu,
                 noise3(),
                 DVector::from_vec(vec![x, y, 0.0]),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::orientation(
+            StateSchemaBlock::orientation(
                 FrameId::Body(handle),
                 FrameId::Odom(handle),
                 Convention::Flu,

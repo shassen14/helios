@@ -1,4 +1,4 @@
-use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+use helios_core::estimation::schema::{StateSchemaBlock, StateSchema};
 use helios_core::frames::transforms::Convention;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::mapping::MapData;
@@ -30,7 +30,7 @@ fn bench_config() -> AStarConfig {
 }
 
 fn make_state(x: f64, y: f64) -> FrameAwareState {
-    let schema = Arc::new(StateSchema::compose(vec![SchemaBlock::new(
+    let schema = Arc::new(StateSchema::compose(vec![StateSchemaBlock::new(
         Quantity::Position(FrameId::World),
         Convention::Enu,
         None,

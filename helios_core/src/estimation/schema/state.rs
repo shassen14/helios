@@ -2,7 +2,7 @@
 //! variables exist, each one's manifold block, and the offset / `Q` / `P`
 //! tables baked from them.
 //!
-//! A schema is assembled once from an ordered list of [`SchemaBlock`]s (via
+//! A schema is assembled once from an ordered list of [`StateSchemaBlock`]s (via
 //! [`StateSchema::compose`]) and is immutable thereafter. It is the shape of the
 //! state, never its values: a [`crate::frames::FrameAwareState`] pairs an
 //! `Arc<StateSchema>` with the mutable `(mean, covariance)` it describes, so one
@@ -20,6 +20,7 @@
 //! moment a curved block enters.
 
 use crate::{
+    estimation::schema::convention::BlockConvention,
     frames::{transforms::Convention, FrameId, StateVariable},
     manifold::{euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise},
     state::Quantity,
@@ -66,13 +67,13 @@ fn block_for(
 /// is producer-declared: whoever composes the block states the axis layout, so a
 /// downstream extractor can check the frame it asks for against the one stored.
 #[derive(Debug, Clone)]
-pub struct SchemaBlock {
+pub struct StateSchemaBlock {
     pub(crate) block: Arc<dyn StateBlock>,
     pub(crate) quantity: Quantity,
     pub(crate) convention: BlockConvention,
 }
 
-impl SchemaBlock {
+impl StateSchemaBlock {
     /// Builds a flat (Euclidean) block for `quantity`, tagging it with the one
     /// axis `convention` its components are expressed in — every kinematic and
     /// bias quantity lives in exactly one, so a bare [`Convention`] suffices and
@@ -93,7 +94,7 @@ impl SchemaBlock {
     ) -> Self {
         assert!(
             !matches!(quantity, Quantity::Orientation { .. }),
-            "SchemaBlock::new builds Euclidean blocks; use SchemaBlock::orientation for an orientation block",
+            "StateSchemaBlock::new builds Euclidean blocks; use StateSchemaBlock::orientation for an orientation block",
         );
 
         let block = block_for(&quantity, noise, x0, p0);
@@ -153,28 +154,13 @@ impl SchemaBlock {
     }
 }
 
-/// The axis convention(s) a schema block's components are expressed in.
-///
-/// A flat block (position, velocity, a bias) lives in one convention; an
-/// orientation is a rotation *between* two frames and so carries one convention
-/// per endpoint. The variant is fixed by the block's [`Quantity`]: every kind is
-/// [`Single`](Self::Single) except [`Orientation`](Quantity::Orientation), which
-/// is [`Pair`](Self::Pair). The `Pair`'s `from` / `to` align with the quantity's
-/// `from` / `to` frames, so a checked extractor reading `orientation::<A, B>`
-/// verifies `A` against `from` and `B` against `to`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlockConvention {
-    Single(Convention),
-    Pair { from: Convention, to: Convention },
-}
-
 /// The immutable shape of a state estimate: its ordered blocks plus the offset,
 /// value, and covariance tables baked from them at [`compose`](Self::compose)
 /// time. Cheap to share behind an `Arc`; never mutated after construction.
 #[derive(Debug)]
 pub struct StateSchema {
     /// Live blocks, walked by [`oplus`](Self::oplus) / [`ominus`](Self::ominus).
-    blocks: Vec<SchemaBlock>,
+    blocks: Vec<StateSchemaBlock>,
     /// Ordered storage-space names; `layout.len() == storage_dim`.
     layout: Vec<StateVariable>,
     storage_dim: usize,
@@ -198,7 +184,7 @@ impl StateSchema {
     /// If any block's `variables.len()` disagrees with its `storage_dim()` — a
     /// construction-time programming error that would otherwise silently desync
     /// `layout` from the stored vector and corrupt every later name lookup.
-    pub fn compose(blocks: Vec<SchemaBlock>) -> Self {
+    pub fn compose(blocks: Vec<StateSchemaBlock>) -> Self {
         let storage_dim = blocks
             .iter()
             .map(|schema_block| schema_block.block.storage_dim())
@@ -276,7 +262,7 @@ impl StateSchema {
     /// blocks land in a fresh diagonal corner past the base, and the base's rows
     /// and columns come out byte-identical — so this method never re-derives the
     /// baking math, it re-runs it over the longer block list.
-    pub fn extended(&self, extra: Vec<SchemaBlock>) -> StateSchema {
+    pub fn extended(&self, extra: Vec<StateSchemaBlock>) -> StateSchema {
         let mut combined = self.blocks.clone();
         combined.extend(extra);
         StateSchema::compose(combined)
@@ -523,20 +509,23 @@ mod tests {
         );
     }
 
-    // ── SchemaBlock: convention tagging and the constructor split ─────────────
+    // ── StateSchemaBlock: convention tagging and the constructor split ─────────────
 
     #[test]
     fn new_tags_a_flat_block_with_a_single_convention() {
         // A flat kind has one axis convention; `new` records it as `Single` and
         // hands it back verbatim through `convention()`.
-        let block = SchemaBlock::new(
+        let block = StateSchemaBlock::new(
             Quantity::Velocity(FrameId::World),
             Convention::Enu,
             noise(0.5),
             DVector::zeros(3),
             DMatrix::identity(3, 3),
         );
-        assert_eq!(block.convention(), &BlockConvention::Single(Convention::Enu));
+        assert_eq!(
+            block.convention(),
+            &BlockConvention::Single(Convention::Enu)
+        );
     }
 
     #[test]
@@ -545,7 +534,7 @@ mod tests {
         // `from_conv` for the source (body → FLU), `to_conv` for the target
         // (odom → ENU), each landing on the matching side.
         let handle = crate::data::primitives::FrameHandle(2);
-        let block = SchemaBlock::orientation(
+        let block = StateSchemaBlock::orientation(
             FrameId::Body(handle),
             FrameId::Odom(handle),
             Convention::Flu,
@@ -567,14 +556,14 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "use SchemaBlock::orientation")]
+    #[should_panic(expected = "use StateSchemaBlock::orientation")]
     fn new_rejects_an_orientation_quantity() {
         // The guard: `new` builds Euclidean blocks and stores one convention, so
         // handing it an orientation would silently pair a quaternion block with a
         // `Single` tag — the exact mismatch `BlockConvention` exists to stop.
-        // Orientations must go through `SchemaBlock::orientation`.
+        // Orientations must go through `StateSchemaBlock::orientation`.
         let handle = crate::data::primitives::FrameHandle(2);
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             Quantity::Orientation {
                 from: FrameId::Body(handle),
                 to: FrameId::Odom(handle),
@@ -588,14 +577,14 @@ mod tests {
 
     fn pos_vel_schema() -> StateSchema {
         StateSchema::compose(vec![
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Position(FrameId::World),
                 Convention::Enu,
                 noise(0.1),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Velocity(FrameId::World),
                 Convention::Enu,
                 noise(0.5),
@@ -675,7 +664,7 @@ mod tests {
         // `Position` names three slots, but a 2-D initial value builds a 2-D
         // block — the wrong-sized value desyncs storage_dim from the derived
         // variable count, which `compose` must reject.
-        StateSchema::compose(vec![SchemaBlock::new(
+        StateSchema::compose(vec![StateSchemaBlock::new(
             Quantity::Position(FrameId::World),
             Convention::Enu,
             None,
@@ -694,7 +683,7 @@ mod tests {
         FrameId::Sensor(crate::data::primitives::FrameHandle(3))
     }
 
-    fn mag_bias_block() -> SchemaBlock {
+    fn mag_bias_block() -> StateSchemaBlock {
         crate::estimation::augmentation::augmentation_block(
             crate::estimation::augmentation::MAGNETOMETER_BIAS,
             mag_sensor(),

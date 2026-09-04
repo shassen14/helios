@@ -12,7 +12,7 @@ use crate::nodes::gaussian_estimator::AidingHandler;
 use crate::port::InternalChannel;
 
 use helios_core::data::primitives::FrameHandle;
-use helios_core::estimation::schema::SchemaBlock;
+use helios_core::estimation::schema::StateSchemaBlock;
 
 /// Context for building a complete `GaussianEstimatorNode`.
 ///
@@ -30,7 +30,7 @@ pub struct GaussianEstimatorBuildContext {
     /// distinguishes two estimators of the same kind.
     pub(crate) instance_name: String,
     pub(crate) aiding: Vec<Box<dyn AidingHandler>>,
-    pub(crate) augmentation_blocks: Vec<SchemaBlock>,
+    pub(crate) augmentation_blocks: Vec<StateSchemaBlock>,
 }
 
 /// Context for building a `MeasurementModel`.

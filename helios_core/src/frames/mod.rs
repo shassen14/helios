@@ -224,7 +224,7 @@ impl FrameAwareState {
 #[cfg(test)]
 mod frame_aware_state_tests {
     use super::*;
-    use crate::estimation::schema::SchemaBlock;
+    use crate::estimation::schema::StateSchemaBlock;
     use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
     use crate::state::Component;
@@ -234,14 +234,14 @@ mod frame_aware_state_tests {
     // quaternion `[0, 0, 0, 1]`; the position block seeds zeros.
     fn pose_schema() -> Arc<StateSchema> {
         Arc::new(StateSchema::compose(vec![
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Position(FrameId::World),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::orientation(
+            StateSchemaBlock::orientation(
                 FrameId::World,
                 FrameId::World,
                 Convention::Enu,
@@ -308,7 +308,7 @@ mod frame_aware_state_tests {
     fn oplus_assign_is_addition_for_a_euclidean_block() {
         // A position block is Euclidean, so `oplus_assign` reduces to `mean += delta`.
         let mut s = FrameAwareState::from_schema(
-            Arc::new(StateSchema::compose(vec![SchemaBlock::new(
+            Arc::new(StateSchema::compose(vec![StateSchemaBlock::new(
                 Quantity::Position(FrameId::World),
                 Convention::Enu,
                 None,
@@ -343,7 +343,7 @@ mod frame_aware_state_tests {
 #[cfg(test)]
 mod block_extractor_tests {
     use super::*;
-    use crate::estimation::schema::SchemaBlock;
+    use crate::estimation::schema::StateSchemaBlock;
     use crate::frames::conventions::{Enu, Flu};
     use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
@@ -367,21 +367,21 @@ mod block_extractor_tests {
     // slots it reads.
     fn composed_state() -> FrameAwareState {
         let schema = StateSchema::compose(vec![
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Position(FrameId::World),
                 Convention::Enu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Velocity(FrameId::World),
                 Convention::Enu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::orientation(
+            StateSchemaBlock::orientation(
                 body(),
                 FrameId::World,
                 Convention::Flu,

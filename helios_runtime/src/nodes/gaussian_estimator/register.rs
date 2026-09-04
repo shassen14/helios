@@ -188,7 +188,7 @@ mod tests {
     use helios_core::data::primitives::FrameHandle;
     use helios_core::data::MonotonicTime;
     use helios_core::estimation::augmentation::{augmentation_block, MAGNETOMETER_BIAS};
-    use helios_core::estimation::schema::SchemaBlock;
+    use helios_core::estimation::schema::StateSchemaBlock;
     use helios_core::frames::transforms::ErasedTransform;
 
     fn ekf_config_with(dynamics: EkfDynamicsConfig) -> EstimatorConfig {
@@ -220,7 +220,7 @@ mod tests {
 
     fn context_with(
         instance_name: &str,
-        augmentation_blocks: Vec<helios_core::estimation::schema::SchemaBlock>,
+        augmentation_blocks: Vec<helios_core::estimation::schema::StateSchemaBlock>,
     ) -> GaussianEstimatorBuildContext {
         GaussianEstimatorBuildContext {
             agent_handle: FrameHandle(0),
@@ -310,7 +310,7 @@ mod tests {
     /// runs one cold-start tick (empty predict-side channels, so predict is
     /// skipped), and returns the `FrameAwareState` the node publishes — its
     /// schema is the composed state we assert on.
-    fn published_state(augmentation_blocks: Vec<SchemaBlock>) -> FrameAwareState {
+    fn published_state(augmentation_blocks: Vec<StateSchemaBlock>) -> FrameAwareState {
         let registry = AutonomyRegistry::default();
         let node = build_ekf(
             config(),

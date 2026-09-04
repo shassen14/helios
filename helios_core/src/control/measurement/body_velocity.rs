@@ -61,7 +61,7 @@ pub fn body_forward_speed(state: &FrameAwareState, body: FrameId) -> Option<f64>
 mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
     use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
     use crate::state::Quantity;
@@ -94,21 +94,21 @@ mod tests {
     // `body → odom` orientation `q`. This is the case-2 (rotate) shape.
     fn odom_estimate(v: Vector3<f64>, q: DVector<f64>) -> FrameAwareState {
         let schema = StateSchema::compose(vec![
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Position(odom()),
                 Convention::Enu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Velocity(odom()),
                 Convention::Enu,
                 noise(),
                 DVector::from_vec(vec![v.x, v.y, v.z]),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::orientation(
+            StateSchemaBlock::orientation(
                 body(),
                 odom(),
                 Convention::Flu,
@@ -161,7 +161,7 @@ mod tests {
     fn velocity_stored_in_body_is_returned_unrotated() {
         // Case 1: an estimate whose velocity block is already in the body frame is
         // returned directly, with no orientation block present at all.
-        let schema = StateSchema::compose(vec![SchemaBlock::new(
+        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
             Quantity::Velocity(body()),
             Convention::Flu,
             noise(),
@@ -175,7 +175,7 @@ mod tests {
     #[test]
     fn cold_start_without_velocity_is_none() {
         // Only a position block: nothing to project.
-        let schema = StateSchema::compose(vec![SchemaBlock::new(
+        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
             Quantity::Position(odom()),
             Convention::Enu,
             noise(),
@@ -191,14 +191,14 @@ mod tests {
         // Velocity is in odom but no orientation block relates it to the body, so
         // case 2 cannot rotate it.
         let schema = StateSchema::compose(vec![
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Position(odom()),
                 Convention::Enu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Velocity(odom()),
                 Convention::Enu,
                 noise(),

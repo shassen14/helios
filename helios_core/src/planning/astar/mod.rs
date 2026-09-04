@@ -379,7 +379,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
     use crate::frames::transforms::Convention;
     use crate::frames::{FrameAwareState, FrameId};
     use crate::mapping::MapData;
@@ -411,7 +411,7 @@ mod tests {
 
     /// Build a minimal world-frame state carrying only a `Position(World)` block.
     fn make_state(x: f64, y: f64) -> FrameAwareState {
-        let schema = StateSchema::compose(vec![SchemaBlock::new(
+        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
             Quantity::Position(FrameId::World),
             Convention::Enu,
             None,

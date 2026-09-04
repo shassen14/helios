@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::data::primitives::{Control, FrameHandle, State};
 use crate::estimation::dynamics::EstimationDynamics;
-use crate::estimation::schema::{SchemaBlock, StateSchema};
+use crate::estimation::schema::{StateSchemaBlock, StateSchema};
 use crate::frames::transforms::Convention;
 use crate::frames::{FrameId, StateVariable};
 use crate::manifold::{StateBlock, TangentNoise};
@@ -188,7 +188,7 @@ fn compose_ins_schema(
 
     let blocks = vec![
         // 1. Position (Odom) — no process noise; P₀ from config.
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             Quantity::Position(odom.clone()),
             Convention::Enu,
             None,
@@ -196,7 +196,7 @@ fn compose_ins_schema(
             p0(initial.pos_var, 3),
         ),
         // 2. Velocity (Odom) — Q from accel white noise.
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             Quantity::Velocity(odom.clone()),
             Convention::Enu,
             Some(noise_block(noise.accel_noise_var, 3)),
@@ -205,7 +205,7 @@ fn compose_ins_schema(
         ),
         // 3. Orientation (Body from Odom) — 4/3 quaternion block.
         //    Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
-        SchemaBlock::orientation(
+        StateSchemaBlock::orientation(
             body.clone(),
             odom.clone(),
             Convention::Flu,
@@ -217,7 +217,7 @@ fn compose_ins_schema(
         // 4. Accel bias (Body) — Q from bias instability. A sensor error term
         //    distinct from any true body acceleration, so it carries its own
         //    quantity rather than borrowing `Acceleration`.
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             Quantity::AccelBias(body.clone()),
             Convention::Flu,
             Some(noise_block(noise.accel_bias_var, 3)),
@@ -226,7 +226,7 @@ fn compose_ins_schema(
         ),
         // 5. Gyro bias (Body) — Q from bias instability. Its own quantity, for
         //    the same reason as the accel bias.
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             Quantity::GyroBias(body.clone()),
             Convention::Flu,
             Some(noise_block(noise.gyro_bias_var, 3)),

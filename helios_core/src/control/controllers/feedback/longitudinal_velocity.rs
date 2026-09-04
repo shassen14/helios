@@ -61,7 +61,7 @@ mod tests {
     use super::*;
     use crate::control::commands::BodyTwist;
     use crate::data::primitives::FrameHandle;
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
     use crate::frames::transforms::Convention;
     use crate::frames::FrameAwareState;
     use crate::manifold::TangentNoise;
@@ -82,7 +82,7 @@ mod tests {
     // projection returns `vx` unrotated — isolating the controller's error math
     // from the frame projection (which `body_velocity`'s own tests cover).
     fn state_with_forward_speed(vx: f64) -> FrameAwareState {
-        let schema = StateSchema::compose(vec![SchemaBlock::new(
+        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
             Quantity::Velocity(body()),
             Convention::Flu,
             noise(),
@@ -139,7 +139,7 @@ mod tests {
         // Reference present, but a cold-start state with no velocity block → the
         // projection is `None`, so the loop commands zero rather than acting on a
         // fabricated measurement.
-        let schema = StateSchema::compose(vec![SchemaBlock::new(
+        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
             Quantity::Position(FrameId::Odom(FrameHandle(1))),
             Convention::Enu,
             noise(),

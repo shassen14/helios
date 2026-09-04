@@ -9,7 +9,7 @@ use helios_core::data::MonotonicTime;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
 use helios_core::estimation::measurement::MeasurementModel;
-use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+use helios_core::estimation::schema::{StateSchemaBlock, StateSchema};
 use helios_core::estimation::{EstimatorInputs, GaussianStateEstimator};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
@@ -48,14 +48,14 @@ impl EstimationDynamics for ConstantVelocity3D {
 
     fn schema(&self) -> Arc<StateSchema> {
         Arc::new(StateSchema::compose(vec![
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Position(FrameId::World),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::Velocity(FrameId::World),
                 Convention::Enu,
                 None,

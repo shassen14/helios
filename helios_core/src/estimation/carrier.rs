@@ -14,7 +14,7 @@
 //! which is why it is a free function and not a `StateSchema` constructor.
 
 use crate::data::primitives::FrameHandle;
-use crate::estimation::schema::{SchemaBlock, StateSchema};
+use crate::estimation::schema::{StateSchemaBlock, StateSchema};
 use crate::frames::transforms::Convention;
 use crate::frames::FrameId;
 use crate::manifold::TangentNoise;
@@ -43,7 +43,7 @@ pub fn kinematic_carrier_schema(agent_handle: FrameHandle) -> StateSchema {
 
     // A flat, certain block: no process noise, zero initial covariance.
     let flat = |quantity: Quantity, convention: Convention| {
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             quantity,
             convention,
             None,
@@ -55,7 +55,7 @@ pub fn kinematic_carrier_schema(agent_handle: FrameHandle) -> StateSchema {
     StateSchema::compose(vec![
         flat(Quantity::Position(odom.clone()), Convention::Enu),
         flat(Quantity::Velocity(odom.clone()), Convention::Enu),
-        SchemaBlock::orientation(
+        StateSchemaBlock::orientation(
             body,
             odom.clone(),
             Convention::Flu,

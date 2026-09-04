@@ -26,7 +26,7 @@ use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
 use helios_core::estimation::measurement::MeasurementModel;
-use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+use helios_core::estimation::schema::{StateSchemaBlock, StateSchema};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::manifold::TangentNoise;
@@ -291,7 +291,7 @@ fn make_state(
     // (a quaternion retraction has no zero-noise covariance), and its value is
     // irrelevant to this prediction-only test.
     let flat = |quantity: Quantity, convention: Convention| {
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             quantity,
             convention,
             None,
@@ -301,7 +301,7 @@ fn make_state(
     };
     let schema = StateSchema::compose(vec![
         flat(Quantity::Position(world.clone()), Convention::Enu),
-        SchemaBlock::orientation(
+        StateSchemaBlock::orientation(
             body.clone(),
             world.clone(),
             Convention::Flu,

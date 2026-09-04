@@ -195,7 +195,7 @@ mod tests {
     use crate::data::ports::TfProvider;
     use crate::data::MonotonicTime;
     use crate::estimation::measurement::MeasurementModel;
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
     use crate::estimation::EstimatorInputs;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
@@ -239,14 +239,14 @@ mod tests {
 
         fn schema(&self) -> std::sync::Arc<StateSchema> {
             std::sync::Arc::new(StateSchema::compose(vec![
-                SchemaBlock::new(
+                StateSchemaBlock::new(
                     Quantity::Position(FrameId::World),
                     Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),
                 ),
-                SchemaBlock::new(
+                StateSchemaBlock::new(
                     Quantity::Velocity(FrameId::World),
                     Convention::Enu,
                     None,
@@ -854,7 +854,7 @@ mod tests {
         )
     }
 
-    fn mag_bias_block(sensor: FrameId) -> crate::estimation::schema::SchemaBlock {
+    fn mag_bias_block(sensor: FrameId) -> crate::estimation::schema::StateSchemaBlock {
         crate::estimation::augmentation::augmentation_block(
             crate::estimation::augmentation::MAGNETOMETER_BIAS,
             sensor,

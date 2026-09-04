@@ -92,7 +92,7 @@ mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::manifold::TangentNoise;
@@ -109,8 +109,8 @@ mod tests {
 
     // The body → World orientation block, seeded to the identity quaternion
     // `[x, y, z, w] = [0, 0, 0, 1]`.
-    fn orientation_block() -> SchemaBlock {
-        SchemaBlock::orientation(
+    fn orientation_block() -> StateSchemaBlock {
+        StateSchemaBlock::orientation(
             FrameId::Body(AGENT),
             FrameId::Odom(AGENT),
             Convention::Flu,
@@ -213,7 +213,7 @@ mod tests {
         let sensor = FrameId::Sensor(SENSOR);
         let schema = StateSchema::compose(vec![
             orientation_block(),
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::MagBias(sensor.clone()),
                 Convention::Flu,
                 noise(),

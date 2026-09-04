@@ -348,7 +348,7 @@ mod tests {
     use super::*;
 
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
-    use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+    use helios_core::estimation::schema::{StateSchemaBlock, StateSchema};
     use helios_core::frames::quantities::FluVector;
     use helios_core::frames::transforms::Convention;
     use helios_core::frames::{FrameId, StateVariable};
@@ -511,7 +511,7 @@ mod tests {
     /// exercise the estimator section without the full 16-state INS layout.
     fn state_with(position: [f64; 3], velocity: [f64; 3]) -> FrameAwareState {
         let flat = |quantity: Quantity, convention: Convention| {
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 quantity,
                 convention,
                 None,
