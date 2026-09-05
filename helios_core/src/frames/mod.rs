@@ -13,9 +13,8 @@ use crate::{
     data::primitives::FrameHandle,
     estimation::schema::StateSchema,
     frames::{
-        conventions::Frame,
         quantities::{FreeVector, Point},
-        transforms::{Rotation, Transform},
+        transforms::{ConventionOf, Rotation, Transform},
     },
     state::Quantity,
 };
@@ -113,53 +112,61 @@ impl FrameAwareState {
     // contiguity check: a block owns a contiguous slice by construction, which is
     // what lets these replace the older by-name, scan-and-check readers entirely.
     //
-    // The convention type parameter (`F`, or `A`/`B`) is *caller-asserted and
-    // unchecked*: the schema stores only a block's `FrameId` identity, never its
-    // axis convention, so nothing here verifies that the requested frame really
-    // is expressed in `F`. That check arrives once the schema carries the
-    // convention; until then the turbofish is a promise the caller keeps.
+    // The convention type parameter (`F`, or `A`/`B`) is *checked in debug
+    // builds*. The schema records each frame's axis convention, and every
+    // extractor `debug_assert`s that the requested `F::CONVENTION` equals the
+    // convention the schema declares for the block's frame. A caller reading
+    // `position::<Flu>` from a frame the schema holds in ENU is a wiring bug, and
+    // it trips at the call site under debug. The check compiles out of release:
+    // both sides are fixed at build and startup (a `const` against a composed
+    // schema), so one that passes in test cannot later fail in release, and a
+    // per-tick release panic would break the no-panic rule. The turbofish is no
+    // longer a bare promise; it is one the schema verifies.
     //
-    // Every extractor returns `None` when no block of that exact `Quantity` — the
-    // kind *and* its frame identity — is in the schema. Asking a state that holds
-    // only `Position(World)` for `position::<F>(some_body)` yields `None`.
+    // Absent and wrong are different outcomes. The assert runs only after a block
+    // is found, so an *absent* block returns `None` — a legitimate "this state
+    // does not track that quantity" — while a block that exists but was read in
+    // the wrong convention asserts. Asking a state that holds only
+    // `Position(World)` for `position::<F>(some_body)` still yields `None`, never
+    // a panic.
 
     /// The position of `id`'s frame, as a `Point` in convention `F`.
-    pub fn position<F: Frame>(&self, id: FrameId) -> Option<Point<F>> {
-        let vec = self.block_vector3(&Quantity::Position(id))?;
+    pub fn position<F: ConventionOf>(&self, id: FrameId) -> Option<Point<F>> {
+        let vec = self.block_vector3::<F>(&Quantity::Position(id))?;
 
         Some(Point::from_raw(vec))
     }
 
     /// The linear velocity of `id`'s frame, as a `FreeVector` in convention `F`.
-    pub fn velocity<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
-        let vec = self.block_vector3(&Quantity::Velocity(id))?;
+    pub fn velocity<F: ConventionOf>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3::<F>(&Quantity::Velocity(id))?;
 
         Some(FreeVector::from_raw(vec))
     }
 
     /// The linear acceleration of `id`'s frame, as a `FreeVector` in convention `F`.
-    pub fn acceleration<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
-        let vec = self.block_vector3(&Quantity::Acceleration(id))?;
+    pub fn acceleration<F: ConventionOf>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3::<F>(&Quantity::Acceleration(id))?;
 
         Some(FreeVector::from_raw(vec))
     }
 
     /// The angular velocity of `id`'s frame, as a `FreeVector` in convention `F`.
-    pub fn angular_velocity<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
-        let vec = self.block_vector3(&Quantity::AngularVelocity(id))?;
+    pub fn angular_velocity<F: ConventionOf>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3::<F>(&Quantity::AngularVelocity(id))?;
 
         Some(FreeVector::from_raw(vec))
     }
 
     /// The angular acceleration of `id`'s frame, as a `FreeVector` in convention `F`.
-    pub fn angular_acceleration<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
-        let vec = self.block_vector3(&Quantity::AngularAcceleration(id))?;
+    pub fn angular_acceleration<F: ConventionOf>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3::<F>(&Quantity::AngularAcceleration(id))?;
         Some(FreeVector::from_raw(vec))
     }
 
     /// The magnetometer bias for sensor `id`, as a `FreeVector` in convention `F`.
-    pub fn mag_bias<F: Frame>(&self, id: FrameId) -> Option<FreeVector<F>> {
-        let vec = self.block_vector3(&Quantity::MagBias(id))?;
+    pub fn mag_bias<F: ConventionOf>(&self, id: FrameId) -> Option<FreeVector<F>> {
+        let vec = self.block_vector3::<F>(&Quantity::MagBias(id))?;
         Some(FreeVector::from_raw(vec))
     }
 
@@ -170,14 +177,38 @@ impl FrameAwareState {
     /// fourth slot and the vector part from the first three. The stored mean is
     /// unit by the orientation block's own retraction, but `from_quaternion`
     /// normalizes defensively before it is tagged.
-    pub fn orientation<A: Frame, B: Frame>(
+    pub fn orientation<A: ConventionOf, B: ConventionOf>(
         &self,
         from: FrameId,
         to: FrameId,
     ) -> Option<Rotation<A, B>> {
         let off = self
             .schema
-            .storage_offset_of_block(&Quantity::Orientation { from, to })?;
+            .storage_offset_of_block(&Quantity::Orientation {
+                from: from.clone(),
+                to: to.clone(),
+            })?;
+
+        // The turbofish `A`/`B` name the conventions this caller believes the
+        // `from`/`to` frames are in; the schema is the source of truth. A
+        // mismatch is a read-in-the-wrong-convention wiring bug. Both endpoints
+        // of a present orientation block are always in the map (compose folds
+        // them in), so `None` here can only mean an inconsistent schema.
+        debug_assert!(
+            self.schema.convention_of(&from) == Some(A::CONVENTION)
+                && self.schema.convention_of(&to) == Some(B::CONVENTION),
+            "orientation {from}→{to} read as {}→{} but the schema declares {}→{}",
+            A::CONVENTION,
+            B::CONVENTION,
+            self.schema
+                .convention_of(&from)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "no convention".to_string()),
+            self.schema
+                .convention_of(&to)
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "no convention".to_string()),
+        );
 
         let q = Quaternion::new(
             self.mean[off + 3],
@@ -197,7 +228,7 @@ impl FrameAwareState {
     /// [`position`](Self::position) *in the reference frame* (its translation) —
     /// so it needs no block of its own; there is no stored pose block. `None` if
     /// either the orientation or the reference-frame position is absent.
-    pub fn pose<A: Frame, B: Frame>(
+    pub fn pose<A: ConventionOf, B: ConventionOf>(
         &self,
         body: FrameId,
         reference: FrameId,
@@ -213,8 +244,25 @@ impl FrameAwareState {
     /// Shared slice-and-copy for the flat (three-scalar) block extractors: the
     /// block's storage offset, then its three contiguous mean rows as a raw
     /// `Vector3`. The public extractors wrap the result in their typed carrier.
-    fn block_vector3(&self, quantity: &Quantity) -> Option<Vector3<f64>> {
+    fn block_vector3<F: ConventionOf>(&self, quantity: &Quantity) -> Option<Vector3<f64>> {
         let offset = self.schema.storage_offset_of_block(quantity)?;
+
+        // The turbofish `F` names the convention this caller believes the block's
+        // frame is in; the schema is the source of truth. A mismatch is a
+        // read-in-the-wrong-convention wiring bug. This runs only on a found
+        // block, whose frame compose has folded into the map, so `None` here can
+        // only mean an inconsistent schema.
+        if let Some(frame) = quantity.frame() {
+            let declared = self.schema.convention_of(frame);
+            debug_assert!(
+                declared == Some(F::CONVENTION),
+                "{quantity} read as {} but the schema declares its frame in {}",
+                F::CONVENTION,
+                declared
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "no convention".to_string()),
+            );
+        }
 
         Some(self.mean.fixed_rows::<3>(offset).into())
     }
@@ -558,6 +606,26 @@ mod block_extractor_tests {
         // identity is a different block, and is absent.
         let s = composed_state();
         assert!(s.position::<Flu>(body()).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "read as FLU")]
+    fn flat_read_in_wrong_convention_panics() {
+        // `World` is composed as ENU, so reading its (present) position block as
+        // FLU is a wiring bug. The block exists, so the convention check fires
+        // rather than returning `None` — the distinction step 4 exists to make.
+        let s = composed_state();
+        let _ = s.position::<Flu>(FrameId::World);
+    }
+
+    #[test]
+    #[should_panic(expected = "read as ENU→ENU")]
+    fn orientation_read_in_wrong_convention_panics() {
+        // The body→World block is composed as FLU→ENU. Reading the `from`
+        // endpoint as ENU disagrees with the schema, so the check fires on a
+        // block that is present.
+        let s = composed_state();
+        let _ = s.orientation::<Enu, Enu>(body(), FrameId::World);
     }
 
     // Quaternion equality up to the double cover: `q` and `-q` are the same
