@@ -108,7 +108,6 @@ mod tests {
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
-    use crate::estimation::schema::BlockConvention;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::state::{Component, Quantity};
@@ -179,7 +178,10 @@ mod tests {
         // Position in the agent's odom frame (ENU), keyed by AGENT — the same
         // FrameId the state carries, so the agreement check lines up.
         assert_eq!(block.quantity(), &Quantity::Position(FrameId::Odom(AGENT)));
-        assert_eq!(block.convention(), &BlockConvention::Single(Convention::Enu));
+        assert_eq!(
+            block.conventions,
+            vec![(FrameId::Odom(AGENT), Convention::Enu)]
+        );
     }
 
     #[test]

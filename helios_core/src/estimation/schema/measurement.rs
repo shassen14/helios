@@ -1,26 +1,26 @@
 use crate::{
-    estimation::schema::BlockConvention,
     frames::{transforms::Convention, FrameId},
     state::{Quantity, StateVariable},
 };
 
 /// One block of a [`MeasurementSchema`]: the [`Quantity`] a measurement predicts
-/// and the [`BlockConvention`] its components are expressed in. The measurement
-/// mirror of [`StateSchemaBlock`](super::StateSchemaBlock), minus the manifold
-/// retraction — a measurement contributes a flat innovation `z − h(x)`, never a
-/// point on a curved space, so there is no `StateBlock` to store. Its identity is
-/// exactly `quantity + convention`; the innovation length comes from
-/// [`dim`](Self::dim).
+/// and the axis convention of each frame it references. The measurement mirror of
+/// [`StateSchemaBlock`](super::StateSchemaBlock), minus the manifold retraction —
+/// a measurement contributes a flat innovation `z − h(x)`, never a point on a
+/// curved space, so there is no `StateBlock` to store. Its identity is exactly
+/// `quantity + conventions`; the innovation length comes from [`dim`](Self::dim).
 #[derive(Debug, Clone)]
 pub struct MeasurementSchemaBlock {
     pub(crate) quantity: Quantity,
-    pub(crate) convention: BlockConvention,
+    /// The axis convention of each frame this block references — one entry for a
+    /// flat quantity, one per endpoint for an orientation.
+    pub(crate) conventions: Vec<(FrameId, Convention)>,
 }
 
 impl MeasurementSchemaBlock {
-    /// Builds a flat block for a measurement of `quantity`, tagging it with the
-    /// one axis `convention` its components are expressed in, stored as
-    /// [`BlockConvention::Single`].
+    /// Builds a flat block for a measurement of `quantity`, recording the one axis
+    /// `convention` its components are expressed in — every flat quantity lives in
+    /// exactly one — as this block's single frame → convention entry.
     ///
     /// # Panics
     /// Rejects [`Orientation`](Quantity::Orientation): a rotation is a map between
@@ -33,34 +33,40 @@ impl MeasurementSchemaBlock {
             "MeasurementSchemaBlock::new builds Euclidean blocks; use MeasurementSchemaBlock::orientation for an orientation block",
         );
 
+        let frame = quantity
+            .frame()
+            .expect("new rejects orientation, so a flat quantity has a frame");
+
+        let conventions = vec![(frame.clone(), convention)];
+
         Self {
             quantity,
-            convention: BlockConvention::Single(convention),
+            conventions,
         }
     }
 
     /// Builds an orientation block for the `from → to` rotation, recording the
-    /// axis convention of each endpoint as a [`BlockConvention::Pair`]. Reserved
-    /// for an attitude/heading measurement (an AHRS): no measurement model
-    /// produces one today, so a `Pair` block has a defined innovation length
-    /// ([`dim`](Self::dim) = 3, the rotation tangent) but no defined component
-    /// names yet — see [`MeasurementSchema::compose`].
+    /// axis convention of each endpoint — `from_conv` for the source, `to_conv`
+    /// for the target. Reserved for an attitude/heading measurement (an AHRS): no
+    /// measurement model produces one today, so an orientation block has a defined
+    /// innovation length ([`dim`](Self::dim) = 3, the rotation tangent) but no
+    /// defined component names yet — see [`MeasurementSchema::compose`].
     pub fn orientation(
         from: FrameId,
         to: FrameId,
         from_conv: Convention,
         to_conv: Convention,
     ) -> Self {
-        let quantity = Quantity::Orientation { from, to };
-
-        let convention = BlockConvention::Pair {
-            from: from_conv,
-            to: to_conv,
+        let quantity = Quantity::Orientation {
+            from: from.clone(),
+            to: to.clone(),
         };
+
+        let conventions = vec![(from, from_conv), (to, to_conv)];
 
         Self {
             quantity,
-            convention,
+            conventions,
         }
     }
 
@@ -68,8 +74,10 @@ impl MeasurementSchemaBlock {
         &self.quantity
     }
 
-    pub fn convention(&self) -> &BlockConvention {
-        &self.convention
+    /// The axis convention of each frame this block references — one entry for a
+    /// flat quantity, one per endpoint for an orientation.
+    pub fn conventions(&self) -> &[(FrameId, Convention)] {
+        &self.conventions
     }
 
     /// The block's contribution to the innovation vector — its *tangent* length,
@@ -78,9 +86,9 @@ impl MeasurementSchemaBlock {
     /// numbers but innovates on the three-DOF rotation tangent, so it
     /// contributes `3`.
     pub(crate) fn dim(&self) -> usize {
-        match self.convention {
-            BlockConvention::Single(_) => self.quantity.variables().len(),
-            BlockConvention::Pair { .. } => 3,
+        match self.quantity {
+            Quantity::Orientation { .. } => 3,
+            _ => self.quantity.variables().len(),
         }
     }
 }
@@ -109,23 +117,23 @@ impl MeasurementSchema {
     /// definitional here, taken straight from [`MeasurementSchemaBlock::dim`].
     ///
     /// # Panics
-    /// On a [`Pair`](BlockConvention::Pair) block. Its innovation length is known
-    /// (3), but the *names* of an orientation measurement's three tangent
-    /// components are not yet defined — no model produces one. When an AHRS
-    /// measurement lands, the resolution is three rotation-vector components
-    /// (so(3) axes, reusing `Component::{X, Y, Z}`), never the four quaternion
-    /// storage names. Until then the block is refused rather than mislabeled.
+    /// On an orientation block. Its innovation length is known (3), but the
+    /// *names* of an orientation measurement's three tangent components are not
+    /// yet defined — no model produces one. When an AHRS measurement lands, the
+    /// resolution is three rotation-vector components (so(3) axes, reusing
+    /// `Component::{X, Y, Z}`), never the four quaternion storage names. Until
+    /// then the block is refused rather than mislabeled.
     pub fn compose(blocks: Vec<MeasurementSchemaBlock>) -> Self {
         let mut layout = Vec::new();
         let mut dim = 0;
 
         for block in &blocks {
             dim += block.dim();
-            match block.convention {
-                BlockConvention::Single(_) => layout.extend(block.quantity.variables()),
-                BlockConvention::Pair { .. } => panic!(
-                    "orientation-measurement layout is not yet defined; no measurement model produces a Pair block"
+            match block.quantity {
+                Quantity::Orientation { .. } => panic!(
+                    "orientation-measurement layout is not yet defined; no measurement model produces one"
                 ),
+                _ => layout.extend(block.quantity.variables()),
             }
         }
 
@@ -162,19 +170,20 @@ mod tests {
     // ── MeasurementSchemaBlock: convention tagging and the constructor split ──
 
     #[test]
-    fn new_tags_a_flat_block_with_a_single_convention() {
+    fn new_records_a_flat_block_as_one_frame_convention_entry() {
+        // A flat kind touches one frame, so `new` records exactly one
+        // (frame, convention) entry: the quantity's frame in the given convention.
         let block =
             MeasurementSchemaBlock::new(Quantity::Position(FrameId::World), Convention::Enu);
-        assert_eq!(
-            block.convention(),
-            &BlockConvention::Single(Convention::Enu)
-        );
+        assert_eq!(block.conventions, vec![(FrameId::World, Convention::Enu)]);
         // A flat block innovates in as many dimensions as it names.
         assert_eq!(block.dim(), 3);
     }
 
     #[test]
-    fn orientation_tags_each_endpoint_as_a_pair() {
+    fn orientation_records_one_entry_per_endpoint() {
+        // A rotation touches two frames, so `orientation` records two entries: the
+        // source in `from_conv`, the target in `to_conv`, each on its own frame.
         let handle = FrameHandle(2);
         let block = MeasurementSchemaBlock::orientation(
             FrameId::Body(handle),
@@ -183,11 +192,11 @@ mod tests {
             Convention::Enu,
         );
         assert_eq!(
-            block.convention(),
-            &BlockConvention::Pair {
-                from: Convention::Flu,
-                to: Convention::Enu,
-            }
+            block.conventions,
+            vec![
+                (FrameId::Body(handle), Convention::Flu),
+                (FrameId::Odom(handle), Convention::Enu),
+            ]
         );
         // An orientation's innovation is the 3-DOF rotation tangent, never the
         // four stored quaternion components.
@@ -197,8 +206,8 @@ mod tests {
     #[test]
     #[should_panic(expected = "use MeasurementSchemaBlock::orientation")]
     fn new_rejects_an_orientation_quantity() {
-        // `new` stores a single convention, so an orientation would pair a 3-DOF
-        // rotation with one tag — the mismatch `BlockConvention` exists to stop.
+        // `new` records a single frame → convention entry, but an orientation
+        // touches two frames; it must go through `orientation`, which records both.
         let handle = FrameHandle(2);
         MeasurementSchemaBlock::new(
             Quantity::Orientation {

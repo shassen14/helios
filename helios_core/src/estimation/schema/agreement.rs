@@ -1,163 +1,83 @@
 use crate::{
-    estimation::schema::{
-        BlockConvention, MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
-    },
+    estimation::schema::{MeasurementSchema, MeasurementSchemaBlock, StateSchema},
     frames::{transforms::Convention, FrameId},
     state::Quantity,
 };
 
-use std::collections::HashMap;
-
 /// Checks that a measurement schema is expressed compatibly with the state it
-/// aids, one block at a time.
+/// aids, one frame at a time.
 ///
-/// For each measurement block, either the state tracks the same quantity — in
-/// which case their conventions must match — or it does not, in which case the
-/// block's frame must either be one the state assigns a convention, which the
-/// measurement must then match, or the sensor's own device frame, whose
-/// convention is the sensor model's concern and is accepted here as declared. A
-/// disagreement is a construction-time config error, returned rather than
-/// panicked so the assembler can name the offending estimator. Does no
-/// coordinate math: the frame crossing is the measurement model's own concern,
-/// and this only validates the declarations line up.
+/// For each frame a measurement block references, the state either assigns that
+/// frame a convention — which the measurement must match — or it does not, in
+/// which case the frame must be the sensor's own device frame, whose convention
+/// is the sensor model's concern and is accepted here as declared; anything else
+/// is unanchorable. This one rule subsumes both a direct readout (the state
+/// tracks the same quantity, so its frame is in the map) and a derived
+/// measurement (the state tracks only the frame): both reduce to looking the
+/// frame up in the state's convention map. A disagreement is a construction-time
+/// config error, returned rather than panicked so the assembler can name the
+/// offending estimator. Does no coordinate math: the frame crossing is the
+/// measurement model's own concern, and this only validates the declarations
+/// line up.
 pub fn check_measurement_state_agreement(
     state: &StateSchema,
     measurement: &MeasurementSchema,
 ) -> Result<(), MeasurementAgreementError> {
-    let by_frame = frame_conventions(state);
     for block in measurement.blocks() {
-        check_block(block, state, &by_frame)?
+        check_block(block, state)?;
     }
     Ok(())
 }
 
-fn frame_conventions(state: &StateSchema) -> HashMap<FrameId, Convention> {
-    let mut by_frame = HashMap::new();
-
-    for block in state.blocks() {
-        match (block.quantity(), block.convention()) {
-            (q, BlockConvention::Single(conv)) => {
-                let f = q.frame().expect("Single convention ⇒ flat quantity");
-                by_frame.insert(f.clone(), *conv);
-            }
-            (
-                Quantity::Orientation { from, to },
-                BlockConvention::Pair {
-                    from: from_conv,
-                    to: to_conv,
-                },
-            ) => {
-                by_frame.insert(from.clone(), *from_conv);
-                by_frame.insert(to.clone(), *to_conv);
-            }
-            _ => unreachable!("constructors keep quantity arity and convention arity in lockstep"),
-        };
-    }
-
-    by_frame
-}
-
+/// Checks one measurement block: every frame it references must agree with the
+/// state's convention for that frame, or be a sensor's own device frame.
 fn check_block(
     block: &MeasurementSchemaBlock,
     state: &StateSchema,
-    by_frame: &HashMap<FrameId, Convention>,
 ) -> Result<(), MeasurementAgreementError> {
-    match find_state_twin(state, block.quantity()) {
-        Some(twin) => {
-            if conventions_agree(block.convention(), twin.convention()) {
-                Ok(())
-            } else {
-                Err(MeasurementAgreementError::ConventionMismatch {
+    for (frame, convention) in &block.conventions {
+        match state.convention_of(frame) {
+            // The state anchors this frame under a different convention. This one
+            // arm covers both a direct readout (the state tracks the same quantity)
+            // and a derived measurement (the state tracks only the frame): if the
+            // state anchors the frame at all, the map holds the convention to match.
+            Some(state_convention) if state_convention != *convention => {
+                return Err(MeasurementAgreementError::FrameConventionMismatch {
                     quantity: block.quantity().clone(),
-                    state: twin.convention().clone(),
-                    measurement: block.convention().clone(),
-                })
+                    frame: frame.clone(),
+                    state: state_convention,
+                    measurement: *convention,
+                });
             }
-        }
-        None => {
-            // Derived: no state block observes this quantity, so there is no twin
-            // to compare against. Fall back to checking the block's frame — the
-            // two extractions below are total because a composed measurement block
-            // is always flat (orientation measurements are refused at compose).
-            let Some(m_frame) = block.quantity().frame() else {
-                unreachable!("a composed measurement block is flat; a flat quantity has a frame")
-            };
-            let BlockConvention::Single(m_convention) = block.convention() else {
-                unreachable!("a composed measurement block is flat; its convention is Single")
-            };
-
-            match by_frame.get(m_frame) {
-                // The state expresses this frame: the measurement must use the
-                // same convention the state assigned it.
-                Some(state_convention) => {
-                    if m_convention == state_convention {
-                        Ok(())
-                    } else {
-                        Err(MeasurementAgreementError::FrameEndpointMismatch {
-                            quantity: block.quantity().clone(),
-                            frame: m_frame.clone(),
-                            state_frame_convention: *state_convention,
-                            measurement_convention: *m_convention,
-                        })
-                    }
-                }
-                // The state never anchors this frame. A sensor's own device frame is
-                // the sensor model's to describe; anything else has nothing to check
-                // against and cannot be anchored.
-                None => {
-                    if matches!(m_frame, FrameId::Sensor(_)) {
-                        // Its convention is the sensor model's to declare and verify —
-                        // FLU for an IMU, optical for a camera — so there is nothing to
-                        // compare here. Accept it.
-                        Ok(())
-                    } else {
-                        Err(MeasurementAgreementError::UnanchorableFrame {
-                            quantity: block.quantity().clone(),
-                            frame: m_frame.clone(),
-                        })
-                    }
-                }
+            // The state anchors this frame and the conventions agree.
+            Some(_) => {}
+            // Not anchored by the state, but the sensor's own device frame — its
+            // convention is the sensor model's to declare, not ours to check.
+            None if matches!(frame, FrameId::Sensor(_)) => {}
+            // Neither anchored by the state nor a sensor frame: nothing to check
+            // against.
+            None => {
+                return Err(MeasurementAgreementError::UnanchorableFrame {
+                    quantity: block.quantity().clone(),
+                    frame: frame.clone(),
+                });
             }
         }
     }
-}
-
-fn find_state_twin<'a>(
-    state: &'a StateSchema,
-    quantity: &Quantity,
-) -> Option<&'a StateSchemaBlock> {
-    state.blocks().iter().find(|b| quantity == b.quantity())
-}
-
-fn conventions_agree(measurement: &BlockConvention, state: &BlockConvention) -> bool {
-    match (measurement, state) {
-        (BlockConvention::Single(a), BlockConvention::Single(b)) => a == b,
-        (
-            BlockConvention::Pair { from: mf, to: mt },
-            BlockConvention::Pair { from: sf, to: st },
-        ) => mf == sf && mt == st,
-        _ => false,
-    }
+    Ok(())
 }
 
 /// Why a measurement schema fails to agree with the state it aids. Every variant
 /// is a construction-time config error; none can arise once a pipeline is built.
 #[derive(Debug)]
 pub enum MeasurementAgreementError {
-    /// The state tracks this exact quantity, but declares it in a different
-    /// convention than the measurement does — a direct-readout mismatch.
-    ConventionMismatch {
-        quantity: Quantity,
-        state: BlockConvention,
-        measurement: BlockConvention,
-    },
     /// The state expresses the measurement's frame, but under a different
     /// convention than the measurement claims for it.
-    FrameEndpointMismatch {
+    FrameConventionMismatch {
         quantity: Quantity,
         frame: FrameId,
-        state_frame_convention: Convention,
-        measurement_convention: Convention,
+        state: Convention,
+        measurement: Convention,
     },
     /// The measurement's frame is neither tracked by the state nor a sensor
     /// frame, so no convention exists to check it against.
@@ -170,26 +90,15 @@ pub enum MeasurementAgreementError {
 impl std::fmt::Display for MeasurementAgreementError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::ConventionMismatch {
+            Self::FrameConventionMismatch {
                 quantity,
+                frame,
                 state,
                 measurement,
             } => write!(
                 f,
-                "measurement of {quantity} is declared in {measurement}, but the state \
-                 tracks it in {state}; the innovation z - h(x) would combine components in \
-                 two different axis conventions. Align the measurement model's schema with the \
-                 state's convention for this quantity."
-            ),
-            Self::FrameEndpointMismatch {
-                quantity,
-                frame,
-                state_frame_convention,
-                measurement_convention,
-            } => write!(
-                f,
-                "measurement of {quantity} in {frame} is declared {measurement_convention}, \
-                 but the state expresses {frame} in {state_frame_convention}. A measurement \
+                "measurement of {quantity} in {frame} is declared {measurement}, \
+                 but the state expresses {frame} in {state}. A measurement \
                  and the state must agree on a frame's axis convention."
             ),
             Self::UnanchorableFrame { quantity, frame } => write!(
@@ -216,6 +125,7 @@ impl std::error::Error for MeasurementAgreementError {}
 mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
+    use crate::estimation::schema::StateSchemaBlock;
     use crate::manifold::TangentNoise;
 
     use nalgebra::{DMatrix, DVector};
@@ -237,7 +147,8 @@ mod tests {
     /// position block, and `Body(agent) → FLU` via the body↦odom orientation.
     /// `World` is deliberately left untracked so it can stand in for the
     /// unanchorable case. Neither block observes `SpecificForce`, so any
-    /// measurement of it exercises the derived (no-twin) branch.
+    /// measurement of it references a frame the state anchors without the state
+    /// tracking the same quantity.
     fn anchored_state() -> StateSchema {
         StateSchema::compose(vec![
             StateSchemaBlock::new(
@@ -266,21 +177,6 @@ mod tests {
         MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(quantity, convention)])
     }
 
-    // ── frame_conventions: the map the derived branch reads ───────────────────
-
-    #[test]
-    fn frame_conventions_splits_an_orientation_into_both_endpoints() {
-        // The position block contributes one entry; the orientation `Pair`
-        // contributes two, its `from`/`to` conventions landing on the matching
-        // frames. Odom appears in both blocks with the same convention, so the
-        // map holds exactly the two distinct frames.
-        let by_frame = frame_conventions(&anchored_state());
-
-        assert_eq!(by_frame.len(), 2);
-        assert_eq!(by_frame[&FrameId::Odom(agent())], Convention::Enu);
-        assert_eq!(by_frame[&FrameId::Body(agent())], Convention::Flu);
-    }
-
     // ── Direct readout: measurement quantity is tracked by the state ──────────
 
     #[test]
@@ -291,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_readout_with_wrong_convention_is_a_convention_mismatch() {
+    fn direct_readout_with_wrong_convention_is_a_frame_convention_mismatch() {
         // Same quantity the state tracks (position in odom), but declared FLU
         // where the state holds ENU: the innovation would mix axis conventions.
         let state = anchored_state();
@@ -300,7 +196,7 @@ mod tests {
         let err = check_measurement_state_agreement(&state, &m).unwrap_err();
         assert!(matches!(
             err,
-            MeasurementAgreementError::ConventionMismatch { .. }
+            MeasurementAgreementError::FrameConventionMismatch { .. }
         ));
     }
 
@@ -320,8 +216,12 @@ mod tests {
     }
 
     #[test]
-    fn derived_measurement_in_a_tracked_frame_with_wrong_convention_is_a_frame_endpoint_mismatch() {
+    fn derived_measurement_in_a_tracked_frame_with_wrong_convention_is_a_frame_convention_mismatch()
+    {
         // Body(agent) is anchored FLU by the state; the measurement claims ENU.
+        // The state tracks the frame but not this quantity, yet it lands on the
+        // same `FrameConventionMismatch` as a direct readout — which is the point
+        // of folding the two cases into one frame lookup.
         let state = anchored_state();
         let m = one(
             Quantity::SpecificForce(FrameId::Body(agent())),
@@ -329,17 +229,17 @@ mod tests {
         );
 
         match check_measurement_state_agreement(&state, &m).unwrap_err() {
-            MeasurementAgreementError::FrameEndpointMismatch {
+            MeasurementAgreementError::FrameConventionMismatch {
                 frame,
-                state_frame_convention,
-                measurement_convention,
+                state,
+                measurement,
                 ..
             } => {
                 assert_eq!(frame, FrameId::Body(agent()));
-                assert_eq!(state_frame_convention, Convention::Flu);
-                assert_eq!(measurement_convention, Convention::Enu);
+                assert_eq!(state, Convention::Flu);
+                assert_eq!(measurement, Convention::Enu);
             }
-            other => panic!("expected FrameEndpointMismatch, got {other:?}"),
+            other => panic!("expected FrameConventionMismatch, got {other:?}"),
         }
     }
 
@@ -412,52 +312,7 @@ mod tests {
 
         assert!(matches!(
             check_measurement_state_agreement(&state, &m).unwrap_err(),
-            MeasurementAgreementError::ConventionMismatch { .. }
-        ));
-    }
-
-    // ── conventions_agree: the direct-branch predicate, in isolation ──────────
-    //
-    // Reached through the public check only for flat (`Single`) blocks today, so
-    // its `Pair` and mixed-arity arms are pinned here directly — an AHRS
-    // orientation measurement will exercise them through the front door later.
-
-    #[test]
-    fn conventions_agree_on_equal_singles_and_disagrees_otherwise() {
-        assert!(conventions_agree(
-            &BlockConvention::Single(Convention::Enu),
-            &BlockConvention::Single(Convention::Enu),
-        ));
-        assert!(!conventions_agree(
-            &BlockConvention::Single(Convention::Enu),
-            &BlockConvention::Single(Convention::Flu),
-        ));
-    }
-
-    #[test]
-    fn conventions_agree_compares_both_pair_endpoints() {
-        let matching = BlockConvention::Pair {
-            from: Convention::Flu,
-            to: Convention::Enu,
-        };
-        assert!(conventions_agree(&matching, &matching));
-
-        // A single endpoint differing is enough to disagree.
-        let one_endpoint_off = BlockConvention::Pair {
-            from: Convention::Flu,
-            to: Convention::Flu,
-        };
-        assert!(!conventions_agree(&matching, &one_endpoint_off));
-    }
-
-    #[test]
-    fn conventions_of_different_arity_never_agree() {
-        assert!(!conventions_agree(
-            &BlockConvention::Single(Convention::Flu),
-            &BlockConvention::Pair {
-                from: Convention::Flu,
-                to: Convention::Enu,
-            },
+            MeasurementAgreementError::FrameConventionMismatch { .. }
         ));
     }
 }

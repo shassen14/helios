@@ -107,7 +107,7 @@ mod tests {
     use super::*;
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
-    use crate::estimation::schema::{BlockConvention, StateSchema, StateSchemaBlock};
+    use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::manifold::TangentNoise;
@@ -264,7 +264,10 @@ mod tests {
         assert_eq!(schema.blocks().len(), 1);
         let block = &schema.blocks()[0];
         assert_eq!(block.quantity(), &Quantity::Mag(FrameId::Sensor(SENSOR)));
-        assert_eq!(block.convention(), &BlockConvention::Single(Convention::Flu));
+        assert_eq!(
+            block.conventions,
+            vec![(FrameId::Sensor(SENSOR), Convention::Flu)]
+        );
     }
 
     #[test]

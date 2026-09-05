@@ -265,9 +265,7 @@ mod tests {
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::data::sensor::LinearAcceleration3D;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
-    use helios_core::estimation::schema::{
-        BlockConvention, MeasurementSchema, MeasurementSchemaBlock,
-    };
+    use helios_core::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
     use helios_core::estimation::EstimatorInputs;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId};
@@ -509,10 +507,10 @@ mod tests {
         assert_eq!(schema.dim(), OnePassModel.dim());
         assert_eq!(schema.blocks().len(), 1);
         assert_eq!(schema.blocks()[0].quantity(), &Quantity::Position(FrameId::World));
-        assert!(matches!(
-            schema.blocks()[0].convention(),
-            BlockConvention::Single(Convention::Enu)
-        ));
+        assert_eq!(
+            schema.blocks()[0].conventions(),
+            &[(FrameId::World, Convention::Enu)]
+        );
     }
 
     #[test]

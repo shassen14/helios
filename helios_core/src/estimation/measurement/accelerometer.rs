@@ -123,7 +123,6 @@ mod tests {
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
-    use crate::estimation::schema::BlockConvention;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId};
     use crate::state::Quantity;
@@ -183,7 +182,10 @@ mod tests {
             block.quantity(),
             &Quantity::SpecificForce(FrameId::Sensor(SENSOR))
         );
-        assert_eq!(block.convention(), &BlockConvention::Single(Convention::Flu));
+        assert_eq!(
+            block.conventions,
+            vec![(FrameId::Sensor(SENSOR), Convention::Flu)]
+        );
     }
 
     #[test]
