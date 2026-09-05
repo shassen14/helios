@@ -36,4 +36,40 @@ impl Quantity {
             }
         }
     }
+
+    pub fn frame(&self) -> Option<&FrameId> {
+        match self {
+            Quantity::Position(f)
+            | Quantity::Velocity(f)
+            | Quantity::Acceleration(f)
+            | Quantity::SpecificForce(f)
+            | Quantity::AngularVelocity(f)
+            | Quantity::AngularAcceleration(f)
+            | Quantity::Mag(f)
+            | Quantity::MagBias(f)
+            | Quantity::AccelBias(f)
+            | Quantity::GyroBias(f) => Some(f),
+            Quantity::Orientation { .. } => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Quantity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Quantity::Position(frame) => write!(f, "position in {frame}"),
+            Quantity::Velocity(frame) => write!(f, "velocity in {frame}"),
+            Quantity::Acceleration(frame) => write!(f, "acceleration in {frame}"),
+            Quantity::SpecificForce(frame) => write!(f, "specific force in {frame}"),
+            Quantity::AngularVelocity(frame) => write!(f, "angular velocity in {frame}"),
+            Quantity::AngularAcceleration(frame) => {
+                write!(f, "angular acceleration in {frame}")
+            }
+            Quantity::Mag(frame) => write!(f, "magnetic field in {frame}"),
+            Quantity::MagBias(frame) => write!(f, "magnetometer bias in {frame}"),
+            Quantity::AccelBias(frame) => write!(f, "accelerometer bias in {frame}"),
+            Quantity::GyroBias(frame) => write!(f, "gyroscope bias in {frame}"),
+            Quantity::Orientation { from, to } => write!(f, "orientation {from}→{to}"),
+        }
+    }
 }

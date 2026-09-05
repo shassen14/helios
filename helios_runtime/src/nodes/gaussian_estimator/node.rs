@@ -26,6 +26,7 @@ use helios_core::data::envelope::SensorReading;
 use helios_core::data::ports::TfProvider;
 use helios_core::data::sensor::SensorPayload;
 use helios_core::estimation::measurement::MeasurementModel;
+use helios_core::estimation::schema::MeasurementSchema;
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::frames::FrameAwareState;
 
@@ -43,6 +44,15 @@ use std::sync::Mutex;
 pub(crate) trait AidingHandler: Send + Sync {
     /// The bus channel this handler reads from.
     fn channel(&self) -> &ChannelKey;
+
+    /// The typed shape of the measurement this handler applies — a forward of
+    /// the underlying [`MeasurementModel::schema`].
+    ///
+    /// Exists so the assembler can read each measurement's schema through the
+    /// erased `Box<dyn AidingHandler>`, without downcasting to the concrete
+    /// payload type. The estimator constructor checks it against the composed
+    /// state schema; this trait only surfaces it.
+    fn schema(&self) -> MeasurementSchema;
 
     /// Pull all readings on this channel and sequentially apply them.
     ///
@@ -103,6 +113,10 @@ impl<T: SensorPayload> TypedAidingHandler<T> {
 impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
     fn channel(&self) -> &ChannelKey {
         &self.channel
+    }
+
+    fn schema(&self) -> MeasurementSchema {
+        self.model.schema()
     }
 
     fn drain_and_apply(
@@ -251,7 +265,9 @@ mod tests {
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
     use helios_core::data::sensor::LinearAcceleration3D;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
-    use helios_core::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
+    use helios_core::estimation::schema::{
+        BlockConvention, MeasurementSchema, MeasurementSchemaBlock,
+    };
     use helios_core::estimation::EstimatorInputs;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId};
@@ -475,6 +491,28 @@ mod tests {
             .port_descriptor()
             .optional_inputs
             .contains(&accel_channel()));
+    }
+
+    #[test]
+    fn aiding_handler_forwards_the_model_schema() {
+        // The handler's schema must be its model's, verbatim — the assembler
+        // reads it through Box<dyn AidingHandler> and would otherwise be blind
+        // to what the measurement actually observes. OnePassModel declares one
+        // world-frame position block, so the forward must surface exactly that.
+        let handler = TypedAidingHandler::<LinearAcceleration3D>::new(
+            accel_sensor_channel(),
+            Box::new(OnePassModel),
+            DMatrix::identity(3, 3),
+        );
+
+        let schema = handler.schema();
+        assert_eq!(schema.dim(), OnePassModel.dim());
+        assert_eq!(schema.blocks().len(), 1);
+        assert_eq!(schema.blocks()[0].quantity(), &Quantity::Position(FrameId::World));
+        assert!(matches!(
+            schema.blocks()[0].convention(),
+            BlockConvention::Single(Convention::Enu)
+        ));
     }
 
     #[test]

@@ -41,6 +41,17 @@ pub enum FrameId {
     Sensor(FrameHandle),
 }
 
+impl std::fmt::Display for FrameId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameId::World => f.write_str("world"),
+            FrameId::Odom(handle) => write!(f, "odom:{}", handle.0),
+            FrameId::Body(handle) => write!(f, "body:{}", handle.0),
+            FrameId::Sensor(handle) => write!(f, "sensor:{}", handle.0),
+        }
+    }
+}
+
 /// The "smart" state object used by filters. It bundles the state estimate
 /// (`mean`) with its schema, covariance, and timestamp.
 #[derive(Debug, Clone, Serialize)]

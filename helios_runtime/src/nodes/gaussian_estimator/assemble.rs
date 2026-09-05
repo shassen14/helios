@@ -16,7 +16,7 @@ use helios_core::data::sensor::{
     AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
 };
 use helios_core::estimation::augmentation::augmentation_block;
-use helios_core::estimation::schema::StateSchemaBlock;
+use helios_core::estimation::schema::{MeasurementAgreementError, StateSchemaBlock};
 use helios_core::frames::FrameId;
 
 use nalgebra::DMatrix;
@@ -157,6 +157,22 @@ fn build_aiding_handler(
 
     let r = DMatrix::from_diagonal(&nalgebra::DVector::from_vec(aid.r_diag.clone()));
 
+    // The measurement's innovation length (its schema dim) and the noise matrix
+    // R must match; otherwise the filter silently skips every update from this
+    // sensor. Catch a mis-sized R here, at build time, rather than as a runtime
+    // no-op that looks like a dead sensor.
+    let schema_dim = model.schema().dim();
+    if schema_dim != r.nrows() {
+        return Err(PipelineAssemblyError::FactoryFailure {
+            node_kind: aid.model.kind.clone(),
+            reason: MeasurementAgreementError::DimensionMismatch {
+                schema_dim,
+                expected: r.nrows(),
+            }
+            .to_string(),
+        });
+    }
+
     // Dispatch on sensor_payload to construct the correctly-typed handler.
     // This list mirrors KNOWN_SENSOR_PAYLOADS in validation.rs and the
     // SensorPayload impls in helios_core::data::sensor.
@@ -204,4 +220,62 @@ fn build_aiding_channel(aid: &AidingConfig) -> Result<SensorChannel, PipelineAss
         _ => unreachable!("caller already validated sensor_payload"),
     };
     Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::config::SensorModelConfig;
+
+    // A GPS-position aiding config (a 3-DOF measurement) whose R diagonal has the
+    // given length, reading from a sensor channel named "gps".
+    fn gps_aiding(r_len: usize) -> AidingConfig {
+        AidingConfig {
+            sensor_payload: "GpsPosition".to_string(),
+            model: SensorModelConfig {
+                kind: "gps_position".to_string(),
+                gravity_enu: [0.0, 0.0, -9.81],
+                magnetic_field_enu: None,
+            },
+            input_channel: "gps".to_string(),
+            r_diag: vec![1.0; r_len],
+        }
+    }
+
+    fn sensor_handles() -> HashMap<String, FrameHandle> {
+        HashMap::from([("gps".to_string(), FrameHandle(1))])
+    }
+
+    // R sized to the model's measurement dimension builds a handler cleanly.
+    #[test]
+    fn aiding_handler_builds_when_r_matches_model_dim() {
+        let registry = AutonomyRegistry::default();
+        let handler = build_aiding_handler(
+            "est",
+            &gps_aiding(3),
+            FrameHandle(0),
+            &sensor_handles(),
+            &registry,
+        );
+        assert!(handler.is_ok());
+    }
+
+    // A mis-sized R would make every update from this sensor a silent runtime
+    // no-op; the build must reject it instead of producing a dead handler.
+    #[test]
+    fn aiding_handler_rejects_r_of_wrong_dim() {
+        let registry = AutonomyRegistry::default();
+        let result = build_aiding_handler(
+            "est",
+            &gps_aiding(2),
+            FrameHandle(0),
+            &sensor_handles(),
+            &registry,
+        );
+        assert!(matches!(
+            result,
+            Err(PipelineAssemblyError::FactoryFailure { .. })
+        ));
+    }
 }

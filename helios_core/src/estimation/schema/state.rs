@@ -294,6 +294,10 @@ impl StateSchema {
         out
     }
 
+    pub fn blocks(&self) -> &[StateSchemaBlock] {
+        &self.blocks
+    }
+
     /// Ordered storage-space layout; `len() == storage_dim()`.
     pub fn layout(&self) -> &[StateVariable] {
         &self.layout

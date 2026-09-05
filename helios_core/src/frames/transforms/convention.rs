@@ -14,6 +14,15 @@ pub enum Convention {
     Flu,
 }
 
+impl std::fmt::Display for Convention {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Convention::Enu => "ENU",
+            Convention::Flu => "FLU",
+        })
+    }
+}
+
 /// Maps a compile-time [`Frame`] marker to its runtime [`Convention`].
 ///
 /// A **capability** trait, deliberately kept off [`Frame`] itself: `Frame` is

@@ -13,6 +13,7 @@ use helios_core::estimation::dynamics::integrated_imu::{
 };
 use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
+use helios_core::estimation::schema::check_measurement_state_agreement;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::state::{Component, Quantity};
 
@@ -89,6 +90,21 @@ fn build_ekf(
         Arc::new(base_schema.extended(ctx.augmentation_blocks))
     };
     let q = schema.process_noise().clone();
+
+    // Every aiding measurement must declare its axes the way the composed state
+    // does — same convention for a directly-observed quantity, same convention
+    // for any frame the state also anchors. A disagreement is a construction
+    // error surfaced here, before the node is built, naming the estimator and
+    // the offending sensor channel so a misconfigured stack fails legibly.
+    for handler in &ctx.aiding {
+        check_measurement_state_agreement(&schema, &handler.schema()).map_err(|e| {
+            format!(
+                "estimator '{}' aiding channel {}: {e}",
+                ctx.instance_name,
+                handler.channel()
+            )
+        })?;
+    }
 
     // Seed the initial state from the schema (mean = zeros + identity
     // orientation, covariance = P₀), then overwrite only the mean pose with this
@@ -185,11 +201,22 @@ mod tests {
     use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
     use crate::runtime::AgentRuntime;
 
+    use crate::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
+    use crate::port::SensorChannel;
+
+    use helios_core::data::envelope::SensorReading;
+    use helios_core::data::ports::TfProvider;
     use helios_core::data::primitives::FrameHandle;
+    use helios_core::data::sensor::LinearAcceleration3D;
     use helios_core::data::MonotonicTime;
     use helios_core::estimation::augmentation::{augmentation_block, MAGNETOMETER_BIAS};
-    use helios_core::estimation::schema::StateSchemaBlock;
-    use helios_core::frames::transforms::ErasedTransform;
+    use helios_core::estimation::measurement::MeasurementModel;
+    use helios_core::estimation::schema::{
+        MeasurementSchema, MeasurementSchemaBlock, StateSchemaBlock,
+    };
+    use helios_core::frames::transforms::{Convention, ErasedTransform};
+
+    use nalgebra::{DMatrix, DVector};
 
     fn ekf_config_with(dynamics: EkfDynamicsConfig) -> EstimatorConfig {
         EstimatorConfig::Ekf(EkfConfig {
@@ -380,5 +407,90 @@ mod tests {
                 Component::X,
             ))
             .is_none());
+    }
+
+    // --- Measurement/state agreement is enforced at build ---
+
+    // Two mock measurement models with fixed schemas, to drive the agreement
+    // check without a real sensor. Both are 3-DOF; only the declared frame and
+    // convention differ, which is all the check reads.
+
+    /// Declares its measurement in `Odom(FrameHandle(0))` / ENU — exactly how the
+    /// IntegratedImu base state anchors position, so it agrees.
+    struct AgreeingModel;
+
+    impl MeasurementModel for AgreeingModel {
+        fn dim(&self) -> usize {
+            3
+        }
+        fn schema(&self) -> MeasurementSchema {
+            MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
+                Quantity::Position(FrameId::Odom(FrameHandle(0))),
+                Convention::Enu,
+            )])
+        }
+        fn predict_measurement(
+            &self,
+            _: &FrameAwareState,
+            _: Option<&dyn TfProvider>,
+            _: MonotonicTime,
+        ) -> Option<DVector<f64>> {
+            Some(DVector::zeros(3))
+        }
+    }
+
+    /// Declares its measurement in the world frame, which the base state never
+    /// anchors and which is not a sensor frame — an unanchorable disagreement.
+    struct UnanchorableModel;
+
+    impl MeasurementModel for UnanchorableModel {
+        fn dim(&self) -> usize {
+            3
+        }
+        fn schema(&self) -> MeasurementSchema {
+            MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
+                Quantity::Position(FrameId::World),
+                Convention::Enu,
+            )])
+        }
+        fn predict_measurement(
+            &self,
+            _: &FrameAwareState,
+            _: Option<&dyn TfProvider>,
+            _: MonotonicTime,
+        ) -> Option<DVector<f64>> {
+            Some(DVector::zeros(3))
+        }
+    }
+
+    fn aiding_with(model: Box<dyn MeasurementModel>) -> Box<dyn AidingHandler> {
+        Box::new(TypedAidingHandler::<LinearAcceleration3D>::new(
+            SensorChannel::of::<Vec<SensorReading<LinearAcceleration3D>>>(),
+            model,
+            DMatrix::identity(3, 3),
+        ))
+    }
+
+    // An aiding measurement whose schema agrees with the composed state must not
+    // block the build.
+    #[test]
+    fn build_ekf_accepts_an_agreeing_aiding_measurement() {
+        let registry = AutonomyRegistry::default();
+        let mut ctx = context("agrees");
+        ctx.aiding.push(aiding_with(Box::new(AgreeingModel)));
+
+        assert!(build_ekf(config(), ctx, &registry).is_ok());
+    }
+
+    // An aiding measurement in a frame the state can't anchor is a config error:
+    // the build must fail rather than run a filter whose innovation references a
+    // frame the state never expresses.
+    #[test]
+    fn build_ekf_rejects_a_disagreeing_aiding_measurement() {
+        let registry = AutonomyRegistry::default();
+        let mut ctx = context("disagrees");
+        ctx.aiding.push(aiding_with(Box::new(UnanchorableModel)));
+
+        assert!(build_ekf(config(), ctx, &registry).is_err());
     }
 }
