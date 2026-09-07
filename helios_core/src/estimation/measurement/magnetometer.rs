@@ -27,10 +27,6 @@ pub struct MagneticFieldModel {
 }
 
 impl MeasurementModel for MagneticFieldModel {
-    fn dim(&self) -> usize {
-        3
-    }
-
     /// One block: the magnetic field resolved in the sensor frame (FLU).
     fn schema(&self) -> MeasurementSchema {
         let frame = FrameId::Sensor(self.sensor_handle);
@@ -253,14 +249,9 @@ mod tests {
     }
 
     #[test]
-    fn dim_is_three() {
-        assert_eq!(make_model().dim(), 3);
-    }
-
-    #[test]
-    fn schema_matches_dim_and_tags_the_sensor_frame_field() {
+    fn schema_is_three_long_and_tags_the_sensor_frame_field() {
         let schema = make_model().schema();
-        assert_eq!(schema.dim(), make_model().dim());
+        assert_eq!(schema.dim(), 3);
         assert_eq!(schema.blocks().len(), 1);
         let block = &schema.blocks()[0];
         assert_eq!(block.quantity(), &Quantity::Mag(FrameId::Sensor(SENSOR)));

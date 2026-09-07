@@ -30,10 +30,6 @@ pub struct GpsPositionModel {
 }
 
 impl MeasurementModel for GpsPositionModel {
-    fn dim(&self) -> usize {
-        3
-    }
-
     /// One block: antenna position in the agent's odom frame (ENU), keyed by the
     /// agent handle — the same `FrameId` the state carries — not the sensor.
     fn schema(&self) -> MeasurementSchema {
@@ -165,14 +161,9 @@ mod tests {
     }
 
     #[test]
-    fn dim_is_three() {
-        assert_eq!(make_model().dim(), 3);
-    }
-
-    #[test]
-    fn schema_matches_dim_and_tags_the_odom_frame_position() {
+    fn schema_is_three_long_and_tags_the_odom_frame_position() {
         let schema = make_model().schema();
-        assert_eq!(schema.dim(), make_model().dim());
+        assert_eq!(schema.dim(), 3);
         assert_eq!(schema.blocks().len(), 1);
         let block = &schema.blocks()[0];
         // Position in the agent's odom frame (ENU), keyed by AGENT — the same

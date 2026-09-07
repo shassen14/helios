@@ -92,9 +92,9 @@ pub(crate) struct TypedAidingHandler<T: SensorPayload> {
 impl<T: SensorPayload> TypedAidingHandler<T> {
     /// Build a handler that reads `Vec<SensorReading<T>>` from `channel`.
     ///
-    /// `r` must be square with side equal to `model.dim()`; the filter silently
-    /// skips updates with mismatched `R` so a wrong-sized matrix becomes a
-    /// no-op rather than a panic.
+    /// `r` must be square with side equal to the sensor's measurement length; the
+    /// filter silently skips any update whose `R` disagrees with the incoming
+    /// measurement, so a wrong-sized matrix becomes a no-op rather than a panic.
     pub(crate) fn new(
         channel: SensorChannel,
         model: Box<dyn MeasurementModel>,
@@ -263,7 +263,7 @@ mod tests {
     use super::*;
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-    use helios_core::data::sensor::LinearAcceleration3D;
+    use helios_core::data::sensor::Acceleration;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
     use helios_core::estimation::EstimatorInputs;
@@ -350,12 +350,9 @@ mod tests {
     struct OnePassModel;
 
     impl MeasurementModel for OnePassModel {
-        fn dim(&self) -> usize {
-            3
-        }
         // A plumbing mock: it predicts a zero 3-vector to exercise the node's
         // tick/update path, not any real measurement. Its schema is just some
-        // 3-DOF world-frame block so the shape agrees with `dim`.
+        // 3-DOF world-frame block.
         fn schema(&self) -> MeasurementSchema {
             MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
                 Quantity::Position(FrameId::World),
@@ -425,7 +422,7 @@ mod tests {
     // --- Helpers ---
 
     fn accel_sensor_channel() -> SensorChannel {
-        SensorChannel::of::<Vec<SensorReading<LinearAcceleration3D>>>()
+        SensorChannel::of::<Vec<SensorReading<Acceleration>>>()
     }
 
     fn accel_channel() -> ChannelKey {
@@ -474,7 +471,7 @@ mod tests {
 
     #[test]
     fn descriptor_lists_aiding_channels_as_optional() {
-        let handler = TypedAidingHandler::<LinearAcceleration3D>::new(
+        let handler = TypedAidingHandler::<Acceleration>::new(
             accel_sensor_channel(),
             Box::new(OnePassModel),
             DMatrix::identity(3, 3),
@@ -497,16 +494,19 @@ mod tests {
         // reads it through Box<dyn AidingHandler> and would otherwise be blind
         // to what the measurement actually observes. OnePassModel declares one
         // world-frame position block, so the forward must surface exactly that.
-        let handler = TypedAidingHandler::<LinearAcceleration3D>::new(
+        let handler = TypedAidingHandler::<Acceleration>::new(
             accel_sensor_channel(),
             Box::new(OnePassModel),
             DMatrix::identity(3, 3),
         );
 
         let schema = handler.schema();
-        assert_eq!(schema.dim(), OnePassModel.dim());
+        assert_eq!(schema.dim(), 3);
         assert_eq!(schema.blocks().len(), 1);
-        assert_eq!(schema.blocks()[0].quantity(), &Quantity::Position(FrameId::World));
+        assert_eq!(
+            schema.blocks()[0].quantity(),
+            &Quantity::Position(FrameId::World)
+        );
         assert_eq!(
             schema.blocks()[0].conventions(),
             &[(FrameId::World, Convention::Enu)]
@@ -557,7 +557,7 @@ mod tests {
         // call counts without needing access through Box<dyn ...>.
         let mut estimator = MockEstimator::new();
 
-        let handler = TypedAidingHandler::<LinearAcceleration3D>::new(
+        let handler = TypedAidingHandler::<Acceleration>::new(
             accel_sensor_channel(),
             Box::new(OnePassModel),
             DMatrix::identity(3, 3),
@@ -568,12 +568,12 @@ mod tests {
             SensorReading {
                 sensor_handle: FrameHandle(1),
                 timestamp: MonotonicTime(2.0),
-                data: LinearAcceleration3D::default(),
+                data: Acceleration::default(),
             },
             SensorReading {
                 sensor_handle: FrameHandle(1),
                 timestamp: MonotonicTime(1.0),
-                data: LinearAcceleration3D::default(),
+                data: Acceleration::default(),
             },
         ];
         bus.write(
@@ -596,7 +596,7 @@ mod tests {
     #[test]
     fn aiding_handler_no_op_on_empty_channel() {
         let mut estimator = MockEstimator::new();
-        let handler = TypedAidingHandler::<LinearAcceleration3D>::new(
+        let handler = TypedAidingHandler::<Acceleration>::new(
             accel_sensor_channel(),
             Box::new(OnePassModel),
             DMatrix::identity(3, 3),

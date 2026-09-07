@@ -207,7 +207,7 @@ mod tests {
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::ports::TfProvider;
     use helios_core::data::primitives::FrameHandle;
-    use helios_core::data::sensor::LinearAcceleration3D;
+    use helios_core::data::sensor::Acceleration;
     use helios_core::data::MonotonicTime;
     use helios_core::estimation::augmentation::{augmentation_block, MAGNETOMETER_BIAS};
     use helios_core::estimation::measurement::MeasurementModel;
@@ -420,9 +420,6 @@ mod tests {
     struct AgreeingModel;
 
     impl MeasurementModel for AgreeingModel {
-        fn dim(&self) -> usize {
-            3
-        }
         fn schema(&self) -> MeasurementSchema {
             MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
                 Quantity::Position(FrameId::Odom(FrameHandle(0))),
@@ -444,9 +441,6 @@ mod tests {
     struct UnanchorableModel;
 
     impl MeasurementModel for UnanchorableModel {
-        fn dim(&self) -> usize {
-            3
-        }
         fn schema(&self) -> MeasurementSchema {
             MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
                 Quantity::Position(FrameId::World),
@@ -464,8 +458,8 @@ mod tests {
     }
 
     fn aiding_with(model: Box<dyn MeasurementModel>) -> Box<dyn AidingHandler> {
-        Box::new(TypedAidingHandler::<LinearAcceleration3D>::new(
-            SensorChannel::of::<Vec<SensorReading<LinearAcceleration3D>>>(),
+        Box::new(TypedAidingHandler::<Acceleration>::new(
+            SensorChannel::of::<Vec<SensorReading<Acceleration>>>(),
             model,
             DMatrix::identity(3, 3),
         ))

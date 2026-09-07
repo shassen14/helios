@@ -62,19 +62,20 @@ pub trait MeasurementModel: Send + Sync {
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
     ) -> DMatrix<f64> {
-        // Rows = measurement length; columns = tangent (error) DOF, not stored
-        // components — H must match P and F, which are tangent-indexed.
-        let m = self.dim();
+        // H is (measurement length × tangent DOF): columns are tangent (error)
+        // coordinates, not stored components, so H matches P and F, which are
+        // tangent-indexed. The row count comes from the prediction itself — with
+        // no `predict_measurement`, there are no rows, so return a zero-row H the
+        // caller shape-checks away (the EKF update already bails on `None` before
+        // reaching here, so this branch is for standalone callers).
         let n = state.tangent_dim();
-        let mut h = DMatrix::zeros(m, n);
 
         let Some(z_base) = self.predict_measurement(state, tf, at) else {
-            return h;
+            return DMatrix::zeros(0, n);
         };
 
-        if z_base.nrows() != m {
-            return h;
-        }
+        let m = z_base.nrows();
+        let mut h = DMatrix::zeros(m, n);
 
         let eps = 1e-5 * (1.0 + state.mean.amax());
         for j in 0..n {
@@ -95,9 +96,6 @@ pub trait MeasurementModel: Send + Sync {
         }
         h
     }
-
-    /// Dimension of the measurement vector `z`.
-    fn dim(&self) -> usize;
 
     /// The measurement's typed shape: the ordered blocks the model predicts and
     /// the axis convention each is expressed in.

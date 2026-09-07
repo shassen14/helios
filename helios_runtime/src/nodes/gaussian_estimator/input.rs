@@ -4,7 +4,7 @@ use crate::{
 };
 use helios_core::{
     estimation::EstimatorInputs,
-    prelude::{AngularVelocity3D, LinearAcceleration3D, SensorReading},
+    prelude::{Acceleration, AngularRate, SensorReading},
 };
 
 use nalgebra::DVector;
@@ -38,9 +38,9 @@ impl IntegratedImuInputBuilder {
         gyro_channel: impl Into<Arc<str>>,
     ) -> Self {
         let accel_channel: ChannelKey =
-            SensorChannel::named::<Vec<SensorReading<LinearAcceleration3D>>>(accel_channel).into();
+            SensorChannel::named::<Vec<SensorReading<Acceleration>>>(accel_channel).into();
         let gyro_channel: ChannelKey =
-            SensorChannel::named::<Vec<SensorReading<AngularVelocity3D>>>(gyro_channel).into();
+            SensorChannel::named::<Vec<SensorReading<AngularRate>>>(gyro_channel).into();
 
         Self {
             accel_channel: accel_channel.clone(),
@@ -58,20 +58,20 @@ impl EstimatorInputBuilder for IntegratedImuInputBuilder {
         _tick: &TickContext,
     ) -> Option<EstimatorInputs> {
         let accel_stamped =
-            bus.read::<Vec<SensorReading<LinearAcceleration3D>>>(self.accel_channel.clone())?;
+            bus.read::<Vec<SensorReading<Acceleration>>>(self.accel_channel.clone())?;
         let gyro_stamped =
-            bus.read::<Vec<SensorReading<AngularVelocity3D>>>(self.gyro_channel.clone())?;
+            bus.read::<Vec<SensorReading<AngularRate>>>(self.gyro_channel.clone())?;
 
         let accel = accel_stamped.value.last()?;
         let gyro = gyro_stamped.value.last()?;
 
         let control = DVector::from_row_slice(&[
-            accel.data.value.x,
-            accel.data.value.y,
-            accel.data.value.z,
-            gyro.data.value.x,
-            gyro.data.value.y,
-            gyro.data.value.z,
+            accel.data.0.x,
+            accel.data.0.y,
+            accel.data.0.z,
+            gyro.data.0.x,
+            gyro.data.0.y,
+            gyro.data.0.z,
         ]);
 
         Some(EstimatorInputs { control })

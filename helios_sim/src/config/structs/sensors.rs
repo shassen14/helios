@@ -28,7 +28,7 @@ impl SensorConfig {
 /// Configuration parameters for a simulated IMU sensor.
 ///
 /// An IMU chip always produces two physical quantities: linear acceleration
-/// (`LinearAcceleration3D`) and angular velocity (`AngularVelocity3D`). If the
+/// (`Acceleration`) and angular rate (`AngularRate`). If the
 /// chip also has an onboard magnetometer, add a separate `Magnetometer` entry
 /// to the sensor suite — that quantity is independently configured and spawns
 /// its own sensor with its own forward model.
@@ -54,13 +54,13 @@ pub struct ImuConfig {
     #[serde(default)]
     pub gyro_noise_stddev: [f64; 3],
 
-    /// Bus channel for `Vec<SensorReading<LinearAcceleration3D>>`. Must match the
+    /// Bus channel for `Vec<SensorReading<Acceleration>>`. Must match the
     /// accelerometer `input_channel` in the estimator's aiding config. Distinct
     /// from `gyro_channel` — one IMU publishes its two quantities on two separate
     /// channels. The name disambiguates multiple IMUs on a single agent's bus; it
     /// need not be unique across agents, since each agent owns its own bus.
     pub accel_channel: String,
-    /// Bus channel for `Vec<SensorReading<AngularVelocity3D>>`. Must match the
+    /// Bus channel for `Vec<SensorReading<AngularRate>>`. Must match the
     /// gyroscope `input_channel` in the estimator's aiding config. Same
     /// per-agent uniqueness rule as `accel_channel`.
     pub gyro_channel: String,
@@ -133,7 +133,7 @@ pub struct MagnetometerConfig {
     /// Standard deviation of noise along the sensor's [X, Y, Z] FLU axes, in µT.
     #[serde(default)]
     pub noise_stddev: [f64; 3],
-    /// Bus channel name for `Vec<SensorReading<MagneticField3D>>` published to the pipeline.
+    /// Bus channel name for `Vec<SensorReading<MagneticField>>` published to the pipeline.
     /// Must match the `input_channel` in the estimator's aiding config.
     pub channel: String,
 }

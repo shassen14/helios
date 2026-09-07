@@ -1,6 +1,6 @@
 //! Forward model for a rate gyroscope.
 
-use crate::data::sensor::AngularVelocity3D;
+use crate::data::sensor::AngularRate;
 use crate::sensors::noise::TriaxialGaussian;
 
 use nalgebra::{UnitQuaternion, Vector3};
@@ -39,11 +39,9 @@ impl GyroscopeModel {
         angular_velocity_world: Vector3<f64>,
         q_sensor_from_world: UnitQuaternion<f64>,
         rng: &mut dyn RngCore,
-    ) -> AngularVelocity3D {
+    ) -> AngularRate {
         let ideal = self.ideal(angular_velocity_world, q_sensor_from_world);
-        AngularVelocity3D {
-            value: self.noise.apply(ideal, rng),
-        }
+        AngularRate(self.noise.apply(ideal, rng))
     }
 }
 
@@ -89,8 +87,8 @@ mod tests {
         let mut rng_b = StdRng::seed_from_u64(3);
 
         assert_eq!(
-            model.sample(rate, q, &mut rng_a).value,
-            model.sample(rate, q, &mut rng_b).value
+            model.sample(rate, q, &mut rng_a).0,
+            model.sample(rate, q, &mut rng_b).0
         );
     }
 }

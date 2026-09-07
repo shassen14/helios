@@ -1,6 +1,6 @@
 //! Forward model for a 3-axis magnetometer.
 
-use crate::data::sensor::MagneticField3D;
+use crate::data::sensor::MagneticField;
 use crate::sensors::noise::TriaxialGaussian;
 
 use nalgebra::{UnitQuaternion, Vector3};
@@ -56,11 +56,9 @@ impl MagnetometerModel {
         &self,
         q_sensor_from_world: UnitQuaternion<f64>,
         rng: &mut dyn RngCore,
-    ) -> MagneticField3D {
+    ) -> MagneticField {
         let ideal = self.ideal(q_sensor_from_world);
-        MagneticField3D {
-            value: self.noise.apply(ideal, rng),
-        }
+        MagneticField(self.noise.apply(ideal, rng))
     }
 }
 
@@ -126,8 +124,8 @@ mod tests {
         let mut rng_b = StdRng::seed_from_u64(9);
 
         assert_eq!(
-            model.sample(q, &mut rng_a).value,
-            model.sample(q, &mut rng_b).value
+            model.sample(q, &mut rng_a).0,
+            model.sample(q, &mut rng_b).0
         );
     }
 }

@@ -13,7 +13,7 @@ use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::EnuVector;
 use crate::prelude::*;
 
-use helios_core::data::sensor::{AngularVelocity3D, LinearAcceleration3D};
+use helios_core::data::sensor::{Acceleration, AngularRate};
 use helios_core::frames::transforms::Convention;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
@@ -63,7 +63,7 @@ impl Accelerometer {
 }
 
 impl StateSensor for Accelerometer {
-    type Payload = LinearAcceleration3D;
+    type Payload = Acceleration;
 
     /// The lever arm is the baked-in FLU mount offset rotated into world ENU by
     /// the body orientation, so it stays consistent with the world-frame ω and
@@ -103,7 +103,7 @@ impl Gyroscope {
 }
 
 impl StateSensor for Gyroscope {
-    type Payload = AngularVelocity3D;
+    type Payload = AngularRate;
 
     /// Angular velocity is a free vector, so only the pose's rotation
     /// matters — inverted, same as the accelerometer.
@@ -286,7 +286,7 @@ mod tests {
             &mut rng,
         );
 
-        assert!((got.value - Vector3::new(0.0, 0.0, 9.81)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.0, 0.0, 9.81)).norm() < 1e-6);
     }
 
     #[test]
@@ -300,7 +300,7 @@ mod tests {
 
         let got = accel.sample(&truth, &yawed_pose(), &mut rng);
 
-        assert!((got.value - Vector3::new(0.0, -2.0, 0.0)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.0, -2.0, 0.0)).norm() < 1e-6);
     }
 
     #[test]
@@ -314,7 +314,7 @@ mod tests {
             &mut rng,
         );
 
-        assert!((got.value - Vector3::new(0.3, 0.0, 0.0)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.3, 0.0, 0.0)).norm() < 1e-6);
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod tests {
             &mut rng,
         );
 
-        assert!((got.value - Vector3::new(0.0, 0.0, 0.02)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.0, 0.0, 0.02)).norm() < 1e-6);
     }
 
     #[test]
@@ -344,7 +344,7 @@ mod tests {
 
         let got = gyro.sample(&truth, &Isometry3::identity(), &mut rng);
 
-        assert!((got.value - Vector3::new(0.1, 0.2, 0.3)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.1, 0.2, 0.3)).norm() < 1e-6);
     }
 
     #[test]
@@ -358,6 +358,6 @@ mod tests {
 
         let got = gyro.sample(&truth, &yawed_pose(), &mut rng);
 
-        assert!((got.value - Vector3::new(0.0, -1.0, 0.0)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.0, -1.0, 0.0)).norm() < 1e-6);
     }
 }

@@ -139,8 +139,8 @@ impl Default for EkfInitialStateConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AidingConfig {
     /// Rust type name of the sensor payload — one of the `SensorPayload`
-    /// implementors: `"GpsPosition"`, `"LinearAcceleration3D"`,
-    /// `"AngularVelocity3D"`, `"MagneticField3D"`, `"GpsVelocity"`.
+    /// implementors: `"GpsPosition"`, `"Acceleration"`,
+    /// `"AngularRate"`, `"MagneticField"`, `"GpsVelocity"`.
     pub sensor_payload: String,
     /// Sensor model config, including the registry key and any physical
     /// constants the model needs (gravity for accelerometer, field vector for
@@ -225,11 +225,11 @@ pub struct IntegratedImuConfig {
     /// error outside the filter's linear regime, so it is not a free knob.
     #[serde(default = "default_gyro_bias_uncertainty_radps")]
     pub gyro_bias_uncertainty_radps: f64,
-    /// Bus channel the predict step reads `Vec<SensorReading<LinearAcceleration3D>>`
+    /// Bus channel the predict step reads `Vec<SensorReading<Acceleration>>`
     /// from. Must match the accelerometer channel the host publishes on
     /// (the sensor's `accel_channel` in sim).
     pub accel_channel: String,
-    /// Bus channel the predict step reads `Vec<SensorReading<AngularVelocity3D>>`
+    /// Bus channel the predict step reads `Vec<SensorReading<AngularRate>>`
     /// from. Must match the gyroscope channel the host publishes on
     /// (the sensor's `gyro_channel` in sim).
     pub gyro_channel: String,

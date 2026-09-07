@@ -36,10 +36,6 @@ pub struct SpecificForceModel {
 }
 
 impl MeasurementModel for SpecificForceModel {
-    fn dim(&self) -> usize {
-        3
-    }
-
     /// One block: specific force in the sensor frame (FLU). Specific force is
     /// its own quantity, distinct from the state's kinematic `Acceleration`, so
     /// the construction-time agreement check never conflates the two.
@@ -166,14 +162,9 @@ mod tests {
     }
 
     #[test]
-    fn dim_is_three() {
-        assert_eq!(make_model().dim(), 3);
-    }
-
-    #[test]
-    fn schema_matches_dim_and_tags_the_sensor_frame_specific_force() {
+    fn schema_is_three_long_and_tags_the_sensor_frame_specific_force() {
         let schema = make_model().schema();
-        assert_eq!(schema.dim(), make_model().dim());
+        assert_eq!(schema.dim(), 3);
         assert_eq!(schema.blocks().len(), 1);
         let block = &schema.blocks()[0];
         // Specific force, not kinematic acceleration — its own quantity, so the

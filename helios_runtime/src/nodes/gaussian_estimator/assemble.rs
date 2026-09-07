@@ -13,7 +13,7 @@ use crate::PipelineAssemblyError;
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::FrameHandle;
 use helios_core::data::sensor::{
-    AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
+    Acceleration, AngularRate, GpsPosition, GpsVelocity, MagneticField,
 };
 use helios_core::estimation::augmentation::augmentation_block;
 use helios_core::estimation::schema::{MeasurementAgreementError, StateSchemaBlock};
@@ -184,13 +184,11 @@ fn build_aiding_handler(
     let handler: Box<dyn AidingHandler> = match aid.sensor_payload.as_str() {
         "GpsPosition" => Box::new(TypedAidingHandler::<GpsPosition>::new(channel, model, r)),
         "GpsVelocity" => Box::new(TypedAidingHandler::<GpsVelocity>::new(channel, model, r)),
-        "LinearAcceleration3D" => Box::new(TypedAidingHandler::<LinearAcceleration3D>::new(
+        "Acceleration" => Box::new(TypedAidingHandler::<Acceleration>::new(channel, model, r)),
+        "AngularRate" => Box::new(TypedAidingHandler::<AngularRate>::new(
             channel, model, r,
         )),
-        "AngularVelocity3D" => Box::new(TypedAidingHandler::<AngularVelocity3D>::new(
-            channel, model, r,
-        )),
-        "MagneticField3D" => Box::new(TypedAidingHandler::<MagneticField3D>::new(
+        "MagneticField" => Box::new(TypedAidingHandler::<MagneticField>::new(
             channel, model, r,
         )),
         other => {
@@ -212,11 +210,9 @@ fn build_aiding_channel(aid: &AidingConfig) -> Result<SensorChannel, PipelineAss
     let key = match aid.sensor_payload.as_str() {
         "GpsPosition" => SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(q),
         "GpsVelocity" => SensorChannel::named::<Vec<SensorReading<GpsVelocity>>>(q),
-        "LinearAcceleration3D" => {
-            SensorChannel::named::<Vec<SensorReading<LinearAcceleration3D>>>(q)
-        }
-        "AngularVelocity3D" => SensorChannel::named::<Vec<SensorReading<AngularVelocity3D>>>(q),
-        "MagneticField3D" => SensorChannel::named::<Vec<SensorReading<MagneticField3D>>>(q),
+        "Acceleration" => SensorChannel::named::<Vec<SensorReading<Acceleration>>>(q),
+        "AngularRate" => SensorChannel::named::<Vec<SensorReading<AngularRate>>>(q),
+        "MagneticField" => SensorChannel::named::<Vec<SensorReading<MagneticField>>>(q),
         _ => unreachable!("caller already validated sensor_payload"),
     };
     Ok(key)
@@ -247,9 +243,9 @@ mod tests {
         HashMap::from([("gps".to_string(), FrameHandle(1))])
     }
 
-    // R sized to the model's measurement dimension builds a handler cleanly.
+    // R sized to the measurement schema's dimension builds a handler cleanly.
     #[test]
-    fn aiding_handler_builds_when_r_matches_model_dim() {
+    fn aiding_handler_builds_when_r_matches_schema_dim() {
         let registry = AutonomyRegistry::default();
         let handler = build_aiding_handler(
             "est",

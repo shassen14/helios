@@ -133,8 +133,12 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
     ) {
-        let m = model.dim();
-        if z.nrows() != m || r.nrows() != m || r.ncols() != m {
+        // The incoming measurement is the authoritative length; the model no
+        // longer declares one. Skip the update if R or the prediction disagrees
+        // with it — a shape guard against a crash, not the semantic check (that
+        // ran once at build time against the measurement schema).
+        let m = z.nrows();
+        if r.nrows() != m || r.ncols() != m {
             return;
         }
 
@@ -196,7 +200,9 @@ mod tests {
     use crate::data::primitives::FrameHandle;
     use crate::data::MonotonicTime;
     use crate::estimation::measurement::MeasurementModel;
-    use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock};
+    use crate::estimation::schema::{
+        MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
+    };
     use crate::estimation::EstimatorInputs;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
@@ -285,16 +291,14 @@ mod tests {
     struct Position2DMeasurement;
 
     impl MeasurementModel for Position2DMeasurement {
-        fn dim(&self) -> usize {
-            2
-        }
-
         // A 2D position observes only x and y. A `Position` quantity is a whole
         // 3-vector, so no honest block yields dim 2 — partial-component
         // measurements are not yet expressible as a schema block. The update
         // tests never ask this mock for a schema, so the gap is recorded, not hit.
         fn schema(&self) -> MeasurementSchema {
-            unimplemented!("2D (partial-component) position measurement has no MeasurementSchema block yet")
+            unimplemented!(
+                "2D (partial-component) position measurement has no MeasurementSchema block yet"
+            )
         }
 
         fn predict_measurement(
@@ -328,10 +332,6 @@ mod tests {
     struct InsPositionMeasurement;
 
     impl MeasurementModel for InsPositionMeasurement {
-        fn dim(&self) -> usize {
-            3
-        }
-
         // Reads the INS position block at the head of the layout — position in
         // the agent's odom frame (ENU). `ins_model` keys the agent as
         // `FrameHandle(7)`, so the block names that same frame.

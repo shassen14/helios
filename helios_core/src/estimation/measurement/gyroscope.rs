@@ -27,10 +27,6 @@ pub struct AngularRateModel {
 }
 
 impl MeasurementModel for AngularRateModel {
-    fn dim(&self) -> usize {
-        3
-    }
-
     /// One block: the body's angular velocity resolved in the sensor frame
     /// (FLU) — exactly what `predict_measurement` returns.
     fn schema(&self) -> MeasurementSchema {
@@ -130,15 +126,10 @@ mod tests {
     }
 
     #[test]
-    fn dim_is_three() {
-        assert_eq!(make_model().dim(), 3);
-    }
-
-    #[test]
-    fn schema_matches_dim_and_tags_the_sensor_frame_angular_velocity() {
+    fn schema_is_three_long_and_tags_the_sensor_frame_angular_velocity() {
         let schema = make_model().schema();
-        // The typed shape agrees with the bare length it will eventually replace.
-        assert_eq!(schema.dim(), make_model().dim());
+        // The schema is now the sole source of the measurement length.
+        assert_eq!(schema.dim(), 3);
         // One block: angular velocity in the sensor frame, expressed FLU.
         assert_eq!(schema.blocks().len(), 1);
         let block = &schema.blocks()[0];

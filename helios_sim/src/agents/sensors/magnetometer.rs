@@ -13,7 +13,7 @@ use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
 
-use helios_core::data::sensor::MagneticField3D;
+use helios_core::data::sensor::MagneticField;
 use helios_core::frames::transforms::Convention;
 use helios_core::sensors::magnetometer::MagnetometerModel;
 
@@ -39,7 +39,7 @@ impl Magnetometer {
 }
 
 impl StateSensor for Magnetometer {
-    type Payload = MagneticField3D;
+    type Payload = MagneticField;
 
     /// A magnetic field is a free vector, so only the pose's rotation matters
     /// — inverted, because the model wants world-into-sensor and the pose's
@@ -175,7 +175,7 @@ mod tests {
     fn sample(mag: &mut Magnetometer, pose: &Isometry3<f64>) -> Vector3<f64> {
         let mut rng = StdRng::seed_from_u64(1);
         mag.sample(&GroundTruthState::default(), pose, &mut rng)
-            .value
+            .0
     }
 
     #[test]

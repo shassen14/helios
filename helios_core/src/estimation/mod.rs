@@ -57,7 +57,7 @@ pub trait GaussianStateEstimator: Send + Sync {
     ///   a typed `SensorReading<T>` via `T::to_measurement_vector()`.
     /// * `model` — the sensor's mathematical model. Provides `h(x)` and `H`.
     /// * `r` — measurement noise covariance for this specific sensor and reading.
-    ///   Must be square with side equal to `model.dim()`.
+    ///   Must be square with side equal to the measurement length (`z.nrows()`).
     /// * `tf` — transform tree access; `None` is valid and is forwarded to the
     ///   model, which may return `None` from `predict_measurement` to signal that
     ///   the update cannot proceed. The filter silently skips in that case.

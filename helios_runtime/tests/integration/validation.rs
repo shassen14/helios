@@ -852,7 +852,7 @@ fn validation_augmentation_without_aiding_source_produces_error() {
 #[test]
 fn validation_augmentation_with_matching_aiding_source_passes() {
     let mag_aiding = AidingConfig {
-        sensor_payload: "MagneticField3D".to_string(),
+        sensor_payload: "MagneticField".to_string(),
         model: SensorModelConfig {
             kind: "magnetometer".to_string(),
             gravity_enu: [0.0, 0.0, -9.81],

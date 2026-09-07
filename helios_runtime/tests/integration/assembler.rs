@@ -21,7 +21,7 @@ use helios_core::control::commands::{DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-use helios_core::data::sensor::MagneticField3D;
+use helios_core::data::sensor::MagneticField;
 use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::frames::conventions::Flu;
 use helios_core::frames::quantities::{FluVector, FreeVector};
@@ -731,7 +731,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
             gyro_channel: "imu/gyro".to_string(),
         }),
         aiding: vec![AidingConfig {
-            sensor_payload: "MagneticField3D".to_string(),
+            sensor_payload: "MagneticField".to_string(),
             model: SensorModelConfig {
                 kind: "magnetometer".to_string(),
                 gravity_enu: [0.0, 0.0, -9.81],
@@ -785,7 +785,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     // increasing timestamp. The node dedups by per-reading timestamp, so a
     // repeated stamp would be dropped and nothing would converge.
     let mag_key: ChannelKey =
-        SensorChannel::named::<Vec<SensorReading<MagneticField3D>>>(MAG_CHANNEL).into();
+        SensorChannel::named::<Vec<SensorReading<MagneticField>>>(MAG_CHANNEL).into();
     let measured = Vector3::new(world_field[0], world_field[1], world_field[2] + true_bias_z);
     let dt = 0.05;
     for i in 1..=40 {
@@ -798,7 +798,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
                     value: vec![SensorReading {
                         sensor_handle: MAG_SENSOR,
                         timestamp: t,
-                        data: MagneticField3D { value: measured },
+                        data: MagneticField(measured),
                     }],
                     timestamp: t,
                     health: Health::Ok,

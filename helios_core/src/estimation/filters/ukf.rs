@@ -192,8 +192,12 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
     ) {
-        let m = model.dim();
-        if z.nrows() != m || r.nrows() != m || r.ncols() != m {
+        // The incoming measurement is the authoritative length (also needed up
+        // front to size the propagated sigma points below); the model no longer
+        // declares one. A shape guard against a crash, not the semantic check —
+        // that ran once at build time against the measurement schema.
+        let m = z.nrows();
+        if r.nrows() != m || r.ncols() != m {
             return;
         }
 
@@ -348,16 +352,14 @@ mod tests {
     struct Position2DMeasurement;
 
     impl MeasurementModel for Position2DMeasurement {
-        fn dim(&self) -> usize {
-            2
-        }
-
         // A 2D position observes only x and y. A `Position` quantity is a whole
         // 3-vector, so no honest block yields dim 2 — partial-component
         // measurements are not yet expressible as a schema block. The update
         // tests never ask this mock for a schema, so the gap is recorded, not hit.
         fn schema(&self) -> MeasurementSchema {
-            unimplemented!("2D (partial-component) position measurement has no MeasurementSchema block yet")
+            unimplemented!(
+                "2D (partial-component) position measurement has no MeasurementSchema block yet"
+            )
         }
 
         fn predict_measurement(
