@@ -5,8 +5,7 @@ pub use crate::data::ports::TfProvider;
 pub use crate::data::primitives::{FrameHandle, MonotonicTime};
 pub use crate::data::sensor::SensorPayload;
 pub use crate::data::sensor::{
-    Acceleration, AngularRate, DepthImage, GpsPosition, GpsVelocity, MagneticField, PointCloud2D,
-    PointCloud3D, RgbImage,
+    Acceleration, AngularRate, DepthImage, GpsPosition, GpsVelocity, MagneticField, RgbImage,
 };
 
 // --- Core Data Structures (The "nouns" of the library) ---

@@ -147,75 +147,66 @@ impl MagnetometerConfig {
     }
 }
 
+/// Configuration parameters for a simulated ray lidar of any beam layout.
+///
+/// The layout is not a variant — one struct spans the 2D planar scanner, the
+/// spinning multi-ring unit, the forward-looking solid-state, and the flash
+/// sensor. Which one a config describes is entirely the scan geometry: a single
+/// entry in `ring_elevations` is a 2D lidar, several entries a 3D one; a `360`
+/// `azimuth_fov` is a spinning unit, a narrow one a forward-looking scanner; a
+/// zero `sweep_period` is a flash capture.
+///
+/// Angles are degrees here for readability and become radians when the forward
+/// model is built. The geometry angles are f64 to feed the model's f64 scan
+/// math without a lossy cast; the three range/noise scalars are f32, the type
+/// the raycasting model reports back to the physics engine's f32-native query.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "PascalCase")]
-pub enum LidarConfig {
-    // The geometry and noise fields stay f32: they parameterize a raycasting
-    // model executed against the physics engine, whose spatial queries are
-    // f32-native. Only `rate` is f64 — it feeds a Duration, like every other
-    // sensor's rate.
-    Lidar2D {
-        rate: f64,
-        #[serde(default)]
-        transform: Pose,
-        max_range: f32,
-        /// Horizontal field of view in degrees.
-        horizontal_fov: f32,
-        horizontal_beams: u32,
-        #[serde(default)]
-        range_noise_stddev: f32,
-        #[serde(default)]
-        debug_visuals: bool,
-        /// Bus channel name for `Vec<SensorReading<PointCloud2D>>` published to the pipeline.
-        channel: String,
-    },
-    Lidar3D {
-        rate: f64,
-        #[serde(default)]
-        transform: Pose,
-        max_range: f32,
-        /// Horizontal field of view in degrees.
-        horizontal_fov: f32,
-        horizontal_beams: u32,
-        /// Vertical field of view in degrees.
-        vertical_fov: f32,
-        vertical_beams: u32,
-        #[serde(default)]
-        range_noise_stddev: f32,
-        #[serde(default)]
-        debug_visuals: bool,
-        /// Bus channel name for `Vec<SensorReading<PointCloud3D>>` published to the pipeline.
-        channel: String,
-    },
+#[serde(deny_unknown_fields)]
+pub struct LidarConfig {
+    pub rate: f64,
+    #[serde(default)]
+    pub transform: Pose,
+    /// Maximum reported range, in meters.
+    pub max_range: f32,
+    /// Azimuth field of view in degrees. `360` sweeps a full circle and drops
+    /// the duplicate seam beam; a smaller value is a forward-looking sector.
+    pub azimuth_fov: f64,
+    /// Number of beams across the azimuth field of view.
+    pub azimuth_beams: u32,
+    /// Elevation of each ring, in degrees. One entry is a planar (2D) lidar;
+    /// several are the rings of a 3D unit. Datasheet tables are non-uniform, so
+    /// this is an explicit list rather than a field-of-view span.
+    pub ring_elevations: Vec<f64>,
+    /// Seconds for one full azimuth sweep, stamped onto each point as a per-point
+    /// time offset. Zero models a flash capture (every point shares the reading's
+    /// instant). Defaults to a flash capture.
+    #[serde(default)]
+    pub sweep_period: f64,
+    /// Range noise standard deviation, in meters. Must be strictly positive.
+    pub range_noise_stddev: f32,
+    /// Angular noise standard deviation, in degrees, applied to both azimuth and
+    /// elevation. Must be strictly positive.
+    pub angular_noise_stddev: f32,
+    #[serde(default)]
+    pub debug_visuals: bool,
+    /// Bus channel name for `Vec<SensorReading<PointCloud<Flu, ()>>>` published to the pipeline.
+    pub channel: String,
 }
 
 impl LidarConfig {
     pub fn get_rate(&self) -> f64 {
-        match self {
-            LidarConfig::Lidar2D { rate, .. } => *rate,
-            LidarConfig::Lidar3D { rate, .. } => *rate,
-        }
+        self.rate
     }
 
     pub fn get_relative_pose(&self) -> Pose {
-        match self {
-            LidarConfig::Lidar2D { transform, .. } => *transform,
-            LidarConfig::Lidar3D { transform, .. } => *transform,
-        }
+        self.transform
     }
 
     pub fn get_debug_visuals_flag(&self) -> bool {
-        match self {
-            LidarConfig::Lidar2D { debug_visuals, .. } => *debug_visuals,
-            LidarConfig::Lidar3D { debug_visuals, .. } => *debug_visuals,
-        }
+        self.debug_visuals
     }
 
     pub fn get_channel(&self) -> &str {
-        match self {
-            LidarConfig::Lidar2D { channel, .. } => channel.as_str(),
-            LidarConfig::Lidar3D { channel, .. } => channel.as_str(),
-        }
+        self.channel.as_str()
     }
 }

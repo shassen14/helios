@@ -4,8 +4,8 @@
 //! Unlike the estimator / planner / follower nodes, this node has **no
 //! input builder**. The mapper's contract is small enough that the node
 //! reads the bus channels directly: `FrameAwareState @ ""` for the robot
-//! pose, and a configurable `Vec<SensorReading<PointCloud2D>>` channel for
-//! scans. Inventing a `MapperInputBuilder` trait would be one struct per
+//! pose, and a configurable `Vec<SensorReading<PointCloud<Flu, ()>>>` channel
+//! for scans. Inventing a `MapperInputBuilder` trait would be one struct per
 //! mapper with zero shared logic.
 //!
 //! ## Execution skeleton
@@ -57,8 +57,8 @@ use std::sync::Mutex;
 use atomic_float::AtomicF64;
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::FrameHandle;
-use helios_core::data::sensor::PointCloud2D;
 use helios_core::data::MonotonicTime;
+use helios_core::data::PointCloud;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::{FrameAwareState, FrameId};
 use helios_core::mapping::Mapper;
@@ -72,7 +72,7 @@ use crate::stamped::{Health, Stamped};
 /// Pipeline node wrapping any 2D [`Mapper`] implementation.
 ///
 /// `scan_channel` is the bus channel carrying
-/// `Vec<SensorReading<PointCloud2D>>`; its instance name comes from the
+/// `Vec<SensorReading<PointCloud<Flu, ()>>>`; its instance name comes from the
 /// mapper config and must match the channel the host's scan sensor
 /// publishes on. `map_channel` is the published map slot
 /// — convention `MapData @ "local"` for rolling-window grids, `@ "global"`
@@ -171,7 +171,7 @@ impl PipelineNode for OccupancyGridNode {
         //    Readings whose TF lookup fails are skipped; startup ordering
         //    can briefly leave a sensor without a TF entry.
         if let Some(stamped_scans) =
-            bus.read::<Vec<SensorReading<PointCloud2D>>>(self.scan_channel.clone())
+            bus.read::<Vec<SensorReading<PointCloud<Flu, ()>>>>(self.scan_channel.clone())
         {
             let batch_ts = stamped_scans.timestamp.0;
             if batch_ts > self.last_integrated_ts.load(Ordering::Relaxed) {
@@ -229,13 +229,14 @@ mod tests {
     use super::*;
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-    use helios_core::data::sensor::PointCloud2D;
+    use helios_core::data::PointCloudBuilder;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::frames::quantities::Point;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use helios_core::mapping::{MapData, Mapper};
     use helios_core::state::{Component, Quantity};
-    use nalgebra::{Isometry3, Point2, Translation3, UnitQuaternion};
+    use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
@@ -308,7 +309,7 @@ mod tests {
         fn integrate_scan_2d(
             &mut self,
             _sensor_world_pose: &Isometry3<f64>,
-            _cloud: &PointCloud2D,
+            _cloud: &PointCloud<Flu, ()>,
         ) {
             self.calls.lock().unwrap().integrate += 1;
         }
@@ -324,7 +325,7 @@ mod tests {
     struct EmptyMapper;
     impl Mapper for EmptyMapper {
         fn recenter(&mut self, _: &Isometry3<f64>) {}
-        fn integrate_scan_2d(&mut self, _: &Isometry3<f64>, _: &PointCloud2D) {}
+        fn integrate_scan_2d(&mut self, _: &Isometry3<f64>, _: &PointCloud<Flu, ()>) {}
         fn get_map(&mut self) -> Option<&MapData> {
             None
         }
@@ -333,7 +334,16 @@ mod tests {
     // --- Helpers ---
 
     fn scan_sensor_channel() -> SensorChannel {
-        SensorChannel::of::<Vec<SensorReading<PointCloud2D>>>()
+        SensorChannel::of::<Vec<SensorReading<PointCloud<Flu, ()>>>>()
+    }
+
+    /// A sensor-frame (FLU) scan from planar `(x, y)` returns at `z = 0`.
+    fn flu_cloud(points: &[(f64, f64)]) -> PointCloud<Flu, ()> {
+        let mut builder = PointCloudBuilder::<Flu>::new();
+        for &(x, y) in points {
+            builder.push(Point::new(x, y, 0.0), ());
+        }
+        builder.finalize().expect("equal-length cloud")
     }
     fn scan_channel() -> ChannelKey {
         scan_sensor_channel().into()
@@ -394,7 +404,7 @@ mod tests {
         bus.write(state_channel(), stamped).unwrap();
     }
 
-    fn publish_scans(bus: &PortBus, readings: Vec<SensorReading<PointCloud2D>>) {
+    fn publish_scans(bus: &PortBus, readings: Vec<SensorReading<PointCloud<Flu, ()>>>) {
         let stamped = Stamped {
             value: readings,
             timestamp: MonotonicTime(0.0),
@@ -498,16 +508,12 @@ mod tests {
                 SensorReading {
                     sensor_handle: unknown, // skipped
                     timestamp: MonotonicTime(0.0),
-                    data: PointCloud2D {
-                        points: vec![Point2::new(1.0, 0.0)],
-                    },
+                    data: flu_cloud(&[(1.0, 0.0)]),
                 },
                 SensorReading {
                     sensor_handle: known,
                     timestamp: MonotonicTime(0.0),
-                    data: PointCloud2D {
-                        points: vec![Point2::new(2.0, 0.0)],
-                    },
+                    data: flu_cloud(&[(2.0, 0.0)]),
                 },
             ],
         );
@@ -545,9 +551,7 @@ mod tests {
             vec![SensorReading {
                 sensor_handle: sensor,
                 timestamp: MonotonicTime(0.0),
-                data: PointCloud2D {
-                    points: vec![Point2::new(2.0, 0.0)],
-                },
+                data: flu_cloud(&[(2.0, 0.0)]),
             }],
         );
 

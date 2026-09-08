@@ -8,14 +8,15 @@
 //! live behind [`Arc`], so cloning a cloud — or deriving one that shares a
 //! frame-invariant column — copies a pointer, not the data.
 
-use std::{marker::PhantomData, sync::Arc};
-
-use nalgebra::Matrix3xX;
-
 use crate::{
     data::Attributes,
     frames::{conventions::Frame, quantities::Point, transforms::Transform},
 };
+
+use core::fmt;
+use std::{marker::PhantomData, sync::Arc};
+
+use nalgebra::Matrix3xX;
 
 /// A set of points in frame `F`, each optionally carrying attributes `A` and a
 /// per-point time offset.
@@ -48,6 +49,20 @@ impl<F: Frame, A: Attributes> Clone for PointCloud<F, A> {
     }
 }
 
+// Hand-written for the same reason as `Clone`, plus one of its own: a derive
+// would demand `A: Debug` — which an attribute bundle like `LidarColumns` is
+// not — and `F: Debug`, and would then field-dump every coordinate column. This
+// prints a summary of cardinality and mode instead, so a cloud stays legible
+// inside a larger debug print without constraining `A` or dumping the data.
+impl<F: Frame, A: Attributes> fmt::Debug for PointCloud<F, A> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PointCloud")
+            .field("len", &self.len())
+            .field("timed", &self.time.is_some())
+            .finish()
+    }
+}
+
 impl<F: Frame, A: Attributes> PointCloud<F, A> {
     /// Assembles a cloud from already-frozen columns, trusting them to be
     /// equal-length.
@@ -67,6 +82,14 @@ impl<F: Frame, A: Attributes> PointCloud<F, A> {
             attributes,
             time,
         }
+    }
+
+    pub(crate) fn empty(attributes: A) -> Self {
+        Self::from_columns(
+            PointColumns::from_arc(Arc::new(Matrix3xX::zeros(0))),
+            attributes,
+            None,
+        )
     }
 
     /// The number of points, defined by the geometry column.
@@ -408,5 +431,21 @@ mod tests {
         assert!(empty.is_empty());
         assert!(empty.attributes().intensity().is_empty());
         assert_eq!(empty.time().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn debug_summarizes_cardinality_and_mode() {
+        // Formatting an `A = ()` cloud and a `LidarColumns` cloud — which is not
+        // itself `Debug` — both compile and run, proving the impl carries no
+        // `A: Debug` bound. The summary reports the point count and whether a
+        // time column is present, not the coordinate data.
+        let untimed = format!("{:?}", bare(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
+        assert!(untimed.contains("PointCloud"));
+        assert!(untimed.contains("len: 2"));
+        assert!(untimed.contains("timed: false"));
+
+        let timed = format!("{:?}", lidar_cloud());
+        assert!(timed.contains("len: 3"));
+        assert!(timed.contains("timed: true")); // lidar_cloud() carries a TimeColumn
     }
 }

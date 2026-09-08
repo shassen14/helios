@@ -1,7 +1,7 @@
 pub mod attributes;
 pub mod builder;
-pub mod cloud;
+pub mod point_cloud;
 
 pub use attributes::*;
 pub use builder::*;
-pub use cloud::*;
+pub use point_cloud::*;

@@ -3,7 +3,7 @@
 pub mod accelerometer;
 pub mod gps;
 pub mod gyroscope;
-pub mod lidar_2d;
+pub mod lidar;
 pub mod magnetometer;
 pub mod noise;
 pub mod raycasting;

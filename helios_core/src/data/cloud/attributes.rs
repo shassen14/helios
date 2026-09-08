@@ -17,8 +17,8 @@ use std::sync::Arc;
 ///
 /// The associated types tie a bundle to its builder: `Row` is the per-point
 /// value pushed while building, and `Builder` is the [`AttributeColumns`] that
-/// accumulates rows and produces `Self`. The trait bounds (`Clone + Send + Sync
-/// + 'static`) are what let a cloud generic over `A` cross the bus and clone by
+/// accumulates rows and produces `Self`. The bounds `Clone + Send + Sync +
+/// 'static` are what let a cloud generic over `A` cross the bus and clone by
 /// sharing its columns.
 pub trait Attributes: Clone + Send + Sync + 'static {
     /// The per-point value handed to the builder's `push`.
@@ -74,9 +74,7 @@ impl Attributes for () {
         None
     }
 
-    fn select(&self, _keep: &[bool]) -> Self {
-        ()
-    }
+    fn select(&self, _keep: &[bool]) -> Self {}
 }
 
 impl AttributeColumns for () {

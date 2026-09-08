@@ -1,4 +1,4 @@
-use crate::data::sensor::{PointCloud2D, PointCloud3D};
+use crate::{data::PointCloud, frames::conventions::Flu};
 use dyn_clone::DynClone;
 use nalgebra::Vector3;
 use std::fmt::Debug;
@@ -21,8 +21,7 @@ pub struct RayHit {
 /// Output type for `process_hits`. Typed per sensor family so `MeasurementData` is not required.
 #[derive(Debug, Clone)]
 pub enum RaycastingOutput {
-    PointCloud2D(PointCloud2D),
-    PointCloud3D(PointCloud3D),
+    PointCloud(PointCloud<Flu, ()>),
 }
 
 /// The contract for any sensor model that works by casting rays into the environment.

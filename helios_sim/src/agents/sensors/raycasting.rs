@@ -1,5 +1,5 @@
 use crate::brain_bridge::components::SensorPublishChannel;
-use crate::config::structs::{LidarConfig, SensorConfig};
+use crate::config::structs::SensorConfig;
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::FluVector;
@@ -8,9 +8,7 @@ use crate::prelude::*;
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
 use helios_core::frames::transforms::Convention;
-use helios_core::sensors::{
-    lidar_2d::Lidar2DModel, RayHit, RaycastingOutput, RaycastingSensorModel,
-};
+use helios_core::sensors::{lidar::LidarModel, RayHit, RaycastingOutput, RaycastingSensorModel};
 
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use std::time::Duration;
@@ -59,34 +57,32 @@ fn spawn_raycasting_sensors(
                     lidar_config.get_rate()
                 );
 
-                let core_model: Box<dyn RaycastingSensorModel> = match lidar_config {
-                    LidarConfig::Lidar2D {
-                        max_range,
-                        horizontal_fov,
-                        horizontal_beams,
-                        range_noise_stddev,
-                        ..
-                    } => {
-                        let angular_noise_stddev_deg = 0.1_f32;
-                        let Some(model) = Lidar2DModel::new(
-                            *max_range,
-                            *horizontal_fov,
-                            *horizontal_beams,
-                            *range_noise_stddev,
-                            angular_noise_stddev_deg,
-                        ) else {
-                            error!(
-                                "LiDAR '{}' has invalid noise parameters (range_noise_stddev={}, angular_noise_stddev_deg={}): both must be > 0. Skipping sensor.",
-                                sensor_name, range_noise_stddev, angular_noise_stddev_deg
-                            );
-                            continue;
-                        };
-                        Box::new(model)
-                    }
-                    LidarConfig::Lidar3D { .. } => {
-                        unimplemented!("Lidar3D spawning not yet implemented.");
-                    }
+                let ring_elevations: Vec<f64> = lidar_config
+                    .ring_elevations
+                    .iter()
+                    .map(|deg| deg.to_radians())
+                    .collect();
+
+                let Some(model) = LidarModel::new(
+                    lidar_config.azimuth_fov.to_radians(),
+                    lidar_config.azimuth_beams,
+                    ring_elevations,
+                    lidar_config.sweep_period,
+                    lidar_config.max_range,
+                    lidar_config.range_noise_stddev,
+                    lidar_config.angular_noise_stddev,
+                ) else {
+                    error!(
+                        "LiDAR '{}' has an unusable configuration (range_noise_stddev={}, angular_noise_stddev={}, azimuth_beams={}, ring_elevations={}): noise stddevs must be > 0 and there must be at least one azimuth beam and one ring. Skipping sensor.",
+                        sensor_name,
+                        lidar_config.range_noise_stddev,
+                        lidar_config.angular_noise_stddev,
+                        lidar_config.azimuth_beams,
+                        lidar_config.ring_elevations.len(),
+                    );
+                    continue;
                 };
+                let core_model: Box<dyn RaycastingSensorModel> = Box::new(model);
 
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
@@ -174,10 +170,7 @@ fn raycasting_sensor_system(
 
         let output = sensor.model.process_hits(&hits, &mut rng.0);
 
-        let point_cloud = match output {
-            RaycastingOutput::PointCloud2D(cloud) => cloud,
-            RaycastingOutput::PointCloud3D(_) => continue,
-        };
+        let RaycastingOutput::PointCloud(point_cloud) = output;
 
         let reading = SensorReading {
             sensor_handle: FrameHandle::from_entity(sensor_entity),

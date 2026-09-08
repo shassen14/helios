@@ -1,6 +1,7 @@
 use nalgebra::{DMatrix, Isometry3, Point3, Translation3, UnitQuaternion};
 
-use crate::data::sensor::PointCloud2D;
+use crate::data::PointCloud;
+use crate::frames::conventions::Flu;
 use crate::mapping::{MapData, Mapper};
 
 /// Log-odds free-space update increment (negative → lowers occupancy probability).
@@ -235,12 +236,17 @@ impl Mapper for OccupancyGridMapper {
         self.recenter_on(t.x, t.y);
     }
 
-    fn integrate_scan_2d(&mut self, sensor_world_pose: &Isometry3<f64>, cloud: &PointCloud2D) {
+    fn integrate_scan_2d(
+        &mut self,
+        sensor_world_pose: &Isometry3<f64>,
+        cloud: &PointCloud<Flu, ()>,
+    ) {
         let robot_wx = sensor_world_pose.translation.x;
         let robot_wy = sensor_world_pose.translation.y;
         // Sensor-FLU 2D points → world ENU via the sensor pose (z = 0 plane).
-        for point in &cloud.points {
-            let p_world = sensor_world_pose * Point3::new(point.x, point.y, 0.0);
+        for i in 0..cloud.len() {
+            let p = cloud.point(i).into_inner();
+            let p_world = sensor_world_pose * Point3::new(p.x, p.y, 0.0);
             self.raycast(robot_wx, robot_wy, p_world.x, p_world.y);
         }
     }
@@ -324,10 +330,21 @@ fn bresenham(x0: i64, y0: i64, x1: i64, y1: i64) -> impl Iterator<Item = (i64, i
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nalgebra::Point2;
+    use crate::data::PointCloudBuilder;
+    use crate::frames::quantities::Point;
 
     fn make_mapper(width_m: f64, height_m: f64) -> OccupancyGridMapper {
         OccupancyGridMapper::new(1.0, width_m, height_m)
+    }
+
+    /// A sensor-frame (FLU) scan from planar `(x, y)` returns, each stored at
+    /// `z = 0` — the shape a 2D lidar produces.
+    fn flu_cloud(points: &[(f64, f64)]) -> PointCloud<Flu, ()> {
+        let mut builder = PointCloudBuilder::<Flu>::new();
+        for &(x, y) in points {
+            builder.push(Point::new(x, y, 0.0), ());
+        }
+        builder.finalize().expect("equal-length cloud")
     }
 
     // -------------------------------------------------------------------------
@@ -543,9 +560,7 @@ mod tests {
         // Sensor at world origin (identity pose). One hit 2m east in sensor FLU
         // = (x=2, y=0) → world (2,0).
         let sensor_pose = Isometry3::identity();
-        let cloud = PointCloud2D {
-            points: vec![Point2::new(2.0, 0.0)],
-        };
+        let cloud = flu_cloud(&[(2.0, 0.0)]);
         <OccupancyGridMapper as Mapper>::integrate_scan_2d(&mut m, &sensor_pose, &cloud);
 
         let occ_idx = 5 * m.width + 7;
