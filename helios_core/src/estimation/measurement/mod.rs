@@ -104,8 +104,9 @@ pub trait MeasurementModel: Send + Sync {
     /// [`StateSchema`](crate::estimation::schema::StateSchema) — it names every
     /// component of `z` and the frame it lives in, so an estimator can verify at
     /// construction that model and state agree on conventions at the `h(x)`
-    /// seam. `schema().dim()` equals [`dim`](Self::dim); the two coexist only
-    /// until callers move off the bare length.
+    /// seam. `schema().dim()` gives the measurement length; the kernel itself
+    /// sizes off the incoming `z.nrows()`, so the schema is consulted only at
+    /// build time (agreement check + sizing), never per tick.
     fn schema(&self) -> MeasurementSchema;
 }
 
