@@ -187,8 +187,6 @@ pub struct LidarConfig {
     /// Angular noise standard deviation, in degrees, applied to both azimuth and
     /// elevation. Must be strictly positive.
     pub angular_noise_stddev: f32,
-    #[serde(default)]
-    pub debug_visuals: bool,
     /// Bus channel name for `Vec<SensorReading<PointCloud<Flu, ()>>>` published to the pipeline.
     pub channel: String,
 }
@@ -200,10 +198,6 @@ impl LidarConfig {
 
     pub fn get_relative_pose(&self) -> Pose {
         self.transform
-    }
-
-    pub fn get_debug_visuals_flag(&self) -> bool {
-        self.debug_visuals
     }
 
     pub fn get_channel(&self) -> &str {

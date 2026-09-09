@@ -9,5 +9,4 @@ ring_elevations = [0.0]                       # Single ring in the sensor's hori
 range_noise_stddev = 0.03
 angular_noise_stddev = 0.1
 
-debug_visuals = true
 channel = "sensor.lidar.front"
