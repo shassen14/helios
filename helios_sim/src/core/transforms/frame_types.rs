@@ -1,10 +1,12 @@
-// Typed coordinate frame newtypes that make illegal frame conversions unrepresentable.
-// All newtypes wrap `Isometry3<f64>` or `Vector3<f64>` — no Bevy dependency here.
+// Typed pose newtypes that make illegal frame conversions unrepresentable.
+// Each wraps an `Isometry3<f64>` — no Bevy dependency here.
 //
 // These live in helios_sim (not helios_runtime) so that standard `From`/`Into` impls
-// for Bevy types can be defined without violating Rust's orphan rules.
+// for Bevy types can be defined without violating Rust's orphan rules. Free vectors
+// and points cross the boundary as core's frame-typed quantities instead; see
+// `bevy_bridge.rs`.
 
-use nalgebra::{Isometry3, Vector3};
+use nalgebra::Isometry3;
 
 /// A world-frame pose in the ENU coordinate system, for static objects (terrain, buildings).
 ///
@@ -30,11 +32,3 @@ pub struct EnuBodyPose(pub Isometry3<f64>);
 /// relative to a vehicle body. FLU identity → Bevy local identity.
 #[derive(Debug, Clone, Copy)]
 pub struct FluLocalPose(pub Isometry3<f64>);
-
-/// A 3D vector in the ENU world coordinate system (East=+X, North=+Y, Up=+Z).
-#[derive(Debug, Clone, Copy)]
-pub struct EnuVector(pub Vector3<f64>);
-
-/// A 3D vector in the FLU body-relative coordinate system (Forward=+X, Left=+Y, Up=+Z).
-#[derive(Debug, Clone, Copy)]
-pub struct FluVector(pub Vector3<f64>);

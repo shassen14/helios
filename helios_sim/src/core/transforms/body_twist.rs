@@ -1,7 +1,7 @@
-use super::frame_types::{EnuBodyPose, EnuVector};
+use super::frame_types::EnuBodyPose;
 
 use helios_core::control::commands::BodyTwist;
-use helios_core::frames::quantities::FluVector;
+use helios_core::frames::quantities::{EnuVector, FluVector};
 
 use nalgebra::UnitQuaternion;
 
@@ -20,8 +20,8 @@ pub fn enu_twist_to_body_flu(
 ) -> BodyTwist {
     let enu_to_flu: UnitQuaternion<f64> = pose.0.rotation.inverse();
     BodyTwist::new(
-        FluVector::from_raw(enu_to_flu * linear_enu.0),
-        FluVector::from_raw(enu_to_flu * angular_enu.0),
+        FluVector::from_raw(enu_to_flu * linear_enu.into_inner()),
+        FluVector::from_raw(enu_to_flu * angular_enu.into_inner()),
     )
 }
 
@@ -62,8 +62,8 @@ mod tests {
     fn identity_pose_passes_enu_through() {
         let twist = enu_twist_to_body_flu(
             body_pose(UnitQuaternion::identity()),
-            EnuVector(Vector3::new(1.0, 2.0, 3.0)),
-            EnuVector(Vector3::new(4.0, 5.0, 6.0)),
+            EnuVector::new(1.0, 2.0, 3.0),
+            EnuVector::new(4.0, 5.0, 6.0),
         );
 
         assert_flu(twist.linear(), [1.0, 2.0, 3.0]);
@@ -77,8 +77,8 @@ mod tests {
         let north = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), FRAC_PI_2);
         let twist = enu_twist_to_body_flu(
             body_pose(north),
-            EnuVector(Vector3::new(1.0, 0.0, 0.0)),
-            EnuVector(Vector3::zeros()),
+            EnuVector::new(1.0, 0.0, 0.0),
+            EnuVector::zeros(),
         );
 
         assert_flu(twist.linear(), [0.0, -1.0, 0.0]);
@@ -94,15 +94,15 @@ mod tests {
 
         let about_east = enu_twist_to_body_flu(
             body_pose(north),
-            EnuVector(Vector3::zeros()),
-            EnuVector(Vector3::new(1.0, 0.0, 0.0)),
+            EnuVector::zeros(),
+            EnuVector::new(1.0, 0.0, 0.0),
         );
         assert_flu(about_east.angular(), [0.0, -1.0, 0.0]);
 
         let about_up = enu_twist_to_body_flu(
             body_pose(north),
-            EnuVector(Vector3::zeros()),
-            EnuVector(Vector3::new(0.0, 0.0, 1.0)),
+            EnuVector::zeros(),
+            EnuVector::new(0.0, 0.0, 1.0),
         );
         assert_flu(about_up.angular(), [0.0, 0.0, 1.0]);
     }

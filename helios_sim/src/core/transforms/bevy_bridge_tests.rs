@@ -45,44 +45,6 @@ fn assert_nalgebra_vector3_approx_eq(v1: &Vector3<f64>, v2: &Vector3<f64>, epsil
 }
 
 #[test]
-fn test_enu_vector_to_bevy_vector_and_back() {
-    let enu_vec = Vector3::new(1.0, 2.0, 3.0);
-    let bevy_vec = BevyVec3::from(EnuVector(enu_vec));
-    let expected = BevyVec3::new(1.0, 3.0, -2.0);
-    assert_bevy_vec3_approx_eq(&bevy_vec, &expected, F32_EPSILON);
-
-    let enu_back = EnuVector::from(bevy_vec).0;
-    assert_nalgebra_vector3_approx_eq(&enu_back, &enu_vec, F64_EPSILON);
-}
-
-#[test]
-fn test_flu_vector_to_bevy_local_vector_axes() {
-    assert_bevy_vec3_approx_eq(
-        &BevyVec3::from(FluVector(Vector3::new(1.0, 0.0, 0.0))),
-        &BevyVec3::new(0.0, 0.0, -1.0),
-        F32_EPSILON,
-    );
-    assert_bevy_vec3_approx_eq(
-        &BevyVec3::from(FluVector(Vector3::new(0.0, 1.0, 0.0))),
-        &BevyVec3::new(-1.0, 0.0, 0.0),
-        F32_EPSILON,
-    );
-    assert_bevy_vec3_approx_eq(
-        &BevyVec3::from(FluVector(Vector3::new(0.0, 0.0, 1.0))),
-        &BevyVec3::new(0.0, 1.0, 0.0),
-        F32_EPSILON,
-    );
-}
-
-#[test]
-fn test_flu_vector_round_trip() {
-    let flu_vec = Vector3::new(1.5, -0.5, 2.0);
-    let bevy_vec = BevyVec3::from(FluVector(flu_vec));
-    let flu_back = FluVector::from(bevy_vec).0;
-    assert_nalgebra_vector3_approx_eq(&flu_back, &flu_vec, F64_EPSILON);
-}
-
-#[test]
 fn test_enu_world_pose_identity() {
     let bevy = BevyTransform::from(EnuWorldPose(Isometry3::identity()));
     assert_bevy_vec3_approx_eq(&bevy.translation, &BevyVec3::ZERO, F32_EPSILON);
@@ -177,4 +139,125 @@ fn test_flu_local_pose_yaw_90() {
         &BevyQuat::from_rotation_y(PI_F32 / 2.0),
         F32_EPSILON,
     );
+}
+
+// ---------------------------------------------------------------------------
+// Typed Bevy-frame boundary: rotations carry the reorder, casts are pure copies.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn enu_to_bevy_rotation_reorders_axes() {
+    // ENU East→Bevy +X, North→−Z, Up→+Y.
+    let east = enu_to_bevy().act(FreeVector::<Enu>::new(1.0, 0.0, 0.0));
+    let north = enu_to_bevy().act(FreeVector::<Enu>::new(0.0, 1.0, 0.0));
+    let up = enu_to_bevy().act(FreeVector::<Enu>::new(0.0, 0.0, 1.0));
+    assert_nalgebra_vector3_approx_eq(&east.into_inner(), &Vector3::new(1.0, 0.0, 0.0), F64_EPSILON);
+    assert_nalgebra_vector3_approx_eq(
+        &north.into_inner(),
+        &Vector3::new(0.0, 0.0, -1.0),
+        F64_EPSILON,
+    );
+    assert_nalgebra_vector3_approx_eq(&up.into_inner(), &Vector3::new(0.0, 1.0, 0.0), F64_EPSILON);
+}
+
+#[test]
+fn flu_to_bevy_local_rotation_reorders_axes() {
+    // FLU Forward→Bevy −Z, Left→−X, Up→+Y.
+    let fwd = flu_to_bevy_local().act(FreeVector::<Flu>::new(1.0, 0.0, 0.0));
+    let left = flu_to_bevy_local().act(FreeVector::<Flu>::new(0.0, 1.0, 0.0));
+    let up = flu_to_bevy_local().act(FreeVector::<Flu>::new(0.0, 0.0, 1.0));
+    assert_nalgebra_vector3_approx_eq(&fwd.into_inner(), &Vector3::new(0.0, 0.0, -1.0), F64_EPSILON);
+    assert_nalgebra_vector3_approx_eq(
+        &left.into_inner(),
+        &Vector3::new(-1.0, 0.0, 0.0),
+        F64_EPSILON,
+    );
+    assert_nalgebra_vector3_approx_eq(&up.into_inner(), &Vector3::new(0.0, 1.0, 0.0), F64_EPSILON);
+}
+
+#[test]
+fn enu_to_bevy_inverse_round_trips() {
+    let v = FreeVector::<Enu>::new(1.5, -0.5, 2.0);
+    let round = enu_to_bevy().inverse().act(enu_to_bevy().act(v));
+    assert_nalgebra_vector3_approx_eq(&round.into_inner(), &v.into_inner(), F64_EPSILON);
+}
+
+#[test]
+fn point_vec3_casts_are_pure_copies() {
+    // A cast never reorders: components pass straight through, only precision changes.
+    let p = Point::<Bevy>::from_raw(Vector3::new(1.0, 2.0, 3.0));
+    assert_bevy_vec3_approx_eq(
+        &point_bevy_to_vec3(p),
+        &BevyVec3::new(1.0, 2.0, 3.0),
+        F32_EPSILON,
+    );
+    let back = vec3_to_point_bevy(BevyVec3::new(1.0, 2.0, 3.0));
+    assert_nalgebra_vector3_approx_eq(&back.into_inner(), &Vector3::new(1.0, 2.0, 3.0), F64_EPSILON);
+}
+
+#[test]
+fn freevector_vec3_casts_are_pure_copies() {
+    let v = FreeVector::<Bevy>::from_raw(Vector3::new(1.0, 2.0, 3.0));
+    assert_bevy_vec3_approx_eq(
+        &freevector_bevy_to_vec3(v),
+        &BevyVec3::new(1.0, 2.0, 3.0),
+        F32_EPSILON,
+    );
+    let back = vec3_to_freevector_bevy(BevyVec3::new(1.0, 2.0, 3.0));
+    assert_nalgebra_vector3_approx_eq(&back.into_inner(), &Vector3::new(1.0, 2.0, 3.0), F64_EPSILON);
+}
+
+#[test]
+fn enu_point_to_bevy_matches_the_rotation() {
+    // The crossing is a pure rotation (identity translation), so a location at
+    // ENU North reorders to Bevy −Z just as a free vector would.
+    let bevy_point = enu_point_to_bevy(Point::<Enu>::new(0.0, 1.0, 0.0));
+    assert_bevy_vec3_approx_eq(
+        &point_bevy_to_vec3(bevy_point),
+        &BevyVec3::new(0.0, 0.0, -1.0),
+        F32_EPSILON,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Directional surface: each helper crosses the boundary in the stated direction.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bevy_to_enu_point_inverts_enu_point_to_bevy() {
+    let enu = Point::<Enu>::new(1.0, -2.0, 3.0);
+    let round = bevy_to_enu_point(enu_point_to_bevy(enu));
+    assert_nalgebra_vector3_approx_eq(&round.into_inner(), &enu.into_inner(), F64_EPSILON);
+}
+
+#[test]
+fn flu_point_to_bevy_local_reorders_axes() {
+    // FLU Forward→Bevy −Z, Left→−X, Up→+Y (same reorder as the free vector).
+    let fwd = flu_point_to_bevy_local(Point::<Flu>::new(1.0, 0.0, 0.0));
+    let left = flu_point_to_bevy_local(Point::<Flu>::new(0.0, 1.0, 0.0));
+    let up = flu_point_to_bevy_local(Point::<Flu>::new(0.0, 0.0, 1.0));
+    assert_bevy_vec3_approx_eq(&point_bevy_to_vec3(fwd), &BevyVec3::new(0.0, 0.0, -1.0), F32_EPSILON);
+    assert_bevy_vec3_approx_eq(&point_bevy_to_vec3(left), &BevyVec3::new(-1.0, 0.0, 0.0), F32_EPSILON);
+    assert_bevy_vec3_approx_eq(&point_bevy_to_vec3(up), &BevyVec3::new(0.0, 1.0, 0.0), F32_EPSILON);
+}
+
+#[test]
+fn enu_freevector_to_bevy_reorders_axes() {
+    // ENU North direction → Bevy −Z.
+    let north = enu_freevector_to_bevy(FreeVector::<Enu>::new(0.0, 1.0, 0.0));
+    assert_nalgebra_vector3_approx_eq(&north.into_inner(), &Vector3::new(0.0, 0.0, -1.0), F64_EPSILON);
+}
+
+#[test]
+fn bevy_to_enu_freevector_inverts_enu_freevector_to_bevy() {
+    let enu = FreeVector::<Enu>::new(1.0, -2.0, 3.0);
+    let round = bevy_to_enu_freevector(enu_freevector_to_bevy(enu));
+    assert_nalgebra_vector3_approx_eq(&round.into_inner(), &enu.into_inner(), F64_EPSILON);
+}
+
+#[test]
+fn flu_freevector_to_bevy_local_reorders_axes() {
+    // FLU Left direction → Bevy −X.
+    let left = flu_freevector_to_bevy_local(FreeVector::<Flu>::new(0.0, 1.0, 0.0));
+    assert_nalgebra_vector3_approx_eq(&left.into_inner(), &Vector3::new(-1.0, 0.0, 0.0), F64_EPSILON);
 }

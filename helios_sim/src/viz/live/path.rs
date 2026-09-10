@@ -7,13 +7,15 @@
 //! planner's first output or when the stack has no planner; the iterator is
 //! simply empty.
 //!
-//! Each waypoint is a [`Point<Enu>`] — a pure ENU world-frame position — so its
-//! coordinates convert straight through the sole ENU→Bevy helper.
+//! Each waypoint is a [`Point<Enu>`] — a pure ENU world-frame position — so it
+//! crosses as a typed point ([`enu_point_to_bevy`]) and the result copies down
+//! to a `bevy::Vec3` for the gizmo.
 //!
 //! [`Point<Enu>`]: helios_core::frames::quantities::Point
 
 use crate::{
-    core::transforms::EnuVector, prelude::AutonomyPipelineComponent,
+    core::transforms::{enu_point_to_bevy, point_bevy_to_vec3},
+    prelude::AutonomyPipelineComponent,
     viz::live::discovery::declared_outputs,
 };
 
@@ -37,7 +39,7 @@ pub fn path_update_system(query: Query<&AutonomyPipelineComponent>, mut gizmos: 
                 .value
                 .waypoints
                 .iter()
-                .map(|wp| Vec3::from(EnuVector(*wp.raw())))
+                .map(|wp| point_bevy_to_vec3(enu_point_to_bevy(*wp)))
                 .collect();
 
             gizmos.linestrip(waypoints, PATH_COLOR);

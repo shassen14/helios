@@ -1,8 +1,13 @@
 //! Coordinate frame conversion helpers and the runtime TF tree.
 //!
-//! Provides typed frame newtypes ([`EnuBodyPose`], [`EnuWorldPose`], [`FluLocalPose`],
-//! [`EnuVector`], [`FluVector`]) with `From` impls for converting between ENU/FLU and
-//! Bevy coordinate systems. The [`TfTree`] resource and its update systems are here too.
+//! The vector/point boundary crosses through core's typed frame algebra: the
+//! [`Bevy`] frame marker turns each axis swap into a real `Rotation`, and the
+//! directional helpers ([`enu_point_to_bevy`] and friends) hand back typed
+//! `Point<Bevy>` / `FreeVector<Bevy>` values that the cast helpers
+//! ([`point_bevy_to_vec3`] etc.) copy to `bevy::Vec3` at the render edge. Poses
+//! still cross via the frame newtypes ([`EnuBodyPose`], [`EnuWorldPose`],
+//! [`FluLocalPose`]) and their `From` impls. The [`TfTree`] resource and its
+//! update systems are here too.
 //!
 //! All axis-swap logic is centralized in `bevy_bridge.rs`. Never perform manual axis swaps
 //! (e.g. `v.y = physics.z`) anywhere else in the codebase — every such swap is a latent bug.
@@ -12,8 +17,13 @@ mod body_twist;
 mod constants;
 mod frame_types;
 
+pub use bevy_bridge::{
+    bevy_to_enu_freevector, bevy_to_enu_point, enu_freevector_to_bevy, enu_point_to_bevy,
+    flu_freevector_to_bevy_local, flu_point_to_bevy_local, freevector_bevy_to_vec3,
+    point_bevy_to_vec3, vec3_to_freevector_bevy, vec3_to_point_bevy, Bevy,
+};
 pub use body_twist::enu_twist_to_body_flu;
-pub use frame_types::{EnuBodyPose, EnuVector, EnuWorldPose, FluLocalPose, FluVector};
+pub use frame_types::{EnuBodyPose, EnuWorldPose, FluLocalPose};
 
 use bevy::prelude::{GlobalTransform, *};
 use helios_core::frames::transforms::{Convention, ErasedTransform};

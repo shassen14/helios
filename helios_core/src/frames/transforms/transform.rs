@@ -72,6 +72,14 @@ impl<From: Frame, To: Frame> Transform<From, To> {
         )
     }
 
+    /// Builds a pure-rotation transform: the [`Rotation`] paired with an
+    /// identity translation. The affine entry point for a frame change that only
+    /// reorders axes about a shared origin — [`act`](Self::act) still applies
+    /// `R·p + t`, but with `t = 0` a point rotates without shifting.
+    pub fn from_rotation(rotation: Rotation<From, To>) -> Self {
+        Self::from_parts(rotation, Translation3::<f64>::identity())
+    }
+
     /// Composition: `self` (`From → To`) followed by `next` (`To → C`), giving
     /// the direct transform `From → C`. The shared middle frame `To` must match,
     /// so composing mismatched transforms does not compile.
@@ -186,6 +194,24 @@ mod tests {
         let round: Transform<Flu, Flu> = out.then(back);
         let p = Point::<Flu>::new(1.0, 2.0, 3.0);
         assert!(close(round.act(p).into_inner(), p.into_inner()));
+    }
+
+    #[test]
+    fn from_rotation_matches_from_parts_with_zero_translation() {
+        // The pure-rotation builder must equal the two-arg builder given an
+        // identity translation: same rotation, no shift.
+        let rotation = Rotation::from_unit_quaternion(UnitQuaternion::from_axis_angle(
+            &Vector3::z_axis(),
+            FRAC_PI_2,
+        ));
+        let p = Point::<Flu>::new(1.0, 2.0, 3.0);
+        let via_rotation: Transform<Flu, Enu> = Transform::from_rotation(rotation);
+        let via_parts: Transform<Flu, Enu> =
+            Transform::from_parts(rotation, Translation3::identity());
+        assert!(close(
+            via_rotation.act(p).into_inner(),
+            via_parts.act(p).into_inner()
+        ));
     }
 
     #[test]

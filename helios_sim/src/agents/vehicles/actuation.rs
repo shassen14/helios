@@ -8,7 +8,7 @@
 //! functions so a new morphology writes only the middle that is actually its own.
 
 use crate::core::components::ActuatorCommandComponent;
-use crate::core::transforms::FluVector;
+use crate::core::transforms::{flu_freevector_to_bevy_local, freevector_bevy_to_vec3};
 
 use helios_core::control::actuation_model::ActuationModel;
 use helios_core::control::actuators::ActuatorCommand;
@@ -55,8 +55,9 @@ pub(crate) fn apply_body_wrench(
     }
 
     let w = wrench.wrench();
-    let force_world = body_rotation * Vec3::from(FluVector(w.force().into_inner()));
-    let torque_world = body_rotation * Vec3::from(FluVector(w.torque().into_inner()));
+    let force_world = body_rotation * freevector_bevy_to_vec3(flu_freevector_to_bevy_local(w.force()));
+    let torque_world =
+        body_rotation * freevector_bevy_to_vec3(flu_freevector_to_bevy_local(w.torque()));
 
     commands.entity(entity).insert((
         ConstantForce::new(force_world.x, force_world.y, force_world.z),

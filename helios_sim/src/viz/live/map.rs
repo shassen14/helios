@@ -15,7 +15,7 @@
 //! offset from the true obstacles — the map faithfully draws a wrong belief.
 //!
 use crate::{
-    core::transforms::EnuVector,
+    core::transforms::{enu_point_to_bevy, point_bevy_to_vec3},
     prelude::AutonomyPipelineComponent,
     viz::{
         interaction::{
@@ -29,6 +29,8 @@ use crate::{
     },
 };
 
+use helios_core::frames::conventions::Enu;
+use helios_core::frames::quantities::Point;
 use helios_core::mapping::MapData;
 
 use bevy::{color, prelude::*};
@@ -83,10 +85,11 @@ pub(crate) fn map_update_system(
                     // elevation would be a different MapData variant, not this.
                     let x = origin.translation.x + (col as f64 + 0.5) * resolution;
                     let y = origin.translation.y + (row as f64 + 0.5) * resolution;
-                    let center_enu = EnuVector(Vector3::<f64>::new(x, y, 0.0));
+                    let center_enu = Point::<Enu>::from_raw(Vector3::<f64>::new(x, y, 0.0));
 
-                    // ENU center → Bevy point via the sole sanctioned helper.
-                    let p = Vec3::from(center_enu);
+                    // ENU center → Bevy point: cross typed, then copy down for
+                    // the gizmo.
+                    let p = point_bevy_to_vec3(enu_point_to_bevy(center_enu));
 
                     // A cell-sized square laid flat on the ground. `rect` draws
                     // in its local XY plane; rotating +90° about X drops that
