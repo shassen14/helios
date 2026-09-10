@@ -41,18 +41,16 @@ pub fn ground_truth_sync_system(
             bevy_transform_to_transform_bevy(transform.compute_transform()).from_bevy();
         ground_truth.pose = world.into_inner();
 
-        let current_angular_velocity_enu = FromBevy::<FreeVector<Enu>>::from_bevy(
-            vec3_to_freevector_bevy(Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z)),
-        )
-        .into_inner();
+        let angular_velocity_enu: FreeVector<Enu> =
+            vec3_to_freevector_bevy(Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z)).from_bevy();
+        let current_angular_velocity_enu = angular_velocity_enu.into_inner();
 
         let angular_acceleration_enu =
             (current_angular_velocity_enu - ground_truth.last_angular_velocity) / dt;
 
-        let current_linear_velocity_enu = FromBevy::<FreeVector<Enu>>::from_bevy(
-            vec3_to_freevector_bevy(Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z)),
-        )
-        .into_inner();
+        let linear_velocity_enu: FreeVector<Enu> =
+            vec3_to_freevector_bevy(Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z)).from_bevy();
+        let current_linear_velocity_enu = linear_velocity_enu.into_inner();
 
         let linear_acceleration_enu =
             (current_linear_velocity_enu - ground_truth.last_linear_velocity) / dt;

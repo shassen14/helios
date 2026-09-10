@@ -63,7 +63,8 @@ pub fn on_click_goal(
         return;
     };
 
-    let enu = FromBevy::<Point<Enu>>::from_bevy(vec3_to_point_bevy(hit)).into_inner();
+    let enu_point: Point<Enu> = vec3_to_point_bevy(hit).from_bevy();
+    let enu = enu_point.into_inner();
     let goal = PlannerGoal::WorldPosition2D(Vector2::new(enu.x, enu.y));
     goals.write(GoalCommandEvent { agent, goal });
 }

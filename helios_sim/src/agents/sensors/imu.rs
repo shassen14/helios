@@ -156,8 +156,8 @@ fn spawn_imu_sensors(
     gravity: Res<Gravity>,
     master_seed: Res<MasterSeed>,
 ) {
-    let gravity_world =
-        FromBevy::<FreeVector<Enu>>::from_bevy(vec3_to_freevector_bevy(gravity.0)).into_inner();
+    let gravity_enu: FreeVector<Enu> = vec3_to_freevector_bevy(gravity.0).from_bevy();
+    let gravity_world = gravity_enu.into_inner();
 
     for (agent_entity, agent_name, request) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {

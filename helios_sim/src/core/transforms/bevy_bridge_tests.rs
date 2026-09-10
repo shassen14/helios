@@ -267,13 +267,13 @@ fn flu_freevector_to_bevy_reorders_axes() {
 #[test]
 fn from_bevy_inverts_to_bevy_for_a_point() {
     let enu = Point::<Enu>::new(1.0, -2.0, 3.0);
-    let round = FromBevy::<Point<Enu>>::from_bevy(enu.to_bevy());
+    let round: Point<Enu> = enu.to_bevy().from_bevy();
     assert_nalgebra_vector3_approx_eq(&round.into_inner(), &enu.into_inner(), F64_EPSILON);
 }
 
 #[test]
 fn from_bevy_inverts_to_bevy_for_a_free_vector() {
     let enu = FreeVector::<Enu>::new(1.0, -2.0, 3.0);
-    let round = FromBevy::<FreeVector<Enu>>::from_bevy(enu.to_bevy());
+    let round: FreeVector<Enu> = enu.to_bevy().from_bevy();
     assert_nalgebra_vector3_approx_eq(&round.into_inner(), &enu.into_inner(), F64_EPSILON);
 }
