@@ -15,7 +15,7 @@
 //! offset from the true obstacles — the map faithfully draws a wrong belief.
 //!
 use crate::{
-    core::transforms::{enu_point_to_bevy, point_bevy_to_vec3},
+    core::transforms::{point_bevy_to_vec3, ToBevy},
     prelude::AutonomyPipelineComponent,
     viz::{
         interaction::{
@@ -89,7 +89,7 @@ pub(crate) fn map_update_system(
 
                     // ENU center → Bevy point: cross typed, then copy down for
                     // the gizmo.
-                    let p = point_bevy_to_vec3(enu_point_to_bevy(center_enu));
+                    let p = point_bevy_to_vec3(center_enu.to_bevy());
 
                     // A cell-sized square laid flat on the ground. `rect` draws
                     // in its local XY plane; rotating +90° about X drops that

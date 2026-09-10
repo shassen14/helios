@@ -2,11 +2,12 @@ use crate::brain_bridge::components::SensorPublishChannel;
 use crate::config::structs::SensorConfig;
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
-use crate::core::transforms::{flu_freevector_to_bevy_local, freevector_bevy_to_vec3};
+use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
 use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+use helios_core::frames::conventions::Flu;
 use helios_core::frames::quantities::FreeVector;
 use helios_core::frames::transforms::Convention;
 use helios_core::sensors::{lidar::LidarModel, RayHit, RaycastingOutput, RaycastingSensorModel};
@@ -150,7 +151,7 @@ fn raycasting_sensor_system(
         let filter = SpatialQueryFilter::from_excluded_entities([parent.parent()]);
 
         for ray in local_rays {
-            let bevy_local_dir = flu_freevector_to_bevy_local(FreeVector::from_raw(ray.direction));
+            let bevy_local_dir = FreeVector::<Flu>::from_raw(ray.direction).to_bevy();
 
             let world_direction: Vec3 = sensor_rotation * freevector_bevy_to_vec3(bevy_local_dir);
 

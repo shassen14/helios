@@ -10,10 +10,11 @@ use super::state_sensor::{publish_state_sensor, SensorTimer, StateSensor};
 
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
-use crate::core::transforms::{bevy_to_enu_freevector, vec3_to_freevector_bevy};
+use crate::core::transforms::{vec3_to_freevector_bevy, FromBevy};
 use crate::prelude::*;
 
 use helios_core::data::sensor::{Acceleration, AngularRate};
+use helios_core::frames::conventions::Enu;
 use helios_core::frames::transforms::Convention;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
@@ -154,7 +155,7 @@ fn spawn_imu_sensors(
     gravity: Res<Gravity>,
     master_seed: Res<MasterSeed>,
 ) {
-    let gravity_world = bevy_to_enu_freevector(vec3_to_freevector_bevy(gravity.0)).into_inner();
+    let gravity_world = vec3_to_freevector_bevy(gravity.0).from_bevy::<Enu>().into_inner();
 
     for (agent_entity, agent_name, request) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {

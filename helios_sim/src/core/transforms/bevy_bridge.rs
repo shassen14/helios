@@ -4,10 +4,16 @@
 //
 // Bevy renders in a Y-up, −Z-forward frame; robotics data uses ENU world and
 // FLU body frames. The vector/point crossing runs through core's typed frame
-// algebra: `Bevy` is a frame marker, so each swap is a real `Rotation`
-// (`enu_to_bevy`, `flu_to_bevy_local`) and a crossed value lands fully typed as
-// `Point<Bevy>` / `FreeVector<Bevy>`. The only untyped step left is the
-// component copy to `bevy::Vec3`, which by construction carries no reorder.
+// algebra: `Bevy` is a frame marker, so each swap is a real `Rotation`. A value
+// crosses via the `ToBevy` / `FromBevy` traits, which dispatch on the core frame
+// type — any frame that states its basis (`CanonicalBasis::to_enu`) converts,
+// with no per-frame code here. The crossed value lands fully typed as
+// `Point<Bevy>` / `FreeVector<Bevy>`; the only untyped step left is the component
+// copy to `bevy::Vec3`, which by construction carries no reorder.
+//
+// Every crossing routes through ENU: `enu_to_bevy` is the one anchored fact (the
+// render relabel), and each frame's `to_enu` supplies the rest, so the whole
+// conversion is `F::to_enu().then(enu_to_bevy())`.
 //
 // The pose `From` impls further down convert ENU/FLU poses to `bevy::Transform`
 // with hand-written quaternion swaps.
@@ -15,9 +21,9 @@
 use super::constants::{Q_ENU_FRAME_TO_BEVY_FRAME, Q_FLU_BODY_TO_BEVY_LOCAL};
 use super::frame_types::{EnuBodyPose, EnuWorldPose, FluLocalPose};
 
-use helios_core::frames::conventions::{Enu, Flu, Frame};
+use helios_core::frames::conventions::{Enu, Frame};
 use helios_core::frames::quantities::{FreeVector, Point};
-use helios_core::frames::transforms::{Rotation, Transform};
+use helios_core::frames::transforms::{CanonicalBasis, Rotation, Transform};
 
 use bevy::prelude::{
     GlobalTransform, Quat as BevyQuat, Transform as BevyTransform, Vec3 as BevyVec3,
@@ -37,25 +43,72 @@ pub struct Bevy;
 
 impl Frame for Bevy {}
 
+/// Crosses a core-framed quantity into Bevy's render frame.
+///
+/// Blanket-implemented for every [`CanonicalBasis`] frame, so a new core frame
+/// renders with no code here — it dispatches on the source frame and routes
+/// through ENU (`F::to_enu().then(enu_to_bevy())`). Living in sim (not core) is
+/// what makes the blanket impl over the foreign `Point<F>` / `FreeVector<F>`
+/// orphan-legal: the trait itself is local. `Bevy` is a sim concept core cannot
+/// name, which is exactly why the split lands here.
+pub trait ToBevy {
+    type Output;
+    fn to_bevy(self) -> Self::Output;
+}
+
+impl<F: CanonicalBasis> ToBevy for Point<F> {
+    type Output = Point<Bevy>;
+    /// A location translates, so it crosses through a `Transform` (the rotation
+    /// with an identity translation), not a bare rotation.
+    fn to_bevy(self) -> Self::Output {
+        Transform::from_rotation(F::to_enu().then(enu_to_bevy())).act(self)
+    }
+}
+
+impl<F: CanonicalBasis> ToBevy for FreeVector<F> {
+    type Output = FreeVector<Bevy>;
+    /// A direction only rotates, so it crosses on the bare rotation.
+    fn to_bevy(self) -> Self::Output {
+        F::to_enu().then(enu_to_bevy()).act(self)
+    }
+}
+
+/// Crosses a Bevy-framed quantity back into a core frame — the inverse of
+/// [`ToBevy`].
+///
+/// The source is always `Bevy`, so the target frame cannot be inferred and is
+/// named by turbofish at the call site (`v.from_bevy::<Enu>()`) — the same
+/// explicit wiring the boundary favors elsewhere. The [`Output`](Self::Output)
+/// GAT tracks that chosen frame. The rotation is the inverse of the forward
+/// crossing.
+// `from_bevy` takes `self`: it consumes a Bevy-framed value to produce a
+// core-framed one, the mirror of `to_bevy`. That is not the `from_x`-constructor
+// shape the convention lint expects, so silence it for this pair.
+#[allow(clippy::wrong_self_convention)]
+pub trait FromBevy {
+    type Output<F: CanonicalBasis>;
+    fn from_bevy<F: CanonicalBasis>(self) -> Self::Output<F>;
+}
+
+impl FromBevy for Point<Bevy> {
+    type Output<F: CanonicalBasis> = Point<F>;
+    fn from_bevy<F: CanonicalBasis>(self) -> Self::Output<F> {
+        Transform::from_rotation(F::to_enu().then(enu_to_bevy()).inverse()).act(self)
+    }
+}
+
+impl FromBevy for FreeVector<Bevy> {
+    type Output<F: CanonicalBasis> = FreeVector<F>;
+    fn from_bevy<F: CanonicalBasis>(self) -> Self::Output<F> {
+        F::to_enu().then(enu_to_bevy()).inverse().act(self)
+    }
+}
+
 /// Rotation from the ENU world frame into Bevy's world frame: a −90° turn about
 /// the shared X axis (ENU East→+X, North→−Z, Up→+Y).
 pub fn enu_to_bevy() -> Rotation<Enu, Bevy> {
     let quat = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -FRAC_PI_2);
     Rotation::from_unit_quaternion(quat)
-}
-
-/// Rotation from the FLU body frame into ENU: a +90° turn about Z. Its only use
-/// is composing `flu_to_bevy_local`; the crossing to Bevy always routes via ENU.
-fn flu_to_enu() -> Rotation<Flu, Enu> {
-    let quat = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), FRAC_PI_2);
-    Rotation::from_unit_quaternion(quat)
-}
-
-/// Rotation from the FLU body frame into Bevy's local frame, composed as FLU→ENU
-/// then ENU→Bevy. `then` only typechecks because the middle frame is ENU, so the
-/// composition is verified by the types rather than asserted.
-pub fn flu_to_bevy_local() -> Rotation<Flu, Bevy> {
-    flu_to_enu().then(enu_to_bevy())
 }
 
 /// Copies a `Point<Bevy>` into a `bevy::Vec3` (f64→f32). No axis reorder — every
@@ -81,43 +134,6 @@ pub fn freevector_bevy_to_vec3(vec: FreeVector<Bevy>) -> BevyVec3 {
 pub fn vec3_to_freevector_bevy(vec: BevyVec3) -> FreeVector<Bevy> {
     let v = Vector3::new(vec.x as f64, vec.y as f64, vec.z as f64);
     FreeVector::<Bevy>::from_raw(v)
-}
-
-/// Maps an ENU-world location into Bevy world space. A location translates, so
-/// it crosses as a `Transform` (the rotation with an identity translation)
-/// acting on the point, not as a bare rotation.
-pub fn enu_point_to_bevy(point: Point<Enu>) -> Point<Bevy> {
-    Transform::from_rotation(enu_to_bevy()).act(point)
-}
-
-/// Maps a Bevy-world location back into the ENU world frame — the inverse of
-/// [`enu_point_to_bevy`], for reading a picked or physics-side position as ENU.
-pub fn bevy_to_enu_point(point: Point<Bevy>) -> Point<Enu> {
-    Transform::from_rotation(enu_to_bevy().inverse()).act(point)
-}
-
-/// Maps an FLU body-local location into Bevy's local frame, e.g. a lidar return
-/// expressed in the sensor's own frame before it is placed under the body entity.
-pub fn flu_point_to_bevy_local(point: Point<Flu>) -> Point<Bevy> {
-    Transform::from_rotation(flu_to_bevy_local()).act(point)
-}
-
-/// Rotates an ENU-world direction into Bevy world space. A direction only
-/// rotates, so it crosses on the bare rotation with no translation.
-pub fn enu_freevector_to_bevy(vec: FreeVector<Enu>) -> FreeVector<Bevy> {
-    enu_to_bevy().act(vec)
-}
-
-/// Rotates a Bevy-world direction back into ENU — the inverse of
-/// [`enu_freevector_to_bevy`] (e.g. reading Avian's Y-up gravity as ENU).
-pub fn bevy_to_enu_freevector(vec: FreeVector<Bevy>) -> FreeVector<Enu> {
-    enu_to_bevy().inverse().act(vec)
-}
-
-/// Rotates an FLU body-local direction into Bevy's local frame, e.g. a ray
-/// direction the raycasting sensor expresses in the sensor's own FLU frame.
-pub fn flu_freevector_to_bevy_local(vec: FreeVector<Flu>) -> FreeVector<Bevy> {
-    flu_to_bevy_local().act(vec)
 }
 
 // Pose conversions still cross on hand-written quaternion and translation

@@ -1,8 +1,9 @@
 use crate::brain_bridge::AutonomyPipelineComponent;
-use crate::core::transforms::{bevy_to_enu_freevector, vec3_to_freevector_bevy};
+use crate::core::transforms::{vec3_to_freevector_bevy, FromBevy};
 use crate::core::{components::GroundTruthState, transforms::EnuBodyPose};
 
 use helios_core::data::{MonotonicTime, Twist};
+use helios_core::frames::conventions::Enu;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::{Health, Stamped, HOST_PRODUCER_ID};
 
@@ -36,18 +37,18 @@ pub fn ground_truth_sync_system(
     for (transform, lin_vel, ang_vel, mut ground_truth) in &mut query {
         ground_truth.pose = EnuBodyPose::from(transform).0;
 
-        let current_angular_velocity_enu = bevy_to_enu_freevector(vec3_to_freevector_bevy(
-            Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z),
-        ))
-        .into_inner();
+        let current_angular_velocity_enu =
+            vec3_to_freevector_bevy(Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z))
+                .from_bevy::<Enu>()
+                .into_inner();
 
         let angular_acceleration_enu =
             (current_angular_velocity_enu - ground_truth.last_angular_velocity) / dt;
 
-        let current_linear_velocity_enu = bevy_to_enu_freevector(vec3_to_freevector_bevy(
-            Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z),
-        ))
-        .into_inner();
+        let current_linear_velocity_enu =
+            vec3_to_freevector_bevy(Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z))
+                .from_bevy::<Enu>()
+                .into_inner();
 
         let linear_acceleration_enu =
             (current_linear_velocity_enu - ground_truth.last_linear_velocity) / dt;
