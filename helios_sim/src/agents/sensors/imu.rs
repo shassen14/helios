@@ -15,6 +15,7 @@ use crate::prelude::*;
 
 use helios_core::data::sensor::{Acceleration, AngularRate};
 use helios_core::frames::conventions::Enu;
+use helios_core::frames::quantities::FreeVector;
 use helios_core::frames::transforms::Convention;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
@@ -155,7 +156,8 @@ fn spawn_imu_sensors(
     gravity: Res<Gravity>,
     master_seed: Res<MasterSeed>,
 ) {
-    let gravity_world = vec3_to_freevector_bevy(gravity.0).from_bevy::<Enu>().into_inner();
+    let gravity_world =
+        FromBevy::<FreeVector<Enu>>::from_bevy(vec3_to_freevector_bevy(gravity.0)).into_inner();
 
     for (agent_entity, agent_name, request) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {

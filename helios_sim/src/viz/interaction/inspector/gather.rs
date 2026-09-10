@@ -11,7 +11,8 @@
 
 use super::{model::*, CurrentInspection};
 use crate::{
-    core::transforms::EnuBodyPose, prelude::AutonomyPipelineComponent,
+    core::transforms::{bevy_transform_to_transform_bevy, EnuBodyPose, FromBevy},
+    prelude::AutonomyPipelineComponent,
     viz::interaction::selection::Selected,
 };
 
@@ -23,8 +24,9 @@ use helios_core::{
     },
     data::MonotonicTime,
     frames::{
-        conventions::Enu,
+        conventions::{Enu, Flu},
         quantities::{FreeVector, Point},
+        transforms::Transform as CoreTransform,
         FrameAwareState,
     },
 };
@@ -112,7 +114,9 @@ pub fn gather_pose(
         return;
     };
 
-    model.sections.push(pose_section(EnuBodyPose::from(gt)));
+    let pose: CoreTransform<Flu, Enu> =
+        bevy_transform_to_transform_bevy(gt.compute_transform()).from_bevy();
+    model.sections.push(pose_section(EnuBodyPose(pose.into_inner())));
 }
 
 /// Packs the ego state estimate into a Section. Pure — the estimate's kinematics

@@ -9,9 +9,13 @@ use bevy::{
 
 use crate::core::app_state::AssetLoadSet;
 use crate::core::components::TerrainMedium;
-use crate::core::transforms::EnuWorldPose;
+use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};
 use crate::prelude::*;
 use crate::world::objects::WorldObjectAssets;
+
+use helios_core::frames::conventions::Enu;
+use helios_core::frames::transforms::Transform as CoreTransform;
+
 use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
 // =========================================================================
@@ -193,7 +197,8 @@ fn terrain_transform(position: [f64; 3], orientation_degrees: [f64; 3]) -> Trans
     let yaw = orientation_degrees[2] * PI / 180.0;
     let translation = Translation3::new(position[0], position[1], position[2]);
     let rotation = UnitQuaternion::from_euler_angles(roll, pitch, yaw);
-    Transform::from(EnuWorldPose(Isometry3::from_parts(translation, rotation)))
+    let iso = Isometry3::from_parts(translation, rotation);
+    transform_bevy_to_bevy_transform(CoreTransform::<Enu, Enu>::from_isometry(iso).to_bevy())
 }
 
 fn spawn_trimesh_colliders_from_gltf(

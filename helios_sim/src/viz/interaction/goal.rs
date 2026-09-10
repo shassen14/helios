@@ -21,6 +21,7 @@ use crate::{
 
 use bevy::prelude::*;
 use helios_core::frames::conventions::Enu;
+use helios_core::frames::quantities::Point;
 use helios_core::prelude::PlannerGoal;
 use nalgebra::Vector2;
 
@@ -62,7 +63,7 @@ pub fn on_click_goal(
         return;
     };
 
-    let enu = vec3_to_point_bevy(hit).from_bevy::<Enu>().into_inner();
+    let enu = FromBevy::<Point<Enu>>::from_bevy(vec3_to_point_bevy(hit)).into_inner();
     let goal = PlannerGoal::WorldPosition2D(Vector2::new(enu.x, enu.y));
     goals.write(GoalCommandEvent { agent, goal });
 }

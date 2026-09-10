@@ -16,7 +16,10 @@ use helios_core::data::primitives::FrameHandle;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::FrameId;
 
-use crate::{core::transforms::EnuBodyPose, prelude::AutonomyPipelineComponent};
+use crate::{
+    core::transforms::{transform_bevy_to_bevy_transform, ToBevy},
+    prelude::AutonomyPipelineComponent,
+};
 
 /// Axis-triad length for the estimate gizmo. Deliberately shorter than the
 /// ground-truth triad ([`crate::viz::live::pose::GROUND_TRUTH_TRIAD_LEN`]) so
@@ -31,15 +34,14 @@ pub fn estimate_update_system(
     for (agent, pipeline) in &query {
         let handle = FrameHandle::from_entity(agent);
         let body = FrameId::Body(handle);
-        let Some(iso) = pipeline.0.read_state().and_then(|st| {
+        let Some(pose) = pipeline.0.read_state().and_then(|st| {
             st.value
                 .pose::<Flu, Enu>(body.clone(), FrameId::Odom(handle))
-                .map(|t| t.into_inner())
         }) else {
             continue;
         };
 
-        let transform = Transform::from(EnuBodyPose(iso));
+        let transform = transform_bevy_to_bevy_transform(pose.to_bevy());
 
         gizmos.axes(transform, ESTIMATE_TRIAD_LEN);
     }

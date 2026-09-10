@@ -1,9 +1,11 @@
 use crate::brain_bridge::AutonomyPipelineComponent;
-use crate::core::transforms::{vec3_to_freevector_bevy, FromBevy};
-use crate::core::{components::GroundTruthState, transforms::EnuBodyPose};
+use crate::core::components::GroundTruthState;
+use crate::core::transforms::{bevy_transform_to_transform_bevy, vec3_to_freevector_bevy, FromBevy};
 
 use helios_core::data::{MonotonicTime, Twist};
-use helios_core::frames::conventions::Enu;
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::quantities::FreeVector;
+use helios_core::frames::transforms::Transform as CoreTransform;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::{Health, Stamped, HOST_PRODUCER_ID};
 
@@ -35,20 +37,22 @@ pub fn ground_truth_sync_system(
     }
 
     for (transform, lin_vel, ang_vel, mut ground_truth) in &mut query {
-        ground_truth.pose = EnuBodyPose::from(transform).0;
+        let world: CoreTransform<Flu, Enu> =
+            bevy_transform_to_transform_bevy(transform.compute_transform()).from_bevy();
+        ground_truth.pose = world.into_inner();
 
-        let current_angular_velocity_enu =
-            vec3_to_freevector_bevy(Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z))
-                .from_bevy::<Enu>()
-                .into_inner();
+        let current_angular_velocity_enu = FromBevy::<FreeVector<Enu>>::from_bevy(
+            vec3_to_freevector_bevy(Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z)),
+        )
+        .into_inner();
 
         let angular_acceleration_enu =
             (current_angular_velocity_enu - ground_truth.last_angular_velocity) / dt;
 
-        let current_linear_velocity_enu =
-            vec3_to_freevector_bevy(Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z))
-                .from_bevy::<Enu>()
-                .into_inner();
+        let current_linear_velocity_enu = FromBevy::<FreeVector<Enu>>::from_bevy(
+            vec3_to_freevector_bevy(Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z)),
+        )
+        .into_inner();
 
         let linear_acceleration_enu =
             (current_linear_velocity_enu - ground_truth.last_linear_velocity) / dt;

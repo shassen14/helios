@@ -5,27 +5,29 @@
 //! [`ToBevy`] / [`FromBevy`] traits carry any core frame across — dispatched on
 //! the frame type — handing back typed `Point<Bevy>` / `FreeVector<Bevy>` values
 //! that the cast helpers ([`point_bevy_to_vec3`] etc.) copy to `bevy::Vec3` at
-//! the render edge. Poses still cross via the frame newtypes ([`EnuBodyPose`],
-//! [`EnuWorldPose`], [`FluLocalPose`]) and their `From` impls. The [`TfTree`]
-//! resource and its update systems are here too.
+//! the render edge. Poses cross the same way through [`ToBevy`] / [`FromBevy`] on
+//! `Transform<From, To>`, with the [`transform_bevy_to_bevy_transform`] /
+//! [`bevy_transform_to_transform_bevy`] casts at the `bevy::Transform` edge. The
+//! [`TfTree`] resource and its update systems are here too.
 //!
 //! All axis-swap logic is centralized in `bevy_bridge.rs`. Never perform manual axis swaps
 //! (e.g. `v.y = physics.z`) anywhere else in the codebase — every such swap is a latent bug.
 
 mod bevy_bridge;
 mod body_twist;
-mod constants;
 mod frame_types;
 
 pub use bevy_bridge::{
-    freevector_bevy_to_vec3, point_bevy_to_vec3, vec3_to_freevector_bevy, vec3_to_point_bevy, Bevy,
-    FromBevy, ToBevy,
+    bevy_transform_to_transform_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3,
+    transform_bevy_to_bevy_transform, vec3_to_freevector_bevy, vec3_to_point_bevy, Bevy, FromBevy,
+    ToBevy,
 };
 pub use body_twist::enu_twist_to_body_flu;
 pub use frame_types::{EnuBodyPose, EnuWorldPose, FluLocalPose};
 
 use bevy::prelude::{GlobalTransform, *};
-use helios_core::frames::transforms::{Convention, ErasedTransform};
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::transforms::{Convention, ErasedTransform, Transform as CoreTransform};
 use helios_core::frames::FrameId;
 use nalgebra::Isometry3;
 use std::collections::HashMap;
@@ -189,10 +191,11 @@ fn resolve_local_iso(
         .get(&parent_entity)
         .copied()
         .or_else(|| {
-            all_transforms
-                .get(parent_entity)
-                .ok()
-                .map(|t| EnuBodyPose::from(t).0)
+            all_transforms.get(parent_entity).ok().map(|t| {
+                let pose: CoreTransform<Flu, Enu> =
+                    bevy_transform_to_transform_bevy(t.compute_transform()).from_bevy();
+                pose.into_inner()
+            })
         });
     parent_world
         .map(|pw| pw.inverse() * world_iso)
@@ -228,9 +231,11 @@ pub fn tf_tree_structural_system(
 
     // Pass 1: world pose + parent link for every newly tracked entity.
     for (entity, gt, child_of, tracked) in &added_query {
+        let world: CoreTransform<Flu, Enu> =
+            bevy_transform_to_transform_bevy(gt.compute_transform()).from_bevy();
         tf_tree
             .transforms_to_world
-            .insert(entity, EnuBodyPose::from(gt).0);
+            .insert(entity, world.into_inner());
 
         tf_tree
             .parent_map
@@ -269,9 +274,11 @@ pub fn tf_tree_incremental_update_system(
 
     // Pass 1: world poses + parent links.
     for (entity, gt, child_of) in &changed_query {
+        let world: CoreTransform<Flu, Enu> =
+            bevy_transform_to_transform_bevy(gt.compute_transform()).from_bevy();
         tf_tree
             .transforms_to_world
-            .insert(entity, EnuBodyPose::from(gt).0);
+            .insert(entity, world.into_inner());
         tf_tree
             .parent_map
             .insert(entity, child_of.map(|c| c.parent()));

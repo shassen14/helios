@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::transforms::EnuBodyPose;
 use helios_core::frames::conventions::Flu;
 
 use approx::assert_abs_diff_eq;
@@ -46,9 +47,32 @@ fn assert_nalgebra_vector3_approx_eq(v1: &Vector3<f64>, v2: &Vector3<f64>, epsil
     assert_abs_diff_eq!(v1.z, v2.z, epsilon = epsilon);
 }
 
+// The three canonical pose crossings, expressed through the `ToBevy` trait and
+// the `Transform<Bevy, Bevy>` cast. The frame mapping is the whole content: a
+// world object is ENU→ENU, an agent body is FLU→ENU (the body heads East at
+// identity), a body-relative child is FLU→FLU.
+fn enu_world_to_bevy(iso: Isometry3<f64>) -> BevyTransform {
+    transform_bevy_to_bevy_transform(Transform::<Enu, Enu>::from_isometry(iso).to_bevy())
+}
+
+fn enu_body_to_bevy(iso: Isometry3<f64>) -> BevyTransform {
+    transform_bevy_to_bevy_transform(Transform::<Flu, Enu>::from_isometry(iso).to_bevy())
+}
+
+fn flu_local_to_bevy(iso: Isometry3<f64>) -> BevyTransform {
+    transform_bevy_to_bevy_transform(Transform::<Flu, Flu>::from_isometry(iso).to_bevy())
+}
+
+// The reverse body crossing: a Bevy transform back to an FLU→ENU pose, carried
+// in the `EnuBodyPose` newtype the callers still use.
+fn bevy_to_enu_body(bevy: BevyTransform) -> EnuBodyPose {
+    let pose: Transform<Flu, Enu> = bevy_transform_to_transform_bevy(bevy).from_bevy();
+    EnuBodyPose(pose.into_inner())
+}
+
 #[test]
 fn test_enu_world_pose_identity() {
-    let bevy = BevyTransform::from(EnuWorldPose(Isometry3::identity()));
+    let bevy = enu_world_to_bevy(Isometry3::identity());
     assert_bevy_vec3_approx_eq(&bevy.translation, &BevyVec3::ZERO, F32_EPSILON);
     assert_bevy_quat_approx_eq(&bevy.rotation, &BevyQuat::IDENTITY, F32_EPSILON);
 }
@@ -57,14 +81,14 @@ fn test_enu_world_pose_identity() {
 fn test_enu_world_pose_yaw_90() {
     let enu_north = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
     let iso = Isometry3::from_parts(nalgebra::Translation3::identity(), enu_north);
-    let bevy = BevyTransform::from(EnuWorldPose(iso));
+    let bevy = enu_world_to_bevy(iso);
     let expected = BevyQuat::from_rotation_y(PI_F32 / 2.0);
     assert_bevy_quat_approx_eq(&bevy.rotation, &expected, F32_EPSILON);
 }
 
 #[test]
 fn test_enu_body_pose_identity() {
-    let bevy = BevyTransform::from(EnuBodyPose(Isometry3::identity()));
+    let bevy = enu_body_to_bevy(Isometry3::identity());
     assert_bevy_vec3_approx_eq(&bevy.translation, &BevyVec3::ZERO, F32_EPSILON);
     assert_bevy_quat_approx_eq(
         &bevy.rotation,
@@ -77,13 +101,13 @@ fn test_enu_body_pose_identity() {
 fn test_enu_body_pose_north() {
     let enu_north = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
     let iso = Isometry3::from_parts(nalgebra::Translation3::identity(), enu_north);
-    let bevy = BevyTransform::from(EnuBodyPose(iso));
+    let bevy = enu_body_to_bevy(iso);
     assert_bevy_quat_approx_eq(&bevy.rotation, &BevyQuat::IDENTITY, F32_EPSILON);
 }
 
 #[test]
 fn test_bevy_transform_to_enu_body_pose_identity() {
-    let enu = EnuBodyPose::from(&BevyTransform::IDENTITY);
+    let enu = bevy_to_enu_body(BevyTransform::IDENTITY);
     assert_nalgebra_vector3_approx_eq(&enu.0.translation.vector, &Vector3::zeros(), F64_EPSILON);
     let expected = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
     assert_nalgebra_quat_approx_eq(&enu.0.rotation, &expected, F64_EPSILON);
@@ -94,8 +118,8 @@ fn test_enu_body_pose_round_trip() {
     for deg in [0.0f64, 45.0, 90.0, 135.0, 180.0, -45.0, -90.0] {
         let enu_q = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), deg.to_radians());
         let iso = Isometry3::from_parts(nalgebra::Translation3::identity(), enu_q);
-        let bevy = BevyTransform::from(EnuBodyPose(iso));
-        let enu_back = EnuBodyPose::from(&bevy);
+        let bevy = enu_body_to_bevy(iso);
+        let enu_back = bevy_to_enu_body(bevy);
         assert_nalgebra_quat_approx_eq(&enu_back.0.rotation, &enu_q, F64_EPSILON);
     }
 }
@@ -106,7 +130,7 @@ fn test_enu_body_pose_general_and_back() {
     let enu_r = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 4.0);
     let iso = Isometry3::from_parts(nalgebra::Translation3::from(enu_t), enu_r);
 
-    let bevy = BevyTransform::from(EnuBodyPose(iso));
+    let bevy = enu_body_to_bevy(iso);
 
     assert_bevy_vec3_approx_eq(
         &bevy.translation,
@@ -119,14 +143,14 @@ fn test_enu_body_pose_general_and_back() {
         F32_EPSILON,
     );
 
-    let enu_back = EnuBodyPose::from(&bevy);
+    let enu_back = bevy_to_enu_body(bevy);
     assert_nalgebra_vector3_approx_eq(&enu_back.0.translation.vector, &enu_t, F64_EPSILON);
     assert_nalgebra_quat_approx_eq(&enu_back.0.rotation, &enu_r, F64_EPSILON);
 }
 
 #[test]
 fn test_flu_local_pose_identity() {
-    let bevy = BevyTransform::from(FluLocalPose(Isometry3::identity()));
+    let bevy = flu_local_to_bevy(Isometry3::identity());
     assert_bevy_vec3_approx_eq(&bevy.translation, &BevyVec3::ZERO, F32_EPSILON);
     assert_bevy_quat_approx_eq(&bevy.rotation, &BevyQuat::IDENTITY, F32_EPSILON);
 }
@@ -135,7 +159,7 @@ fn test_flu_local_pose_identity() {
 fn test_flu_local_pose_yaw_90() {
     let flu_r = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
     let iso = Isometry3::from_parts(nalgebra::Translation3::identity(), flu_r);
-    let bevy = BevyTransform::from(FluLocalPose(iso));
+    let bevy = flu_local_to_bevy(iso);
     assert_bevy_quat_approx_eq(
         &bevy.rotation,
         &BevyQuat::from_rotation_y(PI_F32 / 2.0),
@@ -243,13 +267,13 @@ fn flu_freevector_to_bevy_reorders_axes() {
 #[test]
 fn from_bevy_inverts_to_bevy_for_a_point() {
     let enu = Point::<Enu>::new(1.0, -2.0, 3.0);
-    let round = enu.to_bevy().from_bevy::<Enu>();
+    let round = FromBevy::<Point<Enu>>::from_bevy(enu.to_bevy());
     assert_nalgebra_vector3_approx_eq(&round.into_inner(), &enu.into_inner(), F64_EPSILON);
 }
 
 #[test]
 fn from_bevy_inverts_to_bevy_for_a_free_vector() {
     let enu = FreeVector::<Enu>::new(1.0, -2.0, 3.0);
-    let round = enu.to_bevy().from_bevy::<Enu>();
+    let round = FromBevy::<FreeVector<Enu>>::from_bevy(enu.to_bevy());
     assert_nalgebra_vector3_approx_eq(&round.into_inner(), &enu.into_inner(), F64_EPSILON);
 }

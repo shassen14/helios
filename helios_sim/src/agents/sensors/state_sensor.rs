@@ -11,10 +11,12 @@
 //! [`StateSensor`].
 
 use crate::core::prng::SensorRng;
-use crate::core::transforms::EnuBodyPose;
+use crate::core::transforms::{bevy_transform_to_transform_bevy, FromBevy};
 use crate::prelude::{GroundTruthState, SensorPublishChannel, SensorPublisher};
 
 use helios_core::data::{FrameHandle, MonotonicTime, SensorPayload, SensorReading};
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::transforms::Transform as CoreTransform;
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -133,7 +135,9 @@ pub fn publish_state_sensor<S: StateSensor>(
             }
             continue;
         };
-        let sensor_pose_world = EnuBodyPose::from(transform).0;
+        let sensor_pose: CoreTransform<Flu, Enu> =
+            bevy_transform_to_transform_bevy(transform.compute_transform()).from_bevy();
+        let sensor_pose_world = sensor_pose.into_inner();
 
         let payload = sensor.sample(truth, &sensor_pose_world, &mut rng.0);
 

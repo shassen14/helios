@@ -3,9 +3,9 @@ use crate::frames::{
     transforms::Rotation,
 };
 
-use std::f64::consts::FRAC_PI_2;
-
 use nalgebra::{UnitQuaternion, Vector3};
+use std::f64::consts::FRAC_PI_2;
+use std::sync::LazyLock;
 
 /// The runtime tag for a Layer-1 axis convention — the erased counterpart of the
 /// compile-time [`Frame`] markers.
@@ -52,13 +52,13 @@ impl ConventionOf for Enu {
 }
 
 /// The axis geometry behind a [`Convention`]: the rotation carrying this frame's
-/// axes into the canonical ENU world frame.
+/// axes into the ENU world frame.
 ///
 /// [`ConventionOf`] records *which* convention a frame is (the discrete tag);
 /// this states *how its axes sit* relative to ENU (the geometry). ENU is the
-/// crate-canonical world frame — the odom and estimator world frame — so every
-/// axis-relabel convention is expressed as its offset from it, and ENU's own
-/// basis is the identity.
+/// frame this crate privileges as the basis pivot — the odom and estimator world
+/// frame — not a universal canonical frame, so every axis-relabel convention is
+/// expressed as its offset from ENU, and ENU's own basis is the identity.
 ///
 /// It requires [`ConventionOf`] as a supertrait, so it rides the exact line core
 /// already draws: an axis-relabel frame gets a basis, while a projection frame
@@ -70,24 +70,26 @@ impl ConventionOf for Enu {
 /// crossing built on top of it (rendering relabels, transform composition) is
 /// derived. The `Sized` bound is trivially met — every frame marker is a
 /// zero-sized unit struct — and lets the return type name `Rotation<Self, Enu>`.
-pub trait CanonicalBasis: ConventionOf + Sized {
+pub trait EnuBasis: ConventionOf + Sized {
     /// This frame's axes expressed in ENU: the rotation `Self → Enu`.
     fn to_enu() -> Rotation<Self, Enu>;
 }
 
-impl CanonicalBasis for Enu {
+impl EnuBasis for Enu {
     /// ENU is the canonical frame, so its basis is the identity.
     fn to_enu() -> Rotation<Enu, Enu> {
         Rotation::identity()
     }
 }
 
-impl CanonicalBasis for Flu {
+static FLU_TO_ENU_QUAT: LazyLock<UnitQuaternion<f64>> =
+    LazyLock::new(|| UnitQuaternion::from_axis_angle(&Vector3::z_axis(), FRAC_PI_2));
+
+impl EnuBasis for Flu {
     /// FLU forward (+X) sits at ENU north (+Y): a +90° turn about the shared up
     /// axis (+Z), which also sends left (+Y) to west (−X) and leaves up fixed.
     fn to_enu() -> Rotation<Flu, Enu> {
-        let quat = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), FRAC_PI_2);
-        Rotation::from_unit_quaternion(quat)
+        Rotation::from_unit_quaternion(*FLU_TO_ENU_QUAT)
     }
 }
 
