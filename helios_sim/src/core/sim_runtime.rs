@@ -21,6 +21,12 @@ impl AgentRuntime for SimRuntime<'_> {
         to: FrameId,
         at: MonotonicTime,
     ) -> Option<ErasedTransform> {
+        // The sim tree is latest-only: one pose per frame, no history, so it can
+        // only answer for `now`. `at` is intentionally discarded, and the assert
+        // pins the single case where "now" is the correct answer — a request for
+        // the current instant, never a past or future one. A time-buffered tree
+        // (lands with the estimated map->odom edge) will interpolate to `at`;
+        // this seam already passes it through, so that upgrade is invisible here.
         debug_assert!(at.0 <= self.elapsed_secs);
 
         self.tf.erased(from, to)

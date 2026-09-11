@@ -67,19 +67,31 @@ pub struct TfFramePose {
     pub local_quat_w: f64,
 }
 
+/// One tracked frame's complete state, held as a single value so a frame is
+/// inserted and removed atomically. Storing the world pose, parent-relative
+/// local pose, axis convention, and parent link together removes the drift
+/// class that four parallel `HashMap<Entity, _>` invited — nothing to keep in
+/// lockstep — and mirrors the "isometry plus convention as one value" shape the
+/// [`ErasedTransform`] boundary already settled on.
+#[derive(Debug)]
+pub struct FrameNode {
+    /// World pose, ENU. In sim this is Bevy's already-propagated global pose;
+    /// [`TfTree::erased`] composes world poses rather than walking parents.
+    world: Isometry3<f64>,
+    /// Pose relative to `parent` (ENU for root frames, FLU for body-mounted
+    /// sensors); equals `world` for a frame with no parent.
+    local: Isometry3<f64>,
+    /// Axis convention of this frame, carried through to `ErasedTransform` so a
+    /// convention mismatch fails loudly at the typed crossing.
+    convention: Convention,
+    /// Parent entity; `None` for a world root.
+    parent: Option<Entity>,
+}
+
 /// The Bevy resource that holds the complete transform graph for a single frame.
 #[derive(Resource, Default, Debug)]
 pub struct TfTree {
-    // For fast, internal lookups using the entity ID.
-    transforms_to_world: HashMap<Entity, Isometry3<f64>>,
-
-    frame_conventions: HashMap<Entity, Convention>,
-
-    // Parent-relative poses in ENU (FLU for sensor children).
-    local_transforms: HashMap<Entity, Isometry3<f64>>,
-
-    // Parent entity for each tracked frame; None = world root.
-    parent_map: HashMap<Entity, Option<Entity>>,
+    entity_to_frame_node: HashMap<Entity, FrameNode>,
 
     // For user-facing API calls, configuration, and debugging.
     name_to_entity: HashMap<Arc<str>, Entity>,
@@ -92,6 +104,16 @@ pub struct TfTree {
 }
 
 impl TfTree {
+    /// Resolves the transform between two frames at the tree's *current* state.
+    ///
+    /// The tree is latest-only: one pose per frame (the most recent physics
+    /// step), no history and no time index, so every query is answered for
+    /// "now" — which is why there is no time argument here and
+    /// `SimRuntime::get_transform` discards its `at`. A buffered, interpolating
+    /// tree (the tf2 model: binary-search the bracketing samples, slerp/lerp to
+    /// the requested time, error rather than extrapolate out of range) is
+    /// deferred until the estimated map->odom edge is what first makes
+    /// "now != at" observable.
     pub fn erased(&self, from: FrameId, to: FrameId) -> Option<ErasedTransform> {
         let (from_pose, from_conv) = self.resolve(from)?;
 
@@ -105,34 +127,26 @@ impl TfTree {
     /// Looks up the world pose of a frame by its name.
     pub fn lookup_by_name(&self, frame_name: &str) -> Option<Isometry3<f64>> {
         let entity = self.name_to_entity.get(frame_name)?;
-        self.transforms_to_world.get(entity).copied()
+        Some(self.entity_to_frame_node.get(entity)?.world)
     }
 
     /// Looks up the world pose of a frame by its Entity ID.
     pub fn lookup_by_entity(&self, entity: Entity) -> Option<Isometry3<f64>> {
-        self.transforms_to_world.get(&entity).copied()
+        Some(self.entity_to_frame_node.get(&entity)?.world)
     }
 
     /// Looks up the parent-relative pose of a frame by its Entity ID.
     pub fn lookup_local_by_entity(&self, entity: Entity) -> Option<Isometry3<f64>> {
-        self.local_transforms.get(&entity).copied()
+        Some(self.entity_to_frame_node.get(&entity)?.local)
     }
 
     /// Returns an iterator over all tracked frames: `(entity, world_iso, local_iso, parent_entity)`.
     pub fn iter_frames(
         &self,
     ) -> impl Iterator<Item = (Entity, Isometry3<f64>, Isometry3<f64>, Option<Entity>)> + '_ {
-        self.transforms_to_world
+        self.entity_to_frame_node
             .iter()
-            .map(|(&entity, &world_iso)| {
-                let local_iso = self
-                    .local_transforms
-                    .get(&entity)
-                    .copied()
-                    .unwrap_or(world_iso);
-                let parent = self.parent_map.get(&entity).copied().flatten();
-                (entity, world_iso, local_iso, parent)
-            })
+            .map(|(&entity, node)| (entity, node.world, node.local, node.parent))
     }
 
     pub fn get_transform_by_name(
@@ -148,23 +162,16 @@ impl TfTree {
     fn resolve(&self, frame: FrameId) -> Option<(Isometry3<f64>, Convention)> {
         match frame {
             FrameId::World => Some((Isometry3::identity(), Convention::Enu)),
+            FrameId::Map(_) => Some((Isometry3::identity(), Convention::Enu)),
             // Odom is the estimator's reference frame. With no map→odom
             // correction yet, it is coincident with world (identity, ENU); the
             // world→odom drift lives in the estimate values, not this edge.
             FrameId::Odom(_) => Some((Isometry3::identity(), Convention::Enu)),
-            FrameId::Body(handle) => {
+            FrameId::Body(handle) | FrameId::Sensor(handle) => {
                 let entity = Entity::from_bits(handle.0);
-                let iso = self.transforms_to_world.get(&entity)?;
-                let convention = self.frame_conventions.get(&entity)?;
+                let node = self.entity_to_frame_node.get(&entity)?;
 
-                Some((*iso, *convention))
-            }
-            FrameId::Sensor(handle) => {
-                let entity = Entity::from_bits(handle.0);
-                let iso = self.transforms_to_world.get(&entity)?;
-                let convention = self.frame_conventions.get(&entity)?;
-
-                Some((*iso, *convention))
+                Some((node.world, node.convention))
             }
         }
     }
@@ -185,9 +192,9 @@ fn resolve_local_iso(
         return world_iso;
     };
     let parent_world = tf_tree
-        .transforms_to_world
+        .entity_to_frame_node
         .get(&parent_entity)
-        .copied()
+        .map(|node| node.world)
         .or_else(|| {
             all_transforms.get(parent_entity).ok().map(|t| {
                 let pose: CoreTransform<Flu, Enu> =
@@ -217,36 +224,38 @@ pub fn tf_tree_structural_system(
     mut removed: RemovedComponents<TrackedFrame>,
 ) {
     for entity in removed.read() {
-        tf_tree.transforms_to_world.remove(&entity);
-        tf_tree.local_transforms.remove(&entity);
-        tf_tree.parent_map.remove(&entity);
-        tf_tree.frame_conventions.remove(&entity);
+        tf_tree.entity_to_frame_node.remove(&entity);
     }
 
     if added_query.is_empty() {
         return;
     }
 
-    // Pass 1: world pose + parent link for every newly tracked entity.
+    // Pass 1: world pose, convention, and parent link for every newly tracked
+    // entity. `local` is seeded to `world` and overwritten in pass 2, which
+    // runs for every added entity — the seed never survives.
     for (entity, gt, child_of, tracked) in &added_query {
         let world: CoreTransform<Flu, Enu> =
             bevy_transform_to_transform_bevy(gt.compute_transform()).from_bevy();
-        tf_tree
-            .transforms_to_world
-            .insert(entity, world.into_inner());
-
-        tf_tree
-            .parent_map
-            .insert(entity, child_of.map(|c| c.parent()));
-
-        tf_tree.frame_conventions.insert(entity, tracked.0);
+        let world_iso = world.into_inner();
+        tf_tree.entity_to_frame_node.insert(
+            entity,
+            FrameNode {
+                world: world_iso,
+                local: world_iso,
+                convention: tracked.0,
+                parent: child_of.map(|c| c.parent()),
+            },
+        );
     }
 
     // Pass 2: local pose — requires pass 1 complete so parent world poses are present.
     for (entity, _, child_of, _) in &added_query {
-        let world_iso = tf_tree.transforms_to_world[&entity];
+        let world_iso = tf_tree.entity_to_frame_node[&entity].world;
         let local_iso = resolve_local_iso(&tf_tree, &all_transforms, child_of, world_iso);
-        tf_tree.local_transforms.insert(entity, local_iso);
+        if let Some(node) = tf_tree.entity_to_frame_node.get_mut(&entity) {
+            node.local = local_iso;
+        }
     }
 }
 
@@ -270,23 +279,31 @@ pub fn tf_tree_incremental_update_system(
         return;
     }
 
-    // Pass 1: world poses + parent links.
+    // Pass 1: world poses + parent links. The structural system owns node
+    // creation; this system only updates. `get_mut` therefore leaves the
+    // convention untouched (a fresh insert would wipe it every tick) and skips
+    // any entity the structural system has not created yet — on the tick a
+    // frame first appears, the structural system creates its node fully from
+    // the same `GlobalTransform`, so the end state is correct in whichever
+    // order the two run within `Precomputation`.
     for (entity, gt, child_of) in &changed_query {
         let world: CoreTransform<Flu, Enu> =
             bevy_transform_to_transform_bevy(gt.compute_transform()).from_bevy();
-        tf_tree
-            .transforms_to_world
-            .insert(entity, world.into_inner());
-        tf_tree
-            .parent_map
-            .insert(entity, child_of.map(|c| c.parent()));
+        if let Some(node) = tf_tree.entity_to_frame_node.get_mut(&entity) {
+            node.world = world.into_inner();
+            node.parent = child_of.map(|c| c.parent());
+        }
     }
 
     // Pass 2: local poses — parent world poses already updated in pass 1.
     for (entity, _, child_of) in &changed_query {
-        let world_iso = tf_tree.transforms_to_world[&entity];
+        let Some(world_iso) = tf_tree.entity_to_frame_node.get(&entity).map(|n| n.world) else {
+            continue;
+        };
         let local_iso = resolve_local_iso(&tf_tree, &all_transforms, child_of, world_iso);
-        tf_tree.local_transforms.insert(entity, local_iso);
+        if let Some(node) = tf_tree.entity_to_frame_node.get_mut(&entity) {
+            node.local = local_iso;
+        }
     }
 
     tf_tree.sim_time = time.elapsed_secs_f64();

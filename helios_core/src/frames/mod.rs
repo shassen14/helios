@@ -31,6 +31,13 @@ pub enum FrameId {
     /// The global ENU simulation frame. The ultimate source of truth.
     #[default]
     World,
+    /// A per-agent localization/SLAM origin, one drift-corrected level above
+    /// `Odom`. Identified by the agent's `FrameHandle`, so each agent's map is
+    /// distinct (`map_i != map_j`) and a fleet stitches at a shared root above
+    /// it. The `map -> odom` edge is where a localizer removes odometry drift —
+    /// it may jump on loop closure, unlike the smooth `odom -> body` edge.
+    /// Coincident with `Odom` (identity) until a localizer produces that edge.
+    Map(FrameHandle),
     Odom(FrameHandle),
     /// The origin of a rigid body, where dynamics are typically calculated.
     /// Identified by the agent's unique FrameHandle.
@@ -44,6 +51,7 @@ impl std::fmt::Display for FrameId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FrameId::World => f.write_str("world"),
+            FrameId::Map(handle) => write!(f, "map:{}", handle.0),
             FrameId::Odom(handle) => write!(f, "odom:{}", handle.0),
             FrameId::Body(handle) => write!(f, "body:{}", handle.0),
             FrameId::Sensor(handle) => write!(f, "sensor:{}", handle.0),
