@@ -1,9 +1,7 @@
 use helios_core::control::commands::BodyTwist;
 use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::quantities::{EnuVector, FluVector};
-use helios_core::frames::transforms::Transform;
-
-use nalgebra::UnitQuaternion;
+use helios_core::frames::quantities::EnuVector;
+use helios_core::frames::transforms::{Rotation, Transform};
 
 /// Rotate a world-ENU twist into the body's FLU frame.
 ///
@@ -18,18 +16,17 @@ pub fn enu_twist_to_body_flu(
     linear_enu: EnuVector,
     angular_enu: EnuVector,
 ) -> BodyTwist {
-    let enu_to_flu: UnitQuaternion<f64> = pose.into_inner().rotation.inverse();
-    BodyTwist::new(
-        FluVector::from_raw(enu_to_flu * linear_enu.into_inner()),
-        FluVector::from_raw(enu_to_flu * angular_enu.into_inner()),
-    )
+    let enu_to_flu: Rotation<Enu, Flu> = pose.rotation().inverse();
+    BodyTwist::new(enu_to_flu.act(linear_enu), enu_to_flu.act(angular_enu))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use nalgebra::{Isometry3, Translation3, Vector3};
+    use helios_core::frames::quantities::FluVector;
+
+    use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
 
     // Floats survive one quaternion rotation, so exact equality is unsafe; compare
