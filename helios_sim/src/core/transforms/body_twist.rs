@@ -1,7 +1,7 @@
-use super::frame_types::EnuBodyPose;
-
 use helios_core::control::commands::BodyTwist;
+use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::quantities::{EnuVector, FluVector};
+use helios_core::frames::transforms::Transform;
 
 use nalgebra::UnitQuaternion;
 
@@ -14,11 +14,11 @@ use nalgebra::UnitQuaternion;
 /// ride the *same* rotation — no translation (free vectors), no axis swap (both
 /// frames are right-handed; that swap is Bevy-only and lives in `bevy_bridge`).
 pub fn enu_twist_to_body_flu(
-    pose: EnuBodyPose,
+    pose: Transform<Flu, Enu>,
     linear_enu: EnuVector,
     angular_enu: EnuVector,
 ) -> BodyTwist {
-    let enu_to_flu: UnitQuaternion<f64> = pose.0.rotation.inverse();
+    let enu_to_flu: UnitQuaternion<f64> = pose.into_inner().rotation.inverse();
     BodyTwist::new(
         FluVector::from_raw(enu_to_flu * linear_enu.into_inner()),
         FluVector::from_raw(enu_to_flu * angular_enu.into_inner()),
@@ -48,9 +48,9 @@ mod tests {
         );
     }
 
-    fn body_pose(rotation: UnitQuaternion<f64>) -> EnuBodyPose {
+    fn body_pose(rotation: UnitQuaternion<f64>) -> Transform<Flu, Enu> {
         // A non-zero translation that the free-vector rotation must ignore.
-        EnuBodyPose(Isometry3::from_parts(
+        Transform::from_isometry(Isometry3::from_parts(
             Translation3::new(10.0, -5.0, 3.0),
             rotation,
         ))

@@ -3,11 +3,12 @@ use crate::agents::vehicles::actuation::{apply_body_wrench, resolve_command};
 use crate::agents::vehicles::components::ActuationModelComponent;
 use crate::core::components::{ActuatorCommandComponent, GroundTruthState};
 use crate::core::transforms::{
-    enu_twist_to_body_flu, freevector_bevy_to_vec3, point_bevy_to_vec3, EnuBodyPose, ToBevy,
+    enu_twist_to_body_flu, freevector_bevy_to_vec3, point_bevy_to_vec3, ToBevy,
 };
 
-use helios_core::frames::conventions::Flu;
+use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::quantities::{EnuVector, FreeVector, Point};
+use helios_core::frames::transforms::Transform as CoreTransform;
 use helios_core::plant::WheelContact;
 
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
@@ -51,7 +52,7 @@ pub(super) fn drive_raycast_cars(
         // Ground truth reports velocity in world ENU; the plant computes in the
         // body FLU frame, so rotate the twist through the body pose first.
         let twist = enu_twist_to_body_flu(
-            EnuBodyPose(truth.pose),
+            CoreTransform::<Flu, Enu>::from_isometry(truth.pose),
             EnuVector::from_raw(truth.linear_velocity),
             EnuVector::from_raw(truth.angular_velocity),
         );

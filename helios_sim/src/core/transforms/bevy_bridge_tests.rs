@@ -1,5 +1,4 @@
 use super::*;
-use crate::core::transforms::EnuBodyPose;
 use helios_core::frames::conventions::Flu;
 
 use approx::assert_abs_diff_eq;
@@ -63,11 +62,11 @@ fn flu_local_to_bevy(iso: Isometry3<f64>) -> BevyTransform {
     transform_bevy_to_bevy_transform(Transform::<Flu, Flu>::from_isometry(iso).to_bevy())
 }
 
-// The reverse body crossing: a Bevy transform back to an FLU→ENU pose, carried
-// in the `EnuBodyPose` newtype the callers still use.
-fn bevy_to_enu_body(bevy: BevyTransform) -> EnuBodyPose {
+// The reverse body crossing: a Bevy transform back to an FLU→ENU pose, unwrapped
+// to the raw isometry the assertions compare against.
+fn bevy_to_enu_body(bevy: BevyTransform) -> Isometry3<f64> {
     let pose: Transform<Flu, Enu> = bevy_transform_to_transform_bevy(bevy).from_bevy();
-    EnuBodyPose(pose.into_inner())
+    pose.into_inner()
 }
 
 #[test]
@@ -108,9 +107,9 @@ fn test_enu_body_pose_north() {
 #[test]
 fn test_bevy_transform_to_enu_body_pose_identity() {
     let enu = bevy_to_enu_body(BevyTransform::IDENTITY);
-    assert_nalgebra_vector3_approx_eq(&enu.0.translation.vector, &Vector3::zeros(), F64_EPSILON);
+    assert_nalgebra_vector3_approx_eq(&enu.translation.vector, &Vector3::zeros(), F64_EPSILON);
     let expected = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
-    assert_nalgebra_quat_approx_eq(&enu.0.rotation, &expected, F64_EPSILON);
+    assert_nalgebra_quat_approx_eq(&enu.rotation, &expected, F64_EPSILON);
 }
 
 #[test]
@@ -120,7 +119,7 @@ fn test_enu_body_pose_round_trip() {
         let iso = Isometry3::from_parts(nalgebra::Translation3::identity(), enu_q);
         let bevy = enu_body_to_bevy(iso);
         let enu_back = bevy_to_enu_body(bevy);
-        assert_nalgebra_quat_approx_eq(&enu_back.0.rotation, &enu_q, F64_EPSILON);
+        assert_nalgebra_quat_approx_eq(&enu_back.rotation, &enu_q, F64_EPSILON);
     }
 }
 
@@ -144,8 +143,8 @@ fn test_enu_body_pose_general_and_back() {
     );
 
     let enu_back = bevy_to_enu_body(bevy);
-    assert_nalgebra_vector3_approx_eq(&enu_back.0.translation.vector, &enu_t, F64_EPSILON);
-    assert_nalgebra_quat_approx_eq(&enu_back.0.rotation, &enu_r, F64_EPSILON);
+    assert_nalgebra_vector3_approx_eq(&enu_back.translation.vector, &enu_t, F64_EPSILON);
+    assert_nalgebra_quat_approx_eq(&enu_back.rotation, &enu_r, F64_EPSILON);
 }
 
 #[test]

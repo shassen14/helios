@@ -11,7 +11,7 @@
 
 use super::{model::*, CurrentInspection};
 use crate::{
-    core::transforms::{bevy_transform_to_transform_bevy, EnuBodyPose, FromBevy},
+    core::transforms::{bevy_transform_to_transform_bevy, FromBevy},
     prelude::AutonomyPipelineComponent,
     viz::interaction::selection::Selected,
 };
@@ -85,10 +85,10 @@ pub fn gather_identity(mut out: ResMut<CurrentInspection>) {
 }
 
 /// Packs the subject's ENU pose section. Pure — takes an already-converted
-/// [`EnuBodyPose`], never a Bevy type, so the frame conversion stays in the caller
-/// and this fn is the hardware-portable, testable unit.
-pub fn pose_section(pose: EnuBodyPose) -> Section {
-    let p = pose.0.translation.vector;
+/// FLU→ENU `Transform`, never a Bevy type, so the frame conversion stays in the
+/// caller and this fn is the hardware-portable, testable unit.
+pub fn pose_section(pose: CoreTransform<Flu, Enu>) -> Section {
+    let p = pose.into_inner().translation.vector;
 
     Section {
         id: SubsystemPath(Arc::from("subject.pose")),
@@ -116,7 +116,7 @@ pub fn gather_pose(
 
     let pose: CoreTransform<Flu, Enu> =
         bevy_transform_to_transform_bevy(gt.compute_transform()).from_bevy();
-    model.sections.push(pose_section(EnuBodyPose(pose.into_inner())));
+    model.sections.push(pose_section(pose));
 }
 
 /// Packs the ego state estimate into a Section. Pure — the estimate's kinematics
@@ -410,7 +410,7 @@ mod tests {
     /// on faithful packing — `[x, y, z]` in, `[x, y, z]` out.
     #[test]
     fn pose_section_packs_the_enu_translation() {
-        let pose = EnuBodyPose(Isometry3::translation(1.0, 2.0, 3.0));
+        let pose = CoreTransform::<Flu, Enu>::from_isometry(Isometry3::translation(1.0, 2.0, 3.0));
 
         let section = pose_section(pose);
 

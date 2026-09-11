@@ -15,7 +15,6 @@
 
 mod bevy_bridge;
 mod body_twist;
-mod frame_types;
 
 pub use bevy_bridge::{
     bevy_transform_to_transform_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3,
@@ -23,7 +22,6 @@ pub use bevy_bridge::{
     ToBevy,
 };
 pub use body_twist::enu_twist_to_body_flu;
-pub use frame_types::{EnuBodyPose, EnuWorldPose, FluLocalPose};
 
 use bevy::prelude::{GlobalTransform, *};
 use helios_core::frames::conventions::{Enu, Flu};
