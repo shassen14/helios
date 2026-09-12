@@ -11,7 +11,9 @@ use crate::{
 };
 
 use helios_core::data::sensor::GpsPosition;
+use helios_core::data::AgentId;
 use helios_core::frames::transforms::Convention;
+use helios_core::frames::FrameId;
 use helios_core::sensors::gps::GpsModel;
 
 use nalgebra::{Isometry3, Vector3};
@@ -106,7 +108,13 @@ fn spawn_gps_sensors(
                         Gps::new(model),
                         SensorTimer::from_rate(gps_config.rate),
                         sensor_rng,
-                        TrackedFrame(Convention::Flu),
+                        TrackedFrame::new(
+                            FrameId::sensor(
+                                AgentId::new(request.0.name()),
+                                gps_config.channel.clone(),
+                            ),
+                            Convention::Flu,
+                        ),
                         gps_config.get_relative_pose().to_bevy_local_transform(),
                     ))
                     .id();

@@ -102,6 +102,17 @@ impl FrameId {
         self.leaf.as_str() == BASE_LINK
     }
 
+    /// Whether this frame is a sensor frame: agent-scoped, but not one of the
+    /// spine roles. A sensor's leaf is its own device name, so it is defined by
+    /// exclusion — an agent frame that is neither `map`, `odom`, nor `base_link`
+    /// is a sensor's own frame. The shared `World` frame is never a sensor.
+    pub fn is_sensor(&self) -> bool {
+        matches!(self.scope, FrameScope::Agent(_))
+            && !self.is_map()
+            && !self.is_odom()
+            && !self.is_base_link()
+    }
+
     pub fn scope(&self) -> &FrameScope {
         &self.scope
     }
@@ -199,6 +210,14 @@ mod tests {
         assert!(!sensor.is_map());
         assert!(!sensor.is_odom());
         assert!(!sensor.is_base_link());
+
+        // `is_sensor` is the exclusion of the spine roles within an agent's scope.
+        assert!(sensor.is_sensor());
+        assert!(!base_link.is_sensor());
+        assert!(!FrameId::map(agent()).is_sensor());
+        assert!(!FrameId::odom(agent()).is_sensor());
+        // The shared world frame is never a sensor.
+        assert!(!FrameId::world().is_sensor());
     }
 
     #[test]

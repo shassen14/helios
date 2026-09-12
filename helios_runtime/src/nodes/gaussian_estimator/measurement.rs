@@ -3,7 +3,7 @@
 //! Models are registered by string key (e.g. `"gps_position"`) and built by
 //! the assembler when constructing aiding handlers for `GaussianEstimatorNode`.
 //! All four models resolve their sensor geometry from the TF tree at tick time,
-//! so all require `agent_handle` and `sensor_handle` in the build context.
+//! so all require `agent` and the sensor's `FrameId` in the build context.
 //! Physical constants (gravity, magnetic field) are read from
 //! `ctx.model_config` so they originate from config, not external callers.
 
@@ -26,8 +26,8 @@ fn build_gps_position(
     ctx: MeasurementModelBuildContext,
 ) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(GpsPositionModel {
-        agent_handle: ctx.agent_handle,
-        sensor_handle: ctx.sensor_handle,
+        agent: ctx.agent,
+        sensor: ctx.sensor,
     }))
 }
 
@@ -37,16 +37,16 @@ fn build_accelerometer(
     let gravity_arr = ctx.model_config.gravity_enu;
     let gravity = Vector3::new(gravity_arr[0], gravity_arr[1], gravity_arr[2]);
     Ok(Box::new(SpecificForceModel {
-        agent_handle: ctx.agent_handle,
-        sensor_handle: ctx.sensor_handle,
+        agent: ctx.agent,
+        sensor: ctx.sensor,
         gravity_world: gravity,
     }))
 }
 
 fn build_gyroscope(ctx: MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(AngularRateModel {
-        agent_handle: ctx.agent_handle,
-        sensor_handle: ctx.sensor_handle,
+        agent: ctx.agent,
+        sensor: ctx.sensor,
     }))
 }
 
@@ -59,8 +59,8 @@ fn build_magnetometer(
         .ok_or("magnetometer model requires `magnetic_field_enu` in its SensorModelConfig")?;
     let field = Vector3::new(field_arr[0], field_arr[1], field_arr[2]);
     Ok(Box::new(MagneticFieldModel {
-        agent_handle: ctx.agent_handle,
-        sensor_handle: ctx.sensor_handle,
+        agent: ctx.agent,
+        sensor: ctx.sensor,
         world_magnetic_field: field,
     }))
 }

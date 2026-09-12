@@ -13,7 +13,6 @@ use crate::core::ground_truth::publish_oracle_channels_system;
 use crate::core::ground_truth_sync_system;
 use crate::core::host::TimePolicy;
 use crate::core::prng::MasterSeed;
-use crate::core::transforms::build_static_tf_maps;
 use crate::prelude::*;
 
 pub struct SimulationSetupPlugin;
@@ -46,7 +45,6 @@ impl Plugin for SimulationSetupPlugin {
             (
                 // This system reads the config and creates entities with "request" components.
                 spawn_agent_shells.in_set(SceneBuildSet::CreateRequests),
-                build_static_tf_maps.in_set(SceneBuildSet::Finalize),
                 // This system removes the temporary request components after all processing is done.
                 cleanup_spawn_requests.in_set(SceneBuildSet::Cleanup),
                 // This system transitions to the main simulation loop after building is complete.

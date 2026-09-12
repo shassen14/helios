@@ -9,11 +9,15 @@
 //!
 //! Three things cannot come from config — they are host-specific runtime tokens:
 //!
-//! - `agent_handle` — the agent's [`FrameHandle`], assigned by the host's
-//!   entity system (Bevy `Entity` bits in sim, static calibration ID on hw).
-//! - `sensor_frame_handles` — maps each aiding `input_channel` string to the
-//!   [`FrameHandle`] of the physical sensor that publishes on it. Used to build
-//!   the `MeasurementModelBuildContext` for each aiding handler.
+//! - `agent` — the agent's stable [`AgentId`], the config name every subsystem
+//!   uses to key this agent's frames. All spine frames (`base_link`, `odom`) and
+//!   sensor frames are built from it, so the same identity is valid in sim and
+//!   on hardware.
+//! - `sensor_channels` — the set of sensor channel names the host actually
+//!   publishes for this agent. Each channel name is also the leaf of the
+//!   sensor's [`FrameId`] (`FrameId::sensor(agent, channel_name)`), so an aiding
+//!   or augmentation entry that names a channel the host does not provide is
+//!   rejected at build time rather than silently failing to resolve at tick time.
 //! - `host_capabilities` — the body's name, whether it consumes control, and
 //!   the channels the host publishes outside the autonomy stack (today:
 //!   `oracle/*`; later: `health/*`). The assembler appends config-derived
@@ -64,12 +68,12 @@ use crate::registry::AutonomyRegistry;
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
-use helios_core::data::primitives::FrameHandle;
+use helios_core::data::AgentId;
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::MapData;
 use helios_core::planning::types::Path;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::ops::Add;
 
 /// Node name for the synthesized actuator merge — the terminal that unions each
@@ -87,16 +91,17 @@ const ACTUATOR_MERGE_NODE: &str = "actuator_merge";
 /// [`PipelineAssemblyError::InvalidConfig`] if the config is invalid, so every
 /// host gets the same static checks with legible messages before assembly is
 /// attempted. Errors that need host-supplied context (an aiding channel with no
-/// `FrameHandle`, an unsatisfiable graph edge) still surface from assembly.
+/// unknown sensor channel, an unsatisfiable graph edge) still surface from assembly.
 ///
 /// # Parameters
 ///
 /// - `stack` — fully-resolved autonomy config (no unresolved `from` refs).
 /// - `registry` — factory registry, typically `AutonomyRegistry::default()`.
-/// - `agent_handle` — host-assigned identity token for this agent.
-/// - `sensor_frame_handles` — maps each aiding `input_channel` to the
-///   [`FrameHandle`] of the physical sensor publishing on that channel.
-///   Channels not used by any aiding entry may be absent.
+/// - `agent` — the agent's stable [`AgentId`] (its config name); every frame
+///   this agent owns is keyed by it.
+/// - `sensor_channels` — the set of sensor channel names the host publishes for
+///   this agent. An aiding or augmentation entry naming a channel absent from
+///   this set is an [`UnknownSensorChannel`](PipelineAssemblyError::UnknownSensorChannel).
 /// - `host_capabilities` — host-supplied body capabilities (name,
 ///   `consumes_control`, host-published channels such as `oracle/*`).
 ///   The assembler extends `host_capabilities.publishes` with the
@@ -104,8 +109,8 @@ const ACTUATOR_MERGE_NODE: &str = "actuator_merge";
 pub fn build_pipeline(
     stack: &AutonomyStack,
     registry: &AutonomyRegistry,
-    agent_handle: FrameHandle,
-    sensor_frame_handles: &HashMap<String, FrameHandle>,
+    agent: AgentId,
+    sensor_channels: &HashSet<String>,
     mut host_capabilities: BodyCapabilities,
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
     // Static validation runs before any node is built: a config-level mistake
@@ -130,8 +135,8 @@ pub fn build_pipeline(
         match build_estimator_node(
             instance_name,
             est_cfg,
-            agent_handle,
-            sensor_frame_handles,
+            &agent,
+            sensor_channels,
             registry,
             &mut external_channels,
         ) {
@@ -151,7 +156,7 @@ pub fn build_pipeline(
         match registry.build_mapper(
             map_cfg.get_kind_str(),
             MapperBuildContext {
-                agent_handle,
+                agent: agent.clone(),
                 instance_name: map_name.clone(),
                 config: map_cfg.clone(),
             },
@@ -184,7 +189,7 @@ pub fn build_pipeline(
         match registry.build_search_planner(
             plan_cfg.get_kind_str(),
             SearchPlannerBuildContext {
-                agent_handle,
+                agent: agent.clone(),
                 instance_name: planner_name.clone(),
                 config: plan_cfg.clone(),
                 map_channel,
@@ -230,7 +235,7 @@ pub fn build_pipeline(
                 match registry.build_path_follower(
                     pf_cfg.get_kind_str(),
                     PathFollowerBuildContext {
-                        agent_handle,
+                        agent: agent.clone(),
                         config: pf_cfg.clone(),
                         path_channel,
                         output_channel: follower_output,
@@ -333,7 +338,7 @@ pub fn build_pipeline(
             b = wire_sum_terminal::<DriveForce>(
                 stack,
                 registry,
-                agent_handle,
+                &agent,
                 CommandSpace::DriveForce,
                 b,
                 &mut errors,
@@ -344,7 +349,7 @@ pub fn build_pipeline(
             b = wire_sum_terminal::<SteerAngle>(
                 stack,
                 registry,
-                agent_handle,
+                &agent,
                 CommandSpace::SteerAngle,
                 b,
                 &mut errors,
@@ -352,7 +357,7 @@ pub fn build_pipeline(
         }
         b
     } else {
-        wire_body_twist_terminal(stack, registry, agent_handle, builder, &mut errors)
+        wire_body_twist_terminal(stack, registry, &agent, builder, &mut errors)
     };
 
     // --- Allocators + actuator merge ---
@@ -384,7 +389,7 @@ pub fn build_pipeline(
         match registry.build_allocator(
             alloc_cfg.get_kind_str(),
             AllocatorBuildContext {
-                agent_handle,
+                agent: agent.clone(),
                 instance_name: allocator_name.clone(),
                 config: alloc_cfg.clone(),
                 input_channel: command_channel,
@@ -448,7 +453,7 @@ pub fn build_pipeline(
 fn wire_body_twist_terminal(
     stack: &AutonomyStack,
     registry: &AutonomyRegistry,
-    agent_handle: FrameHandle,
+    agent: &AgentId,
     mut builder: PipelineBuilder,
     errors: &mut Vec<PipelineAssemblyError>,
 ) -> PipelineBuilder {
@@ -456,7 +461,7 @@ fn wire_body_twist_terminal(
         match registry.build_controller(
             ctrl_cfg.get_kind_str(),
             ControllerBuildContext {
-                agent_handle,
+                agent: agent.clone(),
                 instance_name: controller_name.clone(),
                 config: ctrl_cfg.clone(),
                 output_channel: control::command::<BodyTwist>(),
@@ -491,7 +496,7 @@ fn wire_body_twist_terminal(
 fn wire_sum_terminal<T>(
     stack: &AutonomyStack,
     registry: &AutonomyRegistry,
-    agent_handle: FrameHandle,
+    agent: &AgentId,
     space: CommandSpace,
     mut builder: PipelineBuilder,
     errors: &mut Vec<PipelineAssemblyError>,
@@ -513,7 +518,7 @@ where
         match registry.build_controller(
             ctrl_cfg.get_kind_str(),
             ControllerBuildContext {
-                agent_handle,
+                agent: agent.clone(),
                 instance_name: controller_name.clone(),
                 config: ctrl_cfg.clone(),
                 output_channel: contribution.clone(),
@@ -552,8 +557,8 @@ where
 fn build_estimator_node(
     instance_name: &str,
     est_cfg: &EstimatorConfig,
-    agent_handle: FrameHandle,
-    sensor_frame_handles: &HashMap<String, FrameHandle>,
+    agent: &AgentId,
+    sensor_channels: &HashSet<String>,
     registry: &AutonomyRegistry,
     external_channels: &mut Vec<ChannelKey>,
 ) -> Result<Box<dyn crate::pipeline::node::PipelineNode>, PipelineAssemblyError> {
@@ -566,8 +571,8 @@ fn build_estimator_node(
             instance_name,
             est_cfg,
             ekf_cfg,
-            agent_handle,
-            sensor_frame_handles,
+            agent,
+            sensor_channels,
             registry,
             external_channels,
         ),
@@ -586,7 +591,7 @@ fn build_estimator_node(
                     "MockOracle",
                     est_cfg.clone(),
                     MockEstimatorBuildContext {
-                        agent_handle,
+                        agent: agent.clone(),
                         instance_name: instance_name.to_string(),
                     },
                 )

@@ -131,7 +131,8 @@ mod tests {
     use super::*;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
 
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::data::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::conventions::Enu;
     use helios_core::frames::quantities::Point;
@@ -220,7 +221,7 @@ mod tests {
             Some(SearchPlannerInputs {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
-                    std::sync::Arc::new(kinematic_carrier_schema(FrameHandle(0))),
+                    std::sync::Arc::new(kinematic_carrier_schema(AgentId::new("test_agent"))),
                     0.0,
                 ),
                 map: MapData::OccupancyGrid2D {

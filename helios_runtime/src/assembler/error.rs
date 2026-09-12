@@ -14,9 +14,9 @@ pub enum PipelineAssemblyError {
     FactoryFailure { node_kind: String, reason: String },
     /// The assembled node graph failed topological validation.
     PipelineBuild(Vec<PipelineBuildError>),
-    /// An aiding entry names a sensor channel with no corresponding
-    /// [`FrameHandle`](helios_core::data::primitives::FrameHandle) in
-    /// `sensor_frame_handles`.
+    /// An aiding or augmentation entry names a sensor channel the host does not
+    /// publish for this agent (absent from `sensor_channels`), so no sensor
+    /// frame would resolve for it.
     UnknownSensorChannel {
         estimator_instance: String,
         input_channel: String,
@@ -74,7 +74,7 @@ impl std::fmt::Display for PipelineAssemblyError {
             } => {
                 write!(
                     f,
-                    "estimator '{estimator_instance}' aiding channel '{input_channel}' has no FrameHandle in sensor_frame_handles"
+                    "estimator '{estimator_instance}' names sensor channel '{input_channel}', which the host does not publish for this agent"
                 )
             }
             PipelineAssemblyError::UnknownSensorPayload {

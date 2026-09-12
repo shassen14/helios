@@ -6,10 +6,12 @@ use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
 use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;
-use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+use helios_core::data::primitives::MonotonicTime;
+use helios_core::data::AgentId;
 use helios_core::frames::conventions::Flu;
 use helios_core::frames::quantities::FreeVector;
 use helios_core::frames::transforms::Convention;
+use helios_core::frames::FrameId;
 use helios_core::sensors::{lidar::LidarModel, RayHit, RaycastingOutput, RaycastingSensorModel};
 
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
@@ -103,7 +105,13 @@ fn spawn_raycasting_sensors(
                         model: core_model,
                     },
                     sensor_rng,
-                    TrackedFrame(Convention::Flu),
+                    TrackedFrame::new(
+                        FrameId::sensor(
+                            AgentId::new(request.0.name()),
+                            lidar_config.get_channel().to_string(),
+                        ),
+                        Convention::Flu,
+                    ),
                     lidar_config.get_relative_pose().to_bevy_local_transform(),
                 ));
 
@@ -121,10 +129,10 @@ fn raycasting_sensor_system(
     time: Res<Time>,
     spatial_query: SpatialQuery,
     mut sensor_query: Query<(
-        Entity,
         &mut RaycastingSensor,
         &mut SensorRng,
         &SensorPublishChannel,
+        &TrackedFrame,
         &GlobalTransform,
         &ChildOf,
     )>,
@@ -134,7 +142,7 @@ fn raycasting_sensor_system(
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (sensor_entity, mut sensor, mut rng, sensor_publish_channel, sensor_transform, parent) in
+    for (mut sensor, mut rng, sensor_publish_channel, tracked, sensor_transform, parent) in
         &mut sensor_query
     {
         sensor.timer.tick(dt);
@@ -172,7 +180,7 @@ fn raycasting_sensor_system(
         let RaycastingOutput::PointCloud(point_cloud) = output;
 
         let reading = SensorReading {
-            sensor_handle: FrameHandle::from_entity(sensor_entity),
+            sensor: tracked.id.clone(),
             timestamp: MonotonicTime(elapsed),
             data: point_cloud,
         };

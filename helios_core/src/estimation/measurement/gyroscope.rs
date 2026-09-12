@@ -1,7 +1,7 @@
 use nalgebra::DVector;
 
 use crate::data::ports::TfProvider;
-use crate::data::primitives::FrameHandle;
+use crate::data::AgentId;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
@@ -22,15 +22,15 @@ use crate::state::Quantity;
 /// [`SpecificForceModel`]: crate::estimation::measurement::accelerometer::SpecificForceModel
 #[derive(Debug, Clone)]
 pub struct AngularRateModel {
-    pub agent_handle: FrameHandle,
-    pub sensor_handle: FrameHandle,
+    pub agent: AgentId,
+    pub sensor: FrameId,
 }
 
 impl MeasurementModel for AngularRateModel {
     /// One block: the body's angular velocity resolved in the sensor frame
     /// (FLU) — exactly what `predict_measurement` returns.
     fn schema(&self) -> MeasurementSchema {
-        let frame = FrameId::Sensor(self.sensor_handle);
+        let frame = self.sensor.clone();
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::AngularVelocity(frame),
             Convention::Flu,
@@ -50,11 +50,11 @@ impl MeasurementModel for AngularRateModel {
         at: MonotonicTime,
     ) -> Option<DVector<f64>> {
         let tf = tf?;
-        let body_frame = FrameId::Body(self.agent_handle);
+        let body_frame = FrameId::base_link(self.agent.clone());
 
         let erased = tf.get_transform(
-            FrameId::Body(self.agent_handle),
-            FrameId::Sensor(self.sensor_handle),
+            FrameId::base_link(self.agent.clone()),
+            self.sensor.clone(),
             at,
         )?;
 
@@ -82,7 +82,7 @@ impl MeasurementModel for AngularRateModel {
 mod tests {
     use super::*;
     use crate::data::ports::TfProvider;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::frames::transforms::{Convention, ErasedTransform};
@@ -90,8 +90,14 @@ mod tests {
     use nalgebra::Isometry3;
     use std::sync::Arc;
 
-    const AGENT: FrameHandle = FrameHandle(1);
-    const SENSOR: FrameHandle = FrameHandle(2);
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
+    fn sensor() -> FrameId {
+        FrameId::sensor(agent(), "imu")
+    }
+
     const AT: MonotonicTime = MonotonicTime(0.0);
 
     struct IdentityTf;
@@ -112,8 +118,8 @@ mod tests {
 
     fn make_model() -> AngularRateModel {
         AngularRateModel {
-            agent_handle: AGENT,
-            sensor_handle: SENSOR,
+            agent: agent(),
+            sensor: sensor(),
         }
     }
 
@@ -122,7 +128,7 @@ mod tests {
     // hold, so the read falls back to zero — the test pins shape and TF-gating,
     // not the rate value.
     fn make_state() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0)
+        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0)
     }
 
     #[test]
@@ -135,11 +141,11 @@ mod tests {
         let block = &schema.blocks()[0];
         assert_eq!(
             block.quantity(),
-            &Quantity::AngularVelocity(FrameId::Sensor(SENSOR))
+            &Quantity::AngularVelocity(sensor())
         );
         assert_eq!(
             block.conventions,
-            vec![(FrameId::Sensor(SENSOR), Convention::Flu)]
+            vec![(sensor(), Convention::Flu)]
         );
     }
 

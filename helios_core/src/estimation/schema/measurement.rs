@@ -164,7 +164,7 @@ impl MeasurementSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::state::Component;
 
     // ── MeasurementSchemaBlock: convention tagging and the constructor split ──
@@ -174,8 +174,8 @@ mod tests {
         // A flat kind touches one frame, so `new` records exactly one
         // (frame, convention) entry: the quantity's frame in the given convention.
         let block =
-            MeasurementSchemaBlock::new(Quantity::Position(FrameId::World), Convention::Enu);
-        assert_eq!(block.conventions, vec![(FrameId::World, Convention::Enu)]);
+            MeasurementSchemaBlock::new(Quantity::Position(FrameId::world()), Convention::Enu);
+        assert_eq!(block.conventions, vec![(FrameId::world(), Convention::Enu)]);
         // A flat block innovates in as many dimensions as it names.
         assert_eq!(block.dim(), 3);
     }
@@ -184,18 +184,18 @@ mod tests {
     fn orientation_records_one_entry_per_endpoint() {
         // A rotation touches two frames, so `orientation` records two entries: the
         // source in `from_conv`, the target in `to_conv`, each on its own frame.
-        let handle = FrameHandle(2);
+        let agent = AgentId::new("test_agent");
         let block = MeasurementSchemaBlock::orientation(
-            FrameId::Body(handle),
-            FrameId::Odom(handle),
+            FrameId::base_link(agent.clone()),
+            FrameId::odom(agent.clone()),
             Convention::Flu,
             Convention::Enu,
         );
         assert_eq!(
             block.conventions,
             vec![
-                (FrameId::Body(handle), Convention::Flu),
-                (FrameId::Odom(handle), Convention::Enu),
+                (FrameId::base_link(agent.clone()), Convention::Flu),
+                (FrameId::odom(agent.clone()), Convention::Enu),
             ]
         );
         // An orientation's innovation is the 3-DOF rotation tangent, never the
@@ -208,11 +208,11 @@ mod tests {
     fn new_rejects_an_orientation_quantity() {
         // `new` records a single frame → convention entry, but an orientation
         // touches two frames; it must go through `orientation`, which records both.
-        let handle = FrameHandle(2);
+        let agent = AgentId::new("test_agent");
         MeasurementSchemaBlock::new(
             Quantity::Orientation {
-                from: FrameId::Body(handle),
-                to: FrameId::Odom(handle),
+                from: FrameId::base_link(agent.clone()),
+                to: FrameId::odom(agent.clone()),
             },
             Convention::Enu,
         );
@@ -222,8 +222,8 @@ mod tests {
 
     fn pos_vel_measurement() -> MeasurementSchema {
         MeasurementSchema::compose(vec![
-            MeasurementSchemaBlock::new(Quantity::Position(FrameId::World), Convention::Enu),
-            MeasurementSchemaBlock::new(Quantity::Velocity(FrameId::World), Convention::Enu),
+            MeasurementSchemaBlock::new(Quantity::Position(FrameId::world()), Convention::Enu),
+            MeasurementSchemaBlock::new(Quantity::Velocity(FrameId::world()), Convention::Enu),
         ])
     }
 
@@ -241,11 +241,11 @@ mod tests {
         assert_eq!(schema.layout().len(), schema.dim());
         assert_eq!(
             schema.layout()[0],
-            StateVariable::new(Quantity::Position(FrameId::World), Component::X)
+            StateVariable::new(Quantity::Position(FrameId::world()), Component::X)
         );
         assert_eq!(
             schema.layout()[3],
-            StateVariable::new(Quantity::Velocity(FrameId::World), Component::X)
+            StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X)
         );
     }
 
@@ -254,10 +254,10 @@ mod tests {
     fn compose_refuses_a_pair_block_until_an_ahrs_measurement_exists() {
         // The length is known (3), but the component names are not — see the
         // `compose` docs. Refused rather than mislabeled.
-        let handle = FrameHandle(2);
+        let agent = AgentId::new("test_agent");
         MeasurementSchema::compose(vec![MeasurementSchemaBlock::orientation(
-            FrameId::Body(handle),
-            FrameId::Odom(handle),
+            FrameId::base_link(agent.clone()),
+            FrameId::odom(agent.clone()),
             Convention::Flu,
             Convention::Enu,
         )]);

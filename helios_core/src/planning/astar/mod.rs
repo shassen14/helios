@@ -412,7 +412,7 @@ mod tests {
     /// Build a minimal world-frame state carrying only a `Position(World)` block.
     fn make_state(x: f64, y: f64) -> FrameAwareState {
         let schema = StateSchema::compose(vec![StateSchemaBlock::new(
-            Quantity::Position(FrameId::World),
+            Quantity::Position(FrameId::world()),
             Convention::Enu,
             None,
             DVector::from_vec(vec![x, y, 0.0]),

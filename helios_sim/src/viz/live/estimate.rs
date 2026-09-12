@@ -12,13 +12,13 @@
 
 use bevy::prelude::*;
 
-use helios_core::data::primitives::FrameHandle;
+use helios_core::data::AgentId;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::FrameId;
 
 use crate::{
     core::transforms::{transform_bevy_to_bevy_transform, ToBevy},
-    prelude::AutonomyPipelineComponent,
+    prelude::{AgentIdComponent, AutonomyPipelineComponent},
 };
 
 /// Axis-triad length for the estimate gizmo. Deliberately shorter than the
@@ -28,16 +28,17 @@ use crate::{
 const ESTIMATE_TRIAD_LEN: f32 = 3.0;
 
 pub fn estimate_update_system(
-    query: Query<(Entity, &AutonomyPipelineComponent)>,
+    query: Query<(&AutonomyPipelineComponent, &AgentIdComponent)>,
     mut gizmos: Gizmos,
 ) {
-    for (agent, pipeline) in &query {
-        let handle = FrameHandle::from_entity(agent);
-        let body = FrameId::Body(handle);
-        let Some(pose) = pipeline.0.read_state().and_then(|st| {
-            st.value
-                .pose::<Flu, Enu>(body.clone(), FrameId::Odom(handle))
-        }) else {
+    for (pipeline, agent_id) in &query {
+        let agent = AgentId::new(agent_id.0.as_str());
+        let body = FrameId::base_link(agent.clone());
+        let Some(pose) = pipeline
+            .0
+            .read_state()
+            .and_then(|st| st.value.pose::<Flu, Enu>(body.clone(), FrameId::odom(agent.clone())))
+        else {
             continue;
         };
 

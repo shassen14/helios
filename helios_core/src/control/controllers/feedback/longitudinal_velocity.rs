@@ -60,7 +60,7 @@ impl Controller for LongitudinalVelocityController {
 mod tests {
     use super::*;
     use crate::control::commands::BodyTwist;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::estimation::schema::{StateSchemaBlock, StateSchema};
     use crate::frames::transforms::Convention;
     use crate::frames::FrameAwareState;
@@ -70,8 +70,12 @@ mod tests {
     use nalgebra::{DMatrix, DVector};
     use std::sync::Arc;
 
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
     fn body() -> FrameId {
-        FrameId::Body(FrameHandle(1))
+        FrameId::base_link(agent())
     }
 
     fn noise() -> Option<TangentNoise> {
@@ -140,7 +144,7 @@ mod tests {
         // projection is `None`, so the loop commands zero rather than acting on a
         // fabricated measurement.
         let schema = StateSchema::compose(vec![StateSchemaBlock::new(
-            Quantity::Position(FrameId::Odom(FrameHandle(1))),
+            Quantity::Position(FrameId::odom(agent())),
             Convention::Enu,
             noise(),
             DVector::zeros(3),

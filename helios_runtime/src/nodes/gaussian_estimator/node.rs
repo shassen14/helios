@@ -262,7 +262,8 @@ mod tests {
 
     use super::*;
     use helios_core::data::envelope::SensorReading;
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::data::AgentId;
     use helios_core::data::sensor::Acceleration;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
@@ -316,7 +317,7 @@ mod tests {
             // A placeholder kinematic state; this mock never reads its contents.
             Self {
                 state: FrameAwareState::from_schema(
-                    std::sync::Arc::new(kinematic_carrier_schema(FrameHandle(0))),
+                    std::sync::Arc::new(kinematic_carrier_schema(AgentId::new("test_agent"))),
                     0.0,
                 ),
                 counts: StdMutex::new(Default::default()),
@@ -355,7 +356,7 @@ mod tests {
         // 3-DOF world-frame block.
         fn schema(&self) -> MeasurementSchema {
             MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
-                Quantity::Position(FrameId::World),
+                Quantity::Position(FrameId::world()),
                 Convention::Enu,
             )])
         }
@@ -505,11 +506,11 @@ mod tests {
         assert_eq!(schema.blocks().len(), 1);
         assert_eq!(
             schema.blocks()[0].quantity(),
-            &Quantity::Position(FrameId::World)
+            &Quantity::Position(FrameId::world())
         );
         assert_eq!(
             schema.blocks()[0].conventions(),
-            &[(FrameId::World, Convention::Enu)]
+            &[(FrameId::world(), Convention::Enu)]
         );
     }
 
@@ -566,12 +567,12 @@ mod tests {
         let bus = make_bus(vec![]);
         let readings = vec![
             SensorReading {
-                sensor_handle: FrameHandle(1),
+                sensor: FrameId::sensor(AgentId::new("test_agent"), "accel"),
                 timestamp: MonotonicTime(2.0),
                 data: Acceleration::default(),
             },
             SensorReading {
-                sensor_handle: FrameHandle(1),
+                sensor: FrameId::sensor(AgentId::new("test_agent"), "accel"),
                 timestamp: MonotonicTime(1.0),
                 data: Acceleration::default(),
             },

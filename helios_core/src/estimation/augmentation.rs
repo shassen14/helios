@@ -106,7 +106,7 @@ pub fn augmentation_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::frames::StateVariable;
     use crate::state::Component;
 
@@ -114,7 +114,7 @@ mod tests {
     const RANDOM_WALK: f64 = 0.01;
 
     fn sensor_frame() -> FrameId {
-        FrameId::Sensor(FrameHandle(7))
+        FrameId::sensor(AgentId::new("test_agent"), "sensor0")
     }
 
     fn mag_block() -> StateSchemaBlock {

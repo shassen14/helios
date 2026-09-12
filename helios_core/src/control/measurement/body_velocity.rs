@@ -60,7 +60,7 @@ pub fn body_forward_speed(state: &FrameAwareState, body: FrameId) -> Option<f64>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::estimation::schema::{StateSchemaBlock, StateSchema};
     use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
@@ -70,12 +70,16 @@ mod tests {
     use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;
 
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
     fn body() -> FrameId {
-        FrameId::Body(FrameHandle(1))
+        FrameId::base_link(agent())
     }
 
     fn odom() -> FrameId {
-        FrameId::Odom(FrameHandle(1))
+        FrameId::odom(agent())
     }
 
     // Isotropic 3-DOF noise. Irrelevant to a projection (a read), but an

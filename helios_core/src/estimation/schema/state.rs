@@ -415,8 +415,13 @@ impl StateSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::AgentId;
     use crate::manifold::TangentNoise;
     use crate::state::Component;
+
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
 
     fn noise(var: f64) -> Option<TangentNoise> {
         Some(TangentNoise::from_variances(DVector::from_element(3, var)).unwrap())
@@ -430,8 +435,8 @@ mod tests {
         // each kind's exact ordered spelling is pinned here rather than left to
         // transitive coverage. A reordering or a wrong axis tag would silently
         // desync every name lookup built on top of it.
-        let f = FrameId::World;
-        let b = FrameId::Body(crate::data::primitives::FrameHandle(2));
+        let f = FrameId::world();
+        let b = FrameId::base_link(agent());
 
         // A block's stored names are `StateVariable { quantity, component }` for
         // each of the quantity's components. Every flat kind spells x, y, z;
@@ -479,8 +484,8 @@ mod tests {
     fn manifold_orientation_is_a_four_three_quaternion_block() {
         // The one curved kind: four stored components against a three-DOF tangent.
         let quantity = Quantity::Orientation {
-            from: FrameId::Body(crate::data::primitives::FrameHandle(2)),
-            to: FrameId::World,
+            from: FrameId::base_link(agent()),
+            to: FrameId::world(),
         };
 
         let block = block_for(
@@ -496,7 +501,7 @@ mod tests {
     #[test]
     fn manifold_flat_kind_is_an_equal_dim_euclidean_block() {
         // Every non-orientation kind is Euclidean: storage and tangent coincide.
-        let quantity = Quantity::Velocity(FrameId::World);
+        let quantity = Quantity::Velocity(FrameId::world());
 
         let block = block_for(
             &quantity,
@@ -512,7 +517,7 @@ mod tests {
     fn manifold_flat_kind_without_noise_carries_no_process_noise() {
         // `None` on a flat kind routes to `EuclideanBlock::without_noise`: a fixed
         // prior with no random walk (a position seeded from GPS, say).
-        let quantity = Quantity::Position(FrameId::World);
+        let quantity = Quantity::Position(FrameId::world());
         let block = block_for(&quantity, None, DVector::zeros(3), DMatrix::identity(3, 3));
         assert!(block.process_noise().is_none());
     }
@@ -526,8 +531,8 @@ mod tests {
         // passing `None` here is a construction-time programming error and must
         // panic rather than fabricate zero process noise.
         let quantity = Quantity::Orientation {
-            from: FrameId::Body(crate::data::primitives::FrameHandle(2)),
-            to: FrameId::World,
+            from: FrameId::base_link(agent()),
+            to: FrameId::world(),
         };
 
         block_for(
@@ -545,13 +550,13 @@ mod tests {
         // A flat kind touches one frame, so `new` records exactly one
         // (frame, convention) entry: the quantity's frame in the given convention.
         let block = StateSchemaBlock::new(
-            Quantity::Velocity(FrameId::World),
+            Quantity::Velocity(FrameId::world()),
             Convention::Enu,
             noise(0.5),
             DVector::zeros(3),
             DMatrix::identity(3, 3),
         );
-        assert_eq!(block.conventions, vec![(FrameId::World, Convention::Enu)]);
+        assert_eq!(block.conventions, vec![(FrameId::world(), Convention::Enu)]);
     }
 
     #[test]
@@ -559,10 +564,10 @@ mod tests {
         // A rotation touches two frames, so `orientation` records two entries: the
         // source in `from_conv` (body → FLU), the target in `to_conv` (odom → ENU),
         // each landing on its own frame.
-        let handle = crate::data::primitives::FrameHandle(2);
+        let agent = agent();
         let block = StateSchemaBlock::orientation(
-            FrameId::Body(handle),
-            FrameId::Odom(handle),
+            FrameId::base_link(agent.clone()),
+            FrameId::odom(agent.clone()),
             Convention::Flu,
             Convention::Enu,
             noise(0.1),
@@ -572,8 +577,8 @@ mod tests {
         assert_eq!(
             block.conventions,
             vec![
-                (FrameId::Body(handle), Convention::Flu),
-                (FrameId::Odom(handle), Convention::Enu),
+                (FrameId::base_link(agent.clone()), Convention::Flu),
+                (FrameId::odom(agent.clone()), Convention::Enu),
             ]
         );
         // It really is the curved block: four stored components, three-DOF tangent.
@@ -588,11 +593,11 @@ mod tests {
         // convention entry, but an orientation touches two frames and needs the
         // quaternion block. Orientations must go through
         // `StateSchemaBlock::orientation`.
-        let handle = crate::data::primitives::FrameHandle(2);
+        let agent = agent();
         StateSchemaBlock::new(
             Quantity::Orientation {
-                from: FrameId::Body(handle),
-                to: FrameId::Odom(handle),
+                from: FrameId::base_link(agent.clone()),
+                to: FrameId::odom(agent.clone()),
             },
             Convention::Enu,
             noise(0.1),
@@ -608,18 +613,18 @@ mod tests {
         // `compose` folds every block's entries into one frame → convention map:
         // the flat position block anchors its frame, the orientation block both
         // endpoints. Odom is declared by both, agreeing, so it appears once.
-        let handle = crate::data::primitives::FrameHandle(2);
+        let agent = agent();
         let schema = StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::Odom(handle)),
+                Quantity::Position(FrameId::odom(agent.clone())),
                 Convention::Enu,
                 noise(0.1),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::orientation(
-                FrameId::Body(handle),
-                FrameId::Odom(handle),
+                FrameId::base_link(agent.clone()),
+                FrameId::odom(agent.clone()),
                 Convention::Flu,
                 Convention::Enu,
                 noise(0.1),
@@ -629,15 +634,15 @@ mod tests {
         ]);
 
         assert_eq!(
-            schema.convention_of(&FrameId::Odom(handle)),
+            schema.convention_of(&FrameId::odom(agent.clone())),
             Some(Convention::Enu)
         );
         assert_eq!(
-            schema.convention_of(&FrameId::Body(handle)),
+            schema.convention_of(&FrameId::base_link(agent.clone())),
             Some(Convention::Flu)
         );
         // A frame no block declares has no entry.
-        assert_eq!(schema.convention_of(&FrameId::World), None);
+        assert_eq!(schema.convention_of(&FrameId::world()), None);
     }
 
     #[test]
@@ -648,14 +653,14 @@ mod tests {
         // refuses rather than silently keeping the last writer.
         StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::World),
+                Quantity::Position(FrameId::world()),
                 Convention::Enu,
                 noise(0.1),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::new(
-                Quantity::Velocity(FrameId::World),
+                Quantity::Velocity(FrameId::world()),
                 Convention::Flu,
                 noise(0.5),
                 DVector::zeros(3),
@@ -667,14 +672,14 @@ mod tests {
     fn pos_vel_schema() -> StateSchema {
         StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::World),
+                Quantity::Position(FrameId::world()),
                 Convention::Enu,
                 noise(0.1),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::new(
-                Quantity::Velocity(FrameId::World),
+                Quantity::Velocity(FrameId::world()),
                 Convention::Enu,
                 noise(0.5),
                 DVector::zeros(3),
@@ -726,21 +731,21 @@ mod tests {
         let s = pos_vel_schema();
         assert_eq!(
             s.storage_offset_of(&StateVariable::new(
-                Quantity::Position(FrameId::World),
+                Quantity::Position(FrameId::world()),
                 Component::X
             )),
             Some(0)
         );
         assert_eq!(
             s.storage_offset_of(&StateVariable::new(
-                Quantity::Velocity(FrameId::World),
+                Quantity::Velocity(FrameId::world()),
                 Component::X
             )),
             Some(3)
         );
         assert_eq!(
             s.storage_offset_of(&StateVariable::new(
-                Quantity::Acceleration(FrameId::World),
+                Quantity::Acceleration(FrameId::world()),
                 Component::Z
             )),
             None
@@ -754,7 +759,7 @@ mod tests {
         // block — the wrong-sized value desyncs storage_dim from the derived
         // variable count, which `compose` must reject.
         StateSchema::compose(vec![StateSchemaBlock::new(
-            Quantity::Position(FrameId::World),
+            Quantity::Position(FrameId::world()),
             Convention::Enu,
             None,
             DVector::zeros(2),
@@ -769,7 +774,7 @@ mod tests {
     const AUG_RANDOM_WALK: f64 = 0.02;
 
     fn mag_sensor() -> FrameId {
-        FrameId::Sensor(crate::data::primitives::FrameHandle(3))
+        FrameId::sensor(agent(), "sensor0")
     }
 
     fn mag_bias_block() -> StateSchemaBlock {

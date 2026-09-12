@@ -49,7 +49,7 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
     Ok(Box::new(OccupancyGridNode::new(
         ctx.instance_name,
         mapper,
-        ctx.agent_handle,
+        ctx.agent,
         scan_channel,
         map_channel,
         Some(rate as f64),
@@ -60,11 +60,11 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
 mod tests {
     use super::*;
 
-    use helios_core::data::primitives::FrameHandle;
+    use helios_core::data::AgentId;
 
     fn context(instance_name: &str) -> MapperBuildContext {
         MapperBuildContext {
-            agent_handle: FrameHandle(0),
+            agent: AgentId::new("test_agent"),
             instance_name: instance_name.to_string(),
             config: MapLayerConfig::OccupancyGrid2D {
                 rate: 5.0,

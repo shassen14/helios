@@ -1,6 +1,6 @@
 // Assembler integration tests: build_pipeline topology resolution.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use helios_runtime::channels::control;
 use helios_runtime::config::{
@@ -20,8 +20,9 @@ use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue
 use helios_core::control::commands::{DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
 use helios_core::data::envelope::SensorReading;
-use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+use helios_core::data::primitives::MonotonicTime;
 use helios_core::data::sensor::MagneticField;
+use helios_core::data::AgentId;
 use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::frames::conventions::Flu;
 use helios_core::frames::quantities::{FluVector, FreeVector};
@@ -85,8 +86,8 @@ fn teleop_only_stack_builds_without_a_controller() {
     let result = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         teleop_body(),
     );
 
@@ -114,8 +115,8 @@ fn teleop_reference_is_intent_driven_not_free_running() {
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         teleop_body(),
     )
     .expect("teleop-only stack must build");
@@ -148,8 +149,8 @@ fn teleop_intent_is_mapped_into_the_reference() {
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         teleop_body(),
     )
     .expect("teleop stack with a mapper config must build");
@@ -249,8 +250,8 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         body,
     )
     .expect("estimator + map-layer stack must build");
@@ -320,8 +321,8 @@ fn two_map_layers_of_one_kind_publish_to_distinct_channels() {
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         body,
     )
     .expect("two same-kind map layers under distinct keys must build");
@@ -409,8 +410,8 @@ fn drive_force_stack_builds_both_controllers_and_the_allocator() {
     let pipeline = build_pipeline(
         &drive_force_stack(),
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         state_publishing_body(),
     )
     .expect("DriveForce stack must build");
@@ -446,8 +447,8 @@ fn feedback_and_feedforward_fold_into_the_wheel_torque_terminal() {
     let pipeline = build_pipeline(
         &drive_force_stack(),
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         state_publishing_body(),
     )
     .expect("DriveForce stack must build");
@@ -549,8 +550,8 @@ fn decoupled_stack_builds_both_spaces_and_both_allocators() {
     let pipeline = build_pipeline(
         &decoupled_car_stack(),
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         state_publishing_body(),
     )
     .expect("decoupled two-allocator stack must build");
@@ -581,8 +582,8 @@ fn decoupled_legs_merge_into_one_actuator_terminal() {
     let pipeline = build_pipeline(
         &decoupled_car_stack(),
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         state_publishing_body(),
     )
     .expect("decoupled two-allocator stack must build");
@@ -669,8 +670,8 @@ fn build_pipeline_rejects_invalid_config_before_assembly() {
     let Err(errors) = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         body,
     ) else {
         panic!("a planner with no matching map layer must not build");
@@ -700,13 +701,13 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     // `EkfConfig` that declares a magnetometer aiding *and* a `magnetometer_bias`
     // augmentation is assembled, then driven with biased readings. This exercises
     // the correctness crux the mechanism exists for — the augmentation `sensor`
-    // and the `MagneticFieldModel`'s `sensor_handle` must resolve to the *same*
-    // `FrameHandle` through `sensor_frame_handles`, or the appended `MagBias`
-    // slots carry a `FrameId` the model never reads and the block rides inert.
+    // and the `MagneticFieldModel`'s sensor frame must resolve to the *same*
+    // `FrameId`, because both are built as `FrameId::sensor(agent, channel_name)`
+    // from the same channel name — otherwise the appended `MagBias` slots would
+    // carry a `FrameId` the model never reads and the block would ride inert.
     // Here they agree, so the bias state absorbs the injected offset and its
     // variance collapses below the prior.
-    const AGENT: FrameHandle = FrameHandle(0);
-    const MAG_SENSOR: FrameHandle = FrameHandle(7);
+    let agent = AgentId::new("rover");
     const MAG_CHANNEL: &str = "mag/primary";
 
     // North-pointing world field (ENU, µT) and a purely vertical hard-iron bias.
@@ -743,7 +744,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         augmentation: vec![AugmentationConfig {
             kind: MAGNETOMETER_BIAS.to_string(),
             // Must string-match the aiding input_channel above: that shared key
-            // is what ties the block's FrameId::Sensor to the model observing it.
+            // is what ties the block's sensor FrameId to the model observing it.
             sensor: MAG_CHANNEL.to_string(),
             init_uncertainty: 5.0,
             random_walk: 0.01,
@@ -763,8 +764,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         ..Default::default()
     };
 
-    let mut sensor_frame_handles = HashMap::new();
-    sensor_frame_handles.insert(MAG_CHANNEL.to_string(), MAG_SENSOR);
+    let sensor_channels = HashSet::from([MAG_CHANNEL.to_string()]);
 
     let body = BodyCapabilities {
         name: "rover".to_string(),
@@ -775,8 +775,8 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
-        AGENT,
-        &sensor_frame_handles,
+        agent.clone(),
+        &sensor_channels,
         body,
     )
     .expect("mag-bias augmentation stack must build");
@@ -796,7 +796,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
                 mag_key.clone(),
                 Stamped {
                     value: vec![SensorReading {
-                        sensor_handle: MAG_SENSOR,
+                        sensor: FrameId::sensor(agent.clone(), MAG_CHANNEL),
                         timestamp: t,
                         data: MagneticField(measured),
                     }],
@@ -812,7 +812,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     let state = pipeline
         .read_state()
         .expect("the estimator must publish a state");
-    let sensor = FrameId::Sensor(MAG_SENSOR);
+    let sensor = FrameId::sensor(agent.clone(), MAG_CHANNEL);
 
     // The appended block exists and the base grew by exactly 3 storage dims.
     assert_eq!(
@@ -893,8 +893,8 @@ fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
-        FrameHandle(0),
-        &HashMap::new(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
         body,
     )
     .expect("un-augmented stack must build");
@@ -914,7 +914,7 @@ fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
             .value
             .schema()
             .storage_offset_of(&StateVariable::new(
-                Quantity::MagBias(FrameId::Sensor(FrameHandle(7))),
+                Quantity::MagBias(FrameId::sensor(AgentId::new("rover"), "mag/primary")),
                 Component::X,
             ))
             .is_none(),

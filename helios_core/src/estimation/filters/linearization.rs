@@ -67,7 +67,7 @@ pub(crate) fn tangent_state_transition(
 #[cfg(test)]
 mod tests {
     use super::tangent_state_transition;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::estimation::dynamics::integrated_imu::{
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };
@@ -83,7 +83,7 @@ mod tests {
         // block is 4 stored / 3 tangent. F is a tangent-space map, so it must be
         // 15×15 (matching the covariance), NOT the 16×16 of the storage Jacobian.
         let model = IntegratedImuModel::new(
-            FrameHandle(7),
+            AgentId::new("test_agent"),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
                 accel_noise_var: 0.04,

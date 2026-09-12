@@ -1,7 +1,7 @@
 use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::commands::BodyTwist;
 use crate::control::BodyTwistRef;
-use crate::data::primitives::FrameHandle;
+use crate::data::AgentId;
 use crate::frames::conventions::{Enu, Flu};
 use crate::frames::quantities::Point;
 use crate::frames::{FrameAwareState, FrameId};
@@ -25,7 +25,7 @@ pub struct PurePursuitPathFollower {
     /// not re-arm driving. Cleared only by `set_path`/`reset`, so a completed
     /// path stays completed until the planner issues a new one.
     arrived: bool,
-    agent_handle: FrameHandle,
+    agent: AgentId,
 }
 
 impl PurePursuitPathFollower {
@@ -36,7 +36,7 @@ impl PurePursuitPathFollower {
         min_speed: f64,
         max_speed: f64,
         max_lateral_acceleration: f64,
-        agent_handle: FrameHandle,
+        agent: AgentId,
     ) -> Self {
         Self {
             lookahead_distance,
@@ -48,7 +48,7 @@ impl PurePursuitPathFollower {
             path: None,
             lookahead_index: 0,
             arrived: false,
-            agent_handle,
+            agent,
         }
     }
 
@@ -57,7 +57,7 @@ impl PurePursuitPathFollower {
             return;
         };
 
-        let agent_pos = match state.position::<Enu>(FrameId::Odom(self.agent_handle)) {
+        let agent_pos = match state.position::<Enu>(FrameId::odom(self.agent.clone())) {
             Some(p) => Vector2::new(p.x(), p.y()),
             None => return,
         };
@@ -101,7 +101,7 @@ impl PathFollower for PurePursuitPathFollower {
         let lookahead_distance: f64 = match self.lookahead_time {
             Some(t) => {
                 let speed = state
-                    .velocity::<Enu>(FrameId::Odom(self.agent_handle))
+                    .velocity::<Enu>(FrameId::odom(self.agent.clone()))
                     .map(|v| v.raw().xy().norm())
                     .unwrap_or(0.0);
                 (speed * t).max(self.lookahead_distance)
@@ -115,7 +115,7 @@ impl PathFollower for PurePursuitPathFollower {
             return PathFollowerResult::NoPath;
         };
 
-        let agent_pos = match state.position::<Enu>(FrameId::Odom(self.agent_handle)) {
+        let agent_pos = match state.position::<Enu>(FrameId::odom(self.agent.clone())) {
             Some(p) => Vector2::new(p.x(), p.y()),
             None => {
                 return PathFollowerResult::Error(
@@ -124,8 +124,8 @@ impl PathFollower for PurePursuitPathFollower {
             }
         };
         let agent_orientation = match state.orientation::<Flu, Enu>(
-            FrameId::Body(self.agent_handle),
-            FrameId::Odom(self.agent_handle),
+            FrameId::base_link(self.agent.clone()),
+            FrameId::odom(self.agent.clone()),
         ) {
             Some(o) => o.into_inner(),
             None => {
@@ -197,10 +197,14 @@ mod tests {
     use nalgebra::{DMatrix, DVector};
     use std::sync::Arc;
 
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
     fn follower() -> PurePursuitPathFollower {
         // Only the path plumbing is exercised here; the tuning values are
         // arbitrary and the lookahead accessor ignores the agent handle.
-        PurePursuitPathFollower::new(1.0, None, 0.5, 0.1, 2.0, 1.0, FrameHandle(0))
+        PurePursuitPathFollower::new(1.0, None, 0.5, 0.1, 2.0, 1.0, agent())
     }
 
     fn path_of(waypoints: Vec<Point<Enu>>) -> Path {
@@ -219,18 +223,18 @@ mod tests {
 
     /// A state carrying `handle`'s Odom position `(x, y, 0)` and an identity
     /// Body→Odom orientation — the two blocks `compute` reads to locate the agent.
-    fn inputs_at(handle: FrameHandle, x: f64, y: f64) -> PathFollowerInputs {
+    fn inputs_at(agent: AgentId, x: f64, y: f64) -> PathFollowerInputs {
         let schema = StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::Odom(handle)),
+                Quantity::Position(FrameId::odom(agent.clone())),
                 Convention::Enu,
                 noise3(),
                 DVector::from_vec(vec![x, y, 0.0]),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::orientation(
-                FrameId::Body(handle),
-                FrameId::Odom(handle),
+                FrameId::base_link(agent.clone()),
+                FrameId::odom(agent.clone()),
                 Convention::Flu,
                 Convention::Enu,
                 noise3(),
@@ -250,18 +254,18 @@ mod tests {
     /// back, oscillating — the drift call below would return `Active`.
     #[test]
     fn arrival_latches_and_does_not_rearm_on_drift() {
-        let handle = FrameHandle(7);
+        let agent = agent();
         // goal_radius = 1.0; a single-waypoint path at the origin.
-        let mut f = PurePursuitPathFollower::new(1.0, None, 1.0, 0.1, 2.0, 1.0, handle);
+        let mut f = PurePursuitPathFollower::new(1.0, None, 1.0, 0.1, 2.0, 1.0, agent.clone());
         f.set_path(path_of(vec![Point::<Enu>::new(0.0, 0.0, 0.0)]));
 
         // Inside the radius (0.5 m) → arrives and returns a stop.
-        let arrived = f.compute(0.1, &inputs_at(handle, 0.5, 0.0));
+        let arrived = f.compute(0.1, &inputs_at(agent.clone(), 0.5, 0.0));
         assert!(matches!(arrived, PathFollowerResult::GoalReached(_)));
 
         // Drifted 5 m away — well outside the radius. Latched → still GoalReached,
         // and the carried reference is the zero-twist stop, not a drive-back.
-        match f.compute(0.1, &inputs_at(handle, 5.0, 0.0)) {
+        match f.compute(0.1, &inputs_at(agent.clone(), 5.0, 0.0)) {
             PathFollowerResult::GoalReached(r) => assert_eq!(*r.twist(), BodyTwist::zero()),
             _ => panic!("latched follower re-armed after drifting outside goal_radius"),
         }

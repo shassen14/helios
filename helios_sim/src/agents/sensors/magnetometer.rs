@@ -14,7 +14,9 @@ use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
 
 use helios_core::data::sensor::MagneticField;
+use helios_core::data::AgentId;
 use helios_core::frames::transforms::Convention;
+use helios_core::frames::FrameId;
 use helios_core::sensors::magnetometer::MagnetometerModel;
 
 use nalgebra::{Isometry3, Vector3};
@@ -123,7 +125,13 @@ fn spawn_magnetometer_sensors(
                         Magnetometer::new(mag_model),
                         SensorTimer::from_rate(mag_config.rate),
                         sensor_rng,
-                        TrackedFrame(Convention::Flu),
+                        TrackedFrame::new(
+                            FrameId::sensor(
+                                AgentId::new(request.0.name()),
+                                mag_config.channel.clone(),
+                            ),
+                            Convention::Flu,
+                        ),
                         mag_config.get_relative_pose().to_bevy_local_transform(),
                     ))
                     .id();

@@ -12,7 +12,7 @@ use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::commands::BodyTwist;
 use crate::control::kernels::siso_pid::SisoPid;
 use crate::control::BodyTwistRef;
-use crate::data::primitives::FrameHandle;
+use crate::data::AgentId;
 use crate::frames::conventions::{Enu, Flu};
 use crate::frames::quantities::Point;
 use crate::frames::FrameId;
@@ -32,7 +32,7 @@ pub struct SteeringPidPathFollower {
     /// current position, so an inertial body coasting back outside the radius
     /// does not re-arm driving. Cleared only by `set_path`/`reset`.
     arrived: bool,
-    agent_handle: FrameHandle,
+    agent: AgentId,
 }
 
 impl SteeringPidPathFollower {
@@ -43,7 +43,7 @@ impl SteeringPidPathFollower {
         cruise_speed: f64,
         goal_radius: f64,
         lookahead_distance: f64,
-        agent_handle: FrameHandle,
+        agent: AgentId,
     ) -> Self {
         Self {
             heading_pid: SisoPid::new(kp, ki, kd),
@@ -53,7 +53,7 @@ impl SteeringPidPathFollower {
             path: None,
             lookahead_index: 0,
             arrived: false,
-            agent_handle,
+            agent,
         }
     }
 
@@ -101,13 +101,13 @@ impl PathFollower for SteeringPidPathFollower {
             return PathFollowerResult::NoPath;
         }
 
-        let agent_pos = match state.position::<Enu>(FrameId::Odom(self.agent_handle)) {
+        let agent_pos = match state.position::<Enu>(FrameId::odom(self.agent.clone())) {
             Some(p) => Vector2::new(p.x(), p.y()),
             None => return PathFollowerResult::Error("missing agent position".into()),
         };
         let orientation = match state.orientation::<Flu, Enu>(
-            FrameId::Body(self.agent_handle),
-            FrameId::Odom(self.agent_handle),
+            FrameId::base_link(self.agent.clone()),
+            FrameId::odom(self.agent.clone()),
         ) {
             Some(q) => q.into_inner(),
             None => return PathFollowerResult::Error("missing agent orientation".into()),

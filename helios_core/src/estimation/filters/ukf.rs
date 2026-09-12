@@ -323,14 +323,14 @@ mod tests {
         fn schema(&self) -> std::sync::Arc<StateSchema> {
             std::sync::Arc::new(StateSchema::compose(vec![
                 StateSchemaBlock::new(
-                    Quantity::Position(FrameId::World),
+                    Quantity::Position(FrameId::world()),
                     Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),
                 ),
                 StateSchemaBlock::new(
-                    Quantity::Velocity(FrameId::World),
+                    Quantity::Velocity(FrameId::world()),
                     Convention::Enu,
                     None,
                     DVector::zeros(3),

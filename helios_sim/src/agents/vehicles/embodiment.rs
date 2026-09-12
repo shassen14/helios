@@ -5,6 +5,7 @@ use crate::registry::contexts::{
 };
 use crate::registry::embodiment::EmbodimentRegistry;
 
+use helios_core::data::AgentId;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::transforms::Transform as CoreTransform;
 
@@ -43,6 +44,7 @@ pub(super) fn build_embodiment(
         };
         let mut ctx = TopologyBuildContext {
             entity,
+            agent: AgentId::new(request.0.name()),
             commands: &mut commands,
             config: &vehicle.topology,
             start_transform,

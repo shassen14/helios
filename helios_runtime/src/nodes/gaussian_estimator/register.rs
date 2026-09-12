@@ -35,7 +35,7 @@ fn build_ekf(
         return Err("build_ekf received non-Ekf config".to_string());
     };
 
-    let agent_handle = ctx.agent_handle;
+    let agent = ctx.agent;
 
     let init = &ekf_config.initial_state;
 
@@ -43,7 +43,7 @@ fn build_ekf(
         match &ekf_config.dynamics {
             EkfDynamicsConfig::IntegratedImu(c) => (
                 Box::new(IntegratedImuModel::new(
-                    agent_handle,
+                    agent.clone(),
                     Vector3::from_column_slice(&c.gravity_enu),
                     ImuProcessNoise {
                         accel_noise_var: c.accel_noise_stddev.powi(2),
@@ -122,8 +122,8 @@ fn build_ekf(
         )),
     );
 
-    let body = FrameId::Body(agent_handle);
-    let odom = FrameId::Odom(agent_handle);
+    let body = FrameId::base_link(agent.clone());
+    let odom = FrameId::odom(agent);
 
     initial_state.set_variable(
         &StateVariable::new(Quantity::Position(odom.clone()), Component::X),
@@ -206,8 +206,8 @@ mod tests {
 
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::ports::TfProvider;
-    use helios_core::data::primitives::FrameHandle;
     use helios_core::data::sensor::Acceleration;
+    use helios_core::data::AgentId;
     use helios_core::data::MonotonicTime;
     use helios_core::estimation::augmentation::{augmentation_block, MAGNETOMETER_BIAS};
     use helios_core::estimation::measurement::MeasurementModel;
@@ -250,7 +250,7 @@ mod tests {
         augmentation_blocks: Vec<helios_core::estimation::schema::StateSchemaBlock>,
     ) -> GaussianEstimatorBuildContext {
         GaussianEstimatorBuildContext {
-            agent_handle: FrameHandle(0),
+            agent: AgentId::new("test_agent"),
             instance_name: instance_name.to_string(),
             aiding: vec![],
             augmentation_blocks,
@@ -380,7 +380,7 @@ mod tests {
     // block was tagged with.
     #[test]
     fn augmentation_blocks_extend_the_published_filter_state() {
-        let sensor = FrameId::Sensor(FrameHandle(7));
+        let sensor = FrameId::sensor(AgentId::new("test_agent"), "mag");
         let block = augmentation_block(MAGNETOMETER_BIAS, sensor.clone(), 5.0, 0.01)
             .expect("well-formed mag-bias block");
 
@@ -403,7 +403,7 @@ mod tests {
         assert!(state
             .schema()
             .storage_offset_of(&StateVariable::new(
-                Quantity::MagBias(FrameId::Sensor(FrameHandle(7))),
+                Quantity::MagBias(FrameId::sensor(AgentId::new("test_agent"), "mag")),
                 Component::X,
             ))
             .is_none());
@@ -415,14 +415,14 @@ mod tests {
     // check without a real sensor. Both are 3-DOF; only the declared frame and
     // convention differ, which is all the check reads.
 
-    /// Declares its measurement in `Odom(FrameHandle(0))` / ENU — exactly how the
-    /// IntegratedImu base state anchors position, so it agrees.
+    /// Declares its measurement in the agent's `odom` frame / ENU — exactly how
+    /// the IntegratedImu base state anchors position, so it agrees.
     struct AgreeingModel;
 
     impl MeasurementModel for AgreeingModel {
         fn schema(&self) -> MeasurementSchema {
             MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
-                Quantity::Position(FrameId::Odom(FrameHandle(0))),
+                Quantity::Position(FrameId::odom(AgentId::new("test_agent"))),
                 Convention::Enu,
             )])
         }
@@ -443,7 +443,7 @@ mod tests {
     impl MeasurementModel for UnanchorableModel {
         fn schema(&self) -> MeasurementSchema {
             MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
-                Quantity::Position(FrameId::World),
+                Quantity::Position(FrameId::world()),
                 Convention::Enu,
             )])
         }

@@ -11,7 +11,6 @@ pub mod quantities;
 pub mod transforms;
 
 use crate::{
-    data::primitives::FrameHandle,
     estimation::schema::StateSchema,
     frames::{
         quantities::{FreeVector, Point},
@@ -21,44 +20,11 @@ use crate::{
 };
 
 use nalgebra::{DMatrix, DVector, Quaternion, Translation, UnitQuaternion, Vector3};
-use serde::{Deserialize, Serialize};
-use std::{hash::Hash, sync::Arc};
+use serde::Serialize;
+use std::sync::Arc;
 
 pub use crate::state::StateVariable;
-
-/// A unique, hashable identifier for any coordinate frame in the simulation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
-pub enum FrameId {
-    /// The global ENU simulation frame. The ultimate source of truth.
-    #[default]
-    World,
-    /// A per-agent localization/SLAM origin, one drift-corrected level above
-    /// `Odom`. Identified by the agent's `FrameHandle`, so each agent's map is
-    /// distinct (`map_i != map_j`) and a fleet stitches at a shared root above
-    /// it. The `map -> odom` edge is where a localizer removes odometry drift —
-    /// it may jump on loop closure, unlike the smooth `odom -> body` edge.
-    /// Coincident with `Odom` (identity) until a localizer produces that edge.
-    Map(FrameHandle),
-    Odom(FrameHandle),
-    /// The origin of a rigid body, where dynamics are typically calculated.
-    /// Identified by the agent's unique FrameHandle.
-    Body(FrameHandle),
-    /// The specific origin of a sensor component.
-    /// Identified by the sensor's own unique FrameHandle.
-    Sensor(FrameHandle),
-}
-
-impl std::fmt::Display for FrameId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FrameId::World => f.write_str("world"),
-            FrameId::Map(handle) => write!(f, "map:{}", handle.0),
-            FrameId::Odom(handle) => write!(f, "odom:{}", handle.0),
-            FrameId::Body(handle) => write!(f, "body:{}", handle.0),
-            FrameId::Sensor(handle) => write!(f, "sensor:{}", handle.0),
-        }
-    }
-}
+pub use id::FrameId;
 
 /// The "smart" state object used by filters. It bundles the state estimate
 /// (`mean`) with its schema, covariance, and timestamp.
@@ -303,15 +269,15 @@ mod frame_aware_state_tests {
     fn pose_schema() -> Arc<StateSchema> {
         Arc::new(StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::World),
+                Quantity::Position(FrameId::world()),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::orientation(
-                FrameId::World,
-                FrameId::World,
+                FrameId::world(),
+                FrameId::world(),
                 Convention::Enu,
                 Convention::Enu,
                 Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap()),
@@ -334,8 +300,8 @@ mod frame_aware_state_tests {
             .schema
             .storage_offset_of(&StateVariable::new(
                 Quantity::Orientation {
-                    from: FrameId::World,
-                    to: FrameId::World,
+                    from: FrameId::world(),
+                    to: FrameId::world(),
                 },
                 Component::W,
             ))
@@ -347,15 +313,15 @@ mod frame_aware_state_tests {
     fn set_variable_writes_reach_the_mean() {
         let mut s = pose_state();
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
             1.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
             2.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Z),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Z),
             3.0,
         );
 
@@ -367,7 +333,7 @@ mod frame_aware_state_tests {
     fn set_variable_absent_is_noop() {
         let mut s = pose_state();
         assert!(!s.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
             9.0
         ));
     }
@@ -377,7 +343,7 @@ mod frame_aware_state_tests {
         // A position block is Euclidean, so `oplus_assign` reduces to `mean += delta`.
         let mut s = FrameAwareState::from_schema(
             Arc::new(StateSchema::compose(vec![StateSchemaBlock::new(
-                Quantity::Position(FrameId::World),
+                Quantity::Position(FrameId::world()),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
@@ -386,11 +352,11 @@ mod frame_aware_state_tests {
             0.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
             1.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
             2.0,
         );
 
@@ -414,11 +380,12 @@ mod block_extractor_tests {
     use crate::estimation::schema::StateSchemaBlock;
     use crate::frames::conventions::{Enu, Flu};
     use crate::frames::transforms::Convention;
+    use crate::data::AgentId;
     use crate::manifold::TangentNoise;
     use crate::state::Component;
 
     fn body() -> FrameId {
-        FrameId::Body(FrameHandle(1))
+        FrameId::base_link(AgentId::new("test_agent"))
     }
 
     // Isotropic 3-DOF process noise. Its value is irrelevant to a read test, but
@@ -436,14 +403,14 @@ mod block_extractor_tests {
     fn composed_state() -> FrameAwareState {
         let schema = StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::World),
+                Quantity::Position(FrameId::world()),
                 Convention::Enu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::new(
-                Quantity::Velocity(FrameId::World),
+                Quantity::Velocity(FrameId::world()),
                 Convention::Enu,
                 noise(),
                 DVector::zeros(3),
@@ -451,7 +418,7 @@ mod block_extractor_tests {
             ),
             StateSchemaBlock::orientation(
                 body(),
-                FrameId::World,
+                FrameId::world(),
                 Convention::Flu,
                 Convention::Enu,
                 noise(),
@@ -466,19 +433,19 @@ mod block_extractor_tests {
     fn position_reads_its_block() {
         let mut s = composed_state();
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
             1.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
             2.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Z),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Z),
             3.0,
         );
 
-        let p = s.position::<Enu>(FrameId::World).unwrap();
+        let p = s.position::<Enu>(FrameId::world()).unwrap();
         assert_eq!(p.raw(), &Vector3::new(1.0, 2.0, 3.0));
     }
 
@@ -488,19 +455,19 @@ mod block_extractor_tests {
         // extractor honors the block's offset rather than reading from the top.
         let mut s = composed_state();
         s.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
             4.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::Y),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Y),
             5.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::Z),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Z),
             6.0,
         );
 
-        let v = s.velocity::<Enu>(FrameId::World).unwrap();
+        let v = s.velocity::<Enu>(FrameId::world()).unwrap();
         assert_eq!(v.raw(), &Vector3::new(4.0, 5.0, 6.0));
     }
 
@@ -514,7 +481,7 @@ mod block_extractor_tests {
             &StateVariable::new(
                 Quantity::Orientation {
                     from: body(),
-                    to: FrameId::World,
+                    to: FrameId::world(),
                 },
                 Component::X,
             ),
@@ -524,7 +491,7 @@ mod block_extractor_tests {
             &StateVariable::new(
                 Quantity::Orientation {
                     from: body(),
-                    to: FrameId::World,
+                    to: FrameId::world(),
                 },
                 Component::Y,
             ),
@@ -534,7 +501,7 @@ mod block_extractor_tests {
             &StateVariable::new(
                 Quantity::Orientation {
                     from: body(),
-                    to: FrameId::World,
+                    to: FrameId::world(),
                 },
                 Component::Z,
             ),
@@ -544,14 +511,14 @@ mod block_extractor_tests {
             &StateVariable::new(
                 Quantity::Orientation {
                     from: body(),
-                    to: FrameId::World,
+                    to: FrameId::world(),
                 },
                 Component::W,
             ),
             0.0,
         );
 
-        let r = s.orientation::<Flu, Enu>(body(), FrameId::World).unwrap();
+        let r = s.orientation::<Flu, Enu>(body(), FrameId::world()).unwrap();
         let expected = UnitQuaternion::from_quaternion(Quaternion::new(0.0, 0.0, 0.0, 1.0));
         assert!(quat_eq(&r.into_inner(), &expected));
     }
@@ -560,22 +527,22 @@ mod block_extractor_tests {
     fn pose_composes_position_and_orientation() {
         let mut s = composed_state();
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
             1.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
             2.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Z),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Z),
             3.0,
         );
         s.set_variable(
             &StateVariable::new(
                 Quantity::Orientation {
                     from: body(),
-                    to: FrameId::World,
+                    to: FrameId::world(),
                 },
                 Component::Z,
             ),
@@ -585,14 +552,14 @@ mod block_extractor_tests {
             &StateVariable::new(
                 Quantity::Orientation {
                     from: body(),
-                    to: FrameId::World,
+                    to: FrameId::world(),
                 },
                 Component::W,
             ),
             0.0,
         );
 
-        let pose = s.pose::<Flu, Enu>(body(), FrameId::World).unwrap();
+        let pose = s.pose::<Flu, Enu>(body(), FrameId::world()).unwrap();
         let iso = pose.into_inner();
 
         // Translation is the reference-frame position …
@@ -606,7 +573,7 @@ mod block_extractor_tests {
     fn absent_kind_is_none() {
         // No acceleration block was composed, so the read finds nothing.
         let s = composed_state();
-        assert!(s.acceleration::<Enu>(FrameId::World).is_none());
+        assert!(s.acceleration::<Enu>(FrameId::world()).is_none());
     }
 
     #[test]
@@ -624,7 +591,7 @@ mod block_extractor_tests {
         // FLU is a wiring bug. The block exists, so the convention check fires
         // rather than returning `None` — the distinction step 4 exists to make.
         let s = composed_state();
-        let _ = s.position::<Flu>(FrameId::World);
+        let _ = s.position::<Flu>(FrameId::world());
     }
 
     #[test]
@@ -634,7 +601,7 @@ mod block_extractor_tests {
         // endpoint as ENU disagrees with the schema, so the check fires on a
         // block that is present.
         let s = composed_state();
-        let _ = s.orientation::<Enu, Enu>(body(), FrameId::World);
+        let _ = s.orientation::<Enu, Enu>(body(), FrameId::world());
     }
 
     // Quaternion equality up to the double cover: `q` and `-q` are the same

@@ -49,14 +49,14 @@ impl EstimationDynamics for ConstantVelocity3D {
     fn schema(&self) -> Arc<StateSchema> {
         Arc::new(StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::World),
+                Quantity::Position(FrameId::world()),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::new(
-                Quantity::Velocity(FrameId::World),
+                Quantity::Velocity(FrameId::world()),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
@@ -122,7 +122,7 @@ fn make_state() -> FrameAwareState {
     // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
     let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
     state.set_variable(
-        &StateVariable::new(Quantity::Velocity(FrameId::World), Component::X),
+        &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
         1.0,
     ); // vx = 1.0 m/s
     state

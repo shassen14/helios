@@ -14,9 +14,11 @@ use crate::core::transforms::{vec3_to_freevector_bevy, FromBevy};
 use crate::prelude::*;
 
 use helios_core::data::sensor::{Acceleration, AngularRate};
+use helios_core::data::AgentId;
 use helios_core::frames::conventions::Enu;
 use helios_core::frames::quantities::FreeVector;
 use helios_core::frames::transforms::Convention;
+use helios_core::frames::FrameId;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
 
@@ -209,7 +211,13 @@ fn spawn_imu_sensors(
                         Accelerometer::new(accel_model, gravity_world, sensor_pose.translation),
                         SensorTimer::from_rate(imu_config.rate),
                         accel_rng,
-                        TrackedFrame(Convention::Flu),
+                        TrackedFrame::new(
+                            FrameId::sensor(
+                                AgentId::new(request.0.name()),
+                                imu_config.get_accel_channel().to_string(),
+                            ),
+                            Convention::Flu,
+                        ),
                         sensor_pose.to_bevy_local_transform(),
                     ))
                     .id();
@@ -224,7 +232,13 @@ fn spawn_imu_sensors(
                         Gyroscope::new(gyro_model),
                         SensorTimer::from_rate(imu_config.rate),
                         gyro_rng,
-                        TrackedFrame(Convention::Flu),
+                        TrackedFrame::new(
+                            FrameId::sensor(
+                                AgentId::new(request.0.name()),
+                                imu_config.get_gyro_channel().to_string(),
+                            ),
+                            Convention::Flu,
+                        ),
                         sensor_pose.to_bevy_local_transform(),
                     ))
                     .id();

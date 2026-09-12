@@ -2,7 +2,7 @@
 pub use bevy::prelude::*;
 
 // Re-export the entire helios_core prelude so you can easily access
-// pure types like `FrameHandle`, `Dynamics`, `Measurement`, etc.
+// pure types like `FrameId`, `Dynamics`, `Measurement`, etc.
 pub use helios_core::prelude::*;
 
 // The crate's public surface: types and plugins that sim modules, `helios_test`,

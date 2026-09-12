@@ -2,7 +2,7 @@
 pub use crate::data::envelope::SensorReading;
 pub use crate::data::messages::{Odometry, Twist};
 pub use crate::data::ports::TfProvider;
-pub use crate::data::primitives::{FrameHandle, MonotonicTime};
+pub use crate::data::primitives::MonotonicTime;
 pub use crate::data::sensor::SensorPayload;
 pub use crate::data::sensor::{
     Acceleration, AngularRate, DepthImage, GpsPosition, GpsVelocity, MagneticField, RgbImage,

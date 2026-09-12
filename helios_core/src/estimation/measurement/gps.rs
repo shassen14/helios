@@ -1,7 +1,7 @@
 use nalgebra::DVector;
 
 use crate::data::ports::TfProvider;
-use crate::data::primitives::FrameHandle;
+use crate::data::AgentId;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
@@ -23,17 +23,17 @@ use crate::state::Quantity;
 /// [`SpecificForceModel`]: crate::estimation::measurement::accelerometer::SpecificForceModel
 #[derive(Debug, Clone)]
 pub struct GpsPositionModel {
-    pub agent_handle: FrameHandle,
-    /// Frame handle for the GPS antenna. Used to look up the antenna's offset
-    /// from the body origin via the TF tree at prediction time.
-    pub sensor_handle: FrameHandle,
+    pub agent: AgentId,
+    /// The GPS antenna's own frame. Used to look up the antenna's offset from the
+    /// body origin via the TF tree at prediction time.
+    pub sensor: FrameId,
 }
 
 impl MeasurementModel for GpsPositionModel {
     /// One block: antenna position in the agent's odom frame (ENU), keyed by the
-    /// agent handle — the same `FrameId` the state carries — not the sensor.
+    /// agent's odom `FrameId` — the same one the state carries — not the sensor.
     fn schema(&self) -> MeasurementSchema {
-        let frame = FrameId::Odom(self.agent_handle);
+        let frame = FrameId::odom(self.agent.clone());
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::Position(frame),
             Convention::Enu,
@@ -56,19 +56,19 @@ impl MeasurementModel for GpsPositionModel {
     ) -> Option<DVector<f64>> {
         let tf = tf?;
         let body_position_world = filter_state
-            .position::<Enu>(FrameId::Odom(self.agent_handle))
+            .position::<Enu>(FrameId::odom(self.agent.clone()))
             .map(Point::into_inner)?;
         let body_orientation_world = filter_state
             .orientation::<Flu, Enu>(
-                FrameId::Body(self.agent_handle),
-                FrameId::Odom(self.agent_handle),
+                FrameId::base_link(self.agent.clone()),
+                FrameId::odom(self.agent.clone()),
             )
             .map(Rotation::into_inner)
             .unwrap_or_default();
 
         let erased = tf.get_transform(
-            FrameId::Body(self.agent_handle),
-            FrameId::Sensor(self.sensor_handle),
+            FrameId::base_link(self.agent.clone()),
+            self.sensor.clone(),
             at,
         )?;
 
@@ -101,7 +101,7 @@ mod tests {
 
     use super::*;
     use crate::data::ports::TfProvider;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::frames::transforms::{Convention, ErasedTransform};
@@ -110,8 +110,14 @@ mod tests {
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;
 
-    const AGENT: FrameHandle = FrameHandle(1);
-    const SENSOR: FrameHandle = FrameHandle(2);
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
+    fn sensor() -> FrameId {
+        FrameId::sensor(agent(), "gps_antenna")
+    }
+
     const AT: MonotonicTime = MonotonicTime(0.0);
 
     struct FixedTf(Isometry3<f64>);
@@ -133,8 +139,8 @@ mod tests {
 
     fn make_model() -> GpsPositionModel {
         GpsPositionModel {
-            agent_handle: AGENT,
-            sensor_handle: SENSOR,
+            agent: agent(),
+            sensor: sensor(),
         }
     }
 
@@ -144,17 +150,17 @@ mod tests {
     // lever arm.
     fn make_state(px: f64, py: f64, pz: f64) -> FrameAwareState {
         let mut state =
-            FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0);
+            FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0);
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::odom(agent())), Component::X),
             px,
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::odom(agent())), Component::Y),
             py,
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::Z),
+            &StateVariable::new(Quantity::Position(FrameId::odom(agent())), Component::Z),
             pz,
         );
         state
@@ -166,12 +172,12 @@ mod tests {
         assert_eq!(schema.dim(), 3);
         assert_eq!(schema.blocks().len(), 1);
         let block = &schema.blocks()[0];
-        // Position in the agent's odom frame (ENU), keyed by AGENT — the same
-        // FrameId the state carries, so the agreement check lines up.
-        assert_eq!(block.quantity(), &Quantity::Position(FrameId::Odom(AGENT)));
+        // Position in the agent's odom frame (ENU), keyed by the agent's odom
+        // FrameId — the same one the state carries, so the agreement check lines up.
+        assert_eq!(block.quantity(), &Quantity::Position(FrameId::odom(agent())));
         assert_eq!(
             block.conventions,
-            vec![(FrameId::Odom(AGENT), Convention::Enu)]
+            vec![(FrameId::odom(agent()), Convention::Enu)]
         );
     }
 

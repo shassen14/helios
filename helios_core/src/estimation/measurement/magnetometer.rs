@@ -1,5 +1,5 @@
 use crate::{
-    data::{ports::TfProvider, primitives::FrameHandle, MonotonicTime},
+    data::{ports::TfProvider, AgentId, MonotonicTime},
     estimation::{
         measurement::MeasurementModel,
         schema::{MeasurementSchema, MeasurementSchemaBlock},
@@ -20,8 +20,8 @@ use nalgebra::{DVector, Vector3};
 /// providing an absolute heading reference.
 #[derive(Debug, Clone)]
 pub struct MagneticFieldModel {
-    pub agent_handle: FrameHandle,
-    pub sensor_handle: FrameHandle,
+    pub agent: AgentId,
+    pub sensor: FrameId,
     /// The "true" magnetic field vector in the world (ENU) frame.
     pub world_magnetic_field: Vector3<f64>,
 }
@@ -29,7 +29,7 @@ pub struct MagneticFieldModel {
 impl MeasurementModel for MagneticFieldModel {
     /// One block: the magnetic field resolved in the sensor frame (FLU).
     fn schema(&self) -> MeasurementSchema {
-        let frame = FrameId::Sensor(self.sensor_handle);
+        let frame = self.sensor.clone();
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::Mag(frame),
             Convention::Flu,
@@ -52,8 +52,8 @@ impl MeasurementModel for MagneticFieldModel {
 
         let orientation_body_to_world = filter_state
             .orientation::<Flu, Enu>(
-                FrameId::Body(self.agent_handle),
-                FrameId::Odom(self.agent_handle),
+                FrameId::base_link(self.agent.clone()),
+                FrameId::odom(self.agent.clone()),
             )
             .map(Rotation::into_inner)
             .unwrap_or_default();
@@ -61,8 +61,8 @@ impl MeasurementModel for MagneticFieldModel {
         let predicted_mag_body = q_body_from_world * self.world_magnetic_field;
 
         let erased = tf.get_transform(
-            FrameId::Body(self.agent_handle),
-            FrameId::Sensor(self.sensor_handle),
+            FrameId::base_link(self.agent.clone()),
+            self.sensor.clone(),
             at,
         )?;
 
@@ -74,7 +74,7 @@ impl MeasurementModel for MagneticFieldModel {
 
         let rot_sensor_from_body = iso.rotation;
 
-        let sensor = FrameId::Sensor(self.sensor_handle);
+        let sensor = self.sensor.clone();
         let bias = filter_state
             .mag_bias::<Flu>(sensor)
             .map(FreeVector::into_inner)
@@ -101,7 +101,7 @@ mod tests {
     //!   the bias read falls back to zero.
 
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::data::MonotonicTime;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::{Convention, ErasedTransform};
@@ -122,8 +122,8 @@ mod tests {
     // `[x, y, z, w] = [0, 0, 0, 1]`.
     fn orientation_block() -> StateSchemaBlock {
         StateSchemaBlock::orientation(
-            FrameId::Body(AGENT),
-            FrameId::Odom(AGENT),
+            FrameId::base_link(agent()),
+            FrameId::odom(agent()),
             Convention::Flu,
             Convention::Enu,
             noise(),
@@ -132,8 +132,14 @@ mod tests {
         )
     }
 
-    const AGENT: FrameHandle = FrameHandle(1);
-    const SENSOR: FrameHandle = FrameHandle(2);
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
+    fn sensor() -> FrameId {
+        FrameId::sensor(agent(), "magnetometer")
+    }
+
     const AT: MonotonicTime = MonotonicTime(0.0);
 
     /// Reports one fixed extrinsic — the sensor's pose in body axes — for every
@@ -166,7 +172,7 @@ mod tests {
 
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
         let q = UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2);
-        let (body, world) = (FrameId::Body(AGENT), FrameId::Odom(AGENT));
+        let (body, world) = (FrameId::base_link(agent()), FrameId::odom(agent()));
         state.set_variable(
             &StateVariable::new(
                 Quantity::Orientation {
@@ -211,8 +217,8 @@ mod tests {
 
     fn make_model() -> MagneticFieldModel {
         MagneticFieldModel {
-            agent_handle: AGENT,
-            sensor_handle: SENSOR,
+            agent: agent(),
+            sensor: sensor(),
             world_magnetic_field: Vector3::new(0.0, 1.0, 0.0),
         }
     }
@@ -221,7 +227,7 @@ mod tests {
     /// hard-iron bias block for `SENSOR`, the bias initialised to `bias`.
     /// Orientation is identity, so the field prediction isolates the bias term.
     fn make_augmented_state(bias: Vector3<f64>) -> FrameAwareState {
-        let sensor = FrameId::Sensor(SENSOR);
+        let sensor = sensor();
         let schema = StateSchema::compose(vec![
             orientation_block(),
             StateSchemaBlock::new(
@@ -254,10 +260,10 @@ mod tests {
         assert_eq!(schema.dim(), 3);
         assert_eq!(schema.blocks().len(), 1);
         let block = &schema.blocks()[0];
-        assert_eq!(block.quantity(), &Quantity::Mag(FrameId::Sensor(SENSOR)));
+        assert_eq!(block.quantity(), &Quantity::Mag(sensor()));
         assert_eq!(
             block.conventions,
-            vec![(FrameId::Sensor(SENSOR), Convention::Flu)]
+            vec![(sensor(), Convention::Flu)]
         );
     }
 
@@ -355,7 +361,7 @@ mod tests {
         // the orientation block ahead of it spending one fewer tangent than it
         // stores).
         let model = make_model();
-        let sensor = FrameId::Sensor(SENSOR);
+        let sensor = sensor();
         let state = make_augmented_state(Vector3::zeros());
         let off = state
             .schema()

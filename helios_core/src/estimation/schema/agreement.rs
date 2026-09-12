@@ -53,7 +53,7 @@ fn check_block(
             Some(_) => {}
             // Not anchored by the state, but the sensor's own device frame — its
             // convention is the sensor model's to declare, not ours to check.
-            None if matches!(frame, FrameId::Sensor(_)) => {}
+            None if frame.is_sensor() => {}
             // Neither anchored by the state nor a sensor frame: nothing to check
             // against.
             None => {
@@ -124,19 +124,19 @@ impl std::error::Error for MeasurementAgreementError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::estimation::schema::StateSchemaBlock;
     use crate::manifold::TangentNoise;
 
     use nalgebra::{DMatrix, DVector};
 
-    // A single agent and a sensor mounted on it. Distinct handles so a frame
+    // A single agent and a sensor mounted on it. Distinct leaves so a frame
     // mixup would surface as a mismatched id rather than an accidental match.
-    fn agent() -> FrameHandle {
-        FrameHandle(1)
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
     }
-    fn sensor() -> FrameHandle {
-        FrameHandle(3)
+    fn sensor() -> FrameId {
+        FrameId::sensor(agent(), "sensor0")
     }
 
     fn noise(var: f64) -> Option<TangentNoise> {
@@ -152,15 +152,15 @@ mod tests {
     fn anchored_state() -> StateSchema {
         StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::Odom(agent())),
+                Quantity::Position(FrameId::odom(agent())),
                 Convention::Enu,
                 noise(0.1),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::orientation(
-                FrameId::Body(agent()),
-                FrameId::Odom(agent()),
+                FrameId::base_link(agent()),
+                FrameId::odom(agent()),
                 Convention::Flu,
                 Convention::Enu,
                 noise(0.1),
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn direct_readout_with_matching_convention_agrees() {
         let state = anchored_state();
-        let m = one(Quantity::Position(FrameId::Odom(agent())), Convention::Enu);
+        let m = one(Quantity::Position(FrameId::odom(agent())), Convention::Enu);
         assert!(check_measurement_state_agreement(&state, &m).is_ok());
     }
 
@@ -191,7 +191,7 @@ mod tests {
         // Same quantity the state tracks (position in odom), but declared FLU
         // where the state holds ENU: the innovation would mix axis conventions.
         let state = anchored_state();
-        let m = one(Quantity::Position(FrameId::Odom(agent())), Convention::Flu);
+        let m = one(Quantity::Position(FrameId::odom(agent())), Convention::Flu);
 
         let err = check_measurement_state_agreement(&state, &m).unwrap_err();
         assert!(matches!(
@@ -209,7 +209,7 @@ mod tests {
         // declares FLU too.
         let state = anchored_state();
         let m = one(
-            Quantity::SpecificForce(FrameId::Body(agent())),
+            Quantity::SpecificForce(FrameId::base_link(agent())),
             Convention::Flu,
         );
         assert!(check_measurement_state_agreement(&state, &m).is_ok());
@@ -224,7 +224,7 @@ mod tests {
         // of folding the two cases into one frame lookup.
         let state = anchored_state();
         let m = one(
-            Quantity::SpecificForce(FrameId::Body(agent())),
+            Quantity::SpecificForce(FrameId::base_link(agent())),
             Convention::Enu,
         );
 
@@ -235,7 +235,7 @@ mod tests {
                 measurement,
                 ..
             } => {
-                assert_eq!(frame, FrameId::Body(agent()));
+                assert_eq!(frame, FrameId::base_link(agent()));
                 assert_eq!(state, Convention::Flu);
                 assert_eq!(measurement, Convention::Enu);
             }
@@ -254,7 +254,7 @@ mod tests {
         let state = anchored_state();
         for convention in [Convention::Flu, Convention::Enu] {
             let m = one(
-                Quantity::SpecificForce(FrameId::Sensor(sensor())),
+                Quantity::SpecificForce(sensor()),
                 convention,
             );
             assert!(check_measurement_state_agreement(&state, &m).is_ok());
@@ -266,11 +266,11 @@ mod tests {
         // World is neither tracked by this state nor a sensor frame, so there is
         // no convention to check against.
         let state = anchored_state();
-        let m = one(Quantity::SpecificForce(FrameId::World), Convention::Enu);
+        let m = one(Quantity::SpecificForce(FrameId::world()), Convention::Enu);
 
         match check_measurement_state_agreement(&state, &m).unwrap_err() {
             MeasurementAgreementError::UnanchorableFrame { frame, .. } => {
-                assert_eq!(frame, FrameId::World);
+                assert_eq!(frame, FrameId::world());
             }
             other => panic!("expected UnanchorableFrame, got {other:?}"),
         }
@@ -283,11 +283,11 @@ mod tests {
         let state = anchored_state();
         let m = MeasurementSchema::compose(vec![
             MeasurementSchemaBlock::new(
-                Quantity::Position(FrameId::Odom(agent())),
+                Quantity::Position(FrameId::odom(agent())),
                 Convention::Enu,
             ),
             MeasurementSchemaBlock::new(
-                Quantity::SpecificForce(FrameId::Sensor(sensor())),
+                Quantity::SpecificForce(sensor()),
                 Convention::Flu,
             ),
         ]);
@@ -301,11 +301,11 @@ mod tests {
         let state = anchored_state();
         let m = MeasurementSchema::compose(vec![
             MeasurementSchemaBlock::new(
-                Quantity::Position(FrameId::Odom(agent())),
+                Quantity::Position(FrameId::odom(agent())),
                 Convention::Flu,
             ),
             MeasurementSchemaBlock::new(
-                Quantity::SpecificForce(FrameId::Sensor(sensor())),
+                Quantity::SpecificForce(sensor()),
                 Convention::Flu,
             ),
         ]);

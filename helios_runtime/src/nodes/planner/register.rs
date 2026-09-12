@@ -57,13 +57,13 @@ mod tests {
 
     use crate::port::InternalChannel;
 
-    use helios_core::data::primitives::FrameHandle;
+    use helios_core::data::AgentId;
     use helios_core::mapping::MapData;
     use helios_core::planning::types::Path;
 
     fn context(instance_name: &str) -> SearchPlannerBuildContext {
         SearchPlannerBuildContext {
-            agent_handle: FrameHandle(0),
+            agent: AgentId::new("test_agent"),
             instance_name: instance_name.to_string(),
             config: SearchPlannerConfig::AStar {
                 rate: 10.0,

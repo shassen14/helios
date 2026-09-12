@@ -19,9 +19,10 @@ use helios_core::frames::FrameId;
 /// The only external interface [`AutonomyPipeline`](crate::pipeline::AutonomyPipeline)
 /// uses to query world state.
 ///
-/// Implementations must be `Send + Sync`. `FrameHandle` IDs encode Bevy `Entity` bits
-/// in simulation and static calibration IDs on hardware — the trait is agnostic to the
-/// encoding.
+/// Implementations must be `Send + Sync`. A [`FrameId`] names a frame by scope
+/// (world, or a specific agent) and leaf, independent of any host entity or
+/// handle, so the same query is valid in simulation and on hardware — the host
+/// maps it to whatever its own scene or calibration uses to hold the pose.
 ///
 /// # Implementing for a New Host
 ///
@@ -51,7 +52,7 @@ pub trait AgentRuntime: Send + Sync {
 }
 
 /// Adapts `&dyn AgentRuntime` to the `TfProvider` trait expected by `FilterContext`.
-/// Zero-cost: both `AgentRuntime` and `TfProvider` use `FrameHandle` directly.
+/// Zero-cost: both `AgentRuntime` and `TfProvider` take the same `FrameId` query.
 pub(crate) struct TfProviderAdapter<'a>(pub &'a dyn AgentRuntime);
 
 impl TfProvider for TfProviderAdapter<'_> {

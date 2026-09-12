@@ -1,5 +1,5 @@
 use crate::data::ports::TfProvider;
-use crate::data::primitives::FrameHandle;
+use crate::data::AgentId;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
@@ -30,8 +30,8 @@ use nalgebra::{DVector, Vector3};
 /// the lever-arm terms a sensor mounted off the body origin also feels.
 #[derive(Debug, Clone)]
 pub struct SpecificForceModel {
-    pub agent_handle: FrameHandle,
-    pub sensor_handle: FrameHandle,
+    pub agent: AgentId,
+    pub sensor: FrameId,
     pub gravity_world: Vector3<f64>,
 }
 
@@ -40,7 +40,7 @@ impl MeasurementModel for SpecificForceModel {
     /// its own quantity, distinct from the state's kinematic `Acceleration`, so
     /// the construction-time agreement check never conflates the two.
     fn schema(&self) -> MeasurementSchema {
-        let frame = FrameId::Sensor(self.sensor_handle);
+        let frame = self.sensor.clone();
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::SpecificForce(frame),
             Convention::Flu,
@@ -60,11 +60,11 @@ impl MeasurementModel for SpecificForceModel {
         at: MonotonicTime,
     ) -> Option<DVector<f64>> {
         let tf = tf?;
-        let body_frame = FrameId::Body(self.agent_handle);
+        let body_frame = FrameId::base_link(self.agent.clone());
 
         let erased = tf.get_transform(
-            FrameId::Body(self.agent_handle),
-            FrameId::Sensor(self.sensor_handle),
+            FrameId::base_link(self.agent.clone()),
+            self.sensor.clone(),
             at,
         )?;
 
@@ -90,7 +90,7 @@ impl MeasurementModel for SpecificForceModel {
             .map(FreeVector::into_inner)
             .unwrap_or_default();
         let orientation_body_to_world = filter_state
-            .orientation::<Flu, Enu>(body_frame.clone(), FrameId::Odom(self.agent_handle))
+            .orientation::<Flu, Enu>(body_frame.clone(), FrameId::odom(self.agent.clone()))
             .map(Rotation::into_inner)
             .unwrap_or_default();
 
@@ -116,7 +116,7 @@ impl MeasurementModel for SpecificForceModel {
 mod tests {
     use super::*;
     use crate::data::ports::TfProvider;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::frames::transforms::{Convention, ErasedTransform};
@@ -126,8 +126,14 @@ mod tests {
     use nalgebra::Isometry3;
     use std::sync::Arc;
 
-    const AGENT: FrameHandle = FrameHandle(1);
-    const SENSOR: FrameHandle = FrameHandle(2);
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
+    fn sensor() -> FrameId {
+        FrameId::sensor(agent(), "imu")
+    }
+
     const AT: MonotonicTime = MonotonicTime(0.0);
 
     struct IdentityTf;
@@ -148,8 +154,8 @@ mod tests {
 
     fn make_model() -> SpecificForceModel {
         SpecificForceModel {
-            agent_handle: AGENT,
-            sensor_handle: SENSOR,
+            agent: agent(),
+            sensor: sensor(),
             gravity_world: Vector3::new(0.0, 0.0, -9.81),
         }
     }
@@ -158,7 +164,7 @@ mod tests {
     // body-frame acceleration and angular-acceleration reads have no block here
     // and fall back to zero, as they do against a real INS estimate.
     fn make_state() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0)
+        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0)
     }
 
     #[test]
@@ -171,11 +177,11 @@ mod tests {
         // agreement check never mistakes it for the state's Acceleration block.
         assert_eq!(
             block.quantity(),
-            &Quantity::SpecificForce(FrameId::Sensor(SENSOR))
+            &Quantity::SpecificForce(sensor())
         );
         assert_eq!(
             block.conventions,
-            vec![(FrameId::Sensor(SENSOR), Convention::Flu)]
+            vec![(sensor(), Convention::Flu)]
         );
     }
 

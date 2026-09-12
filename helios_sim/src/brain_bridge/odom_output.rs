@@ -5,11 +5,11 @@
 
 use bevy::prelude::*;
 
-use helios_core::data::primitives::FrameHandle;
+use helios_core::data::AgentId;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::FrameId;
 
-use crate::brain_bridge::components::{AutonomyPipelineComponent, OdomFrameOf};
+use crate::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf};
 use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};
 
 /// Updates each odom frame's `Transform` from the pipeline's current pose estimate.
@@ -21,20 +21,21 @@ use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};
 /// TF tree from the estimate. Chaining it into the same set as the tick that
 /// produces the estimate is what keeps them coherent.
 pub fn update_odom_frames(
-    agent_query: Query<&AutonomyPipelineComponent>,
+    agent_query: Query<(&AutonomyPipelineComponent, &AgentIdComponent)>,
     mut odom_query: Query<(&OdomFrameOf, &mut Transform)>,
 ) {
     for (odom_of, mut transform) in &mut odom_query {
-        let Ok(pipeline) = agent_query.get(odom_of.0) else {
+        let Ok((pipeline, agent_id)) = agent_query.get(odom_of.0) else {
             continue;
         };
 
-        let handle = FrameHandle::from_entity(odom_of.0);
-        let body = FrameId::Body(handle);
-        if let Some(pose) = pipeline.0.read_state().and_then(|st| {
-            st.value
-                .pose::<Flu, Enu>(body.clone(), FrameId::Odom(handle))
-        }) {
+        let agent = AgentId::new(agent_id.0.as_str());
+        let body = FrameId::base_link(agent.clone());
+        if let Some(pose) = pipeline
+            .0
+            .read_state()
+            .and_then(|st| st.value.pose::<Flu, Enu>(body.clone(), FrameId::odom(agent.clone())))
+        {
             *transform = transform_bevy_to_bevy_transform(pose.to_bevy());
         }
     }

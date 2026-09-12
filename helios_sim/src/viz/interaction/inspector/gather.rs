@@ -524,32 +524,32 @@ mod tests {
             )
         };
         let schema = StateSchema::compose(vec![
-            flat(Quantity::Position(FrameId::World), Convention::Enu),
-            flat(Quantity::Velocity(FrameId::World), Convention::Enu),
+            flat(Quantity::Position(FrameId::world()), Convention::Enu),
+            flat(Quantity::Velocity(FrameId::world()), Convention::Enu),
         ]);
         let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
             position[0],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
             position[1],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Z),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Z),
             position[2],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
             velocity[0],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::Y),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Y),
             velocity[1],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::Z),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Z),
             velocity[2],
         );
         state

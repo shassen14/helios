@@ -7,8 +7,9 @@ use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
 use helios_core::control::actuators::ActuatorCommand;
-use helios_core::data::primitives::FrameHandle;
+use helios_core::data::AgentId;
 use helios_core::frames::transforms::Convention;
+use helios_core::frames::FrameId;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::config::ReferenceSource;
 use helios_runtime::{
@@ -16,12 +17,12 @@ use helios_runtime::{
     PublishedChannel,
 };
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashSet};
 
 /// Spawns the autonomy pipeline for agents with real estimation.
 ///
 /// Queries each agent's sensor children for `SensorPublishChannel` to build
-/// the channel→FrameHandle map passed to `build_pipeline()`.
+/// the set of sensor channel names passed to `build_pipeline()`.
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
     agent_query: Query<(Entity, &SpawnAgentConfigRequest, &Children)>,
@@ -32,7 +33,7 @@ pub fn spawn_autonomy_pipeline(
     for (agent_entity, request, children) in &agent_query {
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
-        let agent_handle = FrameHandle::from_entity(agent_entity);
+        let agent = AgentId::new(agent_config.name());
 
         if let Err(mismatches) = check_actuation_agreement(stack, &agent_config.vehicle.actuation) {
             for mismatch in &mismatches {
@@ -51,14 +52,13 @@ pub fn spawn_autonomy_pipeline(
             continue;
         }
 
-        let sensor_frame_handles: HashMap<String, FrameHandle> = children
+        // The set of sensor channel names this agent's host publishes. The
+        // assembler builds each sensor's `FrameId::sensor(agent, channel)` from
+        // these names — the same identity the sensor spawners stamp on the tf
+        // tree — so the map of old is now just the name set.
+        let sensor_channels: HashSet<String> = children
             .iter()
-            .filter_map(|child| {
-                channel_query
-                    .get(child)
-                    .ok()
-                    .map(|ch| (ch.0.clone(), FrameHandle::from_entity(child)))
-            })
+            .filter_map(|child| channel_query.get(child).ok().map(|ch| ch.0.clone()))
             .collect();
 
         let host_capabilities = build_host_body_capabilities(agent_config.name());
@@ -70,8 +70,8 @@ pub fn spawn_autonomy_pipeline(
         match build_pipeline(
             stack,
             &registry.0,
-            agent_handle,
-            &sensor_frame_handles,
+            agent,
+            &sensor_channels,
             host_capabilities,
         ) {
             Ok(pipeline) => {
@@ -134,7 +134,10 @@ pub fn spawn_odom_frames(
             // of the estimation stack, not the vehicle — every agent's odom shares
             // it regardless of body convention. A future NED-world estimator would
             // make this configurable at the estimator layer, not per vehicle.
-            TrackedFrame(Convention::Enu),
+            TrackedFrame::new(
+                FrameId::odom(AgentId::new(agent_name)),
+                Convention::Enu,
+            ),
             Transform::IDENTITY,
             GlobalTransform::IDENTITY,
             OdomFrameOf(agent_entity),
@@ -223,6 +226,8 @@ mod tests {
     use super::*;
 
     use helios_runtime::config::SearchPlannerConfig;
+
+    use std::collections::HashMap;
 
     /// A minimal `AStar` planner whose only field that matters here is its goal
     /// channel — the rest are defaults, present only because the variant requires

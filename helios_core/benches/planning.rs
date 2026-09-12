@@ -31,7 +31,7 @@ fn bench_config() -> AStarConfig {
 
 fn make_state(x: f64, y: f64) -> FrameAwareState {
     let schema = Arc::new(StateSchema::compose(vec![StateSchemaBlock::new(
-        Quantity::Position(FrameId::World),
+        Quantity::Position(FrameId::world()),
         Convention::Enu,
         None,
         DVector::zeros(3),
@@ -39,11 +39,11 @@ fn make_state(x: f64, y: f64) -> FrameAwareState {
     )]));
     let mut state = FrameAwareState::from_schema(schema, 0.0);
     state.set_variable(
-        &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+        &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
         x,
     );
     state.set_variable(
-        &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+        &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
         y,
     );
     state
