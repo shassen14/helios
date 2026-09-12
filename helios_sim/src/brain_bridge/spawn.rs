@@ -7,7 +7,6 @@ use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
 use helios_core::control::actuators::ActuatorCommand;
-use helios_core::data::AgentId;
 use helios_core::frames::transforms::Convention;
 use helios_core::frames::FrameId;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
@@ -25,15 +24,18 @@ use std::collections::{BTreeSet, HashSet};
 /// the set of sensor channel names passed to `build_pipeline()`.
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
-    agent_query: Query<(Entity, &SpawnAgentConfigRequest, &Children)>,
+    agent_query: Query<(Entity, &SpawnAgentConfigRequest, &AgentIdComponent, &Children)>,
     channel_query: Query<&SensorPublishChannel>,
     registry: Res<RuntimeAutonomyRegistry>,
 ) {
     let _span = tracing::info_span!("sim.scene_build.autonomy").entered();
-    for (agent_entity, request, children) in &agent_query {
+    for (agent_entity, request, agent_id, children) in &agent_query {
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
-        let agent = AgentId::new(agent_config.name());
+        // The canonical scope stamped on the shell at `CreateRequests`; the
+        // assembler builds every sensor's `FrameId::sensor(agent, channel)` from
+        // it, matching what the sensor spawners stamped on the tf tree.
+        let agent = agent_id.0.clone();
 
         if let Err(mismatches) = check_actuation_agreement(stack, &agent_config.vehicle.actuation) {
             for mismatch in &mismatches {
@@ -45,7 +47,6 @@ pub fn spawn_autonomy_pipeline(
             }
             commands
                 .entity(agent_entity)
-                .insert(AgentIdComponent(agent_config.name().to_string()))
                 .insert(PipelineBuildFailed {
                     errors: mismatches.iter().map(|m| m.to_string()).collect(),
                 });
@@ -75,13 +76,13 @@ pub fn spawn_autonomy_pipeline(
             host_capabilities,
         ) {
             Ok(pipeline) => {
-                // Insert the id in the same chain as the pipeline so the test
-                // bridge's `(&AgentId, &AutonomyPipelineComponent)` query can
-                // never see one without the other.
+                // `AgentIdComponent` is already on the shell (stamped at
+                // `CreateRequests`), so the test bridge's
+                // `(&AgentIdComponent, &AutonomyPipelineComponent)` query still
+                // never sees a pipeline without its identity.
                 let mut cmds = commands.entity(agent_entity);
 
-                cmds.insert(AgentIdComponent(agent_config.name().to_string()))
-                    .insert(AutonomyPipelineComponent(pipeline));
+                cmds.insert(AutonomyPipelineComponent(pipeline));
 
                 if !goal_channels.is_empty() {
                     cmds.insert(MissionGoalChannels(goal_channels.into_iter().collect()));
@@ -112,7 +113,6 @@ pub fn spawn_autonomy_pipeline(
                 // otherwise notice it is inert.
                 commands
                     .entity(agent_entity)
-                    .insert(AgentIdComponent(agent_config.name().to_string()))
                     .insert(PipelineBuildFailed {
                         errors: errors.iter().map(|e| e.to_string()).collect(),
                     });
@@ -124,25 +124,22 @@ pub fn spawn_autonomy_pipeline(
 /// Spawns odom frame entities for agents that have an `AutonomyPipelineComponent`.
 pub fn spawn_odom_frames(
     mut commands: Commands,
-    agent_query: Query<(Entity, &SpawnAgentConfigRequest), With<AutonomyPipelineComponent>>,
+    agent_query: Query<(Entity, &AgentIdComponent), With<AutonomyPipelineComponent>>,
 ) {
-    for (agent_entity, request) in &agent_query {
-        let agent_name = request.0.name();
+    for (agent_entity, agent_id) in &agent_query {
+        let agent = &agent_id.0;
         commands.spawn((
-            Name::new(format!("{}/odom", agent_name)),
+            Name::new(format!("{}/odom", agent)),
             // ENU because the estimator's world frame is ENU. This is a property
             // of the estimation stack, not the vehicle — every agent's odom shares
             // it regardless of body convention. A future NED-world estimator would
             // make this configurable at the estimator layer, not per vehicle.
-            TrackedFrame::new(
-                FrameId::odom(AgentId::new(agent_name)),
-                Convention::Enu,
-            ),
+            TrackedFrame::new(FrameId::odom(agent.clone()), Convention::Enu),
             Transform::IDENTITY,
             GlobalTransform::IDENTITY,
             OdomFrameOf(agent_entity),
         ));
-        info!("[OdomFrame] Spawned odom frame for '{}'", agent_name);
+        info!("[OdomFrame] Spawned odom frame for '{}'", agent);
     }
 }
 

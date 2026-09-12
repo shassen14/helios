@@ -5,7 +5,6 @@
 
 use bevy::prelude::*;
 
-use helios_core::data::AgentId;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::FrameId;
 
@@ -29,7 +28,7 @@ pub fn update_odom_frames(
             continue;
         };
 
-        let agent = AgentId::new(agent_id.0.as_str());
+        let agent = agent_id.0.clone();
         let body = FrameId::base_link(agent.clone());
         if let Some(pose) = pipeline
             .0

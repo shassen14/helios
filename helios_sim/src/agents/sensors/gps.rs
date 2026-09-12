@@ -7,11 +7,11 @@ use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
 use crate::{
-    agents::sensors::state_sensor::SensorTimer, brain_bridge::components::SensorPublishChannel,
+    agents::sensors::state_sensor::SensorTimer,
+    brain_bridge::components::{AgentIdComponent, SensorPublishChannel},
 };
 
 use helios_core::data::sensor::GpsPosition;
-use helios_core::data::AgentId;
 use helios_core::frames::transforms::Convention;
 use helios_core::frames::FrameId;
 use helios_core::sensors::gps::GpsModel;
@@ -72,10 +72,10 @@ impl Plugin for GpsPlugin {
 /// an error instead of spawning a degenerate one.
 fn spawn_gps_sensors(
     mut commands: Commands,
-    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
+    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest, &AgentIdComponent)>,
     master_seed: Res<MasterSeed>,
 ) {
-    for (agent_entity, agent_name, request) in &request_query {
+    for (agent_entity, agent_name, request, agent_id) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Gps(gps_config) = sensor_config {
                 info!(
@@ -109,10 +109,7 @@ fn spawn_gps_sensors(
                         SensorTimer::from_rate(gps_config.rate),
                         sensor_rng,
                         TrackedFrame::new(
-                            FrameId::sensor(
-                                AgentId::new(request.0.name()),
-                                gps_config.channel.clone(),
-                            ),
+                            FrameId::sensor(agent_id.0.clone(), gps_config.channel.clone()),
                             Convention::Flu,
                         ),
                         gps_config.get_relative_pose().to_bevy_local_transform(),

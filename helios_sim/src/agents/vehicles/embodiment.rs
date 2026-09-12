@@ -5,7 +5,6 @@ use crate::registry::contexts::{
 };
 use crate::registry::embodiment::EmbodimentRegistry;
 
-use helios_core::data::AgentId;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::transforms::Transform as CoreTransform;
 
@@ -28,9 +27,17 @@ pub(super) fn build_embodiment(
     registry: Res<EmbodimentRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    query: Query<(Entity, &GroundTruthState, &SpawnAgentConfigRequest), Without<RigidBody>>,
+    query: Query<
+        (
+            Entity,
+            &GroundTruthState,
+            &SpawnAgentConfigRequest,
+            &AgentIdComponent,
+        ),
+        Without<RigidBody>,
+    >,
 ) {
-    for (entity, ground_truth, request) in &query {
+    for (entity, ground_truth, request, agent_id) in &query {
         let vehicle = &request.0.vehicle;
         let start_transform = transform_bevy_to_bevy_transform(
             CoreTransform::<Flu, Enu>::from_isometry(ground_truth.pose).to_bevy(),
@@ -44,7 +51,7 @@ pub(super) fn build_embodiment(
         };
         let mut ctx = TopologyBuildContext {
             entity,
-            agent: AgentId::new(request.0.name()),
+            agent: agent_id.0.clone(),
             commands: &mut commands,
             config: &vehicle.topology,
             start_transform,

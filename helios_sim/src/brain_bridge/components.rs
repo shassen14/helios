@@ -1,3 +1,4 @@
+use helios_core::data::AgentId;
 use helios_runtime::pipeline::AutonomyPipeline;
 
 use bevy::prelude::{Component, Entity};
@@ -8,23 +9,30 @@ use bevy::prelude::{Component, Entity};
 #[derive(Component)]
 pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
 
-/// The agent's stable, human-meaningful identity — the bare name from `agent_config.name()` (e.g. `"rover_1"`), *not* the composite `Name`
-/// (`"rover_1/base_link"`). Written at spawn time by `spawn_autonomy_pipeline`
-/// onto every agent it processes, in the same insert as the outcome of the
-/// build — [`AutonomyPipelineComponent`] on success, [`PipelineBuildFailed`]
-/// on failure. So a query for `(&AgentIdComponent, &AutonomyPipelineComponent)`
-/// never sees a pipeline without its identity, and a failed agent is still
-/// nameable in a report.
+/// The agent's canonical coordinate-frame identity — the typed [`AgentId`] built
+/// once from `agent_config.name()` (e.g. `"rover_1"`), *not* the composite `Name`
+/// (`"rover_1/base_link"`). Stamped at shell-spawn time (`spawn_agent_shells`, in
+/// `SceneBuildSet::CreateRequests`) so it is present before any frame producer
+/// runs — the vehicle topology, every sensor spawner, the odom frame, and the
+/// pipeline assembler all read *this* value rather than each re-deriving an
+/// `AgentId` from a name string in scope.
 ///
-/// This is the external identity used in reports, assertion targets, and (later)
-/// determinism hashing — distinct from the Bevy `Entity`, which is an internal
-/// handle: generational, run-unstable, and meaningless on hardware.
+/// Single-sourcing the scope this way is what makes the aiding-drop bug
+/// unrepresentable: there is one `AgentId` on the entity, so no producer can
+/// silently stamp a frame under a divergent identity (the class of failure that
+/// once dropped a GPS aiding update and let the estimate drift — gh #65). The
+/// `Name` label stays purely cosmetic.
 ///
-/// String-backed is fine while assertion targets are few. Interning the name
-/// for cheap per-tick comparison at swarm scale is deliberately out of scope.
-// TODO: Make String Arc<str> instead
+/// Present on *every* agent from `CreateRequests` onward, so a query for
+/// `(&AgentIdComponent, &AutonomyPipelineComponent)` still never sees a pipeline
+/// without its identity, and a `PipelineBuildFailed` agent is still nameable in a
+/// report.
+///
+/// This is also the external identity used in reports, assertion targets, and
+/// (later) determinism hashing — distinct from the Bevy `Entity`, which is an
+/// internal handle: generational, run-unstable, and meaningless on hardware.
 #[derive(Component)]
-pub struct AgentIdComponent(pub String);
+pub struct AgentIdComponent(pub AgentId);
 
 /// Records that this agent's autonomy pipeline could not be assembled, and why.
 ///

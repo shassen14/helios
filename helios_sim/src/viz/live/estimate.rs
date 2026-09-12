@@ -12,7 +12,6 @@
 
 use bevy::prelude::*;
 
-use helios_core::data::AgentId;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::FrameId;
 
@@ -32,7 +31,7 @@ pub fn estimate_update_system(
     mut gizmos: Gizmos,
 ) {
     for (pipeline, agent_id) in &query {
-        let agent = AgentId::new(agent_id.0.as_str());
+        let agent = agent_id.0.clone();
         let body = FrameId::base_link(agent.clone());
         let Some(pose) = pipeline
             .0

@@ -7,7 +7,6 @@ use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::MonotonicTime;
-use helios_core::data::AgentId;
 use helios_core::frames::conventions::Flu;
 use helios_core::frames::quantities::FreeVector;
 use helios_core::frames::transforms::Convention;
@@ -48,10 +47,10 @@ impl Plugin for RaycastingSensorPlugin {
 
 fn spawn_raycasting_sensors(
     mut commands: Commands,
-    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
+    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest, &AgentIdComponent)>,
     master_seed: Res<MasterSeed>,
 ) {
-    for (agent_entity, agent_name, request) in &request_query {
+    for (agent_entity, agent_name, request, agent_id) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Lidar(lidar_config) = sensor_config {
                 info!(
@@ -107,7 +106,7 @@ fn spawn_raycasting_sensors(
                     sensor_rng,
                     TrackedFrame::new(
                         FrameId::sensor(
-                            AgentId::new(request.0.name()),
+                            agent_id.0.clone(),
                             lidar_config.get_channel().to_string(),
                         ),
                         Convention::Flu,

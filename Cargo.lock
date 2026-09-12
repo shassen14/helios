@@ -3377,7 +3377,6 @@ name = "helios_core"
 version = "0.1.0"
 dependencies = [
  "approx",
- "bevy_ecs",
  "codspeed-criterion-compat",
  "dyn-clone",
  "nalgebra",

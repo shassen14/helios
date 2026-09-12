@@ -14,7 +14,6 @@ use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
 
 use helios_core::data::sensor::MagneticField;
-use helios_core::data::AgentId;
 use helios_core::frames::transforms::Convention;
 use helios_core::frames::FrameId;
 use helios_core::sensors::magnetometer::MagnetometerModel;
@@ -82,13 +81,13 @@ impl Plugin for MagnetometerPlugin {
 /// error instead of spawning a degenerate one.
 fn spawn_magnetometer_sensors(
     mut commands: Commands,
-    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
+    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest, &AgentIdComponent)>,
     config: Res<ScenarioConfig>,
     master_seed: Res<MasterSeed>,
 ) {
     let magnetic_field = &config.common.world.magnetic_field;
 
-    for (agent_entity, agent_name, request) in &request_query {
+    for (agent_entity, agent_name, request, agent_id) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Magnetometer(mag_config) = sensor_config {
                 info!(
@@ -126,10 +125,7 @@ fn spawn_magnetometer_sensors(
                         SensorTimer::from_rate(mag_config.rate),
                         sensor_rng,
                         TrackedFrame::new(
-                            FrameId::sensor(
-                                AgentId::new(request.0.name()),
-                                mag_config.channel.clone(),
-                            ),
+                            FrameId::sensor(agent_id.0.clone(), mag_config.channel.clone()),
                             Convention::Flu,
                         ),
                         mag_config.get_relative_pose().to_bevy_local_transform(),

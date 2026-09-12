@@ -14,7 +14,6 @@ use crate::core::transforms::{vec3_to_freevector_bevy, FromBevy};
 use crate::prelude::*;
 
 use helios_core::data::sensor::{Acceleration, AngularRate};
-use helios_core::data::AgentId;
 use helios_core::frames::conventions::Enu;
 use helios_core::frames::quantities::FreeVector;
 use helios_core::frames::transforms::Convention;
@@ -154,14 +153,14 @@ impl Plugin for ImuPlugin {
 /// with an error — half an IMU would be more confusing than none.
 fn spawn_imu_sensors(
     mut commands: Commands,
-    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
+    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest, &AgentIdComponent)>,
     gravity: Res<Gravity>,
     master_seed: Res<MasterSeed>,
 ) {
     let gravity_enu: FreeVector<Enu> = vec3_to_freevector_bevy(gravity.0).from_bevy();
     let gravity_world = gravity_enu.into_inner();
 
-    for (agent_entity, agent_name, request) in &request_query {
+    for (agent_entity, agent_name, request, agent_id) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Imu(imu_config) = sensor_config {
                 info!(
@@ -213,7 +212,7 @@ fn spawn_imu_sensors(
                         accel_rng,
                         TrackedFrame::new(
                             FrameId::sensor(
-                                AgentId::new(request.0.name()),
+                                agent_id.0.clone(),
                                 imu_config.get_accel_channel().to_string(),
                             ),
                             Convention::Flu,
@@ -234,7 +233,7 @@ fn spawn_imu_sensors(
                         gyro_rng,
                         TrackedFrame::new(
                             FrameId::sensor(
-                                AgentId::new(request.0.name()),
+                                agent_id.0.clone(),
                                 imu_config.get_gyro_channel().to_string(),
                             ),
                             Convention::Flu,
