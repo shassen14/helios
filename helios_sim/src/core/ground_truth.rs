@@ -1,6 +1,8 @@
 use crate::brain_bridge::AutonomyPipelineComponent;
 use crate::core::components::GroundTruthState;
-use crate::core::transforms::{bevy_transform_to_transform_bevy, vec3_to_freevector_bevy, FromBevy};
+use crate::core::transforms::{
+    bevy_transform_to_transform_bevy, vec3_to_freevector_bevy, FromBevy,
+};
 
 use helios_core::data::{MonotonicTime, Twist};
 use helios_core::frames::conventions::{Enu, Flu};

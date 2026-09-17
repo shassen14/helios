@@ -309,9 +309,10 @@ mod tests {
         let service = TfService::new(window(), vec![], vec![mount]);
 
         // No fold: a static edge answers every time straight from the seed.
-        let tf = service
-            .as_provider()
-            .get_transform(sensor("lidar"), base_link(), MonotonicTime(5.0));
+        let tf =
+            service
+                .as_provider()
+                .get_transform(sensor("lidar"), base_link(), MonotonicTime(5.0));
         assert!(tf.is_some());
     }
 

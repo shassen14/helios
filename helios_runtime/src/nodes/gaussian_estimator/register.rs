@@ -14,6 +14,7 @@ use helios_core::estimation::dynamics::integrated_imu::{
 use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::schema::check_measurement_state_agreement;
+use helios_core::frames::transforms::tf::stamped::FrameEdge;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::state::{Component, Quantity};
 
@@ -122,7 +123,12 @@ fn build_ekf(
         )),
     );
 
-    let body = FrameId::base_link(agent.clone());
+    let edge = FrameEdge {
+        child: FrameId::base_link(agent.clone()),
+        parent: FrameId::odom(agent.clone()),
+    };
+
+    let base_link = FrameId::base_link(agent.clone());
     let odom = FrameId::odom(agent);
 
     initial_state.set_variable(
@@ -142,7 +148,7 @@ fn build_ekf(
     initial_state.set_variable(
         &StateVariable::new(
             Quantity::Orientation {
-                from: body.clone(),
+                from: base_link.clone(),
                 to: odom.clone(),
             },
             Component::X,
@@ -152,7 +158,7 @@ fn build_ekf(
     initial_state.set_variable(
         &StateVariable::new(
             Quantity::Orientation {
-                from: body.clone(),
+                from: base_link.clone(),
                 to: odom.clone(),
             },
             Component::Y,
@@ -162,7 +168,7 @@ fn build_ekf(
     initial_state.set_variable(
         &StateVariable::new(
             Quantity::Orientation {
-                from: body.clone(),
+                from: base_link.clone(),
                 to: odom.clone(),
             },
             Component::Z,
@@ -172,7 +178,7 @@ fn build_ekf(
     initial_state.set_variable(
         &StateVariable::new(
             Quantity::Orientation {
-                from: body,
+                from: base_link,
                 to: odom,
             },
             Component::W,
@@ -183,6 +189,7 @@ fn build_ekf(
     let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
     Ok(Box::new(GaussianEstimatorNode::new(
         ctx.instance_name,
+        edge,
         ekf,
         input_builder,
         ctx.aiding,

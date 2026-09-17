@@ -24,7 +24,12 @@ use std::collections::{BTreeSet, HashSet};
 /// the set of sensor channel names passed to `build_pipeline()`.
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
-    agent_query: Query<(Entity, &SpawnAgentConfigRequest, &AgentIdComponent, &Children)>,
+    agent_query: Query<(
+        Entity,
+        &SpawnAgentConfigRequest,
+        &AgentIdComponent,
+        &Children,
+    )>,
     channel_query: Query<&SensorPublishChannel>,
     registry: Res<RuntimeAutonomyRegistry>,
 ) {
@@ -45,11 +50,9 @@ pub fn spawn_autonomy_pipeline(
                     mismatch
                 );
             }
-            commands
-                .entity(agent_entity)
-                .insert(PipelineBuildFailed {
-                    errors: mismatches.iter().map(|m| m.to_string()).collect(),
-                });
+            commands.entity(agent_entity).insert(PipelineBuildFailed {
+                errors: mismatches.iter().map(|m| m.to_string()).collect(),
+            });
             continue;
         }
 
@@ -111,11 +114,9 @@ pub fn spawn_autonomy_pipeline(
                 // Mark the agent so the failure outlives the log line. The
                 // agent gets no pipeline, so nothing downstream would
                 // otherwise notice it is inert.
-                commands
-                    .entity(agent_entity)
-                    .insert(PipelineBuildFailed {
-                        errors: errors.iter().map(|e| e.to_string()).collect(),
-                    });
+                commands.entity(agent_entity).insert(PipelineBuildFailed {
+                    errors: errors.iter().map(|e| e.to_string()).collect(),
+                });
             }
         }
     }

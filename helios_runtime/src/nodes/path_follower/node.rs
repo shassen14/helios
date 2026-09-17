@@ -290,11 +290,7 @@ mod tests {
         }
     }
     impl PathFollowerInputBuilder for AlwaysReadyBuilder {
-        fn assemble(
-            &self,
-            _bus: &PortBus,
-            _tick: &TickContext,
-        ) -> Option<PathFollowerInputs> {
+        fn assemble(&self, _bus: &PortBus, _tick: &TickContext) -> Option<PathFollowerInputs> {
             Some(PathFollowerInputs {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
@@ -316,11 +312,7 @@ mod tests {
         optional: Vec<ChannelKey>,
     }
     impl PathFollowerInputBuilder for NeverReadyBuilder {
-        fn assemble(
-            &self,
-            _bus: &PortBus,
-            _tick: &TickContext,
-        ) -> Option<PathFollowerInputs> {
+        fn assemble(&self, _bus: &PortBus, _tick: &TickContext) -> Option<PathFollowerInputs> {
             None
         }
         fn required_channels(&self) -> &[ChannelKey] {

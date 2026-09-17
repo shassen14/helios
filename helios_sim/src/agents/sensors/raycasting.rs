@@ -105,10 +105,7 @@ fn spawn_raycasting_sensors(
                     },
                     sensor_rng,
                     TrackedFrame::new(
-                        FrameId::sensor(
-                            agent_id.0.clone(),
-                            lidar_config.get_channel().to_string(),
-                        ),
+                        FrameId::sensor(agent_id.0.clone(), lidar_config.get_channel().to_string()),
                         Convention::Flu,
                     ),
                     lidar_config.get_relative_pose().to_bevy_local_transform(),

@@ -6,11 +6,7 @@ use crate::{
 };
 
 pub(crate) trait PathFollowerInputBuilder: Send + Sync {
-    fn assemble(
-        &self,
-        bus: &PortBus,
-        tick: &TickContext,
-    ) -> Option<PathFollowerInputs>;
+    fn assemble(&self, bus: &PortBus, tick: &TickContext) -> Option<PathFollowerInputs>;
 
     fn required_channels(&self) -> &[ChannelKey];
 
@@ -39,11 +35,7 @@ impl DefaultPathFollowerInputBuilder {
 }
 
 impl PathFollowerInputBuilder for DefaultPathFollowerInputBuilder {
-    fn assemble(
-        &self,
-        bus: &PortBus,
-        _tick: &TickContext,
-    ) -> Option<PathFollowerInputs> {
+    fn assemble(&self, bus: &PortBus, _tick: &TickContext) -> Option<PathFollowerInputs> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;
 
         Some(PathFollowerInputs {

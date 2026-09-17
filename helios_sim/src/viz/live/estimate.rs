@@ -33,11 +33,10 @@ pub fn estimate_update_system(
     for (pipeline, agent_id) in &query {
         let agent = agent_id.0.clone();
         let body = FrameId::base_link(agent.clone());
-        let Some(pose) = pipeline
-            .0
-            .read_state()
-            .and_then(|st| st.value.pose::<Flu, Enu>(body.clone(), FrameId::odom(agent.clone())))
-        else {
+        let Some(pose) = pipeline.0.read_state().and_then(|st| {
+            st.value
+                .pose::<Flu, Enu>(body.clone(), FrameId::odom(agent.clone()))
+        }) else {
             continue;
         };
 

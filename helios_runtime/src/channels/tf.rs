@@ -26,8 +26,8 @@
 //! projecting its foreign stream through [`tf_edge`].
 
 use crate::{
-    port::{ChannelKind, InternalChannel},
-    ChannelKey,
+    port::{ChannelError, ChannelKind, InternalChannel, PortBus},
+    ChannelKey, Stamped,
 };
 
 use helios_core::frames::transforms::tf::stamped::{FrameEdge, StampedTransform};
@@ -40,6 +40,36 @@ pub fn tf_edge(edge: &FrameEdge) -> InternalChannel {
     InternalChannel::named::<StampedTransform>(format!("{}{}", TF_EDGE_PREFIX, edge))
 }
 
+/// Dual-publish one transform edge: writes `stamped` onto the [`tf_edge`] slot
+/// its own `(child, parent)` names, so the `TfService` drain can fold it into
+/// the buffer.
+///
+/// The edge is derived from the message's own `child`/`parent`, not passed
+/// separately — a producer physically cannot route its transform onto the wrong
+/// slot. A dropped write here is a genuine wiring bug (the drain list never
+/// carried this edge), unlike the oracle channel's *expected* no-consumer miss,
+/// so it warns loudly and names the edge rather than going out on `.ok()`.
+pub fn publish_edge(bus: &PortBus, stamped: Stamped<StampedTransform>) {
+    let edge = FrameEdge {
+        child: stamped.value.child.clone(),
+        parent: stamped.value.parent.clone(),
+    };
+
+    if let Err(e) = bus.write(tf_edge(&edge).into(), stamped) {
+        match e {
+            // No node drains this edge — its tf-edge channel was never wired
+            // into the graph. A silently unfed edge only surfaces far away, as a
+            // missing lookup at some consumer, so name the edge here at the
+            // source where the fix (add it to the drain list) actually lives.
+            ChannelError::UnknownChannel => tracing::warn!(
+                edge = %edge,
+                "tf edge dropped: no channel wired for this edge; \
+                 the TfService drain list is missing it",
+            ),
+        }
+    }
+}
+
 pub fn is_tf_edge(key: &ChannelKey) -> bool {
     key.kind() == ChannelKind::Internal
         && key.type_id() == TypeId::of::<StampedTransform>()
@@ -50,8 +80,14 @@ pub fn is_tf_edge(key: &ChannelKey) -> bool {
 mod tests {
     use super::*;
 
-    use helios_core::data::AgentId;
+    use crate::port::PortDescriptor;
+    use crate::stamped::Health;
+
+    use helios_core::data::{AgentId, MonotonicTime};
     use helios_core::frames::id::FrameId;
+    use helios_core::frames::transforms::{Convention, ErasedTransform};
+
+    use nalgebra::Isometry3;
 
     /// A payload type that is not [`StampedTransform`], for checking the type
     /// clause of [`is_tf_edge`] in isolation.
@@ -119,7 +155,69 @@ mod tests {
     fn is_tf_edge_rejects_a_prefixed_channel_of_another_type() {
         // The prefix alone is not enough: a `tf/`-named slot carrying a different
         // payload is not a transform edge.
-        let key: ChannelKey = InternalChannel::named::<NotATransform>("tf/bot/base_link->bot/odom").into();
+        let key: ChannelKey =
+            InternalChannel::named::<NotATransform>("tf/bot/base_link->bot/odom").into();
         assert!(!is_tf_edge(&key));
+    }
+
+    /// A sample edge message: an identity `Flu → Enu` transform on `edge`,
+    /// stamped at t=1.
+    fn sample_message(edge: &FrameEdge) -> Stamped<StampedTransform> {
+        Stamped {
+            value: StampedTransform {
+                parent: edge.parent.clone(),
+                child: edge.child.clone(),
+                stamp: MonotonicTime(1.0),
+                transform: ErasedTransform::from_parts(
+                    Isometry3::identity(),
+                    Convention::Flu,
+                    Convention::Enu,
+                ),
+            },
+            timestamp: MonotonicTime(1.0),
+            health: Health::Ok,
+            producer: 0,
+        }
+    }
+
+    /// A bus with exactly the given edges' slots allocated as outputs.
+    fn bus_wired_for(edges: &[FrameEdge]) -> PortBus {
+        let descriptor = PortDescriptor {
+            required_inputs: vec![],
+            optional_inputs: vec![],
+            outputs: edges.iter().map(|e| tf_edge(e).into()).collect(),
+            rate: None,
+        };
+        PortBus::new(&[descriptor])
+    }
+
+    #[test]
+    fn publish_edge_lands_the_transform_on_its_slot() {
+        let edge = base_to_odom();
+        let bus = bus_wired_for(std::slice::from_ref(&edge));
+
+        publish_edge(&bus, sample_message(&edge));
+
+        let read = bus
+            .read::<StampedTransform>(tf_edge(&edge).into())
+            .expect("the published edge must be readable on its slot");
+        // Routed to the slot its own (child, parent) names.
+        assert_eq!(read.value.parent, edge.parent);
+        assert_eq!(read.value.child, edge.child);
+    }
+
+    #[test]
+    fn publish_edge_on_an_unwired_edge_drops_without_panicking() {
+        // The bus allocates a *different* edge's slot, so the target edge's
+        // channel is unknown. The helper must warn and return (the loud-drop
+        // path), never panic, and nothing lands on the target slot.
+        let bus = bus_wired_for(&[odom_to_map()]);
+
+        let target = base_to_odom();
+        publish_edge(&bus, sample_message(&target));
+
+        assert!(bus
+            .read::<StampedTransform>(tf_edge(&target).into())
+            .is_none());
     }
 }

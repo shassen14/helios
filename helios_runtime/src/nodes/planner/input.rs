@@ -19,11 +19,7 @@ use crate::{
 /// [`required_channels`]: SearchPlannerInputBuilder::required_channels
 /// [`optional_channels`]: SearchPlannerInputBuilder::optional_channels
 pub(crate) trait SearchPlannerInputBuilder: Send + Sync {
-    fn assemble(
-        &self,
-        bus: &PortBus,
-        tick: &TickContext,
-    ) -> Option<SearchPlannerInputs>;
+    fn assemble(&self, bus: &PortBus, tick: &TickContext) -> Option<SearchPlannerInputs>;
 
     fn required_channels(&self) -> &[ChannelKey];
 
@@ -64,11 +60,7 @@ impl DefaultSearchPlannerInputBuilder {
 }
 
 impl SearchPlannerInputBuilder for DefaultSearchPlannerInputBuilder {
-    fn assemble(
-        &self,
-        bus: &PortBus,
-        _tick: &TickContext,
-    ) -> Option<SearchPlannerInputs> {
+    fn assemble(&self, bus: &PortBus, _tick: &TickContext) -> Option<SearchPlannerInputs> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;
         let map_stamped = bus.read::<MapData>(self.map_channel.clone())?;
         let goal = bus

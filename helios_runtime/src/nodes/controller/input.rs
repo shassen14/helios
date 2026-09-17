@@ -13,11 +13,7 @@ use std::marker::PhantomData;
 pub(crate) trait ControlInputBuilder: Send + Sync {
     type Output;
 
-    fn assemble(
-        &self,
-        bus: &PortBus,
-        tick: &TickContext,
-    ) -> Option<Self::Output>;
+    fn assemble(&self, bus: &PortBus, tick: &TickContext) -> Option<Self::Output>;
 
     fn required_channels(&self) -> &[ChannelKey];
 
@@ -56,11 +52,7 @@ impl<R: ControlReference> DefaultControlInputBuilder<R> {
 impl<R: ControlReference + Clone> ControlInputBuilder for DefaultControlInputBuilder<R> {
     type Output = ControlInputs<R>;
 
-    fn assemble(
-        &self,
-        bus: &PortBus,
-        _tick: &TickContext,
-    ) -> Option<ControlInputs<R>> {
+    fn assemble(&self, bus: &PortBus, _tick: &TickContext) -> Option<ControlInputs<R>> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;
 
         let reference = bus

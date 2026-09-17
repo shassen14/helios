@@ -11,11 +11,7 @@ use nalgebra::DVector;
 use std::sync::Arc;
 
 pub(crate) trait EstimatorInputBuilder: Send + Sync {
-    fn assemble(
-        &self,
-        bus: &PortBus,
-        tick: &TickContext,
-    ) -> Option<EstimatorInputs>;
+    fn assemble(&self, bus: &PortBus, tick: &TickContext) -> Option<EstimatorInputs>;
 
     fn required_channels(&self) -> &[ChannelKey];
 
@@ -50,11 +46,7 @@ impl IntegratedImuInputBuilder {
 }
 
 impl EstimatorInputBuilder for IntegratedImuInputBuilder {
-    fn assemble(
-        &self,
-        bus: &PortBus,
-        _tick: &TickContext,
-    ) -> Option<EstimatorInputs> {
+    fn assemble(&self, bus: &PortBus, _tick: &TickContext) -> Option<EstimatorInputs> {
         let accel_stamped =
             bus.read::<Vec<SensorReading<Acceleration>>>(self.accel_channel.clone())?;
         let gyro_stamped =

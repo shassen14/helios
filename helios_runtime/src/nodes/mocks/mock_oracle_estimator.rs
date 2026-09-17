@@ -365,7 +365,10 @@ mod tests {
             .expect("node must publish FrameAwareState");
         let recovered = published
             .value
-            .pose::<Flu, Enu>(FrameId::base_link(agent.clone()), FrameId::odom(agent.clone()))
+            .pose::<Flu, Enu>(
+                FrameId::base_link(agent.clone()),
+                FrameId::odom(agent.clone()),
+            )
             .expect("standard schema includes pose")
             .into_inner();
         let dx = (recovered.translation.vector - pose.translation.vector).norm();

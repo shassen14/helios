@@ -30,11 +30,10 @@ pub fn update_odom_frames(
 
         let agent = agent_id.0.clone();
         let body = FrameId::base_link(agent.clone());
-        if let Some(pose) = pipeline
-            .0
-            .read_state()
-            .and_then(|st| st.value.pose::<Flu, Enu>(body.clone(), FrameId::odom(agent.clone())))
-        {
+        if let Some(pose) = pipeline.0.read_state().and_then(|st| {
+            st.value
+                .pose::<Flu, Enu>(body.clone(), FrameId::odom(agent.clone()))
+        }) {
             *transform = transform_bevy_to_bevy_transform(pose.to_bevy());
         }
     }

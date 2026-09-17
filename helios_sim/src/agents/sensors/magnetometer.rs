@@ -178,8 +178,7 @@ mod tests {
 
     fn sample(mag: &mut Magnetometer, pose: &Isometry3<f64>) -> Vector3<f64> {
         let mut rng = StdRng::seed_from_u64(1);
-        mag.sample(&GroundTruthState::default(), pose, &mut rng)
-            .0
+        mag.sample(&GroundTruthState::default(), pose, &mut rng).0
     }
 
     #[test]

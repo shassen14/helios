@@ -353,7 +353,7 @@ mod tests {
 
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
     use helios_core::data::TfProvider;
-    use helios_core::estimation::schema::{StateSchemaBlock, StateSchema};
+    use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
     use helios_core::frames::quantities::FluVector;
     use helios_core::frames::transforms::Convention;
     use helios_core::frames::{FrameId, StateVariable};
@@ -362,9 +362,7 @@ mod tests {
         channels::control,
         pipeline::node::HOST_PRODUCER_ID,
         port::{InternalChannel, PortBus},
-        prelude::{
-            Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext,
-        },
+        prelude::{Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext},
     };
     use nalgebra::{DMatrix, DVector};
 

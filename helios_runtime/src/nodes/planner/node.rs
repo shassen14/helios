@@ -209,11 +209,7 @@ mod tests {
         }
     }
     impl SearchPlannerInputBuilder for AlwaysReadyBuilder {
-        fn assemble(
-            &self,
-            _bus: &PortBus,
-            _tick: &TickContext,
-        ) -> Option<SearchPlannerInputs> {
+        fn assemble(&self, _bus: &PortBus, _tick: &TickContext) -> Option<SearchPlannerInputs> {
             Some(SearchPlannerInputs {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
@@ -242,11 +238,7 @@ mod tests {
         optional: Vec<ChannelKey>,
     }
     impl SearchPlannerInputBuilder for NeverReadyBuilder {
-        fn assemble(
-            &self,
-            _bus: &PortBus,
-            _tick: &TickContext,
-        ) -> Option<SearchPlannerInputs> {
+        fn assemble(&self, _bus: &PortBus, _tick: &TickContext) -> Option<SearchPlannerInputs> {
             None
         }
         fn required_channels(&self) -> &[ChannelKey] {

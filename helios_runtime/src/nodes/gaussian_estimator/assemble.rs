@@ -38,8 +38,7 @@ pub(crate) fn assemble(
     // Build aiding handlers from the aiding list in EkfConfig.
     let mut aiding: Vec<Box<dyn AidingHandler>> = vec![];
     for aid in &ekf_cfg.aiding {
-        let handler =
-            build_aiding_handler(instance_name, aid, agent, sensor_channels, registry)?;
+        let handler = build_aiding_handler(instance_name, aid, agent, sensor_channels, registry)?;
         external_channels.push(handler.channel().clone());
         aiding.push(handler);
     }
@@ -107,16 +106,11 @@ fn build_augmentation_blocks(
         }
         let sensor = FrameId::sensor(agent.clone(), aug.sensor.as_str());
 
-        let block = augmentation_block(
-            &aug.kind,
-            sensor,
-            aug.init_uncertainty,
-            aug.random_walk,
-        )
-        .map_err(|reason| PipelineAssemblyError::AugmentationFailure {
-            estimator_instance: instance_name.to_string(),
-            reason: reason.to_string(),
-        })?;
+        let block = augmentation_block(&aug.kind, sensor, aug.init_uncertainty, aug.random_walk)
+            .map_err(|reason| PipelineAssemblyError::AugmentationFailure {
+                estimator_instance: instance_name.to_string(),
+                reason: reason.to_string(),
+            })?;
 
         blocks.push(block);
     }
@@ -184,12 +178,8 @@ fn build_aiding_handler(
         "GpsPosition" => Box::new(TypedAidingHandler::<GpsPosition>::new(channel, model, r)),
         "GpsVelocity" => Box::new(TypedAidingHandler::<GpsVelocity>::new(channel, model, r)),
         "Acceleration" => Box::new(TypedAidingHandler::<Acceleration>::new(channel, model, r)),
-        "AngularRate" => Box::new(TypedAidingHandler::<AngularRate>::new(
-            channel, model, r,
-        )),
-        "MagneticField" => Box::new(TypedAidingHandler::<MagneticField>::new(
-            channel, model, r,
-        )),
+        "AngularRate" => Box::new(TypedAidingHandler::<AngularRate>::new(channel, model, r)),
+        "MagneticField" => Box::new(TypedAidingHandler::<MagneticField>::new(channel, model, r)),
         other => {
             return Err(PipelineAssemblyError::UnknownSensorPayload {
                 estimator_instance: instance_name.to_string(),
@@ -283,13 +273,8 @@ mod tests {
     #[test]
     fn aiding_handler_rejects_unknown_sensor_channel() {
         let registry = AutonomyRegistry::default();
-        let result = build_aiding_handler(
-            "est",
-            &gps_aiding(3),
-            &agent(),
-            &HashSet::new(),
-            &registry,
-        );
+        let result =
+            build_aiding_handler("est", &gps_aiding(3), &agent(), &HashSet::new(), &registry);
         assert!(matches!(
             result,
             Err(PipelineAssemblyError::UnknownSensorChannel { .. })
