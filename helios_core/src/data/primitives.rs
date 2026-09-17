@@ -1,4 +1,4 @@
-use std::{fmt::Display, sync::Arc};
+use std::{fmt::Display, ops::Sub, sync::Arc};
 
 use nalgebra::DVector;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,37 @@ pub(crate) type Control = DVector<f64>;
 /// Monotonically increasing time in seconds (simulation or hardware clock).
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct MonotonicTime(pub f64);
+
+impl Sub for MonotonicTime {
+    type Output = MonotonicDuration;
+
+    /// The elapsed interval between two instants. Signed: `earlier - later` is
+    /// negative, which is how a lookup measures a query that falls before an
+    /// edge's oldest sample.
+    fn sub(self, rhs: MonotonicTime) -> MonotonicDuration {
+        MonotonicDuration(self.0 - rhs.0)
+    }
+}
+
+impl Sub<MonotonicDuration> for MonotonicTime {
+    type Output = MonotonicTime;
+
+    /// Shifts an instant back by a duration — e.g. `newest - horizon` yields the
+    /// eviction cutoff, the oldest stamp a bounded history still keeps.
+    fn sub(self, rhs: MonotonicDuration) -> MonotonicTime {
+        MonotonicTime(self.0 - rhs.0)
+    }
+}
+
+/// A signed interval in seconds — the difference of two [`MonotonicTime`]s.
+///
+/// Signed and `f64` because simulation time is a monotonic `f64`, not a
+/// wall-clock instant; `std::time::Duration` is the wrong type here (it is
+/// unsigned and wall-clock-flavoured, and a query *before* an edge's history
+/// yields a legitimately negative interval). The name says nothing about sim vs
+/// hardware because the whole frame stack runs identically on both.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
+pub struct MonotonicDuration(pub f64);
 
 /// Stable string identity of one agent, shared by every subsystem that names it
 /// (frame scope, determinism seeding, observability paths) — a reserved string

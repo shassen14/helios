@@ -377,10 +377,10 @@ mod frame_aware_state_tests {
 #[cfg(test)]
 mod block_extractor_tests {
     use super::*;
+    use crate::data::AgentId;
     use crate::estimation::schema::StateSchemaBlock;
     use crate::frames::conventions::{Enu, Flu};
     use crate::frames::transforms::Convention;
-    use crate::data::AgentId;
     use crate::manifold::TangentNoise;
     use crate::state::Component;
 

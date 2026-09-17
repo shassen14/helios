@@ -16,6 +16,7 @@ pub mod prelude;
 pub mod registry;
 pub mod runtime;
 pub mod stamped;
+pub mod tf_service;
 pub mod validation;
 
 pub use crate::body::{

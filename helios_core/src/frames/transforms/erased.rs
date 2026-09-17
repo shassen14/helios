@@ -19,6 +19,7 @@ use std::{error::Error, fmt::Display};
 /// It is the join between Layer 2 (the runtime `FrameId` graph) and Layer 1 (the
 /// compile-time convention markers): the graph produces it keyed by *identity*,
 /// the leaves consume it typed by *convention*.
+#[derive(Debug, Clone, Copy)]
 pub struct ErasedTransform {
     isometry: Isometry3<f64>,
     from: Convention,
@@ -78,6 +79,61 @@ impl ErasedTransform {
         }
 
         Ok(Transform::from_isometry(self.isometry))
+    }
+
+    /// The inverse transform, with its endpoint tags swapped.
+    ///
+    /// An edge tagged `from → to` inverts to one tagged `to → from`, so the
+    /// isometry and the two [`Convention`] tags must move together — invert the
+    /// isometry alone and [`typed`](Self::typed) would reject the correct
+    /// endpoints. This is the *flip* half of the LCA lookup walk: an edge stored
+    /// `child → parent` is inverted when the walk needs `parent → child`.
+    pub fn inverse(self) -> ErasedTransform {
+        ErasedTransform {
+            isometry: self.isometry.inverse(),
+            from: self.to,
+            to: self.from,
+        }
+    }
+
+    /// Composition: `self` (`from → to`) followed by `other` (`to → next`),
+    /// giving the direct transform `from → next`.
+    ///
+    /// The *chain* half of the LCA lookup walk: adjacent edges fold into one as
+    /// the walk climbs from a leaf to the common ancestor and back down. Isometry
+    /// multiplication applies its right operand first, so "`self` then `other`"
+    /// is `other.isometry * self.isometry`, matching [`Transform::then`].
+    ///
+    /// The seam tags (`self.to` and `other.from`) must agree, but that agreement
+    /// is a tree invariant the buffer's ingest already guarantees — a mismatch
+    /// here is a buffer bug, not bad input — so it is a `debug_assert` rather
+    /// than a `Result` the whole walk would have to thread.
+    pub fn then(self, other: ErasedTransform) -> ErasedTransform {
+        debug_assert!(
+            self.to == other.from,
+            "ErasedTransform compose seam mismatch: self is tagged … → {:?}, \
+             other is tagged {:?} → …",
+            self.to,
+            other.from,
+        );
+
+        ErasedTransform {
+            isometry: other.isometry * self.isometry,
+            from: self.from,
+            to: other.to,
+        }
+    }
+
+    pub fn from_convention(&self) -> Convention {
+        self.from
+    }
+
+    pub fn to_convention(&self) -> Convention {
+        self.to
+    }
+
+    pub fn isometry(&self) -> Isometry3<f64> {
+        self.isometry
     }
 }
 
@@ -168,5 +224,90 @@ mod tests {
             .typed::<Enu, Flu>()
             .expect("erase then typed round-trips through matching tags");
         assert_eq!(recovered.into_inner(), sample_isometry());
+    }
+
+    /// A second, distinct `Flu → Enu` isometry (quarter turn about +X, +5 along
+    /// Y) so a two-hop chain composes two *different* transforms — a chain of one
+    /// repeated edge would hide an argument-order bug.
+    fn second_isometry() -> Isometry3<f64> {
+        Isometry3::from_parts(
+            Translation3::new(0.0, 5.0, 0.0),
+            UnitQuaternion::from_axis_angle(&Vector3::x_axis(), FRAC_PI_2),
+        )
+    }
+
+    /// The sample edge as an [`ErasedTransform`] tagged `Enu → Flu`. A helper
+    /// because `then`/`inverse` consume `self` by value, so a test that uses one
+    /// edge twice needs two independent values.
+    fn sample_edge() -> ErasedTransform {
+        ErasedTransform::from_parts(sample_isometry(), Convention::Enu, Convention::Flu)
+    }
+
+    /// Two isometries are close when translation and rotation agree within float
+    /// tolerance. `angle_to` folds the quaternion double-cover (`q` and `−q` are
+    /// the same rotation) into one non-negative angle, so a compose/inverse
+    /// round-trip that lands on `−q` still reads as identity.
+    fn iso_close(a: Isometry3<f64>, b: Isometry3<f64>) -> bool {
+        (a.translation.vector - b.translation.vector).norm() < 1e-9
+            && a.rotation.angle_to(&b.rotation) < 1e-9
+    }
+
+    #[test]
+    fn inverse_swaps_the_tags() {
+        // The isometry-and-tags-move-together invariant: an Enu → Flu edge
+        // inverts to a Flu → Enu one, or a correct edge would fail `typed`.
+        let inverted = sample_edge().inverse();
+        assert_eq!(inverted.from, Convention::Flu);
+        assert_eq!(inverted.to, Convention::Enu);
+        assert!(iso_close(inverted.isometry, sample_isometry().inverse()));
+    }
+
+    #[test]
+    fn inverse_is_its_own_undo() {
+        // Inverting twice is a no-op — data and tags both return to the original.
+        let there_and_back = sample_edge().inverse().inverse();
+        assert!(iso_close(there_and_back.isometry, sample_isometry()));
+        assert_eq!(there_and_back.from, Convention::Enu);
+        assert_eq!(there_and_back.to, Convention::Flu);
+    }
+
+    #[test]
+    fn then_keeps_the_endpoints_and_drops_the_seam() {
+        // Enu → Flu then Flu → Enu is tagged Enu → Enu: `from` comes from the
+        // first edge, `to` from the second, and the shared Flu seam vanishes. A
+        // `to: self.to` bug would leave `to` tagged Flu and fail here.
+        let chained = sample_edge().then(ErasedTransform::from_parts(
+            second_isometry(),
+            Convention::Flu,
+            Convention::Enu,
+        ));
+        assert_eq!(chained.from, Convention::Enu);
+        assert_eq!(chained.to, Convention::Enu);
+    }
+
+    #[test]
+    fn then_composes_right_operand_first() {
+        // "self then other" must apply self first, i.e. other.iso * self.iso.
+        // The two hops differ, so the reversed product would land elsewhere and
+        // this pins the direction, not just that *some* composition happened.
+        let chained = sample_edge().then(ErasedTransform::from_parts(
+            second_isometry(),
+            Convention::Flu,
+            Convention::Enu,
+        ));
+        assert!(iso_close(
+            chained.isometry,
+            second_isometry() * sample_isometry()
+        ));
+    }
+
+    #[test]
+    fn then_an_edge_with_its_inverse_is_identity() {
+        // The capstone: A → B folded with (A → B)⁻¹ = B → A collapses to the
+        // identity pose on A → A — the flip-and-chain the LCA walk relies on.
+        let round = sample_edge().then(sample_edge().inverse());
+        assert!(iso_close(round.isometry, Isometry3::identity()));
+        assert_eq!(round.from, Convention::Enu);
+        assert_eq!(round.to, Convention::Enu);
     }
 }
