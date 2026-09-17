@@ -174,7 +174,10 @@ mod tests {
         let block = &schema.blocks()[0];
         // Position in the agent's odom frame (ENU), keyed by the agent's odom
         // FrameId — the same one the state carries, so the agreement check lines up.
-        assert_eq!(block.quantity(), &Quantity::Position(FrameId::odom(agent())));
+        assert_eq!(
+            block.quantity(),
+            &Quantity::Position(FrameId::odom(agent()))
+        );
         assert_eq!(
             block.conventions,
             vec![(FrameId::odom(agent()), Convention::Enu)]

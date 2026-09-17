@@ -227,9 +227,8 @@ mod tests {
 
     #[test]
     fn select_keeps_masked_rows_in_lockstep() {
-        let kept = lidar(&[(0.1, 0), (0.2, 1), (0.3, 2), (0.4, 3)]).select(&[
-            true, false, true, false,
-        ]);
+        let kept =
+            lidar(&[(0.1, 0), (0.2, 1), (0.3, 2), (0.4, 3)]).select(&[true, false, true, false]);
 
         assert_eq!(kept.intensity(), &[0.1, 0.3]);
         assert_eq!(kept.ring(), &[0, 2]);

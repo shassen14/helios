@@ -14,7 +14,7 @@
 //! which is why it is a free function and not a `StateSchema` constructor.
 
 use crate::data::AgentId;
-use crate::estimation::schema::{StateSchemaBlock, StateSchema};
+use crate::estimation::schema::{StateSchema, StateSchemaBlock};
 use crate::frames::transforms::Convention;
 use crate::frames::FrameId;
 use crate::manifold::TangentNoise;
@@ -133,7 +133,9 @@ mod tests {
             "odom linear velocity reads back"
         );
         assert_eq!(
-            s.angular_velocity::<Enu>(FrameId::odom(agent())).unwrap().z(),
+            s.angular_velocity::<Enu>(FrameId::odom(agent()))
+                .unwrap()
+                .z(),
             0.3,
             "odom angular velocity reads back"
         );

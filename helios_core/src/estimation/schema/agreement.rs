@@ -253,10 +253,7 @@ mod tests {
         // frame); there is nothing here to compare it against.
         let state = anchored_state();
         for convention in [Convention::Flu, Convention::Enu] {
-            let m = one(
-                Quantity::SpecificForce(sensor()),
-                convention,
-            );
+            let m = one(Quantity::SpecificForce(sensor()), convention);
             assert!(check_measurement_state_agreement(&state, &m).is_ok());
         }
     }
@@ -286,10 +283,7 @@ mod tests {
                 Quantity::Position(FrameId::odom(agent())),
                 Convention::Enu,
             ),
-            MeasurementSchemaBlock::new(
-                Quantity::SpecificForce(sensor()),
-                Convention::Flu,
-            ),
+            MeasurementSchemaBlock::new(Quantity::SpecificForce(sensor()), Convention::Flu),
         ]);
         assert!(check_measurement_state_agreement(&state, &m).is_ok());
     }
@@ -304,10 +298,7 @@ mod tests {
                 Quantity::Position(FrameId::odom(agent())),
                 Convention::Flu,
             ),
-            MeasurementSchemaBlock::new(
-                Quantity::SpecificForce(sensor()),
-                Convention::Flu,
-            ),
+            MeasurementSchemaBlock::new(Quantity::SpecificForce(sensor()), Convention::Flu),
         ]);
 
         assert!(matches!(

@@ -175,14 +175,8 @@ mod tests {
         let block = &schema.blocks()[0];
         // Specific force, not kinematic acceleration — its own quantity, so the
         // agreement check never mistakes it for the state's Acceleration block.
-        assert_eq!(
-            block.quantity(),
-            &Quantity::SpecificForce(sensor())
-        );
-        assert_eq!(
-            block.conventions,
-            vec![(sensor(), Convention::Flu)]
-        );
+        assert_eq!(block.quantity(), &Quantity::SpecificForce(sensor()));
+        assert_eq!(block.conventions, vec![(sensor(), Convention::Flu)]);
     }
 
     #[test]

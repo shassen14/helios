@@ -261,10 +261,7 @@ mod tests {
         assert_eq!(schema.blocks().len(), 1);
         let block = &schema.blocks()[0];
         assert_eq!(block.quantity(), &Quantity::Mag(sensor()));
-        assert_eq!(
-            block.conventions,
-            vec![(sensor(), Convention::Flu)]
-        );
+        assert_eq!(block.conventions, vec![(sensor(), Convention::Flu)]);
     }
 
     #[test]

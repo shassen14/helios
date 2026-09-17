@@ -1,4 +1,4 @@
-use helios_core::estimation::schema::{StateSchemaBlock, StateSchema};
+use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
 use helios_core::frames::transforms::Convention;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::mapping::MapData;

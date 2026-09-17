@@ -61,7 +61,7 @@ mod tests {
     use super::*;
     use crate::control::commands::BodyTwist;
     use crate::data::AgentId;
-    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::Convention;
     use crate::frames::FrameAwareState;
     use crate::manifold::TangentNoise;

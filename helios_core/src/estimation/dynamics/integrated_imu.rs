@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::data::primitives::{Control, State};
 use crate::data::AgentId;
 use crate::estimation::dynamics::EstimationDynamics;
-use crate::estimation::schema::{StateSchemaBlock, StateSchema};
+use crate::estimation::schema::{StateSchema, StateSchemaBlock};
 use crate::frames::transforms::Convention;
 use crate::frames::{FrameId, StateVariable};
 use crate::manifold::{StateBlock, TangentNoise};
@@ -85,7 +85,11 @@ impl IntegratedImuModel {
         noise: ImuProcessNoise,
         initial_uncertainty: ImuInitialUncertainty,
     ) -> Self {
-        let schema = Arc::new(compose_ins_schema(agent.clone(), noise, initial_uncertainty));
+        let schema = Arc::new(compose_ins_schema(
+            agent.clone(),
+            noise,
+            initial_uncertainty,
+        ));
 
         let off = |v: &StateVariable| {
             schema

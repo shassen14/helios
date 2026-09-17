@@ -188,7 +188,7 @@ impl PathFollower for PurePursuitPathFollower {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;
     use crate::planning::types::Path;

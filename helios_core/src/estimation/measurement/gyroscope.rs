@@ -139,14 +139,8 @@ mod tests {
         // One block: angular velocity in the sensor frame, expressed FLU.
         assert_eq!(schema.blocks().len(), 1);
         let block = &schema.blocks()[0];
-        assert_eq!(
-            block.quantity(),
-            &Quantity::AngularVelocity(sensor())
-        );
-        assert_eq!(
-            block.conventions,
-            vec![(sensor(), Convention::Flu)]
-        );
+        assert_eq!(block.quantity(), &Quantity::AngularVelocity(sensor()));
+        assert_eq!(block.conventions, vec![(sensor(), Convention::Flu)]);
     }
 
     #[test]

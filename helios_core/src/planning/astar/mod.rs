@@ -379,7 +379,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use crate::estimation::schema::{StateSchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::Convention;
     use crate::frames::{FrameAwareState, FrameId};
     use crate::mapping::MapData;
