@@ -2,12 +2,13 @@ use crate::{
     channels::control,
     pipeline::{key_format::format_key_short, rate_gate::RateTimer},
     port::{ChannelKey, ChannelKind, InternalChannel, PortBus},
-    prelude::{AgentRuntime, PipelineNode, Stamped, TickContext},
+    prelude::{PipelineNode, Stamped, TickContext},
     BodyCapabilities, NodeId, PipelineBuildError,
 };
 
 use helios_core::{
     control::{actuators::ActuatorCommand, commands::BodyTwist},
+    data::{MonotonicTime, TfProvider},
     frames::FrameAwareState,
 };
 
@@ -378,11 +379,10 @@ impl AutonomyPipeline {
     /// node in topological order.
     ///
     /// `dt` is the elapsed wall time since the last call (used by
-    /// [`RateTimer`]). The bus tick-time is sourced from
-    /// [`AgentRuntime::now`] so producers and `read_fresh` consumers
-    /// always see the same clock.
-    pub fn tick(&self, runtime: &dyn AgentRuntime, dt: f64) {
-        let now = runtime.now();
+    /// [`RateTimer`]). `now` is the host's monotonic clock, stamped onto the bus
+    /// tick-time so producers and `read_fresh` consumers always see the same
+    /// clock. `tf` is the transform provider nodes query for the tick.
+    pub fn tick(&self, now: MonotonicTime, dt: f64, tf: &dyn TfProvider) {
         self.bus.set_tick_time(now.0);
 
         // Span only — no event emitted inside. At a default 200 Hz host
@@ -400,7 +400,7 @@ impl AutonomyPipeline {
                         trace_span!("node.execute", name = node.name(), id = *node_id).entered();
                     node.execute(
                         &self.bus,
-                        runtime,
+                        tf,
                         TickContext {
                             now,
                             dt,

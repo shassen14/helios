@@ -26,6 +26,7 @@
 
 use std::sync::Mutex;
 
+use helios_core::data::TfProvider;
 use helios_core::planning::types::PlannerResult;
 use helios_core::planning::SearchPlanner;
 
@@ -33,7 +34,6 @@ use super::input::SearchPlannerInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
-use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
 /// Pipeline node wrapping any search-family planner.
@@ -87,9 +87,9 @@ impl PipelineNode for SearchPlannerNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, runtime: &dyn AgentRuntime, tick: TickContext) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
         // Cold-start / sensor dropout: required inputs absent → skip this tick.
-        let Some(inputs) = self.input_builder.assemble(bus, runtime, &tick) else {
+        let Some(inputs) = self.input_builder.assemble(bus, &tick) else {
             return;
         };
 
@@ -144,11 +144,11 @@ mod tests {
     use nalgebra::{DMatrix, Isometry3};
     use std::sync::Mutex as StdMutex;
 
-    // --- Mock AgentRuntime ---
+    // --- Mock TfProvider ---
 
     struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -160,9 +160,6 @@ mod tests {
                 Convention::Flu,
                 Convention::Flu,
             ))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
         }
     }
 
@@ -215,7 +212,6 @@ mod tests {
         fn assemble(
             &self,
             _bus: &PortBus,
-            _runtime: &dyn AgentRuntime,
             _tick: &TickContext,
         ) -> Option<SearchPlannerInputs> {
             Some(SearchPlannerInputs {
@@ -249,7 +245,6 @@ mod tests {
         fn assemble(
             &self,
             _bus: &PortBus,
-            _runtime: &dyn AgentRuntime,
             _tick: &TickContext,
         ) -> Option<SearchPlannerInputs> {
             None

@@ -352,6 +352,7 @@ mod tests {
     use super::*;
 
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
+    use helios_core::data::TfProvider;
     use helios_core::estimation::schema::{StateSchemaBlock, StateSchema};
     use helios_core::frames::quantities::FluVector;
     use helios_core::frames::transforms::Convention;
@@ -362,8 +363,7 @@ mod tests {
         pipeline::node::HOST_PRODUCER_ID,
         port::{InternalChannel, PortBus},
         prelude::{
-            AgentRuntime, Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped,
-            TickContext,
+            Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext,
         },
     };
     use nalgebra::{DMatrix, DVector};
@@ -585,7 +585,7 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
     /// An `AutonomyPipelineComponent` whose pipeline carries the estimator slot,
@@ -724,7 +724,7 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
     /// An `AutonomyPipelineComponent` whose pipeline carries the controller slot,
@@ -943,7 +943,7 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
     /// An `AutonomyPipelineComponent` whose pipeline carries the reference slot,
@@ -1051,7 +1051,7 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
     /// An `AutonomyPipelineComponent` whose pipeline carries the actuators terminal,

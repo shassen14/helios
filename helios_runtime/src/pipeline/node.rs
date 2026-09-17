@@ -1,7 +1,7 @@
 use crate::port::{PortBus, PortDescriptor};
-use crate::runtime::AgentRuntime;
 
 use helios_core::data::primitives::MonotonicTime;
+use helios_core::data::TfProvider;
 
 /// One unit of computation in an [`AutonomyPipeline`].
 ///
@@ -30,14 +30,14 @@ pub trait PipelineNode: Send + Sync {
     fn port_descriptor(&self) -> &PortDescriptor;
 
     /// Run one iteration. Called by [`AutonomyPipeline::tick`](super::AutonomyPipeline::tick).
-    fn execute(&self, bus: &PortBus, runtime: &dyn AgentRuntime, tick: TickContext);
+    fn execute(&self, bus: &PortBus, tf: &dyn TfProvider, tick: TickContext);
 }
 
 /// Per-execution context passed to every [`PipelineNode::execute`] call.
 ///
-/// `now` and `dt` are sourced from the [`AgentRuntime`] so simulation and
-/// hardware share the same clock semantics. `node_id` lets a node tag the
-/// values it writes to the bus with its own identity for diagnostics.
+/// `now` and `dt` are supplied by the host to [`AutonomyPipeline::tick`], so
+/// simulation and hardware share the same clock semantics. `node_id` lets a node
+/// tag the values it writes to the bus with its own identity for diagnostics.
 pub struct TickContext {
     pub now: MonotonicTime,
     pub dt: f64,

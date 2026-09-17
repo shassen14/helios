@@ -1,7 +1,7 @@
 use crate::{
     channels::control,
     port::{ChannelKey, InternalChannel, PortBus},
-    prelude::{AgentRuntime, TickContext},
+    prelude::TickContext,
 };
 use helios_core::{
     control::{ControlInputs, ControlReference},
@@ -16,7 +16,6 @@ pub(crate) trait ControlInputBuilder: Send + Sync {
     fn assemble(
         &self,
         bus: &PortBus,
-        runtime: &dyn AgentRuntime,
         tick: &TickContext,
     ) -> Option<Self::Output>;
 
@@ -60,7 +59,6 @@ impl<R: ControlReference + Clone> ControlInputBuilder for DefaultControlInputBui
     fn assemble(
         &self,
         bus: &PortBus,
-        _runtime: &dyn AgentRuntime,
         _tick: &TickContext,
     ) -> Option<ControlInputs<R>> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;

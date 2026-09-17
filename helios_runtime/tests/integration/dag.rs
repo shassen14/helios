@@ -75,7 +75,7 @@ impl PipelineNode for ProducerNode {
     fn execute(
         &self,
         bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        _tf: &dyn helios_core::data::TfProvider,
         tick: TickContext,
     ) {
         let stamped = Stamped {
@@ -129,7 +129,7 @@ impl PipelineNode for TransformNode {
     fn execute(
         &self,
         bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        _tf: &dyn helios_core::data::TfProvider,
         tick: TickContext,
     ) {
         let Some(input) = bus.read::<u32>(self.input.clone()) else {
@@ -184,7 +184,7 @@ impl PipelineNode for JoinNode {
     fn execute(
         &self,
         bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        _tf: &dyn helios_core::data::TfProvider,
         tick: TickContext,
     ) {
         let Some(a) = bus.read::<u32>(self.input_a.clone()) else {
@@ -237,7 +237,7 @@ impl PipelineNode for CountingNode {
     fn execute(
         &self,
         _bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        _tf: &dyn helios_core::data::TfProvider,
         _tick: TickContext,
     ) {
         self.counter.fetch_add(1, Ordering::Relaxed);
@@ -277,7 +277,7 @@ impl PipelineNode for SinkNode {
     fn execute(
         &self,
         _bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
+        _tf: &dyn helios_core::data::TfProvider,
         _tick: TickContext,
     ) {
     }
@@ -303,7 +303,7 @@ fn single_node_executes() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let value = pipeline
         .bus()
@@ -328,7 +328,7 @@ fn two_node_chain_level_ordering() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     // If B were placed in level 0 alongside A, B would early-return (A's
     // output not yet on the bus when B reads). Output present means B ran
@@ -357,7 +357,7 @@ fn two_node_chain_with_builder_inserted_out_of_order() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let result = pipeline
         .bus()
@@ -397,7 +397,7 @@ fn three_node_diamond_resolves() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     // A=1, B=A*2=2, C=A*3=3, D=B+C=5.
     let result = pipeline
@@ -579,7 +579,7 @@ fn rate_gated_node_fires_at_correct_interval() {
         .expect("build should succeed");
 
     for _ in 0..4 {
-        pipeline.tick(&MockRuntime, 0.1);
+        pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
     }
     assert_eq!(
         counter.load(Ordering::Relaxed),
@@ -587,7 +587,7 @@ fn rate_gated_node_fires_at_correct_interval() {
         "must not fire before 0.5s elapsed"
     );
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
     assert_eq!(counter.load(Ordering::Relaxed), 1, "must fire on 5th tick");
 }
 
@@ -605,7 +605,7 @@ fn rate_gated_node_does_not_double_fire() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 1.0);
+    pipeline.tick(MonotonicTime(0.0), 1.0, &MockRuntime);
     assert_eq!(
         counter.load(Ordering::Relaxed),
         1,
@@ -627,7 +627,7 @@ fn unrated_node_fires_every_tick() {
         .expect("build should succeed");
 
     for _ in 0..3 {
-        pipeline.tick(&MockRuntime, 0.01);
+        pipeline.tick(MonotonicTime(0.0), 0.01, &MockRuntime);
     }
     assert_eq!(counter.load(Ordering::Relaxed), 3);
 }
@@ -665,7 +665,7 @@ fn tick_preserves_externally_written_values() {
         .write(sensor_key.clone(), stamped)
         .expect("write should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let after = pipeline
         .bus()

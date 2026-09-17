@@ -18,13 +18,14 @@ use std::sync::Arc;
 use helios_core::{
     control::commands::{BodyTwist, TwistIntent},
     control::reference::BodyTwistRef,
+    data::TfProvider,
     frames::quantities::FluVector,
 };
 
 use crate::{
     pipeline::descriptor::AlgorithmNodePortDescriptor,
     port::{ChannelError, InternalChannel, PortBus},
-    AgentRuntime, ChannelKey, PipelineNode, PortDescriptor, Stamped, TickContext,
+    ChannelKey, PipelineNode, PortDescriptor, Stamped, TickContext,
 };
 
 /// Per-DOF scale from dimensionless intent to a body twist: translation in m/s,
@@ -90,7 +91,7 @@ impl PipelineNode for TwistTeleopNode {
     /// on active input — publishes nothing, which is deadman-safe. The intent is
     /// re-clamped defensively, so a device that oversteps `[-1, 1]` cannot drive
     /// past the configured magnitude.
-    fn execute(&self, bus: &PortBus, _runtime: &dyn AgentRuntime, tick: TickContext) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
         let Some(intent) = bus.read::<TwistIntent>(self.intent_key.clone()) else {
             return;
         };
@@ -138,7 +139,7 @@ mod tests {
 
     struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -150,9 +151,6 @@ mod tests {
                 Convention::Flu,
                 Convention::Flu,
             ))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
         }
     }
 

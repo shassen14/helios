@@ -6,7 +6,7 @@ use helios_core::{
 
 use crate::{
     port::{ChannelKey, InternalChannel, PortBus},
-    prelude::{AgentRuntime, TickContext},
+    prelude::TickContext,
 };
 
 /// Assembles [`SearchPlannerInputs`] for a [`SearchPlannerNode`] from bus channels.
@@ -22,7 +22,6 @@ pub(crate) trait SearchPlannerInputBuilder: Send + Sync {
     fn assemble(
         &self,
         bus: &PortBus,
-        runtime: &dyn AgentRuntime,
         tick: &TickContext,
     ) -> Option<SearchPlannerInputs>;
 
@@ -68,7 +67,6 @@ impl SearchPlannerInputBuilder for DefaultSearchPlannerInputBuilder {
     fn assemble(
         &self,
         bus: &PortBus,
-        _runtime: &dyn AgentRuntime,
         _tick: &TickContext,
     ) -> Option<SearchPlannerInputs> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;

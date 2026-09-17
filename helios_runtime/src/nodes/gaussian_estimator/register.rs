@@ -199,7 +199,6 @@ mod tests {
     };
     use crate::pipeline::node::TickContext;
     use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
-    use crate::runtime::AgentRuntime;
 
     use crate::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
     use crate::port::SensorChannel;
@@ -319,7 +318,7 @@ mod tests {
     /// lookup is exercised.
     struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -327,9 +326,6 @@ mod tests {
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
             None
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
         }
     }
 

@@ -14,7 +14,7 @@
 //!    the body→World `pose(...)`. `None` → cold-start, skip the tick.
 //! 2. **Recenter.** Hand the robot pose to [`Mapper::recenter`].
 //! 3. **Integrate scans.** Read the scan channel; for each reading, look up
-//!    the static `agent → sensor` transform via the runtime, compose
+//!    the static `agent → sensor` transform via the tf provider, compose
 //!    `sensor_world = robot_world * agent_to_sensor`, and call
 //!    [`Mapper::integrate_scan_2d`]. Readings whose TF lookup fails are
 //!    silently skipped — TF rebuild lag is normal at startup.
@@ -33,7 +33,7 @@
 //! upstream estimator publishes — real EKF, future
 //! `GroundTruthEstimatorNode`, …) so the map lives in the estimator's
 //! frame. Reading the sensor's ground-truth world pose from the host
-//! runtime directly would anchor the map to physics ground-truth and create a frame mismatch
+//! directly would anchor the map to physics ground-truth and create a frame mismatch
 //! whenever the estimator drifts.
 //!
 //! ## Known gaps
@@ -59,6 +59,7 @@ use helios_core::data::envelope::SensorReading;
 use helios_core::data::AgentId;
 use helios_core::data::MonotonicTime;
 use helios_core::data::PointCloud;
+use helios_core::data::TfProvider;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::{FrameAwareState, FrameId};
 use helios_core::mapping::Mapper;
@@ -66,7 +67,6 @@ use helios_core::mapping::Mapper;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};
-use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
 /// Pipeline node wrapping any 2D [`Mapper`] implementation.
@@ -81,7 +81,7 @@ pub(crate) struct OccupancyGridNode {
     name: String,
     mapper: Mutex<Box<dyn Mapper>>,
     /// Agent identity used to build the `base_link` / `odom` frames that compose
-    /// `agent → sensor` static transforms from the runtime's TF tree. Combined
+    /// `agent → sensor` static transforms from the tf provider. Combined
     /// with the robot pose from `FrameAwareState` it yields a sensor pose in the
     /// **estimator's** world frame, not physics ground-truth.
     agent: AgentId,
@@ -139,7 +139,7 @@ impl PipelineNode for OccupancyGridNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, runtime: &dyn AgentRuntime, tick: TickContext) {
+    fn execute(&self, bus: &PortBus, tf: &dyn TfProvider, tick: TickContext) {
         // 1. Robot pose from the upstream estimator (real or ground-truth).
         let Some(stamped_state) =
             bus.read::<FrameAwareState>(InternalChannel::of::<FrameAwareState>().into())
@@ -176,7 +176,7 @@ impl PipelineNode for OccupancyGridNode {
             let batch_ts = stamped_scans.timestamp.0;
             if batch_ts > self.last_integrated_ts.load(Ordering::Relaxed) {
                 for reading in stamped_scans.value.iter() {
-                    let Some(erased) = runtime.get_transform(
+                    let Some(erased) = tf.get_transform(
                         FrameId::base_link(self.agent.clone()),
                         reading.sensor.clone(),
                         MonotonicTime(batch_ts),
@@ -241,7 +241,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
-    // --- Mock AgentRuntime ---
+    // --- Mock TfProvider ---
 
     /// `get_transform(agent, sensor)` returns whatever was inserted for the
     /// sensor frame's leaf name; missing entries return `None` to exercise the
@@ -262,7 +262,7 @@ mod tests {
         }
     }
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _from: FrameId,
@@ -275,9 +275,6 @@ mod tests {
             self.agent_to_sensor
                 .get(to.leaf().as_str())
                 .map(|iso| ErasedTransform::from_parts(*iso, Convention::Flu, Convention::Flu))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
         }
     }
 

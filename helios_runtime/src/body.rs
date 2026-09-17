@@ -6,9 +6,9 @@
 //! it supplies, and the assembler adapts instead of assuming. It is distinct
 //! from two neighbouring "capability"-shaped types:
 //!
-//! - [`AgentRuntime`](crate::runtime::AgentRuntime) is the *per-tick* contract
-//!   (TF lookups, clock). `BodyCapabilities` is the *static* declaration made
-//!   once at assembly time.
+//! - The per-tick transform contract [`TfProvider`](helios_core::data::TfProvider),
+//!   passed into each node's `execute` beside the bus. `BodyCapabilities` is the
+//!   *static* declaration made once at assembly time.
 //! - [`CapabilitySet`](crate::validation::CapabilitySet) is the autonomy-stack
 //!   feature set (which algorithm families are enabled). `BodyCapabilities`
 //!   describes the host's I/O, not the brain's algorithms.

@@ -2,14 +2,13 @@ use helios_core::{frames::FrameAwareState, prelude::PathFollowerInputs};
 
 use crate::{
     port::{ChannelKey, InternalChannel, PortBus},
-    prelude::{AgentRuntime, TickContext},
+    prelude::TickContext,
 };
 
 pub(crate) trait PathFollowerInputBuilder: Send + Sync {
     fn assemble(
         &self,
         bus: &PortBus,
-        runtime: &dyn AgentRuntime,
         tick: &TickContext,
     ) -> Option<PathFollowerInputs>;
 
@@ -43,7 +42,6 @@ impl PathFollowerInputBuilder for DefaultPathFollowerInputBuilder {
     fn assemble(
         &self,
         bus: &PortBus,
-        _runtime: &dyn AgentRuntime,
         _tick: &TickContext,
     ) -> Option<PathFollowerInputs> {
         let state_stamped = bus.read::<FrameAwareState>(self.state_channel.clone())?;

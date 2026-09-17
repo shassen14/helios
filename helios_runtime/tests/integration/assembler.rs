@@ -123,7 +123,7 @@ fn teleop_reference_is_intent_driven_not_free_running() {
 
     let reference_key: ChannelKey = control::reference::<BodyTwistRef>().into();
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
     assert!(
         pipeline.bus().read::<BodyTwistRef>(reference_key).is_none(),
         "no intent has been published, so the mapper must fabricate no reference"
@@ -172,7 +172,7 @@ fn teleop_intent_is_mapped_into_the_reference() {
         )
         .expect("host write to `intent` must succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let reference_key: ChannelKey = control::reference::<BodyTwistRef>().into();
     let reference = pipeline
@@ -482,7 +482,7 @@ fn feedback_and_feedforward_fold_into_the_wheel_torque_terminal() {
         )
         .expect("write to the feedforward contribution channel must succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let actuators = pipeline
         .read_actuators()
@@ -617,7 +617,7 @@ fn decoupled_legs_merge_into_one_actuator_terminal() {
         )
         .expect("write to the steer contribution channel must succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let actuators = pipeline
         .read_actuators()
@@ -806,7 +806,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
                 },
             )
             .expect("host write to the mag channel must succeed");
-        pipeline.tick(&MockRuntime, dt);
+        pipeline.tick(MonotonicTime(0.0), dt, &MockRuntime);
     }
 
     let state = pipeline
@@ -899,7 +899,7 @@ fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
     )
     .expect("un-augmented stack must build");
 
-    pipeline.tick(&MockRuntime, 0.05);
+    pipeline.tick(MonotonicTime(0.0), 0.05, &MockRuntime);
 
     let state = pipeline
         .read_state()

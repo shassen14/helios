@@ -19,7 +19,6 @@ use super::input::EstimatorInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};
-use crate::runtime::{AgentRuntime, TfProviderAdapter};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::data::envelope::SensorReading;
@@ -222,17 +221,15 @@ impl PipelineNode for GaussianEstimatorNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, runtime: &dyn AgentRuntime, tick: TickContext) {
-        let tf_adapter = TfProviderAdapter(runtime);
-        let tf: Option<&dyn TfProvider> = Some(&tf_adapter);
-
+    fn execute(&self, bus: &PortBus, tf: &dyn TfProvider, tick: TickContext) {
+        let tf = Some(tf);
         // Skip the tick on a poisoned mutex rather than propagating the panic
         let Ok(mut estimator) = self.estimator.lock() else {
             return;
         };
 
         // 1. Predict (skip if input builder can't assemble — cold-start, dropout).
-        if let Some(inputs) = self.input_builder.assemble(bus, runtime, &tick) {
+        if let Some(inputs) = self.input_builder.assemble(bus, &tick) {
             estimator.predict(tick.dt, &inputs);
         }
 
@@ -263,8 +260,8 @@ mod tests {
     use super::*;
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::MonotonicTime;
-    use helios_core::data::AgentId;
     use helios_core::data::sensor::Acceleration;
+    use helios_core::data::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
     use helios_core::estimation::EstimatorInputs;
@@ -274,13 +271,11 @@ mod tests {
     use nalgebra::{DMatrix, DVector, Isometry3};
     use std::sync::Mutex as StdMutex;
 
-    // --- Mock AgentRuntime ---
+    // --- Mock TfProvider ---
 
-    struct MockRuntime {
-        now: f64,
-    }
+    struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -292,9 +287,6 @@ mod tests {
                 Convention::Flu,
                 Convention::Flu,
             ))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(self.now)
         }
     }
 
@@ -385,7 +377,6 @@ mod tests {
         fn assemble(
             &self,
             _bus: &PortBus,
-            _runtime: &dyn AgentRuntime,
             _tick: &TickContext,
         ) -> Option<EstimatorInputs> {
             Some(EstimatorInputs {
@@ -407,7 +398,6 @@ mod tests {
         fn assemble(
             &self,
             _bus: &PortBus,
-            _runtime: &dyn AgentRuntime,
             _tick: &TickContext,
         ) -> Option<EstimatorInputs> {
             None
@@ -523,7 +513,7 @@ mod tests {
             vec![],
         );
         let bus = make_bus(vec![]);
-        let runtime = MockRuntime { now: 1.0 };
+        let runtime = MockRuntime;
 
         node.execute(&bus, &runtime, tick_at(1.0, 0.1));
 
@@ -545,7 +535,7 @@ mod tests {
             vec![],
         );
         let bus = make_bus(vec![]);
-        let runtime = MockRuntime { now: 0.0 };
+        let runtime = MockRuntime;
 
         node.execute(&bus, &runtime, tick_at(0.5, 0.1));
 

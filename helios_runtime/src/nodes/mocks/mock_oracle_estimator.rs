@@ -36,11 +36,11 @@ use crate::channels::{oracle_pose_channel, oracle_twist_channel};
 use crate::pipeline::descriptor::MockNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{InternalChannel, OracleChannel, PortBus, PortDescriptor};
-use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
 use helios_core::data::messages::Twist;
 use helios_core::data::AgentId;
+use helios_core::data::TfProvider;
 use helios_core::estimation::carrier::kinematic_carrier_schema;
 use helios_core::estimation::schema::StateSchema;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
@@ -85,7 +85,7 @@ impl PipelineNode for MockOracleEstimatorNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, _runtime: &dyn AgentRuntime, tick: TickContext) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
         // Cold-start: no oracle/pose yet → skip. The output slot keeps its
         // previous value under last-known-good semantics, or stays empty
         // if this is the first tick.
@@ -240,11 +240,9 @@ mod tests {
 
     // --- Test fixtures ---
 
-    struct MockRuntime {
-        now: f64,
-    }
+    struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -256,9 +254,6 @@ mod tests {
                 Convention::Flu,
                 Convention::Flu,
             ))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(self.now)
         }
     }
 
@@ -363,7 +358,7 @@ mod tests {
         )
         .expect("oracle/pose slot must exist");
 
-        node.execute(&bus, &MockRuntime { now: 0.0 }, tick_at(0.0, 0.01));
+        node.execute(&bus, &MockRuntime, tick_at(0.0, 0.01));
 
         let published = bus
             .read::<FrameAwareState>(state_channel())
@@ -414,7 +409,7 @@ mod tests {
         )
         .expect("oracle/twist slot must exist");
 
-        node.execute(&bus, &MockRuntime { now: 0.0 }, tick_at(0.0, 0.01));
+        node.execute(&bus, &MockRuntime, tick_at(0.0, 0.01));
 
         let out = bus
             .read::<FrameAwareState>(state_channel())
@@ -442,7 +437,7 @@ mod tests {
         let bus = make_bus_with_oracle_producer(&node);
 
         // No write to oracle/pose. Cold start.
-        node.execute(&bus, &MockRuntime { now: 0.0 }, tick_at(0.0, 0.01));
+        node.execute(&bus, &MockRuntime, tick_at(0.0, 0.01));
 
         assert!(
             bus.read::<FrameAwareState>(state_channel()).is_none(),
@@ -470,7 +465,7 @@ mod tests {
             dt: 0.01,
             node_id: 7,
         };
-        node.execute(&bus, &MockRuntime { now: 3.5 }, tick);
+        node.execute(&bus, &MockRuntime, tick);
 
         let out = bus.read::<FrameAwareState>(state_channel()).unwrap();
         assert!((out.timestamp.0 - 3.5).abs() < 1e-9);

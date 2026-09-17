@@ -99,7 +99,7 @@ impl PipelineNode for Merge {
     fn execute(
         &self,
         bus: &crate::port::PortBus,
-        _runtime: &dyn crate::AgentRuntime,
+        _tf: &dyn helios_core::data::TfProvider,
         tick: crate::TickContext,
     ) {
         let Some(inputs) = self
@@ -165,18 +165,19 @@ mod tests {
     use super::*;
 
     use helios_core::control::actuators::{ActuatorSetpoint, SetpointValue};
+    use helios_core::data::ports::TfProvider;
     use helios_core::data::primitives::MonotonicTime;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::FrameId;
 
     use crate::port::PortBus;
-    use crate::{AgentRuntime, NodeId, TickContext};
+    use crate::{NodeId, TickContext};
 
     use nalgebra::Isometry3;
 
     struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -188,9 +189,6 @@ mod tests {
                 Convention::Flu,
                 Convention::Flu,
             ))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
         }
     }
 

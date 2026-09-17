@@ -2,7 +2,7 @@
 //!
 //! Assembles `helios_core` algorithm stages into an [`AutonomyPipeline`] that runs
 //! identically in simulation and on hardware. Key types: `AutonomyPipeline`,
-//! `PipelineBuilder`, `PipelineNode`, `PortBus`, `AgentRuntime`.
+//! `PipelineBuilder`, `PipelineNode`, `PortBus`.
 
 pub mod assembler;
 pub mod body;
@@ -14,7 +14,6 @@ pub mod pipeline;
 pub mod port;
 pub mod prelude;
 pub mod registry;
-pub mod runtime;
 pub mod stamped;
 pub mod tf_service;
 pub mod validation;
@@ -40,5 +39,4 @@ pub use crate::registry::contexts::{
     MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 pub use crate::registry::AutonomyRegistry;
-pub use crate::runtime::AgentRuntime;
 pub use crate::validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError};

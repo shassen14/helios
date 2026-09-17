@@ -1,6 +1,6 @@
 use crate::{
     port::{ChannelKey, PortBus, SensorChannel},
-    prelude::{AgentRuntime, TickContext},
+    prelude::TickContext,
 };
 use helios_core::{
     estimation::EstimatorInputs,
@@ -14,7 +14,6 @@ pub(crate) trait EstimatorInputBuilder: Send + Sync {
     fn assemble(
         &self,
         bus: &PortBus,
-        runtime: &dyn AgentRuntime,
         tick: &TickContext,
     ) -> Option<EstimatorInputs>;
 
@@ -54,7 +53,6 @@ impl EstimatorInputBuilder for IntegratedImuInputBuilder {
     fn assemble(
         &self,
         bus: &PortBus,
-        _runtime: &dyn AgentRuntime,
         _tick: &TickContext,
     ) -> Option<EstimatorInputs> {
         let accel_stamped =

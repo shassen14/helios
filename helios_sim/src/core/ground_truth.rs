@@ -75,7 +75,7 @@ pub fn ground_truth_sync_system(
 /// `FrameAwareState` without rotating.
 ///
 /// The bus timestamp source is `Time::elapsed_secs_f64`, identical to
-/// what `SimRuntime::now()` returns later in the autonomy tick — so
+/// the `now` the host passes into `pipeline.tick` in the autonomy tick — so
 /// `read_fresh(max_age)` comparisons across systems work without skew.
 ///
 /// `bus.write` returns `Err(UnknownChannel)` if no node in the graph
