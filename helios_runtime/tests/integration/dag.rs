@@ -8,8 +8,11 @@ use std::sync::{
     Arc,
 };
 
-use helios_core::data::primitives::MonotonicTime;
+use helios_core::data::{primitives::MonotonicTime, AgentId};
+use helios_core::frames::id::FrameId;
+use helios_core::frames::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
+    channels::tf::tf_edge,
     pipeline::{PipelineBuildError, PipelineBuilder},
     port::{ChannelKey, InternalChannel, OracleChannel, PortBus, PortDescriptor},
     prelude::{Health, PipelineNode, Stamped, TickContext},
@@ -647,4 +650,52 @@ fn tick_preserves_externally_written_values() {
         .read::<u32>(sensor_key)
         .expect("value should still be present after tick");
     assert_eq!(after.value, 99);
+}
+
+// =========================================================================
+// == tf-edge drain-key derivation ==
+// =========================================================================
+
+/// `tf_edge_channels` returns exactly the outputs that are tf edges, filtering
+/// out ordinary outputs — this is the drain list a host feeds a `TfService`,
+/// derived from the graph's own declarations so it cannot drift from them.
+#[test]
+fn tf_edge_channels_returns_only_declared_tf_edges() {
+    let agent = AgentId::new("bot");
+    let edge = FrameEdge {
+        child: FrameId::base_link(agent.clone()),
+        parent: FrameId::odom(agent),
+    };
+    let edge_key: ChannelKey = tf_edge(&edge).into();
+    // A plain (non-tf) output on a second, independent producer: it must be
+    // filtered out, proving the accessor keys off `is_tf_edge`, not "every output".
+    let plain_key = ikey_of::<u32>();
+
+    let pipeline = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new(
+            "edge_producer",
+            edge_key.clone(),
+            0,
+        )))
+        .add_node(Box::new(ProducerNode::new(
+            "state_producer",
+            plain_key,
+            0,
+        )))
+        .build()
+        .expect("two independent producers on distinct channels build");
+
+    assert_eq!(pipeline.tf_edge_channels(), vec![edge_key]);
+}
+
+/// A graph with no edge producer yields an empty drain list — the service then
+/// drains nothing, which is correct for a stack whose only tf need is statics.
+#[test]
+fn tf_edge_channels_is_empty_without_an_edge_producer() {
+    let pipeline = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("plain", ikey_of::<u32>(), 0)))
+        .build()
+        .expect("single plain producer builds");
+
+    assert!(pipeline.tf_edge_channels().is_empty());
 }

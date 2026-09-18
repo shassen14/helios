@@ -1,16 +1,19 @@
 use crate::brain_bridge::components::{
     AgentIdComponent, AutonomyPipelineComponent, MissionGoalChannels, OdomFrameOf,
-    PipelineBuildFailed, SensorPublishChannel, TeleopControlled,
+    PipelineBuildFailed, SensorPublishChannel, TeleopControlled, TfServiceComponent,
 };
 use crate::core::components::{ActuatorCommandComponent, ControllerStateSource};
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
 use helios_core::control::actuators::ActuatorCommand;
-use helios_core::frames::transforms::Convention;
+use helios_core::data::{AgentId, MonotonicTime};
+use helios_core::frames::transforms::tf::stamped::StampedTransform;
+use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::FrameId;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::config::ReferenceSource;
+use helios_runtime::tf_service::TfService;
 use helios_runtime::{
     build_pipeline, check_actuation_agreement, AutonomyStack, BodyCapabilities, Provenance,
     PublishedChannel,
@@ -74,7 +77,7 @@ pub fn spawn_autonomy_pipeline(
         match build_pipeline(
             stack,
             &registry.0,
-            agent,
+            agent.clone(),
             &sensor_channels,
             host_capabilities,
         ) {
@@ -83,9 +86,22 @@ pub fn spawn_autonomy_pipeline(
                 // `CreateRequests`), so the test bridge's
                 // `(&AgentIdComponent, &AutonomyPipelineComponent)` query still
                 // never sees a pipeline without its identity.
-                let mut cmds = commands.entity(agent_entity);
+                //
+                // The TfService is seeded with the static sensor mounts and
+                // drains exactly the tf-edge channels this pipeline declares, so
+                // its estimated tree is fed only by the graph's own producers —
+                // never the sim's truth tree.
+                let window = stack.tf.to_window();
+                let drain_keys = pipeline.tf_edge_channels();
+                let static_seeds = build_static_seeds(agent_config, &agent);
 
+                let mut cmds = commands.entity(agent_entity);
                 cmds.insert(AutonomyPipelineComponent(pipeline));
+                cmds.insert(TfServiceComponent(TfService::new(
+                    window,
+                    drain_keys,
+                    static_seeds,
+                )));
 
                 if !goal_channels.is_empty() {
                     cmds.insert(MissionGoalChannels(goal_channels.into_iter().collect()));
@@ -120,6 +136,33 @@ pub fn spawn_autonomy_pipeline(
             }
         }
     }
+}
+
+/// The static transform edges seeding this agent's estimated tf buffer: one
+/// `base_link → sensor` mount per sensor frame, built from the same sensor
+/// configs the sensor spawners read.
+///
+/// Single-sourcing the mount here (rather than reading it back off the truth
+/// tree) is what keeps the estimated and truth trees from disagreeing on a mount
+/// while leaving the estimated buffer structurally unable to reach the truth
+/// tree. Each mount is time-invariant, so it is stamped at `t = 0` and folded
+/// once when the [`TfService`] is constructed. The pose is `sensor` expressed in
+/// `base_link` (FLU); `from_parts` takes the sensor's own convention first, the
+/// `base_link` convention (FLU) second.
+fn build_static_seeds(agent_config: &AgentConfig, agent: &AgentId) -> Vec<StampedTransform> {
+    let base_link = FrameId::base_link(agent.clone());
+
+    agent_config
+        .sensors
+        .values()
+        .flat_map(|sensor| sensor.frame_mounts())
+        .map(|(channel, pose, convention)| StampedTransform {
+            child: FrameId::sensor(agent.clone(), channel),
+            parent: base_link.clone(),
+            stamp: MonotonicTime(0.0),
+            transform: ErasedTransform::from_parts(pose.to_isometry(), convention, Convention::Flu),
+        })
+        .collect()
 }
 
 /// Spawns odom frame entities for agents that have an `AutonomyPipelineComponent`.

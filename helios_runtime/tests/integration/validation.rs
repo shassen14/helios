@@ -228,6 +228,7 @@ fn validation_valid_full_stack_passes() {
         allocators: Default::default(),
         teleop: None,
         reference_arbitration: Default::default(),
+        tf: Default::default(),
     };
 
     let errors = validate_autonomy_config(&stack, &full_caps());

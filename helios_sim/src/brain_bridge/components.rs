@@ -1,5 +1,5 @@
 use helios_core::data::AgentId;
-use helios_runtime::pipeline::AutonomyPipeline;
+use helios_runtime::{pipeline::AutonomyPipeline, tf_service::TfService};
 
 use bevy::prelude::{Component, Entity};
 
@@ -8,6 +8,17 @@ use bevy::prelude::{Component, Entity};
 /// by `run_pipeline_tick` in `SimulationSet::BrainTick`.
 #[derive(Component)]
 pub struct AutonomyPipelineComponent(pub AutonomyPipeline);
+
+/// Holds the agent's [`TfService`] — the drain-fold-expose unit that turns the
+/// pipeline's dual-published transform edges into a queryable estimated tree.
+///
+/// Written at spawn time alongside [`AutonomyPipelineComponent`], and folded
+/// once per tick by `run_pipeline_tick` (before the pipeline ticks) so nodes
+/// query a frozen buffer. Its provider is the *estimated* chain, wired only from
+/// edge channels — nodes can no longer reach the sim's truth tree, which is the
+/// point of the split.
+#[derive(Component)]
+pub struct TfServiceComponent(pub TfService);
 
 /// The agent's canonical coordinate-frame identity — the typed [`AgentId`] built
 /// once from `agent_config.name()` (e.g. `"rover_1"`), *not* the composite `Name`

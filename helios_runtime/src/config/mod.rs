@@ -15,6 +15,7 @@ mod mapper;
 mod path_following;
 mod planner;
 mod teleop;
+mod tf;
 
 pub use agent::AgentBaseConfig;
 pub use allocator::AllocatorConfig;
@@ -33,3 +34,4 @@ pub use mapper::{MapLayerConfig, MapperPoseSourceConfig};
 pub use path_following::PathFollowingConfig;
 pub use planner::SearchPlannerConfig;
 pub use teleop::TeleopMapperConfig;
+pub use tf::TfBufferConfig;

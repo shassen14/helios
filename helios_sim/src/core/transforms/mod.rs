@@ -97,12 +97,11 @@ impl TfTree {
     ///
     /// The tree is latest-only: one pose per frame (the most recent physics
     /// step), no history and no time index, so every query is answered for
-    /// "now" — which is why there is no time argument here and
-    /// `SimRuntime::get_transform` discards its `at`. A buffered, interpolating
-    /// tree (the tf2 model: binary-search the bracketing samples, slerp/lerp to
-    /// the requested time, error rather than extrapolate out of range) is
-    /// deferred until the estimated map->odom edge is what first makes
-    /// "now != at" observable.
+    /// "now" — which is why there is no time argument here. The estimated tree
+    /// the pipeline reads is a separate, time-buffered `TfBuffer` (the tf2 model:
+    /// binary-search the bracketing samples, slerp/lerp to the requested time,
+    /// error rather than extrapolate out of range); this truth tree stays
+    /// latest-only because sensor generation and viz only ever want "now".
     pub fn erased(&self, from: FrameId, to: FrameId) -> Option<ErasedTransform> {
         let (from_pose, from_conv) = self.resolve(from)?;
 

@@ -26,7 +26,7 @@ use crate::{
 };
 
 use nalgebra::{Isometry3, Translation3};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// The transform tree for the whole system, folded from timestamped edge messages.
 ///
@@ -199,21 +199,30 @@ impl TfBuffer {
     ///
     /// The strategy is lowest common ancestor. In a single-parent tree each frame
     /// has one path to its root, so two endpoints' paths meet at exactly one frame
-    /// and share the tail above it. [`ancestors_from`](TfBuffer::ancestors_from)
-    /// builds each endpoint's `endpoint → ancestor` ladder; the lowest frame on
-    /// both ladders is the LCA, found by walking `from`'s chain root-ward and
-    /// taking the first frame that is also on `to`'s. The answer is `from → LCA`
-    /// followed by the reverse of `to → LCA`: both ladders point *up* toward the
-    /// ancestor, so joining them into `from → to` means descending the second one
-    /// backward.
+    /// — the LCA — and the answer is `from → LCA` then the reverse of `to → LCA`.
+    ///
+    /// Finding the LCA and *evaluating* the paths are two separate phases, and the
+    /// separation is load-bearing. [`lowest_common_ancestor`](TfBuffer::lowest_common_ancestor)
+    /// walks `child_to_parent` **keys only** — it samples no edge — so an edge
+    /// that cannot answer the query (an `At` past a dynamic edge's history) never
+    /// enters the *search* for the meeting point. Only then does
+    /// [`accumulate`](TfBuffer::accumulate) sample the edges on each side, and it
+    /// stops at the LCA: an edge *above* the meeting point is never touched. This
+    /// is what lets a purely static lookup (a sensor mount, `base_link → cam`)
+    /// resolve even while the dynamic `base_link → odom` edge above it is momentarily
+    /// unqueryable — the mount's answer does not cross that edge, so its time
+    /// coverage is irrelevant. (An earlier version climbed every chain to the root
+    /// before locating the LCA, so any out-of-range edge anywhere above either
+    /// endpoint poisoned the whole lookup.)
     ///
     /// The failure cases are disjoint by cause. An endpoint the tree never saw is
     /// [`UnknownFrame`](TfLookupError::UnknownFrame); two endpoints whose chains
     /// never meet live in separate trees and are
-    /// [`Disconnected`](TfLookupError::Disconnected); an `At` query outside an
-    /// edge's retained history surfaces from the ladder as
-    /// [`OutOfTimeRange`](TfLookupError::OutOfTimeRange), propagated unchanged. The
-    /// `from == to` case is identity, answered before any walk.
+    /// [`Disconnected`](TfLookupError::Disconnected); an `At` query outside the
+    /// retained history of an edge *the answer actually crosses* surfaces from
+    /// `accumulate` as [`OutOfTimeRange`](TfLookupError::OutOfTimeRange),
+    /// propagated unchanged. The `from == to` case is identity, answered before
+    /// any walk.
     pub fn lookup(
         &self,
         from: &FrameId,
@@ -241,35 +250,20 @@ impl TfBuffer {
             ));
         }
 
-        // Each endpoint's ladder of `endpoint → ancestor` transforms, keyed by the
-        // ancestor. An `At` query past an edge's history fails here and propagates.
-        let from_anc = self.ancestors_from(from, query)?;
-        let to_anc = self.ancestors_from(to, query)?;
-
-        // The LCA is the lowest frame on both ladders. Walk `from`'s chain root-ward
-        // (`from` first, then each parent) and take the first frame that also sits
-        // on `to`'s ladder — the lowest such frame, since the walk climbs. Chains
+        // Phase 1 — find the meeting point structurally, sampling nothing. Chains
         // that never share a frame belong to separate trees: `Disconnected`.
-        let Some(lca) = std::iter::successors(Some(from), |current| {
-            self.child_to_parent.get(current).map(|n| &n.0)
-        })
-        .find(|f| to_anc.contains_key(f)) else {
-            return Err(TfLookupError::Disconnected {
+        let lca = self
+            .lowest_common_ancestor(from, to)
+            .ok_or_else(|| TfLookupError::Disconnected {
                 from: from.clone(),
                 to: to.clone(),
-            });
-        };
+            })?;
 
-        // Both ladders hold the LCA — `find` just proved it on `to`'s side, and it
-        // lies on `from`'s own chain — but honor the no-panic rule instead of
-        // unwrapping: a missing side falls through to `Disconnected`. The `&`
-        // patterns copy the transforms out (`ErasedTransform` is `Copy`).
-        let (Some(&from_to_lca), Some(&to_to_lca)) = (from_anc.get(lca), to_anc.get(lca)) else {
-            return Err(TfLookupError::Disconnected {
-                from: from.clone(),
-                to: to.clone(),
-            });
-        };
+        // Phase 2 — sample only the edges each side crosses to reach the LCA, and
+        // no further. `OutOfTimeRange` can surface here, but only for an edge on
+        // the `from → LCA` / `to → LCA` path — never one above it.
+        let from_to_lca = self.accumulate(from, &lca, query)?;
+        let to_to_lca = self.accumulate(to, &lca, query)?;
 
         // `from → LCA` then the reverse of `to → LCA` (= `LCA → to`) gives
         // `from → to`. The shared LCA convention is the seam `then` checks.
@@ -466,41 +460,84 @@ impl TfBuffer {
         }
     }
 
-    /// Climbs the tree parent-ward from `start`, accumulating the transform from
-    /// `start` to every ancestor it passes, keyed by that ancestor. This is the
-    /// per-side half of a lookup: `lookup` builds one of these ladders for each
-    /// endpoint and intersects their frame sets to find the lowest common ancestor.
+    /// The lowest frame on both `a`'s and `b`'s root-ward chains, or `None` when
+    /// the two chains never meet (separate trees).
     ///
-    /// The map includes `start` itself, mapped to identity — so a frame is a member
-    /// of its own ancestor set, which is what lets a lookup whose endpoints sit on a
-    /// single root-ward chain (e.g. `base_link → odom`) find its LCA at an endpoint.
+    /// Walks `child_to_parent` **keys only** — it reads no edge pose and calls no
+    /// [`sample_edge`](TfBuffer::sample_edge). That is the whole point: the meeting
+    /// point of two frames is a property of the tree's *structure*, independent of
+    /// whether any edge can answer the query time, so an out-of-range dynamic edge
+    /// anywhere in either chain must not influence — or fail — the search for it.
+    /// [`accumulate`](TfBuffer::accumulate) then samples only the edges strictly
+    /// below the returned LCA.
+    ///
+    /// Each chain includes its own start, so when one endpoint is an ancestor of
+    /// the other (e.g. `base_link` and `odom` on one root-ward line) the LCA is
+    /// that endpoint itself. The walk terminates at a root because
+    /// [`validate`](TfBuffer::validate) keeps the tree acyclic, so parents always
+    /// run out.
+    fn lowest_common_ancestor(&self, a: &FrameId, b: &FrameId) -> Option<FrameId> {
+        // `a`'s root-ward chain, itself included. Only the frame identities matter
+        // here, so nothing is sampled.
+        let mut a_chain: HashSet<FrameId> = HashSet::new();
+        let mut cursor = Some(a.clone());
+        while let Some(frame) = cursor {
+            cursor = self.child_to_parent.get(&frame).map(|(parent, _)| parent.clone());
+            a_chain.insert(frame);
+        }
+
+        // Climb `b`'s chain (itself included) and take the first frame that is also
+        // an ancestor of `a` — the lowest, since the walk ascends.
+        let mut cursor = Some(b.clone());
+        while let Some(frame) = cursor {
+            if a_chain.contains(&frame) {
+                return Some(frame);
+            }
+            cursor = self.child_to_parent.get(&frame).map(|(parent, _)| parent.clone());
+        }
+        None
+    }
+
+    /// Composes `start → target`, climbing parent-ward from `start` and stopping
+    /// the instant the cursor reaches `target`. `start == target` is identity, with
+    /// no hops taken.
+    ///
+    /// Only the edges strictly between `start` and `target` are sampled — nothing
+    /// above `target`. Callers pass an LCA that is a genuine ancestor of `start`,
+    /// so this both bounds the work to the path the answer crosses and is what
+    /// keeps an unqueryable edge higher in the tree from failing a lookup that does
+    /// not reach it.
     ///
     /// Each hop reads its edge with [`sample_edge`](TfBuffer::sample_edge), tags the
     /// pose with the two frames' conventions, and composes it onto the running
-    /// `start → ancestor` transform. An edge whose history does not cover an `At`
-    /// query surfaces as the `sample_edge` error, propagated unchanged. The walk
-    /// terminates at a root because [`validate`](TfBuffer::validate) keeps the tree
-    /// acyclic, so parents always run out.
-    fn ancestors_from(
+    /// `start → cursor` transform. An edge whose history does not cover an `At`
+    /// query surfaces as the `sample_edge` error, propagated unchanged. Reaching a
+    /// root without meeting `target` means the two are not on one chain; that is a
+    /// defensive [`Disconnected`](TfLookupError::Disconnected) never hit on a valid
+    /// LCA, kept to honor the no-panic rule.
+    fn accumulate(
         &self,
         start: &FrameId,
+        target: &FrameId,
         query: TfQuery,
-    ) -> Result<HashMap<FrameId, ErasedTransform>, TfLookupError> {
+    ) -> Result<ErasedTransform, TfLookupError> {
         let Some(start_conv) = self.conventions.get(start) else {
             return Err(TfLookupError::UnknownFrame(start.clone()));
         };
 
-        // `start → start` is identity, tagged with `start`'s convention on both
-        // ends. Seeding the map with it puts `start` in its own ancestor set and
-        // gives the walk its running accumulator.
-        let identity = ErasedTransform::from_parts(Isometry3::identity(), *start_conv, *start_conv);
-
+        // `start → start` identity seeds the accumulator; if `start == target` it
+        // is the answer, and no edge is sampled.
+        let mut running = ErasedTransform::from_parts(Isometry3::identity(), *start_conv, *start_conv);
         let mut cursor = start;
-        let mut running = identity;
-        let mut ancestors: HashMap<FrameId, ErasedTransform> = HashMap::new();
-        ancestors.insert(start.clone(), identity);
 
-        while let Some((parent, edge)) = self.child_to_parent.get(cursor) {
+        while cursor != target {
+            let Some((parent, edge)) = self.child_to_parent.get(cursor) else {
+                return Err(TfLookupError::Disconnected {
+                    from: start.clone(),
+                    to: target.clone(),
+                });
+            };
+
             // The edge's own pose at the query time, before conventions are attached.
             let sample = Self::sample_edge(edge, query, cursor, parent)?;
 
@@ -514,18 +551,14 @@ impl TfBuffer {
             };
 
             // This hop alone: `cursor → parent`, tagged with each end's convention.
-            let hop = ErasedTransform::from_parts(sample, *from, *to);
-
             // Extend the accumulator: `start → cursor` then `cursor → parent` gives
             // `start → parent`. The shared `cursor` convention is the seam `then`
             // checks, so a flipped composition would trip its debug assert.
-            running = running.then(hop);
-
-            ancestors.insert(parent.clone(), running);
+            running = running.then(ErasedTransform::from_parts(sample, *from, *to));
             cursor = parent;
         }
 
-        Ok(ancestors)
+        Ok(running)
     }
 }
 
@@ -849,42 +882,116 @@ mod tests {
         ));
     }
 
-    // --- ancestors_from ---
+    // A sensor mounted on base_link at the given +X offset — the static extrinsic
+    // shape every state-sensor lookup crosses.
+    fn mount(buf: &mut TfBuffer, name: &str, x: f64) -> FrameId {
+        mount_on(buf, name, base_link(), Convention::Flu, x)
+    }
+
+    // A static sensor mount on an arbitrary parent, whose convention names the
+    // parent's end of the edge (the sensor itself is FLU).
+    fn mount_on(
+        buf: &mut TfBuffer,
+        name: &str,
+        parent: FrameId,
+        parent_convention: Convention,
+        x: f64,
+    ) -> FrameId {
+        let frame = sensor(name);
+        assert!(buf
+            .insert_static(stamped(
+                frame.clone(),
+                parent,
+                Convention::Flu,
+                parent_convention,
+                0.0,
+                iso_x(x),
+            ))
+            .is_ok());
+        frame
+    }
+
+    // --- lowest_common_ancestor ---
 
     #[test]
-    fn ancestors_from_includes_start_as_identity() {
-        // A frame is a member of its own ancestor set, mapped to identity — the
-        // property that lets a lookup find its LCA at an endpoint.
+    fn lca_of_two_siblings_is_their_shared_parent() {
+        // cam and lidar both mount on base_link; neither is the other's ancestor,
+        // so the meeting point is base_link.
         let mut buf = TfBuffer::new(window());
-        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+        let cam = mount(&mut buf, "cam", 1.0);
+        let lidar = mount(&mut buf, "lidar", 2.0);
 
-        let ancestors = buf
-            .ancestors_from(&base_link(), TfQuery::Latest)
-            .ok()
-            .expect("base_link is a known frame");
-        let start = ancestors
-            .get(&base_link())
-            .expect("start is in its own ancestor set");
-        assert!(start.isometry().translation.vector.norm() < 1e-12);
-        assert!(start.isometry().rotation.angle().abs() < 1e-12);
+        assert_eq!(buf.lowest_common_ancestor(&cam, &lidar), Some(base_link()));
     }
 
     #[test]
-    fn ancestors_from_accumulates_along_a_chain() {
-        // sensor -(x=1)-> base_link -(x=2)-> odom. Walking from the sensor, each
-        // ancestor carries the composed sensor→ancestor translation: 0, 1, 3.
+    fn lca_of_a_frame_and_its_ancestor_is_the_ancestor() {
+        // base_link and odom lie on one root-ward chain, so their only *common*
+        // ancestor is the upper of the two, odom — reached from either order. A
+        // straight-line lookup then accumulates base_link → odom on one side and an
+        // empty odom → odom on the other.
         let mut buf = TfBuffer::new(window());
-        let cam = sensor("cam");
-        assert!(buf
-            .insert_static(stamped(
-                cam.clone(),
-                base_link(),
-                Convention::Flu,
-                Convention::Flu,
-                0.0,
-                iso_x(1.0),
-            ))
-            .is_ok());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+
+        assert_eq!(
+            buf.lowest_common_ancestor(&base_link(), &odom()),
+            Some(odom())
+        );
+        assert_eq!(
+            buf.lowest_common_ancestor(&odom(), &base_link()),
+            Some(odom())
+        );
+    }
+
+    #[test]
+    fn lca_of_separate_trees_is_none() {
+        // base_link -> odom and a floating sensor -> map share no ancestor.
+        let mut buf = TfBuffer::new(window());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+        let floating = mount_on(&mut buf, "floating", map(), Convention::Enu, 1.0);
+
+        assert_eq!(buf.lowest_common_ancestor(&base_link(), &floating), None);
+    }
+
+    #[test]
+    fn lca_samples_no_edge_so_an_out_of_range_ancestor_is_irrelevant() {
+        // gps mounts on base_link, whose only parent is a dynamic odom edge with
+        // history at t=1,2. The LCA of base_link and gps is base_link regardless of
+        // the query time — the search reads keys, never the odom edge's samples.
+        let mut buf = TfBuffer::new(window());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(2.0, 2.0)).is_ok());
+        let gps = mount(&mut buf, "gps", 0.5);
+
+        // No query is even passed: LCA is purely structural.
+        assert_eq!(buf.lowest_common_ancestor(&base_link(), &gps), Some(base_link()));
+        assert_eq!(buf.lowest_common_ancestor(&gps, &base_link()), Some(base_link()));
+    }
+
+    // --- accumulate ---
+
+    #[test]
+    fn accumulate_start_equals_target_is_identity_and_samples_nothing() {
+        // With start == target the walk takes no hops, so even a dynamic parent
+        // edge that is out of range at the query time is never touched.
+        let mut buf = TfBuffer::new(window());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(2.0, 2.0)).is_ok());
+
+        let tf = buf
+            .accumulate(&base_link(), &base_link(), TfQuery::At(MonotonicTime(5.0)))
+            .ok()
+            .expect("identity needs no edge, so the out-of-range parent is irrelevant");
+        assert!(tf.isometry().translation.vector.norm() < 1e-12);
+    }
+
+    #[test]
+    fn accumulate_composes_only_the_edges_up_to_target() {
+        // gps -(x=1)-> base_link -(x=2)-> odom. Accumulating gps → base_link crosses
+        // just the mount (x=1) and stops; the base_link → odom edge above the target
+        // is never composed in.
+        let mut buf = TfBuffer::new(window());
+        let gps = mount(&mut buf, "gps", 1.0);
         assert!(buf
             .insert_static(stamped(
                 base_link(),
@@ -896,59 +1003,31 @@ mod tests {
             ))
             .is_ok());
 
-        let ancestors = buf
-            .ancestors_from(&cam, TfQuery::Latest)
+        let tf = buf
+            .accumulate(&gps, &base_link(), TfQuery::Latest)
             .ok()
-            .expect("cam is a known frame");
-        // Every frame on the chain, and nothing else.
-        assert_eq!(ancestors.len(), 3);
-        let x_of = |f: &FrameId| {
-            ancestors
-                .get(f)
-                .expect("on the chain")
-                .isometry()
-                .translation
-                .vector
-                .x
-        };
-        assert!((x_of(&cam) - 0.0).abs() < 1e-12);
-        assert!((x_of(&base_link()) - 1.0).abs() < 1e-12);
-        assert!((x_of(&odom()) - 3.0).abs() < 1e-12);
+            .expect("gps reaches base_link across the mount");
+        assert!((tf.isometry().translation.vector.x - 1.0).abs() < 1e-12);
     }
 
     #[test]
-    fn ancestors_from_root_returns_only_itself() {
-        // A root frame is never a child, so the walk takes no hops: its ancestor
-        // set is just itself.
-        let mut buf = TfBuffer::new(window());
-        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
-
-        let ancestors = buf
-            .ancestors_from(&odom(), TfQuery::Latest)
-            .ok()
-            .expect("odom is a known frame");
-        assert_eq!(ancestors.len(), 1);
-        assert!(ancestors.contains_key(&odom()));
-    }
-
-    #[test]
-    fn ancestors_from_propagates_an_out_of_range_edge() {
-        // An `At` query past the edge's history fails the walk with the same error
-        // sample_edge raises — the walk does not swallow or reshape it.
+    fn accumulate_propagates_an_out_of_range_edge_on_the_path() {
+        // The out-of-range edge is *on* the base_link → odom path this time, so the
+        // error is legitimate and must surface unchanged.
         let mut buf = TfBuffer::new(window());
         assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
         assert!(buf.insert_dynamic(bl_odom(2.0, 2.0)).is_ok());
 
-        let result = buf.ancestors_from(&base_link(), TfQuery::At(MonotonicTime(5.0)));
+        let result = buf.accumulate(&base_link(), &odom(), TfQuery::At(MonotonicTime(5.0)));
         assert!(matches!(result, Err(TfLookupError::OutOfTimeRange { .. })));
     }
 
     #[test]
-    fn ancestors_from_unknown_start_is_unknown_frame() {
+    fn accumulate_unknown_start_is_unknown_frame() {
         // A frame no edge ever mentioned has no convention, so the walk cannot even
         // seed its identity — it is reported unknown rather than silently empty.
         let buf = TfBuffer::new(window());
-        let result = buf.ancestors_from(&sensor("ghost"), TfQuery::Latest);
+        let result = buf.accumulate(&sensor("ghost"), &base_link(), TfQuery::Latest);
         assert!(matches!(result, Err(TfLookupError::UnknownFrame(_))));
     }
 
@@ -1087,6 +1166,41 @@ mod tests {
             .ok()
             .expect("t=1 is within the edge history");
         assert!((tf.isometry().translation.vector.x - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn lookup_of_a_static_mount_survives_an_out_of_range_dynamic_ancestor() {
+        // The exact shape of the GPS-aiding regression: a static base_link → gps
+        // mount, under a base_link whose only parent is a dynamic odom edge with
+        // history at t=1,2. A consumer queries the mount at t=5 — past the odom
+        // edge's history — but the mount's answer does not cross that edge, so it
+        // must still resolve. (Before the LCA fix this failed with OutOfTimeRange,
+        // silently dropping every GPS/mag update and drifting the estimate.)
+        let mut buf = TfBuffer::new(window());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(2.0, 2.0)).is_ok());
+        let gps = mount(&mut buf, "gps", 0.5);
+
+        // Both directions resolve at a time the odom edge cannot answer. The edge
+        // is stored child=gps → parent=base_link (x=+0.5), so — as with any
+        // parent-ward hop and its reverse — lookup(base_link, gps) is the inverse
+        // (x=-0.5) and lookup(gps, base_link) is the stored value (x=+0.5).
+        let mount_tf = buf
+            .lookup(&base_link(), &gps, TfQuery::At(MonotonicTime(5.0)))
+            .ok()
+            .expect("a static mount does not cross the odom edge");
+        assert!((mount_tf.isometry().translation.vector.x + 0.5).abs() < 1e-12);
+
+        let reverse = buf
+            .lookup(&gps, &base_link(), TfQuery::At(MonotonicTime(5.0)))
+            .ok()
+            .expect("the reverse mount is just as answerable");
+        assert!((reverse.isometry().translation.vector.x - 0.5).abs() < 1e-12);
+
+        // The guard is scoped, not blanket: a lookup that *does* cross the
+        // out-of-range odom edge still fails, so real staleness is not masked.
+        let crosses = buf.lookup(&base_link(), &odom(), TfQuery::At(MonotonicTime(5.0)));
+        assert!(matches!(crosses, Err(TfLookupError::OutOfTimeRange { .. })));
     }
 
     // --- insert_static ---

@@ -1,6 +1,8 @@
-use serde::Deserialize;
-
 use super::pose::Pose;
+
+use helios_core::frames::transforms::Convention;
+
+use serde::Deserialize;
 
 /// Discriminated union of all sensor kinds.
 /// The `tag = "kind"` tells Serde to look for a `kind = "..."` field in the TOML.
@@ -21,6 +23,41 @@ impl SensorConfig {
             SensorConfig::Gps(_) => "Gps",
             SensorConfig::Lidar(_) => "Lidar",
             SensorConfig::Magnetometer(_) => "Magnetometer",
+        }
+    }
+
+    /// The tf-tree frame mounts this sensor contributes: for each bus channel it
+    /// publishes, the `(channel, pose, convention)` of that sensor frame relative
+    /// to `base_link`. The pose and convention are the same values the sensor
+    /// spawners stamp onto the truth tf tree, so seeding the estimated buffer from
+    /// here cannot fork a mount between the two trees. An IMU yields two mounts
+    /// (accelerometer and gyroscope share one pose but publish on separate
+    /// channels); every other sensor yields one.
+    pub fn frame_mounts(&self) -> Vec<(String, Pose, Convention)> {
+        match self {
+            SensorConfig::Imu(c) => vec![
+                (
+                    c.get_accel_channel().to_string(),
+                    c.get_relative_pose(),
+                    Convention::Flu,
+                ),
+                (
+                    c.get_gyro_channel().to_string(),
+                    c.get_relative_pose(),
+                    Convention::Flu,
+                ),
+            ],
+            SensorConfig::Gps(c) => {
+                vec![(c.channel.clone(), c.get_relative_pose(), Convention::Flu)]
+            }
+            SensorConfig::Lidar(c) => vec![(
+                c.get_channel().to_string(),
+                c.get_relative_pose(),
+                Convention::Flu,
+            )],
+            SensorConfig::Magnetometer(c) => {
+                vec![(c.channel.clone(), c.get_relative_pose(), Convention::Flu)]
+            }
         }
     }
 }

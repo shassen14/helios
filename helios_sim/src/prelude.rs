@@ -28,6 +28,8 @@ pub use crate::core::transforms::{TfTree, TrackedFrame};
 
 pub use crate::agents::sensors::imu::ImuPlugin;
 
-pub use crate::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent};
+pub use crate::brain_bridge::components::{
+    AgentIdComponent, AutonomyPipelineComponent, TfServiceComponent,
+};
 pub use crate::brain_bridge::HostInputPublisher;
 pub use crate::brain_bridge::{SensorPublishChannel, SensorPublisher};
