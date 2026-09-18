@@ -177,8 +177,8 @@ impl PipelineNode for OccupancyGridNode {
             if batch_ts > self.last_integrated_ts.load(Ordering::Relaxed) {
                 for reading in stamped_scans.value.iter() {
                     let Some(erased) = tf.get_transform(
-                        FrameId::base_link(self.agent.clone()),
                         reading.sensor.clone(),
+                        FrameId::base_link(self.agent.clone()),
                         MonotonicTime(batch_ts),
                     ) else {
                         continue;
@@ -243,9 +243,10 @@ mod tests {
 
     // --- Mock TfProvider ---
 
-    /// `get_transform(agent, sensor)` returns whatever was inserted for the
-    /// sensor frame's leaf name; missing entries return `None` to exercise the
-    /// skip path.
+    /// `get_transform(sensor, base_link)` returns whatever was inserted for the
+    /// sensor frame's leaf name (the sensor-in-body mount, per the canonical
+    /// [`TfProvider::get_transform`] direction); missing entries return `None` to
+    /// exercise the skip path.
     struct MockRuntime {
         agent_to_sensor: std::collections::HashMap<String, Isometry3<f64>>,
     }
@@ -265,15 +266,15 @@ mod tests {
     impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
-            _from: FrameId,
-            to: FrameId,
+            from: FrameId,
+            _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            if !to.is_sensor() {
+            if !from.is_sensor() {
                 return None;
             }
             self.agent_to_sensor
-                .get(to.leaf().as_str())
+                .get(from.leaf().as_str())
                 .map(|iso| ErasedTransform::from_parts(*iso, Convention::Flu, Convention::Flu))
         }
     }

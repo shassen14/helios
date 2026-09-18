@@ -61,25 +61,27 @@ impl MeasurementModel for MagneticFieldModel {
         let predicted_mag_body = q_body_from_world * self.world_magnetic_field;
 
         let erased = tf.get_transform(
-            FrameId::base_link(self.agent.clone()),
             self.sensor.clone(),
+            FrameId::base_link(self.agent.clone()),
             at,
         )?;
 
-        let Ok(tf_sensor_from_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
             return None;
         };
 
-        let iso = tf_sensor_from_body.into_inner();
+        let iso = sensor_in_body.into_inner();
 
-        let rot_sensor_from_body = iso.rotation;
+        // Sensor-in-body rotation maps sensor axes into body axes; its inverse
+        // carries the body-frame field into the sensor frame.
+        let rot_body_from_sensor = iso.rotation;
 
         let sensor = self.sensor.clone();
         let bias = filter_state
             .mag_bias::<Flu>(sensor)
             .map(FreeVector::into_inner)
             .unwrap_or_else(Vector3::zeros);
-        let predicted_sensor = rot_sensor_from_body.inverse() * predicted_mag_body + bias;
+        let predicted_sensor = rot_body_from_sensor.inverse() * predicted_mag_body + bias;
 
         Some(DVector::from_row_slice(predicted_sensor.as_slice()))
     }
@@ -142,19 +144,22 @@ mod tests {
 
     const AT: MonotonicTime = MonotonicTime(0.0);
 
-    /// Reports one fixed extrinsic — the sensor's pose in body axes — for every
-    /// lookup, mirroring what a real TF tree hands the model.
+    /// Holds the sensor's pose in body axes (sensor-in-body). Honours the
+    /// canonical [`TfProvider::get_transform`] direction — the stored isometry
+    /// for `get_transform(sensor, base_link)`, its inverse for the reverse — so
+    /// the rotated-mount test below catches a swapped argument order.
     struct Mount(Isometry3<f64>);
 
     impl TfProvider for Mount {
         fn get_transform(
             &self,
-            _from: FrameId,
+            from: FrameId,
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
+            let iso = if from.is_sensor() { self.0 } else { self.0.inverse() };
             Some(ErasedTransform::from_parts(
-                self.0,
+                iso,
                 Convention::Flu,
                 Convention::Flu,
             ))

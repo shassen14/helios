@@ -53,25 +53,27 @@ impl MeasurementModel for AngularRateModel {
         let body_frame = FrameId::base_link(self.agent.clone());
 
         let erased = tf.get_transform(
-            FrameId::base_link(self.agent.clone()),
             self.sensor.clone(),
+            FrameId::base_link(self.agent.clone()),
             at,
         )?;
 
-        let Ok(tf_sensor_from_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
             return None;
         };
 
-        let iso = tf_sensor_from_body.into_inner();
+        let iso = sensor_in_body.into_inner();
 
-        let rot_sensor_from_body = iso.rotation;
+        // Sensor-in-body rotation maps sensor axes into body axes; its inverse
+        // resolves the body's angular velocity into the sensor frame.
+        let rot_body_from_sensor = iso.rotation;
 
         let angular_vel_body = filter_state
             .angular_velocity::<Flu>(body_frame.clone())
             .map(FreeVector::into_inner)
             .unwrap_or_default();
 
-        let predicted_gyro = rot_sensor_from_body.inverse() * angular_vel_body;
+        let predicted_gyro = rot_body_from_sensor.inverse() * angular_vel_body;
         let mut z_pred = DVector::zeros(3);
         z_pred.fixed_rows_mut::<3>(0).copy_from(&predicted_gyro);
         Some(z_pred)
@@ -85,9 +87,13 @@ mod tests {
     use crate::data::AgentId;
     use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
+    use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId};
-    use nalgebra::Isometry3;
+    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::manifold::TangentNoise;
+    use crate::state::Component;
+    use nalgebra::{DMatrix, Isometry3, Translation3, UnitQuaternion};
+    use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;
 
     fn agent() -> AgentId {
@@ -110,6 +116,29 @@ mod tests {
         ) -> Option<ErasedTransform> {
             Some(ErasedTransform::from_parts(
                 Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
+        }
+    }
+
+    /// Holds the sensor's mount *in body axes* (sensor-in-body). Honours the
+    /// canonical [`TfProvider::get_transform`] direction — the stored isometry
+    /// for `get_transform(sensor, base_link)`, its inverse for the reverse — so a
+    /// swapped argument order resolves the rate through the wrong rotation and
+    /// fails the assertion.
+    struct MountTf(Isometry3<f64>);
+
+    impl TfProvider for MountTf {
+        fn get_transform(
+            &self,
+            from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            let iso = if from.is_sensor() { self.0 } else { self.0.inverse() };
+            Some(ErasedTransform::from_parts(
+                iso,
                 Convention::Flu,
                 Convention::Flu,
             ))
@@ -167,5 +196,48 @@ mod tests {
         assert_eq!(h.nrows(), 3);
         // H is tangent-sized: a quaternion block spends one fewer column than it stores.
         assert_eq!(h.ncols(), state.tangent_dim());
+    }
+
+    // A state carrying a *body-frame* angular velocity block (FLU) seeded to
+    // `omega`. The carrier schema only holds world-frame rate, which the model
+    // does not read, so this composes the block the gyro actually resolves.
+    fn make_body_rate_state(omega: [f64; 3]) -> FrameAwareState {
+        let body = FrameId::base_link(agent());
+        let noise = TangentNoise::from_variances(nalgebra::DVector::from_element(3, 0.1)).unwrap();
+        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
+            Quantity::AngularVelocity(body.clone()),
+            Convention::Flu,
+            Some(noise),
+            nalgebra::DVector::zeros(3),
+            DMatrix::identity(3, 3),
+        )]);
+        let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        for (component, value) in [Component::X, Component::Y, Component::Z].into_iter().zip(omega) {
+            state.set_variable(
+                &StateVariable::new(Quantity::AngularVelocity(body.clone()), component),
+                value,
+            );
+        }
+        state
+    }
+
+    #[test]
+    fn rate_is_resolved_through_the_mount_rotation() {
+        // Body angular velocity is +1 rad/s about body +X. The sensor is yawed
+        // +90° about body +Z, so resolving the body-frame rate into sensor axes
+        // maps body +X onto sensor −Y — the reading is −1 along sensor +Y. This
+        // pins the *direction* of the mount lookup: querying base_link-in-sensor
+        // instead of sensor-in-body would rotate the rate the other way, to
+        // sensor +Y, and fail.
+        let model = make_model();
+        let state = make_body_rate_state([1.0, 0.0, 0.0]);
+        let mount = MountTf(Isometry3::from_parts(
+            Translation3::identity(),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2),
+        ));
+        let z = model.predict_measurement(&state, Some(&mount), AT).unwrap();
+        assert!(z[0].abs() < 1e-9);
+        assert!((z[1] + 1.0).abs() < 1e-9);
+        assert!(z[2].abs() < 1e-9);
     }
 }

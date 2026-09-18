@@ -47,7 +47,8 @@ impl MeasurementModel for GpsPositionModel {
     /// when `tf` is unavailable — same behaviour as `SpecificForceModel`.
     ///
     /// `predicted = P_world + R(q_body→world) * antenna_offset_body`
-    /// where `antenna_offset_body` comes from `tf.get_transform(agent, sensor).translation`.
+    /// where `antenna_offset_body` comes from `tf.get_transform(sensor, base_link).translation`
+    /// (the sensor's origin expressed in body axes — see [`TfProvider::get_transform`]).
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,
@@ -67,16 +68,16 @@ impl MeasurementModel for GpsPositionModel {
             .unwrap_or_default();
 
         let erased = tf.get_transform(
-            FrameId::base_link(self.agent.clone()),
             self.sensor.clone(),
+            FrameId::base_link(self.agent.clone()),
             at,
         )?;
 
-        let Ok(tf_sensor_from_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
             return None;
         };
 
-        let iso = tf_sensor_from_body.into_inner();
+        let iso = sensor_in_body.into_inner();
 
         let antenna_offset_body = iso.translation.vector;
 
@@ -120,17 +121,23 @@ mod tests {
 
     const AT: MonotonicTime = MonotonicTime(0.0);
 
-    struct FixedTf(Isometry3<f64>);
+    /// Holds the sensor's mount *in body axes* (sensor-in-body). Honours the
+    /// canonical [`TfProvider::get_transform`] direction: the stored isometry is
+    /// returned for `get_transform(sensor, base_link)` and its inverse for the
+    /// reverse query. Being direction-aware (unlike a value-only mock) is what
+    /// lets these tests catch a swapped argument order.
+    struct MountTf(Isometry3<f64>);
 
-    impl TfProvider for FixedTf {
+    impl TfProvider for MountTf {
         fn get_transform(
             &self,
-            _from: FrameId,
+            from: FrameId,
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
+            let iso = if from.is_sensor() { self.0 } else { self.0.inverse() };
             Some(ErasedTransform::from_parts(
-                self.0,
+                iso,
                 Convention::Flu,
                 Convention::Flu,
             ))
@@ -195,7 +202,7 @@ mod tests {
     fn predict_identity_tf_returns_body_position() {
         let model = make_model();
         let state = make_state(3.0, 4.0, 5.0);
-        let tf = FixedTf(Isometry3::identity());
+        let tf = MountTf(Isometry3::identity());
         let z = model.predict_measurement(&state, Some(&tf), AT).unwrap();
         assert!((z[0] - 3.0).abs() < 1e-9);
         assert!((z[1] - 4.0).abs() < 1e-9);
@@ -206,10 +213,17 @@ mod tests {
     fn predict_lever_arm_adds_rotated_offset() {
         let model = make_model();
         let state = make_state(1.0, 2.0, 3.0);
-        // Antenna is 0.5 m forward, 0.1 m up from body origin; identity orientation.
-        let offset =
-            Isometry3::from_parts(Translation3::new(0.5, 0.0, 0.1), UnitQuaternion::identity());
-        let tf = FixedTf(offset);
+        // Antenna is 0.5 m forward, 0.1 m up from body origin. The mount also
+        // carries a 90° yaw: the GPS model reads only the translation, so the
+        // yaw does not change the expected value — but it makes the mount's
+        // inverse have a *different* translation, so a swapped-argument lookup
+        // (querying base_link-in-sensor instead of sensor-in-body) would land
+        // the antenna somewhere else and fail this assertion.
+        let offset = Isometry3::from_parts(
+            Translation3::new(0.5, 0.0, 0.1),
+            UnitQuaternion::from_euler_angles(0.0, 0.0, std::f64::consts::FRAC_PI_2),
+        );
+        let tf = MountTf(offset);
         let z = model.predict_measurement(&state, Some(&tf), AT).unwrap();
         assert!((z[0] - 1.5).abs() < 1e-9);
         assert!((z[1] - 2.0).abs() < 1e-9);
@@ -220,7 +234,7 @@ mod tests {
     fn jacobian_position_columns_are_identity() {
         let model = make_model();
         let state = make_state(0.0, 0.0, 0.0);
-        let tf = FixedTf(Isometry3::identity());
+        let tf = MountTf(Isometry3::identity());
         let h = model.jacobian(&state, Some(&tf), AT);
         assert_eq!(h.nrows(), 3);
         // H maps a tangent-space error to the measurement, so its column count is

@@ -63,19 +63,21 @@ impl MeasurementModel for SpecificForceModel {
         let body_frame = FrameId::base_link(self.agent.clone());
 
         let erased = tf.get_transform(
-            FrameId::base_link(self.agent.clone()),
             self.sensor.clone(),
+            FrameId::base_link(self.agent.clone()),
             at,
         )?;
 
-        let Ok(tf_sensor_from_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
             return None;
         };
 
-        let iso = tf_sensor_from_body.into_inner();
+        let iso = sensor_in_body.into_inner();
 
-        let r_body_to_sensor = iso.translation.vector;
-        let rot_sensor_from_body = iso.rotation;
+        // Sensor-in-body: translation is the lever arm (sensor origin in body
+        // axes); rotation maps sensor axes into body axes.
+        let lever_arm_body = iso.translation.vector;
+        let rot_body_from_sensor = iso.rotation;
 
         let linear_accel_body = filter_state
             .acceleration::<Flu>(body_frame.clone())
@@ -94,8 +96,8 @@ impl MeasurementModel for SpecificForceModel {
             .map(Rotation::into_inner)
             .unwrap_or_default();
 
-        let tangential_accel = angular_accel_body.cross(&r_body_to_sensor);
-        let centripetal_accel = angular_vel_body.cross(&angular_vel_body.cross(&r_body_to_sensor));
+        let tangential_accel = angular_accel_body.cross(&lever_arm_body);
+        let centripetal_accel = angular_vel_body.cross(&angular_vel_body.cross(&lever_arm_body));
         let total_kinematic_accel_at_sensor =
             linear_accel_body + tangential_accel + centripetal_accel;
 
@@ -104,7 +106,7 @@ impl MeasurementModel for SpecificForceModel {
         let gravity_effect_in_body = q_body_from_world * self.gravity_world;
 
         let proper_accel_in_body_frame = total_kinematic_accel_at_sensor - gravity_effect_in_body;
-        let predicted_accel = rot_sensor_from_body.inverse() * proper_accel_in_body_frame;
+        let predicted_accel = rot_body_from_sensor.inverse() * proper_accel_in_body_frame;
 
         let mut z_pred = DVector::zeros(3);
         z_pred.fixed_rows_mut::<3>(0).copy_from(&predicted_accel);
@@ -123,7 +125,8 @@ mod tests {
     use crate::frames::{FrameAwareState, FrameId};
     use crate::state::Quantity;
 
-    use nalgebra::Isometry3;
+    use nalgebra::{Isometry3, UnitQuaternion};
+    use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;
 
     fn agent() -> AgentId {
@@ -146,6 +149,29 @@ mod tests {
         ) -> Option<ErasedTransform> {
             Some(ErasedTransform::from_parts(
                 Isometry3::identity(),
+                Convention::Flu,
+                Convention::Flu,
+            ))
+        }
+    }
+
+    /// Holds the sensor's mount *in body axes* (sensor-in-body). Honours the
+    /// canonical [`TfProvider::get_transform`] direction — the stored isometry
+    /// for `get_transform(sensor, base_link)`, its inverse for the reverse — so a
+    /// swapped argument order projects gravity through the wrong rotation and
+    /// fails the assertion.
+    struct MountTf(Isometry3<f64>);
+
+    impl TfProvider for MountTf {
+        fn get_transform(
+            &self,
+            from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            let iso = if from.is_sensor() { self.0 } else { self.0.inverse() };
+            Some(ErasedTransform::from_parts(
+                iso,
                 Convention::Flu,
                 Convention::Flu,
             ))
@@ -203,5 +229,26 @@ mod tests {
         assert_eq!(h.nrows(), 3);
         // H is tangent-sized: a quaternion block spends one fewer column than it stores.
         assert_eq!(h.ncols(), state.tangent_dim());
+    }
+
+    #[test]
+    fn gravity_is_projected_through_the_mount_rotation() {
+        // Body level (identity orientation) and at rest: the only specific force
+        // is the +1 g reaction, +9.81 along body +Z. The sensor is rolled +90°
+        // about body +X, so expressing the body-frame vector in sensor axes maps
+        // body +Z onto sensor +Y — the reading is +9.81 along sensor +Y. This
+        // pins the *mount rotation direction*: querying base_link-in-sensor
+        // instead of sensor-in-body would rotate gravity the opposite way, onto
+        // sensor −Y, and fail.
+        let model = make_model();
+        let state = make_state();
+        let mount = MountTf(Isometry3::from_parts(
+            nalgebra::Translation3::identity(),
+            UnitQuaternion::from_euler_angles(FRAC_PI_2, 0.0, 0.0),
+        ));
+        let z = model.predict_measurement(&state, Some(&mount), AT).unwrap();
+        assert!(z[0].abs() < 1e-9);
+        assert!((z[1] - 9.81).abs() < 1e-9);
+        assert!(z[2].abs() < 1e-9);
     }
 }
