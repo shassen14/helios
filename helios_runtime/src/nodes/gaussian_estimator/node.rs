@@ -26,9 +26,9 @@ use crate::stamped::{Health, Stamped};
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::ports::TfProvider;
 use helios_core::data::sensor::SensorPayload;
-use helios_core::estimation::measurement::MeasurementModel;
+use helios_core::estimation::measurement::{MeasurementModel, Unavailable};
 use helios_core::estimation::schema::MeasurementSchema;
-use helios_core::estimation::GaussianStateEstimator;
+use helios_core::estimation::{GaussianStateEstimator, SkipReason, UpdateOutcome};
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::transforms::tf::stamped::{FrameEdge, StampedTransform};
 use helios_core::frames::transforms::ErasedTransform;
@@ -39,6 +39,14 @@ use nalgebra::DMatrix;
 use std::marker::PhantomData;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
+use tracing::warn;
+
+/// Minimum seconds of reading-clock time between two "aiding dropped" warnings
+/// on one channel. A missing extrinsic or a corrupt covariance fails on *every*
+/// reading, so without a throttle the log floods at sensor rate; the first fault
+/// always prints and later ones inside this window are suppressed. Keyed on
+/// reading time (not wall time) so the gate is deterministic and testable.
+const AIDING_DROP_WARN_MIN_INTERVAL_SECS: f64 = 5.0;
 
 /// Per-channel aiding handler: reads one sensor channel from the bus and feeds
 /// each reading into a [`GaussianStateEstimator`] via its measurement model.
@@ -88,6 +96,10 @@ pub(crate) struct TypedAidingHandler<T: SensorPayload> {
     /// skipped — re-applying the same measurement would over-tighten the
     /// EKF's posterior as if independent observations had been received.
     last_applied_ts: AtomicF64,
+    /// Reading-clock time of the last emitted "aiding dropped" warning, for
+    /// rate-limiting. Init `NEG_INFINITY` so the first fault always clears the
+    /// interval and prints. Sibling of `last_applied_ts`, same latch pattern.
+    last_warned: AtomicF64,
     // phantom data in order to avoid compile error that T isn't used
     // fn() -> T to say output-only, non-owned, covariant data
     _phantom: PhantomData<fn() -> T>,
@@ -109,8 +121,22 @@ impl<T: SensorPayload> TypedAidingHandler<T> {
             model,
             r,
             last_applied_ts: AtomicF64::new(f64::NEG_INFINITY),
+            last_warned: AtomicF64::new(f64::NEG_INFINITY),
             _phantom: PhantomData,
         }
+    }
+
+    /// Rate-limit gate for the aiding-dropped warning. Returns `true` at most
+    /// once per [`AIDING_DROP_WARN_MIN_INTERVAL_SECS`] of reading time, and
+    /// records `at` as the new last-warned time when it does. The
+    /// `NEG_INFINITY` seed makes the first fault always pass.
+    fn should_warn(&self, at: f64) -> bool {
+        let last = self.last_warned.load(Ordering::Relaxed);
+        if at - last < AIDING_DROP_WARN_MIN_INTERVAL_SECS {
+            return false;
+        }
+        self.last_warned.store(at, Ordering::Relaxed);
+        true
     }
 }
 
@@ -158,13 +184,26 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
                 continue;
             }
             let z = stamped.value[idx].data.to_measurement_vector();
-            estimator.update(
+            let outcome = estimator.update(
                 &z,
                 &*self.model,
                 &self.r,
                 tf,
                 helios_core::data::MonotonicTime(reading_ts),
             );
+            // Surface a dropped correction that stems from a fault (an
+            // unresolved transform, a shape/covariance bug) — the silent
+            // aiding-drop this whole path exists to make loud. Expected quiet
+            // skips (cold start, no provider) and applied updates say nothing.
+            if let Some(cause) = aiding_drop_cause(&outcome) {
+                if self.should_warn(reading_ts) {
+                    warn!(
+                        "aiding dropped on {}: {cause} at t={reading_ts:.3}; \
+                         filter running unaided.",
+                        self.channel,
+                    );
+                }
+            }
             if reading_ts > max_applied {
                 max_applied = reading_ts;
             }
@@ -172,6 +211,34 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
         if max_applied > last_applied {
             self.last_applied_ts.store(max_applied, Ordering::Relaxed);
         }
+    }
+}
+
+/// The cause of a *loud* aiding drop, or `None` for an applied
+/// update or an expected quiet skip (cold start / no provider).
+///
+/// This is where the runtime reads the loud/quiet judgment off the
+/// [`UpdateOutcome`]: the core filter has already classified the skip; the
+/// caller only decides whether to warn. The frame-carrying transform faults name
+/// their frames so the log points straight at the missing extrinsic.
+fn aiding_drop_cause(outcome: &UpdateOutcome) -> Option<String> {
+    match outcome {
+        UpdateOutcome::Applied
+        | UpdateOutcome::Skipped(SkipReason::Model(
+            Unavailable::ColdStart | Unavailable::NoProvider,
+        )) => None,
+        UpdateOutcome::Skipped(SkipReason::Model(Unavailable::MissingTransform { from, to })) => {
+            Some(format!("transform {from:?} → {to:?} unresolved"))
+        }
+        UpdateOutcome::Skipped(SkipReason::Model(Unavailable::ConventionMismatch { from, to })) => {
+            Some(format!("convention mismatch between {from:?} and {to:?}"))
+        }
+        UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch) => {
+            Some("measurement and covariance lengths disagree (wiring bug)".to_string())
+        }
+        UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite) => Some(
+            "innovation covariance not positive-definite (filter covariance corrupt)".to_string(),
+        ),
     }
 }
 
@@ -347,6 +414,10 @@ mod tests {
     struct MockEstimator {
         state: FrameAwareState,
         counts: StdMutex<MockEstimatorCounts>,
+        /// What each `update` call returns. Defaults to `Applied`; a loud skip
+        /// can be injected to exercise the handler's drop-warning path without
+        /// standing up a real filter + measurement model.
+        update_outcome: UpdateOutcome,
     }
 
     impl MockEstimator {
@@ -364,7 +435,13 @@ mod tests {
             Self {
                 state,
                 counts: StdMutex::new(Default::default()),
+                update_outcome: UpdateOutcome::Applied,
             }
+        }
+
+        fn with_update_outcome(mut self, outcome: UpdateOutcome) -> Self {
+            self.update_outcome = outcome;
+            self
         }
     }
 
@@ -383,7 +460,7 @@ mod tests {
             _at: MonotonicTime,
         ) -> UpdateOutcome {
             self.counts.lock().unwrap().update_calls += 1;
-            UpdateOutcome::Applied
+            self.update_outcome.clone()
         }
         fn state(&self) -> &FrameAwareState {
             &self.state
@@ -727,5 +804,108 @@ mod tests {
         let bus = make_bus(vec![]);
         handler.drain_and_apply(&bus, &mut estimator, None);
         assert_eq!(estimator.counts.lock().unwrap().update_calls, 0);
+    }
+
+    #[test]
+    fn aiding_handler_warns_once_per_interval_on_loud_skip() {
+        // The runtime half of the aiding-drop guard against the silent-drift
+        // bug class: when the filter reports a *loud* skip (here a missing
+        // sensor→base_link transform), the handler must warn — but rate-limited,
+        // so a permanently-missing extrinsic that fails on every reading logs
+        // once per interval, not once per reading. That the filter *derives*
+        // this outcome from an unresolved transform is core's contract (covered
+        // by the filter tests); here the loud outcome is injected so this test
+        // isolates the handler's emit + throttle behavior.
+        let agent = AgentId::new("test_agent");
+        let sensor = FrameId::sensor(agent.clone(), "accel");
+        let base = FrameId::base_link(agent.clone());
+        let mut estimator = MockEstimator::new().with_update_outcome(UpdateOutcome::Skipped(
+            SkipReason::Model(Unavailable::MissingTransform {
+                from: sensor.clone(),
+                to: base,
+            }),
+        ));
+
+        let handler = TypedAidingHandler::<Acceleration>::new(
+            accel_sensor_channel(),
+            Box::new(OnePassModel),
+            DMatrix::identity(3, 3),
+        );
+
+        // Two readings whose stamps sit well inside one throttle window.
+        let bus = make_bus(vec![]);
+        let readings = vec![
+            SensorReading {
+                sensor: sensor.clone(),
+                timestamp: MonotonicTime(1.0),
+                data: Acceleration::default(),
+            },
+            SensorReading {
+                sensor,
+                timestamp: MonotonicTime(1.1),
+                data: Acceleration::default(),
+            },
+        ];
+        bus.write(
+            accel_channel(),
+            Stamped {
+                value: readings,
+                timestamp: MonotonicTime(1.1),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .unwrap();
+
+        handler.drain_and_apply(&bus, &mut estimator, None);
+
+        // Both readings were offered to the filter and both skipped...
+        assert_eq!(estimator.counts.lock().unwrap().update_calls, 2);
+        // ...but only the first fault crossed the throttle: `last_warned`
+        // latched to the first reading's stamp, and the second reading (0.1 s
+        // later, well within the interval) was suppressed.
+        assert_eq!(handler.last_warned.load(Ordering::Relaxed), 1.0);
+    }
+
+    #[test]
+    fn aiding_handler_stays_silent_on_applied_and_quiet_skips() {
+        // The negative of the guard: an applied update and the expected quiet
+        // skips (cold start / no provider) must never trip the warning latch, or
+        // the throttle would be spent on non-faults and hide a later real one.
+        for outcome in [
+            UpdateOutcome::Applied,
+            UpdateOutcome::Skipped(SkipReason::Model(Unavailable::ColdStart)),
+            UpdateOutcome::Skipped(SkipReason::Model(Unavailable::NoProvider)),
+        ] {
+            let mut estimator = MockEstimator::new().with_update_outcome(outcome);
+            let handler = TypedAidingHandler::<Acceleration>::new(
+                accel_sensor_channel(),
+                Box::new(OnePassModel),
+                DMatrix::identity(3, 3),
+            );
+            let bus = make_bus(vec![]);
+            bus.write(
+                accel_channel(),
+                Stamped {
+                    value: vec![SensorReading {
+                        sensor: FrameId::sensor(AgentId::new("test_agent"), "accel"),
+                        timestamp: MonotonicTime(1.0),
+                        data: Acceleration::default(),
+                    }],
+                    timestamp: MonotonicTime(1.0),
+                    health: Health::Ok,
+                    producer: 0,
+                },
+            )
+            .unwrap();
+
+            handler.drain_and_apply(&bus, &mut estimator, None);
+
+            // The latch never moved off its NEG_INFINITY seed.
+            assert_eq!(
+                handler.last_warned.load(Ordering::Relaxed),
+                f64::NEG_INFINITY
+            );
+        }
     }
 }
