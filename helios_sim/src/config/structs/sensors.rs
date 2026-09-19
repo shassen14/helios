@@ -241,3 +241,102 @@ impl LidarConfig {
         self.channel.as_str()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! `frame_mounts` is the single source of the `(channel → base_link → sensor)`
+    //! mounts that seed the estimated tf buffer (`brain_bridge::spawn::
+    //! build_static_seeds`). The leaf of each mount's `FrameId::sensor(agent,
+    //! channel)` is this channel string, which is *also* what the assembler wires
+    //! as the estimator's aiding-input frame — so if `frame_mounts` surfaces the
+    //! wrong channel, or drops one, the sensor's frame silently fails to resolve
+    //! and the filter runs unaided. These assert the channel/convention contract
+    //! that keeps those two sites from forking.
+
+    use super::*;
+
+    use nalgebra::{UnitQuaternion, Vector3};
+
+    /// A distinctive, non-identity mount so the pose pass-through (not only the
+    /// channel name) is actually observed.
+    fn mount_pose() -> Pose {
+        Pose {
+            translation: Vector3::new(0.2, 0.0, 0.3),
+            rotation: UnitQuaternion::identity(),
+        }
+    }
+
+    fn imu(accel: &str, gyro: &str) -> SensorConfig {
+        SensorConfig::Imu(ImuConfig {
+            rate: 100.0,
+            transform: mount_pose(),
+            accel_bias: [0.0; 3],
+            accel_noise_stddev: [0.0; 3],
+            gyro_bias: [0.0; 3],
+            gyro_noise_stddev: [0.0; 3],
+            accel_channel: accel.to_string(),
+            gyro_channel: gyro.to_string(),
+        })
+    }
+
+    /// An IMU is one config but two frames: accelerometer and gyroscope share a
+    /// pose yet publish on separate channels, so each must surface as its own
+    /// mount keyed by its own channel. This is the leaf-granularity decision the
+    /// estimated seed and the assembler both depend on — collapse it to one mount,
+    /// or key it off the wrong string, and one of the two aiding inputs silently
+    /// resolves to no frame.
+    #[test]
+    fn imu_yields_one_mount_per_channel() {
+        let mounts = imu("body/accel", "body/gyro").frame_mounts();
+
+        assert_eq!(mounts.len(), 2);
+        let channels: Vec<&str> = mounts.iter().map(|(c, _, _)| c.as_str()).collect();
+        assert!(channels.contains(&"body/accel"));
+        assert!(channels.contains(&"body/gyro"));
+        // Both share the IMU's single pose and are body-frame (FLU).
+        for (_, pose, convention) in &mounts {
+            assert_eq!(pose.translation, mount_pose().translation);
+            assert_eq!(*convention, Convention::Flu);
+        }
+    }
+
+    /// A GPS is one frame on one channel; the mount carries its channel verbatim
+    /// and the sensor's own convention.
+    #[test]
+    fn gps_yields_a_single_mount_on_its_channel() {
+        let gps = SensorConfig::Gps(GpsConfig {
+            rate: 10.0,
+            channel: "gps".to_string(),
+            transform: mount_pose(),
+            bias: [0.0; 3],
+            noise_stddev: [0.0; 3],
+        });
+
+        let mounts = gps.frame_mounts();
+
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].0, "gps");
+        assert_eq!(mounts[0].1.translation, mount_pose().translation);
+        assert_eq!(mounts[0].2, Convention::Flu);
+    }
+
+    /// A magnetometer follows the same single-mount shape as the GPS — this pins
+    /// the second single-channel sensor so the one-mount path is not tied to one
+    /// variant's quirks.
+    #[test]
+    fn magnetometer_yields_a_single_mount_on_its_channel() {
+        let mag = SensorConfig::Magnetometer(MagnetometerConfig {
+            rate: 50.0,
+            transform: mount_pose(),
+            bias: [0.0; 3],
+            noise_stddev: [0.0; 3],
+            channel: "mag".to_string(),
+        });
+
+        let mounts = mag.frame_mounts();
+
+        assert_eq!(mounts.len(), 1);
+        assert_eq!(mounts[0].0, "mag");
+        assert_eq!(mounts[0].2, Convention::Flu);
+    }
+}
