@@ -2,8 +2,8 @@ use crate::data::ports::TfProvider;
 use crate::data::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::filters::linearization::tangent_state_transition;
-use crate::estimation::measurement::MeasurementModel;
-use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
+use crate::estimation::measurement::{MeasurementModel, Prediction};
+use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
 use crate::frames::FrameAwareState;
 use crate::utils::integrators::RK4;
 
@@ -132,21 +132,23 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         r: &DMatrix<f64>,
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
-    ) {
+    ) -> UpdateOutcome {
         // The incoming measurement is the authoritative length; the model no
         // longer declares one. Skip the update if R or the prediction disagrees
         // with it — a shape guard against a crash, not the semantic check (that
         // ran once at build time against the measurement schema).
         let m = z.nrows();
         if r.nrows() != m || r.ncols() != m {
-            return;
+            return UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch);
         }
 
-        let Some(z_pred) = model.predict_measurement(&self.state, tf, at) else {
-            return;
+        let z_pred = match model.predict_measurement(&self.state, tf, at) {
+            Prediction::Ready(z_pred) => z_pred,
+            Prediction::Unavailable(u) => return UpdateOutcome::Skipped(SkipReason::Model(u)),
         };
+
         if z_pred.nrows() != m {
-            return;
+            return UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch);
         }
 
         let p_priori = self.state.covariance.clone();
@@ -163,7 +165,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         // masks that: it happily inverts an indefinite matrix and lets a corrupt
         // covariance propagate.
         let Some(s_chol) = s.cholesky() else {
-            return;
+            return UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite);
         };
 
         // Kalman gain K = P Hᵀ S⁻¹ (t × m), obtained without ever forming S⁻¹. S is
@@ -186,6 +188,8 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         self.state.covariance = p_post;
 
         self.ensure_covariance_health();
+
+        UpdateOutcome::Applied
     }
 
     fn state(&self) -> &FrameAwareState {
@@ -199,7 +203,7 @@ mod tests {
     use crate::data::ports::TfProvider;
     use crate::data::AgentId;
     use crate::data::MonotonicTime;
-    use crate::estimation::measurement::MeasurementModel;
+    use crate::estimation::measurement::{MeasurementModel, Prediction};
     use crate::estimation::schema::{
         MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
@@ -306,8 +310,8 @@ mod tests {
             state: &FrameAwareState,
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
-        ) -> Option<DVector<f64>> {
-            Some(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
+        ) -> Prediction {
+            Prediction::Ready(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
         }
 
         fn jacobian(
@@ -347,8 +351,8 @@ mod tests {
             state: &FrameAwareState,
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
-        ) -> Option<DVector<f64>> {
-            Some(DVector::from_row_slice(&[
+        ) -> Prediction {
+            Prediction::Ready(DVector::from_row_slice(&[
                 state.mean[0],
                 state.mean[1],
                 state.mean[2],
@@ -427,8 +431,9 @@ mod tests {
         let model = Position2DMeasurement;
         let r = gps_r();
 
-        ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
+        let outcome = ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
 
+        assert_eq!(outcome, UpdateOutcome::Applied);
         let px = ekf.state().mean[0];
         assert!(px > 0.0, "state should correct toward measurement (px > 0)");
         assert!(px < 5.0, "state should not overshoot measurement");
@@ -453,12 +458,18 @@ mod tests {
         let mut ekf = make_ekf(0.0, 0.0);
         let tf = IdentityTf;
         let model = Position2DMeasurement;
-        // Wrong-sized R (3x3 instead of 2x2) — must be silently skipped.
+        // Wrong-sized R (3x3 instead of 2x2) — the shape guard must skip the
+        // update, reporting the reason rather than leaving it to be inferred
+        // from the (also-unchanged) state.
         let bad_r = DMatrix::identity(3, 3) * 0.1;
         let px_before = ekf.state().mean[0];
 
-        ekf.update(&gps_z(5.0, 0.0), &model, &bad_r, Some(&tf), AT);
+        let outcome = ekf.update(&gps_z(5.0, 0.0), &model, &bad_r, Some(&tf), AT);
 
+        assert_eq!(
+            outcome,
+            UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch)
+        );
         assert_eq!(ekf.state().mean[0], px_before);
     }
 
@@ -1180,9 +1191,10 @@ mod tests {
             &StateVariable::new(Quantity::MagBias(sensor.clone()), Component::Z),
             b_true.z,
         );
-        let z = model
-            .predict_measurement(&truth_state, Some(&IdentityTf), AT)
-            .expect("mag prediction under identity TF is defined");
+        let Prediction::Ready(z) = model.predict_measurement(&truth_state, Some(&IdentityTf), AT)
+        else {
+            panic!("mag prediction under identity TF is defined");
+        };
 
         let p0_bias = MAG_BIAS_INIT_UNCERTAINTY * MAG_BIAS_INIT_UNCERTAINTY;
         for _ in 0..MAG_UPDATE_STEPS {

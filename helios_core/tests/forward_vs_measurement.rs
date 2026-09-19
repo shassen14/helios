@@ -25,7 +25,7 @@ use helios_core::estimation::measurement::accelerometer::SpecificForceModel;
 use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
-use helios_core::estimation::measurement::MeasurementModel;
+use helios_core::estimation::measurement::{MeasurementModel, Prediction};
 use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
@@ -109,9 +109,11 @@ fn gps_forward_matches_filter_prediction() {
             Vector3::zeros(),
             Vector3::zeros(),
         );
-        let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
-            .unwrap();
+        let Prediction::Ready(predicted) =
+            filter.predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
+        else {
+            panic!("a resolvable extrinsic yields a ready prediction");
+        };
 
         // Forward: the antenna observes its own world position directly.
         let antenna_world = body_position + q_body_to_world * lever_body;
@@ -146,9 +148,11 @@ fn gyroscope_forward_matches_filter_prediction() {
             Vector3::zeros(),
             Vector3::zeros(),
         );
-        let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
-            .unwrap();
+        let Prediction::Ready(predicted) =
+            filter.predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
+        else {
+            panic!("a resolvable extrinsic yields a ready prediction");
+        };
 
         let ideal = forward.ideal(
             q_body_to_world * omega_body,
@@ -186,9 +190,11 @@ fn accelerometer_forward_matches_filter_prediction() {
             accel_body,
             alpha_body,
         );
-        let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
-            .unwrap();
+        let Prediction::Ready(predicted) =
+            filter.predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
+        else {
+            panic!("a resolvable extrinsic yields a ready prediction");
+        };
 
         // Forward: the same kinematics rotated into world axes. Rotation
         // preserves the cross products, so the two lever-arm paths coincide.
@@ -246,9 +252,11 @@ fn magnetometer_forward_matches_filter_prediction() {
             Vector3::zeros(),
             Vector3::zeros(),
         );
-        let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
-            .unwrap();
+        let Prediction::Ready(predicted) =
+            filter.predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
+        else {
+            panic!("a resolvable extrinsic yields a ready prediction");
+        };
 
         let ideal = forward.ideal(sensor_from_world(&extrinsic, q_body_to_world));
 

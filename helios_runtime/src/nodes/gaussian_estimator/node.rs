@@ -305,10 +305,11 @@ mod tests {
     use helios_core::data::sensor::Acceleration;
     use helios_core::data::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::estimation::measurement::Prediction;
     use helios_core::estimation::schema::{
         MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
-    use helios_core::estimation::EstimatorInputs;
+    use helios_core::estimation::{EstimatorInputs, UpdateOutcome};
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId};
     use helios_core::state::Quantity;
@@ -380,8 +381,9 @@ mod tests {
             _r: &DMatrix<f64>,
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
-        ) {
+        ) -> UpdateOutcome {
             self.counts.lock().unwrap().update_calls += 1;
+            UpdateOutcome::Applied
         }
         fn state(&self) -> &FrameAwareState {
             &self.state
@@ -407,8 +409,8 @@ mod tests {
             _state: &FrameAwareState,
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
-        ) -> Option<DVector<f64>> {
-            Some(DVector::zeros(3))
+        ) -> Prediction {
+            Prediction::Ready(DVector::zeros(3))
         }
     }
 

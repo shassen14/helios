@@ -3,7 +3,7 @@ use nalgebra::DVector;
 use crate::data::ports::TfProvider;
 use crate::data::AgentId;
 use crate::data::MonotonicTime;
-use crate::estimation::measurement::MeasurementModel;
+use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
 use crate::frames::conventions::Flu;
 use crate::frames::quantities::FreeVector;
@@ -41,25 +41,37 @@ impl MeasurementModel for AngularRateModel {
 
     /// Predicts angular velocity in the sensor frame.
     ///
-    /// Returns `None` when `tf` is unavailable — the body→sensor rotation is
-    /// required.
+    /// The body→sensor rotation is required, so this returns
+    /// [`Prediction::Unavailable`] ([`Unavailable::NoProvider`] with no `tf`,
+    /// [`Unavailable::MissingTransform`] when the sensor→base_link edge does not
+    /// resolve).
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
-    ) -> Option<DVector<f64>> {
-        let tf = tf?;
+    ) -> Prediction {
+        let Some(tf) = tf else {
+            return Prediction::Unavailable(Unavailable::NoProvider);
+        };
         let body_frame = FrameId::base_link(self.agent.clone());
 
-        let erased = tf.get_transform(
+        let Some(erased) = tf.get_transform(
             self.sensor.clone(),
             FrameId::base_link(self.agent.clone()),
             at,
-        )?;
+        ) else {
+            return Prediction::Unavailable(Unavailable::MissingTransform {
+                from: self.sensor.clone(),
+                to: FrameId::base_link(self.agent.clone()),
+            });
+        };
 
         let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
-            return None;
+            return Prediction::Unavailable(Unavailable::ConventionMismatch {
+                from: self.sensor.clone(),
+                to: FrameId::base_link(self.agent.clone()),
+            });
         };
 
         let iso = sensor_in_body.into_inner();
@@ -76,7 +88,7 @@ impl MeasurementModel for AngularRateModel {
         let predicted_gyro = rot_body_from_sensor.inverse() * angular_vel_body;
         let mut z_pred = DVector::zeros(3);
         z_pred.fixed_rows_mut::<3>(0).copy_from(&predicted_gyro);
-        Some(z_pred)
+        Prediction::Ready(z_pred)
     }
 }
 
@@ -105,6 +117,21 @@ mod tests {
     }
 
     const AT: MonotonicTime = MonotonicTime(0.0);
+
+    /// A provider that is present but resolves no edges — the shape of the
+    /// historical silent-aiding-drop bug (broken tf graph / mislabelled frame).
+    struct NoEdgeTf;
+
+    impl TfProvider for NoEdgeTf {
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            None
+        }
+    }
 
     struct IdentityTf;
     impl TfProvider for IdentityTf {
@@ -176,7 +203,10 @@ mod tests {
     fn predict_without_tf_returns_none() {
         let model = make_model();
         let state = make_state();
-        assert!(model.predict_measurement(&state, None, AT).is_none());
+        assert_eq!(
+            model.predict_measurement(&state, None, AT),
+            Prediction::Unavailable(Unavailable::NoProvider)
+        );
     }
 
     #[test]
@@ -184,7 +214,25 @@ mod tests {
         let model = make_model();
         let state = make_state();
         let tf = IdentityTf;
-        assert!(model.predict_measurement(&state, Some(&tf), AT).is_some());
+        assert!(matches!(
+            model.predict_measurement(&state, Some(&tf), AT),
+            Prediction::Ready(_)
+        ));
+    }
+
+    #[test]
+    fn predict_with_unresolved_edge_reports_missing_transform() {
+        let model = make_model();
+        let state = make_state();
+        // The provider is present but the sensor→base_link edge does not resolve:
+        // the loud case the reason-carrying return exists to surface.
+        assert_eq!(
+            model.predict_measurement(&state, Some(&NoEdgeTf), AT),
+            Prediction::Unavailable(Unavailable::MissingTransform {
+                from: sensor(),
+                to: FrameId::base_link(agent()),
+            })
+        );
     }
 
     #[test]
@@ -235,7 +283,9 @@ mod tests {
             Translation3::identity(),
             UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2),
         ));
-        let z = model.predict_measurement(&state, Some(&mount), AT).unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&mount), AT) else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!(z[0].abs() < 1e-9);
         assert!((z[1] + 1.0).abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);

@@ -10,10 +10,10 @@ pub mod filters;
 pub mod measurement;
 pub mod schema;
 
-use crate::data::ports::TfProvider;
 use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::FrameAwareState;
+use crate::{data::ports::TfProvider, estimation::measurement::Unavailable};
 
 use nalgebra::{DMatrix, DVector};
 
@@ -59,8 +59,17 @@ pub trait GaussianStateEstimator: Send + Sync {
     /// * `r` — measurement noise covariance for this specific sensor and reading.
     ///   Must be square with side equal to the measurement length (`z.nrows()`).
     /// * `tf` — transform tree access; `None` is valid and is forwarded to the
-    ///   model, which may return `None` from `predict_measurement` to signal that
-    ///   the update cannot proceed. The filter silently skips in that case.
+    ///   model, which may decline to predict. The filter never fuses a
+    ///   half-formed correction — it skips the update whenever the model declines
+    ///   or a numerical guard trips.
+    ///
+    /// Returns an [`UpdateOutcome`]: [`UpdateOutcome::Applied`] when the estimate
+    /// was corrected, or [`UpdateOutcome::Skipped`] carrying the [`SkipReason`]
+    /// otherwise. The reason lets the caller distinguish an expected shortfall
+    /// (cold start, no provider) from a fault (an unresolved transform, a
+    /// non-positive-definite covariance) and log only the latter. This core never
+    /// logs; classification is its whole contribution and emission is the
+    /// runtime caller's.
     fn update(
         &mut self,
         z: &DVector<f64>,
@@ -68,8 +77,40 @@ pub trait GaussianStateEstimator: Send + Sync {
         r: &DMatrix<f64>,
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
-    );
+    ) -> UpdateOutcome;
 
     /// Current best state estimate `(x, P, t)`.
     fn state(&self) -> &FrameAwareState;
+}
+
+/// What one [`GaussianStateEstimator::update`] call did.
+///
+/// Replaces a bare `()` return, which conflated "the estimate was corrected"
+/// with "the measurement was dropped" — the silence that let a broken transform
+/// leave the filter running unaided with no trace. Every skip now carries a
+/// [`SkipReason`], so the runtime caller can surface the faults and stay quiet
+/// on the expected shortfalls.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UpdateOutcome {
+    /// The measurement was fused; the estimate moved.
+    Applied,
+    /// The update was skipped without touching the estimate; the reason says why.
+    Skipped(SkipReason),
+}
+
+/// Why a [`GaussianStateEstimator::update`] declined to fuse a measurement —
+/// split so the caller can log the faults and ignore the expected cases.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SkipReason {
+    /// The measurement model declined to predict. Carries the model's own
+    /// [`Unavailable`] reason, which itself classifies quiet vs. loud — this
+    /// variant forwards that judgment unchanged.
+    Model(Unavailable),
+    /// **Loud.** `R`, the incoming `z`, or the model's prediction disagreed on
+    /// length — a wiring bug the build-time schema check should have caught.
+    MeasurementShapeMismatch,
+    /// **Loud.** The innovation covariance failed Cholesky, i.e. `P` has lost
+    /// positive-definiteness. Not merely a dropped measurement — a sign the
+    /// filter's covariance is corrupt.
+    CovarianceNotPositiveDefinite,
 }

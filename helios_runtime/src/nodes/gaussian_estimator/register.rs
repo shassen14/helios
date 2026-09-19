@@ -216,7 +216,7 @@ mod tests {
     use helios_core::data::AgentId;
     use helios_core::data::MonotonicTime;
     use helios_core::estimation::augmentation::{augmentation_block, MAGNETOMETER_BIAS};
-    use helios_core::estimation::measurement::MeasurementModel;
+    use helios_core::estimation::measurement::{MeasurementModel, Prediction};
     use helios_core::estimation::schema::{
         MeasurementSchema, MeasurementSchemaBlock, StateSchemaBlock,
     };
@@ -434,8 +434,8 @@ mod tests {
             _: &FrameAwareState,
             _: Option<&dyn TfProvider>,
             _: MonotonicTime,
-        ) -> Option<DVector<f64>> {
-            Some(DVector::zeros(3))
+        ) -> Prediction {
+            Prediction::Ready(DVector::zeros(3))
         }
     }
 
@@ -455,8 +455,8 @@ mod tests {
             _: &FrameAwareState,
             _: Option<&dyn TfProvider>,
             _: MonotonicTime,
-        ) -> Option<DVector<f64>> {
-            Some(DVector::zeros(3))
+        ) -> Prediction {
+            Prediction::Ready(DVector::zeros(3))
         }
     }
 

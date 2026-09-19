@@ -1,7 +1,7 @@
 use crate::{
     data::{ports::TfProvider, AgentId, MonotonicTime},
     estimation::{
-        measurement::MeasurementModel,
+        measurement::{MeasurementModel, Prediction, Unavailable},
         schema::{MeasurementSchema, MeasurementSchemaBlock},
     },
     frames::{
@@ -41,14 +41,18 @@ impl MeasurementModel for MagneticFieldModel {
     /// Predicts the magnetic field in the sensor frame: the known world field is
     /// rotated through the filter's orientation into the body frame, then through
     /// the sensor's mount into the sensor frame. TF is required — the mount
-    /// rotation comes from it — so this returns `None` when `tf` is unavailable.
+    /// rotation comes from it — so this returns [`Prediction::Unavailable`]
+    /// ([`Unavailable::NoProvider`] with no `tf`, [`Unavailable::MissingTransform`]
+    /// when the sensor→base_link edge does not resolve).
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
-    ) -> Option<DVector<f64>> {
-        let tf = tf?;
+    ) -> Prediction {
+        let Some(tf) = tf else {
+            return Prediction::Unavailable(Unavailable::NoProvider);
+        };
 
         let orientation_body_to_world = filter_state
             .orientation::<Flu, Enu>(
@@ -60,14 +64,22 @@ impl MeasurementModel for MagneticFieldModel {
         let q_body_from_world = orientation_body_to_world.inverse();
         let predicted_mag_body = q_body_from_world * self.world_magnetic_field;
 
-        let erased = tf.get_transform(
+        let Some(erased) = tf.get_transform(
             self.sensor.clone(),
             FrameId::base_link(self.agent.clone()),
             at,
-        )?;
+        ) else {
+            return Prediction::Unavailable(Unavailable::MissingTransform {
+                from: self.sensor.clone(),
+                to: FrameId::base_link(self.agent.clone()),
+            });
+        };
 
         let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
-            return None;
+            return Prediction::Unavailable(Unavailable::ConventionMismatch {
+                from: self.sensor.clone(),
+                to: FrameId::base_link(self.agent.clone()),
+            });
         };
 
         let iso = sensor_in_body.into_inner();
@@ -83,7 +95,7 @@ impl MeasurementModel for MagneticFieldModel {
             .unwrap_or_else(Vector3::zeros);
         let predicted_sensor = rot_body_from_sensor.inverse() * predicted_mag_body + bias;
 
-        Some(DVector::from_row_slice(predicted_sensor.as_slice()))
+        Prediction::Ready(DVector::from_row_slice(predicted_sensor.as_slice()))
     }
 }
 
@@ -148,6 +160,21 @@ mod tests {
     /// canonical [`TfProvider::get_transform`] direction — the stored isometry
     /// for `get_transform(sensor, base_link)`, its inverse for the reverse — so
     /// the rotated-mount test below catches a swapped argument order.
+    /// A provider that is present but resolves no edges — the shape of the
+    /// historical silent-aiding-drop bug (broken tf graph / mislabelled frame).
+    struct NoEdgeTf;
+
+    impl TfProvider for NoEdgeTf {
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            None
+        }
+    }
+
     struct Mount(Isometry3<f64>);
 
     impl TfProvider for Mount {
@@ -273,16 +300,35 @@ mod tests {
     fn predict_without_tf_returns_none() {
         let model = make_model();
         let state = make_orientation_state();
-        assert!(model.predict_measurement(&state, None, AT).is_none());
+        assert_eq!(
+            model.predict_measurement(&state, None, AT),
+            Prediction::Unavailable(Unavailable::NoProvider)
+        );
+    }
+
+    #[test]
+    fn predict_with_unresolved_edge_reports_missing_transform() {
+        let model = make_model();
+        let state = make_orientation_state();
+        // The provider is present but the sensor→base_link edge does not resolve:
+        // the loud case the reason-carrying return exists to surface.
+        assert_eq!(
+            model.predict_measurement(&state, Some(&NoEdgeTf), AT),
+            Prediction::Unavailable(Unavailable::MissingTransform {
+                from: sensor(),
+                to: FrameId::base_link(agent()),
+            })
+        );
     }
 
     #[test]
     fn predict_identity_orientation_returns_world_field() {
         let model = make_model();
         let state = make_orientation_state();
-        let z = model
-            .predict_measurement(&state, Some(&identity_mount()), AT)
-            .unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&identity_mount()), AT)
+        else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!(z[0].abs() < 1e-9);
         assert!((z[1] - 1.0).abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
@@ -293,9 +339,10 @@ mod tests {
         let model = make_model();
         let mut state = make_orientation_state();
         set_yaw_90_ccw(&mut state);
-        let z = model
-            .predict_measurement(&state, Some(&identity_mount()), AT)
-            .unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&identity_mount()), AT)
+        else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!((z[0] - 1.0).abs() < 1e-9);
         assert!(z[1].abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
@@ -314,7 +361,9 @@ mod tests {
             Translation3::identity(),
             UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2),
         ));
-        let z = model.predict_measurement(&state, Some(&mount), AT).unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&mount), AT) else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!((z[0] - 1.0).abs() < 1e-9);
         assert!(z[1].abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
@@ -328,9 +377,10 @@ mod tests {
         let model = make_model();
         let bias = Vector3::new(0.1, -0.2, 0.05);
         let state = make_augmented_state(bias);
-        let z = model
-            .predict_measurement(&state, Some(&identity_mount()), AT)
-            .unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&identity_mount()), AT)
+        else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!((z[0] - bias.x).abs() < 1e-9);
         assert!((z[1] - (1.0 + bias.y)).abs() < 1e-9);
         assert!((z[2] - bias.z).abs() < 1e-9);
@@ -344,9 +394,10 @@ mod tests {
         // keeps the base (16-state) filter's behaviour frozen.
         let model = make_model();
         let state = make_orientation_state();
-        let z = model
-            .predict_measurement(&state, Some(&identity_mount()), AT)
-            .unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&identity_mount()), AT)
+        else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!(z[0].abs() < 1e-9);
         assert!((z[1] - 1.0).abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
