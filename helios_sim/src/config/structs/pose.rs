@@ -1,8 +1,12 @@
+use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};
+use crate::utils::serde_helpers;
+
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::transforms::Transform as CoreTransform;
+
 use bevy::prelude::Transform;
 use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
 use serde::Deserialize;
-
-use crate::utils::serde_helpers;
 
 #[derive(Deserialize, Debug, Clone, Copy, Default)]
 #[serde(deny_unknown_fields)]
@@ -20,13 +24,13 @@ impl Pose {
     }
 
     pub fn to_bevy_transform(&self) -> Transform {
-        use crate::core::transforms::EnuBodyPose;
-        Transform::from(EnuBodyPose(self.to_isometry()))
+        let pose = CoreTransform::<Flu, Enu>::from_isometry(self.to_isometry());
+        transform_bevy_to_bevy_transform(pose.to_bevy())
     }
 
     /// For body-relative sensor placement (FLU frame).
     pub fn to_bevy_local_transform(&self) -> Transform {
-        use crate::core::transforms::FluLocalPose;
-        Transform::from(FluLocalPose(self.to_isometry()))
+        let pose = CoreTransform::<Flu, Flu>::from_isometry(self.to_isometry());
+        transform_bevy_to_bevy_transform(pose.to_bevy())
     }
 }

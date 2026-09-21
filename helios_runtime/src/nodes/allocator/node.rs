@@ -1,8 +1,9 @@
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::port::{ChannelError, InternalChannel, PortBus};
-use crate::{AgentRuntime, ChannelKey, Health, PipelineNode, PortDescriptor, Stamped, TickContext};
+use crate::{ChannelKey, Health, PipelineNode, PortDescriptor, Stamped, TickContext};
 
 use helios_core::control::allocation::Allocator;
+use helios_core::data::TfProvider;
 
 use std::sync::Mutex;
 
@@ -49,7 +50,7 @@ where
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, _runtime: &dyn AgentRuntime, tick: TickContext) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
         let Some(command) = bus.read::<A::In>(self.input_key.clone()) else {
             return;
         };
@@ -100,11 +101,11 @@ mod tests {
     use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};
 
-    // --- Mock AgentRuntime (the allocator ignores it, but `execute` needs one) ---
+    // --- Mock TfProvider (the allocator ignores it, but `execute` needs one) ---
 
     struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -116,9 +117,6 @@ mod tests {
                 Convention::Flu,
                 Convention::Flu,
             ))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
         }
     }
 

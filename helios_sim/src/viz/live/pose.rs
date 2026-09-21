@@ -13,7 +13,13 @@
 
 use bevy::prelude::*;
 
-use crate::{core::transforms::EnuBodyPose, prelude::GroundTruthState};
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::transforms::Transform as CoreTransform;
+
+use crate::{
+    core::transforms::{transform_bevy_to_bevy_transform, ToBevy},
+    prelude::GroundTruthState,
+};
 
 /// Axis-triad length for the ground-truth gizmo. Longer than the estimate
 /// triad ([`crate::viz::live::estimate::ESTIMATE_TRIAD_LEN`]) so the two are
@@ -24,7 +30,9 @@ const GROUND_TRUTH_TRIAD_LEN: f32 = 5.0;
 pub fn pose_update_system(query: Query<&GroundTruthState>, mut gizmos: Gizmos) {
     for ground_truth in query {
         // ENU ground-truth pose → Bevy transform via the one sanctioned helper.
-        let transform = Transform::from(EnuBodyPose(ground_truth.pose));
+        let transform = transform_bevy_to_bevy_transform(
+            CoreTransform::<Flu, Enu>::from_isometry(ground_truth.pose).to_bevy(),
+        );
 
         gizmos.axes(transform, GROUND_TRUTH_TRIAD_LEN);
     }

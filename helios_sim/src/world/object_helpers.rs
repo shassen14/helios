@@ -10,7 +10,10 @@ use bevy::{
 use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 
 use crate::config::structs::WorldObjectCollider;
-use crate::core::transforms::EnuWorldPose;
+use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};
+
+use helios_core::frames::conventions::Enu;
+use helios_core::frames::transforms::Transform as CoreTransform;
 
 #[derive(serde::Deserialize)]
 pub struct GltfObjectMeta {
@@ -27,7 +30,7 @@ pub fn placement_to_bevy_transform(position: [f64; 3], orientation_degrees: [f64
     let translation = Translation3::new(position[0], position[1], position[2]);
     let rotation = UnitQuaternion::from_euler_angles(roll, pitch, yaw);
     let iso = Isometry3::from_parts(translation, rotation);
-    Transform::from(EnuWorldPose(iso))
+    transform_bevy_to_bevy_transform(CoreTransform::<Enu, Enu>::from_isometry(iso).to_bevy())
 }
 
 pub fn spawn_object_trimesh_colliders(

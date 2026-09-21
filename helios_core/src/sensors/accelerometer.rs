@@ -1,6 +1,6 @@
 //! Forward model for an accelerometer.
 
-use crate::data::sensor::LinearAcceleration3D;
+use crate::data::sensor::Acceleration;
 use crate::sensors::noise::TriaxialGaussian;
 
 use nalgebra::{UnitQuaternion, Vector3};
@@ -61,7 +61,7 @@ impl AccelerometerModel {
         lever_arm_world: Vector3<f64>,
         q_sensor_from_world: UnitQuaternion<f64>,
         rng: &mut dyn RngCore,
-    ) -> LinearAcceleration3D {
+    ) -> Acceleration {
         let ideal = self.ideal(
             accel_world,
             gravity_world,
@@ -71,9 +71,7 @@ impl AccelerometerModel {
             q_sensor_from_world,
         );
 
-        LinearAcceleration3D {
-            value: self.noise.apply(ideal, rng),
-        }
+        Acceleration(self.noise.apply(ideal, rng))
     }
 }
 
@@ -183,7 +181,7 @@ mod tests {
                     q,
                     rng,
                 )
-                .value
+                .0
         };
         assert_eq!(sample(&mut rng_a), sample(&mut rng_b));
     }

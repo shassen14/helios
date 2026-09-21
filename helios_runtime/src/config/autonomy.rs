@@ -1,6 +1,6 @@
 use super::{
     AllocatorConfig, ControllerConfig, EstimatorConfig, MapLayerConfig, PathFollowingConfig,
-    ReferenceArbitrationConfig, SearchPlannerConfig, TeleopMapperConfig,
+    ReferenceArbitrationConfig, SearchPlannerConfig, TeleopMapperConfig, TfBufferConfig,
 };
 
 use serde::Deserialize;
@@ -41,4 +41,9 @@ pub struct AutonomyStack {
     /// teleop source never has to mention it.
     #[serde(default)]
     pub reference_arbitration: ReferenceArbitrationConfig,
+
+    /// Sizing for the estimated transform buffer the `TfService` folds dual-
+    /// published edges into. Defaults apply when the `[tf]` section is omitted.
+    #[serde(default)]
+    pub tf: TfBufferConfig,
 }

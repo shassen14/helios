@@ -1,10 +1,13 @@
 use crate::brain_bridge::AutonomyPipelineComponent;
-use crate::core::{
-    components::GroundTruthState,
-    transforms::{EnuBodyPose, EnuVector},
+use crate::core::components::GroundTruthState;
+use crate::core::transforms::{
+    bevy_transform_to_transform_bevy, vec3_to_freevector_bevy, FromBevy,
 };
 
 use helios_core::data::{MonotonicTime, Twist};
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::quantities::FreeVector;
+use helios_core::frames::transforms::Transform as CoreTransform;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::{Health, Stamped, HOST_PRODUCER_ID};
 
@@ -36,16 +39,20 @@ pub fn ground_truth_sync_system(
     }
 
     for (transform, lin_vel, ang_vel, mut ground_truth) in &mut query {
-        ground_truth.pose = EnuBodyPose::from(transform).0;
+        let world: CoreTransform<Flu, Enu> =
+            bevy_transform_to_transform_bevy(transform.compute_transform()).from_bevy();
+        ground_truth.pose = world.into_inner();
 
-        let current_angular_velocity_enu =
-            EnuVector::from(Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z)).0;
+        let angular_velocity_enu: FreeVector<Enu> =
+            vec3_to_freevector_bevy(Vec3::new(ang_vel.x, ang_vel.y, ang_vel.z)).from_bevy();
+        let current_angular_velocity_enu = angular_velocity_enu.into_inner();
 
         let angular_acceleration_enu =
             (current_angular_velocity_enu - ground_truth.last_angular_velocity) / dt;
 
-        let current_linear_velocity_enu =
-            EnuVector::from(Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z)).0;
+        let linear_velocity_enu: FreeVector<Enu> =
+            vec3_to_freevector_bevy(Vec3::new(lin_vel.x, lin_vel.y, lin_vel.z)).from_bevy();
+        let current_linear_velocity_enu = linear_velocity_enu.into_inner();
 
         let linear_acceleration_enu =
             (current_linear_velocity_enu - ground_truth.last_linear_velocity) / dt;
@@ -70,7 +77,7 @@ pub fn ground_truth_sync_system(
 /// `FrameAwareState` without rotating.
 ///
 /// The bus timestamp source is `Time::elapsed_secs_f64`, identical to
-/// what `SimRuntime::now()` returns later in the autonomy tick — so
+/// the `now` the host passes into `pipeline.tick` in the autonomy tick — so
 /// `read_fresh(max_age)` comparisons across systems work without skew.
 ///
 /// `bus.write` returns `Err(UnknownChannel)` if no node in the graph

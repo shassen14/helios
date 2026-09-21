@@ -19,14 +19,14 @@
 //! many random poses, rates, mounts, and fields while staying reproducible.
 
 use helios_core::data::ports::TfProvider;
-use helios_core::data::primitives::FrameHandle;
+use helios_core::data::AgentId;
 use helios_core::data::MonotonicTime;
 use helios_core::estimation::measurement::accelerometer::SpecificForceModel;
 use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
-use helios_core::estimation::measurement::MeasurementModel;
-use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+use helios_core::estimation::measurement::{MeasurementModel, Prediction};
+use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::manifold::TangentNoise;
@@ -43,8 +43,14 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
 
-const AGENT: FrameHandle = FrameHandle(1);
-const SENSOR: FrameHandle = FrameHandle(2);
+fn agent() -> AgentId {
+    AgentId::new("test_agent")
+}
+
+fn sensor() -> FrameId {
+    FrameId::sensor(agent(), "sensor0")
+}
+
 const AT: MonotonicTime = MonotonicTime(0.0);
 
 /// Random cases per sensor. Large enough to exercise the frame conventions
@@ -83,8 +89,8 @@ fn gps_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0001);
     let forward = GpsModel::new(Vector3::zeros(), UNIT_STDDEV).unwrap();
     let filter = GpsPositionModel {
-        agent_handle: AGENT,
-        sensor_handle: SENSOR,
+        agent: agent(),
+        sensor: sensor(),
     };
 
     for _ in 0..CASES {
@@ -103,9 +109,11 @@ fn gps_forward_matches_filter_prediction() {
             Vector3::zeros(),
             Vector3::zeros(),
         );
-        let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
-            .unwrap();
+        let Prediction::Ready(predicted) =
+            filter.predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
+        else {
+            panic!("a resolvable extrinsic yields a ready prediction");
+        };
 
         // Forward: the antenna observes its own world position directly.
         let antenna_world = body_position + q_body_to_world * lever_body;
@@ -120,8 +128,8 @@ fn gyroscope_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0002);
     let forward = GyroscopeModel::new(Vector3::zeros(), UNIT_STDDEV).unwrap();
     let filter = AngularRateModel {
-        agent_handle: AGENT,
-        sensor_handle: SENSOR,
+        agent: agent(),
+        sensor: sensor(),
     };
 
     for _ in 0..CASES {
@@ -140,9 +148,11 @@ fn gyroscope_forward_matches_filter_prediction() {
             Vector3::zeros(),
             Vector3::zeros(),
         );
-        let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
-            .unwrap();
+        let Prediction::Ready(predicted) =
+            filter.predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
+        else {
+            panic!("a resolvable extrinsic yields a ready prediction");
+        };
 
         let ideal = forward.ideal(
             q_body_to_world * omega_body,
@@ -159,8 +169,8 @@ fn accelerometer_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0003);
     let forward = AccelerometerModel::new(Vector3::zeros(), UNIT_STDDEV).unwrap();
     let filter = SpecificForceModel {
-        agent_handle: AGENT,
-        sensor_handle: SENSOR,
+        agent: agent(),
+        sensor: sensor(),
         gravity_world,
     };
 
@@ -180,9 +190,11 @@ fn accelerometer_forward_matches_filter_prediction() {
             accel_body,
             alpha_body,
         );
-        let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
-            .unwrap();
+        let Prediction::Ready(predicted) =
+            filter.predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
+        else {
+            panic!("a resolvable extrinsic yields a ready prediction");
+        };
 
         // Forward: the same kinematics rotated into world axes. Rotation
         // preserves the cross products, so the two lever-arm paths coincide.
@@ -228,8 +240,8 @@ fn magnetometer_forward_matches_filter_prediction() {
         )
         .unwrap();
         let filter = MagneticFieldModel {
-            agent_handle: AGENT,
-            sensor_handle: SENSOR,
+            agent: agent(),
+            sensor: sensor(),
             world_magnetic_field: field_world,
         };
 
@@ -240,9 +252,11 @@ fn magnetometer_forward_matches_filter_prediction() {
             Vector3::zeros(),
             Vector3::zeros(),
         );
-        let predicted = filter
-            .predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
-            .unwrap();
+        let Prediction::Ready(predicted) =
+            filter.predict_measurement(&state, Some(&SensorInBody(extrinsic)), AT)
+        else {
+            panic!("a resolvable extrinsic yields a ready prediction");
+        };
 
         let ideal = forward.ideal(sensor_from_world(&extrinsic, q_body_to_world));
 
@@ -284,29 +298,35 @@ fn make_state(
 ) -> FrameAwareState {
     // The estimate's kinematics live in the odom frame; the seeded values are the
     // world-frame truth (odom is world-aligned with no drift in this test).
-    let world = FrameId::Odom(AGENT);
-    let body = FrameId::Body(AGENT);
+    let world = FrameId::odom(agent());
+    let body = FrameId::base_link(agent());
 
     // Flat kinematic blocks carry no process noise; the orientation block must
     // (a quaternion retraction has no zero-noise covariance), and its value is
     // irrelevant to this prediction-only test.
-    let flat = |quantity: Quantity| {
-        SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3))
+    let flat = |quantity: Quantity, convention: Convention| {
+        StateSchemaBlock::new(
+            quantity,
+            convention,
+            None,
+            DVector::zeros(3),
+            DMatrix::zeros(3, 3),
+        )
     };
     let schema = StateSchema::compose(vec![
-        flat(Quantity::Position(world.clone())),
-        SchemaBlock::new(
-            Quantity::Orientation {
-                from: body.clone(),
-                to: world.clone(),
-            },
+        flat(Quantity::Position(world.clone()), Convention::Enu),
+        StateSchemaBlock::orientation(
+            body.clone(),
+            world.clone(),
+            Convention::Flu,
+            Convention::Enu,
             Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap()),
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::identity(3, 3),
         ),
-        flat(Quantity::AngularVelocity(body.clone())),
-        flat(Quantity::Acceleration(body.clone())),
-        flat(Quantity::AngularAcceleration(body.clone())),
+        flat(Quantity::AngularVelocity(body.clone()), Convention::Flu),
+        flat(Quantity::Acceleration(body.clone()), Convention::Flu),
+        flat(Quantity::AngularAcceleration(body.clone()), Convention::Flu),
     ]);
     let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
 

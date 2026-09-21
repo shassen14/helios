@@ -1,7 +1,8 @@
 //! Registers built-in mapper factories.
 
 use helios_core::data::envelope::SensorReading;
-use helios_core::data::sensor::PointCloud2D;
+use helios_core::data::PointCloud;
+use helios_core::frames::conventions::Flu;
 use helios_core::mapping::MapData;
 use helios_core::mapping::{Mapper, OccupancyGridMapper};
 
@@ -39,7 +40,7 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
     ));
 
     let scan_channel =
-        SensorChannel::named::<Vec<SensorReading<PointCloud2D>>>(scan_channel.as_str());
+        SensorChannel::named::<Vec<SensorReading<PointCloud<Flu, ()>>>>(scan_channel.as_str());
     // The map is published on a channel named by this layer's config-map key, so
     // two layers of one kind don't collide on a single producer slot and a
     // planner selects the layer it consumes by that same key.
@@ -48,7 +49,7 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
     Ok(Box::new(OccupancyGridNode::new(
         ctx.instance_name,
         mapper,
-        ctx.agent_handle,
+        ctx.agent,
         scan_channel,
         map_channel,
         Some(rate as f64),
@@ -59,11 +60,11 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
 mod tests {
     use super::*;
 
-    use helios_core::data::primitives::FrameHandle;
+    use helios_core::data::AgentId;
 
     fn context(instance_name: &str) -> MapperBuildContext {
         MapperBuildContext {
-            agent_handle: FrameHandle(0),
+            agent: AgentId::new("test_agent"),
             instance_name: instance_name.to_string(),
             config: MapLayerConfig::OccupancyGrid2D {
                 rate: 5.0,

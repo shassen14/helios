@@ -9,5 +9,4 @@
 pub use crate::pipeline::node::{PipelineNode, TickContext};
 pub use crate::pipeline::{AutonomyPipeline, PipelineBuilder};
 pub use crate::port::{ChannelKey, PortDescriptor};
-pub use crate::runtime::AgentRuntime;
 pub use crate::stamped::{Health, Stamped};

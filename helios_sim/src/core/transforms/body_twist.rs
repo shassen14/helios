@@ -1,9 +1,7 @@
-use super::frame_types::{EnuBodyPose, EnuVector};
-
 use helios_core::control::commands::BodyTwist;
-use helios_core::frames::quantities::FluVector;
-
-use nalgebra::UnitQuaternion;
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::quantities::EnuVector;
+use helios_core::frames::transforms::{Rotation, Transform};
 
 /// Rotate a world-ENU twist into the body's FLU frame.
 ///
@@ -14,22 +12,21 @@ use nalgebra::UnitQuaternion;
 /// ride the *same* rotation — no translation (free vectors), no axis swap (both
 /// frames are right-handed; that swap is Bevy-only and lives in `bevy_bridge`).
 pub fn enu_twist_to_body_flu(
-    pose: EnuBodyPose,
+    pose: Transform<Flu, Enu>,
     linear_enu: EnuVector,
     angular_enu: EnuVector,
 ) -> BodyTwist {
-    let enu_to_flu: UnitQuaternion<f64> = pose.0.rotation.inverse();
-    BodyTwist::new(
-        FluVector::from_raw(enu_to_flu * linear_enu.0),
-        FluVector::from_raw(enu_to_flu * angular_enu.0),
-    )
+    let enu_to_flu: Rotation<Enu, Flu> = pose.rotation().inverse();
+    BodyTwist::new(enu_to_flu.act(linear_enu), enu_to_flu.act(angular_enu))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use nalgebra::{Isometry3, Translation3, Vector3};
+    use helios_core::frames::quantities::FluVector;
+
+    use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
 
     // Floats survive one quaternion rotation, so exact equality is unsafe; compare
@@ -48,9 +45,9 @@ mod tests {
         );
     }
 
-    fn body_pose(rotation: UnitQuaternion<f64>) -> EnuBodyPose {
+    fn body_pose(rotation: UnitQuaternion<f64>) -> Transform<Flu, Enu> {
         // A non-zero translation that the free-vector rotation must ignore.
-        EnuBodyPose(Isometry3::from_parts(
+        Transform::from_isometry(Isometry3::from_parts(
             Translation3::new(10.0, -5.0, 3.0),
             rotation,
         ))
@@ -62,8 +59,8 @@ mod tests {
     fn identity_pose_passes_enu_through() {
         let twist = enu_twist_to_body_flu(
             body_pose(UnitQuaternion::identity()),
-            EnuVector(Vector3::new(1.0, 2.0, 3.0)),
-            EnuVector(Vector3::new(4.0, 5.0, 6.0)),
+            EnuVector::new(1.0, 2.0, 3.0),
+            EnuVector::new(4.0, 5.0, 6.0),
         );
 
         assert_flu(twist.linear(), [1.0, 2.0, 3.0]);
@@ -77,8 +74,8 @@ mod tests {
         let north = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), FRAC_PI_2);
         let twist = enu_twist_to_body_flu(
             body_pose(north),
-            EnuVector(Vector3::new(1.0, 0.0, 0.0)),
-            EnuVector(Vector3::zeros()),
+            EnuVector::new(1.0, 0.0, 0.0),
+            EnuVector::zeros(),
         );
 
         assert_flu(twist.linear(), [0.0, -1.0, 0.0]);
@@ -94,15 +91,15 @@ mod tests {
 
         let about_east = enu_twist_to_body_flu(
             body_pose(north),
-            EnuVector(Vector3::zeros()),
-            EnuVector(Vector3::new(1.0, 0.0, 0.0)),
+            EnuVector::zeros(),
+            EnuVector::new(1.0, 0.0, 0.0),
         );
         assert_flu(about_east.angular(), [0.0, -1.0, 0.0]);
 
         let about_up = enu_twist_to_body_flu(
             body_pose(north),
-            EnuVector(Vector3::zeros()),
-            EnuVector(Vector3::new(0.0, 0.0, 1.0)),
+            EnuVector::zeros(),
+            EnuVector::new(0.0, 0.0, 1.0),
         );
         assert_flu(about_up.angular(), [0.0, 0.0, 1.0]);
     }

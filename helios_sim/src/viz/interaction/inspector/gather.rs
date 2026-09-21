@@ -11,7 +11,8 @@
 
 use super::{model::*, CurrentInspection};
 use crate::{
-    core::transforms::EnuBodyPose, prelude::AutonomyPipelineComponent,
+    core::transforms::{bevy_transform_to_transform_bevy, FromBevy},
+    prelude::AutonomyPipelineComponent,
     viz::interaction::selection::Selected,
 };
 
@@ -23,8 +24,9 @@ use helios_core::{
     },
     data::MonotonicTime,
     frames::{
-        conventions::Enu,
+        conventions::{Enu, Flu},
         quantities::{FreeVector, Point},
+        transforms::Transform as CoreTransform,
         FrameAwareState,
     },
 };
@@ -83,10 +85,10 @@ pub fn gather_identity(mut out: ResMut<CurrentInspection>) {
 }
 
 /// Packs the subject's ENU pose section. Pure — takes an already-converted
-/// [`EnuBodyPose`], never a Bevy type, so the frame conversion stays in the caller
-/// and this fn is the hardware-portable, testable unit.
-pub fn pose_section(pose: EnuBodyPose) -> Section {
-    let p = pose.0.translation.vector;
+/// FLU→ENU `Transform`, never a Bevy type, so the frame conversion stays in the
+/// caller and this fn is the hardware-portable, testable unit.
+pub fn pose_section(pose: CoreTransform<Flu, Enu>) -> Section {
+    let p = pose.into_inner().translation.vector;
 
     Section {
         id: SubsystemPath(Arc::from("subject.pose")),
@@ -112,7 +114,9 @@ pub fn gather_pose(
         return;
     };
 
-    model.sections.push(pose_section(EnuBodyPose::from(gt)));
+    let pose: CoreTransform<Flu, Enu> =
+        bevy_transform_to_transform_bevy(gt.compute_transform()).from_bevy();
+    model.sections.push(pose_section(pose));
 }
 
 /// Packs the ego state estimate into a Section. Pure — the estimate's kinematics
@@ -348,18 +352,17 @@ mod tests {
     use super::*;
 
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
-    use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+    use helios_core::data::TfProvider;
+    use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
     use helios_core::frames::quantities::FluVector;
+    use helios_core::frames::transforms::Convention;
     use helios_core::frames::{FrameId, StateVariable};
     use helios_core::state::{Component, Quantity};
     use helios_runtime::{
         channels::control,
         pipeline::node::HOST_PRODUCER_ID,
         port::{InternalChannel, PortBus},
-        prelude::{
-            AgentRuntime, Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped,
-            TickContext,
-        },
+        prelude::{Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext},
     };
     use nalgebra::{DMatrix, DVector};
 
@@ -405,7 +408,7 @@ mod tests {
     /// on faithful packing — `[x, y, z]` in, `[x, y, z]` out.
     #[test]
     fn pose_section_packs_the_enu_translation() {
-        let pose = EnuBodyPose(Isometry3::translation(1.0, 2.0, 3.0));
+        let pose = CoreTransform::<Flu, Enu>::from_isometry(Isometry3::translation(1.0, 2.0, 3.0));
 
         let section = pose_section(pose);
 
@@ -509,36 +512,42 @@ mod tests {
     /// A minimal state carrying only World-frame position and velocity — enough to
     /// exercise the estimator section without the full 16-state INS layout.
     fn state_with(position: [f64; 3], velocity: [f64; 3]) -> FrameAwareState {
-        let flat = |quantity: Quantity| {
-            SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3))
+        let flat = |quantity: Quantity, convention: Convention| {
+            StateSchemaBlock::new(
+                quantity,
+                convention,
+                None,
+                DVector::zeros(3),
+                DMatrix::zeros(3, 3),
+            )
         };
         let schema = StateSchema::compose(vec![
-            flat(Quantity::Position(FrameId::World)),
-            flat(Quantity::Velocity(FrameId::World)),
+            flat(Quantity::Position(FrameId::world()), Convention::Enu),
+            flat(Quantity::Velocity(FrameId::world()), Convention::Enu),
         ]);
         let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
             position[0],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
             position[1],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::World), Component::Z),
+            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Z),
             position[2],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::X),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
             velocity[0],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::Y),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Y),
             velocity[1],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::World), Component::Z),
+            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Z),
             velocity[2],
         );
         state
@@ -574,7 +583,7 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
     /// An `AutonomyPipelineComponent` whose pipeline carries the estimator slot,
@@ -713,7 +722,7 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
     /// An `AutonomyPipelineComponent` whose pipeline carries the controller slot,
@@ -932,7 +941,7 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
     /// An `AutonomyPipelineComponent` whose pipeline carries the reference slot,
@@ -1040,7 +1049,7 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _runtime: &dyn AgentRuntime, _tick: TickContext) {}
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
     /// An `AutonomyPipelineComponent` whose pipeline carries the actuators terminal,

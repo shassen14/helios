@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
-use crate::data::primitives::{Control, FrameHandle, State};
+use crate::data::primitives::{Control, State};
+use crate::data::AgentId;
 use crate::estimation::dynamics::EstimationDynamics;
-use crate::estimation::schema::{SchemaBlock, StateSchema};
+use crate::estimation::schema::{StateSchema, StateSchemaBlock};
+use crate::frames::transforms::Convention;
 use crate::frames::{FrameId, StateVariable};
 use crate::manifold::{StateBlock, TangentNoise};
 use crate::state::{Component, Quantity};
@@ -15,8 +17,8 @@ use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 /// This model correctly handles 3D rotations and estimates IMU biases.
 #[derive(Debug, Clone)]
 pub struct IntegratedImuModel {
-    /// The handle of the agent this model describes.
-    pub agent_handle: FrameHandle,
+    /// The agent this model describes.
+    pub agent: AgentId,
     /// The filter's assumed gravity in the world (ENU) frame, m/s², subtracted
     /// from IMU-integrated acceleration during prediction. This is a model
     /// parameter — what the estimator *believes* gravity to be — not ground
@@ -78,12 +80,16 @@ pub struct ImuInitialUncertainty {
 
 impl IntegratedImuModel {
     pub fn new(
-        agent_handle: FrameHandle,
+        agent: AgentId,
         gravity_world: Vector3<f64>,
         noise: ImuProcessNoise,
         initial_uncertainty: ImuInitialUncertainty,
     ) -> Self {
-        let schema = Arc::new(compose_ins_schema(agent_handle, noise, initial_uncertainty));
+        let schema = Arc::new(compose_ins_schema(
+            agent.clone(),
+            noise,
+            initial_uncertainty,
+        ));
 
         let off = |v: &StateVariable| {
             schema
@@ -91,7 +97,10 @@ impl IntegratedImuModel {
                 .expect("variable is in the schema we just built")
         };
 
-        let (body, odom) = (FrameId::Body(agent_handle), FrameId::Odom(agent_handle));
+        let (body, odom) = (
+            FrameId::base_link(agent.clone()),
+            FrameId::odom(agent.clone()),
+        );
         let pos_off = off(&StateVariable::new(
             Quantity::Position(odom.clone()),
             Component::X,
@@ -124,7 +133,7 @@ impl IntegratedImuModel {
             .clone();
 
         Self {
-            agent_handle,
+            agent,
             gravity_world,
             schema,
             pos_off,
@@ -148,10 +157,10 @@ impl IntegratedImuModel {
 /// - Gyroscope Bias (3) in Body Frame
 ///
 /// # Arguments
-/// * `agent_handle`: The unique handle for the agent (body) whose state is being defined.
-pub fn ins_state_layout(agent_handle: FrameHandle) -> Vec<StateVariable> {
-    let body = FrameId::Body(agent_handle);
-    let odom = FrameId::Odom(agent_handle);
+/// * `agent`: The agent (body) whose state is being defined.
+pub fn ins_state_layout(agent: AgentId) -> Vec<StateVariable> {
+    let body = FrameId::base_link(agent.clone());
+    let odom = FrameId::odom(agent);
 
     // Same per-block quantities, in the same order, that `compose_ins_schema`
     // builds; the layout is their concatenated variable names. Single-sourced
@@ -172,12 +181,12 @@ pub fn ins_state_layout(agent_handle: FrameHandle) -> Vec<StateVariable> {
 }
 
 fn compose_ins_schema(
-    agent_handle: FrameHandle,
+    agent: AgentId,
     noise: ImuProcessNoise,
     initial: ImuInitialUncertainty,
 ) -> StateSchema {
-    let body = FrameId::Body(agent_handle);
-    let odom = FrameId::Odom(agent_handle);
+    let body = FrameId::base_link(agent.clone());
+    let odom = FrameId::odom(agent);
 
     let noise_block = |var: f64, n: usize| {
         TangentNoise::from_variances(DVector::from_element(n, var))
@@ -187,26 +196,28 @@ fn compose_ins_schema(
 
     let blocks = vec![
         // 1. Position (Odom) — no process noise; P₀ from config.
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             Quantity::Position(odom.clone()),
+            Convention::Enu,
             None,
             DVector::zeros(3),
             p0(initial.pos_var, 3),
         ),
         // 2. Velocity (Odom) — Q from accel white noise.
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             Quantity::Velocity(odom.clone()),
+            Convention::Enu,
             Some(noise_block(noise.accel_noise_var, 3)),
             DVector::zeros(3),
             p0(initial.vel_var, 3),
         ),
         // 3. Orientation (Body from Odom) — 4/3 quaternion block.
         //    Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
-        SchemaBlock::new(
-            Quantity::Orientation {
-                from: body.clone(),
-                to: odom.clone(),
-            },
+        StateSchemaBlock::orientation(
+            body.clone(),
+            odom.clone(),
+            Convention::Flu,
+            Convention::Enu,
             Some(noise_block(noise.gyro_noise_var, 3)),
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             p0(initial.ori_var, 3),
@@ -214,16 +225,18 @@ fn compose_ins_schema(
         // 4. Accel bias (Body) — Q from bias instability. A sensor error term
         //    distinct from any true body acceleration, so it carries its own
         //    quantity rather than borrowing `Acceleration`.
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             Quantity::AccelBias(body.clone()),
+            Convention::Flu,
             Some(noise_block(noise.accel_bias_var, 3)),
             DVector::zeros(3),
             p0(initial.accel_bias_var, 3),
         ),
         // 5. Gyro bias (Body) — Q from bias instability. Its own quantity, for
         //    the same reason as the accel bias.
-        SchemaBlock::new(
+        StateSchemaBlock::new(
             Quantity::GyroBias(body.clone()),
+            Convention::Flu,
             Some(noise_block(noise.gyro_bias_var, 3)),
             DVector::zeros(3),
             p0(initial.gyro_bias_var, 3),
@@ -341,18 +354,20 @@ mod tests {
     //!   stationary (position and velocity remain near zero).
 
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::utils::integrators::RK4;
     use nalgebra::DVector;
 
-    const AGENT: FrameHandle = FrameHandle(1);
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
     const G: f64 = 9.81;
 
     fn make_model() -> IntegratedImuModel {
         // Noise/uncertainty values are arbitrary here — these tests exercise the
         // derivatives, Jacobian shape, and propagation, none of which read Q or P₀.
         IntegratedImuModel::new(
-            AGENT,
+            agent(),
             Vector3::new(0.0, 0.0, -G),
             ImuProcessNoise {
                 accel_noise_var: 0.1_f64.powi(2),
@@ -375,7 +390,7 @@ mod tests {
     /// Index layout mirrors [`ins_state_layout`]: 0-2 position, 3-5 velocity,
     /// 6-9 quaternion (Qx, Qy, Qz, Qw), 10-12 accel bias, 13-15 gyro bias.
     fn identity_state() -> DVector<f64> {
-        let mut x = DVector::zeros(ins_state_layout(AGENT).len());
+        let mut x = DVector::zeros(ins_state_layout(agent()).len());
         x[9] = 1.0; // Qw = 1 → identity quaternion
         x
     }
@@ -405,14 +420,14 @@ mod tests {
         // standalone `ins_state_layout` are built from the same per-block groups
         // in the same order, so neither can drift from the other unnoticed.
         let schema = make_model().schema();
-        assert_eq!(schema.layout(), ins_state_layout(AGENT).as_slice());
+        assert_eq!(schema.layout(), ins_state_layout(agent()).as_slice());
     }
 
     #[test]
     fn schema_places_each_block_at_its_ins_offset() {
         let schema = make_model().schema();
-        let body = FrameId::Body(AGENT);
-        let odom = FrameId::Odom(AGENT);
+        let body = FrameId::base_link(agent());
+        let odom = FrameId::odom(agent());
 
         let off = |v: &StateVariable| schema.storage_offset_of(v).unwrap();
         assert_eq!(
@@ -462,8 +477,8 @@ mod tests {
         // 6), then diverge — orientation spends 3 tangent rows against 4 stored, so
         // every block after it sits one row lower in tangent than in storage.
         let schema = make_model().schema();
-        let body = FrameId::Body(AGENT);
-        let odom = FrameId::Odom(AGENT);
+        let body = FrameId::base_link(agent());
+        let odom = FrameId::odom(agent());
 
         let off = |v: &StateVariable| schema.tangent_offset_of(v).unwrap();
         assert_eq!(
@@ -512,7 +527,7 @@ mod tests {
         // value. Position carries no process noise; every other block's Q is the
         // variance passed to `new`.
         let model = IntegratedImuModel::new(
-            AGENT,
+            agent(),
             Vector3::new(0.0, 0.0, -G),
             ImuProcessNoise {
                 accel_noise_var: 2.0, // → velocity block
@@ -553,7 +568,7 @@ mod tests {
         // fallback. Distinct values per block so a misplaced or transposed P₀ can't
         // hide behind a shared number.
         let model = IntegratedImuModel::new(
-            AGENT,
+            agent(),
             Vector3::new(0.0, 0.0, -G),
             ImuProcessNoise {
                 accel_noise_var: 0.1,
@@ -676,7 +691,7 @@ mod tests {
         let u = DVector::zeros(6);
         let (a_jac, b_jac) = model.jacobian(&x, &u, 0.0);
 
-        let dim = ins_state_layout(AGENT).len();
+        let dim = ins_state_layout(agent()).len();
         assert_eq!(a_jac.nrows(), dim, "A rows");
         assert_eq!(a_jac.ncols(), dim, "A cols");
         assert_eq!(b_jac.nrows(), dim, "B rows");

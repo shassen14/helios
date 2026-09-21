@@ -62,12 +62,12 @@ pub struct EkfConfig {
 ///
 /// `sensor` must name an aiding entry's `input_channel`: that aiding source is
 /// what makes the block observable, because its measurement is the only thing
-/// that touches these state columns. The two also share a resolved
-/// `FrameHandle` — the assembler routes `sensor` through the same handle map the
-/// aiding handler uses, so the appended `MagBias` slots carry the exact
-/// `FrameId` the measurement model reads back. An augmentation with no matching
-/// aiding source is inert (it rides through predict but is never updated); the
-/// validator rejects that case rather than let it be a silent no-op.
+/// that touches these state columns. The two also share one resolved
+/// `FrameId` — the assembler builds `FrameId::sensor(agent, sensor)` the same way
+/// for the block and the aiding handler, so the appended `MagBias` slots carry
+/// the exact frame the measurement model reads back. An augmentation with no
+/// matching aiding source is inert (it rides through predict but is never
+/// updated); the validator rejects that case rather than let it be a silent no-op.
 #[derive(Debug, Deserialize, Clone)]
 pub struct AugmentationConfig {
     /// Augmentation kind, matched against the reserved kind strings in
@@ -75,7 +75,7 @@ pub struct AugmentationConfig {
     /// unrecognized value is a build-time error, not a panic.
     pub kind: String,
     /// The aiding `input_channel` whose sensor this block calibrates — the join
-    /// key that ties the block's `FrameId::Sensor` to the model that observes it.
+    /// key that ties the block's sensor `FrameId` to the model that observes it.
     pub sensor: String,
     /// Prior standard deviation on each axis (block units, e.g. µT for
     /// magnetometer bias). Squared onto the diagonal of the block's `P₀`.
@@ -139,8 +139,8 @@ impl Default for EkfInitialStateConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct AidingConfig {
     /// Rust type name of the sensor payload — one of the `SensorPayload`
-    /// implementors: `"GpsPosition"`, `"LinearAcceleration3D"`,
-    /// `"AngularVelocity3D"`, `"MagneticField3D"`, `"GpsVelocity"`.
+    /// implementors: `"GpsPosition"`, `"Acceleration"`,
+    /// `"AngularRate"`, `"MagneticField"`, `"GpsVelocity"`.
     pub sensor_payload: String,
     /// Sensor model config, including the registry key and any physical
     /// constants the model needs (gravity for accelerometer, field vector for
@@ -225,11 +225,11 @@ pub struct IntegratedImuConfig {
     /// error outside the filter's linear regime, so it is not a free knob.
     #[serde(default = "default_gyro_bias_uncertainty_radps")]
     pub gyro_bias_uncertainty_radps: f64,
-    /// Bus channel the predict step reads `Vec<SensorReading<LinearAcceleration3D>>`
+    /// Bus channel the predict step reads `Vec<SensorReading<Acceleration>>`
     /// from. Must match the accelerometer channel the host publishes on
     /// (the sensor's `accel_channel` in sim).
     pub accel_channel: String,
-    /// Bus channel the predict step reads `Vec<SensorReading<AngularVelocity3D>>`
+    /// Bus channel the predict step reads `Vec<SensorReading<AngularRate>>`
     /// from. Must match the gyroscope channel the host publishes on
     /// (the sensor's `gyro_channel` in sim).
     pub gyro_channel: String,

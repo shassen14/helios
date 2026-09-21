@@ -8,8 +8,11 @@ use std::sync::{
     Arc,
 };
 
-use helios_core::data::primitives::MonotonicTime;
+use helios_core::data::{primitives::MonotonicTime, AgentId};
+use helios_core::frames::id::FrameId;
+use helios_core::frames::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
+    channels::tf::tf_edge,
     pipeline::{PipelineBuildError, PipelineBuilder},
     port::{ChannelKey, InternalChannel, OracleChannel, PortBus, PortDescriptor},
     prelude::{Health, PipelineNode, Stamped, TickContext},
@@ -72,12 +75,7 @@ impl PipelineNode for ProducerNode {
         &self.descriptor
     }
 
-    fn execute(
-        &self,
-        bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
-        tick: TickContext,
-    ) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, tick: TickContext) {
         let stamped = Stamped {
             value: self.value,
             timestamp: tick.now,
@@ -126,12 +124,7 @@ impl PipelineNode for TransformNode {
         &self.descriptor
     }
 
-    fn execute(
-        &self,
-        bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
-        tick: TickContext,
-    ) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, tick: TickContext) {
         let Some(input) = bus.read::<u32>(self.input.clone()) else {
             return;
         };
@@ -181,12 +174,7 @@ impl PipelineNode for JoinNode {
         &self.descriptor
     }
 
-    fn execute(
-        &self,
-        bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
-        tick: TickContext,
-    ) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, tick: TickContext) {
         let Some(a) = bus.read::<u32>(self.input_a.clone()) else {
             return;
         };
@@ -234,12 +222,7 @@ impl PipelineNode for CountingNode {
         &self.descriptor
     }
 
-    fn execute(
-        &self,
-        _bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
-        _tick: TickContext,
-    ) {
+    fn execute(&self, _bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, _tick: TickContext) {
         self.counter.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -274,12 +257,7 @@ impl PipelineNode for SinkNode {
         &self.descriptor
     }
 
-    fn execute(
-        &self,
-        _bus: &PortBus,
-        _runtime: &dyn helios_runtime::prelude::AgentRuntime,
-        _tick: TickContext,
-    ) {
+    fn execute(&self, _bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, _tick: TickContext) {
     }
 }
 
@@ -303,7 +281,7 @@ fn single_node_executes() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let value = pipeline
         .bus()
@@ -328,7 +306,7 @@ fn two_node_chain_level_ordering() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     // If B were placed in level 0 alongside A, B would early-return (A's
     // output not yet on the bus when B reads). Output present means B ran
@@ -357,7 +335,7 @@ fn two_node_chain_with_builder_inserted_out_of_order() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let result = pipeline
         .bus()
@@ -397,7 +375,7 @@ fn three_node_diamond_resolves() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     // A=1, B=A*2=2, C=A*3=3, D=B+C=5.
     let result = pipeline
@@ -579,7 +557,7 @@ fn rate_gated_node_fires_at_correct_interval() {
         .expect("build should succeed");
 
     for _ in 0..4 {
-        pipeline.tick(&MockRuntime, 0.1);
+        pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
     }
     assert_eq!(
         counter.load(Ordering::Relaxed),
@@ -587,7 +565,7 @@ fn rate_gated_node_fires_at_correct_interval() {
         "must not fire before 0.5s elapsed"
     );
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
     assert_eq!(counter.load(Ordering::Relaxed), 1, "must fire on 5th tick");
 }
 
@@ -605,7 +583,7 @@ fn rate_gated_node_does_not_double_fire() {
         .build()
         .expect("build should succeed");
 
-    pipeline.tick(&MockRuntime, 1.0);
+    pipeline.tick(MonotonicTime(0.0), 1.0, &MockRuntime);
     assert_eq!(
         counter.load(Ordering::Relaxed),
         1,
@@ -627,7 +605,7 @@ fn unrated_node_fires_every_tick() {
         .expect("build should succeed");
 
     for _ in 0..3 {
-        pipeline.tick(&MockRuntime, 0.01);
+        pipeline.tick(MonotonicTime(0.0), 0.01, &MockRuntime);
     }
     assert_eq!(counter.load(Ordering::Relaxed), 3);
 }
@@ -665,11 +643,55 @@ fn tick_preserves_externally_written_values() {
         .write(sensor_key.clone(), stamped)
         .expect("write should succeed");
 
-    pipeline.tick(&MockRuntime, 0.1);
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let after = pipeline
         .bus()
         .read::<u32>(sensor_key)
         .expect("value should still be present after tick");
     assert_eq!(after.value, 99);
+}
+
+// =========================================================================
+// == tf-edge drain-key derivation ==
+// =========================================================================
+
+/// `tf_edge_channels` returns exactly the outputs that are tf edges, filtering
+/// out ordinary outputs — this is the drain list a host feeds a `TfService`,
+/// derived from the graph's own declarations so it cannot drift from them.
+#[test]
+fn tf_edge_channels_returns_only_declared_tf_edges() {
+    let agent = AgentId::new("bot");
+    let edge = FrameEdge {
+        child: FrameId::base_link(agent.clone()),
+        parent: FrameId::odom(agent),
+    };
+    let edge_key: ChannelKey = tf_edge(&edge).into();
+    // A plain (non-tf) output on a second, independent producer: it must be
+    // filtered out, proving the accessor keys off `is_tf_edge`, not "every output".
+    let plain_key = ikey_of::<u32>();
+
+    let pipeline = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new(
+            "edge_producer",
+            edge_key.clone(),
+            0,
+        )))
+        .add_node(Box::new(ProducerNode::new("state_producer", plain_key, 0)))
+        .build()
+        .expect("two independent producers on distinct channels build");
+
+    assert_eq!(pipeline.tf_edge_channels(), vec![edge_key]);
+}
+
+/// A graph with no edge producer yields an empty drain list — the service then
+/// drains nothing, which is correct for a stack whose only tf need is statics.
+#[test]
+fn tf_edge_channels_is_empty_without_an_edge_producer() {
+    let pipeline = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("plain", ikey_of::<u32>(), 0)))
+        .build()
+        .expect("single plain producer builds");
+
+    assert!(pipeline.tf_edge_channels().is_empty());
 }

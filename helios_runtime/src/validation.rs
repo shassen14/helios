@@ -228,9 +228,9 @@ impl std::fmt::Display for ConfigValidationError {
 const KNOWN_SENSOR_PAYLOADS: &[&str] = &[
     "GpsPosition",
     "GpsVelocity",
-    "LinearAcceleration3D",
-    "AngularVelocity3D",
-    "MagneticField3D",
+    "Acceleration",
+    "AngularRate",
+    "MagneticField",
 ];
 
 /// Validates `config` against `capabilities`, collecting all errors.

@@ -94,13 +94,15 @@ mod tests {
     use super::*;
 
     use bevy::ecs::system::SystemState;
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
+    use helios_core::data::primitives::MonotonicTime;
     use helios_core::data::sensor::GpsPosition;
+    use helios_core::data::AgentId;
+    use helios_core::frames::FrameId;
     use nalgebra::Vector3;
 
-    fn gps_reading(handle: Entity) -> SensorReading<GpsPosition> {
+    fn gps_reading() -> SensorReading<GpsPosition> {
         SensorReading {
-            sensor_handle: FrameHandle::from_entity(handle),
+            sensor: FrameId::sensor(AgentId::new("test_agent"), "gps"),
             timestamp: MonotonicTime(0.0),
             data: GpsPosition {
                 position: Vector3::zeros(),
@@ -118,7 +120,7 @@ mod tests {
         let mut state: SystemState<SensorPublisher> = SystemState::new(&mut world);
         let mut publisher = state.get_mut(&mut world).unwrap();
 
-        publisher.publish(agent, "sensor.gps.primary", vec![gps_reading(agent)]);
+        publisher.publish(agent, "sensor.gps.primary", vec![gps_reading()]);
     }
 
     /// An empty batch never touches the bus and never warns.

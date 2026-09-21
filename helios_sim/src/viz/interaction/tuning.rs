@@ -1,12 +1,18 @@
 use crate::{
     cli::Cli,
-    viz::interaction::{
-        camera::{
-            keyboard::{CameraKeyboardTuning, CameraKeyboardTuningFile},
-            mouse::{CameraMouseTuning, CameraMouseTuningFile},
-            rig::{CameraRigTuning, CameraRigTuningFile},
+    viz::{
+        interaction::{
+            camera::{
+                keyboard::{CameraKeyboardTuning, CameraKeyboardTuningFile},
+                mouse::{CameraMouseTuning, CameraMouseTuningFile},
+                rig::{CameraRigTuning, CameraRigTuningFile},
+            },
+            selection::{SelectionTuning, SelectionTuningFile},
         },
-        selection::{SelectionTuning, SelectionTuningFile},
+        live::{
+            tf::{TfOverlayTuning, TfOverlayTuningFile},
+            tf_labels::{TfLabelTuning, TfLabelTuningFile},
+        },
     },
 };
 
@@ -25,6 +31,8 @@ const INTERACTION_TUNING_FILE: &str = "sim/interaction/default.toml";
 struct InteractionTuningFile {
     camera: CameraTuningFile,
     selection: SelectionTuningFile,
+    tf_overlay: TfOverlayTuningFile,
+    tf_labels: TfLabelTuningFile,
 }
 
 #[derive(Deserialize, Default)]
@@ -44,11 +52,13 @@ pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
         .expect("interaction tuning TOML failed to parse");
 
     match resolve_all(&file) {
-        Ok((keyboard, mouse, rig, selection)) => {
+        Ok((keyboard, mouse, rig, selection, tf_overlay, tf_labels)) => {
             commands.insert_resource(keyboard);
             commands.insert_resource(mouse);
             commands.insert_resource(rig);
             commands.insert_resource(selection);
+            commands.insert_resource(tf_overlay);
+            commands.insert_resource(tf_labels);
         }
         Err(e) => panic!("interaction tuning config: {e}"),
     }
@@ -62,6 +72,8 @@ fn resolve_all(
         CameraMouseTuning,
         CameraRigTuning,
         SelectionTuning,
+        TfOverlayTuning,
+        TfLabelTuning,
     ),
     InteractionTuningError,
 > {
@@ -70,6 +82,8 @@ fn resolve_all(
         CameraMouseTuning::resolve(&file.camera.mouse)?,
         CameraRigTuning::resolve(&file.camera.rig)?,
         SelectionTuning::resolve(&file.selection)?,
+        TfOverlayTuning::resolve(&file.tf_overlay)?,
+        TfLabelTuning::resolve(&file.tf_labels)?,
     ))
 }
 

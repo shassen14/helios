@@ -2,7 +2,7 @@
 pub use bevy::prelude::*;
 
 // Re-export the entire helios_core prelude so you can easily access
-// pure types like `FrameHandle`, `Dynamics`, `Measurement`, etc.
+// pure types like `FrameId`, `Dynamics`, `Measurement`, etc.
 pub use helios_core::prelude::*;
 
 // The crate's public surface: types and plugins that sim modules, `helios_test`,
@@ -28,6 +28,8 @@ pub use crate::core::transforms::{TfTree, TrackedFrame};
 
 pub use crate::agents::sensors::imu::ImuPlugin;
 
-pub use crate::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent};
+pub use crate::brain_bridge::components::{
+    AgentIdComponent, AutonomyPipelineComponent, TfServiceComponent,
+};
 pub use crate::brain_bridge::HostInputPublisher;
 pub use crate::brain_bridge::{SensorPublishChannel, SensorPublisher};

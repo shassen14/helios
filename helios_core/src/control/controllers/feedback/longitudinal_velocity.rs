@@ -60,8 +60,9 @@ impl Controller for LongitudinalVelocityController {
 mod tests {
     use super::*;
     use crate::control::commands::BodyTwist;
-    use crate::data::primitives::FrameHandle;
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::data::AgentId;
+    use crate::estimation::schema::{StateSchema, StateSchemaBlock};
+    use crate::frames::transforms::Convention;
     use crate::frames::FrameAwareState;
     use crate::manifold::TangentNoise;
     use crate::state::Quantity;
@@ -69,8 +70,12 @@ mod tests {
     use nalgebra::{DMatrix, DVector};
     use std::sync::Arc;
 
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
     fn body() -> FrameId {
-        FrameId::Body(FrameHandle(1))
+        FrameId::base_link(agent())
     }
 
     fn noise() -> Option<TangentNoise> {
@@ -81,8 +86,9 @@ mod tests {
     // projection returns `vx` unrotated — isolating the controller's error math
     // from the frame projection (which `body_velocity`'s own tests cover).
     fn state_with_forward_speed(vx: f64) -> FrameAwareState {
-        let schema = StateSchema::compose(vec![SchemaBlock::new(
+        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
             Quantity::Velocity(body()),
+            Convention::Flu,
             noise(),
             DVector::from_vec(vec![vx, 0.0, 0.0]),
             DMatrix::identity(3, 3),
@@ -137,8 +143,9 @@ mod tests {
         // Reference present, but a cold-start state with no velocity block → the
         // projection is `None`, so the loop commands zero rather than acting on a
         // fabricated measurement.
-        let schema = StateSchema::compose(vec![SchemaBlock::new(
-            Quantity::Position(FrameId::Odom(FrameHandle(1))),
+        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
+            Quantity::Position(FrameId::odom(agent())),
+            Convention::Enu,
             noise(),
             DVector::zeros(3),
             DMatrix::identity(3, 3),

@@ -29,7 +29,7 @@ model = { kind = "gps_position" }
 
 # Magnetometer aiding — r_diag = noise_stddev² for magnetometer_pro [0.005, 0.005, 0.005]
 [[config.aiding]]
-sensor_payload = "MagneticField3D"
+sensor_payload = "MagneticField"
 input_channel = "sensor.mag.body"
 r_diag = [0.000025, 0.000025, 0.000025]
 model = { kind = "magnetometer", magnetic_field_enu = [0.0, 50.0, 0.0] }

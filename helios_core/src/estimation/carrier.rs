@@ -13,8 +13,9 @@
 //! [`StateSchema::compose`]; it is a *client* of that primitive, not a new one,
 //! which is why it is a free function and not a `StateSchema` constructor.
 
-use crate::data::primitives::FrameHandle;
-use crate::estimation::schema::{SchemaBlock, StateSchema};
+use crate::data::AgentId;
+use crate::estimation::schema::{StateSchema, StateSchemaBlock};
+use crate::frames::transforms::Convention;
 use crate::frames::FrameId;
 use crate::manifold::TangentNoise;
 use crate::state::Quantity;
@@ -36,23 +37,29 @@ const CARRIER_ORIENTATION_NOISE_VAR: f64 = 1.0;
 /// It carries no sensor-bias or acceleration blocks — a reference source has no
 /// biases and a pose + twist source measures no acceleration. Angular velocity
 /// is in the odom (ENU) frame, matching how the estimate reports it.
-pub fn kinematic_carrier_schema(agent_handle: FrameHandle) -> StateSchema {
-    let body = FrameId::Body(agent_handle);
-    let odom = FrameId::Odom(agent_handle);
+pub fn kinematic_carrier_schema(agent: AgentId) -> StateSchema {
+    let body = FrameId::base_link(agent.clone());
+    let odom = FrameId::odom(agent);
 
     // A flat, certain block: no process noise, zero initial covariance.
-    let flat = |quantity: Quantity| {
-        SchemaBlock::new(quantity, None, DVector::zeros(3), DMatrix::zeros(3, 3))
+    let flat = |quantity: Quantity, convention: Convention| {
+        StateSchemaBlock::new(
+            quantity,
+            convention,
+            None,
+            DVector::zeros(3),
+            DMatrix::zeros(3, 3),
+        )
     };
 
     StateSchema::compose(vec![
-        flat(Quantity::Position(odom.clone())),
-        flat(Quantity::Velocity(odom.clone())),
-        SchemaBlock::new(
-            Quantity::Orientation {
-                from: body,
-                to: odom.clone(),
-            },
+        flat(Quantity::Position(odom.clone()), Convention::Enu),
+        flat(Quantity::Velocity(odom.clone()), Convention::Enu),
+        StateSchemaBlock::orientation(
+            body,
+            odom.clone(),
+            Convention::Flu,
+            Convention::Enu,
             Some(
                 TangentNoise::from_variances(DVector::from_element(
                     3,
@@ -63,7 +70,7 @@ pub fn kinematic_carrier_schema(agent_handle: FrameHandle) -> StateSchema {
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::zeros(3, 3),
         ),
-        flat(Quantity::AngularVelocity(odom)),
+        flat(Quantity::AngularVelocity(odom), Convention::Enu),
     ])
 }
 
@@ -75,10 +82,12 @@ mod tests {
     use crate::state::Component;
     use std::sync::Arc;
 
-    const AGENT: FrameHandle = FrameHandle(1);
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
 
     fn carrier() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0)
+        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0)
     }
 
     #[test]
@@ -96,7 +105,7 @@ mod tests {
         // The orientation block seeds the identity quaternion, readable back as
         // the identity rotation.
         let r = s
-            .orientation::<Flu, Enu>(FrameId::Body(AGENT), FrameId::Odom(AGENT))
+            .orientation::<Flu, Enu>(FrameId::base_link(agent()), FrameId::odom(agent()))
             .expect("carrier holds the attitude block");
         assert!((r.into_inner().angle()).abs() < 1e-12);
         // A carrier is certain: its covariance is all zeros.
@@ -107,29 +116,31 @@ mod tests {
     fn every_kinematic_quantity_reads_back() {
         let mut s = carrier();
         s.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::Odom(AGENT)), Component::X),
+            &StateVariable::new(Quantity::Velocity(FrameId::odom(agent())), Component::X),
             2.0,
         );
         s.set_variable(
             &StateVariable::new(
-                Quantity::AngularVelocity(FrameId::Odom(AGENT)),
+                Quantity::AngularVelocity(FrameId::odom(agent())),
                 Component::Z,
             ),
             0.3,
         );
 
         assert_eq!(
-            s.velocity::<Enu>(FrameId::Odom(AGENT)).unwrap().x(),
+            s.velocity::<Enu>(FrameId::odom(agent())).unwrap().x(),
             2.0,
             "odom linear velocity reads back"
         );
         assert_eq!(
-            s.angular_velocity::<Enu>(FrameId::Odom(AGENT)).unwrap().z(),
+            s.angular_velocity::<Enu>(FrameId::odom(agent()))
+                .unwrap()
+                .z(),
             0.3,
             "odom angular velocity reads back"
         );
         assert!(
-            s.position::<Enu>(FrameId::Odom(AGENT)).is_some(),
+            s.position::<Enu>(FrameId::odom(agent())).is_some(),
             "odom position block is present"
         );
     }

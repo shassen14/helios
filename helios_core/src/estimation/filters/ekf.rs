@@ -2,8 +2,8 @@ use crate::data::ports::TfProvider;
 use crate::data::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::filters::linearization::tangent_state_transition;
-use crate::estimation::measurement::MeasurementModel;
-use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
+use crate::estimation::measurement::{MeasurementModel, Prediction};
+use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
 use crate::frames::FrameAwareState;
 use crate::utils::integrators::RK4;
 
@@ -132,17 +132,23 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         r: &DMatrix<f64>,
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
-    ) {
-        let m = model.dim();
-        if z.nrows() != m || r.nrows() != m || r.ncols() != m {
-            return;
+    ) -> UpdateOutcome {
+        // The incoming measurement is the authoritative length; the model no
+        // longer declares one. Skip the update if R or the prediction disagrees
+        // with it — a shape guard against a crash, not the semantic check (that
+        // ran once at build time against the measurement schema).
+        let m = z.nrows();
+        if r.nrows() != m || r.ncols() != m {
+            return UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch);
         }
 
-        let Some(z_pred) = model.predict_measurement(&self.state, tf, at) else {
-            return;
+        let z_pred = match model.predict_measurement(&self.state, tf, at) {
+            Prediction::Ready(z_pred) => z_pred,
+            Prediction::Unavailable(u) => return UpdateOutcome::Skipped(SkipReason::Model(u)),
         };
+
         if z_pred.nrows() != m {
-            return;
+            return UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch);
         }
 
         let p_priori = self.state.covariance.clone();
@@ -159,7 +165,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         // masks that: it happily inverts an indefinite matrix and lets a corrupt
         // covariance propagate.
         let Some(s_chol) = s.cholesky() else {
-            return;
+            return UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite);
         };
 
         // Kalman gain K = P Hᵀ S⁻¹ (t × m), obtained without ever forming S⁻¹. S is
@@ -182,6 +188,8 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         self.state.covariance = p_post;
 
         self.ensure_covariance_health();
+
+        UpdateOutcome::Applied
     }
 
     fn state(&self) -> &FrameAwareState {
@@ -193,9 +201,12 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 mod tests {
     use super::*;
     use crate::data::ports::TfProvider;
+    use crate::data::AgentId;
     use crate::data::MonotonicTime;
-    use crate::estimation::measurement::MeasurementModel;
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::estimation::measurement::{MeasurementModel, Prediction};
+    use crate::estimation::schema::{
+        MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
+    };
     use crate::estimation::EstimatorInputs;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
@@ -239,14 +250,16 @@ mod tests {
 
         fn schema(&self) -> std::sync::Arc<StateSchema> {
             std::sync::Arc::new(StateSchema::compose(vec![
-                SchemaBlock::new(
-                    Quantity::Position(FrameId::World),
+                StateSchemaBlock::new(
+                    Quantity::Position(FrameId::world()),
+                    Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),
                 ),
-                SchemaBlock::new(
-                    Quantity::Velocity(FrameId::World),
+                StateSchemaBlock::new(
+                    Quantity::Velocity(FrameId::world()),
+                    Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),
@@ -282,8 +295,14 @@ mod tests {
     struct Position2DMeasurement;
 
     impl MeasurementModel for Position2DMeasurement {
-        fn dim(&self) -> usize {
-            2
+        // A 2D position observes only x and y. A `Position` quantity is a whole
+        // 3-vector, so no honest block yields dim 2 — partial-component
+        // measurements are not yet expressible as a schema block. The update
+        // tests never ask this mock for a schema, so the gap is recorded, not hit.
+        fn schema(&self) -> MeasurementSchema {
+            unimplemented!(
+                "2D (partial-component) position measurement has no MeasurementSchema block yet"
+            )
         }
 
         fn predict_measurement(
@@ -291,8 +310,8 @@ mod tests {
             state: &FrameAwareState,
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
-        ) -> Option<DVector<f64>> {
-            Some(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
+        ) -> Prediction {
+            Prediction::Ready(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
         }
 
         fn jacobian(
@@ -317,8 +336,14 @@ mod tests {
     struct InsPositionMeasurement;
 
     impl MeasurementModel for InsPositionMeasurement {
-        fn dim(&self) -> usize {
-            3
+        // Reads the INS position block at the head of the layout — position in
+        // the agent's odom frame (ENU). `ins_model` keys the agent as
+        // `test_agent`, so the block names that same frame.
+        fn schema(&self) -> MeasurementSchema {
+            MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
+                Quantity::Position(FrameId::odom(AgentId::new("test_agent"))),
+                Convention::Enu,
+            )])
         }
 
         fn predict_measurement(
@@ -326,8 +351,8 @@ mod tests {
             state: &FrameAwareState,
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
-        ) -> Option<DVector<f64>> {
-            Some(DVector::from_row_slice(&[
+        ) -> Prediction {
+            Prediction::Ready(DVector::from_row_slice(&[
                 state.mean[0],
                 state.mean[1],
                 state.mean[2],
@@ -406,8 +431,9 @@ mod tests {
         let model = Position2DMeasurement;
         let r = gps_r();
 
-        ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
+        let outcome = ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
 
+        assert_eq!(outcome, UpdateOutcome::Applied);
         let px = ekf.state().mean[0];
         assert!(px > 0.0, "state should correct toward measurement (px > 0)");
         assert!(px < 5.0, "state should not overshoot measurement");
@@ -432,12 +458,18 @@ mod tests {
         let mut ekf = make_ekf(0.0, 0.0);
         let tf = IdentityTf;
         let model = Position2DMeasurement;
-        // Wrong-sized R (3x3 instead of 2x2) — must be silently skipped.
+        // Wrong-sized R (3x3 instead of 2x2) — the shape guard must skip the
+        // update, reporting the reason rather than leaving it to be inferred
+        // from the (also-unchanged) state.
         let bad_r = DMatrix::identity(3, 3) * 0.1;
         let px_before = ekf.state().mean[0];
 
-        ekf.update(&gps_z(5.0, 0.0), &model, &bad_r, Some(&tf), AT);
+        let outcome = ekf.update(&gps_z(5.0, 0.0), &model, &bad_r, Some(&tf), AT);
 
+        assert_eq!(
+            outcome,
+            UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch)
+        );
         assert_eq!(ekf.state().mean[0], px_before);
     }
 
@@ -458,7 +490,7 @@ mod tests {
     /// returning the final `(mean, covariance-diagonal)`. Every input here is a
     /// hardcoded constant so the run is fully deterministic.
     fn run_golden_ins_trajectory() -> (DVector<f64>, DVector<f64>) {
-        use crate::data::primitives::FrameHandle;
+        use crate::data::AgentId;
         use crate::estimation::dynamics::integrated_imu::{
             ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
         };
@@ -467,7 +499,7 @@ mod tests {
         // Distinct per-block variances so a transposed Q or P₀ block cannot hide
         // behind a shared value.
         let model = IntegratedImuModel::new(
-            FrameHandle(7),
+            AgentId::new("test_agent"),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
                 accel_noise_var: 0.04,
@@ -829,12 +861,12 @@ mod tests {
     /// The frozen 16-state INS model, same tuning as the golden trajectory so its
     /// base schema is the well-exercised one.
     fn ins_model() -> crate::estimation::dynamics::integrated_imu::IntegratedImuModel {
-        use crate::data::primitives::FrameHandle;
+        use crate::data::AgentId;
         use crate::estimation::dynamics::integrated_imu::{ImuInitialUncertainty, ImuProcessNoise};
         use nalgebra::Vector3;
 
         crate::estimation::dynamics::integrated_imu::IntegratedImuModel::new(
-            FrameHandle(7),
+            AgentId::new("test_agent"),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
                 accel_noise_var: 0.04,
@@ -852,7 +884,7 @@ mod tests {
         )
     }
 
-    fn mag_bias_block(sensor: FrameId) -> crate::estimation::schema::SchemaBlock {
+    fn mag_bias_block(sensor: FrameId) -> crate::estimation::schema::StateSchemaBlock {
         crate::estimation::augmentation::augmentation_block(
             crate::estimation::augmentation::MAGNETOMETER_BIAS,
             sensor,
@@ -878,7 +910,7 @@ mod tests {
 
     #[test]
     fn augmented_ins_ekf_constructs_and_carries_the_bias_block() {
-        use crate::data::primitives::FrameHandle;
+        use crate::data::AgentId;
         use std::sync::Arc;
 
         let model = ins_model();
@@ -889,7 +921,7 @@ mod tests {
         // off `base_tangent`.
         let base_storage = base.storage_dim();
         let base_tangent = base.tangent_dim();
-        let sensor = FrameId::Sensor(FrameHandle(9));
+        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
 
         let augmented = Arc::new(base.extended(vec![mag_bias_block(sensor.clone())]));
         let state = FrameAwareState::from_schema(augmented.clone(), 0.0);
@@ -967,11 +999,11 @@ mod tests {
 
     #[test]
     fn augmentation_changes_ekf_dimension_by_block_size() {
-        use crate::data::primitives::FrameHandle;
+        use crate::data::AgentId;
 
         // Distinct sensors so the two bias blocks are independent, not aliased.
-        let s9 = FrameId::Sensor(FrameHandle(9));
-        let s10 = FrameId::Sensor(FrameHandle(10));
+        let s9 = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
+        let s10 = FrameId::sensor(AgentId::new("test_agent"), "sensor10");
         let base_dim = ins_model().schema().tangent_dim();
 
         // Cardinality is a load-time property (a Vec length): each added block
@@ -1029,12 +1061,12 @@ mod tests {
 
     #[test]
     fn augmented_predict_leaves_base_subvector_bit_identical() {
-        use crate::data::primitives::FrameHandle;
+        use crate::data::AgentId;
 
         // The mean is storage-indexed, so the base sub-vector spans `base_storage`
         // (16) slots — the full quaternion included — and the bias appends after it.
         let base_storage = ins_model().schema().storage_dim();
-        let sensor = FrameId::Sensor(FrameHandle(9));
+        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
         let mut base = base_ins_ekf();
         let mut aug = augmented_ins_ekf(&[sensor]);
 
@@ -1071,10 +1103,10 @@ mod tests {
 
     #[test]
     fn augmented_predict_grows_bias_covariance_by_process_noise() {
-        use crate::data::primitives::FrameHandle;
+        use crate::data::AgentId;
 
         let base_dim = ins_model().schema().tangent_dim();
-        let sensor = FrameId::Sensor(FrameHandle(9));
+        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
         let mut aug = augmented_ins_ekf(&[sensor]);
 
         let inputs = EstimatorInputs {
@@ -1123,7 +1155,7 @@ mod tests {
 
     #[test]
     fn augmented_update_drives_bias_toward_truth() {
-        use crate::data::primitives::FrameHandle;
+        use crate::data::AgentId;
         use crate::estimation::measurement::magnetometer::MagneticFieldModel;
         use nalgebra::Vector3;
 
@@ -1131,13 +1163,12 @@ mod tests {
         // tangent-indexed (offset 15) — the SO(3) block splits the two.
         let base_storage = ins_model().schema().storage_dim();
         let base_tangent = ins_model().schema().tangent_dim();
-        let sensor_handle = FrameHandle(9);
-        let sensor = FrameId::Sensor(sensor_handle);
+        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
         let mut ekf = augmented_ins_ekf(std::slice::from_ref(&sensor));
 
         let model = MagneticFieldModel {
-            agent_handle: FrameHandle(7),
-            sensor_handle,
+            agent: AgentId::new("test_agent"),
+            sensor: sensor.clone(),
             world_magnetic_field: Vector3::new(0.2, 0.4, -0.3),
         };
         let r = DMatrix::identity(3, 3) * MAG_MEASUREMENT_VAR;
@@ -1160,9 +1191,10 @@ mod tests {
             &StateVariable::new(Quantity::MagBias(sensor.clone()), Component::Z),
             b_true.z,
         );
-        let z = model
-            .predict_measurement(&truth_state, Some(&IdentityTf), AT)
-            .expect("mag prediction under identity TF is defined");
+        let Prediction::Ready(z) = model.predict_measurement(&truth_state, Some(&IdentityTf), AT)
+        else {
+            panic!("mag prediction under identity TF is defined");
+        };
 
         let p0_bias = MAG_BIAS_INIT_UNCERTAINTY * MAG_BIAS_INIT_UNCERTAINTY;
         for _ in 0..MAG_UPDATE_STEPS {

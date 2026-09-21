@@ -49,8 +49,8 @@ fn build_longitudinal_velocity(
     ctx: ControllerBuildContext,
 ) -> Result<Box<dyn PipelineNode>, String> {
     // Feedback leg of the longitudinal loop: a SISO PID on body-forward speed
-    // emitting a `DriveForce`. The controlled frame is this agent's body frame,
-    // derived from the handle the host resolved into the build context.
+    // emitting a `DriveForce`. The controlled frame is this agent's `base_link`,
+    // built from the `AgentId` the host resolved into the build context.
     let received_kind = ctx.config.get_kind_str().to_string();
     let ControllerConfig::LongitudinalVelocity {
         proportional_gain,
@@ -67,7 +67,7 @@ fn build_longitudinal_velocity(
 
     let pid = SisoPid::new(proportional_gain, integral_gain, derivative_gain)
         .with_integral_clamp(integral_clamp);
-    let controller = LongitudinalVelocityController::new(pid, FrameId::Body(ctx.agent_handle));
+    let controller = LongitudinalVelocityController::new(pid, FrameId::base_link(ctx.agent));
     let input_builder = Box::new(DefaultControlInputBuilder::<BodyTwistRef>::new());
 
     Ok(Box::new(ControllerNode::new(
@@ -132,11 +132,11 @@ mod tests {
     use crate::port::InternalChannel;
 
     use helios_core::control::commands::BodyTwist;
-    use helios_core::data::primitives::FrameHandle;
+    use helios_core::data::AgentId;
 
     fn context(instance_name: &str) -> ControllerBuildContext {
         ControllerBuildContext {
-            agent_handle: FrameHandle(0),
+            agent: AgentId::new("test_agent"),
             instance_name: instance_name.to_string(),
             config: ControllerConfig::DirectTwist {
                 state_source: Default::default(),

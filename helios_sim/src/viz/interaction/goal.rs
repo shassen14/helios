@@ -12,11 +12,16 @@
 
 use crate::{
     brain_bridge::components::MissionGoalChannels,
-    core::{events::GoalCommandEvent, transforms::EnuVector},
+    core::{
+        events::GoalCommandEvent,
+        transforms::{vec3_to_point_bevy, FromBevy},
+    },
     viz::interaction::selection::Selected,
 };
 
 use bevy::prelude::*;
+use helios_core::frames::conventions::Enu;
+use helios_core::frames::quantities::Point;
 use helios_core::prelude::PlannerGoal;
 use nalgebra::Vector2;
 
@@ -37,8 +42,9 @@ impl Plugin for GoalPickingPlugin {
 /// picking backend reported no hit position, or no goal-taking agent is selected
 /// — a right-click on empty space, or with nothing selected, is not an error.
 ///
-/// The hit arrives in Bevy world space; [`EnuVector`] is the one conversion to
-/// ENU, keeping the axis swap inside `core/transforms`. Only x and y reach the
+/// The hit arrives in Bevy world space; [`FromBevy::from_bevy`] is the one
+/// conversion to ENU, keeping the axis swap inside `core/transforms`. It is a
+/// location, so it crosses as a typed point. Only x and y reach the
 /// goal — the planner is 2D, so a click's height is discarded until the goal
 /// carries a `WorldPose`.
 pub fn on_click_goal(
@@ -57,7 +63,8 @@ pub fn on_click_goal(
         return;
     };
 
-    let enu = EnuVector::from(hit).0;
+    let enu_point: Point<Enu> = vec3_to_point_bevy(hit).from_bevy();
+    let enu = enu_point.into_inner();
     let goal = PlannerGoal::WorldPosition2D(Vector2::new(enu.x, enu.y));
     goals.write(GoalCommandEvent { agent, goal });
 }

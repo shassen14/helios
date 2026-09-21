@@ -3,6 +3,7 @@ use crate::config::structs::{
 };
 
 use helios_core::control::actuation_model::ActuationModel;
+use helios_core::data::AgentId;
 
 use bevy::prelude::*;
 
@@ -11,6 +12,10 @@ use bevy::prelude::*;
 //   's  — Bevy's "system-state" lifetime on Commands
 pub struct TopologyBuildContext<'a, 'w, 's> {
     pub entity: Entity,
+    /// Stable identity of the agent being built. The topology builder stamps the
+    /// body's `FrameId::base_link(agent)` and each mount's frame from it, so the
+    /// TF tree keys them by the same identity the pipeline's models reference.
+    pub agent: AgentId,
     pub commands: &'a mut Commands<'w, 's>,
     pub config: &'a TopologyConfig,
     pub start_transform: Transform,

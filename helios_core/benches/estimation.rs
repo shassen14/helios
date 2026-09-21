@@ -8,8 +8,8 @@ use helios_core::data::ports::TfProvider;
 use helios_core::data::MonotonicTime;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
-use helios_core::estimation::measurement::MeasurementModel;
-use helios_core::estimation::schema::{SchemaBlock, StateSchema};
+use helios_core::estimation::measurement::{MeasurementModel, Prediction};
+use helios_core::estimation::schema::{MeasurementSchema, StateSchema, StateSchemaBlock};
 use helios_core::estimation::{EstimatorInputs, GaussianStateEstimator};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
@@ -48,14 +48,16 @@ impl EstimationDynamics for ConstantVelocity3D {
 
     fn schema(&self) -> Arc<StateSchema> {
         Arc::new(StateSchema::compose(vec![
-            SchemaBlock::new(
-                Quantity::Position(FrameId::World),
+            StateSchemaBlock::new(
+                Quantity::Position(FrameId::world()),
+                Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
-            SchemaBlock::new(
-                Quantity::Velocity(FrameId::World),
+            StateSchemaBlock::new(
+                Quantity::Velocity(FrameId::world()),
+                Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
@@ -89,8 +91,13 @@ impl EstimationDynamics for ConstantVelocity3D {
 struct Position2DMeasurement;
 
 impl MeasurementModel for Position2DMeasurement {
-    fn dim(&self) -> usize {
-        2
+    // A 2D (partial-component) position measurement has no MeasurementSchema
+    // block yet, and the benchmarked EKF path never asks for one — the gap is
+    // recorded, not hit.
+    fn schema(&self) -> MeasurementSchema {
+        unimplemented!(
+            "2D (partial-component) position measurement has no MeasurementSchema block yet"
+        )
     }
 
     fn predict_measurement(
@@ -98,8 +105,8 @@ impl MeasurementModel for Position2DMeasurement {
         state: &FrameAwareState,
         _tf: Option<&dyn TfProvider>,
         _at: MonotonicTime,
-    ) -> Option<DVector<f64>> {
-        Some(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
+    ) -> Prediction {
+        Prediction::Ready(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
     }
 
     fn jacobian(
@@ -120,7 +127,7 @@ fn make_state() -> FrameAwareState {
     // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
     let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
     state.set_variable(
-        &StateVariable::new(Quantity::Velocity(FrameId::World), Component::X),
+        &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
         1.0,
     ); // vx = 1.0 m/s
     state

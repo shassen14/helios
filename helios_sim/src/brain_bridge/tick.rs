@@ -7,24 +7,27 @@
 
 use bevy::prelude::*;
 
-use crate::brain_bridge::components::AutonomyPipelineComponent;
-use crate::core::sim_runtime::SimRuntime;
-use crate::core::transforms::TfTree;
+use helios_core::data::primitives::MonotonicTime;
+
+use crate::brain_bridge::components::{AutonomyPipelineComponent, TfServiceComponent};
 
 /// Ticks every agent's `AutonomyPipeline` once per `FixedUpdate`.
 pub fn run_pipeline_tick(
-    query: Query<&AutonomyPipelineComponent>,
-    tf_tree: Res<TfTree>,
+    mut query: Query<(&AutonomyPipelineComponent, &mut TfServiceComponent)>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs_f64();
     let elapsed = time.elapsed_secs_f64();
 
-    for pipeline_comp in &query {
-        let runtime = SimRuntime {
-            tf: &tf_tree,
-            elapsed_secs: elapsed,
-        };
-        pipeline_comp.0.tick(&runtime, dt);
+    for (pipeline_comp, mut service_comp) in &mut query {
+        // Fold last tick's dual-published edge samples into the estimated tree,
+        // then hand every node a read-only view of it. The `&mut` fold and the
+        // shared provider borrow cannot overlap, so all nodes this tick query one
+        // frozen buffer regardless of execution order — and, wired only from edge
+        // channels, that buffer cannot reach the sim's truth tree.
+        service_comp.0.fold(pipeline_comp.0.bus());
+        pipeline_comp
+            .0
+            .tick(MonotonicTime(elapsed), dt, service_comp.0.as_provider());
     }
 }

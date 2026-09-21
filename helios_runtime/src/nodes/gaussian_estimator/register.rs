@@ -13,6 +13,8 @@ use helios_core::estimation::dynamics::integrated_imu::{
 };
 use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
+use helios_core::estimation::schema::check_measurement_state_agreement;
+use helios_core::frames::transforms::tf::stamped::FrameEdge;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
 use helios_core::state::{Component, Quantity};
 
@@ -34,7 +36,7 @@ fn build_ekf(
         return Err("build_ekf received non-Ekf config".to_string());
     };
 
-    let agent_handle = ctx.agent_handle;
+    let agent = ctx.agent;
 
     let init = &ekf_config.initial_state;
 
@@ -42,7 +44,7 @@ fn build_ekf(
         match &ekf_config.dynamics {
             EkfDynamicsConfig::IntegratedImu(c) => (
                 Box::new(IntegratedImuModel::new(
-                    agent_handle,
+                    agent.clone(),
                     Vector3::from_column_slice(&c.gravity_enu),
                     ImuProcessNoise {
                         accel_noise_var: c.accel_noise_stddev.powi(2),
@@ -90,6 +92,21 @@ fn build_ekf(
     };
     let q = schema.process_noise().clone();
 
+    // Every aiding measurement must declare its axes the way the composed state
+    // does — same convention for a directly-observed quantity, same convention
+    // for any frame the state also anchors. A disagreement is a construction
+    // error surfaced here, before the node is built, naming the estimator and
+    // the offending sensor channel so a misconfigured stack fails legibly.
+    for handler in &ctx.aiding {
+        check_measurement_state_agreement(&schema, &handler.schema()).map_err(|e| {
+            format!(
+                "estimator '{}' aiding channel {}: {e}",
+                ctx.instance_name,
+                handler.channel()
+            )
+        })?;
+    }
+
     // Seed the initial state from the schema (mean = zeros + identity
     // orientation, covariance = P₀), then overwrite only the mean pose with this
     // scenario's starting position/heading — the one thing the schema can't know.
@@ -106,8 +123,13 @@ fn build_ekf(
         )),
     );
 
-    let body = FrameId::Body(agent_handle);
-    let odom = FrameId::Odom(agent_handle);
+    let edge = FrameEdge {
+        child: FrameId::base_link(agent.clone()),
+        parent: FrameId::odom(agent.clone()),
+    };
+
+    let base_link = FrameId::base_link(agent.clone());
+    let odom = FrameId::odom(agent);
 
     initial_state.set_variable(
         &StateVariable::new(Quantity::Position(odom.clone()), Component::X),
@@ -126,7 +148,7 @@ fn build_ekf(
     initial_state.set_variable(
         &StateVariable::new(
             Quantity::Orientation {
-                from: body.clone(),
+                from: base_link.clone(),
                 to: odom.clone(),
             },
             Component::X,
@@ -136,7 +158,7 @@ fn build_ekf(
     initial_state.set_variable(
         &StateVariable::new(
             Quantity::Orientation {
-                from: body.clone(),
+                from: base_link.clone(),
                 to: odom.clone(),
             },
             Component::Y,
@@ -146,7 +168,7 @@ fn build_ekf(
     initial_state.set_variable(
         &StateVariable::new(
             Quantity::Orientation {
-                from: body.clone(),
+                from: base_link.clone(),
                 to: odom.clone(),
             },
             Component::Z,
@@ -156,7 +178,7 @@ fn build_ekf(
     initial_state.set_variable(
         &StateVariable::new(
             Quantity::Orientation {
-                from: body,
+                from: base_link,
                 to: odom,
             },
             Component::W,
@@ -167,6 +189,7 @@ fn build_ekf(
     let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
     Ok(Box::new(GaussianEstimatorNode::new(
         ctx.instance_name,
+        edge,
         ekf,
         input_builder,
         ctx.aiding,
@@ -183,13 +206,23 @@ mod tests {
     };
     use crate::pipeline::node::TickContext;
     use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
-    use crate::runtime::AgentRuntime;
 
-    use helios_core::data::primitives::FrameHandle;
+    use crate::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
+    use crate::port::SensorChannel;
+
+    use helios_core::data::envelope::SensorReading;
+    use helios_core::data::ports::TfProvider;
+    use helios_core::data::sensor::Acceleration;
+    use helios_core::data::AgentId;
     use helios_core::data::MonotonicTime;
     use helios_core::estimation::augmentation::{augmentation_block, MAGNETOMETER_BIAS};
-    use helios_core::estimation::schema::SchemaBlock;
-    use helios_core::frames::transforms::ErasedTransform;
+    use helios_core::estimation::measurement::{MeasurementModel, Prediction};
+    use helios_core::estimation::schema::{
+        MeasurementSchema, MeasurementSchemaBlock, StateSchemaBlock,
+    };
+    use helios_core::frames::transforms::{Convention, ErasedTransform};
+
+    use nalgebra::{DMatrix, DVector};
 
     fn ekf_config_with(dynamics: EkfDynamicsConfig) -> EstimatorConfig {
         EstimatorConfig::Ekf(EkfConfig {
@@ -220,10 +253,10 @@ mod tests {
 
     fn context_with(
         instance_name: &str,
-        augmentation_blocks: Vec<helios_core::estimation::schema::SchemaBlock>,
+        augmentation_blocks: Vec<helios_core::estimation::schema::StateSchemaBlock>,
     ) -> GaussianEstimatorBuildContext {
         GaussianEstimatorBuildContext {
-            agent_handle: FrameHandle(0),
+            agent: AgentId::new("test_agent"),
             instance_name: instance_name.to_string(),
             aiding: vec![],
             augmentation_blocks,
@@ -292,7 +325,7 @@ mod tests {
     /// lookup is exercised.
     struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -301,16 +334,13 @@ mod tests {
         ) -> Option<ErasedTransform> {
             None
         }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
-        }
     }
 
     /// Builds an EKF node from `config()` with the given augmentation blocks,
     /// runs one cold-start tick (empty predict-side channels, so predict is
     /// skipped), and returns the `FrameAwareState` the node publishes — its
     /// schema is the composed state we assert on.
-    fn published_state(augmentation_blocks: Vec<SchemaBlock>) -> FrameAwareState {
+    fn published_state(augmentation_blocks: Vec<StateSchemaBlock>) -> FrameAwareState {
         let registry = AutonomyRegistry::default();
         let node = build_ekf(
             config(),
@@ -353,7 +383,7 @@ mod tests {
     // block was tagged with.
     #[test]
     fn augmentation_blocks_extend_the_published_filter_state() {
-        let sensor = FrameId::Sensor(FrameHandle(7));
+        let sensor = FrameId::sensor(AgentId::new("test_agent"), "mag");
         let block = augmentation_block(MAGNETOMETER_BIAS, sensor.clone(), 5.0, 0.01)
             .expect("well-formed mag-bias block");
 
@@ -376,9 +406,88 @@ mod tests {
         assert!(state
             .schema()
             .storage_offset_of(&StateVariable::new(
-                Quantity::MagBias(FrameId::Sensor(FrameHandle(7))),
+                Quantity::MagBias(FrameId::sensor(AgentId::new("test_agent"), "mag")),
                 Component::X,
             ))
             .is_none());
+    }
+
+    // --- Measurement/state agreement is enforced at build ---
+
+    // Two mock measurement models with fixed schemas, to drive the agreement
+    // check without a real sensor. Both are 3-DOF; only the declared frame and
+    // convention differ, which is all the check reads.
+
+    /// Declares its measurement in the agent's `odom` frame / ENU — exactly how
+    /// the IntegratedImu base state anchors position, so it agrees.
+    struct AgreeingModel;
+
+    impl MeasurementModel for AgreeingModel {
+        fn schema(&self) -> MeasurementSchema {
+            MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
+                Quantity::Position(FrameId::odom(AgentId::new("test_agent"))),
+                Convention::Enu,
+            )])
+        }
+        fn predict_measurement(
+            &self,
+            _: &FrameAwareState,
+            _: Option<&dyn TfProvider>,
+            _: MonotonicTime,
+        ) -> Prediction {
+            Prediction::Ready(DVector::zeros(3))
+        }
+    }
+
+    /// Declares its measurement in the world frame, which the base state never
+    /// anchors and which is not a sensor frame — an unanchorable disagreement.
+    struct UnanchorableModel;
+
+    impl MeasurementModel for UnanchorableModel {
+        fn schema(&self) -> MeasurementSchema {
+            MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
+                Quantity::Position(FrameId::world()),
+                Convention::Enu,
+            )])
+        }
+        fn predict_measurement(
+            &self,
+            _: &FrameAwareState,
+            _: Option<&dyn TfProvider>,
+            _: MonotonicTime,
+        ) -> Prediction {
+            Prediction::Ready(DVector::zeros(3))
+        }
+    }
+
+    fn aiding_with(model: Box<dyn MeasurementModel>) -> Box<dyn AidingHandler> {
+        Box::new(TypedAidingHandler::<Acceleration>::new(
+            SensorChannel::of::<Vec<SensorReading<Acceleration>>>(),
+            model,
+            DMatrix::identity(3, 3),
+        ))
+    }
+
+    // An aiding measurement whose schema agrees with the composed state must not
+    // block the build.
+    #[test]
+    fn build_ekf_accepts_an_agreeing_aiding_measurement() {
+        let registry = AutonomyRegistry::default();
+        let mut ctx = context("agrees");
+        ctx.aiding.push(aiding_with(Box::new(AgreeingModel)));
+
+        assert!(build_ekf(config(), ctx, &registry).is_ok());
+    }
+
+    // An aiding measurement in a frame the state can't anchor is a config error:
+    // the build must fail rather than run a filter whose innovation references a
+    // frame the state never expresses.
+    #[test]
+    fn build_ekf_rejects_a_disagreeing_aiding_measurement() {
+        let registry = AutonomyRegistry::default();
+        let mut ctx = context("disagrees");
+        ctx.aiding.push(aiding_with(Box::new(UnanchorableModel)));
+
+        assert!(build_ekf(config(), ctx, &registry).is_err());
     }
 }

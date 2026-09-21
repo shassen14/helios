@@ -110,7 +110,7 @@ impl<T: Send + Sync + Clone + 'static> PipelineNode for Selector<T> {
     fn execute(
         &self,
         bus: &crate::port::PortBus,
-        _runtime: &dyn crate::AgentRuntime,
+        _tf: &dyn helios_core::data::TfProvider,
         _tick: crate::TickContext,
     ) {
         let winner = match self.policy {
@@ -158,8 +158,9 @@ mod tests {
     use helios_core::frames::FrameId;
 
     use crate::port::PortBus;
-    use crate::{AgentRuntime, Health, NodeId, Stamped, TickContext};
+    use crate::{Health, NodeId, Stamped, TickContext};
 
+    use helios_core::data::ports::TfProvider;
     use helios_core::data::primitives::MonotonicTime;
 
     use nalgebra::Isometry3;
@@ -173,7 +174,7 @@ mod tests {
 
     struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -185,9 +186,6 @@ mod tests {
                 Convention::Flu,
                 Convention::Flu,
             ))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
         }
     }
 

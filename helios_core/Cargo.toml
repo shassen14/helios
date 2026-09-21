@@ -8,12 +8,6 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-# Add this section to define optional features
-[features]
-# The 'bevy' feature will enable the 'bevy/bevy_ecs' dependency,
-# which is needed for the `Entity` type.
-bevy = ["dep:bevy_ecs"]
-
 [dependencies]
 # These dependencies use the versions defined in the root Cargo.toml
 nalgebra = { workspace = true, features = ["serde-serialize"] }
@@ -22,8 +16,6 @@ serde = { workspace = true }
 dyn-clone = "1.0"
 rand = { workspace = true }
 rand_distr = { workspace = true }
-
-bevy_ecs = { package = "bevy_ecs", version = "0.19.0", optional = true }
 
 [dev-dependencies]
 approx = { workspace = true }

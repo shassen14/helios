@@ -1,13 +1,14 @@
 use crate::{
-    channels::control,
+    channels::{control, tf::is_tf_edge},
     pipeline::{key_format::format_key_short, rate_gate::RateTimer},
     port::{ChannelKey, ChannelKind, InternalChannel, PortBus},
-    prelude::{AgentRuntime, PipelineNode, Stamped, TickContext},
+    prelude::{PipelineNode, Stamped, TickContext},
     BodyCapabilities, NodeId, PipelineBuildError,
 };
 
 use helios_core::{
     control::{actuators::ActuatorCommand, commands::BodyTwist},
+    data::{MonotonicTime, TfProvider},
     frames::FrameAwareState,
 };
 
@@ -378,11 +379,10 @@ impl AutonomyPipeline {
     /// node in topological order.
     ///
     /// `dt` is the elapsed wall time since the last call (used by
-    /// [`RateTimer`]). The bus tick-time is sourced from
-    /// [`AgentRuntime::now`] so producers and `read_fresh` consumers
-    /// always see the same clock.
-    pub fn tick(&self, runtime: &dyn AgentRuntime, dt: f64) {
-        let now = runtime.now();
+    /// [`RateTimer`]). `now` is the host's monotonic clock, stamped onto the bus
+    /// tick-time so producers and `read_fresh` consumers always see the same
+    /// clock. `tf` is the transform provider nodes query for the tick.
+    pub fn tick(&self, now: MonotonicTime, dt: f64, tf: &dyn TfProvider) {
         self.bus.set_tick_time(now.0);
 
         // Span only — no event emitted inside. At a default 200 Hz host
@@ -400,7 +400,7 @@ impl AutonomyPipeline {
                         trace_span!("node.execute", name = node.name(), id = *node_id).entered();
                     node.execute(
                         &self.bus,
-                        runtime,
+                        tf,
                         TickContext {
                             now,
                             dt,
@@ -438,6 +438,21 @@ impl AutonomyPipeline {
                     .map(move |key| (name, key))
             })
         })
+    }
+
+    /// The tf-edge output channels this graph declares — every producer's
+    /// dual-published transform edge, in topological (producer-first) order.
+    ///
+    /// This is the drain list a host feeds a `TfService`: it is *derived* from
+    /// the nodes' own declared outputs via [`is_tf_edge`], not authored
+    /// separately, so coverage is structural — an edge a node emits is an edge
+    /// the service drains, with no second list to drift from the graph. A stack
+    /// with no edge producer yields an empty list.
+    pub fn tf_edge_channels(&self) -> Vec<ChannelKey> {
+        self.channels()
+            .filter(|(_, key)| is_tf_edge(key))
+            .map(|(_, key)| key.clone())
+            .collect()
     }
 
     /// Reads the current ego state, if any node has written one this run.

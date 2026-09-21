@@ -2,8 +2,13 @@ use super::plant::RaycastWheelPlantComponent;
 use crate::agents::vehicles::actuation::{apply_body_wrench, resolve_command};
 use crate::agents::vehicles::components::ActuationModelComponent;
 use crate::core::components::{ActuatorCommandComponent, GroundTruthState};
-use crate::core::transforms::{enu_twist_to_body_flu, EnuBodyPose, EnuVector, FluVector};
+use crate::core::transforms::{
+    enu_twist_to_body_flu, freevector_bevy_to_vec3, point_bevy_to_vec3, ToBevy,
+};
 
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::quantities::{EnuVector, FreeVector, Point};
+use helios_core::frames::transforms::Transform as CoreTransform;
 use helios_core::plant::WheelContact;
 
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
@@ -47,9 +52,9 @@ pub(super) fn drive_raycast_cars(
         // Ground truth reports velocity in world ENU; the plant computes in the
         // body FLU frame, so rotate the twist through the body pose first.
         let twist = enu_twist_to_body_flu(
-            EnuBodyPose(truth.pose),
-            EnuVector(truth.linear_velocity),
-            EnuVector(truth.angular_velocity),
+            CoreTransform::<Flu, Enu>::from_isometry(truth.pose),
+            EnuVector::from_raw(truth.linear_velocity),
+            EnuVector::from_raw(truth.angular_velocity),
         );
 
         // A contact slice sized to the wheel count and indexed by wheel: `None`
@@ -64,8 +69,13 @@ pub(super) fn drive_raycast_cars(
             // The origin is a body point (picks up the body's world translation);
             // the direction is a free vector (rotation only). Casting into Avian and
             // reading the hit are the one f64↔f32 crossing — core stays f64.
-            let origin = body.transform_point(Vec3::from(FluVector(*ray.origin.raw())));
-            let direction = body.rotation() * Vec3::from(FluVector(*ray.direction.raw()));
+            let origin = body.transform_point(point_bevy_to_vec3(
+                Point::<Flu>::from_raw(*ray.origin.raw()).to_bevy(),
+            ));
+            let direction = body.rotation()
+                * freevector_bevy_to_vec3(
+                    FreeVector::<Flu>::from_raw(*ray.direction.raw()).to_bevy(),
+                );
             let Ok(dir) = Dir3::new(direction) else {
                 continue;
             };

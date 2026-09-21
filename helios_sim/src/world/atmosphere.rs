@@ -1,8 +1,10 @@
-use crate::core::transforms::EnuVector;
+use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
 use crate::prelude::*;
 
+use helios_core::frames::conventions::Enu;
+use helios_core::frames::quantities::FreeVector;
+
 use avian3d::prelude::Gravity;
-use bevy::prelude::Vec3 as BevyVec3;
 use nalgebra::Vector3;
 
 pub struct AtmospherePlugin;
@@ -29,7 +31,9 @@ impl Plugin for AtmospherePlugin {
 /// one the physics engine simulates.
 fn configure_gravity(config: Res<ScenarioConfig>, mut gravity: ResMut<Gravity>) {
     let g = config.common.world.atmosphere.gravity_enu;
-    gravity.0 = BevyVec3::from(EnuVector(Vector3::new(g[0], g[1], g[2])));
+    gravity.0 = freevector_bevy_to_vec3(
+        FreeVector::<Enu>::from_raw(Vector3::new(g[0], g[1], g[2])).to_bevy(),
+    );
 
     // Both frames, both labelled: the ENU triple is what the scenario author
     // wrote and can compare against their TOML, and the Bevy triple is what

@@ -11,10 +11,12 @@
 //! [`StateSensor`].
 
 use crate::core::prng::SensorRng;
-use crate::core::transforms::EnuBodyPose;
+use crate::core::transforms::{bevy_transform_to_transform_bevy, FromBevy, TrackedFrame};
 use crate::prelude::{GroundTruthState, SensorPublishChannel, SensorPublisher};
 
-use helios_core::data::{FrameHandle, MonotonicTime, SensorPayload, SensorReading};
+use helios_core::data::{MonotonicTime, SensorPayload, SensorReading};
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::transforms::Transform as CoreTransform;
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -97,6 +99,7 @@ pub trait StateSensor: Component<Mutability = Mutable> {
 /// A sensor whose parent has no [`GroundTruthState`] can never produce data —
 /// that is a scene-wiring bug, so the entity is skipped with a warning, once
 /// per entity.
+#[allow(clippy::type_complexity)]
 pub fn publish_state_sensor<S: StateSensor>(
     time: Res<Time>,
     truth_query: Query<&GroundTruthState>,
@@ -107,6 +110,7 @@ pub fn publish_state_sensor<S: StateSensor>(
         &mut SensorRng,
         &GlobalTransform,
         &SensorPublishChannel,
+        &TrackedFrame,
         &ChildOf,
     )>,
     mut publisher: SensorPublisher,
@@ -115,7 +119,9 @@ pub fn publish_state_sensor<S: StateSensor>(
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (entity, mut sensor, mut timer, mut rng, transform, channel, parent) in &mut sensor_query {
+    for (entity, mut sensor, mut timer, mut rng, transform, channel, tracked, parent) in
+        &mut sensor_query
+    {
         timer.0.tick(dt);
 
         if !timer.0.just_finished() {
@@ -133,12 +139,14 @@ pub fn publish_state_sensor<S: StateSensor>(
             }
             continue;
         };
-        let sensor_pose_world = EnuBodyPose::from(transform).0;
+        let sensor_pose: CoreTransform<Flu, Enu> =
+            bevy_transform_to_transform_bevy(transform.compute_transform()).from_bevy();
+        let sensor_pose_world = sensor_pose.into_inner();
 
         let payload = sensor.sample(truth, &sensor_pose_world, &mut rng.0);
 
         let reading = SensorReading {
-            sensor_handle: FrameHandle::from_entity(entity),
+            sensor: tracked.id.clone(),
             timestamp: MonotonicTime(elapsed),
             data: payload,
         };
@@ -152,6 +160,9 @@ mod tests {
     use super::*;
 
     use helios_core::data::sensor::GpsPosition;
+    use helios_core::data::AgentId;
+    use helios_core::frames::transforms::Convention;
+    use helios_core::frames::FrameId;
 
     use bevy::ecs::schedule::Schedule;
     use bevy::ecs::world::World;
@@ -215,6 +226,10 @@ mod tests {
                 SensorRng(ChaCha8Rng::seed_from_u64(TEST_SEED)),
                 GlobalTransform::default(),
                 SensorPublishChannel("test.channel".to_string()),
+                TrackedFrame::new(
+                    FrameId::sensor(AgentId::new("test_agent"), "test.channel"),
+                    Convention::Flu,
+                ),
                 ChildOf(agent),
             ))
             .id();
@@ -329,6 +344,10 @@ mod tests {
                     SensorRng::from_sensor(TEST_MASTER_SEED, name),
                     GlobalTransform::default(),
                     SensorPublishChannel("test.channel".to_string()),
+                    TrackedFrame::new(
+                        FrameId::sensor(AgentId::new("car_1"), *name),
+                        Convention::Flu,
+                    ),
                     ChildOf(agent),
                 ))
                 .id();

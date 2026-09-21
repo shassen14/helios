@@ -107,7 +107,7 @@ impl<T: Send + Sync + Clone + Add<Output = T> + 'static> PipelineNode for Sum<T>
     fn execute(
         &self,
         bus: &crate::port::PortBus,
-        _runtime: &dyn crate::AgentRuntime,
+        _tf: &dyn helios_core::data::TfProvider,
         tick: crate::TickContext,
     ) {
         let Some(required) = self
@@ -167,8 +167,9 @@ mod tests {
     use helios_core::frames::FrameId;
 
     use crate::port::PortBus;
-    use crate::{AgentRuntime, NodeId, TickContext};
+    use crate::{NodeId, TickContext};
 
+    use helios_core::data::ports::TfProvider;
     use helios_core::data::primitives::MonotonicTime;
 
     use nalgebra::Isometry3;
@@ -185,7 +186,7 @@ mod tests {
 
     struct MockRuntime;
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
             _: FrameId,
@@ -197,9 +198,6 @@ mod tests {
                 Convention::Flu,
                 Convention::Flu,
             ))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
         }
     }
 

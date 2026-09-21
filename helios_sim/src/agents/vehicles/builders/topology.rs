@@ -4,6 +4,7 @@ use crate::core::transforms::TrackedFrame;
 use crate::registry::contexts::TopologyBuildContext;
 
 use helios_core::frames::transforms::Convention;
+use helios_core::frames::FrameId;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -26,7 +27,7 @@ pub fn build_rigid_body_with_mount(ctx: &mut TopologyBuildContext) -> Result<(),
         ctx.start_transform,
         RigidBody::Dynamic,
         Mass(*mass),
-        TrackedFrame(Convention::Flu),
+        TrackedFrame::new(FrameId::base_link(ctx.agent.clone()), Convention::Flu),
         SleepingDisabled,
         LinearVelocity::default(),
         AngularVelocity::default(),
@@ -38,7 +39,10 @@ pub fn build_rigid_body_with_mount(ctx: &mut TopologyBuildContext) -> Result<(),
             .commands
             .spawn((
                 mount.pose.to_bevy_local_transform(),
-                TrackedFrame(Convention::Flu),
+                TrackedFrame::new(
+                    FrameId::sensor(ctx.agent.clone(), mount.name.clone()),
+                    Convention::Flu,
+                ),
                 MountFrame(mount.name.clone()),
             ))
             .id();
@@ -55,6 +59,8 @@ mod tests {
 
     use crate::config::structs::{MountConfig, Pose};
 
+    use helios_core::data::AgentId;
+
     use bevy::ecs::system::SystemState;
     use nalgebra::{UnitQuaternion, Vector3};
 
@@ -65,6 +71,7 @@ mod tests {
             let mut commands = state.get_mut(world).unwrap();
             let mut ctx = TopologyBuildContext {
                 entity,
+                agent: AgentId::new("test_agent"),
                 commands: &mut commands,
                 config,
                 start_transform: Transform::IDENTITY,

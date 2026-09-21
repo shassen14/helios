@@ -25,7 +25,7 @@ fn build_mock_oracle(
     };
     Ok(Box::new(MockOracleEstimatorNode::new(
         ctx.instance_name,
-        ctx.agent_handle,
+        ctx.agent,
     )))
 }
 
@@ -35,11 +35,11 @@ mod tests {
 
     use crate::config::MockOracleEstimatorConfig;
 
-    use helios_core::data::primitives::FrameHandle;
+    use helios_core::data::AgentId;
 
     fn context(instance_name: &str) -> MockEstimatorBuildContext {
         MockEstimatorBuildContext {
-            agent_handle: FrameHandle(0),
+            agent: AgentId::new("test_agent"),
             instance_name: instance_name.to_string(),
         }
     }

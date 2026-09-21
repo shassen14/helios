@@ -4,8 +4,8 @@
 //! Unlike the estimator / planner / follower nodes, this node has **no
 //! input builder**. The mapper's contract is small enough that the node
 //! reads the bus channels directly: `FrameAwareState @ ""` for the robot
-//! pose, and a configurable `Vec<SensorReading<PointCloud2D>>` channel for
-//! scans. Inventing a `MapperInputBuilder` trait would be one struct per
+//! pose, and a configurable `Vec<SensorReading<PointCloud<Flu, ()>>>` channel
+//! for scans. Inventing a `MapperInputBuilder` trait would be one struct per
 //! mapper with zero shared logic.
 //!
 //! ## Execution skeleton
@@ -14,7 +14,7 @@
 //!    the body→World `pose(...)`. `None` → cold-start, skip the tick.
 //! 2. **Recenter.** Hand the robot pose to [`Mapper::recenter`].
 //! 3. **Integrate scans.** Read the scan channel; for each reading, look up
-//!    the static `agent → sensor` transform via the runtime, compose
+//!    the static `agent → sensor` transform via the tf provider, compose
 //!    `sensor_world = robot_world * agent_to_sensor`, and call
 //!    [`Mapper::integrate_scan_2d`]. Readings whose TF lookup fails are
 //!    silently skipped — TF rebuild lag is normal at startup.
@@ -33,7 +33,7 @@
 //! upstream estimator publishes — real EKF, future
 //! `GroundTruthEstimatorNode`, …) so the map lives in the estimator's
 //! frame. Reading the sensor's ground-truth world pose from the host
-//! runtime directly would anchor the map to physics ground-truth and create a frame mismatch
+//! directly would anchor the map to physics ground-truth and create a frame mismatch
 //! whenever the estimator drifts.
 //!
 //! ## Known gaps
@@ -56,9 +56,10 @@ use std::sync::Mutex;
 
 use atomic_float::AtomicF64;
 use helios_core::data::envelope::SensorReading;
-use helios_core::data::primitives::FrameHandle;
-use helios_core::data::sensor::PointCloud2D;
+use helios_core::data::AgentId;
 use helios_core::data::MonotonicTime;
+use helios_core::data::PointCloud;
+use helios_core::data::TfProvider;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::{FrameAwareState, FrameId};
 use helios_core::mapping::Mapper;
@@ -66,13 +67,12 @@ use helios_core::mapping::Mapper;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};
-use crate::runtime::AgentRuntime;
 use crate::stamped::{Health, Stamped};
 
 /// Pipeline node wrapping any 2D [`Mapper`] implementation.
 ///
 /// `scan_channel` is the bus channel carrying
-/// `Vec<SensorReading<PointCloud2D>>`; its instance name comes from the
+/// `Vec<SensorReading<PointCloud<Flu, ()>>>`; its instance name comes from the
 /// mapper config and must match the channel the host's scan sensor
 /// publishes on. `map_channel` is the published map slot
 /// — convention `MapData @ "local"` for rolling-window grids, `@ "global"`
@@ -80,11 +80,11 @@ use crate::stamped::{Health, Stamped};
 pub(crate) struct OccupancyGridNode {
     name: String,
     mapper: Mutex<Box<dyn Mapper>>,
-    /// Agent (body) frame used to compose `agent → sensor` static transforms
-    /// from the runtime's TF tree. Combined with the robot pose from
-    /// `FrameAwareState` it yields a sensor pose in the **estimator's**
-    /// world frame, not physics ground-truth.
-    agent_handle: FrameHandle,
+    /// Agent identity used to build the `base_link` / `odom` frames that compose
+    /// `agent → sensor` static transforms from the tf provider. Combined
+    /// with the robot pose from `FrameAwareState` it yields a sensor pose in the
+    /// **estimator's** world frame, not physics ground-truth.
+    agent: AgentId,
     scan_channel: ChannelKey,
     map_channel: ChannelKey,
     descriptor: PortDescriptor,
@@ -96,7 +96,7 @@ pub(crate) struct OccupancyGridNode {
 }
 
 impl OccupancyGridNode {
-    /// Build a node from a mapper, the agent's frame handle, and the scan /
+    /// Build a node from a mapper, the agent's identity, and the scan /
     /// map channel keys.
     ///
     /// `rate_hz = Some(hz)` rate-gates the node; `None` fires every tick.
@@ -105,7 +105,7 @@ impl OccupancyGridNode {
     pub(crate) fn new(
         name: impl Into<String>,
         mapper: Box<dyn Mapper>,
-        agent_handle: FrameHandle,
+        agent: AgentId,
         scan_channel: SensorChannel,
         map_channel: InternalChannel,
         rate_hz: Option<f64>,
@@ -121,7 +121,7 @@ impl OccupancyGridNode {
         Self {
             name: name.into(),
             mapper: Mutex::new(mapper),
-            agent_handle,
+            agent,
             scan_channel: scan_channel.into(),
             map_channel: map_channel.into(),
             descriptor,
@@ -139,7 +139,7 @@ impl PipelineNode for OccupancyGridNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, runtime: &dyn AgentRuntime, tick: TickContext) {
+    fn execute(&self, bus: &PortBus, tf: &dyn TfProvider, tick: TickContext) {
         // 1. Robot pose from the upstream estimator (real or ground-truth).
         let Some(stamped_state) =
             bus.read::<FrameAwareState>(InternalChannel::of::<FrameAwareState>().into())
@@ -149,8 +149,8 @@ impl PipelineNode for OccupancyGridNode {
         let Some(robot_world_pose) = stamped_state
             .value
             .pose::<Flu, Enu>(
-                FrameId::Body(self.agent_handle),
-                FrameId::Odom(self.agent_handle),
+                FrameId::base_link(self.agent.clone()),
+                FrameId::odom(self.agent.clone()),
             )
             .map(|t| t.into_inner())
         else {
@@ -171,14 +171,14 @@ impl PipelineNode for OccupancyGridNode {
         //    Readings whose TF lookup fails are skipped; startup ordering
         //    can briefly leave a sensor without a TF entry.
         if let Some(stamped_scans) =
-            bus.read::<Vec<SensorReading<PointCloud2D>>>(self.scan_channel.clone())
+            bus.read::<Vec<SensorReading<PointCloud<Flu, ()>>>>(self.scan_channel.clone())
         {
             let batch_ts = stamped_scans.timestamp.0;
             if batch_ts > self.last_integrated_ts.load(Ordering::Relaxed) {
                 for reading in stamped_scans.value.iter() {
-                    let Some(erased) = runtime.get_transform(
-                        FrameId::Body(self.agent_handle),
-                        FrameId::Sensor(reading.sensor_handle),
+                    let Some(erased) = tf.get_transform(
+                        reading.sensor.clone(),
+                        FrameId::base_link(self.agent.clone()),
                         MonotonicTime(batch_ts),
                     ) else {
                         continue;
@@ -228,23 +228,27 @@ mod tests {
 
     use super::*;
     use helios_core::data::envelope::SensorReading;
-    use helios_core::data::primitives::{FrameHandle, MonotonicTime};
-    use helios_core::data::sensor::PointCloud2D;
+    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::data::AgentId;
+    use helios_core::data::PointCloudBuilder;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::frames::quantities::Point;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
     use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
     use helios_core::mapping::{MapData, Mapper};
     use helios_core::state::{Component, Quantity};
-    use nalgebra::{Isometry3, Point2, Translation3, UnitQuaternion};
+    use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;
 
-    // --- Mock AgentRuntime ---
+    // --- Mock TfProvider ---
 
-    /// `get_transform(agent, sensor)` returns whatever was inserted for
-    /// `sensor.0`; missing entries return `None` to exercise the skip path.
+    /// `get_transform(sensor, base_link)` returns whatever was inserted for the
+    /// sensor frame's leaf name (the sensor-in-body mount, per the canonical
+    /// [`TfProvider::get_transform`] direction); missing entries return `None` to
+    /// exercise the skip path.
     struct MockRuntime {
-        agent_to_sensor: std::collections::HashMap<u64, Isometry3<f64>>,
+        agent_to_sensor: std::collections::HashMap<String, Isometry3<f64>>,
     }
 
     impl MockRuntime {
@@ -253,32 +257,31 @@ mod tests {
                 agent_to_sensor: Default::default(),
             }
         }
-        fn with_sensor(mut self, sensor: u64, tf: Isometry3<f64>) -> Self {
-            self.agent_to_sensor.insert(sensor, tf);
+        fn with_sensor(mut self, sensor_leaf: &str, tf: Isometry3<f64>) -> Self {
+            self.agent_to_sensor.insert(sensor_leaf.to_string(), tf);
             self
         }
     }
 
-    impl AgentRuntime for MockRuntime {
+    impl TfProvider for MockRuntime {
         fn get_transform(
             &self,
-            _from: FrameId,
-            to: FrameId,
+            from: FrameId,
+            _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            let FrameId::Sensor(sensor) = to else {
+            if !from.is_sensor() {
                 return None;
-            };
+            }
             self.agent_to_sensor
-                .get(&sensor.0)
+                .get(from.leaf().as_str())
                 .map(|iso| ErasedTransform::from_parts(*iso, Convention::Flu, Convention::Flu))
-        }
-        fn now(&self) -> MonotonicTime {
-            MonotonicTime(0.0)
         }
     }
 
-    const AGENT: FrameHandle = FrameHandle(1);
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
 
     // --- Mock Mapper that records calls ---
 
@@ -308,7 +311,7 @@ mod tests {
         fn integrate_scan_2d(
             &mut self,
             _sensor_world_pose: &Isometry3<f64>,
-            _cloud: &PointCloud2D,
+            _cloud: &PointCloud<Flu, ()>,
         ) {
             self.calls.lock().unwrap().integrate += 1;
         }
@@ -324,7 +327,7 @@ mod tests {
     struct EmptyMapper;
     impl Mapper for EmptyMapper {
         fn recenter(&mut self, _: &Isometry3<f64>) {}
-        fn integrate_scan_2d(&mut self, _: &Isometry3<f64>, _: &PointCloud2D) {}
+        fn integrate_scan_2d(&mut self, _: &Isometry3<f64>, _: &PointCloud<Flu, ()>) {}
         fn get_map(&mut self) -> Option<&MapData> {
             None
         }
@@ -333,7 +336,16 @@ mod tests {
     // --- Helpers ---
 
     fn scan_sensor_channel() -> SensorChannel {
-        SensorChannel::of::<Vec<SensorReading<PointCloud2D>>>()
+        SensorChannel::of::<Vec<SensorReading<PointCloud<Flu, ()>>>>()
+    }
+
+    /// A sensor-frame (FLU) scan from planar `(x, y)` returns at `z = 0`.
+    fn flu_cloud(points: &[(f64, f64)]) -> PointCloud<Flu, ()> {
+        let mut builder = PointCloudBuilder::<Flu>::new();
+        for &(x, y) in points {
+            builder.push(Point::new(x, y, 0.0), ());
+        }
+        builder.finalize().expect("equal-length cloud")
     }
     fn scan_channel() -> ChannelKey {
         scan_sensor_channel().into()
@@ -374,11 +386,11 @@ mod tests {
 
     fn make_state_at(x: f64) -> FrameAwareState {
         // The kinematic carrier already holds a `Position(Odom)` block and an
-        // identity `Body(AGENT) → Odom` attitude, which is all the node's pose
+        // identity `base_link → odom` attitude, which is all the node's pose
         // read needs; seed the odom-x position.
-        let mut s = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(AGENT)), 0.0);
+        let mut s = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0);
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::Odom(AGENT)), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::odom(agent())), Component::X),
             x,
         );
         s
@@ -394,7 +406,7 @@ mod tests {
         bus.write(state_channel(), stamped).unwrap();
     }
 
-    fn publish_scans(bus: &PortBus, readings: Vec<SensorReading<PointCloud2D>>) {
+    fn publish_scans(bus: &PortBus, readings: Vec<SensorReading<PointCloud<Flu, ()>>>) {
         let stamped = Stamped {
             value: readings,
             timestamp: MonotonicTime(0.0),
@@ -419,7 +431,7 @@ mod tests {
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(EmptyMapper),
-            AGENT,
+            agent(),
             scan_sensor_channel(),
             map_internal_channel(),
             Some(5.0),
@@ -438,7 +450,7 @@ mod tests {
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(RecordingMapper::new()),
-            AGENT,
+            agent(),
             scan_sensor_channel(),
             map_internal_channel(),
             None,
@@ -458,7 +470,7 @@ mod tests {
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(EmptyMapper),
-            AGENT,
+            agent(),
             scan_sensor_channel(),
             map_internal_channel(),
             None,
@@ -476,16 +488,16 @@ mod tests {
     fn execute_skips_reading_when_tf_lookup_fails() {
         // Two readings: one for a sensor the runtime knows, one it doesn't.
         // The publish should still happen; the unknown reading is skipped.
-        let known = FrameHandle(7);
-        let unknown = FrameHandle(99);
-        let runtime = MockRuntime::new().with_sensor(known.0, Isometry3::identity());
+        let known = "known_sensor";
+        let unknown = "unknown_sensor";
+        let runtime = MockRuntime::new().with_sensor(known, Isometry3::identity());
 
         // Use a real OccupancyGridMapper to confirm one cell gets marked.
         let mapper = helios_core::mapping::OccupancyGridMapper::new(1.0, 20.0, 20.0);
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(mapper),
-            AGENT,
+            agent(),
             scan_sensor_channel(),
             map_internal_channel(),
             None,
@@ -496,18 +508,14 @@ mod tests {
             &bus,
             vec![
                 SensorReading {
-                    sensor_handle: unknown, // skipped
+                    sensor: FrameId::sensor(agent(), unknown), // skipped
                     timestamp: MonotonicTime(0.0),
-                    data: PointCloud2D {
-                        points: vec![Point2::new(1.0, 0.0)],
-                    },
+                    data: flu_cloud(&[(1.0, 0.0)]),
                 },
                 SensorReading {
-                    sensor_handle: known,
+                    sensor: FrameId::sensor(agent(), known),
                     timestamp: MonotonicTime(0.0),
-                    data: PointCloud2D {
-                        points: vec![Point2::new(2.0, 0.0)],
-                    },
+                    data: flu_cloud(&[(2.0, 0.0)]),
                 },
             ],
         );
@@ -523,9 +531,9 @@ mod tests {
     #[test]
     fn execute_with_full_inputs_integrates_and_publishes() {
         // Sensor at world origin (identity), one hit 2m east.
-        let sensor = FrameHandle(3);
+        let sensor = "lidar";
         let runtime = MockRuntime::new().with_sensor(
-            sensor.0,
+            sensor,
             Isometry3::from_parts(Translation3::new(0.0, 0.0, 0.0), UnitQuaternion::identity()),
         );
 
@@ -533,7 +541,7 @@ mod tests {
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(mapper),
-            AGENT,
+            agent(),
             scan_sensor_channel(),
             map_internal_channel(),
             None,
@@ -543,11 +551,9 @@ mod tests {
         publish_scans(
             &bus,
             vec![SensorReading {
-                sensor_handle: sensor,
+                sensor: FrameId::sensor(agent(), sensor),
                 timestamp: MonotonicTime(0.0),
-                data: PointCloud2D {
-                    points: vec![Point2::new(2.0, 0.0)],
-                },
+                data: flu_cloud(&[(2.0, 0.0)]),
             }],
         );
 

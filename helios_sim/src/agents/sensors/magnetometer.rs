@@ -13,8 +13,9 @@ use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
 
-use helios_core::data::sensor::MagneticField3D;
+use helios_core::data::sensor::MagneticField;
 use helios_core::frames::transforms::Convention;
+use helios_core::frames::FrameId;
 use helios_core::sensors::magnetometer::MagnetometerModel;
 
 use nalgebra::{Isometry3, Vector3};
@@ -39,7 +40,7 @@ impl Magnetometer {
 }
 
 impl StateSensor for Magnetometer {
-    type Payload = MagneticField3D;
+    type Payload = MagneticField;
 
     /// A magnetic field is a free vector, so only the pose's rotation matters
     /// — inverted, because the model wants world-into-sensor and the pose's
@@ -80,13 +81,13 @@ impl Plugin for MagnetometerPlugin {
 /// error instead of spawning a degenerate one.
 fn spawn_magnetometer_sensors(
     mut commands: Commands,
-    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
+    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest, &AgentIdComponent)>,
     config: Res<ScenarioConfig>,
     master_seed: Res<MasterSeed>,
 ) {
     let magnetic_field = &config.common.world.magnetic_field;
 
-    for (agent_entity, agent_name, request) in &request_query {
+    for (agent_entity, agent_name, request, agent_id) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Magnetometer(mag_config) = sensor_config {
                 info!(
@@ -123,7 +124,10 @@ fn spawn_magnetometer_sensors(
                         Magnetometer::new(mag_model),
                         SensorTimer::from_rate(mag_config.rate),
                         sensor_rng,
-                        TrackedFrame(Convention::Flu),
+                        TrackedFrame::new(
+                            FrameId::sensor(agent_id.0.clone(), mag_config.channel.clone()),
+                            Convention::Flu,
+                        ),
                         mag_config.get_relative_pose().to_bevy_local_transform(),
                     ))
                     .id();
@@ -174,8 +178,7 @@ mod tests {
 
     fn sample(mag: &mut Magnetometer, pose: &Isometry3<f64>) -> Vector3<f64> {
         let mut rng = StdRng::seed_from_u64(1);
-        mag.sample(&GroundTruthState::default(), pose, &mut rng)
-            .value
+        mag.sample(&GroundTruthState::default(), pose, &mut rng).0
     }
 
     #[test]

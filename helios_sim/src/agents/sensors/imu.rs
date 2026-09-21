@@ -10,11 +10,14 @@ use super::state_sensor::{publish_state_sensor, SensorTimer, StateSensor};
 
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
-use crate::core::transforms::EnuVector;
+use crate::core::transforms::{vec3_to_freevector_bevy, FromBevy};
 use crate::prelude::*;
 
-use helios_core::data::sensor::{AngularVelocity3D, LinearAcceleration3D};
+use helios_core::data::sensor::{Acceleration, AngularRate};
+use helios_core::frames::conventions::Enu;
+use helios_core::frames::quantities::FreeVector;
 use helios_core::frames::transforms::Convention;
+use helios_core::frames::FrameId;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
 
@@ -63,7 +66,7 @@ impl Accelerometer {
 }
 
 impl StateSensor for Accelerometer {
-    type Payload = LinearAcceleration3D;
+    type Payload = Acceleration;
 
     /// The lever arm is the baked-in FLU mount offset rotated into world ENU by
     /// the body orientation, so it stays consistent with the world-frame ω and
@@ -103,7 +106,7 @@ impl Gyroscope {
 }
 
 impl StateSensor for Gyroscope {
-    type Payload = AngularVelocity3D;
+    type Payload = AngularRate;
 
     /// Angular velocity is a free vector, so only the pose's rotation
     /// matters — inverted, same as the accelerometer.
@@ -150,13 +153,14 @@ impl Plugin for ImuPlugin {
 /// with an error — half an IMU would be more confusing than none.
 fn spawn_imu_sensors(
     mut commands: Commands,
-    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest)>,
+    request_query: Query<(Entity, &Name, &SpawnAgentConfigRequest, &AgentIdComponent)>,
     gravity: Res<Gravity>,
     master_seed: Res<MasterSeed>,
 ) {
-    let gravity_world = EnuVector::from(gravity.0).0;
+    let gravity_enu: FreeVector<Enu> = vec3_to_freevector_bevy(gravity.0).from_bevy();
+    let gravity_world = gravity_enu.into_inner();
 
-    for (agent_entity, agent_name, request) in &request_query {
+    for (agent_entity, agent_name, request, agent_id) in &request_query {
         for (sensor_name, sensor_config) in &request.0.sensors {
             if let SensorConfig::Imu(imu_config) = sensor_config {
                 info!(
@@ -206,7 +210,13 @@ fn spawn_imu_sensors(
                         Accelerometer::new(accel_model, gravity_world, sensor_pose.translation),
                         SensorTimer::from_rate(imu_config.rate),
                         accel_rng,
-                        TrackedFrame(Convention::Flu),
+                        TrackedFrame::new(
+                            FrameId::sensor(
+                                agent_id.0.clone(),
+                                imu_config.get_accel_channel().to_string(),
+                            ),
+                            Convention::Flu,
+                        ),
                         sensor_pose.to_bevy_local_transform(),
                     ))
                     .id();
@@ -221,7 +231,13 @@ fn spawn_imu_sensors(
                         Gyroscope::new(gyro_model),
                         SensorTimer::from_rate(imu_config.rate),
                         gyro_rng,
-                        TrackedFrame(Convention::Flu),
+                        TrackedFrame::new(
+                            FrameId::sensor(
+                                agent_id.0.clone(),
+                                imu_config.get_gyro_channel().to_string(),
+                            ),
+                            Convention::Flu,
+                        ),
                         sensor_pose.to_bevy_local_transform(),
                     ))
                     .id();
@@ -286,7 +302,7 @@ mod tests {
             &mut rng,
         );
 
-        assert!((got.value - Vector3::new(0.0, 0.0, 9.81)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.0, 0.0, 9.81)).norm() < 1e-6);
     }
 
     #[test]
@@ -300,7 +316,7 @@ mod tests {
 
         let got = accel.sample(&truth, &yawed_pose(), &mut rng);
 
-        assert!((got.value - Vector3::new(0.0, -2.0, 0.0)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.0, -2.0, 0.0)).norm() < 1e-6);
     }
 
     #[test]
@@ -314,7 +330,7 @@ mod tests {
             &mut rng,
         );
 
-        assert!((got.value - Vector3::new(0.3, 0.0, 0.0)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.3, 0.0, 0.0)).norm() < 1e-6);
     }
 
     #[test]
@@ -330,7 +346,7 @@ mod tests {
             &mut rng,
         );
 
-        assert!((got.value - Vector3::new(0.0, 0.0, 0.02)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.0, 0.0, 0.02)).norm() < 1e-6);
     }
 
     #[test]
@@ -344,7 +360,7 @@ mod tests {
 
         let got = gyro.sample(&truth, &Isometry3::identity(), &mut rng);
 
-        assert!((got.value - Vector3::new(0.1, 0.2, 0.3)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.1, 0.2, 0.3)).norm() < 1e-6);
     }
 
     #[test]
@@ -358,6 +374,6 @@ mod tests {
 
         let got = gyro.sample(&truth, &yawed_pose(), &mut rng);
 
-        assert!((got.value - Vector3::new(0.0, -1.0, 0.0)).norm() < 1e-6);
+        assert!((got.0 - Vector3::new(0.0, -1.0, 0.0)).norm() < 1e-6);
     }
 }

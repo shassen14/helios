@@ -11,13 +11,16 @@
 //! magnetometers on one vehicle get two independent bias blocks that never alias.
 //!
 //! [`augmentation_block`] maps a config-declared augmentation kind to the
-//! [`SchemaBlock`] that realizes it, ready for [`StateSchema::compose`] to bake
+//! [`StateSchemaBlock`] that realizes it, ready for [`StateSchema::compose`] to bake
 //! into the estimator's state.
 //!
 //! [`StateSchema::compose`]: crate::estimation::schema::StateSchema::compose
 
 use crate::{
-    estimation::schema::SchemaBlock, frames::FrameId, manifold::TangentNoise, state::Quantity,
+    estimation::schema::StateSchemaBlock,
+    frames::{transforms::Convention, FrameId},
+    manifold::TangentNoise,
+    state::Quantity,
 };
 
 use std::fmt::Display;
@@ -26,7 +29,7 @@ use nalgebra::{DMatrix, DVector};
 
 pub const MAGNETOMETER_BIAS: &str = "magnetometer_bias";
 
-/// Why an augmentation kind could not be turned into a [`SchemaBlock`].
+/// Why an augmentation kind could not be turned into a [`StateSchemaBlock`].
 ///
 /// Both variants are load-time configuration faults surfaced to the caller so
 /// the offending field can be named; neither occurs on a well-formed config.
@@ -57,7 +60,7 @@ impl Display for AugmentationError {
     }
 }
 
-/// Builds the [`SchemaBlock`] for one augmentation `kind`, tied to `sensor`.
+/// Builds the [`StateSchemaBlock`] for one augmentation `kind`, tied to `sensor`.
 ///
 /// * `kind` — the augmentation to instantiate; matched against the reserved kind
 ///   strings (e.g. [`MAGNETOMETER_BIAS`]). An unrecognized value is a
@@ -77,7 +80,7 @@ pub fn augmentation_block(
     sensor: FrameId,
     init_uncertainty: f64,
     random_walk: f64,
-) -> Result<SchemaBlock, AugmentationError> {
+) -> Result<StateSchemaBlock, AugmentationError> {
     match kind {
         MAGNETOMETER_BIAS => {
             let noise = TangentNoise::from_std_devs(DVector::from_element(3, random_walk))
@@ -88,8 +91,9 @@ pub fn augmentation_block(
                 init_uncertainty * init_uncertainty,
             ));
 
-            Ok(SchemaBlock::new(
+            Ok(StateSchemaBlock::new(
                 Quantity::MagBias(sensor),
+                Convention::Flu,
                 Some(noise),
                 DVector::zeros(3),
                 p0,
@@ -102,7 +106,7 @@ pub fn augmentation_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::frames::StateVariable;
     use crate::state::Component;
 
@@ -110,10 +114,10 @@ mod tests {
     const RANDOM_WALK: f64 = 0.01;
 
     fn sensor_frame() -> FrameId {
-        FrameId::Sensor(FrameHandle(7))
+        FrameId::sensor(AgentId::new("test_agent"), "sensor0")
     }
 
-    fn mag_block() -> SchemaBlock {
+    fn mag_block() -> StateSchemaBlock {
         augmentation_block(
             MAGNETOMETER_BIAS,
             sensor_frame(),

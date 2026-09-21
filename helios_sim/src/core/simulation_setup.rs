@@ -13,8 +13,9 @@ use crate::core::ground_truth::publish_oracle_channels_system;
 use crate::core::ground_truth_sync_system;
 use crate::core::host::TimePolicy;
 use crate::core::prng::MasterSeed;
-use crate::core::transforms::build_static_tf_maps;
 use crate::prelude::*;
+
+use helios_core::data::AgentId;
 
 pub struct SimulationSetupPlugin;
 
@@ -46,7 +47,6 @@ impl Plugin for SimulationSetupPlugin {
             (
                 // This system reads the config and creates entities with "request" components.
                 spawn_agent_shells.in_set(SceneBuildSet::CreateRequests),
-                build_static_tf_maps.in_set(SceneBuildSet::Finalize),
                 // This system removes the temporary request components after all processing is done.
                 cleanup_spawn_requests.in_set(SceneBuildSet::Cleanup),
                 // This system transitions to the main simulation loop after building is complete.
@@ -278,6 +278,12 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
 
         commands.spawn((
             Name::new(format!("{}/base_link", agent_config.name())),
+            // The agent's canonical frame-scope identity, built once here and read
+            // by every downstream frame producer (topology, sensors, odom,
+            // pipeline). Stamping it on the shell — before any producer runs — is
+            // what leaves no name string in scope for a producer to re-derive a
+            // divergent scope from. See `AgentIdComponent`.
+            AgentIdComponent(AgentId::new(agent_config.name())),
             GroundTruthState {
                 pose: start_isometry,
                 ..default()

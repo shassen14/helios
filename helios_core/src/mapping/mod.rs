@@ -17,7 +17,7 @@
 //! mapping) split the trait the same way `GaussianStateEstimator` was split
 //! out.
 
-use crate::data::sensor::PointCloud2D;
+use crate::{data::PointCloud, frames::conventions::Flu};
 use nalgebra::{DMatrix, Isometry3};
 use std::collections::HashMap;
 
@@ -63,7 +63,11 @@ pub trait Mapper: Send + Sync {
     /// reading's timestamp (composed by the caller from the robot's state
     /// and the static sensor→robot transform). `cloud` is in the sensor's
     /// FLU frame; the mapper transforms it into the world frame internally.
-    fn integrate_scan_2d(&mut self, sensor_world_pose: &Isometry3<f64>, cloud: &PointCloud2D);
+    fn integrate_scan_2d(
+        &mut self,
+        sensor_world_pose: &Isometry3<f64>,
+        cloud: &PointCloud<Flu, ()>,
+    );
 
     /// Return the current map, if one has been produced.
     ///

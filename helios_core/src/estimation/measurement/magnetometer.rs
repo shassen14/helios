@@ -1,12 +1,16 @@
 use crate::{
-    data::{ports::TfProvider, primitives::FrameHandle, MonotonicTime},
-    estimation::measurement::MeasurementModel,
+    data::{ports::TfProvider, AgentId, MonotonicTime},
+    estimation::{
+        measurement::{MeasurementModel, Prediction, Unavailable},
+        schema::{MeasurementSchema, MeasurementSchemaBlock},
+    },
     frames::{
         conventions::{Enu, Flu},
         quantities::FreeVector,
-        transforms::Rotation,
+        transforms::{Convention, Rotation},
         FrameAwareState, FrameId,
     },
+    state::Quantity,
 };
 use nalgebra::{DVector, Vector3};
 
@@ -16,61 +20,82 @@ use nalgebra::{DVector, Vector3};
 /// providing an absolute heading reference.
 #[derive(Debug, Clone)]
 pub struct MagneticFieldModel {
-    pub agent_handle: FrameHandle,
-    pub sensor_handle: FrameHandle,
+    pub agent: AgentId,
+    pub sensor: FrameId,
     /// The "true" magnetic field vector in the world (ENU) frame.
     pub world_magnetic_field: Vector3<f64>,
 }
 
 impl MeasurementModel for MagneticFieldModel {
-    fn dim(&self) -> usize {
-        3
+    /// One block: the magnetic field resolved in the sensor frame (FLU).
+    fn schema(&self) -> MeasurementSchema {
+        let frame = self.sensor.clone();
+        let blocks = vec![MeasurementSchemaBlock::new(
+            Quantity::Mag(frame),
+            Convention::Flu,
+        )];
+
+        MeasurementSchema::compose(blocks)
     }
 
     /// Predicts the magnetic field in the sensor frame: the known world field is
     /// rotated through the filter's orientation into the body frame, then through
     /// the sensor's mount into the sensor frame. TF is required — the mount
-    /// rotation comes from it — so this returns `None` when `tf` is unavailable.
+    /// rotation comes from it — so this returns [`Prediction::Unavailable`]
+    /// ([`Unavailable::NoProvider`] with no `tf`, [`Unavailable::MissingTransform`]
+    /// when the sensor→base_link edge does not resolve).
     fn predict_measurement(
         &self,
         filter_state: &FrameAwareState,
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
-    ) -> Option<DVector<f64>> {
-        let tf = tf?;
+    ) -> Prediction {
+        let Some(tf) = tf else {
+            return Prediction::Unavailable(Unavailable::NoProvider);
+        };
 
         let orientation_body_to_world = filter_state
             .orientation::<Flu, Enu>(
-                FrameId::Body(self.agent_handle),
-                FrameId::Odom(self.agent_handle),
+                FrameId::base_link(self.agent.clone()),
+                FrameId::odom(self.agent.clone()),
             )
             .map(Rotation::into_inner)
             .unwrap_or_default();
         let q_body_from_world = orientation_body_to_world.inverse();
         let predicted_mag_body = q_body_from_world * self.world_magnetic_field;
 
-        let erased = tf.get_transform(
-            FrameId::Body(self.agent_handle),
-            FrameId::Sensor(self.sensor_handle),
+        let Some(erased) = tf.get_transform(
+            self.sensor.clone(),
+            FrameId::base_link(self.agent.clone()),
             at,
-        )?;
-
-        let Ok(tf_sensor_from_body) = erased.typed::<Flu, Flu>() else {
-            return None;
+        ) else {
+            return Prediction::Unavailable(Unavailable::MissingTransform {
+                from: self.sensor.clone(),
+                to: FrameId::base_link(self.agent.clone()),
+            });
         };
 
-        let iso = tf_sensor_from_body.into_inner();
+        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
+            return Prediction::Unavailable(Unavailable::ConventionMismatch {
+                from: self.sensor.clone(),
+                to: FrameId::base_link(self.agent.clone()),
+            });
+        };
 
-        let rot_sensor_from_body = iso.rotation;
+        let iso = sensor_in_body.into_inner();
 
-        let sensor = FrameId::Sensor(self.sensor_handle);
+        // Sensor-in-body rotation maps sensor axes into body axes; its inverse
+        // carries the body-frame field into the sensor frame.
+        let rot_body_from_sensor = iso.rotation;
+
+        let sensor = self.sensor.clone();
         let bias = filter_state
             .mag_bias::<Flu>(sensor)
             .map(FreeVector::into_inner)
             .unwrap_or_else(Vector3::zeros);
-        let predicted_sensor = rot_sensor_from_body.inverse() * predicted_mag_body + bias;
+        let predicted_sensor = rot_body_from_sensor.inverse() * predicted_mag_body + bias;
 
-        Some(DVector::from_row_slice(predicted_sensor.as_slice()))
+        Prediction::Ready(DVector::from_row_slice(predicted_sensor.as_slice()))
     }
 }
 
@@ -90,9 +115,9 @@ mod tests {
     //!   the bias read falls back to zero.
 
     use super::*;
-    use crate::data::primitives::FrameHandle;
+    use crate::data::AgentId;
     use crate::data::MonotonicTime;
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
+    use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
     use crate::manifold::TangentNoise;
@@ -109,35 +134,63 @@ mod tests {
 
     // The body → World orientation block, seeded to the identity quaternion
     // `[x, y, z, w] = [0, 0, 0, 1]`.
-    fn orientation_block() -> SchemaBlock {
-        SchemaBlock::new(
-            Quantity::Orientation {
-                from: FrameId::Body(AGENT),
-                to: FrameId::Odom(AGENT),
-            },
+    fn orientation_block() -> StateSchemaBlock {
+        StateSchemaBlock::orientation(
+            FrameId::base_link(agent()),
+            FrameId::odom(agent()),
+            Convention::Flu,
+            Convention::Enu,
             noise(),
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::identity(3, 3),
         )
     }
 
-    const AGENT: FrameHandle = FrameHandle(1);
-    const SENSOR: FrameHandle = FrameHandle(2);
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
+    fn sensor() -> FrameId {
+        FrameId::sensor(agent(), "magnetometer")
+    }
+
     const AT: MonotonicTime = MonotonicTime(0.0);
 
-    /// Reports one fixed extrinsic — the sensor's pose in body axes — for every
-    /// lookup, mirroring what a real TF tree hands the model.
-    struct Mount(Isometry3<f64>);
+    /// Holds the sensor's pose in body axes (sensor-in-body). Honours the
+    /// canonical [`TfProvider::get_transform`] direction — the stored isometry
+    /// for `get_transform(sensor, base_link)`, its inverse for the reverse — so
+    /// the rotated-mount test below catches a swapped argument order.
+    /// A provider that is present but resolves no edges — the shape of the
+    /// historical silent-aiding-drop bug (broken tf graph / mislabelled frame).
+    struct NoEdgeTf;
 
-    impl TfProvider for Mount {
+    impl TfProvider for NoEdgeTf {
         fn get_transform(
             &self,
             _from: FrameId,
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
+            None
+        }
+    }
+
+    struct Mount(Isometry3<f64>);
+
+    impl TfProvider for Mount {
+        fn get_transform(
+            &self,
+            from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            let iso = if from.is_sensor() {
+                self.0
+            } else {
+                self.0.inverse()
+            };
             Some(ErasedTransform::from_parts(
-                self.0,
+                iso,
                 Convention::Flu,
                 Convention::Flu,
             ))
@@ -155,7 +208,7 @@ mod tests {
 
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
         let q = UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2);
-        let (body, world) = (FrameId::Body(AGENT), FrameId::Odom(AGENT));
+        let (body, world) = (FrameId::base_link(agent()), FrameId::odom(agent()));
         state.set_variable(
             &StateVariable::new(
                 Quantity::Orientation {
@@ -200,8 +253,8 @@ mod tests {
 
     fn make_model() -> MagneticFieldModel {
         MagneticFieldModel {
-            agent_handle: AGENT,
-            sensor_handle: SENSOR,
+            agent: agent(),
+            sensor: sensor(),
             world_magnetic_field: Vector3::new(0.0, 1.0, 0.0),
         }
     }
@@ -210,11 +263,12 @@ mod tests {
     /// hard-iron bias block for `SENSOR`, the bias initialised to `bias`.
     /// Orientation is identity, so the field prediction isolates the bias term.
     fn make_augmented_state(bias: Vector3<f64>) -> FrameAwareState {
-        let sensor = FrameId::Sensor(SENSOR);
+        let sensor = sensor();
         let schema = StateSchema::compose(vec![
             orientation_block(),
-            SchemaBlock::new(
+            StateSchemaBlock::new(
                 Quantity::MagBias(sensor.clone()),
+                Convention::Flu,
                 noise(),
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
@@ -237,24 +291,48 @@ mod tests {
     }
 
     #[test]
-    fn dim_is_three() {
-        assert_eq!(make_model().dim(), 3);
+    fn schema_is_three_long_and_tags_the_sensor_frame_field() {
+        let schema = make_model().schema();
+        assert_eq!(schema.dim(), 3);
+        assert_eq!(schema.blocks().len(), 1);
+        let block = &schema.blocks()[0];
+        assert_eq!(block.quantity(), &Quantity::Mag(sensor()));
+        assert_eq!(block.conventions, vec![(sensor(), Convention::Flu)]);
     }
 
     #[test]
     fn predict_without_tf_returns_none() {
         let model = make_model();
         let state = make_orientation_state();
-        assert!(model.predict_measurement(&state, None, AT).is_none());
+        assert_eq!(
+            model.predict_measurement(&state, None, AT),
+            Prediction::Unavailable(Unavailable::NoProvider)
+        );
+    }
+
+    #[test]
+    fn predict_with_unresolved_edge_reports_missing_transform() {
+        let model = make_model();
+        let state = make_orientation_state();
+        // The provider is present but the sensor→base_link edge does not resolve:
+        // the loud case the reason-carrying return exists to surface.
+        assert_eq!(
+            model.predict_measurement(&state, Some(&NoEdgeTf), AT),
+            Prediction::Unavailable(Unavailable::MissingTransform {
+                from: sensor(),
+                to: FrameId::base_link(agent()),
+            })
+        );
     }
 
     #[test]
     fn predict_identity_orientation_returns_world_field() {
         let model = make_model();
         let state = make_orientation_state();
-        let z = model
-            .predict_measurement(&state, Some(&identity_mount()), AT)
-            .unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&identity_mount()), AT)
+        else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!(z[0].abs() < 1e-9);
         assert!((z[1] - 1.0).abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
@@ -265,9 +343,10 @@ mod tests {
         let model = make_model();
         let mut state = make_orientation_state();
         set_yaw_90_ccw(&mut state);
-        let z = model
-            .predict_measurement(&state, Some(&identity_mount()), AT)
-            .unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&identity_mount()), AT)
+        else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!((z[0] - 1.0).abs() < 1e-9);
         assert!(z[1].abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
@@ -286,7 +365,9 @@ mod tests {
             Translation3::identity(),
             UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2),
         ));
-        let z = model.predict_measurement(&state, Some(&mount), AT).unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&mount), AT) else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!((z[0] - 1.0).abs() < 1e-9);
         assert!(z[1].abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
@@ -300,9 +381,10 @@ mod tests {
         let model = make_model();
         let bias = Vector3::new(0.1, -0.2, 0.05);
         let state = make_augmented_state(bias);
-        let z = model
-            .predict_measurement(&state, Some(&identity_mount()), AT)
-            .unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&identity_mount()), AT)
+        else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!((z[0] - bias.x).abs() < 1e-9);
         assert!((z[1] - (1.0 + bias.y)).abs() < 1e-9);
         assert!((z[2] - bias.z).abs() < 1e-9);
@@ -316,9 +398,10 @@ mod tests {
         // keeps the base (16-state) filter's behaviour frozen.
         let model = make_model();
         let state = make_orientation_state();
-        let z = model
-            .predict_measurement(&state, Some(&identity_mount()), AT)
-            .unwrap();
+        let Prediction::Ready(z) = model.predict_measurement(&state, Some(&identity_mount()), AT)
+        else {
+            panic!("a resolvable mount yields a ready prediction");
+        };
         assert!(z[0].abs() < 1e-9);
         assert!((z[1] - 1.0).abs() < 1e-9);
         assert!(z[2].abs() < 1e-9);
@@ -335,7 +418,7 @@ mod tests {
         // the orientation block ahead of it spending one fewer tangent than it
         // stores).
         let model = make_model();
-        let sensor = FrameId::Sensor(SENSOR);
+        let sensor = sensor();
         let state = make_augmented_state(Vector3::zeros());
         let off = state
             .schema()

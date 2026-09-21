@@ -1,11 +1,12 @@
-use super::primitives::{FrameHandle, MonotonicTime};
+use super::primitives::MonotonicTime;
+use crate::frames::FrameId;
 
 // =========================================================================
 // == SensorReading<T> ==
 // =========================================================================
 
 pub struct SensorReading<T> {
-    pub sensor_handle: FrameHandle,
+    pub sensor: FrameId,
     pub timestamp: MonotonicTime,
     pub data: T,
 }

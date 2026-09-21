@@ -11,16 +11,16 @@ use crate::registry::AutonomyRegistry;
 use crate::PipelineAssemblyError;
 
 use helios_core::data::envelope::SensorReading;
-use helios_core::data::primitives::FrameHandle;
 use helios_core::data::sensor::{
-    AngularVelocity3D, GpsPosition, GpsVelocity, LinearAcceleration3D, MagneticField3D,
+    Acceleration, AngularRate, GpsPosition, GpsVelocity, MagneticField,
 };
+use helios_core::data::AgentId;
 use helios_core::estimation::augmentation::augmentation_block;
-use helios_core::estimation::schema::SchemaBlock;
+use helios_core::estimation::schema::{MeasurementAgreementError, StateSchemaBlock};
 use helios_core::frames::FrameId;
 
 use nalgebra::DMatrix;
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Assembles a Gaussian-estimator node from its config: constructs the aiding
 /// handlers, declares the predict-side input channels as external, and invokes
@@ -30,21 +30,15 @@ pub(crate) fn assemble(
     instance_name: &str,
     est_cfg: &EstimatorConfig,
     ekf_cfg: &EkfConfig,
-    agent_handle: FrameHandle,
-    sensor_frame_handles: &HashMap<String, FrameHandle>,
+    agent: &AgentId,
+    sensor_channels: &HashSet<String>,
     registry: &AutonomyRegistry,
     external_channels: &mut Vec<ChannelKey>,
 ) -> Result<Box<dyn PipelineNode>, PipelineAssemblyError> {
     // Build aiding handlers from the aiding list in EkfConfig.
     let mut aiding: Vec<Box<dyn AidingHandler>> = vec![];
     for aid in &ekf_cfg.aiding {
-        let handler = build_aiding_handler(
-            instance_name,
-            aid,
-            agent_handle,
-            sensor_frame_handles,
-            registry,
-        )?;
+        let handler = build_aiding_handler(instance_name, aid, agent, sensor_channels, registry)?;
         external_channels.push(handler.channel().clone());
         aiding.push(handler);
     }
@@ -60,20 +54,20 @@ pub(crate) fn assemble(
     }
 
     // Turn each declared augmentation into a schema block, tied to the same
-    // sensor FrameHandle its aiding source resolves to. Reusing the aiding
-    // channel resolution (below) is what guarantees the appended bias slots
-    // carry the FrameId the measurement model reads back — a mismatch would
-    // leave the block inert, never observed. The `sensor`-has-an-aiding-source
-    // requirement itself is enforced earlier by `validate_autonomy_config`.
+    // sensor frame its aiding source resolves to. Building both from the sensor
+    // channel name (below) is what guarantees the appended bias slots carry the
+    // FrameId the measurement model reads back — a mismatch would leave the
+    // block inert, never observed. The `sensor`-has-an-aiding-source requirement
+    // itself is enforced earlier by `validate_autonomy_config`.
     let augmentation_blocks =
-        build_augmentation_blocks(instance_name, ekf_cfg, sensor_frame_handles)?;
+        build_augmentation_blocks(instance_name, ekf_cfg, agent, sensor_channels)?;
 
     registry
         .build_gaussian_estimator(
             est_cfg.get_kind_str(),
             est_cfg.clone(),
             GaussianEstimatorBuildContext {
-                agent_handle,
+                agent: agent.clone(),
                 instance_name: instance_name.to_string(),
                 aiding,
                 augmentation_blocks,
@@ -85,41 +79,38 @@ pub(crate) fn assemble(
         })
 }
 
-/// Resolves every `[[augmentation]]` entry into a [`SchemaBlock`], each tagged
-/// with the `FrameId::Sensor` its `sensor` channel resolves to.
+/// Resolves every `[[augmentation]]` entry into a [`StateSchemaBlock`], each tagged
+/// with the `FrameId::sensor` its `sensor` channel names.
 ///
-/// The sensor string is looked up in the same `sensor_frame_handles` map the
-/// aiding handlers use, so the block and the aiding sensor share one handle. An
-/// unresolvable `sensor` is an [`UnknownSensorChannel`], and a bad `kind` or
-/// noise is an [`AugmentationFailure`] — both build-time faults, never a panic.
+/// The sensor string is validated against the same `sensor_channels` set the
+/// aiding handlers use and turned into a `FrameId` the same way, so the block and
+/// the aiding sensor share one frame identity. A `sensor` naming no host channel
+/// is an [`UnknownSensorChannel`], and a bad `kind` or noise is an
+/// [`AugmentationFailure`] — both build-time faults, never a panic.
 ///
 /// [`UnknownSensorChannel`]: PipelineAssemblyError::UnknownSensorChannel
 /// [`AugmentationFailure`]: PipelineAssemblyError::AugmentationFailure
 fn build_augmentation_blocks(
     instance_name: &str,
     ekf_cfg: &EkfConfig,
-    sensor_frame_handles: &HashMap<String, FrameHandle>,
-) -> Result<Vec<SchemaBlock>, PipelineAssemblyError> {
+    agent: &AgentId,
+    sensor_channels: &HashSet<String>,
+) -> Result<Vec<StateSchemaBlock>, PipelineAssemblyError> {
     let mut blocks = Vec::with_capacity(ekf_cfg.augmentation.len());
     for aug in &ekf_cfg.augmentation {
-        let sensor_handle = sensor_frame_handles
-            .get(&aug.sensor)
-            .copied()
-            .ok_or_else(|| PipelineAssemblyError::UnknownSensorChannel {
+        if !sensor_channels.contains(&aug.sensor) {
+            return Err(PipelineAssemblyError::UnknownSensorChannel {
                 estimator_instance: instance_name.to_string(),
                 input_channel: aug.sensor.clone(),
-            })?;
+            });
+        }
+        let sensor = FrameId::sensor(agent.clone(), aug.sensor.as_str());
 
-        let block = augmentation_block(
-            &aug.kind,
-            FrameId::Sensor(sensor_handle),
-            aug.init_uncertainty,
-            aug.random_walk,
-        )
-        .map_err(|reason| PipelineAssemblyError::AugmentationFailure {
-            estimator_instance: instance_name.to_string(),
-            reason: reason.to_string(),
-        })?;
+        let block = augmentation_block(&aug.kind, sensor, aug.init_uncertainty, aug.random_walk)
+            .map_err(|reason| PipelineAssemblyError::AugmentationFailure {
+                estimator_instance: instance_name.to_string(),
+                reason: reason.to_string(),
+            })?;
 
         blocks.push(block);
     }
@@ -129,24 +120,26 @@ fn build_augmentation_blocks(
 fn build_aiding_handler(
     instance_name: &str,
     aid: &AidingConfig,
-    agent_handle: FrameHandle,
-    sensor_frame_handles: &HashMap<String, FrameHandle>,
+    agent: &AgentId,
+    sensor_channels: &HashSet<String>,
     registry: &AutonomyRegistry,
 ) -> Result<Box<dyn AidingHandler>, PipelineAssemblyError> {
-    let sensor_handle = sensor_frame_handles
-        .get(&aid.input_channel)
-        .copied()
-        .ok_or_else(|| PipelineAssemblyError::UnknownSensorChannel {
+    if !sensor_channels.contains(&aid.input_channel) {
+        return Err(PipelineAssemblyError::UnknownSensorChannel {
             estimator_instance: instance_name.to_string(),
             input_channel: aid.input_channel.clone(),
-        })?;
+        });
+    }
+    // The sensor's frame leaf is its channel name — the single identity the host
+    // also stamps its sensor entity with, so the model's TF lookups resolve.
+    let sensor = FrameId::sensor(agent.clone(), aid.input_channel.as_str());
 
     let model = registry
         .build_measurement_model(
             &aid.model.kind,
             MeasurementModelBuildContext {
-                agent_handle,
-                sensor_handle,
+                agent: agent.clone(),
+                sensor,
                 model_config: aid.model.clone(),
             },
         )
@@ -156,6 +149,22 @@ fn build_aiding_handler(
         })?;
 
     let r = DMatrix::from_diagonal(&nalgebra::DVector::from_vec(aid.r_diag.clone()));
+
+    // The measurement's innovation length (its schema dim) and the noise matrix
+    // R must match; otherwise the filter silently skips every update from this
+    // sensor. Catch a mis-sized R here, at build time, rather than as a runtime
+    // no-op that looks like a dead sensor.
+    let schema_dim = model.schema().dim();
+    if schema_dim != r.nrows() {
+        return Err(PipelineAssemblyError::FactoryFailure {
+            node_kind: aid.model.kind.clone(),
+            reason: MeasurementAgreementError::DimensionMismatch {
+                schema_dim,
+                expected: r.nrows(),
+            }
+            .to_string(),
+        });
+    }
 
     // Dispatch on sensor_payload to construct the correctly-typed handler.
     // This list mirrors KNOWN_SENSOR_PAYLOADS in validation.rs and the
@@ -168,15 +177,9 @@ fn build_aiding_handler(
     let handler: Box<dyn AidingHandler> = match aid.sensor_payload.as_str() {
         "GpsPosition" => Box::new(TypedAidingHandler::<GpsPosition>::new(channel, model, r)),
         "GpsVelocity" => Box::new(TypedAidingHandler::<GpsVelocity>::new(channel, model, r)),
-        "LinearAcceleration3D" => Box::new(TypedAidingHandler::<LinearAcceleration3D>::new(
-            channel, model, r,
-        )),
-        "AngularVelocity3D" => Box::new(TypedAidingHandler::<AngularVelocity3D>::new(
-            channel, model, r,
-        )),
-        "MagneticField3D" => Box::new(TypedAidingHandler::<MagneticField3D>::new(
-            channel, model, r,
-        )),
+        "Acceleration" => Box::new(TypedAidingHandler::<Acceleration>::new(channel, model, r)),
+        "AngularRate" => Box::new(TypedAidingHandler::<AngularRate>::new(channel, model, r)),
+        "MagneticField" => Box::new(TypedAidingHandler::<MagneticField>::new(channel, model, r)),
         other => {
             return Err(PipelineAssemblyError::UnknownSensorPayload {
                 estimator_instance: instance_name.to_string(),
@@ -196,12 +199,85 @@ fn build_aiding_channel(aid: &AidingConfig) -> Result<SensorChannel, PipelineAss
     let key = match aid.sensor_payload.as_str() {
         "GpsPosition" => SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(q),
         "GpsVelocity" => SensorChannel::named::<Vec<SensorReading<GpsVelocity>>>(q),
-        "LinearAcceleration3D" => {
-            SensorChannel::named::<Vec<SensorReading<LinearAcceleration3D>>>(q)
-        }
-        "AngularVelocity3D" => SensorChannel::named::<Vec<SensorReading<AngularVelocity3D>>>(q),
-        "MagneticField3D" => SensorChannel::named::<Vec<SensorReading<MagneticField3D>>>(q),
+        "Acceleration" => SensorChannel::named::<Vec<SensorReading<Acceleration>>>(q),
+        "AngularRate" => SensorChannel::named::<Vec<SensorReading<AngularRate>>>(q),
+        "MagneticField" => SensorChannel::named::<Vec<SensorReading<MagneticField>>>(q),
         _ => unreachable!("caller already validated sensor_payload"),
     };
     Ok(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::config::SensorModelConfig;
+
+    // A GPS-position aiding config (a 3-DOF measurement) whose R diagonal has the
+    // given length, reading from a sensor channel named "gps".
+    fn gps_aiding(r_len: usize) -> AidingConfig {
+        AidingConfig {
+            sensor_payload: "GpsPosition".to_string(),
+            model: SensorModelConfig {
+                kind: "gps_position".to_string(),
+                gravity_enu: [0.0, 0.0, -9.81],
+                magnetic_field_enu: None,
+            },
+            input_channel: "gps".to_string(),
+            r_diag: vec![1.0; r_len],
+        }
+    }
+
+    fn agent() -> AgentId {
+        AgentId::new("test_agent")
+    }
+
+    fn sensor_channels() -> HashSet<String> {
+        HashSet::from(["gps".to_string()])
+    }
+
+    // R sized to the measurement schema's dimension builds a handler cleanly.
+    #[test]
+    fn aiding_handler_builds_when_r_matches_schema_dim() {
+        let registry = AutonomyRegistry::default();
+        let handler = build_aiding_handler(
+            "est",
+            &gps_aiding(3),
+            &agent(),
+            &sensor_channels(),
+            &registry,
+        );
+        assert!(handler.is_ok());
+    }
+
+    // A mis-sized R would make every update from this sensor a silent runtime
+    // no-op; the build must reject it instead of producing a dead handler.
+    #[test]
+    fn aiding_handler_rejects_r_of_wrong_dim() {
+        let registry = AutonomyRegistry::default();
+        let result = build_aiding_handler(
+            "est",
+            &gps_aiding(2),
+            &agent(),
+            &sensor_channels(),
+            &registry,
+        );
+        assert!(matches!(
+            result,
+            Err(PipelineAssemblyError::FactoryFailure { .. })
+        ));
+    }
+
+    // An aiding entry naming a channel the host does not publish is rejected at
+    // build time — the loud failure that replaces a silent tick-time TF miss.
+    #[test]
+    fn aiding_handler_rejects_unknown_sensor_channel() {
+        let registry = AutonomyRegistry::default();
+        let result =
+            build_aiding_handler("est", &gps_aiding(3), &agent(), &HashSet::new(), &registry);
+        assert!(matches!(
+            result,
+            Err(PipelineAssemblyError::UnknownSensorChannel { .. })
+        ));
+    }
 }

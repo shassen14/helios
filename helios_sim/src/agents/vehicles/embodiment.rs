@@ -1,9 +1,12 @@
-use crate::core::transforms::EnuBodyPose;
+use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};
 use crate::prelude::*;
 use crate::registry::contexts::{
     CollisionBuildContext, PlantBuildContext, TopologyBuildContext, VisualBuildContext,
 };
 use crate::registry::embodiment::EmbodimentRegistry;
+
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::transforms::Transform as CoreTransform;
 
 use avian3d::prelude::RigidBody;
 
@@ -24,11 +27,21 @@ pub(super) fn build_embodiment(
     registry: Res<EmbodimentRegistry>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    query: Query<(Entity, &GroundTruthState, &SpawnAgentConfigRequest), Without<RigidBody>>,
+    query: Query<
+        (
+            Entity,
+            &GroundTruthState,
+            &SpawnAgentConfigRequest,
+            &AgentIdComponent,
+        ),
+        Without<RigidBody>,
+    >,
 ) {
-    for (entity, ground_truth, request) in &query {
+    for (entity, ground_truth, request, agent_id) in &query {
         let vehicle = &request.0.vehicle;
-        let start_transform = Transform::from(EnuBodyPose(ground_truth.pose));
+        let start_transform = transform_bevy_to_bevy_transform(
+            CoreTransform::<Flu, Enu>::from_isometry(ground_truth.pose).to_bevy(),
+        );
 
         // Topology first — it deposits the body and (later) the mount frames the
         // plant and collision builders read.
@@ -38,6 +51,7 @@ pub(super) fn build_embodiment(
         };
         let mut ctx = TopologyBuildContext {
             entity,
+            agent: agent_id.0.clone(),
             commands: &mut commands,
             config: &vehicle.topology,
             start_transform,

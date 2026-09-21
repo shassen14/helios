@@ -1,88 +1,107 @@
 //! Coordinate frame conversion helpers and the runtime TF tree.
 //!
-//! Provides typed frame newtypes ([`EnuBodyPose`], [`EnuWorldPose`], [`FluLocalPose`],
-//! [`EnuVector`], [`FluVector`]) with `From` impls for converting between ENU/FLU and
-//! Bevy coordinate systems. The [`TfTree`] resource and its update systems are here too.
+//! The vector/point boundary crosses through core's typed frame algebra: the
+//! [`Bevy`] frame marker turns each axis swap into a real `Rotation`, and the
+//! [`ToBevy`] / [`FromBevy`] traits carry any core frame across — dispatched on
+//! the frame type — handing back typed `Point<Bevy>` / `FreeVector<Bevy>` values
+//! that the cast helpers ([`point_bevy_to_vec3`] etc.) copy to `bevy::Vec3` at
+//! the render edge. Poses cross the same way through [`ToBevy`] / [`FromBevy`] on
+//! `Transform<From, To>`, with the [`transform_bevy_to_bevy_transform`] /
+//! [`bevy_transform_to_transform_bevy`] casts at the `bevy::Transform` edge. The
+//! [`TfTree`] resource and its update systems are here too.
 //!
 //! All axis-swap logic is centralized in `bevy_bridge.rs`. Never perform manual axis swaps
 //! (e.g. `v.y = physics.z`) anywhere else in the codebase — every such swap is a latent bug.
 
 mod bevy_bridge;
 mod body_twist;
-mod constants;
-mod frame_types;
 
+pub use bevy_bridge::{
+    bevy_transform_to_transform_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3,
+    transform_bevy_to_bevy_transform, vec3_to_freevector_bevy, vec3_to_point_bevy, Bevy, FromBevy,
+    ToBevy,
+};
 pub use body_twist::enu_twist_to_body_flu;
-pub use frame_types::{EnuBodyPose, EnuVector, EnuWorldPose, FluLocalPose, FluVector};
 
 use bevy::prelude::{GlobalTransform, *};
-use helios_core::frames::transforms::{Convention, ErasedTransform};
+use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::id::FrameScope;
+use helios_core::frames::transforms::{Convention, ErasedTransform, Transform as CoreTransform};
 use helios_core::frames::FrameId;
 use nalgebra::Isometry3;
 use std::collections::HashMap;
-use std::sync::Arc;
 
 // =========================================================================
 // == TF Tree Infrastructure (The "Service") ==
 // =========================================================================
 
-/// A Bevy component to mark any entity that should be tracked by the TF system.
+/// Marks an entity whose pose the TF tree tracks, carrying the frame's
+/// coordinate identity and axis convention as one value.
+///
+/// The [`FrameId`] is the tree's key. Every spawner stamps the same
+/// `(agent, leaf)` the runtime uses to build that frame's `MeasurementModel` —
+/// the leaf is the sensor's channel name for a sensor, `base_link`/`odom` for
+/// the spine — so a reading, its tf edge, and the filter's model all name one
+/// identity. The convention rides along to the [`ErasedTransform`] boundary so a
+/// convention mismatch fails loudly at the typed crossing.
 #[derive(Component)]
-pub struct TrackedFrame(pub Convention);
-
-/// A single named frame's pose snapshot, published to TopicBus after each
-/// physics step so Foxglove can plot any frame's trajectory over time.
-#[derive(Clone, Debug)]
-pub struct TfFramePose {
-    /// Elapsed simulation time (seconds) when this snapshot was taken.
-    pub sim_time: f64,
-    /// Name of this frame (e.g. "truck/imu").
-    pub frame_name: Arc<str>,
-    /// Name of the parent frame; "world" if this is a root frame.
-    pub parent_frame: Arc<str>,
-    // World pose in ENU
-    pub pos_x: f64,
-    pub pos_y: f64,
-    pub pos_z: f64,
-    pub quat_x: f64,
-    pub quat_y: f64,
-    pub quat_z: f64,
-    pub quat_w: f64,
-    // Parent-relative pose (ENU for root frames, FLU for body-mounted sensors)
-    pub local_pos_x: f64,
-    pub local_pos_y: f64,
-    pub local_pos_z: f64,
-    pub local_quat_x: f64,
-    pub local_quat_y: f64,
-    pub local_quat_z: f64,
-    pub local_quat_w: f64,
+pub struct TrackedFrame {
+    pub id: FrameId,
+    pub convention: Convention,
 }
 
-/// The Bevy resource that holds the complete transform graph for a single frame.
+impl TrackedFrame {
+    pub fn new(id: FrameId, convention: Convention) -> Self {
+        Self { id, convention }
+    }
+}
+
+/// One tracked frame's resolved state: its world pose (ENU) and axis
+/// convention. [`TfTree::erased`] composes world poses rather than walking
+/// parents, so a node needs no parent link — the world pose is Bevy's
+/// already-propagated global transform, captured each physics step.
+#[derive(Debug)]
+pub struct FrameNode {
+    world: Isometry3<f64>,
+    convention: Convention,
+}
+
+/// The Bevy resource that holds the complete transform graph, keyed directly by
+/// [`FrameId`].
+///
+/// The hot path ([`erased`](TfTree::erased) → [`resolve`](TfTree::resolve)) is a
+/// single `HashMap<FrameId, _>` lookup per frame. `entity_to_frame` is a cold
+/// reverse index touched only when a `TrackedFrame` is removed: a despawned
+/// `Entity` no longer carries its `FrameId` component, so the eviction path
+/// needs the entity → frame mapping to know which node to drop.
+///
+/// Keying by `FrameId` means **one entity per `(agent, leaf)`** — two entities
+/// stamped with the same `FrameId` collide and the second overwrites the first.
+/// This already holds: one `base_link` per agent, and sensor channel names are
+/// unique per agent (the invariant the `SensorChannel` collision rule enforces).
 #[derive(Resource, Default, Debug)]
 pub struct TfTree {
-    // For fast, internal lookups using the entity ID.
-    transforms_to_world: HashMap<Entity, Isometry3<f64>>,
+    frame_to_node: HashMap<FrameId, FrameNode>,
 
-    frame_conventions: HashMap<Entity, Convention>,
-
-    // Parent-relative poses in ENU (FLU for sensor children).
-    local_transforms: HashMap<Entity, Isometry3<f64>>,
-
-    // Parent entity for each tracked frame; None = world root.
-    parent_map: HashMap<Entity, Option<Entity>>,
-
-    // For user-facing API calls, configuration, and debugging.
-    name_to_entity: HashMap<Arc<str>, Entity>,
-
-    /// Maps a Bevy Entity ID back to its human-readable name for debugging/logging.
-    pub entity_to_name: HashMap<Entity, Arc<str>>,
+    /// Cold `Entity → FrameId` index, touched only on structural add/remove so a
+    /// despawned entity's node can be evicted after its `FrameId` component is
+    /// gone.
+    entity_to_frame: HashMap<Entity, FrameId>,
 
     /// Elapsed simulation time at the last rebuild.
     pub sim_time: f64,
 }
 
 impl TfTree {
+    /// Resolves the transform between two frames at the tree's *current* state.
+    ///
+    /// The tree is latest-only: one pose per frame (the most recent physics
+    /// step), no history and no time index, so every query is answered for
+    /// "now" — which is why there is no time argument here. The estimated tree
+    /// the pipeline reads is a separate, time-buffered `TfBuffer` (the tf2 model:
+    /// binary-search the bracketing samples, slerp/lerp to the requested time,
+    /// error rather than extrapolate out of range); this truth tree stays
+    /// latest-only because sensor generation and viz only ever want "now".
     pub fn erased(&self, from: FrameId, to: FrameId) -> Option<ErasedTransform> {
         let (from_pose, from_conv) = self.resolve(from)?;
 
@@ -93,203 +112,91 @@ impl TfTree {
         Some(ErasedTransform::from_parts(iso, from_conv, to_conv))
     }
 
-    /// Looks up the world pose of a frame by its name.
-    pub fn lookup_by_name(&self, frame_name: &str) -> Option<Isometry3<f64>> {
-        let entity = self.name_to_entity.get(frame_name)?;
-        self.transforms_to_world.get(entity).copied()
-    }
-
-    /// Looks up the world pose of a frame by its Entity ID.
-    pub fn lookup_by_entity(&self, entity: Entity) -> Option<Isometry3<f64>> {
-        self.transforms_to_world.get(&entity).copied()
-    }
-
-    /// Looks up the parent-relative pose of a frame by its Entity ID.
-    pub fn lookup_local_by_entity(&self, entity: Entity) -> Option<Isometry3<f64>> {
-        self.local_transforms.get(&entity).copied()
-    }
-
-    /// Returns an iterator over all tracked frames: `(entity, world_iso, local_iso, parent_entity)`.
-    pub fn iter_frames(
-        &self,
-    ) -> impl Iterator<Item = (Entity, Isometry3<f64>, Isometry3<f64>, Option<Entity>)> + '_ {
-        self.transforms_to_world
-            .iter()
-            .map(|(&entity, &world_iso)| {
-                let local_iso = self
-                    .local_transforms
-                    .get(&entity)
-                    .copied()
-                    .unwrap_or(world_iso);
-                let parent = self.parent_map.get(&entity).copied().flatten();
-                (entity, world_iso, local_iso, parent)
-            })
-    }
-
-    pub fn get_transform_by_name(
-        &self,
-        from_frame: &str,
-        to_frame: &str,
-    ) -> Option<Isometry3<f64>> {
-        let pose_from_world = self.lookup_by_name(from_frame)?;
-        let pose_to_world = self.lookup_by_name(to_frame)?;
-        Some(pose_from_world.inverse() * pose_to_world)
-    }
-
+    /// Resolves one frame to its world pose and convention.
+    ///
+    /// Predicate dispatch over the frame's identity: the shared `World` and —
+    /// until a localizer publishes a `map -> odom` correction — every agent's
+    /// `map`/`odom` root resolve to the identity ENU pose, the world→odom drift
+    /// living in the estimate values rather than these edges. Every other frame
+    /// (a `base_link`, a sensor) is one lookup into the pose store.
     fn resolve(&self, frame: FrameId) -> Option<(Isometry3<f64>, Convention)> {
-        match frame {
-            FrameId::World => Some((Isometry3::identity(), Convention::Enu)),
-            // Odom is the estimator's reference frame. With no map→odom
-            // correction yet, it is coincident with world (identity, ENU); the
-            // world→odom drift lives in the estimate values, not this edge.
-            FrameId::Odom(_) => Some((Isometry3::identity(), Convention::Enu)),
-            FrameId::Body(handle) => {
-                let entity = Entity::from_bits(handle.0);
-                let iso = self.transforms_to_world.get(&entity)?;
-                let convention = self.frame_conventions.get(&entity)?;
-
-                Some((*iso, *convention))
-            }
-            FrameId::Sensor(handle) => {
-                let entity = Entity::from_bits(handle.0);
-                let iso = self.transforms_to_world.get(&entity)?;
-                let convention = self.frame_conventions.get(&entity)?;
-
-                Some((*iso, *convention))
-            }
+        if matches!(frame.scope(), FrameScope::World) {
+            return Some((Isometry3::identity(), Convention::Enu));
         }
+
+        if frame.is_map() || frame.is_odom() {
+            return Some((Isometry3::identity(), Convention::Enu));
+        }
+
+        let node = self.frame_to_node.get(&frame)?;
+
+        Some((node.world, node.convention))
     }
-}
-
-// ---------------------------------------------------------------------------
-// Private helper
-// ---------------------------------------------------------------------------
-
-/// Resolves the parent-relative (local) pose for a tracked entity.
-fn resolve_local_iso(
-    tf_tree: &TfTree,
-    all_transforms: &Query<&GlobalTransform>,
-    child_of: Option<&ChildOf>,
-    world_iso: Isometry3<f64>,
-) -> Isometry3<f64> {
-    let Some(parent_entity) = child_of.map(|c| c.parent()) else {
-        return world_iso;
-    };
-    let parent_world = tf_tree
-        .transforms_to_world
-        .get(&parent_entity)
-        .copied()
-        .or_else(|| {
-            all_transforms
-                .get(parent_entity)
-                .ok()
-                .map(|t| EnuBodyPose::from(t).0)
-        });
-    parent_world
-        .map(|pw| pw.inverse() * world_iso)
-        .unwrap_or(world_iso)
 }
 
 // =========================================================================
 // == Systems ==
 // =========================================================================
 
-/// Handles structural changes to the TF graph: entities gaining or losing `TrackedFrame`.
+/// Handles structural changes to the TF graph: entities gaining or losing
+/// `TrackedFrame`. Keys the pose store by each frame's stamped [`FrameId`] and
+/// records the cold `Entity → FrameId` index the eviction path needs.
 ///
 /// Runs in `SimulationSet::Precomputation`.
 pub fn tf_tree_structural_system(
     mut tf_tree: ResMut<TfTree>,
-    added_query: Query<
-        (Entity, &GlobalTransform, Option<&ChildOf>, &TrackedFrame),
-        Added<TrackedFrame>,
-    >,
-    all_transforms: Query<&GlobalTransform>,
+    added_query: Query<(Entity, &GlobalTransform, &TrackedFrame), Added<TrackedFrame>>,
     mut removed: RemovedComponents<TrackedFrame>,
 ) {
     for entity in removed.read() {
-        tf_tree.transforms_to_world.remove(&entity);
-        tf_tree.local_transforms.remove(&entity);
-        tf_tree.parent_map.remove(&entity);
-        tf_tree.frame_conventions.remove(&entity);
+        if let Some(frame) = tf_tree.entity_to_frame.remove(&entity) {
+            tf_tree.frame_to_node.remove(&frame);
+        }
     }
 
-    if added_query.is_empty() {
-        return;
-    }
-
-    // Pass 1: world pose + parent link for every newly tracked entity.
-    for (entity, gt, child_of, tracked) in &added_query {
-        tf_tree
-            .transforms_to_world
-            .insert(entity, EnuBodyPose::from(gt).0);
-
-        tf_tree
-            .parent_map
-            .insert(entity, child_of.map(|c| c.parent()));
-
-        tf_tree.frame_conventions.insert(entity, tracked.0);
-    }
-
-    // Pass 2: local pose — requires pass 1 complete so parent world poses are present.
-    for (entity, _, child_of, _) in &added_query {
-        let world_iso = tf_tree.transforms_to_world[&entity];
-        let local_iso = resolve_local_iso(&tf_tree, &all_transforms, child_of, world_iso);
-        tf_tree.local_transforms.insert(entity, local_iso);
+    for (entity, gt, tracked) in &added_query {
+        let world: CoreTransform<Flu, Enu> =
+            bevy_transform_to_transform_bevy(gt.compute_transform()).from_bevy();
+        let frame = tracked.id.clone();
+        tf_tree.entity_to_frame.insert(entity, frame.clone());
+        tf_tree.frame_to_node.insert(
+            frame,
+            FrameNode {
+                world: world.into_inner(),
+                convention: tracked.convention,
+            },
+        );
     }
 }
 
-/// Incrementally updates world and local poses for any `TrackedFrame` whose
+/// Incrementally refreshes the world pose of any `TrackedFrame` whose
 /// `GlobalTransform` changed since this system last ran.
 ///
 /// Registered **twice** in the schedule:
 /// - `SimulationSet::Precomputation` — captures first-tick initialization.
 /// - `SimulationSet::StateSync` — runs immediately after Avian3D's physics step.
-#[allow(clippy::type_complexity)]
+///
+/// The structural system owns node creation; this one only updates, so `get_mut`
+/// leaves the convention untouched and skips any entity the structural system
+/// has not created yet. On the tick a frame first appears, the structural system
+/// (chained before this in `Precomputation`) creates the node fully from the
+/// same `GlobalTransform`, so the end state is correct.
 pub fn tf_tree_incremental_update_system(
     mut tf_tree: ResMut<TfTree>,
-    changed_query: Query<
-        (Entity, &GlobalTransform, Option<&ChildOf>),
-        (With<TrackedFrame>, Changed<GlobalTransform>),
-    >,
-    all_transforms: Query<&GlobalTransform>,
+    changed_query: Query<(&GlobalTransform, &TrackedFrame), Changed<GlobalTransform>>,
     time: Res<Time>,
 ) {
     if changed_query.is_empty() {
         return;
     }
 
-    // Pass 1: world poses + parent links.
-    for (entity, gt, child_of) in &changed_query {
-        tf_tree
-            .transforms_to_world
-            .insert(entity, EnuBodyPose::from(gt).0);
-        tf_tree
-            .parent_map
-            .insert(entity, child_of.map(|c| c.parent()));
-    }
-
-    // Pass 2: local poses — parent world poses already updated in pass 1.
-    for (entity, _, child_of) in &changed_query {
-        let world_iso = tf_tree.transforms_to_world[&entity];
-        let local_iso = resolve_local_iso(&tf_tree, &all_transforms, child_of, world_iso);
-        tf_tree.local_transforms.insert(entity, local_iso);
+    for (gt, tracked) in &changed_query {
+        let world: CoreTransform<Flu, Enu> =
+            bevy_transform_to_transform_bevy(gt.compute_transform()).from_bevy();
+        if let Some(node) = tf_tree.frame_to_node.get_mut(&tracked.id) {
+            node.world = world.into_inner();
+        }
     }
 
     tf_tree.sim_time = time.elapsed_secs_f64();
-}
-
-/// System that runs ONCE to build the static name-to-entity mappings.
-pub fn build_static_tf_maps(
-    mut tf_tree: ResMut<TfTree>,
-    query: Query<(Entity, &Name), With<TrackedFrame>>,
-) {
-    info!("Building static TF name maps...");
-    tf_tree.name_to_entity.clear();
-    tf_tree.entity_to_name.clear();
-
-    for (entity, name) in &query {
-        let frame_name: Arc<str> = Arc::from(name.as_str());
-        tf_tree.name_to_entity.insert(frame_name.clone(), entity);
-        tf_tree.entity_to_name.insert(entity, frame_name);
-    }
 }

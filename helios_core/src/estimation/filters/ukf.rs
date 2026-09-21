@@ -1,8 +1,8 @@
 use crate::data::ports::TfProvider;
 use crate::data::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
-use crate::estimation::measurement::MeasurementModel;
-use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
+use crate::estimation::measurement::{MeasurementModel, Prediction};
+use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
 use crate::frames::FrameAwareState;
 use crate::utils::integrators::RK4;
 
@@ -191,10 +191,25 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         r: &DMatrix<f64>,
         tf: Option<&dyn TfProvider>,
         at: MonotonicTime,
-    ) {
-        let m = model.dim();
-        if z.nrows() != m || r.nrows() != m || r.ncols() != m {
-            return;
+    ) -> UpdateOutcome {
+        // The incoming measurement is the authoritative length (also needed up
+        // front to size the propagated sigma points below); the model no longer
+        // declares one. A shape guard against a crash, not the semantic check —
+        // that ran once at build time against the measurement schema.
+        let m = z.nrows();
+        if r.nrows() != m || r.ncols() != m {
+            return UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch);
+        }
+
+        // Classify once, on the mean, before touching the sigma set. The tf
+        // lookup and required state blocks do not depend on the perturbed mean,
+        // so a model that declines here declines for every sigma point too.
+        // Probing up front turns what was a silent per-column zeroing (fusing a
+        // fabricated all-zero measurement, corrupting the state) into a clean
+        // whole-update skip that carries the reason. Only the variant is
+        // consulted; the predicted vector is re-derived per sigma point below.
+        if let Prediction::Unavailable(reason) = model.predict_measurement(&self.state, tf, at) {
+            return UpdateOutcome::Skipped(SkipReason::Model(reason));
         }
 
         let t = self.state.tangent_dim();
@@ -207,7 +222,9 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         for i in 0..(2 * t + 1) {
             self.scratch_state.mean.copy_from(&self.sigma_buf.column(i));
 
-            if let Some(z_point) = model.predict_measurement(&self.scratch_state, tf, at) {
+            if let Prediction::Ready(z_point) =
+                model.predict_measurement(&self.scratch_state, tf, at)
+            {
                 if z_point.nrows() == m {
                     measurement_points.column_mut(i).copy_from(&z_point);
                 }
@@ -246,7 +263,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         // guard the old inverse's None branch gave. Clone because S (innovation_cov)
         // is reused in the covariance downdate below.
         let Some(s_chol) = innovation_cov.clone().cholesky() else {
-            return;
+            return UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite);
         };
 
         // Kalman gain K = P_xz S⁻¹ (t × m), with P_xz the state–measurement cross-
@@ -265,6 +282,8 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
                 self.state.covariance[(j, i)] = avg;
             }
         }
+
+        UpdateOutcome::Applied
     }
 
     fn state(&self) -> &FrameAwareState {
@@ -276,10 +295,10 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
 mod tests {
     use super::*;
     use crate::data::ports::TfProvider;
-    use crate::data::MonotonicTime;
-    use crate::estimation::measurement::MeasurementModel;
-    use crate::estimation::schema::{SchemaBlock, StateSchema};
-    use crate::estimation::EstimatorInputs;
+    use crate::data::{AgentId, MonotonicTime};
+    use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
+    use crate::estimation::schema::{MeasurementSchema, StateSchema, StateSchemaBlock};
+    use crate::estimation::{EstimatorInputs, SkipReason, UpdateOutcome};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId};
     use crate::state::Quantity;
@@ -304,6 +323,57 @@ mod tests {
         }
     }
 
+    /// A provider that is present but resolves no edges — the shape of the
+    /// historical silent-aiding-drop bug (broken tf graph / mislabelled frame).
+    struct NoEdgeTf;
+
+    impl TfProvider for NoEdgeTf {
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            None
+        }
+    }
+
+    /// A model that needs the sensor→base_link edge and reports
+    /// [`Unavailable::MissingTransform`] when the provider cannot resolve it. Used
+    /// to drive the UKF's pre-loop probe: the reason is uniform across sigma
+    /// points, so the whole update must skip rather than fuse zeroed columns.
+    struct LeverArmDependent {
+        sensor: FrameId,
+        base: FrameId,
+    }
+
+    impl MeasurementModel for LeverArmDependent {
+        fn schema(&self) -> MeasurementSchema {
+            unimplemented!("the probe test never consults the schema")
+        }
+
+        fn predict_measurement(
+            &self,
+            _state: &FrameAwareState,
+            tf: Option<&dyn TfProvider>,
+            at: MonotonicTime,
+        ) -> Prediction {
+            let Some(tf) = tf else {
+                return Prediction::Unavailable(Unavailable::NoProvider);
+            };
+            if tf
+                .get_transform(self.sensor.clone(), self.base.clone(), at)
+                .is_none()
+            {
+                return Prediction::Unavailable(Unavailable::MissingTransform {
+                    from: self.sensor.clone(),
+                    to: self.base.clone(),
+                });
+            }
+            Prediction::Ready(DVector::zeros(2))
+        }
+    }
+
     /// 3D constant-velocity dynamics: state = [px, py, pz, vx, vy, vz]. The Z
     /// axis carries no velocity in these tests (vz stays 0), so pz is constant —
     /// the model is 3D only because [`Quantity`] blocks are 3D, not because the
@@ -318,14 +388,16 @@ mod tests {
 
         fn schema(&self) -> std::sync::Arc<StateSchema> {
             std::sync::Arc::new(StateSchema::compose(vec![
-                SchemaBlock::new(
-                    Quantity::Position(FrameId::World),
+                StateSchemaBlock::new(
+                    Quantity::Position(FrameId::world()),
+                    Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),
                 ),
-                SchemaBlock::new(
-                    Quantity::Velocity(FrameId::World),
+                StateSchemaBlock::new(
+                    Quantity::Velocity(FrameId::world()),
+                    Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),
@@ -346,8 +418,14 @@ mod tests {
     struct Position2DMeasurement;
 
     impl MeasurementModel for Position2DMeasurement {
-        fn dim(&self) -> usize {
-            2
+        // A 2D position observes only x and y. A `Position` quantity is a whole
+        // 3-vector, so no honest block yields dim 2 — partial-component
+        // measurements are not yet expressible as a schema block. The update
+        // tests never ask this mock for a schema, so the gap is recorded, not hit.
+        fn schema(&self) -> MeasurementSchema {
+            unimplemented!(
+                "2D (partial-component) position measurement has no MeasurementSchema block yet"
+            )
         }
 
         fn predict_measurement(
@@ -355,8 +433,8 @@ mod tests {
             state: &FrameAwareState,
             _tf: Option<&dyn TfProvider>,
             _at: MonotonicTime,
-        ) -> Option<DVector<f64>> {
-            Some(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
+        ) -> Prediction {
+            Prediction::Ready(DVector::from_row_slice(&[state.mean[0], state.mean[1]]))
         }
 
         fn jacobian(
@@ -427,11 +505,42 @@ mod tests {
         let model = Position2DMeasurement;
         let r = gps_r();
 
-        ukf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
+        let outcome = ukf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
 
+        assert_eq!(outcome, UpdateOutcome::Applied);
         let px = ukf.state().mean[0];
         assert!(px > 0.0);
         assert!(px < 5.0);
+    }
+
+    #[test]
+    fn update_with_missing_tf_skips_and_leaves_state_untouched() {
+        // The provider is present but the lever-arm edge does not resolve. The
+        // pre-loop probe must classify this once and skip the whole update —
+        // the old per-sigma zeroing would have fused an all-zero measurement and
+        // dragged the state toward the origin. Assert both the reported reason
+        // and that the estimate is byte-for-byte unmoved.
+        let mut ukf = make_ukf(3.0, 0.0);
+        let agent = AgentId::new("test_agent");
+        let model = LeverArmDependent {
+            sensor: FrameId::sensor(agent.clone(), "gps_antenna"),
+            base: FrameId::base_link(agent),
+        };
+        let r = gps_r();
+        let mean_before = ukf.state().mean.clone();
+        let cov_before = ukf.state().covariance.clone();
+
+        let outcome = ukf.update(&gps_z(0.0, 0.0), &model, &r, Some(&NoEdgeTf), AT);
+
+        assert_eq!(
+            outcome,
+            UpdateOutcome::Skipped(SkipReason::Model(Unavailable::MissingTransform {
+                from: FrameId::sensor(AgentId::new("test_agent"), "gps_antenna"),
+                to: FrameId::base_link(AgentId::new("test_agent")),
+            }))
+        );
+        assert_eq!(ukf.state().mean, mean_before);
+        assert_eq!(ukf.state().covariance, cov_before);
     }
 
     #[test]

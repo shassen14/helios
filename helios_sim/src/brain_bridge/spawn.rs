@@ -1,38 +1,49 @@
 use crate::brain_bridge::components::{
     AgentIdComponent, AutonomyPipelineComponent, MissionGoalChannels, OdomFrameOf,
-    PipelineBuildFailed, SensorPublishChannel, TeleopControlled,
+    PipelineBuildFailed, SensorPublishChannel, TeleopControlled, TfServiceComponent,
 };
 use crate::core::components::{ActuatorCommandComponent, ControllerStateSource};
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
 use helios_core::control::actuators::ActuatorCommand;
-use helios_core::data::primitives::FrameHandle;
-use helios_core::frames::transforms::Convention;
+use helios_core::data::{AgentId, MonotonicTime};
+use helios_core::frames::transforms::tf::stamped::StampedTransform;
+use helios_core::frames::transforms::{Convention, ErasedTransform};
+use helios_core::frames::FrameId;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::config::ReferenceSource;
+use helios_runtime::tf_service::TfService;
 use helios_runtime::{
     build_pipeline, check_actuation_agreement, AutonomyStack, BodyCapabilities, Provenance,
     PublishedChannel,
 };
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashSet};
 
 /// Spawns the autonomy pipeline for agents with real estimation.
 ///
 /// Queries each agent's sensor children for `SensorPublishChannel` to build
-/// the channel→FrameHandle map passed to `build_pipeline()`.
+/// the set of sensor channel names passed to `build_pipeline()`.
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
-    agent_query: Query<(Entity, &SpawnAgentConfigRequest, &Children)>,
+    agent_query: Query<(
+        Entity,
+        &SpawnAgentConfigRequest,
+        &AgentIdComponent,
+        &Children,
+    )>,
     channel_query: Query<&SensorPublishChannel>,
     registry: Res<RuntimeAutonomyRegistry>,
 ) {
     let _span = tracing::info_span!("sim.scene_build.autonomy").entered();
-    for (agent_entity, request, children) in &agent_query {
+    for (agent_entity, request, agent_id, children) in &agent_query {
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
-        let agent_handle = FrameHandle::from_entity(agent_entity);
+        // The canonical scope stamped on the shell at `CreateRequests`; the
+        // assembler builds every sensor's `FrameId::sensor(agent, channel)` from
+        // it, matching what the sensor spawners stamped on the tf tree.
+        let agent = agent_id.0.clone();
 
         if let Err(mismatches) = check_actuation_agreement(stack, &agent_config.vehicle.actuation) {
             for mismatch in &mismatches {
@@ -42,23 +53,19 @@ pub fn spawn_autonomy_pipeline(
                     mismatch
                 );
             }
-            commands
-                .entity(agent_entity)
-                .insert(AgentIdComponent(agent_config.name().to_string()))
-                .insert(PipelineBuildFailed {
-                    errors: mismatches.iter().map(|m| m.to_string()).collect(),
-                });
+            commands.entity(agent_entity).insert(PipelineBuildFailed {
+                errors: mismatches.iter().map(|m| m.to_string()).collect(),
+            });
             continue;
         }
 
-        let sensor_frame_handles: HashMap<String, FrameHandle> = children
+        // The set of sensor channel names this agent's host publishes. The
+        // assembler builds each sensor's `FrameId::sensor(agent, channel)` from
+        // these names — the same identity the sensor spawners stamp on the tf
+        // tree — so the map of old is now just the name set.
+        let sensor_channels: HashSet<String> = children
             .iter()
-            .filter_map(|child| {
-                channel_query
-                    .get(child)
-                    .ok()
-                    .map(|ch| (ch.0.clone(), FrameHandle::from_entity(child)))
-            })
+            .filter_map(|child| channel_query.get(child).ok().map(|ch| ch.0.clone()))
             .collect();
 
         let host_capabilities = build_host_body_capabilities(agent_config.name());
@@ -70,18 +77,31 @@ pub fn spawn_autonomy_pipeline(
         match build_pipeline(
             stack,
             &registry.0,
-            agent_handle,
-            &sensor_frame_handles,
+            agent.clone(),
+            &sensor_channels,
             host_capabilities,
         ) {
             Ok(pipeline) => {
-                // Insert the id in the same chain as the pipeline so the test
-                // bridge's `(&AgentId, &AutonomyPipelineComponent)` query can
-                // never see one without the other.
-                let mut cmds = commands.entity(agent_entity);
+                // `AgentIdComponent` is already on the shell (stamped at
+                // `CreateRequests`), so the test bridge's
+                // `(&AgentIdComponent, &AutonomyPipelineComponent)` query still
+                // never sees a pipeline without its identity.
+                //
+                // The TfService is seeded with the static sensor mounts and
+                // drains exactly the tf-edge channels this pipeline declares, so
+                // its estimated tree is fed only by the graph's own producers —
+                // never the sim's truth tree.
+                let window = stack.tf.to_window();
+                let drain_keys = pipeline.tf_edge_channels();
+                let static_seeds = build_static_seeds(agent_config, &agent);
 
-                cmds.insert(AgentIdComponent(agent_config.name().to_string()))
-                    .insert(AutonomyPipelineComponent(pipeline));
+                let mut cmds = commands.entity(agent_entity);
+                cmds.insert(AutonomyPipelineComponent(pipeline));
+                cmds.insert(TfServiceComponent(TfService::new(
+                    window,
+                    drain_keys,
+                    static_seeds,
+                )));
 
                 if !goal_channels.is_empty() {
                     cmds.insert(MissionGoalChannels(goal_channels.into_iter().collect()));
@@ -110,36 +130,60 @@ pub fn spawn_autonomy_pipeline(
                 // Mark the agent so the failure outlives the log line. The
                 // agent gets no pipeline, so nothing downstream would
                 // otherwise notice it is inert.
-                commands
-                    .entity(agent_entity)
-                    .insert(AgentIdComponent(agent_config.name().to_string()))
-                    .insert(PipelineBuildFailed {
-                        errors: errors.iter().map(|e| e.to_string()).collect(),
-                    });
+                commands.entity(agent_entity).insert(PipelineBuildFailed {
+                    errors: errors.iter().map(|e| e.to_string()).collect(),
+                });
             }
         }
     }
 }
 
+/// The static transform edges seeding this agent's estimated tf buffer: one
+/// `base_link → sensor` mount per sensor frame, built from the same sensor
+/// configs the sensor spawners read.
+///
+/// Single-sourcing the mount here (rather than reading it back off the truth
+/// tree) is what keeps the estimated and truth trees from disagreeing on a mount
+/// while leaving the estimated buffer structurally unable to reach the truth
+/// tree. Each mount is time-invariant, so it is stamped at `t = 0` and folded
+/// once when the [`TfService`] is constructed. The pose is `sensor` expressed in
+/// `base_link` (FLU); `from_parts` takes the sensor's own convention first, the
+/// `base_link` convention (FLU) second.
+fn build_static_seeds(agent_config: &AgentConfig, agent: &AgentId) -> Vec<StampedTransform> {
+    let base_link = FrameId::base_link(agent.clone());
+
+    agent_config
+        .sensors
+        .values()
+        .flat_map(|sensor| sensor.frame_mounts())
+        .map(|(channel, pose, convention)| StampedTransform {
+            child: FrameId::sensor(agent.clone(), channel),
+            parent: base_link.clone(),
+            stamp: MonotonicTime(0.0),
+            transform: ErasedTransform::from_parts(pose.to_isometry(), convention, Convention::Flu),
+        })
+        .collect()
+}
+
 /// Spawns odom frame entities for agents that have an `AutonomyPipelineComponent`.
 pub fn spawn_odom_frames(
     mut commands: Commands,
-    agent_query: Query<(Entity, &SpawnAgentConfigRequest), With<AutonomyPipelineComponent>>,
+    agent_query: Query<(Entity, &AgentIdComponent), With<AutonomyPipelineComponent>>,
 ) {
-    for (agent_entity, request) in &agent_query {
-        let agent_name = request.0.name();
+    for (agent_entity, agent_id) in &agent_query {
+        let agent = &agent_id.0;
         commands.spawn((
-            Name::new(format!("{}/odom", agent_name)),
+            Name::new(format!("{}/odom", agent)),
             // ENU because the estimator's world frame is ENU. This is a property
             // of the estimation stack, not the vehicle — every agent's odom shares
             // it regardless of body convention. A future NED-world estimator would
             // make this configurable at the estimator layer, not per vehicle.
-            TrackedFrame(Convention::Enu),
+            TrackedFrame::new(FrameId::odom(agent.clone()), Convention::Enu),
             Transform::IDENTITY,
             GlobalTransform::IDENTITY,
             OdomFrameOf(agent_entity),
         ));
-        info!("[OdomFrame] Spawned odom frame for '{}'", agent_name);
+        info!("[OdomFrame] Spawned odom frame for '{}'", agent);
     }
 }
 
@@ -223,6 +267,8 @@ mod tests {
     use super::*;
 
     use helios_runtime::config::SearchPlannerConfig;
+
+    use std::collections::HashMap;
 
     /// A minimal `AStar` planner whose only field that matters here is its goal
     /// channel — the rest are defaults, present only because the variant requires
