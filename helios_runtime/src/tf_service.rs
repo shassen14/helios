@@ -69,6 +69,19 @@ impl TfService {
         &self.buffer
     }
 
+    /// The concrete buffer, for the viz to enumerate the tree's topology.
+    ///
+    /// A read-only convenience off the pipeline path, and the one accessor that
+    /// widens the surface past the `TfProvider` firewall. The autonomy pipeline
+    /// still queries exclusively through [`as_provider`](Self::as_provider), so
+    /// it can never satisfy an estimated lookup from anything but the erased
+    /// query contract. This wider borrow exists only so an out-of-band reader —
+    /// the tf overlay — can walk the tree's shape via [`TfBuffer::edges`];
+    /// nothing on the pipeline path calls it.
+    pub fn buffer(&self) -> &TfBuffer {
+        &self.buffer
+    }
+
     /// Drain every edge's freshest sample into the buffer, once.
     pub fn fold(&mut self, bus: &PortBus) {
         // Split the mutable borrow of `self` into its two fields up front:
@@ -121,7 +134,7 @@ mod tests {
 
     use helios_core::data::{AgentId, MonotonicDuration};
     use helios_core::frames::id::FrameId;
-    use helios_core::frames::transforms::tf::stamped::FrameEdge;
+    use helios_core::frames::transforms::tf::stamped::{EdgeKindTag, FrameEdge};
     use helios_core::frames::transforms::{Convention, ErasedTransform};
 
     use nalgebra::Isometry3;
@@ -333,5 +346,39 @@ mod tests {
             .as_provider()
             .get_transform(base_link(), map(), MonotonicTime(1.0));
         assert!(tf.is_some());
+    }
+
+    #[test]
+    fn buffer_enumerates_seeded_and_folded_edges() {
+        // The viz reaches topology through `buffer().edges()`. A static mount
+        // seeded at construction and a dynamic edge folded from the bus must both
+        // appear, each tagged by kind — the estimated tree's shape as the overlay
+        // sees it, off the `as_provider` lookup path.
+        let mount = message(
+            sensor("lidar"),
+            base_link(),
+            Convention::Flu,
+            Convention::Flu,
+            0.0,
+            0.1,
+        );
+        let key = edge_key(base_link(), odom());
+        let mut service = TfService::new(window(), vec![key.clone()], vec![mount]);
+        let bus = edge_bus(vec![key]);
+        publish(&bus, bl_odom(1.0, 2.0), 1.0);
+
+        service.fold(&bus);
+
+        let edges = service.buffer().edges();
+        assert_eq!(edges.len(), 2, "the seeded mount and the folded edge");
+
+        // Order is unspecified (HashMap walk), so assert by membership.
+        let has = |child: FrameId, parent: FrameId, tag: EdgeKindTag| {
+            edges
+                .iter()
+                .any(|(e, k)| e.child == child && e.parent == parent && *k == tag)
+        };
+        assert!(has(sensor("lidar"), base_link(), EdgeKindTag::Static));
+        assert!(has(base_link(), odom(), EdgeKindTag::Dynamic));
     }
 }

@@ -194,6 +194,35 @@ impl TfBuffer {
         Ok(())
     }
 
+    /// Every edge in the tree paired with its kind, for topology display.
+    ///
+    /// A viz-only convenience off the lookup path: it hands back the tree's
+    /// *shape* — which frames connect and whether each edge is static or
+    /// dynamic — and nothing else. Poses are deliberately not returned; a caller
+    /// fetches those through [`lookup`](Self::lookup) with [`TfQuery::Latest`],
+    /// keeping "enumeration is topology, lookup is pose" a clean split and never
+    /// leaking the stored isometries or sample history. The kind is collapsed to
+    /// its [`EdgeKindTag`] for that same reason — the caller only needs to know
+    /// static-vs-dynamic to route the pose it fetches separately.
+    ///
+    /// Order is unspecified: it walks a `HashMap`, so iteration order is not
+    /// stable across runs. A caller that needs a deterministic layout sorts the
+    /// result itself.
+    pub fn edges(&self) -> Vec<(FrameEdge, EdgeKindTag)> {
+        self.child_to_parent
+            .iter()
+            .map(|(child, (parent, kind))| {
+                (
+                    FrameEdge {
+                        child: child.clone(),
+                        parent: parent.clone(),
+                    },
+                    kind.tag(),
+                )
+            })
+            .collect()
+    }
+
     /// The transform from `from` to `to` at the queried time, composed across the
     /// tree the folded edges describe.
     ///
@@ -252,12 +281,12 @@ impl TfBuffer {
 
         // Phase 1 — find the meeting point structurally, sampling nothing. Chains
         // that never share a frame belong to separate trees: `Disconnected`.
-        let lca = self
-            .lowest_common_ancestor(from, to)
-            .ok_or_else(|| TfLookupError::Disconnected {
-                from: from.clone(),
-                to: to.clone(),
-            })?;
+        let lca =
+            self.lowest_common_ancestor(from, to)
+                .ok_or_else(|| TfLookupError::Disconnected {
+                    from: from.clone(),
+                    to: to.clone(),
+                })?;
 
         // Phase 2 — sample only the edges each side crosses to reach the LCA, and
         // no further. `OutOfTimeRange` can surface here, but only for an edge on
@@ -482,7 +511,10 @@ impl TfBuffer {
         let mut a_chain: HashSet<FrameId> = HashSet::new();
         let mut cursor = Some(a.clone());
         while let Some(frame) = cursor {
-            cursor = self.child_to_parent.get(&frame).map(|(parent, _)| parent.clone());
+            cursor = self
+                .child_to_parent
+                .get(&frame)
+                .map(|(parent, _)| parent.clone());
             a_chain.insert(frame);
         }
 
@@ -493,7 +525,10 @@ impl TfBuffer {
             if a_chain.contains(&frame) {
                 return Some(frame);
             }
-            cursor = self.child_to_parent.get(&frame).map(|(parent, _)| parent.clone());
+            cursor = self
+                .child_to_parent
+                .get(&frame)
+                .map(|(parent, _)| parent.clone());
         }
         None
     }
@@ -527,7 +562,8 @@ impl TfBuffer {
 
         // `start → start` identity seeds the accumulator; if `start == target` it
         // is the answer, and no edge is sampled.
-        let mut running = ErasedTransform::from_parts(Isometry3::identity(), *start_conv, *start_conv);
+        let mut running =
+            ErasedTransform::from_parts(Isometry3::identity(), *start_conv, *start_conv);
         let mut cursor = start;
 
         while cursor != target {
@@ -964,8 +1000,14 @@ mod tests {
         let gps = mount(&mut buf, "gps", 0.5);
 
         // No query is even passed: LCA is purely structural.
-        assert_eq!(buf.lowest_common_ancestor(&base_link(), &gps), Some(base_link()));
-        assert_eq!(buf.lowest_common_ancestor(&gps, &base_link()), Some(base_link()));
+        assert_eq!(
+            buf.lowest_common_ancestor(&base_link(), &gps),
+            Some(base_link())
+        );
+        assert_eq!(
+            buf.lowest_common_ancestor(&gps, &base_link()),
+            Some(base_link())
+        );
     }
 
     // --- accumulate ---
@@ -1331,6 +1373,59 @@ mod tests {
         assert!(buf.insert_dynamic(bl_odom(5.0, 5.0)).is_ok());
         assert!(buf.insert_dynamic(bl_odom(3.0, 3.0)).is_ok());
         assert_stamps(edge_kind(&buf, &base_link()), &[5.0]);
+    }
+
+    // --- edges (topology enumeration) ---
+
+    #[test]
+    fn edges_reports_every_edge_tagged_by_kind() {
+        // A tree with one static mount (sensor -> base_link) and one dynamic
+        // edge (base_link -> odom). `edges` returns both, each carrying only its
+        // kind tag, and the count is one entry per stored edge.
+        let mut buf = TfBuffer::new(window());
+        let mount = stamped(
+            sensor("imu"),
+            base_link(),
+            Convention::Flu,
+            Convention::Flu,
+            0.0,
+            iso_x(1.0),
+        );
+        assert!(buf.insert_static(mount).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+
+        let edges = buf.edges();
+        assert_eq!(edges.len(), 2, "one entry per stored edge");
+
+        // Order is unspecified (HashMap walk), so assert by membership.
+        let has = |child: FrameId, parent: FrameId, tag: EdgeKindTag| {
+            edges
+                .iter()
+                .any(|(e, k)| e.child == child && e.parent == parent && *k == tag)
+        };
+        assert!(has(sensor("imu"), base_link(), EdgeKindTag::Static));
+        assert!(has(base_link(), odom(), EdgeKindTag::Dynamic));
+    }
+
+    #[test]
+    fn edges_collapses_the_kind_to_its_tag_only() {
+        // The full `EdgeKind` payload (the isometry, the sample history) must not
+        // leak through enumeration; a dynamic edge with many samples still yields
+        // exactly one entry, tagged Dynamic, with no history attached.
+        let mut buf = TfBuffer::new(window());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(2.0, 2.0)).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(3.0, 3.0)).is_ok());
+
+        let edges = buf.edges();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].1, EdgeKindTag::Dynamic);
+    }
+
+    #[test]
+    fn edges_is_empty_on_a_fresh_buffer() {
+        // No edges folded yet: an empty topology, not an error.
+        assert!(TfBuffer::new(window()).edges().is_empty());
     }
 
     // --- validate (shared front) ---

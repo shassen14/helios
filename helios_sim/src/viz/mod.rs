@@ -14,6 +14,8 @@ use crate::{
             map::{ensure_map_visible, map_update_system, toggle_map_visibility},
             path::path_update_system,
             pose::pose_update_system,
+            tf::{tf_overlay_system, tf_overlay_visible, toggle_tf_overlay, TfOverlayVisible},
+            tf_labels::tf_label_system,
         },
     },
 };
@@ -44,6 +46,7 @@ impl Plugin for VizPlugin {
             register_viz_actions.in_set(InteractionSet::Registration),
         );
 
+        // estimation
         app.add_systems(
             Update,
             (
@@ -51,6 +54,21 @@ impl Plugin for VizPlugin {
                 estimate_update_system,
                 path_update_system,
                 map_update_system,
+            )
+                .in_set(VizSet::Live)
+                .run_if(in_state(AppState::Running)),
+        );
+
+        // tf — master toggle off by default; the overlay gizmos are gated by it,
+        // while the retained label system stays scheduled and reconciles itself
+        // off (it can't be skipped without leaking its entities).
+        app.init_resource::<TfOverlayVisible>();
+        app.add_systems(
+            Update,
+            (
+                toggle_tf_overlay,
+                tf_overlay_system.run_if(tf_overlay_visible),
+                tf_label_system,
             )
                 .in_set(VizSet::Live)
                 .run_if(in_state(AppState::Running)),
