@@ -222,7 +222,8 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         for i in 0..(2 * t + 1) {
             self.scratch_state.mean.copy_from(&self.sigma_buf.column(i));
 
-            if let Prediction::Ready(z_point) = model.predict_measurement(&self.scratch_state, tf, at)
+            if let Prediction::Ready(z_point) =
+                model.predict_measurement(&self.scratch_state, tf, at)
             {
                 if z_point.nrows() == m {
                     measurement_points.column_mut(i).copy_from(&z_point);

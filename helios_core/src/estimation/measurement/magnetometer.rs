@@ -184,7 +184,11 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            let iso = if from.is_sensor() { self.0 } else { self.0.inverse() };
+            let iso = if from.is_sensor() {
+                self.0
+            } else {
+                self.0.inverse()
+            };
             Some(ErasedTransform::from_parts(
                 iso,
                 Convention::Flu,

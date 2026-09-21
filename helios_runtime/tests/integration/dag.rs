@@ -677,11 +677,7 @@ fn tf_edge_channels_returns_only_declared_tf_edges() {
             edge_key.clone(),
             0,
         )))
-        .add_node(Box::new(ProducerNode::new(
-            "state_producer",
-            plain_key,
-            0,
-        )))
+        .add_node(Box::new(ProducerNode::new("state_producer", plain_key, 0)))
         .build()
         .expect("two independent producers on distinct channels build");
 

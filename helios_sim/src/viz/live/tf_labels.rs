@@ -159,9 +159,7 @@ pub(crate) fn tf_label_system(
                             .ok()
                     },
                 ) {
-                    Some(viewport) => {
-                        on_screen.push((edge.child, viewport + tuning.screen_offset))
-                    }
+                    Some(viewport) => on_screen.push((edge.child, viewport + tuning.screen_offset)),
                     None => off_screen.push(edge.child),
                 }
             }

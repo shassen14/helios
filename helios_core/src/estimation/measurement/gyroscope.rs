@@ -163,7 +163,11 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            let iso = if from.is_sensor() { self.0 } else { self.0.inverse() };
+            let iso = if from.is_sensor() {
+                self.0
+            } else {
+                self.0.inverse()
+            };
             Some(ErasedTransform::from_parts(
                 iso,
                 Convention::Flu,
@@ -260,7 +264,10 @@ mod tests {
             DMatrix::identity(3, 3),
         )]);
         let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
-        for (component, value) in [Component::X, Component::Y, Component::Z].into_iter().zip(omega) {
+        for (component, value) in [Component::X, Component::Y, Component::Z]
+            .into_iter()
+            .zip(omega)
+        {
             state.set_variable(
                 &StateVariable::new(Quantity::AngularVelocity(body.clone()), component),
                 value,

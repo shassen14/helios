@@ -300,7 +300,10 @@ mod tests {
 
         assert_eq!(t.triad_len, 2.0);
         assert_eq!(t.divergence_color, Color::srgb(0.0, 1.0, 0.0));
-        assert_eq!(t.truth_triad_len, TfOverlayTuning::default().truth_triad_len);
+        assert_eq!(
+            t.truth_triad_len,
+            TfOverlayTuning::default().truth_triad_len
+        );
     }
 
     #[test]
