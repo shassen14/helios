@@ -7,6 +7,7 @@ pub mod registration;
 pub mod sampling;
 pub mod selection;
 pub mod teleop;
+pub mod tf_panel;
 pub mod tuning;
 
 use crate::viz::interaction::{

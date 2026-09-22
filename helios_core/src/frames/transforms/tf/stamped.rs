@@ -114,6 +114,13 @@ pub enum EdgeKindTag {
     Dynamic,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DynamicEdgeStats {
+    pub newest: MonotonicTime,
+    pub oldest: MonotonicTime,
+    pub sample_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::FrameEdge;
