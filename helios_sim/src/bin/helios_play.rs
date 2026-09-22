@@ -21,6 +21,7 @@ use helios_sim::viz::interaction::goal::GoalPickingPlugin;
 use helios_sim::viz::interaction::inspector::InspectorPlugin;
 use helios_sim::viz::interaction::selection::SelectionPlugin;
 use helios_sim::viz::interaction::teleop::TeleopPlugin;
+use helios_sim::viz::interaction::tf_panel::TfPanelPlugin;
 
 fn main() {
     let cli = Cli::parse();
@@ -44,6 +45,7 @@ fn main() {
         app.add_plugins(SelectionPlugin);
         app.add_plugins(GoalPickingPlugin);
         app.add_plugins(InspectorPlugin);
+        app.add_plugins(TfPanelPlugin);
         app.add_plugins(TeleopPlugin);
     }
 
