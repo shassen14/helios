@@ -50,6 +50,15 @@ pub(crate) fn register_viz_actions(mut registry: ResMut<ActionRegistry>) {
             default_key: KeyCode::KeyG,
         },
     );
+    registry.register(
+        ActionId("viz.toggle_tf_panel_orientation"),
+        ActionMetadata {
+            label: "Toggle tf panel orientation",
+            group: "viz",
+            kind: InputKind::Button,
+            default_key: KeyCode::KeyO,
+        },
+    );
 }
 
 #[cfg(test)]

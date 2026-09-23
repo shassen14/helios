@@ -25,6 +25,7 @@ use crate::{
 };
 
 use model::AgentGraph;
+use render::PanelOrientation;
 
 use bevy::prelude::*;
 
@@ -36,6 +37,17 @@ impl Plugin for TfPanelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TfPanelVisible>();
         app.init_resource::<TfPanelModel>();
+        // The panel's layout orientation (`TopDown` / `Sideways`), flipped live by the
+        // `viz.toggle_tf_panel_orientation` action. Gated on the panel being shown —
+        // orientation is meaningless while it is hidden — but not on `Running`, so it
+        // flips on a paused panel like the wheel-pan below.
+        app.init_resource::<PanelOrientation>();
+        app.add_systems(
+            Update,
+            toggle_tf_panel_orientation
+                .in_set(VizSet::Live)
+                .run_if(resource_equals(TfPanelVisible(true))),
+        );
         app.add_systems(Startup, panel::spawn_tf_panel);
         // Toggle before sync in one chain, so a keypress flips `TfPanelVisible`
         // and the dock's `Visibility` updates the same frame, not a frame late.
@@ -103,6 +115,31 @@ pub(crate) fn toggle_tf_panel(
 
     if state.is_active(h) {
         panel.0 = !panel.0;
+    }
+}
+
+/// Flips [`PanelOrientation`] between `Sideways` and `TopDown` when
+/// `viz.toggle_tf_panel_orientation` fires, so the two layouts swap on one live tree
+/// without a rebuild. Mirrors [`toggle_tf_panel`]: the handle can't change after
+/// startup, so it is resolved once into a `Local`, and the `expect` is a startup-time
+/// assertion — the action is declared unconditionally in `register_viz_actions`.
+fn toggle_tf_panel_orientation(
+    registry: Res<ActionRegistry>,
+    state: Res<ActionState>,
+    mut orientation: ResMut<PanelOrientation>,
+    mut handle: Local<Option<ActionHandle>>,
+) {
+    let h = *handle.get_or_insert_with(|| {
+        registry
+            .handle(ActionId("viz.toggle_tf_panel_orientation"))
+            .expect("registered")
+    });
+
+    if state.is_active(h) {
+        *orientation = match *orientation {
+            PanelOrientation::Sideways => PanelOrientation::TopDown,
+            PanelOrientation::TopDown => PanelOrientation::Sideways,
+        };
     }
 }
 
