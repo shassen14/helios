@@ -14,8 +14,8 @@
 //! the panel is gated off unless shown, so a reconciler is not worth its bug surface yet.
 
 use crate::viz::interaction::tf_panel::geometry::{
-    edge_color, elbow_segments, graph_extent, node_origin, PanelOrientation, NODE_HEIGHT,
-    NODE_WIDTH,
+    edge_color, elbow_segments, graph_extent, node_origin, PanelOrientation, TfPanelGraphTuning,
+    TfPanelHealthColors,
 };
 use crate::viz::interaction::tf_panel::layout::LayoutCell;
 use crate::viz::interaction::tf_panel::model::AgentGraph;
@@ -26,23 +26,6 @@ use helios_core::frames::FrameId;
 
 use bevy::prelude::*;
 use std::collections::HashMap;
-
-// Interim presentation constants, named rather than inlined — no bare magic numbers in
-// the node. A later `[tf_panel]` config surface lifts these out of source, the same move
-// the camera-rate consts are headed for. The geometry constants (node size, pitch,
-// colours) live beside the geometry fns in `geometry.rs`; these are the ones only the
-// spawn shell touches.
-/// Horizontal gap between one agent's band and the next (multi-agent layout).
-const BAND_GAP: f32 = 28.0;
-const NODE_PADDING: f32 = 4.0;
-/// Small enough that a leaf name (`sensor.gps.primary`) sits on one line in the box.
-const LABEL_FONT_SIZE: f32 = 10.0;
-const HEADER_FONT_SIZE: f32 = 13.0;
-
-const NODE_BG: Color = Color::srgba(0.12, 0.13, 0.18, 0.95);
-const LABEL_COLOR: Color = Color::srgb(0.85, 0.88, 0.95);
-/// Accent for the per-agent header, shared with the inspector's section titles.
-const HEADER_COLOR: Color = Color::srgb(0.62, 0.80, 1.0);
 
 /// Marks everything the renderer spawns, so the previous frame's whole draw can be
 /// found and despawned in one query before the next is built. One canvas per rebuild
@@ -57,9 +40,12 @@ pub struct TfPanelContent;
 /// in side-by-side bands: since a graph's cells are positioned within its own frame,
 /// letting two agents share the cross axis would cross their connectors, so each
 /// agent's whole graph gets its own band offset.
+#[allow(clippy::too_many_arguments)] // a Bevy system's params are its dependencies, not a signature to trim
 pub fn render_tf_panel(
     model: Res<TfPanelModel>,
     orientation: Res<PanelOrientation>,
+    graph_tuning: Res<TfPanelGraphTuning>,
+    health_colors: Res<TfPanelHealthColors>,
     header: Query<Entity, With<TfPanelHeader>>,
     viewport: Query<Entity, With<TfPanelViewport>>,
     old: Query<Entity, With<TfPanelContent>>,
@@ -93,10 +79,10 @@ pub fn render_tf_panel(
             TfPanelContent,
             Text::new(names),
             TextFont {
-                font_size: FontSize::Px(HEADER_FONT_SIZE),
+                font_size: FontSize::Px(graph_tuning.header_font_size),
                 ..default()
             },
-            TextColor(HEADER_COLOR),
+            TextColor(graph_tuning.header_color),
         ))
         .id();
     commands.entity(header_entity).add_child(title);
@@ -110,16 +96,16 @@ pub fn render_tf_panel(
     let mut cursor = 0.0;
     let mut canvas_main = 0.0_f32;
     for graph in &model.0 {
-        let (width, height) = graph_extent(graph, orient);
+        let (width, height) = graph_extent(graph, orient, &graph_tuning);
         let (cross, main) = match orient {
             PanelOrientation::TopDown => (width, height),
             PanelOrientation::Sideways => (height, width),
         };
         bands.push((graph, cursor));
-        cursor += cross + BAND_GAP;
+        cursor += cross + graph_tuning.band_gap;
         canvas_main = canvas_main.max(main);
     }
-    let canvas_cross = (cursor - BAND_GAP).max(0.0); // drop the trailing gap
+    let canvas_cross = (cursor - graph_tuning.band_gap).max(0.0); // drop the trailing gap
     let (canvas_width, canvas_height) = match orient {
         PanelOrientation::TopDown => (canvas_cross, canvas_main),
         PanelOrientation::Sideways => (canvas_main, canvas_cross),
@@ -140,7 +126,15 @@ pub fn render_tf_panel(
     commands.entity(viewport_entity).add_child(canvas);
 
     for (graph, band_offset) in bands {
-        spawn_graph(&mut commands, canvas, graph, band_offset, orient);
+        spawn_graph(
+            &mut commands,
+            canvas,
+            graph,
+            band_offset,
+            orient,
+            &graph_tuning,
+            &health_colors,
+        );
     }
 }
 
@@ -157,6 +151,8 @@ fn spawn_graph(
     graph: &AgentGraph,
     band_offset: f32,
     orient: PanelOrientation,
+    tuning: &TfPanelGraphTuning,
+    health_colors: &TfPanelHealthColors,
 ) {
     let cells: HashMap<&FrameId, LayoutCell> =
         graph.nodes.iter().map(|n| (&n.frame, n.cell)).collect();
@@ -167,8 +163,8 @@ fn spawn_graph(
         else {
             continue;
         };
-        let color = edge_color(&edge.health);
-        for seg in elbow_segments(parent, child, band_offset, orient) {
+        let color = edge_color(&edge.health, health_colors);
+        for seg in elbow_segments(parent, child, band_offset, orient, tuning) {
             // A degenerate run (zero or negative extent) draws nothing; skip it so no
             // `Val::Px` ever receives a negative size.
             if seg.width <= 0.0 || seg.height <= 0.0 {
@@ -192,32 +188,32 @@ fn spawn_graph(
     }
 
     for node in &graph.nodes {
-        let (left, top) = node_origin(node.cell, band_offset, orient);
+        let (left, top) = node_origin(node.cell, band_offset, orient, tuning);
         let boxed = commands
             .spawn((
                 Node {
                     position_type: PositionType::Absolute,
                     left: Val::Px(left),
                     top: Val::Px(top),
-                    width: Val::Px(NODE_WIDTH),
-                    height: Val::Px(NODE_HEIGHT),
-                    padding: UiRect::all(Val::Px(NODE_PADDING)),
+                    width: Val::Px(tuning.node_width),
+                    height: Val::Px(tuning.node_height),
+                    padding: UiRect::all(Val::Px(tuning.node_padding)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     overflow: Overflow::clip(),
                     ..default()
                 },
-                BackgroundColor(NODE_BG),
+                BackgroundColor(tuning.node_bg),
             ))
             .id();
         let label = commands
             .spawn((
                 Text::new(node.label.clone()),
                 TextFont {
-                    font_size: FontSize::Px(LABEL_FONT_SIZE),
+                    font_size: FontSize::Px(tuning.label_font_size),
                     ..default()
                 },
-                TextColor(LABEL_COLOR),
+                TextColor(tuning.label_color),
             ))
             .id();
         commands.entity(boxed).add_child(label);

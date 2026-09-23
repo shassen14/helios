@@ -39,11 +39,11 @@ impl Plugin for TfPanelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TfPanelVisible>();
         app.init_resource::<TfPanelModel>();
-        // The panel's layout orientation (`TopDown` / `Sideways`), flipped live by the
-        // `viz.toggle_tf_panel_orientation` action. Gated on the panel being shown —
-        // orientation is meaningless while it is hidden — but not on `Running`, so it
-        // flips on a paused panel like the wheel-pan below.
-        app.init_resource::<PanelOrientation>();
+        // The panel's layout orientation (`TopDown` / `Sideways`) is not init'd here:
+        // its starting value comes from `[tf_panel.graph].default_orientation`, inserted
+        // by `load_interaction_tuning`, and the toggle below flips it from there. Gated
+        // on the panel being shown — orientation is meaningless while it is hidden — but
+        // not on `Running`, so it flips on a paused panel like the wheel-pan below.
         app.add_systems(
             Update,
             toggle_tf_panel_orientation
@@ -147,7 +147,7 @@ fn toggle_tf_panel_orientation(
 
 #[cfg(test)]
 mod tests {
-    use super::panel::{sync_tf_panel_visibility, TfPanelRoot};
+    use super::panel::{sync_tf_panel_visibility, TfPanelDockTuning, TfPanelRoot};
     use super::{TfPanelModel, TfPanelPlugin, TfPanelVisible};
 
     use crate::prelude::AppState;
@@ -160,12 +160,15 @@ mod tests {
     /// `init_resource` or the `Startup` spawn still compiles; this catches it. The
     /// app sits in a non-`Running` state so the `Update` chain is gated off — the
     /// guard then needs no `ActionRegistry`/`ActionState`, staying scoped to the
-    /// startup wiring it checks.
+    /// startup wiring it checks. `spawn_tf_panel` reads `TfPanelDockTuning` (normally
+    /// inserted by `load_interaction_tuning` in `PreStartup`), so the guard inserts a
+    /// default one rather than boot the whole tuning loader.
     #[test]
     fn plugin_inits_resource_and_spawns_hidden_dock() {
         let mut app = App::new();
         app.add_plugins(StatesPlugin);
         app.insert_state(AppState::AssetLoading);
+        app.insert_resource(TfPanelDockTuning::default());
         app.add_plugins(TfPanelPlugin);
 
         app.update();

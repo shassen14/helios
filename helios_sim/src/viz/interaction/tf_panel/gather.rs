@@ -8,21 +8,96 @@
 
 use crate::prelude::{AgentIdComponent, TfServiceComponent};
 use crate::viz::interaction::selection::Selected;
+use crate::viz::interaction::tf_panel::geometry::TfPanelHealthColors;
 use crate::viz::interaction::tf_panel::layout::tree_layout;
 use crate::viz::interaction::tf_panel::model::{AgentGraph, EdgeHealth, HealthVerdict, PanelEdge, PanelNode};
 use crate::viz::interaction::tf_panel::TfPanelModel;
+use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 
 use helios_core::data::{AgentId, MonotonicTime};
 use helios_core::frames::transforms::tf::stamped::{DynamicEdgeStats, EdgeKindTag, FrameEdge};
 
 use bevy::prelude::*;
+use serde::Deserialize;
 use std::collections::HashMap;
 
-/// Seconds since an edge's newest sample past which it reads as stale, then dead.
-/// Interim named constants — a later `[tf_panel]` config surface lifts them out of
-/// source, the way the camera-rate consts are headed.
-const STALE_AFTER_SECS: f64 = 0.5;
-const DEAD_AFTER_SECS: f64 = 2.0;
+/// Sparse TOML overrides for the `[tf_panel.health]` section. Every field is optional;
+/// anything omitted falls back to a compiled-in default. The section fans out into two
+/// single-consumer resources on resolve: the staleness [`TfPanelHealthThresholds`] read
+/// here in gather, and the [`TfPanelHealthColors`] read by the renderer.
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct TfPanelHealthTuningFile {
+    pub stale_after: Option<f64>,
+    pub dead_after: Option<f64>,
+    pub ok_color: Option<[f32; 3]>,
+    pub stale_color: Option<[f32; 3]>,
+    pub dead_color: Option<[f32; 3]>,
+    pub none_color: Option<[f32; 3]>,
+}
+
+/// Seconds since an edge's newest sample past which it reads as stale, then dead. A
+/// `Resource` — one operator preference for the session — read by the verdict bucketing
+/// in [`edge_health`]. Defaults reproduce the values compiled in before the tuning
+/// surface existed.
+#[derive(Resource, Debug, Clone)]
+pub struct TfPanelHealthThresholds {
+    pub stale_after: f64,
+    pub dead_after: f64,
+}
+
+impl Default for TfPanelHealthThresholds {
+    fn default() -> Self {
+        Self {
+            stale_after: 0.5,
+            dead_after: 2.0,
+        }
+    }
+}
+
+impl TfPanelHealthThresholds {
+    /// Resolves the whole `[tf_panel.health]` section, fanning it into its two
+    /// single-consumer resources: the thresholds (read here) and the verdict colours
+    /// (read by the renderer). Rejects a non-positive threshold and a `dead_after` that
+    /// is not strictly greater than `stale_after` — a dead-before-stale ordering would
+    /// bucket every edge wrong.
+    pub(crate) fn resolve(
+        overrides: &TfPanelHealthTuningFile,
+    ) -> Result<(Self, TfPanelHealthColors), InteractionTuningError> {
+        let mut thresholds = Self::default();
+        if let Some(v) = overrides.stale_after {
+            thresholds.stale_after = v;
+        }
+        if let Some(v) = overrides.dead_after {
+            thresholds.dead_after = v;
+        }
+
+        require_positive("tf_panel.health.stale_after", thresholds.stale_after as f32)?;
+        require_positive("tf_panel.health.dead_after", thresholds.dead_after as f32)?;
+        if thresholds.dead_after <= thresholds.stale_after {
+            return Err(InteractionTuningError::HealthThresholdOrder {
+                stale: thresholds.stale_after,
+                dead: thresholds.dead_after,
+            });
+        }
+
+        let mut colors = TfPanelHealthColors::default();
+        if let Some([r, g, b]) = overrides.ok_color {
+            colors.ok = Color::srgb(r, g, b);
+        }
+        if let Some([r, g, b]) = overrides.stale_color {
+            colors.stale = Color::srgb(r, g, b);
+        }
+        if let Some([r, g, b]) = overrides.dead_color {
+            colors.dead = Color::srgb(r, g, b);
+        }
+        if let Some([r, g, b]) = overrides.none_color {
+            colors.none = Color::srgb(r, g, b);
+        }
+
+        Ok((thresholds, colors))
+    }
+}
 
 /// Rebuilds the panel model from every selected agent's estimated tree.
 ///
@@ -35,6 +110,7 @@ const DEAD_AFTER_SECS: f64 = 2.0;
 pub fn gather_tf_panel(
     query: Query<(&TfServiceComponent, &AgentIdComponent), With<Selected>>,
     time: Res<Time>,
+    thresholds: Res<TfPanelHealthThresholds>,
     mut model: ResMut<TfPanelModel>,
 ) {
     let now = MonotonicTime(time.elapsed_secs_f64());
@@ -48,6 +124,7 @@ pub fn gather_tf_panel(
                 buffer.edges(),
                 buffer.dynamic_edge_stats(),
                 now,
+                &thresholds,
             )
         })
         .collect();
@@ -64,6 +141,7 @@ pub fn build_agent_graph(
     edges: Vec<(FrameEdge, EdgeKindTag)>,
     stats: Vec<(FrameEdge, DynamicEdgeStats)>,
     now: MonotonicTime,
+    thresholds: &TfPanelHealthThresholds,
 ) -> AgentGraph {
     let stats_by_edge: HashMap<FrameEdge, DynamicEdgeStats> = stats.into_iter().collect();
 
@@ -84,7 +162,9 @@ pub fn build_agent_graph(
     let edges = edges
         .into_iter()
         .map(|(edge, _tag)| PanelEdge {
-            health: stats_by_edge.get(&edge).map(|s| edge_health(s, now)),
+            health: stats_by_edge
+                .get(&edge)
+                .map(|s| edge_health(s, now, thresholds)),
             child: edge.child,
             parent: edge.parent,
         })
@@ -100,7 +180,11 @@ pub fn build_agent_graph(
 /// Turns raw sample stamps into an interpreted [`EdgeHealth`]. `n` samples spanning
 /// `T` seconds give `(n-1)/T` Hz; a lone sample has no defined interval and reports
 /// `0`. Staleness is measured from the newest sample to `now`, then bucketed.
-fn edge_health(stats: &DynamicEdgeStats, now: MonotonicTime) -> EdgeHealth {
+fn edge_health(
+    stats: &DynamicEdgeStats,
+    now: MonotonicTime,
+    thresholds: &TfPanelHealthThresholds,
+) -> EdgeHealth {
     let span = stats.newest.0 - stats.oldest.0;
     let rate_hz = if span > 0.0 {
         stats.sample_count.saturating_sub(1) as f64 / span
@@ -109,9 +193,9 @@ fn edge_health(stats: &DynamicEdgeStats, now: MonotonicTime) -> EdgeHealth {
     };
 
     let staleness_s = now.0 - stats.newest.0;
-    let verdict = if staleness_s >= DEAD_AFTER_SECS {
+    let verdict = if staleness_s >= thresholds.dead_after {
         HealthVerdict::Dead
-    } else if staleness_s >= STALE_AFTER_SECS {
+    } else if staleness_s >= thresholds.stale_after {
         HealthVerdict::Stale
     } else {
         HealthVerdict::Ok
@@ -168,6 +252,7 @@ mod tests {
             ],
             vec![(edge(base_link.clone(), odom.clone()), stats(9.9, 9.0, 10))],
             MonotonicTime(10.0),
+            &TfPanelHealthThresholds::default(),
         );
 
         assert_eq!(graph.nodes.len(), 3, "every frame in the topology is placed");
@@ -195,6 +280,7 @@ mod tests {
             vec![(edge(base_link.clone(), odom.clone()), EdgeKindTag::Dynamic)],
             vec![],
             MonotonicTime(10.0),
+            &TfPanelHealthThresholds::default(),
         );
 
         assert!(health_of(&graph, &base_link).is_none());
@@ -204,7 +290,11 @@ mod tests {
     /// as 10 Hz — the interval count, not the sample count, sets the rate.
     #[test]
     fn edge_health_reports_rate_over_the_window() {
-        let h = edge_health(&stats(9.9, 9.0, 10), MonotonicTime(9.9));
+        let h = edge_health(
+            &stats(9.9, 9.0, 10),
+            MonotonicTime(9.9),
+            &TfPanelHealthThresholds::default(),
+        );
         assert!((h.rate_hz - 10.0).abs() < 1e-9);
     }
 
@@ -212,7 +302,11 @@ mod tests {
     /// than dividing by a zero window.
     #[test]
     fn edge_health_reports_zero_rate_for_a_single_sample() {
-        let h = edge_health(&stats(9.0, 9.0, 1), MonotonicTime(9.0));
+        let h = edge_health(
+            &stats(9.0, 9.0, 1),
+            MonotonicTime(9.0),
+            &TfPanelHealthThresholds::default(),
+        );
         assert_eq!(h.rate_hz, 0.0);
     }
 
@@ -221,13 +315,68 @@ mod tests {
     /// `Dead`.
     #[test]
     fn edge_health_buckets_staleness() {
-        let fresh = edge_health(&stats(9.9, 9.0, 2), MonotonicTime(10.0));
+        let th = TfPanelHealthThresholds::default();
+        let fresh = edge_health(&stats(9.9, 9.0, 2), MonotonicTime(10.0), &th);
         assert_eq!(fresh.verdict, HealthVerdict::Ok);
 
-        let stale = edge_health(&stats(9.0, 8.0, 2), MonotonicTime(10.0));
+        let stale = edge_health(&stats(9.0, 8.0, 2), MonotonicTime(10.0), &th);
         assert_eq!(stale.verdict, HealthVerdict::Stale);
 
-        let dead = edge_health(&stats(7.0, 6.0, 2), MonotonicTime(10.0));
+        let dead = edge_health(&stats(7.0, 6.0, 2), MonotonicTime(10.0), &th);
         assert_eq!(dead.verdict, HealthVerdict::Dead);
+    }
+
+    /// An empty file resolves both fanned-out resources to their defaults.
+    #[test]
+    fn health_empty_file_resolves_to_defaults() {
+        let (thresholds, colors) =
+            TfPanelHealthThresholds::resolve(&TfPanelHealthTuningFile::default()).unwrap();
+        let d = TfPanelHealthThresholds::default();
+        assert_eq!(thresholds.stale_after, d.stale_after);
+        assert_eq!(thresholds.dead_after, d.dead_after);
+        assert_eq!(colors.ok, TfPanelHealthColors::default().ok);
+    }
+
+    /// Overrides pass through and colours pack into sRGB.
+    #[test]
+    fn health_overrides_pass_through() {
+        let file = TfPanelHealthTuningFile {
+            stale_after: Some(1.0),
+            dead_after: Some(4.0),
+            dead_color: Some([0.1, 0.2, 0.3]),
+            ..Default::default()
+        };
+        let (thresholds, colors) = TfPanelHealthThresholds::resolve(&file).unwrap();
+        assert_eq!(thresholds.stale_after, 1.0);
+        assert_eq!(thresholds.dead_after, 4.0);
+        assert_eq!(colors.dead, Color::srgb(0.1, 0.2, 0.3));
+    }
+
+    /// A `dead_after` not strictly greater than `stale_after` buckets every edge wrong
+    /// and is rejected.
+    #[test]
+    fn health_rejects_dead_not_past_stale() {
+        let file = TfPanelHealthTuningFile {
+            stale_after: Some(2.0),
+            dead_after: Some(1.0),
+            ..Default::default()
+        };
+        assert!(matches!(
+            TfPanelHealthThresholds::resolve(&file).unwrap_err(),
+            InteractionTuningError::HealthThresholdOrder { .. }
+        ));
+    }
+
+    /// A non-positive threshold is rejected.
+    #[test]
+    fn health_rejects_nonpositive_threshold() {
+        let file = TfPanelHealthTuningFile {
+            stale_after: Some(0.0),
+            ..Default::default()
+        };
+        assert!(matches!(
+            TfPanelHealthThresholds::resolve(&file).unwrap_err(),
+            InteractionTuningError::NonPositive { .. }
+        ));
     }
 }

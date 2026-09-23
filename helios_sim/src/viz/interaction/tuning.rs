@@ -8,6 +8,14 @@ use crate::{
                 rig::{CameraRigTuning, CameraRigTuningFile},
             },
             selection::{SelectionTuning, SelectionTuningFile},
+            tf_panel::{
+                gather::{TfPanelHealthThresholds, TfPanelHealthTuningFile},
+                geometry::{
+                    PanelOrientation, TfPanelGraphTuning, TfPanelGraphTuningFile,
+                    TfPanelHealthColors,
+                },
+                panel::{TfPanelDockTuning, TfPanelDockTuningFile},
+            },
         },
         live::{
             tf::{TfOverlayTuning, TfOverlayTuningFile},
@@ -33,6 +41,7 @@ struct InteractionTuningFile {
     selection: SelectionTuningFile,
     tf_overlay: TfOverlayTuningFile,
     tf_labels: TfLabelTuningFile,
+    tf_panel: TfPanelTuningFile,
 }
 
 #[derive(Deserialize, Default)]
@@ -41,6 +50,18 @@ struct CameraTuningFile {
     keyboard: CameraKeyboardTuningFile,
     mouse: CameraMouseTuningFile,
     rig: CameraRigTuningFile,
+}
+
+/// The `[tf_panel.*]` sections, grouped by concept: the screen-space `dock`, the
+/// `graph` geometry and node chrome, and edge `health` (thresholds + verdict colours).
+/// Each sub-file is owned by the subsystem that consumes it; this only nests them for
+/// one parse, the way [`CameraTuningFile`] groups the camera sub-files.
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+struct TfPanelTuningFile {
+    dock: TfPanelDockTuningFile,
+    graph: TfPanelGraphTuningFile,
+    health: TfPanelHealthTuningFile,
 }
 
 /// Every runtime tuning resource produced from one parse of the interaction TOML.
@@ -55,6 +76,13 @@ struct ResolvedInteractionTuning {
     selection: SelectionTuning,
     tf_overlay: TfOverlayTuning,
     tf_labels: TfLabelTuning,
+    tf_panel_dock: TfPanelDockTuning,
+    /// The panel's starting orientation, resolved out of the graph section because it
+    /// is a separate live-toggled resource rather than a styling field.
+    tf_panel_orientation: PanelOrientation,
+    tf_panel_graph: TfPanelGraphTuning,
+    tf_panel_health_thresholds: TfPanelHealthThresholds,
+    tf_panel_health_colors: TfPanelHealthColors,
 }
 
 pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
@@ -73,6 +101,11 @@ pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
             commands.insert_resource(resolved.selection);
             commands.insert_resource(resolved.tf_overlay);
             commands.insert_resource(resolved.tf_labels);
+            commands.insert_resource(resolved.tf_panel_dock);
+            commands.insert_resource(resolved.tf_panel_orientation);
+            commands.insert_resource(resolved.tf_panel_graph);
+            commands.insert_resource(resolved.tf_panel_health_thresholds);
+            commands.insert_resource(resolved.tf_panel_health_colors);
         }
         Err(e) => panic!("interaction tuning config: {e}"),
     }
@@ -81,6 +114,13 @@ pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
 fn resolve_all(
     file: &InteractionTuningFile,
 ) -> Result<ResolvedInteractionTuning, InteractionTuningError> {
+    // The graph and health sections each fan into more than one resource, so they are
+    // resolved into locals before the struct is assembled.
+    let (tf_panel_orientation, tf_panel_graph) =
+        TfPanelGraphTuning::resolve(&file.tf_panel.graph)?;
+    let (tf_panel_health_thresholds, tf_panel_health_colors) =
+        TfPanelHealthThresholds::resolve(&file.tf_panel.health)?;
+
     Ok(ResolvedInteractionTuning {
         camera_keyboard: CameraKeyboardTuning::resolve(&file.camera.keyboard)?,
         camera_mouse: CameraMouseTuning::resolve(&file.camera.mouse)?,
@@ -88,6 +128,11 @@ fn resolve_all(
         selection: SelectionTuning::resolve(&file.selection)?,
         tf_overlay: TfOverlayTuning::resolve(&file.tf_overlay)?,
         tf_labels: TfLabelTuning::resolve(&file.tf_labels)?,
+        tf_panel_dock: TfPanelDockTuning::resolve(&file.tf_panel.dock)?,
+        tf_panel_orientation,
+        tf_panel_graph,
+        tf_panel_health_thresholds,
+        tf_panel_health_colors,
     })
 }
 
@@ -103,6 +148,11 @@ pub enum InteractionTuningError {
     /// The selection ring margin is below `1.0`, which would draw the ring inside
     /// the object's own footprint.
     MarginTooSmall { value: f32 },
+    /// The tf panel's `default_orientation` string matched no known orientation.
+    UnknownOrientation { value: String },
+    /// The tf panel's `dead_after` is not strictly greater than `stale_after`, so the
+    /// staleness buckets would be misordered.
+    HealthThresholdOrder { stale: f64, dead: f64 },
 }
 
 impl Display for InteractionTuningError {
@@ -121,6 +171,14 @@ impl Display for InteractionTuningError {
             Self::MarginTooSmall { value } => {
                 write!(f, "highlight_margin ({value}) must be >= 1.0")
             }
+            Self::UnknownOrientation { value } => write!(
+                f,
+                "tf_panel default_orientation ('{value}') must be 'sideways' or 'top_down'"
+            ),
+            Self::HealthThresholdOrder { stale, dead } => write!(
+                f,
+                "tf_panel dead_after ({dead}) must be greater than stale_after ({stale})"
+            ),
         }
     }
 }
@@ -135,5 +193,59 @@ pub(crate) fn require_positive(
         Ok(())
     } else {
         Err(InteractionTuningError::NonPositive { field, value })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The aggregate seam: the `[tf_panel.*]` section names and nesting must match the
+    /// file structs, and `resolve_all` must fan the graph and health sections out into
+    /// their several resources. Per-subsystem `resolve` tests cover the value logic;
+    /// this covers the wiring between the TOML sections and the resolved resources,
+    /// which would otherwise only fail at runtime (a mistyped section is swallowed by
+    /// `#[serde(default)]`, a fan-out mistake by nothing).
+    #[test]
+    fn tf_panel_sections_deserialize_and_fan_out() {
+        let toml = r#"
+            [tf_panel.dock]
+            width = 500.0
+
+            [tf_panel.graph]
+            default_orientation = "top_down"
+            col_pitch = 200.0
+
+            [tf_panel.health]
+            stale_after = 1.0
+            dead_after = 3.0
+        "#;
+
+        let file: InteractionTuningFile = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("tf_panel sections parse against the file structs");
+        let resolved = resolve_all(&file).expect("valid overrides resolve");
+
+        assert_eq!(resolved.tf_panel_dock.width, 500.0);
+        assert_eq!(resolved.tf_panel_orientation, PanelOrientation::TopDown);
+        assert_eq!(resolved.tf_panel_graph.col_pitch, 200.0);
+        assert_eq!(resolved.tf_panel_health_thresholds.stale_after, 1.0);
+        assert_eq!(resolved.tf_panel_health_thresholds.dead_after, 3.0);
+    }
+
+    /// An unknown key inside a `[tf_panel.*]` section is rejected rather than silently
+    /// ignored — the `deny_unknown_fields` guard that catches a typo'd override.
+    #[test]
+    fn tf_panel_unknown_key_is_rejected() {
+        let toml = r#"
+            [tf_panel.dock]
+            widht = 500.0
+        "#;
+
+        let parsed = Figment::new()
+            .merge(Toml::string(toml))
+            .extract::<InteractionTuningFile>();
+        assert!(parsed.is_err(), "a misspelled key must not be silently dropped");
     }
 }

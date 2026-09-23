@@ -4,27 +4,106 @@
 //! step. Presentation lives here, apart from the plugin wiring in `mod.rs`.
 
 use super::TfPanelVisible;
+use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
+use serde::Deserialize;
 
-// Interim presentation constants. A later `[tf_panel]` config surface lifts
-// these out of source, the way the camera-rate consts are headed; until then
-// they are named here rather than inlined — no bare magic numbers in the node.
-const PANEL_MARGIN: f32 = 10.0;
-const PANEL_WIDTH: f32 = 440.0;
-/// Height cap on the *scrolling* part only — the pinned header sits above it and is
-/// always visible, so the dock's total height is the header plus up to this.
-const PANEL_VIEWPORT_MAX_HEIGHT: Val = Val::Vh(70.0);
-const PANEL_PADDING: f32 = 8.0;
-/// Gap under the pinned header, separating it from the scrolling tree below.
-const HEADER_GAP: f32 = 6.0;
-/// Semi-opaque dark backing so the empty dock reads against the 3D scene behind it.
-const PANEL_BG: Color = Color::srgba(0.05, 0.05, 0.08, 0.85);
-/// Pixels scrolled per wheel *line* (a mouse notch). Trackpads report pixels already,
-/// so their deltas pass through unscaled.
-const LINE_SCROLL_PX: f32 = 20.0;
+/// Sparse TOML overrides for the panel dock's screen-space geometry and scroll feel.
+/// Every field is optional; anything omitted falls back to the compiled-in
+/// [`TfPanelDockTuning::default`]. `viewport_max_height` is authored as a bare number of
+/// viewport-height units (vh) and wrapped into a [`Val::Vh`] on resolve.
+#[derive(Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct TfPanelDockTuningFile {
+    pub margin: Option<f32>,
+    pub width: Option<f32>,
+    pub viewport_max_height: Option<f32>,
+    pub padding: Option<f32>,
+    pub header_gap: Option<f32>,
+    pub bg: Option<[f32; 4]>,
+    pub line_scroll: Option<f32>,
+}
+
+/// Resolved geometry and scroll feel for the dock — one operator preference for the
+/// session, read by [`spawn_tf_panel`] and [`scroll_tf_panel`]. Defaults reproduce the
+/// values compiled in before the tuning surface existed.
+#[derive(Resource, Debug, Clone)]
+pub struct TfPanelDockTuning {
+    /// Inset of the dock from the top-left corner, px.
+    pub margin: f32,
+    /// Fixed dock width, px.
+    pub width: f32,
+    /// Height cap on the *scrolling* part only — the pinned header sits above it and is
+    /// always visible, so the dock's total height is the header plus up to this.
+    pub viewport_max_height: Val,
+    /// Inner padding of the dock, px.
+    pub padding: f32,
+    /// Gap under the pinned header, separating it from the scrolling tree below, px.
+    pub header_gap: f32,
+    /// Semi-opaque dark backing so the dock reads against the 3D scene behind it,
+    /// `[r, g, b, a]`.
+    pub bg: Color,
+    /// Pixels scrolled per wheel *line* (a mouse notch). Trackpads report pixels
+    /// already, so their deltas pass through unscaled.
+    pub line_scroll: f32,
+}
+
+impl Default for TfPanelDockTuning {
+    fn default() -> Self {
+        Self {
+            margin: 10.0,
+            width: 440.0,
+            viewport_max_height: Val::Vh(70.0),
+            padding: 8.0,
+            header_gap: 6.0,
+            bg: Color::srgba(0.05, 0.05, 0.08, 0.85),
+            line_scroll: 20.0,
+        }
+    }
+}
+
+impl TfPanelDockTuning {
+    /// Overlays sparse overrides onto [`Default`], packing the `[r, g, b, a]` backing
+    /// into an sRGBA [`Color`] and the height cap into a [`Val::Vh`], and rejects a
+    /// non-positive width, height cap, or scroll step (margins and padding may be zero —
+    /// flush is a legitimate look).
+    pub(crate) fn resolve(
+        overrides: &TfPanelDockTuningFile,
+    ) -> Result<Self, InteractionTuningError> {
+        let mut t = Self::default();
+        if let Some(v) = overrides.margin {
+            t.margin = v;
+        }
+        if let Some(v) = overrides.width {
+            t.width = v;
+        }
+        if let Some(v) = overrides.padding {
+            t.padding = v;
+        }
+        if let Some(v) = overrides.header_gap {
+            t.header_gap = v;
+        }
+        if let Some([r, g, b, a]) = overrides.bg {
+            t.bg = Color::srgba(r, g, b, a);
+        }
+        if let Some(v) = overrides.line_scroll {
+            t.line_scroll = v;
+        }
+
+        // The height cap is validated as a bare vh number before it is wrapped, since a
+        // `Val` can't be range-checked once built.
+        let vh = overrides.viewport_max_height.unwrap_or(70.0);
+        require_positive("tf_panel.dock.viewport_max_height", vh)?;
+        t.viewport_max_height = Val::Vh(vh);
+
+        require_positive("tf_panel.dock.width", t.width)?;
+        require_positive("tf_panel.dock.line_scroll", t.line_scroll)?;
+        Ok(t)
+    }
+}
 
 /// Marks the panel's UI root, so the visibility sync can find the one node to flip.
 /// The root itself neither scrolls nor holds the tree directly — it stacks the pinned
@@ -56,7 +135,7 @@ pub struct TfPanelViewport;
 /// system act only when the pointer is over this panel. Starts `Hidden` to match
 /// [`TfPanelVisible`]'s default. A bare coloured node needs no font, so — unlike the
 /// inspector's text panel — this spawns with no asset-server gate.
-pub fn spawn_tf_panel(mut commands: Commands) {
+pub fn spawn_tf_panel(tuning: Res<TfPanelDockTuning>, mut commands: Commands) {
     // The pinned header: fixed at the top of the dock, filled by the renderer.
     let header = commands
         .spawn((
@@ -64,7 +143,7 @@ pub fn spawn_tf_panel(mut commands: Commands) {
             Node {
                 width: Val::Percent(100.0),
                 flex_direction: FlexDirection::Column,
-                margin: UiRect::bottom(Val::Px(HEADER_GAP)),
+                margin: UiRect::bottom(Val::Px(tuning.header_gap)),
                 ..default()
             },
         ))
@@ -77,7 +156,7 @@ pub fn spawn_tf_panel(mut commands: Commands) {
             TfPanelViewport,
             Node {
                 width: Val::Percent(100.0),
-                max_height: PANEL_VIEWPORT_MAX_HEIGHT,
+                max_height: tuning.viewport_max_height,
                 overflow: Overflow::scroll(),
                 ..default()
             },
@@ -92,15 +171,15 @@ pub fn spawn_tf_panel(mut commands: Commands) {
             TfPanelRoot,
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(PANEL_MARGIN),
-                top: Val::Px(PANEL_MARGIN),
-                width: Val::Px(PANEL_WIDTH),
-                padding: UiRect::all(Val::Px(PANEL_PADDING)),
+                left: Val::Px(tuning.margin),
+                top: Val::Px(tuning.margin),
+                width: Val::Px(tuning.width),
+                padding: UiRect::all(Val::Px(tuning.padding)),
                 flex_direction: FlexDirection::Column,
                 overflow: Overflow::clip(),
                 ..default()
             },
-            BackgroundColor(PANEL_BG),
+            BackgroundColor(tuning.bg),
             Visibility::Hidden,
         ))
         .add_child(header)
@@ -118,6 +197,7 @@ pub fn spawn_tf_panel(mut commands: Commands) {
 /// deltas (a notch mouse) are scaled to pixels; trackpad pixel deltas pass through.
 /// The offset is clamped at zero; Bevy clamps the upper bound to the content size.
 pub fn scroll_tf_panel(
+    tuning: Res<TfPanelDockTuning>,
     mut wheel: MessageReader<MouseWheel>,
     keys: Res<ButtonInput<KeyCode>>,
     mut viewport: Query<(&RelativeCursorPosition, &mut ScrollPosition), With<TfPanelViewport>>,
@@ -133,7 +213,7 @@ pub fn scroll_tf_panel(
     let mut dy = 0.0;
     for event in wheel.read() {
         let scale = match event.unit {
-            MouseScrollUnit::Line => LINE_SCROLL_PX,
+            MouseScrollUnit::Line => tuning.line_scroll,
             MouseScrollUnit::Pixel => 1.0,
         };
         dx += event.x * scale;
