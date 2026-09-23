@@ -10,7 +10,9 @@ use crate::prelude::{AgentIdComponent, TfServiceComponent};
 use crate::viz::interaction::selection::Selected;
 use crate::viz::interaction::tf_panel::geometry::TfPanelHealthColors;
 use crate::viz::interaction::tf_panel::layout::tree_layout;
-use crate::viz::interaction::tf_panel::model::{AgentGraph, EdgeHealth, HealthVerdict, PanelEdge, PanelNode};
+use crate::viz::interaction::tf_panel::model::{
+    AgentGraph, EdgeHealth, HealthVerdict, PanelEdge, PanelNode,
+};
 use crate::viz::interaction::tf_panel::TfPanelModel;
 use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 
@@ -255,7 +257,11 @@ mod tests {
             &TfPanelHealthThresholds::default(),
         );
 
-        assert_eq!(graph.nodes.len(), 3, "every frame in the topology is placed");
+        assert_eq!(
+            graph.nodes.len(),
+            3,
+            "every frame in the topology is placed"
+        );
         assert!(
             health_of(&graph, &base_link).is_some(),
             "the dynamic edge carries health",

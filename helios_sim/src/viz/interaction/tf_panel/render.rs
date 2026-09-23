@@ -158,8 +158,7 @@ fn spawn_graph(
         graph.nodes.iter().map(|n| (&n.frame, n.cell)).collect();
 
     for edge in &graph.edges {
-        let (Some(&parent), Some(&child)) =
-            (cells.get(&edge.parent), cells.get(&edge.child))
+        let (Some(&parent), Some(&child)) = (cells.get(&edge.parent), cells.get(&edge.child))
         else {
             continue;
         };

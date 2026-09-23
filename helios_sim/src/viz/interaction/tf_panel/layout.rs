@@ -82,7 +82,14 @@ pub fn tree_layout(edges: &[FrameEdge]) -> Vec<(FrameId, LayoutCell)> {
     let mut next_leaf_x = 0.0;
 
     for root in &roots {
-        place_subtree(root, 0, &children_of, &mut visited, &mut next_leaf_x, &mut layout);
+        place_subtree(
+            root,
+            0,
+            &children_of,
+            &mut visited,
+            &mut next_leaf_x,
+            &mut layout,
+        );
     }
 
     layout
@@ -110,9 +117,7 @@ fn place_subtree(
         .get(frame)
         .into_iter()
         .flatten()
-        .filter_map(|child| {
-            place_subtree(child, depth + 1, children_of, visited, next_leaf_x, out)
-        })
+        .filter_map(|child| place_subtree(child, depth + 1, children_of, visited, next_leaf_x, out))
         .collect();
 
     let x = match (child_xs.first(), child_xs.last()) {
@@ -197,7 +202,10 @@ mod tests {
             "sibling columns are adjacent whole numbers",
         );
         assert_eq!(parent.depth, 0);
-        assert_eq!(parent.x, 0.5, "the parent sits at the midpoint of its children");
+        assert_eq!(
+            parent.x, 0.5,
+            "the parent sits at the midpoint of its children"
+        );
     }
 
     /// Three children spread `0, 1, 2`, and the parent lands at the middle child's
@@ -218,7 +226,10 @@ mod tests {
         ]);
 
         let parent = cell_of(&layout, &base_link).expect("base_link is placed");
-        assert_eq!(parent.x, 1.0, "the parent centres over three children at 0,1,2");
+        assert_eq!(
+            parent.x, 1.0,
+            "the parent centres over three children at 0,1,2"
+        );
     }
 
     /// The load-bearing invariant: layout is a pure function of the edge *set*,

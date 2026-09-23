@@ -158,9 +158,8 @@ impl TfPanelGraphTuning {
         overrides: &TfPanelGraphTuningFile,
     ) -> Result<(PanelOrientation, Self), InteractionTuningError> {
         let orientation = match &overrides.default_orientation {
-            Some(s) => PanelOrientation::from_config(s).ok_or_else(|| {
-                InteractionTuningError::UnknownOrientation { value: s.clone() }
-            })?,
+            Some(s) => PanelOrientation::from_config(s)
+                .ok_or_else(|| InteractionTuningError::UnknownOrientation { value: s.clone() })?,
             None => PanelOrientation::default(),
         };
 
@@ -263,11 +262,13 @@ pub fn graph_extent(
     match orient {
         PanelOrientation::TopDown => {
             let width = max_x * tuning.col_pitch + tuning.node_width;
-            let height = tuning.canvas_pad_top + max_depth as f32 * tuning.row_pitch + tuning.node_height;
+            let height =
+                tuning.canvas_pad_top + max_depth as f32 * tuning.row_pitch + tuning.node_height;
             (width, height)
         }
         PanelOrientation::Sideways => {
-            let width = tuning.canvas_pad_left + max_depth as f32 * tuning.col_pitch + tuning.node_width;
+            let width =
+                tuning.canvas_pad_left + max_depth as f32 * tuning.col_pitch + tuning.node_width;
             let height = max_x * tuning.row_pitch + tuning.node_height;
             (width, height)
         }
@@ -467,15 +468,27 @@ mod tests {
         let child = LayoutCell { depth: 1, x: 1.0 };
         let segs = elbow_segments(parent, child, 0.0, PanelOrientation::TopDown, &t);
 
-        assert_eq!(segs[0].width, t.connector_thickness, "parent stub is vertical");
-        assert_eq!(segs[2].width, t.connector_thickness, "child stub is vertical");
-        assert_eq!(segs[1].height, t.connector_thickness, "middle run is horizontal");
+        assert_eq!(
+            segs[0].width, t.connector_thickness,
+            "parent stub is vertical"
+        );
+        assert_eq!(
+            segs[2].width, t.connector_thickness,
+            "child stub is vertical"
+        );
+        assert_eq!(
+            segs[1].height, t.connector_thickness,
+            "middle run is horizontal"
+        );
 
         let parent_cx = t.node_width / 2.0;
         let child_cx = t.col_pitch + t.node_width / 2.0;
         assert_eq!(segs[0].left, parent_cx - t.connector_thickness / 2.0);
         assert_eq!(segs[2].left, child_cx - t.connector_thickness / 2.0);
-        assert_eq!(segs[1].width, (parent_cx - child_cx).abs() + t.connector_thickness);
+        assert_eq!(
+            segs[1].width,
+            (parent_cx - child_cx).abs() + t.connector_thickness
+        );
 
         assert!(
             (segs[0].top + segs[0].height - segs[2].top).abs() < 1e-6,
@@ -509,9 +522,18 @@ mod tests {
         let child = LayoutCell { depth: 1, x: 1.0 };
         let segs = elbow_segments(parent, child, 0.0, PanelOrientation::Sideways, &t);
 
-        assert_eq!(segs[0].height, t.connector_thickness, "parent stub is horizontal");
-        assert_eq!(segs[2].height, t.connector_thickness, "child stub is horizontal");
-        assert_eq!(segs[1].width, t.connector_thickness, "middle run is vertical");
+        assert_eq!(
+            segs[0].height, t.connector_thickness,
+            "parent stub is horizontal"
+        );
+        assert_eq!(
+            segs[2].height, t.connector_thickness,
+            "child stub is horizontal"
+        );
+        assert_eq!(
+            segs[1].width, t.connector_thickness,
+            "middle run is vertical"
+        );
 
         assert!(
             (segs[0].left + segs[0].width - segs[2].left).abs() < 1e-6,
@@ -553,8 +575,7 @@ mod tests {
     /// An empty file resolves to the compiled-in defaults and the default orientation.
     #[test]
     fn graph_empty_file_resolves_to_defaults() {
-        let (orient, t) =
-            TfPanelGraphTuning::resolve(&TfPanelGraphTuningFile::default()).unwrap();
+        let (orient, t) = TfPanelGraphTuning::resolve(&TfPanelGraphTuningFile::default()).unwrap();
         let d = TfPanelGraphTuning::default();
         assert_eq!(orient, PanelOrientation::default());
         assert_eq!(t.node_width, d.node_width);

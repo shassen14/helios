@@ -116,8 +116,7 @@ fn resolve_all(
 ) -> Result<ResolvedInteractionTuning, InteractionTuningError> {
     // The graph and health sections each fan into more than one resource, so they are
     // resolved into locals before the struct is assembled.
-    let (tf_panel_orientation, tf_panel_graph) =
-        TfPanelGraphTuning::resolve(&file.tf_panel.graph)?;
+    let (tf_panel_orientation, tf_panel_graph) = TfPanelGraphTuning::resolve(&file.tf_panel.graph)?;
     let (tf_panel_health_thresholds, tf_panel_health_colors) =
         TfPanelHealthThresholds::resolve(&file.tf_panel.health)?;
 
@@ -246,6 +245,9 @@ mod tests {
         let parsed = Figment::new()
             .merge(Toml::string(toml))
             .extract::<InteractionTuningFile>();
-        assert!(parsed.is_err(), "a misspelled key must not be silently dropped");
+        assert!(
+            parsed.is_err(),
+            "a misspelled key must not be silently dropped"
+        );
     }
 }
