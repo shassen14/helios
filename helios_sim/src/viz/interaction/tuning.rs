@@ -43,6 +43,20 @@ struct CameraTuningFile {
     rig: CameraRigTuningFile,
 }
 
+/// Every runtime tuning resource produced from one parse of the interaction TOML.
+/// `resolve_all` fills it and `load_interaction_tuning` inserts each field. Naming the
+/// fields keeps the resource set — which grows as subsystems (camera, selection, the tf
+/// overlay and panel, …) are added — off tuple position, so a new resource can't be
+/// silently inserted under the wrong resource type.
+struct ResolvedInteractionTuning {
+    camera_keyboard: CameraKeyboardTuning,
+    camera_mouse: CameraMouseTuning,
+    camera_rig: CameraRigTuning,
+    selection: SelectionTuning,
+    tf_overlay: TfOverlayTuning,
+    tf_labels: TfLabelTuning,
+}
+
 pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
     let path = cli.config_root.join(INTERACTION_TUNING_FILE);
 
@@ -52,13 +66,13 @@ pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
         .expect("interaction tuning TOML failed to parse");
 
     match resolve_all(&file) {
-        Ok((keyboard, mouse, rig, selection, tf_overlay, tf_labels)) => {
-            commands.insert_resource(keyboard);
-            commands.insert_resource(mouse);
-            commands.insert_resource(rig);
-            commands.insert_resource(selection);
-            commands.insert_resource(tf_overlay);
-            commands.insert_resource(tf_labels);
+        Ok(resolved) => {
+            commands.insert_resource(resolved.camera_keyboard);
+            commands.insert_resource(resolved.camera_mouse);
+            commands.insert_resource(resolved.camera_rig);
+            commands.insert_resource(resolved.selection);
+            commands.insert_resource(resolved.tf_overlay);
+            commands.insert_resource(resolved.tf_labels);
         }
         Err(e) => panic!("interaction tuning config: {e}"),
     }
@@ -66,25 +80,15 @@ pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
 
 fn resolve_all(
     file: &InteractionTuningFile,
-) -> Result<
-    (
-        CameraKeyboardTuning,
-        CameraMouseTuning,
-        CameraRigTuning,
-        SelectionTuning,
-        TfOverlayTuning,
-        TfLabelTuning,
-    ),
-    InteractionTuningError,
-> {
-    Ok((
-        CameraKeyboardTuning::resolve(&file.camera.keyboard)?,
-        CameraMouseTuning::resolve(&file.camera.mouse)?,
-        CameraRigTuning::resolve(&file.camera.rig)?,
-        SelectionTuning::resolve(&file.selection)?,
-        TfOverlayTuning::resolve(&file.tf_overlay)?,
-        TfLabelTuning::resolve(&file.tf_labels)?,
-    ))
+) -> Result<ResolvedInteractionTuning, InteractionTuningError> {
+    Ok(ResolvedInteractionTuning {
+        camera_keyboard: CameraKeyboardTuning::resolve(&file.camera.keyboard)?,
+        camera_mouse: CameraMouseTuning::resolve(&file.camera.mouse)?,
+        camera_rig: CameraRigTuning::resolve(&file.camera.rig)?,
+        selection: SelectionTuning::resolve(&file.selection)?,
+        tf_overlay: TfOverlayTuning::resolve(&file.tf_overlay)?,
+        tf_labels: TfLabelTuning::resolve(&file.tf_labels)?,
+    })
 }
 
 #[derive(Debug)]
