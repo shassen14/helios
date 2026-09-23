@@ -34,7 +34,7 @@ use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::control::Controller;
-use helios_core::data::TfProvider;
+use helios_core::prelude::TfProvider;
 
 use std::sync::Mutex;
 
@@ -138,7 +138,7 @@ mod tests {
     use helios_core::control::commands::{BodyTwist, BodyWrench};
     use helios_core::control::{BodyTwistRef, ControlInputs};
     use helios_core::data::primitives::MonotonicTime;
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::quantities::FluVector;
     use helios_core::frames::{FrameAwareState, FrameId};

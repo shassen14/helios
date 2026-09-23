@@ -60,7 +60,7 @@ impl Controller for LongitudinalVelocityController {
 mod tests {
     use super::*;
     use crate::control::commands::BodyTwist;
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::Convention;
     use crate::frames::FrameAwareState;

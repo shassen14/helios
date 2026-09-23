@@ -15,7 +15,7 @@
 
 use std::{borrow::Cow, sync::Arc};
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 
 use serde::{Deserialize, Serialize};
 

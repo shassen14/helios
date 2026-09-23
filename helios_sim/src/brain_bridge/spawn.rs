@@ -7,7 +7,7 @@ use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
 use helios_core::control::actuators::ActuatorCommand;
-use helios_core::data::{AgentId, MonotonicTime};
+use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::frames::transforms::tf::stamped::StampedTransform;
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::FrameId;

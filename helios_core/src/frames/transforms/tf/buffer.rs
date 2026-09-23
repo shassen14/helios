@@ -15,7 +15,7 @@
 //! in `stamped.rs`.
 
 use crate::{
-    data::{MonotonicDuration, MonotonicTime, TfProvider},
+    prelude::{MonotonicDuration, MonotonicTime, TfProvider},
     frames::{
         transforms::{
             tf::stamped::{
@@ -713,7 +713,7 @@ pub enum TfLookupError {
 mod tests {
     use super::*;
 
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
 
     use nalgebra::{UnitQuaternion, Vector3};
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};

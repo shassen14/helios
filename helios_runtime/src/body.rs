@@ -6,7 +6,7 @@
 //! it supplies, and the assembler adapts instead of assuming. It is distinct
 //! from two neighbouring "capability"-shaped types:
 //!
-//! - The per-tick transform contract [`TfProvider`](helios_core::data::TfProvider),
+//! - The per-tick transform contract [`TfProvider`](helios_core::prelude::TfProvider),
 //!   passed into each node's `execute` beside the bus. `BodyCapabilities` is the
 //!   *static* declaration made once at assembly time.
 //! - [`CapabilitySet`](crate::validation::CapabilitySet) is the autonomy-stack

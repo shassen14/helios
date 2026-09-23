@@ -39,8 +39,8 @@ use crate::port::{InternalChannel, OracleChannel, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::data::messages::Twist;
-use helios_core::data::AgentId;
-use helios_core::data::TfProvider;
+use helios_core::prelude::AgentId;
+use helios_core::prelude::TfProvider;
 use helios_core::estimation::carrier::kinematic_carrier_schema;
 use helios_core::estimation::schema::StateSchema;
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};

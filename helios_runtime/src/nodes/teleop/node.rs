@@ -18,7 +18,7 @@ use std::sync::Arc;
 use helios_core::{
     control::commands::{BodyTwist, TwistIntent},
     control::reference::BodyTwistRef,
-    data::TfProvider,
+    prelude::TfProvider,
     frames::quantities::FluVector,
 };
 

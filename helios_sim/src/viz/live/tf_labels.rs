@@ -291,7 +291,7 @@ fn reconcile_labels(
 mod tests {
     use super::*;
 
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
 
     fn agent() -> AgentId {
         AgentId::new("test_agent")

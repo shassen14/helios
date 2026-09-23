@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::data::primitives::{Control, State};
-use crate::data::AgentId;
+use crate::prelude::AgentId;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::schema::{StateSchema, StateSchemaBlock};
 use crate::frames::transforms::Convention;
@@ -354,7 +354,7 @@ mod tests {
     //!   stationary (position and velocity remain near zero).
 
     use super::*;
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
     use crate::utils::integrators::RK4;
     use nalgebra::DVector;
 

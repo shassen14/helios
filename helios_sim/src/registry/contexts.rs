@@ -3,7 +3,7 @@ use crate::config::structs::{
 };
 
 use helios_core::control::actuation_model::ActuationModel;
-use helios_core::data::AgentId;
+use helios_core::prelude::AgentId;
 
 use bevy::prelude::*;
 

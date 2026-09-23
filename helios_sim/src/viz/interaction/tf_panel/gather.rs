@@ -16,7 +16,7 @@ use crate::viz::interaction::tf_panel::model::{
 use crate::viz::interaction::tf_panel::TfPanelModel;
 use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 
-use helios_core::data::{AgentId, MonotonicTime};
+use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::frames::transforms::tf::stamped::{DynamicEdgeStats, EdgeKindTag, FrameEdge};
 
 use bevy::prelude::*;

@@ -124,7 +124,7 @@ impl std::error::Error for MeasurementAgreementError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
     use crate::estimation::schema::StateSchemaBlock;
     use crate::manifold::TangentNoise;
 

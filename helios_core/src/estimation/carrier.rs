@@ -13,7 +13,7 @@
 //! [`StateSchema::compose`]; it is a *client* of that primitive, not a new one,
 //! which is why it is a free function and not a `StateSchema` constructor.
 
-use crate::data::AgentId;
+use crate::prelude::AgentId;
 use crate::estimation::schema::{StateSchema, StateSchemaBlock};
 use crate::frames::transforms::Convention;
 use crate::frames::FrameId;

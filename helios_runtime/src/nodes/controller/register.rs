@@ -132,7 +132,7 @@ mod tests {
     use crate::port::InternalChannel;
 
     use helios_core::control::commands::BodyTwist;
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
 
     fn context(instance_name: &str) -> ControllerBuildContext {
         ControllerBuildContext {

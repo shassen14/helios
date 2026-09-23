@@ -15,7 +15,7 @@ use crate::core::host::TimePolicy;
 use crate::core::prng::MasterSeed;
 use crate::prelude::*;
 
-use helios_core::data::AgentId;
+use helios_core::prelude::AgentId;
 
 pub struct SimulationSetupPlugin;
 

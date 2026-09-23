@@ -3,7 +3,7 @@ use crate::run::termination::TerminationReason;
 use crate::sim::{ReportOutputPath, RunMetadata};
 use crate::{AgentId, ReportStatus, TickAction};
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 use helios_runtime::port::PortBus;
 use helios_runtime::AutonomyPipeline;
 use helios_sim::brain_bridge::components::{

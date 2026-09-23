@@ -164,7 +164,7 @@ impl MeasurementSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
     use crate::state::Component;
 
     // ── MeasurementSchemaBlock: convention tagging and the constructor split ──

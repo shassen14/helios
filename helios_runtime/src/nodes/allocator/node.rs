@@ -3,7 +3,7 @@ use crate::port::{ChannelError, InternalChannel, PortBus};
 use crate::{ChannelKey, Health, PipelineNode, PortDescriptor, Stamped, TickContext};
 
 use helios_core::control::allocation::Allocator;
-use helios_core::data::TfProvider;
+use helios_core::prelude::TfProvider;
 
 use std::sync::Mutex;
 

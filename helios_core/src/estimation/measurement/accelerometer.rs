@@ -1,6 +1,6 @@
 use crate::data::ports::TfProvider;
-use crate::data::AgentId;
-use crate::data::MonotonicTime;
+use crate::prelude::AgentId;
+use crate::prelude::MonotonicTime;
 use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
 use crate::frames::conventions::{Enu, Flu};
@@ -130,8 +130,8 @@ impl MeasurementModel for SpecificForceModel {
 mod tests {
     use super::*;
     use crate::data::ports::TfProvider;
-    use crate::data::AgentId;
-    use crate::data::MonotonicTime;
+    use crate::prelude::AgentId;
+    use crate::prelude::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId};

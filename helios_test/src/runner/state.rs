@@ -1,6 +1,6 @@
 use crate::assertion::AssertionValue;
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 
 /// _Per-step._ The running verdict of a *continuous* assertion — one that must hold every
 /// tick, not just at the end. It's a latch: once `FailedAt`, it stays there,

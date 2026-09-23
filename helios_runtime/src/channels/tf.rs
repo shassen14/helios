@@ -83,7 +83,7 @@ mod tests {
     use crate::port::PortDescriptor;
     use crate::stamped::Health;
 
-    use helios_core::data::{AgentId, MonotonicTime};
+    use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::frames::id::FrameId;
     use helios_core::frames::transforms::{Convention, ErasedTransform};
 

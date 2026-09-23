@@ -1,7 +1,7 @@
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::Isometry3;
 
-use helios_core::data::{PointCloud, PointCloudBuilder};
+use helios_core::prelude::{PointCloud, PointCloudBuilder};
 use helios_core::frames::conventions::Flu;
 use helios_core::frames::quantities::Point;
 use helios_core::mapping::{Mapper, OccupancyGridMapper};

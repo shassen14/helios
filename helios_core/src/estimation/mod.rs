@@ -10,7 +10,7 @@ pub mod filters;
 pub mod measurement;
 pub mod schema;
 
-use crate::data::MonotonicTime;
+use crate::prelude::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::frames::FrameAwareState;
 use crate::{data::ports::TfProvider, estimation::measurement::Unavailable};

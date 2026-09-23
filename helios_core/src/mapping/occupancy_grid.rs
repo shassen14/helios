@@ -1,6 +1,6 @@
 use nalgebra::{DMatrix, Isometry3, Point3, Translation3, UnitQuaternion};
 
-use crate::data::PointCloud;
+use crate::prelude::PointCloud;
 use crate::frames::conventions::Flu;
 use crate::mapping::{MapData, Mapper};
 
@@ -330,7 +330,7 @@ fn bresenham(x0: i64, y0: i64, x1: i64, y1: i64) -> impl Iterator<Item = (i64, i
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::PointCloudBuilder;
+    use crate::prelude::PointCloudBuilder;
     use crate::frames::quantities::Point;
 
     fn make_mapper(width_m: f64, height_m: f64) -> OccupancyGridMapper {

@@ -17,7 +17,7 @@
 //! sensor) is read back from the leaf via the predicates, never re-encoded in a
 //! separate field.
 
-use crate::data::AgentId;
+use crate::prelude::AgentId;
 
 use std::fmt::Display;
 use std::sync::Arc;
@@ -172,7 +172,7 @@ impl<'de> Deserialize<'de> for FrameName {
 mod tests {
     use super::*;
 
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
 
     fn agent() -> AgentId {
         AgentId::new("pickup_1")

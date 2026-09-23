@@ -67,7 +67,7 @@ pub(crate) fn tangent_state_transition(
 #[cfg(test)]
 mod tests {
     use super::tangent_state_transition;
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
     use crate::estimation::dynamics::integrated_imu::{
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };

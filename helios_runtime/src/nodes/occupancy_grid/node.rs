@@ -56,10 +56,10 @@ use std::sync::Mutex;
 
 use atomic_float::AtomicF64;
 use helios_core::data::envelope::SensorReading;
-use helios_core::data::AgentId;
-use helios_core::data::MonotonicTime;
-use helios_core::data::PointCloud;
-use helios_core::data::TfProvider;
+use helios_core::prelude::AgentId;
+use helios_core::prelude::MonotonicTime;
+use helios_core::prelude::PointCloud;
+use helios_core::prelude::TfProvider;
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::{FrameAwareState, FrameId};
 use helios_core::mapping::Mapper;
@@ -229,8 +229,8 @@ mod tests {
     use super::*;
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::MonotonicTime;
-    use helios_core::data::AgentId;
-    use helios_core::data::PointCloudBuilder;
+    use helios_core::prelude::AgentId;
+    use helios_core::prelude::PointCloudBuilder;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::quantities::Point;
     use helios_core::frames::transforms::{Convention, ErasedTransform};

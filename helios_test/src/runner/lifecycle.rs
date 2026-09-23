@@ -8,7 +8,7 @@ use crate::{
     report::{AssertionReportEntry, AssertionStatus, Report, ReportStatus, TerminatedBy},
     run::termination::TerminationReason,
 };
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 use helios_runtime::{port::PortBus, AutonomyPipeline};
 
 use thiserror::Error;

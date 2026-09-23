@@ -18,7 +18,7 @@
 
 use crate::prelude::AutonomyPipelineComponent;
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 use helios_runtime::{port::InternalChannel, Health, Stamped, HOST_PRODUCER_ID};
 
 use bevy::ecs::system::SystemParam;

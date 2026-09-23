@@ -110,7 +110,7 @@ impl<T: Send + Sync + Clone + 'static> PipelineNode for Selector<T> {
     fn execute(
         &self,
         bus: &crate::port::PortBus,
-        _tf: &dyn helios_core::data::TfProvider,
+        _tf: &dyn helios_core::prelude::TfProvider,
         _tick: crate::TickContext,
     ) {
         let winner = match self.policy {

@@ -1,5 +1,5 @@
 use crate::{
-    data::{ports::TfProvider, AgentId, MonotonicTime},
+    prelude::{AgentId, MonotonicTime, TfProvider},
     estimation::{
         measurement::{MeasurementModel, Prediction, Unavailable},
         schema::{MeasurementSchema, MeasurementSchemaBlock},
@@ -115,8 +115,8 @@ mod tests {
     //!   the bias read falls back to zero.
 
     use super::*;
-    use crate::data::AgentId;
-    use crate::data::MonotonicTime;
+    use crate::prelude::AgentId;
+    use crate::prelude::MonotonicTime;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};

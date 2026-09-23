@@ -1,5 +1,5 @@
 use crate::{
-    data::MonotonicTime,
+    prelude::MonotonicTime,
     frames::{transforms::ErasedTransform, FrameId},
 };
 

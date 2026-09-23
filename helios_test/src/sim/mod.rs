@@ -19,7 +19,7 @@ use crate::run::termination::TerminationReason;
 use crate::runner::Runner;
 use crate::RunMetrics;
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 
 use bevy::prelude::Resource;
 use std::path::PathBuf;

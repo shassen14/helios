@@ -1,4 +1,4 @@
-use helios_core::data::AgentId;
+use helios_core::prelude::AgentId;
 use helios_runtime::{pipeline::AutonomyPipeline, tf_service::TfService};
 
 use bevy::prelude::{Component, Entity};

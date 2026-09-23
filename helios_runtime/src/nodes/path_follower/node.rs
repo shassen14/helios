@@ -34,7 +34,7 @@
 use std::sync::Mutex;
 
 use helios_core::control::ControlReference;
-use helios_core::data::TfProvider;
+use helios_core::prelude::TfProvider;
 use helios_core::path_following::{PathFollower, PathFollowerResult};
 use helios_core::planning::types::Path;
 
@@ -190,7 +190,7 @@ mod tests {
     use helios_core::control::commands::BodyTwist;
     use helios_core::control::BodyTwistRef;
     use helios_core::data::primitives::MonotonicTime;
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::frames::conventions::Enu;
     use helios_core::frames::quantities::Point;

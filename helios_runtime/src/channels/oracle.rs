@@ -12,7 +12,7 @@
 
 use crate::{port::OracleChannel, ChannelKey};
 
-use helios_core::data::Twist;
+use helios_core::prelude::Twist;
 use nalgebra::Isometry3;
 
 /// Oracle channel carrying the agent body's world pose at the current tick.

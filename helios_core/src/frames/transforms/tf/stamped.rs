@@ -8,7 +8,7 @@
 //! this file is only the data those two vocabularies share.
 
 use crate::{
-    data::MonotonicTime,
+    prelude::MonotonicTime,
     frames::{id::FrameId, transforms::ErasedTransform},
 };
 
@@ -124,7 +124,7 @@ pub struct DynamicEdgeStats {
 #[cfg(test)]
 mod tests {
     use super::FrameEdge;
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
     use crate::frames::id::FrameId;
 
     #[test]

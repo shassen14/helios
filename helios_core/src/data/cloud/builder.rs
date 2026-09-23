@@ -8,10 +8,8 @@
 //! the equal-length invariant across geometry, attributes, and time is
 //! established; every operation on the finished cloud then preserves it.
 
-use crate::{
-    data::{AttributeColumns, Attributes, PointCloud, PointColumns, TimeColumn},
-    frames::{conventions::Frame, quantities::Point},
-};
+use crate::frames::{conventions::Frame, quantities::Point};
+use super::{AttributeColumns, Attributes, PointCloud, PointColumns, TimeColumn};
 
 use nalgebra::Matrix3xX;
 use std::{marker::PhantomData, sync::Arc};
@@ -147,7 +145,7 @@ pub enum CloudBuildError {
 mod tests {
     use super::*;
 
-    use crate::data::{LidarAttrs, LidarColumns, LidarColumnsBuilder};
+    use crate::prelude::{LidarAttrs, LidarColumns, LidarColumnsBuilder};
     use crate::frames::conventions::Enu;
 
     use nalgebra::Vector3;

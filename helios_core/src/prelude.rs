@@ -1,8 +1,11 @@
 // --- Core Abstractions (The main contracts of the library) ---
+pub use crate::data::cloud::{
+    AttributeColumns, LidarAttrs, LidarColumns, LidarColumnsBuilder, PointCloud, PointCloudBuilder,
+};
 pub use crate::data::envelope::SensorReading;
 pub use crate::data::messages::{Odometry, Twist};
 pub use crate::data::ports::TfProvider;
-pub use crate::data::primitives::MonotonicTime;
+pub use crate::data::primitives::{AgentId, MonotonicDuration, MonotonicTime};
 pub use crate::data::sensor::SensorPayload;
 pub use crate::data::sensor::{
     Acceleration, AngularRate, DepthImage, GpsPosition, GpsVelocity, MagneticField, RgbImage,

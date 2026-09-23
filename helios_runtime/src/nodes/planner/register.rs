@@ -57,7 +57,7 @@ mod tests {
 
     use crate::port::InternalChannel;
 
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
     use helios_core::mapping::MapData;
     use helios_core::planning::types::Path;
 

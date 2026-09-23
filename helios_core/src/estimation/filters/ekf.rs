@@ -1,5 +1,5 @@
 use crate::data::ports::TfProvider;
-use crate::data::MonotonicTime;
+use crate::prelude::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::filters::linearization::tangent_state_transition;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
@@ -201,8 +201,8 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 mod tests {
     use super::*;
     use crate::data::ports::TfProvider;
-    use crate::data::AgentId;
-    use crate::data::MonotonicTime;
+    use crate::prelude::AgentId;
+    use crate::prelude::MonotonicTime;
     use crate::estimation::measurement::{MeasurementModel, Prediction};
     use crate::estimation::schema::{
         MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
@@ -490,7 +490,7 @@ mod tests {
     /// returning the final `(mean, covariance-diagonal)`. Every input here is a
     /// hardcoded constant so the run is fully deterministic.
     fn run_golden_ins_trajectory() -> (DVector<f64>, DVector<f64>) {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
         use crate::estimation::dynamics::integrated_imu::{
             ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
         };
@@ -861,7 +861,7 @@ mod tests {
     /// The frozen 16-state INS model, same tuning as the golden trajectory so its
     /// base schema is the well-exercised one.
     fn ins_model() -> crate::estimation::dynamics::integrated_imu::IntegratedImuModel {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
         use crate::estimation::dynamics::integrated_imu::{ImuInitialUncertainty, ImuProcessNoise};
         use nalgebra::Vector3;
 
@@ -910,7 +910,7 @@ mod tests {
 
     #[test]
     fn augmented_ins_ekf_constructs_and_carries_the_bias_block() {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
         use std::sync::Arc;
 
         let model = ins_model();
@@ -999,7 +999,7 @@ mod tests {
 
     #[test]
     fn augmentation_changes_ekf_dimension_by_block_size() {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
 
         // Distinct sensors so the two bias blocks are independent, not aliased.
         let s9 = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
@@ -1061,7 +1061,7 @@ mod tests {
 
     #[test]
     fn augmented_predict_leaves_base_subvector_bit_identical() {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
 
         // The mean is storage-indexed, so the base sub-vector spans `base_storage`
         // (16) slots — the full quaternion included — and the bias appends after it.
@@ -1103,7 +1103,7 @@ mod tests {
 
     #[test]
     fn augmented_predict_grows_bias_covariance_by_process_noise() {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
 
         let base_dim = ins_model().schema().tangent_dim();
         let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
@@ -1155,7 +1155,7 @@ mod tests {
 
     #[test]
     fn augmented_update_drives_bias_toward_truth() {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
         use crate::estimation::measurement::magnetometer::MagneticFieldModel;
         use nalgebra::Vector3;
 

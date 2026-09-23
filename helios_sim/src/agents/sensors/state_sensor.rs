@@ -14,7 +14,7 @@ use crate::core::prng::SensorRng;
 use crate::core::transforms::{bevy_transform_to_transform_bevy, FromBevy, TrackedFrame};
 use crate::prelude::{GroundTruthState, SensorPublishChannel, SensorPublisher};
 
-use helios_core::data::{MonotonicTime, SensorPayload, SensorReading};
+use helios_core::prelude::{MonotonicTime, SensorPayload, SensorReading};
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::transforms::Transform as CoreTransform;
 
@@ -160,7 +160,7 @@ mod tests {
     use super::*;
 
     use helios_core::data::sensor::GpsPosition;
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
     use helios_core::frames::transforms::Convention;
     use helios_core::frames::FrameId;
 

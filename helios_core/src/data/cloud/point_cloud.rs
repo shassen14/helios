@@ -8,10 +8,8 @@
 //! live behind [`Arc`], so cloning a cloud — or deriving one that shares a
 //! frame-invariant column — copies a pointer, not the data.
 
-use crate::{
-    data::Attributes,
-    frames::{conventions::Frame, quantities::Point, transforms::Transform},
-};
+use crate::frames::{conventions::Frame, quantities::Point, transforms::Transform};
+use super::Attributes;
 
 use core::fmt;
 use std::{marker::PhantomData, sync::Arc};
@@ -290,7 +288,7 @@ impl TimeColumn {
 mod tests {
     use super::*;
 
-    use crate::data::{AttributeColumns, LidarAttrs, LidarColumns, LidarColumnsBuilder};
+    use crate::prelude::{AttributeColumns, LidarAttrs, LidarColumns, LidarColumnsBuilder};
     use crate::frames::conventions::{Enu, Flu};
     use crate::frames::transforms::Rotation;
 

@@ -12,7 +12,7 @@ use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::commands::BodyTwist;
 use crate::control::kernels::siso_pid::SisoPid;
 use crate::control::BodyTwistRef;
-use crate::data::AgentId;
+use crate::prelude::AgentId;
 use crate::frames::conventions::{Enu, Flu};
 use crate::frames::quantities::Point;
 use crate::frames::FrameId;

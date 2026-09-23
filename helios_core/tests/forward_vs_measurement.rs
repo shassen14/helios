@@ -19,8 +19,8 @@
 //! many random poses, rates, mounts, and fields while staying reproducible.
 
 use helios_core::data::ports::TfProvider;
-use helios_core::data::AgentId;
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::AgentId;
+use helios_core::prelude::MonotonicTime;
 use helios_core::estimation::measurement::accelerometer::SpecificForceModel;
 use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;

@@ -8,7 +8,7 @@ use std::sync::{
     Arc,
 };
 
-use helios_core::data::{primitives::MonotonicTime, AgentId};
+use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::frames::id::FrameId;
 use helios_core::frames::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
@@ -75,7 +75,7 @@ impl PipelineNode for ProducerNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, tick: TickContext) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn helios_core::prelude::TfProvider, tick: TickContext) {
         let stamped = Stamped {
             value: self.value,
             timestamp: tick.now,
@@ -124,7 +124,7 @@ impl PipelineNode for TransformNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, tick: TickContext) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn helios_core::prelude::TfProvider, tick: TickContext) {
         let Some(input) = bus.read::<u32>(self.input.clone()) else {
             return;
         };
@@ -174,7 +174,7 @@ impl PipelineNode for JoinNode {
         &self.descriptor
     }
 
-    fn execute(&self, bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, tick: TickContext) {
+    fn execute(&self, bus: &PortBus, _tf: &dyn helios_core::prelude::TfProvider, tick: TickContext) {
         let Some(a) = bus.read::<u32>(self.input_a.clone()) else {
             return;
         };
@@ -222,7 +222,7 @@ impl PipelineNode for CountingNode {
         &self.descriptor
     }
 
-    fn execute(&self, _bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, _tick: TickContext) {
+    fn execute(&self, _bus: &PortBus, _tf: &dyn helios_core::prelude::TfProvider, _tick: TickContext) {
         self.counter.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -257,7 +257,7 @@ impl PipelineNode for SinkNode {
         &self.descriptor
     }
 
-    fn execute(&self, _bus: &PortBus, _tf: &dyn helios_core::data::TfProvider, _tick: TickContext) {
+    fn execute(&self, _bus: &PortBus, _tf: &dyn helios_core::prelude::TfProvider, _tick: TickContext) {
     }
 }
 

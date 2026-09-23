@@ -60,7 +60,7 @@ pub fn body_forward_speed(state: &FrameAwareState, body: FrameId) -> Option<f64>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::Convention;
     use crate::manifold::TangentNoise;

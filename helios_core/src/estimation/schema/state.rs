@@ -415,7 +415,7 @@ impl StateSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
     use crate::manifold::TangentNoise;
     use crate::state::Component;
 

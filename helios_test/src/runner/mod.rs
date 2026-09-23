@@ -17,7 +17,7 @@ use crate::{
     runner::state::AssertionState,
 };
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 
 /// _Per-step._ The state machine the host pumps across a run: owns the run, the
 /// resolved registry, the extractor table, per-assertion state, and the clock

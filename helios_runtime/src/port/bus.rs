@@ -20,7 +20,7 @@ use std::{
 
 use arc_swap::ArcSwap;
 use atomic_float::AtomicF64;
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 
 use crate::{
     port::channel::{ChannelError, ChannelKey},

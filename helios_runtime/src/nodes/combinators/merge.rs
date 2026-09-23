@@ -99,7 +99,7 @@ impl PipelineNode for Merge {
     fn execute(
         &self,
         bus: &crate::port::PortBus,
-        _tf: &dyn helios_core::data::TfProvider,
+        _tf: &dyn helios_core::prelude::TfProvider,
         tick: crate::TickContext,
     ) {
         let Some(inputs) = self

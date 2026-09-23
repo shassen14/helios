@@ -213,8 +213,8 @@ mod tests {
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::ports::TfProvider;
     use helios_core::data::sensor::Acceleration;
-    use helios_core::data::AgentId;
-    use helios_core::data::MonotonicTime;
+    use helios_core::prelude::AgentId;
+    use helios_core::prelude::MonotonicTime;
     use helios_core::estimation::augmentation::{augmentation_block, MAGNETOMETER_BIAS};
     use helios_core::estimation::measurement::{MeasurementModel, Prediction};
     use helios_core::estimation::schema::{

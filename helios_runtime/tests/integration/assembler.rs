@@ -22,7 +22,7 @@ use helios_core::control::BodyTwistRef;
 use helios_core::data::envelope::SensorReading;
 use helios_core::data::primitives::MonotonicTime;
 use helios_core::data::sensor::MagneticField;
-use helios_core::data::AgentId;
+use helios_core::prelude::AgentId;
 use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::frames::conventions::Flu;
 use helios_core::frames::quantities::{FluVector, FreeVector};

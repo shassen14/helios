@@ -10,7 +10,7 @@ use crate::viz::interaction::{
     teleop::{AxisPair, TeleopActions},
 };
 
-use helios_core::{control::commands::TwistIntent, data::MonotonicTime};
+use helios_core::{control::commands::TwistIntent, prelude::MonotonicTime};
 use helios_runtime::channels::control;
 
 use bevy::prelude::*;

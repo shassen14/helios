@@ -35,7 +35,7 @@ mod tests {
 
     use crate::config::MockOracleEstimatorConfig;
 
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
 
     fn context(instance_name: &str) -> MockEstimatorBuildContext {
         MockEstimatorBuildContext {

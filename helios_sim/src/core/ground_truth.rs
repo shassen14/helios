@@ -4,7 +4,7 @@ use crate::core::transforms::{
     bevy_transform_to_transform_bevy, vec3_to_freevector_bevy, FromBevy,
 };
 
-use helios_core::data::{MonotonicTime, Twist};
+use helios_core::prelude::{MonotonicTime, Twist};
 use helios_core::frames::conventions::{Enu, Flu};
 use helios_core::frames::quantities::FreeVector;
 use helios_core::frames::transforms::Transform as CoreTransform;

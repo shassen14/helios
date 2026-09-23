@@ -22,7 +22,7 @@ use helios_core::{
         commands::BodyTwist,
         reference::BodyTwistRef,
     },
-    data::MonotonicTime,
+    prelude::MonotonicTime,
     frames::{
         conventions::{Enu, Flu},
         quantities::{FreeVector, Point},
@@ -352,7 +352,7 @@ mod tests {
     use super::*;
 
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
-    use helios_core::data::TfProvider;
+    use helios_core::prelude::TfProvider;
     use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
     use helios_core::frames::quantities::FluVector;
     use helios_core::frames::transforms::Convention;

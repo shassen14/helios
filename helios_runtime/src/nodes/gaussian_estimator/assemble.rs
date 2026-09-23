@@ -14,7 +14,7 @@ use helios_core::data::envelope::SensorReading;
 use helios_core::data::sensor::{
     Acceleration, AngularRate, GpsPosition, GpsVelocity, MagneticField,
 };
-use helios_core::data::AgentId;
+use helios_core::prelude::AgentId;
 use helios_core::estimation::augmentation::augmentation_block;
 use helios_core::estimation::schema::{MeasurementAgreementError, StateSchemaBlock};
 use helios_core::frames::FrameId;

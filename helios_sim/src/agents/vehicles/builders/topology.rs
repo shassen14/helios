@@ -59,7 +59,7 @@ mod tests {
 
     use crate::config::structs::{MountConfig, Pose};
 
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
 
     use bevy::ecs::system::SystemState;
     use nalgebra::{UnitQuaternion, Vector3};

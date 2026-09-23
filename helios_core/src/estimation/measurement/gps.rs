@@ -1,8 +1,8 @@
 use nalgebra::DVector;
 
 use crate::data::ports::TfProvider;
-use crate::data::AgentId;
-use crate::data::MonotonicTime;
+use crate::prelude::AgentId;
+use crate::prelude::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::measurement::Prediction;
 use crate::estimation::measurement::Unavailable;
@@ -120,8 +120,8 @@ mod tests {
 
     use super::*;
     use crate::data::ports::TfProvider;
-    use crate::data::AgentId;
-    use crate::data::MonotonicTime;
+    use crate::prelude::AgentId;
+    use crate::prelude::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};

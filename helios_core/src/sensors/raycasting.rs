@@ -1,4 +1,4 @@
-use crate::{data::PointCloud, frames::conventions::Flu};
+use crate::{prelude::PointCloud, frames::conventions::Flu};
 use dyn_clone::DynClone;
 use nalgebra::Vector3;
 use std::fmt::Debug;

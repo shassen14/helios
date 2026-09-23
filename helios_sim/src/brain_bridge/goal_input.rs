@@ -12,7 +12,7 @@ use crate::core::components::GoalDispatched;
 use crate::core::events::GoalCommandEvent;
 use crate::prelude::HostInputPublisher;
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 use helios_core::prelude::PlannerGoal;
 use helios_runtime::port::InternalChannel;
 

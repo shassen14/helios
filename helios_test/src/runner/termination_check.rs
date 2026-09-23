@@ -1,4 +1,4 @@
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 
 use crate::{
     assertion::AssertionResult,

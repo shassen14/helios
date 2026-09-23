@@ -1,7 +1,7 @@
 //! Registers built-in mapper factories.
 
 use helios_core::data::envelope::SensorReading;
-use helios_core::data::PointCloud;
+use helios_core::prelude::PointCloud;
 use helios_core::frames::conventions::Flu;
 use helios_core::mapping::MapData;
 use helios_core::mapping::{Mapper, OccupancyGridMapper};
@@ -60,7 +60,7 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
 mod tests {
     use super::*;
 
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
 
     fn context(instance_name: &str) -> MapperBuildContext {
         MapperBuildContext {

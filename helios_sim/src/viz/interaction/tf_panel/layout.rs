@@ -138,7 +138,7 @@ fn place_subtree(
 mod tests {
     use super::*;
 
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
 
     /// A dynamic-style edge `child -> parent`. Poses are irrelevant to layout, so
     /// the tests speak only in identities.

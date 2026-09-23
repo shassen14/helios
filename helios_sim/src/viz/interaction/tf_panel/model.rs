@@ -13,7 +13,7 @@
 
 use crate::viz::interaction::tf_panel::layout::LayoutCell;
 
-use helios_core::{data::AgentId, frames::FrameId};
+use helios_core::{prelude::AgentId, frames::FrameId};
 
 /// One agent's estimated tree, laid out and annotated — the unit the renderer
 /// draws. The panel model is a list of these, one per selected agent, drawn

@@ -189,7 +189,7 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
                 &*self.model,
                 &self.r,
                 tf,
-                helios_core::data::MonotonicTime(reading_ts),
+                helios_core::prelude::MonotonicTime(reading_ts),
             );
             // Surface a dropped correction that stems from a fault (an
             // unresolved transform, a shape/covariance bug) — the silent
@@ -370,7 +370,7 @@ mod tests {
     use helios_core::data::envelope::SensorReading;
     use helios_core::data::primitives::MonotonicTime;
     use helios_core::data::sensor::Acceleration;
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::measurement::Prediction;
     use helios_core::estimation::schema::{

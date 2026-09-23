@@ -68,7 +68,7 @@ use crate::registry::AutonomyRegistry;
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
-use helios_core::data::AgentId;
+use helios_core::prelude::AgentId;
 use helios_core::frames::FrameAwareState;
 use helios_core::mapping::MapData;
 use helios_core::planning::types::Path;

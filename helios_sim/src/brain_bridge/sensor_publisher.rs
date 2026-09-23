@@ -11,7 +11,7 @@
 
 use crate::prelude::AutonomyPipelineComponent;
 
-use helios_core::data::SensorReading;
+use helios_core::prelude::SensorReading;
 use helios_runtime::{port::SensorChannel, ChannelKey, Health, Stamped, HOST_PRODUCER_ID};
 
 use bevy::ecs::system::SystemParam;
@@ -96,7 +96,7 @@ mod tests {
     use bevy::ecs::system::SystemState;
     use helios_core::data::primitives::MonotonicTime;
     use helios_core::data::sensor::GpsPosition;
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
     use helios_core::frames::FrameId;
     use nalgebra::Vector3;
 

@@ -106,7 +106,7 @@ pub fn augmentation_block(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::AgentId;
+    use crate::prelude::AgentId;
     use crate::frames::StateVariable;
     use crate::state::Component;
 

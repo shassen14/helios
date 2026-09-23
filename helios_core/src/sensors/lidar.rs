@@ -1,4 +1,4 @@
-use crate::data::{PointCloud, PointCloudBuilder};
+use crate::prelude::{PointCloud, PointCloudBuilder};
 use crate::frames::conventions::Flu;
 use crate::frames::quantities::Point;
 use crate::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel, SensorRay};

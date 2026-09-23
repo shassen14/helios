@@ -107,7 +107,7 @@ impl<T: Send + Sync + Clone + Add<Output = T> + 'static> PipelineNode for Sum<T>
     fn execute(
         &self,
         bus: &crate::port::PortBus,
-        _tf: &dyn helios_core::data::TfProvider,
+        _tf: &dyn helios_core::prelude::TfProvider,
         tick: crate::TickContext,
     ) {
         let Some(required) = self
