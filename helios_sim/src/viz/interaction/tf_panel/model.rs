@@ -26,10 +26,11 @@ pub struct AgentGraph {
     pub edges: Vec<PanelEdge>,
 }
 
-/// A single frame placed on the panel grid. `frame` is kept alongside the
-/// display `label` so the renderer can hit-test or cross-reference by identity
-/// without re-parsing the string; `cell` is the abstract `(depth, slot)` the
-/// renderer maps to pixels.
+/// A single frame placed on the panel grid. `label` is the display string — the
+/// frame's leaf name alone, since the agent scope is shown once as the graph
+/// header, not repeated per node. The full `frame` is kept alongside it so the
+/// renderer can hit-test or cross-reference by identity without re-parsing the
+/// string; `cell` is the abstract `(depth, slot)` the renderer maps to pixels.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PanelNode {
     pub frame: FrameId,

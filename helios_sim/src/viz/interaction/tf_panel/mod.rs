@@ -8,6 +8,7 @@ pub mod gather;
 pub mod layout;
 pub mod model;
 pub mod panel;
+pub mod render;
 
 use crate::{
     prelude::AppState,
@@ -45,13 +46,24 @@ impl Plugin for TfPanelPlugin {
                 .in_set(VizSet::Live)
                 .run_if(in_state(AppState::Running)),
         );
-        // Rebuild the model only while the panel is shown, so an unopened panel
-        // does no buffer walking. `resource_equals` needs `TfPanelVisible: PartialEq`.
+        // Rebuild the model, then repaint from it, only while the panel is shown —
+        // an unopened panel does no buffer walking and no UI churn. Chained so the
+        // renderer sees the model gather just wrote, the same frame. `resource_equals`
+        // needs `TfPanelVisible: PartialEq`.
         app.add_systems(
             Update,
-            gather::gather_tf_panel
+            (gather::gather_tf_panel, render::render_tf_panel)
+                .chain()
                 .in_set(VizSet::Live)
                 .run_if(in_state(AppState::Running))
+                .run_if(resource_equals(TfPanelVisible(true))),
+        );
+        // Wheel-panning is pure UI interaction, so it is gated on the panel being
+        // shown but not on `Running` — a paused panel still scrolls.
+        app.add_systems(
+            Update,
+            panel::scroll_tf_panel
+                .in_set(VizSet::Live)
                 .run_if(resource_equals(TfPanelVisible(true))),
         );
     }

@@ -72,7 +72,10 @@ pub fn build_agent_graph(
     let nodes = tree_layout(&topology)
         .into_iter()
         .map(|(frame, cell)| PanelNode {
-            label: frame.to_string(),
+            // Leaf only: every node in one graph shares the agent scope, which the
+            // panel already prints once as the graph's header, so repeating
+            // `agent/` on each node is pure noise (and eats the node's width).
+            label: frame.leaf().as_str().to_owned(),
             frame,
             cell,
         })
