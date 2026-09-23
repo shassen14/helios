@@ -4,7 +4,7 @@ kind = "Imu"
 # currently the max rate (Hz).
 # Simulation time runs at 400 Hz so any higher will not actually run at that rate
 rate = 400.0
-transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+transform = { translation = [-1.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
 
 # --- Noise Characteristics (sensor FLU axes) ---
 # Accelerometer in m/s², gyroscope in rad/s.

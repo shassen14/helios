@@ -18,7 +18,9 @@ use crate::{
     data::{MonotonicDuration, MonotonicTime, TfProvider},
     frames::{
         transforms::{
-            tf::stamped::{EdgeKind, EdgeKindTag, FrameEdge, StampedTransform, TimeSpan},
+            tf::stamped::{
+                DynamicEdgeStats, EdgeKind, EdgeKindTag, FrameEdge, StampedTransform, TimeSpan,
+            },
             Convention, ErasedTransform,
         },
         FrameId,
@@ -219,6 +221,32 @@ impl TfBuffer {
                     },
                     kind.tag(),
                 )
+            })
+            .collect()
+    }
+
+    pub fn dynamic_edge_stats(&self) -> Vec<(FrameEdge, DynamicEdgeStats)> {
+        self.child_to_parent
+            .iter()
+            .filter_map(|(child, (parent, kind))| {
+                let EdgeKind::Dynamic(samples) = kind else {
+                    return None;
+                };
+
+                let newest = samples.back()?.0;
+                let oldest = samples.front()?.0;
+
+                Some((
+                    FrameEdge {
+                        child: child.clone(),
+                        parent: parent.clone(),
+                    },
+                    DynamicEdgeStats {
+                        newest,
+                        oldest,
+                        sample_count: samples.len(),
+                    },
+                ))
             })
             .collect()
     }
@@ -1426,6 +1454,109 @@ mod tests {
     fn edges_is_empty_on_a_fresh_buffer() {
         // No edges folded yet: an empty topology, not an error.
         assert!(TfBuffer::new(window()).edges().is_empty());
+    }
+
+    // --- dynamic_edge_stats (dynamic-edge sample timing) ---
+
+    // Locate one edge's stats by endpoints; order is unspecified (HashMap walk).
+    fn stats_for<'a>(
+        stats: &'a [(FrameEdge, DynamicEdgeStats)],
+        child: FrameId,
+        parent: FrameId,
+    ) -> Option<&'a DynamicEdgeStats> {
+        stats
+            .iter()
+            .find(|(e, _)| e.child == child && e.parent == parent)
+            .map(|(_, s)| s)
+    }
+
+    #[test]
+    fn dynamic_edge_stats_reports_newest_oldest_and_count() {
+        // Three samples on one dynamic edge: newest and oldest are the deque ends,
+        // the count is every retained sample. The window is permissive, so nothing
+        // is evicted and all three stand.
+        let mut buf = TfBuffer::new(window());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(2.0, 2.0)).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(3.0, 3.0)).is_ok());
+
+        let stats = buf.dynamic_edge_stats();
+        let s = stats_for(&stats, base_link(), odom()).expect("the dynamic edge is present");
+        assert!(
+            (s.newest.0 - 3.0).abs() < 1e-12,
+            "newest is the back of the deque"
+        );
+        assert!(
+            (s.oldest.0 - 1.0).abs() < 1e-12,
+            "oldest is the front of the deque"
+        );
+        assert_eq!(s.sample_count, 3);
+    }
+
+    #[test]
+    fn dynamic_edge_stats_omits_static_edges() {
+        // A static mount (sensor -> base_link) carries no sample history and cannot
+        // go stale, so it never appears here — only the dynamic base_link -> odom
+        // edge does. (The panel annotates static edges from `edges()` instead.)
+        let mut buf = TfBuffer::new(window());
+        let mount = stamped(
+            sensor("imu"),
+            base_link(),
+            Convention::Flu,
+            Convention::Flu,
+            0.0,
+            iso_x(1.0),
+        );
+        assert!(buf.insert_static(mount).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+
+        let stats = buf.dynamic_edge_stats();
+        assert_eq!(stats.len(), 1, "only the dynamic edge is reported");
+        assert!(stats_for(&stats, base_link(), odom()).is_some());
+        assert!(stats_for(&stats, sensor("imu"), base_link()).is_none());
+    }
+
+    #[test]
+    fn dynamic_edge_stats_is_empty_without_dynamic_edges() {
+        // A fresh buffer and a static-only tree both report no timing: nothing can
+        // be stale, so there is nothing to annotate.
+        assert!(TfBuffer::new(window()).dynamic_edge_stats().is_empty());
+
+        let mut buf = TfBuffer::new(window());
+        let mount = stamped(
+            sensor("imu"),
+            base_link(),
+            Convention::Flu,
+            Convention::Flu,
+            0.0,
+            iso_x(1.0),
+        );
+        assert!(buf.insert_static(mount).is_ok());
+        assert!(buf.dynamic_edge_stats().is_empty());
+    }
+
+    #[test]
+    fn dynamic_edge_stats_tracks_the_window_after_eviction() {
+        // Horizon of 1s: after a t=5 sample the cutoff is t=4, evicting t=0 and t=1
+        // (mirrors `insert_dynamic_evicts_samples_older_than_the_horizon`). The
+        // stats read the surviving deque — oldest advances to 5.0 and the count
+        // drops to one — so a panel's freshness never counts an evicted sample.
+        let mut buf = TfBuffer::new(TfWindow {
+            horizon: MonotonicDuration(1.0),
+            max_samples: 100,
+        });
+        assert!(buf.insert_dynamic(bl_odom(0.0, 0.0)).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+        assert!(buf.insert_dynamic(bl_odom(5.0, 5.0)).is_ok());
+
+        let stats = buf.dynamic_edge_stats();
+        let s = stats_for(&stats, base_link(), odom()).expect("the dynamic edge is present");
+        assert!((s.newest.0 - 5.0).abs() < 1e-12);
+        assert!(
+            (s.oldest.0 - 5.0).abs() < 1e-12,
+            "the evicted samples are gone"
+        );
+        assert_eq!(s.sample_count, 1);
     }
 
     // --- validate (shared front) ---

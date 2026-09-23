@@ -233,16 +233,11 @@ pub(crate) fn frame_transform_in_root(
 ///
 /// A single global switch, unlike the per-agent `MapVisible`: the overlay has
 /// one surface master, and scope-to-selection (a `With<Selected>` filter on the
-/// draw systems), not this flag, narrows *which* agent draws. Off by default —
-/// the overlay is an opt-in diagnostic, not always-on furniture.
-#[derive(Resource)]
+/// draw systems), not this flag, narrows *which* agent draws. Off by default
+/// (`bool::default()` is `false`) — the overlay is an opt-in diagnostic, not
+/// always-on furniture.
+#[derive(Resource, Default)]
 pub(crate) struct TfOverlayVisible(pub bool);
-
-impl Default for TfOverlayVisible {
-    fn default() -> Self {
-        Self(false)
-    }
-}
 
 /// Flip the overlay master when the `viz.toggle_tf` action fires. Mirrors
 /// `toggle_map_visibility`, but the master is one global resource rather than a

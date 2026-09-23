@@ -1,0 +1,226 @@
+//! The 2D tf topology/health panel: a screen-space `bevy_ui` dock showing an
+//! agent's estimated transform tree. This module is its wiring — the master
+//! visibility toggle and the plugin that installs it. The pure hierarchy
+//! placement lives in [`layout`], the cell→pixel geometry and colours in
+//! [`geometry`], the dock container and its show/hide in [`panel`], and the
+//! `bevy_ui` renderer that fills the dock in [`render`].
+
+pub mod gather;
+pub mod geometry;
+pub mod layout;
+pub mod model;
+pub mod panel;
+pub mod render;
+
+use crate::{
+    prelude::AppState,
+    viz::{
+        interaction::{
+            actions::{
+                handle::{ActionHandle, ActionId},
+                registry::ActionRegistry,
+            },
+            sampling::ActionState,
+        },
+        VizSet,
+    },
+};
+
+use geometry::PanelOrientation;
+use model::AgentGraph;
+
+use bevy::prelude::*;
+
+/// Installs the tf panel: its visibility resource, the one-shot dock spawn, and
+/// the per-frame toggle-then-apply pair.
+pub struct TfPanelPlugin;
+
+impl Plugin for TfPanelPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<TfPanelVisible>();
+        app.init_resource::<TfPanelModel>();
+        // The panel's layout orientation (`TopDown` / `Sideways`) is not init'd here:
+        // its starting value comes from `[tf_panel.graph].default_orientation`, inserted
+        // by `load_interaction_tuning`, and the toggle below flips it from there. Gated
+        // on the panel being shown — orientation is meaningless while it is hidden — but
+        // not on `Running`, so it flips on a paused panel like the wheel-pan below.
+        app.add_systems(
+            Update,
+            toggle_tf_panel_orientation
+                .in_set(VizSet::Live)
+                .run_if(resource_equals(TfPanelVisible(true))),
+        );
+        app.add_systems(Startup, panel::spawn_tf_panel);
+        // Toggle before sync in one chain, so a keypress flips `TfPanelVisible`
+        // and the dock's `Visibility` updates the same frame, not a frame late.
+        app.add_systems(
+            Update,
+            (toggle_tf_panel, panel::sync_tf_panel_visibility)
+                .chain()
+                .in_set(VizSet::Live)
+                .run_if(in_state(AppState::Running)),
+        );
+        // Rebuild the model, then repaint from it, only while the panel is shown —
+        // an unopened panel does no buffer walking and no UI churn. Chained so the
+        // renderer sees the model gather just wrote, the same frame. `resource_equals`
+        // needs `TfPanelVisible: PartialEq`.
+        app.add_systems(
+            Update,
+            (gather::gather_tf_panel, render::render_tf_panel)
+                .chain()
+                .in_set(VizSet::Live)
+                .run_if(in_state(AppState::Running))
+                .run_if(resource_equals(TfPanelVisible(true))),
+        );
+        // Wheel-panning is pure UI interaction, so it is gated on the panel being
+        // shown but not on `Running` — a paused panel still scrolls.
+        app.add_systems(
+            Update,
+            panel::scroll_tf_panel
+                .in_set(VizSet::Live)
+                .run_if(resource_equals(TfPanelVisible(true))),
+        );
+    }
+}
+
+/// The panel's master on/off, flipped by [`toggle_tf_panel`] and applied to the
+/// dock by [`panel::sync_tf_panel_visibility`]. Off by default — the panel is
+/// opt-in, like the 3D tf overlay.
+#[derive(Default, PartialEq, Resource)]
+pub struct TfPanelVisible(pub bool);
+
+/// The current panel snapshot: one [`AgentGraph`] per selected agent, rebuilt each
+/// frame by [`gather::gather_tf_panel`] while the panel is visible and consumed by
+/// the renderer. Empty by default and whenever nothing is selected — an empty model
+/// draws nothing. The `Resource` wrapper lives here so [`model`] stays pure data.
+#[derive(Default, Resource)]
+pub struct TfPanelModel(pub Vec<AgentGraph>);
+
+/// Flips the panel's master visibility when `viz.toggle_tf_panel` fires.
+///
+/// Mirrors `toggle_tf_overlay`: the action handle can't change after startup, so
+/// it is resolved once and cached in a `Local`. The `expect` is a startup-time
+/// assertion, not a runtime path — the action is declared unconditionally in
+/// `register_viz_actions`, so its absence is a wiring bug rather than a condition
+/// to handle.
+pub(crate) fn toggle_tf_panel(
+    registry: Res<ActionRegistry>,
+    state: Res<ActionState>,
+    mut panel: ResMut<TfPanelVisible>,
+    mut handle: Local<Option<ActionHandle>>,
+) {
+    let h = *handle.get_or_insert_with(|| {
+        registry
+            .handle(ActionId("viz.toggle_tf_panel"))
+            .expect("registered")
+    });
+
+    if state.is_active(h) {
+        panel.0 = !panel.0;
+    }
+}
+
+/// Flips [`PanelOrientation`] between `Sideways` and `TopDown` when
+/// `viz.toggle_tf_panel_orientation` fires, so the two layouts swap on one live tree
+/// without a rebuild. Mirrors [`toggle_tf_panel`]: the handle can't change after
+/// startup, so it is resolved once into a `Local`, and the `expect` is a startup-time
+/// assertion — the action is declared unconditionally in `register_viz_actions`.
+fn toggle_tf_panel_orientation(
+    registry: Res<ActionRegistry>,
+    state: Res<ActionState>,
+    mut orientation: ResMut<PanelOrientation>,
+    mut handle: Local<Option<ActionHandle>>,
+) {
+    let h = *handle.get_or_insert_with(|| {
+        registry
+            .handle(ActionId("viz.toggle_tf_panel_orientation"))
+            .expect("registered")
+    });
+
+    if state.is_active(h) {
+        *orientation = match *orientation {
+            PanelOrientation::Sideways => PanelOrientation::TopDown,
+            PanelOrientation::TopDown => PanelOrientation::Sideways,
+        };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::panel::{sync_tf_panel_visibility, TfPanelDockTuning, TfPanelRoot};
+    use super::{TfPanelModel, TfPanelPlugin, TfPanelVisible};
+
+    use crate::prelude::AppState;
+
+    use bevy::prelude::*;
+    use bevy::state::app::StatesPlugin;
+
+    /// Tier-3 wiring guard: the plugin must initialise the master resource and
+    /// spawn exactly one, hidden, panel root at startup. Dropping the
+    /// `init_resource` or the `Startup` spawn still compiles; this catches it. The
+    /// app sits in a non-`Running` state so the `Update` chain is gated off — the
+    /// guard then needs no `ActionRegistry`/`ActionState`, staying scoped to the
+    /// startup wiring it checks. `spawn_tf_panel` reads `TfPanelDockTuning` (normally
+    /// inserted by `load_interaction_tuning` in `PreStartup`), so the guard inserts a
+    /// default one rather than boot the whole tuning loader.
+    #[test]
+    fn plugin_inits_resource_and_spawns_hidden_dock() {
+        let mut app = App::new();
+        app.add_plugins(StatesPlugin);
+        app.insert_state(AppState::AssetLoading);
+        app.insert_resource(TfPanelDockTuning::default());
+        app.add_plugins(TfPanelPlugin);
+
+        app.update();
+
+        assert!(
+            !app.world().resource::<TfPanelVisible>().0,
+            "the panel is off by default",
+        );
+        assert!(
+            app.world().resource::<TfPanelModel>().0.is_empty(),
+            "the model starts empty until an agent is selected",
+        );
+
+        let mut roots = app
+            .world_mut()
+            .query_filtered::<&Visibility, With<TfPanelRoot>>();
+        let spawned: Vec<Visibility> = roots.iter(app.world()).copied().collect();
+        assert_eq!(spawned.len(), 1, "startup spawns exactly one panel root");
+        assert_eq!(spawned[0], Visibility::Hidden, "the dock starts hidden");
+    }
+
+    /// The show/hide logic in isolation: `sync_tf_panel_visibility` must drive the
+    /// root's `Visibility` from the resource each frame, in both directions. This
+    /// is the step-6 behaviour without the action plumbing — spawn a root, flip
+    /// the resource, run the one system, watch the `Visibility` follow.
+    #[test]
+    fn sync_drives_dock_visibility_from_resource() {
+        let mut app = App::new();
+        app.insert_resource(TfPanelVisible(true));
+        let root = app
+            .world_mut()
+            .spawn((TfPanelRoot, Visibility::Hidden))
+            .id();
+        app.add_systems(Update, sync_tf_panel_visibility);
+
+        app.update();
+        assert_eq!(
+            *app.world()
+                .get::<Visibility>(root)
+                .expect("root has a Visibility"),
+            Visibility::Visible,
+            "a set resource reveals the dock",
+        );
+
+        app.world_mut().resource_mut::<TfPanelVisible>().0 = false;
+        app.update();
+        assert_eq!(
+            *app.world()
+                .get::<Visibility>(root)
+                .expect("root has a Visibility"),
+            Visibility::Hidden,
+            "clearing the resource hides the dock",
+        );
+    }
+}

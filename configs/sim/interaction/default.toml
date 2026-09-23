@@ -39,3 +39,46 @@
 # screen_offset = [0.0, -14.0]        # nudge from the projected point, logical px (default up 14)
 # line_spacing  = 4.0                 # gap added below the glyph when stacking, px (default 4.0)
 # column_width  = 90.0                # collision bucket width, logical px (default 90.0)
+
+# The 2D tf topology/health panel. Three sections: the screen-space dock, the graph
+# geometry + node chrome, and edge health (staleness thresholds + verdict colors).
+#
+# The dock below ships two active overrides tuned for the Sideways default: the panel
+# grows rightward by col_pitch (128) per depth level, so a depth-4 tree (map→odom→
+# base_link→sensor) needs ~640px to avoid horizontal scroll, and it grows downward by
+# breadth rather than depth, so the height cap can be shorter. Everything else stays
+# commented (compiled default). Uncomment any key to override it.
+
+[tf_panel.dock]
+# margin              = 10.0                    # inset from the top-left corner, px (default 10.0)
+width = 440.0              # fixed dock width, px (default 440.0; widened for Sideways depth-4)
+viewport_max_height = 55.0 # height cap on the scrolling region, vh (default 70.0; shorter for Sideways)
+# padding             = 8.0                     # inner padding, px (default 8.0)
+# header_gap          = 6.0                     # gap under the pinned header, px (default 6.0)
+# bg                  = [0.05, 0.05, 0.08, 0.85]  # dock backing, linear sRGB + alpha (default dark)
+# line_scroll         = 20.0                    # px per wheel notch; trackpad px pass through (default 20.0)
+
+[tf_panel.graph]
+default_orientation = "sideways" # "sideways" | "top_down" (default "sideways"; stated explicitly — the load-bearing layout choice)
+# node_width          = 120.0                   # node box width, px (default 120.0)
+# node_height         = 26.0                    # node box height, px (default 26.0)
+# col_pitch           = 128.0                   # centre-to-centre along depth, px (default 128.0)
+# row_pitch           = 58.0                    # centre-to-centre along siblings, px (default 58.0)
+# canvas_pad_top      = 6.0                     # padding above the root row, px (default 6.0)
+# canvas_pad_left     = 6.0                     # padding before the root column (Sideways), px (default 6.0)
+# band_gap            = 28.0                    # gap between per-agent bands, px (default 28.0)
+# connector_thickness = 2.0                     # connector line thickness, px (default 2.0)
+# node_padding        = 4.0                     # inner padding of a node box, px (default 4.0)
+# label_font_size     = 10.0                    # node-label font, logical px (default 10.0)
+# header_font_size    = 13.0                    # pinned-header font, logical px (default 13.0)
+# node_bg             = [0.12, 0.13, 0.18, 0.95]  # node box background, linear sRGB + alpha
+# label_color         = [0.85, 0.88, 0.95]      # node label text, linear sRGB
+# header_color        = [0.62, 0.80, 1.0]       # pinned-header accent, linear sRGB
+
+# [tf_panel.health]
+# stale_after = 0.5                     # s since newest sample → amber (default 0.5)
+# dead_after  = 2.0                     # s since newest sample → red; must exceed stale_after (default 2.0)
+# ok_color    = [0.36, 0.72, 0.45]      # fresh edge, linear sRGB (default green)
+# stale_color = [0.90, 0.72, 0.25]      # stale edge, linear sRGB (default amber)
+# dead_color  = [0.86, 0.32, 0.32]      # dead edge, linear sRGB (default red)
+# none_color  = [0.45, 0.47, 0.52]      # static / no-samples edge, linear sRGB (default grey)
