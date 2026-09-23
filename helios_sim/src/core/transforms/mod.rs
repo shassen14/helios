@@ -17,9 +17,9 @@ mod bevy_bridge;
 mod body_twist;
 
 pub use bevy_bridge::{
-    bevy_transform_to_transform_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3,
-    transform_bevy_to_bevy_transform, vec3_to_freevector_bevy, vec3_to_point_bevy, Bevy, FromBevy,
-    ToBevy,
+    bevy_transform_to_transform_bevy, frame_triad_to_bevy, freevector_bevy_to_vec3,
+    point_bevy_to_vec3, transform_bevy_to_bevy_transform, vec3_to_freevector_bevy,
+    vec3_to_point_bevy, Bevy, FromBevy, ToBevy,
 };
 pub use body_twist::enu_twist_to_body_flu;
 

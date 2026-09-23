@@ -13,20 +13,17 @@
 use bevy::prelude::*;
 
 use helios_core::frames::conventions::{Enu, Flu};
+use helios_core::frames::transforms::Convention;
 use helios_core::frames::FrameId;
 
 use crate::{
-    core::transforms::{transform_bevy_to_bevy_transform, ToBevy},
+    core::transforms::{frame_triad_to_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3},
     prelude::{AgentIdComponent, AutonomyPipelineComponent},
+    viz::live::{pose::PoseOverlayTuning, triad::draw_triad},
 };
 
-/// Axis-triad length for the estimate gizmo. Deliberately shorter than the
-/// ground-truth triad ([`crate::viz::live::pose::GROUND_TRUTH_TRIAD_LEN`]) so
-/// the two are distinguishable where they overlap.
-// TODO: pull the triad length from viz config once that surface exists.
-const ESTIMATE_TRIAD_LEN: f32 = 3.0;
-
 pub fn estimate_update_system(
+    tuning: Res<PoseOverlayTuning>,
     query: Query<(&AutonomyPipelineComponent, &AgentIdComponent)>,
     mut gizmos: Gizmos,
 ) {
@@ -40,8 +37,18 @@ pub fn estimate_update_system(
             continue;
         };
 
-        let transform = transform_bevy_to_bevy_transform(pose.to_bevy());
+        // The estimate is base_link (FLU) relative to odom (ENU); its FLU
+        // convention rides in the pose's rotation, so the triad crosses one-sided
+        // and points where the brain believes the body points.
+        let Some((origin, axes)) = frame_triad_to_bevy(pose.into_inner(), Convention::Enu) else {
+            continue;
+        };
 
-        gizmos.axes(transform, ESTIMATE_TRIAD_LEN);
+        draw_triad(
+            &mut gizmos,
+            point_bevy_to_vec3(origin),
+            axes.map(freevector_bevy_to_vec3),
+            tuning.estimate_len,
+        );
     }
 }

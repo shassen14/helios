@@ -18,6 +18,7 @@ use crate::{
             },
         },
         live::{
+            pose::{PoseOverlayTuning, PoseOverlayTuningFile},
             tf::{TfOverlayTuning, TfOverlayTuningFile},
             tf_labels::{TfLabelTuning, TfLabelTuningFile},
         },
@@ -39,6 +40,7 @@ const INTERACTION_TUNING_FILE: &str = "sim/interaction/default.toml";
 struct InteractionTuningFile {
     camera: CameraTuningFile,
     selection: SelectionTuningFile,
+    pose_overlay: PoseOverlayTuningFile,
     tf_overlay: TfOverlayTuningFile,
     tf_labels: TfLabelTuningFile,
     tf_panel: TfPanelTuningFile,
@@ -74,6 +76,7 @@ struct ResolvedInteractionTuning {
     camera_mouse: CameraMouseTuning,
     camera_rig: CameraRigTuning,
     selection: SelectionTuning,
+    pose_overlay: PoseOverlayTuning,
     tf_overlay: TfOverlayTuning,
     tf_labels: TfLabelTuning,
     tf_panel_dock: TfPanelDockTuning,
@@ -99,6 +102,7 @@ pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
             commands.insert_resource(resolved.camera_mouse);
             commands.insert_resource(resolved.camera_rig);
             commands.insert_resource(resolved.selection);
+            commands.insert_resource(resolved.pose_overlay);
             commands.insert_resource(resolved.tf_overlay);
             commands.insert_resource(resolved.tf_labels);
             commands.insert_resource(resolved.tf_panel_dock);
@@ -125,6 +129,7 @@ fn resolve_all(
         camera_mouse: CameraMouseTuning::resolve(&file.camera.mouse)?,
         camera_rig: CameraRigTuning::resolve(&file.camera.rig)?,
         selection: SelectionTuning::resolve(&file.selection)?,
+        pose_overlay: PoseOverlayTuning::resolve(&file.pose_overlay)?,
         tf_overlay: TfOverlayTuning::resolve(&file.tf_overlay)?,
         tf_labels: TfLabelTuning::resolve(&file.tf_labels)?,
         tf_panel_dock: TfPanelDockTuning::resolve(&file.tf_panel.dock)?,

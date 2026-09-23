@@ -23,7 +23,7 @@
 
 use helios_core::frames::conventions::{Enu, Frame};
 use helios_core::frames::quantities::{FreeVector, Point};
-use helios_core::frames::transforms::{EnuBasis, Rotation, Transform};
+use helios_core::frames::transforms::{Convention, EnuBasis, Rotation, Transform};
 
 use bevy::prelude::{Quat as BevyQuat, Transform as BevyTransform, Vec3 as BevyVec3};
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
@@ -135,6 +135,40 @@ pub fn enu_to_bevy() -> Rotation<Enu, Bevy> {
 
 pub fn to_bevy_rotation<F: EnuBasis>() -> Rotation<F, Bevy> {
     F::to_enu().then(enu_to_bevy())
+}
+
+/// Builds a frame's drawable axis triad in Bevy's render frame: its origin plus
+/// its three axis directions (+X, +Y, +Z), each pointing where that frame's real
+/// axis points, ready to draw as three colored lines.
+///
+/// Unlike [`ToBevy`] for `Transform`, this does **not** conjugate. A triad is not
+/// a Bevy-authored mesh being placed into the world; it is the frame's own axes,
+/// so each axis crosses one-sided through [`FreeVector`]'s `to_bevy` — the same
+/// crossing a direction always takes. The child frame's convention is already
+/// absorbed into `iso.rotation`: its columns are the child's real axes expressed
+/// in the root, so `iso.rotation * x̂` is that frame's true forward direction in
+/// root coordinates, with no per-frame branch here.
+///
+/// `root` is the render anchor's convention. Only `Enu` is drawable today — the
+/// scene is anchored to the ENU world and `TfTree::resolve` emits only ENU roots
+/// (`World`/`map`/`odom`) — so a non-ENU root returns `None`, a loud skip the
+/// caller warns on, rather than silently drawing a triad relabeled through the
+/// wrong anchor. The day a second render anchor exists, this guard becomes a
+/// `match` over `root`.
+pub fn frame_triad_to_bevy(
+    iso: Isometry3<f64>,
+    root: Convention,
+) -> Option<(Point<Bevy>, [FreeVector<Bevy>; 3])> {
+    if !matches!(root, Convention::Enu) {
+        return None;
+    }
+
+    let origin = Point::<Enu>::from_raw(iso.translation.vector).to_bevy();
+
+    let axes = [Vector3::x(), Vector3::y(), Vector3::z()]
+        .map(|unit| FreeVector::<Enu>::from_raw(iso.rotation * unit).to_bevy());
+
+    Some((origin, axes))
 }
 
 /// Copies a `Point<Bevy>` into a `bevy::Vec3` (f64→f32). No axis reorder — every

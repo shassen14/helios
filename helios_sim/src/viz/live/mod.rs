@@ -5,3 +5,4 @@ pub mod path;
 pub mod pose;
 pub mod tf;
 pub mod tf_labels;
+pub mod triad;

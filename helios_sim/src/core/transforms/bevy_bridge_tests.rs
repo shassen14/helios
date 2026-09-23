@@ -312,3 +312,64 @@ fn from_bevy_inverts_to_bevy_for_a_free_vector() {
     let round: FreeVector<Enu> = enu.to_bevy().from_bevy();
     assert_nalgebra_vector3_approx_eq(&round.into_inner(), &enu.into_inner(), F64_EPSILON);
 }
+
+// ---------------------------------------------------------------------------
+// frame_triad_to_bevy: a frame's own axes cross one-sided, so each arrow points
+// where the frame really points — no conjugation to relabel it back into Bevy.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn frame_triad_east_facing_body_points_forward_along_bevy_x() {
+    // An FLU body at identity heads East. Its forward (+X) arrow must land on
+    // Bevy +X, not Bevy +Z — the exact miss the two-sided conjugation caused.
+    let (origin, [fwd, left, up]) =
+        frame_triad_to_bevy(Isometry3::identity(), Convention::Enu).expect("ENU root is drawable");
+    assert_nalgebra_vector3_approx_eq(&origin.into_inner(), &Vector3::zeros(), F64_EPSILON);
+    // +X forward → Bevy +X (East), +Y left → Bevy −Z (North), +Z up → Bevy +Y.
+    assert_nalgebra_vector3_approx_eq(&fwd.into_inner(), &Vector3::new(1.0, 0.0, 0.0), F64_EPSILON);
+    assert_nalgebra_vector3_approx_eq(
+        &left.into_inner(),
+        &Vector3::new(0.0, 0.0, -1.0),
+        F64_EPSILON,
+    );
+    assert_nalgebra_vector3_approx_eq(&up.into_inner(), &Vector3::new(0.0, 1.0, 0.0), F64_EPSILON);
+}
+
+#[test]
+fn frame_triad_north_facing_body_turns_its_forward_arrow() {
+    // Yaw the body +90° about ENU Up: forward now points North, which renders as
+    // Bevy −Z, while up is unchanged. The child's rotation, not any per-frame
+    // branch, is what turns the arrow.
+    let yaw_north = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI_F64 / 2.0);
+    let iso = Isometry3::from_parts(nalgebra::Translation3::identity(), yaw_north);
+    let (_, [fwd, _left, up]) =
+        frame_triad_to_bevy(iso, Convention::Enu).expect("ENU root is drawable");
+    assert_nalgebra_vector3_approx_eq(
+        &fwd.into_inner(),
+        &Vector3::new(0.0, 0.0, -1.0),
+        F64_EPSILON,
+    );
+    assert_nalgebra_vector3_approx_eq(&up.into_inner(), &Vector3::new(0.0, 1.0, 0.0), F64_EPSILON);
+}
+
+#[test]
+fn frame_triad_origin_follows_the_point_crossing() {
+    // The origin is a location, so it reorders like any ENU point: the same
+    // (1, 2, 0.5) → (1, 0.5, −2) the pose crossing produces, which is why labels
+    // and connectors are unaffected by the triad fix.
+    let t = Vector3::new(1.0, 2.0, 0.5);
+    let iso = Isometry3::from_parts(nalgebra::Translation3::from(t), UnitQuaternion::identity());
+    let (origin, _) = frame_triad_to_bevy(iso, Convention::Enu).expect("ENU root is drawable");
+    assert_nalgebra_vector3_approx_eq(
+        &origin.into_inner(),
+        &Vector3::new(1.0, 0.5, -2.0),
+        F64_EPSILON,
+    );
+}
+
+#[test]
+fn frame_triad_rejects_a_non_enu_anchor() {
+    // Only an ENU render anchor is drawable today; a non-ENU root is a loud skip,
+    // never a silently wrong triad.
+    assert!(frame_triad_to_bevy(Isometry3::identity(), Convention::Flu).is_none());
+}

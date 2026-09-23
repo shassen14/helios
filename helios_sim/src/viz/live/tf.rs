@@ -22,14 +22,16 @@
 //! Each edge also draws a parent→child segment, so the frames read as a tree
 //! rather than a loose scatter of triads.
 //!
-//! Anchoring at `odom` with one `typed::<Flu, Enu>` cross is a deliberate
-//! simplification: every frame below `odom` is FLU, so a single cross serves
-//! them all. A higher ENU root (`map`, once SLAM lands) breaks that uniformity —
-//! it would need a per-frame convention cross against the topmost frame as
-//! anchor. Frames that fail the cross are skipped this pass.
+//! Anchoring at `odom`, each frame draws in its own native robotics axes: the
+//! child's convention is baked into the looked-up isometry, so the triad's arrows
+//! point where the frame actually points (RViz-style, no `<Flu, Enu>` hardcode),
+//! crossing one-sided to Bevy through `frame_triad_to_bevy`. The only assumption
+//! left is that the anchor resolves to an ENU root — which `odom` (and `map`,
+//! once SLAM lands) does. A frame whose lookup fails, or a non-ENU anchor, is
+//! skipped this pass.
 
 use crate::{
-    core::transforms::{transform_bevy_to_bevy_transform, ToBevy},
+    core::transforms::{frame_triad_to_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3},
     prelude::{AgentIdComponent, GroundTruthState, TfServiceComponent},
     viz::interaction::{
         actions::{
@@ -40,14 +42,14 @@ use crate::{
         selection::Selected,
         tuning::{require_positive, InteractionTuningError},
     },
+    viz::live::triad::draw_triad,
 };
 
 use bevy::prelude::*;
 use helios_core::frames::{
-    conventions::{Enu, Flu},
     transforms::{
         tf::buffer::{TfBuffer, TfQuery},
-        Transform as CoreTransform,
+        Convention,
     },
     FrameId,
 };
@@ -94,8 +96,8 @@ pub struct TfOverlayTuning {
 impl Default for TfOverlayTuning {
     fn default() -> Self {
         Self {
-            triad_len: 4.0,
-            truth_triad_len: 6.0,
+            triad_len: 0.6,
+            truth_triad_len: 1.0,
             connector_color: Color::srgb(0.6, 0.6, 0.6),
             error_color: Color::srgb(0.9, 0.3, 0.2),
             divergence_threshold: 1.0,
@@ -150,23 +152,19 @@ pub fn tf_overlay_system(
         // static/dynamic tag, unused until a full per-frame truth walk branches
         // on it (today only `base_link` carries a truth pose, below).
         for (edge, _kind) in tf_service.0.buffer().edges() {
-            let Some(child_transform) =
-                frame_transform_in_root(tf_service.0.buffer(), &edge.child, &root)
+            let Some((child_origin, child_axes)) =
+                frame_triad_in_root(tf_service.0.buffer(), &edge.child, &root)
             else {
                 continue;
             };
-            gizmos.axes(child_transform, tuning.triad_len);
+            draw_triad(&mut gizmos, child_origin, child_axes, tuning.triad_len);
 
             // Connector, drawn after the triad so a parent that fails to
             // resolve drops only the line — never the child's triad.
-            if let Some(parent_transform) =
-                frame_transform_in_root(tf_service.0.buffer(), &edge.parent, &root)
+            if let Some(parent_origin) =
+                frame_origin_in_root(tf_service.0.buffer(), &edge.parent, &root)
             {
-                gizmos.line(
-                    parent_transform.translation,
-                    child_transform.translation,
-                    tuning.connector_color,
-                );
+                gizmos.line(parent_origin, child_origin, tuning.connector_color);
             }
         }
 
@@ -178,31 +176,37 @@ pub fn tf_overlay_system(
         // ENU→Bevy helper. While the tree is `map`-less, `odom` coincides with the
         // world origin, so the estimated (odom-anchored) and truth (world) triads
         // share a frame and the segment length reads as drift.
-        let truth_transform = transform_bevy_to_bevy_transform(
-            CoreTransform::<Flu, Enu>::from_isometry(ground_truth.pose).to_bevy(),
-        );
-        gizmos.axes(truth_transform, tuning.truth_triad_len);
-
-        // Triad drawn first, so an unresolvable estimate drops only the segment.
-        // The segment escalates to the divergence color once the gap it spans
-        // passes the threshold, so a large drift reads without measuring the line.
-        let base_link = FrameId::base_link(agent.clone());
-        if let Some(estimate_transform) =
-            frame_transform_in_root(tf_service.0.buffer(), &base_link, &root)
+        // Ground truth is a `base_link` (FLU) pose in the ENU world, so its triad
+        // crosses through the one sanctioned ENU root — the same `frame_triad_to_bevy`
+        // the estimated frames take, just from `GroundTruthState` instead of a tf
+        // lookup. The ENU literal can never fail the anchor guard, but a mismatch
+        // would drop the truth reference rather than draw it wrong.
+        if let Some((truth_origin, truth_axes)) =
+            frame_triad_to_bevy(ground_truth.pose, Convention::Enu)
         {
-            let gap = estimate_transform
-                .translation
-                .distance(truth_transform.translation);
-            let color = if diverged(gap, tuning.divergence_threshold) {
-                tuning.divergence_color
-            } else {
-                tuning.error_color
-            };
-            gizmos.line(
-                estimate_transform.translation,
-                truth_transform.translation,
-                color,
+            let truth_origin = point_bevy_to_vec3(truth_origin);
+            draw_triad(
+                &mut gizmos,
+                truth_origin,
+                truth_axes.map(freevector_bevy_to_vec3),
+                tuning.truth_triad_len,
             );
+
+            // Triad drawn first, so an unresolvable estimate drops only the segment.
+            // The segment escalates to the divergence color once the gap it spans
+            // passes the threshold, so a large drift reads without measuring the line.
+            let base_link = FrameId::base_link(agent.clone());
+            if let Some(estimate_origin) =
+                frame_origin_in_root(tf_service.0.buffer(), &base_link, &root)
+            {
+                let gap = estimate_origin.distance(truth_origin);
+                let color = if diverged(gap, tuning.divergence_threshold) {
+                    tuning.divergence_color
+                } else {
+                    tuning.error_color
+                };
+                gizmos.line(estimate_origin, truth_origin, color);
+            }
         }
     }
 }
@@ -215,18 +219,33 @@ fn diverged(gap: f32, threshold: f32) -> bool {
     gap >= threshold
 }
 
-/// A frame's pose expressed in `root`, as a Bevy `Transform` — the shared
-/// `lookup` → `typed::<Flu, Enu>` → `to_bevy` path, returning `None` when the
-/// tree can't resolve the frame this tick or the convention cross fails. Shared
-/// with the label overlay, which places its text at the same position.
-pub(crate) fn frame_transform_in_root(
+/// A frame's drawable axis triad expressed in `root`: its Bevy-space origin and
+/// three unit axis directions (+X, +Y, +Z), each pointing where the frame's real
+/// axis points. The shared `lookup` → `frame_triad_to_bevy` path, returning
+/// `None` when the tree can't resolve the frame this tick or the anchor is not an
+/// ENU root. The child's convention is carried by the looked-up isometry, so its
+/// axes are correct with no per-frame branch.
+pub(crate) fn frame_triad_in_root(
     buffer: &TfBuffer,
     frame: &FrameId,
     root: &FrameId,
-) -> Option<Transform> {
+) -> Option<(Vec3, [Vec3; 3])> {
     let erased = buffer.lookup(frame, root, TfQuery::Latest).ok()?;
-    let pose = erased.typed::<Flu, Enu>().ok()?;
-    Some(transform_bevy_to_bevy_transform(pose.to_bevy()))
+    let (origin, axes) = frame_triad_to_bevy(erased.isometry(), erased.to_convention())?;
+    Some((point_bevy_to_vec3(origin), axes.map(freevector_bevy_to_vec3)))
+}
+
+/// A frame's origin in `root`, as a Bevy world position — the triad's origin
+/// alone. Shared with the label overlay (which places its text here) and the
+/// parent→child connectors, neither of which needs the axes. `None` on the same
+/// conditions as [`frame_triad_in_root`]; the origin is identical either way,
+/// since only the axes read the rotation.
+pub(crate) fn frame_origin_in_root(
+    buffer: &TfBuffer,
+    frame: &FrameId,
+    root: &FrameId,
+) -> Option<Vec3> {
+    frame_triad_in_root(buffer, frame, root).map(|(origin, _)| origin)
 }
 
 /// Master on/off for the whole tf overlay — triads, connectors, and labels.
