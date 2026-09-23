@@ -14,18 +14,35 @@ use bevy::ui::RelativeCursorPosition;
 // they are named here rather than inlined — no bare magic numbers in the node.
 const PANEL_MARGIN: f32 = 10.0;
 const PANEL_WIDTH: f32 = 440.0;
-const PANEL_MAX_HEIGHT: Val = Val::Vh(70.0);
+/// Height cap on the *scrolling* part only — the pinned header sits above it and is
+/// always visible, so the dock's total height is the header plus up to this.
+const PANEL_VIEWPORT_MAX_HEIGHT: Val = Val::Vh(70.0);
 const PANEL_PADDING: f32 = 8.0;
+/// Gap under the pinned header, separating it from the scrolling tree below.
+const HEADER_GAP: f32 = 6.0;
 /// Semi-opaque dark backing so the empty dock reads against the 3D scene behind it.
 const PANEL_BG: Color = Color::srgba(0.05, 0.05, 0.08, 0.85);
 /// Pixels scrolled per wheel *line* (a mouse notch). Trackpads report pixels already,
 /// so their deltas pass through unscaled.
 const LINE_SCROLL_PX: f32 = 20.0;
 
-/// Marks the panel's UI root, so the visibility sync can find the one node to
-/// flip and the renderer can hang the frame and edge nodes under it.
+/// Marks the panel's UI root, so the visibility sync can find the one node to flip.
+/// The root itself neither scrolls nor holds the tree directly — it stacks the pinned
+/// [`TfPanelHeader`] above the scrolling [`TfPanelViewport`].
 #[derive(Component)]
 pub struct TfPanelRoot;
+
+/// The pinned header strip at the top of the dock: the renderer writes the agent
+/// name(s) here, outside the scroll region, so identity stays visible while the tree
+/// below is panned away.
+#[derive(Component)]
+pub struct TfPanelHeader;
+
+/// The scrolling region under the header: the renderer hangs the tree canvas here.
+/// This is the node that carries `overflow: scroll`, its `ScrollPosition`, and the
+/// hover test — so the header never moves and only the tree pans.
+#[derive(Component)]
+pub struct TfPanelViewport;
 
 /// Spawns the empty panel dock once, at startup, hidden.
 ///
@@ -40,24 +57,54 @@ pub struct TfPanelRoot;
 /// [`TfPanelVisible`]'s default. A bare coloured node needs no font, so — unlike the
 /// inspector's text panel — this spawns with no asset-server gate.
 pub fn spawn_tf_panel(mut commands: Commands) {
-    commands.spawn((
-        TfPanelRoot,
-        Node {
-            position_type: PositionType::Absolute,
-            left: Val::Px(PANEL_MARGIN),
-            top: Val::Px(PANEL_MARGIN),
-            width: Val::Px(PANEL_WIDTH),
-            max_height: PANEL_MAX_HEIGHT,
-            padding: UiRect::all(Val::Px(PANEL_PADDING)),
-            flex_direction: FlexDirection::Column,
-            overflow: Overflow::scroll(),
-            ..default()
-        },
-        BackgroundColor(PANEL_BG),
-        ScrollPosition::default(),
-        RelativeCursorPosition::default(),
-        Visibility::Hidden,
-    ));
+    // The pinned header: fixed at the top of the dock, filled by the renderer.
+    let header = commands
+        .spawn((
+            TfPanelHeader,
+            Node {
+                width: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                margin: UiRect::bottom(Val::Px(HEADER_GAP)),
+                ..default()
+            },
+        ))
+        .id();
+
+    // The scrolling region: bounded in height, clips+scrolls its tree canvas. It owns
+    // the scroll offset and the hover test so only this part moves.
+    let viewport = commands
+        .spawn((
+            TfPanelViewport,
+            Node {
+                width: Val::Percent(100.0),
+                max_height: PANEL_VIEWPORT_MAX_HEIGHT,
+                overflow: Overflow::scroll(),
+                ..default()
+            },
+            ScrollPosition::default(),
+            RelativeCursorPosition::default(),
+        ))
+        .id();
+
+    // The root sizes to header + viewport and never scrolls itself.
+    commands
+        .spawn((
+            TfPanelRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(PANEL_MARGIN),
+                top: Val::Px(PANEL_MARGIN),
+                width: Val::Px(PANEL_WIDTH),
+                padding: UiRect::all(Val::Px(PANEL_PADDING)),
+                flex_direction: FlexDirection::Column,
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(PANEL_BG),
+            Visibility::Hidden,
+        ))
+        .add_child(header)
+        .add_child(viewport);
 }
 
 /// Pans the panel with the mouse wheel while the pointer is over it.
@@ -73,9 +120,9 @@ pub fn spawn_tf_panel(mut commands: Commands) {
 pub fn scroll_tf_panel(
     mut wheel: MessageReader<MouseWheel>,
     keys: Res<ButtonInput<KeyCode>>,
-    mut panel: Query<(&RelativeCursorPosition, &mut ScrollPosition), With<TfPanelRoot>>,
+    mut viewport: Query<(&RelativeCursorPosition, &mut ScrollPosition), With<TfPanelViewport>>,
 ) {
-    let Ok((cursor, mut scroll)) = panel.single_mut() else {
+    let Ok((cursor, mut scroll)) = viewport.single_mut() else {
         return;
     };
     if !cursor.cursor_over {

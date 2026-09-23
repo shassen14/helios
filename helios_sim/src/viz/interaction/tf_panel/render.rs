@@ -15,7 +15,7 @@
 
 use crate::viz::interaction::tf_panel::layout::LayoutCell;
 use crate::viz::interaction::tf_panel::model::{AgentGraph, EdgeHealth, HealthVerdict};
-use crate::viz::interaction::tf_panel::panel::TfPanelRoot;
+use crate::viz::interaction::tf_panel::panel::{TfPanelHeader, TfPanelViewport};
 use crate::viz::interaction::tf_panel::TfPanelModel;
 
 use helios_core::frames::FrameId;
@@ -32,8 +32,10 @@ const NODE_HEIGHT: f32 = 26.0;
 /// so a gutter is left between rows (for the elbow) and between columns.
 const COL_PITCH: f32 = 128.0;
 const ROW_PITCH: f32 = 58.0;
-/// Vertical room reserved above a graph's root row for its agent-name header.
-const HEADER_HEIGHT: f32 = 22.0;
+/// Small top padding inside the canvas, above the root row, so it is not flush
+/// against the viewport's top edge. (The agent name lives in the pinned header now,
+/// not in the canvas, so no full header row is reserved here.)
+const CANVAS_PAD_TOP: f32 = 6.0;
 /// Horizontal gap between one agent's band and the next (multi-agent layout).
 const BAND_GAP: f32 = 28.0;
 const CONNECTOR_THICKNESS: f32 = 2.0;
@@ -68,23 +70,45 @@ pub struct TfPanelContent;
 /// would cross their connectors, so each agent's whole graph gets its own `left` base.
 pub fn render_tf_panel(
     model: Res<TfPanelModel>,
-    root: Query<Entity, With<TfPanelRoot>>,
+    header: Query<Entity, With<TfPanelHeader>>,
+    viewport: Query<Entity, With<TfPanelViewport>>,
     old: Query<Entity, With<TfPanelContent>>,
     mut commands: Commands,
 ) {
-    // Despawn-and-rebuild: drop the previous canvas (and its children) before drawing.
+    // Despawn-and-rebuild: drop the previous header text and canvas before drawing.
     for entity in &old {
         commands.entity(entity).despawn();
     }
 
     // No dock yet (before `spawn_tf_panel`, or a headless test that skips it) means
     // nowhere to hang the content, so there is nothing to do this frame.
-    let Ok(root_entity) = root.single() else {
+    let (Ok(header_entity), Ok(viewport_entity)) = (header.single(), viewport.single()) else {
         return;
     };
     if model.0.is_empty() {
         return;
     }
+
+    // Pinned title: the agent name(s) whose tree this is, so identity survives the
+    // tree being scrolled. It hangs in the header, outside the scroll region.
+    let names = model
+        .0
+        .iter()
+        .map(|graph| graph.agent.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let title = commands
+        .spawn((
+            TfPanelContent,
+            Text::new(names),
+            TextFont {
+                font_size: FontSize::Px(HEADER_FONT_SIZE),
+                ..default()
+            },
+            TextColor(HEADER_COLOR),
+        ))
+        .id();
+    commands.entity(header_entity).add_child(title);
 
     // First pass: place each graph's band and size the canvas to bound them all.
     let mut bands: Vec<(&AgentGraph, f32)> = Vec::new();
@@ -110,7 +134,7 @@ pub fn render_tf_panel(
             },
         ))
         .id();
-    commands.entity(root_entity).add_child(canvas);
+    commands.entity(viewport_entity).add_child(canvas);
 
     for (graph, band_left) in bands {
         spawn_graph(&mut commands, canvas, graph, band_left);
@@ -124,36 +148,18 @@ fn graph_extent(graph: &AgentGraph) -> (f32, f32) {
     let max_x = graph.nodes.iter().map(|n| n.cell.x).fold(0.0, f32::max);
     let max_depth = graph.nodes.iter().map(|n| n.cell.depth).max().unwrap_or(0);
     let width = max_x * COL_PITCH + NODE_WIDTH;
-    let height = HEADER_HEIGHT + max_depth as f32 * ROW_PITCH + NODE_HEIGHT;
+    let height = CANVAS_PAD_TOP + max_depth as f32 * ROW_PITCH + NODE_HEIGHT;
     (width, height)
 }
 
-/// Spawns one agent's header, connectors, and node boxes into the canvas.
+/// Spawns one agent's connectors and node boxes into the canvas at its band offset.
 ///
 /// Connectors are spawned before the node boxes so the boxes paint over the joins
 /// (later `bevy_ui` siblings render on top). An edge whose parent or child was left
 /// unplaced by the layout — an orphan or a cycle member — has no cell to anchor to,
-/// so its connector is skipped rather than drawn to a bogus origin.
+/// so its connector is skipped rather than drawn to a bogus origin. The agent's name
+/// is not drawn here; it lives in the panel's pinned header.
 fn spawn_graph(commands: &mut Commands, canvas: Entity, graph: &AgentGraph, band_left: f32) {
-    // Header: the agent name, above the root row.
-    let header = commands
-        .spawn((
-            Text::new(graph.agent.as_str()),
-            TextFont {
-                font_size: FontSize::Px(HEADER_FONT_SIZE),
-                ..default()
-            },
-            TextColor(HEADER_COLOR),
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(band_left),
-                top: Val::Px(0.0),
-                ..default()
-            },
-        ))
-        .id();
-    commands.entity(canvas).add_child(header);
-
     let cells: HashMap<&FrameId, LayoutCell> =
         graph.nodes.iter().map(|n| (&n.frame, n.cell)).collect();
 
@@ -226,7 +232,7 @@ fn spawn_graph(commands: &mut Commands, canvas: Entity, graph: &AgentGraph, band
 /// header. This is the whole cell→pixel mapping — pure, so it is Tier-1 tested.
 fn node_origin(cell: LayoutCell, band_left: f32) -> (f32, f32) {
     let left = band_left + cell.x * COL_PITCH;
-    let top = HEADER_HEIGHT + cell.depth as f32 * ROW_PITCH;
+    let top = CANVAS_PAD_TOP + cell.depth as f32 * ROW_PITCH;
     (left, top)
 }
 
@@ -315,12 +321,12 @@ mod tests {
     fn node_origin_maps_depth_to_row_and_column_to_left() {
         let (left, top) = node_origin(LayoutCell { depth: 0, x: 0.0 }, 0.0);
         assert_eq!(left, 0.0);
-        assert_eq!(top, HEADER_HEIGHT);
+        assert_eq!(top, CANVAS_PAD_TOP);
 
         // A fractional column (a centred parent) maps to a fractional pixel offset.
         let (left, top) = node_origin(LayoutCell { depth: 2, x: 1.5 }, 50.0);
         assert_eq!(left, 50.0 + 1.5 * COL_PITCH);
-        assert_eq!(top, HEADER_HEIGHT + 2.0 * ROW_PITCH);
+        assert_eq!(top, CANVAS_PAD_TOP + 2.0 * ROW_PITCH);
     }
 
     /// An elbow between offset columns is three axis-aligned runs: two one-thickness
