@@ -4,7 +4,9 @@
 //! geometry lives in [`layout`], the dock container and its show/hide in
 //! [`panel`]; the renderer that fills the dock arrives with a later step.
 
+pub mod gather;
 pub mod layout;
+pub mod model;
 pub mod panel;
 
 use crate::{
@@ -21,6 +23,8 @@ use crate::{
     },
 };
 
+use model::AgentGraph;
+
 use bevy::prelude::*;
 
 /// Installs the tf panel: its visibility resource, the one-shot dock spawn, and
@@ -30,6 +34,7 @@ pub struct TfPanelPlugin;
 impl Plugin for TfPanelPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TfPanelVisible>();
+        app.init_resource::<TfPanelModel>();
         app.add_systems(Startup, panel::spawn_tf_panel);
         // Toggle before sync in one chain, so a keypress flips `TfPanelVisible`
         // and the dock's `Visibility` updates the same frame, not a frame late.
@@ -40,14 +45,30 @@ impl Plugin for TfPanelPlugin {
                 .in_set(VizSet::Live)
                 .run_if(in_state(AppState::Running)),
         );
+        // Rebuild the model only while the panel is shown, so an unopened panel
+        // does no buffer walking. `resource_equals` needs `TfPanelVisible: PartialEq`.
+        app.add_systems(
+            Update,
+            gather::gather_tf_panel
+                .in_set(VizSet::Live)
+                .run_if(in_state(AppState::Running))
+                .run_if(resource_equals(TfPanelVisible(true))),
+        );
     }
 }
 
 /// The panel's master on/off, flipped by [`toggle_tf_panel`] and applied to the
 /// dock by [`panel::sync_tf_panel_visibility`]. Off by default — the panel is
 /// opt-in, like the 3D tf overlay.
-#[derive(Default, Resource)]
+#[derive(Default, PartialEq, Resource)]
 pub struct TfPanelVisible(pub bool);
+
+/// The current panel snapshot: one [`AgentGraph`] per selected agent, rebuilt each
+/// frame by [`gather::gather_tf_panel`] while the panel is visible and consumed by
+/// the renderer. Empty by default and whenever nothing is selected — an empty model
+/// draws nothing. The `Resource` wrapper lives here so [`model`] stays pure data.
+#[derive(Default, Resource)]
+pub struct TfPanelModel(pub Vec<AgentGraph>);
 
 /// Flips the panel's master visibility when `viz.toggle_tf_panel` fires.
 ///
@@ -76,7 +97,7 @@ pub(crate) fn toggle_tf_panel(
 #[cfg(test)]
 mod tests {
     use super::panel::{sync_tf_panel_visibility, TfPanelRoot};
-    use super::{TfPanelPlugin, TfPanelVisible};
+    use super::{TfPanelModel, TfPanelPlugin, TfPanelVisible};
 
     use crate::prelude::AppState;
 
@@ -102,6 +123,10 @@ mod tests {
             !app.world().resource::<TfPanelVisible>().0,
             "the panel is off by default",
         );
+        assert!(
+            app.world().resource::<TfPanelModel>().0.is_empty(),
+            "the model starts empty until an agent is selected",
+        );
 
         let mut roots = app
             .world_mut()
@@ -119,7 +144,10 @@ mod tests {
     fn sync_drives_dock_visibility_from_resource() {
         let mut app = App::new();
         app.insert_resource(TfPanelVisible(true));
-        let root = app.world_mut().spawn((TfPanelRoot, Visibility::Hidden)).id();
+        let root = app
+            .world_mut()
+            .spawn((TfPanelRoot, Visibility::Hidden))
+            .id();
         app.add_systems(Update, sync_tf_panel_visibility);
 
         app.update();
