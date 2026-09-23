@@ -1,10 +1,12 @@
 //! The 2D tf topology/health panel: a screen-space `bevy_ui` dock showing an
 //! agent's estimated transform tree. This module is its wiring — the master
 //! visibility toggle and the plugin that installs it. The pure hierarchy
-//! geometry lives in [`layout`], the dock container and its show/hide in
-//! [`panel`]; the renderer that fills the dock arrives with a later step.
+//! placement lives in [`layout`], the cell→pixel geometry and colours in
+//! [`geometry`], the dock container and its show/hide in [`panel`], and the
+//! `bevy_ui` renderer that fills the dock in [`render`].
 
 pub mod gather;
+pub mod geometry;
 pub mod layout;
 pub mod model;
 pub mod panel;
@@ -24,8 +26,8 @@ use crate::{
     },
 };
 
+use geometry::PanelOrientation;
 use model::AgentGraph;
-use render::PanelOrientation;
 
 use bevy::prelude::*;
 
