@@ -8,7 +8,7 @@
 //! live behind [`Arc`], so cloning a cloud — or deriving one that shares a
 //! frame-invariant column — copies a pointer, not the data.
 
-use crate::frames::{conventions::Frame, quantities::Point, transforms::Transform};
+use crate::spatial::{conventions::Frame, quantities::Point, transforms::Transform};
 use super::Attributes;
 
 use core::fmt;
@@ -289,8 +289,8 @@ mod tests {
     use super::*;
 
     use crate::prelude::{AttributeColumns, LidarAttrs, LidarColumns, LidarColumnsBuilder};
-    use crate::frames::conventions::{Enu, Flu};
-    use crate::frames::transforms::Rotation;
+    use crate::spatial::conventions::{Enu, Flu};
+    use crate::spatial::transforms::Rotation;
 
     use nalgebra::{Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;

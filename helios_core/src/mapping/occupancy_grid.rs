@@ -1,7 +1,7 @@
 use nalgebra::{DMatrix, Isometry3, Point3, Translation3, UnitQuaternion};
 
 use crate::prelude::PointCloud;
-use crate::frames::conventions::Flu;
+use crate::spatial::conventions::Flu;
 use crate::mapping::{MapData, Mapper};
 
 /// Log-odds free-space update increment (negative → lowers occupancy probability).
@@ -331,7 +331,7 @@ fn bresenham(x0: i64, y0: i64, x1: i64, y1: i64) -> impl Iterator<Item = (i64, i
 mod tests {
     use super::*;
     use crate::prelude::PointCloudBuilder;
-    use crate::frames::quantities::Point;
+    use crate::spatial::quantities::Point;
 
     fn make_mapper(width_m: f64, height_m: f64) -> OccupancyGridMapper {
         OccupancyGridMapper::new(1.0, width_m, height_m)

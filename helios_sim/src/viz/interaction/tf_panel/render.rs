@@ -22,7 +22,7 @@ use crate::viz::interaction::tf_panel::model::AgentGraph;
 use crate::viz::interaction::tf_panel::panel::{TfPanelHeader, TfPanelViewport};
 use crate::viz::interaction::tf_panel::TfPanelModel;
 
-use helios_core::frames::FrameId;
+use helios_core::spatial::FrameId;
 
 use bevy::prelude::*;
 use std::collections::HashMap;

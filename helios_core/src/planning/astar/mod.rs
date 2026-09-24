@@ -38,7 +38,7 @@ mod smoothing;
 
 use nalgebra::Vector2;
 
-use crate::frames::conventions::Enu;
+use crate::spatial::conventions::Enu;
 use crate::mapping::MapData;
 use crate::planning::SearchPlannerInputs;
 
@@ -380,13 +380,13 @@ mod tests {
     use std::sync::Arc;
 
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-    use crate::frames::transforms::Convention;
-    use crate::frames::{FrameAwareState, FrameId};
+    use crate::spatial::transforms::Convention;
+    use crate::spatial::{FrameAwareState, FrameId};
     use crate::mapping::MapData;
     use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
     use crate::planning::SearchPlanner;
     use crate::planning::SearchPlannerInputs;
-    use crate::state::Quantity;
+    use crate::spatial::state::Quantity;
 
     use super::{AStarConfig, AStarPlanner};
 

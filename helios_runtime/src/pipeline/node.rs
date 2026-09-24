@@ -1,6 +1,6 @@
 use crate::port::{PortBus, PortDescriptor};
 
-use helios_core::data::primitives::MonotonicTime;
+use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::prelude::TfProvider;
 
 /// One unit of computation in an [`AutonomyPipeline`].

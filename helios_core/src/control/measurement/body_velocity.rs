@@ -7,9 +7,9 @@
 //! control reference lives in the body frame, so the error is only meaningful once
 //! both are expressed in one frame.
 
-use crate::frames::conventions::{Enu, Flu};
-use crate::frames::quantities::FluVector;
-use crate::frames::{FrameAwareState, FrameId};
+use crate::spatial::conventions::{Enu, Flu};
+use crate::spatial::quantities::FluVector;
+use crate::spatial::{FrameAwareState, FrameId};
 
 /// The vehicle's linear velocity in its own body (FLU) frame, projected from an
 /// estimate whose velocity may be stored in any frame.
@@ -62,9 +62,9 @@ mod tests {
     use super::*;
     use crate::prelude::AgentId;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-    use crate::frames::transforms::Convention;
+    use crate::spatial::transforms::Convention;
     use crate::kernel::manifold::TangentNoise;
-    use crate::state::Quantity;
+    use crate::spatial::state::Quantity;
 
     use nalgebra::{DMatrix, DVector, Vector3};
     use std::f64::consts::FRAC_PI_2;

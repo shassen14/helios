@@ -1,7 +1,7 @@
 use crate::{
     estimation::schema::{MeasurementSchema, MeasurementSchemaBlock, StateSchema},
-    frames::{transforms::Convention, FrameId},
-    state::Quantity,
+    spatial::{transforms::Convention, FrameId},
+    spatial::state::Quantity,
 };
 
 /// Checks that a measurement schema is expressed compatibly with the state it

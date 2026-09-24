@@ -15,8 +15,8 @@ use crate::core::transforms::{bevy_transform_to_transform_bevy, FromBevy, Tracke
 use crate::prelude::{GroundTruthState, SensorPublishChannel, SensorPublisher};
 
 use helios_core::prelude::{MonotonicTime, SensorPayload, SensorReading};
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::transforms::Transform as CoreTransform;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::transforms::Transform as CoreTransform;
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -161,8 +161,8 @@ mod tests {
 
     use helios_core::data::sensor::GpsPosition;
     use helios_core::prelude::AgentId;
-    use helios_core::frames::transforms::Convention;
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::FrameId;
 
     use bevy::ecs::schedule::Schedule;
     use bevy::ecs::world::World;

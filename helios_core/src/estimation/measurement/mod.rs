@@ -20,7 +20,7 @@
 
 use crate::prelude::{MonotonicTime, TfProvider};
 use crate::estimation::schema::MeasurementSchema;
-use crate::frames::{FrameAwareState, FrameId};
+use crate::spatial::{FrameAwareState, FrameId};
 use nalgebra::{DMatrix, DVector};
 
 /// Mathematical model of a sensor: `z = h(x) + v`.

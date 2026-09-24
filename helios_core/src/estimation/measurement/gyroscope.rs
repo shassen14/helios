@@ -1,15 +1,15 @@
 use nalgebra::DVector;
 
-use crate::data::ports::TfProvider;
+use crate::spatial::tf::TfProvider;
 use crate::prelude::AgentId;
 use crate::prelude::MonotonicTime;
 use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
-use crate::frames::conventions::Flu;
-use crate::frames::quantities::FreeVector;
-use crate::frames::transforms::Convention;
-use crate::frames::{FrameAwareState, FrameId};
-use crate::state::Quantity;
+use crate::spatial::conventions::Flu;
+use crate::spatial::quantities::FreeVector;
+use crate::spatial::transforms::Convention;
+use crate::spatial::{FrameAwareState, FrameId};
+use crate::spatial::state::Quantity;
 
 /// What the filter believes a rate gyroscope reports: the body's angular
 /// velocity, rotated into the sensor frame.
@@ -95,15 +95,15 @@ impl MeasurementModel for AngularRateModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::ports::TfProvider;
+    use crate::spatial::tf::TfProvider;
     use crate::prelude::AgentId;
     use crate::prelude::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-    use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::spatial::transforms::{Convention, ErasedTransform};
+    use crate::spatial::{FrameAwareState, FrameId, StateVariable};
     use crate::kernel::manifold::TangentNoise;
-    use crate::state::Component;
+    use crate::spatial::state::Component;
     use nalgebra::{DMatrix, Isometry3, Translation3, UnitQuaternion};
     use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;

@@ -1,5 +1,5 @@
 use super::*;
-use helios_core::frames::conventions::Flu;
+use helios_core::spatial::conventions::Flu;
 
 use approx::assert_abs_diff_eq;
 use std::f32::consts::PI as PI_F32;

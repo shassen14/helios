@@ -1,4 +1,4 @@
-use crate::frames::transforms::{
+use crate::spatial::transforms::{
     convention::{Convention, ConventionOf},
     Transform,
 };
@@ -8,8 +8,8 @@ use std::{error::Error, fmt::Display};
 
 /// A rigid transform whose frame identities have been **erased** to runtime tags.
 ///
-/// This is what a [`TfProvider`](crate::data::ports::TfProvider) lookup returns.
-/// The transform graph is keyed by runtime [`FrameId`](crate::frames::FrameId)
+/// This is what a [`TfProvider`](crate::spatial::tf::TfProvider) lookup returns.
+/// The transform graph is keyed by runtime [`FrameId`](crate::spatial::FrameId)
 /// (`World` / `Body` / `Sensor`), so a lookup cannot hand back a statically-typed
 /// [`Transform<A, B>`](Transform) — the frames aren't known at compile time.
 /// Instead it carries the raw [`Isometry3`] plus the two [`Convention`] tags of
@@ -33,7 +33,7 @@ impl ErasedTransform {
     ///
     /// The entry point for a provider that works in raw isometries — e.g. the sim
     /// `TfTree`, which derives each endpoint's convention from its
-    /// [`FrameId`](crate::frames::FrameId) when it stamps the tags. The tag order
+    /// [`FrameId`](crate::spatial::FrameId) when it stamps the tags. The tag order
     /// must match the lookup's `(from, to)` order, or [`typed`](Self::typed) will
     /// reject a correct edge.
     pub fn from_parts(isometry: Isometry3<f64>, from: Convention, to: Convention) -> Self {
@@ -45,7 +45,7 @@ impl ErasedTransform {
     ///
     /// The inverse of [`typed`](Self::typed): use it when you already hold a typed
     /// transform and must hand it across a
-    /// [`TfProvider`](crate::data::ports::TfProvider) boundary that speaks the
+    /// [`TfProvider`](crate::spatial::tf::TfProvider) boundary that speaks the
     /// erased form.
     pub fn erase<A: ConventionOf, B: ConventionOf>(transform: Transform<A, B>) -> ErasedTransform {
         ErasedTransform::from_parts(transform.into_inner(), A::CONVENTION, B::CONVENTION)
@@ -65,7 +65,7 @@ impl ErasedTransform {
     /// ends carry the expected axis convention, not that you fetched the specific
     /// edge you meant. Two same-convention frames — a body and its FLU sensor — are
     /// indistinguishable to this check; asking for the right
-    /// [`FrameId`](crate::frames::FrameId) at the lookup is what pins identity.
+    /// [`FrameId`](crate::spatial::FrameId) at the lookup is what pins identity.
     pub fn typed<A: ConventionOf, B: ConventionOf>(
         &self,
     ) -> Result<Transform<A, B>, FrameMismatch> {
@@ -166,8 +166,8 @@ impl Error for FrameMismatch {}
 #[cfg(test)]
 mod tests {
     use super::ErasedTransform;
-    use crate::frames::conventions::{Enu, Flu};
-    use crate::frames::transforms::{Convention, Transform};
+    use crate::spatial::conventions::{Enu, Flu};
+    use crate::spatial::transforms::{Convention, Transform};
 
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;

@@ -154,14 +154,14 @@ mod tests {
     //! assertions need.
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::FrameId;
 
     use crate::port::PortBus;
     use crate::{Health, NodeId, Stamped, TickContext};
 
-    use helios_core::data::ports::TfProvider;
-    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::spatial::tf::TfProvider;
+    use helios_core::spatial::primitives::MonotonicTime;
 
     use nalgebra::Isometry3;
 

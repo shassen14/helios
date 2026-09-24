@@ -54,7 +54,7 @@ impl PlantWrench {
         Self::new(BodyWrench::zero(), Vec::new())
     }
 
-    /// The folded body-frame ([`Flu`](crate::frames::conventions::Flu)) wrench
+    /// The folded body-frame ([`Flu`](crate::spatial::conventions::Flu)) wrench
     /// the host rotates into world space and applies to the chassis.
     pub fn wrench(&self) -> BodyWrench {
         self.wrench

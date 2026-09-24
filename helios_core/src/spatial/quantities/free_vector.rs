@@ -1,7 +1,7 @@
 //! Frame-tagged free vector.
 
-use crate::frames::conventions::Frame;
-use crate::frames::transforms::Transform;
+use crate::spatial::conventions::Frame;
+use crate::spatial::transforms::Transform;
 
 use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
@@ -22,7 +22,7 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 /// compile:
 ///
 /// ```compile_fail
-/// use helios_core::frames::quantities::{EnuVector, FluVector};
+/// use helios_core::spatial::quantities::{EnuVector, FluVector};
 ///
 /// let world = EnuVector::new(1.0, 0.0, 0.0);
 /// let body = FluVector::new(0.0, 1.0, 0.0);
@@ -76,17 +76,17 @@ impl<F: Frame> FreeVector<F> {
         Self::new(0.0, 0.0, 0.0)
     }
 
-    /// The first component (E for [`Enu`](crate::frames::conventions::Enu), F for [`Flu`](crate::frames::conventions::Flu)).
+    /// The first component (E for [`Enu`](crate::spatial::conventions::Enu), F for [`Flu`](crate::spatial::conventions::Flu)).
     pub fn x(&self) -> f64 {
         self.0.x
     }
 
-    /// The second component (N for [`Enu`](crate::frames::conventions::Enu), L for [`Flu`](crate::frames::conventions::Flu)).
+    /// The second component (N for [`Enu`](crate::spatial::conventions::Enu), L for [`Flu`](crate::spatial::conventions::Flu)).
     pub fn y(&self) -> f64 {
         self.0.y
     }
 
-    /// The third component (U for both [`Enu`](crate::frames::conventions::Enu) and [`Flu`](crate::frames::conventions::Flu)).
+    /// The third component (U for both [`Enu`](crate::spatial::conventions::Enu) and [`Flu`](crate::spatial::conventions::Flu)).
     pub fn z(&self) -> f64 {
         self.0.z
     }
@@ -115,9 +115,9 @@ impl<F: Frame> FreeVector<F> {
     /// way you could "translate a velocity" — does not compile:
     ///
     /// ```compile_fail
-    /// use helios_core::frames::conventions::{Enu, Flu};
-    /// use helios_core::frames::quantities::FluVector;
-    /// use helios_core::frames::transforms::Transform;
+    /// use helios_core::spatial::conventions::{Enu, Flu};
+    /// use helios_core::spatial::quantities::FluVector;
+    /// use helios_core::spatial::transforms::Transform;
     /// use nalgebra::Isometry3;
     ///
     /// let t = Transform::<Flu, Enu>::from_isometry(Isometry3::identity());
@@ -166,9 +166,9 @@ impl<F: Frame> Div<f64> for FreeVector<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::frames::conventions::{Enu, Flu};
-    use crate::frames::quantities::{EnuVector, FluVector};
-    use crate::frames::transforms::{Rotation, Transform};
+    use crate::spatial::conventions::{Enu, Flu};
+    use crate::spatial::quantities::{EnuVector, FluVector};
+    use crate::spatial::transforms::{Rotation, Transform};
 
     use nalgebra::{Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;

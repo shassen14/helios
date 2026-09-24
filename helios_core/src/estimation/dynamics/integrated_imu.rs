@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use crate::data::primitives::{Control, State};
+use crate::spatial::primitives::{Control, State};
 use crate::prelude::AgentId;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-use crate::frames::transforms::Convention;
-use crate::frames::{FrameId, StateVariable};
+use crate::spatial::transforms::Convention;
+use crate::spatial::{FrameId, StateVariable};
 use crate::kernel::manifold::{StateBlock, TangentNoise};
-use crate::state::{Component, Quantity};
+use crate::spatial::state::{Component, Quantity};
 use crate::kernel::integrators::Integrator;
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 

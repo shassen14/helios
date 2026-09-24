@@ -1,7 +1,7 @@
 //! Spatial force command (force + torque).
 
-use crate::frames::conventions::Frame;
-use crate::frames::quantities::FreeVector;
+use crate::spatial::conventions::Frame;
+use crate::spatial::quantities::FreeVector;
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, Mul, Neg, Sub};
@@ -19,8 +19,8 @@ use std::ops::{Add, Mul, Neg, Sub};
 ///   ([`Add`]) is only valid when both act about the same point; the convention
 ///   guarantees that, so the final command is their sum.
 /// - **A frame change is a pure rotation.** Converting, say, an
-///   [`Enu`](crate::frames::conventions::Enu) wrench to an
-///   [`Flu`](crate::frames::conventions::Flu) one rotates `force` and `torque`
+///   [`Enu`](crate::spatial::conventions::Enu) wrench to an
+///   [`Flu`](crate::spatial::conventions::Flu) one rotates `force` and `torque`
 ///   and nothing else — the reference point is unchanged, so no `r × f` coupling
 ///   term arises. Were the point allowed to differ, a plain rotation would be
 ///   silently wrong.
@@ -29,8 +29,8 @@ use std::ops::{Add, Mul, Neg, Sub};
 ///
 /// `torque` transforms like an ordinary vector only under rotations between
 /// *right-handed* frames. Every convention shipped here
-/// ([`Enu`](crate::frames::conventions::Enu),
-/// [`Flu`](crate::frames::conventions::Flu)) is right-handed, so rotating a
+/// ([`Enu`](crate::spatial::conventions::Enu),
+/// [`Flu`](crate::spatial::conventions::Flu)) is right-handed, so rotating a
 /// `Wrench` is correct. A left-handed convention would require a sign correction
 /// on the torque that a plain rotation would not apply.
 ///
@@ -39,8 +39,8 @@ use std::ops::{Add, Mul, Neg, Sub};
 ///
 /// ```compile_fail
 /// use helios_core::control::commands::Wrench;
-/// use helios_core::frames::conventions::{Enu, Flu};
-/// use helios_core::frames::quantities::FreeVector;
+/// use helios_core::spatial::conventions::{Enu, Flu};
+/// use helios_core::spatial::quantities::FreeVector;
 ///
 /// let world: Wrench<Enu> = Wrench::new(FreeVector::zeros(), FreeVector::zeros());
 /// let body: Wrench<Flu> = Wrench::new(FreeVector::zeros(), FreeVector::zeros());
@@ -134,7 +134,7 @@ impl<F: Frame> Default for Wrench<F> {
 #[cfg(test)]
 mod tests {
     use crate::control::commands::BodyWrench;
-    use crate::frames::quantities::FluVector;
+    use crate::spatial::quantities::FluVector;
 
     /// Builds a body-frame wrench from force `(fx, fy, fz)` and torque
     /// `(tx, ty, tz)`.

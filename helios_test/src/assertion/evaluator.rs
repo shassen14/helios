@@ -100,7 +100,7 @@ mod tests {
     use crate::assertion::terminal::TerminalAssertion;
     use crate::assertion::AssertionTarget;
 
-    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::spatial::primitives::MonotonicTime;
     use helios_runtime::port::InternalChannel;
     use helios_runtime::prelude::{ChannelKey, Health, PortDescriptor, Stamped};
 

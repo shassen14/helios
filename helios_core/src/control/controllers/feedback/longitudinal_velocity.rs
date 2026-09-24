@@ -2,7 +2,7 @@ use crate::control::commands::DriveForce;
 use crate::control::kernels::siso_pid::SisoPid;
 use crate::control::measurement::body_forward_speed;
 use crate::control::{BodyTwistRef, ControlInputs, Controller};
-use crate::frames::FrameId;
+use crate::spatial::FrameId;
 
 /// Longitudinal velocity feedback: drives body-forward speed to the reference's
 /// forward speed and emits a scalar drive force.
@@ -62,10 +62,10 @@ mod tests {
     use crate::control::commands::BodyTwist;
     use crate::prelude::AgentId;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-    use crate::frames::transforms::Convention;
-    use crate::frames::FrameAwareState;
+    use crate::spatial::transforms::Convention;
+    use crate::spatial::FrameAwareState;
     use crate::kernel::manifold::TangentNoise;
-    use crate::state::Quantity;
+    use crate::spatial::state::Quantity;
 
     use nalgebra::{DMatrix, DVector};
     use std::sync::Arc;

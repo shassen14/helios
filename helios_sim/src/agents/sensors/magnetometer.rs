@@ -14,8 +14,8 @@ use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
 
 use helios_core::data::sensor::MagneticField;
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 use helios_core::sensors::magnetometer::MagnetometerModel;
 
 use nalgebra::{Isometry3, Vector3};

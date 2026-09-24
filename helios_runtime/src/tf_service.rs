@@ -13,7 +13,7 @@ use crate::{port::PortBus, ChannelKey};
 
 use helios_core::{
     prelude::{MonotonicTime, TfProvider},
-    frames::transforms::tf::{
+    spatial::transforms::tf::{
         buffer::{TfBuffer, TfWindow},
         stamped::StampedTransform,
     },
@@ -133,9 +133,9 @@ mod tests {
     use crate::stamped::{Health, Stamped};
 
     use helios_core::prelude::{AgentId, MonotonicDuration};
-    use helios_core::frames::id::FrameId;
-    use helios_core::frames::transforms::tf::stamped::{EdgeKindTag, FrameEdge};
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::id::FrameId;
+    use helios_core::spatial::transforms::tf::stamped::{EdgeKindTag, FrameEdge};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
     use nalgebra::Isometry3;
 

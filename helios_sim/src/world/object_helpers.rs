@@ -12,8 +12,8 @@ use nalgebra::{Isometry3, Translation3, UnitQuaternion};
 use crate::config::structs::WorldObjectCollider;
 use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};
 
-use helios_core::frames::conventions::Enu;
-use helios_core::frames::transforms::Transform as CoreTransform;
+use helios_core::spatial::conventions::Enu;
+use helios_core::spatial::transforms::Transform as CoreTransform;
 
 #[derive(serde::Deserialize)]
 pub struct GltfObjectMeta {

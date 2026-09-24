@@ -1,8 +1,8 @@
 //! Frame-tagged affine point.
 
-use crate::frames::conventions::Frame;
-use crate::frames::quantities::FreeVector;
-use crate::frames::transforms::Transform;
+use crate::spatial::conventions::Frame;
+use crate::spatial::quantities::FreeVector;
+use crate::spatial::transforms::Transform;
 
 use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
@@ -27,8 +27,8 @@ use std::ops::{Add, Sub};
 ///   negation for the same reason. Attempting it fails to compile:
 ///
 /// ```compile_fail
-/// use helios_core::frames::conventions::Enu;
-/// use helios_core::frames::quantities::Point;
+/// use helios_core::spatial::conventions::Enu;
+/// use helios_core::spatial::quantities::Point;
 ///
 /// let a = Point::<Enu>::new(1.0, 0.0, 0.0);
 /// let b = Point::<Enu>::new(0.0, 1.0, 0.0);
@@ -80,17 +80,17 @@ impl<F: Frame> Point<F> {
         Self::new(0.0, 0.0, 0.0)
     }
 
-    /// The first coordinate (E for [`Enu`](crate::frames::conventions::Enu), F for [`Flu`](crate::frames::conventions::Flu)).
+    /// The first coordinate (E for [`Enu`](crate::spatial::conventions::Enu), F for [`Flu`](crate::spatial::conventions::Flu)).
     pub fn x(&self) -> f64 {
         self.0.x
     }
 
-    /// The second coordinate (N for [`Enu`](crate::frames::conventions::Enu), L for [`Flu`](crate::frames::conventions::Flu)).
+    /// The second coordinate (N for [`Enu`](crate::spatial::conventions::Enu), L for [`Flu`](crate::spatial::conventions::Flu)).
     pub fn y(&self) -> f64 {
         self.0.y
     }
 
-    /// The third coordinate (U for both [`Enu`](crate::frames::conventions::Enu) and [`Flu`](crate::frames::conventions::Flu)).
+    /// The third coordinate (U for both [`Enu`](crate::spatial::conventions::Enu) and [`Flu`](crate::spatial::conventions::Flu)).
     pub fn z(&self) -> f64 {
         self.0.z
     }
@@ -150,9 +150,9 @@ impl<F: Frame> Sub<FreeVector<F>> for Point<F> {
 
 #[cfg(test)]
 mod tests {
-    use crate::frames::conventions::{Enu, Flu};
-    use crate::frames::quantities::{FreeVector, Point};
-    use crate::frames::transforms::{Rotation, Transform};
+    use crate::spatial::conventions::{Enu, Flu};
+    use crate::spatial::quantities::{FreeVector, Point};
+    use crate::spatial::transforms::{Rotation, Transform};
 
     use nalgebra::{Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;

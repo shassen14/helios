@@ -1,4 +1,4 @@
-use crate::frames::{
+use crate::spatial::{
     conventions::{Enu, Flu, Frame},
     transforms::Rotation,
 };
@@ -96,7 +96,7 @@ impl EnuBasis for Flu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frames::quantities::FreeVector;
+    use crate::spatial::quantities::FreeVector;
 
     /// Floats through a quaternion are not bit-exact; compare within tolerance.
     fn close(a: Vector3<f64>, b: Vector3<f64>) -> bool {

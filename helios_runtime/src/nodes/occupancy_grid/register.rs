@@ -2,7 +2,7 @@
 
 use helios_core::data::envelope::SensorReading;
 use helios_core::prelude::PointCloud;
-use helios_core::frames::conventions::Flu;
+use helios_core::spatial::conventions::Flu;
 use helios_core::mapping::MapData;
 use helios_core::mapping::{Mapper, OccupancyGridMapper};
 

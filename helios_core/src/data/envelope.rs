@@ -1,5 +1,5 @@
-use super::primitives::MonotonicTime;
-use crate::frames::FrameId;
+use crate::spatial::primitives::MonotonicTime;
+use crate::spatial::FrameId;
 
 // =========================================================================
 // == SensorReading<T> ==

@@ -5,7 +5,7 @@ use crate::{
 };
 use helios_core::{
     control::{ControlInputs, ControlReference},
-    frames::FrameAwareState,
+    spatial::FrameAwareState,
 };
 
 use std::marker::PhantomData;

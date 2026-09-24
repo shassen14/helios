@@ -1,5 +1,5 @@
 use helios_core::{
-    frames::FrameAwareState,
+    spatial::FrameAwareState,
     mapping::MapData,
     prelude::{PlannerGoal, SearchPlannerInputs},
 };

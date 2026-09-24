@@ -16,7 +16,7 @@
 
 use crate::{
     prelude::{MonotonicDuration, MonotonicTime, TfProvider},
-    frames::{
+    spatial::{
         transforms::{
             tf::stamped::{
                 DynamicEdgeStats, EdgeKind, EdgeKindTag, FrameEdge, StampedTransform, TimeSpan,

@@ -8,7 +8,7 @@
 //! the equal-length invariant across geometry, attributes, and time is
 //! established; every operation on the finished cloud then preserves it.
 
-use crate::frames::{conventions::Frame, quantities::Point};
+use crate::spatial::{conventions::Frame, quantities::Point};
 use super::{AttributeColumns, Attributes, PointCloud, PointColumns, TimeColumn};
 
 use nalgebra::Matrix3xX;
@@ -146,7 +146,7 @@ mod tests {
     use super::*;
 
     use crate::prelude::{LidarAttrs, LidarColumns, LidarColumnsBuilder};
-    use crate::frames::conventions::Enu;
+    use crate::spatial::conventions::Enu;
 
     use nalgebra::Vector3;
 

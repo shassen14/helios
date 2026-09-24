@@ -11,7 +11,7 @@
 //! crosses as a typed point ([`ToBevy::to_bevy`]) and the result copies down to a
 //! `bevy::Vec3` for the gizmo.
 //!
-//! [`Point<Enu>`]: helios_core::frames::quantities::Point
+//! [`Point<Enu>`]: helios_core::spatial::quantities::Point
 
 use crate::{
     core::transforms::{point_bevy_to_vec3, ToBevy},

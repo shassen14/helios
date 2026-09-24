@@ -1,5 +1,5 @@
 use helios_core::{
-    frames::{conventions::Flu, quantities::Point},
+    spatial::{conventions::Flu, quantities::Point},
     plant::{Axle, RaycastWheelPlant, SuspensionParams, TireParams, Wheel},
 };
 

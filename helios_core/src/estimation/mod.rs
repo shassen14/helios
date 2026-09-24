@@ -12,8 +12,8 @@ pub mod schema;
 
 use crate::prelude::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
-use crate::frames::FrameAwareState;
-use crate::{data::ports::TfProvider, estimation::measurement::Unavailable};
+use crate::spatial::FrameAwareState;
+use crate::{spatial::tf::TfProvider, estimation::measurement::Unavailable};
 
 use nalgebra::{DMatrix, DVector};
 

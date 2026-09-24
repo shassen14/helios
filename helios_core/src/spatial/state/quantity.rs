@@ -1,6 +1,6 @@
 use crate::{
-    frames::FrameId,
-    state::{Component, StateVariable},
+    spatial::FrameId,
+    spatial::state::{Component, StateVariable},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

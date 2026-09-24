@@ -6,9 +6,9 @@ use crate::core::transforms::{
     enu_twist_to_body_flu, freevector_bevy_to_vec3, point_bevy_to_vec3, ToBevy,
 };
 
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::quantities::{EnuVector, FreeVector, Point};
-use helios_core::frames::transforms::Transform as CoreTransform;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::quantities::{EnuVector, FreeVector, Point};
+use helios_core::spatial::transforms::Transform as CoreTransform;
 use helios_core::plant::WheelContact;
 
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};

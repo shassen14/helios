@@ -21,9 +21,9 @@
 // between that and `bevy::Transform`. No axis swap is hand-written anymore — every
 // crossing, points and poses alike, is the typed frame algebra above.
 
-use helios_core::frames::conventions::{Enu, Frame};
-use helios_core::frames::quantities::{FreeVector, Point};
-use helios_core::frames::transforms::{Convention, EnuBasis, Rotation, Transform};
+use helios_core::spatial::conventions::{Enu, Frame};
+use helios_core::spatial::quantities::{FreeVector, Point};
+use helios_core::spatial::transforms::{Convention, EnuBasis, Rotation, Transform};
 
 use bevy::prelude::{Quat as BevyQuat, Transform as BevyTransform, Vec3 as BevyVec3};
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};

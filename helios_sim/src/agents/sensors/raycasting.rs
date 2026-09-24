@@ -6,11 +6,11 @@ use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
 use crate::prelude::*;
 
 use helios_core::data::envelope::SensorReading;
-use helios_core::data::primitives::MonotonicTime;
-use helios_core::frames::conventions::Flu;
-use helios_core::frames::quantities::FreeVector;
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::spatial::primitives::MonotonicTime;
+use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::quantities::FreeVector;
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 use helios_core::sensors::{lidar::LidarModel, RayHit, RaycastingOutput, RaycastingSensorModel};
 
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};

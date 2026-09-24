@@ -1,5 +1,5 @@
 // Core planning data types: Path, PlannerGoal, PlannerResult, PlannerStatus.
-use crate::frames::{conventions::Enu, quantities::Point};
+use crate::spatial::{conventions::Enu, quantities::Point};
 
 use nalgebra::{Isometry3, Vector2};
 

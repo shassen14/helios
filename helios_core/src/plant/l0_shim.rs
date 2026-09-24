@@ -1,6 +1,6 @@
 use crate::control::actuators::{ActuatorCommand, SetpointKind, SetpointValue};
 use crate::control::commands::BodyWrench;
-use crate::frames::quantities::FluVector;
+use crate::spatial::quantities::FluVector;
 use crate::plant::PlantWrench;
 
 use nalgebra::Vector3;
@@ -43,7 +43,7 @@ impl L0ShimPlant {
         }
     }
 
-    /// Fold a resolved actuator command into a body-frame ([`Flu`](crate::frames::conventions::Flu))
+    /// Fold a resolved actuator command into a body-frame ([`Flu`](crate::spatial::conventions::Flu))
     /// wrench.
     ///
     /// Each setpoint is interpreted by its command space: a `Velocity` adds

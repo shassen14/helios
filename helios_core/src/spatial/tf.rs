@@ -1,6 +1,6 @@
 use crate::{
     prelude::MonotonicTime,
-    frames::{transforms::ErasedTransform, FrameId},
+    spatial::{transforms::ErasedTransform, FrameId},
 };
 
 /// Abstraction over any system that can answer transform queries between coordinate frames.

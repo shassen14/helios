@@ -4,13 +4,13 @@ use crate::{
         measurement::{MeasurementModel, Prediction, Unavailable},
         schema::{MeasurementSchema, MeasurementSchemaBlock},
     },
-    frames::{
+    spatial::{
         conventions::{Enu, Flu},
         quantities::FreeVector,
         transforms::{Convention, Rotation},
         FrameAwareState, FrameId,
     },
-    state::Quantity,
+    spatial::state::Quantity,
 };
 use nalgebra::{DVector, Vector3};
 
@@ -118,10 +118,10 @@ mod tests {
     use crate::prelude::AgentId;
     use crate::prelude::MonotonicTime;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-    use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
+    use crate::spatial::transforms::{Convention, ErasedTransform};
+    use crate::spatial::{FrameAwareState, FrameId, StateVariable};
     use crate::kernel::manifold::TangentNoise;
-    use crate::state::{Component, Quantity};
+    use crate::spatial::state::{Component, Quantity};
     use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;

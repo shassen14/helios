@@ -8,9 +8,9 @@ use crate::registry::plugin::RuntimeAutonomyRegistry;
 
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::prelude::{AgentId, MonotonicTime};
-use helios_core::frames::transforms::tf::stamped::StampedTransform;
-use helios_core::frames::transforms::{Convention, ErasedTransform};
-use helios_core::frames::FrameId;
+use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+use helios_core::spatial::transforms::{Convention, ErasedTransform};
+use helios_core::spatial::FrameId;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::config::ReferenceSource;
 use helios_runtime::tf_service::TfService;

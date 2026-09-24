@@ -1,7 +1,7 @@
 use helios_core::control::commands::BodyTwist;
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::quantities::EnuVector;
-use helios_core::frames::transforms::{Rotation, Transform};
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::quantities::EnuVector;
+use helios_core::spatial::transforms::{Rotation, Transform};
 
 /// Rotate a world-ENU twist into the body's FLU frame.
 ///
@@ -24,7 +24,7 @@ pub fn enu_twist_to_body_flu(
 mod tests {
     use super::*;
 
-    use helios_core::frames::quantities::FluVector;
+    use helios_core::spatial::quantities::FluVector;
 
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;

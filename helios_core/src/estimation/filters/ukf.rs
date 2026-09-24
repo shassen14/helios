@@ -1,9 +1,9 @@
-use crate::data::ports::TfProvider;
+use crate::spatial::tf::TfProvider;
 use crate::prelude::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
-use crate::frames::FrameAwareState;
+use crate::spatial::FrameAwareState;
 use crate::kernel::integrators::RK4;
 
 use nalgebra::{Cholesky, DMatrix, DVector};
@@ -294,14 +294,14 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::ports::TfProvider;
+    use crate::spatial::tf::TfProvider;
     use crate::prelude::{AgentId, MonotonicTime};
     use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
     use crate::estimation::schema::{MeasurementSchema, StateSchema, StateSchemaBlock};
     use crate::estimation::{EstimatorInputs, SkipReason, UpdateOutcome};
-    use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId};
-    use crate::state::Quantity;
+    use crate::spatial::transforms::{Convention, ErasedTransform};
+    use crate::spatial::{FrameAwareState, FrameId};
+    use crate::spatial::state::Quantity;
     use nalgebra::{DMatrix, DVector, Isometry3};
 
     const AT: MonotonicTime = MonotonicTime(0.0);

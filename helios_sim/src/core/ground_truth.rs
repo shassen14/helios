@@ -5,9 +5,9 @@ use crate::core::transforms::{
 };
 
 use helios_core::prelude::{MonotonicTime, Twist};
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::quantities::FreeVector;
-use helios_core::frames::transforms::Transform as CoreTransform;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::quantities::FreeVector;
+use helios_core::spatial::transforms::Transform as CoreTransform;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::{Health, Stamped, HOST_PRODUCER_ID};
 

@@ -17,7 +17,7 @@ use helios_core::data::sensor::{
 use helios_core::prelude::AgentId;
 use helios_core::estimation::augmentation::augmentation_block;
 use helios_core::estimation::schema::{MeasurementAgreementError, StateSchemaBlock};
-use helios_core::frames::FrameId;
+use helios_core::spatial::FrameId;
 
 use nalgebra::DMatrix;
 use std::collections::HashSet;

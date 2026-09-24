@@ -70,7 +70,7 @@ mod tests {
 
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint, SetpointValue};
     use helios_core::control::commands::BodyWrench;
-    use helios_core::frames::quantities::FluVector as CoreFluVector;
+    use helios_core::spatial::quantities::FluVector as CoreFluVector;
 
     use bevy::ecs::system::SystemState;
     use figment::{

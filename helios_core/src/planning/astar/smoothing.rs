@@ -25,8 +25,8 @@
 
 use super::grid_space::OccupancyGridSpace;
 
-use crate::frames::conventions::Enu;
-use crate::frames::quantities::Point;
+use crate::spatial::conventions::Enu;
+use crate::spatial::quantities::Point;
 
 use nalgebra::Vector2;
 

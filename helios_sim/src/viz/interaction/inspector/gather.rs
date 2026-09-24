@@ -23,7 +23,7 @@ use helios_core::{
         reference::BodyTwistRef,
     },
     prelude::MonotonicTime,
-    frames::{
+    spatial::{
         conventions::{Enu, Flu},
         quantities::{FreeVector, Point},
         transforms::Transform as CoreTransform,
@@ -354,10 +354,10 @@ mod tests {
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
     use helios_core::prelude::TfProvider;
     use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
-    use helios_core::frames::quantities::FluVector;
-    use helios_core::frames::transforms::Convention;
-    use helios_core::frames::{FrameId, StateVariable};
-    use helios_core::state::{Component, Quantity};
+    use helios_core::spatial::quantities::FluVector;
+    use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::{FrameId, StateVariable};
+    use helios_core::spatial::state::{Component, Quantity};
     use helios_runtime::{
         channels::control,
         pipeline::node::HOST_PRODUCER_ID,

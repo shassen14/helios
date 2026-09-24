@@ -3,8 +3,8 @@ use crate::config::structs::TopologyConfig;
 use crate::core::transforms::TrackedFrame;
 use crate::registry::contexts::TopologyBuildContext;
 
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;

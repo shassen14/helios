@@ -18,9 +18,9 @@
 
 use crate::{
     estimation::schema::StateSchemaBlock,
-    frames::{transforms::Convention, FrameId},
+    spatial::{transforms::Convention, FrameId},
     kernel::manifold::TangentNoise,
-    state::Quantity,
+    spatial::state::Quantity,
 };
 
 use std::fmt::Display;
@@ -107,8 +107,8 @@ pub fn augmentation_block(
 mod tests {
     use super::*;
     use crate::prelude::AgentId;
-    use crate::frames::StateVariable;
-    use crate::state::Component;
+    use crate::spatial::StateVariable;
+    use crate::spatial::state::Component;
 
     const INIT_UNCERTAINTY: f64 = 0.5;
     const RANDOM_WALK: f64 = 0.01;

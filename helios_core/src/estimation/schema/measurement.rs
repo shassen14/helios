@@ -1,6 +1,6 @@
 use crate::{
-    frames::{transforms::Convention, FrameId},
-    state::{Quantity, StateVariable},
+    spatial::{transforms::Convention, FrameId},
+    spatial::state::{Quantity, StateVariable},
 };
 
 /// One block of a [`MeasurementSchema`]: the [`Quantity`] a measurement predicts
@@ -165,7 +165,7 @@ impl MeasurementSchema {
 mod tests {
     use super::*;
     use crate::prelude::AgentId;
-    use crate::state::Component;
+    use crate::spatial::state::Component;
 
     // ── MeasurementSchemaBlock: convention tagging and the constructor split ──
 

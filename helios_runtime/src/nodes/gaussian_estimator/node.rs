@@ -24,15 +24,15 @@ use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorCh
 use crate::stamped::{Health, Stamped};
 
 use helios_core::data::envelope::SensorReading;
-use helios_core::data::ports::TfProvider;
+use helios_core::spatial::tf::TfProvider;
 use helios_core::data::sensor::SensorPayload;
 use helios_core::estimation::measurement::{MeasurementModel, Unavailable};
 use helios_core::estimation::schema::MeasurementSchema;
 use helios_core::estimation::{GaussianStateEstimator, SkipReason, UpdateOutcome};
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::transforms::tf::stamped::{FrameEdge, StampedTransform};
-use helios_core::frames::transforms::ErasedTransform;
-use helios_core::frames::FrameAwareState;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
+use helios_core::spatial::transforms::ErasedTransform;
+use helios_core::spatial::FrameAwareState;
 
 use atomic_float::AtomicF64;
 use nalgebra::DMatrix;
@@ -368,7 +368,7 @@ mod tests {
 
     use super::*;
     use helios_core::data::envelope::SensorReading;
-    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::data::sensor::Acceleration;
     use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
@@ -377,9 +377,9 @@ mod tests {
         MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
     use helios_core::estimation::{EstimatorInputs, UpdateOutcome};
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::frames::{FrameAwareState, FrameId};
-    use helios_core::state::Quantity;
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::{FrameAwareState, FrameId};
+    use helios_core::spatial::state::Quantity;
     use nalgebra::{DMatrix, DVector, Isometry3};
     use std::sync::Mutex as StdMutex;
 

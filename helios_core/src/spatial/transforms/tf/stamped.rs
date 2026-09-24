@@ -9,7 +9,7 @@
 
 use crate::{
     prelude::MonotonicTime,
-    frames::{id::FrameId, transforms::ErasedTransform},
+    spatial::{id::FrameId, transforms::ErasedTransform},
 };
 
 use nalgebra::Isometry3;
@@ -125,7 +125,7 @@ pub struct DynamicEdgeStats {
 mod tests {
     use super::FrameEdge;
     use crate::prelude::AgentId;
-    use crate::frames::id::FrameId;
+    use crate::spatial::id::FrameId;
 
     #[test]
     fn frame_edge_displays_child_then_parent() {

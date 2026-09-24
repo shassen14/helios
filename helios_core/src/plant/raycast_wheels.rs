@@ -19,7 +19,7 @@
 
 use crate::control::actuators::{ActuatorCommand, SetpointKind, SetpointValue};
 use crate::control::commands::{BodyTwist, BodyWrench};
-use crate::frames::{
+use crate::spatial::{
     conventions::Flu,
     quantities::{FluVector, Point},
 };

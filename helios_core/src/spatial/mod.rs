@@ -1,29 +1,34 @@
-//! Coordinate frame types and the layout-indexed state vector.
+//! Geometry and frame vocabulary: where things are and how state is laid out.
 //!
 //! Provides [`FrameId`] (world/body/sensor identifiers), [`StateVariable`] (typed
 //! state-vector slots), and [`FrameAwareState`] (the bundled state + covariance + layout
 //! used by all filters). Index into `FrameAwareState` only via layout lookup — never
-//! hardcode numeric indices.
+//! hardcode numeric indices. Also holds the frame `primitives` (`AgentId`, monotonic
+//! time), the `tf` provider port, the `state` layout blocks, and the compile-time
+//! frame typing under `conventions`.
 
 pub mod conventions;
 pub mod id;
+pub mod primitives;
 pub mod quantities;
+pub mod state;
+pub mod tf;
 pub mod transforms;
 
 use crate::{
     estimation::schema::StateSchema,
-    frames::{
+    spatial::{
         quantities::{FreeVector, Point},
         transforms::{ConventionOf, Rotation, Transform},
     },
-    state::Quantity,
+    spatial::state::Quantity,
 };
 
 use nalgebra::{DMatrix, DVector, Quaternion, Translation, UnitQuaternion, Vector3};
 use serde::Serialize;
 use std::sync::Arc;
 
-pub use crate::state::StateVariable;
+pub use crate::spatial::state::StateVariable;
 pub use id::FrameId;
 
 /// The "smart" state object used by filters. It bundles the state estimate
@@ -259,9 +264,9 @@ impl FrameAwareState {
 mod frame_aware_state_tests {
     use super::*;
     use crate::estimation::schema::StateSchemaBlock;
-    use crate::frames::transforms::Convention;
+    use crate::spatial::transforms::Convention;
     use crate::kernel::manifold::TangentNoise;
-    use crate::state::Component;
+    use crate::spatial::state::Component;
 
     // A composed position + orientation state in World, built from real
     // `Quantity` blocks via `compose`. The orientation block seeds the identity
@@ -379,10 +384,10 @@ mod block_extractor_tests {
     use super::*;
     use crate::prelude::AgentId;
     use crate::estimation::schema::StateSchemaBlock;
-    use crate::frames::conventions::{Enu, Flu};
-    use crate::frames::transforms::Convention;
+    use crate::spatial::conventions::{Enu, Flu};
+    use crate::spatial::transforms::Convention;
     use crate::kernel::manifold::TangentNoise;
-    use crate::state::Component;
+    use crate::spatial::state::Component;
 
     fn body() -> FrameId {
         FrameId::base_link(AgentId::new("test_agent"))

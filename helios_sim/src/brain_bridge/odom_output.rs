@@ -5,8 +5,8 @@
 
 use bevy::prelude::*;
 
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::FrameId;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::FrameId;
 
 use crate::brain_bridge::components::{AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf};
 use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};

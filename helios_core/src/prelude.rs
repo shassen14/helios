@@ -4,15 +4,15 @@ pub use crate::data::cloud::{
 };
 pub use crate::data::envelope::SensorReading;
 pub use crate::data::messages::{Odometry, Twist};
-pub use crate::data::ports::TfProvider;
-pub use crate::data::primitives::{AgentId, MonotonicDuration, MonotonicTime};
+pub use crate::spatial::tf::TfProvider;
+pub use crate::spatial::primitives::{AgentId, MonotonicDuration, MonotonicTime};
 pub use crate::data::sensor::SensorPayload;
 pub use crate::data::sensor::{
     Acceleration, AngularRate, DepthImage, GpsPosition, GpsVelocity, MagneticField, RgbImage,
 };
 
 // --- Core Data Structures (The "nouns" of the library) ---
-pub use crate::frames::{FrameAwareState, FrameId, StateVariable};
+pub use crate::spatial::{FrameAwareState, FrameId, StateVariable};
 
 // --- Control Abstractions ---
 pub use crate::control::dynamics::ControlDynamics;

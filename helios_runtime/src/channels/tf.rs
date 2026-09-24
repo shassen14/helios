@@ -30,7 +30,7 @@ use crate::{
     ChannelKey, Stamped,
 };
 
-use helios_core::frames::transforms::tf::stamped::{FrameEdge, StampedTransform};
+use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 
 use std::any::TypeId;
 
@@ -84,8 +84,8 @@ mod tests {
     use crate::stamped::Health;
 
     use helios_core::prelude::{AgentId, MonotonicTime};
-    use helios_core::frames::id::FrameId;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::id::FrameId;
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
     use nalgebra::Isometry3;
 

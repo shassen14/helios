@@ -131,17 +131,17 @@ mod tests {
     //!   - mirrors the builder's required/optional channels in its descriptor
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
     use crate::port::ChannelKey;
 
     use helios_core::control::commands::{BodyTwist, BodyWrench};
     use helios_core::control::{BodyTwistRef, ControlInputs};
-    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
-    use helios_core::frames::quantities::FluVector;
-    use helios_core::frames::{FrameAwareState, FrameId};
+    use helios_core::spatial::quantities::FluVector;
+    use helios_core::spatial::{FrameAwareState, FrameId};
 
     use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};

@@ -13,9 +13,9 @@ use crate::control::commands::BodyTwist;
 use crate::control::kernels::siso_pid::SisoPid;
 use crate::control::BodyTwistRef;
 use crate::prelude::AgentId;
-use crate::frames::conventions::{Enu, Flu};
-use crate::frames::quantities::Point;
-use crate::frames::FrameId;
+use crate::spatial::conventions::{Enu, Flu};
+use crate::spatial::quantities::Point;
+use crate::spatial::FrameId;
 use crate::planning::types::Path;
 
 use nalgebra::Vector2;

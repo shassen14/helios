@@ -24,10 +24,10 @@ pub use bevy_bridge::{
 pub use body_twist::enu_twist_to_body_flu;
 
 use bevy::prelude::{GlobalTransform, *};
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::id::FrameScope;
-use helios_core::frames::transforms::{Convention, ErasedTransform, Transform as CoreTransform};
-use helios_core::frames::FrameId;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::id::FrameScope;
+use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform as CoreTransform};
+use helios_core::spatial::FrameId;
 use nalgebra::Isometry3;
 use std::collections::HashMap;
 

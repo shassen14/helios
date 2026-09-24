@@ -1,6 +1,6 @@
 use super::pose::Pose;
 
-use helios_core::frames::transforms::Convention;
+use helios_core::spatial::transforms::Convention;
 
 use serde::Deserialize;
 

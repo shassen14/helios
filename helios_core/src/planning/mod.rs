@@ -12,7 +12,7 @@ pub mod astar;
 pub mod search_space;
 pub mod types;
 
-use crate::frames::FrameAwareState;
+use crate::spatial::FrameAwareState;
 use crate::mapping::MapData;
 use types::{PlannerGoal, PlannerResult};
 

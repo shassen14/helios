@@ -1,6 +1,6 @@
 //! Frame-tagged rigid transform (SE(3)).
 
-use crate::frames::{conventions::Frame, quantities::Point, transforms::rotation::Rotation};
+use crate::spatial::{conventions::Frame, quantities::Point, transforms::rotation::Rotation};
 
 use nalgebra::{Isometry3, Point3, Translation3};
 use std::any::type_name;
@@ -15,7 +15,7 @@ use std::marker::PhantomData;
 ///
 /// A transform acts on a [`Point`] — the *affine* half of the frame algebra
 /// (`R·p + t`). Contrast [`Rotation::act`], which acts on a
-/// [`FreeVector`](crate::frames::quantities::FreeVector) and applies `R` alone:
+/// [`FreeVector`](crate::spatial::quantities::FreeVector) and applies `R` alone:
 /// a location translates, a free vector does not, and the argument types are
 /// what enforce the distinction. Pull the rotational part out with
 /// [`rotation`](Self::rotation) to act on free vectors.
@@ -130,8 +130,8 @@ impl<F: Frame> Transform<F, F> {
 #[cfg(test)]
 mod tests {
     use super::{Rotation, Transform};
-    use crate::frames::conventions::{Enu, Flu};
-    use crate::frames::quantities::{FreeVector, Point};
+    use crate::spatial::conventions::{Enu, Flu};
+    use crate::spatial::quantities::{FreeVector, Point};
 
     use nalgebra::{Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;

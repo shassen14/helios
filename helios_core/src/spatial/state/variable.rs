@@ -1,4 +1,4 @@
-use crate::state::{Component, Quantity};
+use crate::spatial::state::{Component, Quantity};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StateVariable {

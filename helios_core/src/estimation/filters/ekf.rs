@@ -1,10 +1,10 @@
-use crate::data::ports::TfProvider;
+use crate::spatial::tf::TfProvider;
 use crate::prelude::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::filters::linearization::tangent_state_transition;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
-use crate::frames::FrameAwareState;
+use crate::spatial::FrameAwareState;
 use crate::kernel::integrators::RK4;
 
 use nalgebra::{DMatrix, DVector};
@@ -200,7 +200,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::ports::TfProvider;
+    use crate::spatial::tf::TfProvider;
     use crate::prelude::AgentId;
     use crate::prelude::MonotonicTime;
     use crate::estimation::measurement::{MeasurementModel, Prediction};
@@ -208,9 +208,9 @@ mod tests {
         MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
     use crate::estimation::EstimatorInputs;
-    use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::state::{Component, Quantity};
+    use crate::spatial::transforms::{Convention, ErasedTransform};
+    use crate::spatial::{FrameAwareState, FrameId, StateVariable};
+    use crate::spatial::state::{Component, Quantity};
     use nalgebra::{DMatrix, DVector, Isometry3};
     use rand::rngs::StdRng;
     use rand::Rng;

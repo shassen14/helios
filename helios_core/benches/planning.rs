@@ -1,8 +1,8 @@
 use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 use helios_core::mapping::MapData;
-use helios_core::state::{Component, Quantity};
+use helios_core::spatial::state::{Component, Quantity};
 
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use helios_core::planning::astar::{AStarConfig, AStarPlanner};

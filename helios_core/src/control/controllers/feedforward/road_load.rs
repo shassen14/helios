@@ -68,7 +68,7 @@ mod tests {
     use super::*;
     use crate::control::commands::BodyTwist;
     use crate::estimation::schema::StateSchema;
-    use crate::frames::FrameAwareState;
+    use crate::spatial::FrameAwareState;
 
     use std::sync::Arc;
 

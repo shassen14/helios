@@ -1,6 +1,6 @@
 //! Frame-tagged rotation (SO(3)).
 
-use crate::frames::{conventions::Frame, quantities::FreeVector};
+use crate::spatial::{conventions::Frame, quantities::FreeVector};
 
 use nalgebra::UnitQuaternion;
 use std::any::type_name;
@@ -13,11 +13,11 @@ use std::marker::PhantomData;
 /// pair and costs nothing at runtime. The type parameters read in the same
 /// direction as the rotation itself — `Rotation<From, To>` takes a quantity
 /// *out of* `From` and *into* `To`, matching the `Qx(from, to)` convention used
-/// by [`StateVariable`](crate::frames::StateVariable).
+/// by [`StateVariable`](crate::spatial::StateVariable).
 ///
 /// A rotation acts on a [`FreeVector`] — the *linear* half of the frame algebra
 /// (`R·v`, no translation). Its affine sibling [`Transform`](super::Transform)
-/// acts on a [`Point`](crate::frames::quantities::Point) and adds the `t`. The
+/// acts on a [`Point`](crate::spatial::quantities::Point) and adds the `t`. The
 /// carrier a value flows through is the record of which law applies, so
 /// "translated a velocity" cannot be written.
 ///
@@ -107,8 +107,8 @@ impl<F: Frame> Rotation<F, F> {
 #[cfg(test)]
 mod tests {
     use super::Rotation;
-    use crate::frames::conventions::{Enu, Flu};
-    use crate::frames::quantities::FreeVector;
+    use crate::spatial::conventions::{Enu, Flu};
+    use crate::spatial::quantities::FreeVector;
 
     use nalgebra::{UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;

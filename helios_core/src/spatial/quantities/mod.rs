@@ -21,7 +21,7 @@ pub mod point;
 pub use free_vector::FreeVector;
 pub use point::Point;
 
-use crate::frames::conventions::{Enu, Flu};
+use crate::spatial::conventions::{Enu, Flu};
 
 /// A [`FreeVector`] expressed in the world [`Enu`](super::conventions::Enu) frame.
 pub type EnuVector = FreeVector<Enu>;

@@ -12,9 +12,9 @@
 
 use bevy::prelude::*;
 
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 
 use crate::{
     core::transforms::{frame_triad_to_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3},

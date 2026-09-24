@@ -16,7 +16,7 @@
 //! A frame with three sensors below it therefore sits above their midpoint, not
 //! hard-left of them — the difference between a legible tree and a lopsided one.
 
-use helios_core::frames::{transforms::tf::stamped::FrameEdge, FrameId};
+use helios_core::spatial::{transforms::tf::stamped::FrameEdge, FrameId};
 
 use std::collections::{HashMap, HashSet};
 

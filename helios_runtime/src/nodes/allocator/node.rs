@@ -88,15 +88,15 @@ mod tests {
     //!   - mirrors its command input and actuator output in its descriptor
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::FrameId;
 
     use helios_core::control::actuators::{
         ActuatorCommand, ActuatorId, ActuatorSetpoint, SetpointValue,
     };
     use helios_core::control::commands::BodyTwist;
-    use helios_core::data::primitives::MonotonicTime;
-    use helios_core::frames::quantities::FluVector;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::quantities::FluVector;
 
     use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};

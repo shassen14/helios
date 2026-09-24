@@ -9,7 +9,7 @@ use crate::{
 use helios_core::{
     control::{actuators::ActuatorCommand, commands::BodyTwist},
     prelude::{MonotonicTime, TfProvider},
-    frames::FrameAwareState,
+    spatial::FrameAwareState,
 };
 
 use std::{

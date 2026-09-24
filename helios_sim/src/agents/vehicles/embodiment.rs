@@ -5,8 +5,8 @@ use crate::registry::contexts::{
 };
 use crate::registry::embodiment::EmbodimentRegistry;
 
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::transforms::Transform as CoreTransform;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::transforms::Transform as CoreTransform;
 
 use avian3d::prelude::RigidBody;
 

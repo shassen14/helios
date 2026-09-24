@@ -19,7 +19,7 @@ use helios_core::{
     control::commands::{BodyTwist, TwistIntent},
     control::reference::BodyTwistRef,
     prelude::TfProvider,
-    frames::quantities::FluVector,
+    spatial::quantities::FluVector,
 };
 
 use crate::{
@@ -128,12 +128,12 @@ mod tests {
     //! silent when no intent is present.
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::FrameId;
 
     use crate::Health;
 
-    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::spatial::primitives::MonotonicTime;
 
     use nalgebra::Isometry3;
 

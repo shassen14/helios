@@ -7,7 +7,7 @@
 
 use bevy::prelude::*;
 
-use helios_core::data::primitives::MonotonicTime;
+use helios_core::spatial::primitives::MonotonicTime;
 
 use crate::brain_bridge::components::{AutonomyPipelineComponent, TfServiceComponent};
 

@@ -14,10 +14,10 @@ use crate::core::transforms::{vec3_to_freevector_bevy, FromBevy};
 use crate::prelude::*;
 
 use helios_core::data::sensor::{Acceleration, AngularRate};
-use helios_core::frames::conventions::Enu;
-use helios_core::frames::quantities::FreeVector;
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::spatial::conventions::Enu;
+use helios_core::spatial::quantities::FreeVector;
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
 

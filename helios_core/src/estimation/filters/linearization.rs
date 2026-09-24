@@ -1,7 +1,7 @@
 //! Numerical linearization of dynamics into a discrete tangent-space state
 //! transition matrix, used by the covariance step of Gaussian filters.
 
-use crate::frames::FrameAwareState;
+use crate::spatial::FrameAwareState;
 use crate::prelude::EstimationDynamics;
 use crate::kernel::integrators::Integrator;
 
@@ -71,7 +71,7 @@ mod tests {
     use crate::estimation::dynamics::integrated_imu::{
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };
-    use crate::frames::FrameAwareState;
+    use crate::spatial::FrameAwareState;
     use crate::prelude::EstimationDynamics;
     use crate::kernel::integrators::RK4;
 

@@ -17,7 +17,7 @@
 //! mapping) split the trait the same way `GaussianStateEstimator` was split
 //! out.
 
-use crate::{prelude::PointCloud, frames::conventions::Flu};
+use crate::{prelude::PointCloud, spatial::conventions::Flu};
 use nalgebra::{DMatrix, Isometry3};
 use std::collections::HashMap;
 

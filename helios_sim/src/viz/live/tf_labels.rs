@@ -24,7 +24,7 @@ use crate::viz::interaction::selection::Selected;
 use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 use crate::viz::live::tf::{frame_origin_in_root, TfOverlayVisible};
 
-use helios_core::frames::FrameId;
+use helios_core::spatial::FrameId;
 
 use std::collections::{HashMap, HashSet};
 

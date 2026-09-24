@@ -8,7 +8,7 @@
 //! high-rate or long-latency stack overrides them in TOML.
 
 use helios_core::prelude::MonotonicDuration;
-use helios_core::frames::transforms::tf::buffer::TfWindow;
+use helios_core::spatial::transforms::tf::buffer::TfWindow;
 
 use serde::Deserialize;
 

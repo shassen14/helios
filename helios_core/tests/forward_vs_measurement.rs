@@ -18,7 +18,7 @@
 //! truth. Cases are drawn from a seeded RNG, so the property is checked over
 //! many random poses, rates, mounts, and fields while staying reproducible.
 
-use helios_core::data::ports::TfProvider;
+use helios_core::spatial::tf::TfProvider;
 use helios_core::prelude::AgentId;
 use helios_core::prelude::MonotonicTime;
 use helios_core::estimation::measurement::accelerometer::SpecificForceModel;
@@ -27,14 +27,14 @@ use helios_core::estimation::measurement::gyroscope::AngularRateModel;
 use helios_core::estimation::measurement::magnetometer::MagneticFieldModel;
 use helios_core::estimation::measurement::{MeasurementModel, Prediction};
 use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
-use helios_core::frames::transforms::{Convention, ErasedTransform};
-use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+use helios_core::spatial::transforms::{Convention, ErasedTransform};
+use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 use helios_core::kernel::manifold::TangentNoise;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gps::GpsModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
 use helios_core::sensors::magnetometer::MagnetometerModel;
-use helios_core::state::{Component, Quantity};
+use helios_core::spatial::state::{Component, Quantity};
 
 use std::f64::consts::{FRAC_PI_2, PI};
 

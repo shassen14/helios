@@ -2,9 +2,9 @@ use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::commands::BodyTwist;
 use crate::control::BodyTwistRef;
 use crate::prelude::AgentId;
-use crate::frames::conventions::{Enu, Flu};
-use crate::frames::quantities::Point;
-use crate::frames::{FrameAwareState, FrameId};
+use crate::spatial::conventions::{Enu, Flu};
+use crate::spatial::quantities::Point;
+use crate::spatial::{FrameAwareState, FrameId};
 use crate::planning::types::Path;
 use nalgebra::Vector2;
 // Plan: output (velocity.x, angle.z)
@@ -189,10 +189,10 @@ impl PathFollower for PurePursuitPathFollower {
 mod tests {
     use super::*;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-    use crate::frames::transforms::Convention;
+    use crate::spatial::transforms::Convention;
     use crate::kernel::manifold::TangentNoise;
     use crate::planning::types::Path;
-    use crate::state::Quantity;
+    use crate::spatial::state::Quantity;
 
     use nalgebra::{DMatrix, DVector};
     use std::sync::Arc;

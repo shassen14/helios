@@ -1,6 +1,6 @@
 use crate::prelude::{PointCloud, PointCloudBuilder};
-use crate::frames::conventions::Flu;
-use crate::frames::quantities::Point;
+use crate::spatial::conventions::Flu;
+use crate::spatial::quantities::Point;
 use crate::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel, SensorRay};
 use nalgebra::Vector3;
 use rand::RngCore;

@@ -14,9 +14,9 @@ use helios_core::estimation::dynamics::integrated_imu::{
 use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::schema::check_measurement_state_agreement;
-use helios_core::frames::transforms::tf::stamped::FrameEdge;
-use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-use helios_core::state::{Component, Quantity};
+use helios_core::spatial::transforms::tf::stamped::FrameEdge;
+use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
+use helios_core::spatial::state::{Component, Quantity};
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use std::sync::Arc;
@@ -211,7 +211,7 @@ mod tests {
     use crate::port::SensorChannel;
 
     use helios_core::data::envelope::SensorReading;
-    use helios_core::data::ports::TfProvider;
+    use helios_core::spatial::tf::TfProvider;
     use helios_core::data::sensor::Acceleration;
     use helios_core::prelude::AgentId;
     use helios_core::prelude::MonotonicTime;
@@ -220,7 +220,7 @@ mod tests {
     use helios_core::estimation::schema::{
         MeasurementSchema, MeasurementSchemaBlock, StateSchemaBlock,
     };
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
     use nalgebra::{DMatrix, DVector};
 

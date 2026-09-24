@@ -9,8 +9,8 @@ use std::sync::{
 };
 
 use helios_core::prelude::{AgentId, MonotonicTime};
-use helios_core::frames::id::FrameId;
-use helios_core::frames::transforms::tf::stamped::FrameEdge;
+use helios_core::spatial::id::FrameId;
+use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
     channels::tf::tf_edge,
     pipeline::{PipelineBuildError, PipelineBuilder},

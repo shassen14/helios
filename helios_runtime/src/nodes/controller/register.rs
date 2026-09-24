@@ -13,7 +13,7 @@ use helios_core::control::controllers::feedforward::bicycle_steer::BicycleSteerF
 use helios_core::control::controllers::feedforward::road_load::RoadLoadFeedforward;
 use helios_core::control::kernels::siso_pid::SisoPid;
 use helios_core::control::BodyTwistRef;
-use helios_core::frames::FrameId;
+use helios_core::spatial::FrameId;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_controller("DirectTwist", build_direct_twist);

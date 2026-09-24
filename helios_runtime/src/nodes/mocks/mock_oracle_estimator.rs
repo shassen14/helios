@@ -43,8 +43,8 @@ use helios_core::prelude::AgentId;
 use helios_core::prelude::TfProvider;
 use helios_core::estimation::carrier::kinematic_carrier_schema;
 use helios_core::estimation::schema::StateSchema;
-use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-use helios_core::state::{Component, Quantity};
+use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
+use helios_core::spatial::state::{Component, Quantity};
 
 use nalgebra::Isometry3;
 use std::sync::Arc;
@@ -232,10 +232,10 @@ mod tests {
     use crate::pipeline::autonomy_pipeline::PipelineBuilder;
     use crate::pipeline::build_error::PipelineBuildError;
     use crate::port::{ChannelKey, PortDescriptor};
-    use helios_core::frames::conventions::{Enu, Flu};
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::conventions::{Enu, Flu};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
-    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::spatial::primitives::MonotonicTime;
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
 
     // --- Test fixtures ---

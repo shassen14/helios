@@ -15,10 +15,10 @@
 
 use crate::prelude::AgentId;
 use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-use crate::frames::transforms::Convention;
-use crate::frames::FrameId;
+use crate::spatial::transforms::Convention;
+use crate::spatial::FrameId;
 use crate::kernel::manifold::TangentNoise;
-use crate::state::Quantity;
+use crate::spatial::state::Quantity;
 
 use nalgebra::{DMatrix, DVector};
 
@@ -77,9 +77,9 @@ pub fn kinematic_carrier_schema(agent: AgentId) -> StateSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frames::conventions::{Enu, Flu};
-    use crate::frames::{FrameAwareState, StateVariable};
-    use crate::state::Component;
+    use crate::spatial::conventions::{Enu, Flu};
+    use crate::spatial::{FrameAwareState, StateVariable};
+    use crate::spatial::state::Component;
     use std::sync::Arc;
 
     fn agent() -> AgentId {

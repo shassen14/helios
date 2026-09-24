@@ -12,8 +12,8 @@ use crate::{
 };
 
 use helios_core::data::sensor::GpsPosition;
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 use helios_core::sensors::gps::GpsModel;
 
 use nalgebra::{Isometry3, Vector3};

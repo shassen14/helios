@@ -33,10 +33,10 @@ use helios_runtime::{
 };
 
 use helios_core::prelude::{AgentId, MonotonicDuration, MonotonicTime, TfProvider};
-use helios_core::frames::id::FrameId;
-use helios_core::frames::transforms::tf::buffer::TfWindow;
-use helios_core::frames::transforms::tf::stamped::{FrameEdge, StampedTransform};
-use helios_core::frames::transforms::{Convention, ErasedTransform};
+use helios_core::spatial::id::FrameId;
+use helios_core::spatial::transforms::tf::buffer::TfWindow;
+use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
+use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
 use nalgebra::Isometry3;
 

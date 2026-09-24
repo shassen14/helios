@@ -46,7 +46,7 @@ use crate::{
 };
 
 use bevy::prelude::*;
-use helios_core::frames::{
+use helios_core::spatial::{
     transforms::{
         tf::buffer::{TfBuffer, TfQuery},
         Convention,

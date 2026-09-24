@@ -17,7 +17,7 @@ use crate::viz::interaction::tf_panel::TfPanelModel;
 use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 
 use helios_core::prelude::{AgentId, MonotonicTime};
-use helios_core::frames::transforms::tf::stamped::{DynamicEdgeStats, EdgeKindTag, FrameEdge};
+use helios_core::spatial::transforms::tf::stamped::{DynamicEdgeStats, EdgeKindTag, FrameEdge};
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -214,7 +214,7 @@ fn edge_health(
 mod tests {
     use super::*;
 
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::FrameId;
 
     /// A dynamic-style edge `child -> parent`; kind supplied per test.
     fn edge(child: FrameId, parent: FrameId) -> FrameEdge {

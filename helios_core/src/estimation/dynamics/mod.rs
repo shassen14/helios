@@ -6,7 +6,7 @@
 
 pub mod integrated_imu;
 
-use crate::data::primitives::{Control, State};
+use crate::spatial::primitives::{Control, State};
 use crate::estimation::schema::StateSchema;
 use crate::kernel::integrators::Integrator;
 use nalgebra::DMatrix;

@@ -4,7 +4,7 @@
 //!
 //! A schema is assembled once from an ordered list of [`StateSchemaBlock`]s (via
 //! [`StateSchema::compose`]) and is immutable thereafter. It is the shape of the
-//! state, never its values: a [`crate::frames::FrameAwareState`] pairs an
+//! state, never its values: a [`crate::spatial::FrameAwareState`] pairs an
 //! `Arc<StateSchema>` with the mutable `(mean, covariance)` it describes, so one
 //! schema is shared cheaply across every snapshot of a run.
 //!
@@ -20,9 +20,9 @@
 //! moment a curved block enters.
 
 use crate::{
-    frames::{transforms::Convention, FrameId, StateVariable},
+    spatial::{transforms::Convention, FrameId, StateVariable},
     kernel::manifold::{euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise},
-    state::Quantity,
+    spatial::state::Quantity,
 };
 
 use nalgebra::{DMatrix, DVector, DVectorView};
@@ -417,7 +417,7 @@ mod tests {
     use super::*;
     use crate::prelude::AgentId;
     use crate::kernel::manifold::TangentNoise;
-    use crate::state::Component;
+    use crate::spatial::state::Component;
 
     fn agent() -> AgentId {
         AgentId::new("test_agent")
