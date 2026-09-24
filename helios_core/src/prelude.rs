@@ -3,6 +3,7 @@ pub use crate::interchange::measurement::cloud::{
     AttributeColumns, LidarAttrs, LidarColumns, LidarColumnsBuilder, PointCloud, PointCloudBuilder,
 };
 pub use crate::interchange::measurement::envelope::SensorReading;
+pub use crate::interchange::measurement::range_field::{DirectionModel, SphericalAngular};
 pub use crate::interchange::motion::{Odometry, Twist};
 pub use crate::spatial::tf::TfProvider;
 pub use crate::spatial::primitives::{AgentId, MonotonicDuration, MonotonicTime};
