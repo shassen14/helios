@@ -62,7 +62,7 @@ pub trait Mapper: Send + Sync {
 }
 
 // --- 3. Declare the implementation sub-modules ---
-mod occupancy_grid;
+mod occupancy;
 
 // --- 4. Re-export the public structs for a clean API ---
-pub use occupancy_grid::OccupancyGridMapper;
+pub use occupancy::OccupancyGridMapper;

@@ -35,7 +35,7 @@ use std::sync::Mutex;
 
 use helios_core::control::ControlReference;
 use helios_core::prelude::TfProvider;
-use helios_core::path_following::{PathFollower, PathFollowerResult};
+use helios_core::following::{PathFollower, PathFollowerResult};
 use helios_core::interchange::path::Path;
 
 use super::input::PathFollowerInputBuilder;
@@ -175,7 +175,7 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
 mod tests {
     //! Wiring tests for [`PathFollowerNode`] — concrete follower behaviour
     //! (lookahead geometry, PID gains, goal-radius checks) is covered in
-    //! `helios_core/src/path_following/`. Here we verify that `execute()`:
+    //! `helios_core/src/following/`. Here we verify that `execute()`:
     //!   - calls `set_path` exactly once per distinct bus-timestamp on `path_channel`
     //!   - never calls `set_path` when the path timestamp is unchanged
     //!   - publishes a `Stamped<BodyTwistRef>` only on `Active`
@@ -195,7 +195,7 @@ mod tests {
     use helios_core::spatial::conventions::Enu;
     use helios_core::spatial::quantities::Point;
     use helios_core::spatial::{FrameAwareState, FrameId};
-    use helios_core::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
+    use helios_core::following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::interchange::path::Path;
 
     use nalgebra::Isometry3;

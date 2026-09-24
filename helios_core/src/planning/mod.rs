@@ -6,10 +6,9 @@
 //! BIT*) live behind a separate trait that does not exist yet — when they
 //! land, they will not share `SearchPlanner`.
 //!
-//! Today the only impl is [`astar::AStarPlanner`].
+//! Today the only impl is [`search::astar::AStarPlanner`].
 
-pub mod astar;
-pub mod search_space;
+pub mod search;
 pub mod types;
 
 use crate::interchange::path::PlannerGoal;

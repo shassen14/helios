@@ -43,9 +43,9 @@ use crate::interchange::perception::map::MapData;
 use crate::planning::SearchPlannerInputs;
 
 use super::search_space::SearchSpace;
-use super::types::{PlannerResult, PlannerStatus};
+use crate::planning::types::{PlannerResult, PlannerStatus};
 use crate::interchange::path::{Path, PlannerGoal};
-use super::SearchPlanner;
+use crate::planning::SearchPlanner;
 
 use grid_space::OccupancyGridSpace;
 use search::{run_astar, AStarSearchBuffers};

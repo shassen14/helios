@@ -219,7 +219,7 @@ impl PipelineNode for OccupancyGridNode {
 mod tests {
     //! Wiring tests for [`OccupancyGridNode`]. The mapper's algorithmic
     //! behavior (raycast / recenter / sigmoid conversion) is covered in
-    //! `helios_core::mapping::occupancy_grid::tests`. Here we verify only:
+    //! `helios_core::mapping::occupancy::occupancy_grid::tests`. Here we verify only:
     //!   - descriptor lists required inputs and the configured map_channel
     //!   - cold-start (no FrameAwareState) is a silent no-op
     //!   - missing TF for a reading skips just that reading, not the tick

@@ -7,7 +7,7 @@ use crate::config::SearchPlannerConfig;
 use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::SearchPlannerBuildContext, AutonomyRegistry};
 
-use helios_core::planning::astar::{AStarConfig, AStarPlanner};
+use helios_core::planning::search::astar::{AStarConfig, AStarPlanner};
 use helios_core::planning::SearchPlanner;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {

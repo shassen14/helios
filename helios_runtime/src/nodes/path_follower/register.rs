@@ -8,7 +8,7 @@ use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::PathFollowerBuildContext, AutonomyRegistry};
 
 use helios_core::control::BodyTwistRef;
-use helios_core::path_following::{
+use helios_core::following::{
     pure_pursuit::PurePursuitPathFollower, steering_pid::SteeringPidPathFollower, PathFollower,
 };
 

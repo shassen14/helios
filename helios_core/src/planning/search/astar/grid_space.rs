@@ -23,7 +23,7 @@
 
 use nalgebra::{DMatrix, Vector2};
 
-use crate::planning::search_space::SearchSpace;
+use crate::planning::search::search_space::SearchSpace;
 
 // =========================================================================
 // == OccupancyGridSpace ==

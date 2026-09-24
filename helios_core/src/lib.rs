@@ -7,10 +7,10 @@
 
 pub mod control;
 pub mod estimation;
+pub mod following;
 pub mod interchange;
 pub mod kernel;
 pub mod mapping;
-pub mod path_following;
 pub mod planning;
 pub mod plant;
 pub mod prelude;

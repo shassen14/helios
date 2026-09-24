@@ -5,7 +5,7 @@ use helios_core::interchange::perception::map::MapData;
 use helios_core::spatial::state::{Component, Quantity};
 
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
-use helios_core::planning::astar::{AStarConfig, AStarPlanner};
+use helios_core::planning::search::astar::{AStarConfig, AStarPlanner};
 use helios_core::interchange::path::PlannerGoal;
 use helios_core::planning::SearchPlanner;
 use helios_core::planning::SearchPlannerInputs;

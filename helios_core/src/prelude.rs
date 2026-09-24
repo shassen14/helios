@@ -30,4 +30,4 @@ pub use crate::planning::SearchPlanner;
 pub use crate::planning::SearchPlannerInputs;
 
 // Path Following
-pub use crate::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
+pub use crate::following::{PathFollower, PathFollowerInputs, PathFollowerResult};
