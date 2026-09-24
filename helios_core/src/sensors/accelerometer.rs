@@ -1,6 +1,6 @@
 //! Forward model for an accelerometer.
 
-use crate::data::sensor::Acceleration;
+use crate::interchange::measurement::sensor::Acceleration;
 use crate::sensors::noise::TriaxialGaussian;
 
 use nalgebra::{UnitQuaternion, Vector3};

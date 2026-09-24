@@ -93,7 +93,7 @@ impl HostInputPublisher<'_, '_> {
 mod tests {
     use super::*;
 
-    use helios_core::planning::types::PlannerGoal;
+    use helios_core::interchange::path::PlannerGoal;
 
     use bevy::ecs::system::SystemState;
     use nalgebra::Vector2;

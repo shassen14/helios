@@ -23,9 +23,9 @@ use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};
 use crate::stamped::{Health, Stamped};
 
-use helios_core::data::envelope::SensorReading;
+use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::spatial::tf::TfProvider;
-use helios_core::data::sensor::SensorPayload;
+use helios_core::interchange::measurement::sensor::SensorPayload;
 use helios_core::estimation::measurement::{MeasurementModel, Unavailable};
 use helios_core::estimation::schema::MeasurementSchema;
 use helios_core::estimation::{GaussianStateEstimator, SkipReason, UpdateOutcome};
@@ -367,9 +367,9 @@ mod tests {
     //! and bus publish.
 
     use super::*;
-    use helios_core::data::envelope::SensorReading;
+    use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::spatial::primitives::MonotonicTime;
-    use helios_core::data::sensor::Acceleration;
+    use helios_core::interchange::measurement::sensor::Acceleration;
     use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::measurement::Prediction;

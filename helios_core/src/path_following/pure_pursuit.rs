@@ -5,7 +5,7 @@ use crate::prelude::AgentId;
 use crate::spatial::conventions::{Enu, Flu};
 use crate::spatial::quantities::Point;
 use crate::spatial::{FrameAwareState, FrameId};
-use crate::planning::types::Path;
+use crate::interchange::path::Path;
 use nalgebra::Vector2;
 // Plan: output (velocity.x, angle.z)
 //          dot (accel.x, ang_vel.z) -> curvature, but fails
@@ -191,7 +191,7 @@ mod tests {
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::spatial::transforms::Convention;
     use crate::kernel::manifold::TangentNoise;
-    use crate::planning::types::Path;
+    use crate::interchange::path::Path;
     use crate::spatial::state::Quantity;
 
     use nalgebra::{DMatrix, DVector};

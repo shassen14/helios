@@ -84,7 +84,7 @@ pub fn dispatch_configured_goals(
 mod tests {
     use super::*;
 
-    use helios_core::planning::types::PlannerGoal;
+    use helios_core::interchange::path::PlannerGoal;
     use nalgebra::Vector2;
 
     /// Counts `GoalCommandEvent`s seen across ticks. Chained after the system

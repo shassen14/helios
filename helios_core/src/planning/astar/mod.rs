@@ -1,6 +1,6 @@
 // helios_core/src/planning/astar/mod.rs
 
-//! A\* path planner on [`MapData::OccupancyGrid2D`](crate::mapping::MapData) maps.
+//! A\* path planner on [`MapData::OccupancyGrid2D`](crate::interchange::perception::map::MapData) maps.
 //!
 //! # Module layout
 //!
@@ -39,11 +39,12 @@ mod smoothing;
 use nalgebra::Vector2;
 
 use crate::spatial::conventions::Enu;
-use crate::mapping::MapData;
+use crate::interchange::perception::map::MapData;
 use crate::planning::SearchPlannerInputs;
 
 use super::search_space::SearchSpace;
-use super::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
+use super::types::{PlannerResult, PlannerStatus};
+use crate::interchange::path::{Path, PlannerGoal};
 use super::SearchPlanner;
 
 use grid_space::OccupancyGridSpace;
@@ -382,8 +383,9 @@ mod tests {
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::spatial::transforms::Convention;
     use crate::spatial::{FrameAwareState, FrameId};
-    use crate::mapping::MapData;
-    use crate::planning::types::{PlannerGoal, PlannerResult, PlannerStatus};
+    use crate::interchange::path::PlannerGoal;
+    use crate::interchange::perception::map::MapData;
+    use crate::planning::types::{PlannerResult, PlannerStatus};
     use crate::planning::SearchPlanner;
     use crate::planning::SearchPlannerInputs;
     use crate::spatial::state::Quantity;

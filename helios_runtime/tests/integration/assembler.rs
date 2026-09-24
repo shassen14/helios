@@ -19,9 +19,9 @@ use helios_runtime::{
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
 use helios_core::control::commands::{DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
-use helios_core::data::envelope::SensorReading;
+use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::spatial::primitives::MonotonicTime;
-use helios_core::data::sensor::MagneticField;
+use helios_core::interchange::measurement::sensor::MagneticField;
 use helios_core::prelude::AgentId;
 use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::spatial::conventions::Flu;

@@ -1,6 +1,6 @@
 use helios_core::{
     spatial::FrameAwareState,
-    mapping::MapData,
+    interchange::perception::map::MapData,
     prelude::{PlannerGoal, SearchPlannerInputs},
 };
 

@@ -1,6 +1,6 @@
 //! Forward model for a GPS position sensor.
 
-use crate::data::sensor::GpsPosition;
+use crate::interchange::measurement::sensor::GpsPosition;
 use crate::sensors::noise::TriaxialGaussian;
 
 use nalgebra::Vector3;

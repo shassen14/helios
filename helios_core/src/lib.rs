@@ -6,8 +6,8 @@
 //! on Bevy or Avian3D. See submodules for details.
 
 pub mod control;
-pub mod data;
 pub mod estimation;
+pub mod interchange;
 pub mod kernel;
 pub mod mapping;
 pub mod path_following;

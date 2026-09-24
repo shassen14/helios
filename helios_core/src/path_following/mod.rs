@@ -28,7 +28,7 @@ use crate::control::ControlReference;
 use crate::spatial::conventions::Enu;
 use crate::spatial::quantities::Point;
 use crate::spatial::FrameAwareState;
-use crate::planning::types::Path;
+use crate::interchange::path::Path;
 
 /// Bus-sourced inputs for one [`PathFollower::compute`] call.
 pub struct PathFollowerInputs {

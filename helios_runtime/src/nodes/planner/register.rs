@@ -58,8 +58,8 @@ mod tests {
     use crate::port::InternalChannel;
 
     use helios_core::prelude::AgentId;
-    use helios_core::mapping::MapData;
-    use helios_core::planning::types::Path;
+    use helios_core::interchange::perception::map::MapData;
+    use helios_core::interchange::path::Path;
 
     fn context(instance_name: &str) -> SearchPlannerBuildContext {
         SearchPlannerBuildContext {

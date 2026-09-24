@@ -38,7 +38,7 @@ use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{InternalChannel, OracleChannel, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
-use helios_core::data::messages::Twist;
+use helios_core::interchange::motion::Twist;
 use helios_core::prelude::AgentId;
 use helios_core::prelude::TfProvider;
 use helios_core::estimation::carrier::kinematic_carrier_schema;

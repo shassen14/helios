@@ -137,8 +137,8 @@ mod tests {
     use helios_core::spatial::conventions::Enu;
     use helios_core::spatial::quantities::Point;
     use helios_core::spatial::{FrameAwareState, FrameId};
-    use helios_core::mapping::MapData;
-    use helios_core::planning::types::Path;
+    use helios_core::interchange::perception::map::MapData;
+    use helios_core::interchange::path::Path;
     use helios_core::planning::SearchPlannerInputs;
 
     use nalgebra::{DMatrix, Isometry3};

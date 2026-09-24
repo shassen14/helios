@@ -10,8 +10,8 @@ use crate::registry::contexts::{GaussianEstimatorBuildContext, MeasurementModelB
 use crate::registry::AutonomyRegistry;
 use crate::PipelineAssemblyError;
 
-use helios_core::data::envelope::SensorReading;
-use helios_core::data::sensor::{
+use helios_core::interchange::measurement::envelope::SensorReading;
+use helios_core::interchange::measurement::sensor::{
     Acceleration, AngularRate, GpsPosition, GpsVelocity, MagneticField,
 };
 use helios_core::prelude::AgentId;
@@ -168,7 +168,7 @@ fn build_aiding_handler(
 
     // Dispatch on sensor_payload to construct the correctly-typed handler.
     // This list mirrors KNOWN_SENSOR_PAYLOADS in validation.rs and the
-    // SensorPayload impls in helios_core::data::sensor.
+    // SensorPayload impls in helios_core::interchange::measurement::sensor.
     //
     // If third-party SensorPayload types become a real need, promote this to a
     // registry family: `register_aiding_handler_factory("MyType", factory)`.

@@ -12,9 +12,10 @@ pub mod astar;
 pub mod search_space;
 pub mod types;
 
+use crate::interchange::path::PlannerGoal;
+use crate::interchange::perception::map::MapData;
 use crate::spatial::FrameAwareState;
-use crate::mapping::MapData;
-use types::{PlannerGoal, PlannerResult};
+use types::PlannerResult;
 
 /// A stateful search-family path planner.
 ///

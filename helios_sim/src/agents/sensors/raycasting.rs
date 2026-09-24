@@ -5,7 +5,7 @@ use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
 use crate::prelude::*;
 
-use helios_core::data::envelope::SensorReading;
+use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::quantities::FreeVector;

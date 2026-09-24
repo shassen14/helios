@@ -220,7 +220,7 @@ impl std::fmt::Display for ConfigValidationError {
 }
 
 /// Known `SensorPayload` implementor names. These must stay in sync with the
-/// types that implement `SensorPayload` in `helios_core::data::sensor`.
+/// types that implement `SensorPayload` in `helios_core::interchange::measurement::sensor`.
 ///
 /// When a new sensor payload type is added to `helios_core`, add its name here.
 /// A future registry-based approach would make this dynamic, but an inline

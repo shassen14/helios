@@ -1,5 +1,5 @@
 use bevy::prelude::{Entity, Message};
-use helios_core::planning::types::PlannerGoal;
+use helios_core::interchange::path::PlannerGoal;
 
 /// Commands a navigation goal change for a specific agent.
 /// Send this event from any system (UI, scenario logic, test harness)

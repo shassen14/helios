@@ -1,6 +1,6 @@
 //! Forward model for a rate gyroscope.
 
-use crate::data::sensor::AngularRate;
+use crate::interchange::measurement::sensor::AngularRate;
 use crate::sensors::noise::TriaxialGaussian;
 
 use nalgebra::{UnitQuaternion, Vector3};

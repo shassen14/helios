@@ -1,13 +1,13 @@
 // --- Core Abstractions (The main contracts of the library) ---
-pub use crate::data::cloud::{
+pub use crate::interchange::measurement::cloud::{
     AttributeColumns, LidarAttrs, LidarColumns, LidarColumnsBuilder, PointCloud, PointCloudBuilder,
 };
-pub use crate::data::envelope::SensorReading;
-pub use crate::data::messages::{Odometry, Twist};
+pub use crate::interchange::measurement::envelope::SensorReading;
+pub use crate::interchange::motion::{Odometry, Twist};
 pub use crate::spatial::tf::TfProvider;
 pub use crate::spatial::primitives::{AgentId, MonotonicDuration, MonotonicTime};
-pub use crate::data::sensor::SensorPayload;
-pub use crate::data::sensor::{
+pub use crate::interchange::measurement::sensor::SensorPayload;
+pub use crate::interchange::measurement::sensor::{
     Acceleration, AngularRate, DepthImage, GpsPosition, GpsVelocity, MagneticField, RgbImage,
 };
 
@@ -24,7 +24,8 @@ pub use crate::estimation::measurement::MeasurementModel;
 pub use crate::estimation::{EstimatorInputs, GaussianStateEstimator};
 
 // --- Planning ---
-pub use crate::planning::types::{Path, PlannerGoal, PlannerResult, PlannerStatus};
+pub use crate::interchange::path::{Path, PlannerGoal};
+pub use crate::planning::types::{PlannerResult, PlannerStatus};
 pub use crate::planning::SearchPlanner;
 pub use crate::planning::SearchPlannerInputs;
 

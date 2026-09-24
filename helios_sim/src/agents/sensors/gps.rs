@@ -11,7 +11,7 @@ use crate::{
     brain_bridge::components::{AgentIdComponent, SensorPublishChannel},
 };
 
-use helios_core::data::sensor::GpsPosition;
+use helios_core::interchange::measurement::sensor::GpsPosition;
 use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 use helios_core::sensors::gps::GpsModel;

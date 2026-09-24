@@ -1,9 +1,9 @@
 //! Registers built-in mapper factories.
 
-use helios_core::data::envelope::SensorReading;
+use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::prelude::PointCloud;
 use helios_core::spatial::conventions::Flu;
-use helios_core::mapping::MapData;
+use helios_core::interchange::perception::map::MapData;
 use helios_core::mapping::{Mapper, OccupancyGridMapper};
 
 use super::node::OccupancyGridNode;

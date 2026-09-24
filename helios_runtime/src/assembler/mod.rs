@@ -33,7 +33,7 @@
 //! compile time. The assembler matches the `sensor_payload` string from
 //! [`AidingConfig`] to one of the known implementors via an inline `match`.
 //! This list must stay in sync with `KNOWN_SENSOR_PAYLOADS` in `validation.rs`
-//! and with the `SensorPayload` impls in `helios_core::data::sensor`.
+//! and with the `SensorPayload` impls in `helios_core::interchange::measurement::sensor`.
 //!
 //! If third-party sensor payload types become a real requirement, this can be
 //! promoted to a registry family (`register_aiding_handler_factory`). For the
@@ -70,8 +70,8 @@ use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistInt
 use helios_core::control::BodyTwistRef;
 use helios_core::prelude::AgentId;
 use helios_core::spatial::FrameAwareState;
-use helios_core::mapping::MapData;
-use helios_core::planning::types::Path;
+use helios_core::interchange::perception::map::MapData;
+use helios_core::interchange::path::Path;
 
 use std::collections::{BTreeSet, HashSet};
 use std::ops::Add;

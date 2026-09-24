@@ -29,7 +29,7 @@ use crate::planning::search_space::SearchSpace;
 // == OccupancyGridSpace ==
 // =========================================================================
 
-/// A view into an [`OccupancyGrid2D`](crate::mapping::MapData) map that
+/// A view into an [`OccupancyGrid2D`](crate::interchange::perception::map::MapData) map that
 /// provides grid-space operations for the A\* search loop.
 ///
 /// The struct borrows the raw `DMatrix<u8>` from the map for the duration of

@@ -36,7 +36,7 @@ use std::sync::Mutex;
 use helios_core::control::ControlReference;
 use helios_core::prelude::TfProvider;
 use helios_core::path_following::{PathFollower, PathFollowerResult};
-use helios_core::planning::types::Path;
+use helios_core::interchange::path::Path;
 
 use super::input::PathFollowerInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
@@ -196,7 +196,7 @@ mod tests {
     use helios_core::spatial::quantities::Point;
     use helios_core::spatial::{FrameAwareState, FrameId};
     use helios_core::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
-    use helios_core::planning::types::Path;
+    use helios_core::interchange::path::Path;
 
     use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};

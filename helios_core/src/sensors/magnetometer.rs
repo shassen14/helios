@@ -1,6 +1,6 @@
 //! Forward model for a 3-axis magnetometer.
 
-use crate::data::sensor::MagneticField;
+use crate::interchange::measurement::sensor::MagneticField;
 use crate::sensors::noise::TriaxialGaussian;
 
 use nalgebra::{UnitQuaternion, Vector3};

@@ -2,7 +2,8 @@ use nalgebra::{DMatrix, Isometry3, Point3, Translation3, UnitQuaternion};
 
 use crate::prelude::PointCloud;
 use crate::spatial::conventions::Flu;
-use crate::mapping::{MapData, Mapper};
+use crate::interchange::perception::map::MapData;
+use crate::mapping::Mapper;
 
 /// Log-odds free-space update increment (negative → lowers occupancy probability).
 const L_FREE: f32 = -0.4;

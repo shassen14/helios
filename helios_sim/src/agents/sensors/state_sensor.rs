@@ -159,7 +159,7 @@ pub fn publish_state_sensor<S: StateSensor>(
 mod tests {
     use super::*;
 
-    use helios_core::data::sensor::GpsPosition;
+    use helios_core::interchange::measurement::sensor::GpsPosition;
     use helios_core::prelude::AgentId;
     use helios_core::spatial::transforms::Convention;
     use helios_core::spatial::FrameId;

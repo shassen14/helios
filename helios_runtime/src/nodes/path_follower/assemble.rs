@@ -5,7 +5,7 @@ use crate::config::AutonomyStack;
 use crate::port::InternalChannel;
 use crate::PipelineAssemblyError;
 
-use helios_core::planning::types::Path;
+use helios_core::interchange::path::Path;
 
 /// Determines the path channel the `PathFollowerNode` should read from.
 ///

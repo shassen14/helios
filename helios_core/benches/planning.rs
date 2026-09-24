@@ -1,12 +1,12 @@
 use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
 use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
-use helios_core::mapping::MapData;
+use helios_core::interchange::perception::map::MapData;
 use helios_core::spatial::state::{Component, Quantity};
 
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use helios_core::planning::astar::{AStarConfig, AStarPlanner};
-use helios_core::planning::types::PlannerGoal;
+use helios_core::interchange::path::PlannerGoal;
 use helios_core::planning::SearchPlanner;
 use helios_core::planning::SearchPlannerInputs;
 use nalgebra::{DMatrix, DVector, Isometry3, Vector2};

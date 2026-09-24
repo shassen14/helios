@@ -210,9 +210,9 @@ mod tests {
     use crate::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
     use crate::port::SensorChannel;
 
-    use helios_core::data::envelope::SensorReading;
+    use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::spatial::tf::TfProvider;
-    use helios_core::data::sensor::Acceleration;
+    use helios_core::interchange::measurement::sensor::Acceleration;
     use helios_core::prelude::AgentId;
     use helios_core::prelude::MonotonicTime;
     use helios_core::estimation::augmentation::{augmentation_block, MAGNETOMETER_BIAS};

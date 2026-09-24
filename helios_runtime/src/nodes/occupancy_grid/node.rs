@@ -49,13 +49,13 @@
 //!   pattern like the estimator family's `AidingHandler`.
 //!
 //! [`OccupancyGridMapper`]: helios_core::mapping::OccupancyGridMapper
-//! [`MapData`]: helios_core::mapping::MapData
+//! [`MapData`]: helios_core::interchange::perception::map::MapData
 
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use atomic_float::AtomicF64;
-use helios_core::data::envelope::SensorReading;
+use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::prelude::AgentId;
 use helios_core::prelude::MonotonicTime;
 use helios_core::prelude::PointCloud;
@@ -227,7 +227,7 @@ mod tests {
     //!     the correct `now` / `producer`
 
     use super::*;
-    use helios_core::data::envelope::SensorReading;
+    use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::prelude::AgentId;
     use helios_core::prelude::PointCloudBuilder;
@@ -235,7 +235,8 @@ mod tests {
     use helios_core::spatial::quantities::Point;
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
     use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
-    use helios_core::mapping::{MapData, Mapper};
+    use helios_core::interchange::perception::map::MapData;
+    use helios_core::mapping::Mapper;
     use helios_core::spatial::state::{Component, Quantity};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;

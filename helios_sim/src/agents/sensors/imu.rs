@@ -13,7 +13,7 @@ use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::{vec3_to_freevector_bevy, FromBevy};
 use crate::prelude::*;
 
-use helios_core::data::sensor::{Acceleration, AngularRate};
+use helios_core::interchange::measurement::sensor::{Acceleration, AngularRate};
 use helios_core::spatial::conventions::Enu;
 use helios_core::spatial::quantities::FreeVector;
 use helios_core::spatial::transforms::Convention;
