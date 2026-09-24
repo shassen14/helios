@@ -260,7 +260,7 @@ mod frame_aware_state_tests {
     use super::*;
     use crate::estimation::schema::StateSchemaBlock;
     use crate::frames::transforms::Convention;
-    use crate::manifold::TangentNoise;
+    use crate::kernel::manifold::TangentNoise;
     use crate::state::Component;
 
     // A composed position + orientation state in World, built from real
@@ -381,7 +381,7 @@ mod block_extractor_tests {
     use crate::estimation::schema::StateSchemaBlock;
     use crate::frames::conventions::{Enu, Flu};
     use crate::frames::transforms::Convention;
-    use crate::manifold::TangentNoise;
+    use crate::kernel::manifold::TangentNoise;
     use crate::state::Component;
 
     fn body() -> FrameId {

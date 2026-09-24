@@ -8,7 +8,7 @@ pub mod integrated_imu;
 
 use crate::data::primitives::{Control, State};
 use crate::estimation::schema::StateSchema;
-use crate::utils::integrators::Integrator;
+use crate::kernel::integrators::Integrator;
 use nalgebra::DMatrix;
 use std::fmt::Debug;
 use std::sync::Arc;

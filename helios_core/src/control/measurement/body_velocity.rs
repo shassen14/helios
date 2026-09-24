@@ -63,7 +63,7 @@ mod tests {
     use crate::prelude::AgentId;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::Convention;
-    use crate::manifold::TangentNoise;
+    use crate::kernel::manifold::TangentNoise;
     use crate::state::Quantity;
 
     use nalgebra::{DMatrix, DVector, Vector3};

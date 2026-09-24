@@ -120,7 +120,7 @@ mod tests {
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::{Convention, ErasedTransform};
     use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::manifold::TangentNoise;
+    use crate::kernel::manifold::TangentNoise;
     use crate::state::{Component, Quantity};
     use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;

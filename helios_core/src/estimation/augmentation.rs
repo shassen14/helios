@@ -19,7 +19,7 @@
 use crate::{
     estimation::schema::StateSchemaBlock,
     frames::{transforms::Convention, FrameId},
-    manifold::TangentNoise,
+    kernel::manifold::TangentNoise,
     state::Quantity,
 };
 

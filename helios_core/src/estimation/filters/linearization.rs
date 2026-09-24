@@ -3,7 +3,7 @@
 
 use crate::frames::FrameAwareState;
 use crate::prelude::EstimationDynamics;
-use crate::utils::integrators::Integrator;
+use crate::kernel::integrators::Integrator;
 
 use nalgebra::{DMatrix, DVector};
 
@@ -73,7 +73,7 @@ mod tests {
     };
     use crate::frames::FrameAwareState;
     use crate::prelude::EstimationDynamics;
-    use crate::utils::integrators::RK4;
+    use crate::kernel::integrators::RK4;
 
     use nalgebra::{DVector, Vector3};
 

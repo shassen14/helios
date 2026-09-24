@@ -6,9 +6,9 @@ use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::schema::{StateSchema, StateSchemaBlock};
 use crate::frames::transforms::Convention;
 use crate::frames::{FrameId, StateVariable};
-use crate::manifold::{StateBlock, TangentNoise};
+use crate::kernel::manifold::{StateBlock, TangentNoise};
 use crate::state::{Component, Quantity};
-use crate::utils::integrators::Integrator;
+use crate::kernel::integrators::Integrator;
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 
 /// A dynamics model that integrates raw IMU measurements (as control inputs)
@@ -355,7 +355,7 @@ mod tests {
 
     use super::*;
     use crate::prelude::AgentId;
-    use crate::utils::integrators::RK4;
+    use crate::kernel::integrators::RK4;
     use nalgebra::DVector;
 
     fn agent() -> AgentId {

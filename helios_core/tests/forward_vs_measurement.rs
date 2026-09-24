@@ -29,7 +29,7 @@ use helios_core::estimation::measurement::{MeasurementModel, Prediction};
 use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
 use helios_core::frames::transforms::{Convention, ErasedTransform};
 use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
-use helios_core::manifold::TangentNoise;
+use helios_core::kernel::manifold::TangentNoise;
 use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gps::GpsModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;

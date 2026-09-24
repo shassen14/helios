@@ -1,4 +1,4 @@
-use helios_core::utils::determinism::stable_hash;
+use helios_core::kernel::determinism::stable_hash;
 
 use bevy::prelude::{Component, Resource};
 use rand::SeedableRng;
@@ -18,7 +18,7 @@ const KIND: &str = "sensor";
 /// here and logged — re-running with `--seed <value>` replays it exactly.
 ///
 /// Every subsystem that needs randomness derives its own stream from this via
-/// `helios_core::utils::determinism::stable_hash`, rather than sharing one
+/// `helios_core::kernel::determinism::stable_hash`, rather than sharing one
 /// generator. Sharing couples each subsystem's draws to how many draws every
 /// other subsystem happened to take first.
 #[derive(Resource)]

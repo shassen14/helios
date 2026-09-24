@@ -102,7 +102,7 @@ impl StateBlock for QuaternionBlock {
 #[cfg(test)]
 mod tests {
     use super::QuaternionBlock;
-    use crate::manifold::{StateBlock, TangentNoise};
+    use crate::kernel::manifold::{StateBlock, TangentNoise};
 
     use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
     use rand::rngs::StdRng;

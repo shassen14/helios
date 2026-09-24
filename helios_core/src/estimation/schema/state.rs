@@ -21,7 +21,7 @@
 
 use crate::{
     frames::{transforms::Convention, FrameId, StateVariable},
-    manifold::{euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise},
+    kernel::manifold::{euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise},
     state::Quantity,
 };
 
@@ -416,7 +416,7 @@ impl StateSchema {
 mod tests {
     use super::*;
     use crate::prelude::AgentId;
-    use crate::manifold::TangentNoise;
+    use crate::kernel::manifold::TangentNoise;
     use crate::state::Component;
 
     fn agent() -> AgentId {

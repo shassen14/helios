@@ -83,7 +83,7 @@ impl StateBlock for EuclideanBlock {
 #[cfg(test)]
 mod tests {
     use super::EuclideanBlock;
-    use crate::manifold::{StateBlock, TangentNoise};
+    use crate::kernel::manifold::{StateBlock, TangentNoise};
 
     use nalgebra::{DMatrix, DVector};
 

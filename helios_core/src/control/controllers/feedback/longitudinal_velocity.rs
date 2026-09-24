@@ -64,7 +64,7 @@ mod tests {
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::frames::transforms::Convention;
     use crate::frames::FrameAwareState;
-    use crate::manifold::TangentNoise;
+    use crate::kernel::manifold::TangentNoise;
     use crate::state::Quantity;
 
     use nalgebra::{DMatrix, DVector};

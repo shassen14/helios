@@ -126,7 +126,7 @@ mod tests {
     use super::*;
     use crate::prelude::AgentId;
     use crate::estimation::schema::StateSchemaBlock;
-    use crate::manifold::TangentNoise;
+    use crate::kernel::manifold::TangentNoise;
 
     use nalgebra::{DMatrix, DVector};
 

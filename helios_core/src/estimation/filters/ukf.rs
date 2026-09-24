@@ -4,7 +4,7 @@ use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
 use crate::frames::FrameAwareState;
-use crate::utils::integrators::RK4;
+use crate::kernel::integrators::RK4;
 
 use nalgebra::{Cholesky, DMatrix, DVector};
 
