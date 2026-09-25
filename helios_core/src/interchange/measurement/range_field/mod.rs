@@ -3,3 +3,4 @@ pub mod direction;
 pub mod field;
 
 pub use direction::*;
+pub use field::*;

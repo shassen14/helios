@@ -9,8 +9,8 @@
 //! - [`sensor`] — the [`SensorPayload`](sensor::SensorPayload) trait and the
 //!   scalar/vector payload primitives that map onto a filter's `z`.
 //! - [`cloud`] — [`PointCloud`](cloud::PointCloud), the SoA world-sensor cloud.
-//! - [`range_field`] — the organized world-sensor grid: one range per beam,
-//!   misses kept, addressed by a
+//! - [`range_field`] — [`RangeField`](range_field::RangeField), the organized
+//!   world-sensor grid: one range per beam, misses kept, addressed by a
 //!   [`DirectionModel`](range_field::DirectionModel).
 
 pub mod cloud;
