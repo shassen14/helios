@@ -194,6 +194,23 @@ impl ScanTiming {
             Self::PerColumn(offsets) => offsets.get(col).copied(),
         }
     }
+
+    /// The offsets themselves, whichever axis they run along.
+    pub fn offsets(&self) -> &[i32] {
+        match self {
+            Self::PerRow(offsets) | Self::PerColumn(offsets) => offsets,
+        }
+    }
+
+    /// How many offsets a `rows × cols` grid needs: one per row for
+    /// [`PerRow`](Self::PerRow), one per column for
+    /// [`PerColumn`](Self::PerColumn).
+    pub fn expected_len(&self, rows: usize, cols: usize) -> usize {
+        match self {
+            Self::PerRow(_) => rows,
+            Self::PerColumn(_) => cols,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -355,5 +372,16 @@ mod tests {
         assert_eq!(per_column.offset(1, 2), Some(200));
         assert_eq!(per_row.offset(2, 0), None);
         assert_eq!(per_column.offset(0, 3), None);
+    }
+
+    #[test]
+    fn scan_timing_expects_one_offset_per_entry_on_its_axis() {
+        let per_row = ScanTiming::PerRow(vec![10, 20]);
+        let per_column = ScanTiming::PerColumn(vec![0, 100, 200]);
+
+        assert_eq!(per_row.expected_len(2, 3), 2);
+        assert_eq!(per_column.expected_len(2, 3), 3);
+        assert_eq!(per_row.offsets(), &[10, 20]);
+        assert_eq!(per_column.offsets(), &[0, 100, 200]);
     }
 }
