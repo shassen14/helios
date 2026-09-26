@@ -6,8 +6,8 @@ use helios_runtime::channels::control;
 use helios_runtime::config::{
     AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, ControllerConfig, EkfConfig,
     EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig,
-    ReferenceArbitrationConfig, ReferenceSource, SearchPlannerConfig, SensorModelConfig,
-    TeleopMapperConfig,
+    PreprocessingConfig, ReferenceArbitrationConfig, ReferenceSource, SearchPlannerConfig,
+    SensorModelConfig, TeleopMapperConfig,
 };
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
@@ -19,15 +19,19 @@ use helios_runtime::{
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
 use helios_core::control::commands::{DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
-use helios_core::interchange::measurement::envelope::SensorReading;
-use helios_core::spatial::primitives::MonotonicTime;
-use helios_core::interchange::measurement::sensor::MagneticField;
-use helios_core::prelude::AgentId;
 use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
+use helios_core::estimation::carrier::kinematic_carrier_schema;
+use helios_core::interchange::measurement::envelope::SensorReading;
+use helios_core::interchange::measurement::sensor::MagneticField;
+use helios_core::interchange::perception::map::MapData;
+use helios_core::prelude::{
+    AgentId, DirectionModel, PointCloud, RangeField, RangeFieldBuilder, SphericalAngular,
+};
 use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::quantities::{FluVector, FreeVector};
-use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 use helios_core::spatial::state::{Component, Quantity};
+use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 use nalgebra::Vector3;
 
@@ -44,6 +48,17 @@ fn twist_teleop() -> TeleopMapperConfig {
         pitch: 0.0,
         yaw: 1.0,
     }
+}
+
+/// A host channel set holding the IMU channels the IMU-EKF fixtures in this
+/// file predict from, plus `others`. The assembler rejects an estimator whose
+/// predict inputs the host does not publish.
+fn host_channels_with_imu(others: &[&str]) -> HashSet<String> {
+    ["imu/accel", "imu/gyro"]
+        .iter()
+        .chain(others)
+        .map(|name| name.to_string())
+        .collect()
 }
 
 /// A body with no autonomy stack, declaring only that it consumes control.
@@ -251,7 +266,7 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
+        &host_channels_with_imu(&["scan"]),
         body,
     )
     .expect("estimator + map-layer stack must build");
@@ -322,7 +337,7 @@ fn two_map_layers_of_one_kind_publish_to_distinct_channels() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
+        &host_channels_with_imu(&["scan/near", "scan/far"]),
         body,
     )
     .expect("two same-kind map layers under distinct keys must build");
@@ -764,7 +779,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         ..Default::default()
     };
 
-    let sensor_channels = HashSet::from([MAG_CHANNEL.to_string()]);
+    let sensor_channels = host_channels_with_imu(&[MAG_CHANNEL]);
 
     let body = BodyCapabilities {
         name: "rover".to_string(),
@@ -894,7 +909,7 @@ fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
+        &host_channels_with_imu(&[]),
         body,
     )
     .expect("un-augmented stack must build");
@@ -919,5 +934,347 @@ fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
             ))
             .is_none(),
         "no augmentation ⇒ no MagBias slots"
+    );
+}
+
+/// A one-ring, four-beam scan with two returns; the other two cells are blank
+/// (nothing returned) and drop out when flattened.
+fn two_return_field() -> RangeField<Flu> {
+    let geometry = SphericalAngular::new(vec![0.0], 0.0, std::f64::consts::FRAC_PI_2, 4)
+        .expect("valid test geometry");
+    let mut builder =
+        RangeFieldBuilder::<Flu>::new(DirectionModel::SphericalAngular(geometry), 0.1, 10.0)
+            .expect("valid test range limits");
+    builder.set(0, 0, 1.0).expect("cell in bounds");
+    builder.set(0, 1, 2.0).expect("cell in bounds");
+    builder.finalize()
+}
+
+#[test]
+fn deproject_preprocessing_turns_host_range_fields_into_clouds() {
+    // A stack with only a deproject entry must build on its own: the node's
+    // input is a host sensor channel, so the assembler seeds it as external.
+    // One tick later the host's field batch is on the derived cloud channel,
+    // stamped with the batch's time rather than the tick's.
+    let input = "sensor.lidar.front";
+    let output = "lidar.front.points";
+
+    let mut preprocessing = HashMap::new();
+    preprocessing.insert(
+        "front_deproject".to_string(),
+        PreprocessingConfig::Deproject {
+            input: input.to_string(),
+            output: output.to_string(),
+        },
+    );
+    let stack = AutonomyStack {
+        preprocessing,
+        ..Default::default()
+    };
+    let body = BodyCapabilities {
+        name: "rover".to_string(),
+        publishes: vec![],
+        consumes_control: false,
+    };
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::from([input.to_string()]),
+        body,
+    )
+    .expect("a lone deproject node over a host channel must build");
+
+    let batch_time = MonotonicTime(0.5);
+    let sensor = FrameId::sensor(AgentId::new("test_agent"), "lidar_front");
+    pipeline
+        .bus()
+        .write(
+            SensorChannel::named::<Vec<SensorReading<RangeField<Flu>>>>(input).into(),
+            Stamped {
+                value: vec![SensorReading {
+                    sensor: sensor.clone(),
+                    timestamp: batch_time,
+                    data: two_return_field(),
+                }],
+                timestamp: batch_time,
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("the deproject input slot must exist");
+
+    pipeline.tick(MonotonicTime(1.0), 0.1, &MockRuntime);
+
+    let clouds = pipeline
+        .bus()
+        .read::<Vec<SensorReading<PointCloud<Flu, ()>>>>(
+            SensorChannel::named::<Vec<SensorReading<PointCloud<Flu, ()>>>>(output).into(),
+        )
+        .expect("the deproject node must publish its cloud batch");
+    assert_eq!(clouds.timestamp, batch_time);
+    assert_eq!(clouds.value.len(), 1);
+    assert_eq!(clouds.value[0].sensor, sensor);
+    assert_eq!(clouds.value[0].data.len(), 2);
+}
+
+/// An IMU-only EKF: the minimum estimator a mapper's state input needs.
+fn imu_ekf() -> EstimatorConfig {
+    EstimatorConfig::Ekf(EkfConfig {
+        dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
+            gravity_enu: [0.0, 0.0, -9.81],
+            accel_noise_stddev: 0.1,
+            gyro_noise_stddev: 0.01,
+            accel_bias_instability: 0.001,
+            gyro_bias_instability: 0.0001,
+            accel_bias_uncertainty_mps2: 0.1,
+            gyro_bias_uncertainty_radps: 0.01,
+            accel_channel: "imu/accel".to_string(),
+            gyro_channel: "imu/gyro".to_string(),
+        }),
+        aiding: vec![],
+        augmentation: vec![],
+        initial_state: EkfInitialStateConfig::default(),
+    })
+}
+
+/// Rate of the mappers built by [`occupancy_grid_reading`]. The node is
+/// rate-gated: it fires only once a full period of tick `dt` has accumulated.
+const MAPPER_RATE_HZ: f32 = 5.0;
+
+fn occupancy_grid_reading(scan: &str) -> MapLayerConfig {
+    MapLayerConfig::OccupancyGrid2D {
+        rate: MAPPER_RATE_HZ,
+        resolution: 0.1,
+        scan_channel: scan.to_string(),
+        width_m: 10.0,
+        height_m: 10.0,
+        pose_source: Default::default(),
+    }
+}
+
+fn deproject(input: &str, output: &str) -> PreprocessingConfig {
+    PreprocessingConfig::Deproject {
+        input: input.to_string(),
+        output: output.to_string(),
+    }
+}
+
+fn perception_body() -> BodyCapabilities {
+    BodyCapabilities {
+        name: "rover".to_string(),
+        publishes: vec![],
+        consumes_control: false,
+    }
+}
+
+#[test]
+fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
+    // The host publishes only the range field. The mapper's scan channel is the
+    // deproject node's output, a derived sensor channel, so it needs no host
+    // publisher, and the producer is ordered ahead of the mapper.
+    let stack = AutonomyStack {
+        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        preprocessing: HashMap::from([(
+            "front_deproject".to_string(),
+            deproject("lidar", "lidar.points"),
+        )]),
+        map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("lidar.points"))]),
+        ..Default::default()
+    };
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["lidar"]),
+        perception_body(),
+    )
+    .expect("a mapper reading a deprojected channel must build");
+
+    let order: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
+    let position = |node: &str| {
+        order
+            .iter()
+            .position(|name| *name == node)
+            .unwrap_or_else(|| panic!("node `{node}` missing from {order:?}"))
+    };
+    assert!(
+        position("front_deproject") < position("local"),
+        "deproject must run before the mapper that reads it, got {order:?}"
+    );
+}
+
+#[test]
+fn mapper_reading_an_unpublished_channel_fails_the_build() {
+    // A scan channel no one publishes used to build fine and leave the mapper
+    // silently empty. It must now fail, naming the node and the channel.
+    let stack = AutonomyStack {
+        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("lidar.typo"))]),
+        ..Default::default()
+    };
+
+    let errors = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["lidar"]),
+        perception_body(),
+    )
+    .err()
+    .expect("a mapper reading an unpublished channel must not build");
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
+                if node_name == "local" && channel == "lidar.typo"
+        )),
+        "expected UnpublishedSensorInput for `local` / `lidar.typo`, got {errors:?}"
+    );
+}
+
+#[test]
+fn preprocessing_output_reusing_a_host_channel_name_fails_the_build() {
+    // Both channels are sensor-kind, so an output named like a host channel
+    // could share its slot. The build refuses it, naming the node.
+    let stack = AutonomyStack {
+        preprocessing: HashMap::from([(
+            "front_deproject".to_string(),
+            deproject("lidar", "lidar"),
+        )]),
+        ..Default::default()
+    };
+
+    let errors = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::from(["lidar".to_string()]),
+        perception_body(),
+    )
+    .err()
+    .expect("an output shadowing a host channel must not build");
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::PreprocessingOutputShadowsSensor { node_name, channel, .. }
+                if node_name == "front_deproject" && channel == "lidar"
+        )),
+        "expected PreprocessingOutputShadowsSensor for `front_deproject`, got {errors:?}"
+    );
+}
+
+#[test]
+fn mapper_builds_a_map_from_a_host_range_field() {
+    // End to end through the real graph: the host publishes only a range
+    // field, the deproject node flattens it, and the mapper integrates the
+    // points. The mapper publishes nothing until it has integrated a scan, so
+    // a map on the bus proves the points arrived. The robot state is supplied
+    // by the body here so the test needs no estimator.
+    let agent = AgentId::new("test_agent");
+    let state_key: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
+    let stack = AutonomyStack {
+        preprocessing: HashMap::from([(
+            "front_deproject".to_string(),
+            deproject("lidar", "lidar.points"),
+        )]),
+        map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("lidar.points"))]),
+        ..Default::default()
+    };
+    let body = BodyCapabilities {
+        name: "rover".to_string(),
+        publishes: vec![PublishedChannel {
+            key: state_key.clone(),
+            provenance: Provenance::Exact,
+        }],
+        consumes_control: false,
+    };
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        agent.clone(),
+        &HashSet::from(["lidar".to_string()]),
+        body,
+    )
+    .expect("deproject feeding a mapper must build");
+
+    let now = MonotonicTime(1.0);
+    pipeline
+        .bus()
+        .write(
+            state_key,
+            Stamped {
+                value: FrameAwareState::from_schema(
+                    std::sync::Arc::new(kinematic_carrier_schema(agent.clone())),
+                    now.0,
+                ),
+                timestamp: now,
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("the state slot must exist");
+    pipeline
+        .bus()
+        .write(
+            SensorChannel::named::<Vec<SensorReading<RangeField<Flu>>>>("lidar").into(),
+            Stamped {
+                value: vec![SensorReading {
+                    sensor: FrameId::sensor(agent, "lidar"),
+                    timestamp: now,
+                    data: two_return_field(),
+                }],
+                timestamp: now,
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("the range-field slot must exist");
+
+    // One tick spanning a full mapper period, so the rate-gated mapper fires.
+    let mapper_period = 1.0 / f64::from(MAPPER_RATE_HZ);
+    pipeline.tick(now, mapper_period, &MockRuntime);
+
+    assert!(
+        pipeline
+            .bus()
+            .read::<MapData>(InternalChannel::named::<MapData>("local").into())
+            .is_some(),
+        "the mapper must publish a map once the deprojected scan reaches it"
+    );
+}
+
+#[test]
+fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
+    // The IMU channels feed prediction, not aiding, but they are host inputs
+    // all the same: an estimator naming one the host does not publish would
+    // build, never receive a sample, and never run.
+    let stack = AutonomyStack {
+        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        ..Default::default()
+    };
+
+    let errors = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::from(["imu/gyro".to_string()]),
+        perception_body(),
+    )
+    .err()
+    .expect("an estimator without its accelerometer channel must not build");
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::UnknownSensorChannel { estimator_instance, input_channel }
+                if estimator_instance == "nav_ekf" && input_channel == "imu/accel"
+        )),
+        "expected UnknownSensorChannel for `nav_ekf` / `imu/accel`, got {errors:?}"
     );
 }

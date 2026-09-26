@@ -3,7 +3,8 @@
 //! Two builders, two surfaces:
 //!
 //! - [`AlgorithmNodePortDescriptor`] accepts `SensorChannel` and
-//!   `InternalChannel` as inputs/outputs. There is **no** method that
+//!   `InternalChannel` as inputs/outputs (a `Sensor` output is a derived
+//!   measurement, such as a range field flattened to a cloud). There is **no** method that
 //!   accepts an `OracleChannel` or `HealthChannel`. The compiler refuses
 //!   to construct an algorithm-node descriptor that names oracle truth as
 //!   input — the fence keeps the brain portable to hardware where no
@@ -89,6 +90,16 @@ impl AlgorithmNodePortDescriptor {
     }
 
     pub(crate) fn output_internal(mut self, c: InternalChannel) -> Self {
+        self.outputs.push(c.into());
+        self
+    }
+
+    /// Declares a derived measurement as output: a measurement-to-measurement
+    /// node (a range field flattened to a cloud, a de-skewed scan) writes a
+    /// `Sensor` channel so consumers read it exactly as they would a host
+    /// channel. Channel kind says what the data is, not who produced it.
+    /// Algorithm results (state, maps, paths, commands) are `Internal`.
+    pub(crate) fn output_sensor(mut self, c: SensorChannel) -> Self {
         self.outputs.push(c.into());
         self
     }

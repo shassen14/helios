@@ -24,6 +24,10 @@ fn default_gyro_bias_uncertainty_radps() -> f64 {
     0.01
 }
 
+/// The `kind` tag of [`EstimatorConfig::MockOracle`], which is also the key its
+/// factory is registered under in the mock-estimator family.
+pub(crate) const MOCK_ORACLE_KIND: &str = "MockOracle";
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind", content = "config")]
 #[serde(rename_all = "PascalCase")]
@@ -38,7 +42,7 @@ impl EstimatorConfig {
         match self {
             EstimatorConfig::Ekf(_) => "Ekf",
             EstimatorConfig::Ukf(_) => "Ukf",
-            EstimatorConfig::MockOracle(_) => "MockOracle",
+            EstimatorConfig::MockOracle(_) => MOCK_ORACLE_KIND,
         }
     }
 }

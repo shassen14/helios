@@ -305,6 +305,7 @@ impl AutonomyRegistry {
     pub fn capabilities(&self) -> CapabilitySet {
         CapabilitySet {
             gaussian_estimators: self.gaussian_estimators.keys().cloned().collect(),
+            mock_estimators: self.mock_estimators.keys().cloned().collect(),
             measurement_models: self.measurement_models.keys().cloned().collect(),
             mappers: self.mappers.keys().cloned().collect(),
             controllers: self.controllers.keys().cloned().collect(),

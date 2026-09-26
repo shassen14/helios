@@ -6,10 +6,11 @@ use helios_runtime::{
     config::{
         AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandSpace,
         ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig,
-        IntegratedImuConfig, MapLayerConfig, MapperPoseSourceConfig, ReferenceArbitrationConfig,
-        ReferenceSource, SearchPlannerConfig, SensorModelConfig,
+        IntegratedImuConfig, MapLayerConfig, MapperPoseSourceConfig, MockOracleEstimatorConfig,
+        ReferenceArbitrationConfig, ReferenceSource, SearchPlannerConfig, SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
+    AutonomyRegistry,
 };
 
 // =========================================================================
@@ -19,6 +20,7 @@ use helios_runtime::{
 fn empty_caps() -> CapabilitySet {
     CapabilitySet {
         gaussian_estimators: Default::default(),
+        mock_estimators: Default::default(),
         measurement_models: Default::default(),
         mappers: Default::default(),
         controllers: Default::default(),
@@ -33,6 +35,7 @@ fn full_caps() -> CapabilitySet {
     }
     CapabilitySet {
         gaussian_estimators: set(&["Ekf"]),
+        mock_estimators: set(&["MockOracle"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
         mappers: set(&["OccupancyGrid2D"]),
         controllers: set(&[
@@ -221,6 +224,7 @@ fn validation_valid_full_stack_passes() {
 
     let stack = AutonomyStack {
         estimators,
+        preprocessing: Default::default(),
         map_layers,
         search_planners,
         path_following: None,
@@ -886,5 +890,44 @@ fn validation_augmentation_with_matching_aiding_source_passes() {
         )),
         "matched aiding source must satisfy the lint, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
+    );
+}
+
+fn mock_oracle_stack() -> AutonomyStack {
+    AutonomyStack {
+        estimators: HashMap::from([(
+            "primary".to_string(),
+            EstimatorConfig::MockOracle(MockOracleEstimatorConfig {}),
+        )]),
+        ..Default::default()
+    }
+}
+
+// The mock oracle is registered in the mock-estimator family, not the Gaussian
+// one. Checked against the real registry, a stack selecting it must validate;
+// before, every estimator kind was checked against the Gaussian set only, so
+// any MockOracle stack was rejected as an unknown Gaussian estimator.
+#[test]
+fn mock_oracle_validates_against_the_default_registry() {
+    let errors = validate_autonomy_config(
+        &mock_oracle_stack(),
+        &AutonomyRegistry::default().capabilities(),
+    );
+    assert!(
+        errors.is_empty(),
+        "a MockOracle stack must validate, got {errors:?}"
+    );
+}
+
+#[test]
+fn unregistered_mock_estimator_is_reported_as_a_mock() {
+    let errors = validate_autonomy_config(&mock_oracle_stack(), &empty_caps());
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            ConfigValidationError::UnknownMockEstimator { instance, kind }
+                if instance == "primary" && kind == "MockOracle"
+        )),
+        "expected UnknownMockEstimator for `primary`, got {errors:?}"
     );
 }

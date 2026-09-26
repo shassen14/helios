@@ -10,13 +10,13 @@ use crate::registry::contexts::{GaussianEstimatorBuildContext, MeasurementModelB
 use crate::registry::AutonomyRegistry;
 use crate::PipelineAssemblyError;
 
+use helios_core::estimation::augmentation::augmentation_block;
+use helios_core::estimation::schema::{MeasurementAgreementError, StateSchemaBlock};
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::measurement::sensor::{
     Acceleration, AngularRate, GpsPosition, GpsVelocity, MagneticField,
 };
 use helios_core::prelude::AgentId;
-use helios_core::estimation::augmentation::augmentation_block;
-use helios_core::estimation::schema::{MeasurementAgreementError, StateSchemaBlock};
 use helios_core::spatial::FrameId;
 
 use nalgebra::DMatrix;
@@ -44,8 +44,18 @@ pub(crate) fn assemble(
     }
 
     // If dynamics is IntegratedImu, declare the IMU predict-side channels
-    // as external too (accel + gyro Vec<SensorReading<_>>).
+    // as external too (accel + gyro Vec<SensorReading<_>>). Each must be a
+    // channel the host publishes, like an aiding input: otherwise the estimator
+    // would build, its predict inputs would never arrive, and it would never run.
     if let EkfDynamicsConfig::IntegratedImu(imu_cfg) = &ekf_cfg.dynamics {
+        for channel in [&imu_cfg.accel_channel, &imu_cfg.gyro_channel] {
+            if !sensor_channels.contains(channel) {
+                return Err(PipelineAssemblyError::UnknownSensorChannel {
+                    estimator_instance: instance_name.to_string(),
+                    input_channel: channel.clone(),
+                });
+            }
+        }
         let builder = IntegratedImuInputBuilder::new(
             imu_cfg.accel_channel.as_str(),
             imu_cfg.gyro_channel.as_str(),

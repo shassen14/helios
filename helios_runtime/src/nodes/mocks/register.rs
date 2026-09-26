@@ -6,12 +6,12 @@
 
 use super::mock_oracle_estimator::MockOracleEstimatorNode;
 
-use crate::config::EstimatorConfig;
+use crate::config::{EstimatorConfig, MOCK_ORACLE_KIND};
 use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::MockEstimatorBuildContext, AutonomyRegistry};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
-    registry.register_mock_estimator("MockOracle", build_mock_oracle);
+    registry.register_mock_estimator(MOCK_ORACLE_KIND, build_mock_oracle);
 }
 
 fn build_mock_oracle(

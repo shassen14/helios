@@ -200,12 +200,15 @@ fn raycasting_sensor_system(
 
         let output = sensor.model.process_hits(&hits, &mut rng.0);
 
+        // Published as measured: flattening to a point cloud is the autonomy
+        // stack's job (a deproject preprocessing node), so the same field
+        // reaches the brain from sim and from a hardware driver alike.
         let RaycastingOutput::RangeField(field) = output;
 
         let reading = SensorReading {
             sensor: tracked.id.clone(),
             timestamp: MonotonicTime(elapsed),
-            data: field.to_point_cloud(),
+            data: field,
         };
 
         publisher.publish(

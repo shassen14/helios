@@ -1,7 +1,8 @@
 //! Portable autonomy configuration structs, shared by simulation and hardware.
 //!
 //! Re-exports `AgentBaseConfig`, `AutonomyStack`, and all sub-configs
-//! (`EstimatorConfig`, `ControllerConfig`, `MapLayerConfig`, `SearchPlannerConfig`).
+//! (`EstimatorConfig`, `ControllerConfig`, `MapLayerConfig`, `PreprocessingConfig`,
+//! `SearchPlannerConfig`).
 //! These structs are TOML-deserializable and contain zero Bevy or simulation types.
 
 mod agent;
@@ -14,6 +15,7 @@ mod estimator;
 mod mapper;
 mod path_following;
 mod planner;
+mod preprocessing;
 mod teleop;
 mod tf;
 
@@ -25,6 +27,7 @@ pub use command_space::CommandSpace;
 pub use controller::ControllerConfig;
 pub use controller::ControllerStateSourceConfig;
 pub use controller::FoldRole;
+pub(crate) use estimator::MOCK_ORACLE_KIND;
 pub use estimator::{
     AckermannProcessNoiseConfig, AidingConfig, AugmentationConfig, EkfConfig, EkfDynamicsConfig,
     EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MockOracleEstimatorConfig,
@@ -33,5 +36,6 @@ pub use estimator::{
 pub use mapper::{MapLayerConfig, MapperPoseSourceConfig};
 pub use path_following::PathFollowingConfig;
 pub use planner::SearchPlannerConfig;
+pub use preprocessing::PreprocessingConfig;
 pub use teleop::TeleopMapperConfig;
 pub use tf::TfBufferConfig;

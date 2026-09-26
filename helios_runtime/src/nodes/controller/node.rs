@@ -30,7 +30,7 @@
 use super::input::ControlInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
+use crate::port::{ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::control::Controller;
@@ -114,7 +114,12 @@ where
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(self.output_key.clone(), stamped);
+        if let Err(ChannelError::UnknownChannel) = bus.write(self.output_key.clone(), stamped) {
+            tracing::warn!(
+                channel = %self.output_key,
+                "controller command output channel is not wired into the DAG"
+            );
+        }
     }
 }
 
@@ -137,9 +142,9 @@ mod tests {
 
     use helios_core::control::commands::{BodyTwist, BodyWrench};
     use helios_core::control::{BodyTwistRef, ControlInputs};
-    use helios_core::spatial::primitives::MonotonicTime;
-    use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::prelude::AgentId;
+    use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::FluVector;
     use helios_core::spatial::{FrameAwareState, FrameId};
 

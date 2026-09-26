@@ -34,14 +34,14 @@
 use std::sync::Mutex;
 
 use helios_core::control::ControlReference;
-use helios_core::prelude::TfProvider;
 use helios_core::following::{PathFollower, PathFollowerResult};
 use helios_core::interchange::path::Path;
+use helios_core::prelude::TfProvider;
 
 use super::input::PathFollowerInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
+use crate::port::{ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 /// Mutable per-tick state: the follower itself and the bus timestamp of the
@@ -167,7 +167,12 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(self.output_channel.clone(), stamped);
+        if let Err(ChannelError::UnknownChannel) = bus.write(self.output_channel.clone(), stamped) {
+            tracing::warn!(
+                channel = %self.output_channel,
+                "path follower reference output channel is not wired into the DAG"
+            );
+        }
     }
 }
 
@@ -189,14 +194,14 @@ mod tests {
 
     use helios_core::control::commands::BodyTwist;
     use helios_core::control::BodyTwistRef;
-    use helios_core::spatial::primitives::MonotonicTime;
-    use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
-    use helios_core::spatial::conventions::Enu;
-    use helios_core::spatial::quantities::Point;
-    use helios_core::spatial::{FrameAwareState, FrameId};
     use helios_core::following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::interchange::path::Path;
+    use helios_core::prelude::AgentId;
+    use helios_core::spatial::conventions::Enu;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::quantities::Point;
+    use helios_core::spatial::{FrameAwareState, FrameId};
 
     use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};

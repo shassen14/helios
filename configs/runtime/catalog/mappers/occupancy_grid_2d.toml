@@ -5,5 +5,7 @@ width_m = 100.0   # rolling window width in meters (East axis)
 height_m = 100.0  # rolling window height in meters (North axis)
 pose_source = "ground_truth"  # "ground_truth" | "estimated"
 
-# Bus channel the grid integrates scans from. Must match the lidar entity's `channel`.
-scan_channel = "sensor.lidar.front"
+# Sensor channel of point clouds the grid integrates: a deproject preprocessing
+# node's `output` for a lidar that publishes a range field (the raycast_car
+# profile declares it), or the sensor's own `channel` if it emits clouds.
+scan_channel = "sensor.lidar.front.points"

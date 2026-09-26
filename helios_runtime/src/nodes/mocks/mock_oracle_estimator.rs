@@ -35,16 +35,18 @@
 use crate::channels::{oracle_pose_channel, oracle_twist_channel};
 use crate::pipeline::descriptor::MockNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{InternalChannel, OracleChannel, PortBus, PortDescriptor};
+use crate::port::{
+    ChannelError, ChannelKey, InternalChannel, OracleChannel, PortBus, PortDescriptor,
+};
 use crate::stamped::{Health, Stamped};
 
+use helios_core::estimation::carrier::kinematic_carrier_schema;
+use helios_core::estimation::schema::StateSchema;
 use helios_core::interchange::motion::Twist;
 use helios_core::prelude::AgentId;
 use helios_core::prelude::TfProvider;
-use helios_core::estimation::carrier::kinematic_carrier_schema;
-use helios_core::estimation::schema::StateSchema;
-use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 use helios_core::spatial::state::{Component, Quantity};
+use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 use nalgebra::Isometry3;
 use std::sync::Arc;
@@ -114,7 +116,13 @@ impl PipelineNode for MockOracleEstimatorNode {
             producer: tick.node_id,
         };
 
-        let _ = bus.write(InternalChannel::of::<FrameAwareState>().into(), stamped);
+        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
+        if let Err(ChannelError::UnknownChannel) = bus.write(state_channel.clone(), stamped) {
+            tracing::warn!(
+                channel = %state_channel,
+                "mock oracle estimator state output channel is not wired into the DAG"
+            );
+        }
     }
 }
 

@@ -11,8 +11,8 @@ use crate::config::{
 use crate::nodes::gaussian_estimator::AidingHandler;
 use crate::port::InternalChannel;
 
-use helios_core::prelude::AgentId;
 use helios_core::estimation::schema::StateSchemaBlock;
+use helios_core::prelude::AgentId;
 use helios_core::spatial::FrameId;
 
 /// Context for building a complete `GaussianEstimatorNode`.

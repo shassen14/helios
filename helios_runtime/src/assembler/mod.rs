@@ -22,7 +22,10 @@
 //!   the channels the host publishes outside the autonomy stack (today:
 //!   `oracle/*`; later: `health/*`). The assembler appends config-derived
 //!   sensor channels onto `host_capabilities.publishes` before handing the
-//!   merged value to [`PipelineBuilder::with_body_capabilities`].
+//!   merged value to [`PipelineBuilder::with_body_capabilities`]. Only
+//!   host-published sensor inputs are appended; an internal input, or a
+//!   sensor channel a preprocessing node derives, must be produced inside the
+//!   graph, so a missing producer still fails the build.
 //!
 //! Everything else — algorithm kinds, noise params, physical constants,
 //! channel names — comes from `stack`.
@@ -41,22 +44,25 @@
 
 mod command;
 mod error;
+mod preprocessing;
 
 pub use self::error::PipelineAssemblyError;
 
 use self::command::{
     command_sum_node_name, selector_policy, REFERENCE_ARBITER_NODE, TELEOP_MAPPER_NODE,
 };
+use self::preprocessing::build_preprocessing_node;
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
 use crate::config::TeleopMapperConfig;
 use crate::config::{AllocatorConfig, AutonomyStack, CommandSpace, FoldRole, ReferenceSource};
-use crate::config::{EstimatorConfig, MapLayerConfig};
+use crate::config::{EstimatorConfig, MapLayerConfig, MOCK_ORACLE_KIND};
 use crate::nodes::combinators::{Merge, Selector, Sum};
 use crate::nodes::gaussian_estimator;
 use crate::nodes::path_follower;
 use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
 use crate::pipeline::autonomy_pipeline::PipelineBuilder;
+use crate::pipeline::node::PipelineNode;
 use crate::pipeline::AutonomyPipeline;
 use crate::port::{ChannelKey, InternalChannel};
 use crate::registry::contexts::{
@@ -68,10 +74,9 @@ use crate::registry::AutonomyRegistry;
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
-use helios_core::prelude::AgentId;
-use helios_core::spatial::FrameAwareState;
-use helios_core::interchange::perception::map::MapData;
 use helios_core::interchange::path::Path;
+use helios_core::interchange::perception::map::MapData;
+use helios_core::prelude::AgentId;
 
 use std::collections::{BTreeSet, HashSet};
 use std::ops::Add;
@@ -130,6 +135,37 @@ pub fn build_pipeline(
     // resolved command topology below, not unconditionally.
     let mut external_channels: Vec<ChannelKey> = vec![];
 
+    // --- Preprocessing ---
+    // Measurement-to-measurement nodes (e.g. a range field flattened to a point
+    // cloud). They read sensor channels and write derived sensor channels, which
+    // consumers read exactly as they read host channels. Every node is built
+    // before any input is seeded, so the derived set is complete even when one
+    // preprocessing node reads another's output.
+    let mut preprocessing_nodes = Vec::with_capacity(stack.preprocessing.len());
+    let mut derived_channels: HashSet<ChannelKey> = HashSet::new();
+    for (name, config) in &stack.preprocessing {
+        let output = config.output_channel();
+        if sensor_channels.contains(output) {
+            errors.push(PipelineAssemblyError::PreprocessingOutputShadowsSensor {
+                node_name: name.clone(),
+                node_kind: config.get_kind_str().to_string(),
+                channel: output.to_string(),
+            });
+            continue;
+        }
+        let node = build_preprocessing_node(name, config);
+        derived_channels.extend(node.port_descriptor().outputs.iter().cloned());
+        preprocessing_nodes.push(node);
+    }
+    let sensor_inputs = SensorInputs {
+        host: sensor_channels,
+        derived: &derived_channels,
+    };
+    for node in preprocessing_nodes {
+        sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
+        builder = builder.add_node(node);
+    }
+
     // --- Estimators ---
     for (instance_name, est_cfg) in &stack.estimators {
         match build_estimator_node(
@@ -162,15 +198,7 @@ pub fn build_pipeline(
             },
         ) {
             Ok(node) => {
-                // FrameAwareState is produced by the estimator upstream;
-                // every other required input of a mapper is an external
-                // sensor channel that must seed the topological sort.
-                let state_key: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
-                for key in &node.port_descriptor().required_inputs {
-                    if *key != state_key {
-                        external_channels.push(key.clone());
-                    }
-                }
+                sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
                 builder = builder.add_node(node);
             }
             Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
@@ -439,6 +467,51 @@ pub fn build_pipeline(
 
 // --- Internals ---
 
+/// Where a node's sensor inputs may come from: channels the host publishes, and
+/// channels a preprocessing node derives inside the graph.
+struct SensorInputs<'a> {
+    host: &'a HashSet<String>,
+    derived: &'a HashSet<ChannelKey>,
+}
+
+impl SensorInputs<'_> {
+    /// Records a node's host-published sensor inputs as external, so they seed
+    /// the topological sort, and reports any sensor input with no source.
+    ///
+    /// Only host channels are seeded. An internal input, or a sensor input a
+    /// preprocessing node derives, must be produced inside the graph: seeding
+    /// it would hide a missing producer, and would let the consumer become
+    /// ready in the same level as its producer, leaving their order within a
+    /// tick arbitrary. A sensor input that is neither host-published nor
+    /// derived is an [`UnpublishedSensorInput`](PipelineAssemblyError::UnpublishedSensorInput):
+    /// without the check the node builds, its slot stays empty, and it silently
+    /// never works.
+    fn seed(
+        &self,
+        node: &dyn PipelineNode,
+        external_channels: &mut Vec<ChannelKey>,
+        errors: &mut Vec<PipelineAssemblyError>,
+    ) {
+        let sensor_inputs = node
+            .port_descriptor()
+            .required_inputs
+            .iter()
+            .filter(|key| matches!(key, ChannelKey::Sensor(_)))
+            .filter(|key| !self.derived.contains(*key));
+
+        for key in sensor_inputs {
+            if self.host.contains(key.instance().as_ref()) {
+                external_channels.push(key.clone());
+            } else {
+                errors.push(PipelineAssemblyError::UnpublishedSensorInput {
+                    node_name: node.name().to_string(),
+                    channel: key.instance().to_string(),
+                });
+            }
+        }
+    }
+}
+
 /// Wires the body-twist command terminal for a coupled morphology: one command
 /// space fed directly by the autonomy controllers. This serves a body-twist
 /// allocator and every no-sum-space stack (pure-perception, controllers without
@@ -588,7 +661,7 @@ fn build_estimator_node(
             // graph, not for body-published oracle channels.
             registry
                 .build_mock_estimator(
-                    "MockOracle",
+                    MOCK_ORACLE_KIND,
                     est_cfg.clone(),
                     MockEstimatorBuildContext {
                         agent: agent.clone(),
@@ -596,7 +669,7 @@ fn build_estimator_node(
                     },
                 )
                 .map_err(|reason| PipelineAssemblyError::FactoryFailure {
-                    node_kind: "MockOracle".to_string(),
+                    node_kind: MOCK_ORACLE_KIND.to_string(),
                     reason,
                 })
         }

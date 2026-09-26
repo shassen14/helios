@@ -72,7 +72,7 @@ fn on_pipeline_built_system(
     let mut pairs: Vec<(AgentId, &AutonomyPipeline)> = Vec::new();
     for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
         pairs.push((
-            AgentId::new(agent_id_comp.0.clone()),
+            AgentId::new(agent_id_comp.0.as_str()),
             &autonomy_pipeline_comp.0,
         ));
     }
@@ -121,7 +121,7 @@ fn tick_system(
 
     for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
         pairs.push((
-            AgentId::new(agent_id_comp.0.clone()),
+            AgentId::new(agent_id_comp.0.as_str()),
             autonomy_pipeline_comp.0.bus(),
         ));
     }
@@ -177,7 +177,7 @@ fn finalize_system(
     let mut pairs: Vec<(AgentId, &PortBus)> = Vec::new();
     for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
         pairs.push((
-            AgentId::new(agent_id_comp.0.clone()),
+            AgentId::new(agent_id_comp.0.as_str()),
             autonomy_pipeline_comp.0.bus(),
         ));
     }

@@ -11,6 +11,9 @@ use crate::config::{
 /// families have implementations.
 pub struct CapabilitySet {
     pub gaussian_estimators: HashSet<String>,
+    /// Mock estimators (e.g. `MockOracle`): a separate registry family, so a
+    /// stack that selects one is checked here, not against the Gaussian set.
+    pub mock_estimators: HashSet<String>,
     pub measurement_models: HashSet<String>,
     pub mappers: HashSet<String>,
     pub controllers: HashSet<String>,
@@ -22,6 +25,10 @@ pub struct CapabilitySet {
 #[derive(Debug)]
 pub enum ConfigValidationError {
     UnknownGaussianEstimator {
+        instance: String,
+        kind: String,
+    },
+    UnknownMockEstimator {
         instance: String,
         kind: String,
     },
@@ -117,6 +124,12 @@ impl std::fmt::Display for ConfigValidationError {
                 write!(
                     f,
                     "Unknown Gaussian estimator kind '{kind}' in estimator '{instance}'"
+                )
+            }
+            ConfigValidationError::UnknownMockEstimator { instance, kind } => {
+                write!(
+                    f,
+                    "Unknown mock estimator kind '{kind}' in estimator '{instance}'"
                 )
             }
             ConfigValidationError::UnknownController { kind } => {
@@ -243,12 +256,26 @@ pub fn validate_autonomy_config(
 
     // Estimator validation (all named instances).
     for (instance, est_cfg) in &config.estimators {
+        // Each estimator variant is built by its own registry family, so its
+        // kind is checked against that family's factories.
         let kind = est_cfg.get_kind_str();
-        if !capabilities.gaussian_estimators.contains(kind) {
-            errors.push(ConfigValidationError::UnknownGaussianEstimator {
-                instance: instance.clone(),
-                kind: kind.to_string(),
-            });
+        match est_cfg {
+            EstimatorConfig::MockOracle(_) => {
+                if !capabilities.mock_estimators.contains(kind) {
+                    errors.push(ConfigValidationError::UnknownMockEstimator {
+                        instance: instance.clone(),
+                        kind: kind.to_string(),
+                    });
+                }
+            }
+            EstimatorConfig::Ekf(_) | EstimatorConfig::Ukf(_) => {
+                if !capabilities.gaussian_estimators.contains(kind) {
+                    errors.push(ConfigValidationError::UnknownGaussianEstimator {
+                        instance: instance.clone(),
+                        kind: kind.to_string(),
+                    });
+                }
+            }
         }
 
         // Validate dynamics and aiding for EKF configs.

@@ -14,9 +14,10 @@ pub enum PipelineAssemblyError {
     FactoryFailure { node_kind: String, reason: String },
     /// The assembled node graph failed topological validation.
     PipelineBuild(Vec<PipelineBuildError>),
-    /// An aiding or augmentation entry names a sensor channel the host does not
-    /// publish for this agent (absent from `sensor_channels`), so no sensor
-    /// frame would resolve for it.
+    /// An estimator's aiding, augmentation, or IMU prediction entry names a
+    /// sensor channel the host does not publish for this agent (absent from
+    /// `sensor_channels`), so its input would never arrive or no sensor frame
+    /// would resolve for it.
     UnknownSensorChannel {
         estimator_instance: String,
         input_channel: String,
@@ -33,6 +34,20 @@ pub enum PipelineAssemblyError {
     AugmentationFailure {
         estimator_instance: String,
         reason: String,
+    },
+    /// A node reads a sensor channel that neither the host publishes
+    /// (absent from `sensor_channels`) nor any preprocessing node derives, so
+    /// its slot would stay empty forever and the node would silently never run
+    /// its work.
+    UnpublishedSensorInput { node_name: String, channel: String },
+    /// A preprocessing node's `output` reuses the name of a channel the host
+    /// publishes. Both are sensor channels, so a same-typed output would share
+    /// the host's slot; even differently typed, one name for two channels
+    /// misleads anyone reading the graph.
+    PreprocessingOutputShadowsSensor {
+        node_name: String,
+        node_kind: String,
+        channel: String,
     },
     /// `path_following` is present but no planner was configured to produce a
     /// path, and no explicit `path_source` was given.
@@ -93,6 +108,22 @@ impl std::fmt::Display for PipelineAssemblyError {
                 write!(
                     f,
                     "estimator '{estimator_instance}' augmentation failed: {reason}"
+                )
+            }
+            PipelineAssemblyError::UnpublishedSensorInput { node_name, channel } => {
+                write!(
+                    f,
+                    "node '{node_name}' reads sensor channel '{channel}', which the host does not publish and no preprocessing node produces"
+                )
+            }
+            PipelineAssemblyError::PreprocessingOutputShadowsSensor {
+                node_name,
+                node_kind,
+                channel,
+            } => {
+                write!(
+                    f,
+                    "{node_kind} preprocessing node '{node_name}' writes '{channel}', which is already a host sensor channel; give the output its own name"
                 )
             }
             PipelineAssemblyError::NoPathSourceForFollower => {

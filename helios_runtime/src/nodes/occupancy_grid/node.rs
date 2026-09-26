@@ -56,17 +56,19 @@ use std::sync::Mutex;
 
 use atomic_float::AtomicF64;
 use helios_core::interchange::measurement::envelope::SensorReading;
+use helios_core::mapping::Mapper;
 use helios_core::prelude::AgentId;
 use helios_core::prelude::MonotonicTime;
 use helios_core::prelude::PointCloud;
 use helios_core::prelude::TfProvider;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::{FrameAwareState, FrameId};
-use helios_core::mapping::Mapper;
 
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};
+use crate::port::{
+    ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel,
+};
 use crate::stamped::{Health, Stamped};
 
 /// Pipeline node wrapping any 2D [`Mapper`] implementation.
@@ -211,7 +213,12 @@ impl PipelineNode for OccupancyGridNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(self.map_channel.clone(), stamped);
+        if let Err(ChannelError::UnknownChannel) = bus.write(self.map_channel.clone(), stamped) {
+            tracing::warn!(
+                channel = %self.map_channel,
+                "mapper map output channel is not wired into the DAG"
+            );
+        }
     }
 }
 
@@ -227,17 +234,17 @@ mod tests {
     //!     the correct `now` / `producer`
 
     use super::*;
-    use helios_core::interchange::measurement::envelope::SensorReading;
-    use helios_core::spatial::primitives::MonotonicTime;
-    use helios_core::prelude::AgentId;
-    use helios_core::prelude::PointCloudBuilder;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
-    use helios_core::spatial::quantities::Point;
-    use helios_core::spatial::transforms::{Convention, ErasedTransform};
-    use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
+    use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::interchange::perception::map::MapData;
     use helios_core::mapping::Mapper;
+    use helios_core::prelude::AgentId;
+    use helios_core::prelude::PointCloudBuilder;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::quantities::Point;
     use helios_core::spatial::state::{Component, Quantity};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;
     use std::sync::Mutex as StdMutex;

@@ -20,16 +20,18 @@ use super::input::EstimatorInputBuilder;
 use crate::channels::tf::{publish_edge, tf_edge};
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel};
+use crate::port::{
+    ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel,
+};
 use crate::stamped::{Health, Stamped};
 
-use helios_core::interchange::measurement::envelope::SensorReading;
-use helios_core::spatial::tf::TfProvider;
-use helios_core::interchange::measurement::sensor::SensorPayload;
 use helios_core::estimation::measurement::{MeasurementModel, Unavailable};
 use helios_core::estimation::schema::MeasurementSchema;
 use helios_core::estimation::{GaussianStateEstimator, SkipReason, UpdateOutcome};
+use helios_core::interchange::measurement::envelope::SensorReading;
+use helios_core::interchange::measurement::sensor::SensorPayload;
 use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::tf::TfProvider;
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 use helios_core::spatial::transforms::ErasedTransform;
 use helios_core::spatial::FrameAwareState;
@@ -355,7 +357,13 @@ impl PipelineNode for GaussianEstimatorNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(InternalChannel::of::<FrameAwareState>().into(), stamped);
+        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
+        if let Err(ChannelError::UnknownChannel) = bus.write(state_channel.clone(), stamped) {
+            tracing::warn!(
+                channel = %state_channel,
+                "estimator state output channel is not wired into the DAG"
+            );
+        }
     }
 }
 
@@ -367,19 +375,19 @@ mod tests {
     //! and bus publish.
 
     use super::*;
-    use helios_core::interchange::measurement::envelope::SensorReading;
-    use helios_core::spatial::primitives::MonotonicTime;
-    use helios_core::interchange::measurement::sensor::Acceleration;
-    use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::measurement::Prediction;
     use helios_core::estimation::schema::{
         MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
     use helios_core::estimation::{EstimatorInputs, UpdateOutcome};
+    use helios_core::interchange::measurement::envelope::SensorReading;
+    use helios_core::interchange::measurement::sensor::Acceleration;
+    use helios_core::prelude::AgentId;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::state::Quantity;
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
     use helios_core::spatial::{FrameAwareState, FrameId};
-    use helios_core::spatial::state::Quantity;
     use nalgebra::{DMatrix, DVector, Isometry3};
     use std::sync::Mutex as StdMutex;
 

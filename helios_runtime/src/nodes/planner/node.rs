@@ -26,14 +26,14 @@
 
 use std::sync::Mutex;
 
-use helios_core::prelude::TfProvider;
 use helios_core::planning::types::PlannerResult;
 use helios_core::planning::SearchPlanner;
+use helios_core::prelude::TfProvider;
 
 use super::input::SearchPlannerInputBuilder;
 use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
+use crate::port::{ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 /// Pipeline node wrapping any search-family planner.
@@ -114,7 +114,12 @@ impl PipelineNode for SearchPlannerNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(self.path_channel.clone(), stamped);
+        if let Err(ChannelError::UnknownChannel) = bus.write(self.path_channel.clone(), stamped) {
+            tracing::warn!(
+                channel = %self.path_channel,
+                "planner path output channel is not wired into the DAG"
+            );
+        }
     }
 }
 
@@ -131,15 +136,15 @@ mod tests {
     use super::*;
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
-    use helios_core::spatial::primitives::MonotonicTime;
-    use helios_core::prelude::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::interchange::path::Path;
+    use helios_core::interchange::perception::map::MapData;
+    use helios_core::planning::SearchPlannerInputs;
+    use helios_core::prelude::AgentId;
     use helios_core::spatial::conventions::Enu;
+    use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::Point;
     use helios_core::spatial::{FrameAwareState, FrameId};
-    use helios_core::interchange::perception::map::MapData;
-    use helios_core::interchange::path::Path;
-    use helios_core::planning::SearchPlannerInputs;
 
     use nalgebra::{DMatrix, Isometry3};
     use std::sync::Mutex as StdMutex;

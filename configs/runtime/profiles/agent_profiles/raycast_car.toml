@@ -23,6 +23,15 @@ local_path = { from = "runtime.catalog.planners.a_star" }
 [map_layers.local]
 from = "runtime.catalog.mappers.occupancy_grid_2d"
 
+# The lidar publishes what it measured: an organized range field. The grid
+# integrates points, so this node flattens each field into a point cloud on a
+# derived channel, which the mapper's `scan_channel` names. `input` must match
+# the lidar entity's `channel`; `output` must not reuse a host channel's name.
+[preprocessing.front_lidar_deproject]
+kind = "Deproject"
+input = "sensor.lidar.front"
+output = "sensor.lidar.front.points"
+
 [path_following]
 kind = "PurePursuit"
 max_speed_m_s = 5.0

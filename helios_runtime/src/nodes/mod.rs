@@ -15,6 +15,7 @@
 pub mod allocator;
 pub mod combinators;
 pub mod controller;
+pub mod deproject;
 pub mod gaussian_estimator;
 pub mod mocks;
 pub mod occupancy_grid;
