@@ -11,7 +11,9 @@ use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::quantities::FreeVector;
 use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
-use helios_core::sensors::{lidar::LidarModel, RayHit, RaycastingOutput, RaycastingSensorModel};
+use helios_core::prelude::SphericalAngular;
+use helios_core::sensors::lidar::{LidarModel, LidarNoise};
+use helios_core::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel};
 
 use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
 use std::time::Duration;
@@ -66,22 +68,47 @@ fn spawn_raycasting_sensors(
                     .map(|deg| deg.to_radians())
                     .collect();
 
-                let Some(model) = LidarModel::new(
+                let Some(geometry) = SphericalAngular::from_field_of_view(
+                    ring_elevations,
                     lidar_config.azimuth_fov.to_radians(),
                     lidar_config.azimuth_beams,
-                    ring_elevations,
-                    lidar_config.sweep_period,
-                    lidar_config.max_range,
-                    lidar_config.range_noise_stddev,
-                    lidar_config.angular_noise_stddev,
                 ) else {
                     error!(
-                        "LiDAR '{}' has an unusable configuration (range_noise_stddev={}, angular_noise_stddev={}, azimuth_beams={}, ring_elevations={}): noise stddevs must be > 0 and there must be at least one azimuth beam and one ring. Skipping sensor.",
+                        "LiDAR '{}' has an unusable beam layout (azimuth_fov={}, azimuth_beams={}, ring_elevations={:?}): the field of view must be finite and non-negative, with at least one azimuth beam and one ring. Skipping sensor.",
+                        sensor_name,
+                        lidar_config.azimuth_fov,
+                        lidar_config.azimuth_beams,
+                        lidar_config.ring_elevations,
+                    );
+                    continue;
+                };
+
+                let Some(noise) = LidarNoise::new(
+                    lidar_config.range_noise_stddev as f64,
+                    (lidar_config.angular_noise_stddev as f64).to_radians(),
+                ) else {
+                    error!(
+                        "LiDAR '{}' has unusable noise (range_noise_stddev={}, angular_noise_stddev={}): both must be finite and > 0. Skipping sensor.",
                         sensor_name,
                         lidar_config.range_noise_stddev,
                         lidar_config.angular_noise_stddev,
-                        lidar_config.azimuth_beams,
-                        lidar_config.ring_elevations.len(),
+                    );
+                    continue;
+                };
+
+                let Some(model) = LidarModel::new(
+                    geometry,
+                    lidar_config.sweep_period,
+                    lidar_config.range_min as f64,
+                    lidar_config.max_range as f64,
+                    noise,
+                ) else {
+                    error!(
+                        "LiDAR '{}' has unusable range limits or sweep (range_min={}, max_range={}, sweep_period={}): limits must be finite with 0 <= range_min < max_range, and the sweep period non-negative. Skipping sensor.",
+                        sensor_name,
+                        lidar_config.range_min,
+                        lidar_config.max_range,
+                        lidar_config.sweep_period,
                     );
                     continue;
                 };
@@ -146,7 +173,7 @@ fn raycasting_sensor_system(
             continue;
         }
 
-        let local_rays = sensor.model.generate_rays();
+        let local_rays = sensor.model.generate_rays(&mut rng.0);
         let mut hits: Vec<RayHit> = Vec::with_capacity(local_rays.len());
         let sensor_origin = sensor_transform.translation();
         let sensor_rotation = sensor_transform.rotation();
@@ -173,12 +200,12 @@ fn raycasting_sensor_system(
 
         let output = sensor.model.process_hits(&hits, &mut rng.0);
 
-        let RaycastingOutput::PointCloud(point_cloud) = output;
+        let RaycastingOutput::RangeField(field) = output;
 
         let reading = SensorReading {
             sensor: tracked.id.clone(),
             timestamp: MonotonicTime(elapsed),
-            data: point_cloud,
+            data: field.to_point_cloud(),
         };
 
         publisher.publish(

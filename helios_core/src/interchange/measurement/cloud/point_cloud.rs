@@ -82,14 +82,6 @@ impl<F: Frame, A: Attributes> PointCloud<F, A> {
         }
     }
 
-    pub(crate) fn empty(attributes: A) -> Self {
-        Self::from_columns(
-            PointColumns::from_arc(Arc::new(Matrix3xX::zeros(0))),
-            attributes,
-            None,
-        )
-    }
-
     /// The number of points, defined by the geometry column.
     pub fn len(&self) -> usize {
         self.geometry.len()

@@ -10,15 +10,15 @@
 use super::{DirectionModel, RangeField, ScanTiming};
 use crate::spatial::conventions::Frame;
 
-use std::marker::PhantomData;
+use std::{fmt, marker::PhantomData};
 
 use nalgebra::DMatrix;
 
 /// Fills a [`RangeField`] in frame `F` cell by cell.
 ///
-/// Holds the same parts as the field it builds. Nothing is derived: a derive
-/// would require `F` itself to implement the trait (see `RangeField`), and
-/// nothing needs to clone or print a half-built grid.
+/// Holds the same parts as the field it builds. A producer whose geometry,
+/// limits, and timing are fixed can build one blank builder at setup, where any
+/// rejection is a configuration error, and clone it for every scan.
 pub struct RangeFieldBuilder<F: Frame> {
     ranges: DMatrix<f64>,
     direction: DirectionModel,
@@ -105,6 +105,35 @@ impl<F: Frame> RangeFieldBuilder<F> {
             self.range_max,
             self.timing,
         )
+    }
+}
+
+// Hand-written rather than derived: `#[derive(Clone)]` would demand `F: Clone`
+// even though `F` lives only inside a `PhantomData`, and that impl is then
+// invisible to generic code that knows only `F: Frame`.
+impl<F: Frame> Clone for RangeFieldBuilder<F> {
+    fn clone(&self) -> Self {
+        Self {
+            ranges: self.ranges.clone(),
+            direction: self.direction.clone(),
+            range_min: self.range_min,
+            range_max: self.range_max,
+            timing: self.timing.clone(),
+            _frame: PhantomData,
+        }
+    }
+}
+
+// Hand-written for the same reason as `Clone`, and to print a summary rather
+// than every cell of the grid.
+impl<F: Frame> fmt::Debug for RangeFieldBuilder<F> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RangeFieldBuilder")
+            .field("shape", &self.ranges.shape())
+            .field("range_min", &self.range_min)
+            .field("range_max", &self.range_max)
+            .field("timed", &self.timing.is_some())
+            .finish()
     }
 }
 
@@ -271,6 +300,32 @@ mod tests {
                 got: 2
             })
         );
+    }
+
+    #[test]
+    fn a_clone_is_filled_independently_of_its_blank() {
+        let blank = builder()
+            .with_timing(ScanTiming::PerColumn(vec![0, 100, 200]))
+            .expect("fits");
+
+        let mut scan = blank.clone();
+        scan.set(0, 0, 4.0).expect("in bounds");
+        let filled = scan.finalize();
+        let untouched = blank.finalize();
+
+        assert_eq!(filled.range(0, 0), Some(4.0));
+        assert_eq!(untouched.range(0, 0), Some(f64::INFINITY));
+        assert_eq!(filled.timing(), untouched.timing());
+    }
+
+    #[test]
+    fn debug_prints_a_summary_not_the_grid() {
+        let mut builder = builder();
+        builder.set(0, 0, 12345.5).expect("in bounds");
+        let printed = format!("{builder:?}");
+
+        assert!(printed.contains("shape: (2, 3)"), "{printed}");
+        assert!(!printed.contains("12345.5"), "{printed}");
     }
 
     #[test]

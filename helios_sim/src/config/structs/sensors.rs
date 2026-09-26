@@ -195,7 +195,7 @@ impl MagnetometerConfig {
 ///
 /// Angles are degrees here for readability and become radians when the forward
 /// model is built. The geometry angles are f64 to feed the model's f64 scan
-/// math without a lossy cast; the three range/noise scalars are f32, the type
+/// math without a lossy cast; the range/noise scalars are f32, the type
 /// the raycasting model reports back to the physics engine's f32-native query.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -203,6 +203,9 @@ pub struct LidarConfig {
     pub rate: f64,
     #[serde(default)]
     pub transform: Pose,
+    /// Minimum reported range, in meters. Nearer returns are misses — the
+    /// unit's blind zone around its own window.
+    pub range_min: f32,
     /// Maximum reported range, in meters.
     pub max_range: f32,
     /// Azimuth field of view in degrees. `360` sweeps a full circle and drops

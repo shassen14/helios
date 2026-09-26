@@ -4,7 +4,7 @@ pub use crate::interchange::measurement::cloud::{
 };
 pub use crate::interchange::measurement::envelope::SensorReading;
 pub use crate::interchange::measurement::range_field::{
-    DirectionModel, RangeField, RangeFieldBuildError, RangeFieldBuilder, ScanTiming,
+    BeamAngles, DirectionModel, RangeField, RangeFieldBuildError, RangeFieldBuilder, ScanTiming,
     SphericalAngular,
 };
 pub use crate::interchange::motion::{Odometry, Twist};

@@ -1,188 +1,220 @@
-use crate::prelude::{PointCloud, PointCloudBuilder};
-use crate::spatial::conventions::Flu;
-use crate::spatial::quantities::Point;
+//! The forward (truth) model of a ray lidar: which rays it casts and what it
+//! reports for their returns.
+//!
+//! The lidar is a world sensor, so it runs in two phases around the host's
+//! raycast: [`LidarModel`] generates the rays, the host casts them into its scene,
+//! and the model packs the returns into an organized [`RangeField`] in the
+//! sensor's FLU frame. Everything a real unit gets wrong lives here, not in the
+//! host.
+//!
+//! [`RangeField`]: crate::prelude::RangeField
+
+use crate::prelude::{DirectionModel, RangeFieldBuilder, ScanTiming, SphericalAngular};
 use crate::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel, SensorRay};
-use nalgebra::Vector3;
+use crate::spatial::conventions::Flu;
+use crate::spatial::primitives::NANOS_PER_SECOND;
+
 use rand::RngCore;
 use rand_distr::{Distribution, Normal};
 
 /// Forward (truth) model for a ray lidar of any beam layout — 2D planar,
 /// spinning multi-ring, forward-looking solid-state, or flash. The layout is not
-/// a type; it is entirely the scan geometry below. A 2D lidar is a single ring at
-/// `0.0` elevation, a spinning unit is a `2π` azimuth sweep over a list of ring
-/// elevations, and a flash unit is a `sweep_period` of zero.
+/// a type; it is entirely the beam geometry. A 2D lidar is a single ring at `0.0`
+/// elevation, a spinning unit is a `2π` azimuth sweep over a list of ring
+/// elevations, and a flash unit has a `sweep_period` of zero.
 ///
-/// The model is deliberately richer than any consumer's belief — noise lives in
-/// spherical space and points carry per-point time — so simulating against it is
-/// not an inverse crime.
+/// Each scan is a [`RangeField`](crate::prelude::RangeField) with one cell per
+/// beam: rows are rings, columns are azimuths. Noise follows the physics of a
+/// real unit. Pointing error perturbs each beam's azimuth and elevation before it
+/// is cast, so it shows up where it does on hardware: as a range error that
+/// depends on what the beam struck. Range error is added to each return. The
+/// range is written into the beam's nominal cell, because that is how a driver
+/// organizes a scan.
+///
+/// The model is deliberately richer than any consumer's belief, so simulating
+/// against it is not an inverse crime.
 #[derive(Debug, Clone)]
 pub struct LidarModel {
-    // Scan geometry — the beam pattern, and the whole of what distinguishes one
-    // lidar from another. Azimuth is a uniform sweep (real units hold a constant
-    // angular rate); ring elevations are an explicit list (datasheet tables are
-    // non-uniform). `azimuth_start` / `azimuth_increment` are derived from the
-    // sweep once in `new`.
-    azimuth_start: f64,
-    azimuth_increment: f64,
-    n_azimuth: u32,
-    ring_elevations: Vec<f64>,
-
-    /// Seconds for one full azimuth sweep. `0.0` models a flash capture, where
-    /// every point shares the reading's instant (all per-point offsets zero).
-    sweep_period: f64,
-
-    /// Maximum reported range, in meters.
-    max_range: f32,
-
-    /// Range noise standard deviation, in meters.
-    pub range_noise_stddev: f32,
-    /// Angular noise standard deviation, in degrees, applied to both azimuth and
-    /// elevation.
-    pub angular_noise_stddev: f32,
-
-    range_noise_dist: Normal<f64>,
-    angular_noise_dist: Normal<f64>,
+    /// The beam pattern: ring elevations and a uniform azimuth sweep. It is the
+    /// whole of what distinguishes one lidar's layout from another's.
+    geometry: SphericalAngular,
+    /// An all-miss grid shaped by `geometry`, with the sweep's per-column timing
+    /// already attached. Built and checked once in `new`; every scan fills a
+    /// copy, so a scan has nothing left to reject.
+    empty_scan: RangeFieldBuilder<Flu>,
+    /// The shortest return the unit reports, in meters. Anything nearer is a miss.
+    range_min: f64,
+    /// The longest return the unit reports, in meters. Anything farther is a miss.
+    range_max: f64,
+    /// The unit's range and pointing error.
+    noise: LidarNoise,
 }
 
 impl LidarModel {
-    /// Builds the model, or returns `None` if the configuration is unusable:
-    /// either noise standard deviation is not strictly positive, there are no
-    /// azimuth beams, or the ring-elevation list is empty.
+    /// Builds the model around a beam `geometry`, or returns `None` for a
+    /// negative or non-finite `sweep_period`, or range limits that are
+    /// negative, non-finite, or leave no span (`range_min >= range_max`).
+    ///
+    /// `sweep_period` is the seconds one azimuth sweep takes; zero is a flash
+    /// capture, whose scans carry no timing. Range limits are meters.
     pub fn new(
-        azimuth_fov: f64,
-        n_azimuth: u32,
-        ring_elevations: Vec<f64>,
+        geometry: SphericalAngular,
         sweep_period: f64,
-        max_range: f32,
-        range_noise_stddev: f32,
-        angular_noise_stddev: f32,
+        range_min: f64,
+        range_max: f64,
+        noise: LidarNoise,
     ) -> Option<Self> {
-        if range_noise_stddev <= 0.0 || angular_noise_stddev <= 0.0 {
+        if !sweep_period.is_finite() || sweep_period < 0.0 {
             return None;
         }
 
-        if n_azimuth < 1 || ring_elevations.is_empty() {
-            return None;
+        let direction = DirectionModel::SphericalAngular(geometry.clone());
+        let mut empty_scan = RangeFieldBuilder::new(direction, range_min, range_max).ok()?;
+
+        // A spinning unit fires each azimuth column at its own fraction of the
+        // sweep, every ring in that column together. A flash capture has no
+        // offsets to record.
+        if sweep_period > 0.0 {
+            let n_azimuth = geometry.n_azimuth();
+            let mut offsets = Vec::with_capacity(n_azimuth as usize);
+            for c in 0..n_azimuth {
+                let fraction = c as f64 / n_azimuth as f64;
+                offsets.push((fraction * sweep_period * NANOS_PER_SECOND) as i32);
+            }
+
+            empty_scan = empty_scan
+                .with_timing(ScanTiming::PerColumn(offsets))
+                .ok()?;
         }
-
-        let range_noise_dist = Normal::new(0.0, range_noise_stddev as f64).ok()?;
-        let angular_noise_dist = Normal::new(0.0, angular_noise_stddev.to_radians() as f64).ok()?;
-
-        let full_circle = azimuth_fov >= std::f64::consts::TAU - 1e-9;
-        let azimuth_increment = if n_azimuth <= 1 {
-            0.0
-        } else if full_circle {
-            azimuth_fov / n_azimuth as f64
-        } else {
-            azimuth_fov / (n_azimuth - 1) as f64
-        };
-        let azimuth_start = -azimuth_fov / 2.0;
 
         Some(Self {
-            azimuth_start,
-            azimuth_increment,
-            n_azimuth,
-            ring_elevations,
-            sweep_period,
-            max_range,
-            range_noise_stddev,
-            angular_noise_stddev,
-            range_noise_dist,
-            angular_noise_dist,
+            geometry,
+            empty_scan,
+            range_min,
+            range_max,
+            noise,
         })
     }
 
-    /// Maps a beam's `(azimuth, elevation)` to a unit direction in the sensor's
-    /// FLU frame: `x` forward, `y` left, `z` up. Azimuth turns about `+z`, so a
-    /// positive azimuth points left; elevation tilts up from the `xy` plane. Both
-    /// `generate_rays` and `process_hits` project through here, so the convention
-    /// lives in exactly one place.
-    fn direction(azimuth: f64, elevation: f64) -> Vector3<f64> {
-        Vector3::new(
-            elevation.cos() * azimuth.cos(),
-            elevation.cos() * azimuth.sin(),
-            elevation.sin(),
+    /// The flat id of the beam in cell `(row, col)`: rows are rings, columns are
+    /// azimuths, numbered ring by ring. It is the id a ray carries out to the
+    /// host and back on its hit.
+    fn ray_id(&self, row: usize, col: usize) -> u32 {
+        (row * self.geometry.n_azimuth() as usize + col) as u32
+    }
+
+    /// The `(row, col)` cell a flat beam id names, inverting [`Self::ray_id`].
+    ///
+    /// Not bounds-checked: an id past the last beam yields a row past the last
+    /// ring, which the scan's `set` rejects.
+    fn cell_of(&self, id: u32) -> (usize, usize) {
+        (
+            (id / self.geometry.n_azimuth()) as usize,
+            (id % self.geometry.n_azimuth()) as usize,
         )
-    }
-
-    /// Recovers the `(ring, azimuth)` indices from a beam's flat id, inverting the
-    /// `ring * n_azimuth + azimuth` encoding `generate_rays` assigns.
-    fn split_id(&self, id: u32) -> (u32, u32) {
-        (id / self.n_azimuth, id % self.n_azimuth)
-    }
-
-    /// The perfect (noise-free) azimuth of a beam index within the sweep.
-    fn azimuth_of(&self, az_idx: u32) -> f64 {
-        self.azimuth_start + az_idx as f64 * self.azimuth_increment
-    }
-
-    /// The per-point time offset for a beam index, in nanoseconds from the start
-    /// of the sweep — a spinning lidar samples later azimuths later. Zero for
-    /// every beam when `sweep_period` is zero (a flash capture).
-    fn dt_of(&self, az_idx: u32) -> i32 {
-        let fraction = az_idx as f64 / self.n_azimuth as f64;
-        (fraction * self.sweep_period * 1e9) as i32
     }
 }
 
 impl RaycastingSensorModel for LidarModel {
-    fn generate_rays(&self) -> Vec<SensorRay> {
-        let mut rays = Vec::with_capacity(self.ring_elevations.len() * self.n_azimuth as usize);
+    /// Casts one ray per beam, each perturbed by pointing error.
+    ///
+    /// A real unit's encoder and ring mounts are each slightly off, so every
+    /// beam's azimuth and elevation get their own independent error before the
+    /// angles become a direction. Perturbing the angles, rather than a point
+    /// after the hit, keeps the error geometry-dependent the way it is on
+    /// hardware: small against a wall faced head-on, large at a grazing angle.
+    fn generate_rays(&self, rng: &mut dyn RngCore) -> Vec<SensorRay> {
+        let (rows, cols) = self.geometry.shape();
 
-        for (ring_idx, &elev) in self.ring_elevations.iter().enumerate() {
-            for az_idx in 0..self.n_azimuth {
-                let id = ring_idx as u32 * self.n_azimuth + az_idx;
-                let direction = Self::direction(self.azimuth_of(az_idx), elev);
-                rays.push(SensorRay { id, direction });
+        let mut rays = Vec::with_capacity(rows * cols);
+
+        for row in 0..rows {
+            for col in 0..cols {
+                let Some(mut beam_angles) = self.geometry.beam_angles(row, col) else {
+                    continue;
+                };
+
+                let azimuth_noise = self.noise.angular.sample(rng);
+                let elevation_noise = self.noise.angular.sample(rng);
+                beam_angles.azimuth += azimuth_noise;
+                beam_angles.elevation += elevation_noise;
+
+                let direction = SphericalAngular::unit_vector(beam_angles);
+
+                rays.push(SensorRay {
+                    id: self.ray_id(row, col),
+                    direction,
+                });
             }
         }
 
         rays
     }
 
-    /// Projects each ray return into a sensor-frame point, applying the error
-    /// model in spherical space.
+    /// Packs the host's returns into one scan, adding range noise to each.
     ///
-    /// A lidar measures a range along a beam and that beam's two angles, so its
-    /// error lives on `(range, azimuth, elevation)`, not on cartesian `xyz`. Each
-    /// is perturbed independently before the spherical-to-cartesian projection;
-    /// perturbing `xyz` directly would fabricate a range-independent, isotropic
-    /// error the real device never exhibits. This is the one property to preserve
-    /// on every future change to the model.
-    ///
-    /// The cloud is built timed: each point carries an offset from its azimuth's
-    /// position in the sweep, so a later de-skew step can undo motion during the
-    /// scan. No consumer reads the offsets yet — stamping them now keeps the
-    /// producer ready rather than retrofitting timing later.
-    ///
-    /// Misses never reach here — the host omits them from `hits` — so the cloud
-    /// is exactly the set of returns. `finalize` can only fail when a column falls
-    /// out of step with the points, which the fused `push_timed` makes unreachable
-    /// here, so the error arm yields an empty cloud rather than surfacing a
-    /// `Result` the caller cannot act on.
+    /// Each return lands in its beam's *nominal* cell: the pointing error was
+    /// already spent when the ray was cast, so it shows up here only through the
+    /// distance the ray travelled. A noisy range outside
+    /// `[range_min, range_max]` is a return the unit would not report, so its
+    /// cell stays a miss. Rays that hit nothing never arrive and stay misses too.
+    /// A ray id outside the grid came from a faulty host and is skipped rather
+    /// than panicking.
     fn process_hits(&self, hits: &[RayHit], rng: &mut dyn RngCore) -> RaycastingOutput {
-        let mut points = PointCloudBuilder::timed();
+        let mut scan = self.empty_scan.clone();
         for hit in hits {
-            let (ring_idx, az_idx) = self.split_id(hit.ray_id);
-            let perfect_az = self.azimuth_of(az_idx);
-            let perfect_el = self.ring_elevations[ring_idx as usize];
-            let noisy_az = perfect_az + self.angular_noise_dist.sample(rng);
-            let noisy_el = perfect_el + self.angular_noise_dist.sample(rng);
-            let noisy_range = hit.distance as f64 + self.range_noise_dist.sample(rng);
+            let (row, col) = self.cell_of(hit.ray_id);
 
-            let point = Self::direction(noisy_az, noisy_el) * noisy_range;
-            points.push_timed(Point::from_raw(point), (), self.dt_of(az_idx))
+            let noisy_range = hit.distance as f64 + self.noise.range.sample(rng);
+
+            // Written as "not inside" rather than "below min or above max" so a
+            // NaN distance from the host is dropped too: every comparison with
+            // NaN is false, so the two-sided form would let it through.
+            if !(self.range_min..=self.range_max).contains(&noisy_range) {
+                continue;
+            }
+
+            // An id past the grid came from a faulty host: skip that return and
+            // keep filling.
+            if scan.set(row, col, noisy_range).is_err() {
+                continue;
+            }
         }
 
-        let Ok(cloud) = points.finalize() else {
-            return RaycastingOutput::PointCloud(PointCloud::<Flu>::empty(()));
-        };
-
-        RaycastingOutput::PointCloud(cloud)
+        RaycastingOutput::RangeField(scan.finalize())
     }
 
     fn get_max_range(&self) -> f32 {
-        self.max_range
+        self.range_max as f32
+    }
+}
+
+/// A lidar's measurement error: a zero-mean Gaussian on each reported range,
+/// and another on each beam's azimuth and elevation.
+///
+/// Grouped apart from the beam geometry because it is what varies between
+/// units of the same layout, and where richer error models (a range error that
+/// grows with distance, dropout) belong.
+#[derive(Debug, Clone)]
+pub struct LidarNoise {
+    range: Normal<f64>,
+    angular: Normal<f64>,
+}
+
+impl LidarNoise {
+    /// Builds the noise from standard deviations in meters (`range_stddev`)
+    /// and radians (`angular_stddev`), or returns `None` unless both are finite
+    /// and strictly positive.
+    pub fn new(range_stddev: f64, angular_stddev: f64) -> Option<Self> {
+        let usable = |stddev: f64| stddev.is_finite() && stddev > 0.0;
+        if !usable(range_stddev) || !usable(angular_stddev) {
+            return None;
+        }
+
+        Some(Self {
+            range: Normal::new(0.0, range_stddev).ok()?,
+            angular: Normal::new(0.0, angular_stddev).ok()?,
+        })
     }
 }
 
@@ -190,213 +222,281 @@ impl RaycastingSensorModel for LidarModel {
 mod tests {
     use super::*;
 
-    use std::f64::consts::{FRAC_PI_2, TAU};
+    use crate::prelude::RangeField;
+
+    use std::f64::consts::FRAC_PI_2;
 
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
-    /// A planar (2D-equivalent) model: one ring at 0° elevation, a 90° forward
-    /// sweep of 3 beams. Both endpoints are included, so the increment is 45° and
-    /// beams 0/1/2 point at -45°/0°/+45° — the middle beam (id 1) is forward.
-    /// Angles are radians, angular noise degrees, range noise meters; the noise
-    /// is small enough that the geometry assertions hold under any seed.
+    const SWEEP_PERIOD: f64 = 0.1;
+    const RANGE_MIN: f64 = 0.1;
+    const RANGE_MAX: f64 = 30.0;
+    /// Range noise standard deviation, in meters.
+    const RANGE_NOISE: f64 = 0.01;
+    /// Angular noise standard deviation, in radians (about 0.1°).
+    const ANGULAR_NOISE: f64 = 0.001_745;
+
+    /// Ten standard deviations of angular noise: a bound no seed crosses in
+    /// practice, and still far tighter than the 45° beam spacing.
+    const ANGULAR_BOUND: f64 = 10.0 * ANGULAR_NOISE;
+    /// Ten standard deviations of range noise, in meters.
+    const RANGE_BOUND: f64 = 10.0 * RANGE_NOISE;
+
+    /// A 3-beam, 90° forward sector over the given rings.
+    fn sector(ring_elevations: Vec<f64>) -> SphericalAngular {
+        SphericalAngular::from_field_of_view(ring_elevations, FRAC_PI_2, 3).expect("valid geometry")
+    }
+
+    fn noise() -> LidarNoise {
+        LidarNoise::new(RANGE_NOISE, ANGULAR_NOISE).expect("valid noise")
+    }
+
+    fn model(ring_elevations: Vec<f64>, sweep_period: f64) -> LidarModel {
+        LidarModel::new(
+            sector(ring_elevations),
+            sweep_period,
+            RANGE_MIN,
+            RANGE_MAX,
+            noise(),
+        )
+        .expect("configuration is valid")
+    }
+
+    /// A planar (2D) model: one ring at 0° over a 90° forward sector of 3 beams.
+    /// A sector puts a beam on each edge, so beams sit at -45°/0°/+45° and the
+    /// middle one (column 1) points straight ahead.
     fn planar_model() -> LidarModel {
-        LidarModel::new(FRAC_PI_2, 3, vec![0.0], 0.1, 30.0, 0.01, 0.1)
-            .expect("configuration is valid")
+        model(vec![0.0], SWEEP_PERIOD)
     }
 
-    /// Two rings tilted ±0.3 rad over the same 3-beam forward sweep. Ring 0 is up,
-    /// ring 1 is down; the forward beam of each carries flat id 1 and 4.
+    /// Two rings, 0.3 rad up and 0.3 rad down, over the same 3-beam sector.
     fn two_ring_model() -> LidarModel {
-        LidarModel::new(FRAC_PI_2, 3, vec![0.3, -0.3], 0.1, 30.0, 0.01, 0.1)
-            .expect("configuration is valid")
+        model(vec![0.3, -0.3], SWEEP_PERIOD)
     }
 
-    fn cloud_of(output: RaycastingOutput) -> PointCloud<Flu, ()> {
-        let RaycastingOutput::PointCloud(cloud) = output;
-        cloud
+    fn field_of(output: RaycastingOutput) -> RangeField<Flu> {
+        let RaycastingOutput::RangeField(field) = output;
+        field
     }
 
-    #[test]
-    fn projects_the_forward_beam_along_x() {
-        // Center beam (id 1): 0° azimuth, 0° elevation. A 5 m return lands near
-        // (5, 0, 0) — range rides x while the near-zero angles keep y and z small.
-        // Pins the range→x assignment: scaling x by the angle instead of the
-        // range drives x toward 0 and trips here.
-        let mut rng = StdRng::seed_from_u64(42);
-        let hits = [RayHit {
-            ray_id: 1,
-            distance: 5.0,
-        }];
-
-        let cloud = cloud_of(planar_model().process_hits(&hits, &mut rng));
-        assert_eq!(cloud.len(), 1);
-
-        let p = cloud.point(0).into_inner();
-        assert!((p.x - 5.0).abs() < 0.2, "x should track range, got {}", p.x);
-        assert!(p.y.abs() < 0.2, "forward-beam y should be ~0, got {}", p.y);
-        assert!(
-            p.z.abs() < 0.2,
-            "0° ring keeps z ~0 up to elevation noise, got {}",
-            p.z
-        );
+    fn hit(ray_id: u32, distance: f32) -> RayHit {
+        RayHit { ray_id, distance }
     }
 
-    #[test]
-    fn azimuth_sign_follows_the_beam() {
-        // id 0 is the -45° beam, id 2 the +45° beam. Positive azimuth points left
-        // (+y), so the near beam projects to -y and the far to +y; the tiny
-        // angular noise cannot flip a 45° bearing.
-        let mut rng = StdRng::seed_from_u64(7);
-        let hits = [
-            RayHit {
-                ray_id: 0,
-                distance: 4.0,
-            },
-            RayHit {
-                ray_id: 2,
-                distance: 4.0,
-            },
-        ];
-
-        let cloud = cloud_of(planar_model().process_hits(&hits, &mut rng));
-        assert_eq!(cloud.len(), 2);
-        assert!(cloud.point(0).into_inner().y < 0.0, "-45° beam → -y");
-        assert!(cloud.point(1).into_inner().y > 0.0, "+45° beam → +y");
-    }
-
-    #[test]
-    fn elevation_and_ring_index_lift_z() {
-        // One forward beam per ring: id 1 is ring 0 (+0.3 rad, up), id 4 is ring 1
-        // (-0.3 rad, down). Pins elevation→z and the flat-id ring recovery at
-        // once — a wrong split reads the other ring's elevation and flips z.
-        let mut rng = StdRng::seed_from_u64(11);
-        let hits = [
-            RayHit {
-                ray_id: 1,
-                distance: 6.0,
-            },
-            RayHit {
-                ray_id: 4,
-                distance: 6.0,
-            },
-        ];
-
-        let cloud = cloud_of(two_ring_model().process_hits(&hits, &mut rng));
-        assert_eq!(cloud.len(), 2);
-        assert!(cloud.point(0).into_inner().z > 0.0, "up ring → +z");
-        assert!(cloud.point(1).into_inner().z < 0.0, "down ring → -z");
-    }
-
-    #[test]
-    fn generate_rays_covers_every_ring_and_azimuth() {
-        // One ray per (ring, azimuth) cell, with contiguous flat ids 0..N.
-        let rays = two_ring_model().generate_rays();
-        assert_eq!(rays.len(), 2 * 3);
-
-        let ids: Vec<u32> = rays.iter().map(|r| r.id).collect();
-        assert_eq!(ids, (0..6).collect::<Vec<_>>());
-    }
-
-    #[test]
-    fn full_circle_omits_the_duplicate_seam_beam() {
-        // A limited FOV includes both endpoints, so the increment spans the whole
-        // sweep across (n - 1) gaps.
-        let limited = planar_model(); // 90° over 3 beams
-        assert!((limited.azimuth_increment - FRAC_PI_2 / 2.0).abs() < 1e-12);
-
-        // A full 360° sweep must not place a beam at both 0 and 2π (the same
-        // direction), so its increment divides by n, not (n - 1).
-        let spinning = LidarModel::new(TAU, 4, vec![0.0], 0.1, 30.0, 0.01, 0.1)
-            .expect("configuration is valid");
-        assert!((spinning.azimuth_increment - TAU / 4.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn stamps_per_point_time_by_azimuth() {
-        // The cloud is timed, and a later azimuth is sampled later in the sweep,
-        // so it carries a larger offset; id 0 opens the sweep at offset 0.
-        let mut rng = StdRng::seed_from_u64(3);
-        let hits = [
-            RayHit {
-                ray_id: 0,
-                distance: 2.0,
-            },
-            RayHit {
-                ray_id: 2,
-                distance: 2.0,
-            },
-        ];
-
-        let cloud = cloud_of(planar_model().process_hits(&hits, &mut rng));
-        let times = cloud.time().expect("built timed").as_slice();
-        assert_eq!(times.len(), 2);
-        assert_eq!(times[0], 0, "the first azimuth opens the sweep");
-        assert!(
-            times[1] > times[0],
-            "a later azimuth carries a larger offset"
-        );
-    }
-
-    #[test]
-    fn flash_capture_has_zero_time_offsets() {
-        // sweep_period 0 models a simultaneous capture: every point shares the
-        // reading's instant, so all offsets are zero even across azimuths.
-        let mut rng = StdRng::seed_from_u64(3);
-        let flash = LidarModel::new(FRAC_PI_2, 3, vec![0.0], 0.0, 30.0, 0.01, 0.1)
-            .expect("configuration is valid");
-        let hits = [
-            RayHit {
-                ray_id: 0,
-                distance: 2.0,
-            },
-            RayHit {
-                ray_id: 2,
-                distance: 2.0,
-            },
-        ];
-
-        let cloud = cloud_of(flash.process_hits(&hits, &mut rng));
-        assert_eq!(cloud.time().expect("built timed").as_slice(), &[0, 0]);
-    }
-
-    #[test]
-    fn emits_one_point_per_hit() {
-        let mut rng = StdRng::seed_from_u64(1);
-        let hits = [
-            RayHit {
-                ray_id: 0,
-                distance: 1.0,
-            },
-            RayHit {
-                ray_id: 1,
-                distance: 2.0,
-            },
-            RayHit {
-                ray_id: 2,
-                distance: 3.0,
-            },
-        ];
-
-        let cloud = cloud_of(planar_model().process_hits(&hits, &mut rng));
-        assert_eq!(cloud.len(), hits.len());
-    }
-
-    #[test]
-    fn no_hits_yields_an_empty_cloud() {
-        // Misses are dropped by the host, so an empty hit list is a valid scan
-        // that returned nothing; the builder must finalize to an empty cloud.
-        let mut rng = StdRng::seed_from_u64(1);
-        let cloud = cloud_of(planar_model().process_hits(&[], &mut rng));
-        assert!(cloud.is_empty());
+    /// Asserts every cell except those listed is a miss.
+    fn assert_misses_except(field: &RangeField<Flu>, filled: &[(usize, usize)]) {
+        let (rows, cols) = field.shape();
+        for row in 0..rows {
+            for col in 0..cols {
+                if !filled.contains(&(row, col)) {
+                    assert_eq!(
+                        field.range(row, col),
+                        Some(f64::INFINITY),
+                        "({row}, {col}) should be a miss"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
     fn new_rejects_unusable_configurations() {
-        // No beams, no rings, or non-positive noise each fail construction.
-        assert!(LidarModel::new(FRAC_PI_2, 0, vec![0.0], 0.1, 30.0, 0.01, 0.1).is_none());
-        assert!(LidarModel::new(FRAC_PI_2, 3, vec![], 0.1, 30.0, 0.01, 0.1).is_none());
-        assert!(LidarModel::new(FRAC_PI_2, 3, vec![0.0], 0.1, 30.0, 0.0, 0.1).is_none());
-        assert!(LidarModel::new(FRAC_PI_2, 3, vec![0.0], 0.1, 30.0, 0.01, 0.0).is_none());
+        let build = |sweep: f64, min: f64, max: f64| {
+            LidarModel::new(sector(vec![0.0]), sweep, min, max, noise())
+        };
+
+        assert!(build(-0.1, RANGE_MIN, RANGE_MAX).is_none());
+        assert!(build(f64::NAN, RANGE_MIN, RANGE_MAX).is_none());
+        assert!(build(SWEEP_PERIOD, -1.0, RANGE_MAX).is_none());
+        assert!(build(SWEEP_PERIOD, RANGE_MAX, RANGE_MIN).is_none());
+        assert!(build(SWEEP_PERIOD, RANGE_MIN, f64::INFINITY).is_none());
+    }
+
+    #[test]
+    fn noise_must_be_finite_and_strictly_positive() {
+        assert!(LidarNoise::new(RANGE_NOISE, ANGULAR_NOISE).is_some());
+        for bad in [0.0, -0.1, f64::NAN, f64::INFINITY] {
+            assert!(LidarNoise::new(bad, ANGULAR_NOISE).is_none(), "range {bad}");
+            assert!(LidarNoise::new(RANGE_NOISE, bad).is_none(), "angular {bad}");
+        }
+    }
+
+    #[test]
+    fn get_max_range_reports_the_upper_limit() {
+        assert_eq!(planar_model().get_max_range(), RANGE_MAX as f32);
+    }
+
+    #[test]
+    fn generate_rays_casts_one_unit_ray_per_beam_with_distinct_ids() {
+        let mut rng = StdRng::seed_from_u64(1);
+        let rays = two_ring_model().generate_rays(&mut rng);
+
+        assert_eq!(rays.len(), 2 * 3);
+        let mut ids: Vec<u32> = rays.iter().map(|ray| ray.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), rays.len(), "every beam needs its own id");
+
+        for ray in &rays {
+            let norm = ray.direction.norm();
+            assert!((norm - 1.0).abs() < 1e-12, "ray {} has norm {norm}", ray.id);
+        }
+    }
+
+    #[test]
+    fn ray_ids_round_trip_to_their_cell() {
+        let model = two_ring_model();
+        for row in 0..2 {
+            for col in 0..3 {
+                assert_eq!(model.cell_of(model.ray_id(row, col)), (row, col));
+            }
+        }
+    }
+
+    #[test]
+    fn each_ray_stays_near_its_beams_nominal_bearing() {
+        let model = two_ring_model();
+        let mut rng = StdRng::seed_from_u64(2);
+
+        for ray in model.generate_rays(&mut rng) {
+            let (row, col) = model.cell_of(ray.id);
+            let nominal = model.geometry.bearing(row, col).expect("in the grid");
+            let error = ray.direction.angle(&nominal);
+            assert!(
+                error < ANGULAR_BOUND,
+                "ray {} is {error} rad off its nominal bearing",
+                ray.id
+            );
+        }
+    }
+
+    #[test]
+    fn rays_carry_pointing_error() {
+        let model = two_ring_model();
+        let mut rng = StdRng::seed_from_u64(3);
+
+        let jittered = model.generate_rays(&mut rng).iter().any(|ray| {
+            let (row, col) = model.cell_of(ray.id);
+            let nominal = model.geometry.bearing(row, col).expect("in the grid");
+            ray.direction.angle(&nominal) > 0.0
+        });
+        assert!(jittered, "no ray was perturbed off its nominal bearing");
+    }
+
+    #[test]
+    fn a_seed_reproduces_the_same_rays_and_scan() {
+        let model = two_ring_model();
+        let run = |seed| {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let rays = model.generate_rays(&mut rng);
+            let field = field_of(model.process_hits(&[hit(4, 5.0)], &mut rng));
+            (
+                rays.iter().map(|ray| ray.direction).collect::<Vec<_>>(),
+                field.range(1, 1),
+            )
+        };
+        assert_eq!(run(7), run(7));
+    }
+
+    #[test]
+    fn a_scan_is_shaped_rings_by_azimuths_and_carries_the_limits() {
+        let mut rng = StdRng::seed_from_u64(4);
+        let field = field_of(two_ring_model().process_hits(&[], &mut rng));
+
+        assert_eq!(field.shape(), (2, 3));
+        assert_eq!(field.range_min(), RANGE_MIN);
+        assert_eq!(field.range_max(), RANGE_MAX);
+        assert_misses_except(&field, &[]);
+    }
+
+    #[test]
+    fn a_return_lands_in_its_beams_cell_with_range_noise() {
+        // Id 4 is ring 1, column 1: the lower ring's forward beam.
+        let mut rng = StdRng::seed_from_u64(5);
+        let field = field_of(two_ring_model().process_hits(&[hit(4, 5.0)], &mut rng));
+
+        let range = field.range(1, 1).expect("in the grid");
+        assert!(
+            (range - 5.0).abs() < RANGE_BOUND,
+            "range should be 5 m up to noise, got {range}"
+        );
+        assert_misses_except(&field, &[(1, 1)]);
+    }
+
+    #[test]
+    fn returns_outside_the_range_limits_are_misses() {
+        let mut rng = StdRng::seed_from_u64(6);
+        let too_far = hit(0, (RANGE_MAX + 1.0) as f32);
+        let too_near = hit(2, (RANGE_MIN / 10.0) as f32);
+        let field = field_of(planar_model().process_hits(&[too_far, too_near], &mut rng));
+
+        assert_misses_except(&field, &[]);
+    }
+
+    #[test]
+    fn a_nan_distance_from_the_host_is_a_miss() {
+        let mut rng = StdRng::seed_from_u64(8);
+        let field =
+            field_of(planar_model().process_hits(&[hit(0, f32::NAN), hit(1, 5.0)], &mut rng));
+
+        assert_misses_except(&field, &[(0, 1)]);
+    }
+
+    #[test]
+    fn a_ray_id_outside_the_grid_is_skipped() {
+        let mut rng = StdRng::seed_from_u64(7);
+        let field = field_of(planar_model().process_hits(&[hit(99, 5.0), hit(1, 5.0)], &mut rng));
+
+        assert_misses_except(&field, &[(0, 1)]);
+    }
+
+    #[test]
+    fn a_forward_return_deprojects_straight_ahead() {
+        // The planar model's forward beam is column 1. End to end through the
+        // field's deprojection, a 5 m return must land on +x.
+        let mut rng = StdRng::seed_from_u64(8);
+        let field = field_of(planar_model().process_hits(&[hit(1, 5.0)], &mut rng));
+
+        let cloud = field.to_point_cloud();
+        assert_eq!(cloud.len(), 1);
+        let p = cloud.point(0).into_inner();
+        assert!(
+            (p.x - 5.0).abs() < RANGE_BOUND,
+            "x should track range, got {}",
+            p.x
+        );
+        assert!(
+            p.y.abs() < 1e-12,
+            "the nominal forward beam has no y, got {}",
+            p.y
+        );
+        assert!(p.z.abs() < 1e-12, "a 0° ring has no z, got {}", p.z);
+    }
+
+    #[test]
+    fn a_spinning_scan_times_each_column_by_its_share_of_the_sweep() {
+        let mut rng = StdRng::seed_from_u64(9);
+        let field = field_of(planar_model().process_hits(&[], &mut rng));
+
+        let Some(ScanTiming::PerColumn(offsets)) = field.timing() else {
+            panic!("a spinning scan should be timed per column");
+        };
+        assert_eq!(offsets.len(), 3);
+        for (col, &offset) in offsets.iter().enumerate() {
+            let expected = col as f64 / 3.0 * SWEEP_PERIOD * NANOS_PER_SECOND;
+            assert!(
+                (offset as f64 - expected).abs() <= 1.0,
+                "column {col}: expected {expected} ns, got {offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_flash_scan_carries_no_timing() {
+        let mut rng = StdRng::seed_from_u64(10);
+        let field = field_of(model(vec![0.0], 0.0).process_hits(&[], &mut rng));
+
+        assert!(field.timing().is_none());
     }
 }

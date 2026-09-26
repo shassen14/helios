@@ -2,6 +2,7 @@
 kind = "Lidar"                                # <-- Matches SensorConfig::Lidar
 rate = 10.0
 transform = { translation = [1.5, 0.0, 0.5], rotation = [0.0, 0.0, 0.0]} # 1.5m forward, 0.5m up (FLU frame)
+range_min = 0.15                              # Blind zone: nearer returns are misses
 max_range = 50.0
 azimuth_fov = 360.0                           # Full-circle spinning scanner
 azimuth_beams = 360

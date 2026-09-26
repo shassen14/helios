@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 pub(crate) type State = DVector<f64>;
 pub(crate) type Control = DVector<f64>;
 
+/// Nanoseconds in one second: converts a duration in seconds to the integer
+/// nanosecond offsets that timed measurements store.
+pub const NANOS_PER_SECOND: f64 = 1e9;
+
 /// Monotonically increasing time in seconds (simulation or hardware clock).
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct MonotonicTime(pub f64);
