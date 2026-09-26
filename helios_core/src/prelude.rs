@@ -4,16 +4,17 @@ pub use crate::interchange::measurement::cloud::{
 };
 pub use crate::interchange::measurement::envelope::SensorReading;
 pub use crate::interchange::measurement::range_field::{
-    BeamAngles, DirectionModel, RangeField, RangeFieldBuildError, RangeFieldBuilder, ScanTiming,
-    SphericalAngular,
+    BeamAngles, DirectionModel, GridAttributes, LidarCell, LidarGrids, RangeField,
+    RangeFieldBuildError, RangeFieldBuilder, ScanTiming, SphericalAngular, NOTHING_RETURNED,
+    NO_INFORMATION,
 };
-pub use crate::interchange::motion::{Odometry, Twist};
-pub use crate::spatial::tf::TfProvider;
-pub use crate::spatial::primitives::{AgentId, MonotonicDuration, MonotonicTime};
 pub use crate::interchange::measurement::sensor::SensorPayload;
 pub use crate::interchange::measurement::sensor::{
     Acceleration, AngularRate, DepthImage, GpsPosition, GpsVelocity, MagneticField, RgbImage,
 };
+pub use crate::interchange::motion::{Odometry, Twist};
+pub use crate::spatial::primitives::{AgentId, MonotonicDuration, MonotonicTime};
+pub use crate::spatial::tf::TfProvider;
 
 // --- Core Data Structures (The "nouns" of the library) ---
 pub use crate::spatial::{FrameAwareState, FrameId, StateVariable};

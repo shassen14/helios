@@ -9,7 +9,9 @@
 //!
 //! [`RangeField`]: crate::prelude::RangeField
 
-use crate::prelude::{DirectionModel, RangeFieldBuilder, ScanTiming, SphericalAngular};
+use crate::prelude::{
+    DirectionModel, RangeFieldBuilder, ScanTiming, SphericalAngular, NO_INFORMATION,
+};
 use crate::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel, SensorRay};
 use crate::spatial::conventions::Flu;
 use crate::spatial::primitives::NANOS_PER_SECOND;
@@ -155,28 +157,43 @@ impl RaycastingSensorModel for LidarModel {
     ///
     /// Each return lands in its beam's *nominal* cell: the pointing error was
     /// already spent when the ray was cast, so it shows up here only through the
-    /// distance the ray travelled. A noisy range outside
-    /// `[range_min, range_max]` is a return the unit would not report, so its
-    /// cell stays a miss. Rays that hit nothing never arrive and stay misses too.
+    /// distance the ray travelled.
+    ///
+    /// A noisy range the unit would not report becomes one of two misses,
+    /// depending on what it says about the world:
+    /// - beyond `range_max`: the beam crossed empty space out to the limit, so
+    ///   the cell keeps [`NOTHING_RETURNED`], as does every ray that hit
+    ///   nothing and so never arrives;
+    /// - below `range_min`, or a non-finite distance from the host: something
+    ///   may be there but the unit cannot say where, so the cell is
+    ///   [`NO_INFORMATION`].
+    ///
     /// A ray id outside the grid came from a faulty host and is skipped rather
     /// than panicking.
+    ///
+    /// [`NOTHING_RETURNED`]: crate::prelude::NOTHING_RETURNED
     fn process_hits(&self, hits: &[RayHit], rng: &mut dyn RngCore) -> RaycastingOutput {
         let mut scan = self.empty_scan.clone();
         for hit in hits {
             let (row, col) = self.cell_of(hit.ray_id);
 
+            // Drawn for every hit, even one about to be discarded, so each hit
+            // consumes the same draws and a seed reproduces the whole scan.
             let noisy_range = hit.distance as f64 + self.noise.range.sample(rng);
 
-            // Written as "not inside" rather than "below min or above max" so a
-            // NaN distance from the host is dropped too: every comparison with
-            // NaN is false, so the two-sided form would let it through.
-            if !(self.range_min..=self.range_max).contains(&noisy_range) {
+            // Non-finite first: every comparison with NaN is false, so a NaN
+            // would slip past both limit checks below.
+            let range = if !noisy_range.is_finite() || noisy_range < self.range_min {
+                NO_INFORMATION
+            } else if noisy_range > self.range_max {
                 continue;
-            }
+            } else {
+                noisy_range
+            };
 
             // An id past the grid came from a faulty host: skip that return and
             // keep filling.
-            if scan.set(row, col, noisy_range).is_err() {
+            if scan.set(row, col, range).is_err() {
                 continue;
             }
         }
@@ -222,7 +239,7 @@ impl LidarNoise {
 mod tests {
     use super::*;
 
-    use crate::prelude::RangeField;
+    use crate::prelude::{RangeField, NOTHING_RETURNED};
 
     use std::f64::consts::FRAC_PI_2;
 
@@ -284,7 +301,7 @@ mod tests {
         RayHit { ray_id, distance }
     }
 
-    /// Asserts every cell except those listed is a miss.
+    /// Asserts every cell except those listed is [`NOTHING_RETURNED`].
     fn assert_misses_except(field: &RangeField<Flu>, filled: &[(usize, usize)]) {
         let (rows, cols) = field.shape();
         for row in 0..rows {
@@ -292,12 +309,18 @@ mod tests {
                 if !filled.contains(&(row, col)) {
                     assert_eq!(
                         field.range(row, col),
-                        Some(f64::INFINITY),
-                        "({row}, {col}) should be a miss"
+                        Some(NOTHING_RETURNED),
+                        "({row}, {col}) should have returned nothing"
                     );
                 }
             }
         }
+    }
+
+    /// Whether `(row, col)` holds [`NO_INFORMATION`]. Checked with `is_nan`
+    /// because `NaN` never compares equal, not even to itself.
+    fn has_no_information(field: &RangeField<Flu>, row: usize, col: usize) -> bool {
+        field.range(row, col).is_some_and(f64::is_nan)
     }
 
     #[test]
@@ -425,22 +448,78 @@ mod tests {
     }
 
     #[test]
-    fn returns_outside_the_range_limits_are_misses() {
+    fn a_return_beyond_range_max_is_nothing_returned() {
         let mut rng = StdRng::seed_from_u64(6);
         let too_far = hit(0, (RANGE_MAX + 1.0) as f32);
-        let too_near = hit(2, (RANGE_MIN / 10.0) as f32);
-        let field = field_of(planar_model().process_hits(&[too_far, too_near], &mut rng));
+        let field = field_of(planar_model().process_hits(&[too_far], &mut rng));
 
         assert_misses_except(&field, &[]);
     }
 
     #[test]
-    fn a_nan_distance_from_the_host_is_a_miss() {
-        let mut rng = StdRng::seed_from_u64(8);
-        let field =
-            field_of(planar_model().process_hits(&[hit(0, f32::NAN), hit(1, 5.0)], &mut rng));
+    fn a_return_below_range_min_is_no_information() {
+        let mut rng = StdRng::seed_from_u64(6);
+        let too_near = hit(2, (RANGE_MIN / 10.0) as f32);
+        let field = field_of(planar_model().process_hits(&[too_near], &mut rng));
 
+        assert!(has_no_information(&field, 0, 2));
+        assert_misses_except(&field, &[(0, 2)]);
+    }
+
+    /// A zero-distance hit whose noise draw is negative yields a range below
+    /// zero. `process_hits` draws exactly one sample per hit, so drawing from a
+    /// fresh RNG with the same seed predicts it.
+    #[test]
+    fn a_negative_noisy_range_is_no_information() {
+        let first_draw = |seed| noise().range.sample(&mut StdRng::seed_from_u64(seed));
+        let seed = (0..)
+            .find(|&seed| first_draw(seed) < 0.0)
+            .expect("half of all draws");
+
+        let mut rng = StdRng::seed_from_u64(seed);
+        let field = field_of(planar_model().process_hits(&[hit(1, 0.0)], &mut rng));
+
+        assert!(has_no_information(&field, 0, 1));
         assert_misses_except(&field, &[(0, 1)]);
+    }
+
+    #[test]
+    fn a_non_finite_distance_from_the_host_is_no_information() {
+        let mut rng = StdRng::seed_from_u64(8);
+        let hits = [hit(0, f32::NAN), hit(1, 5.0), hit(2, f32::INFINITY)];
+        let field = field_of(planar_model().process_hits(&hits, &mut rng));
+
+        assert!(has_no_information(&field, 0, 0));
+        assert!(has_no_information(&field, 0, 2));
+        assert!(field.range(0, 1).is_some_and(f64::is_finite));
+    }
+
+    /// A discarded hit still consumes its noise draw, so a later hit's range
+    /// does not depend on whether an earlier one was kept.
+    #[test]
+    fn a_discarded_hit_still_consumes_its_noise_draw() {
+        let model = planar_model();
+        let second_range = |first: RayHit| {
+            let mut rng = StdRng::seed_from_u64(9);
+            field_of(model.process_hits(&[first, hit(1, 5.0)], &mut rng)).range(0, 1)
+        };
+
+        let kept = second_range(hit(0, 5.0));
+        assert_eq!(second_range(hit(0, f32::NAN)), kept);
+        assert_eq!(second_range(hit(0, (RANGE_MAX + 1.0) as f32)), kept);
+    }
+
+    #[test]
+    fn no_information_cells_never_reach_the_cloud() {
+        let mut rng = StdRng::seed_from_u64(10);
+        let hits = [
+            hit(0, f32::NAN),
+            hit(1, 5.0),
+            hit(2, (RANGE_MIN / 10.0) as f32),
+        ];
+        let field = field_of(planar_model().process_hits(&hits, &mut rng));
+
+        assert_eq!(field.to_point_cloud().len(), 1);
     }
 
     #[test]

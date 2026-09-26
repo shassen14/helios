@@ -42,6 +42,12 @@ pub trait RaycastingSensorModel: Send + Sync + DynClone + Debug {
     ///
     /// The caller supplies the RNG so this function is deterministic under the project's
     /// seeded-PRNG rule (no `thread_rng` inside algorithm code).
+    ///
+    /// `hits` must arrive in the order [`generate_rays`](Self::generate_rays)
+    /// produced the rays. A host may leave out rays that hit nothing but must
+    /// not reorder the rest: noise is drawn per hit in arrival order, so the
+    /// same seed reproduces the same output only if a host casting rays in
+    /// parallel restores that order first.
     fn process_hits(&self, hits: &[RayHit], rng: &mut dyn rand::RngCore) -> RaycastingOutput;
 
     /// Returns the maximum effective range of the sensor in meters.

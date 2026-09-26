@@ -3,11 +3,13 @@
 //! A grid's size is known before any data arrives, and both hosts address cells
 //! by index — the sim by ray id, a hardware driver as packets land. So the
 //! builder is sized from its [`DirectionModel`] up front, starts with every cell
-//! a miss, and is filled in place by [`set`](RangeFieldBuilder::set) rather than
-//! appended to. Every check happens at the call that could get it wrong, which
-//! leaves [`finalize`](RangeFieldBuilder::finalize) nothing to reject.
+//! at [`NOTHING_RETURNED`], and is filled in place by
+//! [`set`](RangeFieldBuilder::set) rather than appended to. Per-cell attributes are filled the same way, through
+//! [`set_attributes`](RangeFieldBuilder::set_attributes). Every check happens at
+//! the call that could get it wrong, which leaves
+//! [`finalize`](RangeFieldBuilder::finalize) nothing to reject.
 
-use super::{DirectionModel, RangeField, ScanTiming};
+use super::{DirectionModel, GridAttributes, RangeField, ScanTiming, NOTHING_RETURNED};
 use crate::spatial::conventions::Frame;
 
 use std::{fmt, marker::PhantomData};
@@ -19,8 +21,12 @@ use nalgebra::DMatrix;
 /// Holds the same parts as the field it builds. A producer whose geometry,
 /// limits, and timing are fixed can build one blank builder at setup, where any
 /// rejection is a configuration error, and clone it for every scan.
-pub struct RangeFieldBuilder<F: Frame> {
+///
+/// `G` is the field's attribute bundle, filled separately from the ranges; a
+/// builder of ranges alone uses `()`.
+pub struct RangeFieldBuilder<F: Frame, G: GridAttributes = ()> {
     ranges: DMatrix<f64>,
+    attributes: G,
     direction: DirectionModel,
     range_min: f64,
     range_max: f64,
@@ -28,12 +34,18 @@ pub struct RangeFieldBuilder<F: Frame> {
     _frame: PhantomData<F>,
 }
 
-impl<F: Frame> RangeFieldBuilder<F> {
-    /// Starts a grid shaped by `direction`, with every cell a miss (`inf`).
+impl<F: Frame, G: GridAttributes> RangeFieldBuilder<F, G> {
+    /// Starts a grid shaped by `direction`, with every cell at
+    /// [`NOTHING_RETURNED`] and every attribute at its blank value. A producer
+    /// then writes only the beams that came back, plus
+    /// [`NO_INFORMATION`](super::NO_INFORMATION) for any beam it cannot vouch
+    /// for.
     ///
     /// Rejects range limits that are non-finite, negative, or leave no valid
     /// span (`range_min >= range_max`); consumers carve free space out to
-    /// `range_max`, so it must be a real distance.
+    /// `range_max`, so it must be a real distance. Also rejects a shape the
+    /// attribute bundle cannot represent, such as a lidar grid with more rows
+    /// than its ring index can count.
     pub fn new(
         direction: DirectionModel,
         range_min: f64,
@@ -51,9 +63,15 @@ impl<F: Frame> RangeFieldBuilder<F> {
         }
 
         let (rows, cols) = direction.shape();
+        let Some(blank) = G::blank(rows, cols) else {
+            return Err(RangeFieldBuildError::AttributeGridRejected {
+                shape: (rows, cols),
+            });
+        };
 
         Ok(Self {
-            ranges: DMatrix::from_element(rows, cols, f64::INFINITY),
+            ranges: DMatrix::from_element(rows, cols, NOTHING_RETURNED),
+            attributes: blank,
             direction,
             range_min,
             range_max,
@@ -81,40 +99,72 @@ impl<F: Frame> RangeFieldBuilder<F> {
 
     /// Writes `range` into cell `(row, col)`, replacing whatever was there.
     ///
-    /// The value is stored as given: the producer has already mapped a return
-    /// outside the sensor's limits to `inf`. An index outside the grid is an
+    /// The value is stored as given: the producer decides which sentinel a
+    /// return it would not report becomes, since only it knows why the return
+    /// failed. An index outside the grid is an
     /// error rather than a panic, because the index comes from the host; the
     /// caller skips that cell and keeps filling.
     pub fn set(&mut self, row: usize, col: usize, range: f64) -> Result<(), RangeFieldBuildError> {
-        let shape = self.ranges.shape();
-        let cell = self
-            .ranges
-            .get_mut((row, col))
-            .ok_or(RangeFieldBuildError::OutOfBounds { row, col, shape })?;
-        *cell = range;
+        self.check_cell(row, col)?;
+        self.ranges[(row, col)] = range;
+        Ok(())
+    }
+
+    /// Writes `cell` into the attributes at `(row, col)`, replacing whatever
+    /// was there.
+    ///
+    /// Independent of [`set`](Self::set): either may be written first, and
+    /// attributes are kept whatever the cell's range, since some sensors report
+    /// them for misses too (ambient light, for one). An index outside the grid
+    /// is an error rather than a panic, for the same reason as `set`.
+    pub fn set_attributes(
+        &mut self,
+        row: usize,
+        col: usize,
+        cell: G::Cell,
+    ) -> Result<(), RangeFieldBuildError> {
+        self.check_cell(row, col)?;
+        self.attributes.set(row, col, cell);
         Ok(())
     }
 
     /// Freezes the grid into a [`RangeField`]. Cannot fail: shape is fixed at
     /// construction and timing was checked when it was attached.
-    pub fn finalize(self) -> RangeField<F> {
+    pub fn finalize(self) -> RangeField<F, G> {
         RangeField::new(
             self.ranges,
+            self.attributes,
             self.direction,
             self.range_min,
             self.range_max,
             self.timing,
         )
     }
+
+    /// Whether `(row, col)` lies inside the grid. The ranges carry the shape
+    /// for the whole builder, since the attribute bundle is the same shape but
+    /// opaque to generic code.
+    fn check_cell(&self, row: usize, col: usize) -> Result<(), RangeFieldBuildError> {
+        let (rows, cols) = self.ranges.shape();
+        if row < rows && col < cols {
+            return Ok(());
+        }
+        Err(RangeFieldBuildError::OutOfBounds {
+            row,
+            col,
+            shape: (rows, cols),
+        })
+    }
 }
 
 // Hand-written rather than derived: `#[derive(Clone)]` would demand `F: Clone`
 // even though `F` lives only inside a `PhantomData`, and that impl is then
 // invisible to generic code that knows only `F: Frame`.
-impl<F: Frame> Clone for RangeFieldBuilder<F> {
+impl<F: Frame, G: GridAttributes> Clone for RangeFieldBuilder<F, G> {
     fn clone(&self) -> Self {
         Self {
             ranges: self.ranges.clone(),
+            attributes: self.attributes.clone(),
             direction: self.direction.clone(),
             range_min: self.range_min,
             range_max: self.range_max,
@@ -126,7 +176,7 @@ impl<F: Frame> Clone for RangeFieldBuilder<F> {
 
 // Hand-written for the same reason as `Clone`, and to print a summary rather
 // than every cell of the grid.
-impl<F: Frame> fmt::Debug for RangeFieldBuilder<F> {
+impl<F: Frame, G: GridAttributes> fmt::Debug for RangeFieldBuilder<F, G> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RangeFieldBuilder")
             .field("shape", &self.ranges.shape())
@@ -150,13 +200,16 @@ pub enum RangeFieldBuildError {
     },
     /// The timing held `got` offsets where its axis has `expected` entries.
     TimingLengthMismatch { expected: usize, got: usize },
+    /// The attribute bundle cannot represent a grid of this `(rows, cols)`
+    /// shape.
+    AttributeGridRejected { shape: (usize, usize) },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::interchange::measurement::range_field::SphericalAngular;
+    use crate::interchange::measurement::range_field::{LidarCell, LidarGrids, SphericalAngular};
     use crate::spatial::conventions::Flu;
 
     const RANGE_MIN: f64 = 0.1;
@@ -173,6 +226,10 @@ mod tests {
         RangeFieldBuilder::new(direction(), RANGE_MIN, RANGE_MAX).expect("valid limits")
     }
 
+    fn lidar_builder() -> RangeFieldBuilder<Flu, LidarGrids> {
+        RangeFieldBuilder::new(direction(), RANGE_MIN, RANGE_MAX).expect("valid limits")
+    }
+
     #[test]
     fn a_fresh_builder_is_all_misses_in_the_direction_models_shape() {
         let field = builder().finalize();
@@ -180,7 +237,7 @@ mod tests {
         assert_eq!(field.shape(), (2, 3));
         for row in 0..2 {
             for col in 0..3 {
-                assert_eq!(field.range(row, col), Some(f64::INFINITY));
+                assert_eq!(field.range(row, col), Some(NOTHING_RETURNED));
             }
         }
         assert!(field.to_point_cloud().is_empty());
@@ -227,7 +284,7 @@ mod tests {
         let field = builder.finalize();
 
         assert_eq!(field.range(1, 2), Some(7.5));
-        assert_eq!(field.range(0, 2), Some(f64::INFINITY));
+        assert_eq!(field.range(0, 2), Some(NOTHING_RETURNED));
     }
 
     #[test]
@@ -314,8 +371,136 @@ mod tests {
         let untouched = blank.finalize();
 
         assert_eq!(filled.range(0, 0), Some(4.0));
-        assert_eq!(untouched.range(0, 0), Some(f64::INFINITY));
+        assert_eq!(untouched.range(0, 0), Some(NOTHING_RETURNED));
         assert_eq!(filled.timing(), untouched.timing());
+    }
+
+    #[test]
+    fn a_fresh_lidar_builder_has_blank_intensity_everywhere() {
+        let field = lidar_builder().finalize();
+        for row in 0..2 {
+            for col in 0..3 {
+                assert!(field
+                    .attributes()
+                    .intensity(row, col)
+                    .is_some_and(f32::is_nan));
+            }
+        }
+    }
+
+    #[test]
+    fn new_rejects_a_shape_the_attribute_bundle_cannot_represent() {
+        // One ring more than a `u16` ring index can count.
+        let too_many_rings = vec![0.0; u16::MAX as usize + 2];
+        let direction = DirectionModel::SphericalAngular(
+            SphericalAngular::new(too_many_rings, 0.0, 0.5, 1).expect("valid geometry"),
+        );
+        let (rows, cols) = direction.shape();
+
+        assert_eq!(
+            RangeFieldBuilder::<Flu, LidarGrids>::new(direction.clone(), RANGE_MIN, RANGE_MAX)
+                .err(),
+            Some(RangeFieldBuildError::AttributeGridRejected {
+                shape: (rows, cols)
+            })
+        );
+        assert!(
+            RangeFieldBuilder::<Flu>::new(direction, RANGE_MIN, RANGE_MAX).is_ok(),
+            "the shape itself is fine without attributes"
+        );
+    }
+
+    #[test]
+    fn set_attributes_writes_the_cell_and_leaves_the_rest_blank() {
+        let mut builder = lidar_builder();
+        builder
+            .set_attributes(1, 2, LidarCell { intensity: 0.7 })
+            .expect("in bounds");
+        let field = builder.finalize();
+
+        assert_eq!(field.attributes().intensity(1, 2), Some(0.7));
+        assert!(field.attributes().intensity(0, 2).is_some_and(f32::is_nan));
+    }
+
+    #[test]
+    fn set_attributes_out_of_bounds_is_an_error_and_leaves_the_grid_untouched() {
+        let mut builder = lidar_builder();
+
+        assert_eq!(
+            builder.set_attributes(2, 0, LidarCell { intensity: 0.7 }),
+            Err(RangeFieldBuildError::OutOfBounds {
+                row: 2,
+                col: 0,
+                shape: (2, 3)
+            })
+        );
+        assert_eq!(
+            builder.set_attributes(0, 3, LidarCell { intensity: 0.7 }),
+            Err(RangeFieldBuildError::OutOfBounds {
+                row: 0,
+                col: 3,
+                shape: (2, 3)
+            })
+        );
+
+        let field = builder.finalize();
+        for row in 0..2 {
+            for col in 0..3 {
+                assert!(field
+                    .attributes()
+                    .intensity(row, col)
+                    .is_some_and(f32::is_nan));
+            }
+        }
+    }
+
+    #[test]
+    fn ranges_and_attributes_fill_in_either_order() {
+        let mut builder = lidar_builder();
+        builder
+            .set_attributes(0, 0, LidarCell { intensity: 0.2 })
+            .expect("in bounds");
+        builder.set(0, 0, 1.0).expect("in bounds");
+        builder.set(1, 2, 3.0).expect("in bounds");
+        builder
+            .set_attributes(1, 2, LidarCell { intensity: 0.9 })
+            .expect("in bounds");
+
+        let cloud = builder.finalize().to_point_cloud();
+        assert_eq!(cloud.attributes().intensity(), &[0.2, 0.9]);
+        assert_eq!(cloud.attributes().ring(), &[0, 1]);
+    }
+
+    #[test]
+    fn a_misses_attributes_survive_finalize_but_not_the_cloud() {
+        let mut builder = lidar_builder();
+        builder
+            .set_attributes(0, 1, LidarCell { intensity: 0.3 })
+            .expect("in bounds");
+        let field = builder.finalize();
+
+        assert_eq!(field.range(0, 1), Some(NOTHING_RETURNED));
+        assert_eq!(field.attributes().intensity(0, 1), Some(0.3));
+        assert!(field.to_point_cloud().attributes().intensity().is_empty());
+    }
+
+    /// Guards the `Clone` impl being generic over the bundle, not just `()`:
+    /// a producer clones one blank lidar builder per scan.
+    #[test]
+    fn a_lidar_clone_fills_its_attributes_independently_of_its_blank() {
+        let blank = lidar_builder();
+
+        let mut scan = blank.clone();
+        scan.set_attributes(0, 0, LidarCell { intensity: 0.5 })
+            .expect("in bounds");
+        let filled = scan.finalize();
+        let untouched = blank.finalize();
+
+        assert_eq!(filled.attributes().intensity(0, 0), Some(0.5));
+        assert!(untouched
+            .attributes()
+            .intensity(0, 0)
+            .is_some_and(f32::is_nan));
     }
 
     #[test]
