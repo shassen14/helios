@@ -8,11 +8,15 @@
 //!   frame-and-time stamp every measurement rides in.
 //! - [`sensor`] — the [`SensorPayload`](sensor::SensorPayload) trait and the
 //!   scalar/vector payload primitives that map onto a filter's `z`.
+//! - [`attribute`] — [`AttributeKey`](attribute::key::AttributeKey) and
+//!   [`AttributeSchema`](attribute::schema::AttributeSchema): the named, typed
+//!   columns a cloud or range field carries beyond geometry and time.
 //! - [`cloud`] — [`PointCloud`](cloud::PointCloud), the SoA world-sensor cloud.
 //! - [`range_field`] — [`RangeField`](range_field::RangeField), the organized
 //!   world-sensor grid: one range per beam, misses kept, addressed by a
 //!   [`DirectionModel`](range_field::DirectionModel).
 
+pub mod attribute;
 pub mod cloud;
 pub mod envelope;
 pub mod range_field;

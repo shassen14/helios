@@ -1,4 +1,11 @@
 // --- Core Abstractions (The main contracts of the library) ---
+pub use crate::interchange::measurement::attribute::canonical::{INTENSITY, RING};
+pub use crate::interchange::measurement::attribute::key::{
+    AttributeDescriptor, AttributeKey, BlankPolicy, TransformMarker,
+};
+pub use crate::interchange::measurement::attribute::schema::{
+    check_agreement, AttributeSchema, DefinitionConflict, RequirementError, SchemaError,
+};
 pub use crate::interchange::measurement::cloud::{
     AttributeColumns, LidarAttrs, LidarColumns, LidarColumnsBuilder, PointCloud, PointCloudBuilder,
 };
