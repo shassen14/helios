@@ -4,7 +4,7 @@
 //! Unlike the estimator / planner / follower nodes, this node has **no
 //! input builder**. The mapper's contract is small enough that the node
 //! reads the bus channels directly: `FrameAwareState @ ""` for the robot
-//! pose, and a configurable `Vec<SensorReading<PointCloud<Flu, ()>>>` channel
+//! pose, and a configurable `Vec<SensorReading<PointCloud<Flu>>>` channel
 //! for scans. Inventing a `MapperInputBuilder` trait would be one struct per
 //! mapper with zero shared logic.
 //!
@@ -74,7 +74,7 @@ use crate::stamped::{Health, Stamped};
 /// Pipeline node wrapping any 2D [`Mapper`] implementation.
 ///
 /// `scan_channel` is the bus channel carrying
-/// `Vec<SensorReading<PointCloud<Flu, ()>>>`; its instance name comes from the
+/// `Vec<SensorReading<PointCloud<Flu>>>`; its instance name comes from the
 /// mapper config and must match the channel the host's scan sensor
 /// publishes on. `map_channel` is the published map slot
 /// — convention `MapData @ "local"` for rolling-window grids, `@ "global"`
@@ -173,7 +173,7 @@ impl PipelineNode for OccupancyGridNode {
         //    Readings whose TF lookup fails are skipped; startup ordering
         //    can briefly leave a sensor without a TF entry.
         if let Some(stamped_scans) =
-            bus.read::<Vec<SensorReading<PointCloud<Flu, ()>>>>(self.scan_channel.clone())
+            bus.read::<Vec<SensorReading<PointCloud<Flu>>>>(self.scan_channel.clone())
         {
             let batch_ts = stamped_scans.timestamp.0;
             if batch_ts > self.last_integrated_ts.load(Ordering::Relaxed) {
@@ -319,7 +319,7 @@ mod tests {
         fn integrate_scan_2d(
             &mut self,
             _sensor_world_pose: &Isometry3<f64>,
-            _cloud: &PointCloud<Flu, ()>,
+            _cloud: &PointCloud<Flu>,
         ) {
             self.calls.lock().unwrap().integrate += 1;
         }
@@ -335,7 +335,7 @@ mod tests {
     struct EmptyMapper;
     impl Mapper for EmptyMapper {
         fn recenter(&mut self, _: &Isometry3<f64>) {}
-        fn integrate_scan_2d(&mut self, _: &Isometry3<f64>, _: &PointCloud<Flu, ()>) {}
+        fn integrate_scan_2d(&mut self, _: &Isometry3<f64>, _: &PointCloud<Flu>) {}
         fn get_map(&mut self) -> Option<&MapData> {
             None
         }
@@ -344,14 +344,14 @@ mod tests {
     // --- Helpers ---
 
     fn scan_sensor_channel() -> SensorChannel {
-        SensorChannel::of::<Vec<SensorReading<PointCloud<Flu, ()>>>>()
+        SensorChannel::of::<Vec<SensorReading<PointCloud<Flu>>>>()
     }
 
     /// A sensor-frame (FLU) scan from planar `(x, y)` returns at `z = 0`.
-    fn flu_cloud(points: &[(f64, f64)]) -> PointCloud<Flu, ()> {
-        let mut builder = PointCloudBuilder::<Flu>::new();
+    fn flu_cloud(points: &[(f64, f64)]) -> PointCloud<Flu> {
+        let mut builder = PointCloudBuilder::<Flu>::default();
         for &(x, y) in points {
-            builder.push(Point::new(x, y, 0.0), ());
+            builder.push(Point::new(x, y, 0.0));
         }
         builder.finalize().expect("equal-length cloud")
     }
@@ -414,7 +414,7 @@ mod tests {
         bus.write(state_channel(), stamped).unwrap();
     }
 
-    fn publish_scans(bus: &PortBus, readings: Vec<SensorReading<PointCloud<Flu, ()>>>) {
+    fn publish_scans(bus: &PortBus, readings: Vec<SensorReading<PointCloud<Flu>>>) {
         let stamped = Stamped {
             value: readings,
             timestamp: MonotonicTime(0.0),

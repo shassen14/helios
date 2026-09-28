@@ -209,6 +209,7 @@ pub enum RangeFieldBuildError {
 mod tests {
     use super::*;
 
+    use crate::interchange::measurement::attribute::canonical::{INTENSITY, RING};
     use crate::interchange::measurement::range_field::{LidarCell, LidarGrids, SphericalAngular};
     use crate::spatial::conventions::Flu;
 
@@ -467,8 +468,8 @@ mod tests {
             .expect("in bounds");
 
         let cloud = builder.finalize().to_point_cloud();
-        assert_eq!(cloud.attributes().intensity(), &[0.2, 0.9]);
-        assert_eq!(cloud.attributes().ring(), &[0, 1]);
+        assert_eq!(cloud.attribute(INTENSITY), Some([0.2, 0.9].as_slice()));
+        assert_eq!(cloud.attribute(RING), Some([0, 1].as_slice()));
     }
 
     #[test]
@@ -481,7 +482,10 @@ mod tests {
 
         assert_eq!(field.range(0, 1), Some(NOTHING_RETURNED));
         assert_eq!(field.attributes().intensity(0, 1), Some(0.3));
-        assert!(field.to_point_cloud().attributes().intensity().is_empty());
+        assert_eq!(
+            field.to_point_cloud().attribute(INTENSITY),
+            Some([].as_slice())
+        );
     }
 
     /// Guards the `Clone` impl being generic over the bundle, not just `()`:

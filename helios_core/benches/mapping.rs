@@ -1,10 +1,10 @@
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use nalgebra::Isometry3;
 
+use helios_core::mapping::{Mapper, OccupancyGridMapper};
 use helios_core::prelude::{PointCloud, PointCloudBuilder};
 use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::quantities::Point;
-use helios_core::mapping::{Mapper, OccupancyGridMapper};
 
 // =========================================================================
 // == Fixtures ==
@@ -21,14 +21,15 @@ fn pose(x: f64, y: f64) -> Isometry3<f64> {
 
 /// Synthesise a 360-beam scan (one ray per degree) from the robot origin outward
 /// to `range_m`, all rays along the ground plane.
-fn make_scan(range_m: f64) -> PointCloud<Flu, ()> {
-    let mut builder = PointCloudBuilder::<Flu>::new();
+fn make_scan(range_m: f64) -> PointCloud<Flu> {
+    let mut builder = PointCloudBuilder::<Flu>::default();
     for deg in 0..360 {
         let angle = (deg as f64).to_radians();
-        builder.push(
-            Point::new(angle.cos() * range_m, angle.sin() * range_m, 0.0),
-            (),
-        );
+        builder.push(Point::new(
+            angle.cos() * range_m,
+            angle.sin() * range_m,
+            0.0,
+        ));
     }
     builder.finalize().expect("equal-length cloud")
 }

@@ -30,7 +30,7 @@ type FieldBatch<F, G> = Vec<SensorReading<RangeField<F, G>>>;
 
 /// The batch the node writes: one cloud per input field, same sensors, same
 /// order.
-type CloudBatch<F, G> = Vec<SensorReading<PointCloud<F, <G as GridAttributes>::Cloud>>>;
+type CloudBatch<F> = Vec<SensorReading<PointCloud<F>>>;
 
 /// Reads [`RangeField`]s from a host sensor channel and publishes the matching
 /// [`PointCloud`]s on another sensor channel: a flattened scan is still a
@@ -55,7 +55,7 @@ impl<F: Frame, G: GridAttributes> DeprojectNode<F, G> {
     /// derived sensor channel `output`, both named by the agent profile.
     pub(crate) fn new(name: impl Into<Arc<str>>, input: &str, output: &str) -> Self {
         let input = SensorChannel::named::<FieldBatch<F, G>>(input);
-        let output = SensorChannel::named::<CloudBatch<F, G>>(output);
+        let output = SensorChannel::named::<CloudBatch<F>>(output);
         let descriptor = AlgorithmNodePortDescriptor::new()
             .input_sensor(input.clone())
             .output_sensor(output.clone())
@@ -98,7 +98,7 @@ impl<F: Frame, G: GridAttributes> PipelineNode for DeprojectNode<F, G> {
             return;
         }
 
-        let clouds: CloudBatch<F, G> = fields
+        let clouds: CloudBatch<F> = fields
             .value
             .iter()
             .map(|reading| SensorReading {
@@ -178,7 +178,7 @@ mod tests {
     }
 
     fn output_key() -> ChannelKey {
-        SensorChannel::named::<CloudBatch<Flu, ()>>(OUTPUT).into()
+        SensorChannel::named::<CloudBatch<Flu>>(OUTPUT).into()
     }
 
     fn bus_for(node: &Node) -> PortBus {
@@ -236,8 +236,8 @@ mod tests {
         }
     }
 
-    fn read_output(bus: &PortBus) -> Option<Arc<Stamped<CloudBatch<Flu, ()>>>> {
-        bus.read::<CloudBatch<Flu, ()>>(output_key())
+    fn read_output(bus: &PortBus) -> Option<Arc<Stamped<CloudBatch<Flu>>>> {
+        bus.read::<CloudBatch<Flu>>(output_key())
     }
 
     #[test]
@@ -338,7 +338,7 @@ mod tests {
         bus.write(
             output_key(),
             Stamped {
-                value: CloudBatch::<Flu, ()>::new(),
+                value: CloudBatch::<Flu>::new(),
                 timestamp: MonotonicTime(0.0),
                 health: Health::Ok,
                 producer: sentinel_producer,

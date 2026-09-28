@@ -40,7 +40,7 @@ fn build_occupancy_grid_2d(ctx: MapperBuildContext) -> Result<Box<dyn PipelineNo
     ));
 
     let scan_channel =
-        SensorChannel::named::<Vec<SensorReading<PointCloud<Flu, ()>>>>(scan_channel.as_str());
+        SensorChannel::named::<Vec<SensorReading<PointCloud<Flu>>>>(scan_channel.as_str());
     // The map is published on a channel named by this layer's config-map key, so
     // two layers of one kind don't collide on a single producer slot and a
     // planner selects the layer it consumes by that same key.

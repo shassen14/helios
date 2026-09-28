@@ -13,9 +13,7 @@
 //! conversion to the cloud.
 
 use super::{DirectionModel, GridAttributes};
-use crate::interchange::measurement::cloud::{
-    AttributeColumns, Attributes, PointCloud, PointColumns, TimeColumn,
-};
+use crate::interchange::measurement::cloud::{PointCloud, PointColumns, TimeColumn};
 use crate::spatial::{conventions::Frame, quantities::Point};
 
 use std::{fmt, marker::PhantomData, sync::Arc};
@@ -142,21 +140,21 @@ impl<F: Frame, G: GridAttributes> RangeField<F, G> {
     /// taking its row's or column's offset; an untimed field yields an untimed
     /// cloud.
     ///
-    /// Each point carries its cell's attributes, converted by
-    /// [`GridAttributes::cloud_row`]; a miss's attributes stay in the field and
-    /// never reach the cloud.
+    /// Each point carries its cell's attributes, built by
+    /// [`GridAttributes::gather`] from the kept cells; a miss's attributes stay
+    /// in the field and never reach the cloud.
     ///
     /// Assembles the cloud's columns directly rather than through the cloud
     /// builder. Every kept cell pushes its time offset (when timed) before its
-    /// coordinates and attributes, and a cell with no offset is skipped whole,
-    /// so the geometry, time, and attribute columns cannot fall out of step.
-    /// Going through the builder would only add a length check this loop cannot
-    /// fail.
-    pub fn to_point_cloud(&self) -> PointCloud<F, G::Cloud> {
+    /// coordinates and its `(row, col)`, and a cell with no offset is skipped
+    /// whole, so the geometry, time, and kept-cell lists cannot fall out of
+    /// step. Going through the builder would only add checks this loop cannot
+    /// fail, behind a `Result` the caller would have to handle.
+    pub fn to_point_cloud(&self) -> PointCloud<F> {
         let (rows, cols) = self.shape();
         let mut coords = Vec::with_capacity(rows * cols * 3);
         let mut times = Vec::with_capacity(rows * cols);
-        let mut attributes = <G::Cloud as Attributes>::Builder::default();
+        let mut kept = Vec::with_capacity(rows * cols);
 
         for col in 0..cols {
             for row in 0..rows {
@@ -172,14 +170,14 @@ impl<F: Frame, G: GridAttributes> RangeField<F, G> {
                 }
 
                 coords.extend(point.raw());
-                attributes.push(self.attributes.cloud_row(row, col));
+                kept.push((row, col));
             }
         }
 
         let geometry = PointColumns::from_arc(Arc::new(Matrix3xX::from_column_slice(&coords)));
         let time = self.timing.is_some().then(|| TimeColumn::from_vec(times));
 
-        PointCloud::from_columns(geometry, attributes.finish(), time)
+        PointCloud::from_columns(geometry, self.attributes.gather(&kept), time)
     }
 }
 
@@ -260,7 +258,7 @@ impl ScanTiming {
 mod tests {
     use super::*;
 
-    use crate::interchange::measurement::cloud::LidarColumns;
+    use crate::interchange::measurement::attribute::canonical::{INTENSITY, RING};
     use crate::interchange::measurement::range_field::{LidarCell, LidarGrids, SphericalAngular};
     use crate::spatial::conventions::Flu;
 
@@ -302,15 +300,15 @@ mod tests {
     /// row 0     0.1     0.2     0.3
     /// row 1     0.4     0.5     0.6
     /// ```
-    const INTENSITY: [[f32; 3]; 2] = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]];
+    const CELL_INTENSITY: [[f32; 3]; 2] = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]];
 
-    /// [`field_with`]'s grid carrying [`INTENSITY`] in a lidar bundle.
+    /// [`field_with`]'s grid carrying [`CELL_INTENSITY`] in a lidar bundle.
     fn lidar_field_with(timing: Option<ScanTiming>) -> RangeField<Flu, LidarGrids> {
         let plain = field_with(timing);
         let (rows, cols) = plain.shape();
 
         let mut grids = LidarGrids::blank(rows, cols).expect("two rings fit a ring index");
-        for (row, intensities) in INTENSITY.iter().enumerate() {
+        for (row, intensities) in CELL_INTENSITY.iter().enumerate() {
             for (col, &intensity) in intensities.iter().enumerate() {
                 grids.set(row, col, LidarCell { intensity });
             }
@@ -326,9 +324,19 @@ mod tests {
         )
     }
 
-    fn assert_attribute_columns_match(cloud: &PointCloud<Flu, LidarColumns>) {
-        assert_eq!(cloud.attributes().intensity().len(), cloud.len());
-        assert_eq!(cloud.attributes().ring().len(), cloud.len());
+    fn assert_attribute_columns_match(cloud: &PointCloud<Flu>) {
+        assert_eq!(
+            cloud.attribute(INTENSITY).map(<[f32]>::len),
+            Some(cloud.len())
+        );
+        assert_eq!(cloud.attribute(RING).map(<[u16]>::len), Some(cloud.len()));
+    }
+
+    /// The cloud's intensity column; every lidar cloud carries one.
+    fn intensity_of(cloud: &PointCloud<Flu>) -> &[f32] {
+        cloud
+            .attribute(INTENSITY)
+            .expect("a lidar cloud carries intensity")
     }
 
     fn assert_close(actual: Point<Flu>, expected: Point<Flu>) {
@@ -434,32 +442,25 @@ mod tests {
 
         let expected_intensity: Vec<f32> = HITS_COLUMN_MAJOR
             .iter()
-            .map(|&(row, col)| INTENSITY[row][col])
+            .map(|&(row, col)| CELL_INTENSITY[row][col])
             .collect();
         let expected_ring: Vec<u16> = HITS_COLUMN_MAJOR
             .iter()
             .map(|&(row, _)| u16::try_from(row).expect("small test grid"))
             .collect();
 
-        assert_eq!(
-            cloud.attributes().intensity(),
-            expected_intensity.as_slice()
-        );
-        assert_eq!(cloud.attributes().ring(), expected_ring.as_slice());
+        assert_eq!(intensity_of(&cloud), expected_intensity.as_slice());
+        assert_eq!(cloud.attribute(RING), Some(expected_ring.as_slice()));
     }
 
     #[test]
     fn a_miss_keeps_its_attributes_in_the_field_but_not_the_cloud() {
         let field = lidar_field_with(None);
-        let miss_intensity = INTENSITY[0][1];
+        let miss_intensity = CELL_INTENSITY[0][1];
         assert_eq!(field.range(0, 1), Some(NOTHING_RETURNED));
 
         assert_eq!(field.attributes().intensity(0, 1), Some(miss_intensity));
-        assert!(!field
-            .to_point_cloud()
-            .attributes()
-            .intensity()
-            .contains(&miss_intensity));
+        assert!(!intensity_of(&field.to_point_cloud()).contains(&miss_intensity));
     }
 
     #[test]
@@ -478,7 +479,24 @@ mod tests {
 
         assert_eq!(cloud.len(), 3);
         assert_attribute_columns_match(&cloud);
-        assert!(!cloud.attributes().intensity().contains(&INTENSITY[0][2]));
+        assert!(!intensity_of(&cloud).contains(&CELL_INTENSITY[0][2]));
+    }
+
+    #[test]
+    fn a_field_of_ranges_alone_yields_a_cloud_with_no_attributes() {
+        let cloud = field_with(None).to_point_cloud();
+
+        assert_eq!(cloud.len(), HITS_COLUMN_MAJOR.len());
+        assert!(cloud.schema().is_empty());
+        assert_eq!(cloud.attribute(INTENSITY), None);
+    }
+
+    #[test]
+    fn a_lidar_cloud_declares_intensity_then_ring() {
+        let cloud = lidar_field_with(None).to_point_cloud();
+        let names: Vec<&str> = cloud.schema().iter().map(|d| d.name()).collect();
+
+        assert_eq!(names, [INTENSITY.name(), RING.name()]);
     }
 
     #[test]

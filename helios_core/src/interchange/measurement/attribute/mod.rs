@@ -10,9 +10,15 @@
 //!   column, and its erased [`AttributeDescriptor`](key::AttributeDescriptor).
 //! - [`canonical`] — the core measurement keys ([`INTENSITY`](canonical::INTENSITY),
 //!   [`RING`](canonical::RING)).
+//! - [`column`](mod@column) — [`AttributeColumn`](column::AttributeColumn),
+//!   one column's values with its element type as a variant.
 //! - [`schema`] — [`AttributeSchema`](schema::AttributeSchema), the columns a
 //!   payload carries, and the build-time checks over schemas.
+//! - [`table`] — [`AttributeTable`](table::AttributeTable), a schema with its
+//!   columns, read by key.
 
 pub mod canonical;
+pub mod column;
 pub mod key;
 pub mod schema;
+pub mod table;

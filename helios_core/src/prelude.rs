@@ -6,9 +6,7 @@ pub use crate::interchange::measurement::attribute::key::{
 pub use crate::interchange::measurement::attribute::schema::{
     check_agreement, AttributeSchema, DefinitionConflict, RequirementError, SchemaError,
 };
-pub use crate::interchange::measurement::cloud::{
-    AttributeColumns, LidarAttrs, LidarColumns, LidarColumnsBuilder, PointCloud, PointCloudBuilder,
-};
+pub use crate::interchange::measurement::cloud::{PointCloud, PointCloudBuilder};
 pub use crate::interchange::measurement::envelope::SensorReading;
 pub use crate::interchange::measurement::range_field::{
     BeamAngles, DirectionModel, GridAttributes, LidarCell, LidarGrids, RangeField,

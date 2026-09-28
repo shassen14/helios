@@ -8,36 +8,39 @@
 //! live behind [`Arc`], so cloning a cloud — or deriving one that shares a
 //! frame-invariant column — copies a pointer, not the data.
 
+use crate::interchange::measurement::attribute::key::{AttributeKey, Element, TransformMarker};
+use crate::interchange::measurement::attribute::schema::AttributeSchema;
+use crate::interchange::measurement::attribute::table::AttributeTable;
 use crate::spatial::{conventions::Frame, quantities::Point, transforms::Transform};
-use super::Attributes;
 
 use core::fmt;
 use std::{marker::PhantomData, sync::Arc};
 
 use nalgebra::Matrix3xX;
 
-/// A set of points in frame `F`, each optionally carrying attributes `A` and a
-/// per-point time offset.
+/// A set of points in frame `F`, each optionally carrying attribute values and
+/// a per-point time offset.
 ///
 /// The three parts are stored as parallel columns of equal length: `geometry`
-/// (the positions), `attributes` (intensity, ring, … — `()` for bare geometry),
-/// and `time`. `A` is not "the sensor" but the *schema* of columns the cloud
-/// carries, and — since the bus routes by type — its channel identity, so two
-/// sensors with different attributes cannot collide on one channel.
+/// (the positions), `attributes` (intensity, ring, … — an empty table for bare
+/// geometry), and `time`. Attributes are data, not part of the type: every
+/// cloud in frame `F` is the same type whatever its sensor reports, so a
+/// consumer that needs fewer attributes than a producer offers reads the same
+/// channel. What a cloud carries is its [`schema`](Self::schema).
 ///
 /// The equal-length invariant is established once, by the builder's `finalize`,
 /// and every method here preserves it.
-pub struct PointCloud<F: Frame, A: Attributes = ()> {
+pub struct PointCloud<F: Frame> {
     geometry: PointColumns<F>,
-    attributes: A,
+    attributes: AttributeTable,
     time: Option<TimeColumn>,
 }
 
 // Hand-written rather than derived: `#[derive(Clone)]` would demand `F: Clone`
 // even though `F` lives only inside a `PhantomData`, and that impl is then
 // invisible to generic code that knows only `F: Frame`. Stating the true bound
-// keeps the clone available there. `A: Clone` holds via the `Attributes` bound.
-impl<F: Frame, A: Attributes> Clone for PointCloud<F, A> {
+// keeps the clone available there.
+impl<F: Frame> Clone for PointCloud<F> {
     fn clone(&self) -> Self {
         Self {
             geometry: self.geometry.clone(),
@@ -48,11 +51,10 @@ impl<F: Frame, A: Attributes> Clone for PointCloud<F, A> {
 }
 
 // Hand-written for the same reason as `Clone`, plus one of its own: a derive
-// would demand `A: Debug` — which an attribute bundle like `LidarColumns` is
-// not — and `F: Debug`, and would then field-dump every coordinate column. This
-// prints a summary of cardinality and mode instead, so a cloud stays legible
-// inside a larger debug print without constraining `A` or dumping the data.
-impl<F: Frame, A: Attributes> fmt::Debug for PointCloud<F, A> {
+// would demand `F: Debug` and would then field-dump every coordinate and
+// attribute value. This prints a summary of cardinality and mode instead, so a
+// cloud stays legible inside a larger debug print.
+impl<F: Frame> fmt::Debug for PointCloud<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PointCloud")
             .field("len", &self.len())
@@ -61,7 +63,7 @@ impl<F: Frame, A: Attributes> fmt::Debug for PointCloud<F, A> {
     }
 }
 
-impl<F: Frame, A: Attributes> PointCloud<F, A> {
+impl<F: Frame> PointCloud<F> {
     /// Assembles a cloud from already-frozen columns, trusting them to be
     /// equal-length.
     ///
@@ -72,7 +74,7 @@ impl<F: Frame, A: Attributes> PointCloud<F, A> {
     /// re-check it, so the gate lives in exactly one place.
     pub(crate) fn from_columns(
         geometry: PointColumns<F>,
-        attributes: A,
+        attributes: AttributeTable,
         time: Option<TimeColumn>,
     ) -> Self {
         Self {
@@ -93,16 +95,23 @@ impl<F: Frame, A: Attributes> PointCloud<F, A> {
         self.len() == 0
     }
 
-    /// The geometry column. A consumer that needs only positions (an endpoint
-    /// mapper, ICP) takes this instead of the whole cloud, sidestepping any
-    /// dependence on the attribute type `A`.
+    /// The geometry column, for a consumer that needs only positions (an
+    /// endpoint mapper, ICP).
     pub fn geometry(&self) -> &PointColumns<F> {
         &self.geometry
     }
 
-    /// The attribute columns.
-    pub fn attributes(&self) -> &A {
-        &self.attributes
+    /// The attributes this cloud carries: what a consumer may read through
+    /// [`attribute`](Self::attribute).
+    pub fn schema(&self) -> &AttributeSchema {
+        self.attributes.schema()
+    }
+
+    /// The values of the attribute `key` names, one per point, or `None` when
+    /// the cloud does not carry it under `key`'s whole definition (see
+    /// [`AttributeTable::get`]).
+    pub fn attribute<T: Element>(&self, key: AttributeKey<T>) -> Option<&[T]> {
+        self.attributes.get(key)
     }
 
     /// The per-point time offsets, present only when the producer recorded them.
@@ -141,12 +150,13 @@ impl<F: Frame, A: Attributes> PointCloud<F, A> {
     ///
     /// The struct-of-arrays payoff: it rotates the whole geometry matrix in a
     /// single matmul and translates each column, computing `R·G + t` in two
-    /// matrix ops rather than an N-length loop over `Transform::act`. Attributes
-    /// and time are frame-invariant — a rotation does not touch intensity or a
-    /// timestamp — so they are shared into the result unchanged. Only the frame
-    /// tag and the geometry buffer differ, which is why this returns
-    /// `PointCloud<To, A>` rather than `Self`.
-    pub fn reexpress<To: Frame>(&self, t: &Transform<F, To>) -> PointCloud<To, A> {
+    /// matrix ops rather than an N-length loop over `Transform::act`. Time is
+    /// frame-invariant, and so is every attribute whose marker is
+    /// [`Scalar`](TransformMarker::Scalar) — a rotation does not touch intensity
+    /// or a timestamp — so they are shared into the result unchanged. Only the
+    /// frame tag and the geometry buffer differ, which is why this returns
+    /// `PointCloud<To>` rather than `Self`.
+    pub fn reexpress<To: Frame>(&self, t: &Transform<F, To>) -> PointCloud<To> {
         let iso = t.into_inner();
         let rotation = iso.rotation.to_rotation_matrix();
         let translation = iso.translation.vector;
@@ -155,6 +165,15 @@ impl<F: Frame, A: Attributes> PointCloud<F, A> {
         rotated
             .column_iter_mut()
             .for_each(|mut col| col += translation);
+
+        // Every marker today is frame-invariant, so the table is shared
+        // unchanged. No wildcard arm: a marker for a column that changes under
+        // rotation (a surface normal) will not compile until handled here.
+        for descriptor in self.attributes.schema().iter() {
+            match descriptor.marker() {
+                TransformMarker::Scalar => {}
+            }
+        }
 
         PointCloud {
             geometry: PointColumns::from_arc(Arc::new(rotated)),
@@ -279,55 +298,53 @@ impl TimeColumn {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::prelude::{AttributeColumns, LidarAttrs, LidarColumns, LidarColumnsBuilder};
+    use crate::interchange::measurement::attribute::canonical::{INTENSITY, RING};
+    use crate::interchange::measurement::attribute::column::AttributeColumn;
     use crate::spatial::conventions::{Enu, Flu};
     use crate::spatial::transforms::Rotation;
 
     use nalgebra::{Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
 
-    /// A bare-geometry `Enu` cloud from `(x, y, z)` triples, no attributes or
-    /// time. Built directly through the crate-private constructors so the cloud's
-    /// own operations are exercised in isolation from the builder.
-    fn bare(points: &[[f64; 3]]) -> PointCloud<Enu, ()> {
-        // Column-major flat fill: three contiguous values become one column, and
-        // an empty slice yields a valid 3x0 matrix (unlike `from_columns`, which
-        // rejects zero columns).
+    /// `(x, y, z)` triples as frame-tagged geometry. Column-major flat fill:
+    /// three contiguous values become one column, and an empty slice yields a
+    /// valid 3x0 matrix (unlike `Matrix3xX::from_columns`, which rejects zero
+    /// columns).
+    fn geometry<F: Frame>(points: &[[f64; 3]]) -> PointColumns<F> {
         let flat: Vec<f64> = points.iter().flatten().copied().collect();
-        PointCloud {
-            geometry: PointColumns::from_arc(Arc::new(Matrix3xX::from_column_slice(&flat))),
-            attributes: (),
-            time: None,
-        }
+        PointColumns::from_arc(Arc::new(Matrix3xX::from_column_slice(&flat)))
     }
 
-    /// Three `Enu` points along +X carrying lidar attributes and a time column,
-    /// so a test can prove the non-geometry columns travel with an operation.
-    fn lidar_cloud() -> PointCloud<Enu, LidarColumns> {
-        let geometry = Matrix3xX::from_columns(&[
-            Vector3::new(1.0, 0.0, 0.0),
-            Vector3::new(2.0, 0.0, 0.0),
-            Vector3::new(3.0, 0.0, 0.0),
-        ]);
-        let mut builder = LidarColumnsBuilder::default();
-        builder.push(LidarAttrs {
-            intensity: 0.1,
-            ring: 0,
-        });
-        builder.push(LidarAttrs {
-            intensity: 0.2,
-            ring: 1,
-        });
-        builder.push(LidarAttrs {
-            intensity: 0.3,
-            ring: 2,
-        });
-        PointCloud {
-            geometry: PointColumns::from_arc(Arc::new(geometry)),
-            attributes: builder.finish(),
-            time: Some(TimeColumn::from_vec(vec![10, 20, 30])),
-        }
+    /// Intensity and ring columns, one row per `(intensity, ring)` pair.
+    fn lidar_table(rows: &[(f32, u16)]) -> AttributeTable {
+        let schema = AttributeSchema::new([INTENSITY.descriptor(), RING.descriptor()])
+            .expect("distinct core keys");
+        let intensity: Vec<f32> = rows.iter().map(|&(i, _)| i).collect();
+        let ring: Vec<u16> = rows.iter().map(|&(_, r)| r).collect();
+        AttributeTable::new(
+            schema,
+            vec![
+                AttributeColumn::F32(intensity.into()),
+                AttributeColumn::U16(ring.into()),
+            ],
+        )
+    }
+
+    /// A bare-geometry `Enu` cloud, no attributes or time. Built through the
+    /// crate-private constructor so the cloud's own operations are exercised
+    /// in isolation from the builder.
+    fn bare(points: &[[f64; 3]]) -> PointCloud<Enu> {
+        PointCloud::from_columns(geometry(points), AttributeTable::default(), None)
+    }
+
+    /// Three `Enu` points along +X carrying intensity, ring, and time, so a
+    /// test can prove the non-geometry columns travel with an operation.
+    fn lidar_cloud() -> PointCloud<Enu> {
+        PointCloud::from_columns(
+            geometry(&[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0]]),
+            lidar_table(&[(0.1, 0), (0.2, 1), (0.3, 2)]),
+            Some(TimeColumn::from_vec(vec![10, 20, 30])),
+        )
     }
 
     #[test]
@@ -343,6 +360,21 @@ mod tests {
     }
 
     #[test]
+    fn bare_cloud_carries_an_empty_schema_and_reads_no_attribute() {
+        let cloud = bare(&[[1.0, 0.0, 0.0]]);
+        assert!(cloud.schema().is_empty());
+        assert_eq!(cloud.attribute(INTENSITY), None);
+    }
+
+    #[test]
+    fn attribute_reads_each_column_by_its_key() {
+        let cloud = lidar_cloud();
+        assert_eq!(cloud.schema().len(), 2);
+        assert_eq!(cloud.attribute(INTENSITY), Some(&[0.1, 0.2, 0.3][..]));
+        assert_eq!(cloud.attribute(RING), Some(&[0, 1, 2][..]));
+    }
+
+    #[test]
     fn map_geometry_replaces_geometry_and_shares_the_rest() {
         let shifted = lidar_cloud().map_geometry(|g| g.map(|v| v + 100.0));
 
@@ -352,7 +384,7 @@ mod tests {
             Vector3::new(101.0, 100.0, 100.0)
         );
         // Attributes and time pass through untouched.
-        assert_eq!(shifted.attributes().intensity(), &[0.1, 0.2, 0.3]);
+        assert_eq!(shifted.attribute(INTENSITY), Some(&[0.1, 0.2, 0.3][..]));
         assert_eq!(shifted.time().unwrap().as_slice(), &[10, 20, 30]);
     }
 
@@ -366,33 +398,33 @@ mod tests {
             )),
             Translation3::new(10.0, 0.0, 0.0),
         );
+        let source: PointCloud<Flu> = PointCloud::from_columns(
+            geometry(&[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            lidar_table(&[(0.5, 7), (0.6, 8)]),
+            Some(TimeColumn::from_vec(vec![1, 2])),
+        );
 
-        let geometry =
-            Matrix3xX::from_columns(&[Vector3::new(1.0, 0.0, 0.0), Vector3::new(0.0, 1.0, 0.0)]);
-        let mut builder = LidarColumnsBuilder::default();
-        builder.push(LidarAttrs {
-            intensity: 0.5,
-            ring: 7,
-        });
-        builder.push(LidarAttrs {
-            intensity: 0.6,
-            ring: 8,
-        });
-        let source: PointCloud<Flu, LidarColumns> = PointCloud {
-            geometry: PointColumns::from_arc(Arc::new(geometry)),
-            attributes: builder.finish(),
-            time: Some(TimeColumn::from_vec(vec![1, 2])),
-        };
-
-        let out: PointCloud<Enu, LidarColumns> = source.reexpress(&transform);
+        let out: PointCloud<Enu> = source.reexpress(&transform);
 
         // (1,0,0) turns to (0,1,0), then shifts +10 in X to (10,1,0).
         assert!((out.point(0).into_inner() - Vector3::new(10.0, 1.0, 0.0)).norm() < 1e-9);
         // (0,1,0) turns to (-1,0,0), then shifts +10 in X to (9,0,0).
         assert!((out.point(1).into_inner() - Vector3::new(9.0, 0.0, 0.0)).norm() < 1e-9);
-        // Attributes and time are frame-invariant and ride along unchanged.
-        assert_eq!(out.attributes().ring(), &[7, 8]);
+        // Scalar attributes and time are frame-invariant and ride along.
+        assert_eq!(out.schema().len(), 2);
+        assert_eq!(out.attribute(RING), Some(&[7, 8][..]));
         assert_eq!(out.time().unwrap().as_slice(), &[1, 2]);
+    }
+
+    /// Scalar columns are shared into the re-expressed cloud, not copied.
+    #[test]
+    fn reexpress_shares_scalar_columns() {
+        let source = lidar_cloud();
+        let out: PointCloud<Enu> = source.reexpress(&Transform::identity());
+
+        let before = source.attribute(INTENSITY).unwrap();
+        let after = out.attribute(INTENSITY).unwrap();
+        assert_eq!(before.as_ptr(), after.as_ptr());
     }
 
     #[test]
@@ -404,8 +436,8 @@ mod tests {
         assert_eq!(kept.point(0).into_inner(), Vector3::new(1.0, 0.0, 0.0));
         assert_eq!(kept.point(1).into_inner(), Vector3::new(3.0, 0.0, 0.0));
         // Attributes and time filter to the same rows — proof of lockstep.
-        assert_eq!(kept.attributes().intensity(), &[0.1, 0.3]);
-        assert_eq!(kept.attributes().ring(), &[0, 2]);
+        assert_eq!(kept.attribute(INTENSITY), Some(&[0.1, 0.3][..]));
+        assert_eq!(kept.attribute(RING), Some(&[0, 2][..]));
         assert_eq!(kept.time().unwrap().as_slice(), &[10, 30]);
     }
 
@@ -414,21 +446,22 @@ mod tests {
         assert_eq!(lidar_cloud().select(&[true, true, true]).len(), 3);
     }
 
+    /// An empty result still declares its attributes: a consumer checks the
+    /// schema, not whether any point survived.
     #[test]
     fn select_all_false_yields_a_valid_empty_cloud() {
         let empty = lidar_cloud().select(&[false, false, false]);
 
         assert!(empty.is_empty());
-        assert!(empty.attributes().intensity().is_empty());
+        assert_eq!(empty.schema().len(), 2);
+        assert_eq!(empty.attribute(INTENSITY), Some(&[][..]));
         assert_eq!(empty.time().unwrap().len(), 0);
     }
 
     #[test]
     fn debug_summarizes_cardinality_and_mode() {
-        // Formatting an `A = ()` cloud and a `LidarColumns` cloud — which is not
-        // itself `Debug` — both compile and run, proving the impl carries no
-        // `A: Debug` bound. The summary reports the point count and whether a
-        // time column is present, not the coordinate data.
+        // The summary reports the point count and whether a time column is
+        // present, not the coordinate or attribute data.
         let untimed = format!("{:?}", bare(&[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]));
         assert!(untimed.contains("PointCloud"));
         assert!(untimed.contains("len: 2"));
@@ -436,6 +469,6 @@ mod tests {
 
         let timed = format!("{:?}", lidar_cloud());
         assert!(timed.contains("len: 3"));
-        assert!(timed.contains("timed: true")); // lidar_cloud() carries a TimeColumn
+        assert!(timed.contains("timed: true"));
     }
 }

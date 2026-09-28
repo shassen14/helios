@@ -1009,8 +1009,8 @@ fn deproject_preprocessing_turns_host_range_fields_into_clouds() {
 
     let clouds = pipeline
         .bus()
-        .read::<Vec<SensorReading<PointCloud<Flu, ()>>>>(
-            SensorChannel::named::<Vec<SensorReading<PointCloud<Flu, ()>>>>(output).into(),
+        .read::<Vec<SensorReading<PointCloud<Flu>>>>(
+            SensorChannel::named::<Vec<SensorReading<PointCloud<Flu>>>>(output).into(),
         )
         .expect("the deproject node must publish its cloud batch");
     assert_eq!(clouds.timestamp, batch_time);

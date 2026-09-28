@@ -84,18 +84,63 @@ pub enum ElementType {
     U16,
 }
 
+/// Seals [`Element`] and pairs each element type with its
+/// [`AttributeColumn`] variant.
+///
+/// The trait is `pub` inside a private module: nameable nowhere outside this
+/// file, so no other crate can implement it (and therefore [`Element`]). Its
+/// methods are still callable wherever a `T: Element` bound is in scope, which
+/// is how a table stores and reads columns generically.
 mod sealed {
-    pub trait Sealed {}
-    impl Sealed for f32 {}
-    impl Sealed for u16 {}
+    use super::super::column::AttributeColumn;
+
+    use std::sync::Arc;
+
+    pub trait Sealed: Sized {
+        /// `values` as the column variant for this element type.
+        fn wrap(values: Arc<[Self]>) -> AttributeColumn;
+
+        /// The column's values, if it is this element type's variant.
+        fn view(column: &AttributeColumn) -> Option<&[Self]>;
+    }
+
+    // Each `view` names every variant rather than using a wildcard arm, so a
+    // new element type fails to compile here until its impls are revisited.
+
+    impl Sealed for f32 {
+        fn wrap(values: Arc<[Self]>) -> AttributeColumn {
+            AttributeColumn::F32(values)
+        }
+
+        fn view(column: &AttributeColumn) -> Option<&[Self]> {
+            match column {
+                AttributeColumn::F32(values) => Some(values),
+                AttributeColumn::U16(_) => None,
+            }
+        }
+    }
+
+    impl Sealed for u16 {
+        fn wrap(values: Arc<[Self]>) -> AttributeColumn {
+            AttributeColumn::U16(values)
+        }
+
+        fn view(column: &AttributeColumn) -> Option<&[Self]> {
+            match column {
+                AttributeColumn::U16(values) => Some(values),
+                AttributeColumn::F32(_) => None,
+            }
+        }
+    }
 }
 
 /// A Rust type that may be an attribute column's element.
 ///
 /// Sealed, unlike `Frame`: serialization and grid pre-fill must handle every
 /// element type, so third parties may define new *keys* but never new
-/// *element types*. Adding one is a core change: a variant on [`ElementType`],
-/// an impl here and on `sealed::Sealed`, and the blank capabilities it supports.
+/// *element types*. Adding one is a core change: a variant on [`ElementType`]
+/// and on [`AttributeColumn`](super::column::AttributeColumn), an impl here
+/// and on `sealed::Sealed`, and the blank capabilities it supports.
 pub trait Element: sealed::Sealed + Copy + Send + Sync + 'static {
     const ELEMENT_TYPE: ElementType;
 }
@@ -172,7 +217,9 @@ impl AttributeDescriptor {
 
 #[cfg(test)]
 mod tests {
+    use super::sealed::Sealed;
     use super::*;
+    use crate::interchange::measurement::attribute::column::AttributeColumn;
 
     const FLOAT_KEY: AttributeKey<f32> =
         AttributeKey::nan_blank("test_float", TransformMarker::Scalar);
@@ -205,5 +252,41 @@ mod tests {
         let nan = AttributeKey::<f32>::nan_blank("x", TransformMarker::Scalar);
         let none = AttributeKey::<f32>::no_blank("x", TransformMarker::Scalar);
         assert_ne!(nan.descriptor(), none.descriptor());
+    }
+
+    /// Wrapping then viewing as the same element type returns the same
+    /// values, shared rather than copied.
+    #[test]
+    fn wrap_then_view_round_trips() {
+        let floats: std::sync::Arc<[f32]> = [0.25, f32::NAN].into();
+        let column = f32::wrap(floats.clone());
+        let viewed = f32::view(&column).expect("an f32 column views as f32");
+        assert_eq!(viewed.as_ptr(), floats.as_ptr());
+
+        let integers = u16::wrap([7, 8].into());
+        assert_eq!(u16::view(&integers), Some(&[7, 8][..]));
+    }
+
+    /// A column never views as another element type: this is what makes a
+    /// typed read through the wrong key return `None` rather than misread.
+    #[test]
+    fn view_refuses_another_element_type() {
+        let floats = f32::wrap([0.5].into());
+        let integers = u16::wrap([1].into());
+        assert_eq!(u16::view(&floats), None);
+        assert_eq!(f32::view(&integers), None);
+    }
+
+    /// Each element type wraps into the variant its `ELEMENT_TYPE` names.
+    #[test]
+    fn wrap_agrees_with_element_type() {
+        fn variant(column: &AttributeColumn) -> ElementType {
+            match column {
+                AttributeColumn::F32(_) => ElementType::F32,
+                AttributeColumn::U16(_) => ElementType::U16,
+            }
+        }
+        assert_eq!(variant(&f32::wrap([].into())), f32::ELEMENT_TYPE);
+        assert_eq!(variant(&u16::wrap([].into())), u16::ELEMENT_TYPE);
     }
 }

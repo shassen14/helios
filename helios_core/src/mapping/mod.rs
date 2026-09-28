@@ -41,11 +41,7 @@ pub trait Mapper: Send + Sync {
     /// reading's timestamp (composed by the caller from the robot's state
     /// and the static sensor→robot transform). `cloud` is in the sensor's
     /// FLU frame; the mapper transforms it into the world frame internally.
-    fn integrate_scan_2d(
-        &mut self,
-        sensor_world_pose: &Isometry3<f64>,
-        cloud: &PointCloud<Flu, ()>,
-    );
+    fn integrate_scan_2d(&mut self, sensor_world_pose: &Isometry3<f64>, cloud: &PointCloud<Flu>);
 
     /// Return the current map, if one has been produced.
     ///

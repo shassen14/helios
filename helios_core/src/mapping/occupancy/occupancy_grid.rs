@@ -237,11 +237,7 @@ impl Mapper for OccupancyGridMapper {
         self.recenter_on(t.x, t.y);
     }
 
-    fn integrate_scan_2d(
-        &mut self,
-        sensor_world_pose: &Isometry3<f64>,
-        cloud: &PointCloud<Flu, ()>,
-    ) {
+    fn integrate_scan_2d(&mut self, sensor_world_pose: &Isometry3<f64>, cloud: &PointCloud<Flu>) {
         let robot_wx = sensor_world_pose.translation.x;
         let robot_wy = sensor_world_pose.translation.y;
         // Sensor-FLU 2D points → world ENU via the sensor pose (z = 0 plane).
@@ -331,7 +327,7 @@ fn bresenham(x0: i64, y0: i64, x1: i64, y1: i64) -> impl Iterator<Item = (i64, i
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::PointCloudBuilder;
+    use crate::prelude::{AttributeSchema, PointCloudBuilder, INTENSITY, RING};
     use crate::spatial::quantities::Point;
 
     fn make_mapper(width_m: f64, height_m: f64) -> OccupancyGridMapper {
@@ -340,10 +336,10 @@ mod tests {
 
     /// A sensor-frame (FLU) scan from planar `(x, y)` returns, each stored at
     /// `z = 0` — the shape a 2D lidar produces.
-    fn flu_cloud(points: &[(f64, f64)]) -> PointCloud<Flu, ()> {
-        let mut builder = PointCloudBuilder::<Flu>::new();
+    fn flu_cloud(points: &[(f64, f64)]) -> PointCloud<Flu> {
+        let mut builder = PointCloudBuilder::<Flu>::default();
         for &(x, y) in points {
-            builder.push(Point::new(x, y, 0.0), ());
+            builder.push(Point::new(x, y, 0.0));
         }
         builder.finalize().expect("equal-length cloud")
     }
@@ -567,6 +563,33 @@ mod tests {
         let occ_idx = 5 * m.width + 7;
         assert!(m.log_odds[occ_idx] > 0.0);
         assert!(m.map_dirty);
+    }
+
+    /// The superset case: a lidar cloud carrying intensity and ring reaches a
+    /// mapper that reads only geometry, and integrates exactly as the same
+    /// points would without the extra columns.
+    #[test]
+    fn mapper_integrates_a_cloud_with_attributes_it_does_not_read() {
+        let points = [(2.0, 0.0), (0.0, 3.0), (-1.0, -2.0)];
+
+        let schema = AttributeSchema::new([INTENSITY.descriptor(), RING.descriptor()])
+            .expect("distinct attribute names");
+        let mut builder = PointCloudBuilder::<Flu>::new(schema);
+        for &(x, y) in &points {
+            builder.push(Point::new(x, y, 0.0));
+        }
+        builder.attach(INTENSITY, vec![0.2, 0.9, 0.5]);
+        builder.attach(RING, vec![0, 0, 0]);
+        let lidar_cloud = builder.finalize().expect("columns match the schema");
+
+        let sensor_pose = Isometry3::identity();
+        let mut with_attributes = make_mapper(10.0, 10.0);
+        let mut geometry_only = make_mapper(10.0, 10.0);
+        with_attributes.integrate_scan_2d(&sensor_pose, &lidar_cloud);
+        geometry_only.integrate_scan_2d(&sensor_pose, &flu_cloud(&points));
+
+        assert!(with_attributes.log_odds.iter().any(|&l| l > 0.0));
+        assert_eq!(with_attributes.log_odds, geometry_only.log_odds);
     }
 
     #[test]

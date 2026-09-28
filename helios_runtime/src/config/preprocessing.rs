@@ -21,7 +21,7 @@ pub enum PreprocessingConfig {
         /// Host sensor channel carrying `Vec<SensorReading<RangeField<Flu>>>`.
         input: String,
         /// Sensor channel this node writes
-        /// `Vec<SensorReading<PointCloud<Flu, ()>>>` to. Consumers such as a
+        /// `Vec<SensorReading<PointCloud<Flu>>>` to. Consumers such as a
         /// mapper's `scan_channel` name it; it must not reuse a host channel's
         /// name.
         output: String,
