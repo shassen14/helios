@@ -19,7 +19,7 @@ pub(super) fn build_preprocessing_node(
 ) -> Box<dyn PipelineNode> {
     match config {
         PreprocessingConfig::Deproject { input, output } => {
-            Box::new(DeprojectNode::<Flu, ()>::new(name, input, output))
+            Box::new(DeprojectNode::<Flu>::new(name, input, output))
         }
     }
 }

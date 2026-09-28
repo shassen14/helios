@@ -6,6 +6,8 @@
 //! with the model that addresses it. Results are raw vectors in the model's
 //! native sensor frame; the grid that carries the model attaches the frame tag.
 
+use crate::interchange::measurement::attribute::{canonical::RING, key::AttributeDescriptor};
+
 use nalgebra::Vector3;
 
 use std::f64::consts::TAU;
@@ -39,6 +41,19 @@ impl DirectionModel {
     pub fn is_planar(&self) -> bool {
         match self {
             Self::SphericalAngular(model) => model.is_planar(),
+        }
+    }
+
+    /// The attributes flattening derives from each cell's position in the
+    /// grid, rather than reads from a grid the producer wrote. They follow the
+    /// grid's own columns in the cloud, in this order.
+    ///
+    /// What a row or column means depends on the geometry, so each model
+    /// decides: a lidar's rows are its lasers, while an image's rows are only
+    /// positions.
+    pub(crate) fn derived_attributes(&self) -> &'static [AttributeDescriptor] {
+        match self {
+            Self::SphericalAngular(_) => SphericalAngular::DERIVED_ATTRIBUTES,
         }
     }
 
@@ -76,8 +91,14 @@ pub struct SphericalAngular {
 }
 
 impl SphericalAngular {
+    /// Each row is one laser, so a point's row becomes its [`RING`]: an exact
+    /// laser identity, which no re-expression disturbs, unlike elevation.
+    /// [`new`](Self::new) rejects a ring count whose indices would not fit.
+    const DERIVED_ATTRIBUTES: &'static [AttributeDescriptor] = &[RING.descriptor()];
+
     /// Builds the geometry, or returns `None` if it addresses no cells (no
-    /// rings or no azimuths) or any angle is non-finite.
+    /// rings or no azimuths), any angle is non-finite, or it has more rings
+    /// than a [`RING`] value can number.
     pub fn new(
         ring_elevations: Vec<f64>,
         azimuth_min: f64,
@@ -90,7 +111,10 @@ impl SphericalAngular {
                 .iter()
                 .all(|elevation| elevation.is_finite());
 
-        if n_azimuth == 0 || ring_elevations.is_empty() || !angles_finite {
+        // Each ring's index becomes its `RING` value, so the last must fit.
+        let rings_numberable = u16::try_from(ring_elevations.len().saturating_sub(1)).is_ok();
+
+        if n_azimuth == 0 || ring_elevations.is_empty() || !angles_finite || !rings_numberable {
             return None;
         }
 
@@ -292,6 +316,19 @@ mod tests {
         assert!(SphericalAngular::new(vec![0.0, f64::NAN], 0.0, 0.1, 4).is_none());
         assert!(SphericalAngular::new(vec![0.0], f64::INFINITY, 0.1, 4).is_none());
         assert!(SphericalAngular::new(vec![0.0], 0.0, f64::NAN, 4).is_none());
+    }
+
+    #[test]
+    fn new_rejects_only_more_rings_than_a_ring_value_can_number() {
+        let most_rings = usize::from(u16::MAX) + 1;
+        assert!(SphericalAngular::new(vec![0.0; most_rings], 0.0, 0.1, 1).is_some());
+        assert!(SphericalAngular::new(vec![0.0; most_rings + 1], 0.0, 0.1, 1).is_none());
+    }
+
+    #[test]
+    fn a_spherical_model_derives_exactly_the_ring() {
+        let model = DirectionModel::SphericalAngular(three_ring_quarter_sweep());
+        assert_eq!(model.derived_attributes(), &[RING.descriptor()]);
     }
 
     #[test]

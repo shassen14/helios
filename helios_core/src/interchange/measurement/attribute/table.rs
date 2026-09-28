@@ -64,6 +64,22 @@ impl AttributeTable {
 
         Self { schema, columns }
     }
+
+    /// The writable counterpart of [`get`](Self::get). Crate-private: a
+    /// published table never changes, and only core's builders fill one.
+    pub(crate) fn get_mut<T: Element>(&mut self, key: AttributeKey<T>) -> Option<&mut [T]> {
+        self.schema
+            .iter()
+            .position(|d| d == key.descriptor())
+            .and_then(|i| self.columns.get_mut(i))
+            .and_then(T::view_mut)
+    }
+
+    /// The columns in schema order, with the schema dropped, for a caller
+    /// that re-wraps them under another schema.
+    pub(crate) fn into_columns(self) -> Vec<AttributeColumn> {
+        self.columns
+    }
 }
 
 #[cfg(test)]
@@ -91,6 +107,42 @@ mod tests {
                 AttributeColumn::U16([0, 1, 2].into()),
             ],
         )
+    }
+
+    #[test]
+    fn get_mut_writes_through_to_get() {
+        let mut table = lidar();
+        table.get_mut(RING).expect("lidar table carries ring")[1] = 7;
+        assert_eq!(table.get(RING), Some([0, 7, 2].as_slice()));
+    }
+
+    #[test]
+    fn get_mut_refuses_a_same_named_key_of_another_definition() {
+        let mut table = lidar();
+        assert!(table.get_mut(INTEGER_INTENSITY).is_none());
+        assert!(table.get_mut(UNBLANKED_INTENSITY).is_none());
+    }
+
+    /// The copy-on-write guarantee a cloned blank grid relies on: writing
+    /// through one clone never changes the other.
+    #[test]
+    fn get_mut_on_a_clone_leaves_the_original_untouched() {
+        let original = lidar();
+        let mut copy = original.clone();
+        copy.get_mut(INTENSITY)
+            .expect("lidar table carries intensity")[0] = 0.9;
+
+        assert_eq!(copy.get(INTENSITY), Some([0.9, 0.2, 0.3].as_slice()));
+        assert_eq!(original.get(INTENSITY), Some([0.1, 0.2, 0.3].as_slice()));
+    }
+
+    #[test]
+    fn into_columns_hands_back_the_columns_in_schema_order() {
+        let columns = lidar().into_columns();
+        assert!(matches!(
+            columns.as_slice(),
+            [AttributeColumn::F32(_), AttributeColumn::U16(_)]
+        ));
     }
 
     #[test]

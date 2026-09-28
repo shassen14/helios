@@ -14,7 +14,7 @@ use crate::{
 };
 
 use helios_core::{
-    prelude::{GridAttributes, PointCloud, RangeField, SensorReading, TfProvider},
+    prelude::{PointCloud, RangeField, SensorReading, TfProvider},
     spatial::conventions::Frame,
 };
 
@@ -26,7 +26,7 @@ use std::{
 use atomic_float::AtomicF64;
 
 /// The batch the node reads: every range field the host produced this cycle.
-type FieldBatch<F, G> = Vec<SensorReading<RangeField<F, G>>>;
+type FieldBatch<F> = Vec<SensorReading<RangeField<F>>>;
 
 /// The batch the node writes: one cloud per input field, same sensors, same
 /// order.
@@ -36,10 +36,11 @@ type CloudBatch<F> = Vec<SensorReading<PointCloud<F>>>;
 /// [`PointCloud`]s on another sensor channel: a flattened scan is still a
 /// measurement, so consumers read it exactly as they would a host channel.
 ///
-/// Generic over the frame and grid attributes so any organized sensor can use
-/// it; the payload types are derived from `F` and `G` inside [`Self::new`], so
-/// a caller cannot wire channels whose types disagree with the conversion.
-pub(crate) struct DeprojectNode<F: Frame, G: GridAttributes> {
+/// Generic over the frame so any organized sensor can use it, whatever
+/// attributes its fields carry; the payload types are derived from `F` inside
+/// [`Self::new`], so a caller cannot wire channels whose types disagree with
+/// the conversion.
+pub(crate) struct DeprojectNode<F: Frame> {
     name: Arc<str>,
     descriptor: PortDescriptor,
     input: ChannelKey,
@@ -47,14 +48,14 @@ pub(crate) struct DeprojectNode<F: Frame, G: GridAttributes> {
     /// Timestamp of the last batch converted; the bus is last-known-good, so
     /// without this every tick would re-publish the same batch.
     last_processed: AtomicF64,
-    _data: PhantomData<fn() -> (F, G)>,
+    _data: PhantomData<fn() -> F>,
 }
 
-impl<F: Frame, G: GridAttributes> DeprojectNode<F, G> {
+impl<F: Frame> DeprojectNode<F> {
     /// Builds a node reading the host sensor channel `input` and writing the
     /// derived sensor channel `output`, both named by the agent profile.
     pub(crate) fn new(name: impl Into<Arc<str>>, input: &str, output: &str) -> Self {
-        let input = SensorChannel::named::<FieldBatch<F, G>>(input);
+        let input = SensorChannel::named::<FieldBatch<F>>(input);
         let output = SensorChannel::named::<CloudBatch<F>>(output);
         let descriptor = AlgorithmNodePortDescriptor::new()
             .input_sensor(input.clone())
@@ -72,7 +73,7 @@ impl<F: Frame, G: GridAttributes> DeprojectNode<F, G> {
     }
 }
 
-impl<F: Frame, G: GridAttributes> PipelineNode for DeprojectNode<F, G> {
+impl<F: Frame> PipelineNode for DeprojectNode<F> {
     fn name(&self) -> &str {
         &self.name
     }
@@ -89,7 +90,7 @@ impl<F: Frame, G: GridAttributes> PipelineNode for DeprojectNode<F, G> {
     /// is skipped, and an empty slot (cold start) publishes nothing. An empty
     /// batch is converted to an empty batch, so the output mirrors the input.
     fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
-        let Some(fields) = bus.read::<FieldBatch<F, G>>(self.input.clone()) else {
+        let Some(fields) = bus.read::<FieldBatch<F>>(self.input.clone()) else {
             return;
         };
 
@@ -154,7 +155,7 @@ mod tests {
     const N_AZIMUTH: u32 = 4;
     const AZIMUTH_INCREMENT: f64 = std::f64::consts::FRAC_PI_2;
 
-    type Node = DeprojectNode<Flu, ()>;
+    type Node = DeprojectNode<Flu>;
 
     struct NoTf;
 
@@ -174,7 +175,7 @@ mod tests {
     }
 
     fn input_key() -> ChannelKey {
-        SensorChannel::named::<FieldBatch<Flu, ()>>(INPUT).into()
+        SensorChannel::named::<FieldBatch<Flu>>(INPUT).into()
     }
 
     fn output_key() -> ChannelKey {
@@ -215,7 +216,7 @@ mod tests {
         }
     }
 
-    fn write_batch(bus: &PortBus, batch: FieldBatch<Flu, ()>, timestamp: f64, health: Health) {
+    fn write_batch(bus: &PortBus, batch: FieldBatch<Flu>, timestamp: f64, health: Health) {
         bus.write(
             input_key(),
             Stamped {

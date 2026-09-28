@@ -9,9 +9,8 @@ pub use crate::interchange::measurement::attribute::schema::{
 pub use crate::interchange::measurement::cloud::{PointCloud, PointCloudBuilder};
 pub use crate::interchange::measurement::envelope::SensorReading;
 pub use crate::interchange::measurement::range_field::{
-    BeamAngles, DirectionModel, GridAttributes, LidarCell, LidarGrids, RangeField,
-    RangeFieldBuildError, RangeFieldBuilder, ScanTiming, SphericalAngular, NOTHING_RETURNED,
-    NO_INFORMATION,
+    BeamAngles, DirectionModel, RangeField, RangeFieldBuildError, RangeFieldBuilder, ScanTiming,
+    SphericalAngular, NOTHING_RETURNED, NO_INFORMATION,
 };
 pub use crate::interchange::measurement::sensor::SensorPayload;
 pub use crate::interchange::measurement::sensor::{

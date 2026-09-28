@@ -12,7 +12,13 @@
 //! everything else takes [`RangeField::to_point_cloud`], the one-way, lossy
 //! conversion to the cloud.
 
-use super::{DirectionModel, GridAttributes};
+use super::DirectionModel;
+use crate::interchange::measurement::attribute::{
+    column::AttributeColumn,
+    key::{AttributeKey, Element},
+    schema::AttributeSchema,
+    table::AttributeTable,
+};
 use crate::interchange::measurement::cloud::{PointCloud, PointColumns, TimeColumn};
 use crate::spatial::{conventions::Frame, quantities::Point};
 
@@ -43,11 +49,17 @@ pub const NO_INFORMATION: f64 = f64::NAN;
 /// immutable once built: the crate's range-field builder is the only way to
 /// make one.
 ///
-/// `G` carries whatever else the sensor measured per cell (return intensity,
-/// for a lidar) as grids of the same shape; a field of ranges alone uses `()`.
-pub struct RangeField<F: Frame, G: GridAttributes = ()> {
+/// Whatever else the sensor measured per cell (return intensity, for a lidar)
+/// rides along as attribute grids of the same shape; a field of ranges alone
+/// carries none.
+pub struct RangeField<F: Frame> {
     ranges: DMatrix<f64>,
-    attributes: G,
+    /// One column per measured attribute, each holding a value for every cell
+    /// in column-major order (see [`cell_index`]).
+    attributes: AttributeTable,
+    /// The attributes [`to_point_cloud`](Self::to_point_cloud) produces: the
+    /// grid's own, then the direction model's derived ones.
+    cloud_schema: AttributeSchema,
     direction: DirectionModel,
     range_min: f64,
     range_max: f64,
@@ -55,17 +67,19 @@ pub struct RangeField<F: Frame, G: GridAttributes = ()> {
     _frame: PhantomData<F>,
 }
 
-impl<F: Frame, G: GridAttributes> RangeField<F, G> {
+impl<F: Frame> RangeField<F> {
     /// Assembles a field from already-checked parts, trusting `ranges` and
-    /// `attributes` to match the direction model's shape and `timing` to match
-    /// its axis.
+    /// every attribute column to match the direction model's shape, `timing` to
+    /// match its axis, and `cloud_schema` to be the attributes' schema followed
+    /// by the direction model's derived attributes.
     ///
     /// Crate-private because the builder is the only write path, and it is there
-    /// that shape and timing are checked; this constructor deliberately does not
-    /// re-check them, so the gate lives in exactly one place.
+    /// that these are checked; this constructor deliberately does not re-check
+    /// them, so the gate lives in exactly one place.
     pub(crate) fn new(
         ranges: DMatrix<f64>,
-        attributes: G,
+        attributes: AttributeTable,
+        cloud_schema: AttributeSchema,
         direction: DirectionModel,
         range_min: f64,
         range_max: f64,
@@ -74,6 +88,7 @@ impl<F: Frame, G: GridAttributes> RangeField<F, G> {
         Self {
             ranges,
             attributes,
+            cloud_schema,
             direction,
             range_min,
             range_max,
@@ -110,10 +125,32 @@ impl<F: Frame, G: GridAttributes> RangeField<F, G> {
         self.timing.as_ref()
     }
 
-    /// The per-cell attribute grids, the same shape as the ranges. Unlike the
-    /// cloud, they keep a value for every cell, misses included.
-    pub fn attributes(&self) -> &G {
+    /// The per-cell attribute grids. Unlike the cloud's columns, they keep a
+    /// value for every cell, misses included, stored column by column; read
+    /// one cell with [`attribute`](Self::attribute).
+    pub fn attributes(&self) -> &AttributeTable {
         &self.attributes
+    }
+
+    /// The value of attribute `key` at `(row, col)`, or `None` if the field
+    /// does not carry `key` or the index lies outside [`shape`](Self::shape).
+    /// A cell the producer never wrote reads as the key's blank.
+    pub fn attribute<T: Element>(&self, key: AttributeKey<T>, row: usize, col: usize) -> Option<T> {
+        let (rows, cols) = self.shape();
+        if row >= rows || col >= cols {
+            return None;
+        }
+        self.attributes
+            .get(key)?
+            .get(cell_index(row, col, rows))
+            .copied()
+    }
+
+    /// The attributes every cloud from [`to_point_cloud`](Self::to_point_cloud)
+    /// carries, known before any flattening: the grid's own, then those the
+    /// direction model derives (a lidar's `ring`).
+    pub fn cloud_schema(&self) -> &AttributeSchema {
+        &self.cloud_schema
     }
 
     /// The range stored at `(row, col)`, or `None` if the index lies outside
@@ -140,21 +177,23 @@ impl<F: Frame, G: GridAttributes> RangeField<F, G> {
     /// taking its row's or column's offset; an untimed field yields an untimed
     /// cloud.
     ///
-    /// Each point carries its cell's attributes, built by
-    /// [`GridAttributes::gather`] from the kept cells; a miss's attributes stay
-    /// in the field and never reach the cloud.
+    /// The cloud's attributes follow [`cloud_schema`](Self::cloud_schema): each
+    /// grid's values at the kept cells, then the direction model's derived
+    /// attributes. A miss's attributes stay in the field and never reach the
+    /// cloud.
     ///
     /// Assembles the cloud's columns directly rather than through the cloud
     /// builder. Every kept cell pushes its time offset (when timed) before its
-    /// coordinates and its `(row, col)`, and a cell with no offset is skipped
-    /// whole, so the geometry, time, and kept-cell lists cannot fall out of
-    /// step. Going through the builder would only add checks this loop cannot
-    /// fail, behind a `Result` the caller would have to handle.
+    /// coordinates, its keep flag, and its ring, and a cell with no offset is
+    /// skipped whole, so no column can fall out of step. Going through the
+    /// builder would only add checks this loop cannot fail, behind a `Result`
+    /// the caller would have to handle.
     pub fn to_point_cloud(&self) -> PointCloud<F> {
         let (rows, cols) = self.shape();
         let mut coords = Vec::with_capacity(rows * cols * 3);
         let mut times = Vec::with_capacity(rows * cols);
-        let mut kept = Vec::with_capacity(rows * cols);
+        let mut keep = vec![false; rows * cols];
+        let mut rings = Vec::with_capacity(rows * cols);
 
         for col in 0..cols {
             for row in 0..rows {
@@ -170,25 +209,47 @@ impl<F: Frame, G: GridAttributes> RangeField<F, G> {
                 }
 
                 coords.extend(point.raw());
-                kept.push((row, col));
+                if let Some(flag) = keep.get_mut(cell_index(row, col, rows)) {
+                    *flag = true;
+                }
+                // Unreachable fallback: a direction model that derives a ring
+                // rejects any row index a `u16` cannot hold.
+                rings.push(u16::try_from(row).unwrap_or(u16::MAX));
             }
         }
 
         let geometry = PointColumns::from_arc(Arc::new(Matrix3xX::from_column_slice(&coords)));
         let time = self.timing.is_some().then(|| TimeColumn::from_vec(times));
 
-        PointCloud::from_columns(geometry, self.attributes.gather(&kept), time)
+        let mut columns = self.attributes.select(&keep).into_columns();
+        columns.extend(self.derived_columns(rings));
+        let attributes = AttributeTable::new(self.cloud_schema.clone(), columns);
+
+        PointCloud::from_columns(geometry, attributes, time)
+    }
+
+    /// The values of the direction model's
+    /// [`derived_attributes`](DirectionModel::derived_attributes) for the kept
+    /// cells, in that list's order. `rings` holds each kept cell's row.
+    ///
+    /// Must produce exactly the columns that list names, since the cloud's
+    /// table pairs them with it by position.
+    fn derived_columns(&self, rings: Vec<u16>) -> Vec<AttributeColumn> {
+        match &self.direction {
+            DirectionModel::SphericalAngular(_) => vec![AttributeColumn::U16(rings.into())],
+        }
     }
 }
 
 // Hand-written rather than derived: `#[derive(Clone)]` would demand `F: Clone`
 // even though `F` lives only inside a `PhantomData`, and that impl is then
 // invisible to generic code that knows only `F: Frame`.
-impl<F: Frame, G: GridAttributes> Clone for RangeField<F, G> {
+impl<F: Frame> Clone for RangeField<F> {
     fn clone(&self) -> Self {
         Self {
             ranges: self.ranges.clone(),
             attributes: self.attributes.clone(),
+            cloud_schema: self.cloud_schema.clone(),
             direction: self.direction.clone(),
             range_min: self.range_min,
             range_max: self.range_max,
@@ -201,7 +262,7 @@ impl<F: Frame, G: GridAttributes> Clone for RangeField<F, G> {
 // Hand-written for the same reason as `Clone`, plus one of its own: a derive
 // would print every range in the grid — tens of thousands of numbers for a
 // multi-ring lidar. This prints a summary instead.
-impl<F: Frame, G: GridAttributes> fmt::Debug for RangeField<F, G> {
+impl<F: Frame> fmt::Debug for RangeField<F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RangeField")
             .field("shape", &self.shape())
@@ -210,6 +271,14 @@ impl<F: Frame, G: GridAttributes> fmt::Debug for RangeField<F, G> {
             .field("timed", &self.timing.is_some())
             .finish()
     }
+}
+
+/// Where cell `(row, col)` of a grid with `rows` rows sits in an attribute
+/// column: column-major, the order the ranges are stored in and
+/// [`RangeField::to_point_cloud`] visits cells. The builder writes by it and
+/// the field reads by it, so the two cannot disagree on layout.
+pub(super) fn cell_index(row: usize, col: usize, rows: usize) -> usize {
+    col * rows + row
 }
 
 /// When each part of a grid was measured, as nanosecond offsets from the
@@ -259,7 +328,7 @@ mod tests {
     use super::*;
 
     use crate::interchange::measurement::attribute::canonical::{INTENSITY, RING};
-    use crate::interchange::measurement::range_field::{LidarCell, LidarGrids, SphericalAngular};
+    use crate::interchange::measurement::range_field::{RangeFieldBuilder, SphericalAngular};
     use crate::spatial::conventions::Flu;
 
     const RANGE_MIN: f64 = 0.1;
@@ -277,23 +346,13 @@ mod tests {
     /// ```
     ///
     /// Walked column by column, the hits are `(0,0) (1,0) (1,1) (0,2)`.
-    fn field_with(timing: Option<ScanTiming>) -> RangeField<Flu> {
-        let direction = DirectionModel::SphericalAngular(
-            SphericalAngular::new(vec![0.0, 0.2], 0.0, 0.5, 3).expect("valid geometry"),
-        );
-        let ranges = DMatrix::from_row_slice(
-            2,
-            3,
-            &[1.0, NOTHING_RETURNED, 3.0, 4.0, 5.0, NO_INFORMATION],
-        );
-        RangeField::new(ranges, (), direction, RANGE_MIN, RANGE_MAX, timing)
-    }
+    const CELL_RANGE: [[f64; 3]; 2] = [[1.0, NOTHING_RETURNED, 3.0], [4.0, 5.0, NO_INFORMATION]];
 
-    /// The hit cells of [`field_with`], in column-major order.
+    /// The hit cells of [`CELL_RANGE`], in column-major order.
     const HITS_COLUMN_MAJOR: [(usize, usize); 4] = [(0, 0), (1, 0), (1, 1), (0, 2)];
 
-    /// Intensities for every cell of [`field_with`]'s grid, misses included,
-    /// each distinct so a test can tell which cell a point came from:
+    /// Intensities for every cell of the grid, misses included, each distinct
+    /// so a test can tell which cell a point came from:
     ///
     /// ```text
     ///          col 0   col 1   col 2
@@ -302,26 +361,64 @@ mod tests {
     /// ```
     const CELL_INTENSITY: [[f32; 3]; 2] = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]];
 
-    /// [`field_with`]'s grid carrying [`CELL_INTENSITY`] in a lidar bundle.
-    fn lidar_field_with(timing: Option<ScanTiming>) -> RangeField<Flu, LidarGrids> {
-        let plain = field_with(timing);
-        let (rows, cols) = plain.shape();
+    fn blank_builder() -> RangeFieldBuilder<Flu> {
+        let direction = DirectionModel::SphericalAngular(
+            SphericalAngular::new(vec![0.0, 0.2], 0.0, 0.5, 3).expect("valid geometry"),
+        );
+        RangeFieldBuilder::new(direction, RANGE_MIN, RANGE_MAX).expect("valid limits")
+    }
 
-        let mut grids = LidarGrids::blank(rows, cols).expect("two rings fit a ring index");
+    /// Writes [`CELL_RANGE`] into `builder` and finalizes it with `timing`.
+    ///
+    /// The timing is attached after finalizing, unchecked, so a test can give
+    /// one of the wrong length, which the builder would reject.
+    fn filled(mut builder: RangeFieldBuilder<Flu>, timing: Option<ScanTiming>) -> RangeField<Flu> {
+        for (row, ranges) in CELL_RANGE.iter().enumerate() {
+            for (col, &range) in ranges.iter().enumerate() {
+                builder.set(row, col, range).expect("in bounds");
+            }
+        }
+        RangeField {
+            timing,
+            ..builder.finalize()
+        }
+    }
+
+    /// The grid of [`CELL_RANGE`], ranges alone.
+    fn field_with(timing: Option<ScanTiming>) -> RangeField<Flu> {
+        filled(blank_builder(), timing)
+    }
+
+    /// The grid of [`CELL_RANGE`] carrying [`CELL_INTENSITY`] in an intensity
+    /// grid.
+    fn lidar_field_with(timing: Option<ScanTiming>) -> RangeField<Flu> {
+        let schema = AttributeSchema::new([INTENSITY.descriptor()]).expect("one name");
+        let mut builder = blank_builder()
+            .with_attributes(schema)
+            .expect("intensity has a blank");
+
         for (row, intensities) in CELL_INTENSITY.iter().enumerate() {
             for (col, &intensity) in intensities.iter().enumerate() {
-                grids.set(row, col, LidarCell { intensity });
+                builder
+                    .set_attribute(INTENSITY, row, col, intensity)
+                    .expect("declared, in bounds");
             }
         }
 
-        RangeField::new(
-            plain.ranges,
-            grids,
-            plain.direction,
-            plain.range_min,
-            plain.range_max,
-            plain.timing,
-        )
+        filled(builder, timing)
+    }
+
+    /// The row of each hit, walked column by column: the ring each point
+    /// should carry.
+    fn hit_rings() -> Vec<u16> {
+        HITS_COLUMN_MAJOR
+            .iter()
+            .map(|&(row, _)| u16::try_from(row).expect("small test grid"))
+            .collect()
+    }
+
+    fn names(schema: &AttributeSchema) -> Vec<&'static str> {
+        schema.iter().map(|d| d.name()).collect()
     }
 
     fn assert_attribute_columns_match(cloud: &PointCloud<Flu>) {
@@ -444,13 +541,8 @@ mod tests {
             .iter()
             .map(|&(row, col)| CELL_INTENSITY[row][col])
             .collect();
-        let expected_ring: Vec<u16> = HITS_COLUMN_MAJOR
-            .iter()
-            .map(|&(row, _)| u16::try_from(row).expect("small test grid"))
-            .collect();
-
         assert_eq!(intensity_of(&cloud), expected_intensity.as_slice());
-        assert_eq!(cloud.attribute(RING), Some(expected_ring.as_slice()));
+        assert_eq!(cloud.attribute(RING), Some(hit_rings().as_slice()));
     }
 
     #[test]
@@ -459,7 +551,7 @@ mod tests {
         let miss_intensity = CELL_INTENSITY[0][1];
         assert_eq!(field.range(0, 1), Some(NOTHING_RETURNED));
 
-        assert_eq!(field.attributes().intensity(0, 1), Some(miss_intensity));
+        assert_eq!(field.attribute(INTENSITY, 0, 1), Some(miss_intensity));
         assert!(!intensity_of(&field.to_point_cloud()).contains(&miss_intensity));
     }
 
@@ -483,40 +575,99 @@ mod tests {
     }
 
     #[test]
-    fn a_field_of_ranges_alone_yields_a_cloud_with_no_attributes() {
+    fn a_field_of_ranges_alone_yields_a_cloud_carrying_only_the_ring() {
         let cloud = field_with(None).to_point_cloud();
 
         assert_eq!(cloud.len(), HITS_COLUMN_MAJOR.len());
-        assert!(cloud.schema().is_empty());
+        assert_eq!(names(cloud.schema()), [RING.name()]);
+        assert_eq!(cloud.attribute(RING), Some(hit_rings().as_slice()));
         assert_eq!(cloud.attribute(INTENSITY), None);
     }
 
     #[test]
     fn a_lidar_cloud_declares_intensity_then_ring() {
         let cloud = lidar_field_with(None).to_point_cloud();
-        let names: Vec<&str> = cloud.schema().iter().map(|d| d.name()).collect();
+        assert_eq!(names(cloud.schema()), [INTENSITY.name(), RING.name()]);
+    }
 
-        assert_eq!(names, [INTENSITY.name(), RING.name()]);
+    /// The field announces its cloud's schema before flattening; it must be
+    /// exactly what flattening then produces.
+    #[test]
+    fn the_announced_cloud_schema_is_the_one_flattening_produces() {
+        for field in [field_with(None), lidar_field_with(None)] {
+            let cloud = field.to_point_cloud();
+            assert_eq!(names(field.cloud_schema()), names(cloud.schema()));
+        }
     }
 
     #[test]
-    fn an_all_miss_field_yields_an_empty_cloud() {
+    fn an_all_miss_field_yields_an_empty_cloud_under_the_full_schema() {
         let direction = DirectionModel::SphericalAngular(
             SphericalAngular::new(vec![0.0], 0.0, 0.5, 4).expect("valid geometry"),
         );
-        let ranges = DMatrix::from_element(1, 4, NOTHING_RETURNED);
-        let field: RangeField<Flu> = RangeField::new(
-            ranges,
-            (),
-            direction,
-            RANGE_MIN,
-            RANGE_MAX,
-            Some(ScanTiming::PerColumn(vec![0, 1, 2, 3])),
-        );
+        let schema = AttributeSchema::new([INTENSITY.descriptor()]).expect("one name");
+        let field = RangeFieldBuilder::<Flu>::new(direction, RANGE_MIN, RANGE_MAX)
+            .and_then(|builder| builder.with_attributes(schema))
+            .and_then(|builder| builder.with_timing(ScanTiming::PerColumn(vec![0, 1, 2, 3])))
+            .expect("valid setup")
+            .finalize();
 
         let cloud = field.to_point_cloud();
         assert!(cloud.is_empty());
         assert_eq!(cloud.time().map(TimeColumn::len), Some(0));
+        assert_eq!(cloud.attribute(INTENSITY), Some([].as_slice()));
+        assert_eq!(cloud.attribute(RING), Some([].as_slice()));
+    }
+
+    /// Row `u16::MAX - 1` rather than the last row: the unreachable fallback
+    /// also yields `u16::MAX`, so only a row below it shows the conversion.
+    #[test]
+    fn a_high_ring_index_reaches_the_cloud_exact() {
+        let most_rings = usize::from(u16::MAX) + 1;
+        let high_row = usize::from(u16::MAX) - 1;
+        let direction = DirectionModel::SphericalAngular(
+            SphericalAngular::new(vec![0.0; most_rings], 0.0, 0.5, 1).expect("valid geometry"),
+        );
+        let mut builder =
+            RangeFieldBuilder::<Flu>::new(direction, RANGE_MIN, RANGE_MAX).expect("valid limits");
+        builder.set(high_row, 0, 1.0).expect("in bounds");
+
+        let cloud = builder.finalize().to_point_cloud();
+        assert_eq!(cloud.attribute(RING), Some([u16::MAX - 1].as_slice()));
+    }
+
+    #[test]
+    fn attribute_reads_none_outside_the_grid_or_for_a_key_not_carried() {
+        let field = lidar_field_with(None);
+
+        assert_eq!(field.attribute(INTENSITY, 1, 2), Some(CELL_INTENSITY[1][2]));
+        assert_eq!(field.attribute(INTENSITY, 2, 0), None);
+        assert_eq!(field.attribute(INTENSITY, 0, 3), None);
+        assert_eq!(
+            field.attribute(RING, 0, 0),
+            None,
+            "ring is derived, not a grid"
+        );
+    }
+
+    /// Attribute grids share the ranges' storage order, which is what lets
+    /// flattening walk both with one index.
+    #[test]
+    fn cell_index_matches_the_ranges_storage_order() {
+        let field = field_with(None);
+        let (rows, cols) = field.shape();
+        let stored = field.ranges.as_slice();
+
+        for col in 0..cols {
+            for row in 0..rows {
+                let at_index = stored[cell_index(row, col, rows)];
+                let at_cell = field.ranges[(row, col)];
+                assert!(
+                    at_index == at_cell || (at_index.is_nan() && at_cell.is_nan()),
+                    "({row}, {col})"
+                );
+            }
+        }
     }
 
     #[test]

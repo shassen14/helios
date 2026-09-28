@@ -102,10 +102,17 @@ mod sealed {
 
         /// The column's values, if it is this element type's variant.
         fn view(column: &AttributeColumn) -> Option<&[Self]>;
+
+        /// The column's values, writable, if it is this element type's
+        /// variant. A column shared with other holders is copied first, so
+        /// they never see the write; that is what lets a cloned blank grid be
+        /// filled without touching the original.
+        fn view_mut(column: &mut AttributeColumn) -> Option<&mut [Self]>;
     }
 
-    // Each `view` names every variant rather than using a wildcard arm, so a
-    // new element type fails to compile here until its impls are revisited.
+    // Each `view` and `view_mut` names every variant rather than using a
+    // wildcard arm, so a new element type fails to compile here until its
+    // impls are revisited.
 
     impl Sealed for f32 {
         fn wrap(values: Arc<[Self]>) -> AttributeColumn {
@@ -115,6 +122,13 @@ mod sealed {
         fn view(column: &AttributeColumn) -> Option<&[Self]> {
             match column {
                 AttributeColumn::F32(values) => Some(values),
+                AttributeColumn::U16(_) => None,
+            }
+        }
+
+        fn view_mut(column: &mut AttributeColumn) -> Option<&mut [Self]> {
+            match column {
+                AttributeColumn::F32(values) => Some(Arc::make_mut(values)),
                 AttributeColumn::U16(_) => None,
             }
         }
@@ -128,6 +142,13 @@ mod sealed {
         fn view(column: &AttributeColumn) -> Option<&[Self]> {
             match column {
                 AttributeColumn::U16(values) => Some(values),
+                AttributeColumn::F32(_) => None,
+            }
+        }
+
+        fn view_mut(column: &mut AttributeColumn) -> Option<&mut [Self]> {
+            match column {
+                AttributeColumn::U16(values) => Some(Arc::make_mut(values)),
                 AttributeColumn::F32(_) => None,
             }
         }

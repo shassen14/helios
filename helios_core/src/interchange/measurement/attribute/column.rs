@@ -5,11 +5,13 @@
 //! columns of different element types sit in one table. Typed access goes back
 //! through a key, which checks the variant before handing out a slice.
 
+use super::key::{AttributeDescriptor, BlankPolicy, ElementType};
+
 use std::sync::Arc;
 
 /// The values of one attribute column, one variant per element type.
 ///
-/// The variant set mirrors [`ElementType`](super::key::ElementType) and is
+/// The variant set mirrors [`ElementType`] and is
 /// closed for the same reason: serialization and grid pre-fill must handle
 /// every member. Every `match` on it names each variant (no wildcard arm), so
 /// adding an element type fails to compile until each operation handles it.
@@ -22,6 +24,19 @@ pub enum AttributeColumn {
 }
 
 impl AttributeColumn {
+    /// A column of `len` values, each the blank of the attribute `descriptor`
+    /// defines, or `None` if that attribute has no blank its element type can
+    /// hold. This is how a grid starts out before any cell is written.
+    pub(crate) fn blank(descriptor: AttributeDescriptor, len: usize) -> Option<Self> {
+        match (descriptor.blank(), descriptor.element_type()) {
+            (BlankPolicy::Nan, ElementType::F32) => Some(Self::F32(vec![f32::NAN; len].into())),
+            // Unreachable, since only `f32` keys can be NaN-blank, but a
+            // descriptor is data, so the pair is still handled.
+            (BlankPolicy::Nan, ElementType::U16) => None,
+            (BlankPolicy::NoBlank, _) => None,
+        }
+    }
+
     /// The number of values: one per point, or one per cell of a grid.
     pub fn len(&self) -> usize {
         match self {
@@ -66,6 +81,7 @@ fn keep_rows<T: Copy>(values: &[T], keep: &[bool]) -> Arc<[T]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::interchange::measurement::attribute::canonical::{INTENSITY, RING};
 
     fn floats(values: &[f32]) -> AttributeColumn {
         AttributeColumn::F32(values.into())
@@ -73,6 +89,22 @@ mod tests {
 
     fn integers(values: &[u16]) -> AttributeColumn {
         AttributeColumn::U16(values.into())
+    }
+
+    #[test]
+    fn a_blank_nan_column_is_len_nans() {
+        let AttributeColumn::F32(values) =
+            AttributeColumn::blank(INTENSITY.descriptor(), 6).expect("intensity has a blank")
+        else {
+            panic!("an f32 key blanked into another element type");
+        };
+        assert_eq!(values.len(), 6);
+        assert!(values.iter().all(|v| v.is_nan()));
+    }
+
+    #[test]
+    fn a_key_with_no_blank_has_no_blank_column() {
+        assert!(AttributeColumn::blank(RING.descriptor(), 6).is_none());
     }
 
     #[test]
