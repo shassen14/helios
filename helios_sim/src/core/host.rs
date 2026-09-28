@@ -38,6 +38,13 @@ use std::time::Duration;
 // once here instead of being re-pasted into each driver bin.
 const LOG_FILTER: &str = "info,wgpu_core=error,wgpu_hal=error,helios_sim=debug,helios_core=debug";
 
+// How often a wall-paced headless run updates: the cadence a window gets from
+// vsync. The fixed loop runs as many steps as the elapsed time owes on each
+// update, so this changes how steps are grouped, never how many run or what
+// they compute. Without it the runner spins between fixed ticks, and every
+// empty update still wakes and parks the whole task pool.
+const HEADLESS_WALL_PACED_UPDATE_PERIOD: Duration = Duration::from_micros(16_667);
+
 // Guards the process-global tracing subscriber. `LogPlugin` installs a logger
 // that can only be set once per process, yet a Monte Carlo batch builds a fresh
 // `App` — and thus a fresh host — for every run. This flips to `true` the first
@@ -97,6 +104,8 @@ impl HeliosHost {
         // `ScheduleRunnerPlugin` to pump `update()` in its place — without a
         // runner, `run()` ticks once and returns. The windowless `WindowPlugin`
         // plus `DontExit` keeps the app alive despite having no primary window.
+        // The runner waits between updates only when the clock follows the
+        // wall (see `TimePolicy::headless_update_period`).
         if let Presentation::Headless = self.presentation {
             group = group
                 .set(WindowPlugin {
@@ -105,7 +114,9 @@ impl HeliosHost {
                     ..default()
                 })
                 .disable::<WinitPlugin>()
-                .add(ScheduleRunnerPlugin::run_loop(Duration::ZERO));
+                .add(ScheduleRunnerPlugin::run_loop(
+                    self.time_policy.headless_update_period(),
+                ));
         }
 
         group
@@ -216,6 +227,19 @@ impl TimePolicy {
             (None, Presentation::Headless) => TimePolicy::FastAsPossible,
         }
     }
+
+    /// The least wall time between updates of a headless run.
+    ///
+    /// A fast-forwarded run never waits: its clock is detached from the wall
+    /// and each update already batches many fixed steps. A wall-paced run
+    /// updates at a window's cadence, since updating faster only finds no
+    /// fixed step due.
+    fn headless_update_period(self) -> Duration {
+        match self {
+            TimePolicy::FastAsPossible => Duration::ZERO,
+            TimePolicy::RealTime | TimePolicy::Scaled(_) => HEADLESS_WALL_PACED_UPDATE_PERIOD,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -227,8 +251,8 @@ mod tests {
     use bevy::time::TimeUpdateStrategy;
 
     // A throwaway host. `default_plugins` selects plugins from `presentation`
-    // alone and reads neither the `Cli` fields nor the time policy, so those
-    // only need to be well-formed, not meaningful.
+    // and reads the time policy only for the headless runner's wait, never the
+    // `Cli` fields, so those only need to be well-formed, not meaningful.
     fn host(presentation: Presentation) -> HeliosHost {
         HeliosHost::new(
             Cli {
@@ -369,6 +393,27 @@ mod tests {
             TimePolicy::from_cli(None, Presentation::Headless),
             TimePolicy::FastAsPossible
         );
+    }
+
+    #[test]
+    fn a_fast_forwarded_headless_run_never_waits_between_updates() {
+        // Its clock ignores the wall, so any wait is pure lost time.
+        assert_eq!(
+            TimePolicy::FastAsPossible.headless_update_period(),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn a_wall_paced_headless_run_waits_between_updates() {
+        // Without a wait the runner spins between fixed ticks, and every empty
+        // update wakes the whole task pool for nothing.
+        for policy in [TimePolicy::RealTime, TimePolicy::Scaled(10.0)] {
+            assert!(
+                policy.headless_update_period() > Duration::ZERO,
+                "{policy:?} must not spin"
+            );
+        }
     }
 
     #[test]
