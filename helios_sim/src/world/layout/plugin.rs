@@ -69,6 +69,7 @@ mod tests {
 
     use crate::config::structs::{BodyKind, ObjectPlacement, ObjectPrefab, World, WorldLayout};
     use crate::config::{load_world_layout, read_catalog, PrefabCatalog};
+    use crate::world::layout::{read_scene, PrefabGeometry};
 
     use bevy::ecs::system::RunSystemOnce;
     use figment::{
@@ -265,6 +266,34 @@ mod tests {
         if let Err(errors) = ResolvedWorldLayout::resolve(&loaded) {
             panic!("{}", error_report(&loaded.layout.name, &errors));
         }
+    }
+
+    #[test]
+    fn every_object_prefab_mesh_derives_geometry() {
+        // At run time a broken asset fails the scenario that first places
+        // it; this finds it when it is exported.
+        let (catalog, _) = read_catalog(&config_root());
+
+        let mut checked = 0;
+        for (key, value) in &catalog.0 {
+            if !key.starts_with(OBJECTS_CATALOG_PREFIX) {
+                continue;
+            }
+            let prefab: ObjectPrefab = value
+                .deserialize()
+                .unwrap_or_else(|e| panic!("{key}: not an object prefab: {e}"));
+            let path = crate::asset_root().join(&prefab.mesh);
+            let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{key}: {path:?}: {e}"));
+            let gltf =
+                gltf::Gltf::from_slice(&bytes).unwrap_or_else(|e| panic!("{key}: {path:?}: {e}"));
+            let roots = read_scene(&gltf).unwrap_or_else(|e| panic!("{key}: {path:?}: {e}"));
+            if let Err(errors) = PrefabGeometry::derive(&roots) {
+                let errors: Vec<String> = errors.iter().map(ToString::to_string).collect();
+                panic!("{key}: {path:?}: {}", errors.join("; "));
+            }
+            checked += 1;
+        }
+        assert!(checked > 0, "no object prefabs found");
     }
 
     /// Catalog keys of object prefabs, from `configs/entities/objects/`.

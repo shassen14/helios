@@ -373,3 +373,18 @@ fn frame_triad_rejects_a_non_enu_anchor() {
     // never a silently wrong triad.
     assert!(frame_triad_to_bevy(Isometry3::identity(), Convention::Flu).is_none());
 }
+
+#[test]
+fn per_axis_enu_to_bevy_reorders_without_signs() {
+    // ENU (east, north, up) → Bevy (x, y, z) = (east, up, −north): a scale of
+    // 2 east, 3 north, 4 up becomes (2, 4, 3), all positive.
+    let crossed = per_axis_to_bevy::<Enu>(Vector3::new(2.0, 3.0, 4.0));
+    assert_nalgebra_vector3_approx_eq(&crossed, &Vector3::new(2.0, 4.0, 3.0), F64_EPSILON);
+}
+
+#[test]
+fn per_axis_flu_to_bevy_reorders_without_signs() {
+    // FLU forward → Bevy −Z, left → −X, up → +Y: (fwd 2, left 3, up 4) → (3, 4, 2).
+    let crossed = per_axis_to_bevy::<Flu>(Vector3::new(2.0, 3.0, 4.0));
+    assert_nalgebra_vector3_approx_eq(&crossed, &Vector3::new(3.0, 4.0, 2.0), F64_EPSILON);
+}

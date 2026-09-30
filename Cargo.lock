@@ -3410,6 +3410,7 @@ dependencies = [
  "clap",
  "dhat",
  "figment",
+ "gltf",
  "helios_core",
  "helios_runtime",
  "nalgebra",

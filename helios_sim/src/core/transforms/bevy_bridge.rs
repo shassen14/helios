@@ -26,7 +26,7 @@ use helios_core::spatial::quantities::{FreeVector, Point};
 use helios_core::spatial::transforms::{Convention, EnuBasis, Rotation, Transform};
 
 use bevy::prelude::{Quat as BevyQuat, Transform as BevyTransform, Vec3 as BevyVec3};
-use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
+use nalgebra::{Isometry3, Matrix3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use std::f64::consts::FRAC_PI_2;
 use std::sync::LazyLock;
 
@@ -135,6 +135,33 @@ pub fn enu_to_bevy() -> Rotation<Enu, Bevy> {
 
 pub fn to_bevy_rotation<F: EnuBasis>() -> Rotation<F, Bevy> {
     F::to_enu().then(enu_to_bevy())
+}
+
+/// Largest off-diagonal entry a crossed per-axis quantity may keep; anything
+/// above it means the frame's rotation into Bevy is not an axis permutation.
+const AXIS_PERMUTATION_TOLERANCE: f64 = 1e-9;
+
+/// Re-expresses a per-axis quantity (a scale, a box's half-extents) given along
+/// `F`'s axes as one along Bevy's.
+///
+/// Such a quantity is a diagonal map, so it crosses as `R · diag(v) · Rᵀ`, not
+/// as a vector: a vector's components would pick up the rotation's signs. Every
+/// frame's rotation into Bevy turns axes onto axes, which keeps the result
+/// diagonal with the same (non-negative) entries, reordered.
+pub fn per_axis_to_bevy<F: EnuBasis>(values: Vector3<f64>) -> Vector3<f64> {
+    let rotation = to_bevy_rotation::<F>()
+        .into_inner()
+        .to_rotation_matrix()
+        .into_inner();
+    let crossed = rotation * Matrix3::from_diagonal(&values) * rotation.transpose();
+    debug_assert!(
+        (crossed - Matrix3::from_diagonal(&crossed.diagonal()))
+            .abs()
+            .max()
+            <= AXIS_PERMUTATION_TOLERANCE * values.abs().max().max(1.0),
+        "rotation into Bevy is not an axis permutation"
+    );
+    crossed.diagonal()
 }
 
 /// Builds a frame's drawable axis triad in Bevy's render frame: its origin plus

@@ -10,6 +10,9 @@ license.workspace = true
 # Bevy and its ecosystem
 bevy = { workspace = true, features = ["serialize"] }
 avian3d = "0.7"
+# Bevy's own glTF reader, same version and features, for reading prefab
+# geometry (node tree and vertex positions) as plain data.
+gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 
 # The crucial dependency on our pure core library
 helios_core = { path = "../helios_core" }
