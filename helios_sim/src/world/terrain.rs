@@ -11,7 +11,6 @@ use crate::core::app_state::AssetLoadSet;
 use crate::core::components::TerrainMedium;
 use crate::core::transforms::{transform_bevy_to_bevy_transform, ToBevy};
 use crate::prelude::*;
-use crate::world::objects::WorldObjectAssets;
 
 use helios_core::spatial::conventions::Enu;
 use helios_core::spatial::transforms::Transform as CoreTransform;
@@ -114,24 +113,18 @@ fn start_terrain_asset_loading(
 }
 
 /// Central asset readiness gate. Transitions to SceneBuilding only when all
-/// terrain tiles AND all world object GLBs have finished loading.
+/// terrain tiles have finished loading.
 fn check_all_assets_loaded(
     mut next_state: ResMut<NextState<AppState>>,
     asset_server: Res<AssetServer>,
     terrain_assets: Res<TerrainAssets>,
-    world_object_assets: Option<Res<WorldObjectAssets>>,
 ) {
     // Wait until at least one kickoff frame has run.
     if terrain_assets.entries.is_empty() {
         return;
     }
 
-    let terrain_ready = terrain_assets.all_loaded(&asset_server);
-    let objects_ready = world_object_assets
-        .map(|a| a.all_loaded(&asset_server))
-        .unwrap_or(true);
-
-    if terrain_ready && objects_ready {
+    if terrain_assets.all_loaded(&asset_server) {
         info!("[Terrain] All world assets loaded. Transitioning to SceneBuilding.");
         next_state.set(AppState::SceneBuilding);
     }

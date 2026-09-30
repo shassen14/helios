@@ -3,6 +3,7 @@
 
 mod catalog;
 mod resolver;
+mod world_layout;
 
 pub mod structs;
 
@@ -18,8 +19,9 @@ use crate::{
     cli::Cli, config::structs::Simulation, core::app_state::AssetLoadSet, prelude::AppState,
 };
 use catalog::load_catalog_from_disk;
-pub use catalog::PrefabCatalog;
+pub use catalog::{read_catalog, PrefabCatalog};
 pub use structs::{AgentConfig, RawScenarioConfig, ScenarioConfig};
+pub use world_layout::{load_world_layout, LoadedWorldLayout};
 
 pub struct ConfigPlugin;
 
@@ -86,20 +88,34 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
         }
     }
 
+    // 3. Follow the world's references. Its failures join the agents' so one
+    //    run reports every broken reference in the scenario.
+    let loaded_layout = match load_world_layout(&raw_config.common.world, &catalog) {
+        Ok(loaded) => loaded,
+        Err(errors) => {
+            failures.extend(errors);
+            None
+        }
+    };
+
     // A partially-built scene has no valid interpretation: the scenario states
     // what to simulate, and quietly simulating a subset answers a question
     // nobody asked. Left non-fatal, a config typo becomes a green run over an
     // empty world.
     if !failures.is_empty() {
         panic!(
-            "{} of {} agents failed to load:\n{}",
+            "scenario {:?} failed to load. Errors: {}\n{}",
+            scenario_path,
             failures.len(),
-            raw_config.agents.len(),
             failures.join("\n")
         );
     }
 
-    // 3. Assemble the final, complete `ScenarioConfig` resource. Every
+    if let Some(loaded) = loaded_layout {
+        commands.insert_resource(loaded);
+    }
+
+    // 4. Assemble the final, complete `ScenarioConfig` resource. Every
     //    non-agent field rides across in the one `common` move; only the agents
     //    needed the resolve step above.
     let mut final_config = ScenarioConfig {
@@ -109,7 +125,7 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
 
     apply_cli_overrides(&mut final_config.common.simulation, &cli);
 
-    // 4. Insert the single, unified config as a resource.
+    // 5. Insert the single, unified config as a resource.
     commands.insert_resource(final_config);
 }
 

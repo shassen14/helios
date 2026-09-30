@@ -8,3 +8,4 @@
 //! forward sensor model structurally cannot emit one.
 
 pub mod map;
+pub mod semantic_class;

@@ -4,13 +4,13 @@
 
 use bevy::prelude::*;
 
-use super::{AtmospherePlugin, TerrainPlugin, WorldObjectPlugin};
+use super::{AtmospherePlugin, TerrainPlugin, WorldLayoutPlugin};
 
-/// Adds all world environment plugins (terrain, atmosphere, world objects).
+/// Adds all world environment plugins (terrain, atmosphere, object layout).
 pub struct HeliosWorldPlugin;
 
 impl Plugin for HeliosWorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((TerrainPlugin, AtmospherePlugin, WorldObjectPlugin));
+        app.add_plugins((TerrainPlugin, AtmospherePlugin, WorldLayoutPlugin));
     }
 }

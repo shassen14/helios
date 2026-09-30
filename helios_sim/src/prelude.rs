@@ -19,8 +19,7 @@ pub use crate::config::ConfigPlugin;
 
 pub use crate::core::app_state::{AppState, SceneBuildSet, SimulationSet};
 pub use crate::core::components::{
-    ActuatorCommandComponent, BoundingBox3D, GroundTruthState, SemanticLabel, TerrainMedium,
-    WorldObjectType,
+    ActuatorCommandComponent, BoundingBox3D, GroundTruthState, TerrainMedium, WorldObjectType,
 };
 pub use crate::core::host::{HeliosHost, Presentation, TimePolicy};
 pub use crate::core::spawn_requests::SpawnAgentConfigRequest;

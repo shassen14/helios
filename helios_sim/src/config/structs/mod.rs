@@ -14,7 +14,7 @@ mod sensors;
 mod simulation;
 mod terrain;
 mod vehicle;
-mod world_object;
+mod world_layout;
 
 // The whole `helios_runtime` config vocabulary is surfaced here unchanged. The
 // glob *is* the curation ("expose all of runtime config under this facade"), not
@@ -34,4 +34,4 @@ pub use vehicle::{
     TopologyConfig, Vehicle, VisualConfig, WheelConfig, WheelVisual, CUBOID, RAYCAST_WHEELS,
     RIGID_BODY_WITH_MOUNT, WHEELED_PRIMITIVES,
 };
-pub use world_object::{WorldObjectCollider, WorldObjectPlacement, WorldObjectPrefab};
+pub use world_layout::{BodyKind, CatalogRef, ObjectPlacement, ObjectPrefab, WorldLayout};

@@ -12,7 +12,7 @@ use super::{
     simulation::MetricsConfig,
     terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig},
     vehicle::Vehicle,
-    world_object::WorldObjectPlacement,
+    world_layout::CatalogRef,
 };
 
 /// The primary Bevy resource holding all configuration for a simulation run.
@@ -100,7 +100,8 @@ fn default_frequency_hz() -> f64 {
     400.0
 }
 
-/// World-level configuration: terrain tiles, atmosphere, and placed objects.
+/// World-level configuration: the placed objects, terrain tiles, atmosphere,
+/// and the magnetic field.
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct World {
@@ -119,10 +120,15 @@ pub struct World {
     #[serde(default)]
     pub magnetic_field: MagneticFieldConfig,
 
-    /// Static world objects (signs, buildings, trees, etc.).
-    /// Declared with `[[world.objects]]` in TOML.
+    /// The scene's objects: `[world.layout] from = "sim.catalog.worlds.<name>"`.
     #[serde(default)]
-    pub objects: Vec<WorldObjectPlacement>,
+    pub layout: Option<CatalogRef>,
+
+    /// The semantic class catalog every label in the run uses:
+    /// `[world.semantic_classes] from = "runtime.catalog.semantic_classes.<name>"`.
+    /// Required when `layout` is set.
+    #[serde(default)]
+    pub semantic_classes: Option<CatalogRef>,
 }
 
 /// Full agent configuration for helios_sim.

@@ -1,0 +1,5 @@
+# configs/entities/objects/crate_1m.toml
+# A 1 m crate. Geometry lives in the .glb; this file holds the rest.
+mesh    = "objects/crate_1m.glb"
+class   = "crate"
+mass_kg = 20.0

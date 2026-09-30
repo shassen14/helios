@@ -66,16 +66,6 @@ pub struct GoalDispatched;
 #[derive(Component, Clone, Debug)]
 pub struct WorldObjectType(pub String);
 
-/// Semantic classification attached to every world object entity.
-/// Used by perception systems for ground-truth labeling and by dataset exporters.
-#[derive(Component, Clone, Debug)]
-pub struct SemanticLabel {
-    /// Human-readable class name, e.g. `"stop_sign"`, `"building"`.
-    pub label: String,
-    /// Integer class ID used by perception algorithms and ML dataset formats.
-    pub class_id: u32,
-}
-
 /// Axis-aligned bounding box in object-local space (half-extents, meters).
 /// Used for debug visualization, sensor hit attribution, and dataset annotation.
 #[derive(Component, Clone, Debug)]
