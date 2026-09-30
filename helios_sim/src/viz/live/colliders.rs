@@ -73,9 +73,8 @@ pub(crate) fn toggle_colliders(
             .expect("registered")
     });
 
-    let (config, _gizmos) = store.config_mut::<PhysicsGizmos>();
-
     if state.is_active(h) {
+        let (config, _) = store.config_mut::<PhysicsGizmos>();
         config.enabled = !config.enabled;
     }
 }

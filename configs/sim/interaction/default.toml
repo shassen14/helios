@@ -91,3 +91,9 @@ default_orientation = "sideways" # "sideways" | "top_down" (default "sideways"; 
 # every collider, the shape physics and sensors actually hit.
 # [collider_view]
 # color = [1.0, 0.5, 0.0]   # wireframe color, linear sRGB (default orange)
+
+# Bounding-box view (toggle: viz.toggle_bounding_boxes, default B): each object's
+# labelled box, turned with the object. With the collider view on too, a line in
+# only one color is where the label and the collider disagree.
+# [bounding_box_view]
+# color = [0.0, 0.8, 1.0]   # box line color, linear sRGB (default cyan)

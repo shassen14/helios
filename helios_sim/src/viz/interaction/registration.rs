@@ -68,6 +68,15 @@ pub(crate) fn register_viz_actions(mut registry: ResMut<ActionRegistry>) {
             default_key: KeyCode::KeyC,
         },
     );
+    registry.register(
+        ActionId("viz.toggle_bounding_boxes"),
+        ActionMetadata {
+            label: "Toggle bounding boxes",
+            group: "viz",
+            kind: InputKind::Button,
+            default_key: KeyCode::KeyB,
+        },
+    );
 }
 
 #[cfg(test)]
@@ -117,6 +126,25 @@ mod tests {
         assert!(
             registry.handle(ActionId("viz.toggle_colliders")).is_some(),
             "register_viz_actions must declare viz.toggle_colliders at Startup",
+        );
+    }
+
+    /// Tier-3 wiring guard: `toggle_bounding_boxes` looks up its handle on the
+    /// first frame and panics if the action was never declared.
+    #[test]
+    fn register_viz_actions_declares_toggle_bounding_boxes_at_startup() {
+        let mut app = App::new();
+        app.init_resource::<ActionRegistry>();
+        app.add_systems(Startup, register_viz_actions);
+
+        app.update();
+
+        let registry = app.world().resource::<ActionRegistry>();
+        assert!(
+            registry
+                .handle(ActionId("viz.toggle_bounding_boxes"))
+                .is_some(),
+            "register_viz_actions must declare viz.toggle_bounding_boxes at Startup",
         );
     }
 }

@@ -1,3 +1,4 @@
+pub mod bounding_boxes;
 pub mod colliders;
 pub mod discovery;
 pub mod estimate;

@@ -18,6 +18,7 @@ use crate::{
             },
         },
         live::{
+            bounding_boxes::{BoundingBoxViewTuning, BoundingBoxViewTuningFile},
             colliders::{ColliderViewTuning, ColliderViewTuningFile},
             pose::{PoseOverlayTuning, PoseOverlayTuningFile},
             tf::{TfOverlayTuning, TfOverlayTuningFile},
@@ -46,6 +47,7 @@ struct InteractionTuningFile {
     tf_labels: TfLabelTuningFile,
     tf_panel: TfPanelTuningFile,
     collider_view: ColliderViewTuningFile,
+    bounding_box_view: BoundingBoxViewTuningFile,
 }
 
 #[derive(Deserialize, Default)]
@@ -89,6 +91,7 @@ struct ResolvedInteractionTuning {
     tf_panel_health_thresholds: TfPanelHealthThresholds,
     tf_panel_health_colors: TfPanelHealthColors,
     collider_view: ColliderViewTuning,
+    bounding_box_view: BoundingBoxViewTuning,
 }
 
 pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
@@ -114,6 +117,7 @@ pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
             commands.insert_resource(resolved.tf_panel_health_thresholds);
             commands.insert_resource(resolved.tf_panel_health_colors);
             commands.insert_resource(resolved.collider_view);
+            commands.insert_resource(resolved.bounding_box_view);
         }
         Err(e) => panic!("interaction tuning config: {e}"),
     }
@@ -142,6 +146,7 @@ fn resolve_all(
         tf_panel_health_thresholds,
         tf_panel_health_colors,
         collider_view: ColliderViewTuning::resolve(&file.collider_view),
+        bounding_box_view: BoundingBoxViewTuning::resolve(&file.bounding_box_view),
     })
 }
 
@@ -259,6 +264,24 @@ mod tests {
         let resolved = resolve_all(&file).expect("valid overrides resolve");
 
         assert_eq!(resolved.collider_view.color, Color::srgb(0.1, 0.8, 0.9));
+    }
+
+    /// The `[bounding_box_view]` section reaches its resource, for the same
+    /// reason as the collider view's.
+    #[test]
+    fn bounding_box_view_section_deserializes_and_resolves() {
+        let toml = r#"
+            [bounding_box_view]
+            color = [0.3, 0.9, 0.2]
+        "#;
+
+        let file: InteractionTuningFile = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("bounding_box_view section parses against the file struct");
+        let resolved = resolve_all(&file).expect("valid overrides resolve");
+
+        assert_eq!(resolved.bounding_box_view.color, Color::srgb(0.3, 0.9, 0.2));
     }
 
     /// An unknown key inside a `[tf_panel.*]` section is rejected rather than silently
