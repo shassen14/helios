@@ -1,0 +1,5 @@
+# configs/entities/objects/wall_4m.toml
+# A 4 m wall segment. Geometry lives in the .glb; this file holds the rest.
+# No mass: a wall is placed static.
+mesh  = "objects/wall_4m.glb"
+class = "wall"

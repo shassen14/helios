@@ -1,0 +1,5 @@
+# configs/entities/objects/ground_100m.toml
+# A 100 m ground slab, top face at z = 0. Geometry lives in the .glb; this
+# file holds the rest. No mass: the ground is placed static.
+mesh  = "objects/ground_100m.glb"
+class = "terrain"
