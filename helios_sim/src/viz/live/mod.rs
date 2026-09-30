@@ -1,3 +1,4 @@
+pub mod colliders;
 pub mod discovery;
 pub mod estimate;
 pub mod map;

@@ -86,3 +86,8 @@ default_orientation = "sideways" # "sideways" | "top_down" (default "sideways"; 
 # stale_color = [0.90, 0.72, 0.25]      # stale edge, linear sRGB (default amber)
 # dead_color  = [0.86, 0.32, 0.32]      # dead edge, linear sRGB (default red)
 # none_color  = [0.45, 0.47, 0.52]      # static / no-samples edge, linear sRGB (default grey)
+
+# Collider view (toggle: viz.toggle_colliders, default C): Avian's wireframe of
+# every collider, the shape physics and sensors actually hit.
+# [collider_view]
+# color = [1.0, 0.5, 0.0]   # wireframe color, linear sRGB (default orange)

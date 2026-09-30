@@ -18,6 +18,7 @@ use crate::{
             },
         },
         live::{
+            colliders::{ColliderViewTuning, ColliderViewTuningFile},
             pose::{PoseOverlayTuning, PoseOverlayTuningFile},
             tf::{TfOverlayTuning, TfOverlayTuningFile},
             tf_labels::{TfLabelTuning, TfLabelTuningFile},
@@ -44,6 +45,7 @@ struct InteractionTuningFile {
     tf_overlay: TfOverlayTuningFile,
     tf_labels: TfLabelTuningFile,
     tf_panel: TfPanelTuningFile,
+    collider_view: ColliderViewTuningFile,
 }
 
 #[derive(Deserialize, Default)]
@@ -86,6 +88,7 @@ struct ResolvedInteractionTuning {
     tf_panel_graph: TfPanelGraphTuning,
     tf_panel_health_thresholds: TfPanelHealthThresholds,
     tf_panel_health_colors: TfPanelHealthColors,
+    collider_view: ColliderViewTuning,
 }
 
 pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
@@ -110,6 +113,7 @@ pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
             commands.insert_resource(resolved.tf_panel_graph);
             commands.insert_resource(resolved.tf_panel_health_thresholds);
             commands.insert_resource(resolved.tf_panel_health_colors);
+            commands.insert_resource(resolved.collider_view);
         }
         Err(e) => panic!("interaction tuning config: {e}"),
     }
@@ -137,6 +141,7 @@ fn resolve_all(
         tf_panel_graph,
         tf_panel_health_thresholds,
         tf_panel_health_colors,
+        collider_view: ColliderViewTuning::resolve(&file.collider_view),
     })
 }
 
@@ -236,6 +241,24 @@ mod tests {
         assert_eq!(resolved.tf_panel_graph.col_pitch, 200.0);
         assert_eq!(resolved.tf_panel_health_thresholds.stale_after, 1.0);
         assert_eq!(resolved.tf_panel_health_thresholds.dead_after, 3.0);
+    }
+
+    /// The `[collider_view]` section reaches its resource: a mistyped section
+    /// name would be swallowed by `#[serde(default)]` and leave the default.
+    #[test]
+    fn collider_view_section_deserializes_and_resolves() {
+        let toml = r#"
+            [collider_view]
+            color = [0.1, 0.8, 0.9]
+        "#;
+
+        let file: InteractionTuningFile = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("collider_view section parses against the file struct");
+        let resolved = resolve_all(&file).expect("valid overrides resolve");
+
+        assert_eq!(resolved.collider_view.color, Color::srgb(0.1, 0.8, 0.9));
     }
 
     /// An unknown key inside a `[tf_panel.*]` section is rejected rather than silently

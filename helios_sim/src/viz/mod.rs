@@ -10,6 +10,7 @@ use crate::{
     viz::{
         interaction::{registration::register_viz_actions, InteractionSet},
         live::{
+            colliders::{apply_collider_view_tuning, toggle_colliders},
             estimate::estimate_update_system,
             map::{ensure_map_visible, map_update_system, toggle_map_visibility},
             path::path_update_system,
@@ -20,6 +21,7 @@ use crate::{
     },
 };
 
+use avian3d::prelude::{PhysicsDebugPlugin, PhysicsGizmos};
 use bevy::prelude::*;
 
 pub mod interaction;
@@ -78,6 +80,25 @@ impl Plugin for VizPlugin {
         app.add_systems(
             Update,
             (ensure_map_visible, toggle_map_visibility)
+                .in_set(VizSet::Live)
+                .run_if(in_state(AppState::Running)),
+        );
+
+        // collider debug
+        app.add_plugins(PhysicsDebugPlugin);
+        // Nothing drawn and switched off until the tuning's color is applied
+        // and the toggle turns it on.
+        app.insert_gizmo_config(
+            PhysicsGizmos::none(),
+            GizmoConfig {
+                enabled: false,
+                ..default()
+            },
+        );
+        app.add_systems(Startup, apply_collider_view_tuning);
+        app.add_systems(
+            Update,
+            (toggle_colliders)
                 .in_set(VizSet::Live)
                 .run_if(in_state(AppState::Running)),
         );
