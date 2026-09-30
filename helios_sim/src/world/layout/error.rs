@@ -1,4 +1,5 @@
-//! Why a world layout is rejected, one variant per load-time check.
+//! Why a world layout is rejected, one variant per load-time check, and the
+//! capped report a failed run prints.
 
 use super::resolved::MESH_EXTENSION;
 
@@ -6,6 +7,10 @@ use helios_core::interchange::perception::semantic_class::UnknownClass;
 
 use std::fmt;
 use std::path::PathBuf;
+
+/// How many errors a failed load lists before summarising the rest. A broken
+/// generator can produce one error per placement.
+const MAX_REPORTED_ERRORS: usize = 50;
 
 /// Why a layout was rejected at load.
 #[derive(Debug, Clone, PartialEq)]
@@ -109,3 +114,38 @@ impl fmt::Display for LayoutError {
 }
 
 impl std::error::Error for LayoutError {}
+
+/// The failure message: `heading` with the error count, every error up to
+/// [`MAX_REPORTED_ERRORS`], then a count of the rest.
+pub(super) fn error_report(heading: &str, errors: &[impl fmt::Display]) -> String {
+    let mut report = format!("{heading}. Errors: {}", errors.len());
+    for error in errors.iter().take(MAX_REPORTED_ERRORS) {
+        report.push_str(&format!("\n{error}"));
+    }
+    if errors.len() > MAX_REPORTED_ERRORS {
+        report.push_str(&format!(
+            "\n... and {} more",
+            errors.len() - MAX_REPORTED_ERRORS
+        ));
+    }
+    report
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_report_caps_the_list_and_counts_the_rest() {
+        let errors: Vec<LayoutError> = (0..MAX_REPORTED_ERRORS + 7)
+            .map(|i| LayoutError::DuplicatePlacement {
+                placement: format!("crate_{i}"),
+            })
+            .collect();
+
+        let report = error_report("world layout `yard` is invalid", &errors);
+
+        assert_eq!(report.lines().count(), 1 + MAX_REPORTED_ERRORS + 1);
+        assert!(report.ends_with("... and 7 more"), "{report}");
+    }
+}

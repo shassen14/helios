@@ -2,7 +2,7 @@ use std::f64::consts::PI;
 
 use avian3d::prelude::{Collider, RigidBody, TrimeshFlags};
 use bevy::{
-    asset::LoadState,
+    asset::UntypedAssetId,
     gltf::{Gltf, GltfAssetLabel, GltfMesh},
     prelude::*,
 };
@@ -35,17 +35,20 @@ pub struct TerrainAssets {
 }
 
 impl TerrainAssets {
-    pub fn all_loaded(&self, asset_server: &AssetServer) -> bool {
-        self.entries.iter().all(|e| {
-            let scene_ok = matches!(
-                asset_server.get_load_state(&e.scene),
-                Some(LoadState::Loaded)
+    /// Every asset to wait for, labelled by tile for a failed load's report.
+    pub fn tracked(&self) -> impl Iterator<Item = (String, UntypedAssetId)> + '_ {
+        self.entries.iter().flat_map(|e| {
+            let scene = (
+                format!("terrain tile {} scene", e.config_idx),
+                e.scene.id().untyped(),
             );
-            let col_ok = e
-                .collider
-                .as_ref()
-                .is_none_or(|h| matches!(asset_server.get_load_state(h), Some(LoadState::Loaded)));
-            scene_ok && col_ok
+            let collider = e.collider.as_ref().map(|h| {
+                (
+                    format!("terrain tile {} collider", e.config_idx),
+                    h.id().untyped(),
+                )
+            });
+            std::iter::once(scene).chain(collider)
         })
     }
 }
@@ -62,12 +65,6 @@ impl Plugin for TerrainPlugin {
             .add_systems(
                 OnEnter(AppState::AssetLoading),
                 start_terrain_asset_loading.in_set(AssetLoadSet::Kickoff),
-            )
-            .add_systems(
-                Update,
-                check_all_assets_loaded
-                    .in_set(AssetLoadSet::Check)
-                    .run_if(in_state(AppState::AssetLoading)),
             )
             .add_systems(
                 OnEnter(AppState::SceneBuilding),
@@ -107,26 +104,10 @@ fn start_terrain_asset_loading(
         });
     }
 
-    if config.common.world.terrains.is_empty() {
-        warn!("[Terrain] No [[world.terrains]] defined — scene will have no ground.");
-    }
-}
-
-/// Central asset readiness gate. Transitions to SceneBuilding only when all
-/// terrain tiles have finished loading.
-fn check_all_assets_loaded(
-    mut next_state: ResMut<NextState<AppState>>,
-    asset_server: Res<AssetServer>,
-    terrain_assets: Res<TerrainAssets>,
-) {
-    // Wait until at least one kickoff frame has run.
-    if terrain_assets.entries.is_empty() {
-        return;
-    }
-
-    if terrain_assets.all_loaded(&asset_server) {
-        info!("[Terrain] All world assets loaded. Transitioning to SceneBuilding.");
-        next_state.set(AppState::SceneBuilding);
+    // A layout places its own ground as an object.
+    let world = &config.common.world;
+    if world.terrains.is_empty() && world.layout.is_none() {
+        warn!("[Terrain] Neither [[world.terrains]] nor [world.layout] defined — scene will have no ground.");
     }
 }
 

@@ -215,12 +215,17 @@ fn highlight_selection(
     mut gizmos: Gizmos,
 ) {
     for (transform, bbox) in &selected {
-        let radius = match bbox {
-            Some(bb) => bb.half_extents.x.max(bb.half_extents.z) * tuning.highlight_margin,
-            None => tuning.highlight_radius,
+        let (base, radius) = match bbox {
+            // Centred under the box's base, which is off the origin whenever
+            // the object's origin is not its centre.
+            Some(bb) => (
+                transform.transform_point(bb.centre - Vec3::Y * bb.half_extents.y),
+                bb.half_extents.x.max(bb.half_extents.z) * tuning.highlight_margin,
+            ),
+            None => (transform.translation(), tuning.highlight_radius),
         };
 
-        let ring = Isometry3d::new(transform.translation(), Quat::from_rotation_x(FRAC_PI_2));
+        let ring = Isometry3d::new(base, Quat::from_rotation_x(FRAC_PI_2));
         gizmos.circle(ring, radius, tuning.highlight_color);
     }
 }

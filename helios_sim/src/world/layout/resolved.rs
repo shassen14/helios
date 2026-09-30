@@ -195,6 +195,16 @@ pub struct ResolvedPlacement {
     pub body: ResolvedBody,
 }
 
+impl ResolvedPlacement {
+    /// The position of this placement's prefab in the resolving layout's
+    /// [`prefabs`](ResolvedWorldLayout::prefabs), for data kept per prefab
+    /// in the same order (loaded assets, derived geometry). Meaningful only
+    /// against that one layout.
+    pub fn prefab_index(&self) -> usize {
+        self.prefab
+    }
+}
+
 /// How physics treats a placed object, with what that needs.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ResolvedBody {

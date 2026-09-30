@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use helios_core::control::actuators::ActuatorCommand;
+use helios_core::interchange::perception::semantic_class::SemanticClass;
 use helios_core::prelude::PlannerGoal;
 use nalgebra::{Isometry3, Vector3};
 use serde::Serialize;
@@ -61,16 +62,29 @@ pub struct GoalDispatched;
 // == World Object Components ==
 // =========================================================================
 
-/// Identifies the prefab catalog key for a world object entity (e.g. `"objects.stop_sign"`).
+/// Identifies the prefab catalog key for a world object entity (e.g. `"entities.objects.crate_1m"`).
 /// Useful for runtime queries such as "which objects of type X are near the agent?".
 #[derive(Component, Clone, Debug)]
 pub struct WorldObjectType(pub String);
 
-/// Axis-aligned bounding box in object-local space (half-extents, meters).
+/// A world object's identity in ground truth, `<layout>/<placement>` (e.g.
+/// `yard/crate_a`). Stable across runs and list order; unlike `Name`, which
+/// is only a debug label, this is the key datasets are joined on.
+#[derive(Component, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ObjectInstanceId(pub String);
+
+/// A world object's semantic class, from the scenario's class catalog.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ObjectClass(pub SemanticClass);
+
+/// Axis-aligned bounding box in the entity's local frame (Bevy axes, meters).
 /// Used for debug visualization, sensor hit attribution, and dataset annotation.
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, PartialEq)]
 pub struct BoundingBox3D {
-    /// Half-extents [hx, hy, hz] along the object's local X/Y/Z axes.
+    /// Box centre relative to the entity's origin. Not zero in general: an
+    /// object standing on its origin has its centre half its height up.
+    pub centre: Vec3,
+    /// Half-extents along the entity's local X/Y/Z axes.
     pub half_extents: Vec3,
 }
 

@@ -13,6 +13,7 @@
 //! so object-axis values cross the bridge as ENU-framed ones. The spawner
 //! poses objects with an ENU-to-ENU transform for the same reason.
 
+use crate::core::components::BoundingBox3D;
 use crate::core::transforms::{per_axis_to_bevy, point_bevy_to_vec3, Bevy, FromBevy, ToBevy};
 
 use helios_core::spatial::conventions::Enu;
@@ -177,6 +178,15 @@ impl ObjectBounds {
             half_extents: self.half_extents.component_mul(scale),
         }
     }
+
+    /// The same box in the placed entity's Bevy frame.
+    pub fn in_bevy_frame(&self) -> BoundingBox3D {
+        let half_extents = per_axis_to_bevy::<Enu>(self.half_extents).cast::<f32>();
+        BoundingBox3D {
+            centre: object_to_bevy(self.centre),
+            half_extents: Vec3::new(half_extents.x, half_extents.y, half_extents.z),
+        }
+    }
 }
 
 /// How a prefab collides.
@@ -301,7 +311,7 @@ fn node_points(
 /// Whether a node is a collider part. A name whose prefix matches only when
 /// case is ignored is an error rather than a visual node.
 fn is_collider_part(name: &str) -> Result<bool, GeometryError> {
-    if name.starts_with(COLLIDER_PREFIX) {
+    if is_collider_node(name) {
         return Ok(true);
     }
     let miscased = name
@@ -313,6 +323,12 @@ fn is_collider_part(name: &str) -> Result<bool, GeometryError> {
         });
     }
     Ok(false)
+}
+
+/// Whether a node named `name` is a collider part rather than something to
+/// render.
+pub(super) fn is_collider_node(name: &str) -> bool {
+    name.starts_with(COLLIDER_PREFIX)
 }
 
 /// Whether the points enclose a volume: two far apart, a third off their

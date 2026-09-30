@@ -4,13 +4,19 @@
 
 use bevy::prelude::*;
 
-use super::{AtmospherePlugin, TerrainPlugin, WorldLayoutPlugin};
+use super::{AssetGatePlugin, AtmospherePlugin, TerrainPlugin, WorldLayoutPlugin};
 
-/// Adds all world environment plugins (terrain, atmosphere, object layout).
+/// Adds all world environment plugins (terrain, atmosphere, object layout)
+/// and the gate that waits for their assets.
 pub struct HeliosWorldPlugin;
 
 impl Plugin for HeliosWorldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((TerrainPlugin, AtmospherePlugin, WorldLayoutPlugin));
+        app.add_plugins((
+            TerrainPlugin,
+            AtmospherePlugin,
+            WorldLayoutPlugin,
+            AssetGatePlugin,
+        ));
     }
 }

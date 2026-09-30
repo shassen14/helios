@@ -1,25 +1,34 @@
-//! Resolves the scenario's layout at startup, failing the run with every
-//! error when it is invalid.
+//! Resolves the scenario's layout at startup, loads each prefab's `.glb`,
+//! and spawns the objects when the scene is built, failing the run with
+//! every error when the layout or its assets are invalid.
 
-use super::error::LayoutError;
+use super::assets::{load_object_assets, ObjectAssets};
+use super::error::error_report;
 use super::resolved::ResolvedWorldLayout;
+use super::spawn::{remove_collider_parts_when_ready, spawn_world_objects};
 use crate::config::LoadedWorldLayout;
 use crate::core::app_state::AssetLoadSet;
 use crate::prelude::*;
 
-/// How many layout errors a failed load lists before summarising the rest.
-/// A broken generator can produce one error per placement.
-const MAX_REPORTED_ERRORS: usize = 50;
-
-/// Resolves the scenario's layout, when it has one, before any asset loads.
+/// Resolves the scenario's layout, when it has one, loads its prefabs, and
+/// spawns its objects.
 pub struct WorldLayoutPlugin;
 
 impl Plugin for WorldLayoutPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            OnEnter(AppState::AssetLoading),
-            resolve_world_layout.in_set(AssetLoadSet::Kickoff),
-        );
+        app.init_resource::<ObjectAssets>()
+            .add_systems(
+                OnEnter(AppState::AssetLoading),
+                // Chained so loading sees the resolved layout inserted.
+                (resolve_world_layout, load_object_assets)
+                    .chain()
+                    .in_set(AssetLoadSet::Kickoff),
+            )
+            .add_systems(
+                OnEnter(AppState::SceneBuilding),
+                spawn_world_objects.in_set(SceneBuildSet::ProcessWorldObjects),
+            )
+            .add_observer(remove_collider_parts_when_ready);
     }
 }
 
@@ -40,27 +49,16 @@ fn resolve_world_layout(mut commands: Commands, loaded: Option<Res<LoadedWorldLa
             );
             commands.insert_resource(resolved);
         }
-        Err(errors) => panic!("{}", error_report(&loaded.layout.name, &errors)),
+        Err(errors) => panic!(
+            "{}",
+            error_report(&invalid_layout(&loaded.layout.name), &errors)
+        ),
     }
 }
 
-/// The failure message: every error up to [`MAX_REPORTED_ERRORS`], then a
-/// count of the rest.
-fn error_report(layout: &str, errors: &[LayoutError]) -> String {
-    let mut report = format!(
-        "world layout `{layout}` is invalid. Errors: {}",
-        errors.len()
-    );
-    for error in errors.iter().take(MAX_REPORTED_ERRORS) {
-        report.push_str(&format!("\n{error}"));
-    }
-    if errors.len() > MAX_REPORTED_ERRORS {
-        report.push_str(&format!(
-            "\n... and {} more",
-            errors.len() - MAX_REPORTED_ERRORS
-        ));
-    }
-    report
+/// The heading of a rejected layout's report.
+fn invalid_layout(name: &str) -> String {
+    format!("world layout `{name}` is invalid")
 }
 
 #[cfg(test)]
@@ -115,20 +113,6 @@ mod tests {
         load_world_layout(&world, &catalog)
             .expect("test references resolve")
             .expect("a layout was named")
-    }
-
-    #[test]
-    fn error_report_caps_the_list_and_counts_the_rest() {
-        let errors: Vec<LayoutError> = (0..MAX_REPORTED_ERRORS + 7)
-            .map(|i| LayoutError::DuplicatePlacement {
-                placement: format!("crate_{i}"),
-            })
-            .collect();
-
-        let report = error_report("yard", &errors);
-
-        assert_eq!(report.lines().count(), 1 + MAX_REPORTED_ERRORS + 1);
-        assert!(report.ends_with("... and 7 more"), "{report}");
     }
 
     #[test]
@@ -194,7 +178,10 @@ mod tests {
                 load_world_layout(&world, &catalog).unwrap_or_else(|e| panic!("{path:?}: {e:#?}"));
             if let Some(loaded) = loaded {
                 if let Err(errors) = ResolvedWorldLayout::resolve(&loaded) {
-                    panic!("{path:?}: {}", error_report(&loaded.layout.name, &errors));
+                    panic!(
+                        "{path:?}: {}",
+                        error_report(&invalid_layout(&loaded.layout.name), &errors)
+                    );
                 }
             }
             checked += 1;
@@ -264,7 +251,10 @@ mod tests {
             taxonomy: classes,
         };
         if let Err(errors) = ResolvedWorldLayout::resolve(&loaded) {
-            panic!("{}", error_report(&loaded.layout.name, &errors));
+            panic!(
+                "{}",
+                error_report(&invalid_layout(&loaded.layout.name), &errors)
+            );
         }
     }
 

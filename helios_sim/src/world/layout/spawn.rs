@@ -322,3 +322,7 @@ fn rigid_body(body: ResolvedBody) -> RigidBody {
 #[cfg(test)]
 #[path = "spawn_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "spawn_physics_tests.rs"]
+mod physics_tests;
