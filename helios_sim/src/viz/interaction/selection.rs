@@ -3,7 +3,8 @@
 //!
 //! Selection is deliberately *general*, not agent-only — a tree, a sign, or an
 //! agent are all selectable; the ground is not. [`Selectable`] marks the identity
-//! roots (added by [`ensure_selectable`]), and a single global observer,
+//! roots (added by [`ensure_selectable`] to every agent and world object whose
+//! class is not listed as unselectable), and a single global observer,
 //! [`on_click_select`], resolves a raw pointer hit up to the nearest `Selectable`
 //! ancestor and moves the lone [`Selected`] marker onto it.
 //!
@@ -14,6 +15,7 @@
 //! needed. Added only by `helios_play`, never the headless host.
 
 use crate::{
+    core::components::ObjectClass,
     prelude::{AppState, AutonomyPipelineComponent, BoundingBox3D, WorldObjectType},
     viz::{
         interaction::{
@@ -27,7 +29,10 @@ use crate::{
         },
         VizSet,
     },
+    world::ResolvedWorldLayout,
 };
+
+use helios_core::interchange::perception::semantic_class::{SemanticClass, SemanticTaxonomy};
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -80,7 +85,8 @@ pub struct Selected;
 
 /// Marks an entity as a valid selection *root*: the identity-bearing parent a raw
 /// mesh hit is resolved up to. Added by [`ensure_selectable`] to agents and world
-/// objects, never to terrain, so a ground click resolves to nothing.
+/// objects, never to one whose class is unselectable (the ground), so a ground
+/// click resolves to nothing.
 #[derive(Component)]
 pub struct Selectable;
 
@@ -152,6 +158,7 @@ pub struct SelectionTuningFile {
     pub highlight_color: Option<[f32; 3]>,
     pub highlight_radius: Option<f32>,
     pub highlight_margin: Option<f32>,
+    pub unselectable_classes: Option<Vec<String>>,
 }
 
 /// Look of the selection ring drawn by [`highlight_selection`]. A `Resource`, not
@@ -169,6 +176,10 @@ pub struct SelectionTuning {
     /// it 15% wider than its half-extent so the outline reads as around, not on,
     /// the object. Unitless; multiplies the bounding-box extent.
     pub highlight_margin: f32,
+    /// Semantic class names that are never selected: surfaces such as the
+    /// ground, which a click lands on whenever it misses every prop. Names,
+    /// not IDs, because the class catalog is chosen per scenario.
+    pub unselectable_classes: Vec<String>,
 }
 
 impl Default for SelectionTuning {
@@ -177,6 +188,7 @@ impl Default for SelectionTuning {
             highlight_color: Color::srgb(1.0, 0.85, 0.2),
             highlight_radius: 1.5,
             highlight_margin: 1.15,
+            unselectable_classes: Vec::new(),
         }
     }
 }
@@ -195,6 +207,9 @@ impl SelectionTuning {
         }
         if let Some(v) = overrides.highlight_margin {
             t.highlight_margin = v;
+        }
+        if let Some(v) = &overrides.unselectable_classes {
+            t.unselectable_classes = v.clone();
         }
 
         require_positive("selection.highlight_radius", t.highlight_radius)?;
@@ -230,31 +245,95 @@ fn highlight_selection(
     }
 }
 
-/// Tags agents and world objects with [`Selectable`] exactly once.
+/// Tags agents and world objects with [`Selectable`] exactly once, skipping
+/// world objects whose class is unselectable.
 ///
 /// Keeps selection state out of the headless-shared scene build: the agents and
 /// props are spawned by the shared host, so this marker is backfilled here from a
 /// windowed-only system. `Without<Selectable>` makes it idempotent — each entity
-/// is tagged once, then drops out of the query. Mirrors `ensure_map_visible`.
+/// is tagged once, then drops out of the query. A skipped object stays in the
+/// query and is rechecked each frame, which is cheap while surfaces are a few
+/// large objects. Mirrors `ensure_map_visible`.
+///
+/// The unselectable names are turned into classes once, on the first run, since
+/// the scene's class catalog exists only once the layout has loaded.
 #[allow(clippy::type_complexity)]
 fn ensure_selectable(
     query: Query<
-        Entity,
+        (Entity, Option<&ObjectClass>),
         (
             Without<Selectable>,
             Or<(With<WorldObjectType>, With<AutonomyPipelineComponent>)>,
         ),
     >,
+    tuning: Res<SelectionTuning>,
+    layout: Option<Res<ResolvedWorldLayout>>,
+    mut unselectable: Local<Option<Vec<SemanticClass>>>,
     mut commands: Commands,
 ) {
-    for e in &query {
+    let unselectable = unselectable.get_or_insert_with(|| match &layout {
+        Some(layout) => unselectable_classes(&tuning.unselectable_classes, layout.taxonomy()),
+        // Without a layout no object carries a class, so there is nothing to skip.
+        None => Vec::new(),
+    });
+
+    for (e, class) in &query {
+        if class.is_some_and(|class| unselectable.contains(&class.0)) {
+            continue;
+        }
         commands.entity(e).insert(Selectable);
     }
+}
+
+/// The classes `names` refer to in `taxonomy`. A name the catalog does not
+/// have is warned about and dropped: the objects it meant would stay
+/// selectable, and the operator file is shared by scenarios whose catalogs
+/// differ, so it cannot fail the run.
+fn unselectable_classes(names: &[String], taxonomy: &SemanticTaxonomy) -> Vec<SemanticClass> {
+    names
+        .iter()
+        .filter_map(|name| match taxonomy.class(name) {
+            Ok(class) => Some(class),
+            Err(unknown) => {
+                warn!("selection.unselectable_classes: {unknown}");
+                None
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::structs::WorldLayout;
+    use crate::config::LoadedWorldLayout;
+
+    use figment::{
+        providers::{Format, Toml},
+        Figment,
+    };
+    use std::collections::BTreeMap;
+
+    /// A layout with no objects, carrying a catalog of `terrain` and `crate`.
+    fn layout_with_classes() -> ResolvedWorldLayout {
+        let taxonomy: SemanticTaxonomy = Figment::new()
+            .merge(Toml::string(
+                "[[class]]\nname = \"unlabeled\"\nid = 0\n\
+                 [[class]]\nname = \"terrain\"\nid = 3\n\
+                 [[class]]\nname = \"crate\"\nid = 7\n",
+            ))
+            .extract()
+            .expect("test catalog is valid");
+        let loaded = LoadedWorldLayout {
+            layout: WorldLayout {
+                name: "yard".to_string(),
+                objects: Vec::new(),
+            },
+            prefabs: BTreeMap::new(),
+            taxonomy,
+        };
+        ResolvedWorldLayout::resolve(&loaded).expect("test layout resolves")
+    }
 
     /// Tier 3 wiring guard: the deselect action must be declared at startup, or
     /// `deselect_on_escape`'s handle lookup panics on the first frame. Compiles
@@ -304,6 +383,7 @@ mod tests {
     #[test]
     fn ensure_selectable_tags_world_objects_idempotently() {
         let mut app = App::new();
+        app.init_resource::<SelectionTuning>();
         let entity = app.world_mut().spawn(WorldObjectType("tree".into())).id();
 
         app.add_systems(Update, ensure_selectable);
@@ -316,6 +396,37 @@ mod tests {
         assert!(app.world().get::<Selectable>(entity).is_some());
     }
 
+    /// Tier 2: an object whose class is listed unselectable is never tagged,
+    /// while one of another class is, and a listed name the catalog lacks is
+    /// dropped without affecting the rest.
+    #[test]
+    fn ensure_selectable_skips_unselectable_classes() {
+        let layout = layout_with_classes();
+        let terrain = layout.taxonomy().class("terrain").expect("in catalog");
+        let crate_class = layout.taxonomy().class("crate").expect("in catalog");
+
+        let mut app = App::new();
+        app.insert_resource(SelectionTuning {
+            unselectable_classes: vec!["terrain".into(), "sidewalk".into()],
+            ..Default::default()
+        });
+        app.insert_resource(layout);
+        let ground = app
+            .world_mut()
+            .spawn((WorldObjectType("ground".into()), ObjectClass(terrain)))
+            .id();
+        let crate_a = app
+            .world_mut()
+            .spawn((WorldObjectType("crate".into()), ObjectClass(crate_class)))
+            .id();
+
+        app.add_systems(Update, ensure_selectable);
+        app.update();
+
+        assert!(app.world().get::<Selectable>(ground).is_none());
+        assert!(app.world().get::<Selectable>(crate_a).is_some());
+    }
+
     /// A file with no overrides resolves to exactly the compiled-in defaults.
     #[test]
     fn empty_file_resolves_to_defaults() {
@@ -324,6 +435,7 @@ mod tests {
         assert_eq!(t.highlight_color, d.highlight_color);
         assert_eq!(t.highlight_radius, d.highlight_radius);
         assert_eq!(t.highlight_margin, d.highlight_margin);
+        assert_eq!(t.unselectable_classes, d.unselectable_classes);
     }
 
     /// The `[r, g, b]` triple packs into an sRGB color; the numeric fields pass
@@ -334,11 +446,13 @@ mod tests {
             highlight_color: Some([0.1, 0.2, 0.3]),
             highlight_radius: Some(4.0),
             highlight_margin: Some(1.5),
+            unselectable_classes: Some(vec!["terrain".into()]),
         };
         let t = SelectionTuning::resolve(&file).unwrap();
         assert_eq!(t.highlight_color, Color::srgb(0.1, 0.2, 0.3));
         assert_eq!(t.highlight_radius, 4.0);
         assert_eq!(t.highlight_margin, 1.5);
+        assert_eq!(t.unselectable_classes, ["terrain"]);
     }
 
     /// A margin below 1.0 would draw the ring inside the object's footprint and is
