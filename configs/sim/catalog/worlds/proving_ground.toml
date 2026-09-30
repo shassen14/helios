@@ -1,0 +1,116 @@
+# configs/sim/catalog/worlds/proving_ground.toml
+# A flat walled test area: the smallest world that exercises every part of
+# the object pipeline. Each group below is there to test something.
+#
+# Positions are ENU metres (x east, y north, z up) of each object's origin,
+# which every asset keeps on its base: z = 0 stands it on the ground.
+# Orientation is [roll, pitch, yaw] in degrees; yaw 90 turns an object's
+# forward (+X) from east to north.
+name = "proving_ground"
+
+# --- Ground: an ordinary placed object, top face at z = 0 ---------------
+
+[[objects]]
+name     = "ground"
+prefab   = "entities.objects.ground_100m"
+position = [0.0, 0.0, 0.0]
+
+# --- Perimeter: one 4 m wall stretched 15x along its length (60 m) -------
+# Tests scaled colliders; all four share one hull per (prefab, scale).
+
+[[objects]]
+name     = "north_wall"
+prefab   = "entities.objects.wall_4m"
+position = [0.0, 30.0, 0.0]
+scale    = [15.0, 1.0, 1.0]
+
+[[objects]]
+name     = "south_wall"
+prefab   = "entities.objects.wall_4m"
+position = [0.0, -30.0, 0.0]
+scale    = [15.0, 1.0, 1.0]
+
+[[objects]]
+name                = "east_wall"
+prefab              = "entities.objects.wall_4m"
+position            = [30.0, 0.0, 0.0]
+orientation_degrees = [0.0, 0.0, 90.0]
+scale               = [15.0, 1.0, 1.0]
+
+[[objects]]
+name                = "west_wall"
+prefab              = "entities.objects.wall_4m"
+position            = [-30.0, 0.0, 0.0]
+orientation_degrees = [0.0, 0.0, 90.0]
+scale               = [15.0, 1.0, 1.0]
+
+# --- Barrier: a 12 m wall north of the route, spanning y = 6..18 --------
+# Seen by the lidar and mapped, but not in the car's way: the planner routes
+# a point, with no clearance for the car's width, so a path around a wall
+# end clips it.
+
+[[objects]]
+name                = "barrier"
+prefab              = "entities.objects.wall_4m"
+position            = [0.0, 12.0, 0.0]
+orientation_degrees = [0.0, 0.0, 90.0]
+scale               = [3.0, 1.0, 1.0]
+
+# --- Crates: pushable, one stacked on another ----------------------------
+
+[[objects]]
+name     = "crate_a"
+prefab   = "entities.objects.crate_1m"
+position = [8.0, 10.0, 0.0]
+body     = "dynamic"
+
+[[objects]]
+name     = "crate_b"
+prefab   = "entities.objects.crate_1m"
+position = [9.5, 10.0, 0.0]
+body     = "dynamic"
+
+[[objects]]
+name     = "crate_a_top"
+prefab   = "entities.objects.crate_1m"
+position = [8.0, 10.0, 1.0]
+body     = "dynamic"
+
+# A low fixed platform: a crate squashed to 3 x 1 x 0.5 m.
+[[objects]]
+name     = "platform"
+prefab   = "entities.objects.crate_1m"
+position = [-8.0, -10.0, 0.0]
+scale    = [3.0, 1.0, 0.5]
+
+# --- Cones: convex-hull colliders, a pushable row and one fixed ----------
+# Kept off the route: at 0.7 m they sit below the lidar's scan plane.
+
+[[objects]]
+name     = "cone_0"
+prefab   = "entities.objects.traffic_cone"
+position = [-10.0, -16.0, 0.0]
+body     = "dynamic"
+
+[[objects]]
+name     = "cone_1"
+prefab   = "entities.objects.traffic_cone"
+position = [-5.0, -16.0, 0.0]
+body     = "dynamic"
+
+[[objects]]
+name     = "cone_2"
+prefab   = "entities.objects.traffic_cone"
+position = [0.0, -16.0, 0.0]
+body     = "dynamic"
+
+[[objects]]
+name     = "cone_3"
+prefab   = "entities.objects.traffic_cone"
+position = [5.0, -16.0, 0.0]
+body     = "dynamic"
+
+[[objects]]
+name     = "cone_fixed"
+prefab   = "entities.objects.traffic_cone"
+position = [15.0, 15.0, 0.0]

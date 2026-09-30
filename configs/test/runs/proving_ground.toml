@@ -1,0 +1,18 @@
+# Proving ground run: a world built only from placed objects, end to end.
+#
+# The scene must build from the layout (ground, walls, crates, cones), and the
+# raycast car must drive across the layout's ground and come to rest near the
+# goal. Like raycast.toml, this carries no
+# assertions: the result is read from the final-position and final-speed
+# metrics against the scenario's goal_pose (20, 0).
+
+schema_version = "1.0"
+
+# Resolved relative to --config-root (default "configs").
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
+
+# Carried but unused (observation presets aren't resolved yet).
+observation = { from = "default" }
+
+# Long enough to drive 40 m and settle at rest.
+termination = { max_simulated_seconds = 60.0 }
