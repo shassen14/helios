@@ -4,7 +4,8 @@
 //! App assembly ([`host`]) and the state machine and system-set graph it drives
 //! ([`app_state`], [`simulation_setup`]); the shared ECS vocabulary
 //! ([`components`], [`events`], [`spawn_requests`]); the seeded RNG
-//! ([`prng`]); and the per-tick systems that bridge physics to the rest of the
+//! ([`prng`]); the run-length cutoff a driver may add ([`run_duration`]); and
+//! the per-tick systems that bridge physics to the rest of the
 //! sim — ground-truth sync and oracle publishing ([`ground_truth`]) plus the TF
 //! tree ([`transforms`]).
 //!
@@ -16,6 +17,7 @@ pub mod events;
 pub mod ground_truth;
 pub mod host;
 pub mod prng;
+pub mod run_duration;
 pub mod simulation_setup;
 pub mod spawn_requests;
 pub mod transforms;

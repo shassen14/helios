@@ -2,15 +2,18 @@
 //!
 //! The real-time twin of `helios_test_sim`: both add the same `HeliosHost` body
 //! and differ only in what they wrap around it. The test bin runs headless, owns
-//! an exit-code verdict, and layers the assertion runner on top; this bin adds
-//! nothing — it opens a window, runs the scenario, and lets a human watch.
+//! an exit-code verdict, and layers the assertion runner on top; this bin opens a
+//! window, runs the scenario, and lets a human watch until they close it.
 //!
 //! `--headless` still routes here, selecting the windowless host, so this one
-//! binary is both the interactive player and a plain scenario launcher. There is
-//! no verdict to report, so the `AppExit` that `run()` returns is discarded —
-//! unlike the test bin, where the exit code *is* the pass/fail contract.
+//! binary is both the interactive player and a plain scenario launcher. With no
+//! window to close, a headless run ends after the scenario's `duration_seconds`.
+//! There is no verdict to report, so the `AppExit` that `run()` returns is
+//! discarded — unlike the test bin, where the exit code *is* the pass/fail
+//! contract.
 
 use helios_sim::cli::Cli;
+use helios_sim::core::run_duration::RunDurationPlugin;
 use helios_sim::prelude::*;
 use helios_sim::viz::interaction::ActionRegistryPlugin;
 use helios_sim::viz::VizPlugin;
@@ -37,6 +40,10 @@ fn main() {
     let mut app = App::new();
 
     app.add_plugins(HeliosHost::new(cli, presentation, time_policy));
+
+    if presentation == Presentation::Headless {
+        app.add_plugins(RunDurationPlugin);
+    }
 
     if presentation == Presentation::Windowed {
         app.add_plugins(ActionRegistryPlugin);

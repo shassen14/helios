@@ -69,6 +69,9 @@ pub struct RawScenarioConfig {
 #[serde(deny_unknown_fields)]
 pub struct Simulation {
     pub seed: Option<u64>,
+    /// Simulated seconds a headless `helios_play` run lasts before it exits.
+    /// A windowed run lasts until its window is closed, and a test run ends by
+    /// its run file's termination rules instead.
     pub duration_seconds: f32,
     #[serde(default = "default_frequency_hz")]
     pub frequency_hz: f64,
