@@ -52,6 +52,7 @@ fn box_geometry(min: [f64; 3], max: [f64; 3]) -> PrefabGeometry {
         name: "box".to_string(),
         local: Matrix4::identity(),
         positions: corners,
+        triangles: Vec::new(),
         children: Vec::new(),
     };
     PrefabGeometry::derive(&[root]).expect("box derives")

@@ -19,8 +19,9 @@ pub struct ObjectPrefab {
     pub mesh: PathBuf,
     /// Semantic class name, looked up in the scenario's class catalog.
     pub class: String,
-    /// Mass in kg of one placed object, whatever its placement scale.
-    /// Required only when a placement makes it dynamic.
+    /// Mass in kg of one placed object. Required only when a placement
+    /// makes it dynamic, and dynamic placements are never scaled, so this
+    /// is the mass at the modelled size.
     #[serde(default)]
     pub mass_kg: Option<f64>,
     /// Whether the object has a physics collider. `false` for things
@@ -52,7 +53,8 @@ pub struct ObjectPlacement {
     /// nose down), then roll about its turned x. Defaults to [0, 0, 0].
     #[serde(default)]
     pub orientation_degrees: [f64; 3],
-    /// Per-axis scale along the object's own axes. Defaults to [1, 1, 1].
+    /// Per-axis scale along the object's own axes. Defaults to [1, 1, 1],
+    /// the only scale a dynamic placement may have.
     #[serde(default = "default_scale")]
     pub scale: [f64; 3],
     /// Whether physics moves the object. Defaults to `static`.

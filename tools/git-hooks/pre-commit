@@ -1,0 +1,33 @@
+#!/bin/sh
+# Refuses a commit that stages an asset's .blend without its exported .glb.
+#
+# The sim reads only the .glb, so a .blend committed alone leaves the two
+# describing different objects with nothing to say so. Blender cannot run in
+# CI, so this is the one point where both files are in view.
+#
+# Install once per clone:  git config core.hooksPath tools/git-hooks
+#
+# A .blend change that exports to an identical .glb (a viewport setting,
+# say) leaves nothing to stage; commit it with --no-verify.
+
+# The folders tools/blender/export_assets.py reads from and writes to.
+SOURCE_DIR=assets_src/objects
+OUTPUT_DIR=helios_sim/assets/objects
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+missing=""
+for blend in $(printf '%s\n' "$staged" | grep "^$SOURCE_DIR/[^/]*\.blend$"); do
+    glb="$OUTPUT_DIR/$(basename "$blend" .blend).glb"
+    if ! printf '%s\n' "$staged" | grep -qxF "$glb"; then
+        missing="$missing $glb"
+    fi
+done
+
+if [ -n "$missing" ]; then
+    echo "pre-commit: a .blend is staged without its exported .glb:" >&2
+    for glb in $missing; do
+        echo "  $glb" >&2
+    done
+    echo "Export with tools/blender/export_assets.py and stage the .glb." >&2
+    exit 1
+fi

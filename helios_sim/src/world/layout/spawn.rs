@@ -76,7 +76,10 @@ fn prepare_prefabs(
             continue;
         };
         match prepare_prefab(gltf) {
-            Ok(ready) => prepared.push(ready),
+            Ok(ready) => {
+                info!("[WorldLayout] {}: {}", prefab.key, ready.geometry);
+                prepared.push(ready);
+            }
             Err(problems) => errors.extend(problems.into_iter().map(error)),
         }
     }

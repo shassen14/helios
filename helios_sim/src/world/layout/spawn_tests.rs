@@ -20,8 +20,9 @@ const TOLERANCE: f32 = 1e-5;
 const CRATE: &str = "entities.objects.crate_1m";
 const CONE: &str = "entities.objects.traffic_cone";
 
-/// A crate placed dynamic, turned to face north and stretched along each of
-/// its axes differently, and a cone that does not collide.
+/// A crate turned to face north and stretched along each of its axes
+/// differently, a second crate placed dynamic (so at its modelled size), and
+/// a cone that does not collide.
 fn yard() -> ResolvedWorldLayout {
     let taxonomy: SemanticTaxonomy = Figment::new()
         .merge(Toml::string(
@@ -47,6 +48,14 @@ fn yard() -> ResolvedWorldLayout {
                     position: [1.0, 2.0, 0.0],
                     orientation_degrees: [0.0, 0.0, 90.0],
                     scale: [1.0, 2.0, 3.0],
+                    body: BodyKind::Static,
+                },
+                ObjectPlacement {
+                    name: "crate_b".to_string(),
+                    prefab: CRATE.to_string(),
+                    position: [4.0, 2.0, 0.0],
+                    orientation_degrees: [0.0; 3],
+                    scale: [1.0; 3],
                     body: BodyKind::Dynamic,
                 },
                 ObjectPlacement {
@@ -88,6 +97,7 @@ fn cube_on_origin() -> PrefabGeometry {
         name: "crate".to_string(),
         local: Matrix4::identity(),
         positions: corners,
+        triangles: Vec::new(),
         children: Vec::new(),
     };
     PrefabGeometry::derive(&[root]).expect("cube derives")
@@ -139,18 +149,18 @@ fn each_placement_is_one_labelled_body() {
     let layout = yard();
     let crate_class = layout.taxonomy().class("crate").unwrap();
     let mut app = spawned(layout);
-    let crate_a = object(&mut app, "yard/crate_a");
+    let crate_b = object(&mut app, "yard/crate_b");
     let world = app.world();
 
-    assert_eq!(world.get::<Name>(crate_a).unwrap().as_str(), "yard/crate_a");
+    assert_eq!(world.get::<Name>(crate_b).unwrap().as_str(), "yard/crate_b");
     assert_eq!(
-        world.get::<ObjectClass>(crate_a),
+        world.get::<ObjectClass>(crate_b),
         Some(&ObjectClass(crate_class))
     );
-    assert_eq!(world.get::<WorldObjectType>(crate_a).unwrap().0, CRATE);
-    assert_eq!(world.get::<RigidBody>(crate_a), Some(&RigidBody::Dynamic));
-    assert_eq!(world.get::<Mass>(crate_a), Some(&Mass(20.0)));
-    assert!(world.get::<Collider>(crate_a).is_some());
+    assert_eq!(world.get::<WorldObjectType>(crate_b).unwrap().0, CRATE);
+    assert_eq!(world.get::<RigidBody>(crate_b), Some(&RigidBody::Dynamic));
+    assert_eq!(world.get::<Mass>(crate_b), Some(&Mass(20.0)));
+    assert!(world.get::<Collider>(crate_b).is_some());
 }
 
 #[test]
@@ -226,7 +236,7 @@ fn a_missing_prefab_is_reported_not_skipped() {
         })
         .expect("system runs");
 
-    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert_eq!(errors.len(), 3, "{errors:?}");
 }
 
 #[test]

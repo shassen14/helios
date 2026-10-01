@@ -18,6 +18,7 @@ fn node(name: &str, local: Matrix4<f64>, positions: Vec<Point3<f64>>) -> AssetNo
         name: name.to_string(),
         local,
         positions,
+        triangles: Vec::new(),
         children: Vec::new(),
     }
 }
@@ -28,6 +29,7 @@ fn group(local: Matrix4<f64>, children: Vec<AssetNode>) -> AssetNode {
         name: String::new(),
         local,
         positions: Vec::new(),
+        triangles: Vec::new(),
         children,
     }
 }
@@ -198,10 +200,15 @@ fn box_collider_scales_along_the_objects_axes() {
 #[test]
 fn collider_parts_are_hulled_in_place() {
     // A part moved by its node is hulled where the node puts it; linked
-    // duplicates (one mesh, two nodes) give one hull each.
+    // duplicates (one mesh, two nodes) give one hull each. The frame spans
+    // both feet, so they lie within the visual.
     let part = cuboid([-0.5, 0.0, -0.5], [0.5, 0.2, 0.5]);
     let geometry = derive(&[
-        node("frame", Matrix4::identity(), cube_on_origin()),
+        node(
+            "frame",
+            Matrix4::identity(),
+            cuboid([-2.5, 0.0, -0.5], [2.5, 1.0, 0.5]),
+        ),
         node("col_foot", translation(-2.0, 0.0, 0.0), part.clone()),
         node("col_foot.001", translation(2.0, 0.0, 0.0), part),
     ]);
@@ -215,10 +222,11 @@ fn collider_parts_are_hulled_in_place() {
 fn rotated_part_scales_exactly() {
     // A cube part turned 45° about up, stretched 2× along forward. Scaling
     // its vertices gives a box ±√2 forward, ±√½ left; scaling the part in
-    // its own turned frame, as Avian would, gives a different shape.
+    // its own turned frame, as Avian would, gives a different shape. The
+    // post is turned with its part, so the part lies within the visual.
     let part = cuboid([-0.5, 0.0, -0.5], [0.5, 1.0, 0.5]);
     let geometry = derive(&[
-        node("post", Matrix4::identity(), cube_on_origin()),
+        node("post", turn_about_up(FRAC_PI_4), part.clone()),
         node("col_post", turn_about_up(FRAC_PI_4), part),
     ]);
 
@@ -263,11 +271,14 @@ fn flat_asset_without_parts_is_rejected() {
 
 #[test]
 fn flat_visual_with_parts_is_accepted() {
-    // A sign plate is flat, but its collider part is not.
+    // A sign plate is flat, but its collider part is not: a slab thin
+    // enough to stay within the overhang tolerance either side of it.
+    let half_thickness = MAX_PART_OVERHANG_M / 2.0;
     let plate = cuboid([-0.5, 0.0, 0.0], [0.5, 1.0, 0.0]);
+    let slab = cuboid([-0.5, 0.0, -half_thickness], [0.5, 1.0, half_thickness]);
     let geometry = derive(&[
         node("plate", Matrix4::identity(), plate),
-        node("col_plate", Matrix4::identity(), cube_on_origin()),
+        node("col_plate", Matrix4::identity(), slab),
     ]);
 
     assert_abs_diff_eq!(geometry.bounds().half_extents.y, 0.0, epsilon = TOLERANCE_M);
@@ -292,9 +303,9 @@ fn flat_collider_part_is_rejected_by_name() {
 #[test]
 fn collinear_collider_part_is_rejected() {
     let line = vec![
+        Point3::new(-0.5, 0.0, 0.0),
         Point3::origin(),
-        Point3::new(1.0, 0.0, 0.0),
-        Point3::new(2.0, 0.0, 0.0),
+        Point3::new(0.5, 0.0, 0.0),
     ];
 
     let errors = derive_errors(&[
@@ -416,6 +427,86 @@ fn every_problem_is_reported_at_once() {
     assert_eq!(errors.len(), 3, "{errors:?}");
 }
 
+/// The 1 m cube on its origin grown by `margin` on every face.
+fn cube_grown_by(margin: f64) -> Vec<Point3<f64>> {
+    cuboid(
+        [-0.5 - margin, -margin, -0.5 - margin],
+        [0.5 + margin, 1.0 + margin, 0.5 + margin],
+    )
+}
+
+/// The one error expected, as the part it names and how far it reaches out.
+fn only_overhang(errors: &[GeometryError]) -> (&str, f64) {
+    let [GeometryError::ColliderPartOutsideVisual { part, overhang_m }] = errors else {
+        panic!("expected one collider-part-outside-visual error: {errors:?}");
+    };
+    (part, *overhang_m)
+}
+
+#[test]
+fn moved_collider_part_is_rejected_by_name() {
+    // A part dragged 1 m forward in Blender would collide in empty air,
+    // and parts are never drawn, so nothing else would show it.
+    let errors = derive_errors(&[
+        node("crate", Matrix4::identity(), cube_on_origin()),
+        node("col_box", translation(1.0, 0.0, 0.0), cube_on_origin()),
+    ]);
+
+    let (part, overhang) = only_overhang(&errors);
+    assert_eq!(part, "col_box");
+    assert_abs_diff_eq!(overhang, 1.0, epsilon = TOLERANCE_M);
+}
+
+#[test]
+fn part_sunk_below_the_visual_is_rejected() {
+    // Down is glTF −y: the bottom face, checked from the low side.
+    let errors = derive_errors(&[
+        node("crate", Matrix4::identity(), cube_on_origin()),
+        node("col_box", translation(0.0, -0.5, 0.0), cube_on_origin()),
+    ]);
+
+    let (_, overhang) = only_overhang(&errors);
+    assert_abs_diff_eq!(overhang, 0.5, epsilon = TOLERANCE_M);
+}
+
+#[test]
+fn part_within_the_overhang_tolerance_is_accepted() {
+    // Slop from placing a part by hand.
+    derive(&[
+        node("crate", Matrix4::identity(), cube_on_origin()),
+        node(
+            "col_box",
+            Matrix4::identity(),
+            cube_grown_by(MAX_PART_OVERHANG_M / 2.0),
+        ),
+    ]);
+}
+
+#[test]
+fn part_past_the_overhang_tolerance_is_rejected() {
+    let margin = MAX_PART_OVERHANG_M * 2.0;
+
+    let errors = derive_errors(&[
+        node("crate", Matrix4::identity(), cube_on_origin()),
+        node("col_box", Matrix4::identity(), cube_grown_by(margin)),
+    ]);
+
+    let (_, overhang) = only_overhang(&errors);
+    assert_abs_diff_eq!(overhang, margin, epsilon = TOLERANCE_M);
+}
+
+#[test]
+fn only_the_moved_part_is_named() {
+    let errors = derive_errors(&[
+        node("crate", Matrix4::identity(), cube_on_origin()),
+        node("col_kept", Matrix4::identity(), cube_on_origin()),
+        node("col_moved", translation(0.0, 0.0, 2.0), cube_on_origin()),
+    ]);
+
+    let (part, _) = only_overhang(&errors);
+    assert_eq!(part, "col_moved");
+}
+
 /// A cone 1 m tall on a 16-sided base of radius 0.5, standing on its origin,
 /// in glTF axes, and the fraction of its 1 m box it fills.
 fn cone() -> (Vec<Point3<f64>>, f64) {
@@ -492,4 +583,231 @@ fn crate_with_bevelled_edges_is_accepted() {
     }
 
     derive(&[node("crate", Matrix4::identity(), bevelled)]);
+}
+
+/// A leaf node whose mesh has triangles.
+fn solid(name: &str, (positions, triangles): (Vec<Point3<f64>>, Vec<[usize; 3]>)) -> AssetNode {
+    AssetNode {
+        triangles,
+        ..node(name, Matrix4::identity(), positions)
+    }
+}
+
+/// A closed mesh: `profile`, a polygon on the ground in glTF (x, z), pulled
+/// straight up to `height`. Each cap is a fan from the profile's first
+/// corner, so every corner must be visible from it (an L seen from its
+/// outer corner is). Each side is two triangles.
+fn prism(profile: &[[f64; 2]], height: f64) -> (Vec<Point3<f64>>, Vec<[usize; 3]>) {
+    let n = profile.len();
+    let positions = [0.0, height]
+        .iter()
+        .flat_map(|&y| profile.iter().map(move |&[x, z]| Point3::new(x, y, z)))
+        .collect();
+    let mut triangles = Vec::new();
+    for k in 1..n - 1 {
+        triangles.push([0, k, k + 1]);
+        triangles.push([n, n + k + 1, n + k]);
+    }
+    for k in 0..n {
+        let next = (k + 1) % n;
+        triangles.push([k, next, n + next]);
+        triangles.push([k, n + next, n + k]);
+    }
+    (positions, triangles)
+}
+
+/// A 2 × 2 m L, 1 m arm width, as seen from above: its outer corner at the
+/// origin.
+const L_PROFILE: [[f64; 2]; 6] = [
+    [0.0, 0.0],
+    [2.0, 0.0],
+    [2.0, 1.0],
+    [1.0, 1.0],
+    [1.0, 2.0],
+    [0.0, 2.0],
+];
+
+/// The one error expected, as the part it names and how deep its dent is.
+fn only_dent(errors: &[GeometryError]) -> (&str, f64) {
+    let [GeometryError::ConcaveColliderPart { part, dent_m }] = errors else {
+        panic!("expected one concave-collider-part error: {errors:?}");
+    };
+    (part, *dent_m)
+}
+
+#[test]
+fn concave_part_is_rejected_by_name() {
+    // One L-shaped part is hulled into a full slab with one corner cut off,
+    // colliding across the empty inside of the L.
+    let errors = derive_errors(&[
+        solid("step", prism(&L_PROFILE, 1.0)),
+        solid("col_step", prism(&L_PROFILE, 1.0)),
+    ]);
+
+    let (part, dent) = only_dent(&errors);
+    assert_eq!(part, "col_step");
+    assert!(dent > MAX_PART_DENT_M, "{dent}");
+}
+
+#[test]
+fn concave_prism_is_caught_by_its_walls_not_its_vertices() {
+    // Every vertex of an extruded L lies on its top or bottom face, so a
+    // vertex-only measure reads no dent. The inner walls' triangles do not.
+    let (positions, triangles) = prism(&L_PROFILE, 1.0);
+
+    assert_abs_diff_eq!(deepest_dent(&positions, &[]), 0.0, epsilon = 1e-6);
+    assert!(deepest_dent(&positions, &triangles) > MAX_PART_DENT_M);
+}
+
+#[test]
+fn concave_part_split_into_convex_parts_is_accepted() {
+    // The same L as two boxes, each convex, overlapping where they meet.
+    derive(&[
+        solid("step", prism(&L_PROFILE, 1.0)),
+        solid(
+            "col_long",
+            prism(&[[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]], 1.0),
+        ),
+        solid(
+            "col_short",
+            prism(&[[0.0, 0.0], [1.0, 0.0], [1.0, 2.0], [0.0, 2.0]], 1.0),
+        ),
+    ]);
+}
+
+#[test]
+fn convex_part_with_triangles_is_accepted() {
+    // A hexagonal column: every triangle, caps and sides, lies in a face of
+    // its hull.
+    let hexagon: Vec<[f64; 2]> = (0..6)
+        .map(|k| {
+            let angle = f64::from(k) * std::f64::consts::TAU / 6.0;
+            [0.5 * angle.cos(), 0.5 * angle.sin()]
+        })
+        .collect();
+
+    derive(&[
+        solid("column", prism(&hexagon, 2.0)),
+        solid("col_column", prism(&hexagon, 2.0)),
+    ]);
+}
+
+#[test]
+fn vertex_inside_a_part_is_rejected_with_its_depth() {
+    // A cube with a stray vertex at its centre, half a metre from every
+    // face.
+    let mut part = cube_on_origin();
+    part.push(Point3::new(0.0, 0.5, 0.0));
+
+    let errors = derive_errors(&[
+        node("crate", Matrix4::identity(), cube_on_origin()),
+        node("col_crate", Matrix4::identity(), part),
+    ]);
+
+    let (_, dent) = only_dent(&errors);
+    assert_abs_diff_eq!(dent, 0.5, epsilon = 1e-6);
+}
+
+#[test]
+fn vertices_on_a_parts_faces_are_not_dents() {
+    // A cube subdivided once: its face and edge midpoints lie on its hull.
+    let mut part = cube_on_origin();
+    part.extend([
+        Point3::new(0.5, 0.5, 0.0),
+        Point3::new(0.0, 1.0, 0.0),
+        Point3::new(0.0, 0.5, -0.5),
+        Point3::new(0.5, 1.0, 0.5),
+    ]);
+
+    derive(&[
+        node("crate", Matrix4::identity(), cube_on_origin()),
+        node("col_crate", Matrix4::identity(), part),
+    ]);
+}
+
+/// The shipped traffic cone's shape: a cone of radius 0.16 m on a 16-sided
+/// base, its tip 0.7 m up, standing on a 0.4 m square plate `PLATE_M`
+/// thick. Returns (plate, cone), in glTF axes.
+fn cone_on_a_plate() -> (Vec<Point3<f64>>, Vec<Point3<f64>>) {
+    const SIDES: u32 = 16;
+    let plate = cuboid([-0.2, 0.0, -0.2], [0.2, PLATE_M, 0.2]);
+    let mut cone: Vec<Point3<f64>> = (0..SIDES)
+        .map(|k| {
+            let angle = f64::from(k) * std::f64::consts::TAU / f64::from(SIDES);
+            Point3::new(0.16 * angle.cos(), PLATE_M, 0.16 * angle.sin())
+        })
+        .collect();
+    cone.push(Point3::new(0.0, 0.7, 0.0));
+    (plate, cone)
+}
+
+const PLATE_M: f64 = 0.03;
+
+#[test]
+fn cone_and_plate_as_one_part_is_rejected() {
+    // One hull over both is a pyramid from the plate's corners to the tip;
+    // the cone's base ring lies inside it, a plate's thickness above its
+    // floor, and the gap round the cone collides.
+    let (plate, cone) = cone_on_a_plate();
+    let both: Vec<_> = plate.iter().chain(&cone).copied().collect();
+
+    let errors = derive_errors(&[
+        node("traffic_cone", Matrix4::identity(), both.clone()),
+        node("col_cone", Matrix4::identity(), both),
+    ]);
+
+    let (_, dent) = only_dent(&errors);
+    assert_abs_diff_eq!(dent, PLATE_M, epsilon = 1e-5);
+}
+
+#[test]
+fn cone_and_plate_as_two_parts_is_accepted() {
+    let (plate, cone) = cone_on_a_plate();
+    let both: Vec<_> = plate.iter().chain(&cone).copied().collect();
+
+    derive(&[
+        node("traffic_cone", Matrix4::identity(), both),
+        node("col_base", Matrix4::identity(), plate),
+        node("col_cone", Matrix4::identity(), cone),
+    ]);
+}
+
+#[test]
+fn triangle_naming_a_missing_vertex_is_rejected() {
+    // A cube has vertices 0 to 7.
+    let errors = derive_errors(&[
+        node("crate", Matrix4::identity(), cube_on_origin()),
+        AssetNode {
+            triangles: vec![[0, 1, 8]],
+            ..node("col_crate", Matrix4::identity(), cube_on_origin())
+        },
+    ]);
+
+    assert_eq!(
+        errors,
+        [GeometryError::TriangleOutOfRange {
+            node: "col_crate".to_string()
+        }]
+    );
+}
+
+#[test]
+fn summary_gives_size_base_and_collider() {
+    let boxed = derive(&[node("crate", Matrix4::identity(), cube_on_origin())]);
+    assert_eq!(
+        boxed.to_string(),
+        "1.00 x 1.00 x 1.00 m, base at z 0 mm, box collider"
+    );
+
+    let (plate, cone) = cone_on_a_plate();
+    let both: Vec<_> = plate.iter().chain(&cone).copied().collect();
+    let hulled = derive(&[
+        node("traffic_cone", Matrix4::identity(), both),
+        node("col_base", Matrix4::identity(), plate),
+        node("col_cone", Matrix4::identity(), cone),
+    ]);
+    assert_eq!(
+        hulled.to_string(),
+        "0.40 x 0.40 x 0.70 m, base at z 0 mm, 2 hulls"
+    );
 }

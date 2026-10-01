@@ -56,6 +56,10 @@ pub enum LayoutError {
         placement: String,
         prefab: String,
     },
+    ScaledDynamic {
+        placement: String,
+        scale: [f64; 3],
+    },
 }
 
 impl fmt::Display for LayoutError {
@@ -108,6 +112,12 @@ impl fmt::Display for LayoutError {
                 f,
                 "placement `{placement}`: dynamic, but prefab `{prefab}` has \
                  collides = false, so it would fall through the ground"
+            ),
+            Self::ScaledDynamic { placement, scale } => write!(
+                f,
+                "placement `{placement}`: dynamic with scale {scale:?}, but a prefab has \
+                 one mass whatever its scale; make it static, or add a prefab at that \
+                 size with its own mass_kg"
             ),
         }
     }

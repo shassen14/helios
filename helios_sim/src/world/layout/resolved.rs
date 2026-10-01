@@ -20,6 +20,10 @@ const INSTANCE_ID_SEPARATOR: char = '/';
 /// The only geometry format the object loader reads.
 pub(super) const MESH_EXTENSION: &str = "glb";
 
+/// The only scale a dynamic placement may have. A prefab's mass is one
+/// number, so a scaled dynamic copy would keep the mass of the unscaled one.
+const DYNAMIC_SCALE: [f64; 3] = [1.0; 3];
+
 /// A checked layout, ready to spawn. Built only by [`resolve`](Self::resolve),
 /// so every placement's prefab exists and every value is valid.
 #[derive(Resource, Debug, Clone)]
@@ -252,6 +256,12 @@ fn resolve_placement(
     let body = match placement.body {
         BodyKind::Static => Some(ResolvedBody::Static),
         BodyKind::Dynamic => {
+            if placement.scale != DYNAMIC_SCALE {
+                errors.push(LayoutError::ScaledDynamic {
+                    placement: name(),
+                    scale: placement.scale,
+                });
+            }
             if !prefab.collides {
                 errors.push(LayoutError::DynamicWithoutCollider {
                     placement: name(),

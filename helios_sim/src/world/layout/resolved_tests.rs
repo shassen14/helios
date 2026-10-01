@@ -416,6 +416,32 @@ fn rejects_dynamic_without_collider() {
 }
 
 #[test]
+fn rejects_scaled_dynamic() {
+    // The prefab's 1.2 kg is a cone at its modelled size; stretched twice as
+    // tall it would keep 1.2 kg, half what its size implies.
+    let errors = resolve_err(&one_cone("body = \"dynamic\"\nscale = [1.0, 1.0, 2.0]"));
+
+    assert_eq!(
+        errors,
+        [LayoutError::ScaledDynamic {
+            placement: "cone_a".to_string(),
+            scale: [1.0, 1.0, 2.0],
+        }]
+    );
+}
+
+#[test]
+fn static_placement_keeps_any_scale() {
+    let layout = ResolvedWorldLayout::resolve(&one_cone("scale = [3.0, 1.0, 0.5]"))
+        .expect("a scaled static placement resolves");
+
+    assert_eq!(
+        placement(&layout, "cone_a").scale,
+        Vector3::new(3.0, 1.0, 0.5)
+    );
+}
+
+#[test]
 fn reports_every_broken_placement() {
     let loaded = load(
         &YARD.replace("\"cone_a\"", "\"Cone A\"").replace(
