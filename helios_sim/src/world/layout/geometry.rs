@@ -19,7 +19,7 @@ use crate::core::transforms::{per_axis_to_bevy, point_bevy_to_vec3, Bevy, FromBe
 use helios_core::spatial::conventions::Enu;
 use helios_core::spatial::quantities::Point;
 
-use avian3d::prelude::Collider;
+use avian3d::prelude::{Collider, ComputeMassProperties3d};
 use bevy::prelude::{Quat, Vec3};
 use nalgebra::{Matrix4, Point3, Vector3};
 use std::fmt;
@@ -30,6 +30,13 @@ const COLLIDER_PREFIX: &str = "col_";
 /// Smallest size, in meters, a collider may have in any direction; anything
 /// thinner counts as flat and cannot be a solid.
 const MIN_EXTENT_M: f64 = 1e-4;
+
+/// Least fraction of its box an asset without collider parts must fill (its
+/// convex hull's volume over the box's) for the box to stand in as its
+/// collider. Boxes fill 1.0 and a bevelled crate about 0.98; an L-shape fills
+/// 0.875, a cylinder 0.785 and a cone 0.26, so 0.9 passes every box and
+/// rejects the rest.
+const MIN_BOX_FILL: f64 = 0.9;
 
 /// A prefab's derived geometry, shared by every placement of it.
 #[derive(Debug, Clone)]
@@ -83,8 +90,15 @@ impl PrefabGeometry {
         }
         if let Some(bounds) = &bounds {
             let size = bounds.half_extents * 2.0;
-            if parts.is_empty() && size.min() < MIN_EXTENT_M {
-                errors.push(GeometryError::FlatWithoutColliderParts { size: size.into() });
+            if parts.is_empty() {
+                if size.min() < MIN_EXTENT_M {
+                    errors.push(GeometryError::FlatWithoutColliderParts { size: size.into() });
+                } else {
+                    let fill = box_fill(&visual, &size);
+                    if fill < MIN_BOX_FILL {
+                        errors.push(GeometryError::NotBoxShaped { fill });
+                    }
+                }
             }
         }
 
@@ -241,6 +255,9 @@ pub enum GeometryError {
     /// The asset has no collider parts and its box is flat, so the box
     /// cannot stand in for them.
     FlatWithoutColliderParts { size: [f64; 3] },
+    /// The asset has no collider parts and fills too little of its box (a
+    /// cone, a cylinder, a stray mesh) for the box to stand in for them.
+    NotBoxShaped { fill: f64 },
 }
 
 impl fmt::Display for GeometryError {
@@ -275,6 +292,14 @@ impl fmt::Display for GeometryError {
                 "the asset is flat ({:.4} x {:.4} x {:.4} m) and has no \
                  `{COLLIDER_PREFIX}` parts to collide with",
                 size[0], size[1], size[2]
+            ),
+            Self::NotBoxShaped { fill } => write!(
+                f,
+                "the asset has no `{COLLIDER_PREFIX}` parts and fills {:.0}% of its box \
+                 (at least {:.0}% needed for the box to be its collider); add \
+                 `{COLLIDER_PREFIX}` parts for its real shape",
+                fill * 100.0,
+                MIN_BOX_FILL * 100.0
             ),
         }
     }
@@ -329,6 +354,21 @@ fn is_collider_part(name: &str) -> Result<bool, GeometryError> {
 /// render.
 pub(super) fn is_collider_node(name: &str) -> bool {
     name.starts_with(COLLIDER_PREFIX)
+}
+
+/// The fraction of a box of `size` that the convex hull of `points` fills.
+/// Zero when the points have no hull, so degenerate geometry fails the
+/// check rather than passing it.
+fn box_fill(points: &[Point3<f64>], size: &Vector3<f64>) -> f64 {
+    let points: Vec<Vec3> = points
+        .iter()
+        .map(|p| Vec3::new(p.x as f32, p.y as f32, p.z as f32))
+        .collect();
+    // At unit density a body's mass is its volume.
+    let hull_volume = Collider::convex_hull(points)
+        .map(|hull| f64::from(hull.mass(1.0)))
+        .unwrap_or(0.0);
+    hull_volume / (size.x * size.y * size.z)
 }
 
 /// Whether the points enclose a volume: two far apart, a third off their

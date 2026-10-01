@@ -154,14 +154,18 @@ fn nested_transforms_compose() {
 fn rotated_mesh_keeps_a_tight_box() {
     // An octagon turned 45° lands on itself, so its box stays ±1. Boxing
     // the mesh first and turning the box would give ±√2, and the box is a
-    // ground-truth label.
+    // ground-truth label. An octagon fills too little of its box to collide
+    // as it, so it carries its own collider part.
     let octagon: Vec<Point3<f64>> = (0..8)
         .flat_map(|k| {
             let angle = f64::from(k) * FRAC_PI_4;
             [0.0, 1.0].map(|height| Point3::new(angle.cos(), height, angle.sin()))
         })
         .collect();
-    let geometry = derive(&[node("pillar", turn_about_up(FRAC_PI_4), octagon)]);
+    let geometry = derive(&[
+        node("pillar", turn_about_up(FRAC_PI_4), octagon.clone()),
+        node("col_pillar", turn_about_up(FRAC_PI_4), octagon),
+    ]);
 
     assert_abs_diff_eq!(
         geometry.bounds().half_extents,
@@ -410,4 +414,82 @@ fn every_problem_is_reported_at_once() {
         node("col_flat", Matrix4::identity(), flat),
     ]);
     assert_eq!(errors.len(), 3, "{errors:?}");
+}
+
+/// A cone 1 m tall on a 16-sided base of radius 0.5, standing on its origin,
+/// in glTF axes, and the fraction of its 1 m box it fills.
+fn cone() -> (Vec<Point3<f64>>, f64) {
+    const SIDES: u32 = 16;
+    const RADIUS: f64 = 0.5;
+    let mut points: Vec<Point3<f64>> = (0..SIDES)
+        .map(|k| {
+            let angle = f64::from(k) * std::f64::consts::TAU / f64::from(SIDES);
+            Point3::new(RADIUS * angle.cos(), 0.0, RADIUS * angle.sin())
+        })
+        .collect();
+    points.push(Point3::new(0.0, 1.0, 0.0));
+    // Base polygon area × height ÷ 3, over a 1 × 1 × 1 box.
+    let sides = f64::from(SIDES);
+    let base_area = sides / 2.0 * RADIUS * RADIUS * (std::f64::consts::TAU / sides).sin();
+    (points, base_area / 3.0)
+}
+
+/// The hull is built in f32, so its volume is good to about this.
+const FILL_TOLERANCE: f64 = 1e-4;
+
+#[test]
+fn cone_without_parts_is_rejected_with_its_fill() {
+    // About π/12 of its box: a box collider would be mostly empty air.
+    let (cone, expected) = cone();
+
+    let errors = derive_errors(&[node("cone", Matrix4::identity(), cone)]);
+    let [GeometryError::NotBoxShaped { fill }] = errors.as_slice() else {
+        panic!("expected a not-box-shaped error: {errors:?}");
+    };
+    assert_abs_diff_eq!(*fill, expected, epsilon = FILL_TOLERANCE);
+}
+
+#[test]
+fn cone_with_a_collider_part_is_accepted() {
+    // Parts give the real shape, so how much of the box it fills is moot.
+    let (cone, _) = cone();
+
+    derive(&[
+        node("cone", Matrix4::identity(), cone.clone()),
+        node("col_cone", Matrix4::identity(), cone),
+    ]);
+}
+
+#[test]
+fn l_shape_without_parts_is_rejected() {
+    // A 2 × 1 × 1 base with a 1 m cube on one end fills ¾ of its 2 × 2 × 1
+    // box; its hull adds the slope between them, filling 7/8. Close to a
+    // box, still not one.
+    let mut l_shape = cuboid([0.0, 0.0, 0.0], [2.0, 1.0, 1.0]);
+    l_shape.extend(cuboid([0.0, 1.0, 0.0], [1.0, 2.0, 1.0]));
+
+    let errors = derive_errors(&[node("step", Matrix4::identity(), l_shape)]);
+    let [GeometryError::NotBoxShaped { fill }] = errors.as_slice() else {
+        panic!("expected a not-box-shaped error: {errors:?}");
+    };
+    assert_abs_diff_eq!(*fill, 0.875, epsilon = FILL_TOLERANCE);
+}
+
+#[test]
+fn crate_with_bevelled_edges_is_accepted() {
+    // A 1 m cube with every edge cut 5 cm in, as a modelled crate's are:
+    // about 98% of its box, comfortably a box.
+    const BEVEL_M: f64 = 0.05;
+    let inset = |v: f64| if v == 0.0 { BEVEL_M } else { 1.0 - BEVEL_M };
+    let mut bevelled = Vec::new();
+    for corner in cuboid([0.0; 3], [1.0; 3]) {
+        // Each corner becomes three points, each moved in along two axes,
+        // which cuts the corner's three edges.
+        let [x, y, z] = [corner.x, corner.y, corner.z];
+        bevelled.push(Point3::new(x, inset(y), inset(z)));
+        bevelled.push(Point3::new(inset(x), y, inset(z)));
+        bevelled.push(Point3::new(inset(x), inset(y), z));
+    }
+
+    derive(&[node("crate", Matrix4::identity(), bevelled)]);
 }
