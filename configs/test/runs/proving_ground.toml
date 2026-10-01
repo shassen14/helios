@@ -2,9 +2,14 @@
 #
 # The scene must build from the layout (ground, walls, crates, cones), and the
 # raycast car must drive across the layout's ground and come to rest near the
-# goal. Like raycast.toml, this carries no
-# assertions: the result is read from the final-position and final-speed
-# metrics against the scenario's goal_pose (20, 0).
+# goal. It carries no assertions (the harness cannot yet extract a pose); the
+# result is read from the summarizer's metrics against the scenario's
+# goal_pose (20, 0):
+#   - final_pos_e / final_pos_n  → where the car came to rest. The car is
+#     inertial and coasts past the goal, so this measures its stopping
+#     distance, a before/after number for any approach-taper work.
+#   - final_speed                → ~0 confirms it stopped (the arrival latches
+#     held) rather than being sampled mid-coast.
 
 schema_version = "1.0"
 

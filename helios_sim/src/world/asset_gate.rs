@@ -2,14 +2,12 @@
 //! asset has loaded, and the run fails, naming each, when any cannot.
 
 use super::layout::ObjectAssets;
-use super::terrain::TerrainAssets;
 use crate::core::app_state::AssetLoadSet;
 use crate::prelude::*;
 
 use bevy::asset::{LoadState, UntypedAssetId};
 
-/// Moves to `SceneBuilding` when every terrain tile and object prefab has
-/// loaded.
+/// Moves to `SceneBuilding` when every object prefab has loaded.
 pub struct AssetGatePlugin;
 
 impl Plugin for AssetGatePlugin {
@@ -56,11 +54,10 @@ fn load_progress(states: impl IntoIterator<Item = (String, Option<LoadState>)>) 
 fn finish_asset_loading(
     mut next_state: ResMut<NextState<AppState>>,
     asset_server: Res<AssetServer>,
-    terrain: Res<TerrainAssets>,
     objects: Res<ObjectAssets>,
 ) {
     let state = |(label, id): (String, UntypedAssetId)| (label, asset_server.get_load_state(id));
-    let tracked = terrain.tracked().chain(objects.tracked()).map(state);
+    let tracked = objects.tracked().map(state);
 
     match load_progress(tracked) {
         LoadProgress::Waiting => {}
@@ -89,7 +86,7 @@ mod tests {
 
     #[test]
     fn nothing_to_load_is_ready() {
-        // An objects-only or empty world must not wait for terrain.
+        // A layout with no objects must not wait forever.
         assert_eq!(load_progress([]), LoadProgress::Ready);
     }
 

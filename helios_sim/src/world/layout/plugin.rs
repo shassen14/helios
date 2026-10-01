@@ -110,9 +110,7 @@ mod tests {
         .deserialize()
         .expect("test world is valid");
 
-        load_world_layout(&world, &catalog)
-            .expect("test references resolve")
-            .expect("a layout was named")
+        load_world_layout(&world, &catalog).expect("test references resolve")
     }
 
     #[test]
@@ -159,9 +157,12 @@ mod tests {
     fn every_scenario_world_loads_and_resolves() {
         // Reads only each scenario's `[world]`: agents are checked by the
         // scenarios' own runs, and must not fail this test for other reasons.
+        // Test fixtures are included, so a broken world fails here rather
+        // than as a run that was meant to fail for another reason.
         let (catalog, _) = read_catalog(&config_root());
-        let scenarios = walkdir::WalkDir::new(config_root().join("sim/scenarios"))
-            .into_iter()
+        let scenarios = SCENARIO_DIRS
+            .iter()
+            .flat_map(|dir| walkdir::WalkDir::new(config_root().join(dir)))
             .filter_map(Result::ok)
             .filter(|e| e.path().extension().is_some_and(|ext| ext == "toml"));
 
@@ -176,13 +177,11 @@ mod tests {
 
             let loaded =
                 load_world_layout(&world, &catalog).unwrap_or_else(|e| panic!("{path:?}: {e:#?}"));
-            if let Some(loaded) = loaded {
-                if let Err(errors) = ResolvedWorldLayout::resolve(&loaded) {
-                    panic!(
-                        "{path:?}: {}",
-                        error_report(&invalid_layout(&loaded.layout.name), &errors)
-                    );
-                }
+            if let Err(errors) = ResolvedWorldLayout::resolve(&loaded) {
+                panic!(
+                    "{path:?}: {}",
+                    error_report(&invalid_layout(&loaded.layout.name), &errors)
+                );
             }
             checked += 1;
         }
@@ -285,6 +284,10 @@ mod tests {
         }
         assert!(checked > 0, "no object prefabs found");
     }
+
+    /// Where scenarios live under `configs/`: the runnable ones and the test
+    /// fixtures.
+    const SCENARIO_DIRS: [&str; 2] = ["sim/scenarios", "test/scenarios"];
 
     /// Catalog keys of object prefabs, from `configs/entities/objects/`.
     const OBJECTS_CATALOG_PREFIX: &str = "entities.objects.";

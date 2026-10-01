@@ -91,7 +91,7 @@ fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res
     // 3. Follow the world's references. Its failures join the agents' so one
     //    run reports every broken reference in the scenario.
     let loaded_layout = match load_world_layout(&raw_config.common.world, &catalog) {
-        Ok(loaded) => loaded,
+        Ok(loaded) => Some(loaded),
         Err(errors) => {
             failures.extend(errors);
             None

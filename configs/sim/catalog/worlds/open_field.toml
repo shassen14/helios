@@ -1,0 +1,12 @@
+# configs/sim/catalog/worlds/open_field.toml
+# Bare ground and nothing else: somewhere to stand or drive for scenarios
+# that test estimation or control, not perception.
+#
+# The ground is 100 x 100 m centred on the origin, top face at z = 0, so a
+# goal must stay within ±50 m or the car drives off the edge.
+name = "open_field"
+
+[[objects]]
+name     = "ground"
+prefab   = "entities.objects.ground_100m"
+position = [0.0, 0.0, 0.0]

@@ -20,7 +20,7 @@ const LAYOUT_FIELD: &str = "world.layout";
 const SEMANTIC_CLASSES_FIELD: &str = "world.semantic_classes";
 
 /// A scenario's layout with everything it references, loaded but not yet
-/// checked. Present only when the scenario names a layout.
+/// checked.
 #[derive(Resource, Debug, Clone)]
 pub struct LoadedWorldLayout {
     pub layout: WorldLayout,
@@ -32,34 +32,34 @@ pub struct LoadedWorldLayout {
 /// Loads the layout and class catalog `world` references, and the prefab of
 /// every placement.
 ///
-/// Returns `None` when the scenario names no layout. A class catalog named
-/// without a layout is still loaded, so a broken catalog fails the run that
-/// references it. Every failure is collected, each naming the field and key.
+/// Both references are required: a scenario with no layout has no ground,
+/// and its agents would fall with no message. Every failure is collected,
+/// each naming the field and key.
 pub fn load_world_layout(
     world: &World,
     catalog: &PrefabCatalog,
-) -> Result<Option<LoadedWorldLayout>, Vec<String>> {
+) -> Result<LoadedWorldLayout, Vec<String>> {
     let mut errors = Vec::new();
 
-    let taxonomy = world
-        .semantic_classes
-        .as_ref()
-        .and_then(|r| lookup::<SemanticTaxonomy>(SEMANTIC_CLASSES_FIELD, r, catalog, &mut errors));
-
-    let Some(layout_ref) = &world.layout else {
-        return if errors.is_empty() {
-            Ok(None)
-        } else {
-            Err(errors)
-        };
+    let taxonomy = match &world.semantic_classes {
+        Some(r) => lookup::<SemanticTaxonomy>(SEMANTIC_CLASSES_FIELD, r, catalog, &mut errors),
+        None => {
+            errors.push(format!(
+                "{SEMANTIC_CLASSES_FIELD} is missing: every scenario names its class catalog; \
+                 add `[{SEMANTIC_CLASSES_FIELD}] from = \"runtime.catalog.semantic_classes.<name>\"`"
+            ));
+            None
+        }
     };
 
-    if world.semantic_classes.is_none() {
+    let Some(layout_ref) = &world.layout else {
         errors.push(format!(
-            "{LAYOUT_FIELD}: a layout needs a class catalog; add \
-             `[{SEMANTIC_CLASSES_FIELD}] from = \"runtime.catalog.semantic_classes.<name>\"`"
+            "{LAYOUT_FIELD} is missing: without a layout there is no ground and \
+             agents fall; add `[{LAYOUT_FIELD}] from = \"sim.catalog.worlds.<name>\"` \
+             (`open_field` is bare ground)"
         ));
-    }
+        return Err(errors);
+    };
 
     let Some(layout) = lookup::<WorldLayout>(LAYOUT_FIELD, layout_ref, catalog, &mut errors) else {
         return Err(errors);
@@ -87,11 +87,11 @@ pub fn load_world_layout(
     }
 
     match taxonomy {
-        Some(taxonomy) if errors.is_empty() => Ok(Some(LoadedWorldLayout {
+        Some(taxonomy) if errors.is_empty() => Ok(LoadedWorldLayout {
             layout,
             prefabs,
             taxonomy,
-        })),
+        }),
         _ => Err(errors),
     }
 }
@@ -200,9 +200,7 @@ mod tests {
 
     #[test]
     fn loads_layout_catalog_and_each_prefab_once() {
-        let loaded = load_world_layout(&world(YARD_WORLD), &yard_catalog())
-            .unwrap()
-            .expect("a layout was named");
+        let loaded = load_world_layout(&world(YARD_WORLD), &yard_catalog()).unwrap();
 
         assert_eq!(loaded.layout.name, "yard");
         assert_eq!(loaded.layout.objects.len(), 2);
@@ -211,10 +209,31 @@ mod tests {
     }
 
     #[test]
-    fn no_layout_loads_nothing() {
-        let loaded = load_world_layout(&world(""), &yard_catalog()).unwrap();
+    fn world_without_references_names_both_missing_fields() {
+        // An empty `[world]` used to load as a world with no ground.
+        let errors = load_world_layout(&world(""), &yard_catalog()).unwrap_err();
 
-        assert!(loaded.is_none());
+        assert_eq!(errors.len(), 2, "{errors:?}");
+        assert!(errors[0].contains(SEMANTIC_CLASSES_FIELD), "{errors:?}");
+        assert!(errors[1].contains(LAYOUT_FIELD), "{errors:?}");
+        assert!(errors[1].contains("is missing"), "{errors:?}");
+    }
+
+    #[test]
+    fn class_catalog_without_layout_is_rejected() {
+        let errors = load_world_layout(
+            &world(
+                r#"
+                [semantic_classes]
+                from = "runtime.catalog.semantic_classes.default"
+                "#,
+            ),
+            &yard_catalog(),
+        )
+        .unwrap_err();
+
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains(LAYOUT_FIELD), "{errors:?}");
     }
 
     #[test]
@@ -275,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn broken_class_catalog_fails_even_without_a_layout() {
+    fn broken_class_catalog_is_reported_beside_a_missing_layout() {
         let catalog = catalog(&[(
             "runtime.catalog.semantic_classes.default",
             "[[class]]\nname = \"car\"\nid = 9\n",
@@ -292,6 +311,7 @@ mod tests {
         )
         .unwrap_err();
 
+        assert_eq!(errors.len(), 2, "{errors:?}");
         assert!(errors[0].contains("unlabeled"), "{errors:?}");
     }
 

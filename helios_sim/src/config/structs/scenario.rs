@@ -7,10 +7,10 @@ use std::collections::HashMap;
 use crate::config::structs::CameraVantage;
 
 use super::{
+    conditions::{AtmosphereConfig, MagneticFieldConfig},
     pose::Pose,
     sensors::SensorConfig,
     simulation::MetricsConfig,
-    terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig},
     vehicle::Vehicle,
     world_layout::CatalogRef,
 };
@@ -100,16 +100,11 @@ fn default_frequency_hz() -> f64 {
     400.0
 }
 
-/// World-level configuration: the placed objects, terrain tiles, atmosphere,
-/// and the magnetic field.
+/// World-level configuration: the placed objects, their class catalog, the
+/// atmosphere, and the magnetic field.
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct World {
-    /// One or more terrain tiles that compose the physical ground.
-    /// Declared with `[[world.terrains]]` in TOML.
-    #[serde(default)]
-    pub terrains: Vec<TerrainConfig>,
-
     /// Lighting, gravity, and atmospheric parameters.
     /// Declared as `[world.atmosphere]` in TOML.
     #[serde(default)]
@@ -120,13 +115,18 @@ pub struct World {
     #[serde(default)]
     pub magnetic_field: MagneticFieldConfig,
 
-    /// The scene's objects: `[world.layout] from = "sim.catalog.worlds.<name>"`.
+    /// The scene's objects, the ground included:
+    /// `[world.layout] from = "sim.catalog.worlds.<name>"`. Required; without
+    /// it agents spawn over nothing and fall.
+    ///
+    /// Optional here only so the loader can report it missing together with
+    /// every other broken reference, and say how to fix it.
     #[serde(default)]
     pub layout: Option<CatalogRef>,
 
     /// The semantic class catalog every label in the run uses:
     /// `[world.semantic_classes] from = "runtime.catalog.semantic_classes.<name>"`.
-    /// Required when `layout` is set.
+    /// Required, and optional here for the same reason as `layout`.
     #[serde(default)]
     pub semantic_classes: Option<CatalogRef>,
 }

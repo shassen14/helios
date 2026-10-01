@@ -7,12 +7,13 @@
 #   - single run  → the "run metrics summarized" log line
 #   - --monte-carlo N --seed S → the aggregate report's final_pos_* stats + seeds
 #
-# A moved agent reads far from its (0, 0) origin; a stationary one reads ~0.
+# A moved agent reads far from its start at (-20, 0); a stationary one reads
+# about -20 east.
 
 schema_version = "1.0"
 
 # Resolved relative to --config-root (default "configs").
-scenario = { from = "sim/scenarios/00_tutorial_showcase.toml" }
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
 
 # Carried but unused (observation presets aren't resolved yet).
 observation = { from = "default" }

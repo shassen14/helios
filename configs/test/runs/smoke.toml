@@ -8,8 +8,8 @@
 schema_version = "1.0"
 
 # Resolved relative to --config-root (default "configs"); see the bin's
-# resolve_scenario_path. Points at a scenario that already runs.
-scenario = { from = "sim/scenarios/00_tutorial_showcase.toml" }
+# resolve_scenario_path. The proving ground, the one driving scenario.
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
 
 # Observation presets are not resolved in Phase 5 (validate() stubs that check),
 # so this reference is carried but unused for now.

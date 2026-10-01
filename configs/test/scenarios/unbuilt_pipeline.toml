@@ -15,10 +15,11 @@ profile          = "unbuilt_pipeline"
 duration_seconds = 5.0
 seed             = 42
 
-[[world.terrains]]
-mesh     = "maps/starter_world.glb"
-collider = "maps/starter_world_col.glb"
-medium   = "air"
+[world.layout]
+from = "sim.catalog.worlds.open_field"
+
+[world.semantic_classes]
+from = "runtime.catalog.semantic_classes.default"
 
 [[agents]]
 from          = "sim.catalog.agents.raycast_car_estimation_only"

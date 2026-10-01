@@ -1,15 +1,19 @@
 # =========================================================================
 # == Helios Simulation: Proving Ground ==
 # =========================================================================
-# A layout-only world: every object, the ground included, is a placed
-# prefab from configs/sim/catalog/worlds/proving_ground.toml. There are no
-# [[world.terrains]].
+# Every object, the ground included, is a placed prefab from
+# configs/sim/catalog/worlds/proving_ground.toml.
 #
 # The car drives east past a barrier wall, crates and cones to a goal 40 m
 # away, mapping them with its lidar on the way.
 #
-# Frames and units as in 00_tutorial_showcase.toml: poses are ENU metres,
-# rotations [roll, pitch, yaw] in degrees.
+# The default scenario of helios_play and the smoke, acceptance and
+# proving-ground runs.
+#
+# Frames and units: poses are in the world ENU frame (x east, y north, z up),
+# in metres; `rotation` is [roll, pitch, yaw] in degrees, so yaw 90 faces
+# north. Sensor mounts on the agent are in the body FLU frame (x forward,
+# y left, z up).
 # =========================================================================
 
 [simulation]

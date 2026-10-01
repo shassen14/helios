@@ -254,11 +254,11 @@ mod tests {
     fn scenario_path_joins_under_config_root() {
         let path = resolve_scenario_path(
             Path::new("configs"),
-            "sim/scenarios/00_tutorial_showcase.toml",
+            "sim/scenarios/01_proving_ground.toml",
         );
         assert_eq!(
             path,
-            PathBuf::from("configs/sim/scenarios/00_tutorial_showcase.toml")
+            PathBuf::from("configs/sim/scenarios/01_proving_ground.toml")
         );
     }
 

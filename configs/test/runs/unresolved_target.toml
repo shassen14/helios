@@ -6,7 +6,7 @@
 # report path as a pass.
 
 schema_version = "1.0"
-scenario = { from = "sim/scenarios/00_tutorial_showcase.toml" }
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
 observation = { from = "default" }
 termination = { max_simulated_seconds = 2.0 }
 

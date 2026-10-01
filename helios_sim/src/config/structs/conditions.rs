@@ -1,33 +1,8 @@
+//! The conditions a scenario runs its world under: the atmosphere and the
+//! magnetic field. They live in the scenario, not the world file, so one
+//! layout can be run under different conditions.
+
 use serde::Deserialize;
-use std::path::PathBuf;
-
-/// Configuration for one terrain tile (visual mesh + optional collision mesh).
-/// Declared in a scenario TOML under `[[world.terrains]]`.
-#[derive(Debug, Deserialize, Clone)]
-#[serde(deny_unknown_fields)]
-pub struct TerrainConfig {
-    /// Path to the visual GLB, relative to the Bevy asset root.
-    pub mesh: PathBuf,
-    /// Path to the collision GLB. If absent, no physics collider is created.
-    #[serde(default)]
-    pub collider: Option<PathBuf>,
-    /// Physics medium this terrain represents. Affects agent physics and sensor
-    /// behaviour. Recognised values: `"air"`, `"water"`, `"vacuum"`.
-    /// Defaults to `"air"`.
-    #[serde(default = "default_medium")]
-    pub medium: String,
-    /// ENU world-frame position offset [x_east, y_north, z_up] in meters.
-    /// Defaults to [0, 0, 0].
-    #[serde(default)]
-    pub position: [f64; 3],
-    /// Orientation [roll, pitch, yaw] in **degrees**. Defaults to [0, 0, 0].
-    #[serde(default)]
-    pub orientation_degrees: [f64; 3],
-}
-
-fn default_medium() -> String {
-    "air".to_string()
-}
 
 /// Atmosphere and lighting configuration for a scenario.
 /// Declared in a scenario TOML as `[world.atmosphere]`.

@@ -12,14 +12,13 @@ pub use crate::HeliosSimulationPlugin;
 pub use crate::cli::Cli;
 
 pub use crate::config::structs::{
-    AgentConfig, AtmosphereConfig, RawScenarioConfig, ScenarioConfig, SensorConfig, TerrainConfig,
-    Vehicle,
+    AgentConfig, AtmosphereConfig, RawScenarioConfig, ScenarioConfig, SensorConfig, Vehicle,
 };
 pub use crate::config::ConfigPlugin;
 
 pub use crate::core::app_state::{AppState, SceneBuildSet, SimulationSet};
 pub use crate::core::components::{
-    ActuatorCommandComponent, BoundingBox3D, GroundTruthState, TerrainMedium, WorldObjectType,
+    ActuatorCommandComponent, BoundingBox3D, GroundTruthState, WorldObjectType,
 };
 pub use crate::core::host::{HeliosHost, Presentation, TimePolicy};
 pub use crate::core::spawn_requests::SpawnAgentConfigRequest;

@@ -92,7 +92,6 @@ fn load(layout: &str, prefabs: &[(&str, &str)]) -> LoadedWorldLayout {
 
     load_world_layout(&world, &PrefabCatalog(entries.into_iter().collect()))
         .expect("test references resolve")
-        .expect("a layout was named")
 }
 
 fn yard() -> LoadedWorldLayout {

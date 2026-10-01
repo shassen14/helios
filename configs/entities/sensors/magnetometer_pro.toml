@@ -2,7 +2,7 @@
 # Corresponds to the `SensorConfig::Magnetometer` enum variant.
 kind = "Magnetometer"
 rate = 100.0
-transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+transform = { translation = [-1.5, 1.0, 0.0], rotation = [90.0, 0.0, 90.0] }
 
 # --- Noise Characteristics (µT, sensor FLU axes) ---
 # The ambient field itself is a property of the world, not of this sensor:

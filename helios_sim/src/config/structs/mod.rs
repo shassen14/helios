@@ -8,11 +8,11 @@
 
 mod autonomy;
 mod camera;
+mod conditions;
 mod pose;
 mod scenario;
 mod sensors;
 mod simulation;
-mod terrain;
 mod vehicle;
 mod world_layout;
 
@@ -22,13 +22,13 @@ mod world_layout;
 pub use autonomy::*;
 
 pub use camera::CameraVantage;
+pub use conditions::{AtmosphereConfig, MagneticFieldConfig};
 pub use pose::Pose;
 pub use scenario::{
     AgentConfig, RawScenarioConfig, ScenarioCommon, ScenarioConfig, Simulation, World,
 };
 pub use sensors::{GpsConfig, ImuConfig, LidarConfig, MagnetometerConfig, SensorConfig};
 pub use simulation::MetricsConfig;
-pub use terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig};
 pub use vehicle::{
     AxleConfig, BoxVisual, CollisionConfig, MountConfig, PlantConfig, SuspensionConfig, TireConfig,
     TopologyConfig, Vehicle, VisualConfig, WheelConfig, WheelVisual, CUBOID, RAYCAST_WHEELS,

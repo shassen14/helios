@@ -41,7 +41,7 @@ pub enum SceneBuildSet {
     /// Pass 1: Create agent shells and attach the main request component.
     CreateRequests,
 
-    /// Pass 2: Spawn all static world objects (signs, buildings, terrain features).
+    /// Pass 2: Spawn the world layout's objects, the ground included.
     /// Runs before agent processing so sensors can reference world geometry at setup time.
     ProcessWorldObjects,
 

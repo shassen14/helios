@@ -75,7 +75,7 @@ impl HeliosHost {
         // Start from Bevy's defaults, then replace/disable individual plugins.
         let mut group = DefaultPlugins.build();
 
-        // Pin the asset root to an absolute path so terrain/object GLBs resolve
+        // Pin the asset root to an absolute path so object GLBs resolve
         // from any working directory — and from a bin in another crate — without
         // needing a `BEVY_ASSET_ROOT` override.
         group = group.set(AssetPlugin {

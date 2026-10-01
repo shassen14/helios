@@ -1,10 +1,10 @@
 # =========================================================================
 # == Dev Scenario: Mock Oracle Estimator ==
 # =========================================================================
-# E2E acceptance for Phase 3's mock_oracle_estimator. Built by deep-merging
-# the tutorial scenario and replacing only the estimator with the MockOracle
-# passthrough. Everything else (A*, occupancy grid, controller, lidar) is
-# the same real pipeline.
+# E2E acceptance for Phase 3's mock_oracle_estimator: the proving-ground
+# scenario with only the estimator replaced by the MockOracle passthrough.
+# Everything else (A*, occupancy grid, controller, lidar) is the same real
+# pipeline, all from the raycast_car prefab.
 #
 # What to verify when running this:
 #   1. DAG dump at startup lists `mock_oracle_estimator` (not `ekf`).
@@ -19,10 +19,11 @@
 duration_seconds = 60.0
 seed = 1337
 
-[[world.terrains]]
-mesh     = "maps/starter_world2.glb"
-collider = "maps/starter_world2_col.glb"
-medium   = "air"
+[world.layout]
+from = "sim.catalog.worlds.proving_ground"
+
+[world.semantic_classes]
+from = "runtime.catalog.semantic_classes.default"
 
 [world.atmosphere]
 gravity_enu = [0.0, 0.0, -9.81]  # [east, north, up] m/s²
@@ -33,17 +34,9 @@ ambient_lux = 1500.0
 [[agents]]
 from = "sim.catalog.agents.raycast_car"
 name = "MockOraclePro"
-starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
-goal_pose = { translation = [100.0, 50.0, 0.5] }
-
-# The raycast prefab already mounts a lidar; this re-states it explicitly so the
-# occupancy grid mapper's scan source is visible in the scenario.
-[agents.sensors.lidar]
-from = "entities.sensors.lidar2d"
-
-# Enable the local-layer mapper so A* has a map to plan against.
-[agents.autonomy_stack.map_layers.local]
-from = "runtime.catalog.mappers.occupancy_grid_2d"
+# Inside the proving ground's walls, along the route its own scenario drives.
+starting_pose = { translation = [-20.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { translation = [20.0, 0.0, 0.5] }
 
 # === The only real Phase 3 change: swap the estimator for MockOracle. ===
 # Deep-merge override of the estimator field inherited from raycast_car.
