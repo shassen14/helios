@@ -25,10 +25,10 @@ pub mod pure_pursuit;
 pub mod steering_pid;
 
 use crate::control::ControlReference;
+use crate::interchange::path::Path;
 use crate::spatial::conventions::Enu;
 use crate::spatial::quantities::Point;
 use crate::spatial::FrameAwareState;
-use crate::interchange::path::Path;
 
 /// Bus-sourced inputs for one [`PathFollower::compute`] call.
 pub struct PathFollowerInputs {

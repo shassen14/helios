@@ -60,12 +60,12 @@ impl Controller for LongitudinalVelocityController {
 mod tests {
     use super::*;
     use crate::control::commands::BodyTwist;
-    use crate::prelude::AgentId;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
+    use crate::kernel::manifold::TangentNoise;
+    use crate::prelude::AgentId;
+    use crate::spatial::state::Quantity;
     use crate::spatial::transforms::Convention;
     use crate::spatial::FrameAwareState;
-    use crate::kernel::manifold::TangentNoise;
-    use crate::spatial::state::Quantity;
 
     use nalgebra::{DMatrix, DVector};
     use std::sync::Arc;

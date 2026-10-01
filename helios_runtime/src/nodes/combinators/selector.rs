@@ -160,8 +160,8 @@ mod tests {
     use crate::port::PortBus;
     use crate::{Health, NodeId, Stamped, TickContext};
 
-    use helios_core::spatial::tf::TfProvider;
     use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::tf::TfProvider;
 
     use nalgebra::Isometry3;
 

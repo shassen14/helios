@@ -20,9 +20,9 @@ use crate::{
 };
 
 use bevy::prelude::*;
+use helios_core::prelude::PlannerGoal;
 use helios_core::spatial::conventions::Enu;
 use helios_core::spatial::quantities::Point;
-use helios_core::prelude::PlannerGoal;
 use nalgebra::Vector2;
 
 /// Registers the right-click goal observer. Relies on the mesh-picking backend

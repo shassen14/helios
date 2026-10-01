@@ -18,8 +18,8 @@
 //!    or more accurate.
 //! 4. Re-export from this `mod.rs`.
 
-use crate::prelude::{MonotonicTime, TfProvider};
 use crate::estimation::schema::MeasurementSchema;
+use crate::prelude::{MonotonicTime, TfProvider};
 use crate::spatial::{FrameAwareState, FrameId};
 use nalgebra::{DMatrix, DVector};
 

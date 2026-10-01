@@ -1,11 +1,11 @@
-use crate::spatial::tf::TfProvider;
-use crate::prelude::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::filters::linearization::tangent_state_transition;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
-use crate::spatial::FrameAwareState;
 use crate::kernel::integrators::RK4;
+use crate::prelude::MonotonicTime;
+use crate::spatial::tf::TfProvider;
+use crate::spatial::FrameAwareState;
 
 use nalgebra::{DMatrix, DVector};
 
@@ -200,17 +200,17 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::tf::TfProvider;
-    use crate::prelude::AgentId;
-    use crate::prelude::MonotonicTime;
     use crate::estimation::measurement::{MeasurementModel, Prediction};
     use crate::estimation::schema::{
         MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
     use crate::estimation::EstimatorInputs;
+    use crate::prelude::AgentId;
+    use crate::prelude::MonotonicTime;
+    use crate::spatial::state::{Component, Quantity};
+    use crate::spatial::tf::TfProvider;
     use crate::spatial::transforms::{Convention, ErasedTransform};
     use crate::spatial::{FrameAwareState, FrameId, StateVariable};
-    use crate::spatial::state::{Component, Quantity};
     use nalgebra::{DMatrix, DVector, Isometry3};
     use rand::rngs::StdRng;
     use rand::Rng;
@@ -490,10 +490,10 @@ mod tests {
     /// returning the final `(mean, covariance-diagonal)`. Every input here is a
     /// hardcoded constant so the run is fully deterministic.
     fn run_golden_ins_trajectory() -> (DVector<f64>, DVector<f64>) {
-        use crate::prelude::AgentId;
         use crate::estimation::dynamics::integrated_imu::{
             ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
         };
+        use crate::prelude::AgentId;
         use nalgebra::Vector3;
 
         // Distinct per-block variances so a transposed Q or P₀ block cannot hide
@@ -861,8 +861,8 @@ mod tests {
     /// The frozen 16-state INS model, same tuning as the golden trajectory so its
     /// base schema is the well-exercised one.
     fn ins_model() -> crate::estimation::dynamics::integrated_imu::IntegratedImuModel {
-        use crate::prelude::AgentId;
         use crate::estimation::dynamics::integrated_imu::{ImuInitialUncertainty, ImuProcessNoise};
+        use crate::prelude::AgentId;
         use nalgebra::Vector3;
 
         crate::estimation::dynamics::integrated_imu::IntegratedImuModel::new(
@@ -1155,8 +1155,8 @@ mod tests {
 
     #[test]
     fn augmented_update_drives_bias_toward_truth() {
-        use crate::prelude::AgentId;
         use crate::estimation::measurement::magnetometer::MagneticFieldModel;
+        use crate::prelude::AgentId;
         use nalgebra::Vector3;
 
         // Bias mean reads are storage-indexed (offset 16), its variance reads are

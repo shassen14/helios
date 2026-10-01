@@ -29,9 +29,9 @@ use crate::{
     },
 };
 
+use helios_core::interchange::perception::map::MapData;
 use helios_core::spatial::conventions::Enu;
 use helios_core::spatial::quantities::Point;
-use helios_core::interchange::perception::map::MapData;
 
 use bevy::{color, prelude::*};
 use nalgebra::Vector3;

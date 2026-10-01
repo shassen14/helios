@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use crate::spatial::primitives::{Control, State};
-use crate::prelude::AgentId;
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::schema::{StateSchema, StateSchemaBlock};
+use crate::kernel::integrators::Integrator;
+use crate::kernel::manifold::{StateBlock, TangentNoise};
+use crate::prelude::AgentId;
+use crate::spatial::primitives::{Control, State};
+use crate::spatial::state::{Component, Quantity};
 use crate::spatial::transforms::Convention;
 use crate::spatial::{FrameId, StateVariable};
-use crate::kernel::manifold::{StateBlock, TangentNoise};
-use crate::spatial::state::{Component, Quantity};
-use crate::kernel::integrators::Integrator;
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 
 /// A dynamics model that integrates raw IMU measurements (as control inputs)
@@ -354,8 +354,8 @@ mod tests {
     //!   stationary (position and velocity remain near zero).
 
     use super::*;
-    use crate::prelude::AgentId;
     use crate::kernel::integrators::RK4;
+    use crate::prelude::AgentId;
     use nalgebra::DVector;
 
     fn agent() -> AgentId {

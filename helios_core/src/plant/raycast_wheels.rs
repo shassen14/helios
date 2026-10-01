@@ -19,11 +19,11 @@
 
 use crate::control::actuators::{ActuatorCommand, SetpointKind, SetpointValue};
 use crate::control::commands::{BodyTwist, BodyWrench};
+use crate::plant::PlantWrench;
 use crate::spatial::{
     conventions::Flu,
     quantities::{FluVector, Point},
 };
-use crate::plant::PlantWrench;
 
 use nalgebra::Vector3;
 

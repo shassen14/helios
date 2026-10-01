@@ -9,9 +9,12 @@
 
 use bevy::{ecs::system::ResMut, input::keyboard::KeyCode};
 
-use crate::viz::interaction::actions::{
-    handle::{ActionId, ActionMetadata, InputKind},
-    registry::ActionRegistry,
+use crate::viz::{
+    interaction::actions::{
+        handle::{ActionId, ActionMetadata, InputKind},
+        registry::ActionRegistry,
+    },
+    live::point_cloud::TOGGLE_POINT_CLOUD,
 };
 
 /// Register every viz-layer action into the shared [`ActionRegistry`].
@@ -75,6 +78,15 @@ pub(crate) fn register_viz_actions(mut registry: ResMut<ActionRegistry>) {
             group: "viz",
             kind: InputKind::Button,
             default_key: KeyCode::KeyB,
+        },
+    );
+    registry.register(
+        TOGGLE_POINT_CLOUD,
+        ActionMetadata {
+            label: "Toggle point cloud",
+            group: "viz",
+            kind: InputKind::Button,
+            default_key: KeyCode::KeyL,
         },
     );
 }

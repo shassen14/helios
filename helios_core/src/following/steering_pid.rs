@@ -12,11 +12,11 @@ use super::{PathFollower, PathFollowerInputs, PathFollowerResult};
 use crate::control::commands::BodyTwist;
 use crate::control::kernels::siso_pid::SisoPid;
 use crate::control::BodyTwistRef;
+use crate::interchange::path::Path;
 use crate::prelude::AgentId;
 use crate::spatial::conventions::{Enu, Flu};
 use crate::spatial::quantities::Point;
 use crate::spatial::FrameId;
-use crate::interchange::path::Path;
 
 use nalgebra::Vector2;
 

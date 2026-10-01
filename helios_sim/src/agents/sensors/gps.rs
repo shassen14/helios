@@ -12,9 +12,9 @@ use crate::{
 };
 
 use helios_core::interchange::measurement::sensor::GpsPosition;
+use helios_core::sensors::gps::GpsModel;
 use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
-use helios_core::sensors::gps::GpsModel;
 
 use nalgebra::{Isometry3, Vector3};
 use rand::RngCore;

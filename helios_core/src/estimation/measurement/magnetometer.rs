@@ -1,16 +1,16 @@
 use crate::{
-    prelude::{AgentId, MonotonicTime, TfProvider},
     estimation::{
         measurement::{MeasurementModel, Prediction, Unavailable},
         schema::{MeasurementSchema, MeasurementSchemaBlock},
     },
+    prelude::{AgentId, MonotonicTime, TfProvider},
+    spatial::state::Quantity,
     spatial::{
         conventions::{Enu, Flu},
         quantities::FreeVector,
         transforms::{Convention, Rotation},
         FrameAwareState, FrameId,
     },
-    spatial::state::Quantity,
 };
 use nalgebra::{DVector, Vector3};
 
@@ -115,13 +115,13 @@ mod tests {
     //!   the bias read falls back to zero.
 
     use super::*;
+    use crate::estimation::schema::{StateSchema, StateSchemaBlock};
+    use crate::kernel::manifold::TangentNoise;
     use crate::prelude::AgentId;
     use crate::prelude::MonotonicTime;
-    use crate::estimation::schema::{StateSchema, StateSchemaBlock};
+    use crate::spatial::state::{Component, Quantity};
     use crate::spatial::transforms::{Convention, ErasedTransform};
     use crate::spatial::{FrameAwareState, FrameId, StateVariable};
-    use crate::kernel::manifold::TangentNoise;
-    use crate::spatial::state::{Component, Quantity};
     use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;

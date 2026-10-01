@@ -10,10 +10,10 @@ pub mod filters;
 pub mod measurement;
 pub mod schema;
 
-use crate::prelude::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
+use crate::prelude::MonotonicTime;
 use crate::spatial::FrameAwareState;
-use crate::{spatial::tf::TfProvider, estimation::measurement::Unavailable};
+use crate::{estimation::measurement::Unavailable, spatial::tf::TfProvider};
 
 use nalgebra::{DMatrix, DVector};
 

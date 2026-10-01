@@ -1,13 +1,13 @@
-use crate::spatial::tf::TfProvider;
-use crate::prelude::AgentId;
-use crate::prelude::MonotonicTime;
 use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
+use crate::prelude::AgentId;
+use crate::prelude::MonotonicTime;
 use crate::spatial::conventions::{Enu, Flu};
 use crate::spatial::quantities::FreeVector;
+use crate::spatial::state::Quantity;
+use crate::spatial::tf::TfProvider;
 use crate::spatial::transforms::{Convention, Rotation};
 use crate::spatial::{FrameAwareState, FrameId};
-use crate::spatial::state::Quantity;
 
 use nalgebra::{DVector, Vector3};
 
@@ -129,13 +129,13 @@ impl MeasurementModel for SpecificForceModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spatial::tf::TfProvider;
+    use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::prelude::AgentId;
     use crate::prelude::MonotonicTime;
-    use crate::estimation::carrier::kinematic_carrier_schema;
+    use crate::spatial::state::Quantity;
+    use crate::spatial::tf::TfProvider;
     use crate::spatial::transforms::{Convention, ErasedTransform};
     use crate::spatial::{FrameAwareState, FrameId};
-    use crate::spatial::state::Quantity;
 
     use nalgebra::{Isometry3, UnitQuaternion};
     use std::f64::consts::FRAC_PI_2;

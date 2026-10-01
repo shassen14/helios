@@ -20,6 +20,7 @@ use crate::{
         live::{
             bounding_boxes::{BoundingBoxViewTuning, BoundingBoxViewTuningFile},
             colliders::{ColliderViewTuning, ColliderViewTuningFile},
+            point_cloud::{PointCloudViewTuning, PointCloudViewTuningFile},
             pose::{PoseOverlayTuning, PoseOverlayTuningFile},
             tf::{TfOverlayTuning, TfOverlayTuningFile},
             tf_labels::{TfLabelTuning, TfLabelTuningFile},
@@ -48,6 +49,7 @@ struct InteractionTuningFile {
     tf_panel: TfPanelTuningFile,
     collider_view: ColliderViewTuningFile,
     bounding_box_view: BoundingBoxViewTuningFile,
+    point_cloud_view: PointCloudViewTuningFile,
 }
 
 #[derive(Deserialize, Default)]
@@ -92,6 +94,7 @@ struct ResolvedInteractionTuning {
     tf_panel_health_colors: TfPanelHealthColors,
     collider_view: ColliderViewTuning,
     bounding_box_view: BoundingBoxViewTuning,
+    point_cloud_view: PointCloudViewTuning,
 }
 
 pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
@@ -118,6 +121,7 @@ pub(crate) fn load_interaction_tuning(cli: Res<Cli>, mut commands: Commands) {
             commands.insert_resource(resolved.tf_panel_health_colors);
             commands.insert_resource(resolved.collider_view);
             commands.insert_resource(resolved.bounding_box_view);
+            commands.insert_resource(resolved.point_cloud_view);
         }
         Err(e) => panic!("interaction tuning config: {e}"),
     }
@@ -147,6 +151,7 @@ fn resolve_all(
         tf_panel_health_colors,
         collider_view: ColliderViewTuning::resolve(&file.collider_view),
         bounding_box_view: BoundingBoxViewTuning::resolve(&file.bounding_box_view),
+        point_cloud_view: PointCloudViewTuning::resolve(&file.point_cloud_view),
     })
 }
 
@@ -282,6 +287,26 @@ mod tests {
         let resolved = resolve_all(&file).expect("valid overrides resolve");
 
         assert_eq!(resolved.bounding_box_view.color, Color::srgb(0.3, 0.9, 0.2));
+    }
+
+    /// The `[point_cloud_view]` section reaches its resource, for the same
+    /// reason as the collider view's.
+    #[test]
+    fn point_cloud_view_section_deserializes_and_resolves() {
+        let toml = r#"
+            [point_cloud_view]
+            color = [0.7, 0.2, 0.9]
+            point_radius = 0.08
+        "#;
+
+        let file: InteractionTuningFile = Figment::new()
+            .merge(Toml::string(toml))
+            .extract()
+            .expect("point_cloud_view section parses against the file struct");
+        let resolved = resolve_all(&file).expect("valid overrides resolve");
+
+        assert_eq!(resolved.point_cloud_view.color, Color::srgb(0.7, 0.2, 0.9));
+        assert_eq!(resolved.point_cloud_view.point_radius, 0.08);
     }
 
     /// An unknown key inside a `[tf_panel.*]` section is rejected rather than silently

@@ -17,11 +17,11 @@ pub mod transforms;
 
 use crate::{
     estimation::schema::StateSchema,
+    spatial::state::Quantity,
     spatial::{
         quantities::{FreeVector, Point},
         transforms::{ConventionOf, Rotation, Transform},
     },
-    spatial::state::Quantity,
 };
 
 use nalgebra::{DMatrix, DVector, Quaternion, Translation, UnitQuaternion, Vector3};
@@ -264,9 +264,9 @@ impl FrameAwareState {
 mod frame_aware_state_tests {
     use super::*;
     use crate::estimation::schema::StateSchemaBlock;
-    use crate::spatial::transforms::Convention;
     use crate::kernel::manifold::TangentNoise;
     use crate::spatial::state::Component;
+    use crate::spatial::transforms::Convention;
 
     // A composed position + orientation state in World, built from real
     // `Quantity` blocks via `compose`. The orientation block seeds the identity
@@ -382,12 +382,12 @@ mod frame_aware_state_tests {
 #[cfg(test)]
 mod block_extractor_tests {
     use super::*;
-    use crate::prelude::AgentId;
     use crate::estimation::schema::StateSchemaBlock;
-    use crate::spatial::conventions::{Enu, Flu};
-    use crate::spatial::transforms::Convention;
     use crate::kernel::manifold::TangentNoise;
+    use crate::prelude::AgentId;
+    use crate::spatial::conventions::{Enu, Flu};
     use crate::spatial::state::Component;
+    use crate::spatial::transforms::Convention;
 
     fn body() -> FrameId {
         FrameId::base_link(AgentId::new("test_agent"))

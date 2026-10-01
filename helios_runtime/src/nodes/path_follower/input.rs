@@ -1,4 +1,4 @@
-use helios_core::{spatial::FrameAwareState, prelude::PathFollowerInputs};
+use helios_core::{prelude::PathFollowerInputs, spatial::FrameAwareState};
 
 use crate::{
     port::{ChannelKey, InternalChannel, PortBus},

@@ -13,12 +13,12 @@
 //! [`StateSchema::compose`]; it is a *client* of that primitive, not a new one,
 //! which is why it is a free function and not a `StateSchema` constructor.
 
-use crate::prelude::AgentId;
 use crate::estimation::schema::{StateSchema, StateSchemaBlock};
+use crate::kernel::manifold::TangentNoise;
+use crate::prelude::AgentId;
+use crate::spatial::state::Quantity;
 use crate::spatial::transforms::Convention;
 use crate::spatial::FrameId;
-use crate::kernel::manifold::TangentNoise;
-use crate::spatial::state::Quantity;
 
 use nalgebra::{DMatrix, DVector};
 
@@ -78,8 +78,8 @@ pub fn kinematic_carrier_schema(agent: AgentId) -> StateSchema {
 mod tests {
     use super::*;
     use crate::spatial::conventions::{Enu, Flu};
-    use crate::spatial::{FrameAwareState, StateVariable};
     use crate::spatial::state::Component;
+    use crate::spatial::{FrameAwareState, StateVariable};
     use std::sync::Arc;
 
     fn agent() -> AgentId {

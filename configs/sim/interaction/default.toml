@@ -97,3 +97,10 @@ default_orientation = "sideways" # "sideways" | "top_down" (default "sideways"; 
 # only one color is where the label and the collider disagree.
 # [bounding_box_view]
 # color = [0.0, 0.8, 1.0]   # box line color, linear sRGB (default cyan)
+
+# Point-cloud view (toggle: viz.toggle_point_cloud, default L): every lidar
+# point, placed on the sensor's true pose when it measured. Points should sit on
+# collider surfaces; with the map on too, a gap is estimator error.
+# [point_cloud_view]
+# color        = [0.5, 0.3, 0.7]   # point color, linear sRGB (default purple)
+# point_radius = 0.05              # sphere radius per point, meters

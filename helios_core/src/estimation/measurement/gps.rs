@@ -1,17 +1,17 @@
 use nalgebra::DVector;
 
-use crate::spatial::tf::TfProvider;
-use crate::prelude::AgentId;
-use crate::prelude::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
 use crate::estimation::measurement::Prediction;
 use crate::estimation::measurement::Unavailable;
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
+use crate::prelude::AgentId;
+use crate::prelude::MonotonicTime;
 use crate::spatial::conventions::{Enu, Flu};
 use crate::spatial::quantities::Point;
+use crate::spatial::state::Quantity;
+use crate::spatial::tf::TfProvider;
 use crate::spatial::transforms::{Convention, Rotation};
 use crate::spatial::{FrameAwareState, FrameId};
-use crate::spatial::state::Quantity;
 
 /// A measurement model for a standard GPS sensor that provides 3D position.
 ///
@@ -119,13 +119,13 @@ mod tests {
     //! - Default finite-diff Jacobian has the correct shape and identity position columns.
 
     use super::*;
-    use crate::spatial::tf::TfProvider;
+    use crate::estimation::carrier::kinematic_carrier_schema;
     use crate::prelude::AgentId;
     use crate::prelude::MonotonicTime;
-    use crate::estimation::carrier::kinematic_carrier_schema;
+    use crate::spatial::state::{Component, Quantity};
+    use crate::spatial::tf::TfProvider;
     use crate::spatial::transforms::{Convention, ErasedTransform};
     use crate::spatial::{FrameAwareState, FrameId, StateVariable};
-    use crate::spatial::state::{Component, Quantity};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;
 

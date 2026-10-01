@@ -1,7 +1,7 @@
 use crate::{
     estimation::schema::{MeasurementSchema, MeasurementSchemaBlock, StateSchema},
-    spatial::{transforms::Convention, FrameId},
     spatial::state::Quantity,
+    spatial::{transforms::Convention, FrameId},
 };
 
 /// Checks that a measurement schema is expressed compatibly with the state it
@@ -124,9 +124,9 @@ impl std::error::Error for MeasurementAgreementError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::AgentId;
     use crate::estimation::schema::StateSchemaBlock;
     use crate::kernel::manifold::TangentNoise;
+    use crate::prelude::AgentId;
 
     use nalgebra::{DMatrix, DVector};
 

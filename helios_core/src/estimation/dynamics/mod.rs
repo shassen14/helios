@@ -6,9 +6,9 @@
 
 pub mod integrated_imu;
 
-use crate::spatial::primitives::{Control, State};
 use crate::estimation::schema::StateSchema;
 use crate::kernel::integrators::Integrator;
+use crate::spatial::primitives::{Control, State};
 use nalgebra::DMatrix;
 use std::fmt::Debug;
 use std::sync::Arc;

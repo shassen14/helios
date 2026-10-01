@@ -306,8 +306,8 @@ mod tests {
     fn lidar_model() -> Box<dyn RaycastingSensorModel> {
         let geometry = SphericalAngular::from_field_of_view(vec![0.0], TAU, AZIMUTH_BEAMS)
             .expect("a single full-circle ring is a valid layout");
-        let noise = LidarNoise::new(RANGE_NOISE_STDDEV, ANGULAR_NOISE_STDDEV)
-            .expect("positive noise");
+        let noise =
+            LidarNoise::new(RANGE_NOISE_STDDEV, ANGULAR_NOISE_STDDEV).expect("positive noise");
         let model = LidarModel::new(geometry, FLASH_SWEEP_PERIOD, RANGE_MIN, MAX_RANGE, noise)
             .expect("valid range limits");
         Box::new(model)

@@ -1,6 +1,6 @@
 use crate::{
-    spatial::{transforms::Convention, FrameId},
     spatial::state::{Quantity, StateVariable},
+    spatial::{transforms::Convention, FrameId},
 };
 
 /// One block of a [`MeasurementSchema`]: the [`Quantity`] a measurement predicts

@@ -232,7 +232,10 @@ pub(crate) fn frame_triad_in_root(
 ) -> Option<(Vec3, [Vec3; 3])> {
     let erased = buffer.lookup(frame, root, TfQuery::Latest).ok()?;
     let (origin, axes) = frame_triad_to_bevy(erased.isometry(), erased.to_convention())?;
-    Some((point_bevy_to_vec3(origin), axes.map(freevector_bevy_to_vec3)))
+    Some((
+        point_bevy_to_vec3(origin),
+        axes.map(freevector_bevy_to_vec3),
+    ))
 }
 
 /// A frame's origin in `root`, as a Bevy world position — the triad's origin

@@ -152,9 +152,9 @@ pub(crate) fn tf_label_system(
         for (tf_service, agent_id) in &agents {
             let root = FrameId::odom(agent_id.0.clone());
             for (edge, _kind) in tf_service.0.buffer().edges() {
-                match frame_origin_in_root(tf_service.0.buffer(), &edge.child, &root).and_then(
-                    |origin| camera.world_to_viewport(camera_transform, origin).ok(),
-                ) {
+                match frame_origin_in_root(tf_service.0.buffer(), &edge.child, &root)
+                    .and_then(|origin| camera.world_to_viewport(camera_transform, origin).ok())
+                {
                     Some(viewport) => on_screen.push((edge.child, viewport + tuning.screen_offset)),
                     None => off_screen.push(edge.child),
                 }

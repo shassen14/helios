@@ -1,9 +1,9 @@
 //! Numerical linearization of dynamics into a discrete tangent-space state
 //! transition matrix, used by the covariance step of Gaussian filters.
 
-use crate::spatial::FrameAwareState;
-use crate::prelude::EstimationDynamics;
 use crate::kernel::integrators::Integrator;
+use crate::prelude::EstimationDynamics;
+use crate::spatial::FrameAwareState;
 
 use nalgebra::{DMatrix, DVector};
 
@@ -67,13 +67,13 @@ pub(crate) fn tangent_state_transition(
 #[cfg(test)]
 mod tests {
     use super::tangent_state_transition;
-    use crate::prelude::AgentId;
     use crate::estimation::dynamics::integrated_imu::{
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };
-    use crate::spatial::FrameAwareState;
-    use crate::prelude::EstimationDynamics;
     use crate::kernel::integrators::RK4;
+    use crate::prelude::AgentId;
+    use crate::prelude::EstimationDynamics;
+    use crate::spatial::FrameAwareState;
 
     use nalgebra::{DVector, Vector3};
 

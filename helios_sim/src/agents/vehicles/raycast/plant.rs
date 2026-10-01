@@ -1,6 +1,6 @@
 use helios_core::{
-    spatial::{conventions::Flu, quantities::Point},
     plant::{Axle, RaycastWheelPlant, SuspensionParams, TireParams, Wheel},
+    spatial::{conventions::Flu, quantities::Point},
 };
 
 use bevy::prelude::*;

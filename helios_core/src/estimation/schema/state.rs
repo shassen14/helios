@@ -20,9 +20,11 @@
 //! moment a curved block enters.
 
 use crate::{
-    spatial::{transforms::Convention, FrameId, StateVariable},
-    kernel::manifold::{euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise},
+    kernel::manifold::{
+        euclidean::EuclideanBlock, quaternion::QuaternionBlock, StateBlock, TangentNoise,
+    },
     spatial::state::Quantity,
+    spatial::{transforms::Convention, FrameId, StateVariable},
 };
 
 use nalgebra::{DMatrix, DVector, DVectorView};
@@ -415,8 +417,8 @@ impl StateSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::AgentId;
     use crate::kernel::manifold::TangentNoise;
+    use crate::prelude::AgentId;
     use crate::spatial::state::Component;
 
     fn agent() -> AgentId {
