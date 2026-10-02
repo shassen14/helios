@@ -2,6 +2,11 @@
 # A flat walled test area: the smallest world that exercises every part of
 # the object pipeline. Each group below is there to test something.
 #
+# The obstacles stand on the route on purpose. This world exposes what the
+# autonomy stack gets wrong, so known weaknesses show up here, in sim, before
+# field testing. Don't move an obstacle off the route to make a run look
+# clean.
+#
 # Positions are ENU metres (x east, y north, z up) of each object's origin,
 # which every asset keeps on its base: z = 0 stands it on the ground.
 # Orientation is [roll, pitch, yaw] in degrees; yaw 90 turns an object's
@@ -44,15 +49,16 @@ position            = [-30.0, 0.0, 0.0]
 orientation_degrees = [0.0, 0.0, 90.0]
 scale               = [15.0, 1.0, 1.0]
 
-# --- Barrier: a 12 m wall north of the route, spanning y = 6..18 --------
-# Seen by the lidar and mapped, but not in the car's way: the planner routes
-# a point, with no clearance for the car's width, so a path around a wall
-# end clips it.
+# --- Barrier: a 12 m wall across the route, spanning y = -4..8 ----------
+# Seen by the lidar and mapped, so the planner must route around it. The
+# south end is the shorter way round, and the corner the car's body must
+# clear: a planner that plans for a point, with no width or heading, clips
+# it.
 
 [[objects]]
 name                = "barrier"
 prefab              = "entities.objects.wall_4m"
-position            = [0.0, 12.0, 0.0]
+position            = [0.0, 2.0, 0.0]
 orientation_degrees = [0.0, 0.0, 90.0]
 scale               = [3.0, 1.0, 1.0]
 
@@ -84,30 +90,33 @@ position = [-8.0, -10.0, 0.0]
 scale    = [3.0, 1.0, 0.5]
 
 # --- Cones: convex-hull colliders, a pushable row and one fixed ----------
-# Kept off the route: at 0.7 m they sit below the lidar's scan plane.
+# The row stands across the route at x = 12. At 0.7 m the cones sit below
+# the planar lidar's scan plane, so a mapper fed only by it never sees them
+# and the car drives into them. They are dynamic so the car pushes through
+# instead of stalling.
 
 [[objects]]
 name     = "cone_0"
 prefab   = "entities.objects.traffic_cone"
-position = [-10.0, -16.0, 0.0]
+position = [12.0, -1.5, 0.0]
 body     = "dynamic"
 
 [[objects]]
 name     = "cone_1"
 prefab   = "entities.objects.traffic_cone"
-position = [-5.0, -16.0, 0.0]
+position = [12.0, -0.5, 0.0]
 body     = "dynamic"
 
 [[objects]]
 name     = "cone_2"
 prefab   = "entities.objects.traffic_cone"
-position = [0.0, -16.0, 0.0]
+position = [12.0, 0.5, 0.0]
 body     = "dynamic"
 
 [[objects]]
 name     = "cone_3"
 prefab   = "entities.objects.traffic_cone"
-position = [5.0, -16.0, 0.0]
+position = [12.0, 1.5, 0.0]
 body     = "dynamic"
 
 [[objects]]

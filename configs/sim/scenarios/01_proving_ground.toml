@@ -4,8 +4,11 @@
 # Every object, the ground included, is a placed prefab from
 # configs/sim/catalog/worlds/proving_ground.toml.
 #
-# The car drives east past a barrier wall, crates and cones to a goal 40 m
-# away, mapping them with its lidar on the way.
+# The car drives east toward a goal 40 m away. A barrier wall and a row of
+# cones stand on the route: the car must map the barrier and plan around
+# it, and its planar lidar can't see the cones. The world exposes what the
+# autonomy stack gets wrong, so expect the car to clip the barrier's corner
+# and run through the cones until mapping and planning improve.
 #
 # The default scenario of helios_play and the smoke, acceptance and
 # proving-ground runs.

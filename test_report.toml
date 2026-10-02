@@ -1,8 +1,8 @@
-run_name = "smoke"
-scenario = "sim/scenarios/00_tutorial_showcase.toml"
+run_name = "acceptance"
+scenario = "sim/scenarios/01_proving_ground.toml"
 status = "passed"
-simulated_duration_secs = 5.0
-wall_duration_secs = 0.811815333
+simulated_duration_secs = 20.0
+wall_duration_secs = 3.371125791
 assertions = []
 
 [terminated_by]

@@ -1,7 +1,9 @@
 # Proving ground run: a world built only from placed objects, end to end.
 #
-# The scene must build from the layout (ground, walls, crates, cones), and the
-# raycast car must drive across the layout's ground and come to rest near the
+# The scene must build from the layout (ground, walls, crates, cones). The
+# barrier and cones stand on the car's route to expose what mapping and
+# planning get wrong, so the drive is not expected to be clean: the car may
+# clip the barrier's corner, push through the cones, or stall short of the
 # goal. It carries no assertions (the harness cannot yet extract a pose); the
 # result is read from the summarizer's metrics against the scenario's
 # goal_pose (20, 0):
