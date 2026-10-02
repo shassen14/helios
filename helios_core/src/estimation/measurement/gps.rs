@@ -20,7 +20,7 @@ use crate::spatial::{FrameAwareState, FrameId};
 /// origin via the TF tree (same pattern as [`SpecificForceModel`]).
 ///
 /// Note: `R` (measurement noise covariance) is **not** held here. It lives at
-/// the call site and is passed per `update`. See `algorithm_family_traits.md` §2.1.
+/// the call site and is passed per `update`.
 ///
 /// [`SpecificForceModel`]: crate::estimation::measurement::accelerometer::SpecificForceModel
 #[derive(Debug, Clone)]

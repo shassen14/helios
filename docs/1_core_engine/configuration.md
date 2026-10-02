@@ -16,7 +16,7 @@ All TOML configuration lives in `configs/` at the workspace root. Never inside a
 ```
 configs/
 ├── scenarios/              ← Top-level simulation scenarios
-│   ├── 00_tutorial_showcase.toml
+│   ├── 01_proving_ground.toml
 │   ├── simple_car_scenario.toml
 │   └── isolation/          ← Single-subsystem test scenarios
 │       └── estimation_only.toml
@@ -136,22 +136,18 @@ profile          = "low_power"  # optional SimulationProfile name
 mock_path        = "fixtures/paths/circle_r5.toml"   # optional
 mock_map         = "fixtures/maps/empty_20x20.toml"  # optional
 
-[world]
-[world.terrains]
-# see terrain config below
+[world.layout]                          # required: the placed objects, ground included
+from = "sim.catalog.worlds.proving_ground"
+
+[world.semantic_classes]                # required: the class catalog every label uses
+from = "runtime.catalog.semantic_classes.default"
 
 [world.atmosphere]
-gravity            = [0.0, -9.81, 0.0]  # Bevy Y-up
+gravity_enu        = [0.0, 0.0, -9.81]  # ENU [east, north, up], m/s²
 sun_elevation      = 45.0               # degrees
 sun_azimuth        = 180.0              # degrees from North
 ambient_lux        = 8000.0
 fog_density        = 0.0
-
-[[world.objects]]
-prefab   = "objects.stop_sign"
-position = [10.0, 5.0, 0.0]             # ENU world frame [East, North, Up]
-orientation_degrees = [0.0, 0.0, 45.0]  # [roll, pitch, yaw]
-scale    = [1.0, 1.0, 1.0]
 
 [debug]
 show_pose_gimbals   = true
@@ -172,36 +168,48 @@ output_path = "results/run_001.csv"     # optional
 # ... (see agent config below)
 ```
 
-### Terrain Config
+### World Layout
+
+A scenario names one world file; the world file places prefabs. There is no
+separate terrain: the ground is a placed object like any other
+(`entities.objects.ground_100m`, a 100 × 100 × 1 m slab with its top face at
+z = 0). Two worlds exist: `proving_ground` (walls, a barrier, crates, cones)
+and `open_field` (ground only).
 
 ```toml
-[[world.terrains]]
-mesh                = "terrain/ground.glb"          # visual mesh
-collider            = "terrain/ground_collision.glb" # optional separate collision mesh
-medium              = "air"                          # "air" | "water" | "vacuum"
-position            = [0.0, 0.0, 0.0]               # ENU
-orientation_degrees = [0.0, 0.0, 0.0]
-```
+# configs/sim/catalog/worlds/proving_ground.toml
+name = "proving_ground"              # prefix of every instance ID
 
-If `collider` is omitted, the physics engine uses the visual mesh as a trimesh collider.
+[[objects]]
+name     = "ground"
+prefab   = "entities.objects.ground_100m"
+position = [0.0, 0.0, 0.0]           # ENU metres of the object's origin
+
+[[objects]]
+name                = "barrier"
+prefab              = "entities.objects.wall_4m"
+position            = [0.0, 12.0, 0.0]
+orientation_degrees = [0.0, 0.0, 90.0]   # [roll, pitch, yaw]
+scale               = [3.0, 1.0, 1.0]    # static placements only
+body                = "static"           # "static" (default) | "dynamic"
+```
 
 ### World Object Prefab
 
-Defined in `catalog/objects/`:
+Defined in `configs/entities/objects/`. Geometry comes from the `.glb`
+(collider parts are its `col_*` nodes, else its bounding box); the TOML holds
+only what the file cannot:
 
 ```toml
-# catalog/objects/stop_sign.toml
-label    = "stop_sign"
-class_id = 10
-
-visual_mesh = "objects/stop_sign.glb"
-bounding_box = [0.6, 2.6, 0.6]          # [width, height, depth] meters
-
-[collider]
-shape       = "capsule"                  # "box" | "sphere" | "capsule" | "cylinder"
-radius      = 0.04
-half_height = 1.0
+# configs/entities/objects/crate_1m.toml
+mesh     = "objects/crate_1m.glb"    # relative to helios_sim/assets/
+class    = "crate"                   # a name in the semantic class catalog
+mass_kg  = 20.0                      # required for a dynamic placement
+collides = true                      # default
 ```
+
+See `docs/future_plans/asset_pipeline_schema.md` and
+`docs/guides/blender_asset_guide.md`.
 
 ---
 
@@ -602,7 +610,7 @@ Missing optional fields use their defaults silently. Missing required fields cau
 | `Vehicle` | `helios_sim/src/simulation/config/structs/vehicle.rs` | `helios_sim` |
 | `SensorConfig` | `helios_sim/src/simulation/config/structs/sensors.rs` | `helios_sim` |
 | `Pose` | `helios_sim/src/simulation/config/structs/pose.rs` | `helios_sim` |
-| `TerrainConfig` / `AtmosphereConfig` | `helios_sim/src/simulation/config/structs/terrain.rs` | `helios_sim` |
-| `WorldObjectPlacement` / `WorldObjectPrefab` | `helios_sim/src/simulation/config/structs/world_object.rs` | `helios_sim` |
+| `AtmosphereConfig` / `MagneticFieldConfig` | `helios_sim/src/config/structs/conditions.rs` | `helios_sim` |
+| `WorldLayout` / `ObjectPlacement` / `ObjectPrefab` | `helios_sim/src/config/structs/world_layout.rs` | `helios_sim` |
 | `PrefabCatalog` | `helios_sim/src/simulation/config/catalog.rs` | `helios_sim` |
 | Resolver logic | `helios_sim/src/simulation/config/resolver.rs` | `helios_sim` |

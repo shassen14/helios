@@ -11,7 +11,7 @@ A full `Planner` trait replacing the original stub. Planners own their replan de
 - `PlannerResult` — 7 variants: `Path`, `GoalOutsideMap`, `Unreachable`, `GoalReached`, `PathStillValid`, `NoGoal`, `Error`
 - `PlannerStatus` — `Idle`, `Active`, `GoalReached`, `Failed`
 - `PlannerContext` — clock + optional TF provider, passed to every `plan()` call
-- `Path` — `Vec<TrajectoryPoint>` with timestamp and level key
+- `Path` — `Vec<Point<Enu>>` (geometry-only waypoints) with timestamp and level key
 
 **A\* on `OccupancyGrid2D`:**
 - Rate-gated replanning via `rate_hz`
@@ -103,7 +103,7 @@ The F9 entry in the legend tracks the path gizmo toggle but does not show which 
 
 - **Global + local planner pair** — Global A\* on a static map at 1 Hz gives the coarse route; local A\* or DWA on the live rolling-window map at 5–10 Hz handles dynamic obstacle avoidance. `ControlCore` already holds `cached_paths` for both `PipelineLevel::Global` and `PipelineLevel::Local`.
 - **`GlobalPathWaypoint` goal chaining** — the local planner receives `PlannerGoal::GlobalPathWaypoint { index }` and automatically advances through the global route on `GoalReached`, keeping the global planner decoupled from the local one.
-- **Velocity-aware waypoints** — `TrajectoryPoint` has slots for velocity; A\* currently sets them to zero. A post-processing pass could assign target speeds based on path curvature (slow on turns, fast on straights).
+- **Velocity-aware trajectories** — today's `Path` waypoints are geometry-only (`Point<Enu>`). Assigning target speeds by curvature (slow on turns, fast on straights) is a *trajectory*, not a path: a distinct typed carrier composing quantity blocks (position + velocity + …), produced by a later optimizer as its own leaf — not fields bolted onto the geometric waypoint. See `state_schema_composition.md` (path vs trajectory).
 
 ### Longer-term
 

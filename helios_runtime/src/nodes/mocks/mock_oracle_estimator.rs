@@ -19,7 +19,7 @@
 //! The descriptor declares `oracle/pose` as a required oracle input. A body
 //! that does not publish `oracle/pose` fails the build with
 //! [`PipelineBuildError::UnsatisfiedBodyCapabilities`]. This is the
-//! type-level fence from `body_contract.md §9`.
+//! type-level fence that keeps oracle-reading nodes off bodies without truth.
 //!
 //! ## Schema
 //!
@@ -232,8 +232,8 @@ mod tests {
     //! 2. Execute round-trip — pose + twist published correctly.
     //! 3. Cold-start — no oracle → no publish.
     //! 4. Body-capability gate — build fails without `oracle/pose`,
-    //!    succeeds with it. Locks the headline guarantee from
-    //!    `mock_catalog.md §2.1`.
+    //!    succeeds with it. Locks the headline guarantee:
+    //!    an oracle node cannot run on a body without truth.
 
     use super::*;
     use crate::body::{BodyCapabilities, Provenance, PublishedChannel};

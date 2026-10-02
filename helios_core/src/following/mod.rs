@@ -18,8 +18,8 @@
 //! (curvature, acceleration) are not carried here — they belong to a separate
 //! summed node, so this layer stays pure geometry-to-velocity.
 //!
-//! This layer is bypassed entirely when a trajectory optimizer (Architecture B)
-//! or MPC (Architecture C) is active — see `pipeline_vision.md`.
+//! This layer is bypassed entirely when a trajectory optimizer or MPC is
+//! active.
 
 pub mod pure_pursuit;
 pub mod steering_pid;

@@ -8,8 +8,12 @@
 
 | File                               | Description                                                                           |
 | ---------------------------------- | ------------------------------------------------------------------------------------- |
-| [architecture.md](architecture.md) | High-level system overview and three-crate architecture rationale                     |
-| [standards.md](standards.md)       | Project-wide coding, coordinate frame, and units standards (read before writing code) |
+| [architecture.md](architecture.md)                       | High-level system overview and three-crate architecture rationale              |
+| [pipeline_vision.md](pipeline_vision.md)                 | Full intended pipeline stage-by-stage vision and multi-agent coordination      |
+| [pipeline_scope.md](pipeline_scope.md)                   | DAG pipeline contract, in/out-of-scope architectures, pluggable boundary      |
+| [pipeline_communication.md](pipeline_communication.md)   | Communication layers (port bus, Zenoh), distributed single-agent deployment   |
+| [standards.md](standards.md)                             | Project-wide coding, coordinate frame, and units standards (read before code) |
+| [config_design/](config_design/README.md)                | Active design thread: config vocabulary, channel wiring, composition/overrides |
 
 ---
 
@@ -63,7 +67,6 @@ Data flow from simulation to observability tools, and profiling workflows.
 
 | File                                                                       | Description                                                                           |
 | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| [5_telemetry_tools/topic_bus.md](5_telemetry_tools/topic_bus.md)           | `TopicBus` publish/subscribe system, Foxglove bridge integration                      |
-| [5_telemetry_tools/profiling_cpu.md](5_telemetry_tools/profiling_cpu.md)   | CPU profiling with samply — build, record, and analyze with `parse_samply_profile.py` |
-| [5_telemetry_tools/profiling_heap.md](5_telemetry_tools/profiling_heap.md) | Heap profiling with DHAT — run and analyze with `parse_dhat_profile.py`               |
+| [5_telemetry_tools/topic_bus.md](5_telemetry_tools/topic_bus.md)           | `TopicBus` — **deprecated**, see `pipeline_communication.md` for replacement          |
+| [5_telemetry_tools/profiling_cpu.md](5_telemetry_tools/profiling_cpu.md)   | CPU profiling with samply — build, record, and read the profile in the browser        |
 

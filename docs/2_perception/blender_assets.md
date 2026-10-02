@@ -5,6 +5,15 @@
 > accurately, and carries the semantic metadata needed by autonomy algorithms and
 > dataset exporters.
 
+> **Superseded in part (2026-10-01).** The asset pipeline that was built
+> differs from this guide: collider parts are `col_*` nodes in the same
+> `.glb` (no `_col.glb`), there is no terrain (the ground is a placed
+> object), scenes are world files referenced by `[world.layout]`, and prefab
+> TOML holds `mesh`, `class`, `mass_kg` and `collides` only. For authoring,
+> follow `docs/guides/blender_asset_guide.md`; for the design,
+> `docs/future_plans/asset_pipeline_schema.md`. Sections not rewritten below
+> (collision standards, catalog fields, class IDs) describe the old design.
+
 ---
 
 ## Table of Contents
@@ -16,14 +25,13 @@
 5. [Semantic Metadata (Custom Properties)](#5-semantic-metadata-custom-properties)
 6. [Collision Mesh Standards](#6-collision-mesh-standards)
 7. [Material and Texture Standards](#7-material-and-texture-standards)
-8. [Terrain Assets](#8-terrain-assets)
+8. [Ground](#8-ground)
 9. [World Object Assets](#9-world-object-assets)
 10. [Export Settings](#10-export-settings)
 11. [Catalog Registration](#11-catalog-registration)
 12. [Scenario Placement](#12-scenario-placement)
-13. [Combining Environments](#13-combining-environments)
-14. [Class ID Registry](#14-class-id-registry)
-15. [Checklist](#15-checklist)
+13. [Class ID Registry](#13-class-id-registry)
+14. [Checklist](#14-checklist)
 
 ---
 
@@ -55,8 +63,8 @@ not need to rotate anything manually.**
 - **Objects (signs, trees, buildings):** Place the origin at the geometric
   center of the base footprint. If the object sits on the ground, origin at
   ground level (Z = 0 in Blender).
-- **Terrain:** Origin at the world origin (0, 0, 0). The scenario TOML provides
-  the ENU offset.
+- **Ground slab:** origin at the centre of its top face, so z = 0 is the
+  driving surface.
 
 ---
 
@@ -64,12 +72,11 @@ not need to rotate anything manually.**
 
 | Category | Description | Where used |
 |---|---|---|
-| **Terrain** | Large ground surfaces, water bodies, cave floors | `[[world.terrains]]` |
-| **World Object** | Discrete, countable semantic entities | `[[world.objects]]` |
+| **World Object** | Discrete, countable semantic entities, the ground included | `[[objects]]` in a world file |
 | **Vehicle** | Agent vehicles (Ackermann, quadrotor, etc.) | `plugins/vehicles/` |
 | **Sensor** | Sensor geometry, optional (rarely needed) | `plugins/sensors/` |
 
-This document covers **Terrain** and **World Objects**. Vehicle assets follow
+This document covers **World Objects**. Vehicle assets follow
 the same rules (vehicle mesh standards are not yet separately documented; follow this guide).
 
 ---
@@ -85,10 +92,6 @@ Examples:
 
 ```
 assets/
-  terrain/
-    valley_floor.glb
-    valley_floor_col.glb
-    lake_surface.glb              ← water terrain, no collision needed
   objects/
     stop_sign.glb
     stop_sign_col.glb
@@ -123,15 +126,6 @@ assets/
 - Mesh children are named `SM_<description>`. The `SM_` prefix is optional but
   helps in large scenes.
 - A root mesh (no empty parent) also works; add Custom Properties directly to it.
-
-### Terrain tile
-
-```
-[Mesh]  valley_floor            ← single root mesh is fine for terrain
-```
-
-Terrain tiles rarely need custom properties — they are identified by their TOML
-`medium` field, not by GLTF metadata.
 
 ### Collision mesh (in `_col.glb`)
 
@@ -218,10 +212,6 @@ inside it. This file is **never rendered** — it is physics-only.
 - Target < 500 triangles per convex piece.
 - A large building: separate meshes per wall and per floor. Each becomes an
   independent trimesh body.
-- Terrain tiles: always use `_col.glb`. Large terrain trimeshes are fine
-  (thousands of triangles) because they use `TrimeshFlags::FIX_INTERNAL_EDGES`.
-- Water surfaces: **no collision mesh**. Declare `medium = "water"` in the
-  terrain TOML and let the physics medium handle buoyancy.
 
 ### Priority rule
 
@@ -242,44 +232,16 @@ If both `collider_mesh` and `[collider]` are set, **`collider_mesh` wins**.
 
 ---
 
-## 8. Terrain Assets
+## 8. Ground
 
-Terrain tiles are large ground surfaces that define the physical substrate of a
-scene. Multiple tiles can be combined to compose environments.
+There is no separate terrain. The ground is a world object like any other:
+`ground_100m`, a 100 × 100 × 1 m slab with its origin on the top face
+centre, placed at z = 0 in each world file. It is 1 m thick because a
+zero-thickness plane cannot size a box collider and lets fast bodies tunnel.
 
-### When to split into multiple tiles
-
-| Situation | Approach |
-|---|---|
-| Lake adjacent to ground | Separate `ground.glb` + `lake.glb` tiles |
-| Mountain + valley | One seamless tile or two snapped tiles |
-| Indoor + outdoor | Separate tiles; indoor tile has no sky lighting |
-| Underwater section | Separate tile with `medium = "water"` |
-
-### Tile seams
-
-Tile edges should meet without visible gaps. In Blender:
-- Snap tile edges to exact integer coordinates.
-- Use the same vertex density along shared edges.
-- Export both tiles from the same `.blend` file to ensure consistent scale.
-
-### Heightmap vs mesh
-
-| | Heightmap (future) | Trimesh (current) |
-|---|---|---|
-| File format | 16-bit PNG | GLB |
-| Max poly count | — | ~500k tris for terrain |
-| Overhangs | No | Yes |
-| Dynamic deformation | Possible | No |
-
-Helios currently uses trimesh terrain only. Heightmap support is planned.
-
-### Terrain performance guidelines
-
-- Visual mesh: up to ~500k triangles for a 200×200 m tile.
-- Collision mesh: 50–100k triangles is sufficient for vehicle physics. Use
-  Blender's **Decimate** modifier to reduce.
-- Large flat areas: use a single quad subdivided minimally.
+Hills need a heightfield ground and a ground-height query; water needs a
+medium volume and buoyancy. Neither is built; both are listed in
+`docs/future_plans/asset_pipeline_schema.md`.
 
 ---
 
@@ -311,8 +273,8 @@ stop_sign_lod2.glb     ← LOD2 (25% reduction)
 
 Multiple instances of the same object type share **one loaded GLB** in memory
 (Bevy handles this automatically via `Handle<Scene>`). You never need to
-duplicate the GLB for multiple placements — just add more `[[world.objects]]`
-entries in the scenario TOML.
+duplicate the GLB for multiple placements — just add more `[[objects]]`
+entries in the world file.
 
 ---
 
@@ -399,99 +361,54 @@ half_height = 1.0
 
 ## 12. Scenario Placement
 
-Place object instances in a scenario TOML using `[[world.objects]]`.
+Objects are placed in a **world file**, `configs/sim/catalog/worlds/<name>.toml`,
+and a scenario names one world. Atmosphere and the magnetic field stay in the
+scenario, so one world runs under different conditions.
 
 ```toml
-# configs/scenarios/my_scene.toml
+# configs/sim/catalog/worlds/my_scene.toml
+name = "my_scene"                        # prefix of every instance ID
 
-[[world.terrains]]
-mesh     = "terrain/urban_flat.glb"
-collider = "terrain/urban_flat_col.glb"
-medium   = "air"
+[[objects]]
+name     = "ground"
+prefab   = "entities.objects.ground_100m"
+position = [0.0, 0.0, 0.0]               # ENU: [east, north, up] metres
+
+[[objects]]
+name                = "barrier"
+prefab              = "entities.objects.wall_4m"
+position            = [0.0, 12.0, 0.0]
+orientation_degrees = [0.0, 0.0, 90.0]   # [roll, pitch, yaw]
+scale               = [3.0, 1.0, 1.0]    # stretch 3x along its length
+```
+
+```toml
+# configs/sim/scenarios/my_scenario.toml
+[world.layout]                           # required
+from = "sim.catalog.worlds.my_scene"
+
+[world.semantic_classes]                 # required
+from = "runtime.catalog.semantic_classes.default"
 
 [world.atmosphere]
-gravity       = [0.0, -9.81, 0.0]
+gravity_enu   = [0.0, 0.0, -9.81]
 sun_elevation = 45.0
 sun_azimuth   = 180.0     # 0=North, 90=East, 180=South, 270=West
 ambient_lux   = 8000.0
-
-# --- Object instances ---
-
-[[world.objects]]
-prefab   = "objects.stop_sign"
-position = [10.0, 5.0, 0.0]          # ENU: [east, north, up] meters
-orientation_degrees = [0.0, 0.0, 0.0] # [roll, pitch, yaw]
-
-[[world.objects]]
-prefab   = "objects.building_office"
-position = [50.0, 30.0, 0.0]
-orientation_degrees = [0.0, 0.0, 45.0]   # rotate 45° about vertical axis
-scale = [1.0, 1.5, 1.0]                  # stretch 1.5× vertically
 ```
 
 ### Coordinate reference
 
-- `position` is in **ENU world frame**: `[east_m, north_m, up_m]`.
+- `position` is in **ENU world frame**: `[east_m, north_m, up_m]`, of the
+  object's origin, which sits on its base: z = 0 stands it on the ground.
 - `orientation_degrees` is **[roll, pitch, yaw]** in degrees, applied in ENU.
-- `scale` is applied to the visual mesh only (not the collider).
+- `scale` applies to the visual, the collider and the bounding box alike.
+  A dynamic placement cannot be scaled (its mass would no longer match its
+  size); make another prefab at that size.
 
 ---
 
-## 13. Combining Environments
-
-Helios supports **multiple terrain tiles per scenario**, enabling composite
-environments such as a coastal road (ground + water) or a mountain pass (valley
-floor + cliff face).
-
-### Example: Ground + Lake
-
-```toml
-[[world.terrains]]
-mesh     = "terrain/valley_ground.glb"
-collider = "terrain/valley_ground_col.glb"
-medium   = "air"
-# No position offset — this tile is at the world origin.
-
-[[world.terrains]]
-mesh     = "terrain/lake_surface.glb"
-medium   = "water"
-position = [80.0, 40.0, -1.5]    # ENU: place 80m east, 40m north, 1.5m below ground
-# No collider — agents don't stand on water; physics medium handles buoyancy.
-```
-
-### Medium types
-
-| Value | Physics effect | Sensor effects |
-|---|---|---|
-| `"air"` | Standard gravity, no drag | All sensors work normally |
-| `"water"` | Added drag, buoyancy (future) | GPS blocked, acoustic sensors enabled (future) |
-| `"vacuum"` | No drag, full gravity | No acoustic sensors (future) |
-
-The `medium` field on a terrain entity is queryable from ECS:
-```rust
-// In a sensor system: check if agent is over water terrain
-fn check_terrain_medium(
-    agent_query: Query<&GlobalTransform, With<GroundTruthState>>,
-    terrain_query: Query<(&GlobalTransform, &TerrainMedium)>,
-) {
-    // ... range check agent position against terrain tiles
-}
-```
-
-### Agent traversability (future config)
-
-Planned field in `AgentBaseConfig`:
-```toml
-traversable_mediums = ["air"]       # ground vehicle
-# traversable_mediums = ["water"]   # AUV
-# traversable_mediums = ["air", "water"]  # amphibious
-```
-
-This will gate physics medium effects per-agent.
-
----
-
-## 14. Class ID Registry
+## 13. Class ID Registry
 
 Reserve class ID ranges by category. IDs must be unique across the entire
 catalog.
@@ -522,7 +439,7 @@ catalog.
 
 ---
 
-## 15. Checklist
+## 14. Checklist
 
 Use this checklist before committing a new asset.
 
@@ -552,11 +469,6 @@ Use this checklist before committing a new asset.
 - [ ] `collider_mesh` OR `[collider]` section present (if physics needed)
 - [ ] `bounding_box` specified (optional but recommended)
 - [ ] Class ID unique and assigned from the correct range
-
-### Terrain tile (`configs/catalog/objects/` or direct `[[world.terrains]]`)
-- [ ] `medium` field set correctly (`"air"` / `"water"` / `"vacuum"`)
-- [ ] `collider` GLB path specified (unless medium = "water")
-- [ ] Tile edges align with adjacent tiles (no gaps)
 
 ### Scenario placement
 - [ ] `position` is in ENU meters (not Bevy space)

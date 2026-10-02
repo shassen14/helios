@@ -1,7 +1,9 @@
 # CPU Profiling with Samply
 
-Samply is an external CPU profiler that wraps the binary and samples call stacks using
-the OS performance counter. Use it to find which functions consume the most CPU time.
+Samply is an external CPU profiler that wraps a binary and samples its call
+stacks. Use it to find which functions consume the most CPU time. It shows the
+result in the Firefox Profiler in your browser: a flame graph, a call tree with
+self and total time, and a timeline per thread.
 
 ---
 
@@ -23,120 +25,98 @@ sudo sysctl kernel.perf_event_paranoid=1
 
 ## Step 1 — Build
 
-Always build the binary separately before profiling. Do not use `samply record cargo run`
-— that profiles the cargo process, not your binary.
+Build the binary with the `profiling` Cargo profile (`inherits = "release"`,
+`debug = true`, `strip = false`, `split-debuginfo = "unpacked"`): release speed,
+with the debug symbols samply needs to name functions.
 
 ```sh
-cargo build --profile profiling --bin helios_research
+# The player, for a run paced like a real session:
+cargo build --profile profiling -p helios_sim --bin helios_play
+
+# The test harness, for a run that ends by itself:
+cargo build --profile profiling -p helios_test --features sim --bin helios_test_sim
 ```
 
-The `profiling` Cargo profile (`inherits = "release"`, `debug = true`, `strip = false`,
-`split-debuginfo = "unpacked"`) gives release-level performance with debug symbols so
-samply and `parse_samply_profile.py` can resolve function names.
+Profile the built binary, never `samply record cargo run`: samply profiles the
+process it launches, so that would profile cargo.
 
 ---
 
 ## Step 2 — Record
 
-Run from the workspace root:
+Run from the workspace root. Both binaries find `helios_sim/assets/` on their
+own; no environment variable is needed.
+
+**Paced like a real session** (answers "how much CPU does the sim use?"):
 
 ```sh
-BEVY_ASSET_ROOT=./helios_sim samply record --output samply-profile.json \
-    ./target/profiling/helios_research \
-    --duration-secs 60 --scenario configs/scenarios/00_tutorial_showcase.toml
+samply record ./target/profiling/helios_play --headless --speed 1.0
 ```
 
-**Two non-obvious requirements:**
+A headless run exits after the scenario's `[simulation] duration_seconds` of
+simulated time (180 s for the proving ground), and samply then saves the
+profile and opens it in the browser. Press **Ctrl+C** to stop sooner; samply
+still saves what it recorded, and 30–60 s is plenty. Leave out `--headless` to
+profile the windowed app, rendering included; a window runs until you close
+it.
 
-- **`BEVY_ASSET_ROOT=./helios_sim`** — Bevy looks for `assets/` relative to the binary
-  by default, which puts it in `target/profiling/`. Setting this variable redirects it to
-  `helios_sim/assets/` in the workspace root where the files actually live.
-- **Profile the binary directly** — pass the binary path to samply, not `cargo run`.
-  Samply wraps the process it launches; wrapping cargo means you profile cargo's startup,
-  not the simulation.
-
-Samply writes the raw (unsymbolicated) JSON to `samply-profile.json` and opens Firefox
-Profiler in your browser automatically. Close the browser tab — the file is what matters.
-
----
-
-## Step 3 — Analyze with the script
-
-`tools/parse_samply_profile.py` reads the raw JSON, symbolicates addresses using `atos`
-(macOS) or `llvm-symbolizer`/`addr2line` (Linux), and prints a terminal report.
+**A fixed run that ends by itself** (answers "where does a tick's time go?"):
 
 ```sh
-# Default: top 15 functions by CPU time across all threads
-python3 tools/parse_samply_profile.py samply-profile.json
-
-# Narrow to helios code only
-python3 tools/parse_samply_profile.py samply-profile.json --filter helios
-
-# Narrow to a specific crate
-python3 tools/parse_samply_profile.py samply-profile.json --filter helios_core
-python3 tools/parse_samply_profile.py samply-profile.json --filter helios_sim
-
-# Show more entries
-python3 tools/parse_samply_profile.py samply-profile.json --top 30
-
-# Combine filters
-python3 tools/parse_samply_profile.py samply-profile.json --filter helios_sim --top 20
+samply record ./target/profiling/helios_test_sim --run configs/test/runs/proving_ground.toml
 ```
 
-### Arguments
+The harness runs unpaced, as fast as the machine allows: the run's 60
+simulated seconds take about 10 s of wall time. Good for finding hot
+functions; not for CPU percentages, since an unpaced run uses all the CPU it
+can.
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `profile` | _(required)_ | Path to `samply-profile.json` |
-| `--filter TEXT` | _(none)_ | Only show functions whose name contains `TEXT` (case-insensitive) |
-| `--top N` | `15` | Number of functions to show per thread |
+Both default to the proving-ground scenario. Pass `--scenario <path>` to
+`helios_play`, or another run file to `helios_test_sim`, to profile a
+different one.
+
+**Useful flags:**
+
+| Flag | Effect |
+|------|--------|
+| `-o <file>` | Where to save the profile (default `profile.json.gz` in the current directory) |
+| `--save-only` | Save without opening the browser |
+| `-r <hz>` | Sampling rate (default 1000 Hz) |
+
+To reopen a saved profile later:
+
+```sh
+samply load profile.json.gz
+```
+
+Symbols are resolved from the binary when the profile is opened, so keep the
+binary unchanged (don't rebuild) until you are done reading the profile.
 
 ---
 
-## Reading the output
+## Step 3 — Read the profile
 
-The report is organized per thread. Each thread shows two tables.
+In the Firefox Profiler:
 
-**Self CPU** — time spent *inside* the function itself, not in callees. This is where the
-CPU actually is. A high self-CPU function is a direct optimization target.
-
-**Total CPU** — time spent in the function *including* all functions it calls. High total
-CPU with low self CPU means the function is a hot call path but the work is delegated
-further down the stack.
-
-```
-THREAD: main (tid=12345, 1200 samples, 59.8s CPU)
-------------------------------------------------------------------------
-  Self CPU  (hottest leaf — where the CPU actually is)
-  Function                                               Self        %
-  ------------------------------------------------------ ---------- ------
-  helios_sim::draw_occupancy_grid                         12.3s    20.5%
-  nalgebra::matrix_multiply                                4.1s     6.8%
-  ...
-
-  Total CPU  (inclusive — hot call paths)
-  Function                                               Total       %
-  ------------------------------------------------------ ---------- ------
-  helios_sim::AutonomyPlugin::run_estimation              22.1s    36.9%
-  ...
-```
+- **Pick the thread** in the track list at the top. Bevy runs systems on the
+  main thread and on its compute task pool threads; the work you care about
+  may be spread across several.
+- **Call Tree**, with **Invert call stack** ticked, lists functions by *self*
+  time: time spent inside the function itself, not its callees. This is where
+  the CPU actually is, and the list to optimize from.
+- **Call Tree** un-inverted gives *total* time: the function plus everything it
+  calls. High total with low self time means a hot path whose work happens
+  further down.
+- **Flame Graph** shows the same tree visually.
+- The **search box** filters to matching functions, e.g. `helios_core` or
+  `helios_sim`, to see only our code.
 
 ---
 
-## Known findings (2026-03-14, tutorial showcase, single agent)
+## Known findings
 
-| Function | Self CPU | Note |
-|----------|----------|------|
-| `draw_occupancy_grid` | ~20% | Iterates every cell every draw call. Primary optimization target (P2-20). |
-| `TopicBus::publish` | ~4% | Measurable at single-agent scale. Will grow linearly with agent count. |
-| EKF predict/update | <1% | Fast after P1 pre-allocation work. Not a concern. |
-| A* replan | <1% | Fast after P2 `AStarSearchBuffers` pre-allocation. Not a concern. |
-
----
-
-## Browser viewer (alternative)
-
-Samply also opens Firefox Profiler automatically after recording. This gives an
-interactive flame graph and timeline view. The `parse_samply_profile.py` script is better
-for quick terminal comparisons and filtering to helios code; the browser is better for
-exploring call hierarchies visually.
+The latest profile (2026-09-28, raycast car with a 2D lidar, 400 Hz) is
+written up in `docs/notes/sim_cpu_profile.md`. In short: the sim's CPU is
+dominated by Bevy's scheduler waking and parking its worker threads, not by
+physics, the lidar or the autonomy pipeline; helios code grows by about 0.55%
+of a core per car, mostly the EKF.

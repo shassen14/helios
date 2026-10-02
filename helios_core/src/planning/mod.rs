@@ -1,6 +1,6 @@
 //! [`SearchPlanner`] trait and path-planning submodules.
 //!
-//! Family-prefixed per `docs/algorithm_family_traits.md` §3.1: search-family
+//! Family-prefixed: search-family
 //! planners (A*, Dijkstra, D*) operate on a discrete graph/grid and find an
 //! optimal path under a cost function. Sampling-family planners (RRT*, PRM,
 //! BIT*) live behind a separate trait that does not exist yet — when they
