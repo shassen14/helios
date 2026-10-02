@@ -1,1 +1,4 @@
 target/
+
+# Blender save backups
+*.blend1
