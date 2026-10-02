@@ -115,8 +115,12 @@ In the Firefox Profiler:
 
 ## Known findings
 
-The latest profile (2026-09-28, raycast car with a 2D lidar, 400 Hz) is
-written up in `docs/notes/sim_cpu_profile.md`. In short: the sim's CPU is
-dominated by Bevy's scheduler waking and parking its worker threads, not by
-physics, the lidar or the autonomy pipeline; helios code grows by about 0.55%
-of a core per car, mostly the EKF.
+- **Profile of 2026-09-28** (raycast car with a 2D lidar, 400 Hz): the
+  sim's CPU is dominated by Bevy's scheduler waking and parking its worker
+  threads, not by physics, the lidar or the autonomy pipeline. Helios code
+  grows by about 0.55% of a core per car, mostly the EKF.
+- **Measurement of 2026-10-02** (`01_proving_ground`, real-time speed): adding a
+  16-ring 3D lidar (5,760 rays per scan at 10 Hz) costs about 1.5% of a core
+  headless. In the window, drawing its point cloud costs far more, because the
+  view draws a sphere per point every frame. Hide the cloud with `L` when
+  measuring anything else.
