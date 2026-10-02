@@ -15,6 +15,9 @@ use avian3d::prelude::PhysicsGizmos;
 use bevy::prelude::*;
 use serde::Deserialize;
 
+/// The action that shows and hides the collider wireframes.
+pub const TOGGLE_COLLIDERS: ActionId = ActionId("viz.toggle_colliders");
+
 #[derive(Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct ColliderViewTuningFile {
@@ -67,11 +70,7 @@ pub(crate) fn toggle_colliders(
     mut store: ResMut<GizmoConfigStore>,
     mut handle: Local<Option<ActionHandle>>,
 ) {
-    let h = *handle.get_or_insert_with(|| {
-        registry
-            .handle(ActionId("viz.toggle_colliders"))
-            .expect("registered")
-    });
+    let h = *handle.get_or_insert_with(|| registry.handle(TOGGLE_COLLIDERS).expect("registered"));
 
     if state.is_active(h) {
         let (config, _) = store.config_mut::<PhysicsGizmos>();
@@ -82,7 +81,10 @@ pub(crate) fn toggle_colliders(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viz::interaction::actions::handle::{ActionMetadata, InputKind};
+    use crate::viz::interaction::{
+        actions::handle::{ActionMetadata, InputKind},
+        registration::VIZ_GROUP,
+    };
 
     /// A store holding the collider group as `VizPlugin` configures it:
     /// nothing drawn, and switched off.
@@ -108,10 +110,10 @@ mod tests {
     fn toggle_flips_the_collider_view_each_time_the_action_fires() {
         let mut registry = ActionRegistry::default();
         let handle = registry.register(
-            ActionId("viz.toggle_colliders"),
+            TOGGLE_COLLIDERS,
             ActionMetadata {
                 label: "Toggle colliders",
-                group: "viz",
+                group: VIZ_GROUP,
                 kind: InputKind::Button,
                 default_key: KeyCode::KeyC,
             },
@@ -137,10 +139,10 @@ mod tests {
     fn toggle_leaves_the_collider_view_alone_when_the_action_is_idle() {
         let mut registry = ActionRegistry::default();
         registry.register(
-            ActionId("viz.toggle_colliders"),
+            TOGGLE_COLLIDERS,
             ActionMetadata {
                 label: "Toggle colliders",
-                group: "viz",
+                group: VIZ_GROUP,
                 kind: InputKind::Button,
                 default_key: KeyCode::KeyC,
             },

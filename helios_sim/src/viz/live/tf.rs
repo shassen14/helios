@@ -55,6 +55,9 @@ use helios_core::spatial::{
 };
 use serde::Deserialize;
 
+/// The action that shows and hides the tf overlay.
+pub const TOGGLE_TF: ActionId = ActionId("viz.toggle_tf");
+
 /// Sparse TOML overrides for the tf overlay's styling. Every field is optional;
 /// anything omitted falls back to the compiled-in [`TfOverlayTuning::default`].
 #[derive(Deserialize, Default)]
@@ -271,11 +274,7 @@ pub(crate) fn toggle_tf_overlay(
     mut overlay: ResMut<TfOverlayVisible>,
     mut handle: Local<Option<ActionHandle>>,
 ) {
-    let h = *handle.get_or_insert_with(|| {
-        registry
-            .handle(ActionId("viz.toggle_tf"))
-            .expect("registered")
-    });
+    let h = *handle.get_or_insert_with(|| registry.handle(TOGGLE_TF).expect("registered"));
 
     if state.is_active(h) {
         overlay.0 = !overlay.0;

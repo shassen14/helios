@@ -38,6 +38,12 @@ use bevy::prelude::*;
 use serde::Deserialize;
 use std::f32::consts::FRAC_PI_2;
 
+/// The action that clears the current selection.
+pub const DESELECT: ActionId = ActionId("selection.deselect");
+
+/// The group the selection actions are listed under.
+pub const SELECTION_GROUP: &str = "selection";
+
 /// Wires selection into the app: the mesh-picking backend, the click observer,
 /// the deselect action, and the per-frame marker consumers this crate owns.
 pub struct SelectionPlugin;
@@ -66,10 +72,10 @@ impl Plugin for SelectionPlugin {
 /// [`deselect_on_escape`] can resolve its handle at runtime.
 pub(crate) fn register_selection_actions(mut registry: ResMut<ActionRegistry>) {
     registry.register(
-        ActionId("selection.deselect"),
+        DESELECT,
         ActionMetadata {
             label: "Deselect",
-            group: "selection",
+            group: SELECTION_GROUP,
             kind: InputKind::Button,
             default_key: KeyCode::Escape,
         },
@@ -135,13 +141,9 @@ pub fn deselect_on_escape(
     mut commands: Commands,
     mut handle: Local<Option<ActionHandle>>,
 ) {
-    // TODO: we have a bunch of hardcoded &str in ActionId to reference to
-    // I would like to have a file or maybe multiple per dir that would be
-    // the vocabulary for such actions. this way we can reference them
-    // later without possible typing errors
     let h = *handle.get_or_insert_with(|| {
         registry
-            .handle(ActionId("selection.deselect"))
+            .handle(DESELECT)
             .expect("selection.deselect registered at startup")
     });
 
@@ -348,7 +350,7 @@ mod tests {
 
         let registry = app.world().resource::<ActionRegistry>();
         assert!(
-            registry.handle(ActionId("selection.deselect")).is_some(),
+            registry.handle(DESELECT).is_some(),
             "register_selection_actions must declare selection.deselect at startup",
         );
     }
@@ -358,10 +360,10 @@ mod tests {
     fn deselect_removes_selected_when_the_action_is_active() {
         let mut registry = ActionRegistry::default();
         let handle = registry.register(
-            ActionId("selection.deselect"),
+            DESELECT,
             ActionMetadata {
                 label: "Deselect",
-                group: "selection",
+                group: SELECTION_GROUP,
                 kind: InputKind::Button,
                 default_key: KeyCode::Escape,
             },

@@ -39,6 +39,17 @@ pub mod keyboard;
 pub mod mouse;
 pub mod rig;
 
+/// Camera action ids, one per motion.
+pub const ORBIT_LEFT: ActionId = ActionId("camera.orbit_left");
+pub const ORBIT_RIGHT: ActionId = ActionId("camera.orbit_right");
+pub const PITCH_UP: ActionId = ActionId("camera.pitch_up");
+pub const PITCH_DOWN: ActionId = ActionId("camera.pitch_down");
+pub const ZOOM_IN: ActionId = ActionId("camera.zoom_in");
+pub const ZOOM_OUT: ActionId = ActionId("camera.zoom_out");
+
+/// The group the camera actions are listed under.
+pub const CAMERA_GROUP: &str = "camera";
+
 /// Schedule anchor for the camera's per-frame control systems. Ordered after
 /// `InteractionSet::Sampling` so the systems here read the current frame's action
 /// state rather than last frame's.
@@ -187,60 +198,60 @@ pub(crate) fn register_camera_actions(
     mut commands: Commands,
 ) {
     let orbit_left = registry.register(
-        ActionId("camera.orbit_left"),
+        ORBIT_LEFT,
         ActionMetadata {
             label: "Orbit left",
-            group: "camera",
+            group: CAMERA_GROUP,
             kind: InputKind::Axis,
             default_key: KeyCode::KeyA,
         },
     );
 
     let orbit_right = registry.register(
-        ActionId("camera.orbit_right"),
+        ORBIT_RIGHT,
         ActionMetadata {
             label: "Orbit right",
-            group: "camera",
+            group: CAMERA_GROUP,
             kind: InputKind::Axis,
             default_key: KeyCode::KeyD,
         },
     );
 
     let pitch_up = registry.register(
-        ActionId("camera.pitch_up"),
+        PITCH_UP,
         ActionMetadata {
             label: "Pitch up",
-            group: "camera",
+            group: CAMERA_GROUP,
             kind: InputKind::Axis,
             default_key: KeyCode::KeyW,
         },
     );
 
     let pitch_down = registry.register(
-        ActionId("camera.pitch_down"),
+        PITCH_DOWN,
         ActionMetadata {
             label: "Pitch down",
-            group: "camera",
+            group: CAMERA_GROUP,
             kind: InputKind::Axis,
             default_key: KeyCode::KeyS,
         },
     );
 
     let zoom_in = registry.register(
-        ActionId("camera.zoom_in"),
+        ZOOM_IN,
         ActionMetadata {
             label: "Zoom in",
-            group: "camera",
+            group: CAMERA_GROUP,
             kind: InputKind::Axis,
             default_key: KeyCode::Equal,
         },
     );
 
     let zoom_out = registry.register(
-        ActionId("camera.zoom_out"),
+        ZOOM_OUT,
         ActionMetadata {
             label: "Zoom out",
-            group: "camera",
+            group: CAMERA_GROUP,
             kind: InputKind::Axis,
             default_key: KeyCode::Minus,
         },
@@ -268,9 +279,12 @@ fn sync_camera_transform(mut query: Query<(&CameraRig, &mut Transform)>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{register_camera_actions, CameraActions};
+    use super::{
+        register_camera_actions, CameraActions, ORBIT_LEFT, ORBIT_RIGHT, PITCH_DOWN, PITCH_UP,
+        ZOOM_IN, ZOOM_OUT,
+    };
 
-    use crate::viz::interaction::actions::{handle::ActionId, registry::ActionRegistry};
+    use crate::viz::interaction::actions::registry::ActionRegistry;
 
     use bevy::prelude::*;
 
@@ -292,16 +306,17 @@ mod tests {
 
         let registry = app.world().resource::<ActionRegistry>();
         for id in [
-            "camera.orbit_left",
-            "camera.orbit_right",
-            "camera.pitch_up",
-            "camera.pitch_down",
-            "camera.zoom_in",
-            "camera.zoom_out",
+            ORBIT_LEFT,
+            ORBIT_RIGHT,
+            PITCH_UP,
+            PITCH_DOWN,
+            ZOOM_IN,
+            ZOOM_OUT,
         ] {
             assert!(
-                registry.handle(ActionId(id)).is_some(),
-                "register_camera_actions must declare {id} at Startup",
+                registry.handle(id).is_some(),
+                "register_camera_actions must declare {} at Startup",
+                id.0,
             );
         }
 

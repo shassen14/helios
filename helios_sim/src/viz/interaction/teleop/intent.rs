@@ -62,6 +62,7 @@ pub(crate) fn publish_teleop_intent(
 #[cfg(test)]
 mod tests {
     use super::{teleop_intent, AxisPair, TeleopActions};
+    use crate::viz::interaction::teleop::TELEOP_GROUP;
 
     use crate::viz::interaction::actions::{
         handle::{ActionId, ActionMetadata, InputKind},
@@ -74,7 +75,7 @@ mod tests {
     fn axis_meta() -> ActionMetadata {
         ActionMetadata {
             label: "t",
-            group: "teleop",
+            group: TELEOP_GROUP,
             kind: InputKind::Axis,
             default_key: KeyCode::ArrowUp,
         }

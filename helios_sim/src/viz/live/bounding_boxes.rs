@@ -18,6 +18,9 @@ use crate::{
 use bevy::prelude::*;
 use serde::Deserialize;
 
+/// The action that shows and hides the bounding boxes.
+pub const TOGGLE_BOUNDING_BOXES: ActionId = ActionId("viz.toggle_bounding_boxes");
+
 /// Gizmo group for the box lines, so they have their own on/off switch.
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub struct BoundingBoxGizmos;
@@ -81,11 +84,8 @@ pub(crate) fn toggle_bounding_boxes(
     mut store: ResMut<GizmoConfigStore>,
     mut handle: Local<Option<ActionHandle>>,
 ) {
-    let h = *handle.get_or_insert_with(|| {
-        registry
-            .handle(ActionId("viz.toggle_bounding_boxes"))
-            .expect("registered")
-    });
+    let h =
+        *handle.get_or_insert_with(|| registry.handle(TOGGLE_BOUNDING_BOXES).expect("registered"));
 
     if state.is_active(h) {
         let (config, _) = store.config_mut::<BoundingBoxGizmos>();
@@ -96,7 +96,10 @@ pub(crate) fn toggle_bounding_boxes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viz::interaction::actions::handle::{ActionMetadata, InputKind};
+    use crate::viz::interaction::{
+        actions::handle::{ActionMetadata, InputKind},
+        registration::VIZ_GROUP,
+    };
 
     use std::f32::consts::FRAC_PI_2;
 
@@ -124,10 +127,10 @@ mod tests {
     fn toggle_app(active: bool) -> App {
         let mut registry = ActionRegistry::default();
         let handle = registry.register(
-            ActionId("viz.toggle_bounding_boxes"),
+            TOGGLE_BOUNDING_BOXES,
             ActionMetadata {
                 label: "Toggle bounding boxes",
-                group: "viz",
+                group: VIZ_GROUP,
                 kind: InputKind::Button,
                 default_key: KeyCode::KeyB,
             },

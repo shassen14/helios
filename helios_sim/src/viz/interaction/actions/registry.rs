@@ -93,9 +93,20 @@ struct ActionEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::viz::interaction::actions::handle::InputKind;
+    use crate::viz::{
+        interaction::{
+            actions::handle::InputKind,
+            camera::{CAMERA_GROUP, ZOOM_IN},
+            registration::VIZ_GROUP,
+        },
+        live::map::TOGGLE_MAP,
+    };
 
     use bevy::input::keyboard::KeyCode;
+
+    /// An id no test registers, for the lookups that must miss.
+    const UNREGISTERED: ActionId = ActionId("viz.nonexistent");
+    const ZOOM_IN_LABEL: &str = "Zoom in";
 
     fn button(label: &'static str, group: &'static str, key: KeyCode) -> ActionMetadata {
         ActionMetadata {
@@ -109,40 +120,37 @@ mod tests {
     #[test]
     fn register_returns_handle_resolvable_by_id_and_by_name() {
         let mut reg = ActionRegistry::default();
-        let handle = reg.register(
-            ActionId("viz.toggle_map"),
-            button("Toggle map", "viz", KeyCode::KeyM),
-        );
+        let handle = reg.register(TOGGLE_MAP, button("Toggle map", VIZ_GROUP, KeyCode::KeyM));
 
         // Both lookup paths land on the same handle: the code-side id and the
         // runtime string a keybinding file would carry.
-        assert_eq!(reg.handle(ActionId("viz.toggle_map")), Some(handle));
-        assert_eq!(reg.handle_by_name("viz.toggle_map"), Some(handle));
+        assert_eq!(reg.handle(TOGGLE_MAP), Some(handle));
+        assert_eq!(reg.handle_by_name(TOGGLE_MAP.0), Some(handle));
     }
 
     #[test]
     fn unregistered_name_resolves_to_none() {
         let reg = ActionRegistry::default();
-        assert_eq!(reg.handle(ActionId("viz.nonexistent")), None);
-        assert_eq!(reg.handle_by_name("viz.nonexistent"), None);
+        assert_eq!(reg.handle(UNREGISTERED), None);
+        assert_eq!(reg.handle_by_name(UNREGISTERED.0), None);
     }
 
     #[test]
     fn metadata_round_trips_through_handle() {
         let mut reg = ActionRegistry::default();
         let handle = reg.register(
-            ActionId("camera.zoom_in"),
+            ZOOM_IN,
             ActionMetadata {
-                label: "Zoom in",
-                group: "camera",
+                label: ZOOM_IN_LABEL,
+                group: CAMERA_GROUP,
                 kind: InputKind::Axis,
                 default_key: KeyCode::Equal,
             },
         );
 
         let meta = reg.metadata(handle);
-        assert_eq!(meta.label, "Zoom in");
-        assert_eq!(meta.group, "camera");
+        assert_eq!(meta.label, ZOOM_IN_LABEL);
+        assert_eq!(meta.group, CAMERA_GROUP);
         assert_eq!(meta.kind, InputKind::Axis);
         assert_eq!(meta.default_key, KeyCode::Equal);
     }
@@ -150,39 +158,24 @@ mod tests {
     #[test]
     fn handles_are_distinct_and_iter_reports_registration_order() {
         let mut reg = ActionRegistry::default();
-        let first = reg.register(
-            ActionId("viz.toggle_map"),
-            button("Toggle map", "viz", KeyCode::KeyM),
-        );
-        let second = reg.register(
-            ActionId("camera.zoom_in"),
-            button("Zoom in", "camera", KeyCode::Equal),
-        );
+        let first = reg.register(TOGGLE_MAP, button("Toggle map", VIZ_GROUP, KeyCode::KeyM));
+        let second = reg.register(ZOOM_IN, button("Zoom in", CAMERA_GROUP, KeyCode::Equal));
 
         assert_ne!(first, second);
 
         let seen: Vec<_> = reg.iter().map(|(handle, id, _)| (handle, id)).collect();
-        assert_eq!(
-            seen,
-            vec![
-                (first, ActionId("viz.toggle_map")),
-                (second, ActionId("camera.zoom_in")),
-            ],
-        );
+        assert_eq!(seen, vec![(first, TOGGLE_MAP), (second, ZOOM_IN),],);
     }
 
     #[test]
     #[should_panic(expected = "duplicate action id")]
     fn duplicate_id_panics() {
         let mut reg = ActionRegistry::default();
-        reg.register(
-            ActionId("viz.toggle_map"),
-            button("Toggle map", "viz", KeyCode::KeyM),
-        );
+        reg.register(TOGGLE_MAP, button("Toggle map", VIZ_GROUP, KeyCode::KeyM));
         // Same id again — a startup misconfiguration, must not silently dedupe.
         reg.register(
-            ActionId("viz.toggle_map"),
-            button("Toggle map again", "viz", KeyCode::KeyN),
+            TOGGLE_MAP,
+            button("Toggle map again", VIZ_GROUP, KeyCode::KeyN),
         );
     }
 }

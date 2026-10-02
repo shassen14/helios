@@ -122,7 +122,16 @@ pub(super) fn resolve_bindings(
 mod tests {
     use super::*;
 
-    use crate::viz::interaction::actions::handle::{ActionMetadata, InputKind};
+    use crate::viz::{
+        interaction::{
+            actions::handle::{ActionMetadata, InputKind},
+            camera::ZOOM_IN,
+        },
+        live::map::TOGGLE_MAP,
+    };
+
+    /// An action name no test registers, for the override that must be rejected.
+    const UNREGISTERED: &str = "viz.nonexistent";
 
     fn button(default_key: KeyCode) -> ActionMetadata {
         ActionMetadata {
@@ -137,8 +146,8 @@ mod tests {
     /// index 1 is `camera.zoom_in`.
     fn two_action_registry() -> ActionRegistry {
         let mut registry = ActionRegistry::default();
-        registry.register(ActionId("viz.toggle_map"), button(KeyCode::KeyM));
-        registry.register(ActionId("camera.zoom_in"), button(KeyCode::Equal));
+        registry.register(TOGGLE_MAP, button(KeyCode::KeyM));
+        registry.register(ZOOM_IN, button(KeyCode::Equal));
         registry
     }
 
@@ -155,7 +164,7 @@ mod tests {
     #[test]
     fn override_replaces_only_the_named_action() {
         let registry = two_action_registry();
-        let overrides = HashMap::from([("viz.toggle_map".to_string(), KeyCode::KeyT)]);
+        let overrides = HashMap::from([(TOGGLE_MAP.0.to_string(), KeyCode::KeyT)]);
 
         let bindings = resolve_bindings(&registry, &overrides).expect("resolves");
 
@@ -177,7 +186,7 @@ mod tests {
     fn two_actions_on_one_key_is_a_conflict() {
         let registry = two_action_registry();
         // Rebind camera.zoom_in onto M, which viz.toggle_map already holds.
-        let overrides = HashMap::from([("camera.zoom_in".to_string(), KeyCode::KeyM)]);
+        let overrides = HashMap::from([(ZOOM_IN.0.to_string(), KeyCode::KeyM)]);
 
         let err = resolve_bindings(&registry, &overrides).expect_err("should conflict");
 
@@ -193,10 +202,10 @@ mod tests {
     #[test]
     fn override_naming_unknown_action_is_rejected() {
         let registry = two_action_registry();
-        let overrides = HashMap::from([("viz.nonexistent".to_string(), KeyCode::KeyX)]);
+        let overrides = HashMap::from([(UNREGISTERED.to_string(), KeyCode::KeyX)]);
 
         let err = resolve_bindings(&registry, &overrides).expect_err("should reject unknown");
 
-        assert!(matches!(err, BindingError::UnknownAction(name) if name == "viz.nonexistent"));
+        assert!(matches!(err, BindingError::UnknownAction(name) if name == UNREGISTERED));
     }
 }

@@ -37,6 +37,9 @@ use bevy::{color, prelude::*};
 use nalgebra::Vector3;
 use std::f32::consts::FRAC_PI_2;
 
+/// The action that shows and hides every agent's map.
+pub const TOGGLE_MAP: ActionId = ActionId("viz.toggle_map");
+
 /// Cells at or below this map value (unknown ≈ 127, free < 127, occupied >
 /// 127) are skipped; only confidently occupied cells are drawn.
 // TODO: pull the occupancy cutoff from viz config once that surface exists.
@@ -126,11 +129,7 @@ pub(crate) fn toggle_map_visibility(
     mut agents: Query<&mut MapVisible>,
     mut handle: Local<Option<ActionHandle>>,
 ) {
-    let h = *handle.get_or_insert_with(|| {
-        registry
-            .handle(ActionId("viz.toggle_map"))
-            .expect("registered")
-    });
+    let h = *handle.get_or_insert_with(|| registry.handle(TOGGLE_MAP).expect("registered"));
 
     if state.is_active(h) {
         for mut is_map_visible in &mut agents {
@@ -166,17 +165,20 @@ pub(crate) fn ensure_map_visible(
 mod tests {
     use super::*;
 
-    use crate::viz::interaction::actions::handle::{ActionMetadata, InputKind};
+    use crate::viz::interaction::{
+        actions::handle::{ActionMetadata, InputKind},
+        registration::VIZ_GROUP,
+    };
 
     /// A registry with `viz.toggle_map` registered, and its handle — enough for
     /// `toggle_map_visibility` to resolve the action it gates on.
     fn toggle_registry() -> (ActionRegistry, ActionHandle) {
         let mut registry = ActionRegistry::default();
         let handle = registry.register(
-            ActionId("viz.toggle_map"),
+            TOGGLE_MAP,
             ActionMetadata {
                 label: "Toggle map",
-                group: "viz",
+                group: VIZ_GROUP,
                 kind: InputKind::Button,
                 default_key: KeyCode::KeyM,
             },

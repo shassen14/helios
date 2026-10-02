@@ -157,7 +157,10 @@ mod tests {
     use crate::{
         agents::sensors::capture_pose::CapturePose,
         core::transforms::freevector_bevy_to_vec3,
-        viz::interaction::actions::handle::{ActionMetadata, InputKind},
+        viz::interaction::{
+            actions::handle::{ActionMetadata, InputKind},
+            registration::VIZ_GROUP,
+        },
     };
 
     use helios_core::{
@@ -319,7 +322,7 @@ mod tests {
             TOGGLE_POINT_CLOUD,
             ActionMetadata {
                 label: "Toggle point cloud",
-                group: "viz",
+                group: VIZ_GROUP,
                 kind: InputKind::Button,
                 default_key: KeyCode::KeyL,
             },

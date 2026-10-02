@@ -28,6 +28,15 @@ use crate::viz::interaction::{
 
 use bevy::prelude::*;
 
+/// Teleop action ids, a negative and a positive key per driven axis.
+pub const SURGE_BACK: ActionId = ActionId("teleop.surge_back");
+pub const SURGE_FORWARD: ActionId = ActionId("teleop.surge_forward");
+pub const YAW_RIGHT: ActionId = ActionId("teleop.yaw_right");
+pub const YAW_LEFT: ActionId = ActionId("teleop.yaw_left");
+
+/// The group the teleop actions are listed under.
+pub const TELEOP_GROUP: &str = "teleop";
+
 /// Schedule anchor for the teleop publish, ordered after `InteractionSet::Sampling`
 /// so it reads this frame's action state rather than last frame's.
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
@@ -112,25 +121,13 @@ pub(crate) fn register_teleop_actions(
     mut commands: Commands,
 ) {
     let surge = AxisPair {
-        negative: registry.register(
-            ActionId("teleop.surge_back"),
-            axis("Drive back", KeyCode::ArrowDown),
-        ),
-        positive: registry.register(
-            ActionId("teleop.surge_forward"),
-            axis("Drive forward", KeyCode::ArrowUp),
-        ),
+        negative: registry.register(SURGE_BACK, axis("Drive back", KeyCode::ArrowDown)),
+        positive: registry.register(SURGE_FORWARD, axis("Drive forward", KeyCode::ArrowUp)),
     };
     // Yaw is left-positive (+Z, FLU), so the left key is the positive handle.
     let yaw = AxisPair {
-        negative: registry.register(
-            ActionId("teleop.yaw_right"),
-            axis("Turn right", KeyCode::ArrowRight),
-        ),
-        positive: registry.register(
-            ActionId("teleop.yaw_left"),
-            axis("Turn left", KeyCode::ArrowLeft),
-        ),
+        negative: registry.register(YAW_RIGHT, axis("Turn right", KeyCode::ArrowRight)),
+        positive: registry.register(YAW_LEFT, axis("Turn left", KeyCode::ArrowLeft)),
     };
 
     commands.insert_resource(TeleopActions {
@@ -144,7 +141,7 @@ pub(crate) fn register_teleop_actions(
 fn axis(label: &'static str, default_key: KeyCode) -> ActionMetadata {
     ActionMetadata {
         label,
-        group: "teleop",
+        group: TELEOP_GROUP,
         kind: InputKind::Axis,
         default_key,
     }
@@ -152,9 +149,11 @@ fn axis(label: &'static str, default_key: KeyCode) -> ActionMetadata {
 
 #[cfg(test)]
 mod tests {
-    use super::{register_teleop_actions, TeleopActions};
+    use super::{
+        register_teleop_actions, TeleopActions, SURGE_BACK, SURGE_FORWARD, YAW_LEFT, YAW_RIGHT,
+    };
 
-    use crate::viz::interaction::actions::{handle::ActionId, registry::ActionRegistry};
+    use crate::viz::interaction::actions::registry::ActionRegistry;
 
     use bevy::prelude::*;
 
@@ -173,15 +172,11 @@ mod tests {
         app.update();
 
         let registry = app.world().resource::<ActionRegistry>();
-        for id in [
-            "teleop.surge_forward",
-            "teleop.surge_back",
-            "teleop.yaw_left",
-            "teleop.yaw_right",
-        ] {
+        for id in [SURGE_FORWARD, SURGE_BACK, YAW_LEFT, YAW_RIGHT] {
             assert!(
-                registry.handle(ActionId(id)).is_some(),
-                "register_teleop_actions must declare {id} at Startup",
+                registry.handle(id).is_some(),
+                "register_teleop_actions must declare {} at Startup",
+                id.0,
             );
         }
 

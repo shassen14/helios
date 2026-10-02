@@ -31,6 +31,12 @@ use model::AgentGraph;
 
 use bevy::prelude::*;
 
+/// The action that shows and hides the tf panel.
+pub const TOGGLE_TF_PANEL: ActionId = ActionId("viz.toggle_tf_panel");
+
+/// The action that swaps the tf panel between its sideways and top-down layouts.
+pub const TOGGLE_TF_PANEL_ORIENTATION: ActionId = ActionId("viz.toggle_tf_panel_orientation");
+
 /// Installs the tf panel: its visibility resource, the one-shot dock spawn, and
 /// the per-frame toggle-then-apply pair.
 pub struct TfPanelPlugin;
@@ -109,11 +115,7 @@ pub(crate) fn toggle_tf_panel(
     mut panel: ResMut<TfPanelVisible>,
     mut handle: Local<Option<ActionHandle>>,
 ) {
-    let h = *handle.get_or_insert_with(|| {
-        registry
-            .handle(ActionId("viz.toggle_tf_panel"))
-            .expect("registered")
-    });
+    let h = *handle.get_or_insert_with(|| registry.handle(TOGGLE_TF_PANEL).expect("registered"));
 
     if state.is_active(h) {
         panel.0 = !panel.0;
@@ -133,7 +135,7 @@ fn toggle_tf_panel_orientation(
 ) {
     let h = *handle.get_or_insert_with(|| {
         registry
-            .handle(ActionId("viz.toggle_tf_panel_orientation"))
+            .handle(TOGGLE_TF_PANEL_ORIENTATION)
             .expect("registered")
     });
 
