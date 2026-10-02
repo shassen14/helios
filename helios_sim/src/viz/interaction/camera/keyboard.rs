@@ -1,5 +1,5 @@
 use crate::viz::interaction::{
-    camera::{CameraActions, CameraDriveIntent},
+    camera::{actions::CameraActions, CameraDriveIntent},
     sampling::ActionState,
     tuning::{require_positive, InteractionTuningError},
 };

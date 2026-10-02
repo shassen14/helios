@@ -13,7 +13,7 @@ use crate::viz::{
             handle::{ActionMetadata, InputKind},
             registry::ActionRegistry,
         },
-        tf_panel::{TOGGLE_TF_PANEL, TOGGLE_TF_PANEL_ORIENTATION},
+        tf_panel::toggle::{TOGGLE_TF_PANEL, TOGGLE_TF_PANEL_ORIENTATION},
     },
     live::{
         bounding_boxes::TOGGLE_BOUNDING_BOXES, colliders::TOGGLE_COLLIDERS, map::TOGGLE_MAP,

@@ -96,7 +96,7 @@ mod tests {
     use crate::viz::{
         interaction::{
             actions::handle::InputKind,
-            camera::{CAMERA_GROUP, ZOOM_IN},
+            camera::actions::{CAMERA_GROUP, ZOOM_IN},
             registration::VIZ_GROUP,
         },
         live::map::TOGGLE_MAP,

@@ -7,7 +7,7 @@ use crate::brain_bridge::components::TeleopControlled;
 use crate::prelude::HostInputPublisher;
 use crate::viz::interaction::{
     sampling::ActionState,
-    teleop::{AxisPair, TeleopActions},
+    teleop::actions::{AxisPair, TeleopActions},
 };
 
 use helios_core::{control::commands::TwistIntent, prelude::MonotonicTime};
@@ -62,7 +62,7 @@ pub(crate) fn publish_teleop_intent(
 #[cfg(test)]
 mod tests {
     use super::{teleop_intent, AxisPair, TeleopActions};
-    use crate::viz::interaction::teleop::TELEOP_GROUP;
+    use crate::viz::interaction::teleop::actions::TELEOP_GROUP;
 
     use crate::viz::interaction::actions::{
         handle::{ActionId, ActionMetadata, InputKind},

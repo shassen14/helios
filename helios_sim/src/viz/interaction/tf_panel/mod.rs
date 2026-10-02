@@ -1,9 +1,10 @@
 //! The 2D tf topology/health panel: a screen-space `bevy_ui` dock showing an
 //! agent's estimated transform tree. This module is its wiring — the master
-//! visibility toggle and the plugin that installs it. The pure hierarchy
-//! placement lives in [`layout`], the cell→pixel geometry and colours in
-//! [`geometry`], the dock container and its show/hide in [`panel`], and the
-//! `bevy_ui` renderer that fills the dock in [`render`].
+//! visibility resource and the plugin that installs it. The actions that show the
+//! panel and swap its layout live in [`toggle`], the pure hierarchy placement in
+//! [`layout`], the cell→pixel geometry and colours in [`geometry`], the dock
+//! container and its show/hide in [`panel`], and the `bevy_ui` renderer that fills
+//! the dock in [`render`].
 
 pub mod gather;
 pub mod geometry;
@@ -11,31 +12,14 @@ pub mod layout;
 pub mod model;
 pub mod panel;
 pub mod render;
+pub mod toggle;
 
-use crate::{
-    prelude::AppState,
-    viz::{
-        interaction::{
-            actions::{
-                handle::{ActionHandle, ActionId},
-                registry::ActionRegistry,
-            },
-            sampling::ActionState,
-        },
-        VizSet,
-    },
-};
+use crate::{prelude::AppState, viz::VizSet};
 
-use geometry::PanelOrientation;
 use model::AgentGraph;
+use toggle::{toggle_tf_panel, toggle_tf_panel_orientation};
 
 use bevy::prelude::*;
-
-/// The action that shows and hides the tf panel.
-pub const TOGGLE_TF_PANEL: ActionId = ActionId("viz.toggle_tf_panel");
-
-/// The action that swaps the tf panel between its sideways and top-down layouts.
-pub const TOGGLE_TF_PANEL_ORIENTATION: ActionId = ActionId("viz.toggle_tf_panel_orientation");
 
 /// Installs the tf panel: its visibility resource, the one-shot dock spawn, and
 /// the per-frame toggle-then-apply pair.
@@ -89,7 +73,7 @@ impl Plugin for TfPanelPlugin {
     }
 }
 
-/// The panel's master on/off, flipped by [`toggle_tf_panel`] and applied to the
+/// The panel's master on/off, flipped by [`toggle_tf_panel`](toggle::toggle_tf_panel) and applied to the
 /// dock by [`panel::sync_tf_panel_visibility`]. Off by default — the panel is
 /// opt-in, like the 3D tf overlay.
 #[derive(Default, PartialEq, Resource)]
@@ -101,51 +85,6 @@ pub struct TfPanelVisible(pub bool);
 /// draws nothing. The `Resource` wrapper lives here so [`model`] stays pure data.
 #[derive(Default, Resource)]
 pub struct TfPanelModel(pub Vec<AgentGraph>);
-
-/// Flips the panel's master visibility when `viz.toggle_tf_panel` fires.
-///
-/// Mirrors `toggle_tf_overlay`: the action handle can't change after startup, so
-/// it is resolved once and cached in a `Local`. The `expect` is a startup-time
-/// assertion, not a runtime path — the action is declared unconditionally in
-/// `register_viz_actions`, so its absence is a wiring bug rather than a condition
-/// to handle.
-pub(crate) fn toggle_tf_panel(
-    registry: Res<ActionRegistry>,
-    state: Res<ActionState>,
-    mut panel: ResMut<TfPanelVisible>,
-    mut handle: Local<Option<ActionHandle>>,
-) {
-    let h = *handle.get_or_insert_with(|| registry.handle(TOGGLE_TF_PANEL).expect("registered"));
-
-    if state.is_active(h) {
-        panel.0 = !panel.0;
-    }
-}
-
-/// Flips [`PanelOrientation`] between `Sideways` and `TopDown` when
-/// `viz.toggle_tf_panel_orientation` fires, so the two layouts swap on one live tree
-/// without a rebuild. Mirrors [`toggle_tf_panel`]: the handle can't change after
-/// startup, so it is resolved once into a `Local`, and the `expect` is a startup-time
-/// assertion — the action is declared unconditionally in `register_viz_actions`.
-fn toggle_tf_panel_orientation(
-    registry: Res<ActionRegistry>,
-    state: Res<ActionState>,
-    mut orientation: ResMut<PanelOrientation>,
-    mut handle: Local<Option<ActionHandle>>,
-) {
-    let h = *handle.get_or_insert_with(|| {
-        registry
-            .handle(TOGGLE_TF_PANEL_ORIENTATION)
-            .expect("registered")
-    });
-
-    if state.is_active(h) {
-        *orientation = match *orientation {
-            PanelOrientation::Sideways => PanelOrientation::TopDown,
-            PanelOrientation::TopDown => PanelOrientation::Sideways,
-        };
-    }
-}
 
 #[cfg(test)]
 mod tests {

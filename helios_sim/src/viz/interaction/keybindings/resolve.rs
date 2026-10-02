@@ -125,7 +125,7 @@ mod tests {
     use crate::viz::{
         interaction::{
             actions::handle::{ActionMetadata, InputKind},
-            camera::ZOOM_IN,
+            camera::actions::ZOOM_IN,
         },
         live::map::TOGGLE_MAP,
     };
