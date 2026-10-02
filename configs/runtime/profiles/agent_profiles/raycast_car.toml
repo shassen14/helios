@@ -32,6 +32,15 @@ kind = "Deproject"
 input = "sensor.lidar.front"
 output = "sensor.lidar.front.points"
 
+# The rear 3D lidar, deprojected for the point-cloud view only: no mapper names
+# this output, because the 2D grid would mark the rings' ground returns as walls.
+# A body without this lidar fails validation here, so remove this node together
+# with the sim agent's `rear_lidar` sensor.
+[preprocessing.rear_lidar_deproject]
+kind = "Deproject"
+input = "sensor.lidar.rear"
+output = "sensor.lidar.rear.points"
+
 [path_following]
 kind = "PurePursuit"
 max_speed_m_s = 5.0

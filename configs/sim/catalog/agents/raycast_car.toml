@@ -22,3 +22,9 @@ from = "runtime.catalog.sensor_suites.ins_pro"
 
 [sensors.lidar]
 from = "entities.sensors.lidar2d"
+
+# A 3D lidar for viewing only: its points reach the point-cloud view but no
+# mapper. To remove it, delete this entry together with the profile's
+# `rear_lidar_deproject` node; either one alone fails validation.
+[sensors.rear_lidar]
+from = "entities.sensors.lidar3d_16"

@@ -16,7 +16,7 @@ use helios_core::spatial::quantities::FreeVector;
 use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 
-use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
+use avian3d::prelude::{ColliderOf, SpatialQuery, SpatialQueryFilter};
 use std::time::Duration;
 
 // =========================================================================
@@ -153,6 +153,7 @@ fn spawn_raycasting_sensors(
 fn raycasting_sensor_system(
     time: Res<Time>,
     spatial_query: SpatialQuery,
+    collider_bodies: Query<&ColliderOf>,
     mut sensor_query: Query<(
         &mut RaycastingSensor,
         &mut SensorRng,
@@ -188,8 +189,28 @@ fn raycasting_sensor_system(
         let sensor_origin = sensor_transform.translation();
         let sensor_rotation = sensor_transform.rotation();
         let max_toi = sensor.model.get_max_range();
+        let agent = parent.parent();
 
-        let filter = SpatialQueryFilter::from_excluded_entities([parent.parent()]);
+        // Checked on the first scan, not at spawn: only now has the sensor's
+        // world transform been propagated from its mount.
+        if capture.latest.is_none() {
+            let intersecting =
+                spatial_query.point_intersections(sensor_origin, &SpatialQueryFilter::default());
+            if is_inside_own_body(&intersecting, agent, |collider| {
+                collider_bodies.get(collider).ok().map(|of| of.body)
+            }) {
+                warn!(
+                    "Sensor '{}' is mounted inside its own agent's body (Bevy world position {:?}): \
+                     every ray hits the body at zero range, so it will report almost no \
+                     returns. Check its mount `transform` if this is not intended.",
+                    tracked.id, sensor_origin,
+                );
+            }
+        }
+
+        // The agent's own body is not excluded: a real sensor sees the vehicle
+        // it is mounted on, and the brain has to filter those returns itself.
+        let filter = SpatialQueryFilter::default();
 
         for ray in local_rays {
             let bevy_local_dir = FreeVector::<Flu>::from_raw(ray.direction).to_bevy();
@@ -228,12 +249,21 @@ fn raycasting_sensor_system(
             data: field,
         };
 
-        publisher.publish(
-            parent.parent(),
-            sensor_publish_channel.0.as_str(),
-            vec![reading],
-        );
+        publisher.publish(agent, sensor_publish_channel.0.as_str(), vec![reading]);
     }
+}
+
+/// Whether any collider in `intersecting` belongs to `agent`: either the agent
+/// entity carries the collider itself, or `body_of` maps the collider to the
+/// agent as its rigid body.
+fn is_inside_own_body(
+    intersecting: &[Entity],
+    agent: Entity,
+    body_of: impl Fn(Entity) -> Option<Entity>,
+) -> bool {
+    intersecting
+        .iter()
+        .any(|&collider| collider == agent || body_of(collider) == Some(agent))
 }
 
 #[cfg(test)]
@@ -430,5 +460,46 @@ mod tests {
             .get::<LastCapturePose>(sensor)
             .expect("inserted at spawn");
         assert!(capture.latest.is_none());
+    }
+
+    /// Three distinct entities standing in for the agent, a collider attached
+    /// to it, and something else in the scene.
+    fn agent_part_and_other() -> (Entity, Entity, Entity) {
+        let mut world = World::new();
+        (
+            world.spawn_empty().id(),
+            world.spawn_empty().id(),
+            world.spawn_empty().id(),
+        )
+    }
+
+    /// The agent entity carrying its collider directly, as the raycast car's
+    /// cuboid does, encloses the sensor.
+    #[test]
+    fn collider_on_the_agent_itself_is_its_own_body() {
+        let (agent, _, _) = agent_part_and_other();
+
+        assert!(is_inside_own_body(&[agent], agent, |_| None));
+    }
+
+    /// A collider on a child entity is the agent's body when its rigid body is
+    /// the agent.
+    #[test]
+    fn collider_attached_to_the_agent_is_its_own_body() {
+        let (agent, part, _) = agent_part_and_other();
+
+        assert!(is_inside_own_body(&[part], agent, |collider| {
+            (collider == part).then_some(agent)
+        }));
+    }
+
+    /// A sensor inside another body, such as a wall or another agent, is not
+    /// enclosed by its own body; open air is not either.
+    #[test]
+    fn another_body_or_open_air_is_not_its_own_body() {
+        let (agent, _, other) = agent_part_and_other();
+
+        assert!(!is_inside_own_body(&[other], agent, |_| None));
+        assert!(!is_inside_own_body(&[], agent, |_| None));
     }
 }
