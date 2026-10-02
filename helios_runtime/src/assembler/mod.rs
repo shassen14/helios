@@ -154,7 +154,7 @@ pub fn build_pipeline(
             continue;
         }
         let node = build_preprocessing_node(name, config);
-        derived_channels.extend(node.port_descriptor().outputs.iter().cloned());
+        derived_channels.extend(node.port_descriptor().outputs().iter().cloned());
         preprocessing_nodes.push(node);
     }
     let sensor_inputs = SensorInputs {
@@ -494,7 +494,7 @@ impl SensorInputs<'_> {
     ) {
         let sensor_inputs = node
             .port_descriptor()
-            .required_inputs
+            .required_inputs()
             .iter()
             .filter(|key| matches!(key, ChannelKey::Sensor(_)))
             .filter(|key| !self.derived.contains(*key));

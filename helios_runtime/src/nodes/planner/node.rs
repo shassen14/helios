@@ -265,12 +265,7 @@ mod tests {
     }
 
     fn make_bus() -> PortBus {
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![path_channel_key()],
-            rate: None,
-        };
+        let descriptor = PortDescriptor::new(vec![], vec![], vec![path_channel_key()], None);
         PortBus::new(&[descriptor])
     }
 
@@ -300,8 +295,8 @@ mod tests {
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![path_channel_key()]);
-        assert!(node.port_descriptor().rate.is_none());
+        assert_eq!(node.port_descriptor().outputs(), vec![path_channel_key()]);
+        assert!(node.port_descriptor().rate().is_none());
     }
 
     #[test]

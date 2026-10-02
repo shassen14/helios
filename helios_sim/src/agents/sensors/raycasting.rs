@@ -271,6 +271,7 @@ mod tests {
     use super::*;
 
     use helios_core::prelude::{AgentId, RangeField, TfProvider};
+    use helios_runtime::pipeline::descriptor::AlgorithmNodePortDescriptor;
     use helios_runtime::port::{PortBus, SensorChannel};
     use helios_runtime::{
         ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext,
@@ -303,12 +304,9 @@ mod tests {
     impl FakeScanConsumer {
         fn new() -> Self {
             Self {
-                descriptor: PortDescriptor {
-                    required_inputs: Vec::new(),
-                    optional_inputs: vec![field_channel()],
-                    outputs: Vec::new(),
-                    rate: None,
-                },
+                descriptor: AlgorithmNodePortDescriptor::new()
+                    .inputs_from_slices(&[], &[field_channel()])
+                    .build(),
             }
         }
     }

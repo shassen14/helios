@@ -39,22 +39,58 @@ use crate::{
 ///
 /// No two nodes may declare the same `outputs` channel — enforced at build time.
 ///
-/// Construct via [`crate::pipeline::descriptor::AlgorithmNodePortDescriptor`]
-/// or [`crate::pipeline::descriptor::MockNodePortDescriptor`] rather than
-/// building this struct directly — those builders are the kind fence.
+/// Fields are private and read through accessors, so the shape of a declared
+/// input can change without touching every node. Outside this crate the only
+/// way to construct one is
+/// [`AlgorithmNodePortDescriptor`](crate::pipeline::descriptor::AlgorithmNodePortDescriptor)
+/// or [`MockNodePortDescriptor`](crate::pipeline::descriptor::MockNodePortDescriptor):
+/// those builders are the kind fence that keeps oracle truth out of algorithm
+/// nodes.
 #[derive(Debug)]
 pub struct PortDescriptor {
+    required_inputs: Vec<ChannelKey>,
+    optional_inputs: Vec<ChannelKey>,
+    outputs: Vec<ChannelKey>,
+    rate: Option<f64>,
+}
+
+impl PortDescriptor {
+    /// Raw constructor with no kind checks. Node descriptors go through the
+    /// builders; this is for the builders themselves and for in-crate tests
+    /// that only need a bus with slots for a given set of channels.
+    pub(crate) fn new(
+        required_inputs: Vec<ChannelKey>,
+        optional_inputs: Vec<ChannelKey>,
+        outputs: Vec<ChannelKey>,
+        rate: Option<f64>,
+    ) -> Self {
+        Self {
+            required_inputs,
+            optional_inputs,
+            outputs,
+            rate,
+        }
+    }
+
     /// Channels that must have a producer in the graph for the build to succeed.
-    pub required_inputs: Vec<ChannelKey>,
+    pub fn required_inputs(&self) -> &[ChannelKey] {
+        &self.required_inputs
+    }
 
     /// Channels the node uses if a value is present. No build-time check.
-    pub optional_inputs: Vec<ChannelKey>,
+    pub fn optional_inputs(&self) -> &[ChannelKey] {
+        &self.optional_inputs
+    }
 
     /// Channels this node writes when it executes.
-    pub outputs: Vec<ChannelKey>,
+    pub fn outputs(&self) -> &[ChannelKey] {
+        &self.outputs
+    }
 
     /// Execution rate in Hz. `None` means every tick.
-    pub rate: Option<f64>,
+    pub fn rate(&self) -> Option<f64> {
+        self.rate
+    }
 }
 
 /// Type-agnostic view of a [`Stamped<T>`] value on the bus.
@@ -139,10 +175,10 @@ impl PortBus {
 
         for descriptor in descriptors {
             for key in descriptor
-                .required_inputs
+                .required_inputs()
                 .iter()
-                .chain(descriptor.optional_inputs.iter())
-                .chain(descriptor.outputs.iter())
+                .chain(descriptor.optional_inputs().iter())
+                .chain(descriptor.outputs().iter())
             {
                 slots
                     .entry(key.clone())
@@ -243,12 +279,7 @@ mod tests {
     }
 
     fn bus_with_outputs(outputs: Vec<ChannelKey>) -> PortBus {
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs,
-            rate: None,
-        };
+        let descriptor = PortDescriptor::new(vec![], vec![], outputs, None);
         PortBus::new(&[descriptor])
     }
 
@@ -267,12 +298,12 @@ mod tests {
         let req = ikey::<u32>();
         let opt = ikey_named::<u32>("opt");
         let out = ikey_named::<u32>("out");
-        let descriptor = PortDescriptor {
-            required_inputs: vec![req.clone()],
-            optional_inputs: vec![opt.clone()],
-            outputs: vec![out.clone()],
-            rate: None,
-        };
+        let descriptor = PortDescriptor::new(
+            vec![req.clone()],
+            vec![opt.clone()],
+            vec![out.clone()],
+            None,
+        );
         let bus = PortBus::new(&[descriptor]);
         assert!(bus.write(req, make_stamped(1u32, 0.0)).is_ok());
         assert!(bus.write(opt, make_stamped(2u32, 0.0)).is_ok());
@@ -282,18 +313,8 @@ mod tests {
     #[test]
     fn new_deduplicates_shared_keys_across_descriptors() {
         let shared = ikey::<u32>();
-        let d1 = PortDescriptor {
-            required_inputs: vec![shared.clone()],
-            optional_inputs: vec![],
-            outputs: vec![],
-            rate: None,
-        };
-        let d2 = PortDescriptor {
-            required_inputs: vec![shared.clone()],
-            optional_inputs: vec![],
-            outputs: vec![],
-            rate: None,
-        };
+        let d1 = PortDescriptor::new(vec![shared.clone()], vec![], vec![], None);
+        let d2 = PortDescriptor::new(vec![shared.clone()], vec![], vec![], None);
         let bus = PortBus::new(&[d1, d2]);
         assert_eq!(bus.slots.len(), 1);
     }

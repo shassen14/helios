@@ -296,10 +296,10 @@ mod tests {
     fn descriptor_has_base_required_and_preferred_optional() {
         let (node, preferred, base, output) = make_selector(3.0);
         let d = node.port_descriptor();
-        assert_eq!(d.required_inputs, vec![base]);
-        assert_eq!(d.optional_inputs, vec![preferred]);
-        assert_eq!(d.outputs, vec![output]);
-        assert!(d.rate.is_none());
+        assert_eq!(d.required_inputs(), vec![base]);
+        assert_eq!(d.optional_inputs(), vec![preferred]);
+        assert_eq!(d.outputs(), vec![output]);
+        assert!(d.rate().is_none());
     }
 
     #[test]

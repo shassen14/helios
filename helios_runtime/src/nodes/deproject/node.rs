@@ -246,8 +246,8 @@ mod tests {
         let node = make_node();
         let descriptor = node.port_descriptor();
 
-        assert_eq!(descriptor.required_inputs, vec![input_key()]);
-        assert_eq!(descriptor.outputs, vec![output_key()]);
+        assert_eq!(descriptor.required_inputs(), vec![input_key()]);
+        assert_eq!(descriptor.outputs(), vec![output_key()]);
     }
 
     #[test]

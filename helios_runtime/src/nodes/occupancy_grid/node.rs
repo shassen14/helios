@@ -371,24 +371,9 @@ mod tests {
     fn make_bus() -> PortBus {
         // Descriptors for: FrameAwareState (host-written), scans (host-written),
         // and the map (node-written).
-        let host_state = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![state_channel()],
-            rate: None,
-        };
-        let host_scans = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![scan_channel()],
-            rate: None,
-        };
-        let map_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![map_channel()],
-            rate: None,
-        };
+        let host_state = PortDescriptor::new(vec![], vec![], vec![state_channel()], None);
+        let host_scans = PortDescriptor::new(vec![], vec![], vec![scan_channel()], None);
+        let map_producer = PortDescriptor::new(vec![], vec![], vec![map_channel()], None);
         PortBus::new(&[host_state, host_scans, map_producer])
     }
 
@@ -445,10 +430,10 @@ mod tests {
             Some(5.0),
         );
         let d = node.port_descriptor();
-        assert!(d.required_inputs.contains(&state_channel()));
-        assert!(d.required_inputs.contains(&scan_channel()));
-        assert_eq!(d.outputs, vec![map_channel()]);
-        assert_eq!(d.rate, Some(5.0));
+        assert!(d.required_inputs().contains(&state_channel()));
+        assert!(d.required_inputs().contains(&scan_channel()));
+        assert_eq!(d.outputs(), vec![map_channel()]);
+        assert_eq!(d.rate(), Some(5.0));
     }
 
     #[test]

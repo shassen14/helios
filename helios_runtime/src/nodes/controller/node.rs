@@ -293,12 +293,7 @@ mod tests {
     }
 
     fn make_bus(output: ChannelKey) -> PortBus {
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![output],
-            rate: None,
-        };
+        let descriptor = PortDescriptor::new(vec![], vec![], vec![output], None);
         PortBus::new(&[descriptor])
     }
 
@@ -321,8 +316,8 @@ mod tests {
             Box::new(AlwaysReadyBuilder::new()),
             InternalChannel::of::<BodyTwist>(),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![twist_channel()]);
-        assert!(node.port_descriptor().rate.is_none());
+        assert_eq!(node.port_descriptor().outputs(), vec![twist_channel()]);
+        assert!(node.port_descriptor().rate().is_none());
     }
 
     #[test]
@@ -338,8 +333,8 @@ mod tests {
             Box::new(builder),
             InternalChannel::of::<BodyTwist>(),
         );
-        assert_eq!(node.port_descriptor().required_inputs, expected_required);
-        assert_eq!(node.port_descriptor().optional_inputs, expected_optional);
+        assert_eq!(node.port_descriptor().required_inputs(), expected_required);
+        assert_eq!(node.port_descriptor().optional_inputs(), expected_optional);
     }
 
     #[test]
@@ -374,7 +369,10 @@ mod tests {
             Box::new(AlwaysReadyBuilder::new()),
             InternalChannel::of::<BodyWrench>(),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![wrench_channel.clone()]);
+        assert_eq!(
+            node.port_descriptor().outputs(),
+            vec![wrench_channel.clone()]
+        );
 
         let bus = make_bus(wrench_channel.clone());
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));

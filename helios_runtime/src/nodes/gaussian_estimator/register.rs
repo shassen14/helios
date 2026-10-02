@@ -351,14 +351,9 @@ mod tests {
 
         // A bus carrying the node's state output plus every channel it reads
         // (left empty → predict is skipped, cold start).
-        let mut outputs: Vec<ChannelKey> = node.port_descriptor().required_inputs.clone();
+        let mut outputs: Vec<ChannelKey> = node.port_descriptor().required_inputs().to_vec();
         outputs.push(InternalChannel::of::<FrameAwareState>().into());
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs,
-            rate: None,
-        };
+        let descriptor = PortDescriptor::new(vec![], vec![], outputs, None);
         let bus = PortBus::new(&[descriptor]);
 
         node.execute(

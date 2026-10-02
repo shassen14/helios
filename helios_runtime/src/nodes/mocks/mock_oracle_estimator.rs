@@ -282,12 +282,12 @@ mod tests {
     /// without a producer the bus skips the slot allocation and the
     /// test would silently no-op.
     fn oracle_producer_descriptor() -> PortDescriptor {
-        PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![oracle_pose_channel(), oracle_twist_channel()],
-            rate: None,
-        }
+        PortDescriptor::new(
+            vec![],
+            vec![],
+            vec![oracle_pose_channel(), oracle_twist_channel()],
+            None,
+        )
     }
 
     fn make_bus_with_oracle_producer(node: &MockOracleEstimatorNode) -> PortBus {
@@ -319,7 +319,7 @@ mod tests {
         let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
         assert!(
             node.port_descriptor()
-                .required_inputs
+                .required_inputs()
                 .contains(&oracle_pose_channel()),
             "oracle/pose must be a required input"
         );
@@ -330,7 +330,7 @@ mod tests {
         let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
         assert!(
             node.port_descriptor()
-                .optional_inputs
+                .optional_inputs()
                 .contains(&oracle_twist_channel()),
             "oracle/twist must be optional, not required"
         );
@@ -339,7 +339,7 @@ mod tests {
     #[test]
     fn descriptor_outputs_frame_aware_state() {
         let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
-        assert_eq!(node.port_descriptor().outputs, vec![state_channel()]);
+        assert_eq!(node.port_descriptor().outputs(), vec![state_channel()]);
     }
 
     // --- Execute behavior ---

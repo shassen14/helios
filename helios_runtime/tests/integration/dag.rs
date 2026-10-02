@@ -13,7 +13,10 @@ use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
     channels::tf::tf_edge,
-    pipeline::{PipelineBuildError, PipelineBuilder},
+    pipeline::{
+        descriptor::{AlgorithmNodePortDescriptor, MockNodePortDescriptor},
+        PipelineBuildError, PipelineBuilder,
+    },
     port::{ChannelKey, InternalChannel, OracleChannel, PortBus, PortDescriptor},
     prelude::{Health, PipelineNode, Stamped, TickContext},
     BodyCapabilities, Provenance, PublishedChannel,
@@ -54,12 +57,9 @@ impl ProducerNode {
     fn new(name: &str, output: ChannelKey, value: u32) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: PortDescriptor {
-                required_inputs: vec![],
-                optional_inputs: vec![],
-                outputs: vec![output.clone()],
-                rate: None,
-            },
+            descriptor: AlgorithmNodePortDescriptor::new()
+                .outputs_from_slice(&[output.clone()])
+                .build(),
             output,
             value,
         }
@@ -107,12 +107,10 @@ impl TransformNode {
     fn new(name: &str, input: ChannelKey, output: ChannelKey, transform: fn(u32) -> u32) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: PortDescriptor {
-                required_inputs: vec![input.clone()],
-                optional_inputs: vec![],
-                outputs: vec![output.clone()],
-                rate: None,
-            },
+            descriptor: AlgorithmNodePortDescriptor::new()
+                .inputs_from_slices(&[input.clone()], &[])
+                .outputs_from_slice(&[output.clone()])
+                .build(),
             input,
             output,
             transform,
@@ -162,12 +160,10 @@ impl JoinNode {
     fn new(name: &str, input_a: ChannelKey, input_b: ChannelKey, output: ChannelKey) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: PortDescriptor {
-                required_inputs: vec![input_a.clone(), input_b.clone()],
-                optional_inputs: vec![],
-                outputs: vec![output.clone()],
-                rate: None,
-            },
+            descriptor: AlgorithmNodePortDescriptor::new()
+                .inputs_from_slices(&[input_a.clone(), input_b.clone()], &[])
+                .outputs_from_slice(&[output.clone()])
+                .build(),
             input_a,
             input_b,
             output,
@@ -217,12 +213,11 @@ impl CountingNode {
     fn new(name: &str, rate_hz: Option<f64>, counter: Arc<AtomicU32>) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: PortDescriptor {
-                required_inputs: vec![],
-                optional_inputs: vec![],
-                outputs: vec![],
-                rate: rate_hz,
-            },
+            descriptor: match rate_hz {
+                Some(hz) => AlgorithmNodePortDescriptor::new().rate_hz(hz),
+                None => AlgorithmNodePortDescriptor::new(),
+            }
+            .build(),
             counter,
         }
     }
@@ -258,12 +253,10 @@ impl SinkNode {
     fn new(name: &str, input: ChannelKey) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: PortDescriptor {
-                required_inputs: vec![input],
-                optional_inputs: vec![],
-                outputs: vec![],
-                rate: None,
-            },
+            descriptor: // Mock builder: some tests sink an oracle channel.
+            MockNodePortDescriptor::new()
+                .inputs_from_slices(&[input], &[])
+                .build(),
         }
     }
 }

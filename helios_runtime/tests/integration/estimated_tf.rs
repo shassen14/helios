@@ -25,7 +25,7 @@ use std::sync::{
 
 use helios_runtime::{
     channels::tf::publish_edge,
-    pipeline::PipelineBuilder,
+    pipeline::{descriptor::AlgorithmNodePortDescriptor, PipelineBuilder},
     port::{PortBus, PortDescriptor},
     prelude::{Health, PipelineNode, Stamped, TickContext},
     tf_service::TfService,
@@ -114,12 +114,7 @@ impl AidingConsumerNode {
         Self {
             name: name.to_string(),
             // Reads tf, not the bus: no ports to declare.
-            descriptor: PortDescriptor {
-                required_inputs: vec![],
-                optional_inputs: vec![],
-                outputs: vec![],
-                rate: None,
-            },
+            descriptor: AlgorithmNodePortDescriptor::new().build(),
             from,
             to,
             applied,
@@ -167,12 +162,9 @@ impl EdgeProducerNode {
             name: name.to_string(),
             // Declares the edge as an output so the pipeline allocates its slot
             // and `tf_edge_channels()` surfaces it into the drain list.
-            descriptor: PortDescriptor {
-                required_inputs: vec![],
-                optional_inputs: vec![],
-                outputs: vec![helios_runtime::channels::tf::tf_edge(&edge).into()],
-                rate: None,
-            },
+            descriptor: AlgorithmNodePortDescriptor::new()
+                .output_internal(helios_runtime::channels::tf::tf_edge(&edge))
+                .build(),
             edge,
             from_conv,
             to_conv,

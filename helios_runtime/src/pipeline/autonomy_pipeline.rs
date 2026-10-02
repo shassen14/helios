@@ -100,7 +100,7 @@ impl PipelineBuilder {
         let mut producer_of: HashMap<ChannelKey, String> = HashMap::new();
         for node in &self.nodes {
             let node_name = node.name();
-            for output in &node.port_descriptor().outputs {
+            for output in node.port_descriptor().outputs() {
                 if let Some(prev_name) = producer_of.insert(output.clone(), node_name.to_string()) {
                     let error = PipelineBuildError::MultipleProducers {
                         channel: output.clone(),
@@ -130,7 +130,7 @@ impl PipelineBuilder {
             let (ready, still_waiting): (Vec<_>, Vec<_>) =
                 remaining.into_iter().partition(|node| {
                     node.port_descriptor()
-                        .required_inputs
+                        .required_inputs()
                         .iter()
                         .all(|channel| produced.contains(channel))
                 });
@@ -144,7 +144,7 @@ impl PipelineBuilder {
                 // Channels that *would* exist if the sort could continue.
                 let mut pending_outputs: HashSet<ChannelKey> = HashSet::new();
                 for node in &remaining {
-                    for channel in &node.port_descriptor().outputs {
+                    for channel in node.port_descriptor().outputs() {
                         pending_outputs.insert(channel.clone());
                     }
                 }
@@ -156,7 +156,7 @@ impl PipelineBuilder {
                 // many nodes participate.
                 let is_cycle_detected = remaining.iter().any(|node| {
                     node.port_descriptor()
-                        .required_inputs
+                        .required_inputs()
                         .iter()
                         .all(|channel| {
                             produced.contains(channel) || pending_outputs.contains(channel)
@@ -168,7 +168,7 @@ impl PipelineBuilder {
                         .iter()
                         .filter(|node| {
                             node.port_descriptor()
-                                .required_inputs
+                                .required_inputs()
                                 .iter()
                                 .all(|channel| {
                                     produced.contains(channel) || pending_outputs.contains(channel)
@@ -183,7 +183,7 @@ impl PipelineBuilder {
                 // by `produced` *or* `pending_outputs` is genuinely
                 // missing — no node anywhere will ever produce it.
                 for node in &remaining {
-                    for channel in &node.port_descriptor().required_inputs {
+                    for channel in node.port_descriptor().required_inputs() {
                         if !produced.contains(channel) && !pending_outputs.contains(channel) {
                             let error = match channel.kind() {
                                 ChannelKind::Sensor | ChannelKind::Internal => {
@@ -214,7 +214,7 @@ impl PipelineBuilder {
             produced.extend(
                 ready
                     .iter()
-                    .flat_map(|node| node.port_descriptor().outputs.iter())
+                    .flat_map(|node| node.port_descriptor().outputs().iter())
                     .cloned(),
             );
 
@@ -260,7 +260,7 @@ impl PipelineBuilder {
         let mut rate_timers: Vec<RateTimer> = Vec::with_capacity(next_id as usize);
         for level in &levels {
             for (_, node) in level {
-                rate_timers.push(RateTimer::new(node.port_descriptor().rate));
+                rate_timers.push(RateTimer::new(node.port_descriptor().rate()));
             }
         }
 
@@ -311,13 +311,13 @@ fn log_resolved_dag(
     for (level_idx, level) in levels.iter().enumerate() {
         for (node_id, node) in level {
             let descriptor = node.port_descriptor();
-            let rate = match descriptor.rate {
+            let rate = match descriptor.rate() {
                 Some(hz) => format!("{hz} Hz"),
                 None => "every tick".to_string(),
             };
-            let inputs = format_keys(&descriptor.required_inputs);
-            let optional = format_keys(&descriptor.optional_inputs);
-            let outputs = format_keys(&descriptor.outputs);
+            let inputs = format_keys(descriptor.required_inputs());
+            let optional = format_keys(descriptor.optional_inputs());
+            let outputs = format_keys(descriptor.outputs());
             info!(
                 target: "helios_runtime::pipeline",
                 level = level_idx,
@@ -433,7 +433,7 @@ impl AutonomyPipeline {
             level.iter().flat_map(|(_, node)| {
                 let name = node.name();
                 node.port_descriptor()
-                    .outputs
+                    .outputs()
                     .iter()
                     .map(move |key| (name, key))
             })

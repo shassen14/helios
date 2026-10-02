@@ -73,8 +73,9 @@ mod tests {
     use crate::run::Run;
     use crate::runner::state::ContinuousStatus;
 
+    use helios_runtime::pipeline::descriptor::AlgorithmNodePortDescriptor;
     use helios_runtime::port::InternalChannel;
-    use helios_runtime::prelude::{ChannelKey, Health, PortDescriptor, Stamped};
+    use helios_runtime::prelude::{ChannelKey, Health, Stamped};
 
     fn at(secs: f64) -> MonotonicTime {
         MonotonicTime(secs)
@@ -112,12 +113,9 @@ mod tests {
     // A single-output bus over one unnamed f64 channel, plus the key to write it.
     fn bus() -> (PortBus, ChannelKey) {
         let channel: ChannelKey = InternalChannel::of::<f64>().into();
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![channel.clone()],
-            rate: None,
-        };
+        let descriptor = AlgorithmNodePortDescriptor::new()
+            .outputs_from_slice(&[channel.clone()])
+            .build();
         (PortBus::new(&[descriptor]), channel)
     }
 

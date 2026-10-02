@@ -101,8 +101,9 @@ mod tests {
     use crate::assertion::AssertionTarget;
 
     use helios_core::spatial::primitives::MonotonicTime;
+    use helios_runtime::pipeline::descriptor::AlgorithmNodePortDescriptor;
     use helios_runtime::port::InternalChannel;
-    use helios_runtime::prelude::{ChannelKey, Health, PortDescriptor, Stamped};
+    use helios_runtime::prelude::{ChannelKey, Health, Stamped};
 
     const TARGET: &str = "agent.car.x";
 
@@ -112,12 +113,9 @@ mod tests {
     // `Pending` path).
     fn fixture<T: 'static>() -> (AgentId, TargetRegistry, PortBus, ChannelKey) {
         let channel: ChannelKey = InternalChannel::of::<T>().into();
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![channel.clone()],
-            rate: None,
-        };
+        let descriptor = AlgorithmNodePortDescriptor::new()
+            .outputs_from_slice(&[channel.clone()])
+            .build();
         let bus = PortBus::new(&[descriptor]);
 
         let agent = AgentId::new("car");

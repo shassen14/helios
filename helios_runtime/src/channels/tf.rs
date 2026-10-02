@@ -182,12 +182,12 @@ mod tests {
 
     /// A bus with exactly the given edges' slots allocated as outputs.
     fn bus_wired_for(edges: &[FrameEdge]) -> PortBus {
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: edges.iter().map(|e| tf_edge(e).into()).collect(),
-            rate: None,
-        };
+        let descriptor = PortDescriptor::new(
+            vec![],
+            vec![],
+            edges.iter().map(|e| tf_edge(e).into()).collect(),
+            None,
+        );
         PortBus::new(&[descriptor])
     }
 

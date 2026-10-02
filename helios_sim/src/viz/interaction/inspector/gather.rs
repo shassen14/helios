@@ -360,7 +360,7 @@ mod tests {
     use helios_core::spatial::{FrameId, StateVariable};
     use helios_runtime::{
         channels::control,
-        pipeline::node::HOST_PRODUCER_ID,
+        pipeline::{descriptor::AlgorithmNodePortDescriptor, node::HOST_PRODUCER_ID},
         port::{InternalChannel, PortBus},
         prelude::{Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext},
     };
@@ -564,12 +564,9 @@ mod tests {
     impl FakeEstimatorNode {
         fn new() -> Self {
             Self {
-                descriptor: PortDescriptor {
-                    required_inputs: Vec::new(),
-                    optional_inputs: Vec::new(),
-                    outputs: vec![InternalChannel::of::<FrameAwareState>().into()],
-                    rate: None,
-                },
+                descriptor: AlgorithmNodePortDescriptor::new()
+                    .output_internal(InternalChannel::of::<FrameAwareState>())
+                    .build(),
             }
         }
     }
@@ -703,12 +700,9 @@ mod tests {
     impl FakeControllerNode {
         fn new() -> Self {
             Self {
-                descriptor: PortDescriptor {
-                    required_inputs: Vec::new(),
-                    optional_inputs: Vec::new(),
-                    outputs: vec![control::command::<BodyTwist>().into()],
-                    rate: None,
-                },
+                descriptor: AlgorithmNodePortDescriptor::new()
+                    .output_internal(control::command::<BodyTwist>())
+                    .build(),
             }
         }
     }
@@ -922,12 +916,9 @@ mod tests {
     impl FakeReferenceNode {
         fn new() -> Self {
             Self {
-                descriptor: PortDescriptor {
-                    required_inputs: Vec::new(),
-                    optional_inputs: Vec::new(),
-                    outputs: vec![control::reference::<BodyTwistRef>().into()],
-                    rate: None,
-                },
+                descriptor: AlgorithmNodePortDescriptor::new()
+                    .output_internal(control::reference::<BodyTwistRef>())
+                    .build(),
             }
         }
     }
@@ -1030,12 +1021,9 @@ mod tests {
     impl FakeActuatorNode {
         fn new() -> Self {
             Self {
-                descriptor: PortDescriptor {
-                    required_inputs: Vec::new(),
-                    optional_inputs: Vec::new(),
-                    outputs: vec![control::actuators().into()],
-                    rate: None,
-                },
+                descriptor: AlgorithmNodePortDescriptor::new()
+                    .output_internal(control::actuators())
+                    .build(),
             }
         }
     }

@@ -316,8 +316,8 @@ mod tests {
     fn descriptor_has_intent_input_and_twist_output() {
         let node = make_node(car_scale());
         let d = node.port_descriptor();
-        assert_eq!(d.required_inputs, vec![intent_key()]);
-        assert_eq!(d.outputs, vec![output_key()]);
-        assert!(d.rate.is_none());
+        assert_eq!(d.required_inputs(), vec![intent_key()]);
+        assert_eq!(d.outputs(), vec![output_key()]);
+        assert!(d.rate().is_none());
     }
 }

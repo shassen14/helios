@@ -350,18 +350,8 @@ mod tests {
         // Two descriptors: one that "produces" the path channel (so the bus
         // allocates a slot for it), and one that outputs the BodyTwistRef
         // the node under test will publish.
-        let path_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![path_channel_key()],
-            rate: None,
-        };
-        let traj_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![out_channel()],
-            rate: None,
-        };
+        let path_producer = PortDescriptor::new(vec![], vec![], vec![path_channel_key()], None);
+        let traj_producer = PortDescriptor::new(vec![], vec![], vec![out_channel()], None);
         PortBus::new(&[path_producer, traj_producer])
     }
 
@@ -416,11 +406,11 @@ mod tests {
             path_channel(),
             out_channel_internal(),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![out_channel()]);
-        assert!(node.port_descriptor().rate.is_none());
+        assert_eq!(node.port_descriptor().outputs(), vec![out_channel()]);
+        assert!(node.port_descriptor().rate().is_none());
         assert!(node
             .port_descriptor()
-            .required_inputs
+            .required_inputs()
             .contains(&path_channel_key()));
     }
 
@@ -470,24 +460,9 @@ mod tests {
         // A bus carrying both the named slot the node is configured to write and
         // the old unnamed slot, so we can assert the write lands on the former and
         // never the latter.
-        let named_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![named_key.clone()],
-            rate: None,
-        };
-        let unnamed_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![out_channel()],
-            rate: None,
-        };
-        let path_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![path_channel_key()],
-            rate: None,
-        };
+        let named_producer = PortDescriptor::new(vec![], vec![], vec![named_key.clone()], None);
+        let unnamed_producer = PortDescriptor::new(vec![], vec![], vec![out_channel()], None);
+        let path_producer = PortDescriptor::new(vec![], vec![], vec![path_channel_key()], None);
         let bus = PortBus::new(&[named_producer, unnamed_producer, path_producer]);
         publish_path(&bus, 1.0);
 

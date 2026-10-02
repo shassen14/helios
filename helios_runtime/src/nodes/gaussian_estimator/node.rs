@@ -554,16 +554,16 @@ mod tests {
     }
 
     fn make_bus(extra_outputs: Vec<ChannelKey>) -> PortBus {
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: {
+        let descriptor = PortDescriptor::new(
+            vec![],
+            vec![],
+            {
                 let mut v = vec![state_channel(), accel_channel()];
                 v.extend(extra_outputs);
                 v
             },
-            rate: None,
-        };
+            None,
+        );
         PortBus::new(&[descriptor])
     }
 
@@ -614,7 +614,7 @@ mod tests {
         );
         // Two outputs: the rich FrameAwareState, and the bare transform edge the
         // estimate dual-publishes for the TfService to fold.
-        let outputs = &node.port_descriptor().outputs;
+        let outputs = &node.port_descriptor().outputs();
         assert_eq!(outputs.len(), 2);
         assert!(outputs.contains(&state_channel()));
         assert!(outputs.contains(&tf_edge(&test_edge()).into()));
@@ -636,7 +636,7 @@ mod tests {
         );
         assert!(node
             .port_descriptor()
-            .optional_inputs
+            .optional_inputs()
             .contains(&accel_channel()));
     }
 

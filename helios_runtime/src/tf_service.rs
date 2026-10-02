@@ -206,12 +206,7 @@ mod tests {
     // A bus with a slot for each edge channel — the minimum a producer needs to
     // publish onto, standing in for the pipeline's descriptor-driven allocation.
     fn edge_bus(keys: Vec<ChannelKey>) -> PortBus {
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: keys,
-            rate: None,
-        };
+        let descriptor = PortDescriptor::new(vec![], vec![], keys, None);
         PortBus::new(&[descriptor])
     }
 
