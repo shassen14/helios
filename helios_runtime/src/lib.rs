@@ -24,7 +24,7 @@ pub use crate::body::{
 pub use crate::pipeline::build_error::PipelineBuildError;
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{AutonomyPipeline, PipelineBuilder};
-pub use crate::port::{ChannelKey, ErasedStamped, PortDescriptor};
+pub use crate::port::{ChannelKey, ErasedStamped, PortDescriptor, SlotVersion};
 pub use crate::stamped::{Health, Stamped};
 
 pub use crate::assembler::{build_pipeline, PipelineAssemblyError};

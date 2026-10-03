@@ -8,6 +8,10 @@
 //! channel no node declared is a
 //! [`ChannelError::UnknownChannel`](crate::port::ChannelError).
 //!
+//! Every slot also carries a [`SlotVersion`] the bus bumps on each write, so a
+//! consumer can tell a new write from an unchanged value without trusting the
+//! producer's timestamp.
+//!
 //! [`ErasedStamped`] is the type-agnostic view of a slot for tooling
 //! (diagnostics, inspector) that holds a [`ChannelKey`](crate::port::ChannelKey)
 //! but not the compile-time payload type.
@@ -151,8 +155,12 @@ impl<T: Any + Send + Sync> ErasedStamped for Stamped<T> {
 /// dedupe on [`Stamped::timestamp`] themselves (see [`PortBus::read_fresh`]
 /// for the simple max-age helper, or track a per-consumer last-seen
 /// timestamp for exact one-shot semantics).
+///
+/// Each slot also carries a [`SlotVersion`] the bus bumps on every write, read
+/// through [`PortBus::read_versioned`]. The timestamp says when the data was
+/// measured; the version says which write this is.
 pub struct PortBus {
-    slots: HashMap<ChannelKey, ArcSwap<Option<Arc<dyn ErasedStamped>>>>,
+    slots: HashMap<ChannelKey, ArcSwap<SlotEntry>>,
     tick_now: AtomicF64,
 }
 
@@ -182,7 +190,7 @@ impl PortBus {
             {
                 slots
                     .entry(key.clone())
-                    .or_insert_with(|| ArcSwap::new(Arc::new(None)));
+                    .or_insert_with(|| ArcSwap::new(Arc::new(SlotEntry::initial())));
             }
         }
 
@@ -203,15 +211,42 @@ impl PortBus {
             .slots
             .get(&channel)
             .ok_or(ChannelError::UnknownChannel)?;
-        slot.store(Arc::new(Some(Arc::new(stamped) as Arc<dyn ErasedStamped>)));
+        // Load-then-store is not one atomic step; it cannot race because the
+        // build admits exactly one writer per channel.
+        let version = slot.load().version.next();
+
+        slot.store(Arc::new(SlotEntry {
+            data: Some(Arc::new(stamped) as Arc<dyn ErasedStamped>),
+            version,
+        }));
+
         Ok(())
     }
 
     pub fn read<T: Any + Send + Sync>(&self, channel: ChannelKey) -> Option<Arc<Stamped<T>>> {
         let guard = self.slots.get(&channel)?.load();
-        let any_arc = guard.as_ref().as_ref()?;
+        let any_arc = guard.data.as_ref()?;
 
         Arc::clone(any_arc).into_any().downcast::<Stamped<T>>().ok()
+    }
+
+    /// [`read`](Self::read) plus the slot's [`SlotVersion`], both taken from one
+    /// load so the pair always belongs to the same write. Use the version to
+    /// tell "a new write landed" apart from "same value as last time", which a
+    /// producer-set timestamp cannot (late measurements, repeated stamps,
+    /// clock jumps). `None` for an unknown channel, an empty slot, or a wrong `T`.
+    pub fn read_versioned<T: Any + Send + Sync>(
+        &self,
+        channel: ChannelKey,
+    ) -> Option<(Arc<Stamped<T>>, SlotVersion)> {
+        let guard = self.slots.get(&channel)?.load();
+        let any_arc = guard.data.as_ref()?;
+        let stamped = Arc::clone(any_arc)
+            .into_any()
+            .downcast::<Stamped<T>>()
+            .ok()?;
+
+        Some((stamped, guard.version))
     }
 
     pub fn read_fresh<T: Any + Send + Sync>(
@@ -238,14 +273,14 @@ impl PortBus {
     /// this call. `None` covers both an unknown channel and an empty slot.
     pub fn read_erased(&self, key: &ChannelKey) -> Option<Arc<dyn ErasedStamped>> {
         let guard = self.slots.get(key)?.load();
-        let erased = guard.as_ref().as_ref()?;
+        let erased = guard.data.as_ref()?;
         Some(Arc::clone(erased))
     }
 
     pub(crate) fn ensure_slot(&mut self, key: ChannelKey) {
         self.slots
             .entry(key)
-            .or_insert_with(|| ArcSwap::new(Arc::new(None)));
+            .or_insert_with(|| ArcSwap::new(Arc::new(SlotEntry::initial())));
     }
 
     pub(crate) fn set_tick_time(&self, now: f64) {
@@ -258,8 +293,50 @@ impl PortBus {
     pub(crate) fn slot_presence(&self) -> Vec<(ChannelKey, bool)> {
         self.slots
             .iter()
-            .map(|(key, slot)| (key.clone(), slot.load().as_ref().is_some()))
+            .map(|(key, slot)| (key.clone(), slot.load().data.is_some()))
             .collect()
+    }
+}
+
+/// What one slot's [`ArcSwap`] holds: the latest value and the version of the
+/// write that put it there. They live in one struct so a single atomic swap
+/// replaces both — a reader can never see a new value with an old version.
+struct SlotEntry {
+    data: Option<Arc<dyn ErasedStamped>>,
+    version: SlotVersion,
+}
+
+impl SlotEntry {
+    /// An unwritten slot: no value, version zero.
+    fn initial() -> Self {
+        Self {
+            data: None,
+            version: SlotVersion::initial(),
+        }
+    }
+}
+
+/// Counts the writes to one bus slot: zero while empty, then one more per
+/// write. It is a write counter, not a time — see [`Stamped::timestamp`] for
+/// when the data was measured.
+///
+/// Only the bus creates versions, so a producer cannot set one wrong. Compare
+/// versions only for equality ("has a new write landed since I last looked?");
+/// the type deliberately has no ordering. The counter wraps after 2^64 writes,
+/// which equality checks survive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SlotVersion(u64);
+
+impl SlotVersion {
+    /// The version of a slot that has never been written.
+    pub(crate) fn initial() -> Self {
+        Self(0u64)
+    }
+
+    /// The version the next write to this slot receives.
+    pub(crate) fn next(mut self) -> Self {
+        self.0 = self.0.wrapping_add(1u64);
+        self
     }
 }
 
@@ -459,5 +536,109 @@ mod tests {
         let stamped = erased.into_any().downcast::<Stamped<u32>>().unwrap();
         assert_eq!(stamped.value, 99);
         assert_eq!(stamped.timestamp, MonotonicTime(2.0));
+    }
+
+    // --- PortBus::read_versioned tests ---
+
+    #[test]
+    fn first_write_is_version_one_after_initial() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
+
+        let (stamped, version) = bus.read_versioned::<u32>(key).unwrap();
+        assert_eq!(stamped.value, 1);
+        assert_eq!(version, SlotVersion::initial().next());
+    }
+
+    #[test]
+    fn each_write_advances_version_by_one() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
+        let (_, first) = bus.read_versioned::<u32>(key.clone()).unwrap();
+
+        bus.write(key.clone(), make_stamped(2u32, 0.1)).unwrap();
+        let (stamped, second) = bus.read_versioned::<u32>(key).unwrap();
+        assert_eq!(stamped.value, 2);
+        assert_eq!(second, first.next());
+    }
+
+    #[test]
+    fn version_advances_when_timestamp_repeats() {
+        // The case a timestamp dedupe misses: same stamp, new write.
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 5.0)).unwrap();
+        let (_, first) = bus.read_versioned::<u32>(key.clone()).unwrap();
+
+        bus.write(key.clone(), make_stamped(2u32, 5.0)).unwrap();
+        let (_, second) = bus.read_versioned::<u32>(key).unwrap();
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn version_advances_when_timestamp_goes_backwards() {
+        // A late measurement carries an older stamp but is still a new write.
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 5.0)).unwrap();
+        let (_, first) = bus.read_versioned::<u32>(key.clone()).unwrap();
+
+        bus.write(key.clone(), make_stamped(2u32, 4.0)).unwrap();
+        let (_, second) = bus.read_versioned::<u32>(key).unwrap();
+        assert_eq!(second, first.next());
+    }
+
+    #[test]
+    fn versions_count_independently_per_channel() {
+        let a = ikey_named::<u32>("a");
+        let b = ikey_named::<u32>("b");
+        let bus = bus_with_outputs(vec![a.clone(), b.clone()]);
+        bus.write(a.clone(), make_stamped(1u32, 0.0)).unwrap();
+        bus.write(a.clone(), make_stamped(2u32, 0.1)).unwrap();
+        bus.write(b.clone(), make_stamped(3u32, 0.1)).unwrap();
+
+        let (_, version_a) = bus.read_versioned::<u32>(a).unwrap();
+        let (_, version_b) = bus.read_versioned::<u32>(b).unwrap();
+        assert_eq!(version_a, SlotVersion::initial().next().next());
+        assert_eq!(version_b, SlotVersion::initial().next());
+    }
+
+    #[test]
+    fn read_versioned_returns_none_for_empty_slot() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        assert!(bus.read_versioned::<u32>(key).is_none());
+    }
+
+    #[test]
+    fn read_versioned_returns_none_for_unknown_channel() {
+        let bus = bus_with_outputs(vec![]);
+        assert!(bus.read_versioned::<u32>(ikey::<u32>()).is_none());
+    }
+
+    #[test]
+    fn read_versioned_returns_none_for_wrong_type() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
+        assert!(bus.read_versioned::<i64>(key).is_none());
+    }
+
+    #[test]
+    fn read_matches_read_versioned_value() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(7u32, 1.0)).unwrap();
+
+        let plain = bus.read::<u32>(key.clone()).unwrap();
+        let (versioned, _) = bus.read_versioned::<u32>(key).unwrap();
+        assert!(Arc::ptr_eq(&plain, &versioned));
+    }
+
+    #[test]
+    fn slot_version_wraps_at_max() {
+        assert_eq!(SlotVersion(u64::MAX).next(), SlotVersion::initial());
     }
 }
