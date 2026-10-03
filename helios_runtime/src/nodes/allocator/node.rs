@@ -1,5 +1,4 @@
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
-use crate::port::{ChannelError, InternalChannel, PortBus};
+use crate::port::{AlgorithmNodePortDescriptor, ChannelError, InternalChannel, PortBus};
 use crate::{ChannelKey, Health, PipelineNode, PortDescriptor, Stamped, TickContext};
 
 use helios_core::control::allocation::Allocator;

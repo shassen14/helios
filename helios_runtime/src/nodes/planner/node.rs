@@ -31,9 +31,10 @@ use helios_core::planning::SearchPlanner;
 use helios_core::prelude::TfProvider;
 
 use super::input::SearchPlannerInputBuilder;
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor};
+use crate::port::{
+    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor,
+};
 use crate::stamped::{Health, Stamped};
 
 /// Pipeline node wrapping any search-family planner.

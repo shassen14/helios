@@ -13,11 +13,11 @@ use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
     channels::tf::tf_edge,
-    pipeline::{
-        descriptor::{AlgorithmNodePortDescriptor, MockNodePortDescriptor},
-        PipelineBuildError, PipelineBuilder,
+    pipeline::{PipelineBuildError, PipelineBuilder},
+    port::{
+        AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, MockNodePortDescriptor,
+        OracleChannel, PortBus, PortDescriptor,
     },
-    port::{ChannelKey, InternalChannel, OracleChannel, PortBus, PortDescriptor},
     prelude::{Health, PipelineNode, Stamped, TickContext},
     BodyCapabilities, Provenance, PublishedChannel,
 };

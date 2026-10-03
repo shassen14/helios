@@ -63,11 +63,10 @@ use helios_core::prelude::PointCloud;
 use helios_core::prelude::TfProvider;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::{FrameAwareState, FrameId};
-
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel,
+    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus,
+    PortDescriptor, SensorChannel,
 };
 use crate::stamped::{Health, Stamped};
 

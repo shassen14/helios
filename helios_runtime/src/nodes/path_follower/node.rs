@@ -39,9 +39,10 @@ use helios_core::interchange::path::Path;
 use helios_core::prelude::TfProvider;
 
 use super::input::PathFollowerInputBuilder;
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor};
+use crate::port::{
+    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor,
+};
 use crate::stamped::{Health, Stamped};
 
 /// Mutable per-tick state: the follower itself and the bus timestamp of the

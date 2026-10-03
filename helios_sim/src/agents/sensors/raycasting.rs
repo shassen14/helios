@@ -271,7 +271,7 @@ mod tests {
     use super::*;
 
     use helios_core::prelude::{AgentId, RangeField, TfProvider};
-    use helios_runtime::pipeline::descriptor::AlgorithmNodePortDescriptor;
+    use helios_runtime::port::AlgorithmNodePortDescriptor;
     use helios_runtime::port::{PortBus, SensorChannel};
     use helios_runtime::{
         ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext,

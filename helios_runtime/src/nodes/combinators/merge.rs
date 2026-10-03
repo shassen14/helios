@@ -38,8 +38,7 @@ use std::{collections::HashSet, sync::Arc};
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId};
 
 use crate::{
-    pipeline::descriptor::AlgorithmNodePortDescriptor,
-    port::{ChannelError, InternalChannel},
+    port::{AlgorithmNodePortDescriptor, ChannelError, InternalChannel},
     ChannelKey, Health, PipelineNode, PortDescriptor, Stamped,
 };
 

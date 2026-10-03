@@ -34,8 +34,7 @@
 //! inputs are `Internal` by construction.
 
 use crate::{
-    pipeline::descriptor::AlgorithmNodePortDescriptor,
-    port::{ChannelError, InternalChannel},
+    port::{AlgorithmNodePortDescriptor, ChannelError, InternalChannel},
     ChannelKey, PipelineNode, PortDescriptor,
 };
 

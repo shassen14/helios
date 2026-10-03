@@ -28,9 +28,10 @@
 //! `SafetyMonitorNode` downstream of this node, not here.
 
 use super::input::ControlInputBuilder;
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor};
+use crate::port::{
+    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor,
+};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::control::Controller;

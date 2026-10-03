@@ -18,10 +18,10 @@
 
 use super::input::EstimatorInputBuilder;
 use crate::channels::tf::{publish_edge, tf_edge};
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor, SensorChannel,
+    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus,
+    PortDescriptor, SensorChannel,
 };
 use crate::stamped::{Health, Stamped};
 

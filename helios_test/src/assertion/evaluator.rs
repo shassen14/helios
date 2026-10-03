@@ -101,7 +101,7 @@ mod tests {
     use crate::assertion::AssertionTarget;
 
     use helios_core::spatial::primitives::MonotonicTime;
-    use helios_runtime::pipeline::descriptor::AlgorithmNodePortDescriptor;
+    use helios_runtime::port::AlgorithmNodePortDescriptor;
     use helios_runtime::port::InternalChannel;
     use helios_runtime::prelude::{ChannelKey, Health, Stamped};
 

@@ -15,7 +15,6 @@
 
 pub mod autonomy_pipeline;
 pub mod build_error;
-pub mod descriptor;
 pub(crate) mod key_format;
 pub mod node;
 pub mod rate_gate;

@@ -5,7 +5,7 @@
 //! name disambiguate slots within a kind. [`PortBus`](crate::port::PortBus)
 //! stores one slot per [`ChannelKey`] regardless of kind — the partition is
 //! enforced at the *declaration surface* (the descriptor builders in
-//! [`crate::pipeline::descriptor`]), not in storage. The compiler refuses to
+//! [`crate::port::descriptor`]), not in storage. The compiler refuses to
 //! construct an algorithm node's descriptor that names an [`OracleChannel`] as
 //! input.
 //!

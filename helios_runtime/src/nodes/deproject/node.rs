@@ -8,8 +8,7 @@
 //! dropped by the conversion.
 
 use crate::{
-    pipeline::descriptor::AlgorithmNodePortDescriptor,
-    port::{ChannelError, PortBus, SensorChannel},
+    port::{AlgorithmNodePortDescriptor, ChannelError, PortBus, SensorChannel},
     ChannelKey, PipelineNode, PortDescriptor, Stamped, TickContext,
 };
 

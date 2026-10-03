@@ -73,7 +73,7 @@ mod tests {
     use crate::run::Run;
     use crate::runner::state::ContinuousStatus;
 
-    use helios_runtime::pipeline::descriptor::AlgorithmNodePortDescriptor;
+    use helios_runtime::port::AlgorithmNodePortDescriptor;
     use helios_runtime::port::InternalChannel;
     use helios_runtime::prelude::{ChannelKey, Health, Stamped};
 

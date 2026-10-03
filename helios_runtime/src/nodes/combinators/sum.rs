@@ -35,8 +35,7 @@
 use std::{marker::PhantomData, ops::Add, sync::Arc};
 
 use crate::{
-    pipeline::descriptor::AlgorithmNodePortDescriptor,
-    port::{ChannelError, InternalChannel},
+    port::{AlgorithmNodePortDescriptor, ChannelError, InternalChannel},
     ChannelKey, Health, PipelineNode, PortDescriptor, Stamped,
 };
 

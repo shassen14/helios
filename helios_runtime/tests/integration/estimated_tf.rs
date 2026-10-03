@@ -25,8 +25,8 @@ use std::sync::{
 
 use helios_runtime::{
     channels::tf::publish_edge,
-    pipeline::{descriptor::AlgorithmNodePortDescriptor, PipelineBuilder},
-    port::{PortBus, PortDescriptor},
+    pipeline::PipelineBuilder,
+    port::{AlgorithmNodePortDescriptor, PortBus, PortDescriptor},
     prelude::{Health, PipelineNode, Stamped, TickContext},
     tf_service::TfService,
     AutonomyPipeline,

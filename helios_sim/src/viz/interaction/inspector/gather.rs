@@ -360,8 +360,8 @@ mod tests {
     use helios_core::spatial::{FrameId, StateVariable};
     use helios_runtime::{
         channels::control,
-        pipeline::{descriptor::AlgorithmNodePortDescriptor, node::HOST_PRODUCER_ID},
-        port::{InternalChannel, PortBus},
+        pipeline::node::HOST_PRODUCER_ID,
+        port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus},
         prelude::{Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext},
     };
     use nalgebra::{DMatrix, DVector};

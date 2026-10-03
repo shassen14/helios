@@ -59,7 +59,7 @@ use crate::port::{
 /// [`HealthChannel`]. The following must NOT compile:
 ///
 /// ```compile_fail
-/// use helios_runtime::pipeline::descriptor::AlgorithmNodePortDescriptor;
+/// use helios_runtime::port::AlgorithmNodePortDescriptor;
 /// use helios_runtime::port::OracleChannel;
 ///
 /// struct Pose;

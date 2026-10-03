@@ -33,10 +33,10 @@
 //!     crate::pipeline::build_error::PipelineBuildError::UnsatisfiedBodyCapabilities
 
 use crate::channels::{oracle_pose_channel, oracle_twist_channel};
-use crate::pipeline::descriptor::MockNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    ChannelError, ChannelKey, InternalChannel, OracleChannel, PortBus, PortDescriptor,
+    ChannelError, ChannelKey, InternalChannel, MockNodePortDescriptor, OracleChannel, PortBus,
+    PortDescriptor,
 };
 use crate::stamped::{Health, Stamped};
 

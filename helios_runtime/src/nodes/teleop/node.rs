@@ -23,8 +23,7 @@ use helios_core::{
 };
 
 use crate::{
-    pipeline::descriptor::AlgorithmNodePortDescriptor,
-    port::{ChannelError, InternalChannel, PortBus},
+    port::{AlgorithmNodePortDescriptor, ChannelError, InternalChannel, PortBus},
     ChannelKey, PipelineNode, PortDescriptor, Stamped, TickContext,
 };
 
