@@ -411,7 +411,7 @@ mod tests {
         assert!(node
             .port_descriptor()
             .required_inputs()
-            .contains(&path_channel_key()));
+            .any(|k| k == &path_channel_key()));
     }
 
     #[test]

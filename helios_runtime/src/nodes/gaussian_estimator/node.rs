@@ -637,7 +637,7 @@ mod tests {
         assert!(node
             .port_descriptor()
             .optional_inputs()
-            .contains(&accel_channel()));
+            .any(|k| k == &accel_channel()));
     }
 
     #[test]

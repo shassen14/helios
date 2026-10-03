@@ -22,6 +22,11 @@
 //! outside this crate: its fields are private and its raw constructor is
 //! crate-only.
 //!
+//! Every input a builder records is same-tick: `input_*` methods record a
+//! required input and `optional_*` methods an optional one. There is no
+//! method for a previous-tick input until the pipeline can actually hand a
+//! reader the start-of-tick value.
+//!
 //! ## Pass-through for erased keys
 //!
 //! `InputBuilder` traits (estimator / controller / planner / path-follower)
@@ -316,7 +321,7 @@ pub(crate) fn _health_kind_reserved(_: HealthChannel) {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::{InternalChannel, OracleChannel, SensorChannel};
+    use crate::port::{InputNeed, InputTiming, InternalChannel, OracleChannel, SensorChannel};
 
     struct State;
     struct Reading;
@@ -330,7 +335,7 @@ mod tests {
             .output_internal(InternalChannel::named::<State>("smoothed"))
             .rate_hz(50.0)
             .build();
-        assert_eq!(d.required_inputs().len(), 2);
+        assert_eq!(d.required_inputs().count(), 2);
         assert_eq!(d.outputs().len(), 1);
         assert_eq!(d.rate(), Some(50.0));
     }
@@ -341,7 +346,7 @@ mod tests {
             .input_oracle(OracleChannel::named::<Pose>("oracle/pose"))
             .output_internal(InternalChannel::of::<State>())
             .build();
-        assert_eq!(d.required_inputs().len(), 1);
+        assert_eq!(d.required_inputs().count(), 1);
         assert_eq!(d.outputs().len(), 1);
     }
 
@@ -355,7 +360,7 @@ mod tests {
             .inputs_from_slices(&required, &[])
             .output_internal(InternalChannel::of::<State>())
             .build();
-        assert_eq!(d.required_inputs().len(), 2);
+        assert_eq!(d.required_inputs().count(), 2);
     }
 
     #[test]
@@ -394,8 +399,8 @@ mod tests {
         let d = MockNodePortDescriptor::new()
             .inputs_from_slices(&required, &optional)
             .build();
-        assert_eq!(d.required_inputs(), required);
-        assert_eq!(d.optional_inputs(), optional);
+        assert_eq!(d.required_inputs().cloned().collect::<Vec<_>>(), required);
+        assert_eq!(d.optional_inputs().cloned().collect::<Vec<_>>(), optional);
     }
 
     #[test]
@@ -403,5 +408,103 @@ mod tests {
     fn mock_outputs_from_slice_panics_on_sensor_in_debug() {
         let bad: Vec<ChannelKey> = vec![SensorChannel::of::<Reading>().into()];
         let _ = MockNodePortDescriptor::new().outputs_from_slice(&bad);
+    }
+
+    // --- Input records ---
+
+    fn needs_and_timings(d: &PortDescriptor) -> Vec<(ChannelKey, InputNeed, InputTiming)> {
+        d.inputs()
+            .map(|i| (i.channel().clone(), i.need(), i.timing()))
+            .collect()
+    }
+
+    #[test]
+    fn algorithm_input_methods_record_need_with_same_tick_timing() {
+        let sensor: ChannelKey = SensorChannel::named::<Reading>("imu").into();
+        let internal: ChannelKey = InternalChannel::of::<State>().into();
+        let opt_sensor: ChannelKey = SensorChannel::named::<Reading>("gps").into();
+        let opt_internal: ChannelKey = InternalChannel::named::<State>("reference").into();
+        let d = AlgorithmNodePortDescriptor::new()
+            .input_sensor(SensorChannel::named::<Reading>("imu"))
+            .optional_sensor(SensorChannel::named::<Reading>("gps"))
+            .input_internal(InternalChannel::of::<State>())
+            .optional_internal(InternalChannel::named::<State>("reference"))
+            .build();
+
+        // Required inputs come first, then optional, each in call order.
+        assert_eq!(
+            needs_and_timings(&d),
+            vec![
+                (sensor, InputNeed::Required, InputTiming::SameTick),
+                (internal, InputNeed::Required, InputTiming::SameTick),
+                (opt_sensor, InputNeed::Optional, InputTiming::SameTick),
+                (opt_internal, InputNeed::Optional, InputTiming::SameTick),
+            ]
+        );
+    }
+
+    #[test]
+    fn mock_oracle_methods_record_need_with_same_tick_timing() {
+        let pose: ChannelKey = OracleChannel::named::<Pose>("oracle/pose").into();
+        let twist: ChannelKey = OracleChannel::named::<Pose>("oracle/twist").into();
+        let d = MockNodePortDescriptor::new()
+            .input_oracle(OracleChannel::named::<Pose>("oracle/pose"))
+            .optional_oracle(OracleChannel::named::<Pose>("oracle/twist"))
+            .build();
+
+        assert_eq!(
+            needs_and_timings(&d),
+            vec![
+                (pose, InputNeed::Required, InputTiming::SameTick),
+                (twist, InputNeed::Optional, InputTiming::SameTick),
+            ]
+        );
+    }
+
+    #[test]
+    fn inputs_from_slices_records_need_from_slice_and_keeps_order() {
+        let required: Vec<ChannelKey> = vec![
+            InternalChannel::named::<State>("b").into(),
+            SensorChannel::named::<Reading>("a").into(),
+        ];
+        let optional: Vec<ChannelKey> = vec![InternalChannel::named::<State>("c").into()];
+        let d = AlgorithmNodePortDescriptor::new()
+            .inputs_from_slices(&required, &optional)
+            .build();
+
+        assert_eq!(
+            needs_and_timings(&d),
+            vec![
+                (
+                    required[0].clone(),
+                    InputNeed::Required,
+                    InputTiming::SameTick
+                ),
+                (
+                    required[1].clone(),
+                    InputNeed::Required,
+                    InputTiming::SameTick
+                ),
+                (
+                    optional[0].clone(),
+                    InputNeed::Optional,
+                    InputTiming::SameTick
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn no_builder_input_is_previous_tick() {
+        let d = MockNodePortDescriptor::new()
+            .input_sensor(SensorChannel::of::<Reading>())
+            .input_internal(InternalChannel::of::<State>())
+            .input_oracle(OracleChannel::named::<Pose>("oracle/pose"))
+            .optional_sensor(SensorChannel::named::<Reading>("opt"))
+            .optional_internal(InternalChannel::named::<State>("opt"))
+            .optional_oracle(OracleChannel::named::<Pose>("oracle/opt"))
+            .build();
+
+        assert!(d.inputs().all(|i| i.timing() == InputTiming::SameTick));
     }
 }

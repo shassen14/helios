@@ -198,7 +198,10 @@ mod tests {
     fn descriptor_reads_command_and_outputs_actuator_command() {
         let node = node(Arc::new(StdMutex::new(None)));
         assert_eq!(
-            node.port_descriptor().required_inputs(),
+            node.port_descriptor()
+                .required_inputs()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![command_channel().into()]
         );
         assert_eq!(

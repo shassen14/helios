@@ -418,8 +418,11 @@ mod tests {
         // combinator is rate-free.
         let (node, drive, steer, out) = drive_steer_merge();
         let d = node.port_descriptor();
-        assert_eq!(d.required_inputs(), vec![drive, steer]);
-        assert!(d.optional_inputs().is_empty());
+        assert_eq!(
+            d.required_inputs().cloned().collect::<Vec<_>>(),
+            vec![drive, steer]
+        );
+        assert!(d.optional_inputs().next().is_none());
         assert_eq!(d.outputs(), vec![out]);
         assert!(d.rate().is_none());
     }

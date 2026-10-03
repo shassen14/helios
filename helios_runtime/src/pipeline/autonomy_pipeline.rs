@@ -131,7 +131,6 @@ impl PipelineBuilder {
                 remaining.into_iter().partition(|node| {
                     node.port_descriptor()
                         .required_inputs()
-                        .iter()
                         .all(|channel| produced.contains(channel))
                 });
 
@@ -155,24 +154,18 @@ impl PipelineBuilder {
                 // cycle. One Cycle error is emitted regardless of how
                 // many nodes participate.
                 let is_cycle_detected = remaining.iter().any(|node| {
-                    node.port_descriptor()
-                        .required_inputs()
-                        .iter()
-                        .all(|channel| {
-                            produced.contains(channel) || pending_outputs.contains(channel)
-                        })
+                    node.port_descriptor().required_inputs().all(|channel| {
+                        produced.contains(channel) || pending_outputs.contains(channel)
+                    })
                 });
 
                 if is_cycle_detected {
                     let participants = remaining
                         .iter()
                         .filter(|node| {
-                            node.port_descriptor()
-                                .required_inputs()
-                                .iter()
-                                .all(|channel| {
-                                    produced.contains(channel) || pending_outputs.contains(channel)
-                                })
+                            node.port_descriptor().required_inputs().all(|channel| {
+                                produced.contains(channel) || pending_outputs.contains(channel)
+                            })
                         })
                         .map(|node| node.name().to_string())
                         .collect();
@@ -333,12 +326,9 @@ fn log_resolved_dag(
     }
 }
 
-fn format_keys(keys: &[ChannelKey]) -> String {
-    if keys.is_empty() {
-        return "[]".to_string();
-    }
+fn format_keys<'a>(keys: impl IntoIterator<Item = &'a ChannelKey>) -> String {
     let joined = keys
-        .iter()
+        .into_iter()
         .map(format_key_short)
         .collect::<Vec<_>>()
         .join(", ");

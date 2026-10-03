@@ -354,8 +354,8 @@ mod tests {
     fn descriptor_splits_required_and_optional() {
         let (node, fb, ff, out) = fb_ff_sum();
         let d = node.port_descriptor();
-        assert_eq!(d.required_inputs(), vec![fb]);
-        assert_eq!(d.optional_inputs(), vec![ff]);
+        assert_eq!(d.required_inputs().cloned().collect::<Vec<_>>(), vec![fb]);
+        assert_eq!(d.optional_inputs().cloned().collect::<Vec<_>>(), vec![ff]);
         assert_eq!(d.outputs(), vec![out]);
         assert!(d.rate().is_none());
     }

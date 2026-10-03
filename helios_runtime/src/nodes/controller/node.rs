@@ -333,8 +333,20 @@ mod tests {
             Box::new(builder),
             InternalChannel::of::<BodyTwist>(),
         );
-        assert_eq!(node.port_descriptor().required_inputs(), expected_required);
-        assert_eq!(node.port_descriptor().optional_inputs(), expected_optional);
+        assert_eq!(
+            node.port_descriptor()
+                .required_inputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            expected_required
+        );
+        assert_eq!(
+            node.port_descriptor()
+                .optional_inputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            expected_optional
+        );
     }
 
     #[test]

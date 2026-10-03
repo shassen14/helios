@@ -320,7 +320,7 @@ mod tests {
         assert!(
             node.port_descriptor()
                 .required_inputs()
-                .contains(&oracle_pose_channel()),
+                .any(|k| k == &oracle_pose_channel()),
             "oracle/pose must be a required input"
         );
     }
@@ -331,7 +331,7 @@ mod tests {
         assert!(
             node.port_descriptor()
                 .optional_inputs()
-                .contains(&oracle_twist_channel()),
+                .any(|k| k == &oracle_twist_channel()),
             "oracle/twist must be optional, not required"
         );
     }

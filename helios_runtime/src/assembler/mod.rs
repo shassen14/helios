@@ -495,7 +495,6 @@ impl SensorInputs<'_> {
         let sensor_inputs = node
             .port_descriptor()
             .required_inputs()
-            .iter()
             .filter(|key| matches!(key, ChannelKey::Sensor(_)))
             .filter(|key| !self.derived.contains(*key));
 
