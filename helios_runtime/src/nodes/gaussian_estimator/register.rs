@@ -3,7 +3,7 @@
 use super::input::IntegratedImuInputBuilder;
 use super::node::GaussianEstimatorNode;
 
-use crate::config::{EkfDynamicsConfig, EstimatorConfig};
+use crate::config::{EkfDynamicsConfig, EstimatorConfig, EKF_KIND, UKF_KIND};
 use crate::nodes::gaussian_estimator::EstimatorInputBuilder;
 use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::GaussianEstimatorBuildContext, AutonomyRegistry};
@@ -22,9 +22,10 @@ use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use std::sync::Arc;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
-    registry.register_gaussian_estimator("Ekf", build_ekf);
-    registry
-        .register_gaussian_estimator("Ukf", |_, _, _| Err("UKF not yet implemented".to_string()));
+    registry.register_gaussian_estimator(EKF_KIND, build_ekf);
+    registry.register_gaussian_estimator(UKF_KIND, |_, _, _| {
+        Err("UKF not yet implemented".to_string())
+    });
 }
 
 fn build_ekf(

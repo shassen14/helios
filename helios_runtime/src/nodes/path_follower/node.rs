@@ -7,9 +7,9 @@
 //!
 //! ## Execution skeleton
 //!
-//! 1. **Detect new path.** Read `Stamped<Path>` from `path_channel`. If the bus
-//!    timestamp differs from the last-seen one, call [`PathFollower::set_path`]
-//!    and remember the new timestamp.
+//! 1. **Detect new path.** Read `Stamped<Path>` from `path_channel` with its
+//!    slot version. If the version differs from the last-seen one, call
+//!    [`PathFollower::set_path`] and remember the new version.
 //! 2. **Assemble inputs.** Ask the [`PathFollowerInputBuilder`] for
 //!    [`PathFollowerInputs`] (state from the bus). `None` ⇒ cold-start, skip.
 //! 3. **Compute.** Run [`PathFollower::compute`] with `dt` and the inputs.
@@ -20,14 +20,15 @@
 //!
 //! ## Path-version tracking
 //!
-//! Detection uses the bus [`Stamped::timestamp`] (set by the upstream planner
-//! node when it called `bus.write`) rather than `Path::timestamp` (set inside
-//! the planner). The bus stamp is monotonic per writer at tick resolution and
-//! is the right "did the bus slot get a new value?" signal.
+//! Detection uses the slot's [`SlotVersion`], which the bus bumps on every
+//! write, rather than any timestamp. A timestamp says when the planner made
+//! the path, not whether a new one landed: two writes can share a stamp (two
+//! replans in one tick, or a paused clock), and a reset clock can make a new
+//! path look older than the last.
 //!
 //! ## State layout
 //!
-//! Both the follower and the last-seen-path timestamp live behind one
+//! Both the follower and the last-seen path version live behind one
 //! [`Mutex`] (`Mutex<FollowerState>`). They are read and written together every
 //! tick — a single lock makes that explicit and avoids two acquisitions.
 
@@ -41,18 +42,19 @@ use helios_core::prelude::TfProvider;
 use super::input::PathFollowerInputBuilder;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor,
+    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus,
+    PortDescriptor, SlotVersion,
 };
 use crate::stamped::{Health, Stamped};
 
-/// Mutable per-tick state: the follower itself and the bus timestamp of the
+/// Mutable per-tick state: the follower itself and the slot version of the
 /// most-recently-applied path. Held behind one [`Mutex`] so the two fields are
 /// always updated together.
 struct FollowerState<R: ControlReference> {
     follower: Box<dyn PathFollower<Reference = R>>,
-    /// Bus [`Stamped::timestamp`] of the last `Path` we called `set_path` on.
+    /// Slot version of the last `Path` we called `set_path` on.
     /// `None` = no path has ever been applied (cold start).
-    last_path_timestamp: Option<f64>,
+    last_path_version: Option<SlotVersion>,
 }
 
 /// Pipeline node wrapping any [`PathFollower`] implementation.
@@ -89,21 +91,19 @@ impl<R: ControlReference> PathFollowerNode<R> {
         let path_channel_key: ChannelKey = path_channel.clone().into();
         let output_channel_key: ChannelKey = output_channel.clone().into();
 
-        // Avoid silently double-declaring if a future builder ever includes
-        // the path channel itself.
-        let builder_required = input_builder.required_channels();
-        let mut builder = AlgorithmNodePortDescriptor::new()
-            .inputs_from_slices(builder_required, input_builder.optional_channels())
-            .output_internal(output_channel);
-        if !builder_required.contains(&path_channel_key) {
-            builder = builder.input_internal(path_channel.clone());
-        }
-        let descriptor = builder.build();
+        let descriptor = AlgorithmNodePortDescriptor::new()
+            .inputs_from_slices(
+                input_builder.required_channels(),
+                input_builder.optional_channels(),
+            )
+            .input_internal(path_channel)
+            .output_internal(output_channel)
+            .build();
         Self {
             name: name.into(),
             state: Mutex::new(FollowerState {
                 follower,
-                last_path_timestamp: None,
+                last_path_version: None,
             }),
             input_builder,
             path_channel: path_channel_key,
@@ -128,16 +128,12 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
             return;
         };
 
-        // 1. New path? Compare against the bus Stamped.timestamp.
-        if let Some(stamped_path) = bus.read::<Path>(self.path_channel.clone()) {
-            let bus_ts = stamped_path.timestamp.0;
-            let is_new = match state.last_path_timestamp {
-                None => true,
-                Some(prev) => bus_ts > prev,
-            };
-            if is_new {
+        // 1. New path? A changed slot version means a new write landed.
+        if let Some((stamped_path, version)) = bus.read_versioned::<Path>(self.path_channel.clone())
+        {
+            if state.last_path_version != Some(version) {
                 state.follower.set_path(stamped_path.value.clone());
-                state.last_path_timestamp = Some(bus_ts);
+                state.last_path_version = Some(version);
             }
         }
 
@@ -579,7 +575,7 @@ mod tests {
     }
 
     #[test]
-    fn set_path_not_called_again_for_same_timestamp() {
+    fn set_path_not_called_again_without_a_new_write() {
         let (follower, calls) = ScriptedFollower::new(PathFollowerResult::NoPath);
         let node = PathFollowerNode::new(
             "pure_pursuit",
@@ -612,6 +608,45 @@ mod tests {
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
         publish_path(&bus, 2.0);
         node.execute(&bus, &MockRuntime, tick_at(2.0, 0.1));
+        assert_eq!(calls.lock().unwrap().set_path_calls, 2);
+    }
+
+    #[test]
+    fn set_path_called_again_when_new_path_reuses_the_stamp() {
+        // Two writes in the same tick carry the same timestamp; the second is
+        // still a new path.
+        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::NoPath);
+        let node = PathFollowerNode::new(
+            "pure_pursuit",
+            Box::new(follower),
+            Box::new(AlwaysReadyBuilder::new()),
+            path_channel(),
+            out_channel_internal(),
+        );
+        let bus = make_bus();
+        publish_path(&bus, 1.0);
+        node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
+        publish_path(&bus, 1.0);
+        node.execute(&bus, &MockRuntime, tick_at(1.1, 0.1));
+        assert_eq!(calls.lock().unwrap().set_path_calls, 2);
+    }
+
+    #[test]
+    fn set_path_called_again_when_new_path_carries_an_older_stamp() {
+        // A reset clock makes the new path look older than the last one.
+        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::NoPath);
+        let node = PathFollowerNode::new(
+            "pure_pursuit",
+            Box::new(follower),
+            Box::new(AlwaysReadyBuilder::new()),
+            path_channel(),
+            out_channel_internal(),
+        );
+        let bus = make_bus();
+        publish_path(&bus, 5.0);
+        node.execute(&bus, &MockRuntime, tick_at(5.0, 0.1));
+        publish_path(&bus, 0.5);
+        node.execute(&bus, &MockRuntime, tick_at(0.5, 0.1));
         assert_eq!(calls.lock().unwrap().set_path_calls, 2);
     }
 

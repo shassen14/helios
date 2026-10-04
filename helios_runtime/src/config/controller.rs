@@ -10,6 +10,22 @@ pub enum ControllerStateSourceConfig {
     GroundTruth,
 }
 
+/// The `kind` tag of [`ControllerConfig::DirectTwist`], which is also the key its
+/// factory is registered under in the controller family.
+pub(crate) const DIRECT_TWIST_KIND: &str = "DirectTwist";
+
+/// The `kind` tag of [`ControllerConfig::LongitudinalVelocity`], which is also the key its
+/// factory is registered under in the controller family.
+pub(crate) const LONGITUDINAL_VELOCITY_KIND: &str = "LongitudinalVelocity";
+
+/// The `kind` tag of [`ControllerConfig::RoadLoad`], which is also the key its
+/// factory is registered under in the controller family.
+pub(crate) const ROAD_LOAD_KIND: &str = "RoadLoad";
+
+/// The `kind` tag of [`ControllerConfig::BicycleSteer`], which is also the key its
+/// factory is registered under in the controller family.
+pub(crate) const BICYCLE_STEER_KIND: &str = "BicycleSteer";
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
@@ -46,10 +62,10 @@ pub enum ControllerConfig {
 impl ControllerConfig {
     pub(crate) fn get_kind_str(&self) -> &str {
         match self {
-            ControllerConfig::DirectTwist { .. } => "DirectTwist",
-            ControllerConfig::LongitudinalVelocity { .. } => "LongitudinalVelocity",
-            ControllerConfig::RoadLoad { .. } => "RoadLoad",
-            ControllerConfig::BicycleSteer { .. } => "BicycleSteer",
+            ControllerConfig::DirectTwist { .. } => DIRECT_TWIST_KIND,
+            ControllerConfig::LongitudinalVelocity { .. } => LONGITUDINAL_VELOCITY_KIND,
+            ControllerConfig::RoadLoad { .. } => ROAD_LOAD_KIND,
+            ControllerConfig::BicycleSteer { .. } => BICYCLE_STEER_KIND,
         }
     }
 

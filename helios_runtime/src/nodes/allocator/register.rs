@@ -1,6 +1,8 @@
 use crate::{
-    config::AllocatorConfig, nodes::allocator::node::AllocatorNode,
-    registry::contexts::AllocatorBuildContext, AutonomyRegistry, PipelineNode,
+    config::{AllocatorConfig, STEER_POSITION_KIND, WHEEL_TORQUE_KIND},
+    nodes::allocator::node::AllocatorNode,
+    registry::contexts::AllocatorBuildContext,
+    AutonomyRegistry, PipelineNode,
 };
 
 use helios_core::control::{
@@ -11,8 +13,8 @@ use helios_core::control::{
 };
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
-    registry.register_allocator("WheelTorque", build_wheel_torque);
-    registry.register_allocator("SteerPosition", build_steer_position);
+    registry.register_allocator(WHEEL_TORQUE_KIND, build_wheel_torque);
+    registry.register_allocator(STEER_POSITION_KIND, build_steer_position);
 }
 
 fn build_wheel_torque(ctx: AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String> {

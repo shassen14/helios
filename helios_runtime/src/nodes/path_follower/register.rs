@@ -3,7 +3,7 @@
 use super::input::DefaultPathFollowerInputBuilder;
 use super::node::PathFollowerNode;
 
-use crate::config::PathFollowingConfig;
+use crate::config::{PathFollowingConfig, PURE_PURSUIT_KIND, STEERING_PID_KIND};
 use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::PathFollowerBuildContext, AutonomyRegistry};
 
@@ -13,8 +13,8 @@ use helios_core::following::{
 };
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
-    registry.register_path_follower("PurePursuit", build_pure_pursuit);
-    registry.register_path_follower("SteeringPid", build_steering_pid);
+    registry.register_path_follower(PURE_PURSUIT_KIND, build_pure_pursuit);
+    registry.register_path_follower(STEERING_PID_KIND, build_steering_pid);
 }
 
 fn build_pure_pursuit(ctx: PathFollowerBuildContext) -> Result<Box<dyn PipelineNode>, String> {

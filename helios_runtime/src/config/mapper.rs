@@ -8,6 +8,14 @@ pub enum MapperPoseSourceConfig {
     Estimated,
 }
 
+/// The `kind` tag of [`MapLayerConfig::OccupancyGrid2D`], which is also the key its
+/// factory is registered under in the mapper family.
+pub(crate) const OCCUPANCY_GRID_2D_KIND: &str = "OccupancyGrid2D";
+
+/// The `kind` tag of [`MapLayerConfig::None`], which is also the key its
+/// factory is registered under in the mapper family.
+pub(crate) const NO_MAPPER_KIND: &str = "None";
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
@@ -31,8 +39,8 @@ pub enum MapLayerConfig {
 impl MapLayerConfig {
     pub(crate) fn get_kind_str(&self) -> &str {
         match self {
-            MapLayerConfig::None => "None",
-            MapLayerConfig::OccupancyGrid2D { .. } => "OccupancyGrid2D",
+            MapLayerConfig::None => NO_MAPPER_KIND,
+            MapLayerConfig::OccupancyGrid2D { .. } => OCCUPANCY_GRID_2D_KIND,
         }
     }
 

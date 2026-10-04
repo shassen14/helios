@@ -3,7 +3,10 @@
 use super::input::DefaultControlInputBuilder;
 use super::node::ControllerNode;
 
-use crate::config::ControllerConfig;
+use crate::config::{
+    ControllerConfig, BICYCLE_STEER_KIND, DIRECT_TWIST_KIND, LONGITUDINAL_VELOCITY_KIND,
+    ROAD_LOAD_KIND,
+};
 use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::ControllerBuildContext, AutonomyRegistry};
 
@@ -16,10 +19,10 @@ use helios_core::control::BodyTwistRef;
 use helios_core::spatial::FrameId;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
-    registry.register_controller("DirectTwist", build_direct_twist);
-    registry.register_controller("LongitudinalVelocity", build_longitudinal_velocity);
-    registry.register_controller("RoadLoad", build_road_load);
-    registry.register_controller("BicycleSteer", build_bicycle_steer);
+    registry.register_controller(DIRECT_TWIST_KIND, build_direct_twist);
+    registry.register_controller(LONGITUDINAL_VELOCITY_KIND, build_longitudinal_velocity);
+    registry.register_controller(ROAD_LOAD_KIND, build_road_load);
+    registry.register_controller(BICYCLE_STEER_KIND, build_bicycle_steer);
 }
 
 fn build_direct_twist(ctx: ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String> {

@@ -19,8 +19,11 @@
 //!   fresh wins. Declared as optional inputs (a source such as teleop may be
 //!   silent this tick).
 //! - `base` — the unconditional fallback, used when no preferred source is
-//!   fresh. It is the sole **required** input, so the topological sort is always
-//!   satisfied.
+//!   fresh. It is the sole **required** input: the stream that is expected to
+//!   be there whenever teleop or another preferred source goes quiet.
+//!
+//! Every input, preferred or base, is read in the same tick, so the selector
+//! runs after all of its sources.
 //!
 //! ## Why every channel is `InternalChannel`
 //!

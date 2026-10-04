@@ -9,7 +9,7 @@ use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::quantities::FreeVector;
 use helios_core::spatial::transforms::Transform as CoreTransform;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::{Health, Stamped, HOST_PRODUCER_ID};
+use helios_runtime::{ChannelKey, Health, Stamped, HOST_PRODUCER_ID};
 
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
@@ -136,14 +136,16 @@ pub fn publish_oracle_channels_system(
         };
 
         let bus = autonomy_pipeline.0.bus();
-        let pose_result = bus.write(oracle_pose_channel(), stamped_pose);
-        let twist_result = bus.write(oracle_twist_channel(), stamped_twist);
+        let pose_key: ChannelKey = oracle_pose_channel().into();
+        let twist_key: ChannelKey = oracle_twist_channel().into();
+        let pose_result = bus.write(pose_key.clone(), stamped_pose);
+        let twist_result = bus.write(twist_key.clone(), stamped_twist);
 
         // TODO: should check for actual error if we have more variants
         if pose_result.is_err() && !*has_warned_no_consumer {
             tracing::trace!(
                 target: "helios_sim::oracle",
-                channel = oracle_pose_channel().to_string(),
+                channel = %pose_key,
                 "oracle channel has no consumer; write dropped"
             );
             *has_warned_no_consumer = true;
@@ -152,7 +154,7 @@ pub fn publish_oracle_channels_system(
         if twist_result.is_err() && !*has_warned_no_consumer {
             tracing::trace!(
                 target: "helios_sim::oracle",
-                channel = oracle_twist_channel().to_string(),
+                channel = %twist_key,
                 "oracle channel has no consumer; write dropped"
             );
             *has_warned_no_consumer = true;

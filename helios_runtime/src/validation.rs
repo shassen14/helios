@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::config::{
-    AutonomyStack, CommandSpace, ControllerConfig, EstimatorConfig, MapLayerConfig, ReferenceSource,
+    AutonomyStack, CommandSpace, ControllerConfig, EstimatorConfig, MapLayerConfig,
+    ReferenceSource, NO_MAPPER_KIND,
 };
 
 /// Snapshot of algorithm keys registered in each family.
@@ -319,7 +320,7 @@ pub fn validate_autonomy_config(
     // Map layer validation.
     for map_cfg in config.map_layers.values() {
         let kind = map_cfg.get_kind_str();
-        if kind != "None" && !capabilities.mappers.contains(kind) {
+        if kind != NO_MAPPER_KIND && !capabilities.mappers.contains(kind) {
             errors.push(ConfigValidationError::UnknownMapper {
                 kind: kind.to_string(),
             });

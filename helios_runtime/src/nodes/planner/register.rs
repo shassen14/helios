@@ -3,7 +3,7 @@
 use super::input::DefaultSearchPlannerInputBuilder;
 use super::node::SearchPlannerNode;
 
-use crate::config::SearchPlannerConfig;
+use crate::config::{SearchPlannerConfig, ASTAR_KIND};
 use crate::pipeline::node::PipelineNode;
 use crate::registry::{contexts::SearchPlannerBuildContext, AutonomyRegistry};
 
@@ -11,7 +11,7 @@ use helios_core::planning::search::astar::{AStarConfig, AStarPlanner};
 use helios_core::planning::SearchPlanner;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
-    registry.register_search_planner("AStar", build_astar);
+    registry.register_search_planner(ASTAR_KIND, build_astar);
 }
 
 fn build_astar(ctx: SearchPlannerBuildContext) -> Result<Box<dyn PipelineNode>, String> {

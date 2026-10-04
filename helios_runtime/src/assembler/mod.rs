@@ -62,7 +62,7 @@ use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
 use crate::config::TeleopMapperConfig;
 use crate::config::{AllocatorConfig, AutonomyStack, CommandSpace, FoldRole, ReferenceSource};
-use crate::config::{EstimatorConfig, MapLayerConfig, MOCK_ORACLE_KIND};
+use crate::config::{EstimatorConfig, MapLayerConfig, MOCK_ORACLE_KIND, UKF_KIND};
 use crate::nodes::combinators::{Merge, Selector, Sum};
 use crate::nodes::gaussian_estimator;
 use crate::nodes::path_follower;
@@ -667,7 +667,7 @@ fn build_estimator_node(
             external_channels,
         ),
         EstimatorConfig::Ukf(_) => Err(PipelineAssemblyError::FactoryFailure {
-            node_kind: "Ukf".to_string(),
+            node_kind: UKF_KIND.to_string(),
             reason: "UKF not yet implemented".to_string(),
         }),
         EstimatorConfig::MockOracle(_) => {

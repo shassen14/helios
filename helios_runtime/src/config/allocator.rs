@@ -4,6 +4,14 @@ use helios_core::control::actuators::SetpointKind;
 
 use serde::Deserialize;
 
+/// The `kind` tag of [`AllocatorConfig::WheelTorque`], which is also the key its
+/// factory is registered under in the allocator family.
+pub(crate) const WHEEL_TORQUE_KIND: &str = "WheelTorque";
+
+/// The `kind` tag of [`AllocatorConfig::SteerPosition`], which is also the key its
+/// factory is registered under in the allocator family.
+pub(crate) const STEER_POSITION_KIND: &str = "SteerPosition";
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
@@ -15,8 +23,8 @@ pub enum AllocatorConfig {
 impl AllocatorConfig {
     pub(crate) fn get_kind_str(&self) -> &str {
         match self {
-            AllocatorConfig::WheelTorque { .. } => "WheelTorque",
-            AllocatorConfig::SteerPosition { .. } => "SteerPosition",
+            AllocatorConfig::WheelTorque { .. } => WHEEL_TORQUE_KIND,
+            AllocatorConfig::SteerPosition { .. } => STEER_POSITION_KIND,
         }
     }
 

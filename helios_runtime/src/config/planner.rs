@@ -24,6 +24,10 @@ fn default_goal_channel() -> String {
     "mission".to_string()
 }
 
+/// The `kind` tag of [`SearchPlannerConfig::AStar`], which is also the key its
+/// factory is registered under in the search-planner family.
+pub(crate) const ASTAR_KIND: &str = "AStar";
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
@@ -52,7 +56,7 @@ pub enum SearchPlannerConfig {
 impl SearchPlannerConfig {
     pub(crate) fn get_kind_str(&self) -> &str {
         match self {
-            SearchPlannerConfig::AStar { .. } => "AStar",
+            SearchPlannerConfig::AStar { .. } => ASTAR_KIND,
         }
     }
 

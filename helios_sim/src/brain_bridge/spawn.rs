@@ -232,12 +232,12 @@ pub fn spawn_actuator_command(
 /// pass it to [`build_pipeline`].
 fn build_host_body_capabilities(agent_name: &str) -> BodyCapabilities {
     let published_pose = PublishedChannel {
-        key: oracle_pose_channel(),
+        key: oracle_pose_channel().into(),
         provenance: Provenance::Exact,
     };
 
     let published_twist = PublishedChannel {
-        key: oracle_twist_channel(),
+        key: oracle_twist_channel().into(),
         provenance: Provenance::Exact,
     };
 
@@ -267,6 +267,7 @@ mod tests {
     use super::*;
 
     use helios_runtime::config::SearchPlannerConfig;
+    use helios_runtime::ChannelKey;
 
     use std::collections::HashMap;
 
@@ -349,8 +350,8 @@ mod tests {
         assert_eq!(caps.publishes.len(), 2);
 
         let keys: Vec<_> = caps.publishes.iter().map(|p| &p.key).collect();
-        assert!(keys.contains(&&oracle_pose_channel()));
-        assert!(keys.contains(&&oracle_twist_channel()));
+        assert!(keys.contains(&&ChannelKey::from(oracle_pose_channel())));
+        assert!(keys.contains(&&ChannelKey::from(oracle_twist_channel())));
     }
 
     #[test]

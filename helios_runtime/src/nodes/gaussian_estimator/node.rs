@@ -275,8 +275,10 @@ impl GaussianEstimatorNode {
             .output_internal(tf_edge(&edge));
 
         for handler in &aiding {
-            // Aiding handlers always read a SensorChannel; the cached
-            // enum-form is unwrapped back via `kind()`-checked optional.
+            // Each aiding sensor is optional: the filter still predicts and
+            // publishes without it. The handler holds only an erased key, so
+            // it goes through the slice path, which asserts the key is a
+            // sensor or internal channel.
             builder = builder.inputs_from_slices(&[], &[handler.channel().clone()]);
         }
         let descriptor = builder.build();

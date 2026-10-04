@@ -33,15 +33,17 @@
 //! return `&[ChannelKey]` — a heterogeneous mix of sensor and internal
 //! channels assembled inside the input builder. The descriptor builder
 //! exposes [`AlgorithmNodePortDescriptor::inputs_from_slices`] for that
-//! pass-through, which `debug_assert!`s every channel is `Sensor` or
-//! `Internal`. Compile-time strictness on this path would require an
+//! pass-through, which asserts every channel is `Sensor` or `Internal`,
+//! in release builds too, since this is the one path past the typed
+//! methods' kind fence. Compile-time strictness on this path would require an
 //! `AlgorithmInputChannel` enum on the input-builder trait — deferred
 //! until the trait has another reason to change.
 //!
 //! The same holds for any caller that holds erased keys rather than typed
 //! channels, such as kind-agnostic test nodes exercising the DAG engine:
 //! both builders offer `inputs_from_slices` and `outputs_from_slice`, each
-//! `debug_assert!`-checked against that builder's surface.
+//! asserted against that builder's surface. A wrong kind panics when the
+//! node is constructed, at startup, never mid-run.
 
 use crate::port::{
     ChannelKey, ChannelKind, HealthChannel, InternalChannel, OracleChannel, PortDescriptor,
@@ -130,12 +132,16 @@ impl AlgorithmNodePortDescriptor {
     }
 
     /// Pass-through for input-builder declarations. Caller is responsible
-    /// for keeping the slices to `Sensor` / `Internal` kinds; misuse is
-    /// `debug_assert!`-checked. Deferred to runtime because the input
-    /// builder traits return `&[ChannelKey]` for ergonomic reasons.
+    /// for keeping the slices to `Sensor` / `Internal` kinds. Checked when
+    /// the descriptor is built rather than by the compiler, because the
+    /// input builder traits return `&[ChannelKey]` for ergonomic reasons.
+    ///
+    /// # Panics
+    ///
+    /// If any key is an `Oracle` or `Health` channel.
     pub fn inputs_from_slices(mut self, required: &[ChannelKey], optional: &[ChannelKey]) -> Self {
         for c in required {
-            debug_assert!(
+            assert!(
                 matches!(c.kind(), ChannelKind::Sensor | ChannelKind::Internal),
                 "algorithm node required input must be Sensor or Internal, got {:?} for {}",
                 c.kind(),
@@ -144,7 +150,7 @@ impl AlgorithmNodePortDescriptor {
             self.required_inputs.push(c.clone());
         }
         for c in optional {
-            debug_assert!(
+            assert!(
                 matches!(c.kind(), ChannelKind::Sensor | ChannelKind::Internal),
                 "algorithm node optional input must be Sensor or Internal, got {:?} for {}",
                 c.kind(),
@@ -157,11 +163,14 @@ impl AlgorithmNodePortDescriptor {
 
     /// Output-side twin of [`inputs_from_slices`](Self::inputs_from_slices),
     /// for callers that hold erased [`ChannelKey`]s rather than typed
-    /// channels. Same contract: `Sensor` / `Internal` only, misuse
-    /// `debug_assert!`-checked.
+    /// channels. Same contract: `Sensor` / `Internal` only.
+    ///
+    /// # Panics
+    ///
+    /// If any key is an `Oracle` or `Health` channel.
     pub fn outputs_from_slice(mut self, outputs: &[ChannelKey]) -> Self {
         for c in outputs {
-            debug_assert!(
+            assert!(
                 matches!(c.kind(), ChannelKind::Sensor | ChannelKind::Internal),
                 "algorithm node output must be Sensor or Internal, got {:?} for {}",
                 c.kind(),
@@ -252,11 +261,14 @@ impl MockNodePortDescriptor {
     }
 
     /// Pass-through for callers that hold erased [`ChannelKey`]s. The mock
-    /// surface admits `Oracle` beside `Sensor` / `Internal`; misuse is
-    /// `debug_assert!`-checked.
+    /// surface admits `Oracle` beside `Sensor` / `Internal`.
+    ///
+    /// # Panics
+    ///
+    /// If any key is a `Health` channel.
     pub fn inputs_from_slices(mut self, required: &[ChannelKey], optional: &[ChannelKey]) -> Self {
         for c in required {
-            debug_assert!(
+            assert!(
                 Self::is_mock_input_kind(c),
                 "mock node required input must be Sensor, Internal, or Oracle, got {:?} for {}",
                 c.kind(),
@@ -265,7 +277,7 @@ impl MockNodePortDescriptor {
             self.required_inputs.push(c.clone());
         }
         for c in optional {
-            debug_assert!(
+            assert!(
                 Self::is_mock_input_kind(c),
                 "mock node optional input must be Sensor, Internal, or Oracle, got {:?} for {}",
                 c.kind(),
@@ -277,11 +289,14 @@ impl MockNodePortDescriptor {
     }
 
     /// Output-side pass-through for erased [`ChannelKey`]s. Mocks publish
-    /// `Internal` channels only, matching [`output_internal`](Self::output_internal);
-    /// misuse is `debug_assert!`-checked.
+    /// `Internal` channels only, matching [`output_internal`](Self::output_internal).
+    ///
+    /// # Panics
+    ///
+    /// If any key is not an `Internal` channel.
     pub fn outputs_from_slice(mut self, outputs: &[ChannelKey]) -> Self {
         for c in outputs {
-            debug_assert!(
+            assert!(
                 matches!(c.kind(), ChannelKind::Internal),
                 "mock node output must be Internal, got {:?} for {}",
                 c.kind(),
@@ -365,7 +380,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "must be Sensor or Internal")]
-    fn inputs_from_slices_panics_on_oracle_in_debug() {
+    fn inputs_from_slices_panics_on_oracle() {
         let bad: Vec<ChannelKey> = vec![OracleChannel::named::<Pose>("oracle/pose").into()];
         let _ = AlgorithmNodePortDescriptor::new().inputs_from_slices(&bad, &[]);
     }
@@ -384,7 +399,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "algorithm node output must be Sensor or Internal")]
-    fn algorithm_outputs_from_slice_panics_on_oracle_in_debug() {
+    fn algorithm_outputs_from_slice_panics_on_oracle() {
         let bad: Vec<ChannelKey> = vec![OracleChannel::named::<Pose>("oracle/pose").into()];
         let _ = AlgorithmNodePortDescriptor::new().outputs_from_slice(&bad);
     }
@@ -405,7 +420,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "mock node output must be Internal")]
-    fn mock_outputs_from_slice_panics_on_sensor_in_debug() {
+    fn mock_outputs_from_slice_panics_on_sensor() {
         let bad: Vec<ChannelKey> = vec![SensorChannel::of::<Reading>().into()];
         let _ = MockNodePortDescriptor::new().outputs_from_slice(&bad);
     }

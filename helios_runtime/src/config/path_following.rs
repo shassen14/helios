@@ -24,6 +24,14 @@ fn default_kd() -> f64 {
     0.0
 }
 
+/// The `kind` tag of [`PathFollowingConfig::PurePursuit`], which is also the key its
+/// factory is registered under in the path-follower family.
+pub(crate) const PURE_PURSUIT_KIND: &str = "PurePursuit";
+
+/// The `kind` tag of [`PathFollowingConfig::SteeringPid`], which is also the key its
+/// factory is registered under in the path-follower family.
+pub(crate) const STEERING_PID_KIND: &str = "SteeringPid";
+
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
@@ -58,8 +66,8 @@ pub enum PathFollowingConfig {
 impl PathFollowingConfig {
     pub(crate) fn get_kind_str(&self) -> &str {
         match self {
-            PathFollowingConfig::SteeringPid { .. } => "SteeringPid",
-            PathFollowingConfig::PurePursuit { .. } => "PurePursuit",
+            PathFollowingConfig::SteeringPid { .. } => STEERING_PID_KIND,
+            PathFollowingConfig::PurePursuit { .. } => PURE_PURSUIT_KIND,
         }
     }
 }

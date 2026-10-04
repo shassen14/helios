@@ -1349,8 +1349,14 @@ fn planner_goals_are_declared_once_per_goal_channel() {
         2,
         "two goal channels must give two outside inputs, got {declared:?}"
     );
-    assert!(declared.contains(&mission), "mission goal missing from {declared:?}");
-    assert!(declared.contains(&waypoints), "waypoints goal missing from {declared:?}");
+    assert!(
+        declared.contains(&mission),
+        "mission goal missing from {declared:?}"
+    );
+    assert!(
+        declared.contains(&waypoints),
+        "waypoints goal missing from {declared:?}"
+    );
 }
 
 #[test]
