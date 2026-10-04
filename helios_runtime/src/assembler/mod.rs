@@ -26,9 +26,12 @@
 //!   [`PipelineBuilder::with_body_capabilities`]. Only host-published sensor
 //!   inputs are appended; an internal input, or a sensor channel a
 //!   preprocessing node derives, must be produced inside the graph, so a
-//!   missing producer still fails the build. The teleop intent, when teleop is
-//!   wired, is appended too, although it is an operator input rather than a
-//!   body measurement.
+//!   missing producer still fails the build.
+//!
+//! Inputs an operator or mission system sends — each planner's goal, and the
+//! teleop intent when teleop is wired — are not body channels. The assembler
+//! declares them separately through [`PipelineBuilder::with_outside_inputs`],
+//! because the stack is what knows which ones it reads.
 //!
 //! Everything else — algorithm kinds, noise params, physical constants,
 //! channel names — comes from `stack`.
@@ -63,6 +66,7 @@ use crate::config::{EstimatorConfig, MapLayerConfig, MOCK_ORACLE_KIND};
 use crate::nodes::combinators::{Merge, Selector, Sum};
 use crate::nodes::gaussian_estimator;
 use crate::nodes::path_follower;
+use crate::nodes::planner::DefaultSearchPlannerInputBuilder;
 use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
 use crate::pipeline::autonomy_pipeline::PipelineBuilder;
 use crate::pipeline::node::PipelineNode;
@@ -113,8 +117,8 @@ const ACTUATOR_MERGE_NODE: &str = "actuator_merge";
 /// - `host_capabilities` — the body's capabilities as the host describes them
 ///   (name, `consumes_control`, reference channels such as `oracle/*`).
 ///   The assembler extends `host_capabilities.publishes` with the
-///   config-derived sensor channels, and the teleop intent when teleop is
-///   wired, before building.
+///   config-derived sensor channels before building. Goals and teleop intent
+///   are declared separately as outside inputs.
 pub fn build_pipeline(
     stack: &AutonomyStack,
     registry: &AutonomyRegistry,
@@ -133,12 +137,15 @@ pub fn build_pipeline(
 
     let mut errors: Vec<PipelineAssemblyError> = vec![];
     let mut builder = PipelineBuilder::new();
-    // Channels written from outside the graph: the body's sensor channels and
-    // the operator's teleop intent. All are merged into the body's `publishes`
-    // before building, to seed the topological sort so consumers don't trip
-    // UnsatisfiedInput. Control channels are seeded per the resolved command
-    // topology below, not unconditionally.
+    // The body's sensor channels the stack reads. Merged into the body's
+    // `publishes` before building, to seed the topological sort so consumers
+    // don't trip UnsatisfiedInput. Control channels are seeded per the resolved
+    // command topology below, not unconditionally.
     let mut external_channels: Vec<ChannelKey> = vec![];
+    // Inputs sent from outside the robot that the stack reads: each planner's
+    // goal, and the operator's teleop intent. Declared to the builder apart from
+    // the body's channels.
+    let mut outside_inputs: Vec<ChannelKey> = vec![];
 
     // --- Preprocessing ---
     // Measurement-to-measurement nodes (e.g. a range field flattened to a point
@@ -215,6 +222,10 @@ pub fn build_pipeline(
 
     // --- Planners ---
     for (planner_name, plan_cfg) in &stack.search_planners {
+        outside_inputs.push(DefaultSearchPlannerInputBuilder::goal_key(
+            plan_cfg.get_goal_channel(),
+        ));
+
         let level = plan_cfg.get_level_str();
         let map_channel = InternalChannel::named::<MapData>(level);
         let path_channel = InternalChannel::named::<Path>(planner_name.as_str());
@@ -324,7 +335,7 @@ pub fn build_pipeline(
                     },
                 );
                 builder = builder.add_node(Box::new(mapper));
-                external_channels.push(control::intent::<TwistIntent>().into());
+                outside_inputs.push(control::intent::<TwistIntent>().into());
 
                 if arbitrate_reference {
                     let arbiter = Selector::<BodyTwistRef>::new(
@@ -452,10 +463,13 @@ pub fn build_pipeline(
         return Err(errors);
     }
 
-    // Deduplicate external channels before handing to the builder, keeping
-    // insertion order so the resolved-config dump is stable.
+    // Deduplicate both lists before handing them to the builder, keeping
+    // insertion order so the resolved-config dump is stable. Two planners on one
+    // goal channel share one outside input.
     let mut seen = HashSet::new();
     external_channels.retain(|key| seen.insert(key.clone()));
+    let mut seen_outside = HashSet::new();
+    outside_inputs.retain(|key| seen_outside.insert(key.clone()));
 
     host_capabilities
         .publishes
@@ -466,6 +480,7 @@ pub fn build_pipeline(
 
     builder
         .with_body_capabilities(host_capabilities)
+        .with_outside_inputs(outside_inputs)
         .build()
         .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
 }

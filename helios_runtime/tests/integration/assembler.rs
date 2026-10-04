@@ -23,6 +23,7 @@ use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::estimation::carrier::kinematic_carrier_schema;
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::measurement::sensor::MagneticField;
+use helios_core::interchange::path::PlannerGoal;
 use helios_core::interchange::perception::map::MapData;
 use helios_core::prelude::{
     AgentId, DirectionModel, PointCloud, RangeField, RangeFieldBuilder, SphericalAngular,
@@ -1276,5 +1277,118 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
                 if estimator_instance == "nav_ekf" && input_channel == "imu/accel"
         )),
         "expected UnknownSensorChannel for `nav_ekf` / `imu/accel`, got {errors:?}"
+    );
+}
+
+// =========================================================================
+// == Outside inputs: goals and teleop intent are declared apart from the body ==
+// =========================================================================
+
+/// An A* planner over the map layer `local`, reading its goal from
+/// `goal_channel`.
+fn astar_reading_goal(goal_channel: &str) -> SearchPlannerConfig {
+    SearchPlannerConfig::AStar {
+        rate: 5.0,
+        arrival_tolerance_m: 1.5,
+        occupancy_threshold: 180,
+        max_search_depth: 20_000,
+        enable_path_smoothing: false,
+        replan_on_path_deviation: false,
+        deviation_tolerance_m: 3.0,
+        level: "local".to_string(),
+        goal_channel: goal_channel.to_string(),
+    }
+}
+
+/// An IMU EKF, a `local` occupancy grid, and one A* planner per
+/// `(name, goal_channel)` pair: the smallest stack whose planners build.
+fn planner_stack(planners: &[(&str, &str)]) -> AutonomyStack {
+    AutonomyStack {
+        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("scan"))]),
+        search_planners: planners
+            .iter()
+            .map(|(name, goal)| (name.to_string(), astar_reading_goal(goal)))
+            .collect(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn planner_goals_are_declared_once_per_goal_channel() {
+    // Two planners share `mission`, a third reads `waypoints`. Each distinct
+    // goal channel is declared exactly once, keyed as the planner reads it.
+    let stack = planner_stack(&[
+        ("local_path", "mission"),
+        ("backup_path", "mission"),
+        ("survey_path", "waypoints"),
+    ]);
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["scan"]),
+        perception_body(),
+    )
+    .expect("a stack of planners over a declared map layer must build");
+
+    let declared = pipeline.outside_inputs();
+    let mission: ChannelKey = InternalChannel::named::<PlannerGoal>("mission").into();
+    let waypoints: ChannelKey = InternalChannel::named::<PlannerGoal>("waypoints").into();
+
+    assert_eq!(
+        declared.len(),
+        2,
+        "two goal channels must give two outside inputs, got {declared:?}"
+    );
+    assert!(declared.contains(&mission), "mission goal missing from {declared:?}");
+    assert!(declared.contains(&waypoints), "waypoints goal missing from {declared:?}");
+}
+
+#[test]
+fn teleop_intent_is_declared_as_an_outside_input() {
+    // The intent is something the operator sends, not a body measurement, so it
+    // is declared as an outside input. A teleop-only stack has no planner, so it
+    // is the only one.
+    let stack = AutonomyStack {
+        teleop: Some(twist_teleop()),
+        reference_arbitration: ReferenceArbitrationConfig {
+            sources: vec![ReferenceSource::Teleop],
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        teleop_body(),
+    )
+    .expect("teleop-only stack must build");
+
+    let intent: ChannelKey = control::intent::<TwistIntent>().into();
+    assert_eq!(pipeline.outside_inputs(), [intent].as_slice());
+}
+
+#[test]
+fn stack_without_planner_or_teleop_declares_no_outside_inputs() {
+    // An estimator and a mapper read only body channels and each other's
+    // outputs; nothing is declared as coming from outside the robot.
+    let pipeline = build_pipeline(
+        &planner_stack(&[]),
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["scan"]),
+        perception_body(),
+    )
+    .expect("an estimator and a mapper must build");
+
+    assert!(
+        pipeline.outside_inputs().is_empty(),
+        "no planner and no teleop must declare nothing, got {:?}",
+        pipeline.outside_inputs()
     );
 }

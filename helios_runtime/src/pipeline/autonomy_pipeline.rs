@@ -19,16 +19,19 @@ use std::{
 use tracing::{debug_span, info, trace_span};
 
 /// Constructs a [`AutonomyPipeline`] from a set of [`PipelineNode`]s and the
-/// [`BodyCapabilities`] describing what the host body feeds the graph.
+/// [`BodyCapabilities`] of the body the graph runs against.
 ///
 /// Build sequence:
 /// 1. Register every node with [`add_node`](Self::add_node).
-/// 2. Declare the host body's published channels — sensor tick systems,
-///    oracle ground truth, mission layer, Zenoh bridge, operator UI — via
+/// 2. Declare the channels the body publishes — sensor channels, `oracle/*`
+///    reference channels, `health/*` status — via
 ///    [`with_body_capabilities`](Self::with_body_capabilities). These seed
 ///    the topological sort so consumers don't trip
 ///    [`PipelineBuildError::UnsatisfiedInput`].
-/// 3. Call [`build`](Self::build) — returns either a fully validated
+/// 3. Declare the inputs sent from outside the robot — goals, teleop intent —
+///    via [`with_outside_inputs`](Self::with_outside_inputs). These seed the
+///    sort the same way.
+/// 4. Call [`build`](Self::build) — returns either a fully validated
 ///    pipeline or every detected error.
 ///
 /// All bus slots use last-known-good semantics; nothing is cleared per tick.
@@ -37,6 +40,7 @@ use tracing::{debug_span, info, trace_span};
 pub struct PipelineBuilder {
     nodes: Vec<Box<dyn PipelineNode>>,
     capabilities: BodyCapabilities,
+    outside_inputs: Vec<ChannelKey>,
 }
 
 impl Default for PipelineBuilder {
@@ -54,6 +58,7 @@ impl PipelineBuilder {
         PipelineBuilder {
             nodes: vec![],
             capabilities: BodyCapabilities::default(),
+            outside_inputs: vec![],
         }
     }
 
@@ -65,8 +70,8 @@ impl PipelineBuilder {
         self
     }
 
-    /// Declares the host body's I/O surface — the channels it publishes
-    /// (sensor signals, oracle ground truth, health) and whether it consumes
+    /// Declares the body's I/O surface — the channels it publishes
+    /// (sensor signals, oracle reference channels, health) and whether it consumes
     /// control. Each published channel seeds the topological sort in
     /// [`build`](Self::build) so consumers don't trip
     /// [`PipelineBuildError::UnsatisfiedInput`]; an unmet `Oracle`/`Health`
@@ -78,6 +83,19 @@ impl PipelineBuilder {
         self
     }
 
+    /// Declares the inputs an operator or mission system sends the graph:
+    /// goals, teleop intent. They are not body channels, so they are kept apart
+    /// from [`with_body_capabilities`](Self::with_body_capabilities).
+    ///
+    /// Each key counts as already written in [`build`](Self::build), as a body
+    /// channel does. The declaration is taken on trust: nothing here checks
+    /// that the host actually feeds these keys. The built pipeline keeps the
+    /// list, readable through [`AutonomyPipeline::outside_inputs`].
+    pub fn with_outside_inputs(mut self, outside_inputs: Vec<ChannelKey>) -> Self {
+        self.outside_inputs = outside_inputs;
+        self
+    }
+
     /// Validates the registered nodes and builds a [`AutonomyPipeline`].
     ///
     /// All errors are collected — `build` never short-circuits. The
@@ -85,7 +103,8 @@ impl PipelineBuilder {
     /// 1. [`PipelineBuildError::MultipleProducers`] — two nodes declared
     ///    the same output channel.
     /// 2. [`PipelineBuildError::UnsatisfiedInput`] — a required input has
-    ///    no producer and is not in the sensor/host declarations.
+    ///    no producer, is not among the body's published channels, and is not
+    ///    a declared outside input.
     /// 3. [`PipelineBuildError::Cycle`] — a remaining sub-graph has every
     ///    input satisfied only by other stranded nodes' outputs.
     ///
@@ -117,6 +136,7 @@ impl PipelineBuilder {
         // consumer of these channels doesn't trip UnsatisfiedInput.
         let mut produced: HashSet<ChannelKey> = HashSet::new();
         produced.extend(self.capabilities.publishes.iter().map(|p| p.key.clone()));
+        produced.extend(self.outside_inputs.iter().cloned());
 
         // Kahn's algorithm (level-by-level form). Each iteration pulls out
         // every node whose required inputs are already produced, assigns
@@ -232,8 +252,8 @@ impl PipelineBuilder {
         // which no in-graph node consumes intentionally has no slot — the
         // host's `bus.write(...)` for such a channel returns
         // `ChannelError::UnknownChannel` and drops silently. The body
-        // declares intent; the bus tracks intra-graph flow. The two
-        // overlap iff a consumer exists.
+        // declares what it offers; the bus tracks intra-graph flow. The
+        // two overlap iff a consumer exists.
         let descriptor_iter = levels
             .iter()
             .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));
@@ -257,12 +277,13 @@ impl PipelineBuilder {
             }
         }
 
-        log_resolved_dag(&levels, &self.capabilities);
+        log_resolved_dag(&levels, &self.capabilities, &self.outside_inputs);
 
         Ok(AutonomyPipeline {
             levels,
             bus,
             rate_timers,
+            outside_inputs: self.outside_inputs,
         })
     }
 }
@@ -273,6 +294,7 @@ impl PipelineBuilder {
 fn log_resolved_dag(
     levels: &[Vec<(NodeId, Box<dyn PipelineNode>)>],
     capabilities: &BodyCapabilities,
+    outside_inputs: &[ChannelKey],
 ) {
     info!(
         target: "helios_runtime::pipeline",
@@ -281,8 +303,8 @@ fn log_resolved_dag(
         "resolved autonomy pipeline",
     );
 
-    // Body line: who the host is and what it offers the graph. Indented two
-    // spaces to nest under the pipeline header, matching the node lines below.
+    // Body line: which body the graph runs against and what it offers. Indented
+    // two spaces to nest under the pipeline header, matching the node lines below.
     info!(
         target: "helios_runtime::pipeline",
         name = capabilities.name,
@@ -291,13 +313,29 @@ fn log_resolved_dag(
         "  body"
     );
 
-    // One line per host-published channel, nested another level under body.
+    // One line per channel the body publishes, nested another level under body.
     for pc in &capabilities.publishes {
         info!(
             target: "helios_runtime::pipeline",
             channel = %format_key_short(&pc.key),
             provenance = ?pc.provenance,
             "    publishes"
+        )
+    }
+
+    // Outside inputs: what an operator or mission system sends, kept apart from
+    // the body's channels. Same nesting as the body section.
+    info!(
+        target: "helios_runtime::pipeline",
+        declared = outside_inputs.len(),
+        "  outside inputs"
+    );
+
+    for key in outside_inputs {
+        info!(
+            target: "helios_runtime::pipeline",
+            channel = %format_key_short(key),
+            "    input"
         )
     }
 
@@ -346,23 +384,34 @@ pub struct AutonomyPipeline {
     /// pairs a node with its build-time-assigned [`NodeId`].
     levels: Vec<Vec<(NodeId, Box<dyn PipelineNode>)>>,
     /// Typed blackboard used for all intra-pipeline data exchange. Also
-    /// the only way external systems (host, mission layer) write values
-    /// into the graph.
+    /// the only way values from outside the graph enter it: the host writes
+    /// body measurements and operator or mission inputs here.
     bus: PortBus,
     /// Per-node rate gating, indexed by [`NodeId`]. A node with
     /// `rate: None` fires every tick.
     rate_timers: Vec<RateTimer>,
+    /// Inputs declared as sent from outside the robot, kept from the build.
+    outside_inputs: Vec<ChannelKey>,
 }
 
 impl AutonomyPipeline {
     /// Returns a reference to the [`PortBus`] for direct read/write access.
     ///
     /// External callers use this to:
-    /// - Clear and re-write sensor signals at the start of each tick.
-    /// - Inject host-state values (mission goals, mode flags, etc.) when
-    ///   they change, via [`PortBus::write`].
+    /// - Write body measurements as they arrive, via [`PortBus::write`].
+    ///   Slots keep the last written value; nothing is cleared per tick.
+    /// - Write values sent from outside the robot (mission goals, teleop
+    ///   intent) when they change.
+    /// - Read graph outputs by key (visualization, tests).
     pub fn bus(&self) -> &PortBus {
         &self.bus
+    }
+
+    /// The inputs declared as sent from outside the robot (goals, teleop
+    /// intent), in declaration order. A host can check each one has something
+    /// feeding it.
+    pub fn outside_inputs(&self) -> &[ChannelKey] {
+        &self.outside_inputs
     }
 
     /// Executes one tick: stamps the bus clock, then runs every rate-due

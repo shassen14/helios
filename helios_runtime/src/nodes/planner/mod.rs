@@ -4,12 +4,14 @@
 //! - `input` — assembles `SearchPlannerInputs` from the bus.
 //! - `register` — registers the built-in search-planner factories.
 //!
-//! Only the `register` fn crosses the family boundary; the node and input types
-//! are wired together internally and boxed as `Box<dyn PipelineNode>` by the
-//! factory.
+//! The `register` fn crosses the family boundary, and so does the input
+//! builder, so the assembler can build the goal key the planner reads. The node
+//! and input types are otherwise wired together internally and boxed as
+//! `Box<dyn PipelineNode>` by the factory.
 
 mod input;
 mod node;
 mod register;
 
+pub(crate) use input::DefaultSearchPlannerInputBuilder;
 pub(crate) use register::register;
