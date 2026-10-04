@@ -1,5 +1,6 @@
 //! [`PipelineBuildError`], everything [`build`](super::PipelineBuilder::build)
-//! can reject, and [`Supplier`], who supplies a channel.
+//! can reject, [`Supplier`], who supplies a channel, and [`CycleEdge`], one
+//! read inside a dependency loop.
 
 use crate::port::{ChannelKey, InputNeed};
 
@@ -13,12 +14,18 @@ use crate::port::{ChannelKey, InputNeed};
 /// type checks DAG structure.
 #[derive(Debug)]
 pub enum PipelineBuildError {
-    /// The dependency graph has no valid topological ordering. At least
-    /// one set of nodes has every input satisfied only by each others'
-    /// outputs. `participants` lists every stranded node whose same-tick
-    /// inputs are all covered by the stranded set's collective outputs —
-    /// the cycle members plus anything downstream of them.
-    Cycle { participants: Vec<String> },
+    /// A set of nodes wait on each other's outputs in the same tick, so no
+    /// order runs each after its producers. One error is raised per loop.
+    ///
+    /// `participants` names the nodes in the loop, sorted. A node that is
+    /// only downstream of the loop is not listed, though it cannot be placed
+    /// either. `edges` lists every same-tick read between participants,
+    /// sorted by producer then consumer; a node reading its own output is a
+    /// loop of one with a single edge.
+    Cycle {
+        participants: Vec<String>,
+        edges: Vec<CycleEdge>,
+    },
     /// A node reads a sensor or internal channel that has no supplier: no
     /// node writes it, the body does not publish it, and it is not declared
     /// as an outside input. Raised for optional inputs too, since optional
@@ -47,6 +54,11 @@ pub enum PipelineBuildError {
     /// Two or more nodes share a name. Errors, logs and node order within a
     /// level all identify a node by its name, so names must be unique.
     DuplicateNodeName { name: String },
+    /// The level sort stopped with nodes left but no loop was found among
+    /// them. Wiring and ordering together rule this out, so it means a bug in
+    /// the build, not a mistake in the pipeline's configuration. `nodes`
+    /// names the nodes left, in no particular order.
+    StuckWithoutCycle { nodes: Vec<String> },
 }
 
 // default source() returns None which is okay
@@ -55,17 +67,20 @@ impl std::error::Error for PipelineBuildError {}
 impl std::fmt::Display for PipelineBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PipelineBuildError::Cycle { participants } => {
-                let names = if participants.is_empty() {
-                    "<unknown>".to_string()
-                } else {
-                    participants.join(", ")
-                };
+            PipelineBuildError::Cycle {
+                participants,
+                edges,
+            } => {
                 write!(
                     f,
-                    "pipeline has a dependency cycle — no valid topological ordering exists; \
-                     stranded nodes: [{names}]"
-                )
+                    "nodes [{}] wait on each other's outputs in the same tick, so none can \
+                     run first:",
+                    participants.join(", ")
+                )?;
+                for edge in edges {
+                    write!(f, " {edge};")?;
+                }
+                Ok(())
             }
             PipelineBuildError::UnsatisfiedInput {
                 node_name,
@@ -110,6 +125,14 @@ impl std::fmt::Display for PipelineBuildError {
                     "more than one node is named \"{name}\" — node names must be unique"
                 )
             }
+            PipelineBuildError::StuckWithoutCycle { nodes } => {
+                write!(
+                    f,
+                    "internal error: ordering stopped with nodes left but found no cycle \
+                     among them: [{}]",
+                    nodes.join(", ")
+                )
+            }
         }
     }
 }
@@ -133,6 +156,29 @@ impl std::fmt::Display for Supplier {
             Supplier::Body(name) => write!(f, "body \"{name}\""),
             Supplier::OutsideInput => write!(f, "an outside input"),
         }
+    }
+}
+
+/// One same-tick read inside a dependency loop, as listed in a
+/// [`PipelineBuildError::Cycle`] error: `consumer` reads `channel`, which
+/// `producer` writes, so `consumer` must run after `producer`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CycleEdge {
+    /// The node that writes `channel`.
+    pub producer: String,
+    /// The node that reads `channel` in the same tick.
+    pub consumer: String,
+    /// The channel read.
+    pub channel: ChannelKey,
+}
+
+impl std::fmt::Display for CycleEdge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "\"{}\" reads {} from \"{}\"",
+            self.consumer, self.channel, self.producer
+        )
     }
 }
 

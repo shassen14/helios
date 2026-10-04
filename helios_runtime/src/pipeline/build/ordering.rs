@@ -2,6 +2,8 @@
 //! producers of its same-tick inputs, required or optional. Runs only after the
 //! wiring checks pass.
 
+use super::cycle::find_cycles;
+
 use crate::{ChannelKey, NodeId, PipelineBuildError, PipelineNode};
 
 use std::collections::HashSet;
@@ -15,8 +17,9 @@ use std::collections::HashSet;
 /// ids do not depend on the order nodes were added. Ids run from `0` in
 /// level-major order, the order the pipeline indexes its rate timers by.
 ///
-/// If the sort gets stuck, the remaining nodes wait on each other, and a
-/// [`PipelineBuildError::Cycle`] is returned.
+/// If the sort gets stuck, the remaining nodes are each waiting on another
+/// remaining node. One [`PipelineBuildError::Cycle`] is returned per loop
+/// among them, leaving out nodes that are only downstream of a loop.
 pub(super) fn order_into_levels(
     mut remaining: Vec<Box<dyn PipelineNode>>,
     mut produced: HashSet<ChannelKey>,
@@ -38,43 +41,19 @@ pub(super) fn order_into_levels(
 
         remaining = still_waiting;
 
-        // If no node is ready but `remaining` is non-empty, the sort
-        // is stuck. The wiring checks already gave every input a supplier, so the
-        // stuck nodes are waiting on each other: a cycle.
+        // No node is ready but some remain, so the sort is stuck. Wiring gave
+        // every input a supplier, so each stuck node waits on another stuck
+        // node, and there is at least one loop among them. Finding none
+        // would be a bug here, not in the pipeline.
         if ready.is_empty() {
-            // Channels that *would* exist if the sort could continue.
-            let mut pending_outputs: HashSet<ChannelKey> = HashSet::new();
-            for node in &remaining {
-                for channel in node.port_descriptor().outputs() {
-                    pending_outputs.insert(channel.clone());
-                }
+            let errors = find_cycles(&remaining);
+
+            if errors.is_empty() {
+                let nodes = remaining.iter().map(|n| n.name().to_string()).collect();
+                return Err(vec![PipelineBuildError::StuckWithoutCycle { nodes }]);
             }
 
-            // Cycle pass: a remaining node whose same-tick inputs are
-            // entirely covered by `produced ∪ pending_outputs` is
-            // blocked purely by other stranded nodes — that is a
-            // cycle. One Cycle error is emitted regardless of how
-            // many nodes participate.
-            let is_cycle_detected = remaining.iter().any(|node| {
-                node.port_descriptor()
-                    .same_tick_inputs()
-                    .all(|channel| produced.contains(channel) || pending_outputs.contains(channel))
-            });
-
-            if is_cycle_detected {
-                let participants = remaining
-                    .iter()
-                    .filter(|node| {
-                        node.port_descriptor().same_tick_inputs().all(|channel| {
-                            produced.contains(channel) || pending_outputs.contains(channel)
-                        })
-                    })
-                    .map(|node| node.name().to_string())
-                    .collect();
-                return Err(vec![PipelineBuildError::Cycle { participants }]);
-            }
-
-            break;
+            return Err(errors);
         }
 
         // Promote this level's outputs into `produced` so the next

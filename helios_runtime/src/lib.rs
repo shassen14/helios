@@ -22,7 +22,9 @@ pub use crate::body::{
     check_actuation_agreement, ActuatorKindMismatch, BodyCapabilities, Provenance, PublishedChannel,
 };
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
-pub use crate::pipeline::{AutonomyPipeline, PipelineBuildError, PipelineBuilder, Supplier};
+pub use crate::pipeline::{
+    AutonomyPipeline, CycleEdge, PipelineBuildError, PipelineBuilder, Supplier,
+};
 pub use crate::port::{
     ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, PortDescriptor, SlotVersion,
 };

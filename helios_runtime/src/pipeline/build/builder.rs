@@ -107,8 +107,10 @@ impl PipelineBuilder {
     ///      has no supplier.
     /// 2. Ordering, run only when wiring is clean, so a missing input never
     ///    also shows up as a cycle.
-    ///    - [`PipelineBuildError::Cycle`] — a remaining sub-graph has every
-    ///      same-tick input satisfied only by other stranded nodes' outputs.
+    ///    - [`PipelineBuildError::Cycle`] — nodes wait on each other's
+    ///      outputs in the same tick; one error per loop.
+    ///    - [`PipelineBuildError::StuckWithoutCycle`] — the sort stopped but
+    ///      found no loop, which means a bug in the build.
     ///
     /// Within a level, nodes are sorted by name, so levels and [`NodeId`](crate::NodeId)s
     /// do not depend on the order nodes were added.

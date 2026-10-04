@@ -13,7 +13,7 @@ use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
     channels::tf::tf_edge,
-    pipeline::{PipelineBuildError, PipelineBuilder, Supplier},
+    pipeline::{CycleEdge, PipelineBuildError, PipelineBuilder, Supplier},
     port::{
         AlgorithmNodePortDescriptor, ChannelKey, InputNeed, InternalChannel,
         MockNodePortDescriptor, OracleChannel, PortBus, PortDescriptor,
@@ -320,6 +320,31 @@ struct Truth;
 // == Build-time validation ==
 // =========================================================================
 
+/// The participants and edges of every `Cycle` error, in the order returned.
+fn cycles(errors: &[PipelineBuildError]) -> Vec<(Vec<&str>, Vec<CycleEdge>)> {
+    errors
+        .iter()
+        .filter_map(|e| match e {
+            PipelineBuildError::Cycle {
+                participants,
+                edges,
+            } => Some((
+                participants.iter().map(String::as_str).collect(),
+                edges.clone(),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+fn edge(producer: &str, consumer: &str, channel: &ChannelKey) -> CycleEdge {
+    CycleEdge {
+        producer: producer.to_string(),
+        consumer: consumer.to_string(),
+        channel: channel.clone(),
+    }
+}
+
 #[test]
 fn single_node_executes() {
     let out = ikey_of::<ChA>();
@@ -456,13 +481,212 @@ fn cycle_detected() {
     let Err(errors) = result else {
         panic!("should fail with cycle");
     };
-    assert!(
-        errors
-            .iter()
-            .any(|e| matches!(e, PipelineBuildError::Cycle { .. })),
-        "expected Cycle, got {:?}",
-        errors
+    assert_eq!(errors.len(), 1, "expected one Cycle, got {errors:?}");
+    assert_eq!(
+        cycles(&errors),
+        [(
+            vec!["a", "b"],
+            vec![edge("a", "b", &a_out), edge("b", "a", &b_out)]
+        )]
     );
+}
+
+#[test]
+fn self_loop_is_a_cycle_of_one() {
+    // The node is its channel's only writer, so wiring passes, but it cannot
+    // run before itself.
+    let own = ikey_of::<ChA>();
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(TransformNode::new(
+            "echo",
+            own.clone(),
+            own.clone(),
+            |v| v,
+        )))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail with cycle");
+    };
+    assert_eq!(errors.len(), 1, "expected one Cycle, got {errors:?}");
+    assert_eq!(
+        cycles(&errors),
+        [(vec!["echo"], vec![edge("echo", "echo", &own)])]
+    );
+}
+
+#[test]
+fn node_downstream_of_a_cycle_is_left_out() {
+    // `c` reads `a`'s output. It is stuck too, but it is not in the loop, so
+    // it is neither a participant nor an edge endpoint.
+    let a_out = ikey_named::<ChA>("a_out");
+    let b_out = ikey_named::<ChB>("b_out");
+    let c_out = ikey_of::<ChC>();
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(TransformNode::new(
+            "a",
+            b_out.clone(),
+            a_out.clone(),
+            |v| v,
+        )))
+        .add_node(Box::new(TransformNode::new(
+            "b",
+            a_out.clone(),
+            b_out.clone(),
+            |v| v,
+        )))
+        .add_node(Box::new(TransformNode::new(
+            "c",
+            a_out.clone(),
+            c_out,
+            |v| v,
+        )))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail with cycle");
+    };
+    assert_eq!(errors.len(), 1, "expected one Cycle, got {errors:?}");
+    assert_eq!(
+        cycles(&errors),
+        [(
+            vec!["a", "b"],
+            vec![edge("a", "b", &a_out), edge("b", "a", &b_out)]
+        )]
+    );
+}
+
+#[test]
+fn separate_cycles_give_one_error_each_sorted_by_name() {
+    // Two loops, {a, b} and {c, d}, joined by `m`, which reads from the first
+    // and feeds the second. The {c, d} loop is added first; errors still come
+    // back in name order, and `m` is in neither.
+    let a_out = ikey_named::<ChA>("a_out");
+    let b_out = ikey_named::<ChA>("b_out");
+    let c_out = ikey_named::<ChA>("c_out");
+    let d_out = ikey_named::<ChA>("d_out");
+    let m_out = ikey_named::<ChA>("m_out");
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(TransformNode::new(
+            "c",
+            d_out.clone(),
+            c_out.clone(),
+            |v| v,
+        )))
+        .add_node(Box::new(JoinNode::new(
+            "d",
+            c_out.clone(),
+            m_out.clone(),
+            d_out.clone(),
+        )))
+        .add_node(Box::new(TransformNode::new(
+            "m",
+            a_out.clone(),
+            m_out.clone(),
+            |v| v,
+        )))
+        .add_node(Box::new(TransformNode::new(
+            "a",
+            b_out.clone(),
+            a_out.clone(),
+            |v| v,
+        )))
+        .add_node(Box::new(TransformNode::new(
+            "b",
+            a_out.clone(),
+            b_out.clone(),
+            |v| v,
+        )))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail with cycles");
+    };
+    assert_eq!(errors.len(), 2, "expected two Cycles, got {errors:?}");
+    assert_eq!(
+        cycles(&errors),
+        [
+            (
+                vec!["a", "b"],
+                vec![edge("a", "b", &a_out), edge("b", "a", &b_out)]
+            ),
+            (
+                vec!["c", "d"],
+                vec![edge("c", "d", &c_out), edge("d", "c", &d_out)]
+            ),
+        ]
+    );
+}
+
+#[test]
+fn cycle_error_does_not_depend_on_insertion_order() {
+    // A three-node loop a → b → c → a, added in two different orders.
+    let a_out = ikey_named::<ChA>("a_out");
+    let b_out = ikey_named::<ChA>("b_out");
+    let c_out = ikey_named::<ChA>("c_out");
+
+    let nodes = [
+        ("a", c_out.clone(), a_out.clone()),
+        ("b", a_out.clone(), b_out.clone()),
+        ("c", b_out.clone(), c_out.clone()),
+    ];
+    let build = |order: [usize; 3]| {
+        let mut builder = PipelineBuilder::new();
+        for i in order {
+            let (name, input, output) = nodes[i].clone();
+            builder = builder.add_node(Box::new(TransformNode::new(name, input, output, |v| v)));
+        }
+        let Err(errors) = builder.build() else {
+            panic!("should fail with cycle");
+        };
+        cycles(&errors)
+            .into_iter()
+            .map(|(names, edges)| {
+                let names: Vec<String> = names.into_iter().map(str::to_string).collect();
+                (names, edges)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let expected = vec![(
+        vec!["a".to_string(), "b".to_string(), "c".to_string()],
+        vec![
+            edge("a", "b", &a_out),
+            edge("b", "c", &b_out),
+            edge("c", "a", &c_out),
+        ],
+    )];
+    assert_eq!(build([0, 1, 2]), expected);
+    assert_eq!(build([2, 0, 1]), expected);
+}
+
+#[test]
+fn cycle_message_names_each_read_in_the_loop() {
+    let a_out = ikey_named::<ChA>("a_out");
+    let b_out = ikey_named::<ChB>("b_out");
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(TransformNode::new(
+            "a",
+            b_out.clone(),
+            a_out.clone(),
+            |v| v,
+        )))
+        .add_node(Box::new(TransformNode::new("b", a_out, b_out, |v| v)))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail with cycle");
+    };
+    let message = errors[0].to_string();
+    assert!(message.contains("[a, b]"), "got {message}");
+    assert!(message.contains("\"b\" reads"), "got {message}");
+    assert!(message.contains("from \"a\""), "got {message}");
+    assert!(message.contains("\"a\" reads"), "got {message}");
+    assert!(message.contains("from \"b\""), "got {message}");
 }
 
 #[test]
