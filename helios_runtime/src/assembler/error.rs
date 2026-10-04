@@ -1,6 +1,6 @@
 //! Errors surfaced while assembling a pipeline from config.
 
-use crate::pipeline::build_error::PipelineBuildError;
+use crate::pipeline::PipelineBuildError;
 use crate::validation::ConfigValidationError;
 
 /// Errors that can occur while assembling a pipeline from config.

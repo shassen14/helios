@@ -68,9 +68,9 @@ use crate::nodes::gaussian_estimator;
 use crate::nodes::path_follower;
 use crate::nodes::planner::DefaultSearchPlannerInputBuilder;
 use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
-use crate::pipeline::autonomy_pipeline::PipelineBuilder;
 use crate::pipeline::node::PipelineNode;
 use crate::pipeline::AutonomyPipeline;
+use crate::pipeline::PipelineBuilder;
 use crate::port::{ChannelKey, InternalChannel};
 use crate::registry::contexts::{
     AllocatorBuildContext, ControllerBuildContext, MapperBuildContext, MockEstimatorBuildContext,

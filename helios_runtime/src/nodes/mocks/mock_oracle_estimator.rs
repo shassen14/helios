@@ -237,8 +237,8 @@ mod tests {
 
     use super::*;
     use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
-    use crate::pipeline::autonomy_pipeline::PipelineBuilder;
-    use crate::pipeline::build_error::PipelineBuildError;
+    use crate::pipeline::PipelineBuildError;
+    use crate::pipeline::PipelineBuilder;
     use crate::port::{ChannelKey, PortDescriptor};
     use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
