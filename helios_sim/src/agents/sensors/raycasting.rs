@@ -274,7 +274,8 @@ mod tests {
     use helios_runtime::port::AlgorithmNodePortDescriptor;
     use helios_runtime::port::{PortBus, SensorChannel};
     use helios_runtime::{
-        ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext,
+        BodyCapabilities, ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor, Provenance,
+        PublishedChannel, Stamped, TickContext,
     };
 
     use avian3d::collider_tree::ColliderTrees;
@@ -341,10 +342,10 @@ mod tests {
         Box::new(model)
     }
 
-    /// A world holding one agent with a pipeline that consumes `CHANNEL`, one
-    /// lidar mounted on it at `sensor_pose`, empty collider trees (every ray
-    /// misses), and a clock advanced by `advance`. Returns the world and the
-    /// sensor entity.
+    /// A world holding one agent with a pipeline that consumes `CHANNEL` (the
+    /// body declares it, so the build finds a supplier), one lidar mounted on
+    /// it at `sensor_pose`, empty collider trees (every ray misses), and a
+    /// clock advanced by `advance`. Returns the world and the sensor entity.
     fn world_with_lidar(sensor_pose: GlobalTransform, advance: Duration) -> (World, Entity) {
         let mut world = World::new();
 
@@ -355,6 +356,14 @@ mod tests {
 
         let pipeline = PipelineBuilder::new()
             .add_node(Box::new(FakeScanConsumer::new()))
+            .with_body_capabilities(BodyCapabilities {
+                name: "agent".to_string(),
+                publishes: vec![PublishedChannel {
+                    key: field_channel(),
+                    provenance: Provenance::Exact,
+                }],
+                consumes_control: false,
+            })
             .build()
             .expect("a single-node pipeline builds");
         let agent = world.spawn(AutonomyPipelineComponent(pipeline)).id();

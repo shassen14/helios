@@ -404,16 +404,23 @@ fn drive_force_stack() -> AutonomyStack {
     }
 }
 
-/// A body that advertises `FrameAwareState` on the bus. The controllers require
-/// state, so an oracle-style body publishing it satisfies the build without an
-/// estimator node — keeping these tests focused on the DriveForce wiring.
-fn state_publishing_body() -> BodyCapabilities {
+/// A body that advertises `FrameAwareState` and the resolved `reference` on the
+/// bus. The controllers read both, so a body publishing them satisfies the build
+/// without an estimator, path follower or arbiter — keeping these tests focused
+/// on the controller and allocator wiring.
+fn state_and_reference_body() -> BodyCapabilities {
     BodyCapabilities {
         name: "oracle_state".to_string(),
-        publishes: vec![PublishedChannel {
-            key: InternalChannel::of::<FrameAwareState>().into(),
-            provenance: Provenance::Exact,
-        }],
+        publishes: vec![
+            PublishedChannel {
+                key: InternalChannel::of::<FrameAwareState>().into(),
+                provenance: Provenance::Exact,
+            },
+            PublishedChannel {
+                key: control::reference::<BodyTwistRef>().into(),
+                provenance: Provenance::Exact,
+            },
+        ],
         consumes_control: true,
     }
 }
@@ -428,7 +435,7 @@ fn drive_force_stack_builds_both_controllers_and_the_allocator() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         &HashSet::new(),
-        state_publishing_body(),
+        state_and_reference_body(),
     )
     .expect("DriveForce stack must build");
 
@@ -465,7 +472,7 @@ fn feedback_and_feedforward_fold_into_the_wheel_torque_terminal() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         &HashSet::new(),
-        state_publishing_body(),
+        state_and_reference_body(),
     )
     .expect("DriveForce stack must build");
 
@@ -568,7 +575,7 @@ fn decoupled_stack_builds_both_spaces_and_both_allocators() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         &HashSet::new(),
-        state_publishing_body(),
+        state_and_reference_body(),
     )
     .expect("decoupled two-allocator stack must build");
 
@@ -600,7 +607,7 @@ fn decoupled_legs_merge_into_one_actuator_terminal() {
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         &HashSet::new(),
-        state_publishing_body(),
+        state_and_reference_body(),
     )
     .expect("decoupled two-allocator stack must build");
 

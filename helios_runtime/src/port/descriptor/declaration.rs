@@ -11,13 +11,16 @@ use crate::port::channel::ChannelKey;
 
 /// Declares what a pipeline node reads from and writes to the bus.
 ///
-/// `required_inputs` channels must have a declared producer in the graph for
-/// `PipelineBuilder::build()` to succeed. This does NOT guarantee a value is
+/// Every input, required or optional, must have a supplier (a node output, a
+/// body channel, or a declared outside input) for `PipelineBuilder::build()`
+/// to succeed. `required_inputs` also order the node after its suppliers. This
+/// does NOT guarantee a value is
 /// present at runtime — cold-start, sensor dropout, and rate-gated upstream
 /// nodes mean every consumer must handle `None`. The standard pattern is an
 /// early-return.
 ///
-/// `optional_inputs` channels are consumed if present; no build-time check.
+/// `optional_inputs` channels are consumed if present; the node runs without
+/// them.
 ///
 /// No two nodes may declare the same `outputs` channel — enforced at build time.
 ///
@@ -78,14 +81,15 @@ impl PortDescriptor {
         self.required_inputs.iter().chain(&self.optional_inputs)
     }
 
-    /// Channels that must have a producer in the graph for the build to
-    /// succeed, in declaration order.
+    /// Channels the node cannot run without, in declaration order. The node is
+    /// placed in a later level than each channel's producing node.
     pub fn required_inputs(&self) -> impl Iterator<Item = &ChannelKey> {
         self.required_inputs.iter().map(|i| &i.channel)
     }
 
-    /// Channels the node uses if a value is present, in declaration order. No
-    /// build-time check.
+    /// Channels the node uses if a value is present, in declaration order. The
+    /// node runs without a value, but the build still requires each channel to
+    /// have a supplier.
     pub fn optional_inputs(&self) -> impl Iterator<Item = &ChannelKey> {
         self.optional_inputs.iter().map(|i| &i.channel)
     }

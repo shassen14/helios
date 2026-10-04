@@ -13,10 +13,10 @@ use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
     channels::tf::tf_edge,
-    pipeline::{PipelineBuildError, PipelineBuilder},
+    pipeline::{PipelineBuildError, PipelineBuilder, Supplier},
     port::{
-        AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, MockNodePortDescriptor,
-        OracleChannel, PortBus, PortDescriptor,
+        AlgorithmNodePortDescriptor, ChannelKey, InputNeed, InternalChannel,
+        MockNodePortDescriptor, OracleChannel, PortBus, PortDescriptor,
     },
     prelude::{Health, PipelineNode, Stamped, TickContext},
     BodyCapabilities, Provenance, PublishedChannel,
@@ -242,8 +242,8 @@ impl PipelineNode for CountingNode {
     }
 }
 
-/// Node that requires an input but produces no output. Used when we need
-/// a consumer for a channel without writing anything back.
+/// Node that reads one input, required or optional, and produces no output.
+/// Used when we need a consumer for a channel without writing anything back.
 struct SinkNode {
     name: String,
     descriptor: PortDescriptor,
@@ -256,6 +256,15 @@ impl SinkNode {
             descriptor: // Mock builder: some tests sink an oracle channel.
             MockNodePortDescriptor::new()
                 .inputs_from_slices(&[input], &[])
+                .build(),
+        }
+    }
+
+    fn optional(name: &str, input: ChannelKey) -> Self {
+        Self {
+            name: name.to_string(),
+            descriptor: MockNodePortDescriptor::new()
+                .inputs_from_slices(&[], &[input])
                 .build(),
         }
     }
@@ -456,15 +465,15 @@ fn unsatisfied_input_detected() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            PipelineBuildError::UnsatisfiedInput { node_name, channel }
-                if node_name == "needs_missing" && *channel == missing
+            PipelineBuildError::UnsatisfiedInput { node_name, channel, need }
+                if node_name == "needs_missing" && *channel == missing && *need == InputNeed::Required
         )),
         "expected UnsatisfiedInput for 'needs_missing'/{missing:?}, got {errors:?}"
     );
 }
 
 #[test]
-fn multiple_producers_detected() {
+fn multiple_suppliers_detected() {
     let shared = ikey_of::<ChA>();
 
     let result = PipelineBuilder::new()
@@ -473,15 +482,196 @@ fn multiple_producers_detected() {
         .build();
 
     let Err(errors) = result else {
-        panic!("should fail with multiple producers");
+        panic!("should fail with multiple suppliers");
     };
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            PipelineBuildError::MultipleProducers { channel, .. } if *channel == shared
+            PipelineBuildError::MultipleSuppliers { channel, first, second }
+                if *channel == shared
+                    && *first == Supplier::Node("a".to_string())
+                    && *second == Supplier::Node("b".to_string())
         )),
-        "expected MultipleProducers, got {errors:?}"
+        "expected MultipleSuppliers naming nodes a and b, got {errors:?}"
     );
+}
+
+#[test]
+fn misspelled_optional_input_is_rejected() {
+    // An optional input still needs a supplier: optional means the node runs
+    // without a value, not that the wiring goes unchecked. A misspelled aiding
+    // channel must fail the build instead of leaving the node silently unaided.
+    let misspelled = ikey_named::<Sensor>("gps.primry");
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(SinkNode::optional("ekf", misspelled.clone())))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: nothing supplies the optional input");
+    };
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineBuildError::UnsatisfiedInput { node_name, channel, need }
+                if node_name == "ekf" && *channel == misspelled && *need == InputNeed::Optional
+        )),
+        "expected UnsatisfiedInput (optional) for 'ekf'/{misspelled:?}, got {errors:?}"
+    );
+}
+
+#[test]
+fn optional_input_satisfied_by_body_capability_builds() {
+    let gps = ikey_named::<Sensor>("gps.primary");
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(SinkNode::optional("ekf", gps.clone())))
+        .with_body_capabilities(BodyCapabilities {
+            name: "test_body".to_string(),
+            publishes: vec![PublishedChannel {
+                key: gps,
+                provenance: Provenance::Exact,
+            }],
+            consumes_control: false,
+        })
+        .build();
+
+    assert!(result.is_ok(), "build should succeed: {:?}", result.err());
+}
+
+#[test]
+fn node_and_body_supplying_one_channel_is_rejected() {
+    // The node-vs-node check alone would pass this: one channel written by
+    // both a node and the body has two writers racing one slot.
+    let shared = ikey_of::<ChA>();
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
+        .with_body_capabilities(BodyCapabilities {
+            name: "test_body".to_string(),
+            publishes: vec![PublishedChannel {
+                key: shared.clone(),
+                provenance: Provenance::Exact,
+            }],
+            consumes_control: false,
+        })
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: node and body both supply the channel");
+    };
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineBuildError::MultipleSuppliers { channel, first, second }
+                if *channel == shared
+                    && *first == Supplier::Body("test_body".to_string())
+                    && *second == Supplier::Node("a".to_string())
+        )),
+        "expected MultipleSuppliers naming the body then node a, got {errors:?}"
+    );
+}
+
+#[test]
+fn node_and_outside_input_supplying_one_channel_is_rejected() {
+    let shared = ikey_of::<ChA>();
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
+        .with_outside_inputs(vec![shared.clone()])
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: node and outside input both supply the channel");
+    };
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineBuildError::MultipleSuppliers { channel, first, second }
+                if *channel == shared
+                    && *first == Supplier::OutsideInput
+                    && *second == Supplier::Node("a".to_string())
+        )),
+        "expected MultipleSuppliers naming the outside input then node a, got {errors:?}"
+    );
+}
+
+#[test]
+fn missing_input_is_not_also_reported_as_a_cycle() {
+    // `downstream` waits on `upstream`, which waits on a channel nobody
+    // supplies. The one real error is the missing input; the stranded
+    // downstream node must not also show up as a cycle.
+    let missing = ikey_named::<ChA>("missing");
+    let mid = ikey_of::<ChB>();
+    let out = ikey_of::<ChC>();
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(TransformNode::new(
+            "upstream",
+            missing,
+            mid.clone(),
+            |v| v,
+        )))
+        .add_node(Box::new(TransformNode::new("downstream", mid, out, |v| v)))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail with unsatisfied input");
+    };
+    assert_eq!(
+        errors.len(),
+        1,
+        "expected only the missing input, got {errors:?}"
+    );
+    assert!(
+        matches!(errors[0], PipelineBuildError::UnsatisfiedInput { .. }),
+        "expected UnsatisfiedInput, got {errors:?}"
+    );
+}
+
+#[test]
+fn duplicate_node_name_is_rejected_once() {
+    // Three nodes share one name. The within-level order is by name, so a
+    // shared name would leave their order to insertion; it is reported once.
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("dup", ikey_of::<ChA>(), 0)))
+        .add_node(Box::new(ProducerNode::new("dup", ikey_of::<ChB>(), 0)))
+        .add_node(Box::new(ProducerNode::new("dup", ikey_of::<ChC>(), 0)))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: node names repeat");
+    };
+    let duplicates: Vec<&str> = errors
+        .iter()
+        .filter_map(|e| match e {
+            PipelineBuildError::DuplicateNodeName { name } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(duplicates, ["dup"], "got {errors:?}");
+}
+
+#[test]
+fn level_order_does_not_depend_on_insertion_order() {
+    // Three independent producers share level 0. Within a level nodes are
+    // sorted by name, so either insertion order yields the same order (and
+    // the same node ids).
+    let build = |names: [&str; 3]| {
+        let keys = [ikey_of::<ChA>(), ikey_of::<ChB>(), ikey_of::<ChC>()];
+        let mut builder = PipelineBuilder::new();
+        for (name, key) in names.into_iter().zip(keys) {
+            builder = builder.add_node(Box::new(ProducerNode::new(name, key, 0)));
+        }
+        let pipeline = builder.build().expect("build should succeed");
+        pipeline
+            .channels()
+            .map(|(name, _)| name.to_string())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(build(["c", "a", "b"]), ["a", "b", "c"]);
+    assert_eq!(build(["b", "c", "a"]), ["a", "b", "c"]);
 }
 
 #[test]
@@ -550,7 +740,7 @@ fn oracle_input_without_body_capability_errors() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            PipelineBuildError::UnsatisfiedBodyCapabilities { node_name, channel_key, body }
+            PipelineBuildError::UnsatisfiedBodyCapabilities { node_name, channel_key, body, .. }
                 if node_name == "mock_oracle" && *channel_key == oracle_key && body == "hw"
         )),
         "expected UnsatisfiedBodyCapabilities for 'mock_oracle'/{oracle_key:?}, got {errors:?}"

@@ -138,9 +138,7 @@ pub fn build_pipeline(
     let mut errors: Vec<PipelineAssemblyError> = vec![];
     let mut builder = PipelineBuilder::new();
     // The body's sensor channels the stack reads. Merged into the body's
-    // `publishes` before building, to seed the topological sort so consumers
-    // don't trip UnsatisfiedInput. Control channels are seeded per the resolved
-    // command topology below, not unconditionally.
+    // `publishes` before building, so the build counts them as supplied.
     let mut external_channels: Vec<ChannelKey> = vec![];
     // Inputs sent from outside the robot that the stack reads: each planner's
     // goal, and the operator's teleop intent. Declared to the builder apart from

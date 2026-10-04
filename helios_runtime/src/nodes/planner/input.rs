@@ -114,7 +114,8 @@ mod tests {
 
     /// The optional set carries exactly the goal channel, and the required set
     /// carries state + map — so a renamed goal channel cannot leak into the
-    /// required inputs and turn an absent goal into an `UnsatisfiedInput`.
+    /// required inputs, which would make the goal something the planner cannot
+    /// run without rather than something it waits for.
     #[test]
     fn goal_is_the_only_optional_input() {
         let builder = DefaultSearchPlannerInputBuilder::new(

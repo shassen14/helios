@@ -21,7 +21,7 @@ pub mod validation;
 pub use crate::body::{
     check_actuation_agreement, ActuatorKindMismatch, BodyCapabilities, Provenance, PublishedChannel,
 };
-pub use crate::pipeline::build_error::PipelineBuildError;
+pub use crate::pipeline::build_error::{PipelineBuildError, Supplier};
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{AutonomyPipeline, PipelineBuilder};
 pub use crate::port::{

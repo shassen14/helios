@@ -1,4 +1,4 @@
-use crate::port::ChannelKey;
+use crate::port::{ChannelKey, InputNeed};
 
 /// Errors produced by [`PipelineBuilder::build`](super::PipelineBuilder::build).
 ///
@@ -16,24 +16,34 @@ pub enum PipelineBuildError {
     /// inputs are all covered by the stranded set's collective outputs —
     /// the cycle members plus anything downstream of them.
     Cycle { participants: Vec<String> },
-    /// A node declared a required input that no other node produces and
-    /// that the body does not publish.
+    /// A node reads a sensor or internal channel that has no supplier: no
+    /// node writes it, the body does not publish it, and it is not declared
+    /// as an outside input. Raised for optional inputs too, since optional
+    /// means the node runs without a value, not that the wiring is unchecked.
     UnsatisfiedInput {
         node_name: String,
         channel: ChannelKey,
+        need: InputNeed,
     },
+    /// A node reads an oracle or health channel that the body does not
+    /// publish. Only a body supplies these, so the error names the body.
     UnsatisfiedBodyCapabilities {
         node_name: String,
         channel_key: ChannelKey,
         body: String,
+        need: InputNeed,
     },
-    /// Two nodes both declared the same channel as one of their outputs.
-    /// At most one producer per channel is allowed.
-    MultipleProducers {
+    /// Two suppliers provide the same channel: two nodes, or a node and the
+    /// body, or a node and an outside input. Each channel has exactly one
+    /// supplier, so every read has one writer.
+    MultipleSuppliers {
         channel: ChannelKey,
-        first_node: String,
-        second_node: String,
+        first: Supplier,
+        second: Supplier,
     },
+    /// Two or more nodes share a name. Errors, logs and node order within a
+    /// level all identify a node by its name, so names must be unique.
+    DuplicateNodeName { name: String },
 }
 
 // default source() returns None which is okay
@@ -54,24 +64,79 @@ impl std::fmt::Display for PipelineBuildError {
                      stranded nodes: [{names}]"
                 )
             }
-            PipelineBuildError::UnsatisfiedInput { node_name, channel } => {
-                write!(f, "node \"{node_name}\" requires channel {channel} but no upstream node or signal key produces it")
+            PipelineBuildError::UnsatisfiedInput {
+                node_name,
+                channel,
+                need,
+            } => {
+                let need = need_label(*need);
+                write!(
+                    f,
+                    "node \"{node_name}\" reads channel {channel} ({need}) but nothing supplies it: \
+                     no node writes it, the body does not publish it, and it is not declared as an \
+                     outside input"
+                )
             }
             PipelineBuildError::UnsatisfiedBodyCapabilities {
                 node_name,
                 channel_key,
                 body,
-            } => write!(
-                f,
-                "Node {node_name} requires channel {channel_key}; body {body} does not advertise it."
-            ),
-            PipelineBuildError::MultipleProducers {
-                channel,
-                first_node,
-                second_node,
+                need,
             } => {
-                write!(f, "channel {channel} is declared as an output by both \"{first_node}\" and \"{second_node}\" — at most one node may produce a channel")
+                let need = need_label(*need);
+                write!(
+                    f,
+                    "node \"{node_name}\" reads channel {channel_key} ({need}); body \"{body}\" \
+                     does not publish it"
+                )
+            }
+            PipelineBuildError::MultipleSuppliers {
+                channel,
+                first,
+                second,
+            } => {
+                write!(
+                    f,
+                    "channel {channel} is supplied by both {first} and {second} — each channel \
+                     has exactly one supplier"
+                )
+            }
+            PipelineBuildError::DuplicateNodeName { name } => {
+                write!(
+                    f,
+                    "more than one node is named \"{name}\" — node names must be unique"
+                )
             }
         }
+    }
+}
+
+/// Who supplies a channel to the graph, as named in a
+/// [`PipelineBuildError::MultipleSuppliers`] error.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Supplier {
+    /// A node writes it; carries the node's name.
+    Node(String),
+    /// The body publishes it; carries the body's name.
+    Body(String),
+    /// It is declared as sent from outside the robot.
+    OutsideInput,
+}
+
+impl std::fmt::Display for Supplier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Supplier::Node(name) => write!(f, "node \"{name}\""),
+            Supplier::Body(name) => write!(f, "body \"{name}\""),
+            Supplier::OutsideInput => write!(f, "an outside input"),
+        }
+    }
+}
+
+/// The word an error message uses for an input's need.
+fn need_label(need: InputNeed) -> &'static str {
+    match need {
+        InputNeed::Required => "required",
+        InputNeed::Optional => "optional",
     }
 }

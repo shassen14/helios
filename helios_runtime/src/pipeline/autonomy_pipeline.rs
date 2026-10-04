@@ -3,7 +3,7 @@ use crate::{
     pipeline::{key_format::format_key_short, rate_gate::RateTimer},
     port::{ChannelKey, ChannelKind, InternalChannel, PortBus},
     prelude::{PipelineNode, Stamped, TickContext},
-    BodyCapabilities, NodeId, PipelineBuildError,
+    BodyCapabilities, NodeId, PipelineBuildError, Supplier,
 };
 
 use helios_core::{
@@ -25,12 +25,12 @@ use tracing::{debug_span, info, trace_span};
 /// 1. Register every node with [`add_node`](Self::add_node).
 /// 2. Declare the channels the body publishes — sensor channels, `oracle/*`
 ///    reference channels, `health/*` status — via
-///    [`with_body_capabilities`](Self::with_body_capabilities). These seed
-///    the topological sort so consumers don't trip
+///    [`with_body_capabilities`](Self::with_body_capabilities). These count
+///    as supplied, so consumers don't trip
 ///    [`PipelineBuildError::UnsatisfiedInput`].
 /// 3. Declare the inputs sent from outside the robot — goals, teleop intent —
-///    via [`with_outside_inputs`](Self::with_outside_inputs). These seed the
-///    sort the same way.
+///    via [`with_outside_inputs`](Self::with_outside_inputs). These count as
+///    supplied the same way.
 /// 4. Call [`build`](Self::build) — returns either a fully validated
 ///    pipeline or every detected error.
 ///
@@ -72,8 +72,8 @@ impl PipelineBuilder {
 
     /// Declares the body's I/O surface — the channels it publishes
     /// (sensor signals, oracle reference channels, health) and whether it consumes
-    /// control. Each published channel seeds the topological sort in
-    /// [`build`](Self::build) so consumers don't trip
+    /// control. Each published channel counts as supplied in
+    /// [`build`](Self::build), so consumers, required or optional, don't trip
     /// [`PipelineBuildError::UnsatisfiedInput`]; an unmet `Oracle`/`Health`
     /// input instead surfaces as
     /// [`PipelineBuildError::UnsatisfiedBodyCapabilities`], naming the body
@@ -98,42 +98,115 @@ impl PipelineBuilder {
 
     /// Validates the registered nodes and builds a [`AutonomyPipeline`].
     ///
-    /// All errors are collected — `build` never short-circuits. The
-    /// returned [`Vec`] contains every issue found, in this order:
-    /// 1. [`PipelineBuildError::MultipleProducers`] — two nodes declared
-    ///    the same output channel.
-    /// 2. [`PipelineBuildError::UnsatisfiedInput`] — a required input has
-    ///    no producer, is not among the body's published channels, and is not
-    ///    a declared outside input.
-    /// 3. [`PipelineBuildError::Cycle`] — a remaining sub-graph has every
-    ///    input satisfied only by other stranded nodes' outputs.
+    /// Errors are checked in two stages, and every error within a stage is
+    /// collected:
+    /// 1. Wiring. Node names are unique, and every input, required or
+    ///    optional, has exactly one supplier: a node output, a body channel,
+    ///    or a declared outside input.
+    ///    - [`PipelineBuildError::DuplicateNodeName`] — two nodes share a
+    ///      name.
+    ///    - [`PipelineBuildError::MultipleSuppliers`] — two suppliers
+    ///      provide the same channel.
+    ///    - [`PipelineBuildError::UnsatisfiedInput`] /
+    ///      [`PipelineBuildError::UnsatisfiedBodyCapabilities`] — an input
+    ///      has no supplier.
+    /// 2. Ordering, run only when wiring is clean, so a missing input never
+    ///    also shows up as a cycle.
+    ///    - [`PipelineBuildError::Cycle`] — a remaining sub-graph has every
+    ///      required input satisfied only by other stranded nodes' outputs.
+    ///
+    /// Within a level, nodes are sorted by name, so levels and [`NodeId`]s
+    /// do not depend on the order nodes were added.
     ///
     /// On success, [`NodeId`]s are assigned in level-major order starting
     /// at `0`, indexing into the pipeline's rate-timer array.
     pub fn build(self) -> Result<AutonomyPipeline, Vec<PipelineBuildError>> {
         let mut errors: Vec<PipelineBuildError> = vec![];
 
-        // First pass: single-producer check. For each output channel of
-        // each node, record the first node that claims it; any later
-        // claimant is a conflict.
-        let mut producer_of: HashMap<ChannelKey, String> = HashMap::new();
+        // Name pass: errors, logs and the within-level order all identify a
+        // node by name, so a shared name is reported once per name.
+        let mut seen_names: HashSet<&str> = HashSet::new();
+        let mut reported_names: HashSet<&str> = HashSet::new();
         for node in &self.nodes {
-            let node_name = node.name();
-            for output in node.port_descriptor().outputs() {
-                if let Some(prev_name) = producer_of.insert(output.clone(), node_name.to_string()) {
-                    let error = PipelineBuildError::MultipleProducers {
-                        channel: output.clone(),
-                        first_node: prev_name,
-                        second_node: node_name.to_string(),
-                    };
-                    errors.push(error);
-                }
+            let name = node.name();
+            if !seen_names.insert(name) && reported_names.insert(name) {
+                errors.push(PipelineBuildError::DuplicateNodeName {
+                    name: name.to_string(),
+                });
             }
         }
 
-        // Seed `produced` with channels supplied from outside the graph.
-        // The topological sort treats them as already-satisfied so any
-        // consumer of these channels doesn't trip UnsatisfiedInput.
+        // Supplier pass: record who supplies each channel. The body and the
+        // outside inputs go in first, so a conflict names the outside-world
+        // supplier before the node. Any second supplier of a key is an error.
+        let mut supplier_of: HashMap<ChannelKey, Supplier> = HashMap::new();
+        let body_supplies = self.capabilities.publishes.iter().map(|published| {
+            (
+                published.key.clone(),
+                Supplier::Body(self.capabilities.name.clone()),
+            )
+        });
+        let outside_supplies = self
+            .outside_inputs
+            .iter()
+            .map(|key| (key.clone(), Supplier::OutsideInput));
+        let node_supplies = self.nodes.iter().flat_map(|node| {
+            node.port_descriptor()
+                .outputs()
+                .iter()
+                .map(|output| (output.clone(), Supplier::Node(node.name().to_string())))
+        });
+        for (channel, supplier) in body_supplies.chain(outside_supplies).chain(node_supplies) {
+            if let Some(first) = supplier_of.get(&channel) {
+                errors.push(PipelineBuildError::MultipleSuppliers {
+                    channel,
+                    first: first.clone(),
+                    second: supplier,
+                });
+            } else {
+                supplier_of.insert(channel, supplier);
+            }
+        }
+
+        // Existence pass: every input, required or optional, needs a
+        // supplier. Optional only means the node runs without a value.
+        for node in &self.nodes {
+            for input in node.port_descriptor().inputs() {
+                let channel = input.channel();
+                if supplier_of.contains_key(channel) {
+                    continue;
+                }
+                let error = match channel.kind() {
+                    ChannelKind::Sensor | ChannelKind::Internal => {
+                        PipelineBuildError::UnsatisfiedInput {
+                            node_name: node.name().to_string(),
+                            channel: channel.clone(),
+                            need: input.need(),
+                        }
+                    }
+                    // Only a body supplies oracle and health channels, so a
+                    // missing one is the body's gap and the error names it.
+                    ChannelKind::Health | ChannelKind::Oracle => {
+                        PipelineBuildError::UnsatisfiedBodyCapabilities {
+                            node_name: node.name().to_string(),
+                            channel_key: channel.clone(),
+                            body: self.capabilities.name.clone(),
+                            need: input.need(),
+                        }
+                    }
+                };
+                errors.push(error);
+            }
+        }
+
+        // Stop before ordering: a node downstream of a missing input would
+        // otherwise be reported as a cycle member too.
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+
+        // Seed `produced` with channels supplied from outside the graph, so
+        // the sort treats them as already written.
         let mut produced: HashSet<ChannelKey> = HashSet::new();
         produced.extend(self.capabilities.publishes.iter().map(|p| p.key.clone()));
         produced.extend(self.outside_inputs.iter().cloned());
@@ -147,7 +220,7 @@ impl PipelineBuilder {
         let mut next_id: NodeId = 0;
 
         while !remaining.is_empty() {
-            let (ready, still_waiting): (Vec<_>, Vec<_>) =
+            let (mut ready, still_waiting): (Vec<_>, Vec<_>) =
                 remaining.into_iter().partition(|node| {
                     node.port_descriptor()
                         .required_inputs()
@@ -157,8 +230,8 @@ impl PipelineBuilder {
             remaining = still_waiting;
 
             // If no node is ready but `remaining` is non-empty, the sort
-            // is stuck. Either an input has no producer anywhere, or two
-            // or more nodes are mutually waiting on each other (cycle).
+            // is stuck. Every input has a supplier (checked above), so the
+            // stuck nodes are waiting on each other: a cycle.
             if ready.is_empty() {
                 // Channels that *would* exist if the sort could continue.
                 let mut pending_outputs: HashSet<ChannelKey> = HashSet::new();
@@ -192,33 +265,6 @@ impl PipelineBuilder {
                     errors.push(PipelineBuildError::Cycle { participants });
                 }
 
-                // Unsatisfied-input pass: any required input not covered
-                // by `produced` *or* `pending_outputs` is genuinely
-                // missing — no node anywhere will ever produce it.
-                for node in &remaining {
-                    for channel in node.port_descriptor().required_inputs() {
-                        if !produced.contains(channel) && !pending_outputs.contains(channel) {
-                            let error = match channel.kind() {
-                                ChannelKind::Sensor | ChannelKind::Internal => {
-                                    PipelineBuildError::UnsatisfiedInput {
-                                        node_name: node.name().to_string(),
-                                        channel: channel.clone(),
-                                    }
-                                }
-                                // todo: fix hardcoded body
-                                ChannelKind::Health | ChannelKind::Oracle => {
-                                    PipelineBuildError::UnsatisfiedBodyCapabilities {
-                                        node_name: node.name().to_string(),
-                                        channel_key: channel.clone(),
-                                        body: self.capabilities.name.clone(),
-                                    }
-                                }
-                            };
-                            errors.push(error);
-                        }
-                    }
-                }
-
                 break;
             }
 
@@ -231,9 +277,11 @@ impl PipelineBuilder {
                     .cloned(),
             );
 
+            // Sort by name so ids don't depend on the order nodes were added.
             // Assign NodeIds in level-major order as we go — this is the
             // same order the rate-timer array will be indexed by at tick
             // time, so the two stay in lockstep without a second pass.
+            ready.sort_by(|a, b| a.name().cmp(b.name()));
             let mut level: Vec<(NodeId, Box<dyn PipelineNode>)> = Vec::with_capacity(ready.len());
             for node in ready {
                 level.push((next_id, node));
