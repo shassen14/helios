@@ -776,7 +776,6 @@ fn optional_input_satisfied_by_body_capability_builds() {
                 key: gps,
                 provenance: Provenance::Exact,
             }],
-            consumes_control: false,
         })
         .build();
 
@@ -797,7 +796,6 @@ fn node_and_body_supplying_one_channel_is_rejected() {
                 key: shared.clone(),
                 provenance: Provenance::Exact,
             }],
-            consumes_control: false,
         })
         .build();
 
@@ -991,7 +989,6 @@ fn body_capabilities_satisfy_required_inputs() {
                 key: sensor_key,
                 provenance: Provenance::Exact,
             }],
-            consumes_control: false,
         })
         .build();
 
@@ -1012,7 +1009,6 @@ fn oracle_input_satisfied_by_body_capability() {
                 key: oracle_key,
                 provenance: Provenance::Exact,
             }],
-            consumes_control: false,
         })
         .build();
 
@@ -1032,7 +1028,6 @@ fn oracle_input_without_body_capability_errors() {
         .with_body_capabilities(BodyCapabilities {
             name: "hw".to_string(),
             publishes: vec![],
-            consumes_control: false,
         })
         .build();
 
@@ -1137,7 +1132,6 @@ fn tick_preserves_externally_written_values() {
                 key: sensor_key.clone(),
                 provenance: Provenance::Exact,
             }],
-            consumes_control: false,
         })
         .build()
         .expect("build should succeed");

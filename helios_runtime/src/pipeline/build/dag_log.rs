@@ -27,7 +27,6 @@ pub(super) fn log_resolved_dag(
     info!(
         target: "helios_runtime::pipeline",
         name = capabilities.name,
-        consumes_control = capabilities.consumes_control,
         published = capabilities.publishes.len(),
         "  body"
     );

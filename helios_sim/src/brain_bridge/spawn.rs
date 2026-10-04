@@ -217,10 +217,6 @@ pub fn spawn_actuator_command(
 ///
 /// - `name`: cloned from `agent_name`; used by error messages
 ///   (`PipelineBuildError::UnsatisfiedBodyCapabilities`) and the DAG dump.
-/// - `consumes_control`: hardcoded `true` — every sim agent has a vehicle
-///   plugin that applies the pipeline's actuator command to physics. Becomes a
-///   parameter (or moves to `AgentConfig`) once passive observer agents,
-///   log-playback agents, or hw-passive Zenoh-bridge nodes exist.
 /// - `publishes`: only the two oracle channels — `oracle/pose` (world ENU)
 ///   and `oracle/twist` (body FLU). Both tagged `Provenance::Exact`
 ///   because the sim is ground truth. Health channels are intentionally
@@ -244,7 +240,6 @@ fn build_host_body_capabilities(agent_name: &str) -> BodyCapabilities {
     BodyCapabilities {
         name: agent_name.to_string(),
         publishes: vec![published_pose, published_twist],
-        consumes_control: true,
     }
 }
 
@@ -336,12 +331,6 @@ mod tests {
     fn name_is_copied_from_argument() {
         let caps = build_host_body_capabilities("rover_1");
         assert_eq!(caps.name, "rover_1");
-    }
-
-    #[test]
-    fn sim_agents_consume_control() {
-        let caps = build_host_body_capabilities("any");
-        assert!(caps.consumes_control);
     }
 
     #[test]

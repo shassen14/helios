@@ -62,12 +62,11 @@ fn host_channels_with_imu(others: &[&str]) -> HashSet<String> {
         .collect()
 }
 
-/// A body with no autonomy stack, declaring only that it consumes control.
+/// A body with no autonomy stack and no published channels.
 fn teleop_body() -> BodyCapabilities {
     BodyCapabilities {
         name: "teleop_only".to_string(),
         publishes: vec![],
-        consumes_control: true,
     }
 }
 
@@ -260,7 +259,6 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
-        consumes_control: false,
     };
 
     let pipeline = build_pipeline(
@@ -331,7 +329,6 @@ fn two_map_layers_of_one_kind_publish_to_distinct_channels() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
-        consumes_control: false,
     };
 
     let pipeline = build_pipeline(
@@ -421,7 +418,6 @@ fn state_and_reference_body() -> BodyCapabilities {
                 provenance: Provenance::Exact,
             },
         ],
-        consumes_control: true,
     }
 }
 
@@ -687,7 +683,6 @@ fn build_pipeline_rejects_invalid_config_before_assembly() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
-        consumes_control: false,
     };
 
     let Err(errors) = build_pipeline(
@@ -792,7 +787,6 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
-        consumes_control: false,
     };
 
     let pipeline = build_pipeline(
@@ -910,7 +904,6 @@ fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
-        consumes_control: false,
     };
 
     let pipeline = build_pipeline(
@@ -982,7 +975,6 @@ fn deproject_preprocessing_turns_host_range_fields_into_clouds() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
-        consumes_control: false,
     };
 
     let pipeline = build_pipeline(
@@ -1073,7 +1065,6 @@ fn perception_body() -> BodyCapabilities {
     BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
-        consumes_control: false,
     }
 }
 
@@ -1199,7 +1190,6 @@ fn mapper_builds_a_map_from_a_host_range_field() {
             key: state_key.clone(),
             provenance: Provenance::Exact,
         }],
-        consumes_control: false,
     };
 
     let pipeline = build_pipeline(

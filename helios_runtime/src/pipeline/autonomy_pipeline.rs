@@ -10,7 +10,7 @@ use crate::{
 };
 
 use helios_core::{
-    control::{actuators::ActuatorCommand, commands::BodyTwist},
+    control::actuators::ActuatorCommand,
     prelude::{MonotonicTime, TfProvider},
     spatial::FrameAwareState,
 };
@@ -148,26 +148,11 @@ impl AutonomyPipeline {
             .read(InternalChannel::of::<FrameAwareState>().into())
     }
 
-    /// Reads the current control output, if any controller node has
-    /// written one this run.
-    ///
-    /// This canonical accessor names one concrete command type. Today that is
-    /// [`BodyTwist`] — the command the current controller family emits — so it is
-    /// morphology-specific: a controller whose `Out` is not `BodyTwist` publishes
-    /// fine on the bus (the node is generic over `C::Out`) but is not visible
-    /// through this accessor. The actuator terminal makes the canonical control
-    /// output a single universal command type, at which point this accessor stops
-    /// being morphology-specific. Read other command channels by name via
-    /// [`bus`](Self::bus)`().read::<T>(key)` in the meantime.
-    pub fn read_control(&self) -> Option<Arc<Stamped<BodyTwist>>> {
-        self.bus.read(control::command::<BodyTwist>().into())
-    }
-
     /// Reads the pipeline's actuator terminal — the per-actuator command the
     /// allocator produces, and the host relay consumes.
     ///
-    /// Unlike [`read_control`](Self::read_control), this is morphology-neutral:
-    /// [`ActuatorCommand`] is the one universal type every host applies,
+    /// Morphology-neutral: [`ActuatorCommand`] is the one universal type every
+    /// host applies,
     /// whatever the vehicle. Returns `None` during cold-start (before the
     /// allocator's first output) and when no allocator node is in the graph.
     pub fn read_actuators(&self) -> Option<Arc<Stamped<ActuatorCommand>>> {

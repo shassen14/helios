@@ -5,11 +5,9 @@
 use super::{dag_log::log_resolved_dag, ordering::order_into_levels, wiring::check_wiring};
 
 use crate::{
-    channels::control, pipeline::rate_gate::RateTimer, port::PortBus, AutonomyPipeline,
-    BodyCapabilities, ChannelKey, PipelineBuildError, PipelineNode,
+    pipeline::rate_gate::RateTimer, port::PortBus, AutonomyPipeline, BodyCapabilities, ChannelKey,
+    PipelineBuildError, PipelineNode,
 };
-
-use helios_core::control::commands::BodyTwist;
 
 use std::collections::HashSet;
 
@@ -45,7 +43,7 @@ impl Default for PipelineBuilder {
 }
 
 impl PipelineBuilder {
-    /// Creates an empty builder with a default (passive, empty)
+    /// Creates an empty builder with a default (empty)
     /// [`BodyCapabilities`]. Add nodes and declare the body's published
     /// channels via [`with_body_capabilities`](Self::with_body_capabilities)
     /// before calling [`build`](Self::build).
@@ -65,9 +63,8 @@ impl PipelineBuilder {
         self
     }
 
-    /// Declares the body's I/O surface — the channels it publishes
-    /// (sensor signals, oracle reference channels, health) and whether it consumes
-    /// control. Each published channel counts as supplied in
+    /// Declares the channels the body publishes (sensor signals, oracle
+    /// reference channels, health). Each published channel counts as supplied in
     /// [`build`](Self::build), so consumers, required or optional, don't trip
     /// [`PipelineBuildError::UnsatisfiedInput`]; an unmet `Oracle`/`Health`
     /// input instead surfaces as
@@ -145,15 +142,7 @@ impl PipelineBuilder {
             .iter()
             .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));
 
-        let mut bus = PortBus::new(descriptor_iter);
-
-        // `command` is the one channel with an out-of-graph consumer: a
-        // control-consuming body reads it back through `read_control`. Guarantee
-        // its slot so a teleop-only stack (no controller, no in-graph producer)
-        // can still have the host's command land instead of dropping.
-        if self.capabilities.consumes_control {
-            bus.ensure_slot(control::command::<BodyTwist>().into());
-        }
+        let bus = PortBus::new(descriptor_iter);
 
         // One timer per node, indexed by NodeId: ids were assigned in this
         // same level-major order, which is also the order `tick` walks.

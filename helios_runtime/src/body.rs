@@ -47,7 +47,9 @@ pub struct PublishedChannel {
 }
 
 /// Everything the agent's body offers the pipeline at the bus seam: the
-/// channels it measures and whether it consumes the control command.
+/// channels it measures. What the body takes back off the bus is the actuator
+/// command, which the host reads through
+/// [`AutonomyPipeline::read_actuators`](crate::AutonomyPipeline::read_actuators).
 ///
 /// This describes what one body carries, not the robot's morphology. Two bodies
 /// of the same drone model can differ: a simulated one carries a perfect truth
@@ -63,11 +65,6 @@ pub struct BodyCapabilities {
     /// them on the body's behalf; each counts as already written when the
     /// pipeline is built.
     pub publishes: Vec<PublishedChannel>,
-
-    /// Whether the body consumes the control command from the bus. This is the
-    /// one thing taken *off* the bus (a sink, not a published channel), so it
-    /// can't live in `publishes`.
-    pub consumes_control: bool,
 }
 
 /// Checks that every allocator's output setpoint kind agrees with the body
@@ -167,10 +164,9 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
-    fn default_is_empty_and_passive() {
+    fn default_is_empty() {
         let caps = BodyCapabilities::default();
         assert!(caps.publishes.is_empty());
-        assert!(!caps.consumes_control);
     }
 
     #[test]
@@ -182,12 +178,10 @@ mod tests {
                 key: key.clone(),
                 provenance: Provenance::default(),
             }],
-            consumes_control: true,
         };
         assert_eq!(caps.publishes.len(), 1);
         assert_eq!(caps.publishes[0].key, key);
         assert_eq!(caps.publishes[0].provenance, Provenance::Exact);
-        assert!(caps.consumes_control);
     }
 
     /// A body with one actuator of the given id and kind. `kind.value(0.0)` gives

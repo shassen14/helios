@@ -111,10 +111,6 @@ impl PortBus {
     /// consumes intentionally have no slot — host writes return
     /// [`ChannelError::UnknownChannel`] until a consumer is added. The body
     /// declares what it offers; the bus tracks what the graph uses.
-    ///
-    /// The one out-of-graph consumer is `read_control`: a control-consuming
-    /// body reads the `command` channel back even when no node produces it, so
-    /// the pipeline reserves that slot separately via [`ensure_slot`](Self::ensure_slot).
     pub fn new<'a>(descriptors: impl IntoIterator<Item = &'a PortDescriptor>) -> Self {
         let mut slots = HashMap::new();
 
@@ -211,12 +207,6 @@ impl PortBus {
         let guard = self.slots.get(key)?.load();
         let erased = guard.data.as_ref()?;
         Some(Arc::clone(erased))
-    }
-
-    pub(crate) fn ensure_slot(&mut self, key: ChannelKey) {
-        self.slots
-            .entry(key)
-            .or_insert_with(|| ArcSwap::new(Arc::new(SlotEntry::initial())));
     }
 
     pub(crate) fn set_tick_time(&self, now: f64) {

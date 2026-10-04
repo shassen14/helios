@@ -18,9 +18,8 @@
 //!   sensor's [`FrameId`] (`FrameId::sensor(agent, channel_name)`), so an aiding
 //!   or augmentation entry that names a channel the host does not provide is
 //!   rejected at build time rather than silently failing to resolve at tick time.
-//! - `host_capabilities` — the body as the host describes it: its name, whether
-//!   it consumes control, and the body channels that are not config-derived
-//!   sensors (today: `oracle/*` reference channels; later: `health/*`). The
+//! - `host_capabilities` — the body as the host describes it: its name and
+//!   the body channels that are not config-derived sensors (today: `oracle/*` reference channels; later: `health/*`). The
 //!   assembler appends config-derived sensor channels onto
 //!   `host_capabilities.publishes` before handing the merged value to
 //!   [`PipelineBuilder::with_body_capabilities`]. Only host-published sensor
@@ -115,7 +114,7 @@ const ACTUATOR_MERGE_NODE: &str = "actuator_merge";
 ///   this agent. An aiding or augmentation entry naming a channel absent from
 ///   this set is an [`UnknownSensorChannel`](PipelineAssemblyError::UnknownSensorChannel).
 /// - `host_capabilities` — the body's capabilities as the host describes them
-///   (name, `consumes_control`, reference channels such as `oracle/*`).
+///   (name, reference channels such as `oracle/*`).
 ///   The assembler extends `host_capabilities.publishes` with the
 ///   config-derived sensor channels before building. Goals and teleop intent
 ///   are declared separately as outside inputs.

@@ -307,7 +307,6 @@ mod tests {
                     provenance: Provenance::Exact,
                 },
             ],
-            consumes_control: true,
         }
     }
 
@@ -490,7 +489,6 @@ mod tests {
         let empty_body = BodyCapabilities {
             name: "no_oracle_body".to_string(),
             publishes: vec![],
-            consumes_control: true,
         };
 
         // .map(|_| ()) drops the AutonomyPipeline so expect_err / Debug
