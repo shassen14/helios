@@ -1,7 +1,9 @@
 //! The single path every host *input* uses to publish onto its agent's bus.
 //!
-//! A host input is any value the host injects into the brain that is not a
-//! sensor reading: a mission goal, a teleop command, a behavior-tree directive.
+//! A host input is a value from outside the robot, sent by an operator or a
+//! mission system, that the host delivers to the brain: a mission goal, a
+//! teleop command, a behavior-tree directive. It is never a measurement of the
+//! body; those go through `SensorPublisher`.
 //! Choosing the channel name and the value stays with each input's own system —
 //! those differ per input. Everything after that is identical: wrap the value
 //! in a `Stamped` envelope with the host producer id, build the named internal

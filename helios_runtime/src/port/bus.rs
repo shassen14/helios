@@ -106,11 +106,11 @@ impl PortBus {
     /// [`ChannelKey`] found across all `descriptors`.
     ///
     /// The bus represents intra-graph flow: a slot exists iff some node in
-    /// the graph mentions the channel. Channels the host body *advertises*
+    /// the graph mentions the channel. Channels the body *advertises*
     /// via [`BodyCapabilities`](crate::BodyCapabilities) but which no node
     /// consumes intentionally have no slot — host writes return
     /// [`ChannelError::UnknownChannel`] until a consumer is added. The body
-    /// declares intent; the bus tracks reality.
+    /// declares what it offers; the bus tracks what the graph uses.
     ///
     /// The one out-of-graph consumer is `read_control`: a control-consuming
     /// body reads the `command` channel back even when no node produces it, so

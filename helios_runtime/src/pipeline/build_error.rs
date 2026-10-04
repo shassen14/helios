@@ -17,7 +17,7 @@ pub enum PipelineBuildError {
     /// the cycle members plus anything downstream of them.
     Cycle { participants: Vec<String> },
     /// A node declared a required input that no other node produces and
-    /// that is not in the builder's sensor-signal or host-state lists.
+    /// that the body does not publish.
     UnsatisfiedInput {
         node_name: String,
         channel: ChannelKey,

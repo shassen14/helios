@@ -18,14 +18,17 @@
 //!   sensor's [`FrameId`] (`FrameId::sensor(agent, channel_name)`), so an aiding
 //!   or augmentation entry that names a channel the host does not provide is
 //!   rejected at build time rather than silently failing to resolve at tick time.
-//! - `host_capabilities` — the body's name, whether it consumes control, and
-//!   the channels the host publishes outside the autonomy stack (today:
-//!   `oracle/*`; later: `health/*`). The assembler appends config-derived
-//!   sensor channels onto `host_capabilities.publishes` before handing the
-//!   merged value to [`PipelineBuilder::with_body_capabilities`]. Only
-//!   host-published sensor inputs are appended; an internal input, or a
-//!   sensor channel a preprocessing node derives, must be produced inside the
-//!   graph, so a missing producer still fails the build.
+//! - `host_capabilities` — the body as the host describes it: its name, whether
+//!   it consumes control, and the body channels that are not config-derived
+//!   sensors (today: `oracle/*` reference channels; later: `health/*`). The
+//!   assembler appends config-derived sensor channels onto
+//!   `host_capabilities.publishes` before handing the merged value to
+//!   [`PipelineBuilder::with_body_capabilities`]. Only host-published sensor
+//!   inputs are appended; an internal input, or a sensor channel a
+//!   preprocessing node derives, must be produced inside the graph, so a
+//!   missing producer still fails the build. The teleop intent, when teleop is
+//!   wired, is appended too, although it is an operator input rather than a
+//!   body measurement.
 //!
 //! Everything else — algorithm kinds, noise params, physical constants,
 //! channel names — comes from `stack`.
@@ -107,10 +110,11 @@ const ACTUATOR_MERGE_NODE: &str = "actuator_merge";
 /// - `sensor_channels` — the set of sensor channel names the host publishes for
 ///   this agent. An aiding or augmentation entry naming a channel absent from
 ///   this set is an [`UnknownSensorChannel`](PipelineAssemblyError::UnknownSensorChannel).
-/// - `host_capabilities` — host-supplied body capabilities (name,
-///   `consumes_control`, host-published channels such as `oracle/*`).
+/// - `host_capabilities` — the body's capabilities as the host describes them
+///   (name, `consumes_control`, reference channels such as `oracle/*`).
 ///   The assembler extends `host_capabilities.publishes` with the
-///   config-derived sensor channels before building.
+///   config-derived sensor channels, and the teleop intent when teleop is
+///   wired, before building.
 pub fn build_pipeline(
     stack: &AutonomyStack,
     registry: &AutonomyRegistry,
@@ -129,10 +133,11 @@ pub fn build_pipeline(
 
     let mut errors: Vec<PipelineAssemblyError> = vec![];
     let mut builder = PipelineBuilder::new();
-    // Channels supplied from outside the graph (sensor publishers, mission
-    // layer, operator UI). Used to seed the topological sort so consumers
-    // don't trip UnsatisfiedInput. Control channels are seeded per the
-    // resolved command topology below, not unconditionally.
+    // Channels written from outside the graph: the body's sensor channels and
+    // the operator's teleop intent. All are merged into the body's `publishes`
+    // before building, to seed the topological sort so consumers don't trip
+    // UnsatisfiedInput. Control channels are seeded per the resolved command
+    // topology below, not unconditionally.
     let mut external_channels: Vec<ChannelKey> = vec![];
 
     // --- Preprocessing ---
@@ -284,7 +289,7 @@ pub fn build_pipeline(
 
     // Teleop guidance ingress + reference arbiter. Teleop enters at the top of the
     // tracking layer, substituting for the follower's instantaneous output. Its
-    // mapper scales the host's `intent` into a `BodyTwistRef` — onto the teleop
+    // mapper scales the operator's `intent` into a `BodyTwistRef` — onto the teleop
     // contender role when a follower also contends, else onto the resolved
     // `reference` directly. When both contend the arbiter picks the fresher of the
     // two onto `reference`; neutral intent publishes nothing, so the follower

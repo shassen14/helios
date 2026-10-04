@@ -1,17 +1,22 @@
-//! The static brain/body I/O declaration: what a host (sim or hardware) offers
-//! the autonomy pipeline at the bus seam.
+//! The static brain/body I/O declaration: what the agent's body offers the
+//! autonomy pipeline at the bus seam.
 //!
-//! This is the portable contract that lets the *same* [`AutonomyPipeline`] run
-//! against a simulation body or a `helios_hw` body — each host advertises what
-//! it supplies, and the assembler adapts instead of assuming. It is distinct
-//! from two neighbouring "capability"-shaped types:
+//! The body is the robot's physical side, simulated or real: the sensors that
+//! measure onto the bus and the actuators that take the control command off
+//! it. The host, the process running the pipeline, describes the body it is
+//! attached to, so the *same* [`AutonomyPipeline`] runs against a simulated or
+//! a hardware body and the assembler adapts instead of assuming. Values sent
+//! from outside the robot, such as mission goals and operator commands, are not
+//! measurements of the body.
+//!
+//! It is distinct from two neighbouring "capability"-shaped types:
 //!
 //! - The per-tick transform contract [`TfProvider`](helios_core::prelude::TfProvider),
 //!   passed into each node's `execute` beside the bus. `BodyCapabilities` is the
 //!   *static* declaration made once at assembly time.
 //! - [`CapabilitySet`](crate::validation::CapabilitySet) is the autonomy-stack
 //!   feature set (which algorithm families are enabled). `BodyCapabilities`
-//!   describes the host's I/O, not the brain's algorithms.
+//!   describes the body's I/O, not the brain's algorithms.
 
 use crate::{port::ChannelKey, AutonomyStack};
 
@@ -28,7 +33,8 @@ use helios_core::control::{
 /// first hardware host.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Provenance {
-    /// Ground truth, exact to the limits of the host (e.g. physics state in sim).
+    /// Ground truth, exact to the limits of the simulation (e.g. physics state
+    /// read by a perfect sensor in sim).
     #[default]
     Exact,
 }
@@ -40,19 +46,24 @@ pub struct PublishedChannel {
     pub provenance: Provenance,
 }
 
-/// Everything a host body offers the pipeline at the bus seam.
+/// Everything the agent's body offers the pipeline at the bus seam: the
+/// channels it measures and whether it consumes the control command.
 ///
-/// The discriminator is the *host*, not the robot's morphology: the same drone
-/// has different capabilities in sim (publishes `oracle/*`) versus on hardware
-/// (no oracle). Morphology lives elsewhere (vehicle plugin, dynamics, sensor
-/// suite), never here.
+/// This describes what one body carries, not the robot's morphology. Two bodies
+/// of the same drone model can differ: a simulated one carries a perfect truth
+/// sensor (`oracle/*`), a test vehicle may carry an RTK reference rig, and a
+/// production unit carries no reference sensor at all. Morphology (vehicle
+/// plugin, dynamics) lives elsewhere, never here.
 #[derive(Clone, Debug, Default)]
 pub struct BodyCapabilities {
+    /// The body's name, used in build errors and the startup log.
     pub name: String,
-    /// Channels the body writes to the bus: sensor channels, `oracle/*`
-    /// ground-truth, and `health/*` driver/sensor status. The assembler reads
-    /// this to seed the pipeline's external channels.
+    /// Channels the body measures onto the bus: sensor channels, `oracle/*`
+    /// reference channels, and `health/*` driver/sensor status. The host writes
+    /// them on the body's behalf; each counts as already written when the
+    /// pipeline is built.
     pub publishes: Vec<PublishedChannel>,
+
     /// Whether the body consumes the control command from the bus. This is the
     /// one thing taken *off* the bus (a sink, not a published channel), so it
     /// can't live in `publishes`.

@@ -4,9 +4,9 @@
 //! The pipeline is a black box with three openings, and every module here
 //! serves exactly one of them:
 //!
-//! - **ingress** — host state and intent flow *in*. [`spawn`] assembles the
-//!   pipeline and its odom/actuator components at scene-build; [`goal_input`]
-//!   feeds the mission goal each tick.
+//! - **ingress** — body measurements and operator inputs flow *in*. [`spawn`]
+//!   assembles the pipeline and its odom/actuator components at scene-build;
+//!   [`goal_input`] feeds the mission goal each tick.
 //! - **tick** — [`tick`] advances every pipeline one step per `FixedUpdate`.
 //! - **egress** — pipeline results flow *out*. [`actuator_output`] copies the
 //!   latest actuator command into the actuation component; [`odom_output`]
