@@ -116,6 +116,26 @@ impl TransformNode {
             transform,
         }
     }
+
+    /// Same node with `input` declared optional. `execute` is unchanged, so it
+    /// still writes nothing when the input is absent.
+    fn optional(
+        name: &str,
+        input: ChannelKey,
+        output: ChannelKey,
+        transform: fn(u32) -> u32,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            descriptor: AlgorithmNodePortDescriptor::new()
+                .inputs_from_slices(&[], &[input.clone()])
+                .outputs_from_slice(&[output.clone()])
+                .build(),
+            input,
+            output,
+            transform,
+        }
+    }
 }
 
 impl PipelineNode for TransformNode {
@@ -672,6 +692,64 @@ fn level_order_does_not_depend_on_insertion_order() {
 
     assert_eq!(build(["c", "a", "b"]), ["a", "b", "c"]);
     assert_eq!(build(["b", "c", "a"]), ["a", "b", "c"]);
+}
+
+#[test]
+fn optional_input_producer_runs_first() {
+    // The reader's name sorts before the producer's, so if the optional edge
+    // did not order them, both would share level 0 and the reader would run
+    // first, see nothing, and write nothing on the first tick.
+    let source = ikey_of::<ChA>();
+    let out = ikey_of::<ChB>();
+
+    let pipeline = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("b_producer", source.clone(), 7)))
+        .add_node(Box::new(TransformNode::optional(
+            "a_reader",
+            source,
+            out.clone(),
+            |v| v + 1,
+        )))
+        .build()
+        .expect("build should succeed");
+
+    let order: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
+    assert_eq!(order, ["b_producer", "a_reader"]);
+
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
+    let result = pipeline
+        .bus()
+        .read::<u32>(out)
+        .expect("reader should see this tick's value on the first tick");
+    assert_eq!(result.value, 8);
+}
+
+#[test]
+fn cycle_through_optional_input_is_detected() {
+    // `a` requires `b`'s output; `b` reads `a`'s output only optionally. The
+    // optional edge is still same-tick, so the two wait on each other.
+    let a_out = ikey_named::<ChA>("a_out");
+    let b_out = ikey_named::<ChB>("b_out");
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(TransformNode::new(
+            "a",
+            b_out.clone(),
+            a_out.clone(),
+            |v| v,
+        )))
+        .add_node(Box::new(TransformNode::optional("b", a_out, b_out, |v| v)))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail with cycle");
+    };
+    assert!(
+        errors
+            .iter()
+            .any(|e| matches!(e, PipelineBuildError::Cycle { .. })),
+        "expected Cycle, got {errors:?}"
+    );
 }
 
 #[test]

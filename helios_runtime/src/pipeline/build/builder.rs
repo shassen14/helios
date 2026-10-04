@@ -108,7 +108,7 @@ impl PipelineBuilder {
     /// 2. Ordering, run only when wiring is clean, so a missing input never
     ///    also shows up as a cycle.
     ///    - [`PipelineBuildError::Cycle`] — a remaining sub-graph has every
-    ///      required input satisfied only by other stranded nodes' outputs.
+    ///      same-tick input satisfied only by other stranded nodes' outputs.
     ///
     /// Within a level, nodes are sorted by name, so levels and [`NodeId`](crate::NodeId)s
     /// do not depend on the order nodes were added.

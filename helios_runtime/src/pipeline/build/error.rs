@@ -15,7 +15,7 @@ use crate::port::{ChannelKey, InputNeed};
 pub enum PipelineBuildError {
     /// The dependency graph has no valid topological ordering. At least
     /// one set of nodes has every input satisfied only by each others'
-    /// outputs. `participants` lists every stranded node whose required
+    /// outputs. `participants` lists every stranded node whose same-tick
     /// inputs are all covered by the stranded set's collective outputs —
     /// the cycle members plus anything downstream of them.
     Cycle { participants: Vec<String> },

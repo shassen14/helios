@@ -15,11 +15,13 @@
 //!
 //! - `required` — every one must be present or the node publishes nothing. A sum
 //!   missing a term is silently wrong, worse than no command (which a downstream
-//!   reads as last-known-good). Required inputs are also the *only* inputs the
-//!   topological sort orders on, so they are read fresh this tick.
-//! - `optional` — folded in when present, skipped when absent. Not ordered, so an
-//!   optional contributor is read last-known-good (possibly a tick old): fine for
-//!   a slowly varying feedforward term, not for a feedback correction.
+//!   reads as last-known-good).
+//! - `optional` — folded in when present, skipped when absent.
+//!
+//! Ordering does not depend on the split: every input is same-tick, so the sort
+//! runs each contributor first and the sum reads this tick's values. A
+//! contributor that did not publish this tick (rate-gated, or it skipped) still
+//! holds its last value, and the sum folds that in as-is.
 //!
 //! Past the gate the distinction is spent — the node holds a flat set of
 //! contributing `Stamped`s and derives two aggregates from it: the summed value

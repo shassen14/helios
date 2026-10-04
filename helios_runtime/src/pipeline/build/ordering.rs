@@ -1,5 +1,6 @@
 //! Ordering nodes into levels: each node runs in a later level than the
-//! producers of its required inputs. Runs only after the wiring checks pass.
+//! producers of its same-tick inputs, required or optional. Runs only after the
+//! wiring checks pass.
 
 use crate::{ChannelKey, NodeId, PipelineBuildError, PipelineNode};
 
@@ -9,7 +10,7 @@ use std::collections::HashSet;
 ///
 /// `produced` holds the channels already written before any node runs: the
 /// body's channels and the outside inputs. A node joins the first level in
-/// which every required input is in `produced`; that level's outputs are then
+/// which every same-tick input is in `produced`; that level's outputs are then
 /// added for the next. Within a level, nodes are sorted by name, so levels and
 /// ids do not depend on the order nodes were added. Ids run from `0` in
 /// level-major order, the order the pipeline indexes its rate timers by.
@@ -21,7 +22,7 @@ pub(super) fn order_into_levels(
     mut produced: HashSet<ChannelKey>,
 ) -> Result<Vec<Vec<(NodeId, Box<dyn PipelineNode>)>>, Vec<PipelineBuildError>> {
     // Kahn's algorithm (level-by-level form). Each iteration pulls out
-    // every node whose required inputs are already produced, assigns
+    // every node whose same-tick inputs are already produced, assigns
     // it a NodeId, and pushes it into the current level. The level's
     // outputs then enter `produced` so the next iteration can advance.
     let mut levels: Vec<Vec<(NodeId, Box<dyn PipelineNode>)>> = Vec::new();
@@ -31,7 +32,7 @@ pub(super) fn order_into_levels(
         let (mut ready, still_waiting): (Vec<_>, Vec<_>) =
             remaining.into_iter().partition(|node| {
                 node.port_descriptor()
-                    .required_inputs()
+                    .same_tick_inputs()
                     .all(|channel| produced.contains(channel))
             });
 
@@ -49,14 +50,14 @@ pub(super) fn order_into_levels(
                 }
             }
 
-            // Cycle pass: a remaining node whose required inputs are
+            // Cycle pass: a remaining node whose same-tick inputs are
             // entirely covered by `produced ∪ pending_outputs` is
             // blocked purely by other stranded nodes — that is a
             // cycle. One Cycle error is emitted regardless of how
             // many nodes participate.
             let is_cycle_detected = remaining.iter().any(|node| {
                 node.port_descriptor()
-                    .required_inputs()
+                    .same_tick_inputs()
                     .all(|channel| produced.contains(channel) || pending_outputs.contains(channel))
             });
 
@@ -64,7 +65,7 @@ pub(super) fn order_into_levels(
                 let participants = remaining
                     .iter()
                     .filter(|node| {
-                        node.port_descriptor().required_inputs().all(|channel| {
+                        node.port_descriptor().same_tick_inputs().all(|channel| {
                             produced.contains(channel) || pending_outputs.contains(channel)
                         })
                     })

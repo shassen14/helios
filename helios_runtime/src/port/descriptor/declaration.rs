@@ -13,8 +13,8 @@ use crate::port::channel::ChannelKey;
 ///
 /// Every input, required or optional, must have a supplier (a node output, a
 /// body channel, or a declared outside input) for `PipelineBuilder::build()`
-/// to succeed. `required_inputs` also order the node after its suppliers. This
-/// does NOT guarantee a value is
+/// to succeed. Every same-tick input, required or optional, also orders the
+/// node after its supplier. This does NOT guarantee a value is
 /// present at runtime — cold-start, sensor dropout, and rate-gated upstream
 /// nodes mean every consumer must handle `None`. The standard pattern is an
 /// early-return.
@@ -81,8 +81,8 @@ impl PortDescriptor {
         self.required_inputs.iter().chain(&self.optional_inputs)
     }
 
-    /// Channels the node cannot run without, in declaration order. The node is
-    /// placed in a later level than each channel's producing node.
+    /// Channels the node cannot run without, in declaration order. Need does
+    /// not decide ordering; [`same_tick_inputs`](Self::same_tick_inputs) does.
     pub fn required_inputs(&self) -> impl Iterator<Item = &ChannelKey> {
         self.required_inputs.iter().map(|i| &i.channel)
     }
@@ -92,6 +92,21 @@ impl PortDescriptor {
     /// have a supplier.
     pub fn optional_inputs(&self) -> impl Iterator<Item = &ChannelKey> {
         self.optional_inputs.iter().map(|i| &i.channel)
+    }
+
+    /// Channels whose value must be written this tick before the node reads
+    /// it, required and optional alike, in [`inputs`](Self::inputs) order. The
+    /// build places the node in a later level than each channel's producing
+    /// node. An [`InputTiming::PreviousTick`] input is left out, which is how a
+    /// loop is broken.
+    pub fn same_tick_inputs(&self) -> impl Iterator<Item = &ChannelKey> {
+        self.inputs().filter_map(|i| {
+            if i.timing == InputTiming::SameTick {
+                Some(&i.channel)
+            } else {
+                None
+            }
+        })
     }
 
     /// Channels this node writes when it executes.
@@ -224,6 +239,39 @@ mod tests {
 
         assert_eq!(d.required_inputs().collect::<Vec<_>>(), vec![&req]);
         assert_eq!(d.optional_inputs().collect::<Vec<_>>(), vec![&opt]);
+    }
+
+    #[test]
+    fn same_tick_inputs_include_optional_inputs() {
+        let req = ikey::<u32>();
+        let opt = ikey_named::<u32>("opt");
+        let d = PortDescriptor::new(vec![req.clone()], vec![opt.clone()], vec![], None);
+
+        assert_eq!(d.same_tick_inputs().collect::<Vec<_>>(), vec![&req, &opt]);
+    }
+
+    #[test]
+    fn same_tick_inputs_leave_out_previous_tick_inputs() {
+        // No builder declares a previous-tick input yet, so build the record
+        // directly: timing alone decides, whatever the need.
+        let now = ikey_named::<u32>("now");
+        let delayed_req = ikey_named::<u32>("delayed_req");
+        let delayed_opt = ikey_named::<u32>("delayed_opt");
+        let d = PortDescriptor {
+            required_inputs: vec![
+                InputPort::new(now.clone(), InputNeed::Required, InputTiming::SameTick),
+                InputPort::new(delayed_req, InputNeed::Required, InputTiming::PreviousTick),
+            ],
+            optional_inputs: vec![InputPort::new(
+                delayed_opt,
+                InputNeed::Optional,
+                InputTiming::PreviousTick,
+            )],
+            outputs: vec![],
+            rate: None,
+        };
+
+        assert_eq!(d.same_tick_inputs().collect::<Vec<_>>(), vec![&now]);
     }
 
     #[test]
