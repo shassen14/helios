@@ -70,7 +70,7 @@ use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
 use crate::pipeline::node::PipelineNode;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
-use crate::port::{ChannelKey, InternalChannel};
+use crate::port::{ChannelKey, InputPort, InternalChannel};
 use crate::registry::contexts::{
     AllocatorBuildContext, ControllerBuildContext, MapperBuildContext, MockEstimatorBuildContext,
     PathFollowerBuildContext, SearchPlannerBuildContext,
@@ -177,15 +177,9 @@ pub fn build_pipeline(
 
     // --- Estimators ---
     for (instance_name, est_cfg) in &stack.estimators {
-        match build_estimator_node(
-            instance_name,
-            est_cfg,
-            &agent,
-            sensor_channels,
-            registry,
-            &mut external_channels,
-        ) {
+        match build_estimator_node(instance_name, est_cfg, &agent, sensor_channels, registry) {
             Ok(node) => {
+                sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
                 builder = builder.add_node(node);
             }
             Err(e) => errors.push(e),
@@ -495,6 +489,10 @@ impl SensorInputs<'_> {
     /// Records a node's host-published sensor inputs as external, so they seed
     /// the topological sort, and reports any sensor input with no source.
     ///
+    /// Every sensor input is checked, required and optional alike: an optional
+    /// input on a channel nobody publishes fails the same silent way, its slot
+    /// never filled and the node never using it.
+    ///
     /// Only host channels are seeded. An internal input, or a sensor input a
     /// preprocessing node derives, must be produced inside the graph: seeding
     /// it would hide a missing producer, and would let the consumer become
@@ -511,7 +509,8 @@ impl SensorInputs<'_> {
     ) {
         let sensor_inputs = node
             .port_descriptor()
-            .required_inputs()
+            .inputs()
+            .map(InputPort::channel)
             .filter(|key| matches!(key, ChannelKey::Sensor(_)))
             .filter(|key| !self.derived.contains(*key));
 
@@ -649,7 +648,6 @@ fn build_estimator_node(
     agent: &AgentId,
     sensor_channels: &HashSet<String>,
     registry: &AutonomyRegistry,
-    external_channels: &mut Vec<ChannelKey>,
 ) -> Result<Box<dyn crate::pipeline::node::PipelineNode>, PipelineAssemblyError> {
     // Dispatch on estimator family. Each family owns a different build
     // context shape (Gaussian needs aiding handlers; mock needs none;
@@ -663,7 +661,6 @@ fn build_estimator_node(
             agent,
             sensor_channels,
             registry,
-            external_channels,
         ),
         EstimatorConfig::Ukf(_) => Err(PipelineAssemblyError::FactoryFailure {
             node_kind: UKF_KIND.to_string(),
@@ -672,9 +669,7 @@ fn build_estimator_node(
         EstimatorConfig::MockOracle(_) => {
             // Mocks declare oracle inputs through their port descriptor and
             // the build-time check against BodyCapabilities decides whether
-            // the body satisfies them. Nothing to push onto external_channels:
-            // that list is for sensor / control signals routed around the
-            // graph, not for body-published oracle channels.
+            // the body satisfies them.
             registry
                 .build_mock_estimator(
                     MOCK_ORACLE_KIND,
@@ -689,5 +684,81 @@ fn build_estimator_node(
                     reason,
                 })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::node::TickContext;
+    use crate::port::{AlgorithmNodePortDescriptor, PortBus, PortDescriptor, SensorChannel};
+
+    use helios_core::prelude::TfProvider;
+
+    /// A node that only declares ports; `seed` reads nothing else.
+    struct PortsOnlyNode {
+        descriptor: PortDescriptor,
+    }
+
+    impl PipelineNode for PortsOnlyNode {
+        fn name(&self) -> &str {
+            "reader"
+        }
+
+        fn port_descriptor(&self) -> &PortDescriptor {
+            &self.descriptor
+        }
+
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
+    }
+
+    fn optional_sensor_reader(channel: &str) -> PortsOnlyNode {
+        PortsOnlyNode {
+            descriptor: AlgorithmNodePortDescriptor::new()
+                .optional_sensor(SensorChannel::named::<f64>(channel))
+                .build(),
+        }
+    }
+
+    /// An optional sensor input on a channel the host publishes is seeded like a
+    /// required one, so the build counts it as supplied.
+    #[test]
+    fn optional_input_on_a_host_channel_is_seeded() {
+        let host = HashSet::from(["gps".to_string()]);
+        let derived = HashSet::new();
+        let sensor_inputs = SensorInputs { host: &host, derived: &derived };
+        let mut external_channels = vec![];
+        let mut errors = vec![];
+
+        sensor_inputs.seed(&optional_sensor_reader("gps"), &mut external_channels, &mut errors);
+
+        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
+        assert_eq!(
+            external_channels,
+            vec![ChannelKey::from(SensorChannel::named::<f64>("gps"))]
+        );
+    }
+
+    /// An optional sensor input nobody publishes would build with its slot
+    /// never filled, so it is reported just as a required one is.
+    #[test]
+    fn optional_input_on_an_unpublished_channel_is_reported() {
+        let host = HashSet::new();
+        let derived = HashSet::new();
+        let sensor_inputs = SensorInputs { host: &host, derived: &derived };
+        let mut external_channels = vec![];
+        let mut errors = vec![];
+
+        sensor_inputs.seed(&optional_sensor_reader("gps.typo"), &mut external_channels, &mut errors);
+
+        assert!(external_channels.is_empty());
+        assert!(
+            errors.iter().any(|e| matches!(
+                e,
+                PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
+                    if node_name == "reader" && channel == "gps.typo"
+            )),
+            "expected UnpublishedSensorInput for `reader` / `gps.typo`, got {errors:?}"
+        );
     }
 }

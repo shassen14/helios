@@ -1277,6 +1277,74 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
     );
 }
 
+/// [`imu_ekf`] aided by a magnetometer reading `mag_channel`.
+fn mag_aided_imu_ekf(mag_channel: &str) -> EstimatorConfig {
+    let EstimatorConfig::Ekf(mut ekf) = imu_ekf() else {
+        unreachable!("imu_ekf builds an EKF");
+    };
+    ekf.aiding = vec![AidingConfig {
+        sensor_payload: "MagneticField".to_string(),
+        model: SensorModelConfig {
+            kind: "magnetometer".to_string(),
+            gravity_enu: [0.0, 0.0, -9.81],
+            magnetic_field_enu: Some([0.0, 1.0, 0.0]),
+        },
+        input_channel: mag_channel.to_string(),
+        r_diag: vec![0.25, 0.25, 0.25],
+    }];
+    EstimatorConfig::Ekf(ekf)
+}
+
+#[test]
+fn estimator_aided_by_a_host_channel_builds() {
+    // Aiding inputs are optional ports. The build counts one as supplied only
+    // because the generic sensor-input pass seeds optional inputs too; were it
+    // to skip them, this build would fail with an unsatisfied input.
+    let stack = AutonomyStack {
+        estimators: HashMap::from([("nav_ekf".to_string(), mag_aided_imu_ekf("mag/primary"))]),
+        ..Default::default()
+    };
+
+    let result = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["mag/primary"]),
+        perception_body(),
+    );
+
+    assert!(result.is_ok(), "expected the aided EKF to build, got {:?}", result.err());
+}
+
+#[test]
+fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
+    // An aiding channel the host does not publish is caught by the estimator's
+    // own check, before the node exists, and named with the estimator instance.
+    let stack = AutonomyStack {
+        estimators: HashMap::from([("nav_ekf".to_string(), mag_aided_imu_ekf("mag/typo"))]),
+        ..Default::default()
+    };
+
+    let errors = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["mag/primary"]),
+        perception_body(),
+    )
+    .err()
+    .expect("an estimator aided by an unpublished channel must not build");
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::UnknownSensorChannel { estimator_instance, input_channel }
+                if estimator_instance == "nav_ekf" && input_channel == "mag/typo"
+        )),
+        "expected UnknownSensorChannel for `nav_ekf` / `mag/typo`, got {errors:?}"
+    );
+}
+
 // =========================================================================
 // == Outside inputs: goals and teleop intent are declared apart from the body ==
 // =========================================================================

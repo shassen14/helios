@@ -49,8 +49,8 @@ fn default_teleop_max_age_s() -> f64 {
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ReferenceSource {
-    Autonomy, // → control::autonomy::<T>()
-    Teleop,   // → control::teleop::<T>()
+    Autonomy, // → control::reference_autonomy::<T>()
+    Teleop,   // → control::reference_teleop::<T>()
 }
 
 impl ReferenceSource {

@@ -1,11 +1,11 @@
 //! Config-to-node assembly for the Gaussian-estimator family: builds the
-//! aiding handlers and predict-side input channels from an [`EkfConfig`], then
-//! hands them to the registry factory.
+//! aiding handlers and augmentation blocks from an [`EkfConfig`], checks its
+//! sensor channels exist, then hands them to the registry factory.
 
-use super::{AidingHandler, EstimatorInputBuilder, IntegratedImuInputBuilder, TypedAidingHandler};
+use super::{AidingHandler, TypedAidingHandler};
 use crate::config::{AidingConfig, EkfConfig, EkfDynamicsConfig, EstimatorConfig};
 use crate::pipeline::node::PipelineNode;
-use crate::port::{ChannelKey, SensorChannel};
+use crate::port::SensorChannel;
 use crate::registry::contexts::{GaussianEstimatorBuildContext, MeasurementModelBuildContext};
 use crate::registry::AutonomyRegistry;
 use crate::PipelineAssemblyError;
@@ -23,9 +23,8 @@ use nalgebra::DMatrix;
 use std::collections::HashSet;
 
 /// Assembles a Gaussian-estimator node from its config: constructs the aiding
-/// handlers, declares the predict-side input channels as external, and invokes
-/// the registry factory. `external_channels` accumulates every host-published
-/// channel the estimator reads so the topological sort can be seeded.
+/// handlers, checks that the IMU predict-side channels are published, builds the
+/// augmentation blocks, and invokes the registry factory.
 pub(crate) fn assemble(
     instance_name: &str,
     est_cfg: &EstimatorConfig,
@@ -33,20 +32,18 @@ pub(crate) fn assemble(
     agent: &AgentId,
     sensor_channels: &HashSet<String>,
     registry: &AutonomyRegistry,
-    external_channels: &mut Vec<ChannelKey>,
 ) -> Result<Box<dyn PipelineNode>, PipelineAssemblyError> {
     // Build aiding handlers from the aiding list in EkfConfig.
     let mut aiding: Vec<Box<dyn AidingHandler>> = vec![];
     for aid in &ekf_cfg.aiding {
         let handler = build_aiding_handler(instance_name, aid, agent, sensor_channels, registry)?;
-        external_channels.push(handler.channel().clone());
         aiding.push(handler);
     }
 
-    // If dynamics is IntegratedImu, declare the IMU predict-side channels
-    // as external too (accel + gyro Vec<SensorReading<_>>). Each must be a
-    // channel the host publishes, like an aiding input: otherwise the estimator
-    // would build, its predict inputs would never arrive, and it would never run.
+    // If dynamics is IntegratedImu, the IMU predict-side channels (accel + gyro
+    // Vec<SensorReading<_>>) must each be a channel the host publishes, like an
+    // aiding input: otherwise the estimator would build, its predict inputs would
+    // never arrive, and it would never run.
     if let EkfDynamicsConfig::IntegratedImu(imu_cfg) = &ekf_cfg.dynamics {
         for channel in [&imu_cfg.accel_channel, &imu_cfg.gyro_channel] {
             if !sensor_channels.contains(channel) {
@@ -56,11 +53,6 @@ pub(crate) fn assemble(
                 });
             }
         }
-        let builder = IntegratedImuInputBuilder::new(
-            imu_cfg.accel_channel.as_str(),
-            imu_cfg.gyro_channel.as_str(),
-        );
-        external_channels.extend_from_slice(builder.required_channels());
     }
 
     // Turn each declared augmentation into a schema block, tied to the same

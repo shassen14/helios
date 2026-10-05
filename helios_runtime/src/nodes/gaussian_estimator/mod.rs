@@ -24,7 +24,7 @@ mod node;
 mod register;
 
 pub(crate) use assemble::assemble;
-pub(crate) use input::{EstimatorInputBuilder, IntegratedImuInputBuilder};
+pub(crate) use input::EstimatorInputBuilder;
 pub(crate) use node::{AidingHandler, TypedAidingHandler};
 
 use crate::registry::AutonomyRegistry;

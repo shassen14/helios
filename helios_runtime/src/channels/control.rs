@@ -2,10 +2,10 @@
 //!
 //! Unlike the *pinned* oracle channels (a fixed name bound to one fixed type
 //! forever), a *command* role fixes the *name* but leaves the *type* to the
-//! morphology: "the command the arbiter reads" is `BodyTwist` for a ground
-//! vehicle and `Wrench` for a free-flyer. So [`autonomy`], [`teleop`], and
-//! [`command`] are generic over `T` — each binds a reserved role string to
-//! whatever payload type the caller's morphology uses.
+//! morphology: "the command the allocator reads" is `BodyTwist` for a ground
+//! vehicle and `Wrench` for a free-flyer. So [`command`] is generic over `T`:
+//! it binds a reserved role string to whatever payload type the caller's
+//! morphology uses.
 //!
 //! The *reference* roles ([`reference`], [`reference_autonomy`],
 //! [`reference_teleop`]) are the same shape one layer up, at the
@@ -35,35 +35,12 @@ use helios_core::control::actuators::ActuatorCommand;
 
 use crate::port::InternalChannel;
 
-const ROLE_AUTONOMY: &str = "autonomy";
-const ROLE_TELEOP: &str = "teleop";
 const ROLE_COMMAND: &str = "command";
 const ROLE_ACTUATORS: &str = "actuators";
 const ROLE_INTENT: &str = "intent";
 const ROLE_REFERENCE: &str = "reference";
 const ROLE_REFERENCE_AUTONOMY: &str = "reference.autonomy";
 const ROLE_REFERENCE_TELEOP: &str = "reference.teleop";
-
-/// The autonomy stack's command.
-///
-/// Plural role (Internal). Written by the controller node, read by the arbiter.
-pub fn autonomy<T>() -> InternalChannel
-where
-    T: 'static,
-{
-    InternalChannel::named::<T>(ROLE_AUTONOMY)
-}
-
-/// The human operator's command.
-///
-/// Plural role (Internal). Written by the host (keyboard / gamepad), read by
-/// the arbiter.
-pub fn teleop<T>() -> InternalChannel
-where
-    T: 'static,
-{
-    InternalChannel::named::<T>(ROLE_TELEOP)
-}
 
 /// The autonomy stack's guidance reference.
 ///
@@ -104,8 +81,9 @@ where
 
 /// The command the downstream consumer reads.
 ///
-/// Plural role (Internal). Written by the arbiter (or a lone command source),
-/// read by the allocator, which converts it into the [`actuators`] terminal.
+/// Plural role (Internal). Written by the command-space `Sum` fold (or a lone
+/// controller), read by the allocator, which converts it into the
+/// [`actuators`] terminal.
 pub fn command<T>() -> InternalChannel
 where
     T: 'static,
@@ -128,11 +106,11 @@ pub fn actuators() -> InternalChannel {
 /// The operator's raw motion intent, before scaling or framing.
 ///
 /// Plural role (Internal). Written by the host as dimensionless per-axis
-/// deflection, read by the teleop mapper node, which scales it into a command
-/// `T`. Generic for the same reason the command roles are: the role fixes the
-/// name, the payload follows the morphology — `TwistIntent` for a velocity body,
-/// a future `SurfaceIntent` for a plane — never the command type itself, so it
-/// stays distinct from [`teleop`] on the same payload.
+/// deflection, read by the teleop mapper node, which scales it into a guidance
+/// reference. Generic for the same reason the other roles are: the role fixes
+/// the name, the payload follows the morphology — `TwistIntent` for a velocity
+/// body, a future `SurfaceIntent` for a plane — never the reference type
+/// itself, so it stays distinct from [`reference_teleop`] on the same payload.
 pub fn intent<T: 'static>() -> InternalChannel {
     InternalChannel::named::<T>(ROLE_INTENT)
 }
@@ -147,7 +125,7 @@ mod tests {
 
     #[test]
     fn roles_are_internal_kind() {
-        let key: ChannelKey = autonomy::<BodyTwist>().into();
+        let key: ChannelKey = command::<BodyTwist>().into();
         assert_eq!(key.kind(), ChannelKind::Internal);
         let terminal: ChannelKey = actuators().into();
         assert_eq!(terminal.kind(), ChannelKind::Internal);
@@ -166,12 +144,10 @@ mod tests {
 
     #[test]
     fn distinct_roles_are_distinct_channels() {
-        assert_ne!(autonomy::<BodyTwist>(), teleop::<BodyTwist>());
-        assert_ne!(teleop::<BodyTwist>(), command::<BodyTwist>());
-        assert_ne!(autonomy::<BodyTwist>(), command::<BodyTwist>());
-        // Intent is the host's pre-scaling ingress, never a command role: it must
-        // not collide with `teleop` even when both carry the same payload type.
-        assert_ne!(intent::<BodyTwist>(), teleop::<BodyTwist>());
+        // Intent is the host's pre-scaling ingress, never a seam role: it must not
+        // collide with the teleop contender or the command, even when they carry
+        // the same payload type.
+        assert_ne!(intent::<BodyTwist>(), reference_teleop::<BodyTwist>());
         assert_ne!(intent::<BodyTwist>(), command::<BodyTwist>());
     }
 
@@ -188,8 +164,6 @@ mod tests {
             reference_teleop::<BodyTwist>()
         );
         assert_ne!(reference::<BodyTwist>(), command::<BodyTwist>());
-        assert_ne!(reference_autonomy::<BodyTwist>(), autonomy::<BodyTwist>());
-        assert_ne!(reference_teleop::<BodyTwist>(), teleop::<BodyTwist>());
     }
 
     #[test]

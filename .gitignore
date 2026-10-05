@@ -1,4 +1,8 @@
 target/
 
+*.json
+memory/
+CLAUDE.md
+
 # Blender save backups
 *.blend1
