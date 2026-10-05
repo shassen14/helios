@@ -15,10 +15,11 @@ use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::config::ReferenceSource;
 use helios_runtime::tf_service::TfService;
 use helios_runtime::{
-    build_pipeline, check_actuation_agreement, AutonomyStack, BodyCapabilities, Provenance,
+    build_pipeline, check_actuation_agreement, BodyCapabilities, ChannelKey, Provenance,
     PublishedChannel,
 };
 
+use std::any::TypeId;
 use std::collections::{BTreeSet, HashSet};
 
 /// Spawns the autonomy pipeline for agents with real estimation.
@@ -70,10 +71,6 @@ pub fn spawn_autonomy_pipeline(
 
         let host_capabilities = build_host_body_capabilities(agent_config.name());
 
-        // The distinct channels this agent's planners read their goal from; a
-        // mission goal fans out to each. Empty when the stack has no planner.
-        let goal_channels = mission_goal_channels(stack);
-
         match build_pipeline(
             stack,
             &registry.0,
@@ -93,6 +90,10 @@ pub fn spawn_autonomy_pipeline(
                 // never the sim's truth tree.
                 let window = stack.tf.to_window();
                 let drain_keys = pipeline.tf_edge_channels();
+                // The distinct channels this agent's planners read their goal
+                // from; a mission goal fans out to each. Empty when no node
+                // declares a goal input.
+                let goal_channels = mission_goal_channels(pipeline.outside_inputs());
                 let static_seeds = build_static_seeds(agent_config, &agent);
 
                 let mut cmds = commands.entity(agent_entity);
@@ -243,17 +244,18 @@ fn build_host_body_capabilities(agent_name: &str) -> BodyCapabilities {
     }
 }
 
-/// The set of channels the stack's planners read their goals from.
+/// The channels a built pipeline expects a [`PlannerGoal`] on from outside,
+/// read from its declared outside inputs.
 ///
 /// A `BTreeSet` so planners sharing a channel (the common case: all on the
 /// default `"mission"`) fold to one entry, and the order is stable across runs —
 /// which the resolved-config dump and determinism hashing will want. Empty when
-/// the stack declares no planner, so there is nowhere for a goal to go.
-fn mission_goal_channels(stack: &AutonomyStack) -> BTreeSet<String> {
-    stack
-        .search_planners
-        .values()
-        .map(|p| p.get_goal_channel().to_string())
+/// no node declares a goal input, so there is nowhere for a goal to go.
+fn mission_goal_channels(outside_inputs: &[ChannelKey]) -> BTreeSet<String> {
+    outside_inputs
+        .iter()
+        .filter(|key| key.type_id() == TypeId::of::<PlannerGoal>())
+        .map(|key| key.instance().to_string())
         .collect()
 }
 
@@ -261,70 +263,59 @@ fn mission_goal_channels(stack: &AutonomyStack) -> BTreeSet<String> {
 mod tests {
     use super::*;
 
-    use helios_runtime::config::SearchPlannerConfig;
-    use helios_runtime::ChannelKey;
+    use helios_core::control::commands::TwistIntent;
+    use helios_runtime::channels::control::intent;
+    use helios_runtime::port::InternalChannel;
 
-    use std::collections::HashMap;
-
-    /// A minimal `AStar` planner whose only field that matters here is its goal
-    /// channel — the rest are defaults, present only because the variant requires
-    /// them.
-    fn astar_with_goal(goal_channel: &str) -> SearchPlannerConfig {
-        SearchPlannerConfig::AStar {
-            rate: 5.0,
-            arrival_tolerance_m: 1.5,
-            occupancy_threshold: 180,
-            max_search_depth: 50_000,
-            enable_path_smoothing: false,
-            replan_on_path_deviation: false,
-            deviation_tolerance_m: 3.0,
-            level: "local".to_string(),
-            goal_channel: goal_channel.to_string(),
-        }
+    /// A goal input keyed the way a planner declares it: a `PlannerGoal` on the
+    /// named channel.
+    fn goal_key(goal_channel: &str) -> ChannelKey {
+        InternalChannel::named::<PlannerGoal>(goal_channel).into()
     }
 
-    /// Every planner's goal channel is collected — the mission goal fans out to
-    /// all of them, not just the first planner found.
+    /// Every goal input's channel is collected — the mission goal fans out to
+    /// all of them, not just the first one found.
     #[test]
-    fn distinct_goal_channels_from_all_planners_are_collected() {
-        let stack = AutonomyStack {
-            search_planners: HashMap::from([
-                ("primary".to_string(), astar_with_goal("mission")),
-                ("secondary".to_string(), astar_with_goal("waypoints")),
-            ]),
-            ..Default::default()
-        };
+    fn distinct_goal_channels_are_collected() {
+        let outside_inputs = [goal_key("mission"), goal_key("waypoints")];
 
         assert_eq!(
-            mission_goal_channels(&stack),
+            mission_goal_channels(&outside_inputs),
             BTreeSet::from(["mission".to_string(), "waypoints".to_string()]),
         );
     }
 
-    /// Planners sharing a channel (the common case: both on the default
-    /// `"mission"`) fold to a single entry, so the host writes the goal once, not
-    /// once per planner.
+    /// Goal inputs sharing a channel (the common case: planners all on the
+    /// default `"mission"`) fold to a single entry, so the host writes the goal
+    /// once, not once per planner.
     #[test]
-    fn planners_sharing_a_goal_channel_are_deduped() {
-        let stack = AutonomyStack {
-            search_planners: HashMap::from([
-                ("primary".to_string(), astar_with_goal("mission")),
-                ("backup".to_string(), astar_with_goal("mission")),
-            ]),
-            ..Default::default()
-        };
+    fn goal_inputs_sharing_a_channel_are_deduped() {
+        let outside_inputs = [goal_key("mission"), goal_key("mission")];
 
-        let channels = mission_goal_channels(&stack);
+        let channels = mission_goal_channels(&outside_inputs);
 
         assert_eq!(channels.len(), 1);
         assert!(channels.contains("mission"));
     }
 
-    /// A stack with no planner has nowhere for a goal to go, so the set is empty —
-    /// which is what lets `spawn_autonomy_pipeline` skip stamping the component.
+    /// With no goal input there is nowhere for a goal to go, so the set is
+    /// empty — which is what lets `spawn_autonomy_pipeline` skip stamping the
+    /// component.
     #[test]
-    fn a_stack_with_no_planner_yields_no_channels() {
-        assert!(mission_goal_channels(&AutonomyStack::default()).is_empty());
+    fn no_goal_inputs_yields_no_channels() {
+        assert!(mission_goal_channels(&[]).is_empty());
+    }
+
+    /// Outside inputs of other types (teleop intent here) are not goal
+    /// channels; only `PlannerGoal` keys are collected.
+    #[test]
+    fn other_outside_inputs_are_ignored() {
+        let outside_inputs = [intent::<TwistIntent>().into(), goal_key("mission")];
+
+        assert_eq!(
+            mission_goal_channels(&outside_inputs),
+            BTreeSet::from(["mission".to_string()]),
+        );
     }
 
     #[test]
