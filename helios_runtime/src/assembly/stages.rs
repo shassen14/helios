@@ -1,8 +1,8 @@
-//! Config-driven pipeline assembler.
+//! The stack-to-pipeline stages behind [`build_pipeline`].
 //!
 //! [`build_pipeline`] is the single entry point: given a fully-resolved
 //! [`AutonomyStack`] and an [`AutonomyRegistry`], it constructs every
-//! [`PipelineNode`], declares sensor signal channels, validates the graph, and
+//! [`PipelineNode`](crate::pipeline::node::PipelineNode), declares sensor signal channels, validates the graph, and
 //! returns a ready-to-tick [`AutonomyPipeline`].
 //!
 //! ## What the host provides
@@ -15,7 +15,7 @@
 //!   on hardware.
 //! - `sensor_channels` — the set of sensor channel names the host actually
 //!   publishes for this agent. Each channel name is also the leaf of the
-//!   sensor's [`FrameId`] (`FrameId::sensor(agent, channel_name)`), so an aiding
+//!   sensor's [`FrameId`](helios_core::spatial::FrameId) (`FrameId::sensor(agent, channel_name)`), so an aiding
 //!   or augmentation entry that names a channel the host does not provide is
 //!   rejected at build time rather than silently failing to resolve at tick time.
 //! - `host_capabilities` — the body as the host describes it: its name and
@@ -39,7 +39,7 @@
 //!
 //! Aiding handler construction requires a concrete `T: SensorPayload` at
 //! compile time. The assembler matches the `sensor_payload` string from
-//! [`AidingConfig`] to one of the known implementors via an inline `match`.
+//! [`AidingConfig`](crate::config::AidingConfig) to one of the known implementors via an inline `match`.
 //! This list must stay in sync with `KNOWN_SENSOR_PAYLOADS` in `validation.rs`
 //! and with the `SensorPayload` impls in `helios_core::interchange::measurement::sensor`.
 //!
@@ -47,16 +47,18 @@
 //! promoted to a registry family (`register_aiding_handler_factory`). For the
 //! current set of five built-in types, the inline match is sufficient.
 
-mod command;
-mod error;
-mod preprocessing;
-
-pub use self::error::PipelineAssemblyError;
-
-use self::command::{
+use super::command::{
     command_sum_node_name, selector_policy, REFERENCE_ARBITER_NODE, TELEOP_MAPPER_NODE,
 };
-use self::preprocessing::build_preprocessing_node;
+use super::contexts::{
+    AllocatorBuildContext, ControllerBuildContext, MapperBuildContext, MockEstimatorBuildContext,
+    PathFollowerBuildContext, SearchPlannerBuildContext,
+};
+use super::error::PipelineAssemblyError;
+use super::preprocessing::build_preprocessing_node;
+use super::registry::AutonomyRegistry;
+use super::sensor_inputs::SensorInputs;
+
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
 use crate::config::TeleopMapperConfig;
@@ -67,15 +69,9 @@ use crate::nodes::gaussian_estimator;
 use crate::nodes::path_follower;
 use crate::nodes::planner::DefaultSearchPlannerInputBuilder;
 use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
-use crate::pipeline::node::PipelineNode;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
-use crate::port::{ChannelKey, InputPort, InternalChannel};
-use crate::registry::contexts::{
-    AllocatorBuildContext, ControllerBuildContext, MapperBuildContext, MockEstimatorBuildContext,
-    PathFollowerBuildContext, SearchPlannerBuildContext,
-};
-use crate::registry::AutonomyRegistry;
+use crate::port::{ChannelKey, InternalChannel};
 
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
@@ -92,7 +88,7 @@ use std::ops::Add;
 /// identity for observability, so a referenced const like the command-seam node
 /// names; `build_pipeline` here is its sole synthesizer. It names the actuator
 /// terminal rather than the command seam, so it lives here, not in
-/// [`self::command`] with the fold and arbiter names.
+/// [`super::command`] with the fold and arbiter names.
 const ACTUATOR_MERGE_NODE: &str = "actuator_merge";
 
 /// Builds a fully-validated [`AutonomyPipeline`] from a resolved [`AutonomyStack`].
@@ -476,57 +472,6 @@ pub fn build_pipeline(
         .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
 }
 
-// --- Internals ---
-
-/// Where a node's sensor inputs may come from: channels the host publishes, and
-/// channels a preprocessing node derives inside the graph.
-struct SensorInputs<'a> {
-    host: &'a HashSet<String>,
-    derived: &'a HashSet<ChannelKey>,
-}
-
-impl SensorInputs<'_> {
-    /// Records a node's host-published sensor inputs as external, so they seed
-    /// the topological sort, and reports any sensor input with no source.
-    ///
-    /// Every sensor input is checked, required and optional alike: an optional
-    /// input on a channel nobody publishes fails the same silent way, its slot
-    /// never filled and the node never using it.
-    ///
-    /// Only host channels are seeded. An internal input, or a sensor input a
-    /// preprocessing node derives, must be produced inside the graph: seeding
-    /// it would hide a missing producer, and would let the consumer become
-    /// ready in the same level as its producer, leaving their order within a
-    /// tick arbitrary. A sensor input that is neither host-published nor
-    /// derived is an [`UnpublishedSensorInput`](PipelineAssemblyError::UnpublishedSensorInput):
-    /// without the check the node builds, its slot stays empty, and it silently
-    /// never works.
-    fn seed(
-        &self,
-        node: &dyn PipelineNode,
-        external_channels: &mut Vec<ChannelKey>,
-        errors: &mut Vec<PipelineAssemblyError>,
-    ) {
-        let sensor_inputs = node
-            .port_descriptor()
-            .inputs()
-            .map(InputPort::channel)
-            .filter(|key| matches!(key, ChannelKey::Sensor(_)))
-            .filter(|key| !self.derived.contains(*key));
-
-        for key in sensor_inputs {
-            if self.host.contains(key.instance().as_ref()) {
-                external_channels.push(key.clone());
-            } else {
-                errors.push(PipelineAssemblyError::UnpublishedSensorInput {
-                    node_name: node.name().to_string(),
-                    channel: key.instance().to_string(),
-                });
-            }
-        }
-    }
-}
-
 /// Wires the body-twist command terminal for a coupled morphology: one command
 /// space fed directly by the autonomy controllers. This serves a body-twist
 /// allocator and every no-sum-space stack (pure-perception, controllers without
@@ -652,7 +597,8 @@ fn build_estimator_node(
     // Dispatch on estimator family. Each family owns a different build
     // context shape (Gaussian needs aiding handlers; mock needs none;
     // particle will need particle-count / resampling). Adding a new
-    // family means a new `registry/<family>.rs` and a new arm here.
+    // family means a new factory map in the registry, a new context in
+    // `contexts.rs`, and a new arm here.
     match est_cfg {
         EstimatorConfig::Ekf(ekf_cfg) => gaussian_estimator::assemble(
             instance_name,
@@ -684,81 +630,5 @@ fn build_estimator_node(
                     reason,
                 })
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::pipeline::node::TickContext;
-    use crate::port::{AlgorithmNodePortDescriptor, PortBus, PortDescriptor, SensorChannel};
-
-    use helios_core::prelude::TfProvider;
-
-    /// A node that only declares ports; `seed` reads nothing else.
-    struct PortsOnlyNode {
-        descriptor: PortDescriptor,
-    }
-
-    impl PipelineNode for PortsOnlyNode {
-        fn name(&self) -> &str {
-            "reader"
-        }
-
-        fn port_descriptor(&self) -> &PortDescriptor {
-            &self.descriptor
-        }
-
-        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
-    }
-
-    fn optional_sensor_reader(channel: &str) -> PortsOnlyNode {
-        PortsOnlyNode {
-            descriptor: AlgorithmNodePortDescriptor::new()
-                .optional_sensor(SensorChannel::named::<f64>(channel))
-                .build(),
-        }
-    }
-
-    /// An optional sensor input on a channel the host publishes is seeded like a
-    /// required one, so the build counts it as supplied.
-    #[test]
-    fn optional_input_on_a_host_channel_is_seeded() {
-        let host = HashSet::from(["gps".to_string()]);
-        let derived = HashSet::new();
-        let sensor_inputs = SensorInputs { host: &host, derived: &derived };
-        let mut external_channels = vec![];
-        let mut errors = vec![];
-
-        sensor_inputs.seed(&optional_sensor_reader("gps"), &mut external_channels, &mut errors);
-
-        assert!(errors.is_empty(), "unexpected errors: {errors:?}");
-        assert_eq!(
-            external_channels,
-            vec![ChannelKey::from(SensorChannel::named::<f64>("gps"))]
-        );
-    }
-
-    /// An optional sensor input nobody publishes would build with its slot
-    /// never filled, so it is reported just as a required one is.
-    #[test]
-    fn optional_input_on_an_unpublished_channel_is_reported() {
-        let host = HashSet::new();
-        let derived = HashSet::new();
-        let sensor_inputs = SensorInputs { host: &host, derived: &derived };
-        let mut external_channels = vec![];
-        let mut errors = vec![];
-
-        sensor_inputs.seed(&optional_sensor_reader("gps.typo"), &mut external_channels, &mut errors);
-
-        assert!(external_channels.is_empty());
-        assert!(
-            errors.iter().any(|e| matches!(
-                e,
-                PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
-                    if node_name == "reader" && channel == "gps.typo"
-            )),
-            "expected UnpublishedSensorInput for `reader` / `gps.typo`, got {errors:?}"
-        );
     }
 }

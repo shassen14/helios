@@ -8,10 +8,10 @@ use helios_core::spatial::conventions::Flu;
 
 use super::node::OccupancyGridNode;
 
+use crate::assembly::{contexts::MapperBuildContext, AutonomyRegistry};
 use crate::config::{MapLayerConfig, NO_MAPPER_KIND, OCCUPANCY_GRID_2D_KIND};
 use crate::pipeline::node::PipelineNode;
 use crate::port::{InternalChannel, SensorChannel};
-use crate::registry::{contexts::MapperBuildContext, AutonomyRegistry};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_mapper(OCCUPANCY_GRID_2D_KIND, build_occupancy_grid_2d);

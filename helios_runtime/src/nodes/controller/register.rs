@@ -3,12 +3,12 @@
 use super::input::DefaultControlInputBuilder;
 use super::node::ControllerNode;
 
+use crate::assembly::{contexts::ControllerBuildContext, AutonomyRegistry};
 use crate::config::{
     ControllerConfig, BICYCLE_STEER_KIND, DIRECT_TWIST_KIND, LONGITUDINAL_VELOCITY_KIND,
     ROAD_LOAD_KIND,
 };
 use crate::pipeline::node::PipelineNode;
-use crate::registry::{contexts::ControllerBuildContext, AutonomyRegistry};
 
 use helios_core::control::controllers::direct_twist::DirectTwistController;
 use helios_core::control::controllers::feedback::longitudinal_velocity::LongitudinalVelocityController;

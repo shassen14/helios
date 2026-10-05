@@ -20,17 +20,14 @@
 //! registry.register_controller("MyPid", my_factory);
 //! ```
 
-pub mod contexts;
-
-use contexts::{
-    ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
-    MeasurementModelBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
-    SearchPlannerBuildContext,
+use super::contexts::{
+    AllocatorBuildContext, ControllerBuildContext, GaussianEstimatorBuildContext,
+    MapperBuildContext, MeasurementModelBuildContext, MockEstimatorBuildContext,
+    PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 
 use crate::config::EstimatorConfig;
 use crate::pipeline::node::PipelineNode;
-use crate::registry::contexts::AllocatorBuildContext;
 use crate::validation::CapabilitySet;
 
 use helios_core::estimation::measurement::MeasurementModel;

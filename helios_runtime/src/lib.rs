@@ -4,7 +4,7 @@
 //! identically in simulation and on hardware. Key types: `AutonomyPipeline`,
 //! `PipelineBuilder`, `PipelineNode`, `PortBus`.
 
-pub mod assembler;
+pub mod assembly;
 pub mod body;
 pub mod channels;
 pub mod config;
@@ -13,7 +13,6 @@ pub mod nodes;
 pub mod pipeline;
 pub mod port;
 pub mod prelude;
-pub mod registry;
 pub mod stamped;
 pub mod tf_service;
 pub mod validation;
@@ -30,16 +29,15 @@ pub use crate::port::{
 };
 pub use crate::stamped::{Health, Stamped};
 
-pub use crate::assembler::{build_pipeline, PipelineAssemblyError};
+pub use crate::assembly::contexts::{
+    ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
+    MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
+};
+pub use crate::assembly::{build_pipeline, AutonomyRegistry, PipelineAssemblyError};
 pub use crate::config::{
     AckermannProcessNoiseConfig, AgentBaseConfig, AidingConfig, AutonomyStack, ControllerConfig,
     EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
     MapLayerConfig, MapperPoseSourceConfig, QuadcopterProcessNoiseConfig, SearchPlannerConfig,
     SensorModelConfig, UkfConfig,
 };
-pub use crate::registry::contexts::{
-    ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
-    MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
-};
-pub use crate::registry::AutonomyRegistry;
 pub use crate::validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError};

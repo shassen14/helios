@@ -27,7 +27,7 @@ pub(crate) use assemble::assemble;
 pub(crate) use input::EstimatorInputBuilder;
 pub(crate) use node::{AidingHandler, TypedAidingHandler};
 
-use crate::registry::AutonomyRegistry;
+use crate::assembly::AutonomyRegistry;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     measurement::register(registry);

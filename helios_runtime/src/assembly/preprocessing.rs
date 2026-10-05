@@ -1,5 +1,4 @@
-//! Preprocessing assembly: turns each `[preprocessing.<name>]` entry into the
-//! node that implements its kind.
+//! Preprocessing assembly: turns each `[preprocessing.<name>]` entry into the node that implements its kind.
 //!
 //! Dispatch is an exhaustive match rather than a registry lookup. These nodes
 //! are runtime-native plumbing with no swappable core algorithm behind them, and

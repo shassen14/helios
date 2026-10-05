@@ -3,9 +3,9 @@
 use super::input::DefaultPathFollowerInputBuilder;
 use super::node::PathFollowerNode;
 
+use crate::assembly::{contexts::PathFollowerBuildContext, AutonomyRegistry};
 use crate::config::{PathFollowingConfig, PURE_PURSUIT_KIND, STEERING_PID_KIND};
 use crate::pipeline::node::PipelineNode;
-use crate::registry::{contexts::PathFollowerBuildContext, AutonomyRegistry};
 
 use helios_core::control::BodyTwistRef;
 use helios_core::following::{

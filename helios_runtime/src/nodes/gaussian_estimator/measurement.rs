@@ -13,7 +13,7 @@ use helios_core::estimation::measurement::{
 };
 use nalgebra::Vector3;
 
-use crate::registry::{contexts::MeasurementModelBuildContext, AutonomyRegistry};
+use crate::assembly::{contexts::MeasurementModelBuildContext, AutonomyRegistry};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_measurement_model("gps_position", build_gps_position);

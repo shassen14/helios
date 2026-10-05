@@ -3,10 +3,10 @@
 use super::input::IntegratedImuInputBuilder;
 use super::node::GaussianEstimatorNode;
 
+use crate::assembly::{contexts::GaussianEstimatorBuildContext, AutonomyRegistry};
 use crate::config::{EkfDynamicsConfig, EstimatorConfig, EKF_KIND, UKF_KIND};
 use crate::nodes::gaussian_estimator::EstimatorInputBuilder;
 use crate::pipeline::node::PipelineNode;
-use crate::registry::{contexts::GaussianEstimatorBuildContext, AutonomyRegistry};
 
 use helios_core::estimation::dynamics::integrated_imu::{
     ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,

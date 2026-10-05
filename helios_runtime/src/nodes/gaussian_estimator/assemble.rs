@@ -3,11 +3,11 @@
 //! sensor channels exist, then hands them to the registry factory.
 
 use super::{AidingHandler, TypedAidingHandler};
+use crate::assembly::contexts::{GaussianEstimatorBuildContext, MeasurementModelBuildContext};
+use crate::assembly::AutonomyRegistry;
 use crate::config::{AidingConfig, EkfConfig, EkfDynamicsConfig, EstimatorConfig};
 use crate::pipeline::node::PipelineNode;
 use crate::port::SensorChannel;
-use crate::registry::contexts::{GaussianEstimatorBuildContext, MeasurementModelBuildContext};
-use crate::registry::AutonomyRegistry;
 use crate::PipelineAssemblyError;
 
 use helios_core::estimation::augmentation::augmentation_block;

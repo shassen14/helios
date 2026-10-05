@@ -3,9 +3,9 @@
 use super::input::DefaultSearchPlannerInputBuilder;
 use super::node::SearchPlannerNode;
 
+use crate::assembly::{contexts::SearchPlannerBuildContext, AutonomyRegistry};
 use crate::config::{SearchPlannerConfig, ASTAR_KIND};
 use crate::pipeline::node::PipelineNode;
-use crate::registry::{contexts::SearchPlannerBuildContext, AutonomyRegistry};
 
 use helios_core::planning::search::astar::{AStarConfig, AStarPlanner};
 use helios_core::planning::SearchPlanner;

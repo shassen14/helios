@@ -5,7 +5,7 @@
 //! trait), optionally `input` (bus-input assembly), and `register` (factories
 //! keyed by config `kind`), behind a `mod.rs` front-door that keeps the
 //! submodules private and re-exports only what crosses the boundary — usually
-//! just the `register` fn the [`AutonomyRegistry`](crate::registry) calls.
+//! just the `register` fn the [`AutonomyRegistry`](crate::assembly::AutonomyRegistry) calls.
 //!
 //! One node type per family: the node is generic over the family trait object,
 //! so `GaussianEstimatorNode` wraps any `Box<dyn GaussianStateEstimator>` (EKF,

@@ -1,7 +1,7 @@
 use crate::{
+    assembly::contexts::AllocatorBuildContext,
     config::{AllocatorConfig, STEER_POSITION_KIND, WHEEL_TORQUE_KIND},
     nodes::allocator::node::AllocatorNode,
-    registry::contexts::AllocatorBuildContext,
     AutonomyRegistry, PipelineNode,
 };
 
