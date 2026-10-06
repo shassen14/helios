@@ -24,7 +24,7 @@
 //!   `host_capabilities.publishes` before handing the merged value to
 //!   [`PipelineBuilder::with_body_capabilities`]. Only host-published sensor
 //!   inputs are appended; an internal input, or a sensor channel a
-//!   preprocessing node derives, must be produced inside the graph, so a
+//!   node derives, must be produced inside the graph, so a
 //!   missing producer still fails the build.
 //!
 //! Inputs an operator or mission system sends — each planner's goal, and the
@@ -55,9 +55,10 @@ use super::contexts::{
     PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 use super::error::PipelineAssemblyError;
+use super::instantiate::instantiate;
 use super::preprocessing::build_preprocessing_node;
 use super::registry::AutonomyRegistry;
-use super::sensor_inputs::SensorInputs;
+use super::sensor_inputs::{derived_channels, SensorInputs};
 
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
@@ -69,8 +70,8 @@ use crate::nodes::gaussian_estimator;
 use crate::nodes::path_follower;
 use crate::nodes::planner::DefaultSearchPlannerInputBuilder;
 use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
-use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
+use crate::pipeline::AutonomyPipeline;
 use crate::port::{ChannelKey, InternalChannel};
 
 use helios_core::control::actuators::ActuatorCommand;
@@ -140,33 +141,28 @@ pub fn build_pipeline(
     // the body's channels.
     let mut outside_inputs: Vec<ChannelKey> = vec![];
 
-    // --- Preprocessing ---
-    // Measurement-to-measurement nodes (e.g. a range field flattened to a point
-    // cloud). They read sensor channels and write derived sensor channels, which
-    // consumers read exactly as they read host channels. Every node is built
-    // before any input is seeded, so the derived set is complete even when one
-    // preprocessing node reads another's output.
-    let mut preprocessing_nodes = Vec::with_capacity(stack.preprocessing.len());
-    let mut derived_channels: HashSet<ChannelKey> = HashSet::new();
+    // --- Nodes and preprocessing ---
+    // Every `[nodes]` entry and every preprocessing node (e.g. a range field
+    // flattened to a point cloud). A sensor channel one of them writes is a
+    // derived channel, which consumers read exactly as they read host channels.
+    // All of them are built before any input is seeded, so the derived set is
+    // complete even when one node reads another's output. A failure here
+    // returns at once: with the derived set incomplete, every consumer of a
+    // missing channel would report a misleading unpublished input.
+    let mut early_nodes = instantiate(stack, registry, &agent, sensor_channels)?;
+
     for (name, config) in &stack.preprocessing {
-        let output = config.output_channel();
-        if sensor_channels.contains(output) {
-            errors.push(PipelineAssemblyError::PreprocessingOutputShadowsSensor {
-                node_name: name.clone(),
-                node_kind: config.get_kind_str().to_string(),
-                channel: output.to_string(),
-            });
-            continue;
-        }
-        let node = build_preprocessing_node(name, config);
-        derived_channels.extend(node.port_descriptor().outputs().iter().cloned());
-        preprocessing_nodes.push(node);
+        early_nodes.push(build_preprocessing_node(name, config));
     }
+
+    let derived = derived_channels(&early_nodes, sensor_channels)?;
+
     let sensor_inputs = SensorInputs {
         host: sensor_channels,
-        derived: &derived_channels,
+        derived: &derived,
     };
-    for node in preprocessing_nodes {
+
+    for node in early_nodes {
         sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
         builder = builder.add_node(node);
     }

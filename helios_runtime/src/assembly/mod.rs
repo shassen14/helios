@@ -9,6 +9,8 @@
 //!   [`DuplicateKind`].
 //! - `factory` — [`BuildContext`], [`FactoryOutput`] and [`FactoryError`]: the
 //!   interface every node-kind factory shares.
+//! - `instantiate` — builds every `[nodes]` entry through the factory
+//!   registered for its kind.
 //! - `contexts` — what each family's factory receives.
 //! - `command` — node names and policy for the command and reference seams.
 //! - `preprocessing` — builds preprocessing nodes from their config.
@@ -21,6 +23,7 @@ mod command;
 pub mod contexts;
 mod error;
 mod factory;
+mod instantiate;
 mod preprocessing;
 mod registry;
 mod sensor_inputs;

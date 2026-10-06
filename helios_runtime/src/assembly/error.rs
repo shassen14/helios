@@ -38,19 +38,15 @@ pub enum PipelineAssemblyError {
         reason: String,
     },
     /// A node reads a sensor channel that neither the host publishes
-    /// (absent from `sensor_channels`) nor any preprocessing node derives, so
+    /// (absent from `sensor_channels`) nor any node in the graph derives, so
     /// its slot would stay empty forever and the node would silently never run
     /// its work.
     UnpublishedSensorInput { node_name: String, channel: String },
-    /// A preprocessing node's `output` reuses the name of a channel the host
+    /// Node `node_name` writes a sensor channel under the name of one the host
     /// publishes. Both are sensor channels, so a same-typed output would share
     /// the host's slot; even differently typed, one name for two channels
     /// misleads anyone reading the graph.
-    PreprocessingOutputShadowsSensor {
-        node_name: String,
-        node_kind: String,
-        channel: String,
-    },
+    SensorOutputShadowsHost { node_name: String, channel: String },
     /// `path_following` is present but no planner was configured to produce a
     /// path, and no explicit `path_source` was given.
     NoPathSourceForFollower,
@@ -67,6 +63,17 @@ pub enum PipelineAssemblyError {
     /// A node kind's factory rejected its config section or failed to build.
     /// The wrapped error names the node, the kind and the cause.
     Factory(FactoryError),
+    /// Node `node_name`'s table has no `kind`, or its `kind` is not a string,
+    /// so there is no factory to look up.
+    MissingNodeKind { node_name: String },
+    /// The factory for node `node_name` built a node named `built_name`. A
+    /// node's name is its table key, since errors and wiring refer to it by
+    /// that name; a factory that picks another is a bug in the factory.
+    NodeNameMismatch {
+        node_name: String,
+        kind: String,
+        built_name: String,
+    },
 }
 
 impl std::fmt::Display for PipelineAssemblyError {
@@ -125,17 +132,13 @@ impl std::fmt::Display for PipelineAssemblyError {
             PipelineAssemblyError::UnpublishedSensorInput { node_name, channel } => {
                 write!(
                     f,
-                    "node '{node_name}' reads sensor channel '{channel}', which the host does not publish and no preprocessing node produces"
+                    "node '{node_name}' reads sensor channel '{channel}', which the host does not publish and no node produces"
                 )
             }
-            PipelineAssemblyError::PreprocessingOutputShadowsSensor {
-                node_name,
-                node_kind,
-                channel,
-            } => {
+            PipelineAssemblyError::SensorOutputShadowsHost { node_name, channel } => {
                 write!(
                     f,
-                    "{node_kind} preprocessing node '{node_name}' writes '{channel}', which is already a host sensor channel; give the output its own name"
+                    "node '{node_name}' writes sensor channel '{channel}', which is already a host sensor channel; give the output its own name"
                 )
             }
             PipelineAssemblyError::NoPathSourceForFollower => {
@@ -160,6 +163,18 @@ impl std::fmt::Display for PipelineAssemblyError {
                 )
             }
             PipelineAssemblyError::Factory(err) => write!(f, "{err}"),
+            PipelineAssemblyError::MissingNodeKind { node_name } => write!(
+                f,
+                "nodes.{node_name}: needs a string 'kind' naming which node kind to build"
+            ),
+            PipelineAssemblyError::NodeNameMismatch {
+                node_name,
+                kind,
+                built_name,
+            } => write!(
+                f,
+                "nodes.{node_name}: the '{kind}' factory named its node '{built_name}'; a factory must name the node after its table key"
+            ),
         }
     }
 }

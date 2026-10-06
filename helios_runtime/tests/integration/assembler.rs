@@ -1160,10 +1160,10 @@ fn preprocessing_output_reusing_a_host_channel_name_fails_the_build() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            PipelineAssemblyError::PreprocessingOutputShadowsSensor { node_name, channel, .. }
+            PipelineAssemblyError::SensorOutputShadowsHost { node_name, channel }
                 if node_name == "front_deproject" && channel == "lidar"
         )),
-        "expected PreprocessingOutputShadowsSensor for `front_deproject`, got {errors:?}"
+        "expected SensorOutputShadowsHost for `front_deproject`, got {errors:?}"
     );
 }
 
@@ -1313,7 +1313,11 @@ fn estimator_aided_by_a_host_channel_builds() {
         perception_body(),
     );
 
-    assert!(result.is_ok(), "expected the aided EKF to build, got {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected the aided EKF to build, got {:?}",
+        result.err()
+    );
 }
 
 #[test]

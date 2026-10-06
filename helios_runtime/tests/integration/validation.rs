@@ -223,6 +223,7 @@ fn validation_valid_full_stack_passes() {
     estimators.insert("primary".to_string(), ekf_config());
 
     let stack = AutonomyStack {
+        nodes: Default::default(),
         estimators,
         preprocessing: Default::default(),
         map_layers,
