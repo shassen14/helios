@@ -34,7 +34,7 @@ pub use crate::assembly::contexts::{
     MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 pub use crate::assembly::{
-    build_pipeline, AutonomyRegistry, BuildContext, FactoryError, FactoryOutput,
+    build_pipeline, AutonomyRegistry, BuildContext, DuplicateKind, FactoryError, FactoryOutput,
     PipelineAssemblyError,
 };
 pub use crate::config::{

@@ -1,5 +1,7 @@
 //! Errors surfaced while assembling a pipeline from config.
 
+use super::factory::FactoryError;
+
 use crate::pipeline::PipelineBuildError;
 use crate::validation::ConfigValidationError;
 
@@ -55,6 +57,16 @@ pub enum PipelineAssemblyError {
     /// `path_following` names a `path_source` planner key that does not exist
     /// in `search_planners`.
     UnknownPathSource { path_source: String },
+    /// The `kind` of node `node_name` matches no registered factory.
+    /// `registered` lists the kinds that do exist, sorted.
+    UnknownNodeKind {
+        node_name: String,
+        kind: String,
+        registered: Vec<String>,
+    },
+    /// A node kind's factory rejected its config section or failed to build.
+    /// The wrapped error names the node, the kind and the cause.
+    Factory(FactoryError),
 }
 
 impl std::fmt::Display for PipelineAssemblyError {
@@ -132,6 +144,28 @@ impl std::fmt::Display for PipelineAssemblyError {
             PipelineAssemblyError::UnknownPathSource { path_source } => {
                 write!(f, "path_following.path_source '{path_source}' does not match any key in search_planners")
             }
+            PipelineAssemblyError::UnknownNodeKind {
+                node_name,
+                kind,
+                registered,
+            } => {
+                let registered = if registered.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    registered.join(", ")
+                };
+                write!(
+                    f,
+                    "nodes.{node_name}: unknown kind '{kind}'; registered kinds: {registered}"
+                )
+            }
+            PipelineAssemblyError::Factory(err) => write!(f, "{err}"),
         }
+    }
+}
+
+impl From<FactoryError> for PipelineAssemblyError {
+    fn from(value: FactoryError) -> Self {
+        PipelineAssemblyError::Factory(value)
     }
 }

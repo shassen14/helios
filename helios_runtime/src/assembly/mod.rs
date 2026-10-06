@@ -5,7 +5,8 @@
 //!   that build and wire each family's nodes.
 //! - `sensor_inputs` — where a node's sensor inputs may come from, and the
 //!   check that each one has a source.
-//! - `registry` — [`AutonomyRegistry`], the kind-string → factory maps.
+//! - `registry` — [`AutonomyRegistry`], the kind-string → factory maps, and
+//!   [`DuplicateKind`].
 //! - `factory` — [`BuildContext`], [`FactoryOutput`] and [`FactoryError`]: the
 //!   interface every node-kind factory shares.
 //! - `contexts` — what each family's factory receives.
@@ -27,5 +28,5 @@ mod stages;
 
 pub use self::error::PipelineAssemblyError;
 pub use self::factory::{BuildContext, FactoryError, FactoryOutput};
-pub use self::registry::AutonomyRegistry;
+pub use self::registry::{AutonomyRegistry, DuplicateKind};
 pub use self::stages::build_pipeline;
