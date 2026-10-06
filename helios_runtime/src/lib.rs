@@ -33,7 +33,10 @@ pub use crate::assembly::contexts::{
     ControllerBuildContext, GaussianEstimatorBuildContext, MapperBuildContext,
     MeasurementModelBuildContext, PathFollowerBuildContext, SearchPlannerBuildContext,
 };
-pub use crate::assembly::{build_pipeline, AutonomyRegistry, PipelineAssemblyError};
+pub use crate::assembly::{
+    build_pipeline, AutonomyRegistry, BuildContext, FactoryError, FactoryOutput,
+    PipelineAssemblyError,
+};
 pub use crate::config::{
     AckermannProcessNoiseConfig, AgentBaseConfig, AidingConfig, AutonomyStack, ControllerConfig,
     EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
