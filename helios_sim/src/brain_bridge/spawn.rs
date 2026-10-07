@@ -6,6 +6,7 @@ use crate::core::components::{ActuatorCommandComponent, ControllerStateSource};
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
+use helios_core::control::actuation_model::ActuationModel;
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::control::commands::TwistIntent;
 use helios_core::prelude::{AgentId, MonotonicTime};
@@ -15,10 +16,7 @@ use helios_core::spatial::FrameId;
 use helios_runtime::channels::control;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::tf_service::TfService;
-use helios_runtime::{
-    build_pipeline, check_actuation_agreement, BodyCapabilities, ChannelKey, Provenance,
-    PublishedChannel,
-};
+use helios_runtime::{build_pipeline, BodyCapabilities, ChannelKey, Provenance, PublishedChannel};
 
 use std::any::TypeId;
 use std::collections::{BTreeSet, HashSet};
@@ -47,20 +45,6 @@ pub fn spawn_autonomy_pipeline(
         // it, matching what the sensor spawners stamped on the tf tree.
         let agent = agent_id.0.clone();
 
-        if let Err(mismatches) = check_actuation_agreement(stack, &agent_config.vehicle.actuation) {
-            for mismatch in &mismatches {
-                error!(
-                    "[spawn_autonomy_pipeline] Agent '{}': {}",
-                    agent_config.name(),
-                    mismatch
-                );
-            }
-            commands.entity(agent_entity).insert(PipelineBuildFailed {
-                errors: mismatches.iter().map(|m| m.to_string()).collect(),
-            });
-            continue;
-        }
-
         // The set of sensor channel names this agent's host publishes. The
         // assembler builds each sensor's `FrameId::sensor(agent, channel)` from
         // these names — the same identity the sensor spawners stamp on the tf
@@ -70,7 +54,8 @@ pub fn spawn_autonomy_pipeline(
             .filter_map(|child| channel_query.get(child).ok().map(|ch| ch.0.clone()))
             .collect();
 
-        let host_capabilities = build_host_body_capabilities(agent_config.name());
+        let host_capabilities =
+            build_host_body_capabilities(agent_config.name(), &agent_config.vehicle.actuation);
 
         match build_pipeline(
             stack,
@@ -206,8 +191,8 @@ pub fn spawn_actuator_command(
 /// This is the host's view of what the body advertises to the autonomy
 /// graph — distinct from anything the autonomy stack itself declares.
 /// Two responsibilities split between host and assembler:
-/// - **Host (this fn)** knows the agent's name, whether the body actuates,
-///   and which host-owned channels exist (`oracle/*`, later `health/*`).
+/// - **Host (this fn)** knows the agent's name, the body's actuators, and
+///   which host-owned channels exist (`oracle/*`, later `health/*`).
 /// - **Assembler** ([`build_pipeline`]) knows the sensor channels derived
 ///   from the autonomy config and merges them into `publishes` before
 ///   handing the merged `BodyCapabilities` to [`PipelineBuilder`].
@@ -222,10 +207,14 @@ pub fn spawn_actuator_command(
 ///   omitted: no sim publisher exists for them yet, and advertising a
 ///   channel the host never writes would let a consumer build and then
 ///   read `None` forever.
+/// - `actuation`: the vehicle's actuators, from its entity file. The
+///   assembler checks every actuator the pipeline drives against it, so an
+///   allocator naming a missing actuator or writing the wrong setpoint kind
+///   fails the build.
 ///
 /// Construct one of these in [`spawn_autonomy_pipeline`] per agent and
 /// pass it to [`build_pipeline`].
-fn build_host_body_capabilities(agent_name: &str) -> BodyCapabilities {
+fn build_host_body_capabilities(agent_name: &str, actuation: &ActuationModel) -> BodyCapabilities {
     let published_pose = PublishedChannel {
         key: oracle_pose_channel().into(),
         provenance: Provenance::Exact,
@@ -239,6 +228,7 @@ fn build_host_body_capabilities(agent_name: &str) -> BodyCapabilities {
     BodyCapabilities {
         name: agent_name.to_string(),
         publishes: vec![published_pose, published_twist],
+        actuation: actuation.clone(),
     }
 }
 
@@ -270,6 +260,8 @@ fn reads_teleop_intent(outside_inputs: &[ChannelKey]) -> bool {
 mod tests {
     use super::*;
 
+    use helios_core::control::actuation_model::{ActuatorSpec, SignConvention};
+    use helios_core::control::actuators::{ActuatorId, SetpointKind};
     use helios_runtime::channels::control::intent;
     use helios_runtime::port::InternalChannel;
 
@@ -342,13 +334,28 @@ mod tests {
 
     #[test]
     fn name_is_copied_from_argument() {
-        let caps = build_host_body_capabilities("rover_1");
+        let caps = build_host_body_capabilities("rover_1", &ActuationModel::default());
         assert_eq!(caps.name, "rover_1");
     }
 
     #[test]
+    fn actuation_is_the_vehicles() {
+        let actuation = ActuationModel::new(vec![ActuatorSpec::new(
+            ActuatorId::new("drive"),
+            SetpointKind::Torque,
+            1.0,
+            SetpointKind::Torque.value(0.0),
+            SignConvention::Normal,
+        )]);
+
+        let caps = build_host_body_capabilities("any", &actuation);
+
+        assert_eq!(caps.actuation, actuation);
+    }
+
+    #[test]
     fn publishes_exactly_pose_and_twist() {
-        let caps = build_host_body_capabilities("any");
+        let caps = build_host_body_capabilities("any", &ActuationModel::default());
         assert_eq!(caps.publishes.len(), 2);
 
         let keys: Vec<_> = caps.publishes.iter().map(|p| &p.key).collect();
@@ -358,7 +365,7 @@ mod tests {
 
     #[test]
     fn all_published_channels_are_provenance_exact() {
-        let caps = build_host_body_capabilities("any");
+        let caps = build_host_body_capabilities("any", &ActuationModel::default());
         for pc in &caps.publishes {
             assert_eq!(pc.provenance, Provenance::Exact);
         }

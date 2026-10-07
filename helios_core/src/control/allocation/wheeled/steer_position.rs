@@ -1,5 +1,7 @@
 use crate::control::{
-    actuators::{ActuatorCommand, ActuatorId, ActuatorSetpoint, SetpointValue},
+    actuators::{
+        ActuatorCommand, ActuatorDrive, ActuatorId, ActuatorSetpoint, SetpointKind, SetpointValue,
+    },
     allocation::Allocator,
     commands::SteerAngle,
 };
@@ -53,11 +55,21 @@ impl Allocator for SteerPositionAllocator {
 
         ActuatorCommand::new(vec![sp])
     }
+
+    /// The steer actuator, in position.
+    fn drives(&self) -> Vec<ActuatorDrive> {
+        vec![ActuatorDrive::new(
+            self.steer.clone(),
+            SetpointKind::Position,
+        )]
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::control::allocation::assert_declared;
 
     // Tests build the struct directly; a registry-facing constructor is the
     // allocator factory's concern, not this leaf's.
@@ -113,5 +125,14 @@ mod tests {
         let only = &cmd.setpoints()[0];
         assert_eq!(only.actuator(), &ActuatorId::new("steer"));
         assert!(matches!(only.value(), SetpointValue::Position(_)));
+    }
+
+    #[test]
+    fn drives_declares_what_allocate_writes() {
+        let mut allocator = allocator();
+        for angle in [-0.3, 0.0, 0.3] {
+            let cmd = allocator.allocate(&SteerAngle::new(angle), &());
+            assert_declared(&allocator, &cmd);
+        }
     }
 }

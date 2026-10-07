@@ -18,8 +18,10 @@
 //!   sensor's [`FrameId`](helios_core::spatial::FrameId) (`FrameId::sensor(agent, channel_name)`), so an aiding
 //!   or augmentation entry that names a channel the host does not provide is
 //!   rejected at build time rather than silently failing to resolve at tick time.
-//! - `host_capabilities` — the body as the host describes it: its name and
-//!   the body channels that are not config-derived sensors (today: `oracle/*` reference channels; later: `health/*`). The
+//! - `host_capabilities` — the body as the host describes it: its name, its
+//!   actuators (which the actuator seam checks every driven actuator against),
+//!   and the body channels that are not config-derived sensors (today:
+//!   `oracle/*` reference channels; later: `health/*`). The
 //!   assembler appends config-derived sensor channels onto
 //!   `host_capabilities.publishes` before handing the merged value to
 //!   [`PipelineBuilder::with_body_capabilities`]. Only host-published sensor
@@ -47,35 +49,26 @@
 //! promoted to a registry family (`register_aiding_handler_factory`). For the
 //! current set of five built-in types, the inline match is sufficient.
 
-use super::contexts::{AllocatorBuildContext, MockEstimatorBuildContext};
+use super::contexts::MockEstimatorBuildContext;
 use super::error::PipelineAssemblyError;
 use super::instantiate::instantiate;
 use super::registry::AutonomyRegistry;
+use super::seams::actuators::actuator_merge;
 use super::seams::command::command_sums;
 use super::seams::reference::reference_selector;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
-use crate::channels::control;
-use crate::config::{AutonomyStack, CommandSpace};
+use crate::config::AutonomyStack;
 use crate::config::{EstimatorConfig, MOCK_ORACLE_KIND, UKF_KIND};
-use crate::nodes::combinators::Merge;
 use crate::nodes::gaussian_estimator;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
-use crate::port::{ChannelKey, InternalChannel};
+use crate::port::ChannelKey;
 
-use helios_core::control::actuators::ActuatorCommand;
-use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle};
 use helios_core::prelude::AgentId;
 
 use std::collections::HashSet;
-
-/// Node name for the synthesized actuator merge — the terminal that unions each
-/// allocator's partial [`ActuatorCommand`] into the one `actuators` output. Raw
-/// identity for observability, so a referenced const like the seam node names;
-/// `build_pipeline` here is its sole synthesizer.
-const ACTUATOR_MERGE_NODE: &str = "actuator_merge";
 
 /// Builds a fully-validated [`AutonomyPipeline`] from a resolved [`AutonomyStack`].
 ///
@@ -96,7 +89,7 @@ const ACTUATOR_MERGE_NODE: &str = "actuator_merge";
 ///   this agent. An aiding or augmentation entry naming a channel absent from
 ///   this set is an [`UnknownSensorChannel`](PipelineAssemblyError::UnknownSensorChannel).
 /// - `host_capabilities` — the body's capabilities as the host describes them
-///   (name, reference channels such as `oracle/*`).
+///   (name, actuators, reference channels such as `oracle/*`).
 ///   The assembler extends `host_capabilities.publishes` with the
 ///   config-derived sensor channels before building. Goals and teleop intent
 ///   are declared separately as outside inputs.
@@ -165,6 +158,21 @@ pub fn build_pipeline(
         Err(seam_errors) => errors.extend(seam_errors),
     }
 
+    // --- Actuator seam ---
+    // The `[actuators]` section names the nodes whose partial actuator
+    // commands one `Merge` unions into the command the body applies. What
+    // each member drives is on its output port; the seam checks it against
+    // the other members and against the body's actuators.
+    match actuator_merge(
+        stack.actuators.as_ref(),
+        &host_capabilities,
+        &instantiated.nodes,
+    ) {
+        Ok(Some(merge)) => builder = builder.add_node(merge),
+        Ok(None) => {}
+        Err(seam_errors) => errors.extend(seam_errors),
+    }
+
     for node in instantiated.nodes {
         sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
         builder = builder.add_node(node);
@@ -179,62 +187,6 @@ pub fn build_pipeline(
             }
             Err(e) => errors.push(e),
         }
-    }
-
-    // --- Allocators + actuator merge ---
-    // Each allocator *consumes* the fold its `input` names (the command seam
-    // above produces it) and *produces* a partial `actuators` command over the actuators
-    // it drives. Every channel here is graph-internal, so nothing is seeded onto
-    // `external_channels`.
-    //
-    // Rather than write the `actuators` terminal directly, each allocator writes a
-    // distinct partial keyed by its instance name; a single `Merge` unions the
-    // partials into the terminal. This is the single shape for any allocator count
-    // — a lone allocator flows through a one-input `Merge` that forwards it — so a
-    // decoupled stack (a drive leg and a steer leg) reassembles the same way a
-    // one-allocator stack does. Validation has already proven the partials own
-    // disjoint actuators; `Merge` re-checks defensively and degrades on overlap.
-    //
-    // The input channel's type is the allocator's own command space, erased to an
-    // `InternalChannel` so the loop is one shape regardless of `T`.
-    let mut partials: Vec<InternalChannel> = vec![];
-    for (allocator_name, alloc_cfg) in &stack.allocators {
-        let input = alloc_cfg.input();
-        let command_channel = match alloc_cfg.command_space() {
-            CommandSpace::DriveForce => InternalChannel::named::<DriveForce>(input),
-            CommandSpace::SteerAngle => InternalChannel::named::<SteerAngle>(input),
-            CommandSpace::BodyTwist => InternalChannel::named::<BodyTwist>(input),
-        };
-
-        let partial = InternalChannel::named::<ActuatorCommand>(allocator_name.as_str());
-
-        match registry.build_allocator(
-            alloc_cfg.get_kind_str(),
-            AllocatorBuildContext {
-                agent: agent.clone(),
-                instance_name: allocator_name.clone(),
-                config: alloc_cfg.clone(),
-                input_channel: command_channel,
-                output_channel: partial.clone(),
-            },
-        ) {
-            Ok(node) => {
-                builder = builder.add_node(node);
-                partials.push(partial);
-            }
-            Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
-                node_kind: alloc_cfg.get_kind_str().to_string(),
-                reason,
-            }),
-        }
-    }
-
-    if !partials.is_empty() {
-        builder = builder.add_node(Box::new(Merge::new(
-            ACTUATOR_MERGE_NODE,
-            partials,
-            control::actuators(),
-        )));
     }
 
     if !errors.is_empty() {

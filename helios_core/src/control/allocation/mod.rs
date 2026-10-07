@@ -9,7 +9,7 @@
 
 pub mod wheeled;
 
-use crate::control::actuators::ActuatorCommand;
+use crate::control::actuators::{ActuatorCommand, ActuatorDrive};
 
 /// Maps a vehicle-level command onto per-actuator setpoints.
 ///
@@ -40,9 +40,31 @@ use crate::control::actuators::ActuatorCommand;
 /// map ignores it. The returned command is *raw* — clamping to each actuator's
 /// limit, the sign convention, and the fail-safe belong to the host via the
 /// [`ActuationModel`](crate::control::actuation_model::ActuationModel), never here.
+///
+/// `drives` lists every actuator `allocate` writes, with the setpoint kind it
+/// writes there, so a pipeline build can check them against the body before
+/// the first tick. It is the declaration of what `allocate` does; each impl
+/// tests the two agree.
 pub trait Allocator: Send + Sync {
     type In;
     type Inputs;
 
     fn allocate(&mut self, command: &Self::In, inputs: &Self::Inputs) -> ActuatorCommand;
+
+    /// The actuators `allocate` writes, each once, with the kind it writes.
+    fn drives(&self) -> Vec<ActuatorDrive>;
+}
+
+/// Fails unless every setpoint in `command` names an actuator `allocator`
+/// declares in [`drives`](Allocator::drives), with the declared kind.
+#[cfg(test)]
+pub(crate) fn assert_declared<A: Allocator>(allocator: &A, command: &ActuatorCommand) {
+    let drives = allocator.drives();
+    for setpoint in command.setpoints() {
+        let declared = ActuatorDrive::new(setpoint.actuator().clone(), setpoint.value().kind());
+        assert!(
+            drives.contains(&declared),
+            "allocate wrote {declared:?}, but drives declares {drives:?}"
+        );
+    }
 }

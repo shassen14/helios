@@ -133,9 +133,10 @@ type = "SteerAngle"
 optional = ["steer_ff"]
 
 # Drive allocator: DriveForce → wheel Torque (τ = F · wheel_radius). `input`
-# names the fold it reads; `drive` names the actuator in the vehicle's [actuation] contract. wheel_radius must
-# match the plant's suspension.wheel_radius.
-[allocators.drive]
+# names the fold it reads; `drive` names the actuator in the vehicle's
+# [actuation] contract. wheel_radius must match the plant's
+# suspension.wheel_radius.
+[nodes.drive]
 kind = "WheelTorque"
 input = "drive_cmd"
 wheel_radius = 0.3
@@ -143,7 +144,14 @@ drive = "drive"
 
 # Steer allocator: SteerAngle → steer Position (pass-through), reading the
 # steer fold.
-[allocators.steer]
+[nodes.steer]
 kind = "SteerPosition"
 input = "steer_cmd"
 steer = "steer"
+
+# The actuator command the body applies: the members' partial commands merged.
+# Each member drives its own actuators; the build checks them against the
+# vehicle's [actuation] contract, so a misnamed actuator or a setpoint of the
+# wrong kind fails at spawn.
+[actuators]
+members = ["drive", "steer"]

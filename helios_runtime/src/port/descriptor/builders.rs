@@ -22,6 +22,10 @@
 //! outside this crate: its fields are private and its raw constructor is
 //! crate-only.
 //!
+//! An `ActuatorCommand` output is declared with
+//! [`AlgorithmNodePortDescriptor::output_actuator_command`], which also takes
+//! the actuators it drives: the actuator seam reads them off the descriptor.
+//!
 //! Every input a builder records is same-tick: `input_*` methods record a
 //! required input and `optional_*` methods an optional one. There is no
 //! method for a previous-tick input until the pipeline can actually hand a
@@ -50,6 +54,10 @@ use crate::port::{
     SensorChannel,
 };
 
+use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
+
+use std::any::TypeId;
+
 /// Builder for an algorithm node's [`PortDescriptor`].
 ///
 /// Accepts only Sensor and Internal channels. Construct via [`Self::new`],
@@ -74,6 +82,7 @@ pub struct AlgorithmNodePortDescriptor {
     required_inputs: Vec<ChannelKey>,
     optional_inputs: Vec<ChannelKey>,
     outputs: Vec<ChannelKey>,
+    drives: Vec<(ChannelKey, Vec<ActuatorDrive>)>,
     rate: Option<f64>,
 }
 
@@ -112,6 +121,31 @@ impl AlgorithmNodePortDescriptor {
     /// Declares an internal channel this node writes. One producer per channel.
     pub fn output_internal(mut self, c: InternalChannel) -> Self {
         self.outputs.push(c.into());
+        self
+    }
+
+    /// Declares an `ActuatorCommand` channel this node writes, and the
+    /// actuators its commands drive, each with the setpoint kind written
+    /// there. The actuator seam checks them against the body and against its
+    /// other members. One producer per channel.
+    ///
+    /// # Panics
+    ///
+    /// If `c` is not an `ActuatorCommand` channel.
+    pub fn output_actuator_command(
+        mut self,
+        c: InternalChannel,
+        drives: Vec<ActuatorDrive>,
+    ) -> Self {
+        assert!(
+            c.type_id() == TypeId::of::<ActuatorCommand>(),
+            "actuator command output must carry ActuatorCommand, got {} for {}",
+            c.type_name(),
+            c.instance()
+        );
+        let key = ChannelKey::from(c);
+        self.outputs.push(key.clone());
+        self.drives.push((key, drives));
         self
     }
 
@@ -189,6 +223,7 @@ impl AlgorithmNodePortDescriptor {
             self.outputs,
             self.rate,
         )
+        .with_drives(self.drives)
     }
 }
 
@@ -338,6 +373,8 @@ mod tests {
     use super::*;
     use crate::port::{InputNeed, InputTiming, InternalChannel, OracleChannel, SensorChannel};
 
+    use helios_core::control::actuators::{ActuatorId, SetpointKind};
+
     struct State;
     struct Reading;
     struct Pose;
@@ -353,6 +390,31 @@ mod tests {
         assert_eq!(d.required_inputs().count(), 2);
         assert_eq!(d.outputs().len(), 1);
         assert_eq!(d.rate(), Some(50.0));
+    }
+
+    #[test]
+    fn actuator_command_output_carries_its_drives() {
+        let command = InternalChannel::named::<ActuatorCommand>("drive");
+        let other = InternalChannel::named::<State>("drive");
+        let drives = vec![ActuatorDrive::new(
+            ActuatorId::new("wheels"),
+            SetpointKind::Torque,
+        )];
+        let d = AlgorithmNodePortDescriptor::new()
+            .output_internal(other.clone())
+            .output_actuator_command(command.clone(), drives.clone())
+            .build();
+
+        assert_eq!(d.outputs(), [other.clone().into(), command.clone().into()]);
+        assert_eq!(d.drives(&command.into()), drives);
+        assert!(d.drives(&other.into()).is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "actuator command output must carry ActuatorCommand")]
+    fn actuator_command_output_panics_on_another_type() {
+        let _ = AlgorithmNodePortDescriptor::new()
+            .output_actuator_command(InternalChannel::named::<State>("drive"), vec![]);
     }
 
     #[test]

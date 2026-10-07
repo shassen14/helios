@@ -1,5 +1,6 @@
 //! [`PortDescriptor`]: what a node declares it reads from and writes to the
-//! bus, with each input as an [`InputPort`] record of channel, need and timing.
+//! bus, with each input as an [`InputPort`] record of channel, need and timing,
+//! and each `ActuatorCommand` output with the actuators it drives.
 //!
 //! The build reads these declarations to allocate bus slots, order nodes, and
 //! check that every channel has exactly one producer. Outside this crate a
@@ -8,6 +9,8 @@
 //! [`MockNodePortDescriptor`](crate::port::MockNodePortDescriptor).
 
 use crate::port::channel::ChannelKey;
+
+use helios_core::control::actuators::ActuatorDrive;
 
 /// Declares what a pipeline node reads from and writes to the bus.
 ///
@@ -29,6 +32,10 @@ use crate::port::channel::ChannelKey;
 /// records; [`required_inputs`](Self::required_inputs) and
 /// [`optional_inputs`](Self::optional_inputs) yield just the channel keys.
 ///
+/// An `ActuatorCommand` output also carries the actuators it drives, read
+/// with [`drives`](Self::drives), so the actuator seam can check them against
+/// the body without knowing what kind of node wrote them.
+///
 /// Fields are private and read through accessors, so the shape of a declared
 /// input can change without touching every node. Outside this crate the only
 /// way to construct one is
@@ -41,6 +48,7 @@ pub struct PortDescriptor {
     required_inputs: Vec<InputPort>,
     optional_inputs: Vec<InputPort>,
     outputs: Vec<ChannelKey>,
+    drives: Vec<(ChannelKey, Vec<ActuatorDrive>)>,
     rate: Option<f64>,
 }
 
@@ -71,8 +79,16 @@ impl PortDescriptor {
             required_inputs: required,
             optional_inputs: optional,
             outputs,
+            drives: Vec::new(),
             rate,
         }
+    }
+
+    /// Records the actuators each `ActuatorCommand` output drives. For the
+    /// builders, which check each channel's type before recording it.
+    pub(crate) fn with_drives(mut self, drives: Vec<(ChannelKey, Vec<ActuatorDrive>)>) -> Self {
+        self.drives = drives;
+        self
     }
 
     /// Every declared input as a full record, required inputs first, then
@@ -112,6 +128,16 @@ impl PortDescriptor {
     /// Channels this node writes when it executes.
     pub fn outputs(&self) -> &[ChannelKey] {
         &self.outputs
+    }
+
+    /// The actuators `output` drives, as the node declared with its
+    /// `ActuatorCommand` output. Empty for an output that declared none,
+    /// including every output of another type.
+    pub fn drives(&self, output: &ChannelKey) -> &[ActuatorDrive] {
+        self.drives
+            .iter()
+            .find(|(channel, _)| channel == output)
+            .map_or(&[], |(_, drives)| drives.as_slice())
     }
 
     /// Execution rate in Hz. `None` means every tick.
@@ -268,6 +294,7 @@ mod tests {
                 InputTiming::PreviousTick,
             )],
             outputs: vec![],
+            drives: vec![],
             rate: None,
         };
 

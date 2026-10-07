@@ -5,8 +5,11 @@
 //! - `reference` — the guidance reference the controllers track.
 //! - `command` — the named command folds the allocators read, and the
 //!   built-in command types.
+//! - `actuators` — the one actuator command the body applies, merged from the
+//!   members' partials and checked against the body.
 //! - `members` — resolving a section's members to the channels they write.
 
+pub(super) mod actuators;
 pub(super) mod command;
 mod members;
 pub(super) mod reference;

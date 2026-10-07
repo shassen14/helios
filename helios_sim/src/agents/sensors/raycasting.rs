@@ -362,6 +362,7 @@ mod tests {
                     key: field_channel(),
                     provenance: Provenance::Exact,
                 }],
+                ..Default::default()
             })
             .build()
             .expect("a single-node pipeline builds");

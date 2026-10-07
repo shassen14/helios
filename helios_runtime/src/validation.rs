@@ -1,6 +1,6 @@
 use crate::config::{AutonomyStack, EstimatorConfig};
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 /// Snapshot of algorithm keys registered in each family.
 ///
@@ -13,7 +13,6 @@ pub struct CapabilitySet {
     /// stack that selects one is checked here, not against the Gaussian set.
     pub mock_estimators: HashSet<String>,
     pub measurement_models: HashSet<String>,
-    pub allocators: HashSet<String>,
 }
 
 /// Structured validation failure.
@@ -43,20 +42,6 @@ pub enum ConfigValidationError {
         estimator_instance: String,
         kind: String,
         sensor: String,
-    },
-    UnknownAllocator {
-        kind: String,
-    },
-
-    /// Two or more allocators name the same actuator. Decoupled control merges
-    /// several allocators' outputs into one terminal command by unioning their
-    /// disjoint actuator sets; a shared actuator breaks that disjointness, so the
-    /// merge would keep one allocator's setpoint and silently drop the other's.
-    /// Each allocator config declares the actuators it drives, so the collision
-    /// is caught here at load rather than as a dropped setpoint at runtime.
-    AllocatorActuatorConflict {
-        actuator: String,
-        allocators: Vec<String>,
     },
 }
 
@@ -101,19 +86,6 @@ impl std::fmt::Display for ConfigValidationError {
                 write!(
                     f,
                     "Estimator '{estimator_instance}' augmentation '{kind}' names sensor '{sensor}', but no aiding entry feeds that channel; the block would never be observed"
-                )
-            }
-            ConfigValidationError::UnknownAllocator { kind } => {
-                write!(f, "Unknown allocator kind '{kind}'")
-            }
-            ConfigValidationError::AllocatorActuatorConflict {
-                actuator,
-                allocators,
-            } => {
-                let allocators = allocators.join(", ");
-                write!(
-                    f,
-                    "actuator '{actuator}' is claimed by more than one allocator ({allocators}); each actuator must be owned by exactly one"
                 )
             }
         }
@@ -201,55 +173,6 @@ pub fn validate_autonomy_config(
                     });
                 }
             }
-        }
-    }
-
-    // Allocator validation.
-    for alloc_cfg in config.allocators.values() {
-        let kind = alloc_cfg.get_kind_str();
-        if !capabilities.allocators.contains(kind) {
-            errors.push(ConfigValidationError::UnknownAllocator {
-                kind: kind.to_string(),
-            });
-        }
-    }
-
-    // Allocator cross-field check. The per-kind check above rejects unknown
-    // allocators; this one catches a well-formed allocator that fights another
-    // for the same actuator, which would otherwise surface late as two writers
-    // racing one terminal slot.
-    //
-    // Decoupled control lets several allocators coexist, each owning a disjoint
-    // set of actuators that a downstream merge unions into the one terminal
-    // command. That union is only well-defined if no two allocators claim the
-    // same actuator: a double-claimed actuator would take its setpoint from
-    // whichever allocator the merge saw first, silently dropping the other. Each
-    // allocator config names the actuators it drives, so this half of the
-    // partition — disjointness — is checkable here. The other half, totality
-    // (every physical actuator is claimed by some allocator), needs the body's
-    // actuation model and so is the host's to check at spawn.
-    //
-    // A BTreeMap and the per-conflict sort keep the emitted errors ordered by
-    // actuator, then by allocator name, so the report is stable across runs
-    // regardless of the source HashMap's iteration order.
-    let mut actuator_to_allocators: BTreeMap<&str, Vec<String>> = BTreeMap::new();
-    for (allocator, cfg) in &config.allocators {
-        for actuator in cfg.actuator_ids() {
-            actuator_to_allocators
-                .entry(actuator)
-                .or_default()
-                .push(allocator.to_string());
-        }
-    }
-
-    for (actuator, allocators) in &actuator_to_allocators {
-        if allocators.len() > 1 {
-            let mut a = allocators.clone();
-            a.sort();
-            errors.push(ConfigValidationError::AllocatorActuatorConflict {
-                actuator: actuator.to_string(),
-                allocators: a,
-            });
         }
     }
 

@@ -1,24 +1,22 @@
 //! Portable autonomy configuration structs, shared by simulation and hardware.
 //!
 //! Re-exports `AgentBaseConfig`, `AutonomyStack`, and all sub-configs
-//! (`EstimatorConfig`, `ReferenceSeamConfig`, `CommandFoldConfig`).
+//! (`EstimatorConfig`, `ReferenceSeamConfig`, `CommandFoldConfig`,
+//! `ActuatorSeamConfig`).
 //! These structs are TOML-deserializable and contain zero Bevy or simulation types.
 
+mod actuators;
 mod agent;
-mod allocator;
 mod autonomy;
 mod command;
-mod command_space;
 mod estimator;
 mod reference;
 mod tf;
 
+pub use actuators::ActuatorSeamConfig;
 pub use agent::AgentBaseConfig;
-pub use allocator::AllocatorConfig;
-pub(crate) use allocator::{STEER_POSITION_KIND, WHEEL_TORQUE_KIND};
 pub use autonomy::AutonomyStack;
 pub use command::CommandFoldConfig;
-pub use command_space::CommandSpace;
 pub use estimator::{
     AckermannProcessNoiseConfig, AidingConfig, AugmentationConfig, EkfConfig, EkfDynamicsConfig,
     EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MockOracleEstimatorConfig,

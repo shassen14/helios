@@ -23,7 +23,7 @@ impl<A: Allocator> AllocatorNode<A> {
     ) -> Self {
         let descriptor = AlgorithmNodePortDescriptor::new()
             .input_internal(input.clone())
-            .output_internal(output.clone())
+            .output_actuator_command(output.clone(), allocator.drives())
             .build();
 
         Self {
@@ -91,7 +91,7 @@ mod tests {
     use helios_core::spatial::FrameId;
 
     use helios_core::control::actuators::{
-        ActuatorCommand, ActuatorId, ActuatorSetpoint, SetpointValue,
+        ActuatorCommand, ActuatorDrive, ActuatorId, ActuatorSetpoint, SetpointKind, SetpointValue,
     };
     use helios_core::control::commands::BodyTwist;
     use helios_core::spatial::primitives::MonotonicTime;
@@ -134,6 +134,10 @@ mod tests {
             *self.seen_vel_x.lock().unwrap() = Some(command.linear().x());
             self.output.clone()
         }
+
+        fn drives(&self) -> Vec<ActuatorDrive> {
+            vec![drive()]
+        }
     }
 
     // --- Helpers ---
@@ -144,6 +148,10 @@ mod tests {
 
     fn actuator_channel() -> InternalChannel {
         InternalChannel::of::<ActuatorCommand>()
+    }
+
+    fn drive() -> ActuatorDrive {
+        ActuatorDrive::new(ActuatorId::new("drive"), SetpointKind::Velocity)
     }
 
     fn canned_command() -> ActuatorCommand {
@@ -208,6 +216,15 @@ mod tests {
             vec![actuator_channel().into()]
         );
         assert!(node.port_descriptor().rate().is_none());
+    }
+
+    #[test]
+    fn descriptor_carries_the_allocators_drives_on_its_output() {
+        let node = node(Arc::new(StdMutex::new(None)));
+        assert_eq!(
+            node.port_descriptor().drives(&actuator_channel().into()),
+            [drive()]
+        );
     }
 
     #[test]

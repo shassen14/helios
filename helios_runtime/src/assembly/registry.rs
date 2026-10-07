@@ -31,8 +31,7 @@
 //! ```
 
 use super::contexts::{
-    AllocatorBuildContext, GaussianEstimatorBuildContext, MeasurementModelBuildContext,
-    MockEstimatorBuildContext,
+    GaussianEstimatorBuildContext, MeasurementModelBuildContext, MockEstimatorBuildContext,
 };
 
 use super::error::PipelineAssemblyError;
@@ -66,9 +65,6 @@ type GaussianEstimatorFactory = Box<
         + Sync,
 >;
 
-type AllocatorFactory =
-    Box<dyn Fn(AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
-
 type MockEstimatorFactory = Box<
     dyn Fn(EstimatorConfig, MockEstimatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
         + Send
@@ -87,7 +83,6 @@ pub struct AutonomyRegistry {
     command_types: BTreeMap<String, CommandType>,
     measurement_models: HashMap<String, MeasurementModelFactory>,
     gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
-    allocators: HashMap<String, AllocatorFactory>,
     // mocks
     mock_estimators: HashMap<String, MockEstimatorFactory>,
 }
@@ -99,7 +94,6 @@ impl Default for AutonomyRegistry {
             command_types: BTreeMap::new(),
             measurement_models: HashMap::new(),
             gaussian_estimators: HashMap::new(),
-            allocators: HashMap::new(),
             mock_estimators: HashMap::new(),
         };
         // Registration order: leaf dependencies before composites.
@@ -202,17 +196,6 @@ impl AutonomyRegistry {
             .insert(key.into(), Box::new(factory));
     }
 
-    pub(crate) fn register_allocator(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.allocators.insert(key.into(), Box::new(factory));
-    }
-
     pub(crate) fn register_mock_estimator(
         &mut self,
         key: impl Into<String>,
@@ -285,16 +268,6 @@ impl AutonomyRegistry {
         )
     }
 
-    pub(crate) fn build_allocator(
-        &self,
-        key: &str,
-        ctx: AllocatorBuildContext,
-    ) -> Result<Box<dyn PipelineNode>, String> {
-        self.allocators
-            .get(key)
-            .ok_or_else(|| format!("No allocator factory registered for '{key}'"))?(ctx)
-    }
-
     pub(crate) fn build_mock_estimator(
         &self,
         key: &str,
@@ -314,7 +287,6 @@ impl AutonomyRegistry {
             gaussian_estimators: self.gaussian_estimators.keys().cloned().collect(),
             mock_estimators: self.mock_estimators.keys().cloned().collect(),
             measurement_models: self.measurement_models.keys().cloned().collect(),
-            allocators: self.allocators.keys().cloned().collect(),
         }
     }
 }

@@ -12,8 +12,9 @@ use crate::control::actuators::{
 
 use serde::{Deserialize, Serialize};
 
-/// Every actuator a body exposes, in declaration order.
-#[derive(Clone, PartialEq, Debug, Deserialize, Serialize)]
+/// Every actuator a body exposes, in declaration order. The default exposes
+/// none: a body nothing drives.
+#[derive(Clone, PartialEq, Debug, Default, Deserialize, Serialize)]
 pub struct ActuationModel {
     actuators: Vec<ActuatorSpec>,
 }

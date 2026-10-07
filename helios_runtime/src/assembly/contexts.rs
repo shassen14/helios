@@ -4,9 +4,8 @@
 //! reads. No Bevy `Entity`, no full `AgentConfig`. The host (sim or hw)
 //! resolves the agent-specific values and passes them here.
 
-use crate::config::{AllocatorConfig, SensorModelConfig};
+use crate::config::SensorModelConfig;
 use crate::nodes::gaussian_estimator::AidingHandler;
-use crate::port::InternalChannel;
 
 use helios_core::estimation::schema::StateSchemaBlock;
 use helios_core::prelude::AgentId;
@@ -45,20 +44,6 @@ pub struct MeasurementModelBuildContext {
     /// model's TF lookups resolve against the same identity the host publishes.
     pub(crate) sensor: FrameId,
     pub(crate) model_config: SensorModelConfig,
-}
-
-/// Context for building an `AllocatorNode`.
-pub struct AllocatorBuildContext {
-    pub agent: AgentId,
-    /// Node name: the allocator's config-map key, so tooling keyed on the name
-    /// distinguishes two allocators of the same kind.
-    pub(crate) instance_name: String,
-    pub(crate) config: AllocatorConfig,
-    /// The bus channel carrying the vehicle-level command this allocator
-    /// consumes: the `[command]` fold its config names.
-    pub(crate) input_channel: InternalChannel,
-    /// The bus channel on which this node publishes its `ActuatorCommand`.
-    pub(crate) output_channel: InternalChannel,
 }
 
 // ------- Mocks --------

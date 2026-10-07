@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use helios_runtime::channels::control;
 use helios_runtime::config::{
-    AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandFoldConfig, EkfConfig,
-    EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
+    ActuatorSeamConfig, AidingConfig, AugmentationConfig, AutonomyStack, CommandFoldConfig,
+    EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
     ReferenceSeamConfig, SensorModelConfig,
 };
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
@@ -15,7 +15,8 @@ use helios_runtime::{
     PipelineAssemblyError, PipelineBuildError, Provenance, PublishedChannel,
 };
 
-use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
+use helios_core::control::actuation_model::{ActuationModel, ActuatorSpec, SignConvention};
+use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointKind, SetpointValue};
 use helios_core::control::commands::{DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
 use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
@@ -88,6 +89,7 @@ fn teleop_body() -> BodyCapabilities {
     BodyCapabilities {
         name: "teleop_only".to_string(),
         publishes: vec![],
+        ..Default::default()
     }
 }
 
@@ -246,6 +248,7 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
+        ..Default::default()
     };
 
     let pipeline = build_pipeline(
@@ -307,6 +310,7 @@ fn two_grids_publish_to_distinct_channels() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
+        ..Default::default()
     };
 
     let pipeline = build_pipeline(
@@ -365,21 +369,62 @@ fn command_seam(section: &str) -> BTreeMap<String, CommandFoldConfig> {
     toml::from_str(section).expect("valid command folds")
 }
 
-/// A wheel-torque allocator reading fold `input` and driving actuator `drive`,
-/// with τ = F · 0.3.
-fn wheel_torque(input: &str, drive: &str) -> AllocatorConfig {
-    AllocatorConfig::WheelTorque {
-        input: input.to_string(),
-        wheel_radius: 0.3,
-        drive: drive.to_string(),
-    }
+/// A wheel-torque allocator named `name`, reading fold `input` and driving
+/// actuator `drive`, with τ = F · 0.3.
+fn wheel_torque(name: &str, input: &str, drive: &str) -> (String, toml::Table) {
+    node_entry(
+        name,
+        &format!(
+            "kind = \"WheelTorque\"\ninput = \"{input}\"\nwheel_radius = 0.3\ndrive = \"{drive}\""
+        ),
+    )
+}
+
+/// A steer-position allocator named `name`, reading fold `input` and driving
+/// actuator `steer`.
+fn steer_position(name: &str, input: &str, steer: &str) -> (String, toml::Table) {
+    node_entry(
+        name,
+        &format!("kind = \"SteerPosition\"\ninput = \"{input}\"\nsteer = \"{steer}\""),
+    )
+}
+
+/// An `[actuators]` section merging `members`.
+fn actuator_seam(members: &[&str]) -> Option<ActuatorSeamConfig> {
+    Some(ActuatorSeamConfig {
+        members: members.iter().map(|member| member.to_string()).collect(),
+    })
+}
+
+/// The body's actuators these tests drive: torque-driven `drive`, `left` and
+/// `right`, and a position-driven `steer`.
+fn test_actuation() -> ActuationModel {
+    let spec = |id: &str, kind: SetpointKind| {
+        ActuatorSpec::new(
+            ActuatorId::new(id),
+            kind,
+            1.0e6,
+            kind.value(0.0),
+            SignConvention::Normal,
+        )
+    };
+    ActuationModel::new(vec![
+        spec("drive", SetpointKind::Torque),
+        spec("left", SetpointKind::Torque),
+        spec("right", SetpointKind::Torque),
+        spec("steer", SetpointKind::Position),
+    ])
 }
 
 /// A DriveForce stack: a feedback leg and a feedforward leg folded into a
 /// wheel-torque allocator. The drive actuator id is `drive`; τ = F · r with
 /// r = 0.3.
 fn drive_force_stack() -> AutonomyStack {
-    let nodes = BTreeMap::from([longitudinal_velocity("speed_ctrl"), road_load("road_load")]);
+    let nodes = BTreeMap::from([
+        longitudinal_velocity("speed_ctrl"),
+        road_load("road_load"),
+        wheel_torque("wheels", "drive_cmd", "drive"),
+    ]);
     let command = command_seam(
         r#"
         [drive_cmd]
@@ -389,12 +434,10 @@ fn drive_force_stack() -> AutonomyStack {
         "#,
     );
 
-    let allocators = HashMap::from([("wheels".to_string(), wheel_torque("drive_cmd", "drive"))]);
-
     AutonomyStack {
         nodes,
         command,
-        allocators,
+        actuators: actuator_seam(&["wheels"]),
         ..Default::default()
     }
 }
@@ -402,7 +445,8 @@ fn drive_force_stack() -> AutonomyStack {
 /// A body that advertises `FrameAwareState` and the resolved `reference` on the
 /// bus. The controllers read both, so a body publishing them satisfies the build
 /// without an estimator, path follower or arbiter — keeping these tests focused
-/// on the controller and allocator wiring.
+/// on the controller and allocator wiring. It has [`test_actuation`]'s
+/// actuators.
 fn state_and_reference_body() -> BodyCapabilities {
     BodyCapabilities {
         name: "oracle_state".to_string(),
@@ -416,6 +460,7 @@ fn state_and_reference_body() -> BodyCapabilities {
                 provenance: Provenance::Exact,
             },
         ],
+        actuation: test_actuation(),
     }
 }
 
@@ -539,6 +584,8 @@ fn decoupled_car_stack() -> AutonomyStack {
     let nodes = BTreeMap::from([
         longitudinal_velocity("speed_ctrl"),
         bicycle_steer("steer_ff"),
+        wheel_torque("drive_wheels", "drive_cmd", "drive"),
+        steer_position("steer_axle", "steer_cmd", "steer"),
     ]);
     let command = command_seam(
         r#"
@@ -552,24 +599,10 @@ fn decoupled_car_stack() -> AutonomyStack {
         "#,
     );
 
-    let allocators = HashMap::from([
-        (
-            "drive_wheels".to_string(),
-            wheel_torque("drive_cmd", "drive"),
-        ),
-        (
-            "steer_axle".to_string(),
-            AllocatorConfig::SteerPosition {
-                input: "steer_cmd".to_string(),
-                steer: "steer".to_string(),
-            },
-        ),
-    ]);
-
     AutonomyStack {
         nodes,
         command,
-        allocators,
+        actuators: actuator_seam(&["drive_wheels", "steer_axle"]),
         ..Default::default()
     }
 }
@@ -722,6 +755,8 @@ fn two_folds_of_one_type_drive_two_allocators() {
         nodes: BTreeMap::from([
             longitudinal_velocity("left_speed"),
             longitudinal_velocity("right_speed"),
+            wheel_torque("left_wheels", "left_cmd", "left"),
+            wheel_torque("right_wheels", "right_cmd", "right"),
         ]),
         command: command_seam(
             r#"
@@ -734,13 +769,7 @@ fn two_folds_of_one_type_drive_two_allocators() {
             required = ["right_speed"]
             "#,
         ),
-        allocators: HashMap::from([
-            ("left_wheels".to_string(), wheel_torque("left_cmd", "left")),
-            (
-                "right_wheels".to_string(),
-                wheel_torque("right_cmd", "right"),
-            ),
-        ]),
+        actuators: actuator_seam(&["left_wheels", "right_wheels"]),
         ..Default::default()
     };
     let pipeline = build_pipeline(
@@ -811,6 +840,144 @@ fn an_allocator_with_no_command_fold_fails_the_build_naming_its_input() {
                 ))
         )),
         "expected UnsatisfiedInput for `steer_axle` reading the steer command, got {errors:?}"
+    );
+}
+
+#[test]
+fn an_actuator_the_body_lacks_fails_the_build_naming_the_body() {
+    // The steer allocator drives `front_steer`, but the body names its steer
+    // actuator `steer`: a typo the actuator seam catches at build.
+    let mut stack = decoupled_car_stack();
+    let (name, section) = steer_position("steer_axle", "steer_cmd", "front_steer");
+    stack.nodes.insert(name, section);
+
+    let Err(errors) = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        state_and_reference_body(),
+    ) else {
+        panic!("an actuator the body lacks must not build");
+    };
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::ActuatorNotOnBody { member, actuator, body }
+                if member == "steer_axle" && actuator == "front_steer" && body == "oracle_state"
+        )),
+        "expected ActuatorNotOnBody for `steer_axle`, got {errors:?}"
+    );
+}
+
+#[test]
+fn a_setpoint_kind_the_body_does_not_accept_fails_the_build() {
+    // A torque-driven allocator over the body's position-driven steer: the
+    // wrong physical quantity, which nothing downstream could detect.
+    let mut stack = decoupled_car_stack();
+    let (name, section) = wheel_torque("drive_wheels", "drive_cmd", "steer");
+    stack.nodes.insert(name, section);
+    stack.actuators = actuator_seam(&["drive_wheels"]);
+
+    let Err(errors) = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        state_and_reference_body(),
+    ) else {
+        panic!("a setpoint kind the actuator does not accept must not build");
+    };
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::ActuatorKindMismatch {
+                member,
+                writes: SetpointKind::Torque,
+                accepts: SetpointKind::Position,
+                ..
+            } if member == "drive_wheels"
+        )),
+        "expected ActuatorKindMismatch for `drive_wheels`, got {errors:?}"
+    );
+}
+
+#[test]
+fn two_allocators_driving_one_actuator_fail_the_build_naming_both() {
+    let mut stack = decoupled_car_stack();
+    let (name, section) = steer_position("steer_axle", "steer_cmd", "drive");
+    stack.nodes.insert(name, section);
+
+    let Err(errors) = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        state_and_reference_body(),
+    ) else {
+        panic!("two members driving one actuator must not build");
+    };
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::ActuatorDrivenTwice { actuator, members }
+                if actuator == "drive" && members.as_slice() == ["drive_wheels", "steer_axle"]
+        )),
+        "expected ActuatorDrivenTwice for `drive`, got {errors:?}"
+    );
+}
+
+#[test]
+fn an_allocator_outside_the_actuator_seam_does_not_reach_the_body() {
+    // Only the listed members are merged. The steer allocator still runs, but
+    // the terminal carries the drive setpoint alone.
+    let mut stack = decoupled_car_stack();
+    stack.actuators = actuator_seam(&["drive_wheels"]);
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        state_and_reference_body(),
+    )
+    .expect("an unmerged allocator is not an error");
+
+    pipeline
+        .bus()
+        .write(
+            InternalChannel::named::<DriveForce>("speed_ctrl").into(),
+            Stamped {
+                value: DriveForce::new(100.0),
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("write to the drive contribution channel must succeed");
+    pipeline
+        .bus()
+        .write(
+            InternalChannel::named::<SteerAngle>("steer_ff").into(),
+            Stamped {
+                value: SteerAngle::new(0.2),
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("write to the steer contribution channel must succeed");
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
+
+    let actuators = pipeline
+        .read_actuators()
+        .expect("the drive member merges alone");
+    assert_eq!(actuators.value.setpoints().len(), 1);
+    assert_eq!(
+        setpoint_value(&actuators.value, "drive"),
+        SetpointValue::Torque(100.0 * 0.3)
     );
 }
 
@@ -1041,12 +1208,16 @@ fn reference_naming_no_node_fails_the_build_naming_it() {
 fn controllers_without_a_reference_section_fail_naming_the_reference() {
     // Without `[reference]` nothing writes the reference, so each controller's
     // reference input is unsatisfied and the build names it.
+    let body = BodyCapabilities {
+        actuation: test_actuation(),
+        ..perception_body()
+    };
     let Err(errors) = build_pipeline(
         &drive_force_stack(),
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
         &HashSet::new(),
-        perception_body(),
+        body,
     ) else {
         panic!("controllers with no reference must not build");
     };
@@ -1143,6 +1314,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
+        ..Default::default()
     };
 
     let pipeline = build_pipeline(
@@ -1260,6 +1432,7 @@ fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
+        ..Default::default()
     };
 
     let pipeline = build_pipeline(
@@ -1323,6 +1496,7 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
     let body = BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
+        ..Default::default()
     };
 
     let pipeline = build_pipeline(
@@ -1418,6 +1592,7 @@ fn perception_body() -> BodyCapabilities {
     BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
+        ..Default::default()
     }
 }
 
@@ -1509,6 +1684,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
             key: state_key.clone(),
             provenance: Provenance::Exact,
         }],
+        ..Default::default()
     };
 
     let pipeline = build_pipeline(

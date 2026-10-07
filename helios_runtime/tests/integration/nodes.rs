@@ -91,6 +91,7 @@ fn body() -> BodyCapabilities {
     BodyCapabilities {
         name: "rover".to_string(),
         publishes: vec![],
+        ..Default::default()
     }
 }
 

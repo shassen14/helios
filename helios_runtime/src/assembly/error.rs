@@ -5,6 +5,8 @@ use super::factory::FactoryError;
 use crate::pipeline::PipelineBuildError;
 use crate::validation::ConfigValidationError;
 
+use helios_core::control::actuators::SetpointKind;
+
 /// Errors that can occur while assembling a pipeline from config.
 #[derive(Debug)]
 pub enum PipelineAssemblyError {
@@ -91,6 +93,33 @@ pub enum PipelineAssemblyError {
         fold: String,
         type_name: String,
         registered: Vec<String>,
+    },
+    /// Member `member` of `[actuators]` declares no actuator it drives, so
+    /// whether it collides with another member, or drives anything the body
+    /// has, cannot be checked.
+    UndeclaredDrives { member: String },
+    /// `actuator` is driven by more than one `[actuators]` member. The merge
+    /// would keep one member's setpoint and drop the others'. `members` is
+    /// sorted.
+    ActuatorDrivenTwice {
+        actuator: String,
+        members: Vec<String>,
+    },
+    /// Member `member` of `[actuators]` drives `actuator`, which body `body`
+    /// does not have: usually a typo in the actuator name.
+    ActuatorNotOnBody {
+        member: String,
+        actuator: String,
+        body: String,
+    },
+    /// Member `member` of `[actuators]` writes a `writes` setpoint to
+    /// `actuator`, which accepts only `accepts`: a torque into a
+    /// velocity-driven wheel, which nothing downstream could detect.
+    ActuatorKindMismatch {
+        member: String,
+        actuator: String,
+        writes: SetpointKind,
+        accepts: SetpointKind,
     },
 }
 
@@ -220,6 +249,32 @@ impl std::fmt::Display for PipelineAssemblyError {
                 } else {
                     registered.join(", ")
                 }
+            ),
+            PipelineAssemblyError::UndeclaredDrives { member } => write!(
+                f,
+                "actuators: member '{member}' declares no actuator it drives; its factory must declare each one"
+            ),
+            PipelineAssemblyError::ActuatorDrivenTwice { actuator, members } => write!(
+                f,
+                "actuators: actuator '{actuator}' is driven by more than one member ({}); each actuator takes one",
+                members.join(", ")
+            ),
+            PipelineAssemblyError::ActuatorNotOnBody {
+                member,
+                actuator,
+                body,
+            } => write!(
+                f,
+                "actuators: member '{member}' drives actuator '{actuator}', which body '{body}' does not have"
+            ),
+            PipelineAssemblyError::ActuatorKindMismatch {
+                member,
+                actuator,
+                writes,
+                accepts,
+            } => write!(
+                f,
+                "actuators: member '{member}' writes {writes:?} to actuator '{actuator}', which accepts {accepts:?}"
             ),
         }
     }

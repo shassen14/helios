@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use helios_runtime::{
     config::{
-        AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, EkfConfig,
-        EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
-        MockOracleEstimatorConfig, SensorModelConfig,
+        AidingConfig, AugmentationConfig, AutonomyStack, EkfConfig, EkfDynamicsConfig,
+        EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MockOracleEstimatorConfig,
+        SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
     AutonomyRegistry,
@@ -21,7 +21,6 @@ fn empty_caps() -> CapabilitySet {
         gaussian_estimators: Default::default(),
         mock_estimators: Default::default(),
         measurement_models: Default::default(),
-        allocators: Default::default(),
     }
 }
 
@@ -33,7 +32,6 @@ fn full_caps() -> CapabilitySet {
         gaussian_estimators: set(&["Ekf"]),
         mock_estimators: set(&["MockOracle"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
-        allocators: set(&["WheelTorque", "SteerPosition"]),
     }
 }
 
@@ -58,21 +56,6 @@ fn ekf_config() -> EstimatorConfig {
         augmentation: vec![],
         initial_state: EkfInitialStateConfig::default(),
     })
-}
-
-fn wheel_torque_allocator() -> AllocatorConfig {
-    AllocatorConfig::WheelTorque {
-        input: "drive_cmd".to_string(),
-        wheel_radius: 0.3,
-        drive: "drive".to_string(),
-    }
-}
-
-fn steer_position_allocator() -> AllocatorConfig {
-    AllocatorConfig::SteerPosition {
-        input: "steer_cmd".to_string(),
-        steer: "steer".to_string(),
-    }
 }
 
 fn ekf_aiding_entry() -> AidingConfig {
@@ -107,9 +90,9 @@ fn validation_valid_full_stack_passes() {
     let stack = AutonomyStack {
         nodes: Default::default(),
         estimators,
-        allocators: Default::default(),
         reference: None,
         command: Default::default(),
+        actuators: None,
         tf: Default::default(),
     };
 
@@ -231,53 +214,6 @@ fn validation_unknown_sensor_payload_in_aiding_produces_error() {
                 if payload_kind == "UnknownSensorType"
         )),
         "Expected UnknownSensorPayload for UnknownSensorType"
-    );
-}
-
-#[test]
-fn validation_allocators_sharing_an_actuator_error() {
-    // Multiple allocators are legal, but not two that claim the same actuator:
-    // the terminal merge unions disjoint actuator sets, so a shared `drive` would
-    // silently drop one allocator's setpoint. Two wheel-torque allocators both
-    // driving `drive` collide. The claimant list is sorted, so the assertion —
-    // and the emitted error — is stable regardless of HashMap iteration order.
-    let mut allocators = HashMap::new();
-    allocators.insert("front_axle".to_string(), wheel_torque_allocator());
-    allocators.insert("rear_axle".to_string(), wheel_torque_allocator());
-    let stack = AutonomyStack {
-        allocators,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::AllocatorActuatorConflict { actuator, allocators }
-                if actuator == "drive"
-                    && allocators.as_slice() == ["front_axle".to_string(), "rear_axle".to_string()]
-        )),
-        "Expected AllocatorActuatorConflict for 'drive' claimed by [front_axle, rear_axle], got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn validation_disjoint_multiple_allocators_pass() {
-    // The decoupled car: a wheel-torque allocator owning `drive` and a
-    // steer-position allocator owning `steer`. Two allocators, disjoint
-    // actuators, no shared terminal. The stack validates clean.
-    let mut allocators = HashMap::new();
-    allocators.insert("drive_alloc".to_string(), wheel_torque_allocator());
-    allocators.insert("steer_alloc".to_string(), steer_position_allocator());
-    let stack = AutonomyStack {
-        allocators,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.is_empty(),
-        "Disjoint multiple allocators must pass, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }
 

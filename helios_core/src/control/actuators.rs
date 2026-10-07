@@ -188,6 +188,29 @@ impl<'de> Deserialize<'de> for ActuatorId {
     }
 }
 
+/// One actuator a command writes, and the setpoint kind it writes there: what
+/// a producer of [`ActuatorCommand`]s declares before it runs, so a build can
+/// check it against a body's [`ActuationModel`] and against other producers.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ActuatorDrive {
+    actuator: ActuatorId,
+    kind: SetpointKind,
+}
+
+impl ActuatorDrive {
+    pub fn new(actuator: ActuatorId, kind: SetpointKind) -> Self {
+        Self { actuator, kind }
+    }
+
+    pub fn actuator(&self) -> &ActuatorId {
+        &self.actuator
+    }
+
+    pub fn kind(&self) -> SetpointKind {
+        self.kind
+    }
+}
+
 /// A commanded value in its native command space. The *variant* is the command
 /// space: a `Torque(5.0)` and a `Force(5.0)` are not interchangeable despite the
 /// equal number. Units are SI by convention (torque N·m, force N, position rad or
