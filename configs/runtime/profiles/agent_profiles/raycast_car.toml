@@ -14,13 +14,15 @@
 [estimators.primary]
 from = "runtime.catalog.estimators.ekf_advanced"
 
-[search_planners]
-local_path = { from = "runtime.catalog.planners.a_star" }
+# The A* planner publishes its path on a channel named after the node, which
+# the path follower's `path` names.
+[nodes.local_path]
+from = "runtime.catalog.planners.a_star"
 
-# The A* planner reads the map this grid publishes, on a channel named after
-# the node (`local`); the grid is built by the lidar the sim prefab mounts.
-# Without this node the planner's map input is unsatisfiable and the pipeline
-# fails to build.
+# The planner reads the map this grid publishes, on a channel named after the
+# node (`local`), which the planner's `map_channel` names; the grid is built by
+# the lidar the sim prefab mounts. Without this node the planner's map input is
+# unsatisfiable and the pipeline fails to build.
 [nodes.local]
 from = "runtime.catalog.mappers.occupancy_grid_2d"
 
@@ -44,6 +46,7 @@ output = "sensor.lidar.rear.points"
 
 [path_following]
 kind = "PurePursuit"
+path = "local_path"
 max_speed_m_s = 5.0
 min_speed_m_s = 0.5
 lookahead_distance_m = 4.0

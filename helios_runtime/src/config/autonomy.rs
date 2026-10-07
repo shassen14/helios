@@ -1,6 +1,6 @@
 use super::{
     AllocatorConfig, ControllerConfig, EstimatorConfig, PathFollowingConfig,
-    ReferenceArbitrationConfig, SearchPlannerConfig, TeleopMapperConfig, TfBufferConfig,
+    ReferenceArbitrationConfig, TeleopMapperConfig, TfBufferConfig,
 };
 
 use serde::Deserialize;
@@ -22,9 +22,6 @@ pub struct AutonomyStack {
     /// comparisons but each must publish to a distinct output channel.
     #[serde(default)]
     pub estimators: HashMap<String, EstimatorConfig>,
-
-    #[serde(default)]
-    pub search_planners: HashMap<String, SearchPlannerConfig>,
 
     #[serde(default)]
     pub path_following: Option<PathFollowingConfig>,

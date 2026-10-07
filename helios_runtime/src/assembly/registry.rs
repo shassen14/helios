@@ -28,7 +28,6 @@
 use super::contexts::{
     AllocatorBuildContext, ControllerBuildContext, GaussianEstimatorBuildContext,
     MeasurementModelBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
-    SearchPlannerBuildContext,
 };
 
 use super::error::PipelineAssemblyError;
@@ -66,9 +65,6 @@ type ControllerFactory =
 type AllocatorFactory =
     Box<dyn Fn(AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
-type SearchPlannerFactory =
-    Box<dyn Fn(SearchPlannerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
-
 type PathFollowerFactory =
     Box<dyn Fn(PathFollowerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
@@ -90,7 +86,6 @@ pub struct AutonomyRegistry {
     gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
     controllers: HashMap<String, ControllerFactory>,
     allocators: HashMap<String, AllocatorFactory>,
-    search_planners: HashMap<String, SearchPlannerFactory>,
     path_followers: HashMap<String, PathFollowerFactory>,
     // mocks
     mock_estimators: HashMap<String, MockEstimatorFactory>,
@@ -104,7 +99,6 @@ impl Default for AutonomyRegistry {
             gaussian_estimators: HashMap::new(),
             controllers: HashMap::new(),
             allocators: HashMap::new(),
-            search_planners: HashMap::new(),
             path_followers: HashMap::new(),
             mock_estimators: HashMap::new(),
         };
@@ -204,17 +198,6 @@ impl AutonomyRegistry {
         self.allocators.insert(key.into(), Box::new(factory));
     }
 
-    pub(crate) fn register_search_planner(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(SearchPlannerBuildContext) -> Result<Box<dyn PipelineNode>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.search_planners.insert(key.into(), Box::new(factory));
-    }
-
     pub(crate) fn register_path_follower(
         &mut self,
         key: impl Into<String>,
@@ -308,16 +291,6 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No allocator factory registered for '{key}'"))?(ctx)
     }
 
-    pub(crate) fn build_search_planner(
-        &self,
-        key: &str,
-        ctx: SearchPlannerBuildContext,
-    ) -> Result<Box<dyn PipelineNode>, String> {
-        self.search_planners
-            .get(key)
-            .ok_or_else(|| format!("No search planner factory registered for '{key}'"))?(ctx)
-    }
-
     pub(crate) fn build_path_follower(
         &self,
         key: &str,
@@ -348,7 +321,6 @@ impl AutonomyRegistry {
             mock_estimators: self.mock_estimators.keys().cloned().collect(),
             measurement_models: self.measurement_models.keys().cloned().collect(),
             controllers: self.controllers.keys().cloned().collect(),
-            planners: self.search_planners.keys().cloned().collect(),
             allocators: self.allocators.keys().cloned().collect(),
         }
     }

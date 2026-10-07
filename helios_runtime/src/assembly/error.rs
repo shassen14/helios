@@ -47,12 +47,6 @@ pub enum PipelineAssemblyError {
     /// the host's slot; even differently typed, one name for two channels
     /// misleads anyone reading the graph.
     SensorOutputShadowsHost { node_name: String, channel: String },
-    /// `path_following` is present but no planner was configured to produce a
-    /// path, and no explicit `path_source` was given.
-    NoPathSourceForFollower,
-    /// `path_following` names a `path_source` planner key that does not exist
-    /// in `search_planners`.
-    UnknownPathSource { path_source: String },
     /// The `kind` of node `node_name` matches no registered factory.
     /// `registered` lists the kinds that do exist, sorted.
     UnknownNodeKind {
@@ -140,12 +134,6 @@ impl std::fmt::Display for PipelineAssemblyError {
                     f,
                     "node '{node_name}' writes sensor channel '{channel}', which is already a host sensor channel; give the output its own name"
                 )
-            }
-            PipelineAssemblyError::NoPathSourceForFollower => {
-                write!(f, "path_following configured but no planner produces a path and no path_source specified")
-            }
-            PipelineAssemblyError::UnknownPathSource { path_source } => {
-                write!(f, "path_following.path_source '{path_source}' does not match any key in search_planners")
             }
             PipelineAssemblyError::UnknownNodeKind {
                 node_name,

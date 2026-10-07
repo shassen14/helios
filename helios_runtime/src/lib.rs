@@ -31,7 +31,7 @@ pub use crate::stamped::{Health, Stamped};
 
 pub use crate::assembly::contexts::{
     ControllerBuildContext, GaussianEstimatorBuildContext, MeasurementModelBuildContext,
-    PathFollowerBuildContext, SearchPlannerBuildContext,
+    PathFollowerBuildContext,
 };
 pub use crate::assembly::{
     build_pipeline, AutonomyRegistry, BuildContext, DuplicateKind, FactoryError, FactoryOutput,
@@ -40,7 +40,6 @@ pub use crate::assembly::{
 pub use crate::config::{
     AckermannProcessNoiseConfig, AgentBaseConfig, AidingConfig, AutonomyStack, ControllerConfig,
     EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
-    QuadcopterProcessNoiseConfig, SearchPlannerConfig,
-    SensorModelConfig, UkfConfig,
+    QuadcopterProcessNoiseConfig, SensorModelConfig, UkfConfig,
 };
 pub use crate::validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError};

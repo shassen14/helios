@@ -1,9 +1,11 @@
 //! What a node factory receives and returns.
 //!
 //! A node kind is built by a factory: given the node's own config section and
-//! a [`BuildContext`], it returns a [`FactoryOutput`] holding the built node,
-//! or a [`FactoryError`] naming the node and kind that failed.
+//! a [`BuildContext`], it returns a [`FactoryOutput`] holding the built node
+//! and the outside inputs it reads, or a [`FactoryError`] naming the node and
+//! kind that failed.
 
+use crate::port::ChannelKey;
 use crate::prelude::PipelineNode;
 
 use helios_core::prelude::AgentId;
@@ -57,12 +59,33 @@ impl<'a> BuildContext<'a> {
 /// factories written outside this crate.
 pub struct FactoryOutput {
     node: Box<dyn PipelineNode>,
+    outside_inputs: Vec<ChannelKey>,
 }
 
 impl FactoryOutput {
-    /// Wraps the built node.
+    /// Wraps the built node, declaring no outside inputs.
     pub fn new(node: Box<dyn PipelineNode>) -> Self {
-        Self { node }
+        Self {
+            node,
+            outside_inputs: Vec::new(),
+        }
+    }
+
+    /// Declares `key` as an outside input: a channel the node reads that an
+    /// operator or mission system writes, rather than a node or the body.
+    ///
+    /// The factory declares it, not the node's port descriptor, because where
+    /// an input comes from depends on the stack: the same node may read a goal
+    /// the host sends in one stack and a goal another node produces in the
+    /// next. A channel declared here must have no producer in the graph.
+    pub fn with_outside_input(mut self, key: impl Into<ChannelKey>) -> Self {
+        self.outside_inputs.push(key.into());
+        self
+    }
+
+    /// The outside inputs this factory declared, in declaration order.
+    pub(crate) fn outside_inputs(&self) -> &[ChannelKey] {
+        &self.outside_inputs
     }
 
     /// Takes the built node out, for the assembler to add to the pipeline.
@@ -195,7 +218,7 @@ mod tests {
     use super::*;
 
     use crate::pipeline::node::TickContext;
-    use crate::port::{AlgorithmNodePortDescriptor, PortBus, PortDescriptor};
+    use crate::port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus, PortDescriptor};
 
     use helios_core::prelude::TfProvider;
 
@@ -387,5 +410,27 @@ mod tests {
         assert_eq!(ctx.agent(), &AgentId::new("car"));
         assert_eq!(ctx.node_name(), "front_deproject");
         assert!(ctx.sensor_channels().contains("front_lidar"));
+    }
+
+    /// An output declares no outside inputs until the factory adds them, and
+    /// keeps them in the order they were added.
+    #[test]
+    fn outside_inputs_are_kept_in_declaration_order() {
+        let stub = || -> Box<dyn PipelineNode> {
+            Box::new(StubNode {
+                descriptor: AlgorithmNodePortDescriptor::new().build(),
+            })
+        };
+        assert!(FactoryOutput::new(stub()).outside_inputs().is_empty());
+
+        let mission = InternalChannel::named::<f64>("mission");
+        let waypoints = InternalChannel::named::<f64>("waypoints");
+        let output = FactoryOutput::new(stub())
+            .with_outside_input(mission.clone())
+            .with_outside_input(waypoints.clone());
+        assert_eq!(
+            output.outside_inputs(),
+            [ChannelKey::from(mission), ChannelKey::from(waypoints)]
+        );
     }
 }

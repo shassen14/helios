@@ -5,4 +5,6 @@ occupancy_threshold = 200
 max_search_depth = 50000
 enable_path_smoothing = true
 replan_on_path_deviation = false
-level = "global"
+# Channel the planner reads its map from: the name of the map node that
+# publishes it.
+map_channel = "global"

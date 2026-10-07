@@ -1,7 +1,7 @@
 //! Portable autonomy configuration structs, shared by simulation and hardware.
 //!
 //! Re-exports `AgentBaseConfig`, `AutonomyStack`, and all sub-configs
-//! (`EstimatorConfig`, `ControllerConfig`, `SearchPlannerConfig`).
+//! (`EstimatorConfig`, `ControllerConfig`, `PathFollowingConfig`).
 //! These structs are TOML-deserializable and contain zero Bevy or simulation types.
 
 mod agent;
@@ -12,7 +12,6 @@ mod command_space;
 mod controller;
 mod estimator;
 mod path_following;
-mod planner;
 mod teleop;
 mod tf;
 
@@ -36,7 +35,5 @@ pub use estimator::{
 pub(crate) use estimator::{EKF_KIND, MOCK_ORACLE_KIND, UKF_KIND};
 pub use path_following::PathFollowingConfig;
 pub(crate) use path_following::{PURE_PURSUIT_KIND, STEERING_PID_KIND};
-pub use planner::SearchPlannerConfig;
-pub(crate) use planner::ASTAR_KIND;
 pub use teleop::TeleopMapperConfig;
 pub use tf::TfBufferConfig;

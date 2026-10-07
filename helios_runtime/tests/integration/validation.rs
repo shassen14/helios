@@ -7,7 +7,7 @@ use helios_runtime::{
         AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandSpace,
         ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig,
         IntegratedImuConfig, MockOracleEstimatorConfig, ReferenceArbitrationConfig,
-        ReferenceSource, SearchPlannerConfig, SensorModelConfig,
+        ReferenceSource, SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
     AutonomyRegistry,
@@ -23,7 +23,6 @@ fn empty_caps() -> CapabilitySet {
         mock_estimators: Default::default(),
         measurement_models: Default::default(),
         controllers: Default::default(),
-        planners: Default::default(),
         allocators: Default::default(),
     }
 }
@@ -42,7 +41,6 @@ fn full_caps() -> CapabilitySet {
             "RoadLoad",
             "BicycleSteer",
         ]),
-        planners: set(&["AStar"]),
         allocators: set(&["WheelTorque", "SteerPosition"]),
     }
 }
@@ -73,20 +71,6 @@ fn ekf_config() -> EstimatorConfig {
 fn direct_twist() -> ControllerConfig {
     ControllerConfig::DirectTwist {
         state_source: Default::default(),
-    }
-}
-
-fn astar() -> SearchPlannerConfig {
-    SearchPlannerConfig::AStar {
-        rate: 5.0,
-        arrival_tolerance_m: 1.5,
-        occupancy_threshold: 180,
-        max_search_depth: 50_000,
-        enable_path_smoothing: false,
-        replan_on_path_deviation: false,
-        deviation_tolerance_m: 3.0,
-        level: "local".to_string(),
-        goal_channel: "mission".to_string(),
     }
 }
 
@@ -197,9 +181,6 @@ fn validation_empty_stack_passes() {
 
 #[test]
 fn validation_valid_full_stack_passes() {
-    let mut search_planners = HashMap::new();
-    search_planners.insert("local_planner".to_string(), astar());
-
     let mut controllers = HashMap::new();
     controllers.insert("main_ctrl".to_string(), direct_twist());
 
@@ -209,7 +190,6 @@ fn validation_valid_full_stack_passes() {
     let stack = AutonomyStack {
         nodes: Default::default(),
         estimators,
-        search_planners,
         path_following: None,
         controllers,
         allocators: Default::default(),
@@ -261,23 +241,6 @@ fn validation_unknown_controller_produces_error() {
             |e| matches!(e, ConfigValidationError::UnknownController { kind } if kind == "DirectTwist")
         ),
         "Expected UnknownController for DirectTwist"
-    );
-}
-
-#[test]
-fn validation_unknown_planner_produces_error() {
-    let mut search_planners = HashMap::new();
-    search_planners.insert("planner".to_string(), astar());
-    let stack = AutonomyStack {
-        search_planners,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &empty_caps());
-    assert!(
-        errors.iter().any(
-            |e| matches!(e, ConfigValidationError::UnknownPlanner { kind } if kind == "AStar")
-        ),
-        "Expected UnknownPlanner for AStar"
     );
 }
 

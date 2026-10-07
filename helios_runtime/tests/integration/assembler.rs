@@ -6,7 +6,7 @@ use helios_runtime::channels::control;
 use helios_runtime::config::{
     AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, ControllerConfig, EkfConfig,
     EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
-    ReferenceArbitrationConfig, ReferenceSource, SearchPlannerConfig, SensorModelConfig,
+    PathFollowingConfig, ReferenceArbitrationConfig, ReferenceSource, SensorModelConfig,
     TeleopMapperConfig,
 };
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
@@ -23,7 +23,7 @@ use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::estimation::carrier::kinematic_carrier_schema;
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::measurement::sensor::MagneticField;
-use helios_core::interchange::path::PlannerGoal;
+use helios_core::interchange::path::{Path, PlannerGoal};
 use helios_core::interchange::perception::map::MapData;
 use helios_core::prelude::{
     AgentId, DirectionModel, PointCloud, RangeField, RangeFieldBuilder, SphericalAngular,
@@ -678,11 +678,11 @@ fn build_pipeline_rejects_invalid_config_before_assembly() {
 
 #[test]
 fn planner_without_a_map_fails_the_build_naming_it() {
-    // The planner reads `MapData` on the channel its `level` names. With no
-    // grid of that name nothing produces it, and the build names the planner
-    // and the missing channel.
+    // The planner reads `MapData` on the channel its `map_channel` names. With
+    // no grid of that name nothing produces it, and the build names the
+    // planner and the missing channel.
     let mut stack = planner_stack(&[("local_path", "mission")]);
-    stack.nodes.clear();
+    stack.nodes.remove("local");
 
     let Err(errors) = build_pipeline(
         &stack,
@@ -706,6 +706,66 @@ fn planner_without_a_map_fails_the_build_naming_it() {
                 ))
         )),
         "expected UnsatisfiedInput for `local_path` reading the `local` map, got {errors:?}"
+    );
+}
+
+/// A pure-pursuit follower reading its path from `path`.
+fn pure_pursuit_reading(path: &str) -> PathFollowingConfig {
+    toml::from_str(&format!(
+        "kind = \"PurePursuit\"\npath = \"{path}\"\nmax_speed_m_s = 5.0\nmin_speed_m_s = 0.5"
+    ))
+    .expect("a valid follower section")
+}
+
+#[test]
+fn follower_reads_the_path_of_the_planner_its_section_names() {
+    let mut stack = planner_stack(&[("local_path", "mission")]);
+    stack.path_following = Some(pure_pursuit_reading("local_path"));
+
+    let built = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["scan"]),
+        perception_body(),
+    );
+    assert!(
+        built.is_ok(),
+        "a follower naming the planner must build, got {:?}",
+        built.err()
+    );
+}
+
+#[test]
+fn follower_naming_no_planner_fails_the_build_naming_it() {
+    // The follower reads `Path` on the channel its `path` names. With no
+    // planner of that name nothing produces it, and the build names the
+    // follower and the missing channel.
+    let mut stack = planner_stack(&[("local_path", "mission")]);
+    stack.path_following = Some(pure_pursuit_reading("global_path"));
+
+    let Err(errors) = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["scan"]),
+        perception_body(),
+    ) else {
+        panic!("a follower naming no planner must not build");
+    };
+
+    let path_key: ChannelKey = InternalChannel::named::<Path>("global_path").into();
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::PipelineBuild(v)
+                if v.iter().any(|b| matches!(
+                    b,
+                    PipelineBuildError::UnsatisfiedInput { node_name, channel, .. }
+                        if node_name == "pure_pursuit" && *channel == path_key
+                ))
+        )),
+        "expected UnsatisfiedInput for `pure_pursuit` reading `global_path`, got {errors:?}"
     );
 }
 
@@ -1316,32 +1376,25 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
 // == Outside inputs: goals and teleop intent are declared apart from the body ==
 // =========================================================================
 
-/// An A* planner over the `local` map, reading its goal from
-/// `goal_channel`.
-fn astar_reading_goal(goal_channel: &str) -> SearchPlannerConfig {
-    SearchPlannerConfig::AStar {
-        rate: 5.0,
-        arrival_tolerance_m: 1.5,
-        occupancy_threshold: 180,
-        max_search_depth: 20_000,
-        enable_path_smoothing: false,
-        replan_on_path_deviation: false,
-        deviation_tolerance_m: 3.0,
-        level: "local".to_string(),
-        goal_channel: goal_channel.to_string(),
-    }
+/// A `[nodes]` entry for an A* planner named `name` over the `local` map,
+/// reading its goal from `goal_channel`.
+fn astar(name: &str, goal_channel: &str) -> (String, toml::Table) {
+    let mut section = toml::Table::new();
+    section.insert("kind".to_string(), "AStar".into());
+    section.insert("rate".to_string(), 5.0.into());
+    section.insert("map_channel".to_string(), "local".into());
+    section.insert("goal_channel".to_string(), goal_channel.into());
+    (name.to_string(), section)
 }
 
 /// An IMU EKF, a `local` occupancy grid, and one A* planner per
 /// `(name, goal_channel)` pair: the smallest stack whose planners build.
 fn planner_stack(planners: &[(&str, &str)]) -> AutonomyStack {
+    let mut nodes = BTreeMap::from([occupancy_grid("local", "scan")]);
+    nodes.extend(planners.iter().map(|(name, goal)| astar(name, goal)));
     AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
-        nodes: BTreeMap::from([occupancy_grid("local", "scan")]),
-        search_planners: planners
-            .iter()
-            .map(|(name, goal)| (name.to_string(), astar_reading_goal(goal)))
-            .collect(),
+        nodes,
         ..Default::default()
     }
 }

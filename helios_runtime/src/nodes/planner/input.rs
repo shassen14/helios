@@ -41,9 +41,9 @@ pub(crate) struct DefaultSearchPlannerInputBuilder {
 
 impl DefaultSearchPlannerInputBuilder {
     /// `goal_channel` is the instance name the planner's optional `PlannerGoal`
-    /// input is keyed on, resolved from `SearchPlannerConfig`'s `goal_channel`
-    /// field at assembly time. The host writes the mission goal to this same
-    /// name, so the planner and the host input agree by construction.
+    /// input is keyed on, from the section's `goal_channel`. The host writes
+    /// the mission goal to this same name, so the planner and the host input
+    /// agree by construction.
     pub(crate) fn new(map_channel: InternalChannel, goal_channel: &str) -> Self {
         let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
         let map_channel_key: ChannelKey = map_channel.into();
@@ -59,7 +59,7 @@ impl DefaultSearchPlannerInputBuilder {
     }
 
     /// The key a planner's goal is read from, given the config's
-    /// `goal_channel` name. The assembler declares this same key as an outside
+    /// `goal_channel` name. The factory declares this same key as an outside
     /// input, so the declaration and the planner's read cannot drift apart.
     pub(crate) fn goal_key(goal_channel: &str) -> ChannelKey {
         InternalChannel::named::<PlannerGoal>(goal_channel).into()

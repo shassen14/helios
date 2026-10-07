@@ -1,17 +1,18 @@
-//! Planner family: the node adapter, its bus-input assembly, and registration.
+//! Planner family: the node adapter, its bus-input assembly, its config, and
+//! registration.
 //!
 //! - `node` — `SearchPlannerNode`, the adapter generic over any `SearchPlanner`.
 //! - `input` — assembles `SearchPlannerInputs` from the bus.
-//! - `register` — registers the built-in search-planner factories.
+//! - `config` — `AStarPlannerConfig`, the `[nodes.<name>]` section of an
+//!   `AStar` entry.
+//! - `register` — registers the `AStar` kind.
 //!
-//! The `register` fn crosses the family boundary, and so does the input
-//! builder, so the assembler can build the goal key the planner reads. The node
-//! and input types are otherwise wired together internally and boxed as
-//! `Box<dyn PipelineNode>` by the factory.
+//! Only the `register` fn crosses the family boundary; the factory builds the
+//! node and declares its goal as an outside input.
 
+mod config;
 mod input;
 mod node;
 mod register;
 
-pub(crate) use input::DefaultSearchPlannerInputBuilder;
 pub(crate) use register::register;

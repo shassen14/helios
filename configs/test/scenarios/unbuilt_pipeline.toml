@@ -27,5 +27,5 @@ name          = "BrokenCar"
 starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
 
 # The planner with nothing to plan over.
-[agents.autonomy_stack.search_planners.local_path]
+[agents.autonomy_stack.nodes.local_path]
 from = "runtime.catalog.planners.a_star"

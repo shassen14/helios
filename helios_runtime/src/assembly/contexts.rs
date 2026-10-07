@@ -4,9 +4,7 @@
 //! reads. No Bevy `Entity`, no full `AgentConfig`. The host (sim or hw)
 //! resolves the agent-specific values and passes them here.
 
-use crate::config::{
-    AllocatorConfig, ControllerConfig, PathFollowingConfig, SearchPlannerConfig, SensorModelConfig,
-};
+use crate::config::{AllocatorConfig, ControllerConfig, PathFollowingConfig, SensorModelConfig};
 use crate::nodes::gaussian_estimator::AidingHandler;
 use crate::port::InternalChannel;
 
@@ -71,20 +69,6 @@ pub struct AllocatorBuildContext {
     pub(crate) input_channel: InternalChannel,
     /// The bus channel on which this node publishes its `ActuatorCommand`.
     pub(crate) output_channel: InternalChannel,
-}
-
-/// Context for building a `SearchPlannerNode`.
-pub struct SearchPlannerBuildContext {
-    pub agent: AgentId,
-    /// Node name: the planner's config-map key, so tooling keyed on the name
-    /// distinguishes two planners of the same kind.
-    pub(crate) instance_name: String,
-    pub(crate) config: SearchPlannerConfig,
-    /// The bus channel on which the upstream mapper publishes `MapData`.
-    /// Always internal (brain-produced).
-    pub(crate) map_channel: InternalChannel,
-    /// The bus channel on which this node will publish its `Path` output.
-    pub(crate) path_channel: InternalChannel,
 }
 
 /// Context for building a `PathFollowerNode`.

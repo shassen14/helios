@@ -37,6 +37,9 @@ pub(crate) const STEERING_PID_KIND: &str = "SteeringPid";
 #[serde(rename_all = "PascalCase")]
 pub enum PathFollowingConfig {
     SteeringPid {
+        /// Channel the follower reads its `Path` from: the name of the
+        /// planner node that publishes it.
+        path: String,
         cruise_speed: f64,
         #[serde(default = "default_kp")]
         kp: f64,
@@ -50,6 +53,9 @@ pub enum PathFollowingConfig {
         lookahead_distance_m: f64,
     },
     PurePursuit {
+        /// Channel the follower reads its `Path` from: the name of the
+        /// planner node that publishes it.
+        path: String,
         max_speed_m_s: f64,
         min_speed_m_s: f64,
         #[serde(default = "default_lookahead_distance_m")]
@@ -68,6 +74,14 @@ impl PathFollowingConfig {
         match self {
             PathFollowingConfig::SteeringPid { .. } => STEERING_PID_KIND,
             PathFollowingConfig::PurePursuit { .. } => PURE_PURSUIT_KIND,
+        }
+    }
+
+    /// The name of the channel the follower reads its `Path` from.
+    pub(crate) fn get_path_str(&self) -> &str {
+        match self {
+            PathFollowingConfig::SteeringPid { path, .. }
+            | PathFollowingConfig::PurePursuit { path, .. } => path.as_str(),
         }
     }
 }

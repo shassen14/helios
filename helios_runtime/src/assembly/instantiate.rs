@@ -12,10 +12,20 @@ use super::registry::AutonomyRegistry;
 
 use crate::config::AutonomyStack;
 use crate::pipeline::node::PipelineNode;
+use crate::port::ChannelKey;
 
 use helios_core::prelude::AgentId;
 
 use std::collections::HashSet;
+
+/// Every `[nodes]` entry, built.
+pub(super) struct Instantiated {
+    /// The built nodes, in name order.
+    pub(super) nodes: Vec<Box<dyn PipelineNode>>,
+    /// Every outside input the factories declared, in node-name order. Two
+    /// nodes reading one outside channel each declare it, so it can repeat.
+    pub(super) outside_inputs: Vec<ChannelKey>,
+}
 
 /// Builds every node in `stack.nodes`, in name order.
 ///
@@ -25,20 +35,27 @@ pub(super) fn instantiate(
     registry: &AutonomyRegistry,
     agent: &AgentId,
     sensor_channels: &HashSet<String>,
-) -> Result<Vec<Box<dyn PipelineNode>>, Vec<PipelineAssemblyError>> {
+) -> Result<Instantiated, Vec<PipelineAssemblyError>> {
     let mut nodes = Vec::new();
+    let mut outside_inputs = Vec::new();
     let mut errors = Vec::new();
 
     for (name, section) in &stack.nodes {
         let section = section.clone();
         match instantiate_node(name, section, registry, agent, sensor_channels) {
-            Ok(node) => nodes.push(node),
+            Ok((node, node_outside_inputs)) => {
+                nodes.push(node);
+                outside_inputs.extend(node_outside_inputs);
+            }
             Err(err) => errors.push(err),
         }
     }
 
     if errors.is_empty() {
-        Ok(nodes)
+        Ok(Instantiated {
+            nodes,
+            outside_inputs,
+        })
     } else {
         Err(errors)
     }
@@ -46,14 +63,14 @@ pub(super) fn instantiate(
 
 /// Builds node `name` from its `section`: takes `kind` out of the section and
 /// hands the rest to that kind's factory, then checks the factory named the
-/// node `name`.
+/// node `name`. Returns the node and the outside inputs its factory declared.
 fn instantiate_node(
     name: &str,
     mut section: toml::Table,
     registry: &AutonomyRegistry,
     agent: &AgentId,
     sensor_channels: &HashSet<String>,
-) -> Result<Box<dyn PipelineNode>, PipelineAssemblyError> {
+) -> Result<(Box<dyn PipelineNode>, Vec<ChannelKey>), PipelineAssemblyError> {
     let Some(toml::Value::String(kind)) = section.remove("kind") else {
         return Err(PipelineAssemblyError::MissingNodeKind {
             node_name: name.to_string(),
@@ -63,6 +80,7 @@ fn instantiate_node(
     let ctx = BuildContext::new(agent.clone(), name, sensor_channels);
 
     let built = registry.build_node(&kind, section, &ctx)?;
+    let outside_inputs = built.output.outside_inputs().to_vec();
     let node = built.output.into_node();
 
     if node.name() != name {
@@ -73,7 +91,7 @@ fn instantiate_node(
         });
     }
 
-    Ok(node)
+    Ok((node, outside_inputs))
 }
 
 #[cfg(test)]
@@ -82,7 +100,7 @@ mod tests {
 
     use crate::assembly::factory::FactoryOutput;
     use crate::pipeline::node::TickContext;
-    use crate::port::{AlgorithmNodePortDescriptor, PortBus, PortDescriptor};
+    use crate::port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus, PortDescriptor};
 
     use helios_core::prelude::TfProvider;
 
@@ -90,6 +108,7 @@ mod tests {
 
     const NAMED_KIND: &str = "TestNamed";
     const MISNAMED_KIND: &str = "TestMisnamed";
+    const OUTSIDE_KIND: &str = "TestOutside";
     const WRONG_NAME: &str = "not_the_key";
 
     /// A node that does nothing; only its name matters here.
@@ -134,6 +153,18 @@ mod tests {
         stub(WRONG_NAME)
     }
 
+    /// Declares one outside input, named after the node.
+    fn build_outside(
+        _config: EmptyConfig,
+        ctx: &BuildContext<'_>,
+    ) -> Result<FactoryOutput, String> {
+        Ok(stub(ctx.node_name())?.with_outside_input(outside_key(ctx.node_name())))
+    }
+
+    fn outside_key(name: &str) -> ChannelKey {
+        InternalChannel::named::<f64>(name).into()
+    }
+
     fn registry() -> AutonomyRegistry {
         let mut registry = AutonomyRegistry::default();
         registry
@@ -143,9 +174,12 @@ mod tests {
             .register_node(MISNAMED_KIND, build_misnamed)
             .expect("test kind is new");
         registry
+            .register_node(OUTSIDE_KIND, build_outside)
+            .expect("test kind is new");
+        registry
     }
 
-    fn run(stack_toml: &str) -> Result<Vec<Box<dyn PipelineNode>>, Vec<PipelineAssemblyError>> {
+    fn run(stack_toml: &str) -> Result<Instantiated, Vec<PipelineAssemblyError>> {
         let stack: AutonomyStack = toml::from_str(stack_toml).expect("test TOML parses");
         instantiate(&stack, &registry(), &AgentId::new("car"), &HashSet::new())
     }
@@ -163,7 +197,7 @@ mod tests {
     /// the factory (whose config denies unknown fields).
     #[test]
     fn every_node_builds_in_name_order() {
-        let nodes = match run(&format!(
+        let built = match run(&format!(
             r#"
             [nodes.b]
             kind = "{NAMED_KIND}"
@@ -172,11 +206,34 @@ mod tests {
             kind = "{NAMED_KIND}"
             "#
         )) {
-            Ok(nodes) => nodes,
+            Ok(built) => built,
             Err(errors) => panic!("expected every node to build, got {errors:?}"),
         };
-        let names: Vec<&str> = nodes.iter().map(|node| node.name()).collect();
+        let names: Vec<&str> = built.nodes.iter().map(|node| node.name()).collect();
         assert_eq!(names, ["a", "b"]);
+        assert!(built.outside_inputs.is_empty());
+    }
+
+    /// The outside inputs every factory declared come back together, in
+    /// node-name order, and a node that declares none adds nothing.
+    #[test]
+    fn outside_inputs_are_collected_in_name_order() {
+        let built = match run(&format!(
+            r#"
+            [nodes.b]
+            kind = "{OUTSIDE_KIND}"
+
+            [nodes.c]
+            kind = "{NAMED_KIND}"
+
+            [nodes.a]
+            kind = "{OUTSIDE_KIND}"
+            "#
+        )) {
+            Ok(built) => built,
+            Err(errors) => panic!("expected every node to build, got {errors:?}"),
+        };
+        assert_eq!(built.outside_inputs, [outside_key("a"), outside_key("b")]);
     }
 
     /// A table with no `kind`, or a `kind` that isn't a string, names the node.

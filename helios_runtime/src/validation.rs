@@ -16,7 +16,6 @@ pub struct CapabilitySet {
     pub mock_estimators: HashSet<String>,
     pub measurement_models: HashSet<String>,
     pub controllers: HashSet<String>,
-    pub planners: HashSet<String>,
     pub allocators: HashSet<String>,
 }
 
@@ -32,9 +31,6 @@ pub enum ConfigValidationError {
         kind: String,
     },
     UnknownController {
-        kind: String,
-    },
-    UnknownPlanner {
         kind: String,
     },
     UnknownMeasurementModel {
@@ -124,9 +120,6 @@ impl std::fmt::Display for ConfigValidationError {
             }
             ConfigValidationError::UnknownController { kind } => {
                 write!(f, "Unknown controller kind '{kind}'")
-            }
-            ConfigValidationError::UnknownPlanner { kind } => {
-                write!(f, "Unknown planner kind '{kind}'")
             }
             ConfigValidationError::UnknownMeasurementModel {
                 estimator_instance,
@@ -312,18 +305,6 @@ pub fn validate_autonomy_config(
         let kind = alloc_cfg.get_kind_str();
         if !capabilities.allocators.contains(kind) {
             errors.push(ConfigValidationError::UnknownAllocator {
-                kind: kind.to_string(),
-            });
-        }
-    }
-
-    // Planner validation.
-    // A `level` naming no map is caught at DAG build, as an unsatisfied
-    // `MapData` input naming the planner.
-    for plan_cfg in config.search_planners.values() {
-        let kind = plan_cfg.get_kind_str();
-        if !capabilities.planners.contains(kind) {
-            errors.push(ConfigValidationError::UnknownPlanner {
                 kind: kind.to_string(),
             });
         }

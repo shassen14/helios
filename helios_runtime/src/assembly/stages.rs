@@ -28,9 +28,10 @@
 //!   missing producer still fails the build.
 //!
 //! Inputs an operator or mission system sends — each planner's goal, and the
-//! teleop intent when teleop is wired — are not body channels. The assembler
-//! declares them separately through [`PipelineBuilder::with_outside_inputs`],
-//! because the stack is what knows which ones it reads.
+//! teleop intent when teleop is wired — are not body channels. They are
+//! declared separately through [`PipelineBuilder::with_outside_inputs`]: a
+//! `[nodes]` factory declares the ones its node reads, and the assembler
+//! declares the teleop intent.
 //!
 //! Everything else — algorithm kinds, noise params, physical constants,
 //! channel names — comes from `stack`.
@@ -52,7 +53,7 @@ use super::command::{
 };
 use super::contexts::{
     AllocatorBuildContext, ControllerBuildContext, MockEstimatorBuildContext,
-    PathFollowerBuildContext, SearchPlannerBuildContext,
+    PathFollowerBuildContext,
 };
 use super::error::PipelineAssemblyError;
 use super::instantiate::instantiate;
@@ -66,8 +67,6 @@ use crate::config::{AllocatorConfig, AutonomyStack, CommandSpace, FoldRole, Refe
 use crate::config::{EstimatorConfig, MOCK_ORACLE_KIND, UKF_KIND};
 use crate::nodes::combinators::{Merge, Selector, Sum};
 use crate::nodes::gaussian_estimator;
-use crate::nodes::path_follower;
-use crate::nodes::planner::DefaultSearchPlannerInputBuilder;
 use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
@@ -77,7 +76,6 @@ use helios_core::control::actuators::ActuatorCommand;
 use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
 use helios_core::interchange::path::Path;
-use helios_core::interchange::perception::map::MapData;
 use helios_core::prelude::AgentId;
 
 use std::collections::{BTreeSet, HashSet};
@@ -148,15 +146,16 @@ pub fn build_pipeline(
     // another's output. A failure here returns at once: with the derived set
     // incomplete, every consumer of a missing channel would report a misleading
     // unpublished input.
-    let nodes = instantiate(stack, registry, &agent, sensor_channels)?;
-    let derived = derived_channels(&nodes, sensor_channels)?;
+    let instantiated = instantiate(stack, registry, &agent, sensor_channels)?;
+    let derived = derived_channels(&instantiated.nodes, sensor_channels)?;
+    outside_inputs.extend(instantiated.outside_inputs);
 
     let sensor_inputs = SensorInputs {
         host: sensor_channels,
         derived: &derived,
     };
 
-    for node in nodes {
+    for node in instantiated.nodes {
         sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
         builder = builder.add_node(node);
     }
@@ -169,36 +168,6 @@ pub fn build_pipeline(
                 builder = builder.add_node(node);
             }
             Err(e) => errors.push(e),
-        }
-    }
-
-    // --- Planners ---
-    for (planner_name, plan_cfg) in &stack.search_planners {
-        outside_inputs.push(DefaultSearchPlannerInputBuilder::goal_key(
-            plan_cfg.get_goal_channel(),
-        ));
-
-        let level = plan_cfg.get_level_str();
-        let map_channel = InternalChannel::named::<MapData>(level);
-        let path_channel = InternalChannel::named::<Path>(planner_name.as_str());
-
-        match registry.build_search_planner(
-            plan_cfg.get_kind_str(),
-            SearchPlannerBuildContext {
-                agent: agent.clone(),
-                instance_name: planner_name.clone(),
-                config: plan_cfg.clone(),
-                map_channel,
-                path_channel,
-            },
-        ) {
-            Ok(node) => {
-                builder = builder.add_node(node);
-            }
-            Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
-                node_kind: plan_cfg.get_kind_str().to_string(),
-                reason,
-            }),
         }
     }
 
@@ -226,27 +195,26 @@ pub fn build_pipeline(
             control::reference::<BodyTwistRef>()
         };
 
-        match path_follower::resolve_path_channel(stack) {
-            Ok(path_channel) => {
-                match registry.build_path_follower(
-                    pf_cfg.get_kind_str(),
-                    PathFollowerBuildContext {
-                        agent: agent.clone(),
-                        config: pf_cfg.clone(),
-                        path_channel,
-                        output_channel: follower_output,
-                    },
-                ) {
-                    Ok(node) => {
-                        builder = builder.add_node(node);
-                    }
-                    Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
-                        node_kind: pf_cfg.get_kind_str().to_string(),
-                        reason,
-                    }),
-                }
+        // A `path` naming no planner is caught at DAG build, as an unsatisfied
+        // `Path` input naming the follower.
+        let path_channel = InternalChannel::named::<Path>(pf_cfg.get_path_str());
+
+        match registry.build_path_follower(
+            pf_cfg.get_kind_str(),
+            PathFollowerBuildContext {
+                agent: agent.clone(),
+                config: pf_cfg.clone(),
+                path_channel,
+                output_channel: follower_output,
+            },
+        ) {
+            Ok(node) => {
+                builder = builder.add_node(node);
             }
-            Err(e) => errors.push(e),
+            Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
+                node_kind: pf_cfg.get_kind_str().to_string(),
+                reason,
+            }),
         }
     }
 
