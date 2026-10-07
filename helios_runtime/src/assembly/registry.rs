@@ -27,7 +27,7 @@
 
 use super::contexts::{
     AllocatorBuildContext, ControllerBuildContext, GaussianEstimatorBuildContext,
-    MeasurementModelBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
+    MeasurementModelBuildContext, MockEstimatorBuildContext,
 };
 
 use super::error::PipelineAssemblyError;
@@ -65,9 +65,6 @@ type ControllerFactory =
 type AllocatorFactory =
     Box<dyn Fn(AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
-type PathFollowerFactory =
-    Box<dyn Fn(PathFollowerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
-
 type MockEstimatorFactory = Box<
     dyn Fn(EstimatorConfig, MockEstimatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
         + Send
@@ -86,7 +83,6 @@ pub struct AutonomyRegistry {
     gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
     controllers: HashMap<String, ControllerFactory>,
     allocators: HashMap<String, AllocatorFactory>,
-    path_followers: HashMap<String, PathFollowerFactory>,
     // mocks
     mock_estimators: HashMap<String, MockEstimatorFactory>,
 }
@@ -99,7 +95,6 @@ impl Default for AutonomyRegistry {
             gaussian_estimators: HashMap::new(),
             controllers: HashMap::new(),
             allocators: HashMap::new(),
-            path_followers: HashMap::new(),
             mock_estimators: HashMap::new(),
         };
         // Registration order: leaf dependencies before composites.
@@ -108,6 +103,7 @@ impl Default for AutonomyRegistry {
         crate::nodes::controller::register(&mut registry);
         crate::nodes::planner::register(&mut registry);
         crate::nodes::path_follower::register(&mut registry);
+        crate::nodes::teleop::register(&mut registry);
         crate::nodes::mocks::register(&mut registry);
         crate::nodes::allocator::register(&mut registry);
         crate::nodes::deproject::register(&mut registry);
@@ -198,17 +194,6 @@ impl AutonomyRegistry {
         self.allocators.insert(key.into(), Box::new(factory));
     }
 
-    pub(crate) fn register_path_follower(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(PathFollowerBuildContext) -> Result<Box<dyn PipelineNode>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.path_followers.insert(key.into(), Box::new(factory));
-    }
-
     pub(crate) fn register_mock_estimator(
         &mut self,
         key: impl Into<String>,
@@ -289,16 +274,6 @@ impl AutonomyRegistry {
         self.allocators
             .get(key)
             .ok_or_else(|| format!("No allocator factory registered for '{key}'"))?(ctx)
-    }
-
-    pub(crate) fn build_path_follower(
-        &self,
-        key: &str,
-        ctx: PathFollowerBuildContext,
-    ) -> Result<Box<dyn PipelineNode>, String> {
-        self.path_followers
-            .get(key)
-            .ok_or_else(|| format!("No path follower factory registered for '{key}'"))?(ctx)
     }
 
     pub(crate) fn build_mock_estimator(

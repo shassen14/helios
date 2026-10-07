@@ -31,7 +31,6 @@ pub use crate::stamped::{Health, Stamped};
 
 pub use crate::assembly::contexts::{
     ControllerBuildContext, GaussianEstimatorBuildContext, MeasurementModelBuildContext,
-    PathFollowerBuildContext,
 };
 pub use crate::assembly::{
     build_pipeline, AutonomyRegistry, BuildContext, DuplicateKind, FactoryError, FactoryOutput,

@@ -7,15 +7,14 @@
 //! it binds a reserved role string to whatever payload type the caller's
 //! morphology uses.
 //!
-//! The *reference* roles ([`reference`], [`reference_autonomy`],
-//! [`reference_teleop`]) are the same shape one layer up, at the
+//! The *reference* role ([`reference`]) is the same shape one layer up, at the
 //! guidance→tracking seam: the instantaneous setpoint the controllers track,
 //! `BodyTwistRef` for a decoupled car and an `AttitudeThrustRef` for a
 //! multirotor. Teleop-vs-autonomy is arbitrated *here*, on the single-signal
-//! reference, not on the fanned-out command spaces below it. The autonomy
-//! follower and the teleop mapper each write their own contender role; a
-//! `Selector` resolves the winner onto [`reference`], which the controllers
-//! read.
+//! reference, not on the fanned-out command spaces below it. The contenders
+//! (a path follower, a teleop mapper) have no role: each writes a channel named
+//! after its node, and the reference seam's `Selector` resolves the winner onto
+//! [`reference`], which the controllers read.
 //!
 //! The *actuator terminal* ([`actuators`]) is the exception: the whole point of
 //! the actuator seam is that everything downstream of the allocator speaks one
@@ -39,37 +38,11 @@ const ROLE_COMMAND: &str = "command";
 const ROLE_ACTUATORS: &str = "actuators";
 const ROLE_INTENT: &str = "intent";
 const ROLE_REFERENCE: &str = "reference";
-const ROLE_REFERENCE_AUTONOMY: &str = "reference.autonomy";
-const ROLE_REFERENCE_TELEOP: &str = "reference.teleop";
-
-/// The autonomy stack's guidance reference.
-///
-/// Contender role (Internal). Written by the path follower when teleop also
-/// contends for the seam, read by the reference `Selector`. When teleop is
-/// absent the follower writes [`reference`] directly and this role is unused.
-pub fn reference_autonomy<T>() -> InternalChannel
-where
-    T: 'static,
-{
-    InternalChannel::named::<T>(ROLE_REFERENCE_AUTONOMY)
-}
-
-/// The human operator's guidance reference.
-///
-/// Contender role (Internal). Written by the teleop mapper (its scaled
-/// `BodyTwistRef`), read by the reference `Selector`. A human is a
-/// hand-operated path follower, so its output is a reference, not a command.
-pub fn reference_teleop<T>() -> InternalChannel
-where
-    T: 'static,
-{
-    InternalChannel::named::<T>(ROLE_REFERENCE_TELEOP)
-}
 
 /// The resolved guidance reference the tracking layer consumes.
 ///
-/// Plural role (Internal). Written by the reference `Selector` (or by a lone
-/// follower when nothing contends), read by every controller's input builder.
+/// Plural role (Internal). Written by the reference seam's `Selector`, read by
+/// every controller's input builder.
 /// This is the single-signal seam: one instantaneous setpoint below all
 /// planning, the same slot whether autonomy or teleop currently owns it.
 pub fn reference<T>() -> InternalChannel
@@ -110,7 +83,7 @@ pub fn actuators() -> InternalChannel {
 /// reference. Generic for the same reason the other roles are: the role fixes
 /// the name, the payload follows the morphology — `TwistIntent` for a velocity
 /// body, a future `SurfaceIntent` for a plane — never the reference type
-/// itself, so it stays distinct from [`reference_teleop`] on the same payload.
+/// itself, so it stays distinct from [`reference`] on the same payload.
 pub fn intent<T: 'static>() -> InternalChannel {
     InternalChannel::named::<T>(ROLE_INTENT)
 }
@@ -145,24 +118,17 @@ mod tests {
     #[test]
     fn distinct_roles_are_distinct_channels() {
         // Intent is the host's pre-scaling ingress, never a seam role: it must not
-        // collide with the teleop contender or the command, even when they carry
-        // the same payload type.
-        assert_ne!(intent::<BodyTwist>(), reference_teleop::<BodyTwist>());
+        // collide with the reference or the command, even when they carry the
+        // same payload type.
+        assert_ne!(intent::<BodyTwist>(), reference::<BodyTwist>());
         assert_ne!(intent::<BodyTwist>(), command::<BodyTwist>());
     }
 
     #[test]
-    fn reference_roles_are_distinct() {
-        // The reference seam has its own contender/resolved trio, one layer up
-        // from the command seam. All three must be distinct slots, and none may
-        // alias a command-seam role even on the same payload type — otherwise
-        // the guidance arbiter and the command arbiter would fight over one slot.
-        assert_ne!(reference::<BodyTwist>(), reference_autonomy::<BodyTwist>());
-        assert_ne!(reference::<BodyTwist>(), reference_teleop::<BodyTwist>());
-        assert_ne!(
-            reference_autonomy::<BodyTwist>(),
-            reference_teleop::<BodyTwist>()
-        );
+    fn reference_is_distinct_from_command() {
+        // The reference seam sits one layer up from the command seam. Its
+        // resolved slot must not alias a command-seam role even on the same
+        // payload type, or the two seams would fight over one slot.
         assert_ne!(reference::<BodyTwist>(), command::<BodyTwist>());
     }
 

@@ -1,8 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::config::{
-    AutonomyStack, CommandSpace, ControllerConfig, EstimatorConfig, ReferenceSource,
-};
+use crate::config::{AutonomyStack, CommandSpace, ControllerConfig, EstimatorConfig};
 
 /// Snapshot of algorithm keys registered in each family.
 ///
@@ -54,24 +52,9 @@ pub enum ConfigValidationError {
         kind: String,
     },
 
-    /// `reference_arbitration` lists `autonomy` as a source, but no controller is
-    /// configured to produce the autonomy command.
-    AutonomySourceWithoutController,
-    /// A controller is configured, but `autonomy` is not among the explicitly
-    /// listed reference sources, so the controller's output is never routed to
-    /// `command`.
-    ControllerConfiguredButNotAReferenceSource,
-    /// The same reference source appears more than once in
-    /// `reference_arbitration.sources`, making priority order ambiguous.
-    DuplicateReferenceSource {
-        source: String,
-    },
-
-    /// An allocator consumes a command space nothing produces — no controller
-    /// emits it and, for a body twist, no teleop source supplies it — so that
+    /// An allocator consumes a command space no controller emits, so that
     /// allocator's `command` input is unfilled. Checked per space, since decoupled
-    /// control opens one seam per space an allocator consumes. The terminal-side
-    /// twin of `AutonomySourceWithoutController`.
+    /// control opens one seam per space an allocator consumes.
     AllocatorWithoutCommandSource {
         space: CommandSpace,
     },
@@ -151,24 +134,6 @@ impl std::fmt::Display for ConfigValidationError {
             }
             ConfigValidationError::UnknownAllocator { kind } => {
                 write!(f, "Unknown allocator kind '{kind}'")
-            }
-            ConfigValidationError::AutonomySourceWithoutController => {
-                write!(
-                    f,
-                    "reference_arbitration lists 'autonomy' as a source but no controller is configured to produce it"
-                )
-            }
-            ConfigValidationError::ControllerConfiguredButNotAReferenceSource => {
-                write!(
-                    f,
-                    "a controller is configured but 'autonomy' is not among reference_arbitration.sources; its output is never routed to command"
-                )
-            }
-            ConfigValidationError::DuplicateReferenceSource { source } => {
-                write!(
-                    f,
-                    "reference_arbitration.sources lists '{source}' more than once"
-                )
             }
             ConfigValidationError::AllocatorWithoutCommandSource { space } => {
                 write!(
@@ -310,33 +275,6 @@ pub fn validate_autonomy_config(
         }
     }
 
-    // Reference arbitration validation.
-    let sources = &config.reference_arbitration.sources;
-    let has_controller = !config.controllers.is_empty();
-    let lists_autonomy = sources.contains(&ReferenceSource::Autonomy);
-
-    // An explicit autonomy source with nothing to produce it.
-    if lists_autonomy && !has_controller {
-        errors.push(ConfigValidationError::AutonomySourceWithoutController);
-    }
-
-    // A controller whose output is never routed to `command`. An empty sources
-    // list infers `[Autonomy]`, so this only fires when the list is explicit
-    // and omits autonomy.
-    if has_controller && !sources.is_empty() && !lists_autonomy {
-        errors.push(ConfigValidationError::ControllerConfiguredButNotAReferenceSource);
-    }
-
-    // A source listed more than once makes priority order ambiguous.
-    let mut seen = HashSet::new();
-    for source in sources {
-        if !seen.insert(*source) {
-            errors.push(ConfigValidationError::DuplicateReferenceSource {
-                source: source.as_str().to_string(),
-            });
-        }
-    }
-
     // Allocator cross-field checks. The per-kind check above rejects unknown
     // allocators; these catch a well-formed allocator wired into a graph that
     // can't feed it or that fights another allocator for the same actuator,
@@ -354,22 +292,17 @@ pub fn validate_autonomy_config(
         .collect();
 
     // Each allocator consumes its space's `command::<T>()` channel, fed by a
-    // same-space fold of controllers — plus, for a body twist alone, a teleop
-    // source. A space with an allocator but no producer leaves that allocator's
-    // input unsatisfiable: the per-space form of the old single-producer check,
-    // now that decoupled control opens one seam per space. Teleop produces only a
-    // body twist today (the teleop mapper is body-twist-only), so it satisfies the
-    // `BodyTwist` space and no other. Mirrors the assembler's `CommandTopology::None`.
-    let teleop_present = sources.contains(&ReferenceSource::Teleop);
+    // same-space fold of controllers. A space with an allocator but no producer
+    // leaves that allocator's input unsatisfiable: the per-space form of the old
+    // single-producer check, now that decoupled control opens one seam per space.
+    // Teleop writes a guidance reference, not a command, so it feeds no space.
     let controller_spaces: HashSet<CommandSpace> = config
         .controllers
         .values()
         .map(|controller| controller.command_space())
         .collect();
     for space in &allocator_spaces {
-        let produced = controller_spaces.contains(space)
-            || (*space == CommandSpace::BodyTwist && teleop_present);
-        if !produced {
+        if !controller_spaces.contains(space) {
             errors.push(ConfigValidationError::AllocatorWithoutCommandSource { space: *space });
         }
     }

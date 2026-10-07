@@ -1,6 +1,5 @@
 use super::{
-    AllocatorConfig, ControllerConfig, EstimatorConfig, PathFollowingConfig,
-    ReferenceArbitrationConfig, TeleopMapperConfig, TfBufferConfig,
+    AllocatorConfig, ControllerConfig, EstimatorConfig, ReferenceSeamConfig, TfBufferConfig,
 };
 
 use serde::Deserialize;
@@ -24,22 +23,15 @@ pub struct AutonomyStack {
     pub estimators: HashMap<String, EstimatorConfig>,
 
     #[serde(default)]
-    pub path_following: Option<PathFollowingConfig>,
-
-    #[serde(default)]
     pub controllers: HashMap<String, ControllerConfig>,
 
     #[serde(default)]
     pub allocators: HashMap<String, AllocatorConfig>,
 
+    /// The guidance reference seam: which `[nodes]` entries feed the reference
+    /// the controllers track. Omitted when nothing in the graph produces one.
     #[serde(default)]
-    pub teleop: Option<TeleopMapperConfig>,
-
-    /// Reference-arbitration tuning (teleop-vs-autonomy freshness). Defaults apply
-    /// when the `[reference_arbitration]` section is omitted, so a stack with no
-    /// teleop source never has to mention it.
-    #[serde(default)]
-    pub reference_arbitration: ReferenceArbitrationConfig,
+    pub reference: Option<ReferenceSeamConfig>,
 
     /// Sizing for the estimated transform buffer the `TfService` folds dual-
     /// published edges into. Defaults apply when the `[tf]` section is omitted.

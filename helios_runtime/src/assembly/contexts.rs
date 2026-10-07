@@ -4,7 +4,7 @@
 //! reads. No Bevy `Entity`, no full `AgentConfig`. The host (sim or hw)
 //! resolves the agent-specific values and passes them here.
 
-use crate::config::{AllocatorConfig, ControllerConfig, PathFollowingConfig, SensorModelConfig};
+use crate::config::{AllocatorConfig, ControllerConfig, SensorModelConfig};
 use crate::nodes::gaussian_estimator::AidingHandler;
 use crate::port::InternalChannel;
 
@@ -68,20 +68,6 @@ pub struct AllocatorBuildContext {
     /// consumes (e.g. `control::command::<BodyTwist>()`).
     pub(crate) input_channel: InternalChannel,
     /// The bus channel on which this node publishes its `ActuatorCommand`.
-    pub(crate) output_channel: InternalChannel,
-}
-
-/// Context for building a `PathFollowerNode`.
-pub struct PathFollowerBuildContext {
-    pub agent: AgentId,
-    pub(crate) config: PathFollowingConfig,
-    /// The bus channel on which the upstream planner publishes `Path`.
-    /// Always internal (brain-produced).
-    pub(crate) path_channel: InternalChannel,
-    /// The reference channel the follower publishes its guidance setpoint on.
-    /// The assembler sets this to the autonomy contender role when teleop also
-    /// drives the seam, or to the resolved reference the controllers read when
-    /// the follower is the lone source. Always internal (brain-produced).
     pub(crate) output_channel: InternalChannel,
 }
 

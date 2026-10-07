@@ -44,7 +44,10 @@ kind = "Deproject"
 input = "sensor.lidar.rear"
 output = "sensor.lidar.rear.points"
 
-[path_following]
+# The path follower reads the planner's path by its node name and publishes its
+# reference on a channel named after itself. `[reference]` below decides where
+# that reference goes.
+[nodes.pure_pursuit]
 kind = "PurePursuit"
 path = "local_path"
 max_speed_m_s = 5.0
@@ -52,7 +55,24 @@ min_speed_m_s = 0.5
 lookahead_distance_m = 4.0
 goal_radius = 3.0
 max_lateral_acceleration = 3.0
-state_source = "ground_truth"
+
+# Teleop mapper: normalized operator intent (per-axis deflection in [-1, 1]) →
+# a BodyTwistRef, scaled per DOF. A car drives only forward speed and turn rate,
+# so it names surge (m/s) and yaw (rad/s); the other four axes default to 0.0 —
+# an honest statement the body cannot drive them, not a dead field. Default keys:
+# ↑/↓ surge, ←/→ yaw.
+[nodes.teleop]
+kind = "TwistTeleop"
+surge = 5.0  # peak forward speed at full deflection, m/s (matches max_speed_m_s)
+yaw = 1.0    # peak turn rate at full deflection, rad/s
+
+# The guidance reference the controllers track. The follower is the base; teleop
+# is preferred while fresh, so driving the keys takes over, and releasing them
+# lets the teleop reference age out and the follower reclaim the seam with no
+# explicit release.
+[reference]
+base = "pure_pursuit"
+preferred = ["teleop"]
 
 # --- Control: decoupled drive + steer legs ---
 # PurePursuit emits one BodyTwistRef reference; both controllers below consume
@@ -114,22 +134,3 @@ drive = "drive"
 [allocators.steer]
 kind = "SteerPosition"
 steer = "steer"
-
-# Autonomy and teleop both contend for the guidance reference seam. The path
-# follower writes the autonomy contender; the teleop mapper below writes the
-# teleop contender; a freshness selector picks the fresher onto the reference the
-# controllers track. Releasing the drive keys lets the teleop reference age out,
-# so the follower reclaims the seam with no explicit release. Listed highest-
-# authority first.
-[reference_arbitration]
-sources = ["autonomy", "teleop"]
-
-# Teleop mapper: normalized operator intent (per-axis deflection in [-1, 1]) →
-# a BodyTwistRef, scaled per DOF. A car drives only forward speed and turn rate,
-# so it names surge (m/s) and yaw (rad/s); the other four axes default to 0.0 —
-# an honest statement the body cannot drive them, not a dead field. Default keys:
-# ↑/↓ surge, ←/→ yaw.
-[teleop]
-kind = "Twist"
-surge = 5.0  # peak forward speed at full deflection, m/s (matches max_speed_m_s)
-yaw = 1.0    # peak turn rate at full deflection, rad/s

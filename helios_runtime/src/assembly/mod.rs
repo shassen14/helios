@@ -12,7 +12,9 @@
 //! - `instantiate` — builds every `[nodes]` entry through the factory
 //!   registered for its kind.
 //! - `contexts` — what each family's factory receives.
-//! - `command` — node names and policy for the command and reference seams.
+//! - `seams` — the passes that combine several nodes' outputs into one seam
+//!   channel, each from its stack section.
+//! - `command` — node names for the command seam.
 //! - `error` — [`PipelineAssemblyError`].
 //!
 //! [`AutonomyStack`]: crate::config::AutonomyStack
@@ -24,6 +26,7 @@ mod error;
 mod factory;
 mod instantiate;
 mod registry;
+mod seams;
 mod sensor_inputs;
 mod stages;
 

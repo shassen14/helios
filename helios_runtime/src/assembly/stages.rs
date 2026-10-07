@@ -29,9 +29,8 @@
 //!
 //! Inputs an operator or mission system sends — each planner's goal, and the
 //! teleop intent when teleop is wired — are not body channels. They are
-//! declared separately through [`PipelineBuilder::with_outside_inputs`]: a
-//! `[nodes]` factory declares the ones its node reads, and the assembler
-//! declares the teleop intent.
+//! declared separately through [`PipelineBuilder::with_outside_inputs`]: the
+//! `[nodes]` factory of each node that reads one declares it.
 //!
 //! Everything else — algorithm kinds, noise params, physical constants,
 //! channel names — comes from `stack`.
@@ -48,34 +47,26 @@
 //! promoted to a registry family (`register_aiding_handler_factory`). For the
 //! current set of five built-in types, the inline match is sufficient.
 
-use super::command::{
-    command_sum_node_name, selector_policy, REFERENCE_ARBITER_NODE, TELEOP_MAPPER_NODE,
-};
-use super::contexts::{
-    AllocatorBuildContext, ControllerBuildContext, MockEstimatorBuildContext,
-    PathFollowerBuildContext,
-};
+use super::command::command_sum_node_name;
+use super::contexts::{AllocatorBuildContext, ControllerBuildContext, MockEstimatorBuildContext};
 use super::error::PipelineAssemblyError;
 use super::instantiate::instantiate;
 use super::registry::AutonomyRegistry;
+use super::seams::reference::reference_selector;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
-use crate::config::TeleopMapperConfig;
-use crate::config::{AllocatorConfig, AutonomyStack, CommandSpace, FoldRole, ReferenceSource};
+use crate::config::{AllocatorConfig, AutonomyStack, CommandSpace, FoldRole};
 use crate::config::{EstimatorConfig, MOCK_ORACLE_KIND, UKF_KIND};
-use crate::nodes::combinators::{Merge, Selector, Sum};
+use crate::nodes::combinators::{Merge, Sum};
 use crate::nodes::gaussian_estimator;
-use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
 use crate::port::{ChannelKey, InternalChannel};
 
 use helios_core::control::actuators::ActuatorCommand;
-use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle, TwistIntent};
-use helios_core::control::BodyTwistRef;
-use helios_core::interchange::path::Path;
+use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle};
 use helios_core::prelude::AgentId;
 
 use std::collections::{BTreeSet, HashSet};
@@ -133,9 +124,9 @@ pub fn build_pipeline(
     // The body's sensor channels the stack reads. Merged into the body's
     // `publishes` before building, so the build counts them as supplied.
     let mut external_channels: Vec<ChannelKey> = vec![];
-    // Inputs sent from outside the robot that the stack reads: each planner's
-    // goal, and the operator's teleop intent. Declared to the builder apart from
-    // the body's channels.
+    // Inputs sent from outside the robot that the stack reads, such as each
+    // planner's goal and the operator's teleop intent. Declared to the builder
+    // apart from the body's channels.
     let mut outside_inputs: Vec<ChannelKey> = vec![];
 
     // --- Nodes ---
@@ -155,6 +146,16 @@ pub fn build_pipeline(
         derived: &derived,
     };
 
+    // --- Reference seam ---
+    // The `[reference]` section names the nodes whose references contend for
+    // the one the controllers track. Members are `[nodes]` entries, so the seam
+    // resolves them before the nodes move into the builder.
+    match reference_selector(stack.reference.as_ref(), &instantiated.nodes) {
+        Ok(Some(selector)) => builder = builder.add_node(selector),
+        Ok(None) => {}
+        Err(seam_errors) => errors.extend(seam_errors),
+    }
+
     for node in instantiated.nodes {
         sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
         builder = builder.add_node(node);
@@ -168,112 +169,6 @@ pub fn build_pipeline(
                 builder = builder.add_node(node);
             }
             Err(e) => errors.push(e),
-        }
-    }
-
-    // --- Path follower + guidance reference seam ---
-    // The guidance reference is the single-signal seam where teleop and autonomy
-    // are arbitrated — below all planning, above the controllers that track it.
-    // The follower (autonomy) and the teleop mapper each write their own contender
-    // role; a `Selector` resolves the fresher onto the resolved `reference` channel
-    // the controllers read. Arbitration is synthesized only when *both* contend: a
-    // lone source (a follower with no teleop, or teleop with no follower) writes
-    // the resolved `reference` directly and no arbiter is needed — the analog of a
-    // lone `Direct` command source. The seam type is `BodyTwistRef`, the only
-    // reference type today; when a second appears, derive it from the follower's
-    // declared reference rather than hard-coding it here.
-    let teleop_contends = stack
-        .reference_arbitration
-        .sources
-        .contains(&ReferenceSource::Teleop);
-    let arbitrate_reference = teleop_contends && stack.path_following.is_some();
-
-    if let Some(pf_cfg) = &stack.path_following {
-        let follower_output = if arbitrate_reference {
-            control::reference_autonomy::<BodyTwistRef>()
-        } else {
-            control::reference::<BodyTwistRef>()
-        };
-
-        // A `path` naming no planner is caught at DAG build, as an unsatisfied
-        // `Path` input naming the follower.
-        let path_channel = InternalChannel::named::<Path>(pf_cfg.get_path_str());
-
-        match registry.build_path_follower(
-            pf_cfg.get_kind_str(),
-            PathFollowerBuildContext {
-                agent: agent.clone(),
-                config: pf_cfg.clone(),
-                path_channel,
-                output_channel: follower_output,
-            },
-        ) {
-            Ok(node) => {
-                builder = builder.add_node(node);
-            }
-            Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
-                node_kind: pf_cfg.get_kind_str().to_string(),
-                reason,
-            }),
-        }
-    }
-
-    // Teleop guidance ingress + reference arbiter. Teleop enters at the top of the
-    // tracking layer, substituting for the follower's instantaneous output. Its
-    // mapper scales the operator's `intent` into a `BodyTwistRef` — onto the teleop
-    // contender role when a follower also contends, else onto the resolved
-    // `reference` directly. When both contend the arbiter picks the fresher of the
-    // two onto `reference`; neutral intent publishes nothing, so the follower
-    // reclaims the seam by freshness with no explicit release.
-    if teleop_contends {
-        let teleop_output = if arbitrate_reference {
-            control::reference_teleop::<BodyTwistRef>()
-        } else {
-            control::reference::<BodyTwistRef>()
-        };
-
-        match &stack.teleop {
-            Some(TeleopMapperConfig::Twist {
-                surge,
-                sway,
-                heave,
-                roll,
-                pitch,
-                yaw,
-            }) => {
-                let mapper = TwistTeleopNode::new(
-                    TELEOP_MAPPER_NODE,
-                    control::intent::<TwistIntent>(),
-                    teleop_output,
-                    TwistScale {
-                        surge: *surge,
-                        sway: *sway,
-                        heave: *heave,
-                        roll: *roll,
-                        pitch: *pitch,
-                        yaw: *yaw,
-                    },
-                );
-                builder = builder.add_node(Box::new(mapper));
-                outside_inputs.push(control::intent::<TwistIntent>().into());
-
-                if arbitrate_reference {
-                    let arbiter = Selector::<BodyTwistRef>::new(
-                        REFERENCE_ARBITER_NODE,
-                        vec![control::reference_teleop::<BodyTwistRef>()],
-                        control::reference_autonomy::<BodyTwistRef>(),
-                        control::reference::<BodyTwistRef>(),
-                        selector_policy(&stack.reference_arbitration),
-                    );
-                    builder = builder.add_node(Box::new(arbiter));
-                }
-            }
-            None => errors.push(PipelineAssemblyError::FactoryFailure {
-                node_kind: "TeleopMapper".to_string(),
-                reason: "teleop is a declared command source but no [teleop] mapper \
-                         config was provided"
-                    .to_string(),
-            }),
         }
     }
 

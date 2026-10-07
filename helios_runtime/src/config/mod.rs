@@ -1,24 +1,21 @@
 //! Portable autonomy configuration structs, shared by simulation and hardware.
 //!
 //! Re-exports `AgentBaseConfig`, `AutonomyStack`, and all sub-configs
-//! (`EstimatorConfig`, `ControllerConfig`, `PathFollowingConfig`).
+//! (`EstimatorConfig`, `ControllerConfig`, `ReferenceSeamConfig`).
 //! These structs are TOML-deserializable and contain zero Bevy or simulation types.
 
 mod agent;
 mod allocator;
-mod arbitration;
 mod autonomy;
 mod command_space;
 mod controller;
 mod estimator;
-mod path_following;
-mod teleop;
+mod reference;
 mod tf;
 
 pub use agent::AgentBaseConfig;
 pub use allocator::AllocatorConfig;
 pub(crate) use allocator::{STEER_POSITION_KIND, WHEEL_TORQUE_KIND};
-pub use arbitration::{ArbitrationPolicyConfig, ReferenceArbitrationConfig, ReferenceSource};
 pub use autonomy::AutonomyStack;
 pub use command_space::CommandSpace;
 pub use controller::ControllerConfig;
@@ -33,7 +30,5 @@ pub use estimator::{
     QuadcopterProcessNoiseConfig, SensorModelConfig, UkfConfig,
 };
 pub(crate) use estimator::{EKF_KIND, MOCK_ORACLE_KIND, UKF_KIND};
-pub use path_following::PathFollowingConfig;
-pub(crate) use path_following::{PURE_PURSUIT_KIND, STEERING_PID_KIND};
-pub use teleop::TeleopMapperConfig;
+pub use reference::{ArbitrationPolicyConfig, ReferenceSeamConfig};
 pub use tf::TfBufferConfig;

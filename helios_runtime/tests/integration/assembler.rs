@@ -6,8 +6,7 @@ use helios_runtime::channels::control;
 use helios_runtime::config::{
     AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, ControllerConfig, EkfConfig,
     EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
-    PathFollowingConfig, ReferenceArbitrationConfig, ReferenceSource, SensorModelConfig,
-    TeleopMapperConfig,
+    ReferenceSeamConfig, SensorModelConfig,
 };
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
@@ -38,16 +37,38 @@ use nalgebra::Vector3;
 
 use crate::common::MockRuntime;
 
-/// A car's teleop mapper tuning: only surge and yaw are active. Required on any
-/// stack that declares a `Teleop` command source.
-fn twist_teleop() -> TeleopMapperConfig {
-    TeleopMapperConfig::Twist {
-        surge: 4.0,
-        sway: 0.0,
-        heave: 0.0,
-        roll: 0.0,
-        pitch: 0.0,
-        yaw: 1.0,
+/// A `[nodes]` entry for a teleop mapper named `teleop` with a car's tuning:
+/// only surge and yaw are active.
+fn twist_teleop() -> (String, toml::Table) {
+    let mut section = toml::Table::new();
+    section.insert("kind".to_string(), "TwistTeleop".into());
+    section.insert("surge".to_string(), 4.0.into());
+    section.insert("yaw".to_string(), 1.0.into());
+    ("teleop".to_string(), section)
+}
+
+/// A `[reference]` section forwarding `base` unless a `preferred` member is
+/// fresh.
+fn reference_seam(base: &str, preferred: &[&str]) -> ReferenceSeamConfig {
+    let mut section = toml::Table::new();
+    section.insert("base".to_string(), base.into());
+    section.insert(
+        "preferred".to_string(),
+        preferred
+            .iter()
+            .map(|name| toml::Value::from(*name))
+            .collect::<Vec<_>>()
+            .into(),
+    );
+    section.try_into().expect("a valid reference section")
+}
+
+/// A stack whose only node is the teleop mapper, forwarded onto the reference.
+fn teleop_only_stack() -> AutonomyStack {
+    AutonomyStack {
+        nodes: BTreeMap::from([twist_teleop()]),
+        reference: Some(reference_seam("teleop", &[])),
+        ..Default::default()
     }
 }
 
@@ -81,22 +102,14 @@ fn setpoint_value(cmd: &ActuatorCommand, id: &str) -> SetpointValue {
 }
 
 // =========================================================================
-// == Teleop-only: a lone teleop source drives the `reference` seam directly ==
+// == Teleop-only: a lone teleop mapper is the reference seam's base       ==
 // =========================================================================
 
 #[test]
 fn teleop_only_stack_builds_without_a_controller() {
-    // `sources = ["teleop"]`, no follower and no controllers: teleop is the lone
-    // guidance source, so its mapper writes the resolved `reference` directly and
-    // no arbiter is synthesized. The stack must still build.
-    let stack = AutonomyStack {
-        teleop: Some(twist_teleop()),
-        reference_arbitration: ReferenceArbitrationConfig {
-            sources: vec![ReferenceSource::Teleop],
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    // No follower and no controllers: the teleop mapper is the seam's lone
+    // member, forwarded onto `reference`. The stack must still build.
+    let stack = teleop_only_stack();
 
     let result = build_pipeline(
         &stack,
@@ -118,14 +131,7 @@ fn teleop_reference_is_intent_driven_not_free_running() {
     // The mapper is a brain node fed by host intent, not a free-running source:
     // with no intent on the bus the resolved `reference` slot stays empty, so
     // nothing is fabricated until the host actually publishes intent.
-    let stack = AutonomyStack {
-        teleop: Some(twist_teleop()),
-        reference_arbitration: ReferenceArbitrationConfig {
-            sources: vec![ReferenceSource::Teleop],
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let stack = teleop_only_stack();
 
     let pipeline = build_pipeline(
         &stack,
@@ -148,18 +154,11 @@ fn teleop_reference_is_intent_driven_not_free_running() {
 #[test]
 fn teleop_intent_is_mapped_into_the_reference() {
     // The core teleop capability: the host publishes normalised intent, and the
-    // synthesized mapper scales it into a `BodyTwistRef` on the resolved
-    // `reference` seam — the same guidance reference a follower would emit.
+    // mapper scales it into a `BodyTwistRef` that the seam forwards onto the
+    // resolved `reference`, the same guidance reference a follower would emit.
     // Writing intent and ticking must make `reference` reflect the *scaled* twist,
     // proving the mapper is a real brain node fed by host intent.
-    let stack = AutonomyStack {
-        teleop: Some(twist_teleop()),
-        reference_arbitration: ReferenceArbitrationConfig {
-            sources: vec![ReferenceSource::Teleop],
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    let stack = teleop_only_stack();
 
     let pipeline = build_pipeline(
         &stack,
@@ -709,18 +708,21 @@ fn planner_without_a_map_fails_the_build_naming_it() {
     );
 }
 
-/// A pure-pursuit follower reading its path from `path`.
-fn pure_pursuit_reading(path: &str) -> PathFollowingConfig {
-    toml::from_str(&format!(
-        "kind = \"PurePursuit\"\npath = \"{path}\"\nmax_speed_m_s = 5.0\nmin_speed_m_s = 0.5"
-    ))
-    .expect("a valid follower section")
+/// A `[nodes]` entry for a pure-pursuit follower named `pure_pursuit` reading
+/// its path from `path`.
+fn pure_pursuit_reading(path: &str) -> (String, toml::Table) {
+    let mut section = toml::Table::new();
+    section.insert("kind".to_string(), "PurePursuit".into());
+    section.insert("path".to_string(), path.into());
+    section.insert("max_speed_m_s".to_string(), 5.0.into());
+    section.insert("min_speed_m_s".to_string(), 0.5.into());
+    ("pure_pursuit".to_string(), section)
 }
 
 #[test]
 fn follower_reads_the_path_of_the_planner_its_section_names() {
     let mut stack = planner_stack(&[("local_path", "mission")]);
-    stack.path_following = Some(pure_pursuit_reading("local_path"));
+    stack.nodes.extend([pure_pursuit_reading("local_path")]);
 
     let built = build_pipeline(
         &stack,
@@ -742,7 +744,7 @@ fn follower_naming_no_planner_fails_the_build_naming_it() {
     // planner of that name nothing produces it, and the build names the
     // follower and the missing channel.
     let mut stack = planner_stack(&[("local_path", "mission")]);
-    stack.path_following = Some(pure_pursuit_reading("global_path"));
+    stack.nodes.extend([pure_pursuit_reading("global_path")]);
 
     let Err(errors) = build_pipeline(
         &stack,
@@ -766,6 +768,118 @@ fn follower_naming_no_planner_fails_the_build_naming_it() {
                 ))
         )),
         "expected UnsatisfiedInput for `pure_pursuit` reading `global_path`, got {errors:?}"
+    );
+}
+
+// =========================================================================
+// == Reference seam: `[reference]` names the nodes that feed `reference`  ==
+// =========================================================================
+
+#[test]
+fn teleop_preferred_over_a_follower_wins_the_reference_while_fresh() {
+    // The follower is the base and teleop is preferred. The follower has no
+    // path yet, so only the operator's intent reaches the seam; a fresh teleop
+    // reference is what the selector forwards onto `reference`.
+    let mut stack = planner_stack(&[("local_path", "mission")]);
+    stack
+        .nodes
+        .extend([pure_pursuit_reading("local_path"), twist_teleop()]);
+    stack.reference = Some(reference_seam("pure_pursuit", &["teleop"]));
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["scan"]),
+        perception_body(),
+    )
+    .expect("a follower and teleop sharing the seam must build");
+
+    let names: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
+    assert!(
+        names.contains(&"reference_arbiter"),
+        "the seam adds its selector, got {names:?}"
+    );
+
+    pipeline
+        .bus()
+        .write(
+            control::intent::<TwistIntent>().into(),
+            Stamped {
+                value: TwistIntent {
+                    surge: 1.0,
+                    ..TwistIntent::neutral()
+                },
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: 0,
+            },
+        )
+        .expect("host write to `intent` must succeed");
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
+
+    let reference = pipeline
+        .bus()
+        .read::<BodyTwistRef>(control::reference::<BodyTwistRef>().into())
+        .expect("the fresh teleop reference must be forwarded");
+    assert_eq!(
+        reference.value.twist().linear(),
+        FluVector::new(4.0, 0.0, 0.0)
+    );
+}
+
+#[test]
+fn reference_naming_no_node_fails_the_build_naming_it() {
+    let stack = AutonomyStack {
+        reference: Some(reference_seam("teleop", &["pure_pursuit"])),
+        ..teleop_only_stack()
+    };
+
+    let Err(errors) = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        teleop_body(),
+    ) else {
+        panic!("a seam naming a missing node must not build");
+    };
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::UnknownSeamMember { seam: "reference", member }
+                if member == "pure_pursuit"
+        )),
+        "expected UnknownSeamMember for `pure_pursuit`, got {errors:?}"
+    );
+}
+
+#[test]
+fn controllers_without_a_reference_section_fail_naming_the_reference() {
+    // Without `[reference]` nothing writes the reference, so each controller's
+    // reference input is unsatisfied and the build names it.
+    let Err(errors) = build_pipeline(
+        &drive_force_stack(),
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        perception_body(),
+    ) else {
+        panic!("controllers with no reference must not build");
+    };
+
+    let reference: ChannelKey = control::reference::<BodyTwistRef>().into();
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::PipelineBuild(v)
+                if v.iter().any(|b| matches!(
+                    b,
+                    PipelineBuildError::UnsatisfiedInput { channel, .. } if *channel == reference
+                ))
+        )),
+        "expected an UnsatisfiedInput on the reference, got {errors:?}"
     );
 }
 
@@ -1439,17 +1553,10 @@ fn planner_goals_are_declared_once_per_goal_channel() {
 
 #[test]
 fn teleop_intent_is_declared_as_an_outside_input() {
-    // The intent is something the operator sends, not a body measurement, so it
-    // is declared as an outside input. A teleop-only stack has no planner, so it
-    // is the only one.
-    let stack = AutonomyStack {
-        teleop: Some(twist_teleop()),
-        reference_arbitration: ReferenceArbitrationConfig {
-            sources: vec![ReferenceSource::Teleop],
-            ..Default::default()
-        },
-        ..Default::default()
-    };
+    // The intent is something the operator sends, not a body measurement, so
+    // the mapper's factory declares it as an outside input. A teleop-only stack
+    // has no planner, so it is the only one.
+    let stack = teleop_only_stack();
 
     let pipeline = build_pipeline(
         &stack,

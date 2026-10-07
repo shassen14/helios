@@ -68,6 +68,20 @@ pub enum PipelineAssemblyError {
         kind: String,
         built_name: String,
     },
+    /// The `[seam]` section names `member`, which is not a `[nodes]` entry.
+    UnknownSeamMember { seam: &'static str, member: String },
+    /// The `[seam]` section names `member` more than once, so its priority is
+    /// ambiguous.
+    DuplicateSeamMember { seam: &'static str, member: String },
+    /// Member `member` of `[seam]` has `matching` outputs of the seam's type
+    /// `expected`. A member must have exactly one, so the seam knows which
+    /// channel to read.
+    SeamMemberOutputMismatch {
+        seam: &'static str,
+        member: String,
+        expected: &'static str,
+        matching: usize,
+    },
 }
 
 impl std::fmt::Display for PipelineAssemblyError {
@@ -162,6 +176,23 @@ impl std::fmt::Display for PipelineAssemblyError {
             } => write!(
                 f,
                 "nodes.{node_name}: the '{kind}' factory named its node '{built_name}'; a factory must name the node after its table key"
+            ),
+            PipelineAssemblyError::UnknownSeamMember { seam, member } => write!(
+                f,
+                "{seam}: names '{member}', which is not a [nodes] entry"
+            ),
+            PipelineAssemblyError::DuplicateSeamMember { seam, member } => write!(
+                f,
+                "{seam}: names '{member}' more than once; each member takes one place"
+            ),
+            PipelineAssemblyError::SeamMemberOutputMismatch {
+                seam,
+                member,
+                expected,
+                matching,
+            } => write!(
+                f,
+                "{seam}: member '{member}' has {matching} outputs of type {expected}; a member needs exactly one"
             ),
         }
     }

@@ -7,12 +7,13 @@ use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
 use helios_core::control::actuators::ActuatorCommand;
+use helios_core::control::commands::TwistIntent;
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
 use helios_core::spatial::transforms::{Convention, ErasedTransform};
 use helios_core::spatial::FrameId;
+use helios_runtime::channels::control;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::config::ReferenceSource;
 use helios_runtime::tf_service::TfService;
 use helios_runtime::{
     build_pipeline, check_actuation_agreement, BodyCapabilities, ChannelKey, Provenance,
@@ -94,6 +95,7 @@ pub fn spawn_autonomy_pipeline(
                 // from; a mission goal fans out to each. Empty when no node
                 // declares a goal input.
                 let goal_channels = mission_goal_channels(pipeline.outside_inputs());
+                let teleop_controlled = reads_teleop_intent(pipeline.outside_inputs());
                 let static_seeds = build_static_seeds(agent_config, &agent);
 
                 let mut cmds = commands.entity(agent_entity);
@@ -107,11 +109,7 @@ pub fn spawn_autonomy_pipeline(
                 if !goal_channels.is_empty() {
                     cmds.insert(MissionGoalChannels(goal_channels.into_iter().collect()));
                 }
-                if stack
-                    .reference_arbitration
-                    .sources
-                    .contains(&ReferenceSource::Teleop)
-                {
+                if teleop_controlled {
                     cmds.insert(TeleopControlled);
                 }
 
@@ -259,11 +257,19 @@ fn mission_goal_channels(outside_inputs: &[ChannelKey]) -> BTreeSet<String> {
         .collect()
 }
 
+/// Whether this agent's pipeline reads the operator's teleop intent. Only then
+/// does the host publish intent to it: the pipeline's declared outside inputs
+/// say what it reads from outside the robot, whatever its config calls the
+/// node that reads it.
+fn reads_teleop_intent(outside_inputs: &[ChannelKey]) -> bool {
+    let intent: ChannelKey = control::intent::<TwistIntent>().into();
+    outside_inputs.contains(&intent)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use helios_core::control::commands::TwistIntent;
     use helios_runtime::channels::control::intent;
     use helios_runtime::port::InternalChannel;
 
@@ -316,6 +322,22 @@ mod tests {
             mission_goal_channels(&outside_inputs),
             BTreeSet::from(["mission".to_string()]),
         );
+    }
+
+    /// A pipeline that declares the intent input is teleop controlled; the
+    /// goal it also reads doesn't matter.
+    #[test]
+    fn declared_intent_marks_the_agent_teleop_controlled() {
+        let outside_inputs = [goal_key("mission"), intent::<TwistIntent>().into()];
+
+        assert!(reads_teleop_intent(&outside_inputs));
+    }
+
+    /// A pipeline that reads only goals gets no intent from the host.
+    #[test]
+    fn without_the_intent_input_the_agent_is_not_teleop_controlled() {
+        assert!(!reads_teleop_intent(&[goal_key("mission")]));
+        assert!(!reads_teleop_intent(&[]));
     }
 
     #[test]
