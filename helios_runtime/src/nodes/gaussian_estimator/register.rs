@@ -14,10 +14,11 @@ use helios_core::estimation::dynamics::integrated_imu::{
 use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::schema::check_measurement_state_agreement;
+use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
-use helios_core::spatial::state::{Component, Quantity};
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
-use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
+use helios_core::spatial::transforms::Transform;
+use helios_core::spatial::{FrameAwareState, FrameId};
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use std::sync::Arc;
@@ -117,7 +118,7 @@ fn build_ekf(
     let mut initial_state = FrameAwareState::from_schema(schema, MonotonicTime(0.0));
 
     let yaw = init.heading_deg.to_radians();
-    let iso = Isometry3::from_parts(
+    let pose = Transform::<Flu, Enu>::from_isometry(Isometry3::from_parts(
         Translation3::new(init.x, init.y, init.z),
         UnitQuaternion::from_quaternion(Quaternion::new(
             (yaw / 2.0).cos(),
@@ -125,70 +126,22 @@ fn build_ekf(
             0.0,
             (yaw / 2.0).sin(),
         )),
-    );
+    ));
 
     let edge = FrameEdge {
         child: FrameId::base_link(agent.clone()),
         parent: FrameId::odom(agent.clone()),
     };
 
-    let base_link = FrameId::base_link(agent.clone());
-    let odom = FrameId::odom(agent);
-
-    initial_state.set_variable(
-        &StateVariable::new(Quantity::Position(odom.clone()), Component::X),
-        iso.translation.x,
-    );
-    initial_state.set_variable(
-        &StateVariable::new(Quantity::Position(odom.clone()), Component::Y),
-        iso.translation.y,
-    );
-    initial_state.set_variable(
-        &StateVariable::new(Quantity::Position(odom.clone()), Component::Z),
-        iso.translation.z,
-    );
-
-    let q_rot = iso.rotation.quaternion();
-    initial_state.set_variable(
-        &StateVariable::new(
-            Quantity::Orientation {
-                from: base_link.clone(),
-                to: odom.clone(),
-            },
-            Component::X,
-        ),
-        q_rot.i,
-    );
-    initial_state.set_variable(
-        &StateVariable::new(
-            Quantity::Orientation {
-                from: base_link.clone(),
-                to: odom.clone(),
-            },
-            Component::Y,
-        ),
-        q_rot.j,
-    );
-    initial_state.set_variable(
-        &StateVariable::new(
-            Quantity::Orientation {
-                from: base_link.clone(),
-                to: odom.clone(),
-            },
-            Component::Z,
-        ),
-        q_rot.k,
-    );
-    initial_state.set_variable(
-        &StateVariable::new(
-            Quantity::Orientation {
-                from: base_link,
-                to: odom,
-            },
-            Component::W,
-        ),
-        q_rot.w,
-    );
+    // A body→odom FLU→ENU pose the composed schema cannot hold is a construction
+    // error, named here rather than silently leaving the identity prior.
+    initial_state
+        .set_pose(
+            FrameId::base_link(agent.clone()),
+            FrameId::odom(agent),
+            pose,
+        )
+        .map_err(|e| format!("estimator '{}' initial pose: {e}", ctx.instance_name))?;
 
     let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
     Ok(Box::new(GaussianEstimatorNode::new(
@@ -223,8 +176,10 @@ mod tests {
     use helios_core::interchange::measurement::sensor::Acceleration;
     use helios_core::prelude::AgentId;
     use helios_core::prelude::MonotonicTime;
+    use helios_core::spatial::state::{Component, Quantity};
     use helios_core::spatial::tf::TfProvider;
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::StateVariable;
 
     use nalgebra::{DMatrix, DVector};
 

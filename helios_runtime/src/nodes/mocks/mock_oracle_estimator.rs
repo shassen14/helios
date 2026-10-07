@@ -44,8 +44,10 @@ use helios_core::estimation::schema::StateSchema;
 use helios_core::interchange::motion::Twist;
 use helios_core::prelude::AgentId;
 use helios_core::prelude::TfProvider;
-use helios_core::spatial::state::{Component, Quantity};
-use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::quantities::FreeVector;
+use helios_core::spatial::transforms::Transform;
+use helios_core::spatial::{BlockWriteError, FrameAwareState, FrameId};
 
 use nalgebra::Isometry3;
 use std::sync::Arc;
@@ -100,12 +102,21 @@ impl PipelineNode for MockOracleEstimatorNode {
 
         let mut state = FrameAwareState::from_schema(self.schema.clone(), pose_stamped.timestamp);
 
-        write_pose_into(&mut state, &pose_stamped.value, &self.agent);
-
-        if let Some(t) = twist {
-            // oracle/twist and the odom velocity blocks are both ENU —
-            // straight passthrough of linear and angular velocity.
-            write_world_twist_into(&mut state, &t, &self.agent);
+        // The carrier schema is fixed at construction, so a refused write is a
+        // mismatch between that schema and these writers. Publishing the state
+        // anyway would hand downstream a partly seeded estimate, so it is dropped.
+        let written =
+            write_pose_into(&mut state, &pose_stamped.value, &self.agent).and_then(|()| {
+                match &twist {
+                    // oracle/twist and the odom velocity blocks are both ENU —
+                    // straight passthrough of linear and angular velocity.
+                    Some(t) => write_world_twist_into(&mut state, t, &self.agent),
+                    None => Ok(()),
+                }
+            });
+        if let Err(e) = written {
+            tracing::warn!(node = %self.name, "mock oracle estimator cannot write its state: {e}");
+            return;
         }
 
         let stamped = Stamped {
@@ -125,103 +136,37 @@ impl PipelineNode for MockOracleEstimatorNode {
     }
 }
 
-fn write_pose_into(state: &mut FrameAwareState, pose: &Isometry3<f64>, agent: &AgentId) {
-    let odom = FrameId::odom(agent.clone());
-    let body = FrameId::base_link(agent.clone());
-
-    // Position in the estimate's odom frame. The oracle is a perfect estimator:
-    // it reports truth, but publishes it into the same odom-frame estimate slot
-    // the real filter fills, so downstream consumers read one frame.
-    state.set_variable(
-        &StateVariable::new(Quantity::Position(odom.clone()), Component::X),
-        pose.translation.x,
-    );
-    state.set_variable(
-        &StateVariable::new(Quantity::Position(odom.clone()), Component::Y),
-        pose.translation.y,
-    );
-    state.set_variable(
-        &StateVariable::new(Quantity::Position(odom.clone()), Component::Z),
-        pose.translation.z,
-    );
-
-    // Body→odom orientation as a quaternion.
-    state.set_variable(
-        &StateVariable::new(
-            Quantity::Orientation {
-                from: body.clone(),
-                to: odom.clone(),
-            },
-            Component::X,
-        ),
-        pose.rotation.i,
-    );
-    state.set_variable(
-        &StateVariable::new(
-            Quantity::Orientation {
-                from: body.clone(),
-                to: odom.clone(),
-            },
-            Component::Y,
-        ),
-        pose.rotation.j,
-    );
-    state.set_variable(
-        &StateVariable::new(
-            Quantity::Orientation {
-                from: body.clone(),
-                to: odom.clone(),
-            },
-            Component::Z,
-        ),
-        pose.rotation.k,
-    );
-    state.set_variable(
-        &StateVariable::new(
-            Quantity::Orientation {
-                from: body.clone(),
-                to: odom,
-            },
-            Component::W,
-        ),
-        pose.rotation.w,
-    );
+fn write_pose_into(
+    state: &mut FrameAwareState,
+    pose: &Isometry3<f64>,
+    agent: &AgentId,
+) -> Result<(), BlockWriteError> {
+    // Position and body→odom attitude in the estimate's odom frame. The oracle is
+    // a perfect estimator: it reports truth, but publishes it into the same
+    // odom-frame estimate slot the real filter fills, so downstream consumers
+    // read one frame.
+    state.set_pose(
+        FrameId::base_link(agent.clone()),
+        FrameId::odom(agent.clone()),
+        Transform::<Flu, Enu>::from_isometry(*pose),
+    )
 }
 
 /// Writes the twist into the estimate's velocity blocks: linear into
-/// `Vx/Vy/Vz(Odom)` and angular into `Wx/Wy/Wz(Odom)`.
+/// `Velocity(Odom)` and angular into `AngularVelocity(Odom)`.
 ///
 /// The oracle reports both linear and angular velocity in the ENU frame, and the
 /// odom-frame estimate is ENU-aligned, so `twist.angular` passes straight through
 /// rather than being dropped.
-fn write_world_twist_into(state: &mut FrameAwareState, twist: &Twist, agent: &AgentId) {
+fn write_world_twist_into(
+    state: &mut FrameAwareState,
+    twist: &Twist,
+    agent: &AgentId,
+) -> Result<(), BlockWriteError> {
     let odom = FrameId::odom(agent.clone());
 
-    state.set_variable(
-        &StateVariable::new(Quantity::Velocity(odom.clone()), Component::X),
-        twist.linear.x,
-    );
-    state.set_variable(
-        &StateVariable::new(Quantity::Velocity(odom.clone()), Component::Y),
-        twist.linear.y,
-    );
-    state.set_variable(
-        &StateVariable::new(Quantity::Velocity(odom.clone()), Component::Z),
-        twist.linear.z,
-    );
-
-    state.set_variable(
-        &StateVariable::new(Quantity::AngularVelocity(odom.clone()), Component::X),
-        twist.angular.x,
-    );
-    state.set_variable(
-        &StateVariable::new(Quantity::AngularVelocity(odom.clone()), Component::Y),
-        twist.angular.y,
-    );
-    state.set_variable(
-        &StateVariable::new(Quantity::AngularVelocity(odom), Component::Z),
-        twist.angular.z,
-    );
+    state.set_velocity(odom.clone(), FreeVector::<Enu>::from_raw(twist.linear))?;
+    state.set_angular_velocity(odom, FreeVector::<Enu>::from_raw(twist.angular))
 }
 
 #[cfg(test)]
