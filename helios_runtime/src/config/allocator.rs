@@ -16,8 +16,16 @@ pub(crate) const STEER_POSITION_KIND: &str = "SteerPosition";
 #[serde(tag = "kind")]
 #[serde(rename_all = "PascalCase")]
 pub enum AllocatorConfig {
-    WheelTorque { wheel_radius: f64, drive: String },
-    SteerPosition { steer: String },
+    /// `input` names the `[command]` fold the allocator reads its `DriveForce`
+    /// from.
+    WheelTorque {
+        input: String,
+        wheel_radius: f64,
+        drive: String,
+    },
+    /// `input` names the `[command]` fold the allocator reads its `SteerAngle`
+    /// from.
+    SteerPosition { input: String, steer: String },
 }
 
 impl AllocatorConfig {
@@ -28,9 +36,16 @@ impl AllocatorConfig {
         }
     }
 
-    /// The command space this allocator consumes. The allocator *defines* the
-    /// command seam, so this is the authoritative `T` the assembler wires the
-    /// `command` channel, the fold, and this allocator's input around.
+    /// The `[command]` fold this allocator reads its command from.
+    pub(crate) fn input(&self) -> &str {
+        match self {
+            AllocatorConfig::WheelTorque { input, .. } => input,
+            AllocatorConfig::SteerPosition { input, .. } => input,
+        }
+    }
+
+    /// The command type this allocator consumes: the type of its input
+    /// channel.
     pub(crate) fn command_space(&self) -> CommandSpace {
         match self {
             AllocatorConfig::WheelTorque { .. } => CommandSpace::DriveForce,
@@ -41,7 +56,7 @@ impl AllocatorConfig {
     pub(crate) fn actuator_ids(&self) -> Vec<&str> {
         match self {
             AllocatorConfig::WheelTorque { drive, .. } => vec![drive],
-            AllocatorConfig::SteerPosition { steer } => vec![steer],
+            AllocatorConfig::SteerPosition { steer, .. } => vec![steer],
         }
     }
 

@@ -1,6 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use crate::config::{AutonomyStack, EstimatorConfig};
 
-use crate::config::{AutonomyStack, CommandSpace, ControllerConfig, EstimatorConfig};
+use std::collections::{BTreeMap, HashSet};
 
 /// Snapshot of algorithm keys registered in each family.
 ///
@@ -13,7 +13,6 @@ pub struct CapabilitySet {
     /// stack that selects one is checked here, not against the Gaussian set.
     pub mock_estimators: HashSet<String>,
     pub measurement_models: HashSet<String>,
-    pub controllers: HashSet<String>,
     pub allocators: HashSet<String>,
 }
 
@@ -26,9 +25,6 @@ pub enum ConfigValidationError {
     },
     UnknownMockEstimator {
         instance: String,
-        kind: String,
-    },
-    UnknownController {
         kind: String,
     },
     UnknownMeasurementModel {
@@ -50,28 +46,6 @@ pub enum ConfigValidationError {
     },
     UnknownAllocator {
         kind: String,
-    },
-
-    /// An allocator consumes a command space no controller emits, so that
-    /// allocator's `command` input is unfilled. Checked per space, since decoupled
-    /// control opens one seam per space an allocator consumes.
-    AllocatorWithoutCommandSource {
-        space: CommandSpace,
-    },
-
-    /// A controller emits a command space no allocator consumes. Each allocator
-    /// defines a command seam, and the assembler instantiates one `command::<T>()`
-    /// channel per space in use; a controller whose space matches no allocator
-    /// writes a slot nothing reads. A decoupled stack has several seams at once,
-    /// so validity is set membership: the controller's space must be one that some
-    /// allocator consumes. The DAG erases the type at the channel boundary, so an
-    /// orphaned contribution would otherwise surface late as an `UnsatisfiedInput`.
-    /// Caught here at load time instead. `available_spaces` is the sorted set of
-    /// spaces the stack's allocators consume, for a message that names the options.
-    ControllerCommandSpaceMismatch {
-        controller: String,
-        controller_space: CommandSpace,
-        available_spaces: Vec<CommandSpace>,
     },
 
     /// Two or more allocators name the same actuator. Decoupled control merges
@@ -100,9 +74,6 @@ impl std::fmt::Display for ConfigValidationError {
                     f,
                     "Unknown mock estimator kind '{kind}' in estimator '{instance}'"
                 )
-            }
-            ConfigValidationError::UnknownController { kind } => {
-                write!(f, "Unknown controller kind '{kind}'")
             }
             ConfigValidationError::UnknownMeasurementModel {
                 estimator_instance,
@@ -135,28 +106,6 @@ impl std::fmt::Display for ConfigValidationError {
             ConfigValidationError::UnknownAllocator { kind } => {
                 write!(f, "Unknown allocator kind '{kind}'")
             }
-            ConfigValidationError::AllocatorWithoutCommandSource { space } => {
-                write!(
-                    f,
-                    "an allocator consumes the {space:?} command space, but nothing produces it (no controller emits {space:?})"
-                )
-            }
-            ConfigValidationError::ControllerCommandSpaceMismatch {
-                controller,
-                controller_space,
-                available_spaces,
-            } => {
-                let available = available_spaces
-                    .iter()
-                    .map(|space| format!("{space:?}"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                write!(
-                    f,
-                    "controller '{controller}' emits {controller_space:?}, but no allocator consumes that space (allocators consume: {available}); every controller must speak a space some allocator consumes"
-                )
-            }
-
             ConfigValidationError::AllocatorActuatorConflict {
                 actuator,
                 allocators,
@@ -255,16 +204,6 @@ pub fn validate_autonomy_config(
         }
     }
 
-    // Controller validation.
-    for ctrl_cfg in config.controllers.values() {
-        let kind = ctrl_cfg.get_kind_str();
-        if !capabilities.controllers.contains(kind) {
-            errors.push(ConfigValidationError::UnknownController {
-                kind: kind.to_string(),
-            });
-        }
-    }
-
     // Allocator validation.
     for alloc_cfg in config.allocators.values() {
         let kind = alloc_cfg.get_kind_str();
@@ -275,38 +214,11 @@ pub fn validate_autonomy_config(
         }
     }
 
-    // Allocator cross-field checks. The per-kind check above rejects unknown
-    // allocators; these catch a well-formed allocator wired into a graph that
-    // can't feed it or that fights another allocator for the same actuator,
-    // each of which would otherwise surface late and cryptically at DAG build
-    // (an UnsatisfiedInput, or two writers racing one terminal slot).
-
-    // Both remaining checks turn on which command spaces the stack's allocators
-    // consume, so gather that set once. It is a BTreeSet so anything derived from
-    // it — the per-space producer errors below, the available-space list in a
-    // mismatch — comes out ordered, stable across the source HashMap's iteration.
-    let allocator_spaces: BTreeSet<CommandSpace> = config
-        .allocators
-        .values()
-        .map(|allocator| allocator.command_space())
-        .collect();
-
-    // Each allocator consumes its space's `command::<T>()` channel, fed by a
-    // same-space fold of controllers. A space with an allocator but no producer
-    // leaves that allocator's input unsatisfiable: the per-space form of the old
-    // single-producer check, now that decoupled control opens one seam per space.
-    // Teleop writes a guidance reference, not a command, so it feeds no space.
-    let controller_spaces: HashSet<CommandSpace> = config
-        .controllers
-        .values()
-        .map(|controller| controller.command_space())
-        .collect();
-    for space in &allocator_spaces {
-        if !controller_spaces.contains(space) {
-            errors.push(ConfigValidationError::AllocatorWithoutCommandSource { space: *space });
-        }
-    }
-
+    // Allocator cross-field check. The per-kind check above rejects unknown
+    // allocators; this one catches a well-formed allocator that fights another
+    // for the same actuator, which would otherwise surface late as two writers
+    // racing one terminal slot.
+    //
     // Decoupled control lets several allocators coexist, each owning a disjoint
     // set of actuators that a downstream merge unions into the one terminal
     // command. That union is only well-defined if no two allocators claim the
@@ -338,31 +250,6 @@ pub fn validate_autonomy_config(
                 actuator: actuator.to_string(),
                 allocators: a,
             });
-        }
-    }
-
-    // Command-space agreement. Every controller writes its contribution into the
-    // fold that feeds an allocator's `command` input; each allocator defines a
-    // seam, so a controller must speak a space some allocator consumes or its
-    // output lands in a slot nothing reads. A decoupled stack has several seams at
-    // once — one per space its allocators consume — so agreement is set
-    // membership, not equality against a lone allocator. With a single allocator
-    // the set is one element and this is the old exact-match. An empty allocator
-    // set has no seam, so there is nothing to disagree with. `allocator_spaces`
-    // (gathered above) is sorted, so a mismatch names the options stably.
-    if !allocator_spaces.is_empty() {
-        let available_spaces: Vec<CommandSpace> = allocator_spaces.iter().copied().collect();
-        let controllers_by_name: BTreeMap<&String, &ControllerConfig> =
-            config.controllers.iter().collect();
-        for (name, ctrl_cfg) in controllers_by_name {
-            let controller_space = ctrl_cfg.command_space();
-            if !allocator_spaces.contains(&controller_space) {
-                errors.push(ConfigValidationError::ControllerCommandSpaceMismatch {
-                    controller: name.clone(),
-                    controller_space,
-                    available_spaces: available_spaces.clone(),
-                });
-            }
         }
     }
 

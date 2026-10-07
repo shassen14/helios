@@ -12,6 +12,11 @@
 //! - `build_node(kind, section, ctx)` — looks up the kind and builds the node
 //!   from its TOML section.
 //!
+//! A second table takes a command type's name to what the command seam needs
+//! to fold it:
+//! - `register_command_type::<T>(name)` — adds a type a `[command.<fold>]`
+//!   table can name in its `type` key.
+//!
 //! The per-family maps, with a `register_<family>` / `build_<family>` pair
 //! each, still hold every kind not yet moved onto the one map.
 //!
@@ -26,12 +31,13 @@
 //! ```
 
 use super::contexts::{
-    AllocatorBuildContext, ControllerBuildContext, GaussianEstimatorBuildContext,
-    MeasurementModelBuildContext, MockEstimatorBuildContext,
+    AllocatorBuildContext, GaussianEstimatorBuildContext, MeasurementModelBuildContext,
+    MockEstimatorBuildContext,
 };
 
 use super::error::PipelineAssemblyError;
 use super::factory::{erase, BuildContext, BuiltNode, ErasedFactory, FactoryOutput};
+use super::seams::command::CommandType;
 
 use crate::config::EstimatorConfig;
 use crate::pipeline::node::PipelineNode;
@@ -44,6 +50,7 @@ use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::Display;
+use std::ops::Add;
 
 type MeasurementModelFactory = Box<
     dyn Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> + Send + Sync,
@@ -58,9 +65,6 @@ type GaussianEstimatorFactory = Box<
         + Send
         + Sync,
 >;
-
-type ControllerFactory =
-    Box<dyn Fn(ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
 type AllocatorFactory =
     Box<dyn Fn(AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
@@ -79,9 +83,10 @@ pub struct AutonomyRegistry {
     // Node kind → factory. Sorted, so an unknown-kind error lists the
     // registered kinds in a stable order.
     nodes: BTreeMap<String, ErasedFactory>,
+    // Command type name → its fold entry. Sorted, for the same reason.
+    command_types: BTreeMap<String, CommandType>,
     measurement_models: HashMap<String, MeasurementModelFactory>,
     gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
-    controllers: HashMap<String, ControllerFactory>,
     allocators: HashMap<String, AllocatorFactory>,
     // mocks
     mock_estimators: HashMap<String, MockEstimatorFactory>,
@@ -91,9 +96,9 @@ impl Default for AutonomyRegistry {
     fn default() -> Self {
         let mut registry = Self {
             nodes: BTreeMap::new(),
+            command_types: BTreeMap::new(),
             measurement_models: HashMap::new(),
             gaussian_estimators: HashMap::new(),
-            controllers: HashMap::new(),
             allocators: HashMap::new(),
             mock_estimators: HashMap::new(),
         };
@@ -107,6 +112,7 @@ impl Default for AutonomyRegistry {
         crate::nodes::mocks::register(&mut registry);
         crate::nodes::allocator::register(&mut registry);
         crate::nodes::deproject::register(&mut registry);
+        super::seams::command::register(&mut registry);
         registry
     }
 }
@@ -144,6 +150,30 @@ impl AutonomyRegistry {
         Ok(())
     }
 
+    /// Registers command type `T` under `name`, the string a
+    /// `[command.<fold>]` table names in its `type` key.
+    ///
+    /// A fold of this type sums its members' `T` outputs, so `T` must be
+    /// addable. Any number of folds may share a type.
+    ///
+    /// Fails if `name` is already registered; the first registration is kept.
+    pub fn register_command_type<T>(
+        &mut self,
+        name: impl Into<String>,
+    ) -> Result<(), DuplicateCommandType>
+    where
+        T: Send + Sync + Clone + Add<Output = T> + 'static,
+    {
+        let name = name.into();
+        if self.command_types.contains_key(&name) {
+            return Err(DuplicateCommandType { name });
+        }
+
+        self.command_types.insert(name, CommandType::of::<T>());
+
+        Ok(())
+    }
+
     pub(crate) fn register_measurement_model(
         &mut self,
         key: impl Into<String>,
@@ -170,17 +200,6 @@ impl AutonomyRegistry {
     ) {
         self.gaussian_estimators
             .insert(key.into(), Box::new(factory));
-    }
-
-    pub(crate) fn register_controller(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.controllers.insert(key.into(), Box::new(factory));
     }
 
     pub(crate) fn register_allocator(
@@ -231,6 +250,16 @@ impl AutonomyRegistry {
         Ok(factory(section, ctx)?)
     }
 
+    /// The command type registered under `name`.
+    pub(crate) fn command_type(&self, name: &str) -> Option<&CommandType> {
+        self.command_types.get(name)
+    }
+
+    /// Every registered command type name, sorted.
+    pub(crate) fn command_type_names(&self) -> Vec<String> {
+        self.command_types.keys().cloned().collect()
+    }
+
     pub(crate) fn build_measurement_model(
         &self,
         key: &str,
@@ -254,16 +283,6 @@ impl AutonomyRegistry {
             .ok_or_else(|| format!("No Gaussian estimator factory registered for '{key}'"))?(
             config, ctx, self,
         )
-    }
-
-    pub(crate) fn build_controller(
-        &self,
-        key: &str,
-        ctx: ControllerBuildContext,
-    ) -> Result<Box<dyn PipelineNode>, String> {
-        self.controllers
-            .get(key)
-            .ok_or_else(|| format!("No controller factory registered for '{key}'"))?(ctx)
     }
 
     pub(crate) fn build_allocator(
@@ -295,7 +314,6 @@ impl AutonomyRegistry {
             gaussian_estimators: self.gaussian_estimators.keys().cloned().collect(),
             mock_estimators: self.mock_estimators.keys().cloned().collect(),
             measurement_models: self.measurement_models.keys().cloned().collect(),
-            controllers: self.controllers.keys().cloned().collect(),
             allocators: self.allocators.keys().cloned().collect(),
         }
     }
@@ -316,15 +334,29 @@ impl Display for DuplicateKind {
 
 impl Error for DuplicateKind {}
 
+/// A command type was registered twice.
+#[derive(Debug)]
+pub struct DuplicateCommandType {
+    /// The type name that was already taken.
+    pub name: String,
+}
+
+impl Display for DuplicateCommandType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "command type '{}' is already registered", self.name)
+    }
+}
+
+impl Error for DuplicateCommandType {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::assembly::factory::FactoryError;
-    use crate::pipeline::node::TickContext;
-    use crate::port::{AlgorithmNodePortDescriptor, PortBus, PortDescriptor};
+    use crate::assembly::test_stub::stub;
 
-    use helios_core::prelude::{AgentId, TfProvider};
+    use helios_core::prelude::AgentId;
 
     use serde::Deserialize;
     use std::collections::HashSet;
@@ -334,23 +366,6 @@ mod tests {
     const OTHER_KIND: &str = "Accumulate";
     const UNKNOWN_KIND: &str = "Deprojcet";
     const DEFAULT_RATE: f64 = 10.0;
-
-    /// A node that does nothing; the registry only passes it through.
-    struct StubNode {
-        descriptor: PortDescriptor,
-    }
-
-    impl PipelineNode for StubNode {
-        fn name(&self) -> &str {
-            NODE
-        }
-
-        fn port_descriptor(&self) -> &PortDescriptor {
-            &self.descriptor
-        }
-
-        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
-    }
 
     #[derive(Deserialize, Serialize)]
     #[serde(deny_unknown_fields)]
@@ -365,9 +380,7 @@ mod tests {
     }
 
     fn build_stub(_config: StubConfig, _ctx: &BuildContext<'_>) -> Result<FactoryOutput, String> {
-        Ok(FactoryOutput::new(Box::new(StubNode {
-            descriptor: AlgorithmNodePortDescriptor::new().build(),
-        })))
+        Ok(FactoryOutput::new(stub(NODE, vec![])))
     }
 
     /// A registry with only the given kinds on its node map, all built by
@@ -416,6 +429,20 @@ mod tests {
         assert_eq!(
             err.to_string(),
             format!("node kind '{KIND}' is already registered")
+        );
+    }
+
+    /// Registering a command type twice fails and names it.
+    #[test]
+    fn registering_a_command_type_twice_is_rejected() {
+        let mut registry = AutonomyRegistry::default();
+        let err = registry
+            .register_command_type::<f64>("DriveForce")
+            .expect_err("DriveForce is already a built-in");
+        assert_eq!(err.name, "DriveForce");
+        assert_eq!(
+            err.to_string(),
+            "command type 'DriveForce' is already registered"
         );
     }
 

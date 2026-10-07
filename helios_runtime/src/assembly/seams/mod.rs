@@ -3,5 +3,10 @@
 //! built nodes, and adds the node that combines them.
 //!
 //! - `reference` — the guidance reference the controllers track.
+//! - `command` — the named command folds the allocators read, and the
+//!   built-in command types.
+//! - `members` — resolving a section's members to the channels they write.
 
+pub(super) mod command;
+mod members;
 pub(super) mod reference;

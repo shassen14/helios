@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use helios_runtime::{
     config::{
-        AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandSpace,
-        ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig,
-        IntegratedImuConfig, MockOracleEstimatorConfig, SensorModelConfig,
+        AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, EkfConfig,
+        EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
+        MockOracleEstimatorConfig, SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
     AutonomyRegistry,
@@ -21,7 +21,6 @@ fn empty_caps() -> CapabilitySet {
         gaussian_estimators: Default::default(),
         mock_estimators: Default::default(),
         measurement_models: Default::default(),
-        controllers: Default::default(),
         allocators: Default::default(),
     }
 }
@@ -34,12 +33,6 @@ fn full_caps() -> CapabilitySet {
         gaussian_estimators: set(&["Ekf"]),
         mock_estimators: set(&["MockOracle"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
-        controllers: set(&[
-            "DirectTwist",
-            "LongitudinalVelocity",
-            "RoadLoad",
-            "BicycleSteer",
-        ]),
         allocators: set(&["WheelTorque", "SteerPosition"]),
     }
 }
@@ -67,67 +60,18 @@ fn ekf_config() -> EstimatorConfig {
     })
 }
 
-fn direct_twist() -> ControllerConfig {
-    ControllerConfig::DirectTwist {
-        state_source: Default::default(),
-    }
-}
-
-// The DriveForce command space: a longitudinal feedback controller and a
-// road-load feedforward controller both emit `DriveForce`; the wheel-torque
-// allocator consumes it.
-
-fn longitudinal_velocity() -> ControllerConfig {
-    ControllerConfig::LongitudinalVelocity {
-        state_source: Default::default(),
-        proportional_gain: 1.0,
-        integral_gain: 0.0,
-        derivative_gain: 0.0,
-        integral_clamp: 0.0,
-    }
-}
-
-fn road_load() -> ControllerConfig {
-    ControllerConfig::RoadLoad {
-        c_roll: 0.01,
-        c_drag: 0.3,
-    }
-}
-
 fn wheel_torque_allocator() -> AllocatorConfig {
     AllocatorConfig::WheelTorque {
+        input: "drive_cmd".to_string(),
         wheel_radius: 0.3,
         drive: "drive".to_string(),
     }
 }
 
-// The SteerAngle command space: a bicycle-steer feedforward controller emits
-// `SteerAngle`; the steer-position allocator consumes it.
-
-fn bicycle_steer() -> ControllerConfig {
-    ControllerConfig::BicycleSteer { wheelbase: 2.0 }
-}
-
 fn steer_position_allocator() -> AllocatorConfig {
     AllocatorConfig::SteerPosition {
+        input: "steer_cmd".to_string(),
         steer: "steer".to_string(),
-    }
-}
-
-fn stack_with_allocators(count: usize, with_controller: bool) -> AutonomyStack {
-    let mut allocators = HashMap::new();
-    for i in 0..count {
-        allocators.insert(format!("alloc_{i}"), wheel_torque_allocator());
-    }
-    let mut controllers = HashMap::new();
-    if with_controller {
-        // A DriveForce controller, matching the wheel-torque allocator's space.
-        controllers.insert("main_ctrl".to_string(), longitudinal_velocity());
-    }
-    AutonomyStack {
-        controllers,
-        allocators,
-        ..Default::default()
     }
 }
 
@@ -157,18 +101,15 @@ fn validation_empty_stack_passes() {
 
 #[test]
 fn validation_valid_full_stack_passes() {
-    let mut controllers = HashMap::new();
-    controllers.insert("main_ctrl".to_string(), direct_twist());
-
     let mut estimators = HashMap::new();
     estimators.insert("primary".to_string(), ekf_config());
 
     let stack = AutonomyStack {
         nodes: Default::default(),
         estimators,
-        controllers,
         allocators: Default::default(),
         reference: None,
+        command: Default::default(),
         tf: Default::default(),
     };
 
@@ -202,35 +143,18 @@ fn validation_unknown_estimator_produces_error() {
 }
 
 #[test]
-fn validation_unknown_controller_produces_error() {
-    let mut controllers = HashMap::new();
-    controllers.insert("ctrl".to_string(), direct_twist());
+fn validation_collects_all_errors_two_bad_estimators() {
+    let mut estimators = HashMap::new();
+    estimators.insert("primary".to_string(), ekf_config());
+    estimators.insert("backup".to_string(), ekf_config());
     let stack = AutonomyStack {
-        controllers,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &empty_caps());
-    assert!(
-        errors.iter().any(
-            |e| matches!(e, ConfigValidationError::UnknownController { kind } if kind == "DirectTwist")
-        ),
-        "Expected UnknownController for DirectTwist"
-    );
-}
-
-#[test]
-fn validation_collects_all_errors_two_bad_controllers() {
-    let mut controllers = HashMap::new();
-    controllers.insert("ctrl1".to_string(), direct_twist());
-    controllers.insert("ctrl2".to_string(), direct_twist());
-    let stack = AutonomyStack {
-        controllers,
+        estimators,
         ..Default::default()
     };
     let errors = validate_autonomy_config(&stack, &empty_caps());
     assert!(
         errors.len() >= 2,
-        "Expected at least 2 errors for two unknown controllers, got {}",
+        "Expected at least 2 errors for two unknown estimators, got {}",
         errors.len()
     );
 }
@@ -311,87 +235,16 @@ fn validation_unknown_sensor_payload_in_aiding_produces_error() {
 }
 
 #[test]
-fn validation_allocator_without_command_source_errors() {
-    // An allocator with no controller has nothing producing the `command` it
-    // consumes. The allocator is a wheel-torque drive, so the
-    // unsatisfied space is `DriveForce`.
-    let stack = stack_with_allocators(1, false);
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::AllocatorWithoutCommandSource { space }
-                if *space == CommandSpace::DriveForce
-        )),
-        "Expected AllocatorWithoutCommandSource, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn validation_allocator_with_controller_passes() {
-    // A controller produces `command`, so the allocator's input is satisfied.
-    let stack = stack_with_allocators(1, true);
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.is_empty(),
-        "Allocator with a controller must pass, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn validation_allocator_space_without_matching_controller_errors() {
-    // The crux of the per-space check: two seams, only one fed. A DriveForce
-    // wheel-torque allocator and a SteerAngle steer-position allocator, but only a
-    // SteerAngle controller. The old blunt check saw *a* controller and passed;
-    // the DriveForce allocator's `command` input is nonetheless unsatisfiable.
-    let mut controllers = HashMap::new();
-    controllers.insert("steer_ff".to_string(), bicycle_steer());
-    let mut allocators = HashMap::new();
-    allocators.insert("drive_alloc".to_string(), wheel_torque_allocator());
-    allocators.insert("steer_alloc".to_string(), steer_position_allocator());
-    let stack = AutonomyStack {
-        controllers,
-        allocators,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    // The unfed DriveForce space errors; the fed SteerAngle space does not.
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::AllocatorWithoutCommandSource { space }
-                if *space == CommandSpace::DriveForce
-        )),
-        "Expected AllocatorWithoutCommandSource for DriveForce, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-    assert!(
-        !errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::AllocatorWithoutCommandSource { space }
-                if *space == CommandSpace::SteerAngle
-        )),
-        "SteerAngle space is fed by the bicycle-steer controller, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
 fn validation_allocators_sharing_an_actuator_error() {
     // Multiple allocators are legal, but not two that claim the same actuator:
     // the terminal merge unions disjoint actuator sets, so a shared `drive` would
     // silently drop one allocator's setpoint. Two wheel-torque allocators both
     // driving `drive` collide. The claimant list is sorted, so the assertion —
     // and the emitted error — is stable regardless of HashMap iteration order.
-    let mut controllers = HashMap::new();
-    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
     let mut allocators = HashMap::new();
     allocators.insert("front_axle".to_string(), wheel_torque_allocator());
     allocators.insert("rear_axle".to_string(), wheel_torque_allocator());
     let stack = AutonomyStack {
-        controllers,
         allocators,
         ..Default::default()
     };
@@ -411,17 +264,12 @@ fn validation_allocators_sharing_an_actuator_error() {
 #[test]
 fn validation_disjoint_multiple_allocators_pass() {
     // The decoupled car: a wheel-torque allocator owning `drive` and a
-    // steer-position allocator owning `steer`, each fed by its own controller.
-    // Two allocators, disjoint actuators, no shared terminal — legal now that the
-    // single-allocator restriction is gone. The stack validates clean.
-    let mut controllers = HashMap::new();
-    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
-    controllers.insert("steer_ff".to_string(), bicycle_steer());
+    // steer-position allocator owning `steer`. Two allocators, disjoint
+    // actuators, no shared terminal. The stack validates clean.
     let mut allocators = HashMap::new();
     allocators.insert("drive_alloc".to_string(), wheel_torque_allocator());
     allocators.insert("steer_alloc".to_string(), steer_position_allocator());
     let stack = AutonomyStack {
-        controllers,
         allocators,
         ..Default::default()
     };
@@ -429,117 +277,6 @@ fn validation_disjoint_multiple_allocators_pass() {
     assert!(
         errors.is_empty(),
         "Disjoint multiple allocators must pass, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn validation_matching_drive_force_stack_passes() {
-    // The whole DriveForce path: a longitudinal feedback leg and a road-load
-    // feedforward leg, both DriveForce, folded into the wheel-torque allocator
-    // that consumes DriveForce. No mismatch, and the stack validates clean.
-    let mut controllers = HashMap::new();
-    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
-    controllers.insert("road_load".to_string(), road_load());
-    let mut allocators = HashMap::new();
-    allocators.insert("alloc".to_string(), wheel_torque_allocator());
-    let stack = AutonomyStack {
-        controllers,
-        allocators,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.is_empty(),
-        "Matching DriveForce stack must produce no errors, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn validation_matching_steer_angle_stack_passes() {
-    // The SteerAngle path: a bicycle-steer feedforward leg emitting `SteerAngle`,
-    // folded into the steer-position allocator that consumes it. The steer twin of
-    // the DriveForce stack — one command space, controller and allocator agree.
-    let mut controllers = HashMap::new();
-    controllers.insert("steer_ff".to_string(), bicycle_steer());
-    let mut allocators = HashMap::new();
-    allocators.insert("alloc".to_string(), steer_position_allocator());
-    let stack = AutonomyStack {
-        controllers,
-        allocators,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.is_empty(),
-        "Matching SteerAngle stack must produce no errors, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn validation_steer_controller_with_drive_allocator_mismatch_errors() {
-    // A SteerAngle controller feeding a DriveForce allocator: the bicycle-steer
-    // leg's contribution would land in a slot the wheel-torque allocator never
-    // reads. The mirror of the DriveForce-vs-BodyTwist mismatch, on the new space.
-    let mut controllers = HashMap::new();
-    controllers.insert("steer_ff".to_string(), bicycle_steer());
-    let mut allocators = HashMap::new();
-    allocators.insert("alloc".to_string(), wheel_torque_allocator());
-    let stack = AutonomyStack {
-        controllers,
-        allocators,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::ControllerCommandSpaceMismatch {
-                controller,
-                controller_space,
-                available_spaces,
-            } if controller == "steer_ff"
-                && *controller_space == CommandSpace::SteerAngle
-                && available_spaces.as_slice() == [CommandSpace::DriveForce]
-        )),
-        "Expected ControllerCommandSpaceMismatch for steer_ff, got: {:?}",
-        errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn validation_controller_matching_no_allocator_space_errors() {
-    // A decoupled stack with two seams: a wheel-torque allocator (DriveForce) and
-    // a steer-position allocator (SteerAngle). A BodyTwist controller matches
-    // neither, so its contribution would orphan. Agreement is set membership now,
-    // and the error reports the whole available set (sorted, so the message is
-    // stable regardless of allocator-map iteration order).
-    let mut controllers = HashMap::new();
-    controllers.insert("twist_ctrl".to_string(), direct_twist());
-    let mut allocators = HashMap::new();
-    allocators.insert("drive_alloc".to_string(), wheel_torque_allocator());
-    allocators.insert("steer_alloc".to_string(), steer_position_allocator());
-    let stack = AutonomyStack {
-        controllers,
-        allocators,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::ControllerCommandSpaceMismatch {
-                controller,
-                controller_space,
-                available_spaces,
-            } if controller == "twist_ctrl"
-                && *controller_space == CommandSpace::BodyTwist
-                && available_spaces.as_slice()
-                    == [CommandSpace::DriveForce, CommandSpace::SteerAngle]
-        )),
-        "Expected ControllerCommandSpaceMismatch for twist_ctrl, got: {:?}",
         errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
     );
 }

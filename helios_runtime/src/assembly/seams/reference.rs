@@ -11,17 +11,16 @@
 //! The seam type is `BodyTwistRef`, the only reference type today. When a
 //! second appears, the section names it and this pass dispatches on it.
 
+use super::members::{duplicates, member_output, member_outputs, SeamType};
+
 use crate::assembly::error::PipelineAssemblyError;
 use crate::channels::control;
 use crate::config::{ArbitrationPolicyConfig, ReferenceSeamConfig};
 use crate::nodes::combinators::{Selector, SelectorPolicy};
 use crate::pipeline::node::PipelineNode;
-use crate::port::{ChannelKey, InternalChannel};
 
 use helios_core::control::BodyTwistRef;
 
-use std::any::{type_name, TypeId};
-use std::collections::HashSet;
 use std::iter;
 
 /// Node name for the `Selector` this seam adds. Raw identity for observability,
@@ -45,29 +44,12 @@ pub(in crate::assembly) fn reference_selector(
         return Ok(None);
     };
 
-    let mut errors = vec![];
-    let mut seen = HashSet::new();
-    for member in iter::once(&config.base).chain(&config.preferred) {
-        if !seen.insert(member.as_str()) {
-            errors.push(PipelineAssemblyError::DuplicateSeamMember {
-                seam: SEAM,
-                member: member.clone(),
-            });
-        }
-    }
-
-    let base = member_reference(&config.base, nodes);
-    let preferred: Vec<_> = config
-        .preferred
-        .iter()
-        .map(|member| member_reference(member, nodes))
-        .collect();
-
-    let base = base.map_err(|err| errors.push(err)).ok();
-    let preferred: Vec<InternalChannel> = preferred
-        .into_iter()
-        .filter_map(|channel| channel.map_err(|err| errors.push(err)).ok())
-        .collect();
+    let ty = SeamType::of::<BodyTwistRef>();
+    let mut errors = duplicates(SEAM, iter::once(&config.base).chain(&config.preferred));
+    let base = member_output(SEAM, ty, &config.base, nodes)
+        .map_err(|err| errors.push(err))
+        .ok();
+    let preferred = member_outputs(SEAM, ty, &config.preferred, nodes, &mut errors);
 
     match base {
         Some(base) if errors.is_empty() => Ok(Some(Box::new(Selector::<BodyTwistRef>::new(
@@ -78,42 +60,6 @@ pub(in crate::assembly) fn reference_selector(
             selector_policy(config),
         )))),
         _ => Err(errors),
-    }
-}
-
-/// The channel member `member` writes its reference on: its one internal
-/// `BodyTwistRef` output.
-fn member_reference(
-    member: &str,
-    nodes: &[Box<dyn PipelineNode>],
-) -> Result<InternalChannel, PipelineAssemblyError> {
-    let Some(node) = nodes.iter().find(|node| node.name() == member) else {
-        return Err(PipelineAssemblyError::UnknownSeamMember {
-            seam: SEAM,
-            member: member.to_string(),
-        });
-    };
-
-    let matching: Vec<&InternalChannel> = node
-        .port_descriptor()
-        .outputs()
-        .iter()
-        .filter_map(|key| match key {
-            ChannelKey::Internal(channel) if channel.type_id() == TypeId::of::<BodyTwistRef>() => {
-                Some(channel)
-            }
-            _ => None,
-        })
-        .collect();
-
-    match matching.as_slice() {
-        [only] => Ok((*only).clone()),
-        _ => Err(PipelineAssemblyError::SeamMemberOutputMismatch {
-            seam: SEAM,
-            member: member.to_string(),
-            expected: type_name::<BodyTwistRef>(),
-            matching: matching.len(),
-        }),
     }
 }
 
@@ -130,42 +76,8 @@ fn selector_policy(config: &ReferenceSeamConfig) -> SelectorPolicy {
 mod tests {
     use super::*;
 
-    use crate::pipeline::node::TickContext;
-    use crate::port::{AlgorithmNodePortDescriptor, PortBus, PortDescriptor};
-
-    use helios_core::prelude::TfProvider;
-
-    /// A node that does nothing; only its name and outputs matter here.
-    struct StubNode {
-        name: String,
-        descriptor: PortDescriptor,
-    }
-
-    impl PipelineNode for StubNode {
-        fn name(&self) -> &str {
-            &self.name
-        }
-
-        fn port_descriptor(&self) -> &PortDescriptor {
-            &self.descriptor
-        }
-
-        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
-    }
-
-    /// A node named `name` writing `outputs`.
-    fn stub(name: &str, outputs: Vec<InternalChannel>) -> Box<dyn PipelineNode> {
-        let descriptor = outputs
-            .into_iter()
-            .fold(AlgorithmNodePortDescriptor::new(), |builder, output| {
-                builder.output_internal(output)
-            })
-            .build();
-        Box::new(StubNode {
-            name: name.to_string(),
-            descriptor,
-        })
-    }
+    use crate::assembly::test_stub::stub;
+    use crate::port::{ChannelKey, InternalChannel};
 
     /// A node writing its reference on a channel named after itself, as every
     /// follower and teleop mapper does.
@@ -262,8 +174,8 @@ mod tests {
         assert!(
             matches!(
                 errors.as_slice(),
-                [PipelineAssemblyError::UnknownSeamMember { seam: "reference", member }]
-                    if member == "teleop"
+                [PipelineAssemblyError::UnknownSeamMember { seam, member }]
+                    if seam == "reference" && member == "teleop"
             ),
             "got {errors:?}"
         );

@@ -202,6 +202,7 @@ mod tests {
             allocators: HashMap::from([(
                 "drive".to_string(),
                 AllocatorConfig::WheelTorque {
+                    input: "drive_cmd".to_string(),
                     wheel_radius: 0.3,
                     drive: "drive".to_string(),
                 },

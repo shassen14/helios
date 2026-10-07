@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use helios_runtime::channels::control;
 use helios_runtime::config::{
-    AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, ControllerConfig, EkfConfig,
+    AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandFoldConfig, EkfConfig,
     EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
     ReferenceSeamConfig, SensorModelConfig,
 };
@@ -336,22 +336,42 @@ fn two_grids_publish_to_distinct_channels() {
 // build_pipeline — the assembler counterpart to the Sum and WheelTorque unit
 // tests.
 
-/// A longitudinal speed feedback controller: emits DriveForce, folds as feedback.
-fn longitudinal_velocity() -> ControllerConfig {
-    ControllerConfig::LongitudinalVelocity {
-        state_source: Default::default(),
-        proportional_gain: 1.0,
-        integral_gain: 0.0,
-        derivative_gain: 0.0,
-        integral_clamp: 0.0,
-    }
+/// A `[nodes]` entry named `name`, parsed from `section` written as TOML.
+fn node_entry(name: &str, section: &str) -> (String, toml::Table) {
+    let section: toml::Table = toml::from_str(section).expect("a valid node section");
+    (name.to_string(), section)
 }
 
-/// A road-load feedforward controller: emits DriveForce, folds as feedforward.
-fn road_load() -> ControllerConfig {
-    ControllerConfig::RoadLoad {
-        c_roll: 0.01,
-        c_drag: 0.3,
+/// A longitudinal speed feedback controller named `name`: emits DriveForce.
+fn longitudinal_velocity(name: &str) -> (String, toml::Table) {
+    node_entry(
+        name,
+        r#"
+        kind = "LongitudinalVelocity"
+        proportional_gain = 1.0
+        integral_gain = 0.0
+        derivative_gain = 0.0
+        "#,
+    )
+}
+
+/// A road-load feedforward controller named `name`: emits DriveForce.
+fn road_load(name: &str) -> (String, toml::Table) {
+    node_entry(name, "kind = \"RoadLoad\"\nc_roll = 0.01\nc_drag = 0.3")
+}
+
+/// The `[command.<fold>]` tables parsed from `section` written as TOML.
+fn command_seam(section: &str) -> BTreeMap<String, CommandFoldConfig> {
+    toml::from_str(section).expect("valid command folds")
+}
+
+/// A wheel-torque allocator reading fold `input` and driving actuator `drive`,
+/// with τ = F · 0.3.
+fn wheel_torque(input: &str, drive: &str) -> AllocatorConfig {
+    AllocatorConfig::WheelTorque {
+        input: input.to_string(),
+        wheel_radius: 0.3,
+        drive: drive.to_string(),
     }
 }
 
@@ -359,21 +379,21 @@ fn road_load() -> ControllerConfig {
 /// wheel-torque allocator. The drive actuator id is `drive`; τ = F · r with
 /// r = 0.3.
 fn drive_force_stack() -> AutonomyStack {
-    let mut controllers = HashMap::new();
-    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
-    controllers.insert("road_load".to_string(), road_load());
-
-    let mut allocators = HashMap::new();
-    allocators.insert(
-        "wheels".to_string(),
-        AllocatorConfig::WheelTorque {
-            wheel_radius: 0.3,
-            drive: "drive".to_string(),
-        },
+    let nodes = BTreeMap::from([longitudinal_velocity("speed_ctrl"), road_load("road_load")]);
+    let command = command_seam(
+        r#"
+        [drive_cmd]
+        type = "DriveForce"
+        required = ["speed_ctrl"]
+        optional = ["road_load"]
+        "#,
     );
 
+    let allocators = HashMap::from([("wheels".to_string(), wheel_torque("drive_cmd", "drive"))]);
+
     AutonomyStack {
-        controllers,
+        nodes,
+        command,
         allocators,
         ..Default::default()
     }
@@ -401,9 +421,8 @@ fn state_and_reference_body() -> BodyCapabilities {
 
 #[test]
 fn drive_force_stack_builds_both_controllers_and_the_allocator() {
-    // Command-space dispatch on the allocator kind: both controllers and the
-    // wheel-torque allocator are present under their config keys, each built by
-    // its registry factory (the step-4 factories) through the DriveForce branch.
+    // Both controllers, the drive fold and the wheel-torque allocator are
+    // present, each under its own name.
     let pipeline = build_pipeline(
         &drive_force_stack(),
         &AutonomyRegistry::default(),
@@ -414,6 +433,10 @@ fn drive_force_stack_builds_both_controllers_and_the_allocator() {
     .expect("DriveForce stack must build");
 
     let names: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
+    assert!(
+        names.contains(&"drive_cmd"),
+        "the command seam adds the drive fold, got {names:?}"
+    );
     assert!(
         names.contains(&"speed_ctrl"),
         "feedback controller must be present under its config key, got {names:?}"
@@ -503,9 +526,9 @@ fn feedback_and_feedforward_fold_into_the_wheel_torque_terminal() {
 // partial commands into the single actuator terminal. This is what the old
 // single-space assembler (and the >1-allocator validation ban) could not build.
 
-/// A bicycle-steer feedforward controller: emits SteerAngle, folds as feedforward.
-fn bicycle_steer() -> ControllerConfig {
-    ControllerConfig::BicycleSteer { wheelbase: 2.0 }
+/// A bicycle-steer feedforward controller named `name`: emits SteerAngle.
+fn bicycle_steer(name: &str) -> (String, toml::Table) {
+    node_entry(name, "kind = \"BicycleSteer\"\nwheelbase = 2.0")
 }
 
 /// A decoupled car stack: a DriveForce leg into a wheel-torque allocator (drive
@@ -513,27 +536,39 @@ fn bicycle_steer() -> ControllerConfig {
 /// allocator (steer actuator `steer`, identity angle → position). The two
 /// allocators own disjoint actuators, so a `Merge` unions their partials.
 fn decoupled_car_stack() -> AutonomyStack {
-    let mut controllers = HashMap::new();
-    controllers.insert("speed_ctrl".to_string(), longitudinal_velocity());
-    controllers.insert("steer_ff".to_string(), bicycle_steer());
+    let nodes = BTreeMap::from([
+        longitudinal_velocity("speed_ctrl"),
+        bicycle_steer("steer_ff"),
+    ]);
+    let command = command_seam(
+        r#"
+        [drive_cmd]
+        type = "DriveForce"
+        required = ["speed_ctrl"]
 
-    let mut allocators = HashMap::new();
-    allocators.insert(
-        "drive_wheels".to_string(),
-        AllocatorConfig::WheelTorque {
-            wheel_radius: 0.3,
-            drive: "drive".to_string(),
-        },
+        [steer_cmd]
+        type = "SteerAngle"
+        optional = ["steer_ff"]
+        "#,
     );
-    allocators.insert(
-        "steer_axle".to_string(),
-        AllocatorConfig::SteerPosition {
-            steer: "steer".to_string(),
-        },
-    );
+
+    let allocators = HashMap::from([
+        (
+            "drive_wheels".to_string(),
+            wheel_torque("drive_cmd", "drive"),
+        ),
+        (
+            "steer_axle".to_string(),
+            AllocatorConfig::SteerPosition {
+                input: "steer_cmd".to_string(),
+                steer: "steer".to_string(),
+            },
+        ),
+    ]);
 
     AutonomyStack {
-        controllers,
+        nodes,
+        command,
         allocators,
         ..Default::default()
     }
@@ -541,9 +576,8 @@ fn decoupled_car_stack() -> AutonomyStack {
 
 #[test]
 fn decoupled_stack_builds_both_spaces_and_both_allocators() {
-    // Two command spaces coexist: the assembler wires one Sum per space and one
-    // allocator per space, each present under its config key. What the old
-    // single-space assembler could not express.
+    // Two command spaces coexist: the command seam adds one Sum per space, and
+    // there is one allocator per space, each present under its config key.
     let pipeline = build_pipeline(
         &decoupled_car_stack(),
         &AutonomyRegistry::default(),
@@ -554,7 +588,14 @@ fn decoupled_stack_builds_both_spaces_and_both_allocators() {
     .expect("decoupled two-allocator stack must build");
 
     let names: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
-    for expected in ["speed_ctrl", "steer_ff", "drive_wheels", "steer_axle"] {
+    for expected in [
+        "speed_ctrl",
+        "steer_ff",
+        "drive_cmd",
+        "steer_cmd",
+        "drive_wheels",
+        "steer_axle",
+    ] {
         assert!(
             names.contains(&expected),
             "`{expected}` must be present under its config key, got {names:?}"
@@ -629,6 +670,147 @@ fn decoupled_legs_merge_into_one_actuator_terminal() {
     assert_eq!(
         setpoint_value(&actuators.value, "steer"),
         SetpointValue::Position(0.2)
+    );
+}
+
+#[test]
+fn a_controller_of_the_wrong_type_fails_the_build_naming_it() {
+    // The steer feedforward writes a `SteerAngle`, so listing it in the drive
+    // fold is a mistake the command seam reports, naming the fold and member.
+    let mut stack = decoupled_car_stack();
+    stack.command = command_seam(
+        r#"
+        [drive_cmd]
+        type = "DriveForce"
+        required = ["speed_ctrl"]
+        optional = ["steer_ff"]
+
+        [steer_cmd]
+        type = "SteerAngle"
+        optional = ["steer_ff"]
+        "#,
+    );
+
+    let Err(errors) = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        state_and_reference_body(),
+    ) else {
+        panic!("a controller of the wrong type must not build");
+    };
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::SeamMemberOutputMismatch {
+                seam,
+                member,
+                ..
+            } if seam == "command.drive_cmd" && member == "steer_ff"
+        )),
+        "expected SeamMemberOutputMismatch for `steer_ff`, got {errors:?}"
+    );
+}
+
+#[test]
+fn two_folds_of_one_type_drive_two_allocators() {
+    // A skid-steer's two sides: two `DriveForce` folds, each read by its own
+    // wheel-torque allocator. One fold per type could not express this.
+    let stack = AutonomyStack {
+        nodes: BTreeMap::from([
+            longitudinal_velocity("left_speed"),
+            longitudinal_velocity("right_speed"),
+        ]),
+        command: command_seam(
+            r#"
+            [left_cmd]
+            type = "DriveForce"
+            required = ["left_speed"]
+
+            [right_cmd]
+            type = "DriveForce"
+            required = ["right_speed"]
+            "#,
+        ),
+        allocators: HashMap::from([
+            ("left_wheels".to_string(), wheel_torque("left_cmd", "left")),
+            (
+                "right_wheels".to_string(),
+                wheel_torque("right_cmd", "right"),
+            ),
+        ]),
+        ..Default::default()
+    };
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        state_and_reference_body(),
+    )
+    .expect("two folds of one type must build");
+
+    for (side, force) in [("left", 100.0), ("right", 40.0)] {
+        pipeline
+            .bus()
+            .write(
+                InternalChannel::named::<DriveForce>(format!("{side}_speed").as_str()).into(),
+                Stamped {
+                    value: DriveForce::new(force),
+                    timestamp: MonotonicTime(0.0),
+                    health: Health::Ok,
+                    producer: 0,
+                },
+            )
+            .expect("write to a side's contribution channel must succeed");
+    }
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
+
+    let actuators = pipeline
+        .read_actuators()
+        .expect("both sides fold, allocate and merge");
+    assert_eq!(
+        setpoint_value(&actuators.value, "left"),
+        SetpointValue::Torque(100.0 * 0.3)
+    );
+    assert_eq!(
+        setpoint_value(&actuators.value, "right"),
+        SetpointValue::Torque(40.0 * 0.3)
+    );
+}
+
+#[test]
+fn an_allocator_with_no_command_fold_fails_the_build_naming_its_input() {
+    // The steer allocator reads `SteerAngle @ steer_cmd`. With no
+    // `[command.steer_cmd]` nothing writes it, and the build names the
+    // allocator and the channel.
+    let mut stack = decoupled_car_stack();
+    stack.command = command_seam("[drive_cmd]\ntype = \"DriveForce\"\nrequired = [\"speed_ctrl\"]");
+
+    let Err(errors) = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        state_and_reference_body(),
+    ) else {
+        panic!("an allocator with no command source must not build");
+    };
+
+    let steer_command: ChannelKey = InternalChannel::named::<SteerAngle>("steer_cmd").into();
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::PipelineBuild(v)
+                if v.iter().any(|b| matches!(
+                    b,
+                    PipelineBuildError::UnsatisfiedInput { node_name, channel, .. }
+                        if node_name == "steer_axle" && *channel == steer_command
+                ))
+        )),
+        "expected UnsatisfiedInput for `steer_axle` reading the steer command, got {errors:?}"
     );
 }
 
@@ -848,8 +1030,8 @@ fn reference_naming_no_node_fails_the_build_naming_it() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            PipelineAssemblyError::UnknownSeamMember { seam: "reference", member }
-                if member == "pure_pursuit"
+            PipelineAssemblyError::UnknownSeamMember { seam, member }
+                if seam == "reference" && member == "pure_pursuit"
         )),
         "expected UnknownSeamMember for `pure_pursuit`, got {errors:?}"
     );

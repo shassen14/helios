@@ -4,7 +4,7 @@
 //! reads. No Bevy `Entity`, no full `AgentConfig`. The host (sim or hw)
 //! resolves the agent-specific values and passes them here.
 
-use crate::config::{AllocatorConfig, ControllerConfig, SensorModelConfig};
+use crate::config::{AllocatorConfig, SensorModelConfig};
 use crate::nodes::gaussian_estimator::AidingHandler;
 use crate::port::InternalChannel;
 
@@ -47,16 +47,6 @@ pub struct MeasurementModelBuildContext {
     pub(crate) model_config: SensorModelConfig,
 }
 
-/// Context for building a `ControllerNode`.
-pub struct ControllerBuildContext {
-    pub agent: AgentId,
-    /// Node name: the controller's config-map key, so tooling keyed on the name
-    /// distinguishes two controllers of the same kind.
-    pub(crate) instance_name: String,
-    pub(crate) config: ControllerConfig,
-    pub(crate) output_channel: InternalChannel,
-}
-
 /// Context for building an `AllocatorNode`.
 pub struct AllocatorBuildContext {
     pub agent: AgentId,
@@ -65,7 +55,7 @@ pub struct AllocatorBuildContext {
     pub(crate) instance_name: String,
     pub(crate) config: AllocatorConfig,
     /// The bus channel carrying the vehicle-level command this allocator
-    /// consumes (e.g. `control::command::<BodyTwist>()`).
+    /// consumes: the `[command]` fold its config names.
     pub(crate) input_channel: InternalChannel,
     /// The bus channel on which this node publishes its `ActuatorCommand`.
     pub(crate) output_channel: InternalChannel,

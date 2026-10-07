@@ -47,19 +47,19 @@
 //! promoted to a registry family (`register_aiding_handler_factory`). For the
 //! current set of five built-in types, the inline match is sufficient.
 
-use super::command::command_sum_node_name;
-use super::contexts::{AllocatorBuildContext, ControllerBuildContext, MockEstimatorBuildContext};
+use super::contexts::{AllocatorBuildContext, MockEstimatorBuildContext};
 use super::error::PipelineAssemblyError;
 use super::instantiate::instantiate;
 use super::registry::AutonomyRegistry;
+use super::seams::command::command_sums;
 use super::seams::reference::reference_selector;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
-use crate::config::{AllocatorConfig, AutonomyStack, CommandSpace, FoldRole};
+use crate::config::{AutonomyStack, CommandSpace};
 use crate::config::{EstimatorConfig, MOCK_ORACLE_KIND, UKF_KIND};
-use crate::nodes::combinators::{Merge, Sum};
+use crate::nodes::combinators::Merge;
 use crate::nodes::gaussian_estimator;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
@@ -69,15 +69,12 @@ use helios_core::control::actuators::ActuatorCommand;
 use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle};
 use helios_core::prelude::AgentId;
 
-use std::collections::{BTreeSet, HashSet};
-use std::ops::Add;
+use std::collections::HashSet;
 
 /// Node name for the synthesized actuator merge — the terminal that unions each
 /// allocator's partial [`ActuatorCommand`] into the one `actuators` output. Raw
-/// identity for observability, so a referenced const like the command-seam node
-/// names; `build_pipeline` here is its sole synthesizer. It names the actuator
-/// terminal rather than the command seam, so it lives here, not in
-/// [`super::command`] with the fold and arbiter names.
+/// identity for observability, so a referenced const like the seam node names;
+/// `build_pipeline` here is its sole synthesizer.
 const ACTUATOR_MERGE_NODE: &str = "actuator_merge";
 
 /// Builds a fully-validated [`AutonomyPipeline`] from a resolved [`AutonomyStack`].
@@ -156,6 +153,18 @@ pub fn build_pipeline(
         Err(seam_errors) => errors.extend(seam_errors),
     }
 
+    // --- Command seam ---
+    // Each `[command.<fold>]` table names the nodes whose commands one `Sum`
+    // folds into a channel named after the fold, which an allocator reads.
+    match command_sums(&stack.command, registry, &instantiated.nodes) {
+        Ok(sums) => {
+            for sum in sums {
+                builder = builder.add_node(sum);
+            }
+        }
+        Err(seam_errors) => errors.extend(seam_errors),
+    }
+
     for node in instantiated.nodes {
         sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
         builder = builder.add_node(node);
@@ -172,56 +181,9 @@ pub fn build_pipeline(
         }
     }
 
-    // --- Controllers + command terminal ---
-    // Each allocator consumes one command space, so the terminal is wired per
-    // space the stack's allocators consume. A decoupled stack opens several seams
-    // — a drive space and a steer space — and each gets its own `Sum` fold of the
-    // controllers speaking it. The body-twist path is the default: it serves the
-    // body-twist allocator and every no-sum-space stack (pure-perception,
-    // controllers-without-allocator), which is why the branch turns on the
-    // presence of a sum space, not on the allocator set being non-empty. Teleop is
-    // arbitrated at the reference seam above, so it no longer factors in here.
-    let allocator_spaces: BTreeSet<CommandSpace> = stack
-        .allocators
-        .values()
-        .map(AllocatorConfig::command_space)
-        .collect();
-
-    let has_sum_space = allocator_spaces.contains(&CommandSpace::DriveForce)
-        || allocator_spaces.contains(&CommandSpace::SteerAngle);
-
-    builder = if has_sum_space {
-        // One `Sum` per present sum space; each folds only its own controllers.
-        let mut b = builder;
-        if allocator_spaces.contains(&CommandSpace::DriveForce) {
-            b = wire_sum_terminal::<DriveForce>(
-                stack,
-                registry,
-                &agent,
-                CommandSpace::DriveForce,
-                b,
-                &mut errors,
-            );
-        }
-
-        if allocator_spaces.contains(&CommandSpace::SteerAngle) {
-            b = wire_sum_terminal::<SteerAngle>(
-                stack,
-                registry,
-                &agent,
-                CommandSpace::SteerAngle,
-                b,
-                &mut errors,
-            );
-        }
-        b
-    } else {
-        wire_body_twist_terminal(stack, registry, &agent, builder, &mut errors)
-    };
-
     // --- Allocators + actuator merge ---
-    // Each allocator *consumes* its space's `command` (the fold / arbiter above
-    // produce it) and *produces* a partial `actuators` command over the actuators
+    // Each allocator *consumes* the fold its `input` names (the command seam
+    // above produces it) and *produces* a partial `actuators` command over the actuators
     // it drives. Every channel here is graph-internal, so nothing is seeded onto
     // `external_channels`.
     //
@@ -233,14 +195,15 @@ pub fn build_pipeline(
     // one-allocator stack does. Validation has already proven the partials own
     // disjoint actuators; `Merge` re-checks defensively and degrades on overlap.
     //
-    // The command channel's type is the allocator's own command space, erased to an
+    // The input channel's type is the allocator's own command space, erased to an
     // `InternalChannel` so the loop is one shape regardless of `T`.
     let mut partials: Vec<InternalChannel> = vec![];
     for (allocator_name, alloc_cfg) in &stack.allocators {
+        let input = alloc_cfg.input();
         let command_channel = match alloc_cfg.command_space() {
-            CommandSpace::DriveForce => control::command::<DriveForce>(),
-            CommandSpace::SteerAngle => control::command::<SteerAngle>(),
-            CommandSpace::BodyTwist => control::command::<BodyTwist>(),
+            CommandSpace::DriveForce => InternalChannel::named::<DriveForce>(input),
+            CommandSpace::SteerAngle => InternalChannel::named::<SteerAngle>(input),
+            CommandSpace::BodyTwist => InternalChannel::named::<BodyTwist>(input),
         };
 
         let partial = InternalChannel::named::<ActuatorCommand>(allocator_name.as_str());
@@ -298,121 +261,6 @@ pub fn build_pipeline(
         .with_outside_inputs(outside_inputs)
         .build()
         .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
-}
-
-/// Wires the body-twist command terminal for a coupled morphology: one command
-/// space fed directly by the autonomy controllers. This serves a body-twist
-/// allocator and every no-sum-space stack (pure-perception, controllers without
-/// an allocator).
-///
-/// Teleop no longer enters here — it is arbitrated one layer up at the guidance
-/// reference seam — so this path is autonomy-only. Each controller writes the
-/// `command` terminal directly; a pure-perception stack has no controller and so
-/// wires nothing. A coupled stack that folds multiple contributions would grow a
-/// `Sum` here, the way the decoupled spaces do; the shipped coupled path is a
-/// single controller, so none is synthesized yet.
-fn wire_body_twist_terminal(
-    stack: &AutonomyStack,
-    registry: &AutonomyRegistry,
-    agent: &AgentId,
-    mut builder: PipelineBuilder,
-    errors: &mut Vec<PipelineAssemblyError>,
-) -> PipelineBuilder {
-    for (controller_name, ctrl_cfg) in &stack.controllers {
-        match registry.build_controller(
-            ctrl_cfg.get_kind_str(),
-            ControllerBuildContext {
-                agent: agent.clone(),
-                instance_name: controller_name.clone(),
-                config: ctrl_cfg.clone(),
-                output_channel: control::command::<BodyTwist>(),
-            },
-        ) {
-            Ok(node) => {
-                builder = builder.add_node(node);
-            }
-            Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
-                node_kind: ctrl_cfg.get_kind_str().to_string(),
-                reason,
-            }),
-        }
-    }
-
-    builder
-}
-
-/// Wires the autonomy-only command terminal for a single-command-space stack,
-/// folding every controller's contribution into one `command` of type `T`.
-///
-/// Each controller writes its own instance-named contribution channel, and a
-/// [`Sum`] folds them into the `command` terminal — a feedback and a feedforward
-/// leg composing without clobbering. Feedback legs are the fold's `required`
-/// inputs (read fresh); feedforward legs are `optional` (folded last-known-good).
-/// No teleop, no arbiter: those await the arbiter's own command-space generalization.
-///
-/// `T` is the allocator's command space — [`DriveForce`] for the longitudinal
-/// drive terminal, [`SteerAngle`] for the steer terminal. The body-twist stack
-/// keeps its own richer arbiter path in [`wire_body_twist_terminal`], so it is
-/// not one of the `T`s folded here.
-fn wire_sum_terminal<T>(
-    stack: &AutonomyStack,
-    registry: &AutonomyRegistry,
-    agent: &AgentId,
-    space: CommandSpace,
-    mut builder: PipelineBuilder,
-    errors: &mut Vec<PipelineAssemblyError>,
-) -> PipelineBuilder
-where
-    T: Send + Sync + Clone + Add<Output = T> + 'static,
-{
-    let mut required: Vec<InternalChannel> = vec![];
-    let mut optional: Vec<InternalChannel> = vec![];
-
-    for (controller_name, ctrl_cfg) in &stack.controllers {
-        if ctrl_cfg.command_space() != space {
-            continue;
-        }
-        // Distinct channel per producer (the planner precedent): a shared output
-        // would clobber, since the bus keeps only the last write.
-        let contribution = InternalChannel::named::<T>(controller_name.as_str());
-
-        match registry.build_controller(
-            ctrl_cfg.get_kind_str(),
-            ControllerBuildContext {
-                agent: agent.clone(),
-                instance_name: controller_name.clone(),
-                config: ctrl_cfg.clone(),
-                output_channel: contribution.clone(),
-            },
-        ) {
-            Ok(node) => {
-                builder = builder.add_node(node);
-                match ctrl_cfg.fold_role() {
-                    FoldRole::Feedback => required.push(contribution),
-                    FoldRole::Feedforward => optional.push(contribution),
-                }
-            }
-            Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
-                node_kind: ctrl_cfg.get_kind_str().to_string(),
-                reason,
-            }),
-        }
-    }
-
-    // No controllers ⇒ no fold: leave `command` unwritten so the allocator's
-    // unsatisfied input surfaces as a loud build error rather than a silent
-    // no-command. A degenerate stack is validation's job to reject.
-    if !required.is_empty() || !optional.is_empty() {
-        let sum = Sum::<T>::new(
-            command_sum_node_name(space),
-            required,
-            optional,
-            control::command::<T>(),
-        );
-        builder = builder.add_node(Box::new(sum));
-    }
-
-    builder
 }
 
 fn build_estimator_node(

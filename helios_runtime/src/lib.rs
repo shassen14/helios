@@ -29,16 +29,14 @@ pub use crate::port::{
 };
 pub use crate::stamped::{Health, Stamped};
 
-pub use crate::assembly::contexts::{
-    ControllerBuildContext, GaussianEstimatorBuildContext, MeasurementModelBuildContext,
-};
+pub use crate::assembly::contexts::{GaussianEstimatorBuildContext, MeasurementModelBuildContext};
 pub use crate::assembly::{
-    build_pipeline, AutonomyRegistry, BuildContext, DuplicateKind, FactoryError, FactoryOutput,
-    PipelineAssemblyError,
+    build_pipeline, AutonomyRegistry, BuildContext, DuplicateCommandType, DuplicateKind,
+    FactoryError, FactoryOutput, PipelineAssemblyError,
 };
 pub use crate::config::{
-    AckermannProcessNoiseConfig, AgentBaseConfig, AidingConfig, AutonomyStack, ControllerConfig,
-    EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
+    AckermannProcessNoiseConfig, AgentBaseConfig, AidingConfig, AutonomyStack, EkfConfig,
+    EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
     QuadcopterProcessNoiseConfig, SensorModelConfig, UkfConfig,
 };
 pub use crate::validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError};

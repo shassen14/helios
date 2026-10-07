@@ -1,5 +1,5 @@
 use super::{
-    AllocatorConfig, ControllerConfig, EstimatorConfig, ReferenceSeamConfig, TfBufferConfig,
+    AllocatorConfig, CommandFoldConfig, EstimatorConfig, ReferenceSeamConfig, TfBufferConfig,
 };
 
 use serde::Deserialize;
@@ -23,15 +23,19 @@ pub struct AutonomyStack {
     pub estimators: HashMap<String, EstimatorConfig>,
 
     #[serde(default)]
-    pub controllers: HashMap<String, ControllerConfig>,
-
-    #[serde(default)]
     pub allocators: HashMap<String, AllocatorConfig>,
 
     /// The guidance reference seam: which `[nodes]` entries feed the reference
     /// the controllers track. Omitted when nothing in the graph produces one.
     #[serde(default)]
     pub reference: Option<ReferenceSeamConfig>,
+
+    /// The command seam: one `[command.<fold>]` table per fold, keyed by the
+    /// fold's name, each summing the commands of the `[nodes]` entries it
+    /// lists. Sorted, so folds are built and reported in the same order
+    /// every run. Empty when nothing is commanded.
+    #[serde(default)]
+    pub command: BTreeMap<String, CommandFoldConfig>,
 
     /// Sizing for the estimated transform buffer the `TfService` folds dual-
     /// published edges into. Defaults apply when the `[tf]` section is omitted.

@@ -28,6 +28,7 @@ fn build_wheel_torque(ctx: AllocatorBuildContext) -> Result<Box<dyn PipelineNode
     let AllocatorConfig::WheelTorque {
         wheel_radius,
         drive,
+        ..
     } = ctx.config
     else {
         return Err(format!(
@@ -47,7 +48,7 @@ fn build_wheel_torque(ctx: AllocatorBuildContext) -> Result<Box<dyn PipelineNode
 
 fn build_steer_position(ctx: AllocatorBuildContext) -> Result<Box<dyn PipelineNode>, String> {
     let received_kind = ctx.config.get_kind_str().to_string();
-    let AllocatorConfig::SteerPosition { steer } = ctx.config else {
+    let AllocatorConfig::SteerPosition { steer, .. } = ctx.config else {
         return Err(format!(
             "SteerPosition allocator factory received a `{received_kind}` config",
         ));

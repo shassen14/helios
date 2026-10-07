@@ -69,18 +69,28 @@ pub enum PipelineAssemblyError {
         built_name: String,
     },
     /// The `[seam]` section names `member`, which is not a `[nodes]` entry.
-    UnknownSeamMember { seam: &'static str, member: String },
+    UnknownSeamMember { seam: String, member: String },
     /// The `[seam]` section names `member` more than once, so its priority is
     /// ambiguous.
-    DuplicateSeamMember { seam: &'static str, member: String },
+    DuplicateSeamMember { seam: String, member: String },
     /// Member `member` of `[seam]` has `matching` outputs of the seam's type
     /// `expected`. A member must have exactly one, so the seam knows which
     /// channel to read.
     SeamMemberOutputMismatch {
-        seam: &'static str,
+        seam: String,
         member: String,
         expected: &'static str,
         matching: usize,
+    },
+    /// The `[seam]` section names no members, so the node combining them
+    /// would never publish.
+    EmptySeam { seam: String },
+    /// Command fold `fold` states a `type` no command type is registered
+    /// under. `registered` lists the names that are, sorted.
+    UnknownCommandType {
+        fold: String,
+        type_name: String,
+        registered: Vec<String>,
     },
 }
 
@@ -193,6 +203,23 @@ impl std::fmt::Display for PipelineAssemblyError {
             } => write!(
                 f,
                 "{seam}: member '{member}' has {matching} outputs of type {expected}; a member needs exactly one"
+            ),
+            PipelineAssemblyError::EmptySeam { seam } => write!(
+                f,
+                "{seam}: names no members; list at least one, or remove the section"
+            ),
+            PipelineAssemblyError::UnknownCommandType {
+                fold,
+                type_name,
+                registered,
+            } => write!(
+                f,
+                "command.{fold}: unknown type '{type_name}'; registered command types: {}",
+                if registered.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    registered.join(", ")
+                }
             ),
         }
     }
