@@ -1,5 +1,7 @@
 use crate::{
-    estimation::schema::{MeasurementSchema, MeasurementSchemaBlock, StateSchema},
+    estimation::schema::{
+        InputSchema, InputSchemaBlock, MeasurementSchema, MeasurementSchemaBlock, StateSchema,
+    },
     spatial::state::Quantity,
     spatial::{transforms::Convention, FrameId},
 };
@@ -120,6 +122,92 @@ impl std::fmt::Display for MeasurementAgreementError {
 }
 
 impl std::error::Error for MeasurementAgreementError {}
+
+/// Checks that the input an input builder assembles is the input the dynamics
+/// consume: the same blocks, in the same order, each with the same quantity,
+/// frame and conventions.
+///
+/// `u` is positional, so agreement is exact equality block by block — no
+/// reordering, no conversion. Length alone is not enough: an accelerometer and
+/// a gyro block are both three long, so a swap passes a length check and then
+/// integrates angular rate as specific force. Returned rather than panicked so
+/// the assembler can name the offending estimator. Does no coordinate math:
+/// moving an input into the frame the dynamics expect is the input builder's
+/// job, and this only validates that the declarations line up.
+pub fn check_input_agreement(
+    expected: &InputSchema,
+    supplied: &InputSchema,
+) -> Result<(), InputAgreementError> {
+    for (index, (want, got)) in expected.blocks().iter().zip(supplied.blocks()).enumerate() {
+        if want != got {
+            return Err(InputAgreementError::BlockMismatch {
+                index,
+                expected: Box::new(want.clone()),
+                supplied: Box::new(got.clone()),
+            });
+        }
+    }
+
+    if expected.blocks().len() != supplied.blocks().len() {
+        return Err(InputAgreementError::BlockCountMismatch {
+            expected: expected.blocks().len(),
+            supplied: supplied.blocks().len(),
+        });
+    }
+
+    Ok(())
+}
+
+/// Why a supplied input fails to agree with the input the dynamics consume.
+/// Every variant is a construction-time config error.
+#[derive(Debug)]
+pub enum InputAgreementError {
+    /// The block at `index` differs in quantity, frame, or convention. Boxed
+    /// to keep the `Result` small; this only arises at construction.
+    BlockMismatch {
+        index: usize,
+        expected: Box<InputSchemaBlock>,
+        supplied: Box<InputSchemaBlock>,
+    },
+    /// Every shared position agrees, but one side has more blocks.
+    BlockCountMismatch { expected: usize, supplied: usize },
+}
+
+impl std::fmt::Display for InputAgreementError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BlockMismatch {
+                index,
+                expected,
+                supplied,
+            } => write!(
+                f,
+                "input block {index}: the dynamics consume {}, but the input builder \
+                 supplies {}. The input vector is positional, so both sides must declare \
+                 the same quantities, frames and conventions in the same order.",
+                describe_block(expected),
+                describe_block(supplied),
+            ),
+            Self::BlockCountMismatch { expected, supplied } => write!(
+                f,
+                "the dynamics consume {expected} input blocks, but the input builder \
+                 supplies {supplied}."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for InputAgreementError {}
+
+/// A block as `quantity [frame: convention, …]`, for error messages.
+fn describe_block(block: &InputSchemaBlock) -> String {
+    let conventions: Vec<String> = block
+        .conventions()
+        .iter()
+        .map(|(frame, convention)| format!("{frame}: {convention}"))
+        .collect();
+    format!("{} [{}]", block.quantity(), conventions.join(", "))
+}
 
 #[cfg(test)]
 mod tests {
@@ -305,5 +393,119 @@ mod tests {
             check_measurement_state_agreement(&state, &m).unwrap_err(),
             MeasurementAgreementError::FrameConventionMismatch { .. }
         ));
+    }
+
+    // ── Input agreement: builder vs dynamics ──────────────────────────────────
+
+    fn specific_force(convention: Convention) -> InputSchemaBlock {
+        InputSchemaBlock::new(
+            Quantity::SpecificForce(FrameId::base_link(agent())),
+            convention,
+        )
+    }
+
+    fn angular_velocity(convention: Convention) -> InputSchemaBlock {
+        InputSchemaBlock::new(
+            Quantity::AngularVelocity(FrameId::base_link(agent())),
+            convention,
+        )
+    }
+
+    /// The IMU input: specific force then angular velocity, both body FLU.
+    fn imu_input() -> InputSchema {
+        InputSchema::compose(vec![
+            specific_force(Convention::Flu),
+            angular_velocity(Convention::Flu),
+        ])
+    }
+
+    #[test]
+    fn identical_inputs_agree() {
+        assert!(check_input_agreement(&imu_input(), &imu_input()).is_ok());
+    }
+
+    #[test]
+    fn an_accel_gyro_swap_is_a_block_mismatch_at_the_first_block() {
+        // Same length, same frames, same conventions — only the order differs.
+        // A length check would pass this and integrate rate as force.
+        let swapped = InputSchema::compose(vec![
+            angular_velocity(Convention::Flu),
+            specific_force(Convention::Flu),
+        ]);
+        assert_eq!(swapped.dim(), imu_input().dim());
+
+        match check_input_agreement(&imu_input(), &swapped).unwrap_err() {
+            InputAgreementError::BlockMismatch {
+                index,
+                expected,
+                supplied,
+            } => {
+                assert_eq!(index, 0);
+                assert_eq!(*expected, specific_force(Convention::Flu));
+                assert_eq!(*supplied, angular_velocity(Convention::Flu));
+            }
+            other => panic!("expected BlockMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_convention_mismatch_is_a_block_mismatch() {
+        let enu_gyro = InputSchema::compose(vec![
+            specific_force(Convention::Flu),
+            angular_velocity(Convention::Enu),
+        ]);
+
+        assert!(matches!(
+            check_input_agreement(&imu_input(), &enu_gyro).unwrap_err(),
+            InputAgreementError::BlockMismatch { index: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn an_input_in_the_sensor_frame_is_a_block_mismatch() {
+        // Raw IMU data lives in the sensor frame; the dynamics consume it in
+        // base_link. Supplying it unrotated is exactly what this check refuses.
+        let raw = InputSchema::compose(vec![
+            InputSchemaBlock::new(Quantity::SpecificForce(sensor()), Convention::Flu),
+            InputSchemaBlock::new(Quantity::AngularVelocity(sensor()), Convention::Flu),
+        ]);
+
+        assert!(matches!(
+            check_input_agreement(&imu_input(), &raw).unwrap_err(),
+            InputAgreementError::BlockMismatch { index: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn a_missing_trailing_block_is_a_block_count_mismatch() {
+        let accel_only = InputSchema::compose(vec![specific_force(Convention::Flu)]);
+
+        match check_input_agreement(&imu_input(), &accel_only).unwrap_err() {
+            InputAgreementError::BlockCountMismatch { expected, supplied } => {
+                assert_eq!((expected, supplied), (2, 1));
+            }
+            other => panic!("expected BlockCountMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_block_mismatch_message_names_both_quantities() {
+        let swapped = InputSchema::compose(vec![
+            angular_velocity(Convention::Flu),
+            specific_force(Convention::Flu),
+        ]);
+        let message = check_input_agreement(&imu_input(), &swapped)
+            .unwrap_err()
+            .to_string();
+
+        assert!(message.contains("input block 0"), "{message}");
+        assert!(
+            message.contains(&Quantity::SpecificForce(FrameId::base_link(agent())).to_string()),
+            "{message}"
+        );
+        assert!(
+            message.contains(&Quantity::AngularVelocity(FrameId::base_link(agent())).to_string()),
+            "{message}"
+        );
     }
 }

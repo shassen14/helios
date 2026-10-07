@@ -295,7 +295,9 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
 mod tests {
     use super::*;
     use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
-    use crate::estimation::schema::{MeasurementSchema, StateSchema, StateSchemaBlock};
+    use crate::estimation::schema::{
+        InputSchema, MeasurementSchema, StateSchema, StateSchemaBlock,
+    };
     use crate::estimation::{EstimatorInputs, SkipReason, UpdateOutcome};
     use crate::prelude::{AgentId, MonotonicDuration, MonotonicTime};
     use crate::spatial::state::Quantity;
@@ -382,8 +384,8 @@ mod tests {
     struct ConstantVelocity3D;
 
     impl EstimationDynamics for ConstantVelocity3D {
-        fn get_control_dim(&self) -> usize {
-            0
+        fn input_schema(&self) -> std::sync::Arc<InputSchema> {
+            std::sync::Arc::new(InputSchema::compose(vec![]))
         }
 
         fn schema(&self) -> std::sync::Arc<StateSchema> {

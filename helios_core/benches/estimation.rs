@@ -7,7 +7,9 @@ use nalgebra::{DMatrix, DVector, Isometry3};
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
 use helios_core::estimation::measurement::{MeasurementModel, Prediction};
-use helios_core::estimation::schema::{MeasurementSchema, StateSchema, StateSchemaBlock};
+use helios_core::estimation::schema::{
+    InputSchema, MeasurementSchema, StateSchema, StateSchemaBlock,
+};
 use helios_core::estimation::{EstimatorInputs, GaussianStateEstimator};
 use helios_core::prelude::EstimationDynamics;
 use helios_core::prelude::MonotonicTime;
@@ -42,8 +44,8 @@ impl TfProvider for IdentityTf {
 struct ConstantVelocity3D;
 
 impl EstimationDynamics for ConstantVelocity3D {
-    fn get_control_dim(&self) -> usize {
-        0
+    fn input_schema(&self) -> Arc<InputSchema> {
+        Arc::new(InputSchema::compose(vec![]))
     }
 
     fn schema(&self) -> Arc<StateSchema> {

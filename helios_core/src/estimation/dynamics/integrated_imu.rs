@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::estimation::dynamics::EstimationDynamics;
-use crate::estimation::schema::{StateSchema, StateSchemaBlock};
+use crate::estimation::schema::{InputSchema, InputSchemaBlock, StateSchema, StateSchemaBlock};
 use crate::kernel::integrators::Integrator;
 use crate::kernel::manifold::{StateBlock, TangentNoise};
 use crate::prelude::AgentId;
@@ -34,11 +34,16 @@ pub struct IntegratedImuModel {
     pub gravity_world: Vector3<f64>,
 
     schema: Arc<StateSchema>,
+    input_schema: Arc<InputSchema>,
     pos_off: usize,
     vel_off: usize,
     quat_off: usize,
     accel_bias_off: usize,
     gyro_bias_off: usize,
+    /// Row of `u` where the specific force starts.
+    specific_force_in: usize,
+    /// Row of `u` where the angular velocity starts.
+    angular_velocity_in: usize,
     orientation_block: Arc<dyn StateBlock>,
 }
 
@@ -124,6 +129,15 @@ impl IntegratedImuModel {
             Quantity::GyroBias(body.clone()),
             Component::X,
         ));
+        let input_schema = Arc::new(compose_ins_input_schema(&body));
+        let in_off = |q: Quantity| {
+            input_schema
+                .offset_of(&StateVariable::new(q, Component::X))
+                .expect("quantity is in the input schema we just built")
+        };
+        let specific_force_in = in_off(Quantity::SpecificForce(body.clone()));
+        let angular_velocity_in = in_off(Quantity::AngularVelocity(body.clone()));
+
         let orientation_block = schema
             .block_of(&Quantity::Orientation {
                 from: body.clone(),
@@ -136,11 +150,14 @@ impl IntegratedImuModel {
             agent,
             gravity_world,
             schema,
+            input_schema,
             pos_off,
             vel_off,
             quat_off,
             accel_bias_off,
             gyro_bias_off,
+            specific_force_in,
+            angular_velocity_in,
             orientation_block,
         }
     }
@@ -246,10 +263,23 @@ fn compose_ins_schema(
     StateSchema::compose(blocks)
 }
 
+/// The INS input: the IMU's specific force then its angular velocity, both in
+/// the body frame, FLU. The order is the order `u` is assembled in.
+fn compose_ins_input_schema(body: &FrameId) -> InputSchema {
+    InputSchema::compose(vec![
+        InputSchemaBlock::new(Quantity::SpecificForce(body.clone()), Convention::Flu),
+        InputSchemaBlock::new(Quantity::AngularVelocity(body.clone()), Convention::Flu),
+    ])
+}
+
 impl EstimationDynamics for IntegratedImuModel {
-    /// The control input `u` is a 6D vector: [ax, ay, az, wx, wy, wz] from the IMU.
-    fn get_control_dim(&self) -> usize {
-        6
+    /// The IMU sample: specific force then angular velocity, both in
+    /// `base_link`, FLU. An accelerometer measures specific force (acceleration
+    /// minus gravity), not acceleration, which is why `derivatives` adds gravity
+    /// back. A sample taken in a mounted sensor frame must be moved into
+    /// `base_link` before it reaches this model.
+    fn input_schema(&self) -> Arc<InputSchema> {
+        Arc::clone(&self.input_schema)
     }
 
     fn schema(&self) -> Arc<StateSchema> {
@@ -268,8 +298,8 @@ impl EstimationDynamics for IntegratedImuModel {
         let accel_bias = x.fixed_rows::<3>(self.accel_bias_off);
         let gyro_bias = x.fixed_rows::<3>(self.gyro_bias_off);
 
-        let raw_accel_measurement = u.fixed_rows::<3>(0);
-        let raw_gyro_measurement = u.fixed_rows::<3>(3);
+        let raw_accel_measurement = u.fixed_rows::<3>(self.specific_force_in);
+        let raw_gyro_measurement = u.fixed_rows::<3>(self.angular_velocity_in);
 
         // --- 2. Correct the raw measurements  ---
         let corrected_accel_body = raw_accel_measurement - accel_bias;
@@ -317,7 +347,8 @@ impl EstimationDynamics for IntegratedImuModel {
         // ω_body is constant across the step: the gyro-bias derivative is zero and
         // u is held constant, so orientation advances by one closed-form retraction
         // rather than an integrated one — only position and velocity need RK4.
-        let omega_body = u.fixed_rows::<3>(3) - x.fixed_rows::<3>(self.gyro_bias_off);
+        let omega_body =
+            u.fixed_rows::<3>(self.angular_velocity_in) - x.fixed_rows::<3>(self.gyro_bias_off);
 
         // Orientation lives on SO(3), so it cannot be stepped by the componentwise
         // integrator below — a weighted sum of unit quaternions leaves the sphere.
@@ -393,6 +424,66 @@ mod tests {
         let mut x = DVector::zeros(ins_state_layout(agent()).len());
         x[9] = 1.0; // Qw = 1 → identity quaternion
         x
+    }
+
+    #[test]
+    fn input_schema_is_body_specific_force_then_angular_velocity_in_flu() {
+        let body = FrameId::base_link(agent());
+        let input = make_model().input_schema();
+
+        assert_eq!(input.dim(), 6);
+        assert_eq!(
+            input.blocks(),
+            &[
+                InputSchemaBlock::new(Quantity::SpecificForce(body.clone()), Convention::Flu),
+                InputSchemaBlock::new(Quantity::AngularVelocity(body), Convention::Flu),
+            ]
+        );
+    }
+
+    #[test]
+    fn input_frames_carry_the_conventions_the_state_gives_them() {
+        // The input is consumed in base_link, which the state anchors through its
+        // orientation block. A model whose input and state disagreed on base_link's
+        // axes would integrate the input in the wrong basis.
+        let model = make_model();
+        let state = model.schema();
+
+        for block in model.input_schema().blocks() {
+            for (frame, convention) in block.conventions() {
+                assert_eq!(
+                    state.convention_of(frame),
+                    Some(*convention),
+                    "{} in {frame}",
+                    block.quantity()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn derivatives_read_the_input_rows_the_schema_names() {
+        // Write a specific force and an angular velocity at the rows the input
+        // schema assigns them; the derivatives must see each as that quantity.
+        let model = make_model();
+        let body = FrameId::base_link(agent());
+        let input = model.input_schema();
+        let row = |q: Quantity| {
+            input
+                .offset_of(&StateVariable::new(q, Component::X))
+                .expect("declared")
+        };
+
+        let mut u = DVector::zeros(input.dim());
+        u[row(Quantity::SpecificForce(body.clone())) + 2] = G; // cancels gravity
+        u[row(Quantity::AngularVelocity(body)) + 2] = 0.4; // yaw rate
+
+        let x_dot = model.derivatives(&identity_state(), &u, 0.0);
+
+        // Specific force +g up exactly cancels gravity: no velocity change.
+        assert!(x_dot.fixed_rows::<3>(3).norm() < 1e-12);
+        // Yaw rate ω about z at identity: q̇ = ½ q ⊗ (0, ω) gives q̇z = ω/2.
+        assert!((x_dot[8] - 0.2).abs() < 1e-12);
     }
 
     /// Returns a 6-element control vector with `az = g` to exactly counteract gravity.

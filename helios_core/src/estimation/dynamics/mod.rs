@@ -6,7 +6,7 @@
 
 pub mod integrated_imu;
 
-use crate::estimation::schema::StateSchema;
+use crate::estimation::schema::{InputSchema, StateSchema};
 use crate::kernel::integrators::Integrator;
 use crate::spatial::primitives::{Control, State};
 use nalgebra::DMatrix;
@@ -19,8 +19,11 @@ use std::sync::Arc;
 /// in time (`derivatives`) and to provide the necessary Jacobians for
 /// linearizing the system, which is essential for filters like the EKF.
 pub trait EstimationDynamics: Debug + Send + Sync {
-    /// Returns the number of dimensions in the control input vector `u`.
-    fn get_control_dim(&self) -> usize;
+    /// The named layout of the input vector `u`: which quantity each row holds,
+    /// in which frame and convention. The input builder must supply exactly
+    /// this, checked by `check_input_agreement`; `u.nrows()` is its `dim()`. A
+    /// model that takes no input returns an empty schema.
+    fn input_schema(&self) -> Arc<InputSchema>;
 
     fn schema(&self) -> Arc<StateSchema>;
 
@@ -61,7 +64,7 @@ pub trait EstimationDynamics: Debug + Send + Sync {
     /// A tuple `(A, B)` where `A` is an NxN matrix and `B` is an NxM matrix (N=state dim, M=control dim).
     fn jacobian(&self, x: &State, u: &Control, t: f64) -> (DMatrix<f64>, DMatrix<f64>) {
         let n = x.nrows();
-        let m = self.get_control_dim();
+        let m = self.input_schema().dim();
         let f0 = self.derivatives(x, u, t);
 
         let mut a = DMatrix::zeros(n, n);
@@ -115,19 +118,20 @@ pub trait EstimationDynamics: Debug + Send + Sync {
 
         // Ensure control input matches expected dimensions, providing zeros if not.
         // This prevents panics if the controller provides an incorrectly sized vector.
-        let u_actual = if u.nrows() == self.get_control_dim() {
+        let control_dim = self.input_schema().dim();
+        let u_actual = if u.nrows() == control_dim {
             u
         } else {
             // Log a warning or error here in a real application
-            // eprintln!("Warning: Control input dimension mismatch for Dynamics propagation. Expected {}, got {}. Using zeros.", self.get_control_dim(), u.nrows());
+            // eprintln!("Warning: Control input dimension mismatch for Dynamics propagation. Expected {}, got {}. Using zeros.", control_dim, u.nrows());
             // Consider thread-safe logging if needed.
             thread_local! {
                 static ZERO_CONTROL: std::cell::RefCell<Control> = std::cell::RefCell::new(Control::zeros(0));
             }
             &ZERO_CONTROL.with(|zc| {
                 let mut zc_mut = zc.borrow_mut();
-                if zc_mut.nrows() != self.get_control_dim() {
-                    *zc_mut = Control::zeros(self.get_control_dim());
+                if zc_mut.nrows() != control_dim {
+                    *zc_mut = Control::zeros(control_dim);
                 }
                 zc_mut.clone() // Borrow the correctly sized zero vector
             })

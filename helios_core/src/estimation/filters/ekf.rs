@@ -87,10 +87,11 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         let p_old = &self.state.covariance;
         let t_old = self.state.timestamp.0;
 
-        let u_sized = if inputs.control.nrows() == dynamics.get_control_dim() {
+        let control_dim = dynamics.input_schema().dim();
+        let u_sized = if inputs.control.nrows() == control_dim {
             &inputs.control
         } else {
-            &DVector::zeros(dynamics.get_control_dim())
+            &DVector::zeros(control_dim)
         };
 
         // --- 2. Predict the next state vector using numerical integration ---
@@ -202,7 +203,7 @@ mod tests {
     use super::*;
     use crate::estimation::measurement::{MeasurementModel, Prediction};
     use crate::estimation::schema::{
-        MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
+        InputSchema, MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
     use crate::estimation::EstimatorInputs;
     use crate::prelude::AgentId;
@@ -244,8 +245,8 @@ mod tests {
     struct ConstantVelocity3D;
 
     impl EstimationDynamics for ConstantVelocity3D {
-        fn get_control_dim(&self) -> usize {
-            0
+        fn input_schema(&self) -> std::sync::Arc<InputSchema> {
+            std::sync::Arc::new(InputSchema::compose(vec![]))
         }
 
         fn schema(&self) -> std::sync::Arc<StateSchema> {
