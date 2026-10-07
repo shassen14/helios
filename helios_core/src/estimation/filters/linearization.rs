@@ -1,11 +1,46 @@
-//! Numerical linearization of dynamics into a discrete tangent-space state
-//! transition matrix, used by the covariance step of Gaussian filters.
+//! Linearization of dynamics into the discrete tangent-space pair `(F_d, Q_d)`
+//! that a Gaussian filter's covariance step `P⁺ = F_d P F_dᵀ + Q_d` needs.
+//!
+//! [`discrete_linearization`] is the one entry point every filter that needs a
+//! dynamics Jacobian calls. Sample-based filters (UKF) push their points
+//! through `propagate` and never call it.
 
 use crate::kernel::integrators::Integrator;
 use crate::prelude::EstimationDynamics;
 use crate::spatial::FrameAwareState;
 
 use nalgebra::{DMatrix, DVector};
+
+/// The discrete covariance-step pair for one predict over `dt`.
+pub(crate) struct DiscreteLinearization {
+    /// `F_d`, tangent × tangent: carries the prior covariance across the step.
+    pub f_d: DMatrix<f64>,
+    /// `Q_d`, tangent × tangent: the process noise accumulated over the step.
+    pub q_d: DMatrix<f64>,
+}
+
+/// The discrete `(F_d, Q_d)` for one step of `dynamics` about `state`.
+///
+/// `F_d` is the numeric tangent transition ([`tangent_state_transition`]) and
+/// `Q_d = Q·dt`, the first-order discretisation of the constant continuous
+/// process noise `process_noise_q`. That is the special case of the
+/// error-state model with `G_c = I` and `Q_c = Q`. A model's own
+/// [`ErrorStateModel`](crate::estimation::dynamics::ErrorStateModel) is not
+/// consulted: every model is linearised numerically.
+pub(crate) fn discrete_linearization(
+    dynamics: &dyn EstimationDynamics,
+    state: &FrameAwareState,
+    u: &DVector<f64>, // already checked against the input schema
+    t: f64,
+    dt: f64,
+    integrator: &dyn Integrator<f64>,
+    process_noise_q: &DMatrix<f64>,
+) -> DiscreteLinearization {
+    DiscreteLinearization {
+        f_d: tangent_state_transition(dynamics, state, u, t, dt, integrator),
+        q_d: process_noise_q * dt,
+    }
+}
 
 /// The discrete tangent-space state-transition matrix `F` (tangent × tangent)
 /// linearizing `dynamics` about `state` over the step `dt`.
@@ -29,7 +64,7 @@ use nalgebra::{DMatrix, DVector};
 /// error consistent with its 4-component storage; a raw component bump would walk
 /// the quaternion off the unit sphere and mis-scale that block. The step size
 /// follows the crate's adaptive rule `ε = 1e-5·(1 + ‖x‖∞)`.
-pub(crate) fn tangent_state_transition(
+fn tangent_state_transition(
     dynamics: &dyn EstimationDynamics,
     state: &FrameAwareState,
     u: &DVector<f64>, // already checked against the input schema
@@ -66,23 +101,25 @@ pub(crate) fn tangent_state_transition(
 
 #[cfg(test)]
 mod tests {
-    use super::tangent_state_transition;
+    use super::{discrete_linearization, tangent_state_transition};
     use crate::estimation::dynamics::integrated_imu::{
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };
-    use crate::kernel::integrators::RK4;
+    use crate::estimation::dynamics::ErrorStateModel;
+    use crate::estimation::schema::{InputSchema, StateSchema};
+    use crate::kernel::integrators::{Integrator, RK4};
     use crate::prelude::EstimationDynamics;
     use crate::prelude::{AgentId, MonotonicTime};
+    use crate::spatial::primitives::{Control, State};
     use crate::spatial::FrameAwareState;
 
-    use nalgebra::{DVector, Vector3};
+    use nalgebra::{DMatrix, DVector, Vector3};
+    use std::sync::Arc;
 
-    #[test]
-    fn ins_tangent_transition_is_fifteen_by_fifteen() {
-        // The INS state stores 16 numbers but has only 15 tangent DOF — the SO(3)
-        // block is 4 stored / 3 tangent. F is a tangent-space map, so it must be
-        // 15×15 (matching the covariance), NOT the 16×16 of the storage Jacobian.
-        let model = IntegratedImuModel::new(
+    const DT: f64 = 0.02;
+
+    fn ins_model() -> IntegratedImuModel {
+        IntegratedImuModel::new(
             AgentId::new("test_agent"),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
@@ -98,14 +135,74 @@ mod tests {
                 accel_bias_var: 1.0,
                 gyro_bias_var: 1.0,
             },
-        );
+        )
+    }
+
+    /// Gravity-compensated, otherwise-still IMU input (control dim is 6).
+    fn still_input() -> DVector<f64> {
+        DVector::from_row_slice(&[0.0, 0.0, 9.81, 0.0, 0.0, 0.0])
+    }
+
+    /// An INS state off the identity: moving, turned, with non-zero biases, so
+    /// the transition has rotation and bias coupling rather than a near-identity.
+    fn moving_ins_state(model: &IntegratedImuModel) -> FrameAwareState {
+        let mut state = FrameAwareState::from_schema(model.schema(), MonotonicTime(0.0));
+        let mut delta = DVector::zeros(state.tangent_dim());
+        delta.rows_mut(3, 3).copy_from_slice(&[1.5, -0.4, 0.1]); // velocity
+        delta.rows_mut(6, 3).copy_from_slice(&[0.3, -0.2, 0.9]); // rotation
+        delta.rows_mut(9, 3).copy_from_slice(&[0.05, -0.02, 0.01]); // accel bias
+        delta
+            .rows_mut(12, 3)
+            .copy_from_slice(&[0.002, 0.001, -0.003]); // gyro bias
+        state.oplus_assign(&delta);
+        state
+    }
+
+    /// Claims an analytic error-state model (a deliberately wrong all-zero one)
+    /// and otherwise delegates to the INS.
+    #[derive(Debug)]
+    struct ClaimsAnalytic(IntegratedImuModel);
+
+    impl EstimationDynamics for ClaimsAnalytic {
+        fn input_schema(&self) -> Arc<InputSchema> {
+            self.0.input_schema()
+        }
+
+        fn schema(&self) -> Arc<StateSchema> {
+            self.0.schema()
+        }
+
+        fn error_state_model(&self, _x: &State, _u: &Control) -> Option<ErrorStateModel> {
+            let n = self.0.schema().tangent_dim();
+            Some(ErrorStateModel {
+                f_c: DMatrix::zeros(n, n),
+                g_c: DMatrix::zeros(n, n),
+                q_c: DMatrix::zeros(n, n),
+            })
+        }
+
+        fn propagate(
+            &self,
+            x: &State,
+            u: &Control,
+            t: f64,
+            dt: f64,
+            integrator: &dyn Integrator<f64>,
+        ) -> State {
+            self.0.propagate(x, u, t, dt, integrator)
+        }
+    }
+
+    #[test]
+    fn ins_tangent_transition_is_fifteen_by_fifteen() {
+        // The INS state stores 16 numbers but has only 15 tangent DOF — the SO(3)
+        // block is 4 stored / 3 tangent. F is a tangent-space map, so it must be
+        // 15×15 (matching the covariance), NOT the 16×16 of the storage Jacobian.
+        let model = ins_model();
         let schema = model.schema();
         let state = FrameAwareState::from_schema(schema.clone(), MonotonicTime(0.0));
-        // Gravity-compensated, otherwise-still IMU input (control dim is 6).
-        let u = DVector::from_row_slice(&[0.0, 0.0, 9.81, 0.0, 0.0, 0.0]);
 
-        let dt = 0.02;
-        let f = tangent_state_transition(&model, &state, &u, 0.0, dt, &RK4);
+        let f = tangent_state_transition(&model, &state, &still_input(), 0.0, DT, &RK4);
 
         assert_eq!(f.nrows(), 15, "F rows = tangent dim");
         assert_eq!(f.ncols(), 15, "F cols = tangent dim");
@@ -114,9 +211,55 @@ mod tests {
         // Teeth: it is a real transition, not a zero/identity stub. Position
         // integrates velocity over the step, so ∂(next posₓ)/∂(velₓ) ≈ dt.
         assert!(
-            (f[(0, 3)] - dt).abs() < 1e-6,
+            (f[(0, 3)] - DT).abs() < 1e-6,
             "position-from-velocity coupling should be ≈ dt, got {}",
             f[(0, 3)]
         );
+    }
+
+    #[test]
+    fn a_model_without_an_error_state_model_takes_the_numeric_path() {
+        // The INS supplies no error-state model, so the entry point must return
+        // exactly the finite-difference F and Q·dt the EKF computed inline
+        // before it existed; exact equality, not a tolerance, because the
+        // proving ground's regression is bit-identical across this change.
+        let model = ins_model();
+        let state = moving_ins_state(&model);
+        let u = still_input();
+        assert!(model.error_state_model(&state.mean, &u).is_none());
+
+        let n = state.tangent_dim();
+        let q = DMatrix::from_fn(
+            n,
+            n,
+            |i, j| if i == j { 1e-3 * (i + 1) as f64 } else { 0.0 },
+        );
+
+        let step = discrete_linearization(&model, &state, &u, 0.0, DT, &RK4, &q);
+
+        assert_eq!(
+            step.f_d,
+            tangent_state_transition(&model, &state, &u, 0.0, DT, &RK4)
+        );
+        assert_eq!(step.q_d, &q * DT);
+    }
+
+    #[test]
+    fn a_supplied_error_state_model_is_not_consulted() {
+        // The analytic path is not built, so a model that returns `Some` is
+        // still linearised numerically: its (here deliberately all-zero) F_c
+        // and Q_c must not reach the covariance step.
+        let model = ClaimsAnalytic(ins_model());
+        let state = moving_ins_state(&model.0);
+        let u = still_input();
+        let n = state.tangent_dim();
+        let q = DMatrix::identity(n, n) * 1e-3;
+
+        let claimed = discrete_linearization(&model, &state, &u, 0.0, DT, &RK4, &q);
+        let numeric = discrete_linearization(&model.0, &state, &u, 0.0, DT, &RK4, &q);
+
+        assert_eq!(claimed.f_d, numeric.f_d);
+        assert_eq!(claimed.q_d, numeric.q_d);
+        assert_ne!(claimed.f_d, DMatrix::zeros(n, n));
     }
 }

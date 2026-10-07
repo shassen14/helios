@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::estimation::dynamics::{integrate_derivatives, EstimationDynamics};
+use crate::estimation::dynamics::{integrate_derivatives, ContinuousDynamics, EstimationDynamics};
 use crate::estimation::schema::{InputSchema, InputSchemaBlock, StateSchema, StateSchemaBlock};
 use crate::kernel::integrators::Integrator;
 use crate::kernel::manifold::{StateBlock, TangentNoise};
@@ -286,6 +286,41 @@ impl EstimationDynamics for IntegratedImuModel {
         Arc::clone(&self.schema)
     }
 
+    fn propagate(
+        &self,
+        x: &State,
+        u: &Control,
+        t: f64,
+        dt: f64,
+        integrator: &dyn Integrator<f64>,
+    ) -> State {
+        // ω_body is constant across the step: the gyro-bias derivative is zero and
+        // u is held constant, so orientation advances by one closed-form retraction
+        // rather than an integrated one — only position and velocity need RK4.
+        let omega_body =
+            u.fixed_rows::<3>(self.angular_velocity_in) - x.fixed_rows::<3>(self.gyro_bias_off);
+
+        // Orientation lives on SO(3), so it cannot be stepped by the componentwise
+        // integrator below — a weighted sum of unit quaternions leaves the sphere.
+        // Advance it by the block's own retraction, q ⊞ (ω·dt). The convention
+        // (scalar-order unpack, right-multiply by exp(ω·dt)) lives once, in
+        // QuaternionBlock::oplus; here we only name the increment and the block it
+        // moves, so the mean advances by the same map the covariance's F linearizes.
+        let delta = DVector::from_column_slice((omega_body * dt).as_slice());
+        let moved = self
+            .orientation_block
+            .oplus(x.rows(self.quat_off, 4), delta.as_view());
+
+        // Translation via RK4. Its own quaternion rows drift off the unit sphere,
+        // but they are overwritten with `moved` below and never read back.
+        let mut x_next = integrate_derivatives(self, x, u, t, dt, integrator);
+
+        x_next.fixed_rows_mut::<4>(self.quat_off).copy_from(&moved);
+        x_next
+    }
+}
+
+impl ContinuousDynamics for IntegratedImuModel {
     fn derivatives(&self, x: &State, u: &Control, _t: f64) -> State {
         let mut x_dot = DVector::zeros(x.nrows());
 
@@ -335,39 +370,6 @@ impl EstimationDynamics for IntegratedImuModel {
 
         x_dot
     }
-
-    fn propagate(
-        &self,
-        x: &State,
-        u: &Control,
-        t: f64,
-        dt: f64,
-        integrator: &dyn Integrator<f64>,
-    ) -> State {
-        // ω_body is constant across the step: the gyro-bias derivative is zero and
-        // u is held constant, so orientation advances by one closed-form retraction
-        // rather than an integrated one — only position and velocity need RK4.
-        let omega_body =
-            u.fixed_rows::<3>(self.angular_velocity_in) - x.fixed_rows::<3>(self.gyro_bias_off);
-
-        // Orientation lives on SO(3), so it cannot be stepped by the componentwise
-        // integrator below — a weighted sum of unit quaternions leaves the sphere.
-        // Advance it by the block's own retraction, q ⊞ (ω·dt). The convention
-        // (scalar-order unpack, right-multiply by exp(ω·dt)) lives once, in
-        // QuaternionBlock::oplus; here we only name the increment and the block it
-        // moves, so the mean advances by the same map the covariance's F linearizes.
-        let delta = DVector::from_column_slice((omega_body * dt).as_slice());
-        let moved = self
-            .orientation_block
-            .oplus(x.rows(self.quat_off, 4), delta.as_view());
-
-        // Translation via RK4. Its own quaternion rows drift off the unit sphere,
-        // but they are overwritten with `moved` below and never read back.
-        let mut x_next = integrate_derivatives(self, x, u, t, dt, integrator);
-
-        x_next.fixed_rows_mut::<4>(self.quat_off).copy_from(&moved);
-        x_next
-    }
 }
 
 #[cfg(test)]
@@ -379,7 +381,6 @@ mod tests {
     //!   Q / P₀ placed per config per block (position carries no process noise).
     //! - Derivatives: position rate = velocity, gravity correctly subtracts from
     //!   IMU acceleration, accel/gyro biases subtract from raw measurements.
-    //! - Jacobian: correct 16×16 / 16×6 shape; velocity-to-position coupling ≈ 1.
     //! - Propagation: RK4 integration with gravity-compensating IMU keeps agent
     //!   stationary (position and velocity remain near zero).
 
@@ -395,7 +396,7 @@ mod tests {
 
     fn make_model() -> IntegratedImuModel {
         // Noise/uncertainty values are arbitrary here — these tests exercise the
-        // derivatives, Jacobian shape, and propagation, none of which read Q or P₀.
+        // derivatives and propagation, neither of which reads Q or P₀.
         IntegratedImuModel::new(
             agent(),
             Vector3::new(0.0, 0.0, -G),
@@ -769,41 +770,6 @@ mod tests {
             "vz_dot with 1.0 z-bias should be -1.0, got {}",
             xdot[5]
         );
-    }
-
-    // ── Jacobian ─────────────────────────────────────────────────────────────
-
-    #[test]
-    fn jacobian_has_correct_dimensions() {
-        // A is the state Jacobian (16×16), B is the control Jacobian (16×6).
-        let model = make_model();
-        let x = identity_state();
-        let u = DVector::zeros(6);
-        let (a_jac, b_jac) = model.jacobian(&x, &u, 0.0);
-
-        let dim = ins_state_layout(agent()).len();
-        assert_eq!(a_jac.nrows(), dim, "A rows");
-        assert_eq!(a_jac.ncols(), dim, "A cols");
-        assert_eq!(b_jac.nrows(), dim, "B rows");
-        assert_eq!(b_jac.ncols(), 6, "B cols = control_dim (ax,ay,az,wx,wy,wz)");
-    }
-
-    #[test]
-    fn jacobian_velocity_to_position_coupling_is_unity() {
-        // A(i, i+3) for i in 0..3 encodes d(pos)/d(vel) = 1.
-        // This is the clearest structural property of the INS dynamics.
-        let model = make_model();
-        let x = identity_state();
-        let u = DVector::zeros(6);
-        let (a_jac, _) = model.jacobian(&x, &u, 0.0);
-
-        for (pos_idx, vel_idx) in [(0, 3), (1, 4), (2, 5)] {
-            assert!(
-                (a_jac[(pos_idx, vel_idx)] - 1.0).abs() < 1e-4,
-                "A({pos_idx},{vel_idx}) = ∂pos_dot/∂vel ≈ 1.0, got {}",
-                a_jac[(pos_idx, vel_idx)]
-            );
-        }
     }
 
     // ── Propagation ──────────────────────────────────────────────────────────

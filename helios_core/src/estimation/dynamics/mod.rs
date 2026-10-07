@@ -1,17 +1,19 @@
 //! `EstimationDynamics` trait and concrete dynamics models for state estimators.
 //!
 //! Each model implements `propagate(x, u, t, dt)`, the discrete step the
-//! filters call, and `derivatives(x, u, t)`, the continuous-time `ẋ = f(x, u, t)`.
-//! A model whose step is a plain integration of `derivatives` implements
-//! `propagate` with [`integrate_derivatives`] (prefer RK4). Concrete models:
-//! `integrated_imu`.
+//! filters call. A model with a continuous `ẋ = f(x, u, t)` also implements
+//! [`ContinuousDynamics`] and builds `propagate` from [`integrate_derivatives`]
+//! (prefer RK4). A model may supply its own [`ErrorStateModel`] for the
+//! filters' covariance step. Concrete models: `integrated_imu`.
 
+pub mod error_state;
 pub mod integrated_imu;
+
+pub use error_state::ErrorStateModel;
 
 use crate::estimation::schema::{InputSchema, StateSchema};
 use crate::kernel::integrators::Integrator;
 use crate::spatial::primitives::{Control, State};
-use nalgebra::DMatrix;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -29,71 +31,21 @@ pub trait EstimationDynamics: Debug + Send + Sync {
 
     fn schema(&self) -> Arc<StateSchema>;
 
-    /// Computes the time derivative of the state vector: `x_dot = f(x, u, t)`.
-    /// This is the core function describing the system's behavior. The result
-    /// has `x.nrows()` rows, zero in any rows past this model's schema; see
-    /// `propagate` on augmented states.
+    /// The continuous error-state model `(F_c, G_c, Q_c)` linearising this
+    /// model about the stored state `x` under input `u`, or `None` to leave the
+    /// filter's numeric linearisation in charge.
     ///
-    /// # Arguments
-    /// * `x`: Current state vector (`State`, which is `DVector<f64>`).
-    /// * `u`: Current control input vector (`Control`, which is `DVector<f64>`).
-    /// * `t`: Current simulation time (`Time`, which is `f64`).
+    /// Optional; the default returns `None`. A model overrides it to give an
+    /// analytic Jacobian, or process noise that depends on the state or input
+    /// (odometry noise that grows with distance travelled). It is sized to this
+    /// model's own schema, like `propagate`, and is written in that schema's
+    /// perturbation convention; see [`ErrorStateModel`]. It takes no time:
+    /// estimation dynamics are time-invariant.
     ///
-    /// # Returns
-    /// The time derivative of the state vector (`State`).
-    fn derivatives(&self, x: &State, u: &Control, t: f64) -> State;
-
-    /// (Optional) Calculates the Jacobian matrices of the dynamics function `f(x, u, t)`.
-    /// Jacobian A = ∂f/∂x (how state derivatives change with state)
-    /// Jacobian B = ∂f/∂u (how state derivatives change with control input)
-    /// Useful for linear controllers (LQR — its `B` block) and stability analysis.
-    /// The default implementation approximates both by numerical finite
-    /// differencing; models with an analytic Jacobian may override it.
-    ///
-    /// **This is NOT the estimator's linearization.** It is a *continuous*,
-    /// *storage-space* `A`/`B` pair. The Gaussian filters propagate covariance
-    /// with a *discrete*, *tangent-space* state transition `F` computed by
-    /// `filters::linearization::tangent_state_transition`, which finite-differences
-    /// `propagate` on the manifold and never calls this method. The two differ in
-    /// both time-discretization and coordinate space
-    /// (storage vs tangent — a curved block stores more numbers than it has DOF),
-    /// so this `A` must not be wired into an EKF/UKF as its `F`.
-    ///
-    /// # Arguments
-    /// * `x`: State vector (`State`) at which to linearize.
-    /// * `u`: Control input vector (`Control`) at which to linearize.
-    /// * `t`: Simulation time (`Time`).
-    ///
-    /// # Returns
-    /// A tuple `(A, B)` where `A` is an NxN matrix and `B` is an NxM matrix (N=state dim, M=control dim).
-    fn jacobian(&self, x: &State, u: &Control, t: f64) -> (DMatrix<f64>, DMatrix<f64>) {
-        let n = x.nrows();
-        let m = self.input_schema().dim();
-        let f0 = self.derivatives(x, u, t);
-
-        let mut a = DMatrix::zeros(n, n);
-        for i in 0..n {
-            let eps = 1e-5 * (1.0 + x[i].abs());
-            let mut x_pert = x.clone();
-            x_pert[i] += eps;
-            let f_pert = self.derivatives(&x_pert, u, t);
-            for j in 0..n {
-                a[(j, i)] = (f_pert[j] - f0[j]) / eps;
-            }
-        }
-
-        let mut b = DMatrix::zeros(n, m);
-        for i in 0..m {
-            let eps = 1e-5 * (1.0 + u[i].abs());
-            let mut u_pert = u.clone();
-            u_pert[i] += eps;
-            let f_pert = self.derivatives(x, &u_pert, t);
-            for j in 0..n {
-                b[(j, i)] = (f_pert[j] - f0[j]) / eps;
-            }
-        }
-
-        (a, b)
+    /// The filters' linearisation does not read it yet: every model is
+    /// linearised numerically, so returning `Some` changes no estimate.
+    fn error_state_model(&self, _x: &State, _u: &Control) -> Option<ErrorStateModel> {
+        None
     }
 
     /// Advances the state by one step of `dt`: the discrete process the filters
@@ -135,13 +87,34 @@ pub trait EstimationDynamics: Debug + Send + Sync {
     ) -> State;
 }
 
+/// A dynamics model with a continuous-time form `ẋ = f(x, u, t)`.
+///
+/// Separate from [`EstimationDynamics`] because a discrete model (an odometry
+/// increment, `x ⊞ Δ`) has a step but no derivative, and the filters only ever
+/// call the step. A continuous model implements both and builds its
+/// `propagate` from [`integrate_derivatives`].
+pub trait ContinuousDynamics: EstimationDynamics {
+    /// Computes the time derivative of the state vector: `x_dot = f(x, u, t)`.
+    /// The result has `x.nrows()` rows, zero in any rows past this model's
+    /// schema; see `propagate` on augmented states.
+    ///
+    /// # Arguments
+    /// * `x`: Current state vector (`State`, which is `DVector<f64>`).
+    /// * `u`: Current control input vector (`Control`, which is `DVector<f64>`).
+    /// * `t`: Current simulation time (`Time`, which is `f64`).
+    ///
+    /// # Returns
+    /// The time derivative of the state vector (`State`).
+    fn derivatives(&self, x: &State, u: &Control, t: f64) -> State;
+}
+
 /// Integrates `dynamics.derivatives` over one step of `dt` with `u` held
 /// constant: the `propagate` of a model with only a continuous `ẋ = f`.
 ///
 /// Componentwise, so it is exact only for flat blocks. A model with a curved
 /// block (an orientation quaternion) must advance that block by its own
 /// retraction and use this for the rest, as `IntegratedImuModel` does.
-pub fn integrate_derivatives<D: EstimationDynamics + ?Sized>(
+pub fn integrate_derivatives<D: ContinuousDynamics + ?Sized>(
     dynamics: &D,
     x: &State,
     u: &Control,

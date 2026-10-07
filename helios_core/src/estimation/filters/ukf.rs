@@ -319,7 +319,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::estimation::dynamics::integrate_derivatives;
+    use crate::estimation::dynamics::{integrate_derivatives, ContinuousDynamics};
     use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
     use crate::estimation::schema::{
         InputSchema, MeasurementSchema, StateSchema, StateSchemaBlock,
@@ -434,14 +434,6 @@ mod tests {
             ]))
         }
 
-        fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-            let mut xdot = DVector::zeros(x.nrows());
-            xdot[0] = x[3];
-            xdot[1] = x[4];
-            xdot[2] = x[5];
-            xdot
-        }
-
         fn propagate(
             &self,
             x: &DVector<f64>,
@@ -451,6 +443,16 @@ mod tests {
             integrator: &dyn Integrator<f64>,
         ) -> DVector<f64> {
             integrate_derivatives(self, x, u, t, dt, integrator)
+        }
+    }
+
+    impl ContinuousDynamics for ConstantVelocity3D {
+        fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
+            let mut xdot = DVector::zeros(x.nrows());
+            xdot[0] = x[3];
+            xdot[1] = x[4];
+            xdot[2] = x[5];
+            xdot
         }
     }
 

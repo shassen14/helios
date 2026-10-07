@@ -4,7 +4,7 @@ use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
 use helios_core::spatial::state::{Component, Quantity};
 use nalgebra::{DMatrix, DVector, Isometry3};
 
-use helios_core::estimation::dynamics::integrate_derivatives;
+use helios_core::estimation::dynamics::{integrate_derivatives, ContinuousDynamics};
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
 use helios_core::estimation::measurement::{MeasurementModel, Prediction};
@@ -69,14 +69,6 @@ impl EstimationDynamics for ConstantVelocity3D {
         ]))
     }
 
-    fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-        let mut xdot = DVector::zeros(x.nrows());
-        xdot[0] = x[3];
-        xdot[1] = x[4];
-        xdot[2] = x[5];
-        xdot
-    }
-
     fn propagate(
         &self,
         x: &DVector<f64>,
@@ -87,18 +79,15 @@ impl EstimationDynamics for ConstantVelocity3D {
     ) -> DVector<f64> {
         integrate_derivatives(self, x, u, t, dt, integrator)
     }
+}
 
-    fn jacobian(
-        &self,
-        _x: &DVector<f64>,
-        _u: &DVector<f64>,
-        _t: f64,
-    ) -> (DMatrix<f64>, DMatrix<f64>) {
-        let mut a = DMatrix::zeros(6, 6);
-        a[(0, 3)] = 1.0;
-        a[(1, 4)] = 1.0;
-        a[(2, 5)] = 1.0;
-        (a, DMatrix::zeros(6, 0))
+impl ContinuousDynamics for ConstantVelocity3D {
+    fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
+        let mut xdot = DVector::zeros(x.nrows());
+        xdot[0] = x[3];
+        xdot[1] = x[4];
+        xdot[2] = x[5];
+        xdot
     }
 }
 

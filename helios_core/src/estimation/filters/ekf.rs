@@ -1,6 +1,6 @@
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::filters::innovation::measure_innovation;
-use crate::estimation::filters::linearization::tangent_state_transition;
+use crate::estimation::filters::linearization::discrete_linearization;
 use crate::estimation::filters::predict_guard::check_predict;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
 use crate::estimation::{
@@ -98,23 +98,31 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         // model owns its own retraction, so this is a direct assignment, not ⊞.
         let x_new = dynamics.propagate(x_old, u, t_old, dt, &RK4);
 
-        // --- 3. Linearize the dynamics into the state-transition matrix F ---
+        // --- 3. Linearize the dynamics into the step's (F, Q_d) ---
         // F is the discrete tangent-space transition (t × t) about the current
         // state. It already includes the time step — F ≈ I + A·dt — because it
         // finite-differences `propagate`, which folds in `dt`. So no identity is
         // added here; doing so would double-count the state's contribution to P.
         // Sized by the state's schema (not the dynamics model's), so an augmented
-        // state's F matches its larger P.
-        let f_k = tangent_state_transition(dynamics.as_ref(), &self.state, u, t_old, dt, &RK4);
+        // state's F matches its larger P. Q_d = Q·dt is the process noise
+        // accumulated over the step — the first-order (Euler) discretization of
+        // ∫₀^dt F(τ) Q Fᵀ(τ) dτ.
+        let step = discrete_linearization(
+            dynamics.as_ref(),
+            &self.state,
+            u,
+            t_old,
+            dt,
+            &RK4,
+            &self.process_noise_q,
+        );
 
         // --- 4. Predict the next covariance matrix ---
-        // Standard discrete EKF: P⁺ = F P Fᵀ + Q·dt. F carries the prior covariance
-        // across the step; Q·dt is the process noise accumulated over it — the
-        // first-order (Euler) discretization of ∫₀^dt F(τ) Q Fᵀ(τ) dτ. Q is added
-        // *outside* the F sandwich: wrapping it (F (P + Q·dt) Fᵀ) would inflate the
-        // noise by ≈ F Q Fᵀ·dt and bias the filter conservative, so its reported
+        // Standard discrete EKF: P⁺ = F P Fᵀ + Q_d. Q_d is added *outside* the F
+        // sandwich: wrapping it (F (P + Q_d) Fᵀ) would inflate the noise by
+        // ≈ F Q_d Fᵀ and bias the filter conservative, so its reported
         // covariance would over-state the true error (NEES below the state dim).
-        let p_new = &f_k * p_old * f_k.transpose() + &self.process_noise_q * dt;
+        let p_new = &step.f_d * p_old * step.f_d.transpose() + step.q_d;
 
         // --- 5. Update the filter's internal state ---
         self.state.mean = x_new;
@@ -206,7 +214,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::estimation::dynamics::integrate_derivatives;
+    use crate::estimation::dynamics::{integrate_derivatives, ContinuousDynamics};
     use crate::estimation::measurement::{MeasurementModel, Prediction};
     use crate::estimation::schema::{
         InputSchema, MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
@@ -275,14 +283,6 @@ mod tests {
             ]))
         }
 
-        fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-            let mut xdot = DVector::zeros(x.nrows());
-            xdot[0] = x[3];
-            xdot[1] = x[4];
-            xdot[2] = x[5];
-            xdot
-        }
-
         fn propagate(
             &self,
             x: &DVector<f64>,
@@ -293,18 +293,15 @@ mod tests {
         ) -> DVector<f64> {
             integrate_derivatives(self, x, u, t, dt, integrator)
         }
+    }
 
-        fn jacobian(
-            &self,
-            _x: &DVector<f64>,
-            _u: &DVector<f64>,
-            _t: f64,
-        ) -> (DMatrix<f64>, DMatrix<f64>) {
-            let mut a = DMatrix::zeros(6, 6);
-            a[(0, 3)] = 1.0;
-            a[(1, 4)] = 1.0;
-            a[(2, 5)] = 1.0;
-            (a, DMatrix::zeros(6, 0))
+    impl ContinuousDynamics for ConstantVelocity3D {
+        fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
+            let mut xdot = DVector::zeros(x.nrows());
+            xdot[0] = x[3];
+            xdot[1] = x[4];
+            xdot[2] = x[5];
+            xdot
         }
     }
 
