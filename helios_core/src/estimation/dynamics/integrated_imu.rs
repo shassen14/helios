@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::estimation::dynamics::EstimationDynamics;
+use crate::estimation::dynamics::{integrate_derivatives, EstimationDynamics};
 use crate::estimation::schema::{InputSchema, InputSchemaBlock, StateSchema, StateSchemaBlock};
 use crate::kernel::integrators::Integrator;
 use crate::kernel::manifold::{StateBlock, TangentNoise};
@@ -363,8 +363,7 @@ impl EstimationDynamics for IntegratedImuModel {
 
         // Translation via RK4. Its own quaternion rows drift off the unit sphere,
         // but they are overwritten with `moved` below and never read back.
-        let func = |x_tau: &State, tau: f64| -> State { self.derivatives(x_tau, u, tau) };
-        let mut x_next = integrator.step(&func, x, t, t + dt);
+        let mut x_next = integrate_derivatives(self, x, u, t, dt, integrator);
 
         x_next.fixed_rows_mut::<4>(self.quat_off).copy_from(&moved);
         x_next

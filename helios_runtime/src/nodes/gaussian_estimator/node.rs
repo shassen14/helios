@@ -9,7 +9,8 @@
 //!
 //! 1. **Predict.** Ask the [`EstimatorInputBuilder`] to assemble the control
 //!    vector from the bus. If `None`, skip predict (cold-start / sensor dropout)
-//!    and proceed to updates anyway.
+//!    and proceed to updates anyway. A predict the filter itself skips for a
+//!    fault (a misshapen input) is warned, rate-limited.
 //! 2. **Update.** For each [`AidingHandler`]: read its sensor channel, sort
 //!    readings by timestamp, and sequentially apply each one to the filter.
 //! 3. **Publish.** Snapshot the filter state; write `FrameAwareState @ ""` on
@@ -27,7 +28,9 @@ use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::measurement::{MeasurementModel, Unavailable};
 use helios_core::estimation::schema::MeasurementSchema;
-use helios_core::estimation::{GaussianStateEstimator, SkipReason, UpdateOutcome};
+use helios_core::estimation::{
+    GaussianStateEstimator, PredictOutcome, PredictSkipReason, SkipReason, UpdateOutcome,
+};
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::measurement::sensor::SensorPayload;
 use helios_core::spatial::conventions::{Enu, Flu};
@@ -43,12 +46,14 @@ use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use tracing::warn;
 
-/// Minimum seconds of reading-clock time between two "aiding dropped" warnings
-/// on one channel. A missing extrinsic or a corrupt covariance fails on *every*
-/// reading, so without a throttle the log floods at sensor rate; the first fault
-/// always prints and later ones inside this window are suppressed. Keyed on
-/// reading time (not wall time) so the gate is deterministic and testable.
-const AIDING_DROP_WARN_MIN_INTERVAL_SECS: f64 = 5.0;
+/// Minimum seconds of pipeline-clock time between two skip warnings from one
+/// source: an aiding channel's "aiding dropped", or the node's "predict
+/// skipped". A missing extrinsic, a corrupt covariance or a misshapen input
+/// fails on *every* reading or tick, so without a throttle the log floods at
+/// sensor rate; the first fault always prints and later ones inside this window
+/// are suppressed. Keyed on reading or tick time (not wall time) so the gate is
+/// deterministic and testable.
+const SKIP_WARN_MIN_INTERVAL_SECS: f64 = 5.0;
 
 /// Per-channel aiding handler: reads one sensor channel from the bus and feeds
 /// each reading into a [`GaussianStateEstimator`] via its measurement model.
@@ -128,17 +133,10 @@ impl<T: SensorPayload> TypedAidingHandler<T> {
         }
     }
 
-    /// Rate-limit gate for the aiding-dropped warning. Returns `true` at most
-    /// once per [`AIDING_DROP_WARN_MIN_INTERVAL_SECS`] of reading time, and
-    /// records `at` as the new last-warned time when it does. The
-    /// `NEG_INFINITY` seed makes the first fault always pass.
+    /// Rate-limit gate for the aiding-dropped warning, on reading time. See
+    /// [`passes_warn_throttle`].
     fn should_warn(&self, at: f64) -> bool {
-        let last = self.last_warned.load(Ordering::Relaxed);
-        if at - last < AIDING_DROP_WARN_MIN_INTERVAL_SECS {
-            return false;
-        }
-        self.last_warned.store(at, Ordering::Relaxed);
-        true
+        passes_warn_throttle(&self.last_warned, at)
     }
 }
 
@@ -244,6 +242,41 @@ fn aiding_drop_cause(outcome: &UpdateOutcome) -> Option<String> {
     }
 }
 
+/// The cause of a *loud* predict skip, or `None` for an applied predict or the
+/// expected quiet skip (a non-positive step, as on the first tick).
+///
+/// The predict-side twin of [`aiding_drop_cause`]: the core filter classified
+/// the skip; the node only decides whether to warn.
+fn predict_skip_cause(outcome: &PredictOutcome) -> Option<String> {
+    match outcome {
+        PredictOutcome::Applied | PredictOutcome::Skipped(PredictSkipReason::NonPositiveDt) => None,
+        PredictOutcome::Skipped(PredictSkipReason::InputShapeMismatch { expected, supplied }) => {
+            Some(format!(
+                "input has {supplied} rows but the dynamics' input schema has {expected} \
+                 (wiring bug)"
+            ))
+        }
+        PredictOutcome::Skipped(PredictSkipReason::CovarianceNotPositiveDefinite) => {
+            Some("state covariance not positive-definite (filter covariance corrupt)".to_string())
+        }
+        // A reason added to core after this match was written: surface it
+        // rather than guess it is harmless.
+        PredictOutcome::Skipped(reason) => Some(format!("{reason:?}")),
+    }
+}
+
+/// Rate-limit gate shared by the skip warnings. Returns `true` at most once per
+/// [`SKIP_WARN_MIN_INTERVAL_SECS`] of `at`, and records `at` in `last_warned`
+/// when it does. A latch seeded with `NEG_INFINITY` lets the first fault pass.
+fn passes_warn_throttle(last_warned: &AtomicF64, at: f64) -> bool {
+    let last = last_warned.load(Ordering::Relaxed);
+    if at - last < SKIP_WARN_MIN_INTERVAL_SECS {
+        return false;
+    }
+    last_warned.store(at, Ordering::Relaxed);
+    true
+}
+
 /// Pipeline node wrapping any Gaussian-family estimator.
 ///
 /// Construction is via [`Self::new`]. The port descriptor is derived from the
@@ -256,6 +289,9 @@ pub(crate) struct GaussianEstimatorNode {
     input_builder: Box<dyn EstimatorInputBuilder>,
     aiding: Vec<Box<dyn AidingHandler>>,
     descriptor: PortDescriptor,
+    /// Tick time of the last emitted "predict skipped" warning, for
+    /// rate-limiting. Init `NEG_INFINITY` so the first fault always prints.
+    last_predict_warned: AtomicF64,
 }
 
 impl GaussianEstimatorNode {
@@ -289,6 +325,7 @@ impl GaussianEstimatorNode {
             input_builder,
             aiding,
             descriptor,
+            last_predict_warned: AtomicF64::new(f64::NEG_INFINITY),
         }
     }
 }
@@ -310,8 +347,19 @@ impl PipelineNode for GaussianEstimatorNode {
         };
 
         // 1. Predict (skip if input builder can't assemble — cold-start, dropout).
+        // A skip the filter reports as a fault is surfaced: predicting on the
+        // prior alone is the same silent drift as an unaided update.
         if let Some(inputs) = self.input_builder.assemble(bus, &tick) {
-            estimator.predict(tick.dt, &inputs);
+            let outcome = estimator.predict(tick.dt, &inputs);
+            if let Some(cause) = predict_skip_cause(&outcome) {
+                if passes_warn_throttle(&self.last_predict_warned, tick.now.0) {
+                    warn!(
+                        "estimator '{}' predict skipped: {cause} at t={:.3}; \
+                         estimate not propagated.",
+                        self.name, tick.now.0,
+                    );
+                }
+            }
         }
 
         // 2. Update from each aiding sensor.
@@ -428,6 +476,9 @@ mod tests {
         /// can be injected to exercise the handler's drop-warning path without
         /// standing up a real filter + measurement model.
         update_outcome: UpdateOutcome,
+        /// What each `predict` call returns. Defaults to `Applied`; a loud skip
+        /// can be injected to exercise the node's predict-warning path.
+        predict_outcome: PredictOutcome,
     }
 
     impl MockEstimator {
@@ -446,6 +497,7 @@ mod tests {
                 state,
                 counts: StdMutex::new(Default::default()),
                 update_outcome: UpdateOutcome::Applied,
+                predict_outcome: PredictOutcome::Applied,
             }
         }
 
@@ -453,13 +505,19 @@ mod tests {
             self.update_outcome = outcome;
             self
         }
+
+        fn with_predict_outcome(mut self, outcome: PredictOutcome) -> Self {
+            self.predict_outcome = outcome;
+            self
+        }
     }
 
     impl GaussianStateEstimator for MockEstimator {
-        fn predict(&mut self, dt: f64, _inputs: &EstimatorInputs) {
+        fn predict(&mut self, dt: f64, _inputs: &EstimatorInputs) -> PredictOutcome {
             let mut c = self.counts.lock().unwrap();
             c.predict_calls += 1;
             c.last_dt = dt;
+            self.predict_outcome.clone()
         }
         fn update(
             &mut self,
@@ -914,6 +972,58 @@ mod tests {
             // The latch never moved off its NEG_INFINITY seed.
             assert_eq!(
                 handler.last_warned.load(Ordering::Relaxed),
+                f64::NEG_INFINITY
+            );
+        }
+    }
+
+    #[test]
+    fn node_warns_once_per_interval_on_a_loud_predict_skip() {
+        // A misshapen input fails on every tick. The node must warn, but
+        // rate-limited: two ticks inside one window latch only the first.
+        let node = GaussianEstimatorNode::new(
+            "ekf",
+            test_edge(),
+            Box::new(
+                MockEstimator::new().with_predict_outcome(PredictOutcome::Skipped(
+                    PredictSkipReason::InputShapeMismatch {
+                        expected: 6,
+                        supplied: 0,
+                    },
+                )),
+            ),
+            Box::new(AlwaysReadyBuilder::new()),
+            vec![],
+        );
+        let bus = make_bus(vec![tf_edge(&test_edge()).into()]);
+
+        node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
+        node.execute(&bus, &MockRuntime, tick_at(1.1, 0.1));
+
+        assert_eq!(node.last_predict_warned.load(Ordering::Relaxed), 1.0);
+    }
+
+    #[test]
+    fn node_stays_silent_on_an_applied_predict_and_a_non_positive_dt() {
+        // An applied predict and the quiet first-tick skip must never spend the
+        // throttle, or a later real fault inside the window would be hidden.
+        for outcome in [
+            PredictOutcome::Applied,
+            PredictOutcome::Skipped(PredictSkipReason::NonPositiveDt),
+        ] {
+            let node = GaussianEstimatorNode::new(
+                "ekf",
+                test_edge(),
+                Box::new(MockEstimator::new().with_predict_outcome(outcome)),
+                Box::new(AlwaysReadyBuilder::new()),
+                vec![],
+            );
+            let bus = make_bus(vec![tf_edge(&test_edge()).into()]);
+
+            node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
+
+            assert_eq!(
+                node.last_predict_warned.load(Ordering::Relaxed),
                 f64::NEG_INFINITY
             );
         }

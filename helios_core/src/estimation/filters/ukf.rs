@@ -1,6 +1,10 @@
 use crate::estimation::dynamics::EstimationDynamics;
+use crate::estimation::filters::predict_guard::check_predict;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
-use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
+use crate::estimation::{
+    EstimatorInputs, GaussianStateEstimator, PredictOutcome, PredictSkipReason, SkipReason,
+    UpdateOutcome,
+};
 use crate::kernel::integrators::RK4;
 use crate::prelude::{MonotonicDuration, MonotonicTime};
 use crate::spatial::tf::TfProvider;
@@ -86,54 +90,65 @@ impl UnscentedKalmanFilter {
     /// point is a POINT in storage space (`s` long); each Cholesky column is a
     /// TANGENT step (`t` long). Straddling is `oplus`, never `+`: the step is
     /// retracted onto the manifold, so it stays correct once a block is curved.
+    ///
+    /// Returns `false`, leaving `sigma_buf` as it was, when `P` has no Cholesky
+    /// factor (it has lost positive-definiteness). There is no honest sigma set
+    /// then: collapsing every point onto the mean would rebuild the covariance
+    /// from nothing, so a predict would reset `P` to `Q·dt` and an update would
+    /// report a correction it never made. The caller skips instead.
+    #[must_use]
     fn fill_sigma_points(
         sigma_buf: &mut DMatrix<f64>,
         state: &FrameAwareState,
         params: &UkfParams,
-    ) {
+    ) -> bool {
         let t = state.tangent_dim();
 
         let lambda = params.alpha.powi(2) * (t as f64 + params.kappa) - t as f64;
 
-        let cholesky_option = Cholesky::new(state.covariance.clone());
+        let Some(cholesky_result) = Cholesky::new(state.covariance.clone()) else {
+            return false;
+        };
 
-        if let Some(cholesky_result) = cholesky_option {
-            // Columns of the scaled Cholesky factor are the ± perturbation steps,
-            // one per tangent axis. Each column is a tangent vector (length t).
-            let l_matrix = cholesky_result.l_dirty();
-            let scale = (t as f64 + lambda).sqrt();
-            let scaled_l = l_matrix * scale;
+        // Columns of the scaled Cholesky factor are the ± perturbation steps,
+        // one per tangent axis. Each column is a tangent vector (length t).
+        let l_matrix = cholesky_result.l_dirty();
+        let scale = (t as f64 + lambda).sqrt();
+        let scaled_l = l_matrix * scale;
 
-            // Column 0 is the mean itself (a point, length s).
-            sigma_buf.column_mut(0).copy_from(&state.mean);
-            for i in 0..t {
-                // Retract the mean by ± the i-th tangent step to get the pair of
-                // sigma points straddling it (points, length s).
-                let step = scaled_l.column(i);
-                let neg_step = -step;
+        // Column 0 is the mean itself (a point, length s).
+        sigma_buf.column_mut(0).copy_from(&state.mean);
+        for i in 0..t {
+            // Retract the mean by ± the i-th tangent step to get the pair of
+            // sigma points straddling it (points, length s).
+            let step = scaled_l.column(i);
+            let neg_step = -step;
 
-                let sigma_plus = state.schema().oplus(state.mean.as_view(), step);
-                let sigma_minus = state
-                    .schema()
-                    .oplus(state.mean.as_view(), neg_step.as_view());
+            let sigma_plus = state.schema().oplus(state.mean.as_view(), step);
+            let sigma_minus = state
+                .schema()
+                .oplus(state.mean.as_view(), neg_step.as_view());
 
-                sigma_buf.column_mut(i + 1).copy_from(&sigma_plus);
-                sigma_buf.column_mut(i + t + 1).copy_from(&sigma_minus);
-            }
-        } else {
-            for i in 0..(2 * t + 1) {
-                sigma_buf.column_mut(i).copy_from(&state.mean);
-            }
+            sigma_buf.column_mut(i + 1).copy_from(&sigma_plus);
+            sigma_buf.column_mut(i + t + 1).copy_from(&sigma_minus);
         }
+        true
     }
 }
 
 impl GaussianStateEstimator for UnscentedKalmanFilter {
-    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) {
+    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) -> PredictOutcome {
+        // --- 0. Check the step and the input before touching the estimate ---
+        if let Err(reason) = check_predict(self.dynamics_model.as_ref(), dt, &inputs.control) {
+            return PredictOutcome::Skipped(reason);
+        }
+
         let t = self.state.tangent_dim();
 
         // --- 1. Generate Sigma Points into self.sigma_buf ---
-        Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params);
+        if !Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params) {
+            return PredictOutcome::Skipped(PredictSkipReason::CovarianceNotPositiveDefinite);
+        }
 
         // --- 2. Propagate each point through the NON-LINEAR dynamics model ---
         self.propagated_buf.fill(0.0);
@@ -182,6 +197,8 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
                 self.state.covariance[(j, i)] = avg;
             }
         }
+
+        PredictOutcome::Applied
     }
 
     fn update(
@@ -215,7 +232,9 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         let t = self.state.tangent_dim();
 
         // Regenerate sigma points from the predicted state.
-        Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params);
+        if !Self::fill_sigma_points(&mut self.sigma_buf, &self.state, &self.params) {
+            return UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite);
+        }
 
         // Propagate sigma points through the (non-linear) measurement model.
         let mut measurement_points = DMatrix::zeros(m, 2 * t + 1);
@@ -294,11 +313,13 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::estimation::dynamics::integrate_derivatives;
     use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
     use crate::estimation::schema::{
         InputSchema, MeasurementSchema, StateSchema, StateSchemaBlock,
     };
-    use crate::estimation::{EstimatorInputs, SkipReason, UpdateOutcome};
+    use crate::estimation::{EstimatorInputs, PredictSkipReason, SkipReason, UpdateOutcome};
+    use crate::kernel::integrators::Integrator;
     use crate::prelude::{AgentId, MonotonicDuration, MonotonicTime};
     use crate::spatial::state::Quantity;
     use crate::spatial::tf::TfProvider;
@@ -408,11 +429,22 @@ mod tests {
         }
 
         fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-            let mut xdot = DVector::zeros(6);
+            let mut xdot = DVector::zeros(x.nrows());
             xdot[0] = x[3];
             xdot[1] = x[4];
             xdot[2] = x[5];
             xdot
+        }
+
+        fn propagate(
+            &self,
+            x: &DVector<f64>,
+            u: &DVector<f64>,
+            t: f64,
+            dt: f64,
+            integrator: &dyn Integrator<f64>,
+        ) -> DVector<f64> {
+            integrate_derivatives(self, x, u, t, dt, integrator)
         }
     }
 
@@ -483,10 +515,115 @@ mod tests {
         let mut ukf = make_ukf(0.0, 1.0);
         let u = DVector::zeros(0);
 
-        ukf.predict(1.0, &EstimatorInputs { control: u });
+        let outcome = ukf.predict(1.0, &EstimatorInputs { control: u });
 
+        assert_eq!(outcome, PredictOutcome::Applied);
         let px = ukf.state().mean[0];
         assert!((px - 1.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn predict_skips_quietly_on_a_non_positive_dt() {
+        // Without the check the UKF would re-spread and re-collapse its sigma
+        // points over a zero step and add Q·dt for a negative one, shrinking P.
+        for dt in [0.0, -0.1] {
+            let mut ukf = make_ukf(5.0, 2.0);
+            let before = ukf.state().clone();
+
+            let outcome = ukf.predict(
+                dt,
+                &EstimatorInputs {
+                    control: DVector::zeros(0),
+                },
+            );
+
+            assert_eq!(
+                outcome,
+                PredictOutcome::Skipped(PredictSkipReason::NonPositiveDt)
+            );
+            assert_eq!(ukf.state().mean, before.mean);
+            assert_eq!(ukf.state().covariance, before.covariance);
+            assert_eq!(ukf.state().timestamp, before.timestamp);
+        }
+    }
+
+    /// A UKF whose `P` has lost positive-definiteness, so it has no Cholesky
+    /// factor and no sigma set.
+    fn ukf_with_corrupt_covariance() -> UnscentedKalmanFilter {
+        let mut ukf = make_ukf(5.0, 2.0);
+        ukf.state.covariance = -DMatrix::identity(6, 6);
+        ukf
+    }
+
+    #[test]
+    fn predict_skips_loudly_when_the_covariance_cannot_be_factored() {
+        // The old fallback collapsed every sigma point onto the mean, which
+        // rebuilt P from nothing as Q·dt: a corrupt covariance silently reset to
+        // a confident one. It must skip and leave P as it was.
+        let mut ukf = ukf_with_corrupt_covariance();
+        let before = ukf.state().clone();
+
+        let outcome = ukf.predict(
+            0.1,
+            &EstimatorInputs {
+                control: DVector::zeros(0),
+            },
+        );
+
+        assert_eq!(
+            outcome,
+            PredictOutcome::Skipped(PredictSkipReason::CovarianceNotPositiveDefinite)
+        );
+        assert_eq!(ukf.state().mean, before.mean);
+        assert_eq!(ukf.state().covariance, before.covariance);
+        assert_eq!(ukf.state().timestamp, before.timestamp);
+    }
+
+    #[test]
+    fn update_skips_loudly_when_the_covariance_cannot_be_factored() {
+        // Same fallback on the update side: with every sigma point on the mean
+        // the gain is zero, so the update reported Applied and changed nothing.
+        let mut ukf = ukf_with_corrupt_covariance();
+        let before = ukf.state().clone();
+
+        let outcome = ukf.update(
+            &gps_z(1.0, 1.0),
+            &Position2DMeasurement,
+            &gps_r(),
+            Some(&IdentityTf),
+            AT,
+        );
+
+        assert_eq!(
+            outcome,
+            UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite)
+        );
+        assert_eq!(ukf.state().mean, before.mean);
+        assert_eq!(ukf.state().covariance, before.covariance);
+    }
+
+    #[test]
+    fn predict_skips_loudly_on_an_input_the_schema_does_not_describe() {
+        let mut ukf = make_ukf(5.0, 2.0);
+        let before = ukf.state().clone();
+
+        let outcome = ukf.predict(
+            0.1,
+            &EstimatorInputs {
+                control: DVector::zeros(2),
+            },
+        );
+
+        assert_eq!(
+            outcome,
+            PredictOutcome::Skipped(PredictSkipReason::InputShapeMismatch {
+                expected: 0,
+                supplied: 2,
+            })
+        );
+        assert_eq!(ukf.state().mean, before.mean);
+        assert_eq!(ukf.state().covariance, before.covariance);
+        assert_eq!(ukf.state().timestamp, before.timestamp);
     }
 
     #[test]

@@ -1,7 +1,10 @@
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::filters::linearization::tangent_state_transition;
+use crate::estimation::filters::predict_guard::check_predict;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
-use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
+use crate::estimation::{
+    EstimatorInputs, GaussianStateEstimator, PredictOutcome, SkipReason, UpdateOutcome,
+};
 use crate::kernel::integrators::RK4;
 use crate::prelude::{MonotonicDuration, MonotonicTime};
 use crate::spatial::tf::TfProvider;
@@ -76,28 +79,23 @@ impl ExtendedKalmanFilter {
 }
 
 impl GaussianStateEstimator for ExtendedKalmanFilter {
-    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) {
-        if dt <= 0.0 {
-            return;
+    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) -> PredictOutcome {
+        // --- 0. Check the step and the input before touching the estimate ---
+        let dynamics = &self.dynamics_model;
+        if let Err(reason) = check_predict(dynamics.as_ref(), dt, &inputs.control) {
+            return PredictOutcome::Skipped(reason);
         }
 
-        // --- 1. Get current state and dynamics model ---
-        let dynamics = &self.dynamics_model;
+        // --- 1. Get current state and input ---
         let x_old = &self.state.mean;
         let p_old = &self.state.covariance;
         let t_old = self.state.timestamp.0;
-
-        let control_dim = dynamics.input_schema().dim();
-        let u_sized = if inputs.control.nrows() == control_dim {
-            &inputs.control
-        } else {
-            &DVector::zeros(control_dim)
-        };
+        let u = &inputs.control;
 
         // --- 2. Predict the next state vector using numerical integration ---
         // x_pred = f(x, u, t). A point in storage space (length s); the dynamics
         // model owns its own retraction, so this is a direct assignment, not ⊞.
-        let x_new = dynamics.propagate(x_old, u_sized, t_old, dt, &RK4);
+        let x_new = dynamics.propagate(x_old, u, t_old, dt, &RK4);
 
         // --- 3. Linearize the dynamics into the state-transition matrix F ---
         // F is the discrete tangent-space transition (t × t) about the current
@@ -106,8 +104,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         // added here; doing so would double-count the state's contribution to P.
         // Sized by the state's schema (not the dynamics model's), so an augmented
         // state's F matches its larger P.
-        let f_k =
-            tangent_state_transition(dynamics.as_ref(), &self.state, u_sized, t_old, dt, &RK4);
+        let f_k = tangent_state_transition(dynamics.as_ref(), &self.state, u, t_old, dt, &RK4);
 
         // --- 4. Predict the next covariance matrix ---
         // Standard discrete EKF: P⁺ = F P Fᵀ + Q·dt. F carries the prior covariance
@@ -124,6 +121,8 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         self.state.timestamp += MonotonicDuration(dt);
 
         self.ensure_covariance_health();
+
+        PredictOutcome::Applied
     }
 
     fn update(
@@ -201,11 +200,13 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::estimation::dynamics::integrate_derivatives;
     use crate::estimation::measurement::{MeasurementModel, Prediction};
     use crate::estimation::schema::{
         InputSchema, MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
-    use crate::estimation::EstimatorInputs;
+    use crate::estimation::{EstimatorInputs, PredictSkipReason};
+    use crate::kernel::integrators::Integrator;
     use crate::prelude::AgentId;
     use crate::prelude::{MonotonicDuration, MonotonicTime};
     use crate::spatial::state::{Component, Quantity};
@@ -269,11 +270,22 @@ mod tests {
         }
 
         fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-            let mut xdot = DVector::zeros(6);
+            let mut xdot = DVector::zeros(x.nrows());
             xdot[0] = x[3];
             xdot[1] = x[4];
             xdot[2] = x[5];
             xdot
+        }
+
+        fn propagate(
+            &self,
+            x: &DVector<f64>,
+            u: &DVector<f64>,
+            t: f64,
+            dt: f64,
+            integrator: &dyn Integrator<f64>,
+        ) -> DVector<f64> {
+            integrate_derivatives(self, x, u, t, dt, integrator)
         }
 
         fn jacobian(
@@ -391,8 +403,9 @@ mod tests {
         let mut ekf = make_ekf(0.0, 1.0);
         let u = DVector::zeros(0);
 
-        ekf.predict(1.0, &EstimatorInputs { control: u });
+        let outcome = ekf.predict(1.0, &EstimatorInputs { control: u });
 
+        assert_eq!(outcome, PredictOutcome::Applied);
         let px = ekf.state().mean[0];
         assert!(
             (px - 1.0).abs() < 0.05,
@@ -402,15 +415,85 @@ mod tests {
     }
 
     #[test]
-    fn predict_zero_dt_is_noop() {
+    fn predict_skips_quietly_on_a_non_positive_dt() {
+        // No interval, nothing to propagate: the estimate is left exactly as it
+        // was, and the reason is the quiet one. A negative step skips the same
+        // way rather than running the dynamics backwards.
+        for dt in [0.0, -0.1] {
+            let mut ekf = make_ekf(5.0, 2.0);
+            let before = ekf.state().clone();
+
+            let outcome = ekf.predict(
+                dt,
+                &EstimatorInputs {
+                    control: DVector::zeros(0),
+                },
+            );
+
+            assert_eq!(
+                outcome,
+                PredictOutcome::Skipped(PredictSkipReason::NonPositiveDt)
+            );
+            assert_eq!(ekf.state().mean, before.mean);
+            assert_eq!(ekf.state().covariance, before.covariance);
+            assert_eq!(ekf.state().timestamp, before.timestamp);
+        }
+    }
+
+    #[test]
+    fn predict_skips_loudly_on_an_input_the_schema_does_not_describe() {
+        // A model with no input handed a 2-row control. Predicting anyway
+        // would integrate rows the model never named; the skip carries both
+        // lengths so the log says what was wired wrong.
         let mut ekf = make_ekf(5.0, 2.0);
-        let u = DVector::zeros(0);
-        let px_before = ekf.state().mean[0];
+        let before = ekf.state().clone();
 
-        ekf.predict(0.0, &EstimatorInputs { control: u });
+        let outcome = ekf.predict(
+            0.1,
+            &EstimatorInputs {
+                control: DVector::zeros(2),
+            },
+        );
 
-        assert_eq!(ekf.state().mean[0], px_before);
-        assert_eq!(ekf.state().timestamp, MonotonicTime(0.0));
+        assert_eq!(
+            outcome,
+            PredictOutcome::Skipped(PredictSkipReason::InputShapeMismatch {
+                expected: 0,
+                supplied: 2,
+            })
+        );
+        assert_eq!(ekf.state().mean, before.mean);
+        assert_eq!(ekf.state().covariance, before.covariance);
+        assert_eq!(ekf.state().timestamp, before.timestamp);
+    }
+
+    #[test]
+    fn ins_predict_without_an_imu_sample_skips_instead_of_free_falling() {
+        // The case the zero-control fallback used to hide: an INS handed no
+        // sample integrated zero specific force, so the estimate fell at g with
+        // nothing in the log. It must now skip and name both lengths.
+        let model = ins_model();
+        let q = model.schema().process_noise().clone();
+        let state = FrameAwareState::from_schema(model.schema(), MonotonicTime(0.0));
+        let mut ekf = ExtendedKalmanFilter::new(state, q, Box::new(model));
+        let before = ekf.state().clone();
+
+        let outcome = ekf.predict(
+            0.02,
+            &EstimatorInputs {
+                control: DVector::zeros(0),
+            },
+        );
+
+        assert_eq!(
+            outcome,
+            PredictOutcome::Skipped(PredictSkipReason::InputShapeMismatch {
+                expected: 6,
+                supplied: 0,
+            })
+        );
+        assert_eq!(ekf.state().mean, before.mean);
+        assert_eq!(ekf.state().covariance, before.covariance);
     }
 
     #[test]

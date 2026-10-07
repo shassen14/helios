@@ -32,7 +32,7 @@ use nalgebra::{DMatrix, DVector};
 pub(crate) fn tangent_state_transition(
     dynamics: &dyn EstimationDynamics,
     state: &FrameAwareState,
-    u: &DVector<f64>, // already control-sized (u_sized)
+    u: &DVector<f64>, // already checked against the input schema
     t: f64,
     dt: f64,
     integrator: &dyn Integrator<f64>,

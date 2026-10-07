@@ -1,8 +1,10 @@
 //! `EstimationDynamics` trait and concrete dynamics models for state estimators.
 //!
-//! Each model implements `derivatives(x, u, t)` (the continuous-time `ẋ = f(x, u, t)`)
-//! and optionally overrides `jacobian`. The default `propagate` implementation
-//! delegates to an `Integrator` (prefer RK4). Concrete models: `integrated_imu`.
+//! Each model implements `propagate(x, u, t, dt)`, the discrete step the
+//! filters call, and `derivatives(x, u, t)`, the continuous-time `ẋ = f(x, u, t)`.
+//! A model whose step is a plain integration of `derivatives` implements
+//! `propagate` with [`integrate_derivatives`] (prefer RK4). Concrete models:
+//! `integrated_imu`.
 
 pub mod integrated_imu;
 
@@ -15,9 +17,9 @@ use std::sync::Arc;
 
 /// A trait for dynamics models used within state estimators.
 ///
-/// This model's primary responsibilities are to propagate a state vector forward
-/// in time (`derivatives`) and to provide the necessary Jacobians for
-/// linearizing the system, which is essential for filters like the EKF.
+/// This model's primary responsibility is to propagate a state vector forward
+/// in time (`propagate`). The filters linearize it themselves by
+/// finite-differencing `propagate`, so a model needs no Jacobian to be filtered.
 pub trait EstimationDynamics: Debug + Send + Sync {
     /// The named layout of the input vector `u`: which quantity each row holds,
     /// in which frame and convention. The input builder must supply exactly
@@ -28,7 +30,9 @@ pub trait EstimationDynamics: Debug + Send + Sync {
     fn schema(&self) -> Arc<StateSchema>;
 
     /// Computes the time derivative of the state vector: `x_dot = f(x, u, t)`.
-    /// This is the core function describing the system's behavior.
+    /// This is the core function describing the system's behavior. The result
+    /// has `x.nrows()` rows, zero in any rows past this model's schema; see
+    /// `propagate` on augmented states.
     ///
     /// # Arguments
     /// * `x`: Current state vector (`State`, which is `DVector<f64>`).
@@ -92,20 +96,35 @@ pub trait EstimationDynamics: Debug + Send + Sync {
         (a, b)
     }
 
-    /// Propagates the state forward in time using a numerical integrator.
-    /// This method provides a default implementation using the `Integrator` trait.
-    /// Specific dynamics models *could* override this if they have an analytical solution
-    /// or a specialized integration scheme.
+    /// Advances the state by one step of `dt`: the discrete process the filters
+    /// propagate the mean through and finite-difference for `F`.
+    ///
+    /// Required, so a discrete model (an odometry increment, `x ⊞ Δ`) states its
+    /// step directly. A model with only a continuous `ẋ = f` implements it with
+    /// [`integrate_derivatives`].
+    ///
+    /// Preconditions, checked by the filter before it calls this: `dt > 0`, and
+    /// `u.nrows() == self.input_schema().dim()`. An implementation may index `u`
+    /// at its input schema's rows without re-checking.
+    ///
+    /// `x` may be longer than this model's own schema: a filter with
+    /// augmentation blocks (a sensor bias, say) appends them after the model's
+    /// blocks and passes the whole state. The implementation must return a
+    /// vector of `x.nrows()` with the appended rows unchanged, which gives each
+    /// augmentation block an identity transition. It reads and writes only its
+    /// own blocks at its schema's offsets, and sizes anything it allocates from
+    /// `x`, never from its schema (`integrate_derivatives` does this when
+    /// `derivatives` sizes `ẋ` from `x` and leaves the appended rows zero).
     ///
     /// # Arguments
     /// * `x`: Current state vector (`State`).
     /// * `u`: Current control input vector (`Control`). Assumed constant over `dt`.
-    /// * `t`: Current simulation time (`Time`).
-    /// * `dt`: Time step duration (`Time`). Must be non-negative.
-    /// * `integrator`: A reference to an object implementing the `Integrator` trait (e.g., `RK4`).
+    /// * `t`: Time at the start of the step.
+    /// * `dt`: Step length in seconds.
+    /// * `integrator`: The integrator to use for any continuous part (e.g. `RK4`).
     ///
     /// # Returns
-    /// The estimated state vector at time `t + dt` (`State`).
+    /// The state vector at `t + dt` (`State`).
     fn propagate(
         &self,
         x: &State,
@@ -113,35 +132,23 @@ pub trait EstimationDynamics: Debug + Send + Sync {
         t: f64,
         dt: f64,
         integrator: &dyn Integrator<f64>,
-    ) -> State {
-        assert!(dt >= 0.0, "Dynamics::propagate: dt cannot be negative");
+    ) -> State;
+}
 
-        // Ensure control input matches expected dimensions, providing zeros if not.
-        // This prevents panics if the controller provides an incorrectly sized vector.
-        let control_dim = self.input_schema().dim();
-        let u_actual = if u.nrows() == control_dim {
-            u
-        } else {
-            // Log a warning or error here in a real application
-            // eprintln!("Warning: Control input dimension mismatch for Dynamics propagation. Expected {}, got {}. Using zeros.", control_dim, u.nrows());
-            // Consider thread-safe logging if needed.
-            thread_local! {
-                static ZERO_CONTROL: std::cell::RefCell<Control> = std::cell::RefCell::new(Control::zeros(0));
-            }
-            &ZERO_CONTROL.with(|zc| {
-                let mut zc_mut = zc.borrow_mut();
-                if zc_mut.nrows() != control_dim {
-                    *zc_mut = Control::zeros(control_dim);
-                }
-                zc_mut.clone() // Borrow the correctly sized zero vector
-            })
-        };
-
-        // Define the closure f(x, t) for the integrator, capturing the current control input 'u'.
-        let func =
-            |func_x: &State, func_t: f64| -> State { self.derivatives(func_x, u_actual, func_t) };
-
-        // Perform the integration step.
-        integrator.step(&func, x, t, t + dt)
-    }
+/// Integrates `dynamics.derivatives` over one step of `dt` with `u` held
+/// constant: the `propagate` of a model with only a continuous `ẋ = f`.
+///
+/// Componentwise, so it is exact only for flat blocks. A model with a curved
+/// block (an orientation quaternion) must advance that block by its own
+/// retraction and use this for the rest, as `IntegratedImuModel` does.
+pub fn integrate_derivatives<D: EstimationDynamics + ?Sized>(
+    dynamics: &D,
+    x: &State,
+    u: &Control,
+    t: f64,
+    dt: f64,
+    integrator: &dyn Integrator<f64>,
+) -> State {
+    let func = |func_x: &State, func_t: f64| -> State { dynamics.derivatives(func_x, u, func_t) };
+    integrator.step(&func, x, t, t + dt)
 }

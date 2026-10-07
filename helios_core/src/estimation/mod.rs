@@ -31,6 +31,8 @@ pub struct EstimatorInputs {
 /// estimator exposes:
 ///
 /// 1. **`predict`** — propagates `(x, P)` forward using dynamics + control input.
+///    Returns a [`PredictOutcome`]: it skips rather than propagate on a bad step
+///    or a misshapen input, and says which.
 /// 2. **`update`** — fuses one measurement using a [`MeasurementModel`] (the math)
 ///    and a noise covariance `R` (the per-sensor noise). The model does not hold
 ///    `R`; it is supplied per call so one model can serve sensors of differing
@@ -48,8 +50,13 @@ pub struct EstimatorInputs {
 pub trait GaussianStateEstimator: Send + Sync {
     /// Propagates the state and covariance forward by `dt` seconds.
     ///
-    /// On `dt <= 0` the call must be a no-op.
-    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs);
+    /// Returns [`PredictOutcome::Applied`] when `(x, P, t)` moved, or
+    /// [`PredictOutcome::Skipped`] with the [`PredictSkipReason`] when it did not:
+    /// a `dt <= 0` (nothing to propagate), a control vector whose length
+    /// disagrees with the dynamics' input schema, or (sigma-point filters) a
+    /// `P` that cannot be factored. A skip leaves `(x, P, t)` untouched. A misshapen input is never padded with zeros: integrating the
+    /// wrong quantity, or none, is a silent model error, so it is reported.
+    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) -> PredictOutcome;
 
     /// Fuses one measurement to correct the current estimate.
     ///
@@ -81,6 +88,40 @@ pub trait GaussianStateEstimator: Send + Sync {
 
     /// Current best state estimate `(x, P, t)`.
     fn state(&self) -> &FrameAwareState;
+}
+
+/// What one [`GaussianStateEstimator::predict`] call did.
+///
+/// The predict-side twin of [`UpdateOutcome`], with its own reasons: a predict
+/// has no measurement, so none of [`SkipReason`]'s variants apply to it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PredictOutcome {
+    /// The state, covariance and valid-at time moved forward by `dt`.
+    Applied,
+    /// The predict was skipped without touching the estimate; the reason says why.
+    Skipped(PredictSkipReason),
+}
+
+/// Why a [`GaussianStateEstimator::predict`] declined to propagate — split so the
+/// caller can log the faults and ignore the expected cases.
+///
+/// Non-exhaustive: a new reason (a non-finite input, say) must not break a
+/// caller's `match`. A caller outside this crate treats an unknown reason as
+/// loud.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum PredictSkipReason {
+    /// **Quiet.** `dt <= 0`: there is no interval to propagate over, as on the
+    /// first tick.
+    NonPositiveDt,
+    /// **Loud.** The control vector's length is not the dynamics' input-schema
+    /// length — a wiring bug the build-time input agreement check should have
+    /// caught. Carries both lengths for the log.
+    InputShapeMismatch { expected: usize, supplied: usize },
+    /// **Loud.** `P` failed Cholesky, so a sigma-point filter cannot spread its
+    /// points: the covariance is corrupt. An EKF never factors `P` to predict
+    /// and does not report this.
+    CovarianceNotPositiveDefinite,
 }
 
 /// What one [`GaussianStateEstimator::update`] call did.
