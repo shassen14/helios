@@ -13,7 +13,6 @@
 //!   registered for its kind.
 //! - `contexts` — what each family's factory receives.
 //! - `command` — node names and policy for the command and reference seams.
-//! - `preprocessing` — builds preprocessing nodes from their config.
 //! - `error` — [`PipelineAssemblyError`].
 //!
 //! [`AutonomyStack`]: crate::config::AutonomyStack
@@ -24,7 +23,6 @@ pub mod contexts;
 mod error;
 mod factory;
 mod instantiate;
-mod preprocessing;
 mod registry;
 mod sensor_inputs;
 mod stages;

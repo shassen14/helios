@@ -225,7 +225,6 @@ fn validation_valid_full_stack_passes() {
     let stack = AutonomyStack {
         nodes: Default::default(),
         estimators,
-        preprocessing: Default::default(),
         map_layers,
         search_planners,
         path_following: None,

@@ -121,6 +121,7 @@ impl Default for AutonomyRegistry {
         crate::nodes::path_follower::register(&mut registry);
         crate::nodes::mocks::register(&mut registry);
         crate::nodes::allocator::register(&mut registry);
+        crate::nodes::deproject::register(&mut registry);
         registry
     }
 }

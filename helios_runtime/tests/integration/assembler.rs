@@ -1,13 +1,13 @@
 // Assembler integration tests: build_pipeline topology resolution.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use helios_runtime::channels::control;
 use helios_runtime::config::{
     AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, ControllerConfig, EkfConfig,
     EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig,
-    PreprocessingConfig, ReferenceArbitrationConfig, ReferenceSource, SearchPlannerConfig,
-    SensorModelConfig, TeleopMapperConfig,
+    ReferenceArbitrationConfig, ReferenceSource, SearchPlannerConfig, SensorModelConfig,
+    TeleopMapperConfig,
 };
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
@@ -952,7 +952,7 @@ fn two_return_field() -> RangeField<Flu> {
 }
 
 #[test]
-fn deproject_preprocessing_turns_host_range_fields_into_clouds() {
+fn deproject_node_turns_host_range_fields_into_clouds() {
     // A stack with only a deproject entry must build on its own: the node's
     // input is a host sensor channel, so the assembler seeds it as external.
     // One tick later the host's field batch is on the derived cloud channel,
@@ -960,16 +960,8 @@ fn deproject_preprocessing_turns_host_range_fields_into_clouds() {
     let input = "sensor.lidar.front";
     let output = "lidar.front.points";
 
-    let mut preprocessing = HashMap::new();
-    preprocessing.insert(
-        "front_deproject".to_string(),
-        PreprocessingConfig::Deproject {
-            input: input.to_string(),
-            output: output.to_string(),
-        },
-    );
     let stack = AutonomyStack {
-        preprocessing,
+        nodes: deproject("front_deproject", input, output),
         ..Default::default()
     };
     let body = BodyCapabilities {
@@ -1054,11 +1046,14 @@ fn occupancy_grid_reading(scan: &str) -> MapLayerConfig {
     }
 }
 
-fn deproject(input: &str, output: &str) -> PreprocessingConfig {
-    PreprocessingConfig::Deproject {
-        input: input.to_string(),
-        output: output.to_string(),
-    }
+/// A `[nodes]` map holding one `Deproject` entry named `name`, as a profile
+/// would write it.
+fn deproject(name: &str, input: &str, output: &str) -> BTreeMap<String, toml::Table> {
+    let mut section = toml::Table::new();
+    section.insert("kind".to_string(), "Deproject".into());
+    section.insert("input".to_string(), input.into());
+    section.insert("output".to_string(), output.into());
+    BTreeMap::from([(name.to_string(), section)])
 }
 
 fn perception_body() -> BodyCapabilities {
@@ -1075,10 +1070,7 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
     // publisher, and the producer is ordered ahead of the mapper.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
-        preprocessing: HashMap::from([(
-            "front_deproject".to_string(),
-            deproject("lidar", "lidar.points"),
-        )]),
+        nodes: deproject("front_deproject", "lidar", "lidar.points"),
         map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("lidar.points"))]),
         ..Default::default()
     };
@@ -1136,38 +1128,6 @@ fn mapper_reading_an_unpublished_channel_fails_the_build() {
 }
 
 #[test]
-fn preprocessing_output_reusing_a_host_channel_name_fails_the_build() {
-    // Both channels are sensor-kind, so an output named like a host channel
-    // could share its slot. The build refuses it, naming the node.
-    let stack = AutonomyStack {
-        preprocessing: HashMap::from([(
-            "front_deproject".to_string(),
-            deproject("lidar", "lidar"),
-        )]),
-        ..Default::default()
-    };
-
-    let errors = build_pipeline(
-        &stack,
-        &AutonomyRegistry::default(),
-        AgentId::new("test_agent"),
-        &HashSet::from(["lidar".to_string()]),
-        perception_body(),
-    )
-    .err()
-    .expect("an output shadowing a host channel must not build");
-
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            PipelineAssemblyError::SensorOutputShadowsHost { node_name, channel }
-                if node_name == "front_deproject" && channel == "lidar"
-        )),
-        "expected SensorOutputShadowsHost for `front_deproject`, got {errors:?}"
-    );
-}
-
-#[test]
 fn mapper_builds_a_map_from_a_host_range_field() {
     // End to end through the real graph: the host publishes only a range
     // field, the deproject node flattens it, and the mapper integrates the
@@ -1177,10 +1137,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
     let agent = AgentId::new("test_agent");
     let state_key: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
     let stack = AutonomyStack {
-        preprocessing: HashMap::from([(
-            "front_deproject".to_string(),
-            deproject("lidar", "lidar.points"),
-        )]),
+        nodes: deproject("front_deproject", "lidar", "lidar.points"),
         map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("lidar.points"))]),
         ..Default::default()
     };

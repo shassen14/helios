@@ -1,7 +1,7 @@
 //! Portable autonomy configuration structs, shared by simulation and hardware.
 //!
 //! Re-exports `AgentBaseConfig`, `AutonomyStack`, and all sub-configs
-//! (`EstimatorConfig`, `ControllerConfig`, `MapLayerConfig`, `PreprocessingConfig`,
+//! (`EstimatorConfig`, `ControllerConfig`, `MapLayerConfig`,
 //! `SearchPlannerConfig`).
 //! These structs are TOML-deserializable and contain zero Bevy or simulation types.
 
@@ -15,7 +15,6 @@ mod estimator;
 mod mapper;
 mod path_following;
 mod planner;
-mod preprocessing;
 mod teleop;
 mod tf;
 
@@ -43,6 +42,5 @@ pub use path_following::PathFollowingConfig;
 pub(crate) use path_following::{PURE_PURSUIT_KIND, STEERING_PID_KIND};
 pub use planner::SearchPlannerConfig;
 pub(crate) use planner::ASTAR_KIND;
-pub use preprocessing::PreprocessingConfig;
 pub use teleop::TeleopMapperConfig;
 pub use tf::TfBufferConfig;

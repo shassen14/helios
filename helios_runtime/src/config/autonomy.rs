@@ -1,7 +1,6 @@
 use super::{
     AllocatorConfig, ControllerConfig, EstimatorConfig, MapLayerConfig, PathFollowingConfig,
-    PreprocessingConfig, ReferenceArbitrationConfig, SearchPlannerConfig, TeleopMapperConfig,
-    TfBufferConfig,
+    ReferenceArbitrationConfig, SearchPlannerConfig, TeleopMapperConfig, TfBufferConfig,
 };
 
 use serde::Deserialize;
@@ -23,13 +22,6 @@ pub struct AutonomyStack {
     /// comparisons but each must publish to a distinct output channel.
     #[serde(default)]
     pub estimators: HashMap<String, EstimatorConfig>,
-
-    /// Measurement conditioning — named nodes that turn one channel into another
-    /// before any algorithm reads it (e.g. a range field flattened to a point
-    /// cloud). The key is the node name; each entry names its own input and
-    /// output channels.
-    #[serde(default)]
-    pub preprocessing: HashMap<String, PreprocessingConfig>,
 
     /// World building — one entry per named map layer (e.g. `"local"`, `"global"`).
     /// The HashMap key becomes the channel qualifier: `MapData @ "<key>"`.

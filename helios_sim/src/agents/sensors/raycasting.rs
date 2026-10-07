@@ -239,7 +239,7 @@ fn raycasting_sensor_system(
         });
 
         // Published as measured: flattening to a point cloud is the autonomy
-        // stack's job (a deproject preprocessing node), so the same field
+        // stack's job (a `Deproject` node), so the same field
         // reaches the brain from sim and from a hardware driver alike.
         let RaycastingOutput::RangeField(field) = output;
 

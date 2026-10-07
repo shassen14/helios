@@ -228,8 +228,8 @@ pub struct LidarConfig {
     /// elevation. Must be strictly positive.
     pub angular_noise_stddev: f32,
     /// Bus channel name for `Vec<SensorReading<RangeField<Flu>>>` published to
-    /// the pipeline. A consumer that wants points reads a deproject
-    /// preprocessing node's output instead.
+    /// the pipeline. A consumer that wants points reads a `Deproject` node's
+    /// output instead.
     pub channel: String,
 }
 

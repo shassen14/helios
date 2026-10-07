@@ -27,7 +27,7 @@ from = "runtime.catalog.mappers.occupancy_grid_2d"
 # integrates points, so this node flattens each field into a point cloud on a
 # derived channel, which the mapper's `scan_channel` names. `input` must match
 # the lidar entity's `channel`; `output` must not reuse a host channel's name.
-[preprocessing.front_lidar_deproject]
+[nodes.front_lidar_deproject]
 kind = "Deproject"
 input = "sensor.lidar.front"
 output = "sensor.lidar.front.points"
@@ -36,7 +36,7 @@ output = "sensor.lidar.front.points"
 # this output, because the 2D grid would mark the rings' ground returns as walls.
 # A body without this lidar fails validation here, so remove this node together
 # with the sim agent's `rear_lidar` sensor.
-[preprocessing.rear_lidar_deproject]
+[nodes.rear_lidar_deproject]
 kind = "Deproject"
 input = "sensor.lidar.rear"
 output = "sensor.lidar.rear.points"

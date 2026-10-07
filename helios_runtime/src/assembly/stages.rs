@@ -56,7 +56,6 @@ use super::contexts::{
 };
 use super::error::PipelineAssemblyError;
 use super::instantiate::instantiate;
-use super::preprocessing::build_preprocessing_node;
 use super::registry::AutonomyRegistry;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
@@ -141,28 +140,23 @@ pub fn build_pipeline(
     // the body's channels.
     let mut outside_inputs: Vec<ChannelKey> = vec![];
 
-    // --- Nodes and preprocessing ---
-    // Every `[nodes]` entry and every preprocessing node (e.g. a range field
-    // flattened to a point cloud). A sensor channel one of them writes is a
-    // derived channel, which consumers read exactly as they read host channels.
-    // All of them are built before any input is seeded, so the derived set is
-    // complete even when one node reads another's output. A failure here
-    // returns at once: with the derived set incomplete, every consumer of a
-    // missing channel would report a misleading unpublished input.
-    let mut early_nodes = instantiate(stack, registry, &agent, sensor_channels)?;
-
-    for (name, config) in &stack.preprocessing {
-        early_nodes.push(build_preprocessing_node(name, config));
-    }
-
-    let derived = derived_channels(&early_nodes, sensor_channels)?;
+    // --- Nodes ---
+    // Every `[nodes]` entry (e.g. a range field flattened to a point cloud). A
+    // sensor channel one of them writes is a derived channel, which consumers
+    // read exactly as they read host channels. All of them are built before any
+    // input is seeded, so the derived set is complete even when one node reads
+    // another's output. A failure here returns at once: with the derived set
+    // incomplete, every consumer of a missing channel would report a misleading
+    // unpublished input.
+    let nodes = instantiate(stack, registry, &agent, sensor_channels)?;
+    let derived = derived_channels(&nodes, sensor_channels)?;
 
     let sensor_inputs = SensorInputs {
         host: sensor_channels,
         derived: &derived,
     };
 
-    for node in early_nodes {
+    for node in nodes {
         sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
         builder = builder.add_node(node);
     }
