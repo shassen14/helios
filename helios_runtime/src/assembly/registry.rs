@@ -27,8 +27,8 @@
 
 use super::contexts::{
     AllocatorBuildContext, ControllerBuildContext, GaussianEstimatorBuildContext,
-    MapperBuildContext, MeasurementModelBuildContext, MockEstimatorBuildContext,
-    PathFollowerBuildContext, SearchPlannerBuildContext,
+    MeasurementModelBuildContext, MockEstimatorBuildContext, PathFollowerBuildContext,
+    SearchPlannerBuildContext,
 };
 
 use super::error::PipelineAssemblyError;
@@ -60,9 +60,6 @@ type GaussianEstimatorFactory = Box<
         + Sync,
 >;
 
-type MapperFactory =
-    Box<dyn Fn(MapperBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
-
 type ControllerFactory =
     Box<dyn Fn(ControllerBuildContext) -> Result<Box<dyn PipelineNode>, String> + Send + Sync>;
 
@@ -91,7 +88,6 @@ pub struct AutonomyRegistry {
     nodes: BTreeMap<String, ErasedFactory>,
     measurement_models: HashMap<String, MeasurementModelFactory>,
     gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
-    mappers: HashMap<String, MapperFactory>,
     controllers: HashMap<String, ControllerFactory>,
     allocators: HashMap<String, AllocatorFactory>,
     search_planners: HashMap<String, SearchPlannerFactory>,
@@ -106,7 +102,6 @@ impl Default for AutonomyRegistry {
             nodes: BTreeMap::new(),
             measurement_models: HashMap::new(),
             gaussian_estimators: HashMap::new(),
-            mappers: HashMap::new(),
             controllers: HashMap::new(),
             allocators: HashMap::new(),
             search_planners: HashMap::new(),
@@ -185,17 +180,6 @@ impl AutonomyRegistry {
     ) {
         self.gaussian_estimators
             .insert(key.into(), Box::new(factory));
-    }
-
-    pub(crate) fn register_mapper(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(MapperBuildContext) -> Result<Box<dyn PipelineNode>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.mappers.insert(key.into(), Box::new(factory));
     }
 
     pub(crate) fn register_controller(
@@ -304,16 +288,6 @@ impl AutonomyRegistry {
         )
     }
 
-    pub(crate) fn build_mapper(
-        &self,
-        key: &str,
-        ctx: MapperBuildContext,
-    ) -> Result<Box<dyn PipelineNode>, String> {
-        self.mappers
-            .get(key)
-            .ok_or_else(|| format!("No mapper factory registered for '{key}'"))?(ctx)
-    }
-
     pub(crate) fn build_controller(
         &self,
         key: &str,
@@ -373,7 +347,6 @@ impl AutonomyRegistry {
             gaussian_estimators: self.gaussian_estimators.keys().cloned().collect(),
             mock_estimators: self.mock_estimators.keys().cloned().collect(),
             measurement_models: self.measurement_models.keys().cloned().collect(),
-            mappers: self.mappers.keys().cloned().collect(),
             controllers: self.controllers.keys().cloned().collect(),
             planners: self.search_planners.keys().cloned().collect(),
             allocators: self.allocators.keys().cloned().collect(),

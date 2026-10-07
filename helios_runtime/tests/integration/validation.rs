@@ -6,8 +6,8 @@ use helios_runtime::{
     config::{
         AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, CommandSpace,
         ControllerConfig, EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig,
-        IntegratedImuConfig, MapLayerConfig, MapperPoseSourceConfig, MockOracleEstimatorConfig,
-        ReferenceArbitrationConfig, ReferenceSource, SearchPlannerConfig, SensorModelConfig,
+        IntegratedImuConfig, MockOracleEstimatorConfig, ReferenceArbitrationConfig,
+        ReferenceSource, SearchPlannerConfig, SensorModelConfig,
     },
     validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError},
     AutonomyRegistry,
@@ -22,7 +22,6 @@ fn empty_caps() -> CapabilitySet {
         gaussian_estimators: Default::default(),
         mock_estimators: Default::default(),
         measurement_models: Default::default(),
-        mappers: Default::default(),
         controllers: Default::default(),
         planners: Default::default(),
         allocators: Default::default(),
@@ -37,7 +36,6 @@ fn full_caps() -> CapabilitySet {
         gaussian_estimators: set(&["Ekf"]),
         mock_estimators: set(&["MockOracle"]),
         measurement_models: set(&["gps_position", "accelerometer", "gyroscope", "magnetometer"]),
-        mappers: set(&["OccupancyGrid2D"]),
         controllers: set(&[
             "DirectTwist",
             "LongitudinalVelocity",
@@ -89,17 +87,6 @@ fn astar() -> SearchPlannerConfig {
         deviation_tolerance_m: 3.0,
         level: "local".to_string(),
         goal_channel: "mission".to_string(),
-    }
-}
-
-fn occupancy_grid() -> MapLayerConfig {
-    MapLayerConfig::OccupancyGrid2D {
-        rate: 10.0,
-        resolution: 0.1,
-        scan_channel: "sensor.lidar.front".to_string(),
-        width_m: 20.0,
-        height_m: 20.0,
-        pose_source: MapperPoseSourceConfig::GroundTruth,
     }
 }
 
@@ -216,16 +203,12 @@ fn validation_valid_full_stack_passes() {
     let mut controllers = HashMap::new();
     controllers.insert("main_ctrl".to_string(), direct_twist());
 
-    let mut map_layers = HashMap::new();
-    map_layers.insert("local".to_string(), occupancy_grid());
-
     let mut estimators = HashMap::new();
     estimators.insert("primary".to_string(), ekf_config());
 
     let stack = AutonomyStack {
         nodes: Default::default(),
         estimators,
-        map_layers,
         search_planners,
         path_following: None,
         controllers,
@@ -265,27 +248,6 @@ fn validation_unknown_estimator_produces_error() {
 }
 
 #[test]
-fn validation_unknown_mapper_produces_error() {
-    let mut map_layers = HashMap::new();
-    map_layers.insert("local".to_string(), occupancy_grid());
-
-    let stack = AutonomyStack {
-        map_layers,
-        ..Default::default()
-    };
-    let mut caps = full_caps();
-    caps.mappers.clear();
-    let errors = validate_autonomy_config(&stack, &caps);
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::UnknownMapper { kind } if kind == "OccupancyGrid2D"
-        )),
-        "Expected UnknownMapper for OccupancyGrid2D"
-    );
-}
-
-#[test]
 fn validation_unknown_controller_produces_error() {
     let mut controllers = HashMap::new();
     controllers.insert("ctrl".to_string(), direct_twist());
@@ -316,51 +278,6 @@ fn validation_unknown_planner_produces_error() {
             |e| matches!(e, ConfigValidationError::UnknownPlanner { kind } if kind == "AStar")
         ),
         "Expected UnknownPlanner for AStar"
-    );
-}
-
-#[test]
-fn validation_planner_without_matching_map_layer_produces_error() {
-    // `astar()` reads level "local", but no map layer of that key is declared,
-    // so nothing produces the `MapData` it requires. Caught here rather than as
-    // a downstream `UnsatisfiedInput` at DAG build.
-    let mut search_planners = HashMap::new();
-    search_planners.insert("planner".to_string(), astar());
-    let stack = AutonomyStack {
-        search_planners,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::PlannerReferencesUnknownMapLayer { planner, level }
-                if planner == "planner" && level == "local"
-        )),
-        "Expected PlannerReferencesUnknownMapLayer for level 'local'"
-    );
-}
-
-#[test]
-fn validation_planner_referencing_none_map_layer_produces_error() {
-    // A layer keyed "local" but declared `None` produces no mapper node, so a
-    // planner reading level "local" still has no map producer.
-    let mut search_planners = HashMap::new();
-    search_planners.insert("planner".to_string(), astar());
-    let mut map_layers = HashMap::new();
-    map_layers.insert("local".to_string(), MapLayerConfig::None);
-    let stack = AutonomyStack {
-        search_planners,
-        map_layers,
-        ..Default::default()
-    };
-    let errors = validate_autonomy_config(&stack, &full_caps());
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            ConfigValidationError::PlannerReferencesUnknownMapLayer { level, .. } if level == "local"
-        )),
-        "Expected PlannerReferencesUnknownMapLayer for a None-valued layer"
     );
 }
 

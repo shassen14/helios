@@ -7,8 +7,8 @@ use helios_runtime::config::{EkfConfig, EkfDynamicsConfig, IntegratedImuConfig};
 use helios_runtime::port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel};
 use helios_runtime::{
     build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStack, BodyCapabilities,
-    BuildContext, EkfInitialStateConfig, EstimatorConfig, FactoryOutput, MapLayerConfig,
-    PipelineAssemblyError, PipelineBuildError, PipelineNode, PortDescriptor, TickContext,
+    BuildContext, EkfInitialStateConfig, EstimatorConfig, FactoryOutput, PipelineAssemblyError,
+    PipelineBuildError, PipelineNode, PortDescriptor, TickContext,
 };
 
 use helios_core::interchange::measurement::envelope::SensorReading;
@@ -139,17 +139,6 @@ fn imu_ekf() -> EstimatorConfig {
 
 const IMU_CHANNELS: [&str; 2] = ["imu/accel", "imu/gyro"];
 
-fn occupancy_grid_reading(scan: &str) -> MapLayerConfig {
-    MapLayerConfig::OccupancyGrid2D {
-        rate: 5.0,
-        resolution: 0.1,
-        scan_channel: scan.to_string(),
-        width_m: 10.0,
-        height_m: 10.0,
-        pose_source: Default::default(),
-    }
-}
-
 #[test]
 fn a_kind_registered_from_outside_the_crate_is_built() {
     // The goal of node factories: registering a kind and naming it under
@@ -217,16 +206,25 @@ fn a_nodes_entry_reading_an_unpublished_channel_fails_the_build() {
 }
 
 #[test]
-fn a_legacy_mapper_reads_a_channel_a_nodes_entry_derives() {
-    // The host publishes only the IMU. The mapper's scan channel is written by
-    // a `[nodes]` entry, so it is a derived channel: no host publisher needed,
-    // and the producer is ordered ahead of the mapper.
+fn a_nodes_entry_reads_a_channel_another_derives() {
+    // The host publishes only the IMU. The grid's scan channel is written by
+    // another `[nodes]` entry, so it is a derived channel: no host publisher
+    // needed, and the producer is ordered ahead of the grid. The grid sorts
+    // first by name, so it is built before its producer; the derived set must
+    // already hold the producer's output when the grid is seeded.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
-        map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("lidar.points"))]),
         ..stack_with_nodes(&format!(
             r#"
-            [nodes.front_source]
+            [nodes.grid]
+            kind = "OccupancyGrid2D"
+            rate = 5.0
+            resolution = 0.1
+            scan_channel = "lidar.points"
+            width_m = 10.0
+            height_m = 10.0
+
+            [nodes.scan_source]
             kind = "{TEST_KIND}"
             output = "lidar.points"
             "#
@@ -234,7 +232,7 @@ fn a_legacy_mapper_reads_a_channel_a_nodes_entry_derives() {
     };
 
     let pipeline =
-        build(&stack, &IMU_CHANNELS).expect("a legacy mapper reading a [nodes] output must build");
+        build(&stack, &IMU_CHANNELS).expect("a grid reading another node's output must build");
 
     let order = node_names(&pipeline);
     let position = |node: &str| {
@@ -244,8 +242,8 @@ fn a_legacy_mapper_reads_a_channel_a_nodes_entry_derives() {
             .unwrap_or_else(|| panic!("node `{node}` missing from {order:?}"))
     };
     assert!(
-        position("front_source") < position("local"),
-        "the source must run before the mapper that reads it, got {order:?}"
+        position("scan_source") < position("grid"),
+        "the source must run before the grid that reads it, got {order:?}"
     );
 }
 

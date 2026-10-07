@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use helios_runtime::channels::control;
 use helios_runtime::config::{
     AidingConfig, AllocatorConfig, AugmentationConfig, AutonomyStack, ControllerConfig, EkfConfig,
-    EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MapLayerConfig,
+    EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
     ReferenceArbitrationConfig, ReferenceSource, SearchPlannerConfig, SensorModelConfig,
     TeleopMapperConfig,
 };
@@ -13,7 +13,7 @@ use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
     build_pipeline, AutonomyRegistry, BodyCapabilities, ConfigValidationError,
-    PipelineAssemblyError, Provenance, PublishedChannel,
+    PipelineAssemblyError, PipelineBuildError, Provenance, PublishedChannel,
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId, SetpointValue};
@@ -212,8 +212,9 @@ fn teleop_intent_is_mapped_into_the_reference() {
 #[test]
 fn nodes_are_named_by_their_config_key_not_their_kind() {
     // Whereas each factory's unit test injects `instance_name` directly, this
-    // exercises the whole assembler: the estimator and map-layer loops must
-    // thread the `HashMap` key through to the built node's identity. Two nodes
+    // exercises the whole assembler: the estimator pass and `[nodes]`
+    // instantiation must thread the table key through to the built node's
+    // identity. Two nodes
     // of a shared kind under distinct keys would otherwise collide on one name
     // in any name-keyed tooling (observability paths, `channels()`).
     let mut estimators = HashMap::new();
@@ -237,22 +238,9 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
         }),
     );
 
-    let mut map_layers = HashMap::new();
-    map_layers.insert(
-        "local_grid".to_string(),
-        MapLayerConfig::OccupancyGrid2D {
-            rate: 5.0,
-            resolution: 0.1,
-            scan_channel: "scan".to_string(),
-            width_m: 10.0,
-            height_m: 10.0,
-            pose_source: Default::default(),
-        },
-    );
-
     let stack = AutonomyStack {
+        nodes: BTreeMap::from([occupancy_grid("local_grid", "scan")]),
         estimators,
-        map_layers,
         ..Default::default()
     };
 
@@ -268,7 +256,7 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
         &host_channels_with_imu(&["scan"]),
         body,
     )
-    .expect("estimator + map-layer stack must build");
+    .expect("estimator + grid stack must build");
 
     let names: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
     assert!(
@@ -277,15 +265,15 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
     );
     assert!(
         names.contains(&"local_grid"),
-        "map-layer node must carry its config key `local_grid`, got {names:?}"
+        "grid node must carry its config key `local_grid`, got {names:?}"
     );
 }
 
 #[test]
-fn two_map_layers_of_one_kind_publish_to_distinct_channels() {
-    // Two `OccupancyGrid2D` layers under distinct keys must not collide on the
+fn two_grids_publish_to_distinct_channels() {
+    // Two `OccupancyGrid2D` nodes under distinct keys must not collide on the
     // map producer slot. Each publishes `MapData` on a channel named by its own
-    // config key; a single hardcoded output name would make the second layer a
+    // key; a single hardcoded output name would make the second grid a
     // `DuplicateProducer` and fail the build.
     let mut estimators = HashMap::new();
     estimators.insert(
@@ -308,21 +296,12 @@ fn two_map_layers_of_one_kind_publish_to_distinct_channels() {
         }),
     );
 
-    let occupancy = |scan: &str| MapLayerConfig::OccupancyGrid2D {
-        rate: 5.0,
-        resolution: 0.1,
-        scan_channel: scan.to_string(),
-        width_m: 10.0,
-        height_m: 10.0,
-        pose_source: Default::default(),
-    };
-    let mut map_layers = HashMap::new();
-    map_layers.insert("local".to_string(), occupancy("scan/near"));
-    map_layers.insert("global".to_string(), occupancy("scan/far"));
-
     let stack = AutonomyStack {
+        nodes: BTreeMap::from([
+            occupancy_grid("local", "scan/near"),
+            occupancy_grid("global", "scan/far"),
+        ]),
         estimators,
-        map_layers,
         ..Default::default()
     };
 
@@ -338,12 +317,12 @@ fn two_map_layers_of_one_kind_publish_to_distinct_channels() {
         &host_channels_with_imu(&["scan/near", "scan/far"]),
         body,
     )
-    .expect("two same-kind map layers under distinct keys must build");
+    .expect("two grids under distinct keys must build");
 
     let names: Vec<&str> = pipeline.channels().map(|(name, _)| name).collect();
     assert!(
         names.contains(&"local") && names.contains(&"global"),
-        "both map-layer nodes must be present, got {names:?}"
+        "both grid nodes must be present, got {names:?}"
     );
 }
 
@@ -656,43 +635,31 @@ fn decoupled_legs_merge_into_one_actuator_terminal() {
 
 #[test]
 fn build_pipeline_rejects_invalid_config_before_assembly() {
-    // A planner reading map level "local" with no such layer declared is a
-    // config error. `build_pipeline` runs static validation first, so this
-    // surfaces as `InvalidConfig` up front rather than as a downstream
-    // `UnsatisfiedInput` on the missing `MapData` producer.
-    let mut search_planners = HashMap::new();
-    search_planners.insert(
-        "local_path".to_string(),
-        SearchPlannerConfig::AStar {
-            rate: 5.0,
-            arrival_tolerance_m: 1.5,
-            occupancy_threshold: 180,
-            max_search_depth: 20_000,
-            enable_path_smoothing: false,
-            replan_on_path_deviation: false,
-            deviation_tolerance_m: 3.0,
-            level: "local".to_string(),
-            goal_channel: "mission".to_string(),
-        },
-    );
-    let stack = AutonomyStack {
-        search_planners,
-        ..Default::default()
+    // An augmentation with no aiding source on its sensor is a config error.
+    // `build_pipeline` runs static validation first, so this surfaces as
+    // `InvalidConfig` up front, before any node is built.
+    let EstimatorConfig::Ekf(mut ekf) = imu_ekf() else {
+        unreachable!("imu_ekf builds an EKF");
     };
-
-    let body = BodyCapabilities {
-        name: "rover".to_string(),
-        publishes: vec![],
+    ekf.augmentation.push(AugmentationConfig {
+        kind: MAGNETOMETER_BIAS.to_string(),
+        sensor: "sensor.mag.primary".to_string(),
+        init_uncertainty: 5.0,
+        random_walk: 0.01,
+    });
+    let stack = AutonomyStack {
+        estimators: HashMap::from([("nav_ekf".to_string(), EstimatorConfig::Ekf(ekf))]),
+        ..Default::default()
     };
 
     let Err(errors) = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
-        body,
+        &host_channels_with_imu(&[]),
+        perception_body(),
     ) else {
-        panic!("a planner with no matching map layer must not build");
+        panic!("an unobservable augmentation must not build");
     };
 
     assert!(
@@ -701,11 +668,44 @@ fn build_pipeline_rejects_invalid_config_before_assembly() {
             PipelineAssemblyError::InvalidConfig(v)
                 if v.iter().any(|c| matches!(
                     c,
-                    ConfigValidationError::PlannerReferencesUnknownMapLayer { level, .. }
-                        if level == "local"
+                    ConfigValidationError::AugmentationHasNoAidingSource { sensor, .. }
+                        if sensor == "sensor.mag.primary"
                 ))
         )),
-        "expected InvalidConfig carrying PlannerReferencesUnknownMapLayer, got {errors:?}"
+        "expected InvalidConfig carrying AugmentationHasNoAidingSource, got {errors:?}"
+    );
+}
+
+#[test]
+fn planner_without_a_map_fails_the_build_naming_it() {
+    // The planner reads `MapData` on the channel its `level` names. With no
+    // grid of that name nothing produces it, and the build names the planner
+    // and the missing channel.
+    let mut stack = planner_stack(&[("local_path", "mission")]);
+    stack.nodes.clear();
+
+    let Err(errors) = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &host_channels_with_imu(&["scan"]),
+        perception_body(),
+    ) else {
+        panic!("a planner with no map must not build");
+    };
+
+    let map_key: ChannelKey = InternalChannel::named::<MapData>("local").into();
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::PipelineBuild(v)
+                if v.iter().any(|b| matches!(
+                    b,
+                    PipelineBuildError::UnsatisfiedInput { node_name, channel, .. }
+                        if node_name == "local_path" && *channel == map_key
+                ))
+        )),
+        "expected UnsatisfiedInput for `local_path` reading the `local` map, got {errors:?}"
     );
 }
 
@@ -961,7 +961,7 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
     let output = "lidar.front.points";
 
     let stack = AutonomyStack {
-        nodes: deproject("front_deproject", input, output),
+        nodes: BTreeMap::from([deproject("front_deproject", input, output)]),
         ..Default::default()
     };
     let body = BodyCapabilities {
@@ -1031,29 +1031,31 @@ fn imu_ekf() -> EstimatorConfig {
     })
 }
 
-/// Rate of the mappers built by [`occupancy_grid_reading`]. The node is
-/// rate-gated: it fires only once a full period of tick `dt` has accumulated.
-const MAPPER_RATE_HZ: f32 = 5.0;
+/// Rate of the grids built by [`occupancy_grid`]. The node is rate-gated: it
+/// fires only once a full period of tick `dt` has accumulated.
+const MAPPER_RATE_HZ: f64 = 5.0;
 
-fn occupancy_grid_reading(scan: &str) -> MapLayerConfig {
-    MapLayerConfig::OccupancyGrid2D {
-        rate: MAPPER_RATE_HZ,
-        resolution: 0.1,
-        scan_channel: scan.to_string(),
-        width_m: 10.0,
-        height_m: 10.0,
-        pose_source: Default::default(),
-    }
+/// A `[nodes]` entry for an `OccupancyGrid2D` named `name` reading `scan`, as
+/// a profile would write it.
+fn occupancy_grid(name: &str, scan: &str) -> (String, toml::Table) {
+    let mut section = toml::Table::new();
+    section.insert("kind".to_string(), "OccupancyGrid2D".into());
+    section.insert("rate".to_string(), MAPPER_RATE_HZ.into());
+    section.insert("resolution".to_string(), 0.1.into());
+    section.insert("scan_channel".to_string(), scan.into());
+    section.insert("width_m".to_string(), 10.0.into());
+    section.insert("height_m".to_string(), 10.0.into());
+    (name.to_string(), section)
 }
 
-/// A `[nodes]` map holding one `Deproject` entry named `name`, as a profile
-/// would write it.
-fn deproject(name: &str, input: &str, output: &str) -> BTreeMap<String, toml::Table> {
+/// A `[nodes]` entry for a `Deproject` named `name`, as a profile would write
+/// it.
+fn deproject(name: &str, input: &str, output: &str) -> (String, toml::Table) {
     let mut section = toml::Table::new();
     section.insert("kind".to_string(), "Deproject".into());
     section.insert("input".to_string(), input.into());
     section.insert("output".to_string(), output.into());
-    BTreeMap::from([(name.to_string(), section)])
+    (name.to_string(), section)
 }
 
 fn perception_body() -> BodyCapabilities {
@@ -1070,8 +1072,10 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
     // publisher, and the producer is ordered ahead of the mapper.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
-        nodes: deproject("front_deproject", "lidar", "lidar.points"),
-        map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("lidar.points"))]),
+        nodes: BTreeMap::from([
+            deproject("front_deproject", "lidar", "lidar.points"),
+            occupancy_grid("local", "lidar.points"),
+        ]),
         ..Default::default()
     };
 
@@ -1103,7 +1107,7 @@ fn mapper_reading_an_unpublished_channel_fails_the_build() {
     // silently empty. It must now fail, naming the node and the channel.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
-        map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("lidar.typo"))]),
+        nodes: BTreeMap::from([occupancy_grid("local", "lidar.typo")]),
         ..Default::default()
     };
 
@@ -1137,8 +1141,10 @@ fn mapper_builds_a_map_from_a_host_range_field() {
     let agent = AgentId::new("test_agent");
     let state_key: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
     let stack = AutonomyStack {
-        nodes: deproject("front_deproject", "lidar", "lidar.points"),
-        map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("lidar.points"))]),
+        nodes: BTreeMap::from([
+            deproject("front_deproject", "lidar", "lidar.points"),
+            occupancy_grid("local", "lidar.points"),
+        ]),
         ..Default::default()
     };
     let body = BodyCapabilities {
@@ -1192,7 +1198,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
         .expect("the range-field slot must exist");
 
     // One tick spanning a full mapper period, so the rate-gated mapper fires.
-    let mapper_period = 1.0 / f64::from(MAPPER_RATE_HZ);
+    let mapper_period = 1.0 / MAPPER_RATE_HZ;
     pipeline.tick(now, mapper_period, &MockRuntime);
 
     assert!(
@@ -1310,7 +1316,7 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
 // == Outside inputs: goals and teleop intent are declared apart from the body ==
 // =========================================================================
 
-/// An A* planner over the map layer `local`, reading its goal from
+/// An A* planner over the `local` map, reading its goal from
 /// `goal_channel`.
 fn astar_reading_goal(goal_channel: &str) -> SearchPlannerConfig {
     SearchPlannerConfig::AStar {
@@ -1331,7 +1337,7 @@ fn astar_reading_goal(goal_channel: &str) -> SearchPlannerConfig {
 fn planner_stack(planners: &[(&str, &str)]) -> AutonomyStack {
     AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
-        map_layers: HashMap::from([("local".to_string(), occupancy_grid_reading("scan"))]),
+        nodes: BTreeMap::from([occupancy_grid("local", "scan")]),
         search_planners: planners
             .iter()
             .map(|(name, goal)| (name.to_string(), astar_reading_goal(goal)))
@@ -1357,7 +1363,7 @@ fn planner_goals_are_declared_once_per_goal_channel() {
         &host_channels_with_imu(&["scan"]),
         perception_body(),
     )
-    .expect("a stack of planners over a declared map layer must build");
+    .expect("a stack of planners over a declared grid must build");
 
     let declared = pipeline.outside_inputs();
     let mission: ChannelKey = InternalChannel::named::<PlannerGoal>("mission").into();

@@ -5,8 +5,7 @@
 //! resolves the agent-specific values and passes them here.
 
 use crate::config::{
-    AllocatorConfig, ControllerConfig, MapLayerConfig, PathFollowingConfig, SearchPlannerConfig,
-    SensorModelConfig,
+    AllocatorConfig, ControllerConfig, PathFollowingConfig, SearchPlannerConfig, SensorModelConfig,
 };
 use crate::nodes::gaussian_estimator::AidingHandler;
 use crate::port::InternalChannel;
@@ -48,15 +47,6 @@ pub struct MeasurementModelBuildContext {
     /// model's TF lookups resolve against the same identity the host publishes.
     pub(crate) sensor: FrameId,
     pub(crate) model_config: SensorModelConfig,
-}
-
-/// Context for building an `OccupancyGridNode` (or any `Mapper`-backed node).
-pub struct MapperBuildContext {
-    pub agent: AgentId,
-    /// Node name: the map layer's config-map key, so tooling keyed on the name
-    /// distinguishes two layers of the same kind.
-    pub(crate) instance_name: String,
-    pub(crate) config: MapLayerConfig,
 }
 
 /// Context for building a `ControllerNode`.

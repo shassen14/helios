@@ -1,8 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::config::{
-    AutonomyStack, CommandSpace, ControllerConfig, EstimatorConfig, MapLayerConfig,
-    ReferenceSource, NO_MAPPER_KIND,
+    AutonomyStack, CommandSpace, ControllerConfig, EstimatorConfig, ReferenceSource,
 };
 
 /// Snapshot of algorithm keys registered in each family.
@@ -16,7 +15,6 @@ pub struct CapabilitySet {
     /// stack that selects one is checked here, not against the Gaussian set.
     pub mock_estimators: HashSet<String>,
     pub measurement_models: HashSet<String>,
-    pub mappers: HashSet<String>,
     pub controllers: HashSet<String>,
     pub planners: HashSet<String>,
     pub allocators: HashSet<String>,
@@ -36,17 +34,8 @@ pub enum ConfigValidationError {
     UnknownController {
         kind: String,
     },
-    UnknownMapper {
-        kind: String,
-    },
     UnknownPlanner {
         kind: String,
-    },
-    /// A planner's `level` names no active map layer, so nothing produces the
-    /// `MapData` it reads. The layer is either absent or declared `None`.
-    PlannerReferencesUnknownMapLayer {
-        planner: String,
-        level: String,
     },
     UnknownMeasurementModel {
         estimator_instance: String,
@@ -136,17 +125,8 @@ impl std::fmt::Display for ConfigValidationError {
             ConfigValidationError::UnknownController { kind } => {
                 write!(f, "Unknown controller kind '{kind}'")
             }
-            ConfigValidationError::UnknownMapper { kind } => {
-                write!(f, "Unknown mapper kind '{kind}'")
-            }
             ConfigValidationError::UnknownPlanner { kind } => {
                 write!(f, "Unknown planner kind '{kind}'")
-            }
-            ConfigValidationError::PlannerReferencesUnknownMapLayer { planner, level } => {
-                write!(
-                    f,
-                    "Planner '{planner}' reads map layer '{level}', but no active map layer of that name is declared"
-                )
             }
             ConfigValidationError::UnknownMeasurementModel {
                 estimator_instance,
@@ -317,16 +297,6 @@ pub fn validate_autonomy_config(
         }
     }
 
-    // Map layer validation.
-    for map_cfg in config.map_layers.values() {
-        let kind = map_cfg.get_kind_str();
-        if kind != NO_MAPPER_KIND && !capabilities.mappers.contains(kind) {
-            errors.push(ConfigValidationError::UnknownMapper {
-                kind: kind.to_string(),
-            });
-        }
-    }
-
     // Controller validation.
     for ctrl_cfg in config.controllers.values() {
         let kind = ctrl_cfg.get_kind_str();
@@ -348,26 +318,13 @@ pub fn validate_autonomy_config(
     }
 
     // Planner validation.
-    for (instance, plan_cfg) in &config.search_planners {
+    // A `level` naming no map is caught at DAG build, as an unsatisfied
+    // `MapData` input naming the planner.
+    for plan_cfg in config.search_planners.values() {
         let kind = plan_cfg.get_kind_str();
         if !capabilities.planners.contains(kind) {
             errors.push(ConfigValidationError::UnknownPlanner {
                 kind: kind.to_string(),
-            });
-        }
-
-        // The planner reads its `MapData` from the channel named by `level`; the
-        // mapper of that same config-map key produces it. A `level` naming no
-        // active layer would only surface as an `UnsatisfiedInput` at DAG build.
-        let level = plan_cfg.get_level_str();
-        let layer_is_active = config
-            .map_layers
-            .get(level)
-            .is_some_and(|layer| !matches!(layer, MapLayerConfig::None));
-        if !layer_is_active {
-            errors.push(ConfigValidationError::PlannerReferencesUnknownMapLayer {
-                planner: instance.clone(),
-                level: level.to_string(),
             });
         }
     }

@@ -1,5 +1,5 @@
 use super::{
-    AllocatorConfig, ControllerConfig, EstimatorConfig, MapLayerConfig, PathFollowingConfig,
+    AllocatorConfig, ControllerConfig, EstimatorConfig, PathFollowingConfig,
     ReferenceArbitrationConfig, SearchPlannerConfig, TeleopMapperConfig, TfBufferConfig,
 };
 
@@ -22,11 +22,6 @@ pub struct AutonomyStack {
     /// comparisons but each must publish to a distinct output channel.
     #[serde(default)]
     pub estimators: HashMap<String, EstimatorConfig>,
-
-    /// World building — one entry per named map layer (e.g. `"local"`, `"global"`).
-    /// The HashMap key becomes the channel qualifier: `MapData @ "<key>"`.
-    #[serde(default)]
-    pub map_layers: HashMap<String, MapLayerConfig>,
 
     #[serde(default)]
     pub search_planners: HashMap<String, SearchPlannerConfig>,

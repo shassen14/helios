@@ -51,7 +51,7 @@ use super::command::{
     command_sum_node_name, selector_policy, REFERENCE_ARBITER_NODE, TELEOP_MAPPER_NODE,
 };
 use super::contexts::{
-    AllocatorBuildContext, ControllerBuildContext, MapperBuildContext, MockEstimatorBuildContext,
+    AllocatorBuildContext, ControllerBuildContext, MockEstimatorBuildContext,
     PathFollowerBuildContext, SearchPlannerBuildContext,
 };
 use super::error::PipelineAssemblyError;
@@ -63,14 +63,14 @@ use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::channels::control;
 use crate::config::TeleopMapperConfig;
 use crate::config::{AllocatorConfig, AutonomyStack, CommandSpace, FoldRole, ReferenceSource};
-use crate::config::{EstimatorConfig, MapLayerConfig, MOCK_ORACLE_KIND, UKF_KIND};
+use crate::config::{EstimatorConfig, MOCK_ORACLE_KIND, UKF_KIND};
 use crate::nodes::combinators::{Merge, Selector, Sum};
 use crate::nodes::gaussian_estimator;
 use crate::nodes::path_follower;
 use crate::nodes::planner::DefaultSearchPlannerInputBuilder;
 use crate::nodes::teleop::{TwistScale, TwistTeleopNode};
-use crate::pipeline::PipelineBuilder;
 use crate::pipeline::AutonomyPipeline;
+use crate::pipeline::PipelineBuilder;
 use crate::port::{ChannelKey, InternalChannel};
 
 use helios_core::control::actuators::ActuatorCommand;
@@ -122,8 +122,8 @@ pub fn build_pipeline(
     mut host_capabilities: BodyCapabilities,
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
     // Static validation runs before any node is built: a config-level mistake
-    // (unknown kind, planner reading an absent map layer) is reported as itself
-    // rather than as a downstream factory or unsatisfied-input failure.
+    // (unknown kind, an augmentation no aiding source observes) is reported as
+    // itself rather than as a downstream factory or unsatisfied-input failure.
     let config_errors =
         crate::validation::validate_autonomy_config(stack, &registry.capabilities());
     if !config_errors.is_empty() {
@@ -169,31 +169,6 @@ pub fn build_pipeline(
                 builder = builder.add_node(node);
             }
             Err(e) => errors.push(e),
-        }
-    }
-
-    // --- Map layers ---
-    for (map_name, map_cfg) in &stack.map_layers {
-        if matches!(map_cfg, MapLayerConfig::None) {
-            continue;
-        }
-
-        match registry.build_mapper(
-            map_cfg.get_kind_str(),
-            MapperBuildContext {
-                agent: agent.clone(),
-                instance_name: map_name.clone(),
-                config: map_cfg.clone(),
-            },
-        ) {
-            Ok(node) => {
-                sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
-                builder = builder.add_node(node);
-            }
-            Err(reason) => errors.push(PipelineAssemblyError::FactoryFailure {
-                node_kind: map_cfg.get_kind_str().to_string(),
-                reason,
-            }),
         }
     }
 

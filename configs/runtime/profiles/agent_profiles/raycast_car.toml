@@ -17,10 +17,11 @@ from = "runtime.catalog.estimators.ekf_advanced"
 [search_planners]
 local_path = { from = "runtime.catalog.planners.a_star" }
 
-# The A* planner reads the occupancy grid published on the `local` layer; the
-# grid is built by the lidar the sim prefab mounts. Without this layer the
-# planner's map input is unsatisfiable and the pipeline fails validation.
-[map_layers.local]
+# The A* planner reads the map this grid publishes, on a channel named after
+# the node (`local`); the grid is built by the lidar the sim prefab mounts.
+# Without this node the planner's map input is unsatisfiable and the pipeline
+# fails to build.
+[nodes.local]
 from = "runtime.catalog.mappers.occupancy_grid_2d"
 
 # The lidar publishes what it measured: an organized range field. The grid
