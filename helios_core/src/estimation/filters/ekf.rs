@@ -1,4 +1,5 @@
 use crate::estimation::dynamics::EstimationDynamics;
+use crate::estimation::filters::innovation::measure_innovation;
 use crate::estimation::filters::linearization::tangent_state_transition;
 use crate::estimation::filters::predict_guard::check_predict;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
@@ -168,6 +169,11 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
             return UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite);
         };
 
+        // How surprising z is against the prediction, measured before the
+        // estimate moves; an innovation gate would read it here to refuse an
+        // outlier.
+        let innovation = measure_innovation(&s_chol, &y);
+
         // Kalman gain K = P Hᵀ S⁻¹ (t × m), obtained without ever forming S⁻¹. S is
         // symmetric, so Kᵀ = S⁻¹(H P): solve S·Kᵀ = H·P for Kᵀ (m × t), then
         // transpose. The correction K·y is a tangent vector (length t); retract it
@@ -189,7 +195,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 
         self.ensure_covariance_health();
 
-        UpdateOutcome::Applied
+        UpdateOutcome::Applied(innovation)
     }
 
     fn state(&self) -> &FrameAwareState {
@@ -536,7 +542,7 @@ mod tests {
 
         let outcome = ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
 
-        assert_eq!(outcome, UpdateOutcome::Applied);
+        assert!(matches!(outcome, UpdateOutcome::Applied(_)));
         let px = ekf.state().mean[0];
         assert!(px > 0.0, "state should correct toward measurement (px > 0)");
         assert!(px < 5.0, "state should not overshoot measurement");
@@ -561,8 +567,43 @@ mod tests {
             AT,
         );
 
-        assert_eq!(outcome, UpdateOutcome::Applied);
+        assert!(matches!(outcome, UpdateOutcome::Applied(_)));
         assert_eq!(ekf.state().timestamp, before);
+    }
+
+    #[test]
+    fn update_reports_nis_against_the_predicted_spread() {
+        // Position observes px and py directly (H selects them), so S = P_pp + R
+        // and, with P_pp diagonal, NIS is the per-axis y²/(σp² + σr²) summed —
+        // the scalar formula on each axis.
+        let mut ekf = make_ekf(0.0, 0.0);
+        let p = ekf.state().covariance.clone();
+        assert_eq!(
+            p[(0, 1)],
+            0.0,
+            "the per-axis formula needs px, py uncorrelated"
+        );
+        let r = gps_r();
+        let (zx, zy) = (5.0, -2.0);
+
+        let outcome = ekf.update(
+            &gps_z(zx, zy),
+            &Position2DMeasurement,
+            &r,
+            Some(&IdentityTf),
+            AT,
+        );
+
+        let UpdateOutcome::Applied(innovation) = outcome else {
+            panic!("expected an applied update, got {outcome:?}");
+        };
+        let expected = zx * zx / (p[(0, 0)] + r[(0, 0)]) + zy * zy / (p[(1, 1)] + r[(1, 1)]);
+        assert!(
+            (innovation.nis - expected).abs() <= 1e-12 * expected,
+            "nis {} != {expected}",
+            innovation.nis
+        );
+        assert_eq!(innovation.dof, 2);
     }
 
     #[test]
@@ -897,9 +938,14 @@ mod tests {
     // filter keeps NEES at the tangent dimension whether or not a direction is seen,
     // and the position update also shrinks the correlated velocity error through the
     // cross-covariance, so both blocks stay consistent, not just the measured one.
+    //
+    // The same runs grade the innovation the update reports. NIS, yᵀS⁻¹y, is the
+    // measurement-space twin of NEES: it needs no truth, only the filter's own S,
+    // and has expectation equal to the measurement's length when S is honest. Its
+    // average over every update of every run must sit in the same band around 3.
 
     #[test]
-    fn ins_ekf_update_nees_is_consistent() {
+    fn ins_ekf_update_nees_and_nis_are_consistent() {
         use rand::SeedableRng;
 
         let n = ins_model().schema().tangent_dim();
@@ -916,6 +962,8 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0x5550_4441);
 
         let mut nees_sum = 0.0;
+        let mut nis_sum = 0.0;
+        let mut nis_count = 0usize;
         for _ in 0..NEES_RUNS {
             let model = ins_model();
             let mut est_init = FrameAwareState::from_schema(model.schema(), MonotonicTime(0.0));
@@ -942,7 +990,13 @@ mod tests {
                     truth.mean[1] + z_noise[1],
                     truth.mean[2] + z_noise[2],
                 ]);
-                ekf.update(&z, &meas_model, &r, None, AT);
+                let UpdateOutcome::Applied(innovation) = ekf.update(&z, &meas_model, &r, None, AT)
+                else {
+                    panic!("a position update on a healthy INS filter applies");
+                };
+                assert_eq!(innovation.dof, 3);
+                nis_sum += innovation.nis;
+                nis_count += 1;
 
                 t += NEES_DT;
             }
@@ -963,6 +1017,15 @@ mod tests {
             (mean_nees - dof).abs() <= NEES_BAND_FRAC * dof,
             "average NEES {mean_nees} outside {:.0}% of the tangent dimension {dof}: \
              the post-update covariance is inconsistent with the actual error",
+            NEES_BAND_FRAC * 100.0
+        );
+
+        let mean_nis = nis_sum / nis_count as f64;
+        let meas_dof = r.nrows() as f64;
+        assert!(
+            (mean_nis - meas_dof).abs() <= NEES_BAND_FRAC * meas_dof,
+            "average NIS {mean_nis} outside {:.0}% of the measurement dimension {meas_dof}: \
+             the reported innovation is inconsistent with the filter's predicted spread",
             NEES_BAND_FRAC * 100.0
         );
     }

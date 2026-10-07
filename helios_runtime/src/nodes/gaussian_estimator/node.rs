@@ -223,7 +223,7 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
 /// their frames so the log points straight at the missing extrinsic.
 fn aiding_drop_cause(outcome: &UpdateOutcome) -> Option<String> {
     match outcome {
-        UpdateOutcome::Applied
+        UpdateOutcome::Applied(_)
         | UpdateOutcome::Skipped(SkipReason::Model(
             Unavailable::ColdStart | Unavailable::NoProvider,
         )) => None,
@@ -239,6 +239,9 @@ fn aiding_drop_cause(outcome: &UpdateOutcome) -> Option<String> {
         UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite) => Some(
             "innovation covariance not positive-definite (filter covariance corrupt)".to_string(),
         ),
+        // A reason added to core after this match was written: surface it
+        // rather than guess it is harmless.
+        UpdateOutcome::Skipped(reason) => Some(format!("{reason:?}")),
     }
 }
 
@@ -430,7 +433,7 @@ mod tests {
     use helios_core::estimation::schema::{
         MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
-    use helios_core::estimation::{EstimatorInputs, UpdateOutcome};
+    use helios_core::estimation::{EstimatorInputs, Innovation, UpdateOutcome};
     use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::interchange::measurement::sensor::Acceleration;
     use helios_core::prelude::AgentId;
@@ -481,6 +484,12 @@ mod tests {
         predict_outcome: PredictOutcome,
     }
 
+    /// An applied update. The node reads only that the update applied, never the
+    /// innovation's value, so any innovation stands in.
+    fn applied_update() -> UpdateOutcome {
+        UpdateOutcome::Applied(Innovation::new(1.0, 1))
+    }
+
     impl MockEstimator {
         fn new() -> Self {
             // A placeholder kinematic state: its schema anchors position in odom
@@ -496,7 +505,7 @@ mod tests {
             Self {
                 state,
                 counts: StdMutex::new(Default::default()),
-                update_outcome: UpdateOutcome::Applied,
+                update_outcome: applied_update(),
                 predict_outcome: PredictOutcome::Applied,
             }
         }
@@ -941,7 +950,7 @@ mod tests {
         // skips (cold start / no provider) must never trip the warning latch, or
         // the throttle would be spent on non-faults and hide a later real one.
         for outcome in [
-            UpdateOutcome::Applied,
+            applied_update(),
             UpdateOutcome::Skipped(SkipReason::Model(Unavailable::ColdStart)),
             UpdateOutcome::Skipped(SkipReason::Model(Unavailable::NoProvider)),
         ] {

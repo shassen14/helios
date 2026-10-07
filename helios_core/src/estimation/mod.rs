@@ -133,15 +133,52 @@ pub enum PredictSkipReason {
 /// on the expected shortfalls.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateOutcome {
-    /// The measurement was fused; the estimate moved.
-    Applied,
+    /// The measurement was fused; the estimate moved. Carries how surprising the
+    /// measurement was against the filter's prediction.
+    Applied(Innovation),
     /// The update was skipped without touching the estimate; the reason says why.
     Skipped(SkipReason),
 }
 
+/// How surprising one fused measurement was, measured against the filter's own
+/// predicted spread for it.
+///
+/// `nis` is the normalized innovation squared, `yᵀS⁻¹y`, with `y = z − ẑ` the
+/// innovation and `S` its predicted covariance. Unit-free, so sensors of
+/// different kinds compare on one scale. When the filter's `S` is honest, `nis`
+/// is chi-squared with `dof` degrees of freedom: its average over many updates
+/// sits near `dof`. Well above means the filter is overconfident (or the
+/// measurement is an outlier); well below means it is too cautious. One sample
+/// is noisy; judge consistency over a window.
+///
+/// Gaussian-specific: it presumes a single predicted `S`. Non-exhaustive, so the
+/// innovation vector, `S`, or the predictive log-likelihood can be added without
+/// breaking a caller; build one with [`Innovation::new`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct Innovation {
+    /// Normalized innovation squared, `yᵀS⁻¹y`.
+    pub nis: f64,
+    /// Degrees of freedom: the measurement's length.
+    pub dof: usize,
+}
+
+impl Innovation {
+    /// An innovation with normalized squared size `nis` over `dof` degrees of
+    /// freedom.
+    pub fn new(nis: f64, dof: usize) -> Self {
+        Self { nis, dof }
+    }
+}
+
 /// Why a [`GaussianStateEstimator::update`] declined to fuse a measurement —
 /// split so the caller can log the faults and ignore the expected cases.
+///
+/// Non-exhaustive: a new reason (an outlier rejected by an innovation gate, say)
+/// must not break a caller's `match`. A caller outside this crate treats an
+/// unknown reason as loud.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SkipReason {
     /// The measurement model declined to predict. Carries the model's own
     /// [`Unavailable`] reason, which itself classifies quiet vs. loud — this
