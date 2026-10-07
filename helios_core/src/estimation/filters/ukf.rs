@@ -2,7 +2,7 @@ use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
 use crate::kernel::integrators::RK4;
-use crate::prelude::MonotonicTime;
+use crate::prelude::{MonotonicDuration, MonotonicTime};
 use crate::spatial::tf::TfProvider;
 use crate::spatial::FrameAwareState;
 
@@ -142,7 +142,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
             let propagated = self.dynamics_model.propagate(
                 &point,
                 &inputs.control,
-                self.state.timestamp,
+                self.state.timestamp.0,
                 dt,
                 &RK4,
             );
@@ -172,7 +172,7 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         // --- 4. Update the state ---
         self.state.mean = x_pred;
         self.state.covariance.copy_from(&self.p_pred_buf);
-        self.state.timestamp += dt;
+        self.state.timestamp += MonotonicDuration(dt);
 
         // Symmetrize covariance in-place (no allocation).
         for i in 0..t {
@@ -297,7 +297,7 @@ mod tests {
     use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
     use crate::estimation::schema::{MeasurementSchema, StateSchema, StateSchemaBlock};
     use crate::estimation::{EstimatorInputs, SkipReason, UpdateOutcome};
-    use crate::prelude::{AgentId, MonotonicTime};
+    use crate::prelude::{AgentId, MonotonicDuration, MonotonicTime};
     use crate::spatial::state::Quantity;
     use crate::spatial::tf::TfProvider;
     use crate::spatial::transforms::{Convention, ErasedTransform};
@@ -453,7 +453,8 @@ mod tests {
 
     fn make_ukf(initial_px: f64, vx: f64) -> UnscentedKalmanFilter {
         // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
-        let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
+        let mut state =
+            FrameAwareState::from_schema(ConstantVelocity3D.schema(), MonotonicTime(0.0));
         state.mean[0] = initial_px;
         state.mean[3] = vx;
 
@@ -484,6 +485,21 @@ mod tests {
 
         let px = ukf.state().mean[0];
         assert!((px - 1.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn predict_advances_valid_at_time_by_dt() {
+        let mut ukf = make_ukf(0.0, 1.0);
+
+        let inputs = EstimatorInputs {
+            control: DVector::zeros(0),
+        };
+
+        ukf.predict(0.1, &inputs);
+        ukf.predict(0.25, &inputs);
+
+        let expected = MonotonicTime(0.0) + MonotonicDuration(0.1) + MonotonicDuration(0.25);
+        assert_eq!(ukf.state().timestamp, expected);
     }
 
     #[test]

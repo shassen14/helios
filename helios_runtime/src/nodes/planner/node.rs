@@ -220,7 +220,7 @@ mod tests {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
                     std::sync::Arc::new(kinematic_carrier_schema(AgentId::new("test_agent"))),
-                    0.0,
+                    MonotonicTime(0.0),
                 ),
                 map: MapData::OccupancyGrid2D {
                     origin: Isometry3::identity(),

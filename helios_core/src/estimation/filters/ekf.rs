@@ -3,7 +3,7 @@ use crate::estimation::filters::linearization::tangent_state_transition;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
 use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
 use crate::kernel::integrators::RK4;
-use crate::prelude::MonotonicTime;
+use crate::prelude::{MonotonicDuration, MonotonicTime};
 use crate::spatial::tf::TfProvider;
 use crate::spatial::FrameAwareState;
 
@@ -85,7 +85,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         let dynamics = &self.dynamics_model;
         let x_old = &self.state.mean;
         let p_old = &self.state.covariance;
-        let t_old = self.state.timestamp;
+        let t_old = self.state.timestamp.0;
 
         let u_sized = if inputs.control.nrows() == dynamics.get_control_dim() {
             &inputs.control
@@ -120,7 +120,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         // --- 5. Update the filter's internal state ---
         self.state.mean = x_new;
         self.state.covariance = p_new;
-        self.state.timestamp += dt;
+        self.state.timestamp += MonotonicDuration(dt);
 
         self.ensure_covariance_health();
     }
@@ -206,7 +206,7 @@ mod tests {
     };
     use crate::estimation::EstimatorInputs;
     use crate::prelude::AgentId;
-    use crate::prelude::MonotonicTime;
+    use crate::prelude::{MonotonicDuration, MonotonicTime};
     use crate::spatial::state::{Component, Quantity};
     use crate::spatial::tf::TfProvider;
     use crate::spatial::transforms::{Convention, ErasedTransform};
@@ -362,7 +362,8 @@ mod tests {
 
     fn make_state_with_velocity(vx: f64) -> FrameAwareState {
         // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
-        let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
+        let mut state =
+            FrameAwareState::from_schema(ConstantVelocity3D.schema(), MonotonicTime(0.0));
         state.mean[3] = vx;
         state
     }
@@ -408,6 +409,24 @@ mod tests {
         ekf.predict(0.0, &EstimatorInputs { control: u });
 
         assert_eq!(ekf.state().mean[0], px_before);
+        assert_eq!(ekf.state().timestamp, MonotonicTime(0.0));
+    }
+
+    #[test]
+    fn predict_advances_valid_at_time_by_dt() {
+        // The state holds at the instant it was predicted to: the prior's time
+        // plus each step, accumulated exactly as the filter adds them.
+        let mut ekf = make_ekf(0.0, 1.0);
+
+        let inputs = EstimatorInputs {
+            control: DVector::zeros(0),
+        };
+
+        ekf.predict(0.1, &inputs);
+        ekf.predict(0.25, &inputs);
+
+        let expected = MonotonicTime(0.0) + MonotonicDuration(0.1) + MonotonicDuration(0.25);
+        assert_eq!(ekf.state().timestamp, expected);
     }
 
     #[test]
@@ -437,6 +456,29 @@ mod tests {
         let px = ekf.state().mean[0];
         assert!(px > 0.0, "state should correct toward measurement (px > 0)");
         assert!(px < 5.0, "state should not overshoot measurement");
+    }
+
+    #[test]
+    fn update_leaves_valid_at_time_unchanged() {
+        // An update conditions the state on a measurement; it does not move the
+        // instant the state holds at.
+        let mut ekf = make_ekf(0.0, 0.0);
+        let inputs = EstimatorInputs {
+            control: DVector::zeros(0),
+        };
+        ekf.predict(0.5, &inputs);
+        let before = ekf.state().timestamp;
+
+        let outcome = ekf.update(
+            &gps_z(5.0, 0.0),
+            &Position2DMeasurement,
+            &gps_r(),
+            Some(&IdentityTf),
+            AT,
+        );
+
+        assert_eq!(outcome, UpdateOutcome::Applied);
+        assert_eq!(ekf.state().timestamp, before);
     }
 
     #[test]
@@ -518,7 +560,7 @@ mod tests {
 
         let schema = model.schema();
         let q = schema.process_noise().clone();
-        let initial_state = FrameAwareState::from_schema(schema, 0.0);
+        let initial_state = FrameAwareState::from_schema(schema, MonotonicTime(0.0));
         let mut ekf = ExtendedKalmanFilter::new(initial_state, q, Box::new(model));
 
         // Constant IMU: 0.5 m/s² forward, gravity-compensated on Z, 0.15 rad/s yaw.
@@ -716,7 +758,7 @@ mod tests {
         let mut nees_sum = 0.0;
         for _ in 0..NEES_RUNS {
             let model = ins_model();
-            let mut est_init = FrameAwareState::from_schema(model.schema(), 0.0);
+            let mut est_init = FrameAwareState::from_schema(model.schema(), MonotonicTime(0.0));
             est_init.covariance = p0.clone();
             let mut ekf = ExtendedKalmanFilter::new(est_init, q.clone(), Box::new(model));
 
@@ -792,7 +834,7 @@ mod tests {
         let mut nees_sum = 0.0;
         for _ in 0..NEES_RUNS {
             let model = ins_model();
-            let mut est_init = FrameAwareState::from_schema(model.schema(), 0.0);
+            let mut est_init = FrameAwareState::from_schema(model.schema(), MonotonicTime(0.0));
             est_init.covariance = p0.clone();
             let mut ekf = ExtendedKalmanFilter::new(est_init, q.clone(), Box::new(model));
 
@@ -904,7 +946,7 @@ mod tests {
         let base = model.schema();
         let blocks = bias_sensors.iter().cloned().map(mag_bias_block).collect();
         let augmented = Arc::new(base.extended(blocks));
-        let state = FrameAwareState::from_schema(augmented.clone(), 0.0);
+        let state = FrameAwareState::from_schema(augmented.clone(), MonotonicTime(0.0));
         ExtendedKalmanFilter::new(state, augmented.process_noise().clone(), Box::new(model))
     }
 
@@ -924,7 +966,7 @@ mod tests {
         let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
 
         let augmented = Arc::new(base.extended(vec![mag_bias_block(sensor.clone())]));
-        let state = FrameAwareState::from_schema(augmented.clone(), 0.0);
+        let state = FrameAwareState::from_schema(augmented.clone(), MonotonicTime(0.0));
 
         // The construction seam: `ExtendedKalmanFilter::new`'s only assertion is
         // `tangent_dim == Q dims`, which the composed schema satisfies. Reaching
@@ -1055,7 +1097,7 @@ mod tests {
     fn base_ins_ekf() -> ExtendedKalmanFilter {
         let model = ins_model();
         let schema = model.schema();
-        let state = FrameAwareState::from_schema(schema.clone(), 0.0);
+        let state = FrameAwareState::from_schema(schema.clone(), MonotonicTime(0.0));
         ExtendedKalmanFilter::new(state, schema.process_noise().clone(), Box::new(model))
     }
 

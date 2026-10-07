@@ -62,7 +62,7 @@ mod tests {
     use crate::control::commands::BodyTwist;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::kernel::manifold::TangentNoise;
-    use crate::prelude::AgentId;
+    use crate::prelude::{AgentId, MonotonicTime};
     use crate::spatial::state::Quantity;
     use crate::spatial::transforms::Convention;
     use crate::spatial::FrameAwareState;
@@ -93,7 +93,7 @@ mod tests {
             DVector::from_vec(vec![vx, 0.0, 0.0]),
             DMatrix::identity(3, 3),
         )]);
-        FrameAwareState::from_schema(Arc::new(schema), 0.0)
+        FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0))
     }
 
     fn inputs(reference_vx: Option<f64>, measured_vx: f64) -> ControlInputs<BodyTwistRef> {
@@ -151,7 +151,7 @@ mod tests {
             DMatrix::identity(3, 3),
         )]);
         let cold = ControlInputs {
-            state: FrameAwareState::from_schema(Arc::new(schema), 0.0),
+            state: FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0)),
             reference: Some(BodyTwistRef::new(BodyTwist::unicycle(5.0, 0.0))),
         };
         let mut c = proportional(10.0);

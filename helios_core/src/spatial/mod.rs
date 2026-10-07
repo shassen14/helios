@@ -17,6 +17,7 @@ pub mod transforms;
 
 use crate::{
     estimation::schema::StateSchema,
+    spatial::primitives::MonotonicTime,
     spatial::state::Quantity,
     spatial::{
         quantities::{FreeVector, Point},
@@ -32,18 +33,21 @@ pub use crate::spatial::state::StateVariable;
 pub use id::FrameId;
 
 /// The "smart" state object used by filters. It bundles the state estimate
-/// (`mean`) with its schema, covariance, and timestamp.
+/// (`mean`) with its schema, covariance, and valid-at time.
 #[derive(Debug, Clone, Serialize)]
 pub struct FrameAwareState {
     #[serde(skip)]
     pub schema: Arc<StateSchema>,
     pub mean: DVector<f64>,
     pub covariance: DMatrix<f64>,
-    pub timestamp: f64,
+    /// The instant this mean and covariance hold at — not when they were
+    /// computed or published. A filter advances it by the step it predicts
+    /// across and never reads a clock; whoever builds the state seeds it.
+    pub timestamp: MonotonicTime,
 }
 
 impl FrameAwareState {
-    pub fn from_schema(schema: Arc<StateSchema>, timestamp: f64) -> Self {
+    pub fn from_schema(schema: Arc<StateSchema>, timestamp: MonotonicTime) -> Self {
         Self {
             mean: schema.initial_value().clone(),
             covariance: schema.initial_covariance().clone(),
@@ -293,7 +297,7 @@ mod frame_aware_state_tests {
     }
 
     fn pose_state() -> FrameAwareState {
-        FrameAwareState::from_schema(pose_schema(), 0.0)
+        FrameAwareState::from_schema(pose_schema(), MonotonicTime(0.0))
     }
 
     #[test]
@@ -354,7 +358,7 @@ mod frame_aware_state_tests {
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             )])),
-            0.0,
+            MonotonicTime(0.0),
         );
         s.set_variable(
             &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
@@ -372,10 +376,10 @@ mod frame_aware_state_tests {
     #[test]
     fn from_schema_takes_initial_value() {
         let schema = pose_schema();
-        let s = FrameAwareState::from_schema(schema.clone(), 5.0);
+        let s = FrameAwareState::from_schema(schema.clone(), MonotonicTime(5.0));
 
         assert_eq!(&s.mean, schema.initial_value());
-        assert_eq!(s.timestamp, 5.0);
+        assert_eq!(s.timestamp, MonotonicTime(5.0));
     }
 }
 
@@ -431,7 +435,7 @@ mod block_extractor_tests {
                 DMatrix::identity(3, 3),
             ),
         ]);
-        FrameAwareState::from_schema(Arc::new(schema), 0.0)
+        FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0))
     }
 
     #[test]

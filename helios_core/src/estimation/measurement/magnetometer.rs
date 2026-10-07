@@ -203,7 +203,7 @@ mod tests {
 
     fn make_orientation_state() -> FrameAwareState {
         let schema = StateSchema::compose(vec![orientation_block()]);
-        FrameAwareState::from_schema(Arc::new(schema), 0.0)
+        FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0))
     }
 
     fn set_yaw_90_ccw(state: &mut FrameAwareState) {
@@ -274,7 +274,7 @@ mod tests {
                 DMatrix::identity(3, 3),
             ),
         ]);
-        let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        let mut state = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         state.set_variable(
             &StateVariable::new(Quantity::MagBias(sensor.clone()), Component::X),
             bias.x,

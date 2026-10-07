@@ -86,6 +86,7 @@ mod tests {
     use super::*;
     use crate::control::commands::BodyTwist;
     use crate::estimation::schema::StateSchema;
+    use crate::prelude::MonotonicTime;
     use crate::spatial::FrameAwareState;
 
     use std::f64::consts::FRAC_PI_4;
@@ -100,7 +101,7 @@ mod tests {
     // Feedforward never reads the estimate, so an empty state suffices — the point
     // is precisely that the output depends on the reference alone.
     fn empty_state() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(StateSchema::compose(vec![])), 0.0)
+        FrameAwareState::from_schema(Arc::new(StateSchema::compose(vec![])), MonotonicTime(0.0))
     }
 
     // A reference twist carrying forward speed `vx` and yaw rate `wz` (FLU).

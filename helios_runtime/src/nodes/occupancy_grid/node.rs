@@ -380,7 +380,10 @@ mod tests {
         // The kinematic carrier already holds a `Position(Odom)` block and an
         // identity `base_link → odom` attitude, which is all the node's pose
         // read needs; seed the odom-x position.
-        let mut s = FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0);
+        let mut s = FrameAwareState::from_schema(
+            Arc::new(kinematic_carrier_schema(agent())),
+            MonotonicTime(0.0),
+        );
         s.set_variable(
             &StateVariable::new(Quantity::Position(FrameId::odom(agent())), Component::X),
             x,

@@ -98,7 +98,7 @@ impl PipelineNode for MockOracleEstimatorNode {
             .read::<Twist>(oracle_twist_channel().into())
             .map(|s| s.value.clone());
 
-        let mut state = FrameAwareState::from_schema(self.schema.clone(), tick.now.0);
+        let mut state = FrameAwareState::from_schema(self.schema.clone(), pose_stamped.timestamp);
 
         write_pose_into(&mut state, &pose_stamped.value, &self.agent);
 

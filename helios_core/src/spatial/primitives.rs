@@ -1,4 +1,8 @@
-use std::{fmt::Display, ops::Sub, sync::Arc};
+use std::{
+    fmt::Display,
+    ops::{Add, AddAssign, Sub},
+    sync::Arc,
+};
 
 use nalgebra::DVector;
 use serde::{Deserialize, Serialize};
@@ -33,6 +37,22 @@ impl Sub<MonotonicDuration> for MonotonicTime {
     /// eviction cutoff, the oldest stamp a bounded history still keeps.
     fn sub(self, rhs: MonotonicDuration) -> MonotonicTime {
         MonotonicTime(self.0 - rhs.0)
+    }
+}
+
+impl Add<MonotonicDuration> for MonotonicTime {
+    type Output = MonotonicTime;
+
+    /// Shifts an instant forward by a duration — e.g. a predicted state's
+    /// valid-at time is the prior's plus the step it was predicted across.
+    fn add(self, rhs: MonotonicDuration) -> MonotonicTime {
+        MonotonicTime(self.0 + rhs.0)
+    }
+}
+
+impl AddAssign<MonotonicDuration> for MonotonicTime {
+    fn add_assign(&mut self, rhs: MonotonicDuration) {
+        *self = *self + rhs;
     }
 }
 
@@ -84,5 +104,28 @@ impl<'de> Deserialize<'de> for AgentId {
         D: serde::Deserializer<'de>,
     {
         Ok(AgentId::new(String::deserialize(deserializer)?))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adding_a_duration_inverts_subtracting_it() {
+        let t = MonotonicTime(2.0);
+        let d = MonotonicDuration(0.25);
+
+        assert_eq!(t + d, MonotonicTime(2.25));
+        assert_eq!((t + d) - d, t);
+        assert_eq!((t + d) - t, d);
+    }
+
+    #[test]
+    fn add_assign_matches_add() {
+        let mut t = MonotonicTime(1.0);
+        t += MonotonicDuration(0.1);
+
+        assert_eq!(t, MonotonicTime(1.0) + MonotonicDuration(0.1));
     }
 }

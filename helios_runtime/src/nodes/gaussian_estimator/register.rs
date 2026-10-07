@@ -14,6 +14,7 @@ use helios_core::estimation::dynamics::integrated_imu::{
 use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::schema::check_measurement_state_agreement;
+use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::state::{Component, Quantity};
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
@@ -111,7 +112,9 @@ fn build_ekf(
     // Seed the initial state from the schema (mean = zeros + identity
     // orientation, covariance = P₀), then overwrite only the mean pose with this
     // scenario's starting position/heading — the one thing the schema can't know.
-    let mut initial_state = FrameAwareState::from_schema(schema, 0.0);
+    // Valid at time zero, which holds only where the clock starts at zero (the
+    // sim); a host whose clock starts elsewhere needs the first tick's time.
+    let mut initial_state = FrameAwareState::from_schema(schema, MonotonicTime(0.0));
 
     let yaw = init.heading_deg.to_radians();
     let iso = Isometry3::from_parts(

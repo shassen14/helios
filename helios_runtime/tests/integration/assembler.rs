@@ -1704,7 +1704,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
             Stamped {
                 value: FrameAwareState::from_schema(
                     std::sync::Arc::new(kinematic_carrier_schema(agent.clone())),
-                    now.0,
+                    now,
                 ),
                 timestamp: now,
                 health: Health::Ok,

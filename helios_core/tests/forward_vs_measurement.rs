@@ -328,7 +328,7 @@ fn make_state(
         flat(Quantity::Acceleration(body.clone()), Convention::Flu),
         flat(Quantity::AngularAcceleration(body.clone()), Convention::Flu),
     ]);
-    let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+    let mut state = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
 
     set_vec3(
         &mut state,

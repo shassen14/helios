@@ -193,8 +193,10 @@ mod tests {
     // world-frame antenna position it predicts is that position plus the rotated
     // lever arm.
     fn make_state(px: f64, py: f64, pz: f64) -> FrameAwareState {
-        let mut state =
-            FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0);
+        let mut state = FrameAwareState::from_schema(
+            Arc::new(kinematic_carrier_schema(agent())),
+            MonotonicTime(0.0),
+        );
         state.set_variable(
             &StateVariable::new(Quantity::Position(FrameId::odom(agent())), Component::X),
             px,

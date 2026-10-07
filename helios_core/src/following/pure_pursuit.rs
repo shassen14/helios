@@ -191,6 +191,7 @@ mod tests {
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::interchange::path::Path;
     use crate::kernel::manifold::TangentNoise;
+    use crate::prelude::MonotonicTime;
     use crate::spatial::state::Quantity;
     use crate::spatial::transforms::Convention;
 
@@ -243,7 +244,7 @@ mod tests {
             ),
         ]);
         PathFollowerInputs {
-            state: FrameAwareState::from_schema(Arc::new(schema), 0.0),
+            state: FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0)),
         }
     }
 

@@ -221,7 +221,10 @@ mod tests {
     // body-frame acceleration and angular-acceleration reads have no block here
     // and fall back to zero, as they do against a real INS estimate.
     fn make_state() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0)
+        FrameAwareState::from_schema(
+            Arc::new(kinematic_carrier_schema(agent())),
+            MonotonicTime(0.0),
+        )
     }
 
     #[test]

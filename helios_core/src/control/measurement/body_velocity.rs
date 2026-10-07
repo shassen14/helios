@@ -62,7 +62,7 @@ mod tests {
     use super::*;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::kernel::manifold::TangentNoise;
-    use crate::prelude::AgentId;
+    use crate::prelude::{AgentId, MonotonicTime};
     use crate::spatial::state::Quantity;
     use crate::spatial::transforms::Convention;
 
@@ -122,7 +122,7 @@ mod tests {
                 DMatrix::identity(3, 3),
             ),
         ]);
-        FrameAwareState::from_schema(Arc::new(schema), 0.0)
+        FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0))
     }
 
     fn close(a: f64, b: f64) -> bool {
@@ -172,7 +172,7 @@ mod tests {
             DVector::from_vec(vec![3.0, 0.0, 0.0]),
             DMatrix::identity(3, 3),
         )]);
-        let s = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        let s = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         assert!(close(body_velocity(&s, body()).unwrap().x(), 3.0));
     }
 
@@ -186,7 +186,7 @@ mod tests {
             DVector::zeros(3),
             DMatrix::identity(3, 3),
         )]);
-        let s = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        let s = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         assert!(body_velocity(&s, body()).is_none());
     }
 
@@ -210,7 +210,7 @@ mod tests {
                 DMatrix::identity(3, 3),
             ),
         ]);
-        let s = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        let s = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         assert!(body_velocity(&s, body()).is_none());
     }
 

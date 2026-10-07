@@ -386,6 +386,7 @@ mod tests {
     use crate::planning::types::{PlannerResult, PlannerStatus};
     use crate::planning::SearchPlanner;
     use crate::planning::SearchPlannerInputs;
+    use crate::prelude::MonotonicTime;
     use crate::spatial::state::Quantity;
     use crate::spatial::transforms::Convention;
     use crate::spatial::{FrameAwareState, FrameId};
@@ -420,7 +421,7 @@ mod tests {
             DVector::from_vec(vec![x, y, 0.0]),
             DMatrix::zeros(3, 3),
         )]);
-        FrameAwareState::from_schema(Arc::new(schema), 0.0)
+        FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0))
     }
 
     /// All-zero `nrows × ncols` grid anchored at the world origin.

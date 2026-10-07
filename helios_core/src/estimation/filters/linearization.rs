@@ -71,8 +71,8 @@ mod tests {
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };
     use crate::kernel::integrators::RK4;
-    use crate::prelude::AgentId;
     use crate::prelude::EstimationDynamics;
+    use crate::prelude::{AgentId, MonotonicTime};
     use crate::spatial::FrameAwareState;
 
     use nalgebra::{DVector, Vector3};
@@ -100,7 +100,7 @@ mod tests {
             },
         );
         let schema = model.schema();
-        let state = FrameAwareState::from_schema(schema.clone(), 0.0);
+        let state = FrameAwareState::from_schema(schema.clone(), MonotonicTime(0.0));
         // Gravity-compensated, otherwise-still IMU input (control dim is 6).
         let u = DVector::from_row_slice(&[0.0, 0.0, 9.81, 0.0, 0.0, 0.0]);
 

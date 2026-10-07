@@ -1,5 +1,6 @@
 use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
 use helios_core::interchange::perception::map::MapData;
+use helios_core::prelude::MonotonicTime;
 use helios_core::spatial::state::{Component, Quantity};
 use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
@@ -37,7 +38,7 @@ fn make_state(x: f64, y: f64) -> FrameAwareState {
         DVector::zeros(3),
         DMatrix::identity(3, 3),
     )]));
-    let mut state = FrameAwareState::from_schema(schema, 0.0);
+    let mut state = FrameAwareState::from_schema(schema, MonotonicTime(0.0));
     state.set_variable(
         &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
         x,

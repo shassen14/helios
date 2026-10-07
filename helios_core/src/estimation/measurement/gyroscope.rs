@@ -188,7 +188,10 @@ mod tests {
     // hold, so the read falls back to zero — the test pins shape and TF-gating,
     // not the rate value.
     fn make_state() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0)
+        FrameAwareState::from_schema(
+            Arc::new(kinematic_carrier_schema(agent())),
+            MonotonicTime(0.0),
+        )
     }
 
     #[test]
@@ -263,7 +266,7 @@ mod tests {
             nalgebra::DVector::zeros(3),
             DMatrix::identity(3, 3),
         )]);
-        let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        let mut state = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         for (component, value) in [Component::X, Component::Y, Component::Z]
             .into_iter()
             .zip(omega)

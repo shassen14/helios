@@ -480,7 +480,7 @@ mod tests {
             flat(Quantity::Position(FrameId::world()), Convention::Enu),
             flat(Quantity::Velocity(FrameId::world()), Convention::Enu),
         ]);
-        let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        let mut state = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         state.set_variable(
             &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
             position[0],

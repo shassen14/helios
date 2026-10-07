@@ -437,7 +437,7 @@ mod tests {
             // the schema default, an identity pose) and the node dual-publishes.
             Self::with_state(FrameAwareState::from_schema(
                 std::sync::Arc::new(kinematic_carrier_schema(AgentId::new("test_agent"))),
-                0.0,
+                MonotonicTime(0.0),
             ))
         }
 
@@ -600,7 +600,7 @@ mod tests {
             DVector::zeros(3),
             DMatrix::zeros(3, 3),
         )]);
-        FrameAwareState::from_schema(std::sync::Arc::new(schema), 0.0)
+        FrameAwareState::from_schema(std::sync::Arc::new(schema), MonotonicTime(0.0))
     }
 
     // --- Tests ---

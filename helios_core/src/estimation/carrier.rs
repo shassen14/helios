@@ -77,6 +77,7 @@ pub fn kinematic_carrier_schema(agent: AgentId) -> StateSchema {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prelude::MonotonicTime;
     use crate::spatial::conventions::{Enu, Flu};
     use crate::spatial::state::Component;
     use crate::spatial::{FrameAwareState, StateVariable};
@@ -87,7 +88,10 @@ mod tests {
     }
 
     fn carrier() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0)
+        FrameAwareState::from_schema(
+            Arc::new(kinematic_carrier_schema(agent())),
+            MonotonicTime(0.0),
+        )
     }
 
     #[test]
