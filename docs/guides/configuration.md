@@ -145,7 +145,7 @@ An agent is split in two, so the autonomy can run on hardware unchanged:
 
 | | Sim agent (`sim/catalog/agents/`) | Agent profile (`runtime/profiles/agent_profiles/`) |
 |---|---|---|
-| Holds | the vehicle, its sensors, default poses, and which profile to run | the autonomy stack: estimators, mappers, planners, preprocessing, path following, controllers, allocators, arbitration, teleop |
+| Holds | the vehicle, its sensors, default poses, and which profile to run | the autonomy stack: its `[nodes]` (estimators, mappers, planners, path followers, controllers, allocators, teleop, …) and the seam sections that join them |
 | Read by | the simulator | the simulator today, a hardware host later |
 
 ```toml
@@ -164,18 +164,33 @@ from = "runtime.catalog.sensor_suites.ins_pro"   # IMU + GPS + magnetometer
 from = "entities.sensors.lidar2d"
 ```
 
-Each node in a profile names its `kind` and its settings, either inline or
+Every node in a profile is a `[nodes.<name>]` table. The key is the node's
+name; the table names its `kind` and that kind's settings, either inline or
 through `from` to a catalog prefab:
 
 ```toml
-[estimators.primary]
+[nodes.primary]
 from = "runtime.catalog.estimators.ekf_advanced"
 
-[preprocessing.front_lidar_deproject]
+[nodes.front_lidar_deproject]
 kind   = "Deproject"
 input  = "sensor.lidar.front"
 output = "sensor.lidar.front.points"
 ```
+
+Where several nodes feed one channel, a seam section says which nodes join
+it and how:
+
+| Section | Says |
+|---|---|
+| `[estimate]` | which estimator the rest of the stack reads (`source`) |
+| `[reference]` | which nodes feed the reference the controllers track (`base`, `preferred`) |
+| `[command.<fold>]` | which controllers' commands are summed into one command an allocator reads (`type`, `required`, `optional`) |
+| `[actuators]` | which allocators' partial commands make up what the body applies (`members`) |
+| `[tf]` | sizing for the estimated transform buffer; optional |
+
+A seam names nodes by their table key. `raycast_car.toml` uses all four
+seams and is the worked example.
 
 ### Sensors and channels
 

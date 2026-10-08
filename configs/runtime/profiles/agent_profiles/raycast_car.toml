@@ -2,7 +2,7 @@
 # == Agent Profile: Raycast Car ==
 # =========================================================================
 # Portable autonomy for the L1 raycast car. No vehicle, sensors, or physics.
-# Root-level keys are the fields of AutonomyStack. Safe to load in helios_hw.
+# Root-level keys are the fields of AutonomyStackConfig. Safe to load in helios_hw.
 #
 # Estimator, planner, and path follower are identical to `pro_car`. What
 # differs is the control stanza: the L0 car's single KinematicAckermann

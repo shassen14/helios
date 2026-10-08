@@ -2,7 +2,7 @@
 # == Agent Profile: Basic Car ==
 # =========================================================================
 # Portable autonomy configuration. No vehicle, sensors, or physics.
-# Root-level keys are the fields of AutonomyStack.
+# Root-level keys are the fields of AutonomyStackConfig.
 # Safe to load in helios_hw without helios_sim.
 
 [nodes.primary]
