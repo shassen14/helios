@@ -8,8 +8,8 @@
 //! - `registry` — [`AutonomyRegistry`]: the node map, the legacy per-family
 //!   maps, and the extension store other tables live in (the command seam's
 //!   [`CommandTypes`], the estimator's component tables); [`DuplicateKind`].
-//! - `factory` — [`BuildContext`], [`FactoryOutput`] and [`FactoryError`]: the
-//!   interface every node-kind factory shares.
+//! - `factory` — [`BuildContext`], [`FactoryOutput`], [`BuildFailure`] and
+//!   [`FactoryError`]: the interface every node-kind factory shares.
 //! - `component` — `ComponentTable`, the kind → factory table a node factory
 //!   draws one of its parts from (an estimator's filter, dynamics and
 //!   measurement models), and [`ComponentError`]. The tables themselves live
@@ -40,7 +40,7 @@ mod test_stub;
 pub(crate) use self::component::{BuiltComponent, ComponentTable};
 pub use self::component::{ComponentError, DuplicateComponentKind, NoParams, Site};
 pub use self::error::PipelineAssemblyError;
-pub use self::factory::{BuildContext, FactoryError, FactoryOutput};
+pub use self::factory::{BuildContext, BuildFailure, FactoryError, FactoryOutput};
 pub use self::registry::{AutonomyRegistry, DuplicateKind};
 pub use self::seams::command::{CommandTypes, DuplicateCommandType};
 pub use self::stages::build_pipeline;

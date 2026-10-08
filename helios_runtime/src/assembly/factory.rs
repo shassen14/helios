@@ -2,8 +2,11 @@
 //!
 //! A node kind is built by a factory: given the node's own config section and
 //! a [`BuildContext`], it returns a [`FactoryOutput`] holding the built node
-//! and the outside inputs it reads, or a [`FactoryError`] naming the node and
-//! kind that failed.
+//! and the outside inputs it reads, or a [`BuildFailure`]. The assembler turns
+//! a failure into a [`FactoryError`] naming the node and kind that failed.
+
+use super::component::ComponentError;
+use super::registry::AutonomyRegistry;
 
 use crate::port::ChannelKey;
 use crate::prelude::PipelineNode;
@@ -11,6 +14,7 @@ use crate::prelude::PipelineNode;
 use helios_core::prelude::AgentId;
 use serde::{de::DeserializeOwned, Serialize};
 
+use std::any::{type_name, Any};
 use std::{collections::HashSet, error::Error, fmt::Display};
 
 /// The key naming a config section's kind: a `[nodes.<name>]` table's node
@@ -64,6 +68,7 @@ impl<'a> BuildContext<'a> {
 pub struct FactoryOutput {
     node: Box<dyn PipelineNode>,
     outside_inputs: Vec<ChannelKey>,
+    resolved_components: Vec<(Vec<String>, toml::Table)>,
 }
 
 impl FactoryOutput {
@@ -72,6 +77,7 @@ impl FactoryOutput {
         Self {
             node,
             outside_inputs: Vec::new(),
+            resolved_components: Vec::new(),
         }
     }
 
@@ -87,9 +93,35 @@ impl FactoryOutput {
         self
     }
 
+    /// Replaces the sub-table at `path` in the node's resolved section with
+    /// `resolved`, the component's own resolved sub-table.
+    ///
+    /// The node's config holds a component's sub-table raw, so without this
+    /// the dump would show the component as written, missing its defaults.
+    /// `path` is the key path inside the node's section, one key per segment
+    /// (`["aiding", "gps", "model"]`); tables missing along it are added.
+    pub fn with_resolved_component<S: Into<String>>(
+        mut self,
+        path: impl IntoIterator<Item = S>,
+        resolved: toml::Table,
+    ) -> Self {
+        let path = path.into_iter().map(Into::into).collect();
+        self.resolved_components.push((path, resolved));
+        self
+    }
+
     /// The outside inputs this factory declared, in declaration order.
     pub(crate) fn outside_inputs(&self) -> &[ChannelKey] {
         &self.outside_inputs
+    }
+
+    /// Writes every component sub-table recorded by
+    /// [`with_resolved_component`](Self::with_resolved_component) into
+    /// `section`, in the order they were recorded.
+    fn splice_resolved_components(&mut self, section: &mut toml::Table) {
+        for (path, resolved) in self.resolved_components.drain(..) {
+            insert_table_at(section, &path, resolved);
+        }
     }
 
     /// Takes the built node out, for the assembler to add to the pipeline.
@@ -98,8 +130,64 @@ impl FactoryOutput {
     }
 }
 
-/// Why a factory failed. Every variant names the node and its kind, so the
-/// message points at the config entry to fix.
+/// Puts `value` at the key `path` inside `table`, adding a table for each
+/// missing or non-table key along the way. An empty path does nothing.
+fn insert_table_at(table: &mut toml::Table, path: &[String], value: toml::Table) {
+    match path {
+        [] => {}
+        [last] => {
+            table.insert(last.clone(), toml::Value::Table(value));
+        }
+        [first, rest @ ..] => {
+            let entry = table
+                .entry(first.clone())
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if !entry.is_table() {
+                *entry = toml::Value::Table(toml::Table::new());
+            }
+            if let toml::Value::Table(next) = entry {
+                insert_table_at(next, rest, value);
+            }
+        }
+    }
+}
+
+/// Why a kind's build function failed, before the assembler names the node
+/// and kind.
+///
+/// A build function may return a plain `String` reason, which converts into
+/// [`Reason`](Self::Reason). One that builds components returns their
+/// [`ComponentError`] as is: it already names the node and the sub-table, so
+/// wrapping it in the node's own prefix would say the node twice.
+#[derive(Debug)]
+pub enum BuildFailure {
+    /// The build function rejected the config, for this reason.
+    Reason(String),
+    /// A component the node draws from a component table failed.
+    Component(ComponentError),
+}
+
+impl From<String> for BuildFailure {
+    fn from(reason: String) -> Self {
+        Self::Reason(reason)
+    }
+}
+
+impl From<&str> for BuildFailure {
+    fn from(reason: &str) -> Self {
+        Self::Reason(reason.to_string())
+    }
+}
+
+impl From<ComponentError> for BuildFailure {
+    fn from(err: ComponentError) -> Self {
+        Self::Component(err)
+    }
+}
+
+/// Why a factory failed. Every variant names the node, and its kind or the
+/// kind of the component that failed, so the message points at the config
+/// entry to fix.
 #[derive(Debug)]
 pub enum FactoryError {
     /// The node's config section did not parse into the kind's config type:
@@ -125,6 +213,9 @@ pub enum FactoryError {
         kind: String,
         message: String,
     },
+    /// A component sub-table of the node failed. The error names the node,
+    /// the sub-table's path and the component's kind.
+    Component(ComponentError),
 }
 
 impl Display for FactoryError {
@@ -158,6 +249,7 @@ impl Display for FactoryError {
                 f,
                 "nodes.{node_name} (kind '{kind}'): config type does not serialize back to a TOML table: {message}"
             ),
+            Self::Component(err) => write!(f, "{err}"),
         }
     }
 }
@@ -174,53 +266,113 @@ pub(crate) struct BuiltNode {
 
 /// A node-kind factory with its config type hidden, so factories for every
 /// kind fit in one map. Takes the node's raw config section (common keys
-/// already removed) and its context. Built by [`erase`].
-pub(crate) type ErasedFactory =
-    Box<dyn Fn(toml::Table, &BuildContext<'_>) -> Result<BuiltNode, FactoryError> + Send + Sync>;
+/// already removed), its context, and the registry it was registered on, for
+/// a factory that looks up the extension its kind declared. Built by
+/// [`erase`] or [`erase_with`].
+pub(crate) type ErasedFactory = Box<
+    dyn Fn(toml::Table, &BuildContext<'_>, &AutonomyRegistry) -> Result<BuiltNode, FactoryError>
+        + Send
+        + Sync,
+>;
 
 /// Wraps a kind's typed build function into an [`ErasedFactory`].
 ///
-/// The returned closure parses the raw section strictly into `C` (the config
-/// type must deny unknown fields, which a trait bound can't require),
-/// serializes the parsed config back as the resolved section, then calls
-/// `build`. Serializing comes before building because `build` takes the config
-/// by value. `kind` is kept only to name the kind in errors.
-pub(crate) fn erase<C, F>(kind: String, build: F) -> ErasedFactory
+/// The returned closure runs [`build_erased`] on the section; `build` needs
+/// nothing from the registry. `kind` is kept only to name the kind in errors.
+pub(crate) fn erase<C, E, F>(kind: String, build: F) -> ErasedFactory
 where
     C: DeserializeOwned + Serialize + 'static,
-    F: Fn(C, &BuildContext<'_>) -> Result<FactoryOutput, String> + Send + Sync + 'static,
+    E: Into<BuildFailure>,
+    F: Fn(C, &BuildContext<'_>) -> Result<FactoryOutput, E> + Send + Sync + 'static,
 {
-    Box::new(move |section: toml::Table, ctx: &BuildContext<'_>| {
-        let config: C = serde_path_to_error::deserialize(section).map_err(|err| {
-            FactoryError::InvalidConfig {
-                node_name: ctx.node_name().to_string(),
-                kind: kind.clone(),
-                key: err.path().to_string(),
-                message: err.inner().to_string().trim_end().to_string(),
-            }
-        })?;
+    Box::new(
+        move |section: toml::Table, ctx: &BuildContext<'_>, _registry: &AutonomyRegistry| {
+            build_erased(&kind, section, ctx, |config| build(config, ctx))
+        },
+    )
+}
 
-        let resolved =
-            toml::Table::try_from(&config).map_err(|err| FactoryError::ResolveFailed {
-                node_name: ctx.node_name().to_string(),
-                kind: kind.clone(),
-                message: err.to_string().trim_end().to_string(),
-            })?;
+/// Wraps a kind's typed build function that draws on the registry's extension
+/// `T` into an [`ErasedFactory`].
+///
+/// The returned closure looks `T` up on the registry at each build, so a kind
+/// added to `T` after this kind was registered is seen, then runs
+/// [`build_erased`], passing `build` the extension. Registering through
+/// [`AutonomyRegistry::register_node_with`] creates `T`, so the lookup only
+/// fails if that invariant is broken; it fails as a build error naming `T`.
+pub(crate) fn erase_with<T, C, E, F>(kind: String, build: F) -> ErasedFactory
+where
+    T: Any + Send + Sync,
+    C: DeserializeOwned + Serialize + 'static,
+    E: Into<BuildFailure>,
+    F: Fn(C, &BuildContext<'_>, &T) -> Result<FactoryOutput, E> + Send + Sync + 'static,
+{
+    Box::new(
+        move |section: toml::Table, ctx: &BuildContext<'_>, registry: &AutonomyRegistry| {
+            let Some(extension) = registry.extension::<T>() else {
+                return Err(FactoryError::BuildFailed {
+                    node_name: ctx.node_name().to_string(),
+                    kind: kind.clone(),
+                    reason: format!(
+                        "the registry holds no `{}`, which this kind declares",
+                        type_name::<T>()
+                    ),
+                });
+            };
+            build_erased(&kind, section, ctx, |config| build(config, ctx, extension))
+        },
+    )
+}
 
-        let output = build(config, ctx).map_err(|err| FactoryError::BuildFailed {
+/// Runs one erased build: parses the raw section strictly into `C` (the config
+/// type must deny unknown fields, which a trait bound can't require),
+/// serializes the parsed config back as the resolved section, then calls
+/// `build` and splices in the resolved sub-tables of the components it built.
+/// Serializing comes before building because `build` takes the config by
+/// value. Every error names the node and `kind`.
+fn build_erased<C, E>(
+    kind: &str,
+    section: toml::Table,
+    ctx: &BuildContext<'_>,
+    build: impl FnOnce(C) -> Result<FactoryOutput, E>,
+) -> Result<BuiltNode, FactoryError>
+where
+    C: DeserializeOwned + Serialize,
+    E: Into<BuildFailure>,
+{
+    let config: C =
+        serde_path_to_error::deserialize(section).map_err(|err| FactoryError::InvalidConfig {
             node_name: ctx.node_name().to_string(),
-            kind: kind.clone(),
-            reason: err,
+            kind: kind.to_string(),
+            key: err.path().to_string(),
+            message: err.inner().to_string().trim_end().to_string(),
         })?;
 
-        Ok(BuiltNode { output, resolved })
-    })
+    let mut resolved =
+        toml::Table::try_from(&config).map_err(|err| FactoryError::ResolveFailed {
+            node_name: ctx.node_name().to_string(),
+            kind: kind.to_string(),
+            message: err.to_string().trim_end().to_string(),
+        })?;
+
+    let mut output = build(config).map_err(|err| match err.into() {
+        BuildFailure::Reason(reason) => FactoryError::BuildFailed {
+            node_name: ctx.node_name().to_string(),
+            kind: kind.to_string(),
+            reason,
+        },
+        BuildFailure::Component(err) => FactoryError::Component(err),
+    })?;
+    output.splice_resolved_components(&mut resolved);
+
+    Ok(BuiltNode { output, resolved })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::assembly::Site;
     use crate::pipeline::node::TickContext;
     use crate::port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus, PortDescriptor};
 
@@ -286,7 +438,7 @@ mod tests {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
         let channels = HashSet::new();
         let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
-        factory(section, &ctx)
+        factory(section, &ctx, &AutonomyRegistry::empty())
     }
 
     /// Unwraps the failure of [`run`]; `BuiltNode` has no `Debug`, so
@@ -368,6 +520,86 @@ mod tests {
         };
         assert_eq!((node_name.as_str(), kind.as_str()), (NODE, KIND));
         assert!(reason.contains(REJECTED_OUTPUT), "{reason}");
+    }
+
+    /// Records two component sub-tables: one replacing a table the config
+    /// holds, one under tables the config does not have.
+    fn build_with_components(
+        config: StubConfig,
+        ctx: &BuildContext<'_>,
+    ) -> Result<FactoryOutput, String> {
+        let resolved_noise: toml::Table =
+            toml::from_str("kind = \"Gaussian\"\nsigma = 0.5").expect("test TOML parses");
+        let resolved_model: toml::Table =
+            toml::from_str("kind = \"gps_position\"").expect("test TOML parses");
+        Ok(build_stub(config, ctx)?
+            .with_resolved_component(["noise"], resolved_noise)
+            .with_resolved_component(["aiding", "gps", "model"], resolved_model))
+    }
+
+    /// Fails the way a factory does when a component it draws fails.
+    fn build_failing_component(
+        _config: StubConfig,
+        ctx: &BuildContext<'_>,
+    ) -> Result<FactoryOutput, BuildFailure> {
+        Err(ComponentError::MissingKind {
+            site: Site {
+                node_name: ctx.node_name().to_string(),
+                path: "filter".to_string(),
+            },
+        }
+        .into())
+    }
+
+    /// A component's resolved sub-table replaces what the config held at its
+    /// path, and tables missing along a path are added.
+    #[test]
+    fn resolved_components_are_spliced_into_the_section() {
+        let factory = erase(KIND.to_string(), build_with_components);
+        let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
+        let channels = HashSet::new();
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let Ok(built) = factory(section, &ctx, &AutonomyRegistry::empty()) else {
+            panic!("expected the factory to succeed");
+        };
+
+        assert_eq!(
+            built.resolved["noise"]["sigma"],
+            toml::Value::Float(0.5),
+            "the component's value replaces the config's default"
+        );
+        assert_eq!(
+            built.resolved["noise"]["kind"],
+            toml::Value::String("Gaussian".into())
+        );
+        assert_eq!(
+            built.resolved["aiding"]["gps"]["model"]["kind"],
+            toml::Value::String("gps_position".into())
+        );
+        assert_eq!(
+            built.resolved["output"],
+            toml::Value::String("cloud".into())
+        );
+    }
+
+    /// A component error comes back as itself: it already names the node and
+    /// the sub-table, so it is not wrapped in the node's own prefix.
+    #[test]
+    fn a_component_failure_is_reported_as_itself() {
+        let factory = erase(KIND.to_string(), build_failing_component);
+        let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
+        let channels = HashSet::new();
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let err = match factory(section, &ctx, &AutonomyRegistry::empty()) {
+            Ok(_) => panic!("expected the factory to fail"),
+            Err(err) => err,
+        };
+
+        assert!(matches!(err, FactoryError::Component(_)), "{err}");
+        assert_eq!(
+            err.to_string(),
+            format!("nodes.{NODE}.filter: no `kind` string")
+        );
     }
 
     fn invalid_config(key: &str) -> FactoryError {

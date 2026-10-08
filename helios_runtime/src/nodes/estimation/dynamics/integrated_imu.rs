@@ -271,13 +271,13 @@ mod tests {
         let Ok(built) = build_section(SECTION) else {
             panic!("the built-in kind builds");
         };
-        let component = built.component;
-        let schema = component.dynamics().schema();
+        let (dynamics, input) = built.component.into_parts();
+        let schema = dynamics.schema();
         assert_eq!((schema.storage_dim(), schema.tangent_dim()), (16, 15));
-        assert_eq!(component.input().required_channels().len(), 2);
+        assert_eq!(input.required_channels().len(), 2);
         assert_eq!(
-            component.input().input_schema().blocks(),
-            component.dynamics().input_schema().blocks()
+            input.input_schema().blocks(),
+            dynamics.input_schema().blocks()
         );
     }
 

@@ -29,7 +29,7 @@ pub use crate::stamped::{Health, Stamped};
 
 pub use crate::assembly::contexts::{GaussianEstimatorBuildContext, MeasurementModelBuildContext};
 pub use crate::assembly::{
-    build_pipeline, AutonomyRegistry, BuildContext, CommandTypes, ComponentError,
+    build_pipeline, AutonomyRegistry, BuildContext, BuildFailure, CommandTypes, ComponentError,
     DuplicateCommandType, DuplicateComponentKind, DuplicateKind, FactoryError, FactoryOutput,
     NoParams, PipelineAssemblyError, Site,
 };

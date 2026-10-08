@@ -14,8 +14,6 @@
 //! None is specific to one estimator family: a batch smoother would reuse the
 //! dynamics and measurement components and replace only the loop.
 
-#![expect(dead_code, reason = "no node factory builds estimator components yet")]
-
 mod components;
 mod dynamics;
 mod filter;
@@ -34,8 +32,8 @@ pub(crate) use dynamics::{
 pub(crate) use filter::EKF_FILTER_KIND;
 pub(crate) use gravity::default_gravity_enu;
 pub(crate) use measurement::{
-    Measurement, PayloadReader, ACCELEROMETER_KIND, GPS_POSITION_KIND, GYROSCOPE_KIND,
-    MAGNETOMETER_KIND,
+    Measurement, MeasurementSource, MeasurementWiring, PayloadReader, ACCELEROMETER_KIND,
+    GPS_POSITION_KIND, GYROSCOPE_KIND, MAGNETOMETER_KIND,
 };
 
 use crate::assembly::AutonomyRegistry;

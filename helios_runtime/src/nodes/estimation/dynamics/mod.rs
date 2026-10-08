@@ -69,11 +69,6 @@ impl DynamicsComponent {
         &*self.dynamics
     }
 
-    /// The input builder.
-    pub(crate) fn input(&self) -> &dyn EstimatorInputBuilder {
-        &*self.input
-    }
-
     /// Writes `pose` into `state` the way this dynamics' state holds a pose.
     pub(crate) fn seed_pose(
         &self,

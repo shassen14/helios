@@ -11,7 +11,8 @@
 //! so `GaussianEstimatorNode` wraps any `Box<dyn GaussianStateEstimator>` (EKF,
 //! UKF, ESKF, IF). `mocks` holds runtime-native test doubles that wrap no core
 //! trait. `estimation` is not a family: it holds the components (filter,
-//! dynamics, measurement) every estimator family assembles its node from.
+//! dynamics, measurement) every estimator family assembles its node from;
+//! `recursive_estimator` is the first family built from them.
 
 pub mod allocator;
 pub mod combinators;
@@ -23,4 +24,5 @@ pub mod mocks;
 pub mod occupancy_grid;
 pub mod path_follower;
 pub mod planner;
+pub mod recursive_estimator;
 pub mod teleop;

@@ -1,0 +1,28 @@
+# The proving ground with the car's estimator built as a RecursiveEstimator
+# node rather than a legacy `[estimators]` entry. Every other value is a copy
+# of sim/scenarios/01_proving_ground.toml, so the run must end where the
+# proving-ground run ends. Paired with
+# configs/test/runs/proving_ground_recursive.toml.
+
+[simulation]
+duration_seconds = 180.0
+seed = 2024
+
+[world.layout]
+from = "sim.catalog.worlds.proving_ground"
+
+[world.semantic_classes]
+from = "runtime.catalog.semantic_classes.default"
+
+[world.atmosphere]
+gravity_enu = [0.0, 0.0, -9.81]  # [east, north, up] m/s²
+sun_elevation = 45.0
+sun_azimuth = 180.0
+ambient_lux = 1500.0
+
+[[agents]]
+from = "sim.catalog.agents.raycast_car_recursive"
+name = "ProvingCar"
+# Facing east, toward the goal.
+starting_pose = { translation = [-20.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { translation = [20.0, 0.0, 0.5] }

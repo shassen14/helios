@@ -17,41 +17,29 @@
 //!    the bus, and dual-publish the `base_link → odom` transform edge the
 //!    estimate implies for the `TfService` to fold.
 
-use crate::channels::tf::{publish_edge, tf_edge};
+use crate::channels::tf::tf_edge;
 use crate::nodes::estimation::{EstimatorInputBuilder, Measurement, PayloadReader};
+use crate::nodes::recursive_estimator::{
+    aiding_drop_cause, passes_warn_throttle, predict_skip_cause, publish_estimate,
+};
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus,
-    PortDescriptor, SensorChannel,
+    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
+    SensorChannel,
 };
-use crate::stamped::{Health, Stamped};
 
-use helios_core::estimation::measurement::{MeasurementModel, Unavailable};
+use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::schema::MeasurementSchema;
-use helios_core::estimation::{
-    GaussianStateEstimator, PredictOutcome, PredictSkipReason, SkipReason, UpdateOutcome,
-};
+use helios_core::estimation::GaussianStateEstimator;
 use helios_core::interchange::measurement::sensor::SensorPayload;
-use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::tf::TfProvider;
-use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
-use helios_core::spatial::transforms::ErasedTransform;
+use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_core::spatial::FrameAwareState;
 
 use atomic_float::AtomicF64;
 use nalgebra::DMatrix;
-use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use tracing::warn;
-
-/// Minimum seconds of pipeline-clock time between two skip warnings from one
-/// source: an aiding channel's "aiding dropped", or the node's "predict
-/// skipped". A missing extrinsic, a corrupt covariance or a misshapen input
-/// fails on *every* reading or tick, so without a throttle the log floods at
-/// sensor rate; the first fault always prints and later ones inside this window
-/// are suppressed. Keyed on reading or tick time (not wall time) so the gate is
-/// deterministic and testable.
-const SKIP_WARN_MIN_INTERVAL_SECS: f64 = 5.0;
 
 /// Per-channel aiding handler: reads one sensor channel from the bus and feeds
 /// each reading into a [`GaussianStateEstimator`] via its measurement model.
@@ -164,72 +152,6 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
     }
 }
 
-/// The cause of a *loud* aiding drop, or `None` for an applied
-/// update or an expected quiet skip (cold start / no provider).
-///
-/// This is where the runtime reads the loud/quiet judgment off the
-/// [`UpdateOutcome`]: the core filter has already classified the skip; the
-/// caller only decides whether to warn. The frame-carrying transform faults name
-/// their frames so the log points straight at the missing extrinsic.
-fn aiding_drop_cause(outcome: &UpdateOutcome) -> Option<String> {
-    match outcome {
-        UpdateOutcome::Applied(_)
-        | UpdateOutcome::Skipped(SkipReason::Model(
-            Unavailable::ColdStart | Unavailable::NoProvider,
-        )) => None,
-        UpdateOutcome::Skipped(SkipReason::Model(Unavailable::MissingTransform { from, to })) => {
-            Some(format!("transform {from:?} → {to:?} unresolved"))
-        }
-        UpdateOutcome::Skipped(SkipReason::Model(Unavailable::ConventionMismatch { from, to })) => {
-            Some(format!("convention mismatch between {from:?} and {to:?}"))
-        }
-        UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch) => {
-            Some("measurement and covariance lengths disagree (wiring bug)".to_string())
-        }
-        UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite) => Some(
-            "innovation covariance not positive-definite (filter covariance corrupt)".to_string(),
-        ),
-        // A reason added to core after this match was written: surface it
-        // rather than guess it is harmless.
-        UpdateOutcome::Skipped(reason) => Some(format!("{reason:?}")),
-    }
-}
-
-/// The cause of a *loud* predict skip, or `None` for an applied predict or the
-/// expected quiet skip (a non-positive step, as on the first tick).
-///
-/// The predict-side twin of [`aiding_drop_cause`]: the core filter classified
-/// the skip; the node only decides whether to warn.
-fn predict_skip_cause(outcome: &PredictOutcome) -> Option<String> {
-    match outcome {
-        PredictOutcome::Applied | PredictOutcome::Skipped(PredictSkipReason::NonPositiveDt) => None,
-        PredictOutcome::Skipped(PredictSkipReason::InputShapeMismatch { expected, supplied }) => {
-            Some(format!(
-                "input has {supplied} rows but the dynamics' input schema has {expected} \
-                 (wiring bug)"
-            ))
-        }
-        PredictOutcome::Skipped(PredictSkipReason::CovarianceNotPositiveDefinite) => {
-            Some("state covariance not positive-definite (filter covariance corrupt)".to_string())
-        }
-        // A reason added to core after this match was written: surface it
-        // rather than guess it is harmless.
-        PredictOutcome::Skipped(reason) => Some(format!("{reason:?}")),
-    }
-}
-
-/// Rate-limit gate shared by the skip warnings. Returns `true` at most once per
-/// [`SKIP_WARN_MIN_INTERVAL_SECS`] of `at`, and records `at` in `last_warned`
-/// when it does. A latch seeded with `NEG_INFINITY` lets the first fault pass.
-fn passes_warn_throttle(last_warned: &AtomicF64, at: f64) -> bool {
-    let last = last_warned.load(Ordering::Relaxed);
-    if at - last < SKIP_WARN_MIN_INTERVAL_SECS {
-        return false;
-    }
-    last_warned.store(at, Ordering::Relaxed);
-    true
-}
-
 /// Pipeline node wrapping any Gaussian-family estimator.
 ///
 /// Construction is via [`Self::new`]. The port descriptor is derived from the
@@ -321,52 +243,7 @@ impl PipelineNode for GaussianEstimatorNode {
         }
 
         // 3. Publish snapshot.
-        let snapshot = estimator.state().clone();
-
-        // Dual-publish the transform edge this estimate implies (child in
-        // parent = base_link in odom): the rich FrameAwareState on its own
-        // channel, and a bare StampedTransform on the tf-edge channel for the
-        // TfService to fold. The pose is a pure read of the state's orientation
-        // and reference-frame position; if either block is absent (a cold-start
-        // schema not yet seeded with a pose), skip the edge this tick rather
-        // than feed the buffer a bogus identity.
-        if let Some(pose) =
-            snapshot.pose::<Flu, Enu>(self.edge.child.clone(), self.edge.parent.clone())
-        {
-            let edge = StampedTransform {
-                parent: self.edge.parent.clone(),
-                child: self.edge.child.clone(),
-                // When the pose held. For the filter's current estimate that is
-                // `now`; it coincides with the envelope timestamp below but means
-                // a different thing (pose-held vs published-at), so they are kept
-                // as two fields, not merged.
-                stamp: tick.now,
-                transform: ErasedTransform::erase::<Flu, Enu>(pose),
-            };
-            publish_edge(
-                bus,
-                Stamped {
-                    value: edge,
-                    timestamp: tick.now,
-                    health: Health::Ok,
-                    producer: tick.node_id,
-                },
-            );
-        }
-
-        let stamped = Stamped {
-            value: snapshot,
-            timestamp: tick.now,
-            health: Health::Ok,
-            producer: tick.node_id,
-        };
-        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
-        if let Err(ChannelError::UnknownChannel) = bus.write(state_channel.clone(), stamped) {
-            tracing::warn!(
-                channel = %state_channel,
-                "estimator state output channel is not wired into the DAG"
-            );
-        }
+        publish_estimate(bus, &self.edge, estimator.state().clone(), &tick);
     }
 }
 
@@ -378,20 +255,27 @@ mod tests {
     //! and bus publish.
 
     use super::*;
+    use crate::stamped::{Health, Stamped};
+
     use helios_core::estimation::carrier::kinematic_carrier_schema;
-    use helios_core::estimation::measurement::Prediction;
+    use helios_core::estimation::measurement::{Prediction, Unavailable};
     use helios_core::estimation::schema::{
         InputSchema, MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
-    use helios_core::estimation::{EstimatorInputs, Innovation, UpdateOutcome};
+    use helios_core::estimation::{
+        EstimatorInputs, Innovation, PredictOutcome, PredictSkipReason, SkipReason, UpdateOutcome,
+    };
     use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::interchange::measurement::sensor::Acceleration;
     use helios_core::prelude::AgentId;
+    use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::state::Quantity;
+    use helios_core::spatial::transforms::tf::stamped::StampedTransform;
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
     use helios_core::spatial::{FrameAwareState, FrameId};
     use nalgebra::{DMatrix, DVector, Isometry3};
+    use std::sync::atomic::Ordering;
     use std::sync::{Arc, Mutex as StdMutex};
 
     // --- Mock TfProvider ---

@@ -133,10 +133,6 @@ impl<X: 'static, T: 'static> ComponentTable<X, T> {
 
 /// What [`ComponentTable::build`] returns: the component and its resolved
 /// sub-table, defaults filled in and `kind` included, for the config dump.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no node factory builds estimator components yet")
-)]
 pub(crate) struct BuiltComponent<T> {
     pub(crate) component: T,
     pub(crate) resolved: toml::Table,
