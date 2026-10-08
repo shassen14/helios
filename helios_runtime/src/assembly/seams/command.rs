@@ -9,9 +9,9 @@
 //! members are folded in when present. A lone member is a one-input sum, which
 //! forwards it, so the shape is the same for any number of members.
 //!
-//! A command type is an entry in the registry's table, not a variant here, so
-//! any number of folds may share one and a type defined outside this crate is
-//! one registration away.
+//! A command type is an entry in [`CommandTypes`], a registry extension, not a
+//! variant here, so any number of folds may share one and a type defined
+//! outside this crate is one registration away.
 
 use super::members::{duplicates, member_outputs, SeamType};
 
@@ -25,6 +25,8 @@ use crate::port::InternalChannel;
 use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle};
 
 use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt::Display;
 use std::ops::Add;
 
 /// The `type` a fold states to sum body-frame velocity commands.
@@ -39,7 +41,67 @@ pub(crate) const STEER_ANGLE_TYPE: &str = "SteerAngle";
 /// Builds a fold's `Sum` from its name and its required and optional inputs.
 type BuildSum = fn(&str, Vec<InternalChannel>, Vec<InternalChannel>) -> Box<dyn PipelineNode>;
 
-/// One entry in the registry's command-type table: what a member must write to
+/// The command types a `[command.<fold>]` table may name in its `type` key:
+/// type name → what the seam needs to fold it.
+///
+/// A registry extension. The default registry adds the built-in types; an
+/// outside crate adds its own through
+/// `registry.extension_mut::<CommandTypes>().register::<T>(name)`.
+#[derive(Default)]
+pub struct CommandTypes {
+    // Sorted, so an unknown-type error lists the registered types in a stable
+    // order.
+    types: BTreeMap<String, CommandType>,
+}
+
+impl CommandTypes {
+    /// The entry registered under `name`.
+    pub(crate) fn get(&self, name: &str) -> Option<&CommandType> {
+        self.types.get(name)
+    }
+
+    /// Every registered type name, sorted.
+    pub(crate) fn names(&self) -> Vec<String> {
+        self.types.keys().cloned().collect()
+    }
+
+    /// Registers command type `T` under `name`.
+    ///
+    /// A fold of this type sums its members' `T` outputs, so `T` must be
+    /// addable. Any number of folds may share a type.
+    ///
+    /// Fails if `name` is already registered; the first registration is kept.
+    pub fn register<T>(&mut self, name: impl Into<String>) -> Result<(), DuplicateCommandType>
+    where
+        T: Send + Sync + Clone + Add<Output = T> + 'static,
+    {
+        let name = name.into();
+        if self.types.contains_key(&name) {
+            return Err(DuplicateCommandType { name });
+        }
+
+        self.types.insert(name, CommandType::of::<T>());
+
+        Ok(())
+    }
+}
+
+/// A command type was registered twice.
+#[derive(Debug)]
+pub struct DuplicateCommandType {
+    /// The type name that was already taken.
+    pub name: String,
+}
+
+impl Display for DuplicateCommandType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "command type '{}' is already registered", self.name)
+    }
+}
+
+impl Error for DuplicateCommandType {}
+
+/// One entry in [`CommandTypes`]: what a member must write to
 /// join a fold of this type, and how to build that fold's `Sum`.
 pub(crate) struct CommandType {
     ty: SeamType,
@@ -78,14 +140,15 @@ where
 
 /// Adds the built-in command types to `registry`.
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
-    registry
-        .register_command_type::<BodyTwist>(BODY_TWIST_TYPE)
+    let types = registry.extension_mut::<CommandTypes>();
+    types
+        .register::<BodyTwist>(BODY_TWIST_TYPE)
         .expect("BodyTwist is registered once, by the default registry");
-    registry
-        .register_command_type::<DriveForce>(DRIVE_FORCE_TYPE)
+    types
+        .register::<DriveForce>(DRIVE_FORCE_TYPE)
         .expect("DriveForce is registered once, by the default registry");
-    registry
-        .register_command_type::<SteerAngle>(STEER_ANGLE_TYPE)
+    types
+        .register::<SteerAngle>(STEER_ANGLE_TYPE)
         .expect("SteerAngle is registered once, by the default registry");
 }
 
@@ -124,11 +187,12 @@ fn command_sum(
     registry: &AutonomyRegistry,
     nodes: &[Box<dyn PipelineNode>],
 ) -> Result<Box<dyn PipelineNode>, Vec<PipelineAssemblyError>> {
-    let Some(command_type) = registry.command_type(&fold.type_name) else {
+    let types = registry.extension::<CommandTypes>();
+    let Some(command_type) = types.and_then(|types| types.get(&fold.type_name)) else {
         return Err(vec![PipelineAssemblyError::UnknownCommandType {
             fold: fold_name.to_string(),
             type_name: fold.type_name.clone(),
-            registered: registry.command_type_names(),
+            registered: types.map(CommandTypes::names).unwrap_or_default(),
         }]);
     };
 
@@ -294,7 +358,8 @@ mod tests {
 
         let mut registry = AutonomyRegistry::default();
         registry
-            .register_command_type::<Thrust>("Thrust")
+            .extension_mut::<CommandTypes>()
+            .register::<Thrust>("Thrust")
             .expect("Thrust is new");
         let nodes = vec![controller::<Thrust>("altitude")];
         let config = folds([("lift", fold("Thrust", &["altitude"], &[]))]);
@@ -304,6 +369,37 @@ mod tests {
         assert_eq!(
             sums[0].port_descriptor().outputs(),
             [key::<Thrust>("lift")].as_slice()
+        );
+    }
+
+    #[test]
+    fn registering_a_command_type_twice_is_rejected() {
+        let mut registry = AutonomyRegistry::default();
+        let err = registry
+            .extension_mut::<CommandTypes>()
+            .register::<f64>(DRIVE_FORCE_TYPE)
+            .expect_err("DriveForce is already a built-in");
+        assert_eq!(err.name, DRIVE_FORCE_TYPE);
+        assert_eq!(
+            err.to_string(),
+            "command type 'DriveForce' is already registered"
+        );
+    }
+
+    #[test]
+    fn a_registry_without_command_types_lists_none() {
+        let registry = AutonomyRegistry::empty();
+        let config = folds([("drive_cmd", fold(DRIVE_FORCE_TYPE, &["drive_speed"], &[]))]);
+
+        let errors = errors_of(command_sums(&config, &registry, &car_controllers()));
+
+        assert!(
+            matches!(
+                errors.as_slice(),
+                [PipelineAssemblyError::UnknownCommandType { registered, .. }]
+                    if registered.is_empty()
+            ),
+            "got {errors:?}"
         );
     }
 

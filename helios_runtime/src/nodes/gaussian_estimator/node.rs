@@ -17,8 +17,8 @@
 //!    the bus, and dual-publish the `base_link → odom` transform edge the
 //!    estimate implies for the `TfService` to fold.
 
-use super::input::EstimatorInputBuilder;
 use crate::channels::tf::{publish_edge, tf_edge};
+use crate::nodes::estimation::{EstimatorInputBuilder, Measurement, PayloadReader};
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
     AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus,
@@ -31,7 +31,6 @@ use helios_core::estimation::schema::MeasurementSchema;
 use helios_core::estimation::{
     GaussianStateEstimator, PredictOutcome, PredictSkipReason, SkipReason, UpdateOutcome,
 };
-use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::measurement::sensor::SensorPayload;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::tf::TfProvider;
@@ -41,7 +40,6 @@ use helios_core::spatial::FrameAwareState;
 
 use atomic_float::AtomicF64;
 use nalgebra::DMatrix;
-use std::marker::PhantomData;
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 use tracing::warn;
@@ -93,23 +91,16 @@ pub(crate) trait AidingHandler: Send + Sync {
 /// (per-sensor). Both are constructed once and reused across every reading on
 /// the channel.
 pub(crate) struct TypedAidingHandler<T: SensorPayload> {
-    /// Cached enum-form key for `bus.read` calls. Built once from the
-    /// kinded `SensorChannel` passed to [`Self::new`].
-    channel: ChannelKey,
+    /// Takes each reading on the channel once, oldest first: re-applying a
+    /// measurement would over-tighten the posterior as if independent
+    /// observations had been received.
+    reader: PayloadReader<T>,
     model: Box<dyn MeasurementModel>,
     r: DMatrix<f64>,
-    /// Highest per-reading [`SensorReading::timestamp`] applied to the
-    /// filter so far. Readings with `timestamp <= last_applied_ts` are
-    /// skipped — re-applying the same measurement would over-tighten the
-    /// EKF's posterior as if independent observations had been received.
-    last_applied_ts: AtomicF64,
     /// Reading-clock time of the last emitted "aiding dropped" warning, for
     /// rate-limiting. Init `NEG_INFINITY` so the first fault always clears the
-    /// interval and prints. Sibling of `last_applied_ts`, same latch pattern.
+    /// interval and prints.
     last_warned: AtomicF64,
-    // phantom data in order to avoid compile error that T isn't used
-    // fn() -> T to say output-only, non-owned, covariant data
-    _phantom: PhantomData<fn() -> T>,
 }
 
 impl<T: SensorPayload> TypedAidingHandler<T> {
@@ -124,12 +115,10 @@ impl<T: SensorPayload> TypedAidingHandler<T> {
         r: DMatrix<f64>,
     ) -> Self {
         Self {
-            channel: channel.into(),
+            reader: PayloadReader::new(channel),
             model,
             r,
-            last_applied_ts: AtomicF64::new(f64::NEG_INFINITY),
             last_warned: AtomicF64::new(f64::NEG_INFINITY),
-            _phantom: PhantomData,
         }
     }
 
@@ -142,7 +131,7 @@ impl<T: SensorPayload> TypedAidingHandler<T> {
 
 impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
     fn channel(&self) -> &ChannelKey {
-        &self.channel
+        self.reader.channel()
     }
 
     fn schema(&self) -> MeasurementSchema {
@@ -155,61 +144,22 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
         estimator: &mut dyn GaussianStateEstimator,
         tf: Option<&dyn TfProvider>,
     ) {
-        let Some(stamped) = bus.read::<Vec<SensorReading<T>>>(self.channel.clone()) else {
-            return;
-        };
-        if stamped.value.is_empty() {
-            return;
-        }
-
-        // Sort by timestamp so the filter sees readings in causal order even if
-        // the producer batched out-of-order arrivals into one tick.
-        let mut indices: Vec<usize> = (0..stamped.value.len()).collect();
-        indices.sort_by(|&a, &b| {
-            stamped.value[a]
-                .timestamp
-                .0
-                .total_cmp(&stamped.value[b].timestamp.0)
-        });
-
-        // Skip readings already applied on a prior tick. Bus slots are
-        // last-known-good, so the same batch can show up on consecutive
-        // ticks; re-applying would treat one measurement as several
-        // independent observations and overstate confidence.
-        let last_applied = self.last_applied_ts.load(Ordering::Relaxed);
-        let mut max_applied = last_applied;
-        for idx in indices {
-            let reading_ts = stamped.value[idx].timestamp.0;
-            if reading_ts <= last_applied {
-                continue;
-            }
-            let z = stamped.value[idx].data.to_measurement_vector();
-            let outcome = estimator.update(
-                &z,
-                &*self.model,
-                &self.r,
-                tf,
-                helios_core::prelude::MonotonicTime(reading_ts),
-            );
+        for Measurement { z, at } in self.reader.take_new(bus) {
+            let outcome = estimator.update(&z, &*self.model, &self.r, tf, at);
             // Surface a dropped correction that stems from a fault (an
             // unresolved transform, a shape/covariance bug) — the silent
             // aiding-drop this whole path exists to make loud. Expected quiet
             // skips (cold start, no provider) and applied updates say nothing.
             if let Some(cause) = aiding_drop_cause(&outcome) {
-                if self.should_warn(reading_ts) {
+                if self.should_warn(at.0) {
                     warn!(
-                        "aiding dropped on {}: {cause} at t={reading_ts:.3}; \
+                        "aiding dropped on {}: {cause} at t={:.3}; \
                          filter running unaided.",
-                        self.channel,
+                        self.reader.channel(),
+                        at.0,
                     );
                 }
             }
-            if reading_ts > max_applied {
-                max_applied = reading_ts;
-            }
-        }
-        if max_applied > last_applied {
-            self.last_applied_ts.store(max_applied, Ordering::Relaxed);
         }
     }
 }
@@ -431,7 +381,7 @@ mod tests {
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::measurement::Prediction;
     use helios_core::estimation::schema::{
-        MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
+        InputSchema, MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
     use helios_core::estimation::{EstimatorInputs, Innovation, UpdateOutcome};
     use helios_core::interchange::measurement::envelope::SensorReading;
@@ -442,7 +392,7 @@ mod tests {
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
     use helios_core::spatial::{FrameAwareState, FrameId};
     use nalgebra::{DMatrix, DVector, Isometry3};
-    use std::sync::Mutex as StdMutex;
+    use std::sync::{Arc, Mutex as StdMutex};
 
     // --- Mock TfProvider ---
 
@@ -580,6 +530,9 @@ mod tests {
     }
 
     impl EstimatorInputBuilder for AlwaysReadyBuilder {
+        fn input_schema(&self) -> Arc<InputSchema> {
+            Arc::new(InputSchema::compose(vec![]))
+        }
         fn assemble(&self, _bus: &PortBus, _tick: &TickContext) -> Option<EstimatorInputs> {
             Some(EstimatorInputs {
                 control: DVector::zeros(0),
@@ -597,6 +550,9 @@ mod tests {
         required: Vec<ChannelKey>,
     }
     impl EstimatorInputBuilder for NeverReadyBuilder {
+        fn input_schema(&self) -> Arc<InputSchema> {
+            Arc::new(InputSchema::compose(vec![]))
+        }
         fn assemble(&self, _bus: &PortBus, _tick: &TickContext) -> Option<EstimatorInputs> {
             None
         }

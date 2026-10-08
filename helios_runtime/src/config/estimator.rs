@@ -1,27 +1,29 @@
+use crate::nodes::estimation::{
+    default_gravity_enu, DEFAULT_ACCEL_BIAS_UNCERTAINTY_MPS2, DEFAULT_GYRO_BIAS_UNCERTAINTY_RADPS,
+    DEFAULT_ORIENTATION_UNCERTAINTY_DEG, DEFAULT_POSITION_UNCERTAINTY_M,
+    DEFAULT_VELOCITY_UNCERTAINTY_MPS, EKF_FILTER_KIND, INTEGRATED_IMU_KIND,
+};
+
 use serde::Deserialize;
 
-fn default_gravity_enu() -> [f64; 3] {
-    [0.0, 0.0, -9.81]
-}
-
 fn default_position_uncertainty_m() -> f64 {
-    1000.0
+    DEFAULT_POSITION_UNCERTAINTY_M
 }
 
 fn default_orientation_uncertainty_deg() -> f64 {
-    180.0
+    DEFAULT_ORIENTATION_UNCERTAINTY_DEG
 }
 
 fn default_velocity_uncertainty_mps() -> f64 {
-    1.0
+    DEFAULT_VELOCITY_UNCERTAINTY_MPS
 }
 
 fn default_accel_bias_uncertainty_mps2() -> f64 {
-    0.1
+    DEFAULT_ACCEL_BIAS_UNCERTAINTY_MPS2
 }
 
 fn default_gyro_bias_uncertainty_radps() -> f64 {
-    0.01
+    DEFAULT_GYRO_BIAS_UNCERTAINTY_RADPS
 }
 
 /// The `kind` tag of [`EstimatorConfig::MockOracle`], which is also the key its
@@ -30,7 +32,7 @@ pub(crate) const MOCK_ORACLE_KIND: &str = "MockOracle";
 
 /// The `kind` tag of [`EstimatorConfig::Ekf`], which is also the key its
 /// factory is registered under in the Gaussian-estimator family.
-pub(crate) const EKF_KIND: &str = "Ekf";
+pub(crate) const EKF_KIND: &str = EKF_FILTER_KIND;
 
 /// The `kind` tag of [`EstimatorConfig::Ukf`], which is also the key its
 /// factory is registered under in the Gaussian-estimator family.
@@ -201,7 +203,7 @@ pub enum EkfDynamicsConfig {
 impl EkfDynamicsConfig {
     pub(crate) fn get_kind_str(&self) -> &str {
         match self {
-            EkfDynamicsConfig::IntegratedImu(_) => "IntegratedImu",
+            EkfDynamicsConfig::IntegratedImu(_) => INTEGRATED_IMU_KIND,
             EkfDynamicsConfig::AckermannOdometry(_) => "AckermannOdometry",
             EkfDynamicsConfig::Quadcopter(_) => "Quadcopter",
         }

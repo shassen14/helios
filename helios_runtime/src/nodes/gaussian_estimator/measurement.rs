@@ -14,12 +14,15 @@ use helios_core::estimation::measurement::{
 use nalgebra::Vector3;
 
 use crate::assembly::{contexts::MeasurementModelBuildContext, AutonomyRegistry};
+use crate::nodes::estimation::{
+    ACCELEROMETER_KIND, GPS_POSITION_KIND, GYROSCOPE_KIND, MAGNETOMETER_KIND,
+};
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
-    registry.register_measurement_model("gps_position", build_gps_position);
-    registry.register_measurement_model("accelerometer", build_accelerometer);
-    registry.register_measurement_model("gyroscope", build_gyroscope);
-    registry.register_measurement_model("magnetometer", build_magnetometer);
+    registry.register_measurement_model(GPS_POSITION_KIND, build_gps_position);
+    registry.register_measurement_model(ACCELEROMETER_KIND, build_accelerometer);
+    registry.register_measurement_model(GYROSCOPE_KIND, build_gyroscope);
+    registry.register_measurement_model(MAGNETOMETER_KIND, build_magnetometer);
 }
 
 fn build_gps_position(

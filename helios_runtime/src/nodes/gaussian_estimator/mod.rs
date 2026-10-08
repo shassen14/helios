@@ -5,7 +5,6 @@
 //!
 //! - `node` — `GaussianEstimatorNode` plus the `AidingHandler` /
 //!   `TypedAidingHandler` machinery its aiding updates run through.
-//! - `input` — assembles filter inputs from the bus.
 //! - `assemble` — builds a node from config (aiding handlers + predict-side
 //!   channels), invoked by the assembler's estimator dispatch.
 //! - `dynamics` / `measurement` — register the `EstimationDynamics` and
@@ -18,13 +17,11 @@
 //! consume them.
 
 mod assemble;
-mod input;
 mod measurement;
 mod node;
 mod register;
 
 pub(crate) use assemble::assemble;
-pub(crate) use input::EstimatorInputBuilder;
 pub(crate) use node::{AidingHandler, TypedAidingHandler};
 
 use crate::assembly::AutonomyRegistry;

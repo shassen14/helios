@@ -13,6 +13,10 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use std::{collections::HashSet, error::Error, fmt::Display};
 
+/// The key naming a config section's kind: a `[nodes.<name>]` table's node
+/// kind, or a component sub-table's component kind.
+pub(crate) const KIND_KEY: &str = "kind";
+
 /// What every factory receives besides its own config: the values that come
 /// from the agent and the host rather than from the node's section.
 ///

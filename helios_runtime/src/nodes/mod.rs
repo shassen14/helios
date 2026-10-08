@@ -10,12 +10,14 @@
 //! One node type per family: the node is generic over the family trait object,
 //! so `GaussianEstimatorNode` wraps any `Box<dyn GaussianStateEstimator>` (EKF,
 //! UKF, ESKF, IF). `mocks` holds runtime-native test doubles that wrap no core
-//! trait.
+//! trait. `estimation` is not a family: it holds the components (filter,
+//! dynamics, measurement) every estimator family assembles its node from.
 
 pub mod allocator;
 pub mod combinators;
 pub mod controller;
 pub mod deproject;
+pub mod estimation;
 pub mod gaussian_estimator;
 pub mod mocks;
 pub mod occupancy_grid;

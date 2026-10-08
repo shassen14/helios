@@ -1,11 +1,10 @@
 //! Registers Gaussian filter factories (EKF, UKF).
 
-use super::input::IntegratedImuInputBuilder;
 use super::node::GaussianEstimatorNode;
 
 use crate::assembly::{contexts::GaussianEstimatorBuildContext, AutonomyRegistry};
 use crate::config::{EkfDynamicsConfig, EstimatorConfig, EKF_KIND, UKF_KIND};
-use crate::nodes::gaussian_estimator::EstimatorInputBuilder;
+use crate::nodes::estimation::{EstimatorInputBuilder, IntegratedImuInputBuilder};
 use crate::pipeline::node::PipelineNode;
 
 use helios_core::estimation::dynamics::integrated_imu::{
@@ -64,6 +63,7 @@ fn build_ekf(
                     },
                 )),
                 Box::new(IntegratedImuInputBuilder::new(
+                    agent.clone(),
                     c.accel_channel.as_str(),
                     c.gyro_channel.as_str(),
                 )),

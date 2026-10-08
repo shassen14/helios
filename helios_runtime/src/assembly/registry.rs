@@ -12,10 +12,17 @@
 //! - `build_node(kind, section, ctx)` — looks up the kind and builds the node
 //!   from its TOML section.
 //!
-//! A second table takes a command type's name to what the command seam needs
-//! to fold it:
-//! - `register_command_type::<T>(name)` — adds a type a `[command.<fold>]`
-//!   table can name in its `type` key.
+//! Every other table lives in an **extension**, one value per type, owned by
+//! the concept that gives the table meaning. The registry stores extensions
+//! without knowing what they hold:
+//! - `extension_mut::<T>()` — the extension of type `T`, added empty if
+//!   absent; its own methods register into it.
+//! - `extension::<T>()` — the extension of type `T`, for a pass or factory to
+//!   look kinds up in.
+//!
+//! The built-in extensions are the command seam's `CommandTypes` and the
+//! estimator's `EstimatorComponents`. An outside crate adds its own the same
+//! way, without a change here.
 //!
 //! The per-family maps, with a `register_<family>` / `build_<family>` pair
 //! each, still hold every kind not yet moved onto the one map.
@@ -25,18 +32,21 @@
 //!
 //! ## Extension
 //!
-//! Register a custom node kind on an existing registry:
+//! Register a custom node kind, command type or estimator filter on an
+//! existing registry:
 //! ```ignore
 //! registry.register_node("MyPid", build_my_pid)?;
+//! registry.extension_mut::<CommandTypes>().register::<Thrust>("Thrust")?;
+//! registry
+//!     .extension_mut::<EstimatorComponents>()
+//!     .register_filter("IteratedEkf", build_iterated_ekf)?;
 //! ```
 
 use super::contexts::{
     GaussianEstimatorBuildContext, MeasurementModelBuildContext, MockEstimatorBuildContext,
 };
-
 use super::error::PipelineAssemblyError;
 use super::factory::{erase, BuildContext, BuiltNode, ErasedFactory, FactoryOutput};
-use super::seams::command::CommandType;
 
 use crate::config::EstimatorConfig;
 use crate::pipeline::node::PipelineNode;
@@ -46,10 +56,10 @@ use helios_core::estimation::measurement::MeasurementModel;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::Display;
-use std::ops::Add;
 
 type MeasurementModelFactory = Box<
     dyn Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> + Send + Sync,
@@ -79,8 +89,9 @@ pub struct AutonomyRegistry {
     // Node kind → factory. Sorted, so an unknown-kind error lists the
     // registered kinds in a stable order.
     nodes: BTreeMap<String, ErasedFactory>,
-    // Command type name → its fold entry. Sorted, for the same reason.
-    command_types: BTreeMap<String, CommandType>,
+    // Extension type → the one value of that type. Each is a table owned by
+    // the concept that defines it; the registry never looks inside.
+    extensions: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
     measurement_models: HashMap<String, MeasurementModelFactory>,
     gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
     // mocks
@@ -89,14 +100,9 @@ pub struct AutonomyRegistry {
 
 impl Default for AutonomyRegistry {
     fn default() -> Self {
-        let mut registry = Self {
-            nodes: BTreeMap::new(),
-            command_types: BTreeMap::new(),
-            measurement_models: HashMap::new(),
-            gaussian_estimators: HashMap::new(),
-            mock_estimators: HashMap::new(),
-        };
+        let mut registry = Self::empty();
         // Registration order: leaf dependencies before composites.
+        crate::nodes::estimation::register(&mut registry);
         crate::nodes::gaussian_estimator::register(&mut registry);
         crate::nodes::occupancy_grid::register(&mut registry);
         crate::nodes::controller::register(&mut registry);
@@ -112,6 +118,18 @@ impl Default for AutonomyRegistry {
 }
 
 impl AutonomyRegistry {
+    /// A registry with no kinds and no extensions. Built-ins are added by
+    /// `default()`; tests use this to see what an absent table looks like.
+    pub(crate) fn empty() -> Self {
+        Self {
+            nodes: BTreeMap::new(),
+            extensions: HashMap::new(),
+            measurement_models: HashMap::new(),
+            gaussian_estimators: HashMap::new(),
+            mock_estimators: HashMap::new(),
+        }
+    }
+
     // --- Registration ---
 
     /// Registers a node kind under `kind`, the string a `[nodes.<name>]` table
@@ -140,30 +158,6 @@ impl AutonomyRegistry {
         }
 
         self.nodes.insert(kind.clone(), erase(kind, build));
-
-        Ok(())
-    }
-
-    /// Registers command type `T` under `name`, the string a
-    /// `[command.<fold>]` table names in its `type` key.
-    ///
-    /// A fold of this type sums its members' `T` outputs, so `T` must be
-    /// addable. Any number of folds may share a type.
-    ///
-    /// Fails if `name` is already registered; the first registration is kept.
-    pub fn register_command_type<T>(
-        &mut self,
-        name: impl Into<String>,
-    ) -> Result<(), DuplicateCommandType>
-    where
-        T: Send + Sync + Clone + Add<Output = T> + 'static,
-    {
-        let name = name.into();
-        if self.command_types.contains_key(&name) {
-            return Err(DuplicateCommandType { name });
-        }
-
-        self.command_types.insert(name, CommandType::of::<T>());
 
         Ok(())
     }
@@ -207,6 +201,37 @@ impl AutonomyRegistry {
         self.mock_estimators.insert(key.into(), Box::new(factory));
     }
 
+    // --- Extensions ---
+
+    /// The extension of type `T`, or `None` if nothing has added one.
+    ///
+    /// The default registry adds every built-in extension, so a built-in pass
+    /// or factory finds its table here. `None` means a registry built without
+    /// it, which reads the same as an empty table.
+    pub fn extension<T>(&self) -> Option<&T>
+    where
+        T: Any + Send + Sync,
+    {
+        self.extensions
+            .get(&TypeId::of::<T>())
+            .and_then(|extension| extension.downcast_ref::<T>())
+    }
+
+    /// The extension of type `T`, added as `T::default()` first if absent.
+    ///
+    /// Registration goes through the extension's own methods, so the registry
+    /// stays the same whatever tables a crate adds.
+    pub fn extension_mut<T>(&mut self) -> &mut T
+    where
+        T: Any + Send + Sync + Default,
+    {
+        self.extensions
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| Box::new(T::default()))
+            .downcast_mut::<T>()
+            .expect("an extension is stored under its own TypeId")
+    }
+
     // --- Build ---
 
     /// Builds the node `ctx.node_name()` with the factory registered for
@@ -231,16 +256,6 @@ impl AutonomyRegistry {
         };
 
         Ok(factory(section, ctx)?)
-    }
-
-    /// The command type registered under `name`.
-    pub(crate) fn command_type(&self, name: &str) -> Option<&CommandType> {
-        self.command_types.get(name)
-    }
-
-    /// Every registered command type name, sorted.
-    pub(crate) fn command_type_names(&self) -> Vec<String> {
-        self.command_types.keys().cloned().collect()
     }
 
     pub(crate) fn build_measurement_model(
@@ -306,21 +321,6 @@ impl Display for DuplicateKind {
 
 impl Error for DuplicateKind {}
 
-/// A command type was registered twice.
-#[derive(Debug)]
-pub struct DuplicateCommandType {
-    /// The type name that was already taken.
-    pub name: String,
-}
-
-impl Display for DuplicateCommandType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "command type '{}' is already registered", self.name)
-    }
-}
-
-impl Error for DuplicateCommandType {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,11 +356,10 @@ mod tests {
     }
 
     /// A registry with only the given kinds on its node map, all built by
-    /// [`build_stub`]. The built-in kinds are cleared so the tests don't depend
-    /// on which ones exist.
+    /// [`build_stub`]. Starts empty so the tests don't depend on which
+    /// built-in kinds exist.
     fn registry_with(kinds: &[&str]) -> AutonomyRegistry {
-        let mut registry = AutonomyRegistry::default();
-        registry.nodes.clear();
+        let mut registry = AutonomyRegistry::empty();
         for kind in kinds {
             registry
                 .register_node(*kind, build_stub)
@@ -404,17 +403,53 @@ mod tests {
         );
     }
 
-    /// Registering a command type twice fails and names it.
+    /// Stands in for a table an outside crate keeps on the registry.
+    #[derive(Default)]
+    struct Tally(Vec<&'static str>);
+
+    /// A second extension type, to show the two don't share a slot.
+    #[derive(Default)]
+    struct OtherTally(Vec<&'static str>);
+
     #[test]
-    fn registering_a_command_type_twice_is_rejected() {
-        let mut registry = AutonomyRegistry::default();
-        let err = registry
-            .register_command_type::<f64>("DriveForce")
-            .expect_err("DriveForce is already a built-in");
-        assert_eq!(err.name, "DriveForce");
+    fn an_extension_is_absent_until_first_touched() {
+        let mut registry = AutonomyRegistry::empty();
+        assert!(registry.extension::<Tally>().is_none());
+
+        registry.extension_mut::<Tally>().0.push("first");
+
         assert_eq!(
-            err.to_string(),
-            "command type 'DriveForce' is already registered"
+            registry
+                .extension::<Tally>()
+                .map(|tally| tally.0.as_slice()),
+            Some(["first"].as_slice())
+        );
+    }
+
+    #[test]
+    fn extension_mut_keeps_what_was_added_before() {
+        let mut registry = AutonomyRegistry::empty();
+        registry.extension_mut::<Tally>().0.push("first");
+        registry.extension_mut::<Tally>().0.push("second");
+
+        assert_eq!(
+            registry.extension::<Tally>().map(|tally| tally.0.len()),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn extensions_are_keyed_by_type() {
+        let mut registry = AutonomyRegistry::empty();
+        registry.extension_mut::<Tally>().0.push("tally");
+
+        assert!(registry.extension::<OtherTally>().is_none());
+        registry.extension_mut::<OtherTally>().0.push("other");
+        assert_eq!(
+            registry
+                .extension::<Tally>()
+                .map(|tally| tally.0.as_slice()),
+            Some(["tally"].as_slice())
         );
     }
 

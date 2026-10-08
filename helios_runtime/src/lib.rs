@@ -29,12 +29,16 @@ pub use crate::stamped::{Health, Stamped};
 
 pub use crate::assembly::contexts::{GaussianEstimatorBuildContext, MeasurementModelBuildContext};
 pub use crate::assembly::{
-    build_pipeline, AutonomyRegistry, BuildContext, DuplicateCommandType, DuplicateKind,
-    FactoryError, FactoryOutput, PipelineAssemblyError,
+    build_pipeline, AutonomyRegistry, BuildContext, CommandTypes, ComponentError,
+    DuplicateCommandType, DuplicateComponentKind, DuplicateKind, FactoryError, FactoryOutput,
+    NoParams, PipelineAssemblyError, Site,
 };
 pub use crate::config::{
     AckermannProcessNoiseConfig, AgentBaseConfig, AidingConfig, AutonomyStack, EkfConfig,
     EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
     QuadcopterProcessNoiseConfig, SensorModelConfig, UkfConfig,
+};
+pub use crate::nodes::estimation::{
+    DynamicsComponent, EstimatorInputBuilder, FilterParts, SeedPose,
 };
 pub use crate::validation::{validate_autonomy_config, CapabilitySet, ConfigValidationError};

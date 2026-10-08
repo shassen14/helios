@@ -7,7 +7,7 @@
 //! as unpublished inputs on every node that reads its outputs.
 
 use super::error::PipelineAssemblyError;
-use super::factory::BuildContext;
+use super::factory::{BuildContext, KIND_KEY};
 use super::registry::AutonomyRegistry;
 
 use crate::config::AutonomyStack;
@@ -71,7 +71,7 @@ fn instantiate_node(
     agent: &AgentId,
     sensor_channels: &HashSet<String>,
 ) -> Result<(Box<dyn PipelineNode>, Vec<ChannelKey>), PipelineAssemblyError> {
-    let Some(toml::Value::String(kind)) = section.remove("kind") else {
+    let Some(toml::Value::String(kind)) = section.remove(KIND_KEY) else {
         return Err(PipelineAssemblyError::MissingNodeKind {
             node_name: name.to_string(),
         });
