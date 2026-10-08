@@ -15,7 +15,7 @@
 # moves — accelerometer bias, gyro drift, GPS noise, and the magnetometer's
 # heading reference — with no control or planning behavior mixed in.
 
-# ekf_advanced's aiding covariances match the ins_pro sensor suite this
+# ekf_advanced's aiding covariances match the raycast_car_ins_pro sensor fit this
 # profile is paired with in configs/sim/catalog/agents.
 [nodes.primary]
 from = "runtime.catalog.estimators.ekf_advanced"

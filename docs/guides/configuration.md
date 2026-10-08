@@ -12,16 +12,17 @@ live here rather than in Rust.
 configs/
   entities/           physical things, one file each
     vehicles/           bodies: topology, plant, actuation
-    sensors/            sensor devices: mount, rate, noise, channel
+    sensors/            sensor devices: kind, rate, noise, bias
+    sensor_fits/        a vehicle's sensors: each unit's device, mount, channel(s)
     objects/            world objects: mesh, class, mass
   runtime/            portable autonomy (helios_runtime's vocabulary)
     catalog/            reusable algorithm prefabs: estimators, planners,
-                        mappers, controllers, sensor suites, semantic classes
+                        mappers, controllers, semantic classes
     profiles/
       agent_profiles/   one agent's whole autonomy stack
   sim/                simulator only (helios_sim's vocabulary)
     catalog/
-      agents/           sim agents: a vehicle + sensors + a profile
+      agents/           sim agents: a vehicle + a sensor fit + a profile
       worlds/           world layouts: placed objects
     scenarios/          what to run: world, agents, simulation settings
     interaction/        viewer tuning (colors, sizes)
@@ -50,13 +51,12 @@ A table containing `from = "<key>"` is replaced by that prefab:
 ```toml
 vehicle = { from = "entities.vehicles.raycast_car" }
 
-[sensors.lidar]
-from = "entities.sensors.lidar2d"
+[sensors]
+from = "entities.sensor_fits.raycast_car_ins_pro_lidar"
 ```
 
 Keys written beside `from` are merged on top of the prefab. Scenarios use
-this to give each agent instance its name and poses, and a sim agent uses it
-to add a sensor to a referenced sensor suite.
+this to give each agent instance its name and poses.
 
 **Rules:**
 
@@ -145,7 +145,7 @@ An agent is split in two, so the autonomy can run on hardware unchanged:
 
 | | Sim agent (`sim/catalog/agents/`) | Agent profile (`runtime/profiles/agent_profiles/`) |
 |---|---|---|
-| Holds | the vehicle, its sensors, default poses, and which profile to run | the autonomy stack: its `[nodes]` (estimators, mappers, planners, path followers, controllers, allocators, teleop, …) and the seam sections that join them |
+| Holds | the vehicle, its sensor fit, default poses, and which profile to run | the autonomy stack: its `[nodes]` (estimators, mappers, planners, path followers, controllers, allocators, teleop, …) and the seam sections that join them |
 | Read by | the simulator | the simulator today, a hardware host later |
 
 ```toml
@@ -158,10 +158,7 @@ autonomy_stack = { from = "runtime.profiles.agent_profiles.raycast_car" }
 
 # Last, so the keys above are not read as sensor entries.
 [sensors]
-from = "runtime.catalog.sensor_suites.ins_pro"   # IMU + GPS + magnetometer
-
-[sensors.lidar]
-from = "entities.sensors.lidar2d"
+from = "entities.sensor_fits.raycast_car_ins_pro_lidar"   # IMU + GPS + magnetometer + 2 lidars
 ```
 
 Every node in a profile is a `[nodes.<name>]` table. The key is the node's
@@ -194,13 +191,15 @@ seams and is the worked example.
 
 ### Sensors and channels
 
-A sensor entity gives its mount, rate, noise, and the channel it publishes
-on:
+A sensor is described in two layers, so each value lives in one place.
+
+A **device** (`entities/sensors/`) holds what is true of every unit of one
+model: its kind, rate, noise and bias, and for a lidar its beam pattern.
 
 ```toml
+# entities/sensors/lidar2d.toml
 kind = "Lidar"
 rate = 10.0                                  # Hz
-transform = { translation = [1.5, 0.0, 0.5], rotation = [0.0, 0.0, 0.0] }  # body FLU
 range_min = 0.15                             # nearer returns are misses
 max_range = 50.0
 azimuth_fov = 360.0                          # degrees
@@ -208,19 +207,45 @@ azimuth_beams = 360
 ring_elevations = [0.0]                      # degrees; one entry per ring
 range_noise_stddev = 0.03
 angular_noise_stddev = 0.1
+```
+
+A **sensor fit** (`entities/sensor_fits/`) lists the units on one vehicle.
+Each table is one **installation**: which device it is, where it is mounted,
+and the channel(s) it publishes on. The table key names the sensor and
+seeds its noise, so two units of one device draw independent noise.
+
+```toml
+# entities/sensor_fits/raycast_car_ins_pro_lidar.toml (excerpt)
+[imu_pro]
+device = { from = "entities.sensors.imu_pro" }
+transform = { translation = [-1.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }  # body FLU
+accel_channel = "sensor.imu.accel"
+gyro_channel = "sensor.imu.gyro"
+
+[lidar]
+device = { from = "entities.sensors.lidar2d" }
+transform = { translation = [1.5, 0.0, 0.5], rotation = [0.0, 0.0, 0.0] }
 channel = "sensor.lidar.front"
 ```
+
+- `transform` is required.
+- The channel fields depend on the device kind. An IMU takes `accel_channel`
+  and `gyro_channel`; every other kind takes `channel`. A missing field, or
+  one the kind doesn't have, fails the load and names the field.
+- A fit's mounts are measured on one vehicle, so a fit is named after its
+  vehicle. Swapping devices in a fit (`raycast_car_ins_pro` →
+  `raycast_car_ins_basic`) leaves the sensors where they are.
 
 Channel names are written in config, never invented in code. A node in the
 profile reads a sensor by naming that channel, and the agent fails to build
 if a node reads a sensor channel no sensor on the body publishes. So adding
-or removing a sensor means changing the sim agent and the profile together.
+or removing a sensor means changing the sensor fit and the profile together.
 
 ## 6. Frames and units
 
 - **World poses** (scenario poses, object placements) are ENU: x east,
   y north, z up, in meters.
-- **Mounts** (sensor `transform`, vehicle mounts) are body FLU: x forward,
+- **Mounts** (an installation's `transform`, vehicle mounts) are body FLU: x forward,
   y left, z up, in meters.
 - **Rotations** are `[roll, pitch, yaw]` in degrees. Degrees are allowed in
   config wherever a human reads the value (headings, fields of view, ring

@@ -1,5 +1,5 @@
 # Advanced EKF — ultra-low-noise IMU, pro GPS + pro magnetometer aiding.
-# Tuned for the ins_pro sensor suite.
+# Tuned for the raycast_car_ins_pro sensor fit.
 #
 # A RecursiveEstimator node: the filter, dynamics, prior and aiding are each
 # named by their own `kind`. Aiding entries are named tables, applied in name

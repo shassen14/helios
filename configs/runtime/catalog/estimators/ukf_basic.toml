@@ -1,5 +1,5 @@
 # Basic UKF — ekf_basic with the filter swapped: same IMU dynamics, same
-# basic GPS + basic magnetometer aiding. Tuned for the ins_basic sensor suite.
+# basic GPS + basic magnetometer aiding. Tuned for the raycast_car_ins_basic sensor fit.
 #
 # Does not build today: the UKF needs every state block to be Euclidean, and
 # IntegratedImu carries an orientation quaternion. It builds once a dynamics

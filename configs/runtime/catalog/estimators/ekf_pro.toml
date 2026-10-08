@@ -1,6 +1,6 @@
 # configs/runtime/catalog/estimators/ekf_pro.toml
 # Pro EKF — low-noise IMU, standard GPS + basic magnetometer aiding.
-# Tuned for the ins_standard sensor suite.
+# Tuned for the raycast_car_ins_standard sensor fit.
 #
 # A RecursiveEstimator node: the filter, dynamics, prior and aiding are each
 # named by their own `kind`. Aiding entries are named tables, applied in name

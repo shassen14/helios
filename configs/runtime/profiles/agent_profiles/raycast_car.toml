@@ -10,7 +10,7 @@
 # drive leg and steer leg — because the raycast plant applies Torque and
 # Position, not a body velocity.
 
-# ekf_advanced matches the ins_pro sensor suite this profile is flown with.
+# ekf_advanced matches the raycast_car_ins_pro sensor fit this profile is flown with.
 [nodes.primary]
 from = "runtime.catalog.estimators.ekf_advanced"
 
