@@ -1,17 +1,15 @@
 // `[nodes]` integration tests: entries built through registered factories by
 // build_pipeline, using only the public API.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::config::{
-    EkfConfig, EkfDynamicsConfig, EstimateSeamConfig, IntegratedImuConfig,
-};
+use helios_runtime::config::EstimateSeamConfig;
 use helios_runtime::port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel};
 use helios_runtime::{
     build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStack, BodyCapabilities,
-    BuildContext, EkfInitialStateConfig, EstimatorConfig, FactoryOutput, PipelineAssemblyError,
-    PipelineBuildError, PipelineNode, PortDescriptor, Provenance, PublishedChannel, TickContext,
+    BuildContext, FactoryOutput, PipelineAssemblyError, PipelineBuildError, PipelineNode,
+    PortDescriptor, Provenance, PublishedChannel, TickContext,
 };
 
 use helios_core::interchange::measurement::envelope::SensorReading;
@@ -24,7 +22,7 @@ use serde::{Deserialize, Serialize};
 const TEST_KIND: &str = "TestCloudSource";
 
 /// The payload [`CloudSourceNode`] reads and writes: the type a mapper's scan
-/// channel carries, so a legacy mapper can consume its output.
+/// channel carries, so a mapper can consume its output.
 type CloudBatch = Vec<SensorReading<PointCloud<Flu>>>;
 
 /// A node that writes one point-cloud sensor channel and optionally reads
@@ -81,7 +79,7 @@ fn registry_with_test_kind() -> AutonomyRegistry {
 }
 
 /// A stack whose only content is `nodes_toml`, a TOML document of
-/// `[nodes.<name>]` tables. Tests add legacy sections with struct update.
+/// `[nodes.<name>]` tables. Tests add other sections with struct update.
 fn stack_with_nodes(nodes_toml: &str) -> AutonomyStack {
     toml::from_str(nodes_toml).expect("test TOML parses")
 }
@@ -119,26 +117,6 @@ fn build_err(stack: &AutonomyStack, host: &[&str]) -> Vec<PipelineAssemblyError>
 
 fn node_names(pipeline: &AutonomyPipeline) -> Vec<&str> {
     pipeline.channels().map(|(name, _)| name).collect()
-}
-
-/// An IMU-only EKF, the minimum estimator a mapper's state input needs.
-fn imu_ekf() -> EstimatorConfig {
-    EstimatorConfig::Ekf(EkfConfig {
-        dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
-            gravity_enu: [0.0, 0.0, -9.81],
-            accel_noise_stddev: 0.1,
-            gyro_noise_stddev: 0.01,
-            accel_bias_instability: 0.001,
-            gyro_bias_instability: 0.0001,
-            accel_bias_uncertainty_mps2: 0.1,
-            gyro_bias_uncertainty_radps: 0.01,
-            accel_channel: "imu/accel".to_string(),
-            gyro_channel: "imu/gyro".to_string(),
-        }),
-        aiding: vec![],
-        augmentation: vec![],
-        initial_state: EkfInitialStateConfig::default(),
-    })
 }
 
 const IMU_CHANNELS: [&str; 2] = ["imu/accel", "imu/gyro"];
@@ -217,12 +195,16 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
     // first by name, so it is built before its producer; the derived set must
     // already hold the producer's output when the grid is seeded.
     let stack = AutonomyStack {
-        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
         estimate: Some(EstimateSeamConfig {
             source: "nav_ekf".to_string(),
         }),
         ..stack_with_nodes(&format!(
             r#"
+            [nodes.nav_ekf]
+            kind = "RecursiveEstimator"
+            filter = {{ kind = "Ekf" }}
+            dynamics = {{ kind = "IntegratedImu", accel_channel = "imu/accel", gyro_channel = "imu/gyro", accel_noise_stddev = 0.1, gyro_noise_stddev = 0.01, accel_bias_instability = 0.001, gyro_bias_instability = 0.0001 }}
+
             [nodes.grid]
             kind = "OccupancyGrid2D"
             rate = 5.0
@@ -320,36 +302,6 @@ fn a_nodes_entry_without_a_kind_fails_the_build() {
     );
 }
 
-#[test]
-fn a_nodes_entry_named_like_a_legacy_node_fails_the_build() {
-    // `[nodes]` and the legacy family sections share one namespace. A
-    // collision must fail loudly, not keep one node and drop the other.
-    let stack = AutonomyStack {
-        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
-        ..stack_with_nodes(&format!(
-            r#"
-            [nodes.nav_ekf]
-            kind = "{TEST_KIND}"
-            output = "front.points"
-            "#
-        ))
-    };
-
-    let errors = build_err(&stack, &IMU_CHANNELS);
-
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            PipelineAssemblyError::PipelineBuild(build_errors)
-                if build_errors.iter().any(|b| matches!(
-                    b,
-                    PipelineBuildError::DuplicateNodeName { name } if name == "nav_ekf"
-                ))
-        )),
-        "expected DuplicateNodeName for `nav_ekf`, got {errors:?}"
-    );
-}
-
 /// A stack whose one node is a `MockOracle` named `primary`, the estimator it
 /// stands in for.
 fn mock_oracle_stack() -> AutonomyStack {
@@ -392,8 +344,7 @@ fn a_mock_oracle_entry_builds_on_a_body_with_truth() {
 #[test]
 fn a_mock_oracle_entry_is_refused_on_a_body_without_truth() {
     // The fence is the pipeline builder's, so it holds for a `[nodes]` entry
-    // exactly as for the legacy section: oracle truth only reaches a node
-    // through the body.
+    // like any other node: oracle truth only reaches a node through the body.
     let errors = build_on(body())
         .err()
         .expect("a body without oracle/pose must refuse the mock");

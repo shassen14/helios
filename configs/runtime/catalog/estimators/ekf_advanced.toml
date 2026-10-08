@@ -1,4 +1,3 @@
-# configs/runtime/catalog/estimators/ekf_advanced.toml
 # Advanced EKF — ultra-low-noise IMU, pro GPS + pro magnetometer aiding.
 # Tuned for the ins_pro sensor suite.
 #

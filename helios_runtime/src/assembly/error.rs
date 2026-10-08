@@ -3,42 +3,14 @@
 use super::factory::FactoryError;
 
 use crate::pipeline::PipelineBuildError;
-use crate::validation::ConfigValidationError;
 
 use helios_core::control::actuators::SetpointKind;
 
 /// Errors that can occur while assembling a pipeline from config.
 #[derive(Debug)]
 pub enum PipelineAssemblyError {
-    /// The config failed static validation before any node was built. Carries
-    /// every [`ConfigValidationError`] found, so a caller sees all config
-    /// problems at once rather than one factory failure at a time.
-    InvalidConfig(Vec<ConfigValidationError>),
-    /// The config references an algorithm or model not in the registry.
-    FactoryFailure { node_kind: String, reason: String },
     /// The assembled node graph failed topological validation.
     PipelineBuild(Vec<PipelineBuildError>),
-    /// An estimator's aiding, augmentation, or IMU prediction entry names a
-    /// sensor channel the host does not publish for this agent (absent from
-    /// `sensor_channels`), so its input would never arrive or no sensor frame
-    /// would resolve for it.
-    UnknownSensorChannel {
-        estimator_instance: String,
-        input_channel: String,
-    },
-    /// An aiding entry names a `sensor_payload` the assembler does not
-    /// recognize. (Should be caught first by `validate_autonomy_config`.)
-    UnknownSensorPayload {
-        estimator_instance: String,
-        payload_kind: String,
-    },
-    /// An augmentation entry could not be turned into a state block: its `kind`
-    /// matches no registered augmentation, or its noise parameters are invalid.
-    /// `reason` carries the underlying `AugmentationError`'s message.
-    AugmentationFailure {
-        estimator_instance: String,
-        reason: String,
-    },
     /// A node reads a sensor channel that neither the host publishes
     /// (absent from `sensor_channels`) nor any node in the graph derives, so
     /// its slot would stay empty forever and the node would silently never run
@@ -126,19 +98,6 @@ pub enum PipelineAssemblyError {
 impl std::fmt::Display for PipelineAssemblyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PipelineAssemblyError::InvalidConfig(errs) => {
-                write!(f, "invalid config: ")?;
-                for (i, e) in errs.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, "; ")?;
-                    }
-                    write!(f, "{e}")?;
-                }
-                Ok(())
-            }
-            PipelineAssemblyError::FactoryFailure { node_kind, reason } => {
-                write!(f, "factory '{node_kind}' failed: {reason}")
-            }
             PipelineAssemblyError::PipelineBuild(errs) => {
                 write!(f, "pipeline graph errors: ")?;
                 for (i, e) in errs.iter().enumerate() {
@@ -148,33 +107,6 @@ impl std::fmt::Display for PipelineAssemblyError {
                     write!(f, "{e}")?;
                 }
                 Ok(())
-            }
-            PipelineAssemblyError::UnknownSensorChannel {
-                estimator_instance,
-                input_channel,
-            } => {
-                write!(
-                    f,
-                    "estimator '{estimator_instance}' names sensor channel '{input_channel}', which the host does not publish for this agent"
-                )
-            }
-            PipelineAssemblyError::UnknownSensorPayload {
-                estimator_instance,
-                payload_kind,
-            } => {
-                write!(
-                    f,
-                    "estimator '{estimator_instance}' aiding entry has unknown sensor_payload '{payload_kind}'"
-                )
-            }
-            PipelineAssemblyError::AugmentationFailure {
-                estimator_instance,
-                reason,
-            } => {
-                write!(
-                    f,
-                    "estimator '{estimator_instance}' augmentation failed: {reason}"
-                )
             }
             PipelineAssemblyError::UnpublishedSensorInput { node_name, channel } => {
                 write!(

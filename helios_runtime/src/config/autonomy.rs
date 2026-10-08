@@ -1,10 +1,9 @@
 use super::{
-    ActuatorSeamConfig, CommandFoldConfig, EstimateSeamConfig, EstimatorConfig,
-    ReferenceSeamConfig, TfBufferConfig,
+    ActuatorSeamConfig, CommandFoldConfig, EstimateSeamConfig, ReferenceSeamConfig, TfBufferConfig,
 };
 
 use serde::Deserialize;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
@@ -15,13 +14,6 @@ pub struct AutonomyStack {
     /// nodes are built, reported and dumped in the same order every run.
     #[serde(default)]
     pub nodes: BTreeMap<String, toml::Table>,
-
-    /// Ego localization — named estimator instances.
-    /// Key is the instance name (e.g. `"primary"`); value is the estimator config.
-    /// Most agents have exactly one entry. Multiple entries are valid for research
-    /// comparisons but each must publish to a distinct output channel.
-    #[serde(default)]
-    pub estimators: HashMap<String, EstimatorConfig>,
 
     /// The estimate seam: which estimator's state the rest of the stack reads
     /// and the TF edge comes from. Omitted when the stack has no estimator.

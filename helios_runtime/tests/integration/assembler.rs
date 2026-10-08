@@ -1,18 +1,16 @@
 // Assembler integration tests: build_pipeline topology resolution.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use helios_runtime::channels::{control, estimate};
 use helios_runtime::config::{
-    ActuatorSeamConfig, AidingConfig, AugmentationConfig, AutonomyStack, CommandFoldConfig,
-    EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimateSeamConfig, EstimatorConfig,
-    IntegratedImuConfig, ReferenceSeamConfig, SensorModelConfig,
+    ActuatorSeamConfig, AutonomyStack, CommandFoldConfig, EstimateSeamConfig, ReferenceSeamConfig,
 };
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
-    build_pipeline, AutonomyRegistry, BodyCapabilities, ConfigValidationError,
-    PipelineAssemblyError, PipelineBuildError, Provenance, PublishedChannel,
+    build_pipeline, AutonomyRegistry, BodyCapabilities, PipelineAssemblyError, PipelineBuildError,
+    Provenance, PublishedChannel,
 };
 
 use helios_core::control::actuation_model::{ActuationModel, ActuatorSpec, SignConvention};
@@ -219,36 +217,13 @@ fn teleop_intent_is_mapped_into_the_reference() {
 
 #[test]
 fn nodes_are_named_by_their_config_key_not_their_kind() {
-    // Whereas each factory's unit test injects `instance_name` directly, this
-    // exercises the whole assembler: the estimator pass and `[nodes]`
-    // instantiation must thread the table key through to the built node's
-    // identity. Two nodes
+    // Whereas each factory's unit test builds one node directly, this
+    // exercises the whole assembler: `[nodes]` instantiation must thread the
+    // table key through to the built node's identity. Two nodes
     // of a shared kind under distinct keys would otherwise collide on one name
     // in any name-keyed tooling (observability paths, `channels()`).
-    let mut estimators = HashMap::new();
-    estimators.insert(
-        "nav_ekf".to_string(),
-        EstimatorConfig::Ekf(EkfConfig {
-            dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
-                gravity_enu: [0.0, 0.0, -9.81],
-                accel_noise_stddev: 0.1,
-                gyro_noise_stddev: 0.01,
-                accel_bias_instability: 0.001,
-                gyro_bias_instability: 0.0001,
-                accel_bias_uncertainty_mps2: 0.1,
-                gyro_bias_uncertainty_radps: 0.01,
-                accel_channel: "imu/accel".to_string(),
-                gyro_channel: "imu/gyro".to_string(),
-            }),
-            aiding: vec![],
-            augmentation: vec![],
-            initial_state: EkfInitialStateConfig::default(),
-        }),
-    );
-
     let stack = AutonomyStack {
-        nodes: BTreeMap::from([occupancy_grid("local_grid", "scan")]),
-        estimators,
+        nodes: BTreeMap::from([occupancy_grid("local_grid", "scan"), imu_ekf("nav_ekf")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
@@ -285,33 +260,12 @@ fn two_grids_publish_to_distinct_channels() {
     // map producer slot. Each publishes `MapData` on a channel named by its own
     // key; a single hardcoded output name would make the second grid a
     // `DuplicateProducer` and fail the build.
-    let mut estimators = HashMap::new();
-    estimators.insert(
-        "nav_ekf".to_string(),
-        EstimatorConfig::Ekf(EkfConfig {
-            dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
-                gravity_enu: [0.0, 0.0, -9.81],
-                accel_noise_stddev: 0.1,
-                gyro_noise_stddev: 0.01,
-                accel_bias_instability: 0.001,
-                gyro_bias_instability: 0.0001,
-                accel_bias_uncertainty_mps2: 0.1,
-                gyro_bias_uncertainty_radps: 0.01,
-                accel_channel: "imu/accel".to_string(),
-                gyro_channel: "imu/gyro".to_string(),
-            }),
-            aiding: vec![],
-            augmentation: vec![],
-            initial_state: EkfInitialStateConfig::default(),
-        }),
-    );
-
     let stack = AutonomyStack {
         nodes: BTreeMap::from([
             occupancy_grid("local", "scan/near"),
             occupancy_grid("global", "scan/far"),
+            imu_ekf("nav_ekf"),
         ]),
-        estimators,
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
@@ -991,50 +945,6 @@ fn an_allocator_outside_the_actuator_seam_does_not_reach_the_body() {
 }
 
 #[test]
-fn build_pipeline_rejects_invalid_config_before_assembly() {
-    // An augmentation with no aiding source on its sensor is a config error.
-    // `build_pipeline` runs static validation first, so this surfaces as
-    // `InvalidConfig` up front, before any node is built.
-    let EstimatorConfig::Ekf(mut ekf) = imu_ekf() else {
-        unreachable!("imu_ekf builds an EKF");
-    };
-    ekf.augmentation.push(AugmentationConfig {
-        kind: MAGNETOMETER_BIAS.to_string(),
-        sensor: "sensor.mag.primary".to_string(),
-        init_uncertainty: 5.0,
-        random_walk: 0.01,
-    });
-    let stack = AutonomyStack {
-        estimators: HashMap::from([("nav_ekf".to_string(), EstimatorConfig::Ekf(ekf))]),
-        estimate: Some(estimate_seam("nav_ekf")),
-        ..Default::default()
-    };
-
-    let Err(errors) = build_pipeline(
-        &stack,
-        &AutonomyRegistry::default(),
-        AgentId::new("test_agent"),
-        &host_channels_with_imu(&[]),
-        perception_body(),
-    ) else {
-        panic!("an unobservable augmentation must not build");
-    };
-
-    assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            PipelineAssemblyError::InvalidConfig(v)
-                if v.iter().any(|c| matches!(
-                    c,
-                    ConfigValidationError::AugmentationHasNoAidingSource { sensor, .. }
-                        if sensor == "sensor.mag.primary"
-                ))
-        )),
-        "expected InvalidConfig carrying AugmentationHasNoAidingSource, got {errors:?}"
-    );
-}
-
-#[test]
 fn planner_without_a_map_fails_the_build_naming_it() {
     // The planner reads `MapData` on the channel its `map_channel` names. With
     // no grid of that name nothing produces it, and the build names the
@@ -1253,7 +1163,7 @@ fn controllers_without_a_reference_section_fail_naming_the_reference() {
 #[test]
 fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     // The full augmentation path end-to-end through `build_pipeline`: an
-    // `EkfConfig` that declares a magnetometer aiding *and* a `magnetometer_bias`
+    // estimator that declares a magnetometer aiding *and* a `magnetometer_bias`
     // augmentation is assembled, then driven with biased readings. This exercises
     // the correctness crux the mechanism exists for — the augmentation `sensor`
     // and the `MagneticFieldModel`'s sensor frame must resolve to the *same*
@@ -1272,50 +1182,32 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     let world_field = [0.0, 1.0, 0.0];
     let true_bias_z = 3.0;
 
-    let ekf = EkfConfig {
-        dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
-            gravity_enu: [0.0, 0.0, -9.81],
-            accel_noise_stddev: 0.1,
-            gyro_noise_stddev: 0.01,
-            accel_bias_instability: 0.001,
-            gyro_bias_instability: 0.0001,
-            accel_bias_uncertainty_mps2: 0.1,
-            gyro_bias_uncertainty_radps: 0.01,
-            // Never published here, so the predict step is skipped and the
-            // trajectory stays frozen — every mag residual flows into the update.
-            accel_channel: "imu/accel".to_string(),
-            gyro_channel: "imu/gyro".to_string(),
-        }),
-        aiding: vec![AidingConfig {
-            sensor_payload: "MagneticField".to_string(),
-            model: SensorModelConfig {
-                kind: "magnetometer".to_string(),
-                gravity_enu: [0.0, 0.0, -9.81],
-                magnetic_field_enu: Some(world_field),
-            },
-            input_channel: MAG_CHANNEL.to_string(),
-            r_diag: vec![0.25, 0.25, 0.25],
-        }],
-        augmentation: vec![AugmentationConfig {
-            kind: MAGNETOMETER_BIAS.to_string(),
-            // Must string-match the aiding input_channel above: that shared key
-            // is what ties the block's sensor FrameId to the model observing it.
-            sensor: MAG_CHANNEL.to_string(),
-            init_uncertainty: 5.0,
-            random_walk: 0.01,
-        }],
-        initial_state: EkfInitialStateConfig {
-            // Pin orientation tightly so the residual lands on the bias, not on a
-            // spurious tilt (belt-and-suspenders with the Z-bias choice above).
-            orientation_uncertainty_deg: 1.0,
-            ..Default::default()
-        },
-    };
+    // The IMU channels are never published here, so the predict step is
+    // skipped and the trajectory stays frozen: every mag residual flows into
+    // the update. Orientation is pinned tightly so the residual lands on the
+    // bias, not on a spurious tilt (belt-and-suspenders with the Z-bias choice
+    // above). The augmentation's `sensor` must string-match the aiding
+    // `input`: that shared key is what ties the block's sensor FrameId to the
+    // model observing it.
+    let section = format!(
+        r#"{IMU_EKF}
+        [dynamics.initial_uncertainty]
+        orientation_deg = 1.0
 
-    let mut estimators = HashMap::new();
-    estimators.insert("nav_ekf".to_string(), EstimatorConfig::Ekf(ekf));
+        [aiding.mag]
+        input = "{MAG_CHANNEL}"
+        r_diag = [0.25, 0.25, 0.25]
+        model = {{ kind = "magnetometer", magnetic_field_enu = {world_field:?} }}
+
+        [[augmentation]]
+        kind = "{MAGNETOMETER_BIAS}"
+        sensor = "{MAG_CHANNEL}"
+        init_uncertainty = 5.0
+        random_walk = 0.01
+        "#
+    );
     let stack = AutonomyStack {
-        estimators,
+        nodes: BTreeMap::from([node_entry("nav_ekf", &section)]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
@@ -1409,76 +1301,6 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     );
 }
 
-#[test]
-fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
-    // The dual of the exit-proof: an EKF with no augmentation block must publish
-    // the bare 16-state INS shape with no MagBias slots — the build_pipeline-level
-    // echo of the builder-level guarantee in register.rs. This freezes the "empty
-    // augmentation ⇒ base filter shape unchanged" contract at the config front
-    // door.
-    let ekf = EkfConfig {
-        dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
-            gravity_enu: [0.0, 0.0, -9.81],
-            accel_noise_stddev: 0.1,
-            gyro_noise_stddev: 0.01,
-            accel_bias_instability: 0.001,
-            gyro_bias_instability: 0.0001,
-            accel_bias_uncertainty_mps2: 0.1,
-            gyro_bias_uncertainty_radps: 0.01,
-            accel_channel: "imu/accel".to_string(),
-            gyro_channel: "imu/gyro".to_string(),
-        }),
-        aiding: vec![],
-        augmentation: vec![],
-        initial_state: EkfInitialStateConfig::default(),
-    };
-
-    let mut estimators = HashMap::new();
-    estimators.insert("nav_ekf".to_string(), EstimatorConfig::Ekf(ekf));
-    let stack = AutonomyStack {
-        estimators,
-        estimate: Some(estimate_seam("nav_ekf")),
-        ..Default::default()
-    };
-
-    let body = BodyCapabilities {
-        name: "rover".to_string(),
-        publishes: vec![],
-        ..Default::default()
-    };
-
-    let pipeline = build_pipeline(
-        &stack,
-        &AutonomyRegistry::default(),
-        AgentId::new("test_agent"),
-        &host_channels_with_imu(&[]),
-        body,
-    )
-    .expect("un-augmented stack must build");
-
-    pipeline.tick(MonotonicTime(0.0), 0.05, &MockRuntime);
-
-    let state = pipeline
-        .read_state()
-        .expect("the estimator must publish a state");
-    assert_eq!(
-        state.value.schema().storage_dim(),
-        16,
-        "bare INS base, no augmentation"
-    );
-    assert!(
-        state
-            .value
-            .schema()
-            .storage_offset_of(&StateVariable::new(
-                Quantity::MagBias(FrameId::sensor(AgentId::new("rover"), "mag/primary")),
-                Component::X,
-            ))
-            .is_none(),
-        "no augmentation ⇒ no MagBias slots"
-    );
-}
-
 /// A one-ring, four-beam scan with two returns; the other two cells are blank
 /// (nothing returned) and drop out when flattened.
 fn two_return_field() -> RangeField<Flu> {
@@ -1553,24 +1375,26 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
     assert_eq!(clouds.value[0].data.len(), 2);
 }
 
-/// An IMU-only EKF: the minimum estimator a mapper's state input needs.
-fn imu_ekf() -> EstimatorConfig {
-    EstimatorConfig::Ekf(EkfConfig {
-        dynamics: EkfDynamicsConfig::IntegratedImu(IntegratedImuConfig {
-            gravity_enu: [0.0, 0.0, -9.81],
-            accel_noise_stddev: 0.1,
-            gyro_noise_stddev: 0.01,
-            accel_bias_instability: 0.001,
-            gyro_bias_instability: 0.0001,
-            accel_bias_uncertainty_mps2: 0.1,
-            gyro_bias_uncertainty_radps: 0.01,
-            accel_channel: "imu/accel".to_string(),
-            gyro_channel: "imu/gyro".to_string(),
-        }),
-        aiding: vec![],
-        augmentation: vec![],
-        initial_state: EkfInitialStateConfig::default(),
-    })
+/// The section of an IMU-only EKF reading `imu/accel` and `imu/gyro`, as a
+/// profile would write it. Tables can follow it.
+const IMU_EKF: &str = r#"
+    kind = "RecursiveEstimator"
+    filter = { kind = "Ekf" }
+
+    [dynamics]
+    kind = "IntegratedImu"
+    accel_channel = "imu/accel"
+    gyro_channel = "imu/gyro"
+    accel_noise_stddev = 0.1
+    gyro_noise_stddev = 0.01
+    accel_bias_instability = 0.001
+    gyro_bias_instability = 0.0001
+"#;
+
+/// An IMU-only EKF named `name`: the minimum estimator a mapper's state input
+/// needs.
+fn imu_ekf(name: &str) -> (String, toml::Table) {
+    node_entry(name, IMU_EKF)
 }
 
 /// Rate of the grids built by [`occupancy_grid`]. The node is rate-gated: it
@@ -1614,11 +1438,11 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
     // deproject node's output, a derived sensor channel, so it needs no host
     // publisher, and the producer is ordered ahead of the mapper.
     let stack = AutonomyStack {
-        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
         estimate: Some(estimate_seam("nav_ekf")),
         nodes: BTreeMap::from([
             deproject("front_deproject", "lidar", "lidar.points"),
             occupancy_grid("local", "lidar.points"),
+            imu_ekf("nav_ekf"),
         ]),
         ..Default::default()
     };
@@ -1650,9 +1474,8 @@ fn mapper_reading_an_unpublished_channel_fails_the_build() {
     // A scan channel no one publishes used to build fine and leave the mapper
     // silently empty. It must now fail, naming the node and the channel.
     let stack = AutonomyStack {
-        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
         estimate: Some(estimate_seam("nav_ekf")),
-        nodes: BTreeMap::from([occupancy_grid("local", "lidar.typo")]),
+        nodes: BTreeMap::from([occupancy_grid("local", "lidar.typo"), imu_ekf("nav_ekf")]),
         ..Default::default()
     };
 
@@ -1762,7 +1585,7 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
     // all the same: an estimator naming one the host does not publish would
     // build, never receive a sample, and never run.
     let stack = AutonomyStack {
-        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        nodes: BTreeMap::from([imu_ekf("nav_ekf")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
@@ -1780,29 +1603,25 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            PipelineAssemblyError::UnknownSensorChannel { estimator_instance, input_channel }
-                if estimator_instance == "nav_ekf" && input_channel == "imu/accel"
+            PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
+                if node_name == "nav_ekf" && channel == "imu/accel"
         )),
-        "expected UnknownSensorChannel for `nav_ekf` / `imu/accel`, got {errors:?}"
+        "expected UnpublishedSensorInput for `nav_ekf` / `imu/accel`, got {errors:?}"
     );
 }
 
-/// [`imu_ekf`] aided by a magnetometer reading `mag_channel`.
-fn mag_aided_imu_ekf(mag_channel: &str) -> EstimatorConfig {
-    let EstimatorConfig::Ekf(mut ekf) = imu_ekf() else {
-        unreachable!("imu_ekf builds an EKF");
-    };
-    ekf.aiding = vec![AidingConfig {
-        sensor_payload: "MagneticField".to_string(),
-        model: SensorModelConfig {
-            kind: "magnetometer".to_string(),
-            gravity_enu: [0.0, 0.0, -9.81],
-            magnetic_field_enu: Some([0.0, 1.0, 0.0]),
-        },
-        input_channel: mag_channel.to_string(),
-        r_diag: vec![0.25, 0.25, 0.25],
-    }];
-    EstimatorConfig::Ekf(ekf)
+/// [`imu_ekf`] named `nav_ekf`, aided by a magnetometer reading
+/// `mag_channel`.
+fn mag_aided_imu_ekf(mag_channel: &str) -> (String, toml::Table) {
+    let section = format!(
+        r#"{IMU_EKF}
+        [aiding.mag]
+        input = "{mag_channel}"
+        r_diag = [0.25, 0.25, 0.25]
+        model = {{ kind = "magnetometer", magnetic_field_enu = [0.0, 1.0, 0.0] }}
+        "#
+    );
+    node_entry("nav_ekf", &section)
 }
 
 #[test]
@@ -1811,7 +1630,7 @@ fn estimator_aided_by_a_host_channel_builds() {
     // because the generic sensor-input pass seeds optional inputs too; were it
     // to skip them, this build would fail with an unsatisfied input.
     let stack = AutonomyStack {
-        estimators: HashMap::from([("nav_ekf".to_string(), mag_aided_imu_ekf("mag/primary"))]),
+        nodes: BTreeMap::from([mag_aided_imu_ekf("mag/primary")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
@@ -1833,10 +1652,10 @@ fn estimator_aided_by_a_host_channel_builds() {
 
 #[test]
 fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
-    // An aiding channel the host does not publish is caught by the estimator's
-    // own check, before the node exists, and named with the estimator instance.
+    // An aiding channel the host does not publish is caught by the sensor-input
+    // check every node gets, named with the estimator node.
     let stack = AutonomyStack {
-        estimators: HashMap::from([("nav_ekf".to_string(), mag_aided_imu_ekf("mag/typo"))]),
+        nodes: BTreeMap::from([mag_aided_imu_ekf("mag/typo")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
@@ -1854,10 +1673,10 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            PipelineAssemblyError::UnknownSensorChannel { estimator_instance, input_channel }
-                if estimator_instance == "nav_ekf" && input_channel == "mag/typo"
+            PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
+                if node_name == "nav_ekf" && channel == "mag/typo"
         )),
-        "expected UnknownSensorChannel for `nav_ekf` / `mag/typo`, got {errors:?}"
+        "expected UnpublishedSensorInput for `nav_ekf` / `mag/typo`, got {errors:?}"
     );
 }
 
@@ -1879,10 +1698,9 @@ fn astar(name: &str, goal_channel: &str) -> (String, toml::Table) {
 /// An IMU EKF, a `local` occupancy grid, and one A* planner per
 /// `(name, goal_channel)` pair: the smallest stack whose planners build.
 fn planner_stack(planners: &[(&str, &str)]) -> AutonomyStack {
-    let mut nodes = BTreeMap::from([occupancy_grid("local", "scan")]);
+    let mut nodes = BTreeMap::from([occupancy_grid("local", "scan"), imu_ekf("nav_ekf")]);
     nodes.extend(planners.iter().map(|(name, goal)| astar(name, goal)));
     AutonomyStack {
-        estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
         estimate: Some(estimate_seam("nav_ekf")),
         nodes,
         ..Default::default()

@@ -1,13 +1,14 @@
 //! Config-to-pipeline assembly: turns a resolved [`AutonomyStack`] into a
 //! ready-to-tick [`AutonomyPipeline`].
 //!
-//! - `stages` — [`build_pipeline`], the single entry point, and the passes
-//!   that build and wire each family's nodes.
+//! - `stages` — [`build_pipeline`], the single entry point: builds the
+//!   `[nodes]` entries, runs the seam passes and hands the result to the
+//!   pipeline builder.
 //! - `sensor_inputs` — where a node's sensor inputs may come from, and the
 //!   check that each one has a source.
-//! - `registry` — [`AutonomyRegistry`]: the node map, the legacy per-family
-//!   maps, and the extension store other tables live in (the command seam's
-//!   [`CommandTypes`], the estimator's component tables); [`DuplicateKind`].
+//! - `registry` — [`AutonomyRegistry`]: the node map and the extension store
+//!   other tables live in (the command seam's [`CommandTypes`], the
+//!   estimator's component tables); [`DuplicateKind`].
 //! - `factory` — [`BuildContext`], [`FactoryOutput`], [`BuildFailure`] and
 //!   [`FactoryError`]: the interface every node-kind factory shares.
 //! - `component` — `ComponentTable`, the kind → factory table a node factory
@@ -16,7 +17,6 @@
 //!   in the extension of the concept that owns them.
 //! - `instantiate` — builds every `[nodes]` entry through the factory
 //!   registered for its kind.
-//! - `contexts` — what each family's factory receives.
 //! - `seams` — the passes that combine several nodes' outputs into one seam
 //!   channel, each from its stack section.
 //! - `error` — [`PipelineAssemblyError`].
@@ -26,7 +26,6 @@
 //! [`AutonomyPipeline`]: crate::pipeline::AutonomyPipeline
 
 mod component;
-pub mod contexts;
 mod error;
 mod factory;
 mod instantiate;

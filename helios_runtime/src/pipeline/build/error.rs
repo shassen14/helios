@@ -8,10 +8,9 @@ use crate::port::{ChannelKey, InputNeed};
 ///
 /// `build` returns every error found in a stage as a `Vec` rather than
 /// stopping at the first. Wiring errors are reported before ordering runs,
-/// so a pipeline with both reports the wiring errors first. Disjoint from
-/// [`ConfigValidationError`](crate::validation::ConfigValidationError),
-/// which checks that TOML strings reference real registry keys — this
-/// type checks DAG structure.
+/// so a pipeline with both reports the wiring errors first. A node's own
+/// config is checked earlier, by its kind's factory; this type checks DAG
+/// structure.
 #[derive(Debug)]
 pub enum PipelineBuildError {
     /// A set of nodes wait on each other's outputs in the same tick, so no

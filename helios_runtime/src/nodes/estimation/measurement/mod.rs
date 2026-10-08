@@ -11,7 +11,6 @@
 mod models;
 mod reader;
 
-pub(crate) use models::{ACCELEROMETER_KIND, GPS_POSITION_KIND, GYROSCOPE_KIND, MAGNETOMETER_KIND};
 pub(crate) use reader::{Measurement, PayloadReader};
 
 use crate::assembly::BuildContext;
@@ -145,6 +144,7 @@ pub(super) fn register(components: &mut EstimatorComponents) {
 
 #[cfg(test)]
 mod tests {
+    use super::models::GPS_POSITION_KIND;
     use super::*;
 
     use crate::assembly::{AutonomyRegistry, ComponentError, NoParams};

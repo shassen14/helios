@@ -2,8 +2,7 @@
 //! publish loop, assembled from the estimator components (`nodes::estimation`)
 //! its section names.
 //!
-//! - `node` — `RecursiveEstimatorNode`, the loop, and the skip warnings it
-//!   shares with the legacy Gaussian-estimator node.
+//! - `node` — `RecursiveEstimatorNode`, the loop, and its skip warnings.
 //! - `config` — `RecursiveEstimatorConfig`, the `[nodes.<name>]` section.
 //! - `nis_health` — `NisWindow`, the windowed-NIS health check on one aiding
 //!   sensor.
@@ -14,7 +13,4 @@ mod nis_health;
 mod node;
 mod register;
 
-pub(crate) use node::{
-    aiding_drop_cause, passes_warn_throttle, predict_skip_cause, publish_estimate,
-};
 pub(crate) use register::register;

@@ -45,8 +45,8 @@
 //!   would eliminate the per-tick copy. Defer until profiling shows it.
 //! - Per-sensor weighting / inhibit is not expressible: all readings on
 //!   the one channel are integrated equally. If that becomes a real
-//!   requirement, switch to per-sensor named channels and a handler
-//!   pattern like the estimator family's `AidingHandler`.
+//!   requirement, switch to per-sensor named channels, one source per
+//!   sensor like the estimator's `MeasurementSource`.
 //!
 //! [`OccupancyGridMapper`]: helios_core::mapping::OccupancyGridMapper
 //! [`MapData`]: helios_core::interchange::perception::map::MapData

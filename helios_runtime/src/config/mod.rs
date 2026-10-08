@@ -1,8 +1,9 @@
 //! Portable autonomy configuration structs, shared by simulation and hardware.
 //!
-//! Re-exports `AgentBaseConfig`, `AutonomyStack`, and all sub-configs
-//! (`EstimatorConfig`, `EstimateSeamConfig`, `ReferenceSeamConfig`,
-//! `CommandFoldConfig`, `ActuatorSeamConfig`).
+//! Re-exports `AgentBaseConfig`, `AutonomyStack`, and its section configs
+//! (`EstimateSeamConfig`, `ReferenceSeamConfig`, `CommandFoldConfig`,
+//! `ActuatorSeamConfig`). A `[nodes]` kind keeps its own config beside its
+//! factory.
 //! These structs are TOML-deserializable and contain zero Bevy or simulation types.
 
 mod actuators;
@@ -10,7 +11,6 @@ mod agent;
 mod autonomy;
 mod command;
 mod estimate;
-mod estimator;
 mod reference;
 mod tf;
 
@@ -19,11 +19,5 @@ pub use agent::AgentBaseConfig;
 pub use autonomy::AutonomyStack;
 pub use command::CommandFoldConfig;
 pub use estimate::EstimateSeamConfig;
-pub use estimator::{
-    AckermannProcessNoiseConfig, AidingConfig, AugmentationConfig, EkfConfig, EkfDynamicsConfig,
-    EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig, MockOracleEstimatorConfig,
-    QuadcopterProcessNoiseConfig, SensorModelConfig, UkfConfig,
-};
-pub(crate) use estimator::{EKF_KIND, MOCK_ORACLE_KIND, UKF_KIND};
 pub use reference::{ArbitrationPolicyConfig, ReferenceSeamConfig};
 pub use tf::TfBufferConfig;

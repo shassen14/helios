@@ -9,14 +9,10 @@
 //! from outside the robot, such as mission goals and operator commands, are not
 //! measurements of the body.
 //!
-//! It is distinct from two neighbouring "capability"-shaped types:
-//!
-//! - The per-tick transform contract [`TfProvider`](helios_core::prelude::TfProvider),
-//!   passed into each node's `execute` beside the bus. `BodyCapabilities` is the
-//!   *static* declaration made once at assembly time.
-//! - [`CapabilitySet`](crate::validation::CapabilitySet) is the autonomy-stack
-//!   feature set (which algorithm families are enabled). `BodyCapabilities`
-//!   describes the body's I/O, not the brain's algorithms.
+//! It is distinct from the per-tick transform contract
+//! [`TfProvider`](helios_core::prelude::TfProvider), passed into each node's
+//! `execute` beside the bus. `BodyCapabilities` is the *static* declaration
+//! made once at assembly time.
 
 use crate::port::ChannelKey;
 

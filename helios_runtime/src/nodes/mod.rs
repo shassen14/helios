@@ -8,11 +8,11 @@
 //! just the `register` fn the [`AutonomyRegistry`](crate::assembly::AutonomyRegistry) calls.
 //!
 //! One node type per family: the node is generic over the family trait object,
-//! so `GaussianEstimatorNode` wraps any `Box<dyn GaussianStateEstimator>` (EKF,
-//! UKF, ESKF, IF). `mocks` holds runtime-native test doubles that wrap no core
+//! so `RecursiveEstimatorNode` wraps any `Box<dyn GaussianStateEstimator>` (EKF,
+//! UKF, …). `mocks` holds runtime-native test doubles that wrap no core
 //! trait. `estimation` is not a family: it holds the components (filter,
 //! dynamics, measurement) every estimator family assembles its node from;
-//! `recursive_estimator` is the first family built from them. `estimate_relay`
+//! `recursive_estimator` is the family built from them today. `estimate_relay`
 //! is the node the estimate seam adds, forwarding the authoritative
 //! estimator's state.
 
@@ -22,7 +22,6 @@ pub mod controller;
 pub mod deproject;
 pub mod estimate_relay;
 pub mod estimation;
-pub mod gaussian_estimator;
 pub mod mocks;
 pub mod occupancy_grid;
 pub mod path_follower;

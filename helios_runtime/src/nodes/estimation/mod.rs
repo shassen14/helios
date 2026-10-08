@@ -26,17 +26,9 @@ pub use components::EstimatorComponents;
 pub use dynamics::{DynamicsComponent, EstimatorInputBuilder, SeedPose};
 pub use filter::FilterParts;
 
-pub(crate) use dynamics::{
-    IntegratedImuInputBuilder, DEFAULT_ACCEL_BIAS_UNCERTAINTY_MPS2,
-    DEFAULT_GYRO_BIAS_UNCERTAINTY_RADPS, DEFAULT_ORIENTATION_UNCERTAINTY_DEG,
-    DEFAULT_POSITION_UNCERTAINTY_M, DEFAULT_VELOCITY_UNCERTAINTY_MPS, INTEGRATED_IMU_KIND,
-};
-pub(crate) use filter::EKF_FILTER_KIND;
-pub(crate) use gravity::default_gravity_enu;
-pub(crate) use measurement::{
-    Measurement, MeasurementSource, MeasurementWiring, PayloadReader, ACCELEROMETER_KIND,
-    GPS_POSITION_KIND, GYROSCOPE_KIND, MAGNETOMETER_KIND,
-};
+#[cfg(test)]
+pub(crate) use measurement::PayloadReader;
+pub(crate) use measurement::{Measurement, MeasurementSource, MeasurementWiring};
 
 use crate::assembly::AutonomyRegistry;
 

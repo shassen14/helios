@@ -26,9 +26,6 @@
 //! estimator's `EstimatorComponents`. An outside crate adds its own the same
 //! way, without a change here.
 //!
-//! The per-family maps, with a `register_<family>` / `build_<family>` pair
-//! each, still hold every kind not yet moved onto the one map.
-//!
 //! `AutonomyRegistry::default()` calls every sub-module's `register()` so all
 //! built-in algorithms are available without any manual registration.
 //!
@@ -44,19 +41,11 @@
 //!     .register_filter("IteratedEkf", build_iterated_ekf)?;
 //! ```
 
-use super::contexts::{
-    GaussianEstimatorBuildContext, MeasurementModelBuildContext, MockEstimatorBuildContext,
-};
 use super::error::PipelineAssemblyError;
 use super::factory::{
     erase, erase_with, BuildContext, BuildFailure, BuiltNode, ErasedFactory, FactoryOutput,
 };
 
-use crate::config::EstimatorConfig;
-use crate::pipeline::node::PipelineNode;
-use crate::validation::CapabilitySet;
-
-use helios_core::estimation::measurement::MeasurementModel;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
@@ -65,29 +54,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::Display;
 
-type MeasurementModelFactory = Box<
-    dyn Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String> + Send + Sync,
->;
-
-type GaussianEstimatorFactory = Box<
-    dyn Fn(
-            EstimatorConfig,
-            GaussianEstimatorBuildContext,
-            &AutonomyRegistry,
-        ) -> Result<Box<dyn PipelineNode>, String>
-        + Send
-        + Sync,
->;
-
-type MockEstimatorFactory = Box<
-    dyn Fn(EstimatorConfig, MockEstimatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
-        + Send
-        + Sync,
->;
-
 /// Portable factory registry for autonomy pipeline nodes.
 ///
-/// Keys match the `kind` strings used in TOML config (e.g. `"Ekf"`, `"AStar"`,
+/// Keys match the `kind` strings used in TOML config (e.g. `"RecursiveEstimator"`, `"AStar"`,
 /// `"PurePursuit"`).
 pub struct AutonomyRegistry {
     // Node kind → factory. Sorted, so an unknown-kind error lists the
@@ -96,10 +65,6 @@ pub struct AutonomyRegistry {
     // Extension type → the one value of that type. Each is a table owned by
     // the concept that defines it; the registry never looks inside.
     extensions: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
-    measurement_models: HashMap<String, MeasurementModelFactory>,
-    gaussian_estimators: HashMap<String, GaussianEstimatorFactory>,
-    // mocks
-    mock_estimators: HashMap<String, MockEstimatorFactory>,
 }
 
 impl Default for AutonomyRegistry {
@@ -107,7 +72,6 @@ impl Default for AutonomyRegistry {
         let mut registry = Self::empty();
         // Registration order: leaf dependencies before composites.
         crate::nodes::estimation::register(&mut registry);
-        crate::nodes::gaussian_estimator::register(&mut registry);
         crate::nodes::occupancy_grid::register(&mut registry);
         crate::nodes::controller::register(&mut registry);
         crate::nodes::planner::register(&mut registry);
@@ -129,9 +93,6 @@ impl AutonomyRegistry {
         Self {
             nodes: BTreeMap::new(),
             extensions: HashMap::new(),
-            measurement_models: HashMap::new(),
-            gaussian_estimators: HashMap::new(),
-            mock_estimators: HashMap::new(),
         }
     }
 
@@ -202,45 +163,6 @@ impl AutonomyRegistry {
         Ok(())
     }
 
-    pub(crate) fn register_measurement_model(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(MeasurementModelBuildContext) -> Result<Box<dyn MeasurementModel>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.measurement_models
-            .insert(key.into(), Box::new(factory));
-    }
-
-    pub(crate) fn register_gaussian_estimator(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(
-                EstimatorConfig,
-                GaussianEstimatorBuildContext,
-                &AutonomyRegistry,
-            ) -> Result<Box<dyn PipelineNode>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.gaussian_estimators
-            .insert(key.into(), Box::new(factory));
-    }
-
-    pub(crate) fn register_mock_estimator(
-        &mut self,
-        key: impl Into<String>,
-        factory: impl Fn(EstimatorConfig, MockEstimatorBuildContext) -> Result<Box<dyn PipelineNode>, String>
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.mock_estimators.insert(key.into(), Box::new(factory));
-    }
-
     // --- Extensions ---
 
     /// The extension of type `T`, or `None` if nothing has added one.
@@ -298,53 +220,6 @@ impl AutonomyRegistry {
         };
 
         Ok(factory(section, ctx, self)?)
-    }
-
-    pub(crate) fn build_measurement_model(
-        &self,
-        key: &str,
-        ctx: MeasurementModelBuildContext,
-    ) -> Result<Box<dyn MeasurementModel>, String> {
-        self.measurement_models
-            .get(key)
-            .ok_or_else(|| format!("No measurement model factory registered for '{key}'"))?(
-            ctx
-        )
-    }
-
-    pub(crate) fn build_gaussian_estimator(
-        &self,
-        key: &str,
-        config: EstimatorConfig,
-        ctx: GaussianEstimatorBuildContext,
-    ) -> Result<Box<dyn PipelineNode>, String> {
-        self.gaussian_estimators
-            .get(key)
-            .ok_or_else(|| format!("No Gaussian estimator factory registered for '{key}'"))?(
-            config, ctx, self,
-        )
-    }
-
-    pub(crate) fn build_mock_estimator(
-        &self,
-        key: &str,
-        config: EstimatorConfig,
-        ctx: MockEstimatorBuildContext,
-    ) -> Result<Box<dyn PipelineNode>, String> {
-        self.mock_estimators
-            .get(key)
-            .ok_or_else(|| format!("No mock estimator factory registered for '{key}'"))?(
-            config, ctx,
-        )
-    }
-
-    /// Snapshot of all registered keys per family, for `validate_autonomy_config`.
-    pub fn capabilities(&self) -> CapabilitySet {
-        CapabilitySet {
-            gaussian_estimators: self.gaussian_estimators.keys().cloned().collect(),
-            mock_estimators: self.mock_estimators.keys().cloned().collect(),
-            measurement_models: self.measurement_models.keys().cloned().collect(),
-        }
     }
 }
 

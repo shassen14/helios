@@ -8,5 +8,3 @@ mod dag;
 mod estimated_tf;
 #[path = "integration/nodes.rs"]
 mod nodes;
-#[path = "integration/validation.rs"]
-mod validation;

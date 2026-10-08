@@ -8,11 +8,6 @@ mod input;
 mod integrated_imu;
 
 pub use input::EstimatorInputBuilder;
-pub(crate) use integrated_imu::{
-    IntegratedImuInputBuilder, DEFAULT_ACCEL_BIAS_UNCERTAINTY_MPS2,
-    DEFAULT_GYRO_BIAS_UNCERTAINTY_RADPS, DEFAULT_ORIENTATION_UNCERTAINTY_DEG,
-    DEFAULT_POSITION_UNCERTAINTY_M, DEFAULT_VELOCITY_UNCERTAINTY_MPS, INTEGRATED_IMU_KIND,
-};
 
 use crate::nodes::estimation::EstimatorComponents;
 
@@ -109,6 +104,7 @@ pub(super) fn register(components: &mut EstimatorComponents) {
 
 #[cfg(test)]
 mod tests {
+    use super::integrated_imu::INTEGRATED_IMU_KIND;
     use super::*;
 
     use crate::assembly::{AutonomyRegistry, BuildContext, ComponentError, NoParams};

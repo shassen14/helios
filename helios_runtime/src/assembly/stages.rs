@@ -15,9 +15,9 @@
 //!   on hardware.
 //! - `sensor_channels` — the set of sensor channel names the host actually
 //!   publishes for this agent. Each channel name is also the leaf of the
-//!   sensor's [`FrameId`](helios_core::spatial::FrameId) (`FrameId::sensor(agent, channel_name)`), so an aiding
-//!   or augmentation entry that names a channel the host does not provide is
-//!   rejected at build time rather than silently failing to resolve at tick time.
+//!   sensor's [`FrameId`](helios_core::spatial::FrameId) (`FrameId::sensor(agent, channel_name)`), so a node
+//!   that reads a channel the host does not provide, and no node derives, is
+//!   rejected at build time rather than silently never running.
 //! - `host_capabilities` — the body as the host describes it: its name, its
 //!   actuators (which the actuator seam checks every driven actuator against),
 //!   and the body channels that are not config-derived sensors (today:
@@ -36,20 +36,7 @@
 //!
 //! Everything else — algorithm kinds, noise params, physical constants,
 //! channel names — comes from `stack`.
-//!
-//! ## Sensor payload dispatch
-//!
-//! Aiding handler construction requires a concrete `T: SensorPayload` at
-//! compile time. The assembler matches the `sensor_payload` string from
-//! [`AidingConfig`](crate::config::AidingConfig) to one of the known implementors via an inline `match`.
-//! This list must stay in sync with `KNOWN_SENSOR_PAYLOADS` in `validation.rs`
-//! and with the `SensorPayload` impls in `helios_core::interchange::measurement::sensor`.
-//!
-//! If third-party sensor payload types become a real requirement, this can be
-//! promoted to a registry family (`register_aiding_handler_factory`). For the
-//! current set of five built-in types, the inline match is sufficient.
 
-use super::contexts::MockEstimatorBuildContext;
 use super::error::PipelineAssemblyError;
 use super::instantiate::instantiate;
 use super::registry::AutonomyRegistry;
@@ -61,8 +48,6 @@ use super::sensor_inputs::{derived_channels, SensorInputs};
 
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 use crate::config::AutonomyStack;
-use crate::config::{EstimatorConfig, MOCK_ORACLE_KIND, UKF_KIND};
-use crate::nodes::gaussian_estimator;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
 use crate::port::ChannelKey;
@@ -73,12 +58,9 @@ use std::collections::HashSet;
 
 /// Builds a fully-validated [`AutonomyPipeline`] from a resolved [`AutonomyStack`].
 ///
-/// Runs [`crate::validation::validate_autonomy_config`] against the registry's
-/// capabilities first and short-circuits with
-/// [`PipelineAssemblyError::InvalidConfig`] if the config is invalid, so every
-/// host gets the same static checks with legible messages before assembly is
-/// attempted. Errors that need host-supplied context (an aiding channel with no
-/// unknown sensor channel, an unsatisfiable graph edge) still surface from assembly.
+/// Each node's own config is checked by its kind's factory; the stack-level
+/// checks (an unsourced sensor input, an unsatisfiable graph edge) follow once
+/// every node is built.
 ///
 /// # Parameters
 ///
@@ -87,8 +69,9 @@ use std::collections::HashSet;
 /// - `agent` — the agent's stable [`AgentId`] (its config name); every frame
 ///   this agent owns is keyed by it.
 /// - `sensor_channels` — the set of sensor channel names the host publishes for
-///   this agent. An aiding or augmentation entry naming a channel absent from
-///   this set is an [`UnknownSensorChannel`](PipelineAssemblyError::UnknownSensorChannel).
+///   this agent. A node reading a sensor channel absent from this set, and
+///   derived by no node, is an
+///   [`UnpublishedSensorInput`](PipelineAssemblyError::UnpublishedSensorInput).
 /// - `host_capabilities` — the body's capabilities as the host describes them
 ///   (name, actuators, reference channels such as `oracle/*`).
 ///   The assembler extends `host_capabilities.publishes` with the
@@ -101,15 +84,6 @@ pub fn build_pipeline(
     sensor_channels: &HashSet<String>,
     mut host_capabilities: BodyCapabilities,
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
-    // Static validation runs before any node is built: a config-level mistake
-    // (unknown kind, an augmentation no aiding source observes) is reported as
-    // itself rather than as a downstream factory or unsatisfied-input failure.
-    let config_errors =
-        crate::validation::validate_autonomy_config(stack, &registry.capabilities());
-    if !config_errors.is_empty() {
-        return Err(vec![PipelineAssemblyError::InvalidConfig(config_errors)]);
-    }
-
     let mut errors: Vec<PipelineAssemblyError> = vec![];
     let mut builder = PipelineBuilder::new();
     // The body's sensor channels the stack reads. Merged into the body's
@@ -136,16 +110,7 @@ pub fn build_pipeline(
         host: sensor_channels,
         derived: &derived,
     };
-    let mut nodes = instantiated.nodes;
-
-    // --- Estimators ---
-    // Built before the seams so the estimate seam can name one as its source.
-    for (instance_name, est_cfg) in &stack.estimators {
-        match build_estimator_node(instance_name, est_cfg, &agent, sensor_channels, registry) {
-            Ok(node) => nodes.push(node),
-            Err(e) => errors.push(e),
-        }
-    }
+    let nodes = instantiated.nodes;
 
     // --- Estimate seam ---
     // The `[estimate]` section names the estimator whose state the rest of
@@ -218,50 +183,4 @@ pub fn build_pipeline(
         .with_outside_inputs(outside_inputs)
         .build()
         .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
-}
-
-fn build_estimator_node(
-    instance_name: &str,
-    est_cfg: &EstimatorConfig,
-    agent: &AgentId,
-    sensor_channels: &HashSet<String>,
-    registry: &AutonomyRegistry,
-) -> Result<Box<dyn crate::pipeline::node::PipelineNode>, PipelineAssemblyError> {
-    // Dispatch on estimator family. Each family owns a different build
-    // context shape (Gaussian needs aiding handlers; mock needs none;
-    // particle will need particle-count / resampling). Adding a new
-    // family means a new factory map in the registry, a new context in
-    // `contexts.rs`, and a new arm here.
-    match est_cfg {
-        EstimatorConfig::Ekf(ekf_cfg) => gaussian_estimator::assemble(
-            instance_name,
-            est_cfg,
-            ekf_cfg,
-            agent,
-            sensor_channels,
-            registry,
-        ),
-        EstimatorConfig::Ukf(_) => Err(PipelineAssemblyError::FactoryFailure {
-            node_kind: UKF_KIND.to_string(),
-            reason: "UKF not yet implemented".to_string(),
-        }),
-        EstimatorConfig::MockOracle(_) => {
-            // Mocks declare oracle inputs through their port descriptor and
-            // the build-time check against BodyCapabilities decides whether
-            // the body satisfies them.
-            registry
-                .build_mock_estimator(
-                    MOCK_ORACLE_KIND,
-                    est_cfg.clone(),
-                    MockEstimatorBuildContext {
-                        agent: agent.clone(),
-                        instance_name: instance_name.to_string(),
-                    },
-                )
-                .map_err(|reason| PipelineAssemblyError::FactoryFailure {
-                    node_kind: MOCK_ORACLE_KIND.to_string(),
-                    reason,
-                })
-        }
-    }
 }
