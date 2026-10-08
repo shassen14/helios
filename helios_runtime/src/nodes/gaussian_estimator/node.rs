@@ -13,19 +13,17 @@
 //!    fault (a misshapen input) is warned, rate-limited.
 //! 2. **Update.** For each [`AidingHandler`]: read its sensor channel, sort
 //!    readings by timestamp, and sequentially apply each one to the filter.
-//! 3. **Publish.** Snapshot the filter state; write `FrameAwareState @ ""` on
-//!    the bus, and dual-publish the `base_link → odom` transform edge the
-//!    estimate implies for the `TfService` to fold.
+//! 3. **Publish.** Snapshot the filter state and write it on the channel named
+//!    after the node. The estimate seam's relay publishes the TF edge.
 
-use crate::channels::tf::tf_edge;
+use crate::channels::estimate::estimator_output;
 use crate::nodes::estimation::{EstimatorInputBuilder, Measurement, PayloadReader};
 use crate::nodes::recursive_estimator::{
     aiding_drop_cause, passes_warn_throttle, predict_skip_cause, publish_estimate,
 };
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
-    SensorChannel,
+    AlgorithmNodePortDescriptor, ChannelKey, PortBus, PortDescriptor, SensorChannel,
 };
 use crate::stamped::Health;
 
@@ -34,8 +32,6 @@ use helios_core::estimation::schema::MeasurementSchema;
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::interchange::measurement::sensor::SensorPayload;
 use helios_core::spatial::tf::TfProvider;
-use helios_core::spatial::transforms::tf::stamped::FrameEdge;
-use helios_core::spatial::FrameAwareState;
 
 use atomic_float::AtomicF64;
 use nalgebra::DMatrix;
@@ -157,10 +153,10 @@ impl<T: SensorPayload> AidingHandler for TypedAidingHandler<T> {
 ///
 /// Construction is via [`Self::new`]. The port descriptor is derived from the
 /// input builder and aiding handlers — callers don't compose channel keys
-/// directly. Output is `FrameAwareState @ ""`.
+/// directly. Output is its state, on the channel named after the node.
 pub(crate) struct GaussianEstimatorNode {
     name: String,
-    edge: FrameEdge,
+    output: ChannelKey,
     estimator: Mutex<Box<dyn GaussianStateEstimator>>,
     input_builder: Box<dyn EstimatorInputBuilder>,
     aiding: Vec<Box<dyn AidingHandler>>,
@@ -173,18 +169,18 @@ pub(crate) struct GaussianEstimatorNode {
 impl GaussianEstimatorNode {
     pub(crate) fn new(
         name: impl Into<String>,
-        edge: FrameEdge,
         estimator: Box<dyn GaussianStateEstimator>,
         input_builder: Box<dyn EstimatorInputBuilder>,
         aiding: Vec<Box<dyn AidingHandler>>,
     ) -> Self {
+        let name = name.into();
+        let output = estimator_output(&name);
         let mut builder = AlgorithmNodePortDescriptor::new()
             .inputs_from_slices(
                 input_builder.required_channels(),
                 input_builder.optional_channels(),
             )
-            .output_internal(InternalChannel::of::<FrameAwareState>())
-            .output_internal(tf_edge(&edge));
+            .output_internal(output.clone());
 
         for handler in &aiding {
             // Each aiding sensor is optional: the filter still predicts and
@@ -195,8 +191,8 @@ impl GaussianEstimatorNode {
         }
         let descriptor = builder.build();
         Self {
-            name: name.into(),
-            edge,
+            name,
+            output: output.into(),
             estimator: Mutex::new(estimator),
             input_builder,
             aiding,
@@ -246,7 +242,7 @@ impl PipelineNode for GaussianEstimatorNode {
         // 3. Publish snapshot.
         publish_estimate(
             bus,
-            &self.edge,
+            &self.output,
             estimator.state().clone(),
             tick.now,
             Health::Ok,
@@ -267,19 +263,15 @@ mod tests {
 
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::measurement::{Prediction, Unavailable};
-    use helios_core::estimation::schema::{
-        InputSchema, MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
-    };
+    use helios_core::estimation::schema::{InputSchema, MeasurementSchema, MeasurementSchemaBlock};
     use helios_core::estimation::{
         EstimatorInputs, Innovation, PredictOutcome, PredictSkipReason, SkipReason, UpdateOutcome,
     };
     use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::interchange::measurement::sensor::Acceleration;
     use helios_core::prelude::AgentId;
-    use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::state::Quantity;
-    use helios_core::spatial::transforms::tf::stamped::StampedTransform;
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
     use helios_core::spatial::{FrameAwareState, FrameId};
     use nalgebra::{DMatrix, DVector, Isometry3};
@@ -470,7 +462,7 @@ mod tests {
     }
 
     fn state_channel() -> ChannelKey {
-        InternalChannel::of::<FrameAwareState>().into()
+        estimator_output("ekf").into()
     }
 
     fn make_bus(extra_outputs: Vec<ChannelKey>) -> PortBus {
@@ -495,49 +487,19 @@ mod tests {
         }
     }
 
-    /// The `base_link → odom` edge the estimator owns, for `test_agent` — the
-    /// same frames [`MockEstimator::new`]'s state anchors, so its `pose()`
-    /// resolves and the dual-publish fires.
-    fn test_edge() -> FrameEdge {
-        let agent = AgentId::new("test_agent");
-        FrameEdge {
-            child: FrameId::base_link(agent.clone()),
-            parent: FrameId::odom(agent),
-        }
-    }
-
-    /// A state whose schema carries neither orientation nor an odom position
-    /// block, so `pose::<Flu, Enu>` returns `None` — the cold-start shape before
-    /// the filter is seeded with a pose.
-    fn poseless_state() -> FrameAwareState {
-        let agent = AgentId::new("test_agent");
-        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
-            Quantity::Velocity(FrameId::odom(agent)),
-            Convention::Enu,
-            None,
-            DVector::zeros(3),
-            DMatrix::zeros(3, 3),
-        )]);
-        FrameAwareState::from_schema(std::sync::Arc::new(schema), MonotonicTime(0.0))
-    }
-
     // --- Tests ---
 
     #[test]
-    fn descriptor_outputs_state_and_its_transform_edge() {
+    fn descriptor_outputs_only_its_state() {
         let node = GaussianEstimatorNode::new(
             "ekf",
-            test_edge(),
             Box::new(MockEstimator::new()),
             Box::new(AlwaysReadyBuilder::new()),
             vec![],
         );
-        // Two outputs: the rich FrameAwareState, and the bare transform edge the
-        // estimate dual-publishes for the TfService to fold.
+        // The state alone: the estimate seam's relay owns the TF edge.
         let outputs = &node.port_descriptor().outputs();
-        assert_eq!(outputs.len(), 2);
-        assert!(outputs.contains(&state_channel()));
-        assert!(outputs.contains(&tf_edge(&test_edge()).into()));
+        assert_eq!(outputs, &[state_channel()]);
     }
 
     #[test]
@@ -549,7 +511,6 @@ mod tests {
         );
         let node = GaussianEstimatorNode::new(
             "ekf",
-            test_edge(),
             Box::new(MockEstimator::new()),
             Box::new(AlwaysReadyBuilder::new()),
             vec![Box::new(handler)],
@@ -589,7 +550,6 @@ mod tests {
     fn execute_publishes_state_with_correct_stamp() {
         let node = GaussianEstimatorNode::new(
             "ekf",
-            test_edge(),
             Box::new(MockEstimator::new()),
             Box::new(AlwaysReadyBuilder::new()),
             vec![],
@@ -607,66 +567,11 @@ mod tests {
     }
 
     #[test]
-    fn execute_dual_publishes_the_transform_edge() {
-        let edge = test_edge();
-        let node = GaussianEstimatorNode::new(
-            "ekf",
-            edge.clone(),
-            Box::new(MockEstimator::new()),
-            Box::new(AlwaysReadyBuilder::new()),
-            vec![],
-        );
-        let bus = make_bus(vec![tf_edge(&edge).into()]);
-
-        node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-
-        let published = bus
-            .read::<StampedTransform>(tf_edge(&edge).into())
-            .expect("node must dual-publish the transform edge");
-        // The message names the edge it belongs to, child-in-parent.
-        assert_eq!(published.value.parent, edge.parent);
-        assert_eq!(published.value.child, edge.child);
-        // The inner (pose-held) stamp is the tick's `now`.
-        assert!((published.value.stamp.0 - 1.0).abs() < 1e-9);
-        // The mock's state is the schema default (identity pose); the erased
-        // edge must cross back to a typed Flu→Enu identity transform.
-        let typed = published
-            .value
-            .transform
-            .typed::<Flu, Enu>()
-            .expect("edge carries a Flu→Enu transform");
-        assert!(typed.into_inner().translation.vector.norm() < 1e-9);
-    }
-
-    #[test]
-    fn execute_skips_the_edge_when_state_has_no_pose() {
-        let edge = test_edge();
-        let node = GaussianEstimatorNode::new(
-            "ekf",
-            edge.clone(),
-            Box::new(MockEstimator::with_state(poseless_state())),
-            Box::new(AlwaysReadyBuilder::new()),
-            vec![],
-        );
-        let bus = make_bus(vec![tf_edge(&edge).into()]);
-
-        node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-
-        // State is still published; the edge is not — no pose to build it from,
-        // and a cold-start tick must not feed the buffer a bogus identity.
-        assert!(bus.read::<FrameAwareState>(state_channel()).is_some());
-        assert!(bus
-            .read::<StampedTransform>(tf_edge(&edge).into())
-            .is_none());
-    }
-
-    #[test]
     fn execute_publishes_even_when_input_builder_returns_none() {
         // Cold-start: predict is skipped but state still gets published so
         // downstream consumers see *something* (the prior).
         let node = GaussianEstimatorNode::new(
             "ekf",
-            test_edge(),
             Box::new(MockEstimator::new()),
             Box::new(NeverReadyBuilder { required: vec![] }),
             vec![],
@@ -843,7 +748,6 @@ mod tests {
         // rate-limited: two ticks inside one window latch only the first.
         let node = GaussianEstimatorNode::new(
             "ekf",
-            test_edge(),
             Box::new(
                 MockEstimator::new().with_predict_outcome(PredictOutcome::Skipped(
                     PredictSkipReason::InputShapeMismatch {
@@ -855,7 +759,7 @@ mod tests {
             Box::new(AlwaysReadyBuilder::new()),
             vec![],
         );
-        let bus = make_bus(vec![tf_edge(&test_edge()).into()]);
+        let bus = make_bus(vec![]);
 
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
         node.execute(&bus, &MockRuntime, tick_at(1.1, 0.1));
@@ -873,12 +777,11 @@ mod tests {
         ] {
             let node = GaussianEstimatorNode::new(
                 "ekf",
-                test_edge(),
                 Box::new(MockEstimator::new().with_predict_outcome(outcome)),
                 Box::new(AlwaysReadyBuilder::new()),
                 vec![],
             );
-            let bus = make_bus(vec![tf_edge(&test_edge()).into()]);
+            let bus = make_bus(vec![]);
 
             node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
 

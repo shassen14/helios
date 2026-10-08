@@ -55,6 +55,7 @@ use super::instantiate::instantiate;
 use super::registry::AutonomyRegistry;
 use super::seams::actuators::actuator_merge;
 use super::seams::command::command_sums;
+use super::seams::estimate::estimate_relay;
 use super::seams::reference::reference_selector;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
@@ -135,12 +136,31 @@ pub fn build_pipeline(
         host: sensor_channels,
         derived: &derived,
     };
+    let mut nodes = instantiated.nodes;
+
+    // --- Estimators ---
+    // Built before the seams so the estimate seam can name one as its source.
+    for (instance_name, est_cfg) in &stack.estimators {
+        match build_estimator_node(instance_name, est_cfg, &agent, sensor_channels, registry) {
+            Ok(node) => nodes.push(node),
+            Err(e) => errors.push(e),
+        }
+    }
+
+    // --- Estimate seam ---
+    // The `[estimate]` section names the estimator whose state the rest of
+    // the stack reads; a relay forwards it and publishes the TF edge.
+    match estimate_relay(stack.estimate.as_ref(), &nodes, &agent) {
+        Ok(Some(relay)) => builder = builder.add_node(relay),
+        Ok(None) => {}
+        Err(seam_errors) => errors.extend(seam_errors),
+    }
 
     // --- Reference seam ---
     // The `[reference]` section names the nodes whose references contend for
     // the one the controllers track. Members are `[nodes]` entries, so the seam
     // resolves them before the nodes move into the builder.
-    match reference_selector(stack.reference.as_ref(), &instantiated.nodes) {
+    match reference_selector(stack.reference.as_ref(), &nodes) {
         Ok(Some(selector)) => builder = builder.add_node(selector),
         Ok(None) => {}
         Err(seam_errors) => errors.extend(seam_errors),
@@ -149,7 +169,7 @@ pub fn build_pipeline(
     // --- Command seam ---
     // Each `[command.<fold>]` table names the nodes whose commands one `Sum`
     // folds into a channel named after the fold, which an allocator reads.
-    match command_sums(&stack.command, registry, &instantiated.nodes) {
+    match command_sums(&stack.command, registry, &nodes) {
         Ok(sums) => {
             for sum in sums {
                 builder = builder.add_node(sum);
@@ -163,30 +183,15 @@ pub fn build_pipeline(
     // commands one `Merge` unions into the command the body applies. What
     // each member drives is on its output port; the seam checks it against
     // the other members and against the body's actuators.
-    match actuator_merge(
-        stack.actuators.as_ref(),
-        &host_capabilities,
-        &instantiated.nodes,
-    ) {
+    match actuator_merge(stack.actuators.as_ref(), &host_capabilities, &nodes) {
         Ok(Some(merge)) => builder = builder.add_node(merge),
         Ok(None) => {}
         Err(seam_errors) => errors.extend(seam_errors),
     }
 
-    for node in instantiated.nodes {
+    for node in nodes {
         sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
         builder = builder.add_node(node);
-    }
-
-    // --- Estimators ---
-    for (instance_name, est_cfg) in &stack.estimators {
-        match build_estimator_node(instance_name, est_cfg, &agent, sensor_channels, registry) {
-            Ok(node) => {
-                sensor_inputs.seed(node.as_ref(), &mut external_channels, &mut errors);
-                builder = builder.add_node(node);
-            }
-            Err(e) => errors.push(e),
-        }
     }
 
     if !errors.is_empty() {

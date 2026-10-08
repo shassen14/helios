@@ -12,7 +12,8 @@
 //! 2. Read `oracle/twist` (optional).
 //! 3. Build a `FrameAwareState` on the kinematic carrier schema from the pose
 //!    and twist — position, linear/angular velocity, and attitude.
-//! 4. Publish on `Internal<FrameAwareState>` (default-named slot).
+//! 4. Publish on the channel named after the node. Like any estimator it
+//!    publishes no TF edge; the estimate seam's relay does.
 //!
 //! ## Body capability requirement
 //!
@@ -32,11 +33,10 @@
 //! [`PipelineBuildError::UnsatisfiedBodyCapabilities`]:
 //!     crate::pipeline::build_error::PipelineBuildError::UnsatisfiedBodyCapabilities
 
+use crate::channels::estimate::estimator_output;
 use crate::channels::{oracle_pose_channel, oracle_twist_channel};
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{
-    ChannelError, ChannelKey, InternalChannel, MockNodePortDescriptor, PortBus, PortDescriptor,
-};
+use crate::port::{ChannelError, ChannelKey, MockNodePortDescriptor, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::carrier::kinematic_carrier_schema;
@@ -55,6 +55,7 @@ use std::sync::Arc;
 pub(crate) struct MockOracleEstimatorNode {
     name: String,
     agent: AgentId,
+    output: ChannelKey,
     descriptor: PortDescriptor,
     /// The composed kinematic carrier schema, cached at construction and shared into
     /// every published state by `Arc` clone. Composing it allocates and the
@@ -65,13 +66,16 @@ pub(crate) struct MockOracleEstimatorNode {
 
 impl MockOracleEstimatorNode {
     pub(crate) fn new(name: impl Into<String>, agent: AgentId) -> Self {
+        let name = name.into();
+        let output = estimator_output(&name);
         let descriptor = MockNodePortDescriptor::new()
             .input_oracle(oracle_pose_channel())
             .optional_oracle(oracle_twist_channel())
-            .output_internal(InternalChannel::of::<FrameAwareState>())
+            .output_internal(output.clone())
             .build();
         Self {
-            name: name.into(),
+            name,
+            output: output.into(),
             schema: Arc::new(kinematic_carrier_schema(agent.clone())),
             agent,
             descriptor,
@@ -126,10 +130,9 @@ impl PipelineNode for MockOracleEstimatorNode {
             producer: tick.node_id,
         };
 
-        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
-        if let Err(ChannelError::UnknownChannel) = bus.write(state_channel.clone(), stamped) {
+        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), stamped) {
             tracing::warn!(
-                channel = %state_channel,
+                channel = %self.output,
                 "mock oracle estimator state output channel is not wired into the DAG"
             );
         }
@@ -218,7 +221,7 @@ mod tests {
     }
 
     fn state_channel() -> ChannelKey {
-        InternalChannel::of::<FrameAwareState>().into()
+        estimator_output("mock").into()
     }
 
     /// A descriptor that "produces" the oracle channels, so the bus has

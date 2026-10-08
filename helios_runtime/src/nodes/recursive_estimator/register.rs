@@ -19,7 +19,6 @@ use helios_core::estimation::augmentation::augmentation_block;
 use helios_core::estimation::schema::{check_measurement_state_agreement, StateSchemaBlock};
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
-use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_core::spatial::transforms::Transform;
 use helios_core::spatial::{FrameAwareState, FrameId};
 
@@ -91,11 +90,6 @@ fn build(
         FilterParts::new(initial_state, process),
     )?;
 
-    let agent = ctx.agent();
-    let edge = FrameEdge {
-        child: FrameId::base_link(agent.clone()),
-        parent: FrameId::odom(agent.clone()),
-    };
     let aiding = aiding
         .into_iter()
         .zip(nis_windows)
@@ -104,7 +98,7 @@ fn build(
             None => Aiding::new(source),
         })
         .collect();
-    let node = RecursiveEstimatorNode::new(ctx.node_name(), edge, filter.component, input, aiding);
+    let node = RecursiveEstimatorNode::new(ctx.node_name(), filter.component, input, aiding);
 
     let mut output = FactoryOutput::new(Box::new(node))
         .with_resolved_component([FILTER_KEY], filter.resolved)
@@ -234,8 +228,9 @@ mod tests {
     use super::*;
 
     use crate::assembly::NoParams;
+    use crate::channels::estimate::estimator_output;
     use crate::pipeline::node::{PipelineNode, TickContext};
-    use crate::port::{ChannelKey, InputPort, InternalChannel, PortBus, PortDescriptor};
+    use crate::port::{ChannelKey, InputPort, PortBus, PortDescriptor};
 
     use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
     use helios_core::estimation::measurement::{MeasurementModel, Prediction};
@@ -352,7 +347,7 @@ mod tests {
             },
         );
 
-        bus.read::<FrameAwareState>(InternalChannel::of::<FrameAwareState>().into())
+        bus.read::<FrameAwareState>(estimator_output(NODE).into())
             .expect("the node publishes its state")
             .value
             .clone()
@@ -447,7 +442,7 @@ mod tests {
         assert_eq!(optional, ["gps"]);
         assert!(descriptor
             .outputs()
-            .contains(&InternalChannel::of::<FrameAwareState>().into()));
+            .contains(&estimator_output(NODE).into()));
     }
 
     /// The resolved section carries each component's resolved sub-table, so

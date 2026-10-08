@@ -90,6 +90,7 @@ fn validation_valid_full_stack_passes() {
     let stack = AutonomyStack {
         nodes: Default::default(),
         estimators,
+        estimate: None,
         reference: None,
         command: Default::default(),
         actuators: None,

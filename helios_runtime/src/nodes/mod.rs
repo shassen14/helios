@@ -12,12 +12,15 @@
 //! UKF, ESKF, IF). `mocks` holds runtime-native test doubles that wrap no core
 //! trait. `estimation` is not a family: it holds the components (filter,
 //! dynamics, measurement) every estimator family assembles its node from;
-//! `recursive_estimator` is the first family built from them.
+//! `recursive_estimator` is the first family built from them. `estimate_relay`
+//! is the node the estimate seam adds, forwarding the authoritative
+//! estimator's state.
 
 pub mod allocator;
 pub mod combinators;
 pub mod controller;
 pub mod deproject;
+pub mod estimate_relay;
 pub mod estimation;
 pub mod gaussian_estimator;
 pub mod mocks;

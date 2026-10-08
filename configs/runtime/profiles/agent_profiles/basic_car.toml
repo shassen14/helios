@@ -7,3 +7,8 @@
 
 [estimators.primary]
 from = "runtime.catalog.estimators.ekf_basic"
+
+# The estimate the rest of the stack reads, and the source of the
+# odom → base_link edge: this stack's one estimator.
+[estimate]
+source = "primary"

@@ -15,7 +15,6 @@ use helios_core::estimation::filters::ekf::{CovarianceConditioning, ExtendedKalm
 use helios_core::estimation::schema::check_measurement_state_agreement;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
-use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_core::spatial::transforms::Transform;
 use helios_core::spatial::{FrameAwareState, FrameId};
 
@@ -136,11 +135,6 @@ fn build_ekf(
         )),
     ));
 
-    let edge = FrameEdge {
-        child: FrameId::base_link(agent.clone()),
-        parent: FrameId::odom(agent.clone()),
-    };
-
     // A body→odom FLU→ENU pose the composed schema cannot hold is a construction
     // error, named here rather than silently leaving the identity prior.
     initial_state
@@ -161,7 +155,6 @@ fn build_ekf(
     );
     Ok(Box::new(GaussianEstimatorNode::new(
         ctx.instance_name,
-        edge,
         ekf,
         input_builder,
         ctx.aiding,
@@ -171,13 +164,14 @@ fn build_ekf(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::estimate::estimator_output;
 
     use crate::config::{
         AckermannProcessNoiseConfig, EkfConfig, EkfInitialStateConfig, IntegratedImuConfig,
         QuadcopterProcessNoiseConfig,
     };
     use crate::pipeline::node::TickContext;
-    use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
+    use crate::port::{ChannelKey, PortBus, PortDescriptor};
 
     use crate::nodes::gaussian_estimator::{AidingHandler, TypedAidingHandler};
     use crate::port::SensorChannel;
@@ -327,7 +321,7 @@ mod tests {
         // (left empty → predict is skipped, cold start).
         let mut outputs: Vec<ChannelKey> =
             node.port_descriptor().required_inputs().cloned().collect();
-        outputs.push(InternalChannel::of::<FrameAwareState>().into());
+        outputs.push(estimator_output("aug").into());
         let descriptor = PortDescriptor::new(vec![], vec![], outputs, None);
         let bus = PortBus::new(&[descriptor]);
 
@@ -341,7 +335,7 @@ mod tests {
             },
         );
 
-        bus.read::<FrameAwareState>(InternalChannel::of::<FrameAwareState>().into())
+        bus.read::<FrameAwareState>(estimator_output("aug").into())
             .expect("node publishes its state")
             .value
             .clone()

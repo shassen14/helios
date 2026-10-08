@@ -5,6 +5,7 @@ use helios_core::{
 };
 
 use crate::{
+    channels::estimate::estimate,
     port::{ChannelKey, InternalChannel, PortBus},
     prelude::TickContext,
 };
@@ -26,7 +27,7 @@ pub(crate) trait SearchPlannerInputBuilder: Send + Sync {
     fn optional_channels(&self) -> &[ChannelKey];
 }
 
-/// Default builder: reads `FrameAwareState @ ""`, a configurable map channel,
+/// Default builder: reads the estimate (`FrameAwareState @ estimate`), a configurable map channel,
 /// and an optional `PlannerGoal` on a configurable goal channel (the planner
 /// config's `goal_channel`, defaulting to `"mission"`). Whichever host input
 /// declares that channel — a mission dispatcher, teleop, a ground-station
@@ -45,7 +46,7 @@ impl DefaultSearchPlannerInputBuilder {
     /// the mission goal to this same name, so the planner and the host input
     /// agree by construction.
     pub(crate) fn new(map_channel: InternalChannel, goal_channel: &str) -> Self {
-        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
+        let state_channel: ChannelKey = estimate().into();
         let map_channel_key: ChannelKey = map_channel.into();
         let goal_channel: ChannelKey = Self::goal_key(goal_channel);
 

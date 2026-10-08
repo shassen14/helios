@@ -2,11 +2,11 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use helios_runtime::channels::control;
+use helios_runtime::channels::{control, estimate};
 use helios_runtime::config::{
     ActuatorSeamConfig, AidingConfig, AugmentationConfig, AutonomyStack, CommandFoldConfig,
-    EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimatorConfig, IntegratedImuConfig,
-    ReferenceSeamConfig, SensorModelConfig,
+    EkfConfig, EkfDynamicsConfig, EkfInitialStateConfig, EstimateSeamConfig, EstimatorConfig,
+    IntegratedImuConfig, ReferenceSeamConfig, SensorModelConfig,
 };
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
@@ -62,6 +62,13 @@ fn reference_seam(base: &str, preferred: &[&str]) -> ReferenceSeamConfig {
             .into(),
     );
     section.try_into().expect("a valid reference section")
+}
+
+/// An `[estimate]` section naming `source` as the authoritative estimator.
+fn estimate_seam(source: &str) -> EstimateSeamConfig {
+    EstimateSeamConfig {
+        source: source.to_string(),
+    }
 }
 
 /// A stack whose only node is the teleop mapper, forwarded onto the reference.
@@ -242,6 +249,7 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
     let stack = AutonomyStack {
         nodes: BTreeMap::from([occupancy_grid("local_grid", "scan")]),
         estimators,
+        estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
 
@@ -304,6 +312,7 @@ fn two_grids_publish_to_distinct_channels() {
             occupancy_grid("global", "scan/far"),
         ]),
         estimators,
+        estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
 
@@ -442,7 +451,7 @@ fn drive_force_stack() -> AutonomyStack {
     }
 }
 
-/// A body that advertises `FrameAwareState` and the resolved `reference` on the
+/// A body that advertises the estimate and the resolved `reference` on the
 /// bus. The controllers read both, so a body publishing them satisfies the build
 /// without an estimator, path follower or arbiter — keeping these tests focused
 /// on the controller and allocator wiring. It has [`test_actuation`]'s
@@ -452,7 +461,7 @@ fn state_and_reference_body() -> BodyCapabilities {
         name: "oracle_state".to_string(),
         publishes: vec![
             PublishedChannel {
-                key: InternalChannel::of::<FrameAwareState>().into(),
+                key: estimate::estimate().into(),
                 provenance: Provenance::Exact,
             },
             PublishedChannel {
@@ -997,6 +1006,7 @@ fn build_pipeline_rejects_invalid_config_before_assembly() {
     });
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), EstimatorConfig::Ekf(ekf))]),
+        estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
 
@@ -1306,6 +1316,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     estimators.insert("nav_ekf".to_string(), EstimatorConfig::Ekf(ekf));
     let stack = AutonomyStack {
         estimators,
+        estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
 
@@ -1426,6 +1437,7 @@ fn no_declared_augmentation_leaves_the_base_schema_unchanged() {
     estimators.insert("nav_ekf".to_string(), EstimatorConfig::Ekf(ekf));
     let stack = AutonomyStack {
         estimators,
+        estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
 
@@ -1603,6 +1615,7 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
     // publisher, and the producer is ordered ahead of the mapper.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        estimate: Some(estimate_seam("nav_ekf")),
         nodes: BTreeMap::from([
             deproject("front_deproject", "lidar", "lidar.points"),
             occupancy_grid("local", "lidar.points"),
@@ -1638,6 +1651,7 @@ fn mapper_reading_an_unpublished_channel_fails_the_build() {
     // silently empty. It must now fail, naming the node and the channel.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        estimate: Some(estimate_seam("nav_ekf")),
         nodes: BTreeMap::from([occupancy_grid("local", "lidar.typo")]),
         ..Default::default()
     };
@@ -1670,7 +1684,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
     // a map on the bus proves the points arrived. The robot state is supplied
     // by the body here so the test needs no estimator.
     let agent = AgentId::new("test_agent");
-    let state_key: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
+    let state_key: ChannelKey = estimate::estimate().into();
     let stack = AutonomyStack {
         nodes: BTreeMap::from([
             deproject("front_deproject", "lidar", "lidar.points"),
@@ -1749,6 +1763,7 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
     // build, never receive a sample, and never run.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
 
@@ -1797,6 +1812,7 @@ fn estimator_aided_by_a_host_channel_builds() {
     // to skip them, this build would fail with an unsatisfied input.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), mag_aided_imu_ekf("mag/primary"))]),
+        estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
 
@@ -1821,6 +1837,7 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
     // own check, before the node exists, and named with the estimator instance.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), mag_aided_imu_ekf("mag/typo"))]),
+        estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
 
@@ -1866,6 +1883,7 @@ fn planner_stack(planners: &[(&str, &str)]) -> AutonomyStack {
     nodes.extend(planners.iter().map(|(name, goal)| astar(name, goal)));
     AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        estimate: Some(estimate_seam("nav_ekf")),
         nodes,
         ..Default::default()
     }

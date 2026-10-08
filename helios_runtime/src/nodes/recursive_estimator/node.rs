@@ -18,14 +18,16 @@
 //! 2. **Update.** Each aiding source hands over the readings it has not handed
 //!    over before, oldest first, and each is applied to the filter. A dropped
 //!    correction that stems from a fault is warned, rate-limited per source.
-//! 3. **Publish.** The filter's state goes out as `FrameAwareState @ ""`, and
-//!    the `base_link → odom` edge it implies goes to the TF service, both
-//!    stamped with the state's valid-at time. After a tick with no predict
-//!    that is earlier than the tick's: the estimate says when it holds.
+//! 3. **Publish.** The filter's state goes out on a channel named after the
+//!    node, stamped with the state's valid-at time. After a tick with no
+//!    predict that is earlier than the tick's: the estimate says when it
+//!    holds. The node publishes no TF edge; if the stack's estimate seam names
+//!    this node, its relay publishes the `base_link → odom` edge from this
+//!    state.
 //!
 //! ## Health
 //!
-//! Both outputs carry `Health::Degraded` while either holds:
+//! The state carries `Health::Degraded` while either holds:
 //! - the last predict the filter attempted was skipped for a fault, so the
 //!   estimate is no longer being propagated (cleared by the next applied
 //!   predict);
@@ -40,23 +42,18 @@
 
 use super::nis_health::NisWindow;
 
-use crate::channels::tf::{publish_edge, tf_edge};
+use crate::channels::estimate::estimator_output;
 use crate::nodes::estimation::{EstimatorInputBuilder, Measurement, MeasurementSource};
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor,
-};
+use crate::port::{AlgorithmNodePortDescriptor, ChannelError, ChannelKey, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::measurement::Unavailable;
 use helios_core::estimation::{
     GaussianStateEstimator, PredictOutcome, PredictSkipReason, SkipReason, UpdateOutcome,
 };
-use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::tf::TfProvider;
-use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
-use helios_core::spatial::transforms::ErasedTransform;
 use helios_core::spatial::FrameAwareState;
 
 use atomic_float::AtomicF64;
@@ -80,7 +77,7 @@ pub(crate) const SKIP_WARN_MIN_INTERVAL_SECS: f64 = 5.0;
 /// optional, since the filter still predicts and publishes without it.
 pub(crate) struct RecursiveEstimatorNode {
     name: String,
-    edge: FrameEdge,
+    output: ChannelKey,
     filter: Mutex<Running>,
     input: Box<dyn EstimatorInputBuilder>,
     aiding: Vec<Aiding>,
@@ -94,19 +91,19 @@ pub(crate) struct RecursiveEstimatorNode {
 
 impl RecursiveEstimatorNode {
     /// A node named `name` that runs `filter`, predicting from what `input`
-    /// assembles and correcting from each of `aiding`, in order. `edge` is the
-    /// transform edge the estimate implies.
+    /// assembles and correcting from each of `aiding`, in order. It writes its
+    /// state on the channel named after it.
     pub(crate) fn new(
         name: impl Into<String>,
-        edge: FrameEdge,
         filter: Box<dyn GaussianStateEstimator>,
         input: Box<dyn EstimatorInputBuilder>,
         aiding: Vec<Aiding>,
     ) -> Self {
+        let name = name.into();
+        let output = estimator_output(&name);
         let mut builder = AlgorithmNodePortDescriptor::new()
             .inputs_from_slices(input.required_channels(), input.optional_channels())
-            .output_internal(InternalChannel::of::<FrameAwareState>())
-            .output_internal(tf_edge(&edge));
+            .output_internal(output.clone());
         for aiding in &aiding {
             // The source holds only an erased key, so it goes through the
             // slice path, which asserts the key is a sensor or internal
@@ -115,8 +112,8 @@ impl RecursiveEstimatorNode {
         }
 
         Self {
-            name: name.into(),
-            edge,
+            name,
+            output: output.into(),
             filter: Mutex::new(Running {
                 filter,
                 predict_fault: None,
@@ -196,7 +193,7 @@ impl PipelineNode for RecursiveEstimatorNode {
             .fold(predict_health(predict_fault.as_deref()), Health::worse_of);
         let state = filter.state().clone();
         let valid_at = state.timestamp;
-        publish_estimate(bus, &self.edge, state, valid_at, health, &tick);
+        publish_estimate(bus, &self.output, state, valid_at, health, &tick);
     }
 }
 
@@ -299,52 +296,24 @@ impl Aiding {
     }
 }
 
-/// Writes `state` as `FrameAwareState @ ""` and the `edge` transform it
-/// implies, both stamped `at` and carrying `health`.
-///
-/// The edge is a pure read of the state's orientation and reference-frame
-/// position. If either block is absent (a schema not yet seeded with a pose),
-/// the edge is skipped this tick rather than feeding the TF buffer a bogus
-/// identity.
+/// Writes `state` on `output`, stamped `at` and carrying `health`.
 pub(crate) fn publish_estimate(
     bus: &PortBus,
-    edge: &FrameEdge,
+    output: &ChannelKey,
     state: FrameAwareState,
     at: MonotonicTime,
     health: Health,
     tick: &TickContext,
 ) {
-    if let Some(pose) = state.pose::<Flu, Enu>(edge.child.clone(), edge.parent.clone()) {
-        let transform = StampedTransform {
-            parent: edge.parent.clone(),
-            child: edge.child.clone(),
-            // When the pose held. It coincides with the envelope timestamp
-            // below but means a different thing (pose-held vs published-at),
-            // so they are kept as two fields, not merged.
-            stamp: at,
-            transform: ErasedTransform::erase::<Flu, Enu>(pose),
-        };
-        publish_edge(
-            bus,
-            Stamped {
-                value: transform,
-                timestamp: at,
-                health: health.clone(),
-                producer: tick.node_id,
-            },
-        );
-    }
-
     let stamped = Stamped {
         value: state,
         timestamp: at,
         health,
         producer: tick.node_id,
     };
-    let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
-    if let Err(ChannelError::UnknownChannel) = bus.write(state_channel.clone(), stamped) {
+    if let Err(ChannelError::UnknownChannel) = bus.write(output.clone(), stamped) {
         warn!(
-            channel = %state_channel,
+            channel = %output,
             "estimator state output channel is not wired into the DAG"
         );
     }
@@ -438,7 +407,7 @@ mod tests {
     use helios_core::interchange::measurement::sensor::Acceleration;
     use helios_core::prelude::{AgentId, MonotonicDuration};
     use helios_core::spatial::state::Quantity;
-    use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
     use helios_core::spatial::FrameId;
 
     use nalgebra::{DMatrix, DVector};
@@ -456,7 +425,7 @@ mod tests {
     }
 
     fn state_channel() -> ChannelKey {
-        InternalChannel::of::<FrameAwareState>().into()
+        estimator_output("primary").into()
     }
 
     /// What the filter was asked to do, readable after the filter is boxed,
@@ -612,8 +581,7 @@ mod tests {
     fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Probe) {
         let calls = Arc::new(StdMutex::new(Calls::default()));
         let filter = RecordingFilter {
-            // Anchors base_link in odom, so the state holds a pose and the
-            // edge is published.
+            // Anchors base_link in odom, so the state holds a pose.
             state: FrameAwareState::from_schema(
                 Arc::new(kinematic_carrier_schema(agent())),
                 MonotonicTime(0.0),
@@ -628,13 +596,8 @@ mod tests {
             model: ZeroModel,
             noise: DMatrix::identity(3, 3),
         };
-        let edge = FrameEdge {
-            child: FrameId::base_link(agent()),
-            parent: FrameId::odom(agent()),
-        };
         let node = RecursiveEstimatorNode::new(
             "primary",
-            edge,
             Box::new(filter),
             Box::new(ToggledInput(Arc::clone(&input_ready))),
             vec![match nis {
@@ -717,17 +680,12 @@ mod tests {
         );
     }
 
-    /// The published estimate's and edge's stamps.
-    fn published_stamps(bus: &PortBus, node: &RecursiveEstimatorNode) -> (f64, f64) {
+    /// The published estimate's envelope stamp and valid-at time.
+    fn published_stamps(bus: &PortBus) -> (f64, f64) {
         let state = bus
             .read::<FrameAwareState>(state_channel())
             .expect("the estimate is published");
-        let edge = bus
-            .read::<StampedTransform>(tf_edge(&node.edge).into())
-            .expect("the edge is published");
-        assert_eq!(edge.timestamp, edge.value.stamp);
-        assert_eq!(state.timestamp, state.value.timestamp);
-        (state.timestamp.0, edge.value.stamp.0)
+        (state.timestamp.0, state.value.timestamp.0)
     }
 
     /// The first tick stamps the prior with the clock's time and predicts
@@ -740,7 +698,7 @@ mod tests {
         node.execute(&bus, &NoTransforms, tick(1000.0));
 
         assert!(probe.predict_dts().is_empty());
-        assert_eq!(published_stamps(&bus, &node), (1000.0, 1000.0));
+        assert_eq!(published_stamps(&bus), (1000.0, 1000.0));
     }
 
     /// Predict steps from the state's valid-at time to now, never by the
@@ -754,7 +712,7 @@ mod tests {
         node.execute(&bus, &NoTransforms, tick(1.25));
 
         assert_eq!(probe.predict_dts(), [0.25]);
-        assert_eq!(published_stamps(&bus, &node), (1.25, 1.25));
+        assert_eq!(published_stamps(&bus), (1.25, 1.25));
     }
 
     /// A tick whose input can't be assembled loses no time: the next predict
@@ -768,25 +726,21 @@ mod tests {
         node.execute(&bus, &NoTransforms, tick(1.0));
         probe.input_ready.store(false, Ordering::Relaxed);
         node.execute(&bus, &NoTransforms, tick(1.5));
-        assert_eq!(published_stamps(&bus, &node), (1.0, 1.0));
+        assert_eq!(published_stamps(&bus), (1.0, 1.0));
 
         probe.input_ready.store(true, Ordering::Relaxed);
         node.execute(&bus, &NoTransforms, tick(2.0));
 
         assert_eq!(probe.predict_dts(), [1.0]);
-        assert_eq!(published_stamps(&bus, &node), (2.0, 2.0));
+        assert_eq!(published_stamps(&bus), (2.0, 2.0));
     }
 
-    /// The published estimate's and edge's health, which always agree.
-    fn published_health(bus: &PortBus, node: &RecursiveEstimatorNode) -> Health {
-        let state = bus
-            .read::<FrameAwareState>(state_channel())
-            .expect("the estimate is published");
-        let edge = bus
-            .read::<StampedTransform>(tf_edge(&node.edge).into())
-            .expect("the edge is published");
-        assert_eq!(format!("{:?}", state.health), format!("{:?}", edge.health));
-        state.health.clone()
+    /// The published estimate's health.
+    fn published_health(bus: &PortBus) -> Health {
+        bus.read::<FrameAwareState>(state_channel())
+            .expect("the estimate is published")
+            .health
+            .clone()
     }
 
     /// A predict skipped for a fault degrades the estimate, which stays
@@ -797,11 +751,11 @@ mod tests {
         let (node, probe) = node();
         let bus = bus_for(&node);
         node.execute(&bus, &NoTransforms, tick(1.0));
-        assert!(matches!(published_health(&bus, &node), Health::Ok));
+        assert!(matches!(published_health(&bus), Health::Ok));
 
         probe.fail_predict(true);
         node.execute(&bus, &NoTransforms, tick(1.1));
-        let Health::Degraded { reason } = published_health(&bus, &node) else {
+        let Health::Degraded { reason } = published_health(&bus) else {
             panic!("a predict fault degrades the estimate");
         };
         assert!(reason.starts_with("predict skipped:"), "{reason}");
@@ -809,14 +763,11 @@ mod tests {
         probe.fail_predict(false);
         probe.input_ready.store(false, Ordering::Relaxed);
         node.execute(&bus, &NoTransforms, tick(1.2));
-        assert!(matches!(
-            published_health(&bus, &node),
-            Health::Degraded { .. }
-        ));
+        assert!(matches!(published_health(&bus), Health::Degraded { .. }));
 
         probe.input_ready.store(true, Ordering::Relaxed);
         node.execute(&bus, &NoTransforms, tick(1.3));
-        assert!(matches!(published_health(&bus, &node), Health::Ok));
+        assert!(matches!(published_health(&bus), Health::Ok));
     }
 
     /// An aiding sensor whose windowed mean NIS leaves the band degrades the
@@ -831,13 +782,13 @@ mod tests {
         write_accel(&bus, &[1.0]);
         node.execute(&bus, &NoTransforms, tick(1.0));
         assert!(
-            matches!(published_health(&bus, &node), Health::Ok),
+            matches!(published_health(&bus), Health::Ok),
             "one reading does not fill the window"
         );
 
         write_accel(&bus, &[2.0]);
         node.execute(&bus, &NoTransforms, tick(2.0));
-        let Health::Degraded { reason } = published_health(&bus, &node) else {
+        let Health::Degraded { reason } = published_health(&bus) else {
             panic!("a full out-of-band window degrades the estimate");
         };
         assert!(reason.contains("accel"), "{reason}");
@@ -845,7 +796,7 @@ mod tests {
         probe.report_nis(1.0);
         write_accel(&bus, &[3.0, 4.0]);
         node.execute(&bus, &NoTransforms, tick(4.0));
-        assert!(matches!(published_health(&bus, &node), Health::Ok));
+        assert!(matches!(published_health(&bus), Health::Ok));
     }
 
     /// Without a NIS window, no innovation degrades the estimate.
@@ -856,7 +807,7 @@ mod tests {
         probe.report_nis(1e6);
         write_accel(&bus, &[1.0, 2.0, 3.0]);
         node.execute(&bus, &NoTransforms, tick(3.0));
-        assert!(matches!(published_health(&bus, &node), Health::Ok));
+        assert!(matches!(published_health(&bus), Health::Ok));
     }
 
     /// The throttle lets the first fault through, holds the next ones for

@@ -3,14 +3,14 @@
 //!
 //! Unlike the estimator / planner / follower nodes, this node has **no
 //! input builder**. The mapper's contract is small enough that the node
-//! reads the bus channels directly: `FrameAwareState @ ""` for the robot
+//! reads the bus channels directly: the estimate (`FrameAwareState @ estimate`) for the robot
 //! pose, and a configurable `Vec<SensorReading<PointCloud<Flu>>>` channel
 //! for scans. Inventing a `MapperInputBuilder` trait would be one struct per
 //! mapper with zero shared logic.
 //!
 //! ## Execution skeleton
 //!
-//! 1. **Resolve robot pose.** Read `FrameAwareState @ ""`; pull
+//! 1. **Resolve robot pose.** Read the estimate (`FrameAwareState @ estimate`); pull
 //!    the body→World `pose(...)`. `None` → cold-start, skip the tick.
 //! 2. **Recenter.** Hand the robot pose to [`Mapper::recenter`].
 //! 3. **Integrate scans.** Read the scan channel; for each reading, look up
@@ -54,6 +54,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
+use crate::channels::estimate::estimate;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
     AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus,
@@ -101,7 +102,7 @@ impl OccupancyGridNode {
     /// map channel keys.
     ///
     /// `rate_hz = Some(hz)` rate-gates the node; `None` fires every tick.
-    /// Required inputs: `FrameAwareState @ ""` and `scan_channel`.
+    /// Required inputs: the estimate (`FrameAwareState @ estimate`) and `scan_channel`.
     /// Outputs: `map_channel`.
     pub(crate) fn new(
         name: impl Into<String>,
@@ -112,7 +113,7 @@ impl OccupancyGridNode {
         rate_hz: Option<f64>,
     ) -> Self {
         let mut builder = AlgorithmNodePortDescriptor::new()
-            .input_internal(InternalChannel::of::<FrameAwareState>())
+            .input_internal(estimate())
             .input_sensor(scan_channel.clone())
             .output_internal(map_channel.clone());
         if let Some(hz) = rate_hz {
@@ -142,9 +143,7 @@ impl PipelineNode for OccupancyGridNode {
 
     fn execute(&self, bus: &PortBus, tf: &dyn TfProvider, tick: TickContext) {
         // 1. Robot pose from the upstream estimator (real or ground-truth).
-        let Some(stamped_state) =
-            bus.read::<FrameAwareState>(InternalChannel::of::<FrameAwareState>().into())
-        else {
+        let Some(stamped_state) = bus.read::<FrameAwareState>(estimate().into()) else {
             return;
         };
         let Some(robot_world_pose) = stamped_state
@@ -364,7 +363,7 @@ mod tests {
         map_internal_channel().into()
     }
     fn state_channel() -> ChannelKey {
-        InternalChannel::of::<FrameAwareState>().into()
+        estimate().into()
     }
 
     fn make_bus() -> PortBus {

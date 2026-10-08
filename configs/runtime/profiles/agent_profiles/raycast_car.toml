@@ -14,6 +14,11 @@
 [estimators.primary]
 from = "runtime.catalog.estimators.ekf_advanced"
 
+# The estimate the rest of the stack reads, and the source of the
+# odom → base_link edge: this stack's one estimator.
+[estimate]
+source = "primary"
+
 # The A* planner publishes its path on a channel named after the node, which
 # the path follower's `path` names.
 [nodes.local_path]

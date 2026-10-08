@@ -2,9 +2,9 @@
 //! time. Only the builder in [`build`](super::build) constructs one.
 
 use crate::{
-    channels::{control, tf::is_tf_edge},
+    channels::{control, estimate::estimate, tf::is_tf_edge},
     pipeline::rate_gate::RateTimer,
-    port::{ChannelKey, InternalChannel, PortBus},
+    port::{ChannelKey, PortBus},
     prelude::{PipelineNode, Stamped, TickContext},
     NodeId,
 };
@@ -144,8 +144,7 @@ impl AutonomyPipeline {
     /// Returns `None` during cold-start (before the estimator has produced
     /// its first state) and when no estimator node is present in the graph.
     pub fn read_state(&self) -> Option<Arc<Stamped<FrameAwareState>>> {
-        self.bus
-            .read(InternalChannel::of::<FrameAwareState>().into())
+        self.bus.read(estimate().into())
     }
 
     /// Reads the pipeline's actuator terminal — the per-actuator command the

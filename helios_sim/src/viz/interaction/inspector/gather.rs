@@ -314,9 +314,9 @@ mod tests {
     use helios_core::spatial::transforms::Convention;
     use helios_core::spatial::{FrameId, StateVariable};
     use helios_runtime::{
-        channels::control,
+        channels::{control, estimate},
         pipeline::node::HOST_PRODUCER_ID,
-        port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus},
+        port::{AlgorithmNodePortDescriptor, PortBus},
         prelude::{Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext},
     };
     use nalgebra::{DMatrix, DVector};
@@ -508,7 +508,7 @@ mod tests {
         state
     }
 
-    /// A stand-in estimator node: it declares the canonical `FrameAwareState` output so
+    /// A stand-in for the estimate seam: it declares the estimate output so
     /// the bus allocates that slot, but computes nothing. A test writes the state onto
     /// the bus directly — standing in for a real estimator having produced one, which is
     /// exactly what `gather_estimator` reads back through `read_state`.
@@ -520,7 +520,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 descriptor: AlgorithmNodePortDescriptor::new()
-                    .output_internal(InternalChannel::of::<FrameAwareState>())
+                    .output_internal(estimate::estimate())
                     .build(),
             }
         }
@@ -551,7 +551,7 @@ mod tests {
             pipeline
                 .bus()
                 .write(
-                    InternalChannel::of::<FrameAwareState>().into(),
+                    estimate::estimate().into(),
                     Stamped {
                         value: state,
                         timestamp: MonotonicTime(0.0),

@@ -1,5 +1,6 @@
 use super::{
-    ActuatorSeamConfig, CommandFoldConfig, EstimatorConfig, ReferenceSeamConfig, TfBufferConfig,
+    ActuatorSeamConfig, CommandFoldConfig, EstimateSeamConfig, EstimatorConfig,
+    ReferenceSeamConfig, TfBufferConfig,
 };
 
 use serde::Deserialize;
@@ -21,6 +22,11 @@ pub struct AutonomyStack {
     /// comparisons but each must publish to a distinct output channel.
     #[serde(default)]
     pub estimators: HashMap<String, EstimatorConfig>,
+
+    /// The estimate seam: which estimator's state the rest of the stack reads
+    /// and the TF edge comes from. Omitted when the stack has no estimator.
+    #[serde(default)]
+    pub estimate: Option<EstimateSeamConfig>,
 
     /// The guidance reference seam: which `[nodes]` entries feed the reference
     /// the controllers track. Omitted when nothing in the graph produces one.

@@ -1,6 +1,6 @@
 use crate::{
-    channels::control,
-    port::{ChannelKey, InternalChannel, PortBus},
+    channels::{control, estimate::estimate},
+    port::{ChannelKey, PortBus},
     prelude::TickContext,
 };
 use helios_core::{
@@ -36,7 +36,7 @@ impl<R: ControlReference> Default for DefaultControlInputBuilder<R> {
 
 impl<R: ControlReference> DefaultControlInputBuilder<R> {
     pub(crate) fn new() -> Self {
-        let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
+        let state_channel: ChannelKey = estimate().into();
         let reference_channel: ChannelKey = control::reference::<R>().into();
 
         Self {

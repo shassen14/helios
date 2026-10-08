@@ -3,7 +3,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use helios_runtime::config::{EkfConfig, EkfDynamicsConfig, IntegratedImuConfig};
+use helios_runtime::config::{
+    EkfConfig, EkfDynamicsConfig, EstimateSeamConfig, IntegratedImuConfig,
+};
 use helios_runtime::port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel};
 use helios_runtime::{
     build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStack, BodyCapabilities,
@@ -215,6 +217,9 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
     // already hold the producer's output when the grid is seeded.
     let stack = AutonomyStack {
         estimators: HashMap::from([("nav_ekf".to_string(), imu_ekf())]),
+        estimate: Some(EstimateSeamConfig {
+            source: "nav_ekf".to_string(),
+        }),
         ..stack_with_nodes(&format!(
             r#"
             [nodes.grid]

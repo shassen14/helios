@@ -137,6 +137,7 @@ mod tests {
     //!   - mirrors the builder's required/optional channels in its descriptor
 
     use super::*;
+    use crate::channels::estimate::estimate;
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
     use crate::port::ChannelKey;
@@ -235,7 +236,7 @@ mod tests {
     impl AlwaysReadyBuilder {
         fn new() -> Self {
             Self {
-                required: vec![InternalChannel::of::<FrameAwareState>().into()],
+                required: vec![estimate().into()],
                 optional: vec![],
             }
         }
