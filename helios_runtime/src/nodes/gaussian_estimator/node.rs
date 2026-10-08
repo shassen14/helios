@@ -243,7 +243,7 @@ impl PipelineNode for GaussianEstimatorNode {
         }
 
         // 3. Publish snapshot.
-        publish_estimate(bus, &self.edge, estimator.state().clone(), &tick);
+        publish_estimate(bus, &self.edge, estimator.state().clone(), tick.now, &tick);
     }
 }
 
@@ -372,6 +372,9 @@ mod tests {
         ) -> UpdateOutcome {
             self.counts.lock().unwrap().update_calls += 1;
             self.update_outcome.clone()
+        }
+        fn set_valid_at(&mut self, t: MonotonicTime) {
+            self.state.timestamp = t;
         }
         fn state(&self) -> &FrameAwareState {
             &self.state

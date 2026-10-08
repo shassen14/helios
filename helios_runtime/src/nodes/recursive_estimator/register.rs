@@ -161,8 +161,8 @@ fn augmentation_blocks(
 /// the state can't anchor, a convention it doesn't use), naming the sensor,
 /// or if the state can't hold the pose.
 ///
-/// Valid at time zero, which holds only where the clock starts at zero (the
-/// sim); a host whose clock starts elsewhere needs the first tick's time.
+/// Built valid at time zero; the node restamps it with the pipeline clock on
+/// its first tick.
 fn seeded_state(
     dynamics: &DynamicsComponent,
     augmentation: Vec<StateSchemaBlock>,

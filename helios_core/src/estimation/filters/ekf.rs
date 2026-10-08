@@ -206,6 +206,10 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         UpdateOutcome::Applied(innovation)
     }
 
+    fn set_valid_at(&mut self, t: MonotonicTime) {
+        self.state.timestamp = t;
+    }
+
     fn state(&self) -> &FrameAwareState {
         &self.state
     }
@@ -514,6 +518,23 @@ mod tests {
 
         let expected = MonotonicTime(0.0) + MonotonicDuration(0.1) + MonotonicDuration(0.25);
         assert_eq!(ekf.state().timestamp, expected);
+    }
+
+    #[test]
+    fn set_valid_at_moves_only_the_time_and_predict_advances_from_it() {
+        let mut ekf = make_ekf(0.0, 1.0);
+        let before = ekf.state().clone();
+
+        ekf.set_valid_at(MonotonicTime(42.0));
+        assert_eq!(ekf.state().timestamp, MonotonicTime(42.0));
+        assert_eq!(ekf.state().mean, before.mean);
+        assert_eq!(ekf.state().covariance, before.covariance);
+
+        let inputs = EstimatorInputs {
+            control: DVector::zeros(0),
+        };
+        ekf.predict(0.5, &inputs);
+        assert_eq!(ekf.state().timestamp, MonotonicTime(42.5));
     }
 
     #[test]

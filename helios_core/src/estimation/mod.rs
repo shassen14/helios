@@ -86,6 +86,16 @@ pub trait GaussianStateEstimator: Send + Sync {
         at: MonotonicTime,
     ) -> UpdateOutcome;
 
+    /// Declares the current mean and covariance valid at `t`, moving neither.
+    ///
+    /// This is not a predict: no time is integrated, so `t` may be earlier or
+    /// later than the current valid-at time. It exists for the caller that
+    /// builds the prior before it can read its clock: the prior is built
+    /// valid at an arbitrary time, and on its first tick the caller stamps it
+    /// with the clock's time, after which every [`predict`](Self::predict)
+    /// advances it by `dt`.
+    fn set_valid_at(&mut self, t: MonotonicTime);
+
     /// Current best state estimate `(x, P, t)`.
     fn state(&self) -> &FrameAwareState;
 }

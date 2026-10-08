@@ -4,18 +4,27 @@
 //!
 //! ## Each tick
 //!
+//! 0. **Start (first tick only).** The prior was built before the node could
+//!    read the pipeline clock, so it is stamped valid at this tick's time and
+//!    nothing is predicted: no interval has elapsed since it began to hold.
 //! 1. **Predict.** The input builder assembles the control vector from the
-//!    bus; if it can't yet (cold start, dropout), predict is skipped and the
-//!    tick goes on to the updates. A predict the filter itself skips for a
-//!    fault (a misshapen input) is warned, rate-limited.
+//!    bus, and the filter steps from the state's valid-at time to now,
+//!    holding that input over the whole interval. If the builder can't
+//!    assemble yet (cold start, dropout), predict is skipped and the tick
+//!    goes on to the updates; the interval is not lost, since the next predict
+//!    starts from the same valid-at time. A predict the filter itself skips
+//!    for a fault (a misshapen input) is warned, rate-limited, and likewise
+//!    caught up later.
 //! 2. **Update.** Each aiding source hands over the readings it has not handed
 //!    over before, oldest first, and each is applied to the filter. A dropped
 //!    correction that stems from a fault is warned, rate-limited per source.
 //! 3. **Publish.** The filter's state goes out as `FrameAwareState @ ""`, and
-//!    the `base_link → odom` edge it implies goes to the TF service.
+//!    the `base_link → odom` edge it implies goes to the TF service, both
+//!    stamped with the state's valid-at time. After a tick with no predict
+//!    that is earlier than the tick's: the estimate says when it holds.
 //!
-//! Predict uses the tick's `dt` and everything is stamped with the tick's
-//! time: the pipeline clock, not the state's own.
+//! The state's valid-at time is the node's only clock memory. The tick's
+//! `dt` is never read: a tick that does not predict would lose it.
 
 use crate::channels::tf::{publish_edge, tf_edge};
 use crate::nodes::estimation::{EstimatorInputBuilder, Measurement, MeasurementSource};
@@ -30,13 +39,14 @@ use helios_core::estimation::{
     GaussianStateEstimator, PredictOutcome, PredictSkipReason, SkipReason, UpdateOutcome,
 };
 use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::tf::TfProvider;
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 use helios_core::spatial::transforms::ErasedTransform;
 use helios_core::spatial::FrameAwareState;
 
 use atomic_float::AtomicF64;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tracing::warn;
 
@@ -61,6 +71,8 @@ pub(crate) struct RecursiveEstimatorNode {
     input: Box<dyn EstimatorInputBuilder>,
     aiding: Vec<Aiding>,
     descriptor: PortDescriptor,
+    /// Whether the first tick has stamped the prior with the pipeline clock.
+    started: AtomicBool,
     /// Tick time of the last "predict skipped" warning; `NEG_INFINITY` so the
     /// first fault always prints.
     last_predict_warned: AtomicF64,
@@ -95,6 +107,7 @@ impl RecursiveEstimatorNode {
             input,
             aiding: aiding.into_iter().map(Aiding::new).collect(),
             descriptor: builder.build(),
+            started: AtomicBool::new(false),
             last_predict_warned: AtomicF64::new(f64::NEG_INFINITY),
         }
     }
@@ -115,11 +128,24 @@ impl PipelineNode for RecursiveEstimatorNode {
             return;
         };
 
-        // 1. Predict. A skip the filter reports as a fault is surfaced:
-        // predicting on the prior alone is the same silent drift as an
-        // unaided update.
-        if let Some(inputs) = self.input.assemble(bus, &tick) {
-            let outcome = filter.predict(tick.dt, &inputs);
+        // 0. Start. Read and set under the filter lock, so no two ticks
+        // can both see it unset.
+        let starting = !self.started.swap(true, Ordering::Relaxed);
+        if starting {
+            filter.set_valid_at(tick.now);
+        }
+
+        // 1. Predict, from when the state last held to now. A skip the filter
+        // reports as a fault is surfaced: predicting on the prior alone is
+        // the same silent drift as an unaided update.
+        let inputs = if starting {
+            None
+        } else {
+            self.input.assemble(bus, &tick)
+        };
+        if let Some(inputs) = inputs {
+            let dt = tick.now.0 - filter.state().timestamp.0;
+            let outcome = filter.predict(dt, &inputs);
             if let Some(cause) = predict_skip_cause(&outcome) {
                 if passes_warn_throttle(&self.last_predict_warned, tick.now.0) {
                     warn!(
@@ -136,8 +162,10 @@ impl PipelineNode for RecursiveEstimatorNode {
             aiding.apply_new(bus, &mut **filter, Some(tf));
         }
 
-        // 3. Publish.
-        publish_estimate(bus, &self.edge, filter.state().clone(), &tick);
+        // 3. Publish, at the time the state holds.
+        let state = filter.state().clone();
+        let valid_at = state.timestamp;
+        publish_estimate(bus, &self.edge, state, valid_at, &tick);
     }
 }
 
@@ -184,7 +212,7 @@ impl Aiding {
 }
 
 /// Writes `state` as `FrameAwareState @ ""` and the `edge` transform it
-/// implies, both stamped with the tick's time.
+/// implies, both stamped `at`.
 ///
 /// The edge is a pure read of the state's orientation and reference-frame
 /// position. If either block is absent (a schema not yet seeded with a pose),
@@ -194,24 +222,24 @@ pub(crate) fn publish_estimate(
     bus: &PortBus,
     edge: &FrameEdge,
     state: FrameAwareState,
+    at: MonotonicTime,
     tick: &TickContext,
 ) {
     if let Some(pose) = state.pose::<Flu, Enu>(edge.child.clone(), edge.parent.clone()) {
         let transform = StampedTransform {
             parent: edge.parent.clone(),
             child: edge.child.clone(),
-            // When the pose held. For the filter's current estimate that is
-            // `now`; it coincides with the envelope timestamp below but means
-            // a different thing (pose-held vs published-at), so they are kept
-            // as two fields, not merged.
-            stamp: tick.now,
+            // When the pose held. It coincides with the envelope timestamp
+            // below but means a different thing (pose-held vs published-at),
+            // so they are kept as two fields, not merged.
+            stamp: at,
             transform: ErasedTransform::erase::<Flu, Enu>(pose),
         };
         publish_edge(
             bus,
             Stamped {
                 value: transform,
-                timestamp: tick.now,
+                timestamp: at,
                 health: Health::Ok,
                 producer: tick.node_id,
             },
@@ -220,7 +248,7 @@ pub(crate) fn publish_estimate(
 
     let stamped = Stamped {
         value: state,
-        timestamp: tick.now,
+        timestamp: at,
         health: Health::Ok,
         producer: tick.node_id,
     };
@@ -313,8 +341,7 @@ mod tests {
     use helios_core::estimation::{EstimatorInputs, Innovation};
     use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::interchange::measurement::sensor::Acceleration;
-    use helios_core::prelude::AgentId;
-    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::prelude::{AgentId, MonotonicDuration};
     use helios_core::spatial::state::Quantity;
     use helios_core::spatial::transforms::Convention;
     use helios_core::spatial::FrameId;
@@ -322,6 +349,7 @@ mod tests {
     use nalgebra::{DMatrix, DVector};
     use std::sync::{Arc, Mutex as StdMutex};
 
+    /// The tick's own step, which the node must never predict by.
     const DT: f64 = 0.1;
 
     fn agent() -> AgentId {
@@ -343,7 +371,8 @@ mod tests {
         update_times: Vec<f64>,
     }
 
-    /// A filter that applies everything and records each call.
+    /// A filter that applies everything, advancing its valid-at time as a
+    /// real filter does, and records each call.
     struct RecordingFilter {
         state: FrameAwareState,
         calls: Arc<StdMutex<Calls>>,
@@ -352,6 +381,7 @@ mod tests {
     impl GaussianStateEstimator for RecordingFilter {
         fn predict(&mut self, dt: f64, _: &EstimatorInputs) -> PredictOutcome {
             self.calls.lock().expect("test lock").predict_dts.push(dt);
+            self.state.timestamp += MonotonicDuration(dt);
             PredictOutcome::Applied
         }
 
@@ -369,6 +399,10 @@ mod tests {
                 .update_times
                 .push(at.0);
             UpdateOutcome::Applied(Innovation::new(1.0, 1))
+        }
+
+        fn set_valid_at(&mut self, t: MonotonicTime) {
+            self.state.timestamp = t;
         }
 
         fn state(&self) -> &FrameAwareState {
@@ -422,16 +456,17 @@ mod tests {
         }
     }
 
-    /// An input builder with nothing to read, always ready.
-    struct ReadyInput;
+    /// An input builder with nothing to read, ready while its flag is set
+    /// (clear it to stand for an input dropout).
+    struct ToggledInput(Arc<AtomicBool>);
 
-    impl EstimatorInputBuilder for ReadyInput {
+    impl EstimatorInputBuilder for ToggledInput {
         fn input_schema(&self) -> Arc<InputSchema> {
             Arc::new(InputSchema::compose(vec![]))
         }
 
         fn assemble(&self, _: &PortBus, _: &TickContext) -> Option<EstimatorInputs> {
-            Some(EstimatorInputs {
+            self.0.load(Ordering::Relaxed).then(|| EstimatorInputs {
                 control: DVector::zeros(0),
             })
         }
@@ -445,9 +480,22 @@ mod tests {
         }
     }
 
-    /// A node over a [`RecordingFilter`] with one accelerometer source, and the
-    /// record of what the filter was asked to do.
-    fn node() -> (RecursiveEstimatorNode, Arc<StdMutex<Calls>>) {
+    /// What a test reads and steers around a [`node`].
+    struct Probe {
+        calls: Arc<StdMutex<Calls>>,
+        input_ready: Arc<AtomicBool>,
+    }
+
+    impl Probe {
+        fn predict_dts(&self) -> Vec<f64> {
+            self.calls.lock().expect("test lock").predict_dts.clone()
+        }
+    }
+
+    /// A node over a [`RecordingFilter`] with one accelerometer source, its
+    /// input ready, and the probe on it. The prior is valid at zero, as the
+    /// factory builds it.
+    fn node() -> (RecursiveEstimatorNode, Probe) {
         let calls = Arc::new(StdMutex::new(Calls::default()));
         let filter = RecordingFilter {
             // Anchors base_link in odom, so the state holds a pose and the
@@ -458,6 +506,7 @@ mod tests {
             ),
             calls: Arc::clone(&calls),
         };
+        let input_ready = Arc::new(AtomicBool::new(true));
         let source = AccelSource {
             reader: PayloadReader::new(SensorChannel::named::<Vec<SensorReading<Acceleration>>>(
                 "accel",
@@ -473,10 +522,10 @@ mod tests {
             "primary",
             edge,
             Box::new(filter),
-            Box::new(ReadyInput),
+            Box::new(ToggledInput(Arc::clone(&input_ready))),
             vec![Box::new(source)],
         );
-        (node, calls)
+        (node, Probe { calls, input_ready })
     }
 
     /// A bus carrying everything `node` reads and writes.
@@ -538,34 +587,77 @@ mod tests {
     /// next tick is not applied again.
     #[test]
     fn readings_are_applied_oldest_first_and_once() {
-        let (node, calls) = node();
+        let (node, probe) = node();
         let bus = bus_for(&node);
         write_accel(&bus, &[2.0, 1.0]);
 
         node.execute(&bus, &NoTransforms, tick(2.0));
         node.execute(&bus, &NoTransforms, tick(2.1));
 
-        assert_eq!(calls.lock().expect("test lock").update_times, [1.0, 2.0]);
+        assert_eq!(
+            probe.calls.lock().expect("test lock").update_times,
+            [1.0, 2.0]
+        );
     }
 
-    /// Predict steps by the tick's `dt`, and the estimate and its edge are
-    /// stamped with the tick's time.
-    #[test]
-    fn predict_and_publish_follow_the_tick() {
-        let (node, calls) = node();
-        let bus = bus_for(&node);
-
-        node.execute(&bus, &NoTransforms, tick(3.0));
-
-        assert_eq!(calls.lock().expect("test lock").predict_dts, [DT]);
+    /// The published estimate's and edge's stamps.
+    fn published_stamps(bus: &PortBus, node: &RecursiveEstimatorNode) -> (f64, f64) {
         let state = bus
             .read::<FrameAwareState>(state_channel())
             .expect("the estimate is published");
-        assert_eq!(state.timestamp, MonotonicTime(3.0));
         let edge = bus
             .read::<StampedTransform>(tf_edge(&node.edge).into())
             .expect("the edge is published");
-        assert_eq!(edge.value.stamp, MonotonicTime(3.0));
+        assert_eq!(edge.timestamp, edge.value.stamp);
+        assert_eq!(state.timestamp, state.value.timestamp);
+        (state.timestamp.0, edge.value.stamp.0)
+    }
+
+    /// The first tick stamps the prior with the clock's time and predicts
+    /// nothing, wherever the clock starts.
+    #[test]
+    fn the_first_tick_starts_the_prior_at_its_time() {
+        let (node, probe) = node();
+        let bus = bus_for(&node);
+
+        node.execute(&bus, &NoTransforms, tick(1000.0));
+
+        assert!(probe.predict_dts().is_empty());
+        assert_eq!(published_stamps(&bus, &node), (1000.0, 1000.0));
+    }
+
+    /// Predict steps from the state's valid-at time to now, never by the
+    /// tick's `dt`.
+    #[test]
+    fn predict_steps_from_the_valid_at_time_to_now() {
+        let (node, probe) = node();
+        let bus = bus_for(&node);
+
+        node.execute(&bus, &NoTransforms, tick(1.0));
+        node.execute(&bus, &NoTransforms, tick(1.25));
+
+        assert_eq!(probe.predict_dts(), [0.25]);
+        assert_eq!(published_stamps(&bus, &node), (1.25, 1.25));
+    }
+
+    /// A tick whose input can't be assembled loses no time: the next predict
+    /// covers it, and meanwhile the estimate is published at the time it
+    /// still holds, not the tick's.
+    #[test]
+    fn a_tick_without_input_loses_no_time() {
+        let (node, probe) = node();
+        let bus = bus_for(&node);
+
+        node.execute(&bus, &NoTransforms, tick(1.0));
+        probe.input_ready.store(false, Ordering::Relaxed);
+        node.execute(&bus, &NoTransforms, tick(1.5));
+        assert_eq!(published_stamps(&bus, &node), (1.0, 1.0));
+
+        probe.input_ready.store(true, Ordering::Relaxed);
+        node.execute(&bus, &NoTransforms, tick(2.0));
+
+        assert_eq!(probe.predict_dts(), [1.0]);
+        assert_eq!(published_stamps(&bus, &node), (2.0, 2.0));
     }
 
     /// The throttle lets the first fault through, holds the next ones for
