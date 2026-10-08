@@ -1,4 +1,4 @@
-//! Config-to-pipeline assembly: turns a resolved [`AutonomyStack`] into a
+//! Config-to-pipeline assembly: turns a resolved [`AutonomyStackConfig`] into a
 //! ready-to-tick [`AutonomyPipeline`].
 //!
 //! - `stages` — [`build_pipeline`], the single entry point: builds the
@@ -17,15 +17,17 @@
 //!   in the extension of the concept that owns them.
 //! - `instantiate` — builds every `[nodes]` entry through the factory
 //!   registered for its kind.
+//! - `config` — [`AutonomyStackConfig`], the stack's root config, one field per
+//!   section, and [`AgentBaseConfig`], the portable agent profile.
 //! - `seams` — the passes that combine several nodes' outputs into one seam
-//!   channel, each from its stack section.
+//!   channel, each from its stack section, with that section's config.
 //! - `error` — [`PipelineAssemblyError`].
 //! - `test_stub` — a do-nothing node for this module's tests.
 //!
-//! [`AutonomyStack`]: crate::config::AutonomyStack
 //! [`AutonomyPipeline`]: crate::pipeline::AutonomyPipeline
 
 mod component;
+mod config;
 mod error;
 mod factory;
 mod instantiate;
@@ -38,8 +40,12 @@ mod test_stub;
 
 pub(crate) use self::component::{BuiltComponent, ComponentTable};
 pub use self::component::{ComponentError, DuplicateComponentKind, NoParams, Site};
+pub use self::config::{AgentBaseConfig, AutonomyStackConfig};
 pub use self::error::PipelineAssemblyError;
 pub use self::factory::{BuildContext, BuildFailure, FactoryError, FactoryOutput};
 pub use self::registry::{AutonomyRegistry, DuplicateKind};
-pub use self::seams::command::{CommandTypes, DuplicateCommandType};
+pub use self::seams::actuators::ActuatorSeamConfig;
+pub use self::seams::command::{CommandFoldConfig, CommandTypes, DuplicateCommandType};
+pub use self::seams::estimate::EstimateSeamConfig;
+pub use self::seams::reference::{ArbitrationPolicyConfig, ReferenceSeamConfig};
 pub use self::stages::build_pipeline;

@@ -7,10 +7,12 @@
 //!
 //! - `mock_oracle_estimator` — `MockOracleEstimatorNode`, publishes ground-truth
 //!   pose/twist read from the oracle channels.
+//! - `config` — the `[nodes.<name>]` section of the `MockOracle` kind.
 //! - `register` — registers the built-in mock factories.
 //!
 //! Only the `register` fn crosses the family boundary.
 
+mod config;
 mod mock_oracle_estimator;
 mod register;
 

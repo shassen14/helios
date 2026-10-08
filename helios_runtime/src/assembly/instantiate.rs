@@ -6,11 +6,11 @@
 //! and stopping here keeps one broken node from showing up again downstream
 //! as unpublished inputs on every node that reads its outputs.
 
+use super::config::AutonomyStackConfig;
 use super::error::PipelineAssemblyError;
 use super::factory::{BuildContext, KIND_KEY};
 use super::registry::AutonomyRegistry;
 
-use crate::config::AutonomyStack;
 use crate::pipeline::node::PipelineNode;
 use crate::port::ChannelKey;
 
@@ -31,7 +31,7 @@ pub(super) struct Instantiated {
 ///
 /// Fails with one error per node that could not be built.
 pub(super) fn instantiate(
-    stack: &AutonomyStack,
+    stack: &AutonomyStackConfig,
     registry: &AutonomyRegistry,
     agent: &AgentId,
     sensor_channels: &HashSet<String>,
@@ -180,7 +180,7 @@ mod tests {
     }
 
     fn run(stack_toml: &str) -> Result<Instantiated, Vec<PipelineAssemblyError>> {
-        let stack: AutonomyStack = toml::from_str(stack_toml).expect("test TOML parses");
+        let stack: AutonomyStackConfig = toml::from_str(stack_toml).expect("test TOML parses");
         instantiate(&stack, &registry(), &AgentId::new("car"), &HashSet::new())
     }
 

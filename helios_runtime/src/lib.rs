@@ -7,7 +7,6 @@
 pub mod assembly;
 pub mod body;
 pub mod channels;
-pub mod config;
 pub mod diagnostics;
 pub mod nodes;
 pub mod pipeline;
@@ -27,11 +26,13 @@ pub use crate::port::{
 pub use crate::stamped::{Health, Stamped};
 
 pub use crate::assembly::{
-    build_pipeline, AutonomyRegistry, BuildContext, BuildFailure, CommandTypes, ComponentError,
-    DuplicateCommandType, DuplicateComponentKind, DuplicateKind, FactoryError, FactoryOutput,
-    NoParams, PipelineAssemblyError, Site,
+    build_pipeline, ActuatorSeamConfig, AgentBaseConfig, ArbitrationPolicyConfig, AutonomyRegistry,
+    AutonomyStackConfig, BuildContext, BuildFailure, CommandFoldConfig, CommandTypes,
+    ComponentError, DuplicateCommandType, DuplicateComponentKind, DuplicateKind,
+    EstimateSeamConfig, FactoryError, FactoryOutput, NoParams, PipelineAssemblyError,
+    ReferenceSeamConfig, Site,
 };
-pub use crate::config::{AgentBaseConfig, AutonomyStack};
 pub use crate::nodes::estimation::{
     DynamicsComponent, EstimatorInputBuilder, FilterParts, SeedPose,
 };
+pub use crate::tf_service::TfBufferConfig;

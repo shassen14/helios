@@ -4,12 +4,11 @@
 use std::collections::HashSet;
 
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::config::EstimateSeamConfig;
 use helios_runtime::port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel};
 use helios_runtime::{
-    build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStack, BodyCapabilities,
-    BuildContext, FactoryOutput, PipelineAssemblyError, PipelineBuildError, PipelineNode,
-    PortDescriptor, Provenance, PublishedChannel, TickContext,
+    build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
+    BuildContext, EstimateSeamConfig, FactoryOutput, PipelineAssemblyError, PipelineBuildError,
+    PipelineNode, PortDescriptor, Provenance, PublishedChannel, TickContext,
 };
 
 use helios_core::interchange::measurement::envelope::SensorReading;
@@ -80,7 +79,7 @@ fn registry_with_test_kind() -> AutonomyRegistry {
 
 /// A stack whose only content is `nodes_toml`, a TOML document of
 /// `[nodes.<name>]` tables. Tests add other sections with struct update.
-fn stack_with_nodes(nodes_toml: &str) -> AutonomyStack {
+fn stack_with_nodes(nodes_toml: &str) -> AutonomyStackConfig {
     toml::from_str(nodes_toml).expect("test TOML parses")
 }
 
@@ -97,7 +96,7 @@ fn body() -> BodyCapabilities {
 }
 
 fn build(
-    stack: &AutonomyStack,
+    stack: &AutonomyStackConfig,
     host: &[&str],
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
     build_pipeline(
@@ -109,7 +108,7 @@ fn build(
     )
 }
 
-fn build_err(stack: &AutonomyStack, host: &[&str]) -> Vec<PipelineAssemblyError> {
+fn build_err(stack: &AutonomyStackConfig, host: &[&str]) -> Vec<PipelineAssemblyError> {
     build(stack, host)
         .err()
         .expect("expected the build to fail")
@@ -194,7 +193,7 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
     // needed, and the producer is ordered ahead of the grid. The grid sorts
     // first by name, so it is built before its producer; the derived set must
     // already hold the producer's output when the grid is seeded.
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         estimate: Some(EstimateSeamConfig {
             source: "nav_ekf".to_string(),
         }),
@@ -304,7 +303,7 @@ fn a_nodes_entry_without_a_kind_fails_the_build() {
 
 /// A stack whose one node is a `MockOracle` named `primary`, the estimator it
 /// stands in for.
-fn mock_oracle_stack() -> AutonomyStack {
+fn mock_oracle_stack() -> AutonomyStackConfig {
     stack_with_nodes(
         r#"
         [nodes.primary]

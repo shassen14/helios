@@ -1,7 +1,7 @@
 //! The stack-to-pipeline stages behind [`build_pipeline`].
 //!
 //! [`build_pipeline`] is the single entry point: given a fully-resolved
-//! [`AutonomyStack`] and an [`AutonomyRegistry`], it constructs every
+//! [`AutonomyStackConfig`] and an [`AutonomyRegistry`], it constructs every
 //! [`PipelineNode`](crate::pipeline::node::PipelineNode), declares sensor signal channels, validates the graph, and
 //! returns a ready-to-tick [`AutonomyPipeline`].
 //!
@@ -37,6 +37,7 @@
 //! Everything else — algorithm kinds, noise params, physical constants,
 //! channel names — comes from `stack`.
 
+use super::config::AutonomyStackConfig;
 use super::error::PipelineAssemblyError;
 use super::instantiate::instantiate;
 use super::registry::AutonomyRegistry;
@@ -47,7 +48,6 @@ use super::seams::reference::reference_selector;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
-use crate::config::AutonomyStack;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
 use crate::port::ChannelKey;
@@ -56,7 +56,7 @@ use helios_core::prelude::AgentId;
 
 use std::collections::HashSet;
 
-/// Builds a fully-validated [`AutonomyPipeline`] from a resolved [`AutonomyStack`].
+/// Builds a fully-validated [`AutonomyPipeline`] from a resolved [`AutonomyStackConfig`].
 ///
 /// Each node's own config is checked by its kind's factory; the stack-level
 /// checks (an unsourced sensor input, an unsatisfiable graph edge) follow once
@@ -78,7 +78,7 @@ use std::collections::HashSet;
 ///   config-derived sensor channels before building. Goals and teleop intent
 ///   are declared separately as outside inputs.
 pub fn build_pipeline(
-    stack: &AutonomyStack,
+    stack: &AutonomyStackConfig,
     registry: &AutonomyRegistry,
     agent: AgentId,
     sensor_channels: &HashSet<String>,

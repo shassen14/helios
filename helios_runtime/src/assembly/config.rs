@@ -1,13 +1,25 @@
-use super::{
-    ActuatorSeamConfig, CommandFoldConfig, EstimateSeamConfig, ReferenceSeamConfig, TfBufferConfig,
-};
+//! [`AutonomyStackConfig`], the root of an agent's autonomy TOML, and
+//! [`AgentBaseConfig`], the portable agent profile that carries one.
+//!
+//! The stack has one field per section. Each section's type lives in the
+//! `config.rs` of the module that reads it: a seam's in its seam folder, the
+//! `[tf]` sizing in `tf_service`, a `[nodes]` kind's in its node folder.
+
+use super::seams::actuators::ActuatorSeamConfig;
+use super::seams::command::CommandFoldConfig;
+use super::seams::estimate::EstimateSeamConfig;
+use super::seams::reference::ReferenceSeamConfig;
+
+use crate::tf_service::TfBufferConfig;
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
+/// An agent's autonomy stack: the `[nodes]` it runs and the seam sections that
+/// join them. Zero Bevy or simulation types, so sim and hardware load it alike.
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
-pub struct AutonomyStack {
+pub struct AutonomyStackConfig {
     /// Pipeline nodes, one `[nodes.<name>]` table each. The key is the node
     /// name; the table holds its `kind` plus that kind's own keys, left
     /// untyped here because only the kind's factory knows its shape. Sorted, so
@@ -44,6 +56,18 @@ pub struct AutonomyStack {
     pub tf: TfBufferConfig,
 }
 
+/// Portable agent identity and autonomy configuration.
+///
+/// Contains no simulation-specific fields (no vehicle, sensors, or physics).
+/// Can be loaded by `helios_hw` directly from `configs/catalog/agent_profiles/`
+/// without any `helios_sim` dependency.
+#[derive(Debug, Deserialize, Clone)]
+pub struct AgentBaseConfig {
+    pub name: String,
+    #[serde(default)]
+    pub autonomy_stack: AutonomyStackConfig,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -52,7 +76,7 @@ mod tests {
     /// and a stack without `[nodes]` loads with none.
     #[test]
     fn nodes_tables_load_untyped_and_default_to_empty() {
-        let stack: AutonomyStack = toml::from_str(
+        let stack: AutonomyStackConfig = toml::from_str(
             r#"
             [nodes.front_deproject]
             kind = "Deproject"
@@ -71,7 +95,7 @@ mod tests {
         assert_eq!(front["kind"].as_str(), Some("Deproject"));
         assert_eq!(front["input"].as_str(), Some("front_lidar"));
 
-        let empty: AutonomyStack = toml::from_str("").expect("empty stack parses");
+        let empty: AutonomyStackConfig = toml::from_str("").expect("empty stack parses");
         assert!(empty.nodes.is_empty());
     }
 }

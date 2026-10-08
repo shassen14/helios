@@ -1,9 +1,8 @@
-//! The `IntegratedImu` dynamics kind: a strapdown INS driven by the IMU's
-//! specific force and angular rate, read from the bus each predict.
+//! The `IntegratedImu` model's input builder and factory.
 
-use super::{DynamicsComponent, EstimatorInputBuilder};
+use super::super::{DynamicsComponent, EstimatorInputBuilder};
+use super::config::IntegratedImuConfig;
 use crate::assembly::BuildContext;
-use crate::nodes::estimation::gravity::default_gravity_enu;
 use crate::nodes::estimation::EstimatorComponents;
 use crate::port::{ChannelKey, PortBus, SensorChannel};
 use crate::prelude::TickContext;
@@ -19,99 +18,10 @@ use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 
 use nalgebra::{DVector, Vector3};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// The `kind` a `dynamics` sub-table writes for the IMU-driven INS.
 pub(crate) const INTEGRATED_IMU_KIND: &str = "IntegratedImu";
-
-/// Default prior std dev on position (m): large, for a cold start whose pose
-/// is unknown until GNSS arrives.
-pub(crate) const DEFAULT_POSITION_UNCERTAINTY_M: f64 = 1000.0;
-/// Default prior std dev on velocity (m/s).
-pub(crate) const DEFAULT_VELOCITY_UNCERTAINTY_MPS: f64 = 1.0;
-/// Default prior std dev on attitude (degrees): any heading.
-pub(crate) const DEFAULT_ORIENTATION_UNCERTAINTY_DEG: f64 = 180.0;
-/// Default prior std dev on accelerometer bias (m/s²).
-pub(crate) const DEFAULT_ACCEL_BIAS_UNCERTAINTY_MPS2: f64 = 0.1;
-/// Default prior std dev on gyro bias (rad/s).
-pub(crate) const DEFAULT_GYRO_BIAS_UNCERTAINTY_RADPS: f64 = 0.01;
-
-/// The `[dynamics]` sub-table of the `IntegratedImu` kind.
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct IntegratedImuConfig {
-    /// The filter's believed gravity, world ENU `[east, north, up]` (m/s²).
-    #[serde(default = "default_gravity_enu")]
-    gravity_enu: [f64; 3],
-    /// Velocity random walk: accelerometer white-noise std dev (m/s²/√Hz).
-    accel_noise_stddev: f64,
-    /// Angle random walk: gyro white-noise std dev (rad/s/√Hz).
-    gyro_noise_stddev: f64,
-    /// Accelerometer bias instability std dev (m/s²/√Hz); the bias block's Q.
-    accel_bias_instability: f64,
-    /// Gyro bias instability std dev (rad/s/√Hz); the bias block's Q.
-    gyro_bias_instability: f64,
-    /// The prior's std dev per block; squared onto P₀.
-    #[serde(default)]
-    initial_uncertainty: InitialUncertaintyConfig,
-    /// Channel the predict step reads `Vec<SensorReading<Acceleration>>` from.
-    accel_channel: String,
-    /// Channel the predict step reads `Vec<SensorReading<AngularRate>>` from.
-    gyro_channel: String,
-}
-
-/// Prior std dev on each INS block: the state's P₀, which the model bakes
-/// into its schema.
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct InitialUncertaintyConfig {
-    #[serde(default = "default_position_m")]
-    position_m: f64,
-    #[serde(default = "default_velocity_mps")]
-    velocity_mps: f64,
-    /// Degrees in config; converted to radians on load.
-    #[serde(default = "default_orientation_deg")]
-    orientation_deg: f64,
-    /// Distinct from `accel_bias_instability`, which is the block's Q.
-    #[serde(default = "default_accel_bias_mps2")]
-    accel_bias_mps2: f64,
-    /// Too large seeds attitude error outside the filter's linear regime.
-    #[serde(default = "default_gyro_bias_radps")]
-    gyro_bias_radps: f64,
-}
-
-impl Default for InitialUncertaintyConfig {
-    fn default() -> Self {
-        Self {
-            position_m: DEFAULT_POSITION_UNCERTAINTY_M,
-            velocity_mps: DEFAULT_VELOCITY_UNCERTAINTY_MPS,
-            orientation_deg: DEFAULT_ORIENTATION_UNCERTAINTY_DEG,
-            accel_bias_mps2: DEFAULT_ACCEL_BIAS_UNCERTAINTY_MPS2,
-            gyro_bias_radps: DEFAULT_GYRO_BIAS_UNCERTAINTY_RADPS,
-        }
-    }
-}
-
-fn default_position_m() -> f64 {
-    DEFAULT_POSITION_UNCERTAINTY_M
-}
-
-fn default_velocity_mps() -> f64 {
-    DEFAULT_VELOCITY_UNCERTAINTY_MPS
-}
-
-fn default_orientation_deg() -> f64 {
-    DEFAULT_ORIENTATION_UNCERTAINTY_DEG
-}
-
-fn default_accel_bias_mps2() -> f64 {
-    DEFAULT_ACCEL_BIAS_UNCERTAINTY_MPS2
-}
-
-fn default_gyro_bias_radps() -> f64 {
-    DEFAULT_GYRO_BIAS_UNCERTAINTY_RADPS
-}
 
 /// Assembles a 6-element IMU control vector `[ax, ay, az, wx, wy, wz]` from
 /// the most recent linear acceleration and angular velocity readings on the bus.
@@ -188,7 +98,7 @@ impl EstimatorInputBuilder for IntegratedImuInputBuilder {
     }
 }
 
-pub(super) fn register(components: &mut EstimatorComponents) {
+pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponents) {
     components
         .register_dynamics(INTEGRATED_IMU_KIND, build)
         .expect("IntegratedImu is registered once, by the default components");
@@ -224,6 +134,7 @@ fn build(config: IntegratedImuConfig, ctx: &BuildContext<'_>) -> Result<Dynamics
 
 #[cfg(test)]
 mod tests {
+    use super::super::config::DEFAULT_POSITION_UNCERTAINTY_M;
     use super::*;
 
     use crate::assembly::{AutonomyRegistry, ComponentError};

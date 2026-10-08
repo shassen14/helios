@@ -1,21 +1,10 @@
-//! The reference seam: turns the `[reference]` section into the `Selector`
-//! that writes the guidance reference the controllers track.
-//!
-//! Each member writes its reference on a channel of its own. The seam reads
-//! the section's member list, finds each member's reference output among the
-//! built nodes, and adds one `Selector` from those channels onto the resolved
-//! [`control::reference`] channel. A lone member is the selector's `base` with
-//! no `preferred` inputs, which forwards it every tick, so the shape is the
-//! same for any number of members.
-//!
-//! The seam type is `BodyTwistRef`, the only reference type today. When a
-//! second appears, the section names it and this pass dispatches on it.
+//! The `[reference]` seam's pass.
 
-use super::members::{duplicates, member_output, member_outputs, SeamType};
+use super::super::members::{duplicates, member_output, member_outputs, SeamType};
+use super::config::{ArbitrationPolicyConfig, ReferenceSeamConfig};
 
 use crate::assembly::error::PipelineAssemblyError;
 use crate::channels::control;
-use crate::config::{ArbitrationPolicyConfig, ReferenceSeamConfig};
 use crate::nodes::combinators::{Selector, SelectorPolicy};
 use crate::pipeline::node::PipelineNode;
 

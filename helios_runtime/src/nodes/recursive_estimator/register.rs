@@ -6,7 +6,9 @@
 //! them together: the aiding wiring, the augmentation blocks and the starting
 //! pose.
 
-use super::config::{AidingEntry, AugmentationEntry, InitialPoseConfig, RecursiveEstimatorConfig};
+use super::config::{
+    AidingConfig, AugmentationConfig, InitialPoseConfig, RecursiveEstimatorConfig,
+};
 use super::nis_health::NisWindow;
 use super::node::{Aiding, RecursiveEstimatorNode};
 
@@ -114,7 +116,7 @@ fn build(
 fn build_aiding(
     components: &EstimatorComponents,
     name: &str,
-    entry: AidingEntry,
+    entry: AidingConfig,
     ctx: &BuildContext<'_>,
 ) -> Result<(Box<dyn MeasurementSource>, toml::Table), BuildFailure> {
     let wiring = MeasurementWiring {
@@ -128,7 +130,7 @@ fn build_aiding(
 
 /// The NIS window aiding entry `name` asks for, if any, or why its
 /// `nis_health` is unusable.
-fn nis_window(name: &str, entry: &AidingEntry) -> Result<Option<NisWindow>, String> {
+fn nis_window(name: &str, entry: &AidingConfig) -> Result<Option<NisWindow>, String> {
     entry
         .nis_health
         .as_ref()
@@ -145,7 +147,7 @@ fn nis_window(name: &str, entry: &AidingEntry) -> Result<Option<NisWindow>, Stri
 /// corrected. The aiding source builds its sensor frame from the same channel
 /// name, so the block's frame is the one its model reads back.
 fn augmentation_blocks(
-    entries: &[AugmentationEntry],
+    entries: &[AugmentationConfig],
     aiding_inputs: &[String],
     ctx: &BuildContext<'_>,
 ) -> Result<Vec<StateSchemaBlock>, String> {

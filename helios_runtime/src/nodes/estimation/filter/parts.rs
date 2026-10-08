@@ -1,17 +1,17 @@
-//! The filter component: the recursive algorithm a node runs (EKF, UKF), built
-//! around a seeded state and a dynamics model.
+//! [`FilterParts`], the built-in filter kinds and their factories.
+
+use super::config::{EkfConfig, UkfConfig};
 
 use crate::assembly::BuildContext;
 use crate::nodes::estimation::EstimatorComponents;
 
 use helios_core::estimation::dynamics::EstimationDynamics;
-use helios_core::estimation::filters::ekf::{CovarianceConditioning, ExtendedKalmanFilter};
-use helios_core::estimation::filters::ukf::{self, UnscentedKalmanFilter};
+use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
+use helios_core::estimation::filters::ukf::UnscentedKalmanFilter;
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::spatial::FrameAwareState;
 
 use nalgebra::DMatrix;
-use serde::{Deserialize, Serialize};
 
 /// The `kind` a `filter` sub-table writes for the extended Kalman filter.
 pub(crate) const EKF_FILTER_KIND: &str = "Ekf";
@@ -51,89 +51,7 @@ impl FilterParts {
     }
 }
 
-/// The EKF's own keys in a `filter` sub-table.
-///
-/// The EKF always symmetrises `P` after a step. The floor and the jitter are
-/// off unless set: each hides a diverging or over-confident filter rather
-/// than fixing it.
-#[derive(Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct EkfParams {
-    /// The smallest variance `P` may hold on its diagonal; a smaller one is
-    /// raised to it after each step. Must be finite and positive.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) covariance_floor: Option<f64>,
-    /// Added to every variance after each step. Must be finite and positive.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) covariance_jitter: Option<f64>,
-}
-
-impl EkfParams {
-    /// The conditioning these keys ask for, or why a value is unusable.
-    fn conditioning(&self) -> Result<CovarianceConditioning, String> {
-        for (key, value) in [
-            ("covariance_floor", self.covariance_floor),
-            ("covariance_jitter", self.covariance_jitter),
-        ] {
-            if let Some(value) = value {
-                if !value.is_finite() || value <= 0.0 {
-                    return Err(format!("{key} must be finite and positive, got {value}"));
-                }
-            }
-        }
-        Ok(CovarianceConditioning {
-            floor: self.covariance_floor,
-            jitter: self.covariance_jitter,
-        })
-    }
-}
-
-/// The UKF's own keys in a `filter` sub-table: the sigma-point spread.
-/// All three are required; there is no one right default.
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct UkfParams {
-    /// How far the sigma points sit from the mean. Must be finite and
-    /// positive.
-    pub(crate) alpha: f64,
-    /// Prior knowledge of the distribution's shape (2 for a Gaussian). Must
-    /// be finite.
-    pub(crate) beta: f64,
-    /// Secondary spread. Must be finite, and `n + kappa` positive for the
-    /// state's `n` degrees of freedom, or the sigma points have no spread.
-    pub(crate) kappa: f64,
-}
-
-impl UkfParams {
-    /// The core parameters for a state with `dof` degrees of freedom, or why
-    /// a value is unusable.
-    fn for_dof(&self, dof: usize) -> Result<ukf::UkfParams, String> {
-        if !self.alpha.is_finite() || self.alpha <= 0.0 {
-            return Err(format!(
-                "alpha must be finite and positive, got {}",
-                self.alpha
-            ));
-        }
-        for (key, value) in [("beta", self.beta), ("kappa", self.kappa)] {
-            if !value.is_finite() {
-                return Err(format!("{key} must be finite, got {value}"));
-            }
-        }
-        if dof as f64 + self.kappa <= 0.0 {
-            return Err(format!(
-                "kappa must exceed -{dof}, the state's degrees of freedom, got {}",
-                self.kappa
-            ));
-        }
-        Ok(ukf::UkfParams {
-            alpha: self.alpha,
-            beta: self.beta,
-            kappa: self.kappa,
-        })
-    }
-}
-
-pub(super) fn register(components: &mut EstimatorComponents) {
+pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponents) {
     components
         .register_filter(EKF_FILTER_KIND, build_ekf)
         .expect("Ekf is registered once, by the default components");
@@ -143,7 +61,7 @@ pub(super) fn register(components: &mut EstimatorComponents) {
 }
 
 fn build_ekf(
-    params: EkfParams,
+    params: EkfConfig,
     _ctx: &BuildContext<'_>,
     parts: FilterParts,
 ) -> Result<Box<dyn GaussianStateEstimator>, String> {
@@ -161,7 +79,7 @@ fn build_ekf(
 /// (a sum of unit quaternions is not one). Until the mean is computed on the
 /// manifold, a curved block is refused here rather than estimated wrongly.
 fn build_ukf(
-    params: UkfParams,
+    params: UkfConfig,
     _ctx: &BuildContext<'_>,
     parts: FilterParts,
 ) -> Result<Box<dyn GaussianStateEstimator>, String> {
@@ -411,7 +329,7 @@ mod tests {
         if !config.frozen {
             return Err("only the frozen variant exists".to_string());
         }
-        build_ekf(EkfParams::default(), _ctx, parts)
+        build_ekf(EkfConfig::default(), _ctx, parts)
     }
 
     #[test]

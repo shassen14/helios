@@ -1,6 +1,6 @@
 use bevy::prelude::Resource;
 use figment::value::Value;
-use helios_runtime::config::{AgentBaseConfig, AutonomyStack};
+use helios_runtime::{AgentBaseConfig, AutonomyStackConfig};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -151,7 +151,7 @@ impl AgentConfig {
         &self.base.name
     }
 
-    pub fn autonomy_stack(&self) -> &AutonomyStack {
+    pub fn autonomy_stack(&self) -> &AutonomyStackConfig {
         &self.base.autonomy_stack
     }
 }

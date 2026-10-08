@@ -3,14 +3,12 @@
 use std::collections::{BTreeMap, HashSet};
 
 use helios_runtime::channels::{control, estimate};
-use helios_runtime::config::{
-    ActuatorSeamConfig, AutonomyStack, CommandFoldConfig, EstimateSeamConfig, ReferenceSeamConfig,
-};
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
-    build_pipeline, AutonomyRegistry, BodyCapabilities, PipelineAssemblyError, PipelineBuildError,
-    Provenance, PublishedChannel,
+    build_pipeline, ActuatorSeamConfig, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
+    CommandFoldConfig, EstimateSeamConfig, PipelineAssemblyError, PipelineBuildError, Provenance,
+    PublishedChannel, ReferenceSeamConfig,
 };
 
 use helios_core::control::actuation_model::{ActuationModel, ActuatorSpec, SignConvention};
@@ -70,8 +68,8 @@ fn estimate_seam(source: &str) -> EstimateSeamConfig {
 }
 
 /// A stack whose only node is the teleop mapper, forwarded onto the reference.
-fn teleop_only_stack() -> AutonomyStack {
-    AutonomyStack {
+fn teleop_only_stack() -> AutonomyStackConfig {
+    AutonomyStackConfig {
         nodes: BTreeMap::from([twist_teleop()]),
         reference: Some(reference_seam("teleop", &[])),
         ..Default::default()
@@ -222,7 +220,7 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
     // table key through to the built node's identity. Two nodes
     // of a shared kind under distinct keys would otherwise collide on one name
     // in any name-keyed tooling (observability paths, `channels()`).
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([occupancy_grid("local_grid", "scan"), imu_ekf("nav_ekf")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
@@ -260,7 +258,7 @@ fn two_grids_publish_to_distinct_channels() {
     // map producer slot. Each publishes `MapData` on a channel named by its own
     // key; a single hardcoded output name would make the second grid a
     // `DuplicateProducer` and fail the build.
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([
             occupancy_grid("local", "scan/near"),
             occupancy_grid("global", "scan/far"),
@@ -382,7 +380,7 @@ fn test_actuation() -> ActuationModel {
 /// A DriveForce stack: a feedback leg and a feedforward leg folded into a
 /// wheel-torque allocator. The drive actuator id is `drive`; τ = F · r with
 /// r = 0.3.
-fn drive_force_stack() -> AutonomyStack {
+fn drive_force_stack() -> AutonomyStackConfig {
     let nodes = BTreeMap::from([
         longitudinal_velocity("speed_ctrl"),
         road_load("road_load"),
@@ -397,7 +395,7 @@ fn drive_force_stack() -> AutonomyStack {
         "#,
     );
 
-    AutonomyStack {
+    AutonomyStackConfig {
         nodes,
         command,
         actuators: actuator_seam(&["wheels"]),
@@ -543,7 +541,7 @@ fn bicycle_steer(name: &str) -> (String, toml::Table) {
 /// actuator `drive`, τ = F · r, r = 0.3) and a SteerAngle leg into a steer-position
 /// allocator (steer actuator `steer`, identity angle → position). The two
 /// allocators own disjoint actuators, so a `Merge` unions their partials.
-fn decoupled_car_stack() -> AutonomyStack {
+fn decoupled_car_stack() -> AutonomyStackConfig {
     let nodes = BTreeMap::from([
         longitudinal_velocity("speed_ctrl"),
         bicycle_steer("steer_ff"),
@@ -562,7 +560,7 @@ fn decoupled_car_stack() -> AutonomyStack {
         "#,
     );
 
-    AutonomyStack {
+    AutonomyStackConfig {
         nodes,
         command,
         actuators: actuator_seam(&["drive_wheels", "steer_axle"]),
@@ -714,7 +712,7 @@ fn a_controller_of_the_wrong_type_fails_the_build_naming_it() {
 fn two_folds_of_one_type_drive_two_allocators() {
     // A skid-steer's two sides: two `DriveForce` folds, each read by its own
     // wheel-torque allocator. One fold per type could not express this.
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([
             longitudinal_velocity("left_speed"),
             longitudinal_velocity("right_speed"),
@@ -1099,7 +1097,7 @@ fn teleop_preferred_over_a_follower_wins_the_reference_while_fresh() {
 
 #[test]
 fn reference_naming_no_node_fails_the_build_naming_it() {
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         reference: Some(reference_seam("teleop", &["pure_pursuit"])),
         ..teleop_only_stack()
     };
@@ -1206,7 +1204,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         random_walk = 0.01
         "#
     );
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([node_entry("nav_ekf", &section)]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
@@ -1323,7 +1321,7 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
     let input = "sensor.lidar.front";
     let output = "lidar.front.points";
 
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([deproject("front_deproject", input, output)]),
         ..Default::default()
     };
@@ -1437,7 +1435,7 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
     // The host publishes only the range field. The mapper's scan channel is the
     // deproject node's output, a derived sensor channel, so it needs no host
     // publisher, and the producer is ordered ahead of the mapper.
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         estimate: Some(estimate_seam("nav_ekf")),
         nodes: BTreeMap::from([
             deproject("front_deproject", "lidar", "lidar.points"),
@@ -1473,7 +1471,7 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
 fn mapper_reading_an_unpublished_channel_fails_the_build() {
     // A scan channel no one publishes used to build fine and leave the mapper
     // silently empty. It must now fail, naming the node and the channel.
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         estimate: Some(estimate_seam("nav_ekf")),
         nodes: BTreeMap::from([occupancy_grid("local", "lidar.typo"), imu_ekf("nav_ekf")]),
         ..Default::default()
@@ -1508,7 +1506,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
     // by the body here so the test needs no estimator.
     let agent = AgentId::new("test_agent");
     let state_key: ChannelKey = estimate::estimate().into();
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([
             deproject("front_deproject", "lidar", "lidar.points"),
             occupancy_grid("local", "lidar.points"),
@@ -1584,7 +1582,7 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
     // The IMU channels feed prediction, not aiding, but they are host inputs
     // all the same: an estimator naming one the host does not publish would
     // build, never receive a sample, and never run.
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([imu_ekf("nav_ekf")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
@@ -1629,7 +1627,7 @@ fn estimator_aided_by_a_host_channel_builds() {
     // Aiding inputs are optional ports. The build counts one as supplied only
     // because the generic sensor-input pass seeds optional inputs too; were it
     // to skip them, this build would fail with an unsatisfied input.
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([mag_aided_imu_ekf("mag/primary")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
@@ -1654,7 +1652,7 @@ fn estimator_aided_by_a_host_channel_builds() {
 fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
     // An aiding channel the host does not publish is caught by the sensor-input
     // check every node gets, named with the estimator node.
-    let stack = AutonomyStack {
+    let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([mag_aided_imu_ekf("mag/typo")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
@@ -1697,10 +1695,10 @@ fn astar(name: &str, goal_channel: &str) -> (String, toml::Table) {
 
 /// An IMU EKF, a `local` occupancy grid, and one A* planner per
 /// `(name, goal_channel)` pair: the smallest stack whose planners build.
-fn planner_stack(planners: &[(&str, &str)]) -> AutonomyStack {
+fn planner_stack(planners: &[(&str, &str)]) -> AutonomyStackConfig {
     let mut nodes = BTreeMap::from([occupancy_grid("local", "scan"), imu_ekf("nav_ekf")]);
     nodes.extend(planners.iter().map(|(name, goal)| astar(name, goal)));
-    AutonomyStack {
+    AutonomyStackConfig {
         estimate: Some(estimate_seam("nav_ekf")),
         nodes,
         ..Default::default()

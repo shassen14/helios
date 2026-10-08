@@ -22,11 +22,11 @@ pub(crate) struct RecursiveEstimatorConfig {
     /// The sensors that correct the estimate, keyed by a name of the
     /// profile's choosing. Applied in key order each tick.
     #[serde(default)]
-    pub(crate) aiding: BTreeMap<String, AidingEntry>,
+    pub(crate) aiding: BTreeMap<String, AidingConfig>,
     /// Nuisance parameters estimated alongside the state, appended to the
     /// dynamics' state in list order.
     #[serde(default)]
-    pub(crate) augmentation: Vec<AugmentationEntry>,
+    pub(crate) augmentation: Vec<AugmentationConfig>,
     /// The pose the filter starts from. Its uncertainty is the dynamics'.
     #[serde(default)]
     pub(crate) initial_pose: InitialPoseConfig,
@@ -36,7 +36,7 @@ pub(crate) struct RecursiveEstimatorConfig {
 /// model that predicts them.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AidingEntry {
+pub(crate) struct AidingConfig {
     /// The host sensor channel the readings arrive on. Also the leaf of the
     /// sensor's frame.
     pub(crate) input: String,
@@ -67,7 +67,7 @@ pub(crate) struct NisHealthConfig {
 /// sensor.
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct AugmentationEntry {
+pub(crate) struct AugmentationConfig {
     /// Augmentation kind, one of the reserved kinds in
     /// `helios_core::estimation::augmentation` (e.g. the magnetometer bias).
     pub(crate) kind: String,

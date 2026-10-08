@@ -1,13 +1,8 @@
-//! The built-in measurement kinds, each registered with the payload type it
-//! reads.
-//!
-//! Every model resolves its sensor's geometry from the TF tree at tick time,
-//! so each is built for the sensor frame its channel names. Physical constants
-//! the model believes (gravity, the local magnetic field) come from its own
-//! config.
+//! The built-in measurement kinds' factories and registration.
+
+use super::config::{AccelerometerConfig, MagnetometerConfig};
 
 use crate::assembly::{BuildContext, NoParams};
-use crate::nodes::estimation::gravity::default_gravity_enu;
 use crate::nodes::estimation::EstimatorComponents;
 
 use helios_core::estimation::measurement::{
@@ -20,7 +15,6 @@ use helios_core::interchange::measurement::sensor::{
 use helios_core::spatial::FrameId;
 
 use nalgebra::Vector3;
-use serde::{Deserialize, Serialize};
 
 /// The `kind` of a GNSS position model, reading `GpsPosition`.
 pub(crate) const GPS_POSITION_KIND: &str = "gps_position";
@@ -31,7 +25,7 @@ pub(crate) const GYROSCOPE_KIND: &str = "gyroscope";
 /// The `kind` of a magnetic-field model, reading `MagneticField`.
 pub(crate) const MAGNETOMETER_KIND: &str = "magnetometer";
 
-pub(super) fn register(components: &mut EstimatorComponents) {
+pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponents) {
     const ONCE: &str = "built-in measurement kinds are registered once, by the default components";
     components
         .register_measurement::<GpsPosition, _, _>(GPS_POSITION_KIND, build_gps_position)
@@ -45,27 +39,6 @@ pub(super) fn register(components: &mut EstimatorComponents) {
     components
         .register_measurement::<MagneticField, _, _>(MAGNETOMETER_KIND, build_magnetometer)
         .expect(ONCE);
-}
-
-/// The `accelerometer` kind's config.
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct AccelerometerConfig {
-    /// The filter's believed gravity, world ENU `[east, north, up]` (m/s²).
-    /// Must match the simulated world's gravity unless the mismatch is the
-    /// experiment.
-    #[serde(default = "default_gravity_enu")]
-    gravity_enu: [f64; 3],
-}
-
-/// The `magnetometer` kind's config.
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct MagnetometerConfig {
-    /// The filter's believed local field, world ENU (µT). Required: there is
-    /// no sensible default. Must match the simulated world's field unless the
-    /// mismatch is the experiment.
-    magnetic_field_enu: [f64; 3],
 }
 
 fn build_gps_position(
