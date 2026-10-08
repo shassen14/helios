@@ -2,7 +2,7 @@
 //! chosen by its own `kind` and built through a component table in
 //! [`EstimatorComponents`], the registry extension this module owns.
 //!
-//! - `filter` — the recursive filter (EKF, …), built around a seeded state and
+//! - `filter` — the recursive filter (EKF, UKF), built around a seeded state and
 //!   a dynamics model ([`FilterParts`]).
 //! - `dynamics` — the process model and the input builder feeding its predict
 //!   ([`DynamicsComponent`]); the two must agree on the input schema.
@@ -17,6 +17,8 @@
 mod components;
 mod dynamics;
 mod filter;
+#[cfg(test)]
+pub(crate) mod flat_position;
 mod gravity;
 mod measurement;
 

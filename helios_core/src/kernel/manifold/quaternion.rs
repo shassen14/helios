@@ -60,6 +60,10 @@ impl StateBlock for QuaternionBlock {
         3
     }
 
+    fn is_euclidean(&self) -> bool {
+        false
+    }
+
     fn oplus(&self, x: DVectorView<f64>, delta: DVectorView<f64>) -> DVector<f64> {
         // Stored order is [x, y, z, w] (scalar last); Quaternion::new wants
         // (w, i, j, k) (scalar first), so the scalar x[3] leads.

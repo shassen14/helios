@@ -1,4 +1,4 @@
-//! The filter component: the recursive algorithm a node runs (EKF, …), built
+//! The filter component: the recursive algorithm a node runs (EKF, UKF), built
 //! around a seeded state and a dynamics model.
 
 use crate::assembly::BuildContext;
@@ -6,6 +6,7 @@ use crate::nodes::estimation::EstimatorComponents;
 
 use helios_core::estimation::dynamics::EstimationDynamics;
 use helios_core::estimation::filters::ekf::{CovarianceConditioning, ExtendedKalmanFilter};
+use helios_core::estimation::filters::ukf::{self, UnscentedKalmanFilter};
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::spatial::FrameAwareState;
 
@@ -14,6 +15,8 @@ use serde::{Deserialize, Serialize};
 
 /// The `kind` a `filter` sub-table writes for the extended Kalman filter.
 pub(crate) const EKF_FILTER_KIND: &str = "Ekf";
+/// The `kind` a `filter` sub-table writes for the unscented Kalman filter.
+pub(crate) const UKF_FILTER_KIND: &str = "Ukf";
 
 /// What a filter factory receives besides its own config: the parts the node
 /// built before choosing the filter.
@@ -85,10 +88,58 @@ impl EkfParams {
     }
 }
 
+/// The UKF's own keys in a `filter` sub-table: the sigma-point spread.
+/// All three are required; there is no one right default.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct UkfParams {
+    /// How far the sigma points sit from the mean. Must be finite and
+    /// positive.
+    pub(crate) alpha: f64,
+    /// Prior knowledge of the distribution's shape (2 for a Gaussian). Must
+    /// be finite.
+    pub(crate) beta: f64,
+    /// Secondary spread. Must be finite, and `n + kappa` positive for the
+    /// state's `n` degrees of freedom, or the sigma points have no spread.
+    pub(crate) kappa: f64,
+}
+
+impl UkfParams {
+    /// The core parameters for a state with `dof` degrees of freedom, or why
+    /// a value is unusable.
+    fn for_dof(&self, dof: usize) -> Result<ukf::UkfParams, String> {
+        if !self.alpha.is_finite() || self.alpha <= 0.0 {
+            return Err(format!(
+                "alpha must be finite and positive, got {}",
+                self.alpha
+            ));
+        }
+        for (key, value) in [("beta", self.beta), ("kappa", self.kappa)] {
+            if !value.is_finite() {
+                return Err(format!("{key} must be finite, got {value}"));
+            }
+        }
+        if dof as f64 + self.kappa <= 0.0 {
+            return Err(format!(
+                "kappa must exceed -{dof}, the state's degrees of freedom, got {}",
+                self.kappa
+            ));
+        }
+        Ok(ukf::UkfParams {
+            alpha: self.alpha,
+            beta: self.beta,
+            kappa: self.kappa,
+        })
+    }
+}
+
 pub(super) fn register(components: &mut EstimatorComponents) {
     components
         .register_filter(EKF_FILTER_KIND, build_ekf)
         .expect("Ekf is registered once, by the default components");
+    components
+        .register_filter(UKF_FILTER_KIND, build_ukf)
+        .expect("Ukf is registered once, by the default components");
 }
 
 fn build_ekf(
@@ -103,11 +154,40 @@ fn build_ekf(
     ))
 }
 
+/// Builds a UKF, refusing a state with a curved block.
+///
+/// The UKF's predicted mean is a plain weighted sum of the sigma points. That
+/// is the mean only on a flat block; on a rotation it leaves the manifold
+/// (a sum of unit quaternions is not one). Until the mean is computed on the
+/// manifold, a curved block is refused here rather than estimated wrongly.
+fn build_ukf(
+    params: UkfParams,
+    _ctx: &BuildContext<'_>,
+    parts: FilterParts,
+) -> Result<Box<dyn GaussianStateEstimator>, String> {
+    let schema = parts.initial_state.schema();
+    if let Some(curved) = schema.blocks().iter().find(|block| !block.is_euclidean()) {
+        return Err(format!(
+            "the UKF needs every state block to be Euclidean, but {} is curved: its \
+             sigma-point mean is a plain weighted sum, which is not a mean on a rotation",
+            curved.quantity()
+        ));
+    }
+    let params = params.for_dof(schema.tangent_dim())?;
+    Ok(Box::new(UnscentedKalmanFilter::new(
+        parts.initial_state,
+        parts.process_noise,
+        parts.dynamics,
+        params,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::assembly::{AutonomyRegistry, ComponentError};
+    use crate::nodes::estimation::flat_position::FlatPosition;
 
     use helios_core::estimation::dynamics::integrated_imu::{
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
@@ -156,9 +236,24 @@ mod tests {
         }
     }
 
+    /// Parts on a flat state: a still `odom` position.
+    fn flat_parts() -> FilterParts {
+        let dynamics = FlatPosition::new(agent());
+        let state = FrameAwareState::from_schema(dynamics.schema(), MonotonicTime(0.0));
+        FilterParts::new(state, Box::new(dynamics))
+    }
+
     fn build(
         registry: &AutonomyRegistry,
         section: &str,
+    ) -> Result<Box<dyn GaussianStateEstimator>, ComponentError> {
+        build_on(registry, section, parts())
+    }
+
+    fn build_on(
+        registry: &AutonomyRegistry,
+        section: &str,
+        parts: FilterParts,
     ) -> Result<Box<dyn GaussianStateEstimator>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
         let channels = HashSet::new();
@@ -166,8 +261,13 @@ mod tests {
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")
-            .build_filter("filter", section, &ctx, parts())
+            .build_filter("filter", section, &ctx, parts)
             .map(|built| built.component)
+    }
+
+    /// A UKF section with the usual Gaussian spread.
+    fn ukf_section() -> String {
+        format!("kind = \"{UKF_FILTER_KIND}\"\nalpha = 1e-3\nbeta = 2.0\nkappa = 0.0")
     }
 
     /// Q is read from the state's schema, so it is sized to the state.
@@ -218,6 +318,79 @@ mod tests {
                 };
                 assert!(matches!(err, ComponentError::BuildFailed { .. }), "{err}");
             }
+        }
+    }
+
+    /// The built-in UKF builds on a flat state and predicts: P grows by Q·dt.
+    #[test]
+    fn the_built_in_ukf_builds_on_a_flat_state_and_predicts() {
+        let registry = AutonomyRegistry::default();
+        let parts = flat_parts();
+        let p0 = parts.initial_state.covariance.clone();
+        let q = parts.process_noise.clone();
+        let Ok(mut filter) = build_on(&registry, &ukf_section(), parts) else {
+            panic!("the built-in UKF builds on a flat state");
+        };
+        let none = EstimatorInputs {
+            control: DVector::zeros(0),
+        };
+
+        assert_eq!(filter.predict(DT, &none), PredictOutcome::Applied);
+        assert_eq!(filter.state().timestamp, MonotonicTime(DT));
+        let expected = p0 + q * DT;
+        assert!(
+            (&filter.state().covariance - &expected).amax() < 1e-9,
+            "P after predict: {}, expected {expected}",
+            filter.state().covariance
+        );
+    }
+
+    /// The INS state holds an orientation, which the UKF's mean can't average.
+    #[test]
+    fn the_ukf_refuses_a_state_with_a_curved_block() {
+        let registry = AutonomyRegistry::default();
+        let Err(err) = build(&registry, &ukf_section()) else {
+            panic!("the UKF must not build on a state holding an orientation");
+        };
+        assert!(matches!(err, ComponentError::BuildFailed { .. }), "{err}");
+        let message = err.to_string();
+        assert!(message.contains("Euclidean"), "{message}");
+        assert!(message.contains("orientation"), "{message}");
+    }
+
+    #[test]
+    fn the_ukf_requires_its_spread_and_rejects_unknown_keys() {
+        let registry = AutonomyRegistry::default();
+        for section in [
+            format!("kind = \"{UKF_FILTER_KIND}\"\nalpha = 1e-3\nbeta = 2.0"),
+            format!("{}\ncovariance_floor = 1e-9", ukf_section()),
+        ] {
+            let Err(err) = build_on(&registry, &section, flat_parts()) else {
+                panic!("`{section}` must not build");
+            };
+            assert!(matches!(err, ComponentError::InvalidConfig { .. }), "{err}");
+        }
+    }
+
+    #[test]
+    fn an_unusable_ukf_spread_is_rejected() {
+        let registry = AutonomyRegistry::default();
+        // The flat state has 3 degrees of freedom, so kappa must exceed -3.
+        for (alpha, beta, kappa) in [
+            ("0.0", "2.0", "0.0"),
+            ("-1e-3", "2.0", "0.0"),
+            ("nan", "2.0", "0.0"),
+            ("1e-3", "inf", "0.0"),
+            ("1e-3", "2.0", "nan"),
+            ("1e-3", "2.0", "-3.0"),
+        ] {
+            let section = format!(
+                "kind = \"{UKF_FILTER_KIND}\"\nalpha = {alpha}\nbeta = {beta}\nkappa = {kappa}"
+            );
+            let Err(err) = build_on(&registry, &section, flat_parts()) else {
+                panic!("alpha = {alpha}, beta = {beta}, kappa = {kappa} must not build");
+            };
+            assert!(matches!(err, ComponentError::BuildFailed { .. }), "{err}");
         }
     }
 

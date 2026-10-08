@@ -155,6 +155,11 @@ impl StateSchemaBlock {
     pub fn variables(&self) -> Vec<StateVariable> {
         self.quantity.variables()
     }
+
+    /// Whether the block is flat; see [`StateBlock::is_euclidean`].
+    pub fn is_euclidean(&self) -> bool {
+        self.block.is_euclidean()
+    }
 }
 
 /// The immutable shape of a state estimate: its ordered blocks plus the offset,

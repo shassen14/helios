@@ -31,6 +31,11 @@ pub trait StateBlock: Debug + Send + Sync {
 
     fn tangent_dim(&self) -> usize;
 
+    /// Whether the block is flat: `oplus` / `ominus` are plain `+` / `-`, so
+    /// a weighted sum of its points is a point on it. A curved block (a
+    /// rotation) says `false`. No default, so a new block has to answer.
+    fn is_euclidean(&self) -> bool;
+
     fn oplus(&self, x: DVectorView<f64>, delta: DVectorView<f64>) -> DVector<f64> {
         x.into_owned() + delta
     }

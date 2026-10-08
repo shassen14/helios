@@ -68,6 +68,10 @@ impl StateBlock for EuclideanBlock {
         self.dim
     }
 
+    fn is_euclidean(&self) -> bool {
+        true
+    }
+
     fn process_noise(&self) -> Option<TangentNoise> {
         self.process_noise.clone()
     }
