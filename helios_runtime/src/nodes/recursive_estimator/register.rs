@@ -7,7 +7,8 @@
 //! pose.
 
 use super::config::{AidingEntry, AugmentationEntry, InitialPoseConfig, RecursiveEstimatorConfig};
-use super::node::RecursiveEstimatorNode;
+use super::nis_health::NisWindow;
+use super::node::{Aiding, RecursiveEstimatorNode};
 
 use crate::assembly::{AutonomyRegistry, BuildContext, BuildFailure, FactoryOutput};
 use crate::nodes::estimation::{
@@ -36,6 +37,8 @@ const DYNAMICS_KEY: &str = "dynamics";
 const AIDING_KEY: &str = "aiding";
 /// The key of an aiding entry's model sub-table.
 const MODEL_KEY: &str = "model";
+/// The key of an aiding entry's NIS health check, named in its errors.
+const NIS_HEALTH_KEY: &str = "nis_health";
 
 /// Adds the `RecursiveEstimator` kind to `registry`.
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
@@ -55,14 +58,17 @@ fn build(
     let dynamics = components.build_dynamics(DYNAMICS_KEY, config.dynamics, ctx)?;
     let mut resolved_aiding = Vec::with_capacity(config.aiding.len());
     let mut aiding = Vec::with_capacity(config.aiding.len());
+    let mut nis_windows = Vec::with_capacity(config.aiding.len());
     let inputs: Vec<String> = config
         .aiding
         .values()
         .map(|entry| entry.input.clone())
         .collect();
     for (name, entry) in config.aiding {
+        let nis_window = nis_window(&name, &entry)?;
         let (source, resolved) = build_aiding(components, &name, entry, ctx)?;
         aiding.push(source);
+        nis_windows.push(nis_window);
         resolved_aiding.push((
             [AIDING_KEY.to_string(), name, MODEL_KEY.to_string()],
             resolved,
@@ -90,6 +96,14 @@ fn build(
         child: FrameId::base_link(agent.clone()),
         parent: FrameId::odom(agent.clone()),
     };
+    let aiding = aiding
+        .into_iter()
+        .zip(nis_windows)
+        .map(|(source, window)| match window {
+            Some(window) => Aiding::new(source).with_nis_window(window),
+            None => Aiding::new(source),
+        })
+        .collect();
     let node = RecursiveEstimatorNode::new(ctx.node_name(), edge, filter.component, input, aiding);
 
     let mut output = FactoryOutput::new(Box::new(node))
@@ -116,6 +130,17 @@ fn build_aiding(
     let path = format!("{AIDING_KEY}.{name}.{MODEL_KEY}");
     let built = components.build_measurement(&path, entry.model, ctx, wiring)?;
     Ok((built.component, built.resolved))
+}
+
+/// The NIS window aiding entry `name` asks for, if any, or why its
+/// `nis_health` is unusable.
+fn nis_window(name: &str, entry: &AidingEntry) -> Result<Option<NisWindow>, String> {
+    entry
+        .nis_health
+        .as_ref()
+        .map(|health| NisWindow::new(health.window, health.band))
+        .transpose()
+        .map_err(|err| format!("{AIDING_KEY}.{name}.{NIS_HEALTH_KEY}: {err}"))
 }
 
 /// Turns every augmentation entry into a state block tagged with its sensor's
@@ -474,6 +499,19 @@ mod tests {
             GPS.replace("gps_position", "gsp_position")
         ));
         assert!(err.starts_with("nodes.primary.aiding.gps.model:"), "{err}");
+    }
+
+    /// An aiding entry may ask for a NIS window; an unusable one is refused,
+    /// naming its entry.
+    #[test]
+    fn an_aiding_entrys_nis_health_is_checked_at_build() {
+        let with = |health: &str| format!("{BASE}{GPS}nis_health = {health}\n");
+        build_section(&with("{ window = 50, band = [0.3, 3.0] }"));
+
+        let err = build_err(&with("{ window = 0, band = [0.3, 3.0] }"));
+        assert!(err.contains("aiding.gps.nis_health: window"), "{err}");
+        let err = build_err(&with("{ window = 50, band = [3.0, 0.3] }"));
+        assert!(err.contains("aiding.gps.nis_health: band"), "{err}");
     }
 
     /// An augmentation no aiding entry observes is refused rather than left

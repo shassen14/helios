@@ -46,6 +46,21 @@ pub(crate) struct AidingEntry {
     /// The measurement model (`kind = "gps_position"`, …). The kind fixes the
     /// payload type read from `input`.
     pub(crate) model: toml::Table,
+    /// Marks the estimate degraded while this sensor's recent innovations
+    /// disagree with the filter's predicted spread. Off when absent.
+    #[serde(default)]
+    pub(crate) nis_health: Option<NisHealthConfig>,
+}
+
+/// The windowed-NIS check on one aiding sensor.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NisHealthConfig {
+    /// How many of the latest applied readings the mean runs over.
+    pub(crate) window: usize,
+    /// `[low, high]` bounds on the mean NIS ÷ dof over the window, which is 1
+    /// for an honest filter.
+    pub(crate) band: [f64; 2],
 }
 
 /// One nuisance block appended to the state, calibrated through an aiding
@@ -113,6 +128,8 @@ mod tests {
             "agiding = {}",
             "[initial_pose]\nheadng_deg = 90.0",
             "[aiding.gps]\ninput = \"gps\"\nr_diag = []\nmodel = {}\nr_diagg = []",
+            "[aiding.gps]\ninput = \"gps\"\nr_diag = []\nmodel = {}\n\
+             nis_health = { window = 5, band = [0.5, 2.0], windw = 5 }",
         ] {
             let section = format!("{MINIMAL}\n{extra}");
             assert!(

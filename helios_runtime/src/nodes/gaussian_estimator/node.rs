@@ -27,6 +27,7 @@ use crate::port::{
     AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
     SensorChannel,
 };
+use crate::stamped::Health;
 
 use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::schema::MeasurementSchema;
@@ -243,7 +244,14 @@ impl PipelineNode for GaussianEstimatorNode {
         }
 
         // 3. Publish snapshot.
-        publish_estimate(bus, &self.edge, estimator.state().clone(), tick.now, &tick);
+        publish_estimate(
+            bus,
+            &self.edge,
+            estimator.state().clone(),
+            tick.now,
+            Health::Ok,
+            &tick,
+        );
     }
 }
 
@@ -255,7 +263,7 @@ mod tests {
     //! and bus publish.
 
     use super::*;
-    use crate::stamped::{Health, Stamped};
+    use crate::stamped::Stamped;
 
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::measurement::{Prediction, Unavailable};

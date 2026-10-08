@@ -23,8 +23,22 @@
 //!    stamped with the state's valid-at time. After a tick with no predict
 //!    that is earlier than the tick's: the estimate says when it holds.
 //!
+//! ## Health
+//!
+//! Both outputs carry `Health::Degraded` while either holds:
+//! - the last predict the filter attempted was skipped for a fault, so the
+//!   estimate is no longer being propagated (cleared by the next applied
+//!   predict);
+//! - an aiding sensor with a NIS window has a full window whose mean
+//!   NIS ÷ dof lies outside its band.
+//!
+//! Otherwise they are `Health::Ok`. Health says how far to trust the
+//! estimate; it never changes what the filter computes.
+//!
 //! The state's valid-at time is the node's only clock memory. The tick's
 //! `dt` is never read: a tick that does not predict would lose it.
+
+use super::nis_health::NisWindow;
 
 use crate::channels::tf::{publish_edge, tf_edge};
 use crate::nodes::estimation::{EstimatorInputBuilder, Measurement, MeasurementSource};
@@ -67,7 +81,7 @@ pub(crate) const SKIP_WARN_MIN_INTERVAL_SECS: f64 = 5.0;
 pub(crate) struct RecursiveEstimatorNode {
     name: String,
     edge: FrameEdge,
-    filter: Mutex<Box<dyn GaussianStateEstimator>>,
+    filter: Mutex<Running>,
     input: Box<dyn EstimatorInputBuilder>,
     aiding: Vec<Aiding>,
     descriptor: PortDescriptor,
@@ -87,25 +101,28 @@ impl RecursiveEstimatorNode {
         edge: FrameEdge,
         filter: Box<dyn GaussianStateEstimator>,
         input: Box<dyn EstimatorInputBuilder>,
-        aiding: Vec<Box<dyn MeasurementSource>>,
+        aiding: Vec<Aiding>,
     ) -> Self {
         let mut builder = AlgorithmNodePortDescriptor::new()
             .inputs_from_slices(input.required_channels(), input.optional_channels())
             .output_internal(InternalChannel::of::<FrameAwareState>())
             .output_internal(tf_edge(&edge));
-        for source in &aiding {
+        for aiding in &aiding {
             // The source holds only an erased key, so it goes through the
             // slice path, which asserts the key is a sensor or internal
             // channel.
-            builder = builder.inputs_from_slices(&[], &[source.channel().clone()]);
+            builder = builder.inputs_from_slices(&[], &[aiding.source.channel().clone()]);
         }
 
         Self {
             name: name.into(),
             edge,
-            filter: Mutex::new(filter),
+            filter: Mutex::new(Running {
+                filter,
+                predict_fault: None,
+            }),
             input,
-            aiding: aiding.into_iter().map(Aiding::new).collect(),
+            aiding,
             descriptor: builder.build(),
             started: AtomicBool::new(false),
             last_predict_warned: AtomicF64::new(f64::NEG_INFINITY),
@@ -124,9 +141,13 @@ impl PipelineNode for RecursiveEstimatorNode {
 
     fn execute(&self, bus: &PortBus, tf: &dyn TfProvider, tick: TickContext) {
         // Skip the tick on a poisoned mutex rather than propagating the panic.
-        let Ok(mut filter) = self.filter.lock() else {
+        let Ok(mut running) = self.filter.lock() else {
             return;
         };
+        let Running {
+            filter,
+            predict_fault,
+        } = &mut *running;
 
         // 0. Start. Read and set under the filter lock, so no two ticks
         // can both see it unset.
@@ -146,6 +167,9 @@ impl PipelineNode for RecursiveEstimatorNode {
         if let Some(inputs) = inputs {
             let dt = tick.now.0 - filter.state().timestamp.0;
             let outcome = filter.predict(dt, &inputs);
+            if outcome == PredictOutcome::Applied {
+                *predict_fault = None;
+            }
             if let Some(cause) = predict_skip_cause(&outcome) {
                 if passes_warn_throttle(&self.last_predict_warned, tick.now.0) {
                     warn!(
@@ -154,6 +178,7 @@ impl PipelineNode for RecursiveEstimatorNode {
                         self.name, tick.now.0,
                     );
                 }
+                *predict_fault = Some(cause);
             }
         }
 
@@ -162,26 +187,84 @@ impl PipelineNode for RecursiveEstimatorNode {
             aiding.apply_new(bus, &mut **filter, Some(tf));
         }
 
-        // 3. Publish, at the time the state holds.
+        // 3. Publish, at the time the state holds, with the health it has
+        // earned.
+        let health = self
+            .aiding
+            .iter()
+            .map(Aiding::health)
+            .fold(predict_health(predict_fault.as_deref()), Health::worse_of);
         let state = filter.state().clone();
         let valid_at = state.timestamp;
-        publish_estimate(bus, &self.edge, state, valid_at, &tick);
+        publish_estimate(bus, &self.edge, state, valid_at, health, &tick);
     }
 }
 
-/// One aiding source and the throttle on its drop warnings.
-struct Aiding {
+/// What the node holds under its lock: the filter, and why its last
+/// attempted predict was skipped, if for a fault.
+struct Running {
+    filter: Box<dyn GaussianStateEstimator>,
+    predict_fault: Option<String>,
+}
+
+/// The health a predict fault leaves the estimate in.
+fn predict_health(fault: Option<&str>) -> Health {
+    match fault {
+        None => Health::Ok,
+        Some(cause) => Health::Degraded {
+            reason: format!("predict skipped: {cause}").into(),
+        },
+    }
+}
+
+/// One aiding source, the throttle on its drop warnings, and its NIS window
+/// if it has one.
+pub(crate) struct Aiding {
     source: Box<dyn MeasurementSource>,
     /// Reading time of the last "aiding dropped" warning; `NEG_INFINITY` so
     /// the first fault always prints.
     last_warned: AtomicF64,
+    /// Locked only inside a tick, under the node's filter lock, so never
+    /// contended.
+    nis: Option<Mutex<NisWindow>>,
 }
 
 impl Aiding {
-    fn new(source: Box<dyn MeasurementSource>) -> Self {
+    /// `source`, with no NIS window.
+    pub(crate) fn new(source: Box<dyn MeasurementSource>) -> Self {
         Self {
             source,
             last_warned: AtomicF64::new(f64::NEG_INFINITY),
+            nis: None,
+        }
+    }
+
+    /// The same source, judged by `window`.
+    pub(crate) fn with_nis_window(mut self, window: NisWindow) -> Self {
+        self.nis = Some(Mutex::new(window));
+        self
+    }
+
+    /// `Degraded` while the NIS window is full and its mean is out of band;
+    /// `Ok` otherwise, and always without a window.
+    fn health(&self) -> Health {
+        let Some(Ok(nis)) = self.nis.as_ref().map(Mutex::lock) else {
+            return Health::Ok;
+        };
+        match nis.out_of_band_mean() {
+            None => Health::Ok,
+            Some(mean) => {
+                let [low, high] = nis.band();
+                Health::Degraded {
+                    reason: format!(
+                        "{}: mean NIS/dof {mean:.2} over the last {} readings is outside \
+                         [{low}, {high}]",
+                        self.source.channel(),
+                        nis.capacity(),
+                    )
+                    .into(),
+                }
+            }
         }
     }
 
@@ -195,6 +278,11 @@ impl Aiding {
     ) {
         for Measurement { z, at } in self.source.take_new(bus) {
             let outcome = filter.update(&z, self.source.model(), self.source.noise(), tf, at);
+            if let (UpdateOutcome::Applied(innovation), Some(Ok(mut nis))) =
+                (&outcome, self.nis.as_ref().map(Mutex::lock))
+            {
+                nis.record(*innovation);
+            }
             // Expected quiet skips (cold start, no provider) and applied
             // updates say nothing.
             if let Some(cause) = aiding_drop_cause(&outcome) {
@@ -212,7 +300,7 @@ impl Aiding {
 }
 
 /// Writes `state` as `FrameAwareState @ ""` and the `edge` transform it
-/// implies, both stamped `at`.
+/// implies, both stamped `at` and carrying `health`.
 ///
 /// The edge is a pure read of the state's orientation and reference-frame
 /// position. If either block is absent (a schema not yet seeded with a pose),
@@ -223,6 +311,7 @@ pub(crate) fn publish_estimate(
     edge: &FrameEdge,
     state: FrameAwareState,
     at: MonotonicTime,
+    health: Health,
     tick: &TickContext,
 ) {
     if let Some(pose) = state.pose::<Flu, Enu>(edge.child.clone(), edge.parent.clone()) {
@@ -240,7 +329,7 @@ pub(crate) fn publish_estimate(
             Stamped {
                 value: transform,
                 timestamp: at,
-                health: Health::Ok,
+                health: health.clone(),
                 producer: tick.node_id,
             },
         );
@@ -249,7 +338,7 @@ pub(crate) fn publish_estimate(
     let stamped = Stamped {
         value: state,
         timestamp: at,
-        health: Health::Ok,
+        health,
         producer: tick.node_id,
     };
     let state_channel: ChannelKey = InternalChannel::of::<FrameAwareState>().into();
@@ -285,6 +374,9 @@ pub(crate) fn aiding_drop_cause(outcome: &UpdateOutcome) -> Option<String> {
         UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite) => Some(
             "innovation covariance not positive-definite (filter covariance corrupt)".to_string(),
         ),
+        UpdateOutcome::Skipped(SkipReason::NonFiniteInput) => {
+            Some("measurement, R or estimate holds NaN or ∞".to_string())
+        }
         // A reason added to core after this match was written: surface it
         // rather than guess it is harmless.
         UpdateOutcome::Skipped(reason) => Some(format!("{reason:?}")),
@@ -306,6 +398,9 @@ pub(crate) fn predict_skip_cause(outcome: &PredictOutcome) -> Option<String> {
         }
         PredictOutcome::Skipped(PredictSkipReason::CovarianceNotPositiveDefinite) => {
             Some("state covariance not positive-definite (filter covariance corrupt)".to_string())
+        }
+        PredictOutcome::Skipped(PredictSkipReason::NonFiniteInput) => {
+            Some("step, input or estimate holds NaN or ∞".to_string())
         }
         // A reason added to core after this match was written: surface it
         // rather than guess it is harmless.
@@ -364,11 +459,16 @@ mod tests {
         InternalChannel::of::<FrameAwareState>().into()
     }
 
-    /// What the filter was asked to do, readable after the filter is boxed.
+    /// What the filter was asked to do, readable after the filter is boxed,
+    /// and how it answers.
     #[derive(Default)]
     struct Calls {
         predict_dts: Vec<f64>,
         update_times: Vec<f64>,
+        /// Skip every predict for a fault while set.
+        fail_predict: bool,
+        /// The NIS every update reports, over one degree of freedom.
+        nis: f64,
     }
 
     /// A filter that applies everything, advancing its valid-at time as a
@@ -380,7 +480,11 @@ mod tests {
 
     impl GaussianStateEstimator for RecordingFilter {
         fn predict(&mut self, dt: f64, _: &EstimatorInputs) -> PredictOutcome {
-            self.calls.lock().expect("test lock").predict_dts.push(dt);
+            let mut calls = self.calls.lock().expect("test lock");
+            calls.predict_dts.push(dt);
+            if calls.fail_predict {
+                return PredictOutcome::Skipped(PredictSkipReason::NonFiniteInput);
+            }
             self.state.timestamp += MonotonicDuration(dt);
             PredictOutcome::Applied
         }
@@ -393,12 +497,9 @@ mod tests {
             _: Option<&dyn TfProvider>,
             at: MonotonicTime,
         ) -> UpdateOutcome {
-            self.calls
-                .lock()
-                .expect("test lock")
-                .update_times
-                .push(at.0);
-            UpdateOutcome::Applied(Innovation::new(1.0, 1))
+            let mut calls = self.calls.lock().expect("test lock");
+            calls.update_times.push(at.0);
+            UpdateOutcome::Applied(Innovation::new(calls.nis, 1))
         }
 
         fn set_valid_at(&mut self, t: MonotonicTime) {
@@ -490,12 +591,25 @@ mod tests {
         fn predict_dts(&self) -> Vec<f64> {
             self.calls.lock().expect("test lock").predict_dts.clone()
         }
+
+        fn fail_predict(&self, fail: bool) {
+            self.calls.lock().expect("test lock").fail_predict = fail;
+        }
+
+        fn report_nis(&self, nis: f64) {
+            self.calls.lock().expect("test lock").nis = nis;
+        }
     }
 
     /// A node over a [`RecordingFilter`] with one accelerometer source, its
     /// input ready, and the probe on it. The prior is valid at zero, as the
     /// factory builds it.
     fn node() -> (RecursiveEstimatorNode, Probe) {
+        node_with(None)
+    }
+
+    /// [`node`], its accelerometer source judged by `nis` if given.
+    fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Probe) {
         let calls = Arc::new(StdMutex::new(Calls::default()));
         let filter = RecordingFilter {
             // Anchors base_link in odom, so the state holds a pose and the
@@ -523,7 +637,10 @@ mod tests {
             edge,
             Box::new(filter),
             Box::new(ToggledInput(Arc::clone(&input_ready))),
-            vec![Box::new(source)],
+            vec![match nis {
+                Some(window) => Aiding::new(Box::new(source)).with_nis_window(window),
+                None => Aiding::new(Box::new(source)),
+            }],
         );
         (node, Probe { calls, input_ready })
     }
@@ -658,6 +775,88 @@ mod tests {
 
         assert_eq!(probe.predict_dts(), [1.0]);
         assert_eq!(published_stamps(&bus, &node), (2.0, 2.0));
+    }
+
+    /// The published estimate's and edge's health, which always agree.
+    fn published_health(bus: &PortBus, node: &RecursiveEstimatorNode) -> Health {
+        let state = bus
+            .read::<FrameAwareState>(state_channel())
+            .expect("the estimate is published");
+        let edge = bus
+            .read::<StampedTransform>(tf_edge(&node.edge).into())
+            .expect("the edge is published");
+        assert_eq!(format!("{:?}", state.health), format!("{:?}", edge.health));
+        state.health.clone()
+    }
+
+    /// A predict skipped for a fault degrades the estimate, which stays
+    /// degraded through ticks with no predict and recovers at the next
+    /// applied one.
+    #[test]
+    fn a_predict_fault_degrades_until_a_predict_applies() {
+        let (node, probe) = node();
+        let bus = bus_for(&node);
+        node.execute(&bus, &NoTransforms, tick(1.0));
+        assert!(matches!(published_health(&bus, &node), Health::Ok));
+
+        probe.fail_predict(true);
+        node.execute(&bus, &NoTransforms, tick(1.1));
+        let Health::Degraded { reason } = published_health(&bus, &node) else {
+            panic!("a predict fault degrades the estimate");
+        };
+        assert!(reason.starts_with("predict skipped:"), "{reason}");
+
+        probe.fail_predict(false);
+        probe.input_ready.store(false, Ordering::Relaxed);
+        node.execute(&bus, &NoTransforms, tick(1.2));
+        assert!(matches!(
+            published_health(&bus, &node),
+            Health::Degraded { .. }
+        ));
+
+        probe.input_ready.store(true, Ordering::Relaxed);
+        node.execute(&bus, &NoTransforms, tick(1.3));
+        assert!(matches!(published_health(&bus, &node), Health::Ok));
+    }
+
+    /// An aiding sensor whose windowed mean NIS leaves the band degrades the
+    /// estimate, naming the sensor; back inside, the estimate is healthy.
+    #[test]
+    fn an_out_of_band_nis_window_degrades_the_estimate() {
+        let window = NisWindow::new(2, [0.5, 2.0]).expect("a valid window");
+        let (node, probe) = node_with(Some(window));
+        let bus = bus_for(&node);
+        probe.report_nis(9.0);
+
+        write_accel(&bus, &[1.0]);
+        node.execute(&bus, &NoTransforms, tick(1.0));
+        assert!(
+            matches!(published_health(&bus, &node), Health::Ok),
+            "one reading does not fill the window"
+        );
+
+        write_accel(&bus, &[2.0]);
+        node.execute(&bus, &NoTransforms, tick(2.0));
+        let Health::Degraded { reason } = published_health(&bus, &node) else {
+            panic!("a full out-of-band window degrades the estimate");
+        };
+        assert!(reason.contains("accel"), "{reason}");
+
+        probe.report_nis(1.0);
+        write_accel(&bus, &[3.0, 4.0]);
+        node.execute(&bus, &NoTransforms, tick(4.0));
+        assert!(matches!(published_health(&bus, &node), Health::Ok));
+    }
+
+    /// Without a NIS window, no innovation degrades the estimate.
+    #[test]
+    fn without_a_nis_window_innovations_leave_health_alone() {
+        let (node, probe) = node();
+        let bus = bus_for(&node);
+        probe.report_nis(1e6);
+        write_accel(&bus, &[1.0, 2.0, 3.0]);
+        node.execute(&bus, &NoTransforms, tick(3.0));
+        assert!(matches!(published_health(&bus, &node), Health::Ok));
     }
 
     /// The throttle lets the first fault through, holds the next ones for

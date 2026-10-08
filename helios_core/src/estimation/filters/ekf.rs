@@ -2,6 +2,7 @@ use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::filters::innovation::measure_innovation;
 use crate::estimation::filters::linearization::discrete_linearization;
 use crate::estimation::filters::predict_guard::check_predict;
+use crate::estimation::filters::update_guard::check_update_finite;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
 use crate::estimation::{
     EstimatorInputs, GaussianStateEstimator, PredictOutcome, SkipReason, UpdateOutcome,
@@ -16,9 +17,9 @@ use nalgebra::{DMatrix, DVector};
 /// A concrete implementation of an Extended Kalman Filter.
 ///
 /// Holds only filter-intrinsic state: the current `(x, P, t)`, the process noise
-/// `Q`, and the dynamics model. Measurement models and their `R` matrices are
-/// supplied per `update` call by the caller — the filter does not maintain a
-/// registry of sensors.
+/// `Q`, the dynamics model and how `P` is conditioned after each step.
+/// Measurement models and their `R` matrices are supplied per `update` call by
+/// the caller — the filter does not maintain a registry of sensors.
 pub struct ExtendedKalmanFilter {
     /// The current state of the filter (x, P, t).
     state: FrameAwareState,
@@ -26,10 +27,13 @@ pub struct ExtendedKalmanFilter {
     process_noise_q: DMatrix<f64>,
     /// The specific dynamics model this filter will use for prediction.
     dynamics_model: Box<dyn EstimationDynamics>,
+    /// What is done to `P` after every predict and update, beyond symmetrising.
+    conditioning: CovarianceConditioning,
 }
 
 impl ExtendedKalmanFilter {
-    /// Creates a new EKF instance.
+    /// Creates a new EKF instance that only symmetrises `P` after each step
+    /// (no variance floor, no jitter).
     pub fn new(
         initial_state: FrameAwareState,
         process_noise_q: DMatrix<f64>,
@@ -42,20 +46,26 @@ impl ExtendedKalmanFilter {
             state: initial_state,
             process_noise_q,
             dynamics_model,
+            conditioning: CovarianceConditioning::default(),
         }
     }
 
-    /// Enforces physical properties on the covariance matrix to prevent divergence.
-    /// Called at the end of every predict and update step.
-    fn ensure_covariance_health(&mut self) {
+    /// The same filter, conditioning `P` with `conditioning` after each step.
+    pub fn with_conditioning(mut self, conditioning: CovarianceConditioning) -> Self {
+        self.conditioning = conditioning;
+        self
+    }
+
+    /// Symmetrises `P`, then applies the configured floor and jitter. Called at
+    /// the end of every predict and update.
+    fn condition_covariance(&mut self) {
         // The covariance lives in tangent space (t × t), so every index here is
         // a tangent dimension, not a stored-vector slot.
         let dim = self.state.tangent_dim();
         let p = &mut self.state.covariance;
-        let min_variance = 1e-9;
 
-        // 1. Enforce symmetry in-place (no allocation): average each off-diagonal pair.
-        // p * p^T * 0.5
+        // 1. Symmetrise in place (no allocation): average each off-diagonal
+        // pair, undoing the round-off asymmetry of F P Fᵀ and the Joseph form.
         for i in 0..dim {
             for j in (i + 1)..dim {
                 let avg = (p[(i, j)] + p[(j, i)]) * 0.5;
@@ -64,26 +74,47 @@ impl ExtendedKalmanFilter {
             }
         }
 
-        // 2. Enforce positive diagonal (prevent negative variance).
-        for i in 0..dim {
-            if p[(i, i)] < min_variance {
-                p[(i, i)] = min_variance;
+        // 2. Raise any variance below the floor to it.
+        if let Some(floor) = self.conditioning.floor {
+            for i in 0..dim {
+                if p[(i, i)] < floor {
+                    p[(i, i)] = floor;
+                }
             }
         }
 
-        // 3. Regularization via diagonal add (no identity matrix allocation).
-        // Adds a tiny uncertainty preventing "close-minded" filters for numerical stability
-        for i in 0..dim {
-            p[(i, i)] += 1e-12;
+        // 3. Add the jitter to every variance.
+        if let Some(jitter) = self.conditioning.jitter {
+            for i in 0..dim {
+                p[(i, i)] += jitter;
+            }
         }
     }
+}
+
+/// What the EKF does to `P` after each step besides symmetrising it, which it
+/// always does.
+///
+/// Both are off by default. Each hides a symptom rather than fixing a cause:
+/// a variance that falls below the floor, or a `P` that needs jitter to stay
+/// factorable, means the filter is diverging or over-confident, and a raised
+/// or padded `P` keeps that from showing (in NEES, or as a
+/// [`SkipReason::CovarianceNotPositiveDefinite`]). Raising only the diagonal
+/// can itself leave `P` indefinite.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CovarianceConditioning {
+    /// The smallest variance a diagonal entry may hold; one below it is
+    /// raised to it. `None`: never raised.
+    pub floor: Option<f64>,
+    /// Added to every variance after each step. `None`: nothing added.
+    pub jitter: Option<f64>,
 }
 
 impl GaussianStateEstimator for ExtendedKalmanFilter {
     fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) -> PredictOutcome {
         // --- 0. Check the step and the input before touching the estimate ---
         let dynamics = &self.dynamics_model;
-        if let Err(reason) = check_predict(dynamics.as_ref(), dt, &inputs.control) {
+        if let Err(reason) = check_predict(dynamics.as_ref(), &self.state, dt, &inputs.control) {
             return PredictOutcome::Skipped(reason);
         }
 
@@ -129,7 +160,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         self.state.covariance = p_new;
         self.state.timestamp += MonotonicDuration(dt);
 
-        self.ensure_covariance_health();
+        self.condition_covariance();
 
         PredictOutcome::Applied
     }
@@ -149,6 +180,9 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         let m = z.nrows();
         if r.nrows() != m || r.ncols() != m {
             return UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch);
+        }
+        if let Err(reason) = check_update_finite(z, r, &self.state) {
+            return UpdateOutcome::Skipped(reason);
         }
 
         let z_pred = match model.predict_measurement(&self.state, tf, at) {
@@ -201,7 +235,7 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         let p_post = &i_kh * p_priori * i_kh.transpose() + &k_gain * r * k_gain.transpose();
         self.state.covariance = p_post;
 
-        self.ensure_covariance_health();
+        self.condition_covariance();
 
         UpdateOutcome::Applied(innovation)
     }
@@ -537,6 +571,92 @@ mod tests {
         assert_eq!(ekf.state().timestamp, MonotonicTime(42.5));
     }
 
+    /// A NaN or ∞ step, control entry or estimate is refused loudly and
+    /// leaves the estimate untouched, rather than poisoning it for good.
+    #[test]
+    fn predict_refuses_a_non_finite_input() {
+        let still = DVector::from_row_slice(&[0.0, 0.0, 9.81, 0.0, 0.0, 0.0]);
+        let mut nan_control = still.clone();
+        nan_control[2] = f64::NAN;
+        let ins = || {
+            let model = ins_model();
+            let schema = model.schema();
+            let state = FrameAwareState::from_schema(schema.clone(), MonotonicTime(0.0));
+            ExtendedKalmanFilter::new(state, schema.process_noise().clone(), Box::new(model))
+        };
+
+        let mut nan_mean = ins();
+        nan_mean.state.mean[0] = f64::NAN;
+        let mut inf_variance = ins();
+        inf_variance.state.covariance[(0, 0)] = f64::INFINITY;
+        let cases = [
+            (ins(), f64::NAN, still.clone()),
+            (ins(), f64::INFINITY, still.clone()),
+            (ins(), 0.02, nan_control),
+            (nan_mean, 0.02, still.clone()),
+            (inf_variance, 0.02, still),
+        ];
+        for (mut ekf, dt, control) in cases {
+            let before = ekf.state().clone();
+            let outcome = ekf.predict(dt, &EstimatorInputs { control });
+            assert_eq!(
+                outcome,
+                PredictOutcome::Skipped(PredictSkipReason::NonFiniteInput)
+            );
+            assert_eq!(ekf.state().timestamp, before.timestamp);
+        }
+    }
+
+    /// A NaN measurement or `R` is refused loudly, so it never reaches the
+    /// mean or reports a NaN NIS as applied.
+    #[test]
+    fn update_refuses_a_non_finite_measurement_or_noise() {
+        let mut nan_r = gps_r();
+        nan_r[(1, 1)] = f64::NAN;
+        for (z, r) in [(gps_z(f64::NAN, 0.0), gps_r()), (gps_z(1.0, 0.0), nan_r)] {
+            let mut ekf = make_ekf(0.0, 1.0);
+            let before = ekf.state().clone();
+            let outcome = ekf.update(&z, &Position2DMeasurement, &r, None, AT);
+            assert_eq!(outcome, UpdateOutcome::Skipped(SkipReason::NonFiniteInput));
+            assert_eq!(ekf.state().mean, before.mean);
+            assert_eq!(ekf.state().covariance, before.covariance);
+        }
+    }
+
+    /// With no conditioning configured, a step only symmetrises `P`: a tiny
+    /// variance is left as it is.
+    #[test]
+    fn default_conditioning_leaves_a_small_variance_alone() {
+        let mut ekf = make_ekf(0.0, 1.0);
+        ekf.state.covariance[(5, 5)] = 1e-15;
+        ekf.state.covariance[(0, 1)] = 0.25;
+        ekf.state.covariance[(1, 0)] = 0.75;
+
+        ekf.condition_covariance();
+
+        assert_eq!(ekf.state().covariance[(5, 5)], 1e-15);
+        assert_eq!(ekf.state().covariance[(0, 1)], 0.5);
+        assert_eq!(ekf.state().covariance[(1, 0)], 0.5);
+    }
+
+    /// A configured floor raises a variance below it, and the jitter is then
+    /// added to every variance.
+    #[test]
+    fn configured_floor_and_jitter_act_on_the_diagonal() {
+        const FLOOR: f64 = 1e-6;
+        const JITTER: f64 = 1e-8;
+        let mut ekf = make_ekf(0.0, 1.0).with_conditioning(CovarianceConditioning {
+            floor: Some(FLOOR),
+            jitter: Some(JITTER),
+        });
+        ekf.state.covariance[(5, 5)] = 1e-15;
+
+        ekf.condition_covariance();
+
+        assert_eq!(ekf.state().covariance[(5, 5)], FLOOR + JITTER);
+        assert_eq!(ekf.state().covariance[(0, 0)], 1.0 + JITTER);
+    }
+
     #[test]
     fn predict_grows_covariance() {
         let mut ekf = make_ekf(0.0, 1.0);
@@ -671,6 +791,11 @@ mod tests {
     // (e.g. the quaternion tangent block dropping 4→3 dims), re-harvest the
     // literals in the same run and commit the new values deliberately.
 
+    /// The covariance floor the golden trajectory was harvested with.
+    const GOLDEN_COVARIANCE_FLOOR: f64 = 1e-9;
+    /// The covariance jitter the golden trajectory was harvested with.
+    const GOLDEN_COVARIANCE_JITTER: f64 = 1e-12;
+
     /// Builds the frozen 16-state INS EKF and runs a fixed control script,
     /// returning the final `(mean, covariance-diagonal)`. Every input here is a
     /// hardcoded constant so the run is fully deterministic.
@@ -704,7 +829,13 @@ mod tests {
         let schema = model.schema();
         let q = schema.process_noise().clone();
         let initial_state = FrameAwareState::from_schema(schema, MonotonicTime(0.0));
-        let mut ekf = ExtendedKalmanFilter::new(initial_state, q, Box::new(model));
+        // The literals were harvested with this floor and jitter, which the
+        // EKF applied unconditionally until they became parameters.
+        let mut ekf = ExtendedKalmanFilter::new(initial_state, q, Box::new(model))
+            .with_conditioning(CovarianceConditioning {
+                floor: Some(GOLDEN_COVARIANCE_FLOOR),
+                jitter: Some(GOLDEN_COVARIANCE_JITTER),
+            });
 
         // Constant IMU: 0.5 m/s² forward, gravity-compensated on Z, 0.15 rad/s yaw.
         let control = DVector::from_row_slice(&[0.5, 0.0, 9.81, 0.0, 0.0, 0.15]);
@@ -1248,9 +1379,9 @@ mod tests {
 
     /// Absolute tolerance on the accumulated bias variance. The block-diagonal
     /// covariance recursion makes `P_bias = P₀ + N·Q·dt` exact in real
-    /// arithmetic; the only slack is `ensure_covariance_health`'s per-step
-    /// 1e-12 diagonal regularization (≈ N·1e-12 total), which this bound clears
-    /// by orders of magnitude while staying far below the growth it checks.
+    /// arithmetic; the only slack is floating-point round-off, which this
+    /// bound clears by orders of magnitude while staying far below the growth
+    /// it checks.
     const BIAS_COV_TOL: f64 = 1e-9;
 
     fn imu_control_script() -> DVector<f64> {

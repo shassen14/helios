@@ -11,7 +11,7 @@ use helios_core::estimation::dynamics::integrated_imu::{
     ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
 };
 use helios_core::estimation::dynamics::EstimationDynamics;
-use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
+use helios_core::estimation::filters::ekf::{CovarianceConditioning, ExtendedKalmanFilter};
 use helios_core::estimation::schema::check_measurement_state_agreement;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
@@ -21,6 +21,14 @@ use helios_core::spatial::{FrameAwareState, FrameId};
 
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3};
 use std::sync::Arc;
+
+/// The variance floor this kind's EKF applies after every step. The EKF
+/// applied it unconditionally before it became a parameter; this kind keeps it
+/// so its runs don't move.
+const COVARIANCE_FLOOR: f64 = 1e-9;
+/// The jitter this kind's EKF adds to every variance after every step, kept
+/// for the same reason as [`COVARIANCE_FLOOR`].
+const COVARIANCE_JITTER: f64 = 1e-12;
 
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
     registry.register_gaussian_estimator(EKF_KIND, build_ekf);
@@ -143,7 +151,14 @@ fn build_ekf(
         )
         .map_err(|e| format!("estimator '{}' initial pose: {e}", ctx.instance_name))?;
 
-    let ekf = Box::new(ExtendedKalmanFilter::new(initial_state, q, dynamics));
+    let ekf = Box::new(
+        ExtendedKalmanFilter::new(initial_state, q, dynamics).with_conditioning(
+            CovarianceConditioning {
+                floor: Some(COVARIANCE_FLOOR),
+                jitter: Some(COVARIANCE_JITTER),
+            },
+        ),
+    );
     Ok(Box::new(GaussianEstimatorNode::new(
         ctx.instance_name,
         edge,

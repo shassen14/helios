@@ -78,6 +78,13 @@ impl FrameAwareState {
         self.schema.reference_frame()
     }
 
+    /// Whether every entry of the mean and the covariance is finite (no NaN,
+    /// no ±∞). A non-finite estimate stays non-finite through every later
+    /// step, so a filter checks it before stepping.
+    pub fn is_finite(&self) -> bool {
+        self.mean.iter().all(|v| v.is_finite()) && self.covariance.iter().all(|v| v.is_finite())
+    }
+
     fn find_idx(&self, var: &StateVariable) -> Option<usize> {
         self.schema.storage_offset_of(var)
     }

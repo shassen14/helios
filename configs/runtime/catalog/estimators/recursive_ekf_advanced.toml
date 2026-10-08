@@ -12,6 +12,11 @@ kind = "RecursiveEstimator"
 
 [filter]
 kind = "Ekf"
+# The floor and jitter the EKF applied unconditionally before they were
+# parameters, kept so this prefab's runs don't move. Both hide a diverging
+# filter; drop them once its covariance is shown to stay healthy without.
+covariance_floor = 1e-9
+covariance_jitter = 1e-12
 
 [dynamics]
 kind = "IntegratedImu"

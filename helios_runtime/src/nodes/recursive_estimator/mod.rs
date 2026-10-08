@@ -5,9 +5,12 @@
 //! - `node` — `RecursiveEstimatorNode`, the loop, and the skip warnings it
 //!   shares with the legacy Gaussian-estimator node.
 //! - `config` — `RecursiveEstimatorConfig`, the `[nodes.<name>]` section.
+//! - `nis_health` — `NisWindow`, the windowed-NIS health check on one aiding
+//!   sensor.
 //! - `register` — registers the `RecursiveEstimator` kind and its factory.
 
 mod config;
+mod nis_health;
 mod node;
 mod register;
 

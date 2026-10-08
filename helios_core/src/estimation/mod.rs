@@ -132,6 +132,10 @@ pub enum PredictSkipReason {
     /// points: the covariance is corrupt. An EKF never factors `P` to predict
     /// and does not report this.
     CovarianceNotPositiveDefinite,
+    /// **Loud.** The step, the control vector, or the estimate it would start
+    /// from holds a NaN or ±∞. Stepping on it would make the estimate
+    /// non-finite for good, so the predict is refused instead.
+    NonFiniteInput,
 }
 
 /// What one [`GaussianStateEstimator::update`] call did.
@@ -201,4 +205,8 @@ pub enum SkipReason {
     /// positive-definiteness. Not merely a dropped measurement — a sign the
     /// filter's covariance is corrupt.
     CovarianceNotPositiveDefinite,
+    /// **Loud.** The measurement, its `R`, or the estimate it would correct
+    /// holds a NaN or ±∞. Fused, it would make the estimate non-finite for
+    /// good (and its NIS NaN, reported as applied), so it is refused instead.
+    NonFiniteInput,
 }

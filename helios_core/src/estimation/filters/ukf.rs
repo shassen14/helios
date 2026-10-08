@@ -1,6 +1,7 @@
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::filters::innovation::measure_innovation;
 use crate::estimation::filters::predict_guard::check_predict;
+use crate::estimation::filters::update_guard::check_update_finite;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
 use crate::estimation::{
     EstimatorInputs, GaussianStateEstimator, PredictOutcome, PredictSkipReason, SkipReason,
@@ -140,7 +141,12 @@ impl UnscentedKalmanFilter {
 impl GaussianStateEstimator for UnscentedKalmanFilter {
     fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) -> PredictOutcome {
         // --- 0. Check the step and the input before touching the estimate ---
-        if let Err(reason) = check_predict(self.dynamics_model.as_ref(), dt, &inputs.control) {
+        if let Err(reason) = check_predict(
+            self.dynamics_model.as_ref(),
+            &self.state,
+            dt,
+            &inputs.control,
+        ) {
             return PredictOutcome::Skipped(reason);
         }
 
@@ -217,6 +223,9 @@ impl GaussianStateEstimator for UnscentedKalmanFilter {
         let m = z.nrows();
         if r.nrows() != m || r.ncols() != m {
             return UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch);
+        }
+        if let Err(reason) = check_update_finite(z, r, &self.state) {
+            return UpdateOutcome::Skipped(reason);
         }
 
         let t = self.state.tangent_dim();
@@ -699,6 +708,27 @@ mod tests {
         };
         ukf.predict(0.5, &inputs);
         assert_eq!(ukf.state().timestamp, MonotonicTime(42.5));
+    }
+
+    /// A non-finite step, measurement or `R` is refused loudly, as in the EKF:
+    /// the guards are shared.
+    #[test]
+    fn non_finite_inputs_are_refused() {
+        let mut ukf = make_ukf(0.0, 1.0);
+        let inputs = EstimatorInputs {
+            control: DVector::zeros(0),
+        };
+        assert_eq!(
+            ukf.predict(f64::NAN, &inputs),
+            PredictOutcome::Skipped(PredictSkipReason::NonFiniteInput)
+        );
+
+        let z = DVector::from_row_slice(&[f64::NAN, 0.0]);
+        let r = DMatrix::identity(2, 2) * 0.1;
+        assert_eq!(
+            ukf.update(&z, &Position2DMeasurement, &r, None, AT),
+            UpdateOutcome::Skipped(SkipReason::NonFiniteInput)
+        );
     }
 
     #[test]

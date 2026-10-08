@@ -3,12 +3,14 @@
 
 use crate::estimation::dynamics::EstimationDynamics;
 use crate::estimation::PredictSkipReason;
+use crate::spatial::FrameAwareState;
 
 use nalgebra::DVector;
 
 /// Checks that a predict over `dt` with control `u` may call
-/// [`EstimationDynamics::propagate`]: `dt > 0`, and `u` is exactly as long as the
-/// dynamics' input schema. Returns the reason to skip otherwise.
+/// [`EstimationDynamics::propagate`] on `state`: `dt` is finite and positive,
+/// `u` is exactly as long as the dynamics' input schema, and `u` and the
+/// estimate are finite. Returns the reason to skip otherwise.
 ///
 /// The step is checked first: on a zero-length step nothing would be integrated,
 /// so the input's shape does not matter yet. A length mismatch is reported, never
@@ -16,9 +18,13 @@ use nalgebra::DVector;
 /// no force and no rotation, which is a silent model error, not a safe default.
 pub(crate) fn check_predict(
     dynamics: &dyn EstimationDynamics,
+    state: &FrameAwareState,
     dt: f64,
     u: &DVector<f64>,
 ) -> Result<(), PredictSkipReason> {
+    if !dt.is_finite() {
+        return Err(PredictSkipReason::NonFiniteInput);
+    }
     if dt <= 0.0 {
         return Err(PredictSkipReason::NonPositiveDt);
     }
@@ -28,6 +34,9 @@ pub(crate) fn check_predict(
             expected,
             supplied: u.nrows(),
         });
+    }
+    if !u.iter().all(|v| v.is_finite()) || !state.is_finite() {
+        return Err(PredictSkipReason::NonFiniteInput);
     }
     Ok(())
 }
