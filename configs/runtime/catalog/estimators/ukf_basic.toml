@@ -1,0 +1,45 @@
+# Basic UKF — ekf_basic with the filter swapped: same IMU dynamics, same
+# basic GPS + basic magnetometer aiding. Tuned for the ins_basic sensor suite.
+#
+# Does not build today: the UKF needs every state block to be Euclidean, and
+# IntegratedImu carries an orientation quaternion. It builds once a dynamics
+# model with a flat state is chosen here.
+kind = "RecursiveEstimator"
+
+[filter]
+kind = "Ukf"
+# Sigma-point spread. alpha sets how far the points sit from the mean (small =
+# tight), beta = 2 is optimal for a Gaussian prior, kappa is secondary scaling
+# (0 is the common choice). Requires state_dof + kappa > 0.
+alpha = 1e-3
+beta = 2.0
+kappa = 0.0
+
+[dynamics]
+kind = "IntegratedImu"
+# Bus channels the predict step reads IMU data from. Must match the IMU entity's
+# `accel_channel` / `gyro_channel`.
+accel_channel = "sensor.imu.accel"
+gyro_channel = "sensor.imu.gyro"
+accel_noise_stddev = 0.8
+gyro_noise_stddev = 0.08
+accel_bias_instability = 0.1
+gyro_bias_instability = 0.01
+
+# Prior std dev on each bias at cold start (P₀), distinct from the
+# *_instability random walk (Q) above.
+[dynamics.initial_uncertainty]
+accel_bias_mps2 = 0.5
+gyro_bias_radps = 0.05
+
+# GPS aiding — r_diag = noise_stddev² for gps_basic [2.5, 2.5, 4.0]
+[aiding.gps]
+input = "sensor.gps.primary"
+r_diag = [6.25, 6.25, 16.0]
+model = { kind = "gps_position" }
+
+# Magnetometer aiding — r_diag = noise_stddev² for magnetometer_basic [5.0, 5.0, 5.0]
+[aiding.mag]
+input = "sensor.mag.body"
+r_diag = [25.0, 25.0, 25.0]
+model = { kind = "magnetometer", magnetic_field_enu = [0.0, 50.0, 0.0] }

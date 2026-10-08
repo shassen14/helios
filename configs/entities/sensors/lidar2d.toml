@@ -1,7 +1,6 @@
 # A planar (single-ring) lidar: one ring at 0° elevation, full-circle sweep.
-kind = "Lidar"                                # <-- Matches SensorConfig::Lidar
+kind = "Lidar"                                # <-- Matches SensorDeviceConfig::Lidar
 rate = 10.0
-transform = { translation = [1.5, 0.0, 0.5], rotation = [0.0, 0.0, 0.0]} # 1.5m forward, 0.5m up (FLU frame)
 range_min = 0.15                              # Blind zone: nearer returns are misses
 max_range = 50.0
 azimuth_fov = 360.0                           # Full-circle spinning scanner
@@ -9,5 +8,3 @@ azimuth_beams = 360
 ring_elevations = [0.0]                       # Single ring in the sensor's horizontal plane
 range_noise_stddev = 0.03
 angular_noise_stddev = 0.1
-
-channel = "sensor.lidar.front"

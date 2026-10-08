@@ -9,7 +9,7 @@ use crate::config::structs::CameraVantage;
 use super::{
     conditions::{AtmosphereConfig, MagneticFieldConfig},
     pose::Pose,
-    sensors::SensorConfig,
+    sensors::SensorInstallationConfig,
     simulation::MetricsConfig,
     vehicle::Vehicle,
     world_layout::CatalogRef,
@@ -143,7 +143,7 @@ pub struct AgentConfig {
     pub goal_pose: Pose,
     pub vehicle: Vehicle,
     #[serde(default)]
-    pub sensors: HashMap<String, SensorConfig>,
+    pub sensors: HashMap<String, SensorInstallationConfig>,
 }
 
 impl AgentConfig {

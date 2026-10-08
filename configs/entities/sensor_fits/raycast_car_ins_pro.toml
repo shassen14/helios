@@ -1,0 +1,24 @@
+# The ins_pro INS fit on the raycast car: a pro-grade IMU, GPS and
+# magnetometer. Each table is one installation: the device it is, where it is
+# mounted in the car's base_link (FLU: Forward, Left, Up), and the channel(s)
+# it publishes on. Each channel must match the estimator's input in the agent's
+# autonomy stack.
+#
+# The table key names the sensor and seeds its noise (`<agent>/<key>`).
+
+[imu_pro]
+device = { from = "entities.sensors.imu_pro" }
+transform = { translation = [-1.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+accel_channel = "sensor.imu.accel"
+gyro_channel = "sensor.imu.gyro"
+
+# The antenna on the roof, slightly forward: a clear view of the sky.
+[gps_pro]
+device = { from = "entities.sensors.gps_pro" }
+transform = { translation = [1.0, -0.5, 0.0], rotation = [0, 0, 0] }
+channel = "sensor.gps.primary"
+
+[magnetometer_pro]
+device = { from = "entities.sensors.magnetometer_pro" }
+transform = { translation = [-1.5, 1.0, 0.0], rotation = [90.0, 0.0, 90.0] }
+channel = "sensor.mag.body"

@@ -1,6 +1,6 @@
 use crate::agents::sensors::capture_pose::{CapturePose, LastCapturePose};
 use crate::brain_bridge::components::SensorPublishChannel;
-use crate::config::structs::SensorConfig;
+use crate::config::structs::CHANNEL_FIELD;
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
@@ -54,8 +54,17 @@ fn spawn_raycasting_sensors(
     master_seed: Res<MasterSeed>,
 ) {
     for (agent_entity, agent_name, request, agent_id) in &request_query {
-        for (sensor_name, sensor_config) in &request.0.sensors {
-            if let SensorConfig::Lidar(lidar_config) = sensor_config {
+        for (sensor_name, installation) in &request.0.sensors {
+            if let SensorDeviceConfig::Lidar(lidar_config) = &installation.device {
+                let Some(channel) = installation.channel(CHANNEL_FIELD) else {
+                    error!(
+                        "LiDAR '{}' on agent '{}' has no `{}`. Skipping sensor.",
+                        sensor_name,
+                        agent_name.as_str(),
+                        CHANNEL_FIELD
+                    );
+                    continue;
+                };
                 info!(
                     "  -> Spawning LiDAR '{}' as RaycastingSensor for agent '{}' with rate of {:.1} Hz",
                     sensor_name,
@@ -123,7 +132,7 @@ fn spawn_raycasting_sensors(
 
                 sensor_entity_commands.insert((
                     Name::new(sensor_label),
-                    SensorPublishChannel(lidar_config.get_channel().to_string()),
+                    SensorPublishChannel(channel.to_string()),
                     RaycastingSensor {
                         timer: Timer::new(
                             Duration::from_secs_f64(1.0 / lidar_config.get_rate()),
@@ -133,11 +142,11 @@ fn spawn_raycasting_sensors(
                     },
                     sensor_rng,
                     TrackedFrame::new(
-                        FrameId::sensor(agent_id.0.clone(), lidar_config.get_channel().to_string()),
+                        FrameId::sensor(agent_id.0.clone(), channel.to_string()),
                         Convention::Flu,
                     ),
                     LastCapturePose::default(),
-                    lidar_config.get_relative_pose().to_bevy_local_transform(),
+                    installation.transform.to_bevy_local_transform(),
                 ));
 
                 commands.entity(agent_entity).add_child(sensor_entity);

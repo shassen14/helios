@@ -1,8 +1,7 @@
 # A basic, low-cost 3-axis magnetometer.
-# Corresponds to the `SensorConfig::Magnetometer` enum variant.
+# Corresponds to the `SensorDeviceConfig::Magnetometer` enum variant.
 kind = "Magnetometer"
 rate = 50.0
-transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
 
 # --- Noise Characteristics (µT, sensor FLU axes) ---
 # The ambient field itself is a property of the world, not of this sensor:
@@ -13,5 +12,3 @@ noise_stddev = [5.0, 5.0, 5.0]
 # Hard-iron offset: the fixed field of ferrous material mounted near the
 # sensor. Zero here models a perfectly calibrated install.
 bias = [0.0, 0.0, 0.0]
-
-channel = "sensor.mag.body"

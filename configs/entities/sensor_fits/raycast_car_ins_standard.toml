@@ -1,0 +1,23 @@
+# The ins_standard INS fit on the raycast car: the same mounts and channels as
+# raycast_car_ins_pro with standard-grade devices (the magnetometer is the
+# basic part), so comparing grades changes only the devices. Each table is one installation: the device it is, where it
+# is mounted in the car's base_link (FLU: Forward, Left, Up), and the
+# channel(s) it publishes on.
+#
+# The table key names the sensor and seeds its noise (`<agent>/<key>`).
+
+[imu_standard]
+device = { from = "entities.sensors.imu_standard" }
+transform = { translation = [-1.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+accel_channel = "sensor.imu.accel"
+gyro_channel = "sensor.imu.gyro"
+
+[gps_standard]
+device = { from = "entities.sensors.gps_standard" }
+transform = { translation = [1.0, -0.5, 0.0], rotation = [0, 0, 0] }
+channel = "sensor.gps.primary"
+
+[magnetometer_basic]
+device = { from = "entities.sensors.magnetometer_basic" }
+transform = { translation = [-1.5, 1.0, 0.0], rotation = [90.0, 0.0, 90.0] }
+channel = "sensor.mag.body"

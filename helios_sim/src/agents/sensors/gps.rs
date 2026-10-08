@@ -3,6 +3,7 @@
 
 use super::state_sensor::{publish_state_sensor, StateSensor};
 
+use crate::config::structs::CHANNEL_FIELD;
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
@@ -76,8 +77,17 @@ fn spawn_gps_sensors(
     master_seed: Res<MasterSeed>,
 ) {
     for (agent_entity, agent_name, request, agent_id) in &request_query {
-        for (sensor_name, sensor_config) in &request.0.sensors {
-            if let SensorConfig::Gps(gps_config) = sensor_config {
+        for (sensor_name, installation) in &request.0.sensors {
+            if let SensorDeviceConfig::Gps(gps_config) = &installation.device {
+                let Some(channel) = installation.channel(CHANNEL_FIELD) else {
+                    error!(
+                        "GPS '{}' on agent '{}' has no `{}`. Skipping sensor.",
+                        sensor_name,
+                        agent_name.as_str(),
+                        CHANNEL_FIELD
+                    );
+                    continue;
+                };
                 info!(
                     "  -> Spawning GPS '{}' as child of agent '{}'",
                     sensor_name,
@@ -104,15 +114,15 @@ fn spawn_gps_sensors(
                 let sensor_entity = commands
                     .spawn((
                         Name::new(sensor_label),
-                        SensorPublishChannel(gps_config.channel.clone()),
+                        SensorPublishChannel(channel.to_string()),
                         Gps::new(model),
                         SensorTimer::from_rate(gps_config.rate),
                         sensor_rng,
                         TrackedFrame::new(
-                            FrameId::sensor(agent_id.0.clone(), gps_config.channel.clone()),
+                            FrameId::sensor(agent_id.0.clone(), channel.to_string()),
                             Convention::Flu,
                         ),
-                        gps_config.get_relative_pose().to_bevy_local_transform(),
+                        installation.transform.to_bevy_local_transform(),
                     ))
                     .id();
 

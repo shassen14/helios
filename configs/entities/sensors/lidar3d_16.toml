@@ -2,17 +2,8 @@
 # from -15° to +15°, a full-circle sweep. Azimuth is 1° (a real unit is ~0.2°),
 # keeping the ray count at 16 × 360 = 5,760 per scan while the sim casts rays on
 # one thread and the point-cloud view draws a sphere per point.
-#
-# Mounted on a bracket at the rear of the roof, 0.5 m above it (the roof is
-# 0.4 m above the body origin). A spinning unit sees all the way round, so it is
-# not yawed. The sensor sees its own car: looking forward along the 3.5 m of
-# roof ahead of it, rings steeper than about -8° land on the roof, as they would
-# on a real rear mount; to the sides and rear every ring clears. Rings below 0°
-# also strike the ground, which the 2D occupancy grid would read as walls, so no
-# mapper consumes this lidar.
-kind = "Lidar"                                # <-- Matches SensorConfig::Lidar
+kind = "Lidar"                                # <-- Matches SensorDeviceConfig::Lidar
 rate = 10.0
-transform = { translation = [-1.5, 0.0, 0.9], rotation = [0.0, 0.0, 0.0] } # 1.5m back, 0.9m up (FLU frame)
 range_min = 0.15                              # Blind zone: nearer returns are misses
 max_range = 50.0
 azimuth_fov = 360.0                           # Full-circle spinning scanner
@@ -21,5 +12,3 @@ ring_elevations = [-15.0, -13.0, -11.0, -9.0, -7.0, -5.0, -3.0, -1.0, 1.0, 3.0, 
 sweep_period = 0.1                            # One revolution per scan, matching `rate`
 range_noise_stddev = 0.03
 angular_noise_stddev = 0.1
-
-channel = "sensor.lidar.rear"

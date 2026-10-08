@@ -1,0 +1,47 @@
+# The ins_pro INS fit on the raycast car (see raycast_car_ins_pro) plus two
+# lidars. Each table is one installation: the device it is, where it is
+# mounted in the car's base_link (FLU: Forward, Left, Up), and the channel(s)
+# it publishes on. Each channel must match a node input in the agent's
+# autonomy stack.
+#
+# The table key names the sensor and seeds its noise (`<agent>/<key>`).
+
+[imu_pro]
+device = { from = "entities.sensors.imu_pro" }
+transform = { translation = [-1.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+accel_channel = "sensor.imu.accel"
+gyro_channel = "sensor.imu.gyro"
+
+# The antenna on the roof, slightly forward: a clear view of the sky.
+[gps_pro]
+device = { from = "entities.sensors.gps_pro" }
+transform = { translation = [1.0, -0.5, 0.0], rotation = [0, 0, 0] }
+channel = "sensor.gps.primary"
+
+[magnetometer_pro]
+device = { from = "entities.sensors.magnetometer_pro" }
+transform = { translation = [-1.5, 1.0, 0.0], rotation = [90.0, 0.0, 90.0] }
+channel = "sensor.mag.body"
+
+# A planar lidar 1.5 m forward and 0.5 m up. Feeds the occupancy grid the
+# profile's A* planner reads.
+[lidar]
+device = { from = "entities.sensors.lidar2d" }
+transform = { translation = [1.5, 0.0, 0.5], rotation = [0.0, 0.0, 0.0] }
+channel = "sensor.lidar.front"
+
+# A 3D lidar for viewing only: its points reach the point-cloud view but no
+# mapper. To remove it, delete this entry together with the profile's
+# `rear_lidar_deproject` node; either one alone fails validation.
+#
+# Mounted on a bracket at the rear of the roof, 0.5 m above it (the roof is
+# 0.4 m above the body origin). A spinning unit sees all the way round, so it is
+# not yawed. The sensor sees its own car: looking forward along the 3.5 m of
+# roof ahead of it, rings steeper than about -8° land on the roof, as they would
+# on a real rear mount; to the sides and rear every ring clears. Rings below 0°
+# also strike the ground, which the 2D occupancy grid would read as walls, so no
+# mapper consumes this lidar.
+[rear_lidar]
+device = { from = "entities.sensors.lidar3d_16" }
+transform = { translation = [-1.5, 0.0, 0.9], rotation = [0.0, 0.0, 0.0] }
+channel = "sensor.lidar.rear"

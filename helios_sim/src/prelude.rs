@@ -12,7 +12,8 @@ pub use crate::HeliosSimulationPlugin;
 pub use crate::cli::Cli;
 
 pub use crate::config::structs::{
-    AgentConfig, AtmosphereConfig, RawScenarioConfig, ScenarioConfig, SensorConfig, Vehicle,
+    AgentConfig, AtmosphereConfig, RawScenarioConfig, ScenarioConfig, SensorDeviceConfig,
+    SensorInstallationConfig, Vehicle,
 };
 pub use crate::config::ConfigPlugin;
 

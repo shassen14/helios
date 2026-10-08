@@ -9,6 +9,7 @@
 use super::state_sensor::{publish_state_sensor, SensorTimer, StateSensor};
 
 use crate::brain_bridge::components::SensorPublishChannel;
+use crate::config::structs::CHANNEL_FIELD;
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
@@ -88,8 +89,17 @@ fn spawn_magnetometer_sensors(
     let magnetic_field = &config.common.world.magnetic_field;
 
     for (agent_entity, agent_name, request, agent_id) in &request_query {
-        for (sensor_name, sensor_config) in &request.0.sensors {
-            if let SensorConfig::Magnetometer(mag_config) = sensor_config {
+        for (sensor_name, installation) in &request.0.sensors {
+            if let SensorDeviceConfig::Magnetometer(mag_config) = &installation.device {
+                let Some(channel) = installation.channel(CHANNEL_FIELD) else {
+                    error!(
+                        "Magnetometer '{}' on agent '{}' has no `{}`. Skipping sensor.",
+                        sensor_name,
+                        agent_name.as_str(),
+                        CHANNEL_FIELD
+                    );
+                    continue;
+                };
                 info!(
                     "  -> Spawning Magnetometer '{}' as child of agent '{}' with rate of {:.1} Hz",
                     sensor_name,
@@ -120,15 +130,15 @@ fn spawn_magnetometer_sensors(
                 let sensor_entity = commands
                     .spawn((
                         Name::new(sensor_label),
-                        SensorPublishChannel(mag_config.channel.clone()),
+                        SensorPublishChannel(channel.to_string()),
                         Magnetometer::new(mag_model),
                         SensorTimer::from_rate(mag_config.rate),
                         sensor_rng,
                         TrackedFrame::new(
-                            FrameId::sensor(agent_id.0.clone(), mag_config.channel.clone()),
+                            FrameId::sensor(agent_id.0.clone(), channel.to_string()),
                             Convention::Flu,
                         ),
-                        mag_config.get_relative_pose().to_bevy_local_transform(),
+                        installation.transform.to_bevy_local_transform(),
                     ))
                     .id();
 

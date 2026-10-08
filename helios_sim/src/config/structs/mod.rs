@@ -27,7 +27,10 @@ pub use pose::Pose;
 pub use scenario::{
     AgentConfig, RawScenarioConfig, ScenarioCommon, ScenarioConfig, Simulation, World,
 };
-pub use sensors::{GpsConfig, ImuConfig, LidarConfig, MagnetometerConfig, SensorConfig};
+pub use sensors::{
+    GpsConfig, ImuConfig, LidarConfig, MagnetometerConfig, SensorDeviceConfig,
+    SensorInstallationConfig, ACCEL_CHANNEL_FIELD, CHANNEL_FIELD, GYRO_CHANNEL_FIELD,
+};
 pub use simulation::MetricsConfig;
 pub use vehicle::{
     AxleConfig, BoxVisual, CollisionConfig, MountConfig, PlantConfig, SuspensionConfig, TireConfig,

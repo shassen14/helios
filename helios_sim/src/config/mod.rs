@@ -214,9 +214,12 @@ mod tests {
         sign = "Normal"
 
         [sensors.gps]
+        transform = { translation = [0.0, 0.0, 0.0] }
+        channel = "gps/fix"
+
+        [sensors.gps.device]
         kind = "Gps"
         rate = 10.0
-        channel = "gps/fix"
     "#;
 
     // Parses an agent's TOML into the raw `Value` the scenario loader hands to

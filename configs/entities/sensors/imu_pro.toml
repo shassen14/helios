@@ -1,10 +1,9 @@
 # configs/entities/sensors/imu_pro.toml
-# Corresponds to the `SensorConfig::Imu` enum variant.
+# Corresponds to the `SensorDeviceConfig::Imu` enum variant.
 kind = "Imu"
 # currently the max rate (Hz).
 # Simulation time runs at 400 Hz so any higher will not actually run at that rate
 rate = 400.0
-transform = { translation = [-1.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
 
 # --- Noise Characteristics (sensor FLU axes) ---
 # Accelerometer in m/s², gyroscope in rad/s.
@@ -15,8 +14,3 @@ gyro_noise_stddev = [0.0001, 0.0001, 0.0001]
 # calibrated part.
 accel_bias = [0.0, 0.0, 0.0]
 gyro_bias = [0.0, 0.0, 0.0]
-
-# Bus channels the two IMU quantities publish on. Each must match the
-# estimator's corresponding input channel in the agent's autonomy stack.
-accel_channel = "sensor.imu.accel"
-gyro_channel = "sensor.imu.gyro"
