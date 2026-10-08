@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::config::{
     EkfConfig, EkfDynamicsConfig, EstimateSeamConfig, IntegratedImuConfig,
 };
@@ -10,7 +11,7 @@ use helios_runtime::port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel};
 use helios_runtime::{
     build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStack, BodyCapabilities,
     BuildContext, EkfInitialStateConfig, EstimatorConfig, FactoryOutput, PipelineAssemblyError,
-    PipelineBuildError, PipelineNode, PortDescriptor, TickContext,
+    PipelineBuildError, PipelineNode, PortDescriptor, Provenance, PublishedChannel, TickContext,
 };
 
 use helios_core::interchange::measurement::envelope::SensorReading;
@@ -346,5 +347,67 @@ fn a_nodes_entry_named_like_a_legacy_node_fails_the_build() {
                 ))
         )),
         "expected DuplicateNodeName for `nav_ekf`, got {errors:?}"
+    );
+}
+
+/// A stack whose one node is a `MockOracle` named `primary`, the estimator it
+/// stands in for.
+fn mock_oracle_stack() -> AutonomyStack {
+    stack_with_nodes(
+        r#"
+        [nodes.primary]
+        kind = "MockOracle"
+        "#,
+    )
+}
+
+fn build_on(body: BodyCapabilities) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
+    build_pipeline(
+        &mock_oracle_stack(),
+        &AutonomyRegistry::default(),
+        AgentId::new("test_agent"),
+        &HashSet::new(),
+        body,
+    )
+}
+
+#[test]
+fn a_mock_oracle_entry_builds_on_a_body_with_truth() {
+    let truth = BodyCapabilities {
+        publishes: [oracle_pose_channel().into(), oracle_twist_channel().into()]
+            .into_iter()
+            .map(|key| PublishedChannel {
+                key,
+                provenance: Provenance::Exact,
+            })
+            .collect(),
+        ..body()
+    };
+
+    let pipeline = build_on(truth).expect("a body publishing oracle truth must build");
+
+    assert!(node_names(&pipeline).contains(&"primary"));
+}
+
+#[test]
+fn a_mock_oracle_entry_is_refused_on_a_body_without_truth() {
+    // The fence is the pipeline builder's, so it holds for a `[nodes]` entry
+    // exactly as for the legacy section: oracle truth only reaches a node
+    // through the body.
+    let errors = build_on(body())
+        .err()
+        .expect("a body without oracle/pose must refuse the mock");
+
+    assert!(
+        errors.iter().any(|e| matches!(
+            e,
+            PipelineAssemblyError::PipelineBuild(build_errors)
+                if build_errors.iter().any(|b| matches!(
+                    b,
+                    PipelineBuildError::UnsatisfiedBodyCapabilities { node_name, .. }
+                        if node_name == "primary"
+                ))
+        )),
+        "expected UnsatisfiedBodyCapabilities for `primary`, got {errors:?}"
     );
 }
