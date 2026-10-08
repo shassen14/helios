@@ -1,11 +1,22 @@
 # configs/runtime/catalog/estimators/ekf_pro.toml
 # Pro EKF — low-noise IMU, standard GPS + basic magnetometer aiding.
 # Tuned for the ins_standard sensor suite.
-kind = "Ekf"
+#
+# A RecursiveEstimator node: the filter, dynamics, prior and aiding are each
+# named by their own `kind`. Aiding entries are named tables, applied in name
+# order each tick; the model's kind fixes the payload it reads.
+kind = "RecursiveEstimator"
 
-[config]
-[config.dynamics]
-type = "IntegratedImu"
+[filter]
+kind = "Ekf"
+# The floor and jitter the EKF applied unconditionally before they were
+# parameters, kept so this prefab's runs don't move. Both hide a diverging
+# filter; drop them once its covariance is shown to stay healthy without.
+covariance_floor = 1e-9
+covariance_jitter = 1e-12
+
+[dynamics]
+kind = "IntegratedImu"
 # Bus channels the predict step reads IMU data from. Must match the IMU entity's
 # `accel_channel` / `gyro_channel`.
 accel_channel = "sensor.imu.accel"
@@ -14,22 +25,22 @@ accel_noise_stddev = 0.2
 gyro_noise_stddev = 0.01
 accel_bias_instability = 0.05
 gyro_bias_instability = 0.005
-# Initial bias uncertainty: prior std dev on each bias at cold start (P₀),
-# distinct from the *_instability random-walk (Q) above. Grade-scaled with the
-# IMU.
-accel_bias_uncertainty_mps2 = 0.1
-gyro_bias_uncertainty_radps = 0.01
+
+# Prior std dev on each bias at cold start (P₀), distinct from the
+# *_instability random walk (Q) above. Grade-scaled with the IMU. Position,
+# velocity and orientation keep their cold-start defaults.
+[dynamics.initial_uncertainty]
+accel_bias_mps2 = 0.1
+gyro_bias_radps = 0.01
 
 # GPS aiding — r_diag = noise_stddev² for gps_standard [0.4, 0.4, 0.8]
-[[config.aiding]]
-sensor_payload = "GpsPosition"
-input_channel = "sensor.gps.primary"
+[aiding.gps]
+input = "sensor.gps.primary"
 r_diag = [0.16, 0.16, 0.64]
 model = { kind = "gps_position" }
 
 # Magnetometer aiding — r_diag = noise_stddev² for magnetometer_basic [5.0, 5.0, 5.0]
-[[config.aiding]]
-sensor_payload = "MagneticField"
-input_channel = "sensor.mag.body"
+[aiding.mag]
+input = "sensor.mag.body"
 r_diag = [25.0, 25.0, 25.0]
 model = { kind = "magnetometer", magnetic_field_enu = [0.0, 50.0, 0.0] }

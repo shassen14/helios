@@ -17,7 +17,7 @@
 
 # ekf_advanced's aiding covariances match the ins_pro sensor suite this
 # profile is paired with in configs/sim/catalog/agents.
-[estimators.primary]
+[nodes.primary]
 from = "runtime.catalog.estimators.ekf_advanced"
 
 # The estimate the rest of the stack reads, and the source of the

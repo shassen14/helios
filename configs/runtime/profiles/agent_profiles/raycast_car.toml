@@ -11,7 +11,7 @@
 # Position, not a body velocity.
 
 # ekf_advanced matches the ins_pro sensor suite this profile is flown with.
-[estimators.primary]
+[nodes.primary]
 from = "runtime.catalog.estimators.ekf_advanced"
 
 # The estimate the rest of the stack reads, and the source of the
