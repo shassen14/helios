@@ -2,7 +2,10 @@
 //! can reject, [`Supplier`], who supplies a channel, and [`CycleEdge`], one
 //! read inside a dependency loop.
 
-use crate::port::{ChannelKey, InputNeed};
+use crate::{
+    pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
+    port::{ChannelKey, InputNeed},
+};
 
 /// Errors produced by [`PipelineBuilder::build`](super::PipelineBuilder::build).
 ///
@@ -53,6 +56,30 @@ pub enum PipelineBuildError {
     /// Two or more nodes share a name. Errors, logs and node order within a
     /// level all identify a node by its name, so names must be unique.
     DuplicateNodeName { name: String },
+    /// A node declares a watchable leaf that isn't a well-formed path: it is
+    /// empty, has an empty part between dots (`.nis`, `nis.`, `aiding..nis`),
+    /// or contains `/`. Paths split on `.`, so such a leaf would mis-split in
+    /// a glob or a tree-shaped sink.
+    MalformedObservable { node_name: String, leaf: String },
+    /// A node declares a watchable leaf in the pipeline's own group
+    /// ([`PIPELINE_LEAF_GROUP`]), which holds the leaves the pipeline adds to
+    /// every node. Refused even when the pipeline doesn't add that leaf yet,
+    /// so adding one later never breaks a node.
+    ReservedObservable { node_name: String, leaf: String },
+    /// A node declares the same watchable leaf more than once, so a
+    /// watcher's path would point at two values. Reported once per leaf per
+    /// node.
+    DuplicateObservable { node_name: String, leaf: String },
+    /// A node declares a leaf that has the same path as one of its own output
+    /// channels: under `agent.<agent>.<node>`, `leaf` and the channel's path
+    /// segment are the same string, so a watcher or an assertion target
+    /// would name two things. Only an exact match is refused; a shared
+    /// dotted prefix (`estimate` beside `estimate.cov`) is a group.
+    ObservableCollidesWithOutput {
+        node_name: String,
+        leaf: String,
+        channel: ChannelKey,
+    },
     /// The level sort stopped with nodes left but no loop was found among
     /// them. Wiring and ordering together rule this out, so it means a bug in
     /// the build, not a mistake in the pipeline's configuration. `nodes`
@@ -122,6 +149,39 @@ impl std::fmt::Display for PipelineBuildError {
                 write!(
                     f,
                     "more than one node is named \"{name}\" — node names must be unique"
+                )
+            }
+            PipelineBuildError::MalformedObservable { node_name, leaf } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" declares watchable leaf \"{leaf}\", which is not a \
+                     path — a leaf is one or more non-empty parts joined by '.', with no '/'"
+                )
+            }
+            PipelineBuildError::ReservedObservable { node_name, leaf } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" declares watchable leaf \"{leaf}\" in the \
+                     \"{PIPELINE_LEAF_GROUP}\" group, which the pipeline owns and adds to every \
+                     node — use another name"
+                )
+            }
+            PipelineBuildError::DuplicateObservable { node_name, leaf } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" declares watchable leaf \"{leaf}\" more than once — \
+                     each leaf names one value"
+                )
+            }
+            PipelineBuildError::ObservableCollidesWithOutput {
+                node_name,
+                leaf,
+                channel,
+            } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" declares watchable leaf \"{leaf}\", which is also \
+                     the path of its output channel {channel} — rename the leaf or the channel"
                 )
             }
             PipelineBuildError::StuckWithoutCycle { nodes } => {

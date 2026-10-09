@@ -19,6 +19,11 @@ use helios_core::{
 use std::sync::Arc;
 use tracing::{debug_span, trace_span};
 
+/// The group the pipeline's own leaves sit under. The pipeline adds these to
+/// every node, so a node may not declare this leaf or any leaf under it; the
+/// build refuses one, so a leaf the pipeline adds later never breaks a node.
+pub const PIPELINE_LEAF_GROUP: &str = "tick";
+
 /// The leaf under which the pipeline reports how long one run of a node took,
 /// in seconds. Every node has it; nodes never declare it themselves. Wall-clock
 /// time, so it differs between runs.
@@ -277,6 +282,20 @@ mod tests {
             observable_catalog(node.as_ref()),
             vec![Observable::new(TICK_DURATION_LEAF, Determinism::WallClock)]
         );
+    }
+
+    #[test]
+    fn every_leaf_the_pipeline_adds_is_in_its_group() {
+        let node = declaring(&[]);
+        let group = format!("{PIPELINE_LEAF_GROUP}.");
+
+        for observable in observable_catalog(node.as_ref()) {
+            assert!(
+                observable.leaf_name().starts_with(&group),
+                "{} is outside the pipeline's group",
+                observable.leaf_name()
+            );
+        }
     }
 
     #[test]

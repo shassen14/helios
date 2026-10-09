@@ -92,11 +92,21 @@ impl PipelineBuilder {
     ///
     /// Errors are checked in two stages, and every error within a stage is
     /// collected:
-    /// 1. Wiring. Node names are unique, and every input, required or
-    ///    optional, has exactly one supplier: a node output, a body channel,
-    ///    or a declared outside input.
+    /// 1. Wiring. Node names are unique, each node's watchable leaves are
+    ///    well formed, outside the pipeline's own group, distinct and clear
+    ///    of its output channels' paths, and every input,
+    ///    required or optional, has exactly one supplier: a node output, a
+    ///    body channel, or a declared outside input.
     ///    - [`PipelineBuildError::DuplicateNodeName`] — two nodes share a
     ///      name.
+    ///    - [`PipelineBuildError::MalformedObservable`] — a leaf has an
+    ///      empty part or a `/`.
+    ///    - [`PipelineBuildError::ReservedObservable`] — a node declares a
+    ///      leaf in the pipeline's own group.
+    ///    - [`PipelineBuildError::DuplicateObservable`] — a node names a
+    ///      watchable leaf twice.
+    ///    - [`PipelineBuildError::ObservableCollidesWithOutput`] — a leaf has
+    ///      the same path as one of the node's output channels.
     ///    - [`PipelineBuildError::MultipleSuppliers`] — two suppliers
     ///      provide the same channel.
     ///    - [`PipelineBuildError::UnsatisfiedInput`] /

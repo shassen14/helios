@@ -1,17 +1,26 @@
-//! Wiring checks: node names are unique, and every input has exactly one
-//! supplier. These need only the declarations, not an order, so they run
-//! before the sort.
+//! Wiring checks: node names are unique, each node's watchable leaves are
+//! well formed, outside the pipeline's own group, distinct and clear of its
+//! output channels' paths, and every input has exactly one supplier. These need only the declarations, not an order, so
+//! they run before the sort.
 
 use crate::{
-    port::ChannelKind, BodyCapabilities, ChannelKey, PipelineBuildError, PipelineNode, Supplier,
+    observe::path::channel_to_path_segment,
+    pipeline::autonomy_pipeline::{observable_catalog, PIPELINE_LEAF_GROUP},
+    port::ChannelKind,
+    BodyCapabilities, ChannelKey, PipelineBuildError, PipelineNode, Supplier,
 };
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 /// Checks the graph's wiring and returns every problem found. An empty list
-/// means each node name is unique and every input, required or optional, has
-/// exactly one supplier: a node output, a body channel, or a declared outside
-/// input.
+/// means each node name is unique, every watchable leaf a node declares is
+/// well formed and outside the pipeline's own group, no node names a leaf
+/// twice or gives one the path of its own output channel, and every input,
+/// required or optional, has exactly one supplier: a node output, a body
+/// channel, or a declared outside input.
 pub(super) fn check_wiring(
     nodes: &[Box<dyn PipelineNode>],
     capabilities: &BodyCapabilities,
@@ -19,6 +28,7 @@ pub(super) fn check_wiring(
 ) -> Vec<PipelineBuildError> {
     let mut errors = vec![];
     check_node_names(nodes, &mut errors);
+    check_observables(nodes, &mut errors);
     let supplier_of = map_suppliers(nodes, capabilities, outside_inputs, &mut errors);
     check_inputs_supplied(nodes, &supplier_of, &capabilities.name, &mut errors);
     errors
@@ -36,6 +46,91 @@ fn check_node_names(nodes: &[Box<dyn PipelineNode>], errors: &mut Vec<PipelineBu
                 name: name.to_string(),
             });
         }
+    }
+}
+
+/// A watcher addresses a node's leaves and its output channels by one dotted
+/// path under that node. Each leaf the node declares must be a well-formed
+/// path and stay out of the pipeline's own group. Then, across the node's
+/// whole catalog, each leaf must be distinct and differ from every output's
+/// path segment. Checked per node: paths include the node name, so two nodes
+/// never clash. Only exact matches are refused; a shared dotted prefix is a
+/// group. Each problem with a leaf is reported once, and a leaf refused for
+/// its form or group is not checked further.
+fn check_observables(nodes: &[Box<dyn PipelineNode>], errors: &mut Vec<PipelineBuildError>) {
+    for node in nodes {
+        let node_name = node.name();
+        let mut refused_leaves: HashSet<Arc<str>> = HashSet::new();
+        for observable in node.port_descriptor().observables() {
+            let leaf = observable.leaf_name();
+            let error = if !is_well_formed_leaf(leaf) {
+                PipelineBuildError::MalformedObservable {
+                    node_name: node_name.to_string(),
+                    leaf: leaf.to_string(),
+                }
+            } else if is_in_pipeline_group(leaf) {
+                PipelineBuildError::ReservedObservable {
+                    node_name: node_name.to_string(),
+                    leaf: leaf.to_string(),
+                }
+            } else {
+                continue;
+            };
+            if refused_leaves.insert(leaf.clone()) {
+                errors.push(error);
+            }
+        }
+
+        let outputs: Vec<(String, &ChannelKey)> = node
+            .port_descriptor()
+            .outputs()
+            .iter()
+            .map(|key| (channel_to_path_segment(key), key))
+            .collect();
+
+        let mut seen_leaves: HashSet<Arc<str>> = HashSet::new();
+        let mut reported_leaves: HashSet<Arc<str>> = HashSet::new();
+        for observable in observable_catalog(node.as_ref()) {
+            let leaf = observable.leaf_name();
+            if refused_leaves.contains(leaf) {
+                continue;
+            }
+            if !seen_leaves.insert(leaf.clone()) {
+                if reported_leaves.insert(leaf.clone()) {
+                    errors.push(PipelineBuildError::DuplicateObservable {
+                        node_name: node_name.to_string(),
+                        leaf: leaf.to_string(),
+                    });
+                }
+                continue;
+            }
+            for (segment, channel) in &outputs {
+                if segment.as_str() == leaf.as_ref() {
+                    errors.push(PipelineBuildError::ObservableCollidesWithOutput {
+                        node_name: node_name.to_string(),
+                        leaf: leaf.to_string(),
+                        channel: (*channel).clone(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// A leaf is one or more non-empty parts joined by `.`, with no `/`. An empty
+/// part (`""`, `.nis`, `nis.`, `aiding..nis`) would mis-split in a glob or a
+/// tree-shaped sink, and a `/` would read as a level that channel paths turn
+/// into `.` but a leaf would keep.
+fn is_well_formed_leaf(leaf: &str) -> bool {
+    !leaf.contains('/') && leaf.split('.').all(|part| !part.is_empty())
+}
+
+/// The pipeline's group itself or any leaf under it (`tick`, `tick.overrun`),
+/// but not a leaf that only starts with the same letters (`ticker`).
+fn is_in_pipeline_group(leaf: &str) -> bool {
+    match leaf.strip_prefix(PIPELINE_LEAF_GROUP) {
+        Some(rest) => rest.is_empty() || rest.starts_with('.'),
+        None => false,
     }
 }
 

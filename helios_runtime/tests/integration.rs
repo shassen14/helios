@@ -8,3 +8,5 @@ mod dag;
 mod estimated_tf;
 #[path = "integration/nodes.rs"]
 mod nodes;
+#[path = "integration/observables.rs"]
+mod observables;
