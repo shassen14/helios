@@ -1,6 +1,8 @@
 //! [`PortDescriptor`]: what a node declares it reads from and writes to the
 //! bus, with each input as an [`InputPort`] record of channel, need and timing,
-//! and each `ActuatorCommand` output with the actuators it drives.
+//! and each `ActuatorCommand` output with the actuators it drives. It also
+//! declares what the node can emit for watchers, each value an [`Observable`]
+//! record of leaf name and [`Determinism`].
 //!
 //! The build reads these declarations to allocate bus slots, order nodes, and
 //! check that every channel has exactly one producer. Outside this crate a
@@ -11,6 +13,8 @@
 use crate::port::channel::ChannelKey;
 
 use helios_core::control::actuators::ActuatorDrive;
+
+use std::sync::Arc;
 
 /// Declares what a pipeline node reads from and writes to the bus.
 ///
@@ -36,6 +40,11 @@ use helios_core::control::actuators::ActuatorDrive;
 /// with [`drives`](Self::drives), so the actuator seam can check them against
 /// the body without knowing what kind of node wrote them.
 ///
+/// Each value the node can emit for watchers is declared as an [`Observable`],
+/// read with [`observables`](Self::observables). These never touch the bus:
+/// they are the node's catalog of watchable values, and an emit of a leaf the
+/// node didn't declare is dropped.
+///
 /// Fields are private and read through accessors, so the shape of a declared
 /// input can change without touching every node. Outside this crate the only
 /// way to construct one is
@@ -49,6 +58,7 @@ pub struct PortDescriptor {
     optional_inputs: Vec<InputPort>,
     outputs: Vec<ChannelKey>,
     drives: Vec<(ChannelKey, Vec<ActuatorDrive>)>,
+    observables: Vec<Observable>,
     rate: Option<f64>,
 }
 
@@ -80,6 +90,7 @@ impl PortDescriptor {
             optional_inputs: optional,
             outputs,
             drives: Vec::new(),
+            observables: Vec::new(),
             rate,
         }
     }
@@ -88,6 +99,13 @@ impl PortDescriptor {
     /// builders, which check each channel's type before recording it.
     pub(crate) fn with_drives(mut self, drives: Vec<(ChannelKey, Vec<ActuatorDrive>)>) -> Self {
         self.drives = drives;
+        self
+    }
+
+    /// Records the values the node can emit for watchers, in declaration
+    /// order. For the builders.
+    pub(crate) fn with_observables(mut self, observables: Vec<Observable>) -> Self {
+        self.observables = observables;
         self
     }
 
@@ -138,6 +156,12 @@ impl PortDescriptor {
             .iter()
             .find(|(channel, _)| channel == output)
             .map_or(&[], |(_, drives)| drives.as_slice())
+    }
+
+    /// The values this node declares it can emit for watchers, in declaration
+    /// order. Empty for a node that declares none.
+    pub fn observables(&self) -> &[Observable] {
+        &self.observables
     }
 
     /// Execution rate in Hz. `None` means every tick.
@@ -209,6 +233,54 @@ pub enum InputTiming {
     /// constraint. No builder declares it yet, because reads still go to the
     /// live slot and would not actually see the start-of-tick value.
     PreviousTick,
+}
+
+/// One value a node declares it can emit for watchers: its leaf name and
+/// whether it repeats across runs.
+///
+/// The leaf name is relative to the node (`aiding.gps.nis`); the pipeline adds
+/// the node's name and the host adds the agent. Only the descriptor builders
+/// create records, so every declaration goes through one place.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Observable {
+    leaf_name: Arc<str>,
+    determinism: Determinism,
+}
+
+impl Observable {
+    pub(crate) fn new(leaf_name: impl Into<Arc<str>>, determinism: Determinism) -> Self {
+        Self {
+            leaf_name: leaf_name.into(),
+            determinism,
+        }
+    }
+
+    /// The name the node emits this value under, relative to the node.
+    pub fn leaf_name(&self) -> &Arc<str> {
+        &self.leaf_name
+    }
+
+    /// Whether two runs with the same seed and inputs give the same samples.
+    pub fn determinism(&self) -> Determinism {
+        self.determinism
+    }
+}
+
+/// Whether a declared value repeats exactly across runs.
+///
+/// A sink comparing two runs (a regression check, a seeded Monte Carlo batch,
+/// the everything-watched vs nothing-watched gate) expects every
+/// [`Reproducible`](Self::Reproducible) value to match bit for bit, and skips
+/// [`WallClock`](Self::WallClock) values, which differ on every run. Only the
+/// node knows which kind a value is, since both arrive as plain numbers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Determinism {
+    /// The same on every run with the same seed and inputs: a statistic of the
+    /// computation, such as NIS or a drop count.
+    Reproducible,
+    /// Depends on the machine and its load, such as how long a node took to
+    /// run. Differs between runs; a comparison skips it.
+    WallClock,
 }
 
 #[cfg(test)]
@@ -295,10 +367,34 @@ mod tests {
             )],
             outputs: vec![],
             drives: vec![],
+            observables: vec![],
             rate: None,
         };
 
         assert_eq!(d.same_tick_inputs().collect::<Vec<_>>(), vec![&now]);
+    }
+
+    #[test]
+    fn new_declares_no_observables() {
+        let d = PortDescriptor::new(vec![], vec![], vec![ikey::<u32>()], None);
+        assert!(d.observables().is_empty());
+    }
+
+    #[test]
+    fn with_observables_keeps_declaration_order() {
+        let nis = Observable::new("aiding.gps.nis", Determinism::Reproducible);
+        let duration = Observable::new("duration", Determinism::WallClock);
+        let d = PortDescriptor::new(vec![], vec![], vec![], None)
+            .with_observables(vec![nis.clone(), duration.clone()]);
+
+        assert_eq!(d.observables(), &[nis, duration]);
+    }
+
+    #[test]
+    fn observable_reads_back_its_name_and_determinism() {
+        let o = Observable::new("aiding.gps.nis", Determinism::Reproducible);
+        assert_eq!(o.leaf_name().as_ref(), "aiding.gps.nis");
+        assert_eq!(o.determinism(), Determinism::Reproducible);
     }
 
     #[test]

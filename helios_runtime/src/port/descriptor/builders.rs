@@ -26,6 +26,11 @@
 //! [`AlgorithmNodePortDescriptor::output_actuator_command`], which also takes
 //! the actuators it drives: the actuator seam reads them off the descriptor.
 //!
+//! Both builders also declare what the node can emit for watchers, one leaf
+//! per [`observable`](AlgorithmNodePortDescriptor::observable) call. Leaves
+//! with a config-derived part (`aiding.<entry>.nis`) are formatted by the node
+//! as it builds its descriptor.
+//!
 //! Every input a builder records is same-tick: `input_*` methods record a
 //! required input and `optional_*` methods an optional one. There is no
 //! method for a previous-tick input until the pipeline can actually hand a
@@ -50,11 +55,13 @@
 //! node is constructed, at startup, never mid-run.
 
 use crate::port::{
-    ChannelKey, ChannelKind, HealthChannel, InternalChannel, OracleChannel, PortDescriptor,
-    SensorChannel,
+    ChannelKey, ChannelKind, Determinism, HealthChannel, InternalChannel, Observable,
+    OracleChannel, PortDescriptor, SensorChannel,
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
+
+use std::sync::Arc;
 
 use std::any::TypeId;
 
@@ -83,6 +90,7 @@ pub struct AlgorithmNodePortDescriptor {
     optional_inputs: Vec<ChannelKey>,
     outputs: Vec<ChannelKey>,
     drives: Vec<(ChannelKey, Vec<ActuatorDrive>)>,
+    observables: Vec<Observable>,
     rate: Option<f64>,
 }
 
@@ -159,6 +167,15 @@ impl AlgorithmNodePortDescriptor {
         self
     }
 
+    /// Declares a value the node can emit for watchers, under `leaf` (relative
+    /// to the node, e.g. `aiding.gps.nis`). Declaring makes a leaf watchable;
+    /// an emit of a leaf the node didn't declare is dropped. A leaf declared
+    /// twice, or one that collides with an output channel, fails the build.
+    pub fn observable(mut self, leaf: impl Into<Arc<str>>, determinism: Determinism) -> Self {
+        self.observables.push(Observable::new(leaf, determinism));
+        self
+    }
+
     /// Gates execution to `hz`. Without it the node fires every tick.
     pub fn rate_hz(mut self, hz: f64) -> Self {
         self.rate = Some(hz);
@@ -224,6 +241,7 @@ impl AlgorithmNodePortDescriptor {
             self.rate,
         )
         .with_drives(self.drives)
+        .with_observables(self.observables)
     }
 }
 
@@ -236,6 +254,7 @@ pub struct MockNodePortDescriptor {
     required_inputs: Vec<ChannelKey>,
     optional_inputs: Vec<ChannelKey>,
     outputs: Vec<ChannelKey>,
+    observables: Vec<Observable>,
     rate: Option<f64>,
 }
 
@@ -286,6 +305,13 @@ impl MockNodePortDescriptor {
     /// Declares an internal channel this node writes. One producer per channel.
     pub fn output_internal(mut self, c: InternalChannel) -> Self {
         self.outputs.push(c.into());
+        self
+    }
+
+    /// Declares a value the node can emit for watchers, as
+    /// [`AlgorithmNodePortDescriptor::observable`] does.
+    pub fn observable(mut self, leaf: impl Into<Arc<str>>, determinism: Determinism) -> Self {
+        self.observables.push(Observable::new(leaf, determinism));
         self
     }
 
@@ -350,6 +376,7 @@ impl MockNodePortDescriptor {
             self.outputs,
             self.rate,
         )
+        .with_observables(self.observables)
     }
 
     fn is_mock_input_kind(c: &ChannelKey) -> bool {
@@ -390,6 +417,53 @@ mod tests {
         assert_eq!(d.required_inputs().count(), 2);
         assert_eq!(d.outputs().len(), 1);
         assert_eq!(d.rate(), Some(50.0));
+    }
+
+    #[test]
+    fn algorithm_builder_keeps_observables_in_declaration_order() {
+        let d = AlgorithmNodePortDescriptor::new()
+            .observable("aiding.gps.nis", Determinism::Reproducible)
+            .observable(
+                format!("aiding.{}.dropped", "gps"),
+                Determinism::Reproducible,
+            )
+            .build();
+
+        assert_eq!(
+            d.observables(),
+            [
+                Observable::new("aiding.gps.nis", Determinism::Reproducible),
+                Observable::new("aiding.gps.dropped", Determinism::Reproducible),
+            ]
+        );
+    }
+
+    #[test]
+    fn mock_builder_keeps_observables_in_declaration_order() {
+        let d = MockNodePortDescriptor::new()
+            .observable("value", Determinism::Reproducible)
+            .observable("search_time", Determinism::WallClock)
+            .build();
+
+        assert_eq!(
+            d.observables(),
+            [
+                Observable::new("value", Determinism::Reproducible),
+                Observable::new("search_time", Determinism::WallClock),
+            ]
+        );
+    }
+
+    #[test]
+    fn builders_declare_no_observables_by_default() {
+        assert!(AlgorithmNodePortDescriptor::new()
+            .build()
+            .observables()
+            .is_empty());
+        assert!(MockNodePortDescriptor::new()
+            .build()
+            .observables()
+            .is_empty());
     }
 
     #[test]
