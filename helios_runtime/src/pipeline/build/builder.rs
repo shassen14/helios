@@ -5,8 +5,8 @@
 use super::{dag_log::log_resolved_dag, ordering::order_into_levels, wiring::check_wiring};
 
 use crate::{
-    observe::buffer::NodeObservations, pipeline::rate_gate::RateTimer, port::PortBus,
-    AutonomyPipeline, BodyCapabilities, ChannelKey, PipelineBuildError, PipelineNode,
+    pipeline::autonomy_pipeline::ScheduledNode, port::PortBus, AutonomyPipeline, BodyCapabilities,
+    ChannelKey, PipelineBuildError, PipelineNode,
 };
 
 use std::collections::HashSet;
@@ -144,25 +144,23 @@ impl PipelineBuilder {
 
         let bus = PortBus::new(descriptor_iter);
 
-        // One timer and one observation buffer per node, indexed by NodeId:
-        // ids were assigned in this same level-major order, which is also the
-        // order `tick` walks.
-        let mut rate_timers: Vec<RateTimer> = Vec::new();
-        let mut observations: Vec<NodeObservations> = Vec::new();
-        for level in &levels {
-            for (_, node) in level {
-                rate_timers.push(RateTimer::new(node.port_descriptor().rate()));
-                observations.push(NodeObservations::new(node.name(), Vec::<&str>::new()));
-            }
-        }
-
         log_resolved_dag(&levels, &self.capabilities, &self.outside_inputs);
+
+        // Each node gets the state the pipeline keeps for it, keeping the
+        // levels and the order within them.
+        let levels = levels
+            .into_iter()
+            .map(|level| {
+                level
+                    .into_iter()
+                    .map(|(node_id, node)| ScheduledNode::new(node_id, node))
+                    .collect()
+            })
+            .collect();
 
         Ok(AutonomyPipeline {
             levels,
             bus,
-            rate_timers,
-            observations,
             outside_inputs: self.outside_inputs,
         })
     }

@@ -22,24 +22,18 @@ use tracing::{debug_span, trace_span};
 /// A built, validated autonomy pipeline.
 ///
 /// Constructed only via [`PipelineBuilder::build`](crate::PipelineBuilder::build). After construction
-/// the topology is fixed; the only mutable state is the bus contents and
-/// per-node timer counters, both of which use interior mutability so
-/// [`tick`](Self::tick) can take `&self`.
+/// the topology is fixed; the only mutable state is the bus contents, the
+/// per-node timer counters, and the per-node observation buffers, all of
+/// which use interior mutability so [`tick`](Self::tick) can take `&self`.
 pub struct AutonomyPipeline {
-    /// Nodes grouped by topological level, in execution order. Each entry
-    /// pairs a node with its build-time-assigned [`NodeId`].
-    pub(super) levels: Vec<Vec<(NodeId, Box<dyn PipelineNode>)>>,
+    /// Nodes grouped by topological level, in execution order, each with
+    /// the state the pipeline keeps for it. Walking levels in order visits
+    /// nodes in [`NodeId`] order.
+    pub(super) levels: Vec<Vec<ScheduledNode>>,
     /// Typed blackboard used for all intra-pipeline data exchange. Also
     /// the only way values from outside the graph enter it: the host writes
     /// body measurements and operator or mission inputs here.
     pub(super) bus: PortBus,
-    /// Per-node rate gating, indexed by [`NodeId`]. A node with
-    /// `rate: None` fires every tick.
-    pub(super) rate_timers: Vec<RateTimer>,
-    /// Per-node buffers of values emitted for watchers, indexed by
-    /// [`NodeId`]. A node records into its own buffer during `tick`; nothing
-    /// in the pipeline reads them.
-    pub(super) observations: Vec<NodeObservations>,
     /// Inputs declared as sent from outside the robot, kept from the build.
     pub(super) outside_inputs: Vec<ChannelKey>,
 }
@@ -83,14 +77,18 @@ impl AutonomyPipeline {
         let _tick_span = debug_span!("pipeline.tick", t = now.0, dt).entered();
 
         for level in &self.levels {
-            for (node_id, node) in level {
-                if self.rate_timers[*node_id as usize].should_fire_and_advance(dt) {
-                    let _node_span =
-                        trace_span!("node.execute", name = node.name(), id = *node_id).entered();
-                    node.execute(
+            for scheduled in level {
+                if scheduled.rate_timer.should_fire_and_advance(dt) {
+                    let _node_span = trace_span!(
+                        "node.execute",
+                        name = scheduled.node.name(),
+                        id = scheduled.node_id
+                    )
+                    .entered();
+                    scheduled.node.execute(
                         &self.bus,
                         tf,
-                        TickContext::new(now, dt, *node_id, &self.observations[*node_id as usize]),
+                        TickContext::new(now, dt, scheduled.node_id, &scheduled.observations),
                     );
                 }
             }
@@ -115,9 +113,11 @@ impl AutonomyPipeline {
     /// bus, use [`AutonomyPipeline::bus`].
     pub fn channels(&self) -> impl Iterator<Item = (&str, &ChannelKey)> + '_ {
         self.levels.iter().flat_map(|level| {
-            level.iter().flat_map(|(_, node)| {
-                let name = node.name();
-                node.port_descriptor()
+            level.iter().flat_map(|scheduled| {
+                let name = scheduled.node.name();
+                scheduled
+                    .node
+                    .port_descriptor()
                     .outputs()
                     .iter()
                     .map(move |key| (name, key))
@@ -157,5 +157,39 @@ impl AutonomyPipeline {
     /// allocator's first output) and when no allocator node is in the graph.
     pub fn read_actuators(&self) -> Option<Arc<Stamped<ActuatorCommand>>> {
         self.bus.read(control::actuators().into())
+    }
+}
+
+/// A node as the running pipeline holds it: the node plus the state the
+/// pipeline keeps for it.
+///
+/// A field belongs here only when the pipeline gives it to every node, such
+/// as rate gating or an observation buffer. State specific to one kind of
+/// node stays inside that node.
+pub(super) struct ScheduledNode {
+    /// Assigned at build in level-major order; stamps the node's bus writes.
+    pub(super) node_id: NodeId,
+    pub(super) node: Box<dyn PipelineNode>,
+    /// Decides each tick whether the node is due. Fires every tick when the
+    /// node declares no rate.
+    pub(super) rate_timer: RateTimer,
+    /// What the node emitted for watchers since the last drain. Nothing in
+    /// the pipeline reads it.
+    pub(super) observations: NodeObservations,
+}
+
+impl ScheduledNode {
+    /// Wraps `node` with a timer at its declared rate and an empty buffer
+    /// under its name.
+    pub(super) fn new(node_id: NodeId, node: Box<dyn PipelineNode>) -> Self {
+        let rate_timer = RateTimer::new(node.port_descriptor().rate());
+        let observations = NodeObservations::new(node.name(), Vec::<&str>::new());
+
+        Self {
+            node_id,
+            node,
+            rate_timer,
+            observations,
+        }
     }
 }
