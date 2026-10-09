@@ -10,7 +10,8 @@
 //! Three things cannot come from config — they are host-specific runtime tokens:
 //!
 //! - `agent` — the agent's stable [`AgentId`], the config name every subsystem
-//!   uses to key this agent's frames. All spine frames (`base_link`, `odom`) and
+//!   uses to key this agent's frames. It must be non-empty and free of `.`,
+//!   since it is one part of every watcher path for the agent. All spine frames (`base_link`, `odom`) and
 //!   sensor frames are built from it, so the same identity is valid in sim and
 //!   on hardware.
 //! - `sensor_channels` — the set of sensor channel names the host actually
@@ -48,6 +49,7 @@ use super::seams::reference::reference_selector;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
+use crate::observe::path::is_path_segment;
 use crate::pipeline::dag_log::log_resolved_dag;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
@@ -68,7 +70,9 @@ use std::collections::HashSet;
 /// - `stack` — fully-resolved autonomy config (no unresolved `from` refs).
 /// - `registry` — factory registry, typically `AutonomyRegistry::default()`.
 /// - `agent` — the agent's stable [`AgentId`] (its config name); every frame
-///   this agent owns is keyed by it.
+///   this agent owns is keyed by it. An empty or dotted name is a
+///   [`MalformedAgentName`](PipelineAssemblyError::MalformedAgentName), and
+///   nothing else is checked.
 /// - `sensor_channels` — the set of sensor channel names the host publishes for
 ///   this agent. A node reading a sensor channel absent from this set, and
 ///   derived by no node, is an
@@ -85,6 +89,14 @@ pub fn build_pipeline(
     sensor_channels: &HashSet<String>,
     mut host_capabilities: BodyCapabilities,
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
+    // Checked first and alone: every frame and watcher path for this agent
+    // is built from its name, so anything checked after would only repeat it.
+    if !is_path_segment(agent.as_str()) {
+        return Err(vec![PipelineAssemblyError::MalformedAgentName {
+            agent: agent.to_string(),
+        }]);
+    }
+
     let mut errors: Vec<PipelineAssemblyError> = vec![];
     let mut builder = PipelineBuilder::new();
     // The body's sensor channels the stack reads. Merged into the body's

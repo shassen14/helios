@@ -897,6 +897,30 @@ fn duplicate_node_name_is_rejected_once() {
 }
 
 #[test]
+fn empty_or_dotted_node_names_are_refused_once_each() {
+    // A node name is one part of every watcher path under the node. Two nodes
+    // sharing a dotted name give one malformed-name error (and one duplicate).
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("a.b", ikey_of::<ChA>(), 0)))
+        .add_node(Box::new(ProducerNode::new("a.b", ikey_of::<ChB>(), 0)))
+        .add_node(Box::new(ProducerNode::new("", ikey_of::<ChC>(), 0)))
+        .add_node(Box::new(ProducerNode::new("fine", ikey_of::<ChD>(), 0)))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: two node names are not path segments");
+    };
+    let malformed: Vec<&str> = errors
+        .iter()
+        .filter_map(|e| match e {
+            PipelineBuildError::MalformedNodeName { name } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(malformed, ["a.b", ""], "got {errors:?}");
+}
+
+#[test]
 fn level_order_does_not_depend_on_insertion_order() {
     // Three independent producers share level 0. Within a level nodes are
     // sorted by name, so either insertion order yields the same order (and

@@ -56,6 +56,10 @@ pub enum PipelineBuildError {
     /// Two or more nodes share a name. Errors, logs and node order within a
     /// level all identify a node by its name, so names must be unique.
     DuplicateNodeName { name: String },
+    /// A node's name is empty or contains `.`. The name fills one part of
+    /// every watcher path under the node (`agent.<agent>.<node>.<leaf>`), and
+    /// `.` separates the parts, so such a path could not be split back.
+    MalformedNodeName { name: String },
     /// A node declares a watchable leaf that isn't a well-formed path: it is
     /// empty, has an empty part between dots (`.nis`, `nis.`, `aiding..nis`),
     /// or contains `/`. Paths split on `.`, so such a leaf would mis-split in
@@ -149,6 +153,13 @@ impl std::fmt::Display for PipelineBuildError {
                 write!(
                     f,
                     "more than one node is named \"{name}\" — node names must be unique"
+                )
+            }
+            PipelineBuildError::MalformedNodeName { name } => {
+                write!(
+                    f,
+                    "node name \"{name}\" is empty or contains '.' — a node name is one part \
+                     of a watcher path, and '.' separates the parts"
                 )
             }
             PipelineBuildError::MalformedObservable { node_name, leaf } => {

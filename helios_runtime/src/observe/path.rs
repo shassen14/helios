@@ -1,13 +1,25 @@
-//! How a channel is named inside a watcher path.
+//! How names are spelled inside a watcher path.
 //!
 //! Watchers address everything under a node by a dotted path,
-//! `agent.<agent>.<node>.<rest>`. A node's observations fill `<rest>` with
-//! the leaf the node declared; a node's output channels fill it with the
-//! segment built here. Both share one namespace, so the build compares leaves
-//! against these segments, and assertion targets use the same rule to find
-//! a channel.
+//! `agent.<agent>.<node>.<rest>`. The agent and the node each fill exactly
+//! one part, so their names must be [path segments](is_path_segment). A
+//! node's observations fill `<rest>` with the leaf the node declared; a
+//! node's output channels fill it with the segment built here. Both share one
+//! namespace, so the build compares leaves against these segments, and
+//! assertion targets use the same rule to find a channel.
 
 use crate::port::ChannelKey;
+
+/// The one level separator in watcher paths.
+pub(crate) const PATH_SEPARATOR: &str = ".";
+
+/// Whether `name` can fill exactly one part of a watcher path: it is not
+/// empty and holds no [`PATH_SEPARATOR`]. Agent and node names must be; an
+/// empty name or a dotted one would make the path impossible to split back
+/// into its parts.
+pub(crate) fn is_path_segment(name: &str) -> bool {
+    !name.is_empty() && !name.contains(PATH_SEPARATOR)
+}
 
 /// The path segment for `key`: its instance, else its type's name.
 ///
@@ -19,7 +31,7 @@ use crate::port::ChannelKey;
 pub fn channel_to_path_segment(key: &ChannelKey) -> String {
     let raw = key.instance();
     if !raw.trim().is_empty() {
-        raw.replace('/', ".")
+        raw.replace('/', PATH_SEPARATOR)
     } else {
         to_snake_case(last_segment(key.type_name()))
     }
@@ -57,6 +69,19 @@ mod tests {
 
     fn channel_unnamed<T: 'static>() -> ChannelKey {
         InternalChannel::of::<T>().into()
+    }
+
+    #[test]
+    fn plain_name_is_a_path_segment() {
+        assert!(is_path_segment("primary"));
+        assert!(is_path_segment("front_lidar_deproject"));
+    }
+
+    #[test]
+    fn dotted_or_empty_name_is_not_a_path_segment() {
+        assert!(!is_path_segment("a.b"));
+        assert!(!is_path_segment(".a"));
+        assert!(!is_path_segment(""));
     }
 
     #[test]

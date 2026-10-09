@@ -1,10 +1,10 @@
-//! Wiring checks: node names are unique, each node's watchable leaves are
+//! Wiring checks: node names are unique path segments, each node's watchable leaves are
 //! well formed, outside the pipeline's own group, distinct and clear of its
 //! output channels' paths, and every input has exactly one supplier. These need only the declarations, not an order, so
 //! they run before the sort.
 
 use crate::{
-    observe::path::channel_to_path_segment,
+    observe::path::{channel_to_path_segment, is_path_segment, PATH_SEPARATOR},
     pipeline::autonomy_pipeline::{observable_catalog, PIPELINE_LEAF_GROUP},
     port::ChannelKind,
     BodyCapabilities, ChannelKey, PipelineBuildError, PipelineNode, Supplier,
@@ -16,7 +16,8 @@ use std::{
 };
 
 /// Checks the graph's wiring and returns every problem found. An empty list
-/// means each node name is unique, every watchable leaf a node declares is
+/// means each node name is unique and fits one part of a watcher path, every
+/// watchable leaf a node declares is
 /// well formed and outside the pipeline's own group, no node names a leaf
 /// twice or gives one the path of its own output channel, and every input,
 /// required or optional, has exactly one supplier: a node output, a body
@@ -35,12 +36,20 @@ pub(super) fn check_wiring(
 }
 
 /// Errors, logs and the within-level order all identify a node by name, so a
-/// shared name is reported once per name.
+/// shared name is reported once per name. A node's name is also one part of
+/// every watcher path under it, so an empty or dotted name is reported, once
+/// per name.
 fn check_node_names(nodes: &[Box<dyn PipelineNode>], errors: &mut Vec<PipelineBuildError>) {
     let mut seen_names: HashSet<&str> = HashSet::new();
     let mut reported_names: HashSet<&str> = HashSet::new();
+    let mut malformed_names: HashSet<&str> = HashSet::new();
     for node in nodes {
         let name = node.name();
+        if !is_path_segment(name) && malformed_names.insert(name) {
+            errors.push(PipelineBuildError::MalformedNodeName {
+                name: name.to_string(),
+            });
+        }
         if !seen_names.insert(name) && reported_names.insert(name) {
             errors.push(PipelineBuildError::DuplicateNodeName {
                 name: name.to_string(),
@@ -122,14 +131,14 @@ fn check_observables(nodes: &[Box<dyn PipelineNode>], errors: &mut Vec<PipelineB
 /// tree-shaped sink, and a `/` would read as a level that channel paths turn
 /// into `.` but a leaf would keep.
 fn is_well_formed_leaf(leaf: &str) -> bool {
-    !leaf.contains('/') && leaf.split('.').all(|part| !part.is_empty())
+    !leaf.contains('/') && leaf.split(PATH_SEPARATOR).all(|part| !part.is_empty())
 }
 
 /// The pipeline's group itself or any leaf under it (`tick`, `tick.overrun`),
 /// but not a leaf that only starts with the same letters (`ticker`).
 fn is_in_pipeline_group(leaf: &str) -> bool {
     match leaf.strip_prefix(PIPELINE_LEAF_GROUP) {
-        Some(rest) => rest.is_empty() || rest.starts_with('.'),
+        Some(rest) => rest.is_empty() || rest.starts_with(PATH_SEPARATOR),
         None => false,
     }
 }

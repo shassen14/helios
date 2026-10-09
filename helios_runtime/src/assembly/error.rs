@@ -9,6 +9,10 @@ use helios_core::control::actuators::SetpointKind;
 /// Errors that can occur while assembling a pipeline from config.
 #[derive(Debug)]
 pub enum PipelineAssemblyError {
+    /// The agent's name is empty or contains `.`. It fills one part of every
+    /// watcher path for this agent (`agent.<agent>.<node>.<leaf>`), and `.`
+    /// separates the parts, so such a path could not be split back.
+    MalformedAgentName { agent: String },
     /// The assembled node graph failed topological validation.
     PipelineBuild(Vec<PipelineBuildError>),
     /// A node reads a sensor channel that neither the host publishes
@@ -98,6 +102,11 @@ pub enum PipelineAssemblyError {
 impl std::fmt::Display for PipelineAssemblyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            PipelineAssemblyError::MalformedAgentName { agent } => write!(
+                f,
+                "agent name '{agent}' is empty or contains '.'; an agent name is one part of \
+                 a watcher path, and '.' separates the parts"
+            ),
             PipelineAssemblyError::PipelineBuild(errs) => {
                 write!(f, "pipeline graph errors: ")?;
                 for (i, e) in errs.iter().enumerate() {

@@ -132,6 +132,31 @@ fn teleop_only_stack_builds_without_a_controller() {
 }
 
 #[test]
+fn empty_or_dotted_agent_name_is_refused_alone() {
+    // The agent name is one part of every watcher path, so `.` or an empty
+    // name is refused before anything else is checked.
+    for name in ["car.1", ""] {
+        let result = build_pipeline(
+            &teleop_only_stack(),
+            &AutonomyRegistry::default(),
+            AgentId::new(name),
+            &HashSet::new(),
+            teleop_body(),
+        );
+        let Err(errors) = result else {
+            panic!("agent name {name:?} should be refused");
+        };
+        assert!(
+            matches!(
+                errors.as_slice(),
+                [PipelineAssemblyError::MalformedAgentName { agent }] if agent == name
+            ),
+            "got {errors:?}"
+        );
+    }
+}
+
+#[test]
 fn teleop_reference_is_intent_driven_not_free_running() {
     // The mapper is a brain node fed by host intent, not a free-running source:
     // with no intent on the bus the resolved `reference` slot stays empty, so
