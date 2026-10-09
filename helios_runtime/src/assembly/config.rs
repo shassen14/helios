@@ -5,6 +5,7 @@
 //! `config.rs` of the module that reads it: a seam's in its seam folder, the
 //! `[tf]` sizing in `tf_service`, a `[nodes]` kind's in its node folder.
 
+use super::factory::KIND_KEY;
 use super::seams::actuators::ActuatorSeamConfig;
 use super::seams::command::CommandFoldConfig;
 use super::seams::estimate::EstimateSeamConfig;
@@ -56,6 +57,14 @@ pub struct AutonomyStackConfig {
     pub tf: TfBufferConfig,
 }
 
+impl AutonomyStackConfig {
+    /// The `kind` of the `[nodes.<name>]` entry, or `None` when no entry has
+    /// that name (a seam's node) or its `kind` is not a string.
+    pub(super) fn node_kind(&self, name: &str) -> Option<&str> {
+        self.nodes.get(name)?.get(KIND_KEY)?.as_str()
+    }
+}
+
 /// Portable agent identity and autonomy configuration.
 ///
 /// Contains no simulation-specific fields (no vehicle, sensors, or physics).
@@ -97,5 +106,24 @@ mod tests {
 
         let empty: AutonomyStackConfig = toml::from_str("").expect("empty stack parses");
         assert!(empty.nodes.is_empty());
+    }
+
+    /// A `[nodes]` entry's kind is found by its name; a name with no entry,
+    /// or an entry whose kind is not a string, has none.
+    #[test]
+    fn node_kind_is_looked_up_by_name() {
+        let stack: AutonomyStackConfig = toml::from_str(
+            r#"
+            [nodes.primary]
+            kind = "Ekf"
+
+            [nodes.number_kind]
+            kind = 5
+            "#,
+        )
+        .expect("stack with nodes parses");
+        assert_eq!(stack.node_kind("primary"), Some("Ekf"));
+        assert_eq!(stack.node_kind("number_kind"), None);
+        assert_eq!(stack.node_kind("actuator_merge"), None);
     }
 }

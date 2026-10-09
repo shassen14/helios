@@ -48,6 +48,7 @@ use super::seams::reference::reference_selector;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
+use crate::pipeline::dag_log::log_resolved_dag;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
 use crate::port::ChannelKey;
@@ -178,9 +179,17 @@ pub fn build_pipeline(
             provenance: Provenance::Exact,
         }));
 
-    builder
+    // Kept for the startup log, which shows the body the graph was built
+    // against.
+    let capabilities = host_capabilities.clone();
+    let pipeline = builder
         .with_body_capabilities(host_capabilities)
         .with_outside_inputs(outside_inputs)
         .build()
-        .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])
+        .map_err(|build_errors| vec![PipelineAssemblyError::PipelineBuild(build_errors)])?;
+
+    // Each `[nodes]` entry is labelled with its kind; a seam's node has no
+    // entry and shows its name alone.
+    log_resolved_dag(&pipeline, &capabilities, |name| stack.node_kind(name));
+    Ok(pipeline)
 }

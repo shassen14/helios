@@ -2,7 +2,7 @@
 //! outside inputs, then [`build`](PipelineBuilder::build) checks them and
 //! assembles the [`AutonomyPipeline`].
 
-use super::{dag_log::log_resolved_dag, ordering::order_into_levels, wiring::check_wiring};
+use super::{ordering::order_into_levels, wiring::check_wiring};
 
 use crate::{
     pipeline::autonomy_pipeline::ScheduledNode, port::PortBus, AutonomyPipeline, BodyCapabilities,
@@ -153,8 +153,6 @@ impl PipelineBuilder {
             .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));
 
         let bus = PortBus::new(descriptor_iter);
-
-        log_resolved_dag(&levels, &self.capabilities, &self.outside_inputs);
 
         // Each node gets the state the pipeline keeps for it, keeping the
         // levels and the order within them.

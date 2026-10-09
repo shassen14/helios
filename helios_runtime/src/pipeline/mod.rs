@@ -16,6 +16,7 @@
 
 pub mod autonomy_pipeline;
 pub mod build;
+pub(crate) mod dag_log;
 pub(crate) mod key_format;
 pub mod node;
 pub mod rate_gate;
