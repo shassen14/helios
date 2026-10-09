@@ -212,12 +212,8 @@ mod tests {
         }
     }
 
-    fn tick_at(now: f64, dt: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt,
-            node_id: 0,
-        }
+    fn tick_at(now: f64, dt: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), dt, 0)
     }
 
     fn state_channel() -> ChannelKey {
@@ -418,11 +414,7 @@ mod tests {
         )
         .unwrap();
 
-        let tick = TickContext {
-            now: MonotonicTime(3.5),
-            dt: 0.01,
-            node_id: 7,
-        };
+        let tick = TickContext::detached(MonotonicTime(3.5), 0.01, 7);
         node.execute(&bus, &MockRuntime, tick);
 
         let out = bus.read::<FrameAwareState>(state_channel()).unwrap();

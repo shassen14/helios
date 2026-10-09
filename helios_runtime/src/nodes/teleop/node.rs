@@ -200,12 +200,8 @@ mod tests {
         .unwrap();
     }
 
-    fn tick_at(now: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt: 0.1,
-            node_id: 7,
-        }
+    fn tick_at(now: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), 0.1, 7)
     }
 
     #[test]

@@ -200,12 +200,8 @@ mod tests {
         }
     }
 
-    fn tick_at(now: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt: 0.1,
-            node_id: 99,
-        }
+    fn tick_at(now: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), 0.1, 99)
     }
 
     /// A `Cmd` selector with one preferred channel, plus the three channel keys

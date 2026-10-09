@@ -410,12 +410,8 @@ mod tests {
         bus.write(scan_channel(), stamped).unwrap();
     }
 
-    fn tick_at(now: f64, dt: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt,
-            node_id: 5,
-        }
+    fn tick_at(now: f64, dt: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), dt, 5)
     }
 
     // --- Tests ---

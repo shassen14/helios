@@ -342,11 +342,7 @@ mod tests {
         node.execute(
             &bus,
             &NoTransforms,
-            TickContext {
-                now: MonotonicTime(0.0),
-                dt: 0.1,
-                node_id: 0,
-            },
+            TickContext::detached(MonotonicTime(0.0), 0.1, 0),
         );
 
         bus.read::<FrameAwareState>(estimator_output(NODE).into())

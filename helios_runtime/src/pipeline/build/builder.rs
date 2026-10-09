@@ -5,8 +5,8 @@
 use super::{dag_log::log_resolved_dag, ordering::order_into_levels, wiring::check_wiring};
 
 use crate::{
-    pipeline::rate_gate::RateTimer, port::PortBus, AutonomyPipeline, BodyCapabilities, ChannelKey,
-    PipelineBuildError, PipelineNode,
+    observe::buffer::NodeObservations, pipeline::rate_gate::RateTimer, port::PortBus,
+    AutonomyPipeline, BodyCapabilities, ChannelKey, PipelineBuildError, PipelineNode,
 };
 
 use std::collections::HashSet;
@@ -144,12 +144,15 @@ impl PipelineBuilder {
 
         let bus = PortBus::new(descriptor_iter);
 
-        // One timer per node, indexed by NodeId: ids were assigned in this
-        // same level-major order, which is also the order `tick` walks.
+        // One timer and one observation buffer per node, indexed by NodeId:
+        // ids were assigned in this same level-major order, which is also the
+        // order `tick` walks.
         let mut rate_timers: Vec<RateTimer> = Vec::new();
+        let mut observations: Vec<NodeObservations> = Vec::new();
         for level in &levels {
             for (_, node) in level {
                 rate_timers.push(RateTimer::new(node.port_descriptor().rate()));
+                observations.push(NodeObservations::new(node.name(), Vec::<&str>::new()));
             }
         }
 
@@ -159,6 +162,7 @@ impl PipelineBuilder {
             levels,
             bus,
             rate_timers,
+            observations,
             outside_inputs: self.outside_inputs,
         })
     }

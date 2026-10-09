@@ -211,12 +211,8 @@ mod tests {
         }
     }
 
-    fn tick(now: f64, node_id: NodeId) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt: 0.1,
-            node_id,
-        }
+    fn tick(now: f64, node_id: NodeId) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), 0.1, node_id)
     }
 
     fn bus_for(node: &Merge) -> PortBus {

@@ -3,6 +3,7 @@
 
 use crate::{
     channels::{control, estimate::estimate, tf::is_tf_edge},
+    observe::buffer::NodeObservations,
     pipeline::rate_gate::RateTimer,
     port::{ChannelKey, PortBus},
     prelude::{PipelineNode, Stamped, TickContext},
@@ -35,6 +36,10 @@ pub struct AutonomyPipeline {
     /// Per-node rate gating, indexed by [`NodeId`]. A node with
     /// `rate: None` fires every tick.
     pub(super) rate_timers: Vec<RateTimer>,
+    /// Per-node buffers of values emitted for watchers, indexed by
+    /// [`NodeId`]. A node records into its own buffer during `tick`; nothing
+    /// in the pipeline reads them.
+    pub(super) observations: Vec<NodeObservations>,
     /// Inputs declared as sent from outside the robot, kept from the build.
     pub(super) outside_inputs: Vec<ChannelKey>,
 }
@@ -85,11 +90,7 @@ impl AutonomyPipeline {
                     node.execute(
                         &self.bus,
                         tf,
-                        TickContext {
-                            now,
-                            dt,
-                            node_id: *node_id,
-                        },
+                        TickContext::new(now, dt, *node_id, &self.observations[*node_id as usize]),
                     );
                 }
             }

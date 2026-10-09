@@ -1,7 +1,11 @@
+use crate::observe::buffer::NodeObservations;
+use crate::observe::observation::ObservedValue;
 use crate::port::{PortBus, PortDescriptor};
 
 use helios_core::prelude::TfProvider;
 use helios_core::spatial::primitives::MonotonicTime;
+
+use std::sync::Arc;
 
 /// One unit of computation in an [`AutonomyPipeline`].
 ///
@@ -38,10 +42,86 @@ pub trait PipelineNode: Send + Sync {
 /// `now` and `dt` are supplied by the host to [`AutonomyPipeline::tick`], so
 /// simulation and hardware share the same clock semantics. `node_id` lets a node
 /// tag the values it writes to the bus with its own identity for diagnostics.
-pub struct TickContext {
+///
+/// The context also carries the node's outlet for watchers:
+/// [`emit`](Self::emit) and [`emit_with`](Self::emit_with) record values that
+/// tests, visualizers, and recorders read after the tick. Nothing in the
+/// pipeline reads them back, and emitting returns nothing to branch on, so
+/// what is watched never changes what the pipeline computes. The context
+/// borrows its node's buffer for one tick, so it can't be kept past it.
+pub struct TickContext<'a> {
     pub now: MonotonicTime,
     pub dt: f64,
     pub node_id: NodeId,
+    /// The node's own buffer, or `None` for a detached context.
+    observations: Option<&'a NodeObservations>,
+}
+
+impl<'a> TickContext<'a> {
+    /// A context whose emits go to `observations`, the running node's own
+    /// buffer.
+    pub(crate) fn new(
+        now: MonotonicTime,
+        dt: f64,
+        node_id: NodeId,
+        observations: &'a NodeObservations,
+    ) -> Self {
+        Self {
+            now,
+            dt,
+            node_id,
+            observations: Some(observations),
+        }
+    }
+
+    /// A context outside any pipeline, whose emits go nowhere. Used to run a
+    /// node's [`execute`](PipelineNode::execute) directly, as unit tests do.
+    pub fn detached(now: MonotonicTime, dt: f64, node_id: NodeId) -> TickContext<'static> {
+        TickContext {
+            now,
+            dt,
+            node_id,
+            observations: None,
+        }
+    }
+
+    /// Records `value` under `leaf` if a watcher asked for it, else does
+    /// nothing.
+    ///
+    /// `leaf` is the name the node declares for the value, e.g.
+    /// `aiding.gps.nis`. `timestamp` is the time the value describes, which
+    /// is not always `now`: a measurement update stamps the reading's time.
+    /// For a value that is costly to compute, use [`emit_with`](Self::emit_with).
+    pub fn emit(&self, leaf: &str, timestamp: MonotonicTime, value: impl Into<ObservedValue>) {
+        let Some((buffer, leaf)) = self.watched(leaf) else {
+            return;
+        };
+
+        buffer.record(leaf, timestamp, value.into());
+    }
+
+    /// Like [`emit`](Self::emit), but `make_value` runs only when `leaf` is
+    /// watched, so an unwatched value costs one check.
+    ///
+    /// `make_value` must not change the node's state; it may not run at all.
+    pub fn emit_with<V>(&self, leaf: &str, timestamp: MonotonicTime, make_value: impl FnOnce() -> V)
+    where
+        V: Into<ObservedValue>,
+    {
+        let Some((buffer, leaf)) = self.watched(leaf) else {
+            return;
+        };
+
+        buffer.record(leaf, timestamp, make_value().into());
+    }
+
+    /// The buffer and stored leaf name to record into, if this context has a
+    /// buffer and `leaf` is watched in it.
+    fn watched(&self, leaf: &str) -> Option<(&'a NodeObservations, Arc<str>)> {
+        let buffer = self.observations?;
+        let leaf = buffer.watched_leaf(leaf)?;
+        Some((buffer, leaf))
+    }
 }
 
 /// Build-time-assigned identifier for a [`PipelineNode`].
@@ -58,3 +138,84 @@ pub type NodeId = u32;
 /// `NodeId::MAX` is chosen so the sentinel cannot collide with a real
 /// assigned ID (which counts up from 0 and is bounded by the node count).
 pub const HOST_PRODUCER_ID: NodeId = NodeId::MAX;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::observe::observation::Observation;
+
+    use std::cell::Cell;
+
+    const NODE: &str = "estimator";
+    const NODE_ID: NodeId = 0;
+    const NIS: &str = "aiding.gps.nis";
+    const DT: f64 = 0.01;
+
+    fn buffer(watched: bool) -> NodeObservations {
+        let mut buffer = NodeObservations::new(NODE, [NIS]);
+        buffer.set_watched(NIS, watched);
+        buffer
+    }
+
+    fn context(buffer: &NodeObservations) -> TickContext<'_> {
+        TickContext::new(MonotonicTime(2.0), DT, NODE_ID, buffer)
+    }
+
+    fn drain(buffer: &NodeObservations) -> Vec<Observation> {
+        let mut out = Vec::new();
+        buffer.drain_into(&mut out);
+        out
+    }
+
+    fn observation(t: f64, value: f64) -> Observation {
+        Observation {
+            node: NODE.into(),
+            leaf: NIS.into(),
+            timestamp: MonotonicTime(t),
+            value: ObservedValue::Scalar(value),
+        }
+    }
+
+    #[test]
+    fn watched_emits_record_with_their_own_timestamp() {
+        let buffer = buffer(true);
+        let tick = context(&buffer);
+
+        tick.emit(NIS, MonotonicTime(1.5), 0.5);
+        tick.emit_with(NIS, MonotonicTime(2.0), || 1.5);
+
+        assert_eq!(
+            drain(&buffer),
+            vec![observation(1.5, 0.5), observation(2.0, 1.5)]
+        );
+    }
+
+    #[test]
+    fn unwatched_lazy_emit_never_builds_the_value() {
+        let buffer = buffer(false);
+        let tick = context(&buffer);
+        let ran = Cell::new(false);
+
+        tick.emit_with(NIS, tick.now, || {
+            ran.set(true);
+            0.5
+        });
+
+        assert!(!ran.get());
+        assert!(drain(&buffer).is_empty());
+    }
+
+    #[test]
+    fn detached_context_emits_go_nowhere() {
+        let tick = TickContext::detached(MonotonicTime(2.0), DT, NODE_ID);
+        let ran = Cell::new(false);
+
+        tick.emit(NIS, tick.now, 0.5);
+        tick.emit_with(NIS, tick.now, || {
+            ran.set(true);
+            0.5
+        });
+
+        assert!(!ran.get());
+    }
+}

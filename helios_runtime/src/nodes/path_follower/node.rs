@@ -352,12 +352,8 @@ mod tests {
         PortBus::new(&[path_producer, traj_producer])
     }
 
-    fn tick_at(now: f64, dt: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt,
-            node_id: 13,
-        }
+    fn tick_at(now: f64, dt: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), dt, 13)
     }
 
     /// A single geometric path waypoint (ENU position only).

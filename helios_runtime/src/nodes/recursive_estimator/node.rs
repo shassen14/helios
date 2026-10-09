@@ -641,12 +641,8 @@ mod tests {
         .expect("the bus carries the accelerometer channel");
     }
 
-    fn tick(now: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt: DT,
-            node_id: 0,
-        }
+    fn tick(now: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), DT, 0)
     }
 
     /// The filter still predicts and publishes without an aiding sensor, so

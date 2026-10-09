@@ -270,12 +270,8 @@ mod tests {
         PortBus::new(&[descriptor])
     }
 
-    fn tick_at(now: f64, dt: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt,
-            node_id: 7,
-        }
+    fn tick_at(now: f64, dt: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), dt, 7)
     }
 
     fn dummy_path() -> Path {

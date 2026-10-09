@@ -9,6 +9,7 @@ pub mod body;
 pub mod channels;
 pub mod diagnostics;
 pub mod nodes;
+pub mod observe;
 pub mod pipeline;
 pub mod port;
 pub mod prelude;

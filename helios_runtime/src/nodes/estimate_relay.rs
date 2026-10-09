@@ -169,12 +169,8 @@ mod tests {
         PortBus::new([relay.port_descriptor(), &estimator])
     }
 
-    fn tick() -> TickContext {
-        TickContext {
-            now: MonotonicTime(2.0),
-            dt: 0.1,
-            node_id: 9,
-        }
+    fn tick() -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(2.0), 0.1, 9)
     }
 
     /// A state whose schema anchors position in odom and orientation

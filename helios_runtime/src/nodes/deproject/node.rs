@@ -228,12 +228,8 @@ mod tests {
         .unwrap();
     }
 
-    fn tick_at(now: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt: 0.1,
-            node_id: NODE_ID,
-        }
+    fn tick_at(now: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), 0.1, NODE_ID)
     }
 
     fn read_output(bus: &PortBus) -> Option<Arc<Stamped<CloudBatch<Flu>>>> {
