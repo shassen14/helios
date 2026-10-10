@@ -18,6 +18,8 @@
 //! 2. **Update.** Each aiding source hands over the readings it has not handed
 //!    over before, oldest first, and each is applied to the filter. A dropped
 //!    correction that stems from a fault is warned, rate-limited per source.
+//!    Each applied correction reports its NIS ÷ dof, and each dropped one a
+//!    count, under the source's `aiding.<entry>` leaves, for watchers.
 //! 3. **Publish.** The filter's state goes out on a channel named after the
 //!    node, stamped with the state's valid-at time. After a tick with no
 //!    predict that is earlier than the tick's: the estimate says when it
@@ -40,7 +42,8 @@
 //! The state's valid-at time is the node's only clock memory. The tick's
 //! `dt` is never read: a tick that does not predict would lose it.
 
-use super::nis_health::NisWindow;
+use super::leaves::{AidingLeaf, AidingLeaves, ONE_DROP};
+use super::nis_health::{nis_per_dof, NisWindow};
 
 use crate::channels::estimate::estimator_output;
 use crate::nodes::estimation::{EstimatorInputBuilder, Measurement, MeasurementSource};
@@ -74,7 +77,8 @@ pub(crate) const SKIP_WARN_MIN_INTERVAL_SECS: f64 = 5.0;
 ///
 /// The port descriptor is derived from the input builder and the aiding
 /// sources: the builder's channels as it declares them, each aiding channel
-/// optional, since the filter still predicts and publishes without it.
+/// optional, since the filter still predicts and publishes without it, and
+/// each aiding source's two leaves, its NIS and its drop count.
 pub(crate) struct RecursiveEstimatorNode {
     name: String,
     output: ChannelKey,
@@ -109,6 +113,9 @@ impl RecursiveEstimatorNode {
             // slice path, which asserts the key is a sensor or internal
             // channel.
             builder = builder.inputs_from_slices(&[], &[aiding.source.channel().clone()]);
+            for (leaf, path) in aiding.leaves.iter() {
+                builder = builder.observable(path.clone(), leaf.determinism());
+            }
         }
 
         Self {
@@ -181,7 +188,7 @@ impl PipelineNode for RecursiveEstimatorNode {
 
         // 2. Update from each aiding source.
         for aiding in &self.aiding {
-            aiding.apply_new(bus, &mut **filter, Some(tf));
+            aiding.apply_new(bus, &tick, &mut **filter, Some(tf));
         }
 
         // 3. Publish, at the time the state holds, with the health it has
@@ -214,8 +221,8 @@ fn predict_health(fault: Option<&str>) -> Health {
     }
 }
 
-/// One aiding source, the throttle on its drop warnings, and its NIS window
-/// if it has one.
+/// One aiding source, the throttle on its drop warnings, its NIS window if it
+/// has one, and the leaves it reports under.
 pub(crate) struct Aiding {
     source: Box<dyn MeasurementSource>,
     /// Reading time of the last "aiding dropped" warning; `NEG_INFINITY` so
@@ -224,15 +231,19 @@ pub(crate) struct Aiding {
     /// Locked only inside a tick, under the node's filter lock, so never
     /// contended.
     nis: Option<Mutex<NisWindow>>,
+    /// The paths this source reports under.
+    leaves: AidingLeaves,
 }
 
 impl Aiding {
-    /// `source`, with no NIS window.
-    pub(crate) fn new(source: Box<dyn MeasurementSource>) -> Self {
+    /// `source`, read for the aiding entry named `entry`, with no NIS window.
+    /// The entry's name names its leaves.
+    pub(crate) fn new(entry: &str, source: Box<dyn MeasurementSource>) -> Self {
         Self {
             source,
             last_warned: AtomicF64::new(f64::NEG_INFINITY),
             nis: None,
+            leaves: AidingLeaves::new(entry),
         }
     }
 
@@ -267,22 +278,33 @@ impl Aiding {
 
     /// Applies every reading the source has not handed over before, oldest
     /// first, warning on a correction dropped for a fault.
+    ///
+    /// Reports each applied correction's NIS ÷ dof and each correction
+    /// dropped for a fault on the source's leaves, stamped with the reading's
+    /// time. Every drop is reported, though its warning is rate-limited.
     fn apply_new(
         &self,
         bus: &PortBus,
+        tick: &TickContext,
         filter: &mut dyn GaussianStateEstimator,
         tf: Option<&dyn TfProvider>,
     ) {
         for Measurement { z, at } in self.source.take_new(bus) {
             let outcome = filter.update(&z, self.source.model(), self.source.noise(), tf, at);
-            if let (UpdateOutcome::Applied(innovation), Some(Ok(mut nis))) =
-                (&outcome, self.nis.as_ref().map(Mutex::lock))
-            {
-                nis.record(*innovation);
+
+            if let UpdateOutcome::Applied(innovation) = &outcome {
+                if let Some(ratio) = nis_per_dof(*innovation) {
+                    self.report(tick, AidingLeaf::Nis, at, ratio);
+                }
+                if let Some(Ok(mut nis)) = self.nis.as_ref().map(Mutex::lock) {
+                    nis.record(*innovation);
+                }
             }
+
             // Expected quiet skips (cold start, no provider) and applied
-            // updates say nothing.
+            // updates are not drops: no count, no warning.
             if let Some(cause) = aiding_drop_cause(&outcome) {
+                self.report(tick, AidingLeaf::Dropped, at, ONE_DROP);
                 if passes_warn_throttle(&self.last_warned, at.0) {
                     warn!(
                         "aiding dropped on {}: {cause} at t={:.3}; \
@@ -292,6 +314,18 @@ impl Aiding {
                     );
                 }
             }
+        }
+    }
+
+    /// Reports `value` on `leaf`, stamped `at`, if a watcher asked for it.
+    fn report(&self, tick: &TickContext, leaf: AidingLeaf, at: MonotonicTime, value: f64) {
+        let path = self.leaves.path(leaf);
+        debug_assert!(
+            path.is_some(),
+            "aiding leaf {leaf:?} is missing from AidingLeaf::ALL"
+        );
+        if let Some(path) = path {
+            tick.emit(path, at, value);
         }
     }
 }
@@ -397,7 +431,9 @@ mod tests {
     use super::*;
 
     use crate::nodes::estimation::PayloadReader;
-    use crate::port::{InputPort, SensorChannel};
+    use crate::observe::buffer::NodeObservations;
+    use crate::observe::observation::{Observation, ObservedValue};
+    use crate::port::{Determinism, InputPort, SensorChannel};
 
     use helios_core::estimation::carrier::kinematic_carrier_schema;
     use helios_core::estimation::measurement::{MeasurementModel, Prediction};
@@ -415,6 +451,8 @@ mod tests {
 
     /// The tick's own step, which the node must never predict by.
     const DT: f64 = 0.1;
+    /// The aiding entry the accelerometer source is read for.
+    const ACCEL_ENTRY: &str = "accel";
 
     fn agent() -> AgentId {
         AgentId::new("car")
@@ -438,6 +476,8 @@ mod tests {
         fail_predict: bool,
         /// The NIS every update reports, over one degree of freedom.
         nis: f64,
+        /// Skip every update for this reason while set.
+        skip_update: Option<SkipReason>,
     }
 
     /// A filter that applies everything, advancing its valid-at time as a
@@ -468,7 +508,10 @@ mod tests {
         ) -> UpdateOutcome {
             let mut calls = self.calls.lock().expect("test lock");
             calls.update_times.push(at.0);
-            UpdateOutcome::Applied(Innovation::new(calls.nis, 1))
+            match &calls.skip_update {
+                Some(reason) => UpdateOutcome::Skipped(reason.clone()),
+                None => UpdateOutcome::Applied(Innovation::new(calls.nis, 1)),
+            }
         }
 
         fn set_valid_at(&mut self, t: MonotonicTime) {
@@ -568,6 +611,10 @@ mod tests {
         fn report_nis(&self, nis: f64) {
             self.calls.lock().expect("test lock").nis = nis;
         }
+
+        fn skip_updates(&self, reason: SkipReason) {
+            self.calls.lock().expect("test lock").skip_update = Some(reason);
+        }
     }
 
     /// A node over a [`RecordingFilter`] with one accelerometer source, its
@@ -601,8 +648,8 @@ mod tests {
             Box::new(filter),
             Box::new(ToggledInput(Arc::clone(&input_ready))),
             vec![match nis {
-                Some(window) => Aiding::new(Box::new(source)).with_nis_window(window),
-                None => Aiding::new(Box::new(source)),
+                Some(window) => Aiding::new(ACCEL_ENTRY, Box::new(source)).with_nis_window(window),
+                None => Aiding::new(ACCEL_ENTRY, Box::new(source)),
             }],
         );
         (node, Probe { calls, input_ready })
@@ -643,6 +690,40 @@ mod tests {
 
     fn tick(now: f64) -> TickContext<'static> {
         TickContext::detached(MonotonicTime(now), DT, 0)
+    }
+
+    /// A buffer holding every leaf `node` declares, all watched, as a pipeline
+    /// builds one.
+    fn watching(node: &RecursiveEstimatorNode) -> NodeObservations {
+        let leaves = node
+            .port_descriptor()
+            .observables()
+            .iter()
+            .map(|observable| observable.leaf_name().clone());
+        let mut buffer = NodeObservations::new(node.name(), leaves);
+        buffer.set_all_watched(true);
+        buffer
+    }
+
+    /// A tick at `now` whose emits go to `buffer`.
+    fn watched_tick(now: f64, buffer: &NodeObservations) -> TickContext<'_> {
+        TickContext::new(MonotonicTime(now), DT, 0, buffer)
+    }
+
+    fn drain(buffer: &NodeObservations) -> Vec<Observation> {
+        let mut out = Vec::new();
+        buffer.drain_into(&mut out);
+        out
+    }
+
+    /// What the `primary` node reports on `leaf` for a reading at `t`.
+    fn reported(leaf: &str, t: f64, value: f64) -> Observation {
+        Observation {
+            node: "primary".into(),
+            leaf: leaf.into(),
+            timestamp: MonotonicTime(t),
+            value: ObservedValue::Scalar(value),
+        }
     }
 
     /// The filter still predicts and publishes without an aiding sensor, so
@@ -804,6 +885,86 @@ mod tests {
         write_accel(&bus, &[1.0, 2.0, 3.0]);
         node.execute(&bus, &NoTransforms, tick(3.0));
         assert!(matches!(published_health(&bus), Health::Ok));
+    }
+
+    /// Each aiding entry declares every leaf it reports, as replayable values.
+    #[test]
+    fn each_aiding_entry_declares_its_leaves() {
+        let (node, _) = node();
+
+        let declared: Vec<(&str, Determinism)> = node
+            .port_descriptor()
+            .observables()
+            .iter()
+            .map(|observable| (observable.leaf_name().as_ref(), observable.determinism()))
+            .collect();
+
+        assert_eq!(
+            declared,
+            [
+                ("aiding.accel.nis", Determinism::Reproducible),
+                ("aiding.accel.dropped", Determinism::Reproducible),
+            ]
+        );
+    }
+
+    /// Each applied update reports its NIS ÷ dof, stamped with the reading's
+    /// time, not the tick's. The fixture's innovations have one degree of
+    /// freedom, so the value is the NIS itself.
+    #[test]
+    fn each_applied_update_reports_its_nis_at_the_reading_time() {
+        let (node, probe) = node();
+        let bus = bus_for(&node);
+        let buffer = watching(&node);
+        probe.report_nis(2.5);
+        write_accel(&bus, &[1.0, 2.0]);
+
+        node.execute(&bus, &NoTransforms, watched_tick(3.0, &buffer));
+
+        assert_eq!(
+            drain(&buffer),
+            [
+                reported("aiding.accel.nis", 1.0, 2.5),
+                reported("aiding.accel.nis", 2.0, 2.5),
+            ]
+        );
+    }
+
+    /// Every correction dropped for a fault is counted, though all but the
+    /// first warning inside the throttle interval are suppressed.
+    #[test]
+    fn every_loud_drop_is_counted_while_its_warning_is_throttled() {
+        let (node, probe) = node();
+        let bus = bus_for(&node);
+        let buffer = watching(&node);
+        probe.skip_updates(SkipReason::MeasurementShapeMismatch);
+        write_accel(&bus, &[1.0, 2.0, 3.0]);
+
+        node.execute(&bus, &NoTransforms, watched_tick(3.0, &buffer));
+
+        assert_eq!(
+            drain(&buffer),
+            [
+                reported("aiding.accel.dropped", 1.0, ONE_DROP),
+                reported("aiding.accel.dropped", 2.0, ONE_DROP),
+                reported("aiding.accel.dropped", 3.0, ONE_DROP),
+            ]
+        );
+    }
+
+    /// An expected skip, such as a model not ready yet, is neither a drop nor
+    /// an applied update, so it reports nothing.
+    #[test]
+    fn a_quiet_skip_reports_nothing() {
+        let (node, probe) = node();
+        let bus = bus_for(&node);
+        let buffer = watching(&node);
+        probe.skip_updates(SkipReason::Model(Unavailable::ColdStart));
+        write_accel(&bus, &[1.0]);
+
+        node.execute(&bus, &NoTransforms, watched_tick(1.0, &buffer));
+
+        assert!(drain(&buffer).is_empty());
     }
 
     /// The throttle lets the first fault through, holds the next ones for

@@ -6,9 +6,11 @@
 //! - `config` — `RecursiveEstimatorConfig`, the `[nodes.<name>]` section.
 //! - `nis_health` — `NisWindow`, the windowed-NIS health check on one aiding
 //!   sensor.
+//! - `leaves` — `AidingLeaf`, what each aiding source reports to watchers.
 //! - `register` — registers the `RecursiveEstimator` kind and its factory.
 
 mod config;
+mod leaves;
 mod nis_health;
 mod node;
 mod register;

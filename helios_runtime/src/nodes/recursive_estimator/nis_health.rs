@@ -66,15 +66,23 @@ impl NisWindow {
     /// Adds one applied reading's innovation, dropping the oldest once full.
     /// An innovation with no degrees of freedom says nothing and is ignored.
     pub(crate) fn record(&mut self, innovation: Innovation) {
-        if innovation.dof == 0 {
+        let Some(ratio) = nis_per_dof(innovation) else {
             return;
-        }
+        };
         if self.ratios.len() == self.capacity {
             self.ratios.pop_front();
         }
-        self.ratios
-            .push_back(innovation.nis / innovation.dof as f64);
+        self.ratios.push_back(ratio);
     }
+}
+
+/// `innovation`'s NIS ÷ dof, or `None` when it has no degrees of freedom and
+/// so says nothing.
+///
+/// The one place the ratio is computed, so the value a window judges and the
+/// value the node reports to watchers are the same number.
+pub(crate) fn nis_per_dof(innovation: Innovation) -> Option<f64> {
+    (innovation.dof != 0).then(|| innovation.nis / innovation.dof as f64)
 }
 
 #[cfg(test)]
@@ -82,6 +90,16 @@ mod tests {
     use super::*;
 
     const BAND: [f64; 2] = [0.5, 2.0];
+
+    #[test]
+    fn nis_per_dof_divides_by_the_degrees_of_freedom() {
+        assert_eq!(nis_per_dof(Innovation::new(6.0, 3)), Some(2.0));
+    }
+
+    #[test]
+    fn an_innovation_without_degrees_of_freedom_has_no_ratio() {
+        assert_eq!(nis_per_dof(Innovation::new(6.0, 0)), None);
+    }
 
     fn window(capacity: usize) -> NisWindow {
         NisWindow::new(capacity, BAND).expect("a valid window")

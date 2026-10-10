@@ -59,7 +59,8 @@ fn build(
     let dynamics = components.build_dynamics(DYNAMICS_KEY, config.dynamics, ctx)?;
     let mut resolved_aiding = Vec::with_capacity(config.aiding.len());
     let mut aiding = Vec::with_capacity(config.aiding.len());
-    let mut nis_windows = Vec::with_capacity(config.aiding.len());
+    // Each entry's name, which names its leaves, with its NIS window.
+    let mut entry_windows = Vec::with_capacity(config.aiding.len());
     let inputs: Vec<String> = config
         .aiding
         .values()
@@ -69,7 +70,7 @@ fn build(
         let nis_window = nis_window(&name, &entry)?;
         let (source, resolved) = build_aiding(components, &name, entry, ctx)?;
         aiding.push(source);
-        nis_windows.push(nis_window);
+        entry_windows.push((name.clone(), nis_window));
         resolved_aiding.push((
             [AIDING_KEY.to_string(), name, MODEL_KEY.to_string()],
             resolved,
@@ -94,10 +95,10 @@ fn build(
 
     let aiding = aiding
         .into_iter()
-        .zip(nis_windows)
-        .map(|(source, window)| match window {
-            Some(window) => Aiding::new(source).with_nis_window(window),
-            None => Aiding::new(source),
+        .zip(entry_windows)
+        .map(|(source, (name, window))| match window {
+            Some(window) => Aiding::new(&name, source).with_nis_window(window),
+            None => Aiding::new(&name, source),
         })
         .collect();
     let node = RecursiveEstimatorNode::new(ctx.node_name(), filter.component, input, aiding);
