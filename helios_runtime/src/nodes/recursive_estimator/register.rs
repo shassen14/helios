@@ -6,11 +6,12 @@
 //! them together: the aiding wiring, the augmentation blocks and the starting
 //! pose.
 
+use super::aiding::Aiding;
 use super::config::{
     AidingConfig, AugmentationConfig, InitialPoseConfig, RecursiveEstimatorConfig,
 };
 use super::nis_health::NisWindow;
-use super::node::{Aiding, RecursiveEstimatorNode};
+use super::node::RecursiveEstimatorNode;
 
 use crate::assembly::{AutonomyRegistry, BuildContext, BuildFailure, FactoryOutput};
 use crate::nodes::estimation::{
