@@ -1,7 +1,7 @@
 //! [`AutonomyPipeline`]: a built graph of nodes over a bus, run one tick at a
 //! time. Only the builder in [`build`](crate::pipeline::build) constructs one.
 
-use super::scheduled::ScheduledNode;
+use super::scheduled::{ScheduledNode, TICK_DURATION_LEAF};
 
 use crate::{
     channels::{control, estimate::estimate, tf::is_tf_edge},
@@ -15,7 +15,7 @@ use helios_core::{
     spatial::FrameAwareState,
 };
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 use tracing::{debug_span, trace_span};
 
 /// A built, validated autonomy pipeline.
@@ -63,7 +63,11 @@ impl AutonomyPipeline {
     /// `dt` is the elapsed wall time since the last call (used by
     /// [`RateTimer`](crate::pipeline::rate_gate::RateTimer)). `now` is the
     /// host's monotonic clock, stamped onto the bus tick-time so producers and
-    /// `read_fresh` consumers always see the same clock. `tf` is the transform provider nodes query for the tick.
+    /// `read_fresh` consumers always see the same clock. `tf` is the transform
+    /// provider nodes query for the tick.
+    ///
+    /// When a node's [`TICK_DURATION_LEAF`] is watched, its run is timed on a
+    /// wall clock and recorded in seconds, stamped with `now`.
     pub fn tick(&self, now: MonotonicTime, dt: f64, tf: &dyn TfProvider) {
         self.bus.set_tick_time(now.0);
 
@@ -84,11 +88,27 @@ impl AutonomyPipeline {
                         id = scheduled.node_id
                     )
                     .entered();
+
+                    // Time the run only when a watcher asked for it, so an
+                    // unwatched node pays one check and never reads the clock.
+                    let timing = scheduled
+                        .observations
+                        .watched_leaf(TICK_DURATION_LEAF)
+                        .map(|leaf| (leaf, Instant::now()));
+
                     scheduled.node.execute(
                         &self.bus,
                         tf,
                         TickContext::new(now, dt, scheduled.node_id, &scheduled.observations),
                     );
+
+                    if let Some((leaf, start)) = timing {
+                        scheduled.observations.record(
+                            leaf,
+                            now,
+                            start.elapsed().as_secs_f64().into(),
+                        );
+                    }
                 }
             }
         }

@@ -1,10 +1,14 @@
 //! What a watching host calls on [`AutonomyPipeline`]: the catalog of what
-//! each node can report, and the watch set that picks what it does report.
+//! each node can report, the watch set that picks what it does report, and
+//! the drain that collects what was reported.
 
 use super::{observable_catalog, ScheduledNode};
 
 use crate::{
-    observe::watch::{WatchError, WatchSet},
+    observe::{
+        observation::Observation,
+        watch::{WatchError, WatchSet},
+    },
     port::Observable,
     AutonomyPipeline,
 };
@@ -27,6 +31,22 @@ impl AutonomyPipeline {
                 .into_iter()
                 .map(move |observable| (name, observable))
         })
+    }
+
+    /// Moves everything recorded since the last drain onto the end of `out`,
+    /// leaving every node's buffer empty.
+    ///
+    /// Observations come grouped by node, in [`NodeId`](crate::NodeId) order,
+    /// and in emit order within a node; a caller wanting one timeline sorts
+    /// by timestamp. Appending lets a host reuse one list every tick, and
+    /// drain several pipelines into it.
+    ///
+    /// The host must drain after every tick: a node with watched leaves
+    /// records on every run, and nothing else empties its buffer.
+    pub fn drain_into(&self, out: &mut Vec<Observation>) {
+        for scheduled in self.levels.iter().flatten() {
+            scheduled.observations.drain_into(out);
+        }
     }
 
     /// Replaces the whole watch set: from now on, exactly the leaves `set`
@@ -102,14 +122,17 @@ mod tests {
     use super::*;
 
     use crate::{
-        observe::watch::WatchedLeaf,
+        observe::{observation::ObservedValue, watch::WatchedLeaf},
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
         port::{Determinism, MockNodePortDescriptor, PortBus, PortDescriptor},
         prelude::{PipelineNode, TickContext},
         PipelineBuilder,
     };
 
-    use helios_core::prelude::TfProvider;
+    use helios_core::{
+        prelude::{FrameId, MonotonicTime, TfProvider},
+        spatial::transforms::ErasedTransform,
+    };
 
     const FIRST: &str = "first";
     const SECOND: &str = "second";
@@ -117,14 +140,16 @@ mod tests {
     const DROPPED: &str = "aiding.gps.dropped";
     const UNDECLARED: &str = "aiding.gps.undeclared";
     const MISSING_NODE: &str = "missing";
+    const STEP: f64 = 0.01;
 
-    /// A node that only declares leaves; it never runs in these tests.
-    struct Declaring {
+    /// A node that, each run, emits every leaf it declares once, valued and
+    /// stamped with the tick's `now`.
+    struct Emitting {
         name: String,
         descriptor: PortDescriptor,
     }
 
-    impl PipelineNode for Declaring {
+    impl PipelineNode for Emitting {
         fn name(&self) -> &str {
             &self.name
         }
@@ -133,17 +158,21 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
+            for observable in self.descriptor.observables() {
+                tick.emit(observable.leaf_name(), tick.now, tick.now.0);
+            }
+        }
     }
 
-    fn declaring(name: &str, leaves: &[&str]) -> Box<dyn PipelineNode> {
+    fn emitting(name: &str, leaves: &[&str]) -> Box<dyn PipelineNode> {
         let descriptor = leaves
             .iter()
             .fold(MockNodePortDescriptor::new(), |builder, leaf| {
                 builder.observable(*leaf, Determinism::Reproducible)
             })
             .build();
-        Box::new(Declaring {
+        Box::new(Emitting {
             name: name.to_string(),
             descriptor,
         })
@@ -152,8 +181,8 @@ mod tests {
     /// `first` declares NIS and the drop count; `second` declares NIS only.
     fn pipeline() -> AutonomyPipeline {
         PipelineBuilder::new()
-            .add_node(declaring(FIRST, &[NIS, DROPPED]))
-            .add_node(declaring(SECOND, &[NIS]))
+            .add_node(emitting(FIRST, &[NIS, DROPPED]))
+            .add_node(emitting(SECOND, &[NIS]))
             .build()
             .expect("two independent nodes build")
     }
@@ -192,6 +221,51 @@ mod tests {
         pairs
             .iter()
             .map(|(node, leaf)| (node.to_string(), leaf.to_string()))
+            .collect()
+    }
+
+    struct NoTransforms;
+
+    impl TfProvider for NoTransforms {
+        fn get_transform(
+            &self,
+            _from: FrameId,
+            _to: FrameId,
+            _at: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            None
+        }
+    }
+
+    /// Ticks once at each time in `times`. The nodes declare no rate, so
+    /// every node runs every tick.
+    fn run(pipeline: &AutonomyPipeline, times: &[f64]) {
+        for t in times {
+            pipeline.tick(MonotonicTime(*t), STEP, &NoTransforms);
+        }
+    }
+
+    fn drained(pipeline: &AutonomyPipeline) -> Vec<Observation> {
+        let mut out = Vec::new();
+        pipeline.drain_into(&mut out);
+        out
+    }
+
+    /// What an [`Emitting`] node records for `leaf` on the run at `t`.
+    fn emitted(node: &str, leaf: &str, t: f64) -> Observation {
+        Observation {
+            node: node.into(),
+            leaf: leaf.into(),
+            timestamp: MonotonicTime(t),
+            value: ObservedValue::Scalar(t),
+        }
+    }
+
+    /// The `(node, leaf)` of each observation, in drained order.
+    fn sources(observations: &[Observation]) -> Vec<(String, String)> {
+        observations
+            .iter()
+            .map(|o| (o.node.to_string(), o.leaf.to_string()))
             .collect()
     }
 
@@ -298,6 +372,88 @@ mod tests {
                 node: SECOND.to_string(),
                 leaf: DROPPED.to_string(),
             }]
+        );
+    }
+
+    #[test]
+    fn drain_gives_each_node_in_id_order_in_emit_order_then_empties() {
+        let mut pipeline = pipeline();
+        pipeline
+            .watch(&leaves(&[(FIRST, NIS), (FIRST, DROPPED), (SECOND, NIS)]))
+            .expect("all declared");
+
+        run(&pipeline, &[1.0, 2.0]);
+
+        assert_eq!(
+            drained(&pipeline),
+            vec![
+                emitted(FIRST, NIS, 1.0),
+                emitted(FIRST, DROPPED, 1.0),
+                emitted(FIRST, NIS, 2.0),
+                emitted(FIRST, DROPPED, 2.0),
+                emitted(SECOND, NIS, 1.0),
+                emitted(SECOND, NIS, 2.0),
+            ]
+        );
+        assert!(drained(&pipeline).is_empty());
+    }
+
+    #[test]
+    fn nothing_watched_drains_nothing() {
+        let pipeline = pipeline();
+        run(&pipeline, &[1.0]);
+
+        assert!(drained(&pipeline).is_empty());
+    }
+
+    #[test]
+    fn unwatched_leaves_beside_a_watched_one_are_not_recorded() {
+        let mut pipeline = pipeline();
+        pipeline.watch(&leaves(&[(FIRST, NIS)])).expect("declared");
+
+        run(&pipeline, &[1.0]);
+
+        assert_eq!(drained(&pipeline), vec![emitted(FIRST, NIS, 1.0)]);
+    }
+
+    #[test]
+    fn watched_tick_duration_is_one_sample_per_run_stamped_with_now() {
+        let mut pipeline = pipeline();
+        pipeline
+            .watch(&leaves(&[(SECOND, TICK_DURATION_LEAF)]))
+            .expect("every node has a duration");
+
+        run(&pipeline, &[1.0, 2.0]);
+        let observations = drained(&pipeline);
+
+        assert_eq!(
+            sources(&observations),
+            pairs(&[(SECOND, TICK_DURATION_LEAF), (SECOND, TICK_DURATION_LEAF)])
+        );
+        let stamps: Vec<MonotonicTime> = observations.iter().map(|o| o.timestamp).collect();
+        assert_eq!(stamps, vec![MonotonicTime(1.0), MonotonicTime(2.0)]);
+        for observation in &observations {
+            let ObservedValue::Scalar(seconds) = observation.value;
+            assert!(seconds.is_finite() && seconds >= 0.0, "duration {seconds}");
+        }
+    }
+
+    #[test]
+    fn tick_duration_follows_the_nodes_own_emits() {
+        let mut pipeline = pipeline();
+        pipeline.watch(&WatchSet::Everything).expect("cannot fail");
+
+        run(&pipeline, &[1.0]);
+
+        assert_eq!(
+            sources(&drained(&pipeline)),
+            pairs(&[
+                (FIRST, NIS),
+                (FIRST, DROPPED),
+                (FIRST, TICK_DURATION_LEAF),
+                (SECOND, NIS),
+                (SECOND, TICK_DURATION_LEAF),
+            ])
         );
     }
 }
