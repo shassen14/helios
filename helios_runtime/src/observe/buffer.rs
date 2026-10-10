@@ -76,6 +76,19 @@ impl NodeObservations {
             .any(|leaf| leaf.name.as_ref() == leaf_name)
     }
 
+    /// Panics in debug builds if the node doesn't declare `leaf_name`; does
+    /// nothing in release builds.
+    ///
+    /// An emit of an undeclared leaf can never be watched, so without this a
+    /// misspelled leaf would go unnoticed.
+    pub(crate) fn assert_declared(&self, leaf_name: &str) {
+        debug_assert!(
+            self.declares(leaf_name),
+            "node \"{}\" emitted undeclared leaf \"{leaf_name}\"",
+            self.node_name
+        );
+    }
+
     /// Appends one observation of `leaf`. Callers pass a name returned by
     /// [`watched_leaf`](Self::watched_leaf).
     ///

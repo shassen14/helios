@@ -92,6 +92,9 @@ impl<'a> TickContext<'a> {
     /// `aiding.gps.nis`. `timestamp` is the time the value describes, which
     /// is not always `now`: a measurement update stamps the reading's time.
     /// For a value that is costly to compute, use [`emit_with`](Self::emit_with).
+    ///
+    /// In debug builds, emitting a leaf the node didn't declare panics, naming
+    /// the node and the leaf.
     pub fn emit(&self, leaf: &str, timestamp: MonotonicTime, value: impl Into<ObservedValue>) {
         let Some((buffer, leaf)) = self.watched(leaf) else {
             return;
@@ -117,8 +120,12 @@ impl<'a> TickContext<'a> {
 
     /// The buffer and stored leaf name to record into, if this context has a
     /// buffer and `leaf` is watched in it.
+    ///
+    /// Checks that `leaf` is declared before asking whether it is watched, so
+    /// an undeclared emit is caught even when nothing on the node is watched.
     fn watched(&self, leaf: &str) -> Option<(&'a NodeObservations, Arc<str>)> {
         let buffer = self.observations?;
+        buffer.assert_declared(leaf);
         let leaf = buffer.watched_leaf(leaf)?;
         Some((buffer, leaf))
     }
@@ -149,6 +156,7 @@ mod tests {
     const NODE: &str = "estimator";
     const NODE_ID: NodeId = 0;
     const NIS: &str = "aiding.gps.nis";
+    const UNDECLARED: &str = "aiding.gps.nsi";
     const DT: f64 = 0.01;
 
     fn buffer(watched: bool) -> NodeObservations {
@@ -203,6 +211,18 @@ mod tests {
 
         assert!(!ran.get());
         assert!(drain(&buffer).is_empty());
+    }
+
+    // `expected` takes only a literal, so it repeats `UNDECLARED`. The check
+    // is compiled out of release builds, and so is this test.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "node \"estimator\" emitted undeclared leaf \"aiding.gps.nsi\"")]
+    fn undeclared_emit_panics_even_when_nothing_is_watched() {
+        let buffer = buffer(false);
+        let tick = context(&buffer);
+
+        tick.emit(UNDECLARED, tick.now, 0.5);
     }
 
     #[test]
