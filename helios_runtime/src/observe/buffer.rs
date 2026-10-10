@@ -69,6 +69,13 @@ impl NodeObservations {
             .map(|leaf| leaf.name.clone())
     }
 
+    /// Whether the node declares `leaf_name`, watched or not.
+    pub(crate) fn declares(&self, leaf_name: &str) -> bool {
+        self.leaves
+            .iter()
+            .any(|leaf| leaf.name.as_ref() == leaf_name)
+    }
+
     /// Appends one observation of `leaf`. Callers pass a name returned by
     /// [`watched_leaf`](Self::watched_leaf).
     ///
@@ -113,6 +120,16 @@ impl NodeObservations {
         leaf.watched = watched;
         self.any_watched = self.leaves.iter().any(|leaf| leaf.watched);
         true
+    }
+
+    /// Sets whether every declared leaf is watched. A buffer that declares no
+    /// leaves stays unwatched.
+    pub(crate) fn set_all_watched(&mut self, watched: bool) {
+        self.any_watched = watched && !self.leaves.is_empty();
+
+        for leaf in &mut self.leaves {
+            leaf.watched = watched;
+        }
     }
 }
 
@@ -242,5 +259,54 @@ mod tests {
         assert!(!buffer.any_watched);
         emit(&buffer, NIS, 1.0, 0.5);
         assert!(drain(&buffer).is_empty());
+    }
+
+    #[test]
+    fn declares_answers_whether_watched_or_not() {
+        let mut buffer = buffer();
+        assert!(buffer.declares(NIS));
+
+        buffer.set_watched(NIS, true);
+        assert!(buffer.declares(NIS));
+        assert!(!buffer.declares(UNDECLARED));
+    }
+
+    #[test]
+    fn watching_all_records_every_leaf() {
+        let mut buffer = buffer();
+        buffer.set_all_watched(true);
+
+        emit(&buffer, NIS, 1.0, 0.5);
+        emit(&buffer, DROPPED, 1.0, 1.0);
+
+        assert_eq!(
+            drain(&buffer),
+            vec![
+                observation(NODE, NIS, 1.0, 0.5),
+                observation(NODE, DROPPED, 1.0, 1.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn unwatching_all_records_nothing_even_after_one_leaf_is_rewatched() {
+        let mut buffer = buffer();
+        buffer.set_all_watched(true);
+        buffer.set_all_watched(false);
+
+        emit(&buffer, NIS, 1.0, 0.5);
+        assert!(drain(&buffer).is_empty());
+
+        buffer.set_watched(NIS, true);
+        emit(&buffer, NIS, 1.0, 0.5);
+        emit(&buffer, DROPPED, 1.0, 1.0);
+        assert_eq!(drain(&buffer), vec![observation(NODE, NIS, 1.0, 0.5)]);
+    }
+
+    #[test]
+    fn buffer_declaring_nothing_stays_unwatched() {
+        let mut buffer = NodeObservations::new(NODE, Vec::<&str>::new());
+        buffer.set_all_watched(true);
+        assert!(!buffer.any_watched);
     }
 }
