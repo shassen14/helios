@@ -31,16 +31,20 @@ pub struct Observation {
 
 /// The kinds of value an observation can carry.
 ///
-/// Non-exhaustive: richer kinds (shared typed values, structured events) are
-/// added as variants, so a `match` outside this crate needs a wildcard arm,
-/// and a sink skips kinds it doesn't handle. Deliberately not `Copy`, since
-/// later kinds hold shared data.
+/// Non-exhaustive: richer kinds (structured events) are added as variants, so
+/// a `match` outside this crate needs a wildcard arm, and a sink skips kinds
+/// it doesn't handle. Not `Copy`, since [`Typed`](Self::Typed) holds shared
+/// data.
 #[derive(Clone)]
 #[non_exhaustive]
 pub enum ObservedValue {
     /// A number in SI units: a statistic such as NIS, a count (each event
     /// emits `1.0`), or a duration in seconds.
     Scalar(f64),
+    /// A value a node wrote to one of its output channels: the bus slot's own
+    /// `Arc`, shared rather than copied. The observation's timestamp is the
+    /// value's own. Two are equal only when they are the same write, never by
+    /// comparing payloads.
     Typed(Arc<dyn ErasedStamped>),
 }
 

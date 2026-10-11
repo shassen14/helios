@@ -218,6 +218,20 @@ impl PortBus {
         Some(Arc::clone(erased))
     }
 
+    /// [`read_erased`](Self::read_erased) plus the slot's [`SlotVersion`], both
+    /// taken from one load so the pair always belongs to the same write. What
+    /// the pipeline compares around a node's run to tell whether that node
+    /// wrote a channel it has no compile-time `T` for. `None` for an unknown
+    /// channel or an empty slot.
+    pub(crate) fn read_erased_versioned(
+        &self,
+        key: &ChannelKey,
+    ) -> Option<(Arc<dyn ErasedStamped>, SlotVersion)> {
+        let guard = self.slots.get(key)?.load();
+        let erased = guard.data.as_ref()?;
+        Some((Arc::clone(erased), guard.version))
+    }
+
     pub(crate) fn set_tick_time(&self, now: f64) {
         self.tick_now.store(now, Ordering::Relaxed);
     }
@@ -570,6 +584,49 @@ mod tests {
         let plain = bus.read::<u32>(key.clone()).unwrap();
         let (versioned, _) = bus.read_versioned::<u32>(key).unwrap();
         assert!(Arc::ptr_eq(&plain, &versioned));
+    }
+
+    // --- PortBus::read_erased_versioned tests ---
+
+    #[test]
+    fn read_erased_versioned_matches_the_typed_reads() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
+        bus.write(key.clone(), make_stamped(2u32, 0.1)).unwrap();
+
+        let (erased, version) = bus.read_erased_versioned(&key).unwrap();
+        let (_, typed_version) = bus.read_versioned::<u32>(key.clone()).unwrap();
+        // The same allocation the slot holds, so a tap shares the value
+        // rather than copying it.
+        assert!(Arc::ptr_eq(&erased, &bus.read_erased(&key).unwrap()));
+        assert_eq!(version, typed_version);
+    }
+
+    #[test]
+    fn read_erased_versioned_advances_on_each_write() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        bus.write(key.clone(), make_stamped(1u32, 5.0)).unwrap();
+        let (_, first) = bus.read_erased_versioned(&key).unwrap();
+
+        // A repeated stamp is still a new write.
+        bus.write(key.clone(), make_stamped(2u32, 5.0)).unwrap();
+        let (_, second) = bus.read_erased_versioned(&key).unwrap();
+        assert_eq!(second, first.next());
+    }
+
+    #[test]
+    fn read_erased_versioned_returns_none_for_empty_slot() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        assert!(bus.read_erased_versioned(&key).is_none());
+    }
+
+    #[test]
+    fn read_erased_versioned_returns_none_for_unknown_channel() {
+        let bus = bus_with_outputs(vec![]);
+        assert!(bus.read_erased_versioned(&ikey::<u32>()).is_none());
     }
 
     #[test]
