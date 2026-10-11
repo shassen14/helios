@@ -10,7 +10,8 @@
 //! - **tick** — [`tick`] advances every pipeline one step per `FixedUpdate`.
 //! - **egress** — pipeline results flow *out*. [`actuator_output`] copies the
 //!   latest actuator command into the actuation component; [`odom_output`]
-//!   writes the pose estimate onto the odom frame.
+//!   writes the pose estimate onto the odom frame; [`observation_output`]
+//!   collects what every pipeline recorded into one batch for sinks.
 //!
 //! Each runtime module is named for the `SimulationSet` it runs in, so this
 //! module list mirrors the schedule. [`BrainBridgePlugin`] registers them all.
@@ -19,6 +20,7 @@ pub mod actuator_output;
 pub mod components;
 pub mod goal_input;
 pub mod host_input_publisher;
+pub mod observation_output;
 pub mod odom_output;
 pub mod sensor_publisher;
 pub mod spawn;
@@ -30,6 +32,7 @@ pub use components::{
 };
 pub use goal_input::{dispatch_configured_goals, forward_goal_events};
 pub use host_input_publisher::HostInputPublisher;
+pub use observation_output::{drain_observations, ObservationBatch};
 pub use odom_output::update_odom_frames;
 pub use sensor_publisher::SensorPublisher;
 pub use spawn::{spawn_actuator_command, spawn_autonomy_pipeline, spawn_odom_frames};
@@ -60,11 +63,13 @@ impl Plugin for BrainBridgePlugin {
             ),
         );
 
-        // The whole-brain tick, then the odom write. Chained: `update_odom_frames`
-        // must see the pose `run_pipeline_tick` just produced (see odom_output).
-        app.add_systems(
+        // The whole-brain tick, then the odom write and the observation drain.
+        // Chained: both read what `run_pipeline_tick` just produced, the pose
+        // (see odom_output) and the tick's observations (see observation_output).
+        // The batch exists from the start, so a reader never finds it missing.
+        app.init_resource::<ObservationBatch>().add_systems(
             FixedUpdate,
-            (run_pipeline_tick, update_odom_frames)
+            (run_pipeline_tick, update_odom_frames, drain_observations)
                 .chain()
                 .in_set(SimulationSet::BrainTick)
                 .run_if(in_state(AppState::Running)),
