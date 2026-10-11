@@ -38,4 +38,10 @@ pub struct Cli {
     /// entropy when the file leaves it unset.
     #[arg(long)]
     pub seed: Option<u64>,
+
+    /// Watch every observable and log, per agent, how many observations
+    /// arrive per second. Watching never changes what a run computes, so a
+    /// run with this flag ends exactly where one without it does.
+    #[arg(long, default_value_t = false)]
+    pub watch_stats: bool,
 }

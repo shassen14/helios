@@ -38,6 +38,7 @@ fn headless_app() -> App {
         headless: true,
         speed: None,
         seed: None,
+        watch_stats: false,
     };
     let mut app = App::new();
     app.add_plugins(HeliosHost::new(

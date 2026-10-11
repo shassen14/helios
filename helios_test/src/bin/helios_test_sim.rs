@@ -56,6 +56,12 @@ struct SimCli {
     /// entropy), which leaves a batch unseeded and near-identical run to run.
     #[arg(long)]
     pub seed: Option<u64>,
+
+    /// Watch every observable and log per-agent observation rates. Watching
+    /// never changes what a run computes, so the verdict and metrics match a
+    /// run without it.
+    #[arg(long, default_value_t = false)]
+    pub watch_stats: bool,
 }
 
 fn main() {
@@ -116,6 +122,7 @@ fn main() {
             // a caller may slow down and skew the wall-clock timings with.
             speed: None,
             seed,
+            watch_stats: args.watch_stats,
         };
 
         app.add_plugins(HeliosHost::new(

@@ -297,6 +297,7 @@ mod tests {
             headless: true,
             speed: None,
             seed,
+            watch_stats: false,
         }
     }
 

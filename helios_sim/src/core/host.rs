@@ -21,8 +21,12 @@
 //! ```
 
 use crate::{
-    asset_root, cli::Cli, config::ConfigPlugin, core::app_state::AppState, HeliosSimulationPlugin,
+    asset_root, brain_bridge::ObservationSinkAppExt, cli::Cli, config::ConfigPlugin,
+    core::app_state::AppState, HeliosSimulationPlugin,
 };
+
+use helios_core::prelude::MonotonicDuration;
+use helios_runtime::observe::sinks::stats::StatsSink;
 
 use avian3d::prelude::PhysicsPlugins;
 use bevy::app::{PluginGroupBuilder, ScheduleRunnerPlugin};
@@ -50,6 +54,9 @@ const HEADLESS_WALL_PACED_UPDATE_PERIOD: Duration = Duration::from_micros(16_667
 // `App` — and thus a fresh host — for every run. This flips to `true` the first
 // time any host is built; later hosts find it already set and skip `LogPlugin`.
 static LOG_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+// How much simulated time each `--watch-stats` report covers.
+const STATS_REPORT_PERIOD: MonotonicDuration = MonotonicDuration(1.0);
 
 pub struct HeliosHost {
     // The resolved launch config. `ConfigPlugin` reads it at startup to locate
@@ -154,6 +161,12 @@ impl Plugin for HeliosHost {
         app.add_plugins(ConfigPlugin);
 
         app.add_plugins(HeliosSimulationPlugin);
+
+        // Watches every observable. Built here rather than handed in, so
+        // every driver that passes the flag gets the same sink.
+        if self.cli.watch_stats {
+            app.add_observation_sink(StatsSink::new(STATS_REPORT_PERIOD));
+        }
     }
 }
 
@@ -261,6 +274,7 @@ mod tests {
                 headless: true,
                 speed: None,
                 seed: None,
+                watch_stats: false,
             },
             presentation,
             TimePolicy::RealTime,
