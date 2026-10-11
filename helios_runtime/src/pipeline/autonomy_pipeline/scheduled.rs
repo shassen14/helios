@@ -2,12 +2,14 @@
 //! every node's catalog.
 
 use crate::{
-    observe::buffer::NodeObservations,
+    observe::{buffer::NodeObservations, path::channel_to_path_segment},
     pipeline::rate_gate::RateTimer,
-    port::{Determinism, Observable},
+    port::{ChannelKey, Determinism, Observable},
     prelude::PipelineNode,
     NodeId,
 };
+
+use std::sync::Arc;
 
 /// The group the pipeline's own leaves sit under. The pipeline adds these to
 /// every node, so a node may not declare this leaf or any leaf under it; the
@@ -35,6 +37,9 @@ pub(in crate::pipeline) struct ScheduledNode {
     /// What the node emitted for watchers since the last drain. Nothing in
     /// the pipeline reads it.
     pub(in crate::pipeline) observations: NodeObservations,
+    /// One per output channel, in output order: which channel each tap leaf
+    /// in the catalog reads.
+    pub(in crate::pipeline) taps: Vec<Tap>,
 }
 
 impl ScheduledNode {
@@ -49,27 +54,55 @@ impl ScheduledNode {
                 .into_iter()
                 .map(|o| o.leaf_name().clone()),
         );
+        let taps = output_taps(node.as_ref()).collect();
 
         Self {
             node_id,
             node,
             rate_timer,
             observations,
+            taps,
         }
     }
 }
 
+/// A leaf that reports what a node writes to one of its output channels: the
+/// value itself, shared with the bus, once per run that wrote it.
+#[derive(Debug, Clone, PartialEq)]
+pub(in crate::pipeline) struct Tap {
+    /// The channel's [path segment](channel_to_path_segment).
+    pub(in crate::pipeline) leaf: Arc<str>,
+    pub(in crate::pipeline) channel: ChannelKey,
+}
+
+/// A tap for each of `node`'s outputs, in output order. The catalog and the
+/// scheduled node both build their taps here, so a tap leaf a watcher can ask
+/// for always has a channel behind it.
+fn output_taps(node: &dyn PipelineNode) -> impl Iterator<Item = Tap> + '_ {
+    node.port_descriptor().outputs().iter().map(|channel| Tap {
+        leaf: channel_to_path_segment(channel).into(),
+        channel: channel.clone(),
+    })
+}
+
 /// Everything `node` can emit for watchers: the leaves it declares on its
 /// descriptor, in declaration order, then the leaves the pipeline adds to every
-/// node ([`TICK_DURATION_LEAF`]).
+/// node: a tap per output channel, in output order, then the pipeline's own
+/// measurements ([`TICK_DURATION_LEAF`]).
 ///
-/// The pipeline adds a leaf only when it can measure that value the same way
-/// for every node, from outside the node. Anything about a node's insides is
-/// the node's own declaration. Every reader of a node's catalog (its buffer,
-/// the build checks, the startup log) goes through here, so none of them
-/// needs to know which leaves the pipeline adds.
+/// The pipeline adds a leaf only when it can see that value the same way for
+/// every node, from outside the node: what the node wrote, or how long it
+/// ran. Anything about a node's insides is the node's own declaration. Every
+/// reader of a node's catalog (its buffer, the watch set, the startup log)
+/// goes through here, so none of them needs to know which leaves the
+/// pipeline adds.
+///
+/// A tap is reproducible: a node's outputs depend only on its inputs and the
+/// tick's time.
 pub(crate) fn observable_catalog(node: &dyn PipelineNode) -> Vec<Observable> {
     let mut observables = node.port_descriptor().observables().to_vec();
+    observables
+        .extend(output_taps(node).map(|tap| Observable::new(tap.leaf, Determinism::Reproducible)));
     observables.push(Observable::new(TICK_DURATION_LEAF, Determinism::WallClock));
     observables
 }
@@ -79,7 +112,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        port::{MockNodePortDescriptor, PortBus, PortDescriptor},
+        port::{InternalChannel, MockNodePortDescriptor, PortBus, PortDescriptor},
         prelude::TickContext,
     };
 
@@ -87,6 +120,11 @@ mod tests {
 
     const NIS: &str = "aiding.gps.nis";
     const DROPPED: &str = "aiding.gps.dropped";
+    /// An output's instance, and the tap leaf it becomes.
+    const COVARIANCE: &str = "est/cov";
+    const COVARIANCE_TAP: &str = "est.cov";
+    /// The tap leaf of an unnamed `f64` output.
+    const UNNAMED_TAP: &str = "f64";
 
     /// A node that only declares; it never runs in these tests.
     struct Declaring {
@@ -105,32 +143,55 @@ mod tests {
         fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
+    /// A node declaring `leaves` that writes no channels.
     fn declaring(leaves: &[&str]) -> Box<dyn PipelineNode> {
-        let descriptor = leaves
+        declaring_with_outputs(leaves, &[])
+    }
+
+    fn declaring_with_outputs(
+        leaves: &[&str],
+        outputs: &[InternalChannel],
+    ) -> Box<dyn PipelineNode> {
+        let builder = leaves
             .iter()
             .fold(MockNodePortDescriptor::new(), |builder, leaf| {
                 builder.observable(*leaf, Determinism::Reproducible)
+            });
+        let descriptor = outputs
+            .iter()
+            .fold(builder, |builder, output| {
+                builder.output_internal(output.clone())
             })
             .build();
         Box::new(Declaring { descriptor })
     }
 
+    /// One named and one unnamed output.
+    fn two_outputs() -> [InternalChannel; 2] {
+        [
+            InternalChannel::named::<f64>(COVARIANCE),
+            InternalChannel::of::<f64>(),
+        ]
+    }
+
     #[test]
-    fn catalog_lists_declared_leaves_then_tick_duration() {
-        let node = declaring(&[NIS, DROPPED]);
+    fn catalog_lists_declared_leaves_then_taps_then_tick_duration() {
+        let node = declaring_with_outputs(&[NIS, DROPPED], &two_outputs());
 
         assert_eq!(
             observable_catalog(node.as_ref()),
             vec![
                 Observable::new(NIS, Determinism::Reproducible),
                 Observable::new(DROPPED, Determinism::Reproducible),
+                Observable::new(COVARIANCE_TAP, Determinism::Reproducible),
+                Observable::new(UNNAMED_TAP, Determinism::Reproducible),
                 Observable::new(TICK_DURATION_LEAF, Determinism::WallClock),
             ]
         );
     }
 
     #[test]
-    fn catalog_of_a_node_declaring_nothing_is_tick_duration() {
+    fn catalog_of_a_node_declaring_and_writing_nothing_is_tick_duration() {
         let node = declaring(&[]);
 
         assert_eq!(
@@ -140,11 +201,15 @@ mod tests {
     }
 
     #[test]
-    fn every_leaf_the_pipeline_adds_is_in_its_group() {
-        let node = declaring(&[]);
+    fn every_leaf_the_pipeline_measures_is_in_its_group() {
+        let node = declaring_with_outputs(&[], &two_outputs());
+        let taps: Vec<Tap> = output_taps(node.as_ref()).collect();
         let group = format!("{PIPELINE_LEAF_GROUP}.");
 
-        for observable in observable_catalog(node.as_ref()) {
+        let measured = observable_catalog(node.as_ref())
+            .into_iter()
+            .filter(|observable| !taps.iter().any(|tap| &tap.leaf == observable.leaf_name()));
+        for observable in measured {
             assert!(
                 observable.leaf_name().starts_with(&group),
                 "{} is outside the pipeline's group",
@@ -154,10 +219,32 @@ mod tests {
     }
 
     #[test]
+    fn scheduled_node_taps_pair_each_catalog_tap_with_its_output() {
+        let outputs = two_outputs();
+        let scheduled = ScheduledNode::new(0, declaring_with_outputs(&[NIS], &outputs));
+
+        assert_eq!(
+            scheduled.taps,
+            vec![
+                Tap {
+                    leaf: COVARIANCE_TAP.into(),
+                    channel: outputs[0].clone().into(),
+                },
+                Tap {
+                    leaf: UNNAMED_TAP.into(),
+                    channel: outputs[1].clone().into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn scheduled_node_buffer_holds_the_whole_catalog() {
-        let mut scheduled = ScheduledNode::new(0, declaring(&[NIS]));
+        let mut scheduled = ScheduledNode::new(0, declaring_with_outputs(&[NIS], &two_outputs()));
 
         assert!(scheduled.observations.set_watched(NIS, true));
+        assert!(scheduled.observations.set_watched(COVARIANCE_TAP, true));
+        assert!(scheduled.observations.set_watched(UNNAMED_TAP, true));
         assert!(scheduled.observations.set_watched(TICK_DURATION_LEAF, true));
         assert!(!scheduled.observations.set_watched(DROPPED, true));
     }
