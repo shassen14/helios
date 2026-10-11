@@ -13,6 +13,19 @@ use crate::port::ChannelKey;
 /// The one level separator in watcher paths.
 pub(crate) const PATH_SEPARATOR: &str = ".";
 
+/// The first segment of every watcher path.
+pub(crate) const AGENT_ROOT: &str = "agent";
+
+/// The watcher path `agent.<agent>.<node>.<rest>`.
+///
+/// `agent` and `node` must each be a [path segment](is_path_segment); the
+/// build refuses names that aren't. `rest` may hold dots: it is a leaf the
+/// node declared (`aiding.gps.nis`) or one of its channels' segments
+/// (`oracle.pose`). Paths are only ever built here, never split apart.
+pub fn agent_path(agent: &str, node: &str, rest: &str) -> String {
+    [AGENT_ROOT, agent, node, rest].join(PATH_SEPARATOR)
+}
+
 /// Whether `name` can fill exactly one part of a watcher path: it is not
 /// empty and holds no [`PATH_SEPARATOR`]. Agent and node names must be; an
 /// empty name or a dotted one would make the path impossible to split back
@@ -69,6 +82,22 @@ mod tests {
 
     fn channel_unnamed<T: 'static>() -> ChannelKey {
         InternalChannel::of::<T>().into()
+    }
+
+    #[test]
+    fn agent_path_puts_the_parts_in_order_under_the_root() {
+        assert_eq!(
+            agent_path("car", "estimator", "position"),
+            "agent.car.estimator.position"
+        );
+    }
+
+    #[test]
+    fn agent_path_keeps_a_dotted_rest_whole() {
+        assert_eq!(
+            agent_path("car", "estimator", "aiding.gps.nis"),
+            "agent.car.estimator.aiding.gps.nis"
+        );
     }
 
     #[test]

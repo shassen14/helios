@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use helios_runtime::{observe::path::channel_to_path_segment, AutonomyPipeline, ChannelKey};
+use helios_runtime::{
+    observe::path::{agent_path, channel_to_path_segment},
+    AutonomyPipeline, ChannelKey,
+};
 use serde::Deserialize;
 
 /// _Shared (pre + per)._ A symbolic subsystem path naming what an assertion
@@ -82,12 +85,7 @@ pub fn build_for_pipeline(
     let mut pairs: Vec<(AssertionTarget, ChannelKey)> = pipeline
         .channels()
         .map(|(node_name, key)| {
-            let target_str = format!(
-                "agent.{}.{}.{}",
-                agent.as_str(),
-                node_name,
-                channel_to_path_segment(key)
-            );
+            let target_str = agent_path(agent.as_str(), node_name, &channel_to_path_segment(key));
             (AssertionTarget::new(target_str), key.clone())
         })
         .collect();

@@ -5,7 +5,9 @@
 //! computes statistics over them (a mean, a settling time, a rate across
 //! runs), so the node never fixes which summaries exist.
 
-use helios_core::prelude::MonotonicTime;
+use crate::observe::path::agent_path;
+
+use helios_core::prelude::{AgentId, MonotonicTime};
 
 use std::sync::Arc;
 
@@ -44,5 +46,49 @@ pub enum ObservedValue {
 impl From<f64> for ObservedValue {
     fn from(value: f64) -> Self {
         ObservedValue::Scalar(value)
+    }
+}
+
+/// An observation with the agent whose pipeline emitted it: what a host hands
+/// its sinks.
+///
+/// The agent is a field rather than part of a path string, so tagging a
+/// sample builds no string; every field is shared, so a sink keeps a sample
+/// by cloning it cheaply.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentObservation {
+    pub agent: AgentId,
+    pub observation: Observation,
+}
+
+impl AgentObservation {
+    /// The sample's full watcher path, `agent.<agent>.<node>.<leaf>`: the
+    /// spelling sinks request it by.
+    pub fn path(&self) -> String {
+        agent_path(
+            self.agent.as_str(),
+            &self.observation.node,
+            &self.observation.leaf,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_names_the_agent_node_and_leaf() {
+        let tagged = AgentObservation {
+            agent: AgentId::new("car"),
+            observation: Observation {
+                node: "estimator".into(),
+                leaf: "aiding.gps.nis".into(),
+                timestamp: MonotonicTime(1.0),
+                value: ObservedValue::Scalar(0.5),
+            },
+        };
+
+        assert_eq!(tagged.path(), "agent.car.estimator.aiding.gps.nis");
     }
 }
