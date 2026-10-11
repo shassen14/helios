@@ -65,15 +65,43 @@ pub enum PipelineBuildError {
     /// or contains `/`. Paths split on `.`, so such a leaf would mis-split in
     /// a glob or a tree-shaped sink.
     MalformedObservable { node_name: String, leaf: String },
+    /// A node's output channel watches at a path that isn't well formed: its
+    /// instance has an empty part between `/`s (`gps/`, `a//b`), and `/`
+    /// becomes `.` in a watcher path. `segment` is that path.
+    MalformedOutputPath {
+        node_name: String,
+        channel: ChannelKey,
+        segment: String,
+    },
     /// A node declares a watchable leaf in the pipeline's own group
     /// ([`PIPELINE_LEAF_GROUP`]), which holds the leaves the pipeline adds to
     /// every node. Refused even when the pipeline doesn't add that leaf yet,
     /// so adding one later never breaks a node.
     ReservedObservable { node_name: String, leaf: String },
+    /// A node's output channel watches at a path in the pipeline's own group
+    /// ([`PIPELINE_LEAF_GROUP`]), such as an instance named `tick/duration`.
+    /// Refused like a declared leaf there, so the pipeline's leaves never
+    /// share a path with a channel.
+    ReservedOutputPath {
+        node_name: String,
+        channel: ChannelKey,
+        segment: String,
+    },
     /// A node declares the same watchable leaf more than once, so a
     /// watcher's path would point at two values. Reported once per leaf per
     /// node.
     DuplicateObservable { node_name: String, leaf: String },
+    /// Two of a node's output channels watch at the same path, so a watcher
+    /// asking for it would get two channels: instances `a/b` and `a.b` both
+    /// sit at `a.b`, and an unnamed `Estimate` sits where an instance named
+    /// `estimate` does. With more than two, each later one is reported
+    /// against the first.
+    DuplicateOutputPath {
+        node_name: String,
+        segment: String,
+        first: ChannelKey,
+        second: ChannelKey,
+    },
     /// A node declares a leaf that has the same path as one of its own output
     /// channels: under `agent.<agent>.<node>`, `leaf` and the channel's path
     /// segment are the same string, so a watcher or an assertion target
@@ -169,6 +197,18 @@ impl std::fmt::Display for PipelineBuildError {
                      path — a leaf is one or more non-empty parts joined by '.', with no '/'"
                 )
             }
+            PipelineBuildError::MalformedOutputPath {
+                node_name,
+                channel,
+                segment,
+            } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" writes channel {channel}, which watchers would ask \
+                     for at \"{segment}\", not a path — an instance's parts between '/' must \
+                     be non-empty"
+                )
+            }
             PipelineBuildError::ReservedObservable { node_name, leaf } => {
                 write!(
                     f,
@@ -177,11 +217,35 @@ impl std::fmt::Display for PipelineBuildError {
                      node — use another name"
                 )
             }
+            PipelineBuildError::ReservedOutputPath {
+                node_name,
+                channel,
+                segment,
+            } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" writes channel {channel}, which watchers would ask \
+                     for at \"{segment}\", in the \"{PIPELINE_LEAF_GROUP}\" group the pipeline \
+                     owns — rename the channel"
+                )
+            }
             PipelineBuildError::DuplicateObservable { node_name, leaf } => {
                 write!(
                     f,
                     "node \"{node_name}\" declares watchable leaf \"{leaf}\" more than once — \
                      each leaf names one value"
+                )
+            }
+            PipelineBuildError::DuplicateOutputPath {
+                node_name,
+                segment,
+                first,
+                second,
+            } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" writes channels {first} and {second}, which watchers \
+                     would both ask for at \"{segment}\" — rename one of them"
                 )
             }
             PipelineBuildError::ObservableCollidesWithOutput {
