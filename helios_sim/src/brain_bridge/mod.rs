@@ -11,7 +11,9 @@
 //! - **egress** — pipeline results flow *out*. [`actuator_output`] copies the
 //!   latest actuator command into the actuation component; [`odom_output`]
 //!   writes the pose estimate onto the odom frame; [`observation_output`]
-//!   collects what every pipeline recorded into one batch for sinks.
+//!   collects what every pipeline recorded into one batch for sinks;
+//!   [`observation_sinks`] registers those sinks, tells each pipeline what
+//!   they asked for, and feeds them the batch.
 //!
 //! Each runtime module is named for the `SimulationSet` it runs in, so this
 //! module list mirrors the schedule. [`BrainBridgePlugin`] registers them all.
@@ -21,6 +23,7 @@ pub mod components;
 pub mod goal_input;
 pub mod host_input_publisher;
 pub mod observation_output;
+pub mod observation_sinks;
 pub mod odom_output;
 pub mod sensor_publisher;
 pub mod spawn;
@@ -33,6 +36,9 @@ pub use components::{
 pub use goal_input::{dispatch_configured_goals, forward_goal_events};
 pub use host_input_publisher::HostInputPublisher;
 pub use observation_output::{drain_observations, ObservationBatch};
+pub use observation_sinks::{
+    watch_requested_observables, HostWatchRequest, ObservationSinkAppExt, RegisteredSink,
+};
 pub use odom_output::update_odom_frames;
 pub use sensor_publisher::SensorPublisher;
 pub use spawn::{spawn_actuator_command, spawn_autonomy_pipeline, spawn_odom_frames};
@@ -51,23 +57,32 @@ pub struct BrainBridgePlugin;
 
 impl Plugin for BrainBridgePlugin {
     fn build(&self, app: &mut App) {
+        // The sinks' joined request. It exists from the start, so with no sink
+        // registered the pipelines watch nothing.
+        app.init_resource::<HostWatchRequest>();
+
         // Scene-build spawns. `SpawnPipeline` runs first (assembly reads the
         // sensors' channels), then odom + actuator-command bind to the fresh
-        // pipeline. Both are independent, so they share the `BindPipeline` pass.
+        // pipeline, and the pipeline is told what the sinks asked to watch.
+        // All three are independent, so they share the `BindPipeline` pass.
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
             (
                 spawn_autonomy_pipeline.in_set(SceneBuildSet::SpawnPipeline),
                 spawn_odom_frames.in_set(SceneBuildSet::BindPipeline),
                 spawn_actuator_command.in_set(SceneBuildSet::BindPipeline),
+                watch_requested_observables.in_set(SceneBuildSet::BindPipeline),
             ),
         );
+
+        // The tick's observations. The batch exists from the start, so a
+        // reader never finds it missing.
+        app.init_resource::<ObservationBatch>();
 
         // The whole-brain tick, then the odom write and the observation drain.
         // Chained: both read what `run_pipeline_tick` just produced, the pose
         // (see odom_output) and the tick's observations (see observation_output).
-        // The batch exists from the start, so a reader never finds it missing.
-        app.init_resource::<ObservationBatch>().add_systems(
+        app.add_systems(
             FixedUpdate,
             (run_pipeline_tick, update_odom_frames, drain_observations)
                 .chain()
@@ -75,12 +90,15 @@ impl Plugin for BrainBridgePlugin {
                 .run_if(in_state(AppState::Running)),
         );
 
-        // Goal ingress. `add_message` is the *sole* registration of
+        // The goal message. `add_message` is the *sole* registration of
         // `GoalCommandEvent` now that the old PlanningPlugin is gone — dropping
-        // it breaks goal forwarding silently, so a test guards it below. Chained:
-        // dispatch writes an event that forward reads the same tick, and a Bevy
-        // message is only readable this tick if its writer ran first.
-        app.add_message::<GoalCommandEvent>().add_systems(
+        // it breaks goal forwarding silently, so a test guards it below.
+        app.add_message::<GoalCommandEvent>();
+
+        // Goal ingress. Chained: dispatch writes an event that forward reads
+        // the same tick, and a Bevy message is only readable this tick if its
+        // writer ran first.
+        app.add_systems(
             FixedUpdate,
             (dispatch_configured_goals, forward_goal_events)
                 .chain()

@@ -31,4 +31,5 @@ pub use crate::brain_bridge::components::{
     AgentIdComponent, AutonomyPipelineComponent, TfServiceComponent,
 };
 pub use crate::brain_bridge::HostInputPublisher;
+pub use crate::brain_bridge::ObservationSinkAppExt;
 pub use crate::brain_bridge::{SensorPublishChannel, SensorPublisher};
