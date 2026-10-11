@@ -433,7 +433,9 @@ mod tests {
         let stamps: Vec<MonotonicTime> = observations.iter().map(|o| o.timestamp).collect();
         assert_eq!(stamps, vec![MonotonicTime(1.0), MonotonicTime(2.0)]);
         for observation in &observations {
-            let ObservedValue::Scalar(seconds) = observation.value;
+            let ObservedValue::Scalar(seconds) = observation.value else {
+                panic!("a duration is a scalar, got {:?}", observation.value);
+            };
             assert!(seconds.is_finite() && seconds >= 0.0, "duration {seconds}");
         }
     }

@@ -5,11 +5,11 @@
 //! computes statistics over them (a mean, a settling time, a rate across
 //! runs), so the node never fixes which summaries exist.
 
-use crate::observe::path::agent_path;
+use crate::{observe::path::agent_path, ErasedStamped};
 
 use helios_core::prelude::{AgentId, MonotonicTime};
 
-use std::sync::Arc;
+use std::{fmt::Debug, sync::Arc};
 
 /// One sample a node emitted, named relative to that node.
 ///
@@ -35,12 +35,39 @@ pub struct Observation {
 /// added as variants, so a `match` outside this crate needs a wildcard arm,
 /// and a sink skips kinds it doesn't handle. Deliberately not `Copy`, since
 /// later kinds hold shared data.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum ObservedValue {
     /// A number in SI units: a statistic such as NIS, a count (each event
     /// emits `1.0`), or a duration in seconds.
     Scalar(f64),
+    Typed(Arc<dyn ErasedStamped>),
+}
+
+impl Debug for ObservedValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Scalar(value) => f.debug_tuple("Scalar").field(value).finish(),
+            Self::Typed(stamped) => f
+                .debug_struct("Typed")
+                .field("payload", &stamped.payload_type_name())
+                .field("timestamp", &stamped.timestamp())
+                .finish(),
+        }
+    }
+}
+
+impl PartialEq for ObservedValue {
+    fn eq(&self, other: &Self) -> bool {
+        // Matching on `self` alone, with no wildcard, makes a new variant a
+        // compile error here until it says how it compares.
+        match self {
+            Self::Scalar(mine) => matches!(other, Self::Scalar(theirs) if mine == theirs),
+            Self::Typed(mine) => {
+                matches!(other, Self::Typed(theirs) if Arc::ptr_eq(mine, theirs))
+            }
+        }
+    }
 }
 
 impl From<f64> for ObservedValue {

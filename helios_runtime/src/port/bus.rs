@@ -54,6 +54,11 @@ pub trait ErasedStamped: Any + Send + Sync {
     /// so a consumer can pick the right extractor before downcasting.
     fn payload_type_id(&self) -> TypeId;
 
+    /// The payload's Rust type name, for people reading it (debug output,
+    /// tooling). Not a stable identity: compare [`payload_type_id`](Self::payload_type_id)
+    /// instead.
+    fn payload_type_name(&self) -> &'static str;
+
     fn timestamp(&self) -> MonotonicTime;
 
     /// Escape hatch to a plain `dyn Any` so the typed `read`/`read_fresh` paths
@@ -69,6 +74,10 @@ impl<T: Any + Send + Sync> ErasedStamped for Stamped<T> {
 
     fn payload_type_id(&self) -> TypeId {
         self.value.type_id()
+    }
+
+    fn payload_type_name(&self) -> &'static str {
+        std::any::type_name::<T>()
     }
 
     fn timestamp(&self) -> MonotonicTime {
