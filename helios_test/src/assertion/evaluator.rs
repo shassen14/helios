@@ -1,10 +1,9 @@
 use crate::assertion::{
-    condition::Condition,
-    extract::ExtractorTable,
-    target::{AgentId, TargetRegistry},
-    Assertion, AssertionResult, AssertionValue, FailureKind,
+    condition::Condition, extract::ExtractorTable, target::TargetRegistry, Assertion,
+    AssertionResult, AssertionValue, FailureKind,
 };
 
+use helios_core::prelude::AgentId;
 use helios_runtime::port::PortBus;
 
 /// Judge one assertion against the current bus state, producing a single

@@ -1,9 +1,9 @@
 use super::{ActiveRunner, RunOutcome, RunVerdict, WallClockStart};
 use crate::run::termination::TerminationReason;
 use crate::sim::{ReportOutputPath, RunMetadata};
-use crate::{AgentId, ReportStatus, TickAction};
+use crate::{ReportStatus, TickAction};
 
-use helios_core::prelude::MonotonicTime;
+use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::port::PortBus;
 use helios_runtime::AutonomyPipeline;
 use helios_sim::brain_bridge::components::{
@@ -71,10 +71,7 @@ fn on_pipeline_built_system(
     // co-located insert in spawn_autonomy_pipeline (see AgentIdComponent docs).
     let mut pairs: Vec<(AgentId, &AutonomyPipeline)> = Vec::new();
     for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
-        pairs.push((
-            AgentId::new(agent_id_comp.0.as_str()),
-            &autonomy_pipeline_comp.0,
-        ));
+        pairs.push((agent_id_comp.0.clone(), &autonomy_pipeline_comp.0));
     }
 
     match runner.0.on_pipeline_built(&pairs) {
@@ -120,10 +117,7 @@ fn tick_system(
     let mut pairs: Vec<(AgentId, &PortBus)> = Vec::new();
 
     for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
-        pairs.push((
-            AgentId::new(agent_id_comp.0.as_str()),
-            autonomy_pipeline_comp.0.bus(),
-        ));
+        pairs.push((agent_id_comp.0.clone(), autonomy_pipeline_comp.0.bus()));
     }
 
     match runner.0.tick(now, &pairs) {
@@ -176,10 +170,7 @@ fn finalize_system(
     // TODO(perf): SmallVec / scratch buffer at swarm scale.
     let mut pairs: Vec<(AgentId, &PortBus)> = Vec::new();
     for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
-        pairs.push((
-            AgentId::new(agent_id_comp.0.as_str()),
-            autonomy_pipeline_comp.0.bus(),
-        ));
+        pairs.push((agent_id_comp.0.clone(), autonomy_pipeline_comp.0.bus()));
     }
 
     let report = runner

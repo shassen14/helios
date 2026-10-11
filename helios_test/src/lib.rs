@@ -15,8 +15,7 @@
 //! - **`_Per-step._`** — live state and verdicts produced *while* ticking; no
 //!   serde, never serialized. `Runner`, `AssertionState`, `ContinuousStatus`,
 //!   `TickAction`, `AssertionResult`, `FailureKind`, `ConditionError`,
-//!   `TerminationReason`, `TargetRegistry`, `ExtractorTable`, `Extractor`,
-//!   `AgentId`.
+//!   `TerminationReason`, `TargetRegistry`, `ExtractorTable`, `Extractor`.
 //! - **`_Per/Post-step._`** — measurement data filled *during* a run, then
 //!   read back *after* it to build the serialized aggregate. `RunMetrics`.
 //! - **`_Post-step._`** — built *after* the run and serialized out. Its job is
@@ -47,7 +46,7 @@ pub mod statistics;
 // run, build and pump a `Runner`, and read the report; everything else stays
 // reachable through its module path but isn't surfaced here.
 pub use assertion::extract::{standard_extractors, ExtractorTable};
-pub use assertion::target::{AgentId, TargetRegistry};
+pub use assertion::target::TargetRegistry;
 pub use assertion::{Assertion, AssertionResult, AssertionTarget, AssertionValue};
 pub use metrics::{MetricId, RunMetrics};
 pub use report::aggregate::AggregateReport;

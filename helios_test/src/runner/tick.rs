@@ -1,10 +1,9 @@
-use crate::assertion::target::AgentId;
 use crate::assertion::{Assertion, AssertionResult};
 use crate::run::termination::TerminationReason;
 
 use super::{termination_check, Runner};
 
-use helios_core::prelude::MonotonicTime;
+use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::port::PortBus;
 
 impl Runner {
