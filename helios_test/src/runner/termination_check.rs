@@ -1,54 +1,30 @@
 use helios_core::prelude::MonotonicTime;
 
-use crate::{
-    assertion::AssertionResult,
-    run::termination::{OnAssertion, Termination, TerminationReason},
-};
+use crate::run::termination::{Termination, TerminationReason};
 
 /// Decide whether the run should stop this tick, and if so why. Pure and
-/// read-only: it judges nothing itself, it only reads the verdicts the
-/// evaluator already produced (`results`, one per assertion this tick, each
-/// with the assertion's number) against the run's stop config. `Some(reason)` means stop; `None` means keep going.
-/// The caller acts on the decision — this never terminates anything.
+/// read-only: it judges nothing itself. `first_failed` is the number of the
+/// first continuous assertion, in run-file order, whose latch has failed.
+/// `Some(reason)` means stop; `None` means keep going. The caller acts on the
+/// decision — this never terminates anything.
 ///
-/// Precedence: an assertion outcome is checked before the time budget, because
-/// "an assertion tripped" is the meaningful test result, whereas "time ran out"
-/// is the fallback that only matters when nothing tripped.
+/// Precedence: a failure is checked before the time budget, because "an
+/// assertion failed" is the meaningful test result, whereas "time ran out" is
+/// the fallback that only matters when nothing failed.
 pub fn check(
     now: MonotonicTime,
     start: MonotonicTime,
     termination: &Termination,
-    results: &[(usize, AssertionResult)],
+    first_failed: Option<usize>,
 ) -> Option<TerminationReason> {
-    // Assertion trigger. Both variants do the same thing — find the first
-    // result matching the watched state and report *that* result — so they
-    // share one shape and differ only in the pattern. Reporting the matched
-    // result (rather than a freshly built `Passed`) means the `Failed` case
-    // carries its kind and observed value through to the report unchanged,
-    // and its number says which assertion it was.
-    if let Some(on_assertion) = termination.on_assertion() {
-        let triggered = match on_assertion {
-            OnAssertion::AnyPassed => results
-                .iter()
-                .find(|(_, r)| matches!(r, AssertionResult::Passed { .. })),
-            OnAssertion::AnyFailed => results
-                .iter()
-                .find(|(_, r)| matches!(r, AssertionResult::Failed { .. })),
-        };
-        if let Some((number, result)) = triggered {
-            return Some(TerminationReason::OnAssertion {
-                number: *number,
-                result: result.clone(),
-            });
+    if termination.fail_fast() {
+        if let Some(number) = first_failed {
+            return Some(TerminationReason::AssertionFailed { number });
         }
     }
 
-    // Time budget. `>=` so the tick that reaches the budget is the one that
-    // stops, rather than overshooting by a tick.
-    if let Some(max_time) = termination.max_simulated_seconds() {
-        if now.0 - start.0 >= max_time {
-            return Some(TerminationReason::MaxSimulatedSeconds);
-        }
+    if termination.budget_spent(start, now) {
+        return Some(TerminationReason::MaxSimulatedSeconds);
     }
 
     None
@@ -58,11 +34,7 @@ pub fn check(
 mod tests {
     use super::*;
 
-    use crate::assertion::{AssertionValue, FailureKind};
-
-    // Build a `Termination` by parsing TOML, since its fields are private. The
-    // caller supplies the trigger body (`max_simulated_seconds`, `on_assertion`,
-    // or both).
+    // Build a `Termination` by parsing TOML, since its fields are private.
     fn term(body: &str) -> Termination {
         toml::from_str(body).unwrap()
     }
@@ -71,37 +43,17 @@ mod tests {
         MonotonicTime(secs)
     }
 
-    // A `Failed` result carrying a kind and observed value, to confirm the
-    // trigger forwards the real failure rather than a synthetic one.
-    fn failed() -> AssertionResult {
-        AssertionResult::Failed {
-            kind: FailureKind::ConditionFailed,
-            actual: Some(AssertionValue::Float(9.0)),
-        }
-    }
+    const BUDGET: &str = "max_simulated_seconds = 5.0";
 
-    // A `Passed` result. It carries the observed value, so the trigger has a
-    // concrete result to clone into `OnAssertion`.
-    fn passed() -> AssertionResult {
-        AssertionResult::Passed {
-            actual: AssertionValue::Float(1.0),
-        }
-    }
-
-    #[test]
-    fn no_trigger_set_never_stops() {
-        // Empty termination → both triggers `None`. Even with decisive results
-        // present, there's nothing configured to act on them.
-        let t = term("");
-        let results = [(1, passed()), (2, failed())];
-        assert_eq!(check(at(100.0), at(0.0), &t, &results), None);
-    }
+    const FAIL_FAST: &str = r#"
+        max_simulated_seconds = 5.0
+        fail_fast = true
+    "#;
 
     #[test]
     fn time_budget_fires_once_elapsed() {
-        let t = term("max_simulated_seconds = 5.0");
         assert_eq!(
-            check(at(6.0), at(0.0), &t, &[]),
+            check(at(6.0), at(0.0), &term(BUDGET), None),
             Some(TerminationReason::MaxSimulatedSeconds)
         );
     }
@@ -109,101 +61,49 @@ mod tests {
     #[test]
     fn time_budget_fires_exactly_at_the_boundary() {
         // `>=`: reaching the budget on the nose stops here, not a tick later.
-        let t = term("max_simulated_seconds = 5.0");
         assert_eq!(
-            check(at(5.0), at(0.0), &t, &[]),
+            check(at(5.0), at(0.0), &term(BUDGET), None),
             Some(TerminationReason::MaxSimulatedSeconds)
         );
     }
 
     #[test]
     fn time_budget_holds_before_the_boundary() {
-        let t = term("max_simulated_seconds = 5.0");
-        assert_eq!(check(at(4.999), at(0.0), &t, &[]), None);
+        assert_eq!(check(at(4.999), at(0.0), &term(BUDGET), None), None);
     }
 
     #[test]
     fn elapsed_is_measured_from_start_not_zero() {
         // 12 - 8 = 4 < 5, so a nonzero start must not read as already elapsed.
-        let t = term("max_simulated_seconds = 5.0");
-        assert_eq!(check(at(12.0), at(8.0), &t, &[]), None);
+        assert_eq!(check(at(12.0), at(8.0), &term(BUDGET), None), None);
     }
 
     #[test]
-    fn any_passed_fires_on_a_pass() {
-        let t = term(r#"on_assertion = "any_passed""#);
-        let results = [(1, AssertionResult::Pending), (2, passed())];
+    fn fail_fast_stops_on_a_failure_and_names_it() {
         assert_eq!(
-            check(at(0.0), at(0.0), &t, &results),
-            Some(TerminationReason::OnAssertion {
-                number: 2,
-                result: passed(),
-            })
+            check(at(0.0), at(0.0), &term(FAIL_FAST), Some(2)),
+            Some(TerminationReason::AssertionFailed { number: 2 })
         );
     }
 
     #[test]
-    fn any_passed_ignores_failures_and_pending() {
-        let t = term(r#"on_assertion = "any_passed""#);
-        let results = [(1, AssertionResult::Pending), (2, failed())];
-        assert_eq!(check(at(0.0), at(0.0), &t, &results), None);
+    fn a_failure_without_fail_fast_runs_on() {
+        assert_eq!(check(at(0.0), at(0.0), &term(BUDGET), Some(2)), None);
     }
 
     #[test]
-    fn any_failed_fires_and_carries_the_failing_result() {
-        // The reason must forward the real failure (kind + observed value), not
-        // a placeholder, and the number of the assertion that failed, so the
-        // report can explain what tripped.
-        let t = term(r#"on_assertion = "any_failed""#);
-        let results = [(1, passed()), (2, failed())];
+    fn a_failure_wins_over_an_elapsed_time_budget() {
+        // Both would stop this tick; the failure is the more informative result.
         assert_eq!(
-            check(at(0.0), at(0.0), &t, &results),
-            Some(TerminationReason::OnAssertion {
-                number: 2,
-                result: failed(),
-            })
+            check(at(10.0), at(0.0), &term(FAIL_FAST), Some(1)),
+            Some(TerminationReason::AssertionFailed { number: 1 })
         );
     }
 
     #[test]
-    fn any_failed_ignores_passes_and_pending() {
-        let t = term(r#"on_assertion = "any_failed""#);
-        let results = [(1, passed()), (2, AssertionResult::Pending)];
-        assert_eq!(check(at(0.0), at(0.0), &t, &results), None);
-    }
-
-    #[test]
-    fn assertion_trigger_wins_over_an_elapsed_time_budget() {
-        // Both triggers would fire this tick; the assertion outcome is the more
-        // informative result, so it's the one reported.
-        let t = term(
-            r#"
-            max_simulated_seconds = 5.0
-            on_assertion = "any_failed"
-            "#,
-        );
-        let results = [(1, failed())];
+    fn time_budget_still_fires_under_fail_fast_with_no_failure() {
         assert_eq!(
-            check(at(10.0), at(0.0), &t, &results),
-            Some(TerminationReason::OnAssertion {
-                number: 1,
-                result: failed(),
-            })
-        );
-    }
-
-    #[test]
-    fn time_budget_still_fires_when_the_assertion_trigger_does_not_match() {
-        // on_assertion set but nothing failed; the time budget is the fallback.
-        let t = term(
-            r#"
-            max_simulated_seconds = 5.0
-            on_assertion = "any_failed"
-            "#,
-        );
-        let results = [(1, passed())];
-        assert_eq!(
-            check(at(6.0), at(0.0), &t, &results),
+            check(at(6.0), at(0.0), &term(FAIL_FAST), None),
             Some(TerminationReason::MaxSimulatedSeconds)
         );
     }

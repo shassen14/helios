@@ -11,9 +11,11 @@ use helios_runtime::{
         sink::ObservationSink,
     },
     port::{AlgorithmNodePortDescriptor, Determinism, PortBus, PortDescriptor},
-    prelude::{PipelineNode, TickContext},
+    prelude::{Health, PipelineNode, Stamped, TickContext},
     AutonomyPipeline, PipelineBuilder,
 };
+
+use std::sync::Arc;
 
 pub(super) const CAR: &str = "car";
 pub(super) const TRUCK: &str = "truck";
@@ -116,13 +118,34 @@ pub(super) fn ready(run: Run, agents: &[&str]) -> (Runner, ObservationCollector)
 
 /// `agent`'s estimator reports `value` for [`LEAF`] at `secs`.
 pub(super) fn report(collector: &mut ObservationCollector, agent: &str, secs: f64, value: f64) {
+    observe(collector, agent, secs, ObservedValue::Scalar(value));
+}
+
+/// `agent`'s estimator reports a value for [`LEAF`] at `secs` that the
+/// collector turns away: a channel payload no extractor reads.
+pub(super) fn report_unreadable(collector: &mut ObservationCollector, agent: &str, secs: f64) {
+    let unreadable = Stamped {
+        value: String::new(),
+        timestamp: at(secs),
+        health: Health::Ok,
+        producer: 0,
+    };
+    observe(
+        collector,
+        agent,
+        secs,
+        ObservedValue::Typed(Arc::new(unreadable)),
+    );
+}
+
+fn observe(collector: &mut ObservationCollector, agent: &str, secs: f64, value: ObservedValue) {
     collector.receive(&[AgentObservation {
         agent: AgentId::new(agent),
         observation: Observation {
             node: ESTIMATOR.into(),
             leaf: LEAF.into(),
             timestamp: at(secs),
-            value: ObservedValue::Scalar(value),
+            value,
         },
     }]);
 }

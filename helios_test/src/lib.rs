@@ -11,8 +11,7 @@
 //!   file, or checked against the pipelines once they are built. Its job is
 //!   to be *strict*: reject unknown keys, fail loudly on a bad file or on an
 //!   assertion the run could never judge. `Run`, `RunLoadError`,
-//!   `ScenarioRef`, `ObservationRef`, `Termination`, `OnAssertion`,
-//!   `ValidationError`, `Assertion`, `TerminalAssertion`,
+//!   `ScenarioRef`, `ObservationRef`, `Termination`, `ValidationError`, `Assertion`, `TerminalAssertion`,
 //!   `ContinuousAssertion`, `MalformedTarget`, `UnusableAssertion`,
 //!   `TargetProblem`.
 //! - **`_Per-step._`** — live state and verdicts produced *while* ticking; no

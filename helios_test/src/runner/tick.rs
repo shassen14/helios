@@ -1,11 +1,8 @@
 use crate::{
-    assertion::{
-        evaluator::{evaluate, evaluate_latest},
-        Assertion, AssertionResult, FailureKind,
-    },
+    assertion::{evaluator::evaluate, Assertion, AssertionResult, FailureKind},
     collector::{ObservationCollector, Series},
     run::termination::TerminationReason,
-    runner::state::AssertionState,
+    runner::state::{AssertionState, ContinuousStatus},
 };
 
 use super::{termination_check, Phase, Runner, FOREIGN_COLLECTOR, NEVER_SET_UP};
@@ -44,37 +41,35 @@ impl Runner {
         // so the time budget is measured from when the run actually began, not
         // from zero. Copied out so the borrow of `start_time` ends here.
         let start = *self.start_time.get_or_insert(t);
+        self.latest_tick = Some(t);
 
-        // Judge every assertion on the samples that arrived since the last
-        // tick. Terminal assertions are judged too, because the stop-decision
-        // reads them for `on_assertion` triggers; only continuous ones latch.
-        // The states are borrowed mutably out of `self.phase` and the
-        // assertions immutably out of `self.run`: disjoint fields, so the two
-        // borrows coexist.
-        let results: Vec<(usize, AssertionResult)> = self
+        // Latch every continuous assertion on the samples that arrived since
+        // the last tick. A terminal assertion is judged only at the end, so
+        // here it just reaches its new samples. The states are borrowed
+        // mutably out of `self.phase` and the assertions immutably out of
+        // `self.run`: disjoint fields, so the two borrows coexist. Collected
+        // in full rather than stopped at the first failure, so every
+        // assertion reaches this tick's samples.
+        let failed: Vec<usize> = self
             .run
             .assertions()
             .iter()
             .zip(entries)
-            .map(|(assertion, (number, series, state))| {
-                let result = match assertion {
-                    Assertion::Continuous(_) => check_new(assertion, state, series, t),
-                    Assertion::Terminal(_) => {
-                        state.reach_new(series.samples());
-                        evaluate_latest(
-                            assertion,
-                            series.rejection(),
-                            state.reached(series.samples()),
-                        )
-                    }
-                };
-                (number, result)
+            .filter_map(|(assertion, (number, series, state))| match assertion {
+                Assertion::Continuous(_) => {
+                    check_new(assertion, state, series, t);
+                    matches!(state.status(), ContinuousStatus::FailedAt { .. }).then_some(number)
+                }
+                Assertion::Terminal(_) => {
+                    state.reach_new(series.samples(), series.rejection());
+                    None
+                }
             })
             .collect();
 
-        // Decide. `check` applies the precedence (assertion outcome before time
-        // budget) and returns the reason, if any.
-        match termination_check::check(t, start, self.run.termination(), &results) {
+        // Decide. `check` applies the precedence (failure before time budget)
+        // and returns the reason, if any.
+        match termination_check::check(t, start, self.run.termination(), failed.first().copied()) {
             Some(reason) => TickAction::Terminate { reason },
             None => TickAction::Continue,
         }
@@ -89,52 +84,39 @@ pub enum TickAction {
 }
 
 /// Judge a continuous assertion on each sample that arrived since the last
-/// tick, once each, latching a failure at the sample's own time. The verdict
-/// for the stop-decision is the first failure among them, else the latest
-/// pass, else `Pending` when none arrived. A series that turned a value away
-/// fails, latched at `t` since the value it rejected isn't kept.
-fn check_new(
-    assertion: &Assertion,
-    state: &mut AssertionState,
-    series: &Series,
-    t: MonotonicTime,
-) -> AssertionResult {
-    if let Some(rejection) = series.rejection() {
+/// tick, once each, latching a failure at the sample's own time. A series that
+/// turned a value away fails, latched at `t` since the value it rejected isn't
+/// kept.
+fn check_new(assertion: &Assertion, state: &mut AssertionState, series: &Series, t: MonotonicTime) {
+    let new = state.reach_new(series.samples(), series.rejection());
+    if let Some(rejection) = state.rejection() {
         let kind = FailureKind::Rejected(rejection);
         state.record(None, Err(kind.to_string()), t);
-        return AssertionResult::Failed { kind, actual: None };
+        return;
     }
 
-    let mut verdict = AssertionResult::Pending;
-    for sample in state.reach_new(series.samples()) {
-        let result = evaluate(assertion, sample.value.clone());
-        match &result {
+    for sample in new {
+        match evaluate(assertion, sample.value.clone()) {
             AssertionResult::Passed { actual } => {
-                state.record(Some(actual.clone()), Ok(()), sample.timestamp);
+                state.record(Some(actual), Ok(()), sample.timestamp);
             }
             AssertionResult::Failed { kind, actual } => {
-                state.record(actual.clone(), Err(kind.to_string()), sample.timestamp);
+                state.record(actual, Err(kind.to_string()), sample.timestamp);
             }
             AssertionResult::Pending => {}
         }
-        if !matches!(verdict, AssertionResult::Failed { .. }) {
-            verdict = result;
-        }
     }
-    verdict
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::{
-        assertion::AssertionValue,
-        runner::{
-            fixtures::{at, cont, ready, report, run, states, term, CAR, TRUCK},
-            state::ContinuousStatus,
-        },
-    };
+    use crate::runner::fixtures::{at, cont, ready, report, run, states, term, CAR, TRUCK};
+
+    const BUDGET: &str = "max_simulated_seconds = 10.0";
+
+    const FAIL_FAST: &str = "max_simulated_seconds = 10.0, fail_fast = true";
 
     #[test]
     fn a_failed_setup_stops_the_run_without_judging() {
@@ -209,19 +191,13 @@ mod tests {
         // The latch records the time the failing value describes, not the
         // tick that judged it.
         let a = cont(CAR, 5.0);
-        let (mut r, mut collector) = ready(run("on_assertion = \"any_failed\"", &[&a]), &[CAR]);
+        let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a]), &[CAR]);
         report(&mut collector, CAR, 1.5, 9.0);
 
         assert_eq!(
             r.tick(at(2.0), &collector),
             TickAction::Terminate {
-                reason: TerminationReason::OnAssertion {
-                    number: 1,
-                    result: AssertionResult::Failed {
-                        kind: FailureKind::ConditionFailed,
-                        actual: Some(AssertionValue::Float(9.0)),
-                    },
-                },
+                reason: TerminationReason::AssertionFailed { number: 1 },
             }
         );
         assert_eq!(
@@ -238,16 +214,16 @@ mod tests {
         // A failing value followed by a passing one before the next tick:
         // reading only the latest would miss the failure.
         let a = cont(CAR, 5.0);
-        let (mut r, mut collector) = ready(run("on_assertion = \"any_failed\"", &[&a]), &[CAR]);
+        let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a]), &[CAR]);
         report(&mut collector, CAR, 0.5, 9.0);
         report(&mut collector, CAR, 0.75, 5.0);
 
-        assert!(matches!(
+        assert_eq!(
             r.tick(at(1.0), &collector),
             TickAction::Terminate {
-                reason: TerminationReason::OnAssertion { .. }
+                reason: TerminationReason::AssertionFailed { number: 1 },
             }
-        ));
+        );
         assert!(matches!(
             states(&r)[0].status(),
             ContinuousStatus::FailedAt { .. }
@@ -255,79 +231,55 @@ mod tests {
     }
 
     #[test]
-    fn a_sample_is_checked_once() {
-        // The second tick has nothing new, so it judges nothing: `Pending`,
-        // which no trigger reads, and the latch is left as it was.
-        let a = cont(CAR, 5.0);
-        let (mut r, mut collector) = ready(
-            run(
-                "max_simulated_seconds = 10.0, on_assertion = \"any_passed\"",
-                &[&a],
-            ),
-            &[CAR],
-        );
-        r.tick(at(0.0), &collector);
-        report(&mut collector, CAR, 0.5, 5.0);
-
-        assert!(matches!(
-            r.tick(at(1.0), &collector),
-            TickAction::Terminate { .. }
-        ));
-        assert_eq!(r.tick(at(2.0), &collector), TickAction::Continue);
-    }
-
-    #[test]
-    fn an_assertion_trigger_names_the_assertion_that_tripped_it() {
+    fn a_fail_fast_stop_names_the_assertion_that_failed() {
         // Both assertions are on the car; only the second fails, so the stop
         // must say it was assertion 2, not merely that one failed.
         let a = cont(CAR, 5.0);
         let b = cont(CAR, 6.0);
-        let (mut r, mut collector) = ready(run("on_assertion = \"any_failed\"", &[&a, &b]), &[CAR]);
-        report(&mut collector, CAR, 0.5, 5.0);
-
-        assert!(matches!(
-            r.tick(at(1.0), &collector),
-            TickAction::Terminate {
-                reason: TerminationReason::OnAssertion { number: 2, .. }
-            }
-        ));
-    }
-
-    #[test]
-    fn terminal_pass_terminates_without_latching() {
-        // A terminal assertion drives the stop-decision (`any_passed` fires on
-        // its pass) but is never folded into the latch — terminals are judged at
-        // finalize, so the status stays Pending.
-        let a = term(CAR, 5.0);
-        let (mut r, mut collector) = ready(run("on_assertion = \"any_passed\"", &[&a]), &[CAR]);
+        let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a, &b]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
 
         assert_eq!(
             r.tick(at(1.0), &collector),
             TickAction::Terminate {
-                reason: TerminationReason::OnAssertion {
-                    number: 1,
-                    result: AssertionResult::Passed {
-                        actual: AssertionValue::Float(5.0),
-                    },
-                },
+                reason: TerminationReason::AssertionFailed { number: 2 },
             }
         );
-        assert_eq!(states(&r)[0].status(), &ContinuousStatus::Pending);
+    }
+
+    #[test]
+    fn a_failing_terminal_value_mid_run_does_not_stop_a_fail_fast_run() {
+        // A terminal assertion is judged at the end: a value that misses it
+        // mid-run (the car not at its goal yet) is no failure, and it is
+        // never latched.
+        let a = cont(CAR, 5.0);
+        let b = term(CAR, 6.0);
+        let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a, &b]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 5.0);
+
+        assert_eq!(r.tick(at(1.0), &collector), TickAction::Continue);
+        assert_eq!(states(&r)[1].status(), &ContinuousStatus::Pending);
+    }
+
+    #[test]
+    fn a_failure_without_fail_fast_runs_to_the_budget() {
+        let a = cont(CAR, 5.0);
+        let (mut r, mut collector) = ready(run(BUDGET, &[&a]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 9.0);
+
+        assert_eq!(r.tick(at(1.0), &collector), TickAction::Continue);
+        assert!(matches!(
+            states(&r)[0].status(),
+            ContinuousStatus::FailedAt { .. }
+        ));
     }
 
     #[test]
     fn no_samples_yet_continues_without_latching() {
         // Nothing has arrived — `Pending`, not a failure mid-run. Even with
-        // `any_failed` armed, the run continues and the latch is left alone.
+        // `fail_fast` set, the run continues and the latch is left alone.
         let a = cont(CAR, 5.0);
-        let (mut r, collector) = ready(
-            run(
-                "max_simulated_seconds = 10.0, on_assertion = \"any_failed\"",
-                &[&a],
-            ),
-            &[CAR],
-        );
+        let (mut r, collector) = ready(run(FAIL_FAST, &[&a]), &[CAR]);
 
         assert_eq!(r.tick(at(0.0), &collector), TickAction::Continue);
         assert_eq!(states(&r)[0].status(), &ContinuousStatus::Pending);

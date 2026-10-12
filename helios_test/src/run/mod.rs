@@ -129,7 +129,7 @@ mod tests {
         assert_eq!(run.scenario().path(), "sim.scenarios.parking_lot");
         assert_eq!(run.observation().path(), "observation.presets.verbose");
         assert_eq!(run.assertions().len(), 1);
-        assert_eq!(run.termination().max_simulated_seconds(), Some(30.0));
+        assert_eq!(run.termination().max_simulated_seconds(), 30.0);
     }
 
     #[test]

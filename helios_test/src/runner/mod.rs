@@ -32,11 +32,12 @@ const FOREIGN_COLLECTOR: &str = "the collector is not the one the run was set up
 
 /// _Per-step._ The state machine the host pumps across a run: owns the run,
 /// its phase (which holds the per-assertion state once the run is ready), and
-/// the clock origin.
+/// its clock: the first tick's time and the latest's.
 pub struct Runner {
     run: Run,
     phase: Phase,
     start_time: Option<MonotonicTime>,
+    latest_tick: Option<MonotonicTime>,
     setup_failures: Vec<String>,
 }
 
@@ -54,6 +55,7 @@ impl Runner {
             run,
             phase: Phase::AwaitingPipelines,
             start_time: None,
+            latest_tick: None,
             // Filled only if the run is doomed before it ticks. Assertions
             // cannot speak for this class of failure: a scenario whose agent
             // has no pipeline usually has no assertion naming it either, so
@@ -120,13 +122,13 @@ mod tests {
 
     #[test]
     fn rejects_an_incoherent_run() {
-        // Empty termination never stops; `new` must surface the validation
+        // A NaN budget is never reached; `new` must surface the validation
         // error rather than build a runner that can never terminate. `matches!`
         // (not `unwrap_err`) avoids needing `Debug` on the `Ok` type `Runner`.
-        let run = run_with("termination = {}");
+        let run = run_with("termination = { max_simulated_seconds = nan }");
         assert!(matches!(
             Runner::new(run),
-            Err(ValidationError::NoTermination)
+            Err(ValidationError::UnreachableBudget(_))
         ));
     }
 

@@ -5,7 +5,6 @@ pub mod toml_writer;
 use crate::{
     assertion::{AssertionResult, AssertionValue, Condition},
     run::termination::TerminationReason,
-    runner::state::ContinuousStatus,
 };
 
 use serde::Serialize;
@@ -116,29 +115,21 @@ pub enum TerminatedBy {
     Aborted,
     /// The simulated-time budget elapsed.
     TimeBudget,
-    /// An assertion reached the configured `on_assertion` state; `number` is
-    /// its position in the run file, counting from 1, and `outcome` its
-    /// verdict.
-    Assertion {
-        number: usize,
-        outcome: AssertionStatus,
-    },
+    /// A continuous assertion failed in a `fail_fast` run; `number` is its
+    /// position in the run file, counting from 1.
+    AssertionFailed { number: usize },
 }
 
 /// Project the per-step stop reason into the report's stable vocabulary.
-/// `MaxSimulatedSeconds` becomes `TimeBudget`; an assertion-triggered stop
-/// carries the triggering assertion's number and its result reduced to a bare
-/// `AssertionStatus`, so the
-/// live `AssertionResult` / `FailureKind` types never reach the serialized form.
+/// `MaxSimulatedSeconds` becomes `TimeBudget`.
 impl From<&TerminationReason> for TerminatedBy {
     fn from(value: &TerminationReason) -> Self {
         match value {
             TerminationReason::Aborted => TerminatedBy::Aborted,
             TerminationReason::MaxSimulatedSeconds => TerminatedBy::TimeBudget,
-            TerminationReason::OnAssertion { number, result } => TerminatedBy::Assertion {
-                number: *number,
-                outcome: AssertionStatus::from(result),
-            },
+            TerminationReason::AssertionFailed { number } => {
+                TerminatedBy::AssertionFailed { number: *number }
+            }
         }
     }
 }
@@ -151,7 +142,8 @@ pub struct AssertionReportEntry {
     target: String,
     condition: Condition,
     expected: AssertionValue,
-    /// `None` when no value was observed (pending, or an unresolved / no-extractor failure).
+    /// `None` when no value was observed (a silent or unresolved assertion,
+    /// or one whose values were turned away).
     actual: Option<AssertionValue>,
     status: AssertionStatus,
 }
@@ -193,33 +185,22 @@ impl AssertionReportEntry {
 pub enum AssertionStatus {
     Passed,
     Failed,
-    Pending,
+    /// No verdict: the run stopped before the assertion's window ended (a
+    /// `fail_fast` stop or an aborted setup) and it hadn't failed by then.
+    /// Neither passes nor fails a run on its own; a run with one has already
+    /// failed for another reason.
+    Unjudged,
 }
 
-/// A continuous assertion's latch reduced to a report verdict: `Holding` held
-/// on every observed tick (`Passed`), `FailedAt` latched a violation
-/// (`Failed`), `Pending` never observed a value. The latch's `t` / `reason`
-/// detail is dropped — the entry schema doesn't carry it.
-impl From<&ContinuousStatus> for AssertionStatus {
-    fn from(value: &ContinuousStatus) -> Self {
-        match value {
-            ContinuousStatus::Holding => AssertionStatus::Passed,
-            ContinuousStatus::FailedAt { .. } => AssertionStatus::Failed,
-            ContinuousStatus::Pending => AssertionStatus::Pending,
-        }
-    }
-}
-
-/// A freshly evaluated result reduced to a report verdict. Used for terminal
-/// assertions (judged once at finalize) and for the `on_assertion` outcome
-/// inside [`TerminatedBy`]. The observed value is pulled out separately via
-/// `AssertionResult::into_actual`; this only projects the verdict.
+/// A freshly evaluated result reduced to a report verdict, for a terminal
+/// assertion judged at finalize. The observed value is pulled out separately
+/// via `AssertionResult::into_actual`; this only projects the verdict.
 impl From<&AssertionResult> for AssertionStatus {
     fn from(value: &AssertionResult) -> Self {
         match value {
             AssertionResult::Passed { .. } => AssertionStatus::Passed,
             AssertionResult::Failed { .. } => AssertionStatus::Failed,
-            AssertionResult::Pending => AssertionStatus::Pending,
+            AssertionResult::Pending => AssertionStatus::Unjudged,
         }
     }
 }

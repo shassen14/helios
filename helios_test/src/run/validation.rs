@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::run::Run;
+use crate::{assertion::Assertion, run::Run};
 
 /// _Pre-step._ Coherence problems a structurally-valid run file can still have. Parsing
 /// proves the *shape* is right; these are the cross-field checks serde can't
@@ -8,10 +8,15 @@ use crate::run::Run;
 /// being discovered partway through a simulation.
 #[derive(Debug, PartialEq, Error)]
 pub enum ValidationError {
-    #[error("no stop condition declared: the run would never terminate")]
-    NoTermination,
-    #[error("`on_assertion` is set but the run declares no assertions for it to watch")]
-    OnAssertionWithoutAssertions,
+    #[error(
+        "`max_simulated_seconds` must be positive and finite, got {0}: the run would never \
+         terminate"
+    )]
+    UnreachableBudget(f64),
+    #[error(
+        "`fail_fast` is set but the run declares no continuous assertion that could fail early"
+    )]
+    FailFastWithoutContinuous,
     // todo!() WithinRangeWithoutBounds
 }
 
@@ -25,15 +30,22 @@ pub enum ValidationError {
 pub fn validate(run: &Run) -> Result<(), ValidationError> {
     let termination = run.termination();
 
-    // A run with no stop trigger at all never terminates.
-    if termination.max_simulated_seconds().is_none() && termination.on_assertion().is_none() {
-        return Err(ValidationError::NoTermination);
+    // The budget is the one stop every run is sure of. Elapsed time never
+    // reaches a NaN or infinite budget, and a zero or negative one stops
+    // before anything is judged.
+    let budget = termination.max_simulated_seconds();
+    if !(budget.is_finite() && budget > 0.0) {
+        return Err(ValidationError::UnreachableBudget(budget));
     }
 
-    // An `on_assertion` trigger fires when assertions reach a pass/fail state,
-    // so with zero assertions it can never fire — the trigger watches nothing.
-    if termination.on_assertion().is_some() && run.assertions().is_empty() {
-        return Err(ValidationError::OnAssertionWithoutAssertions);
+    // `fail_fast` stops on a continuous failure; a terminal assertion is only
+    // judged at the end, so without a continuous one it watches nothing.
+    let has_continuous = run
+        .assertions()
+        .iter()
+        .any(|assertion| matches!(assertion, Assertion::Continuous(_)));
+    if termination.fail_fast() && !has_continuous {
+        return Err(ValidationError::FailFastWithoutContinuous);
     }
 
     validate_observation_covers_target(run)?;
@@ -68,7 +80,7 @@ mod tests {
         toml::from_str(&toml).unwrap()
     }
 
-    const ASSERT: &str = r#"
+    const TERMINAL: &str = r#"
         [[assert]]
         when = "at_completion"
         target = "agent.car.estimator.x"
@@ -76,12 +88,13 @@ mod tests {
         value = 0.0
     "#;
 
-    #[test]
-    fn no_trigger_is_no_termination() {
-        // Empty termination table → both triggers `None` → never stops.
-        let run = run_with("termination = {}");
-        assert_eq!(validate(&run), Err(ValidationError::NoTermination));
-    }
+    const CONTINUOUS: &str = r#"
+        [[assert]]
+        when = "continuous"
+        target = "agent.car.estimator.x"
+        condition = "less_than"
+        value = 1.0
+    "#;
 
     #[test]
     fn time_budget_alone_is_ok_without_assertions() {
@@ -92,27 +105,44 @@ mod tests {
     }
 
     #[test]
-    fn on_assertion_without_assertions_errors() {
-        let run = run_with(r#"termination = { on_assertion = "any_passed" }"#);
+    fn a_budget_the_clock_never_reaches_errors() {
+        for budget in ["0.0", "-1.0", "nan", "inf"] {
+            let run = run_with(&format!(
+                "termination = {{ max_simulated_seconds = {budget} }}"
+            ));
+            assert!(
+                matches!(validate(&run), Err(ValidationError::UnreachableBudget(_))),
+                "budget {budget}"
+            );
+        }
+    }
+
+    #[test]
+    fn fail_fast_without_assertions_errors() {
+        let run = run_with("termination = { max_simulated_seconds = 5.0, fail_fast = true }");
         assert_eq!(
             validate(&run),
-            Err(ValidationError::OnAssertionWithoutAssertions)
+            Err(ValidationError::FailFastWithoutContinuous)
         );
     }
 
     #[test]
-    fn on_assertion_with_an_assertion_is_ok() {
-        let body = format!(r#"termination = {{ on_assertion = "any_passed" }}{ASSERT}"#);
-        let run = run_with(&body);
-        assert_eq!(validate(&run), Ok(()));
+    fn fail_fast_over_only_terminal_assertions_errors() {
+        // A terminal assertion can't fail before the end, so fail_fast would
+        // never fire.
+        let body =
+            format!("termination = {{ max_simulated_seconds = 5.0, fail_fast = true }}{TERMINAL}");
+        assert_eq!(
+            validate(&run_with(&body)),
+            Err(ValidationError::FailFastWithoutContinuous)
+        );
     }
 
     #[test]
     fn fully_specified_run_passes() {
         let body = format!(
-            r#"termination = {{ max_simulated_seconds = 30.0, on_assertion = "any_failed" }}{ASSERT}"#
+            "termination = {{ max_simulated_seconds = 30.0, fail_fast = true }}{TERMINAL}{CONTINUOUS}"
         );
-        let run = run_with(&body);
-        assert_eq!(validate(&run), Ok(()));
+        assert_eq!(validate(&run_with(&body)), Ok(()));
     }
 }

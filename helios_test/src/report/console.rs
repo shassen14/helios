@@ -92,16 +92,17 @@ fn render(report: &Report) -> String {
 }
 
 /// Phrase the termination reason as "<cause> at t=<sim-seconds>s". The sim time
-/// is the report's `simulated_duration_secs`; for an assertion-triggered stop we
-/// also say which assertion it was and which way it went.
+/// is the report's `simulated_duration_secs`; for a `fail_fast` stop we also
+/// say which assertion failed.
 fn termination_line(report: &Report) -> String {
     let at = format!("t={:.1}s", report.simulated_duration_secs);
     match &report.terminated_by {
         TerminatedBy::Aborted => "aborted during setup, before the first tick".to_string(),
         TerminatedBy::TimeBudget => format!("time budget reached at {at}"),
-        TerminatedBy::Assertion { number, outcome } => {
-            format!("assertion {number} {} at {at}", status_label(outcome))
-        }
+        TerminatedBy::AssertionFailed { number } => format!(
+            "assertion {number} {} at {at}",
+            status_label(&AssertionStatus::Failed)
+        ),
     }
 }
 
@@ -134,12 +135,12 @@ fn status_label(status: &AssertionStatus) -> &'static str {
     match status {
         AssertionStatus::Passed => "PASSED",
         AssertionStatus::Failed => "FAILED",
-        AssertionStatus::Pending => "PENDING",
+        AssertionStatus::Unjudged => "UNJUDGED",
     }
 }
 
 /// Label for the run-level verdict. Separate from [`status_label`] because
-/// `ReportStatus` has no `Pending` — a finished run is only ever passed or failed.
+/// `ReportStatus` has no `Unjudged` — a finished run is only ever passed or failed.
 fn run_status_label(status: &ReportStatus) -> &'static str {
     match status {
         ReportStatus::Passed => "PASSED",
@@ -204,9 +205,9 @@ mod tests {
     }
 
     #[test]
-    fn pending_entry_without_actual_does_not_panic() {
+    fn unjudged_entry_without_actual_does_not_panic() {
         let report = Report::new(
-            "pending".to_string(),
+            "unjudged".to_string(),
             "s".to_string(),
             None,
             ReportStatus::Failed,
@@ -219,10 +220,17 @@ mod tests {
                 Condition::Equals,
                 AssertionValue::Float(0.0),
                 None,
-                AssertionStatus::Pending,
+                AssertionStatus::Unjudged,
             )],
         );
         let text = render(&report);
-        assert!(text.contains("PENDING"));
+        assert!(text.contains("UNJUDGED"));
+    }
+
+    #[test]
+    fn a_fail_fast_stop_names_the_failed_assertion() {
+        let mut report = sample_report();
+        report.terminated_by = TerminatedBy::AssertionFailed { number: 2 };
+        assert!(render(&report).contains("[run] terminated: assertion 2 FAILED at t=47.3s"));
     }
 }

@@ -1,4 +1,7 @@
-use crate::{assertion::AssertionValue, collector::Sample};
+use crate::{
+    assertion::AssertionValue,
+    collector::{Rejection, Sample},
+};
 
 use helios_core::prelude::MonotonicTime;
 
@@ -20,7 +23,8 @@ pub enum ContinuousStatus {
 /// _Per-step._ Per-assertion runtime state the runner carries across ticks. `last_value`
 /// caches the most recent observation for the report; `continuous` is the latch
 /// above; `reached` counts the samples of the assertion's series the run has
-/// reached. Terminal assertions reuse this type but leave `continuous` as
+/// reached, and `rejection` is the series' rejection once the run has reached
+/// it. Terminal assertions reuse this type but leave `continuous` as
 /// `Pending` forever — they're judged once at finalize, not per tick — so the
 /// runner can hold one uniform collection instead of two.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +32,7 @@ pub struct AssertionState {
     last_value: Option<AssertionValue>,
     continuous: ContinuousStatus,
     reached: usize,
+    rejection: Option<Rejection>,
 }
 
 impl Default for AssertionState {
@@ -43,6 +48,7 @@ impl AssertionState {
             last_value: None,
             continuous: ContinuousStatus::Pending,
             reached: 0,
+            rejection: None,
         }
     }
 
@@ -91,10 +97,17 @@ impl AssertionState {
 
     /// The samples of `samples` that arrived since the last call, which the
     /// run has now reached. `samples` is the assertion's whole series, which
-    /// only grows.
-    pub fn reach_new<'s>(&mut self, samples: &'s [Sample]) -> &'s [Sample] {
+    /// only grows. The series' `rejection`, if it has one, is reached with
+    /// them: a value turned away after the run's last tick is past its end,
+    /// like a sample.
+    pub fn reach_new<'s>(
+        &mut self,
+        samples: &'s [Sample],
+        rejection: Option<Rejection>,
+    ) -> &'s [Sample] {
         let new = samples.get(self.reached..).unwrap_or_default();
         self.reached = samples.len();
+        self.rejection = self.rejection.or(rejection);
         new
     }
 
@@ -106,6 +119,11 @@ impl AssertionState {
     /// The current latch state.
     pub fn status(&self) -> &ContinuousStatus {
         &self.continuous
+    }
+
+    /// Why a value of the series was turned away, if the run reached one.
+    pub fn rejection(&self) -> Option<Rejection> {
+        self.rejection
     }
 
     /// The samples of `samples` the run has reached. Samples that arrive
@@ -139,9 +157,9 @@ mod tests {
         let mut s = AssertionState::new();
         let series = [sample(1.0, 1.0), sample(2.0, 2.0), sample(3.0, 3.0)];
 
-        assert_eq!(s.reach_new(&series[..2]), &series[..2]);
-        assert_eq!(s.reach_new(&series[..2]), &[]);
-        assert_eq!(s.reach_new(&series), &series[2..]);
+        assert_eq!(s.reach_new(&series[..2], None), &series[..2]);
+        assert_eq!(s.reach_new(&series[..2], None), &[]);
+        assert_eq!(s.reach_new(&series, None), &series[2..]);
     }
 
     #[test]
@@ -150,7 +168,7 @@ mod tests {
         let mut s = AssertionState::new();
         let series = [sample(1.0, 1.0), sample(2.0, 2.0)];
 
-        s.reach_new(&series[..1]);
+        s.reach_new(&series[..1], None);
 
         assert_eq!(s.reached(&series), &series[..1]);
     }

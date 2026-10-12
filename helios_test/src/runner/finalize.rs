@@ -1,7 +1,12 @@
-use super::{state::ContinuousStatus, Phase, Runner, FOREIGN_COLLECTOR, NEVER_SET_UP};
+use super::{
+    state::{AssertionState, ContinuousStatus},
+    Phase, Runner, FOREIGN_COLLECTOR, NEVER_SET_UP,
+};
 use crate::{
-    assertion::{evaluator::evaluate_latest, Assertion, AssertionResult, FailureKind},
-    collector::ObservationCollector,
+    assertion::{
+        evaluator::evaluate_latest, Assertion, AssertionResult, AssertionValue, FailureKind,
+    },
+    collector::{ObservationCollector, Series},
     report::{AssertionReportEntry, AssertionStatus, Report, ReportStatus, TerminatedBy},
     run::termination::TerminationReason,
 };
@@ -11,12 +16,22 @@ impl Runner {
     /// Build the run's [`Report`] once the host stops ticking. Continuous
     /// assertions are read from their latches (already folded across every
     /// tick by `tick`); terminal assertions are judged here, once, on the
-    /// latest sample the run reached. An assertion that never saw a sample
-    /// fails. The run is `Passed` only if every assertion passed and setup
-    /// didn't fail.
+    /// latest sample the run reached.
     ///
-    /// A run that isn't ready judges nothing: its assertions are reported
-    /// `Pending`, and the run fails on its setup failures.
+    /// Only a run whose ticks reached its time budget covered every
+    /// assertion's window, which today is the whole run. The runner reads
+    /// that from its own clock, not from the stop reason the host passes,
+    /// which only labels the report: a `fail_fast` failure on the tick the
+    /// budget runs out still covered it. In one that stopped early (a
+    /// `fail_fast` stop or an aborted setup), an assertion that hadn't failed
+    /// by then is `Unjudged`: neither its pass nor its silence says anything
+    /// about a window the run never finished. A failure is final however the
+    /// run stopped. In a run that covered its windows, an assertion that never
+    /// saw a sample fails, since that is how a dropped signal looks.
+    ///
+    /// The run is `Passed` only if every assertion passed and setup didn't
+    /// fail. An early stop is always a failure or an abort, so an `Unjudged`
+    /// assertion only ever sits in a run that failed for another reason.
     ///
     /// Takes `&self`, not `&mut`: the latches are only read, nothing is
     /// recorded. `run_name`, `wall_duration_secs`, the stop `reason`, and
@@ -49,6 +64,10 @@ impl Runner {
             }
             Phase::Aborted => None,
         };
+        let covered = match (self.start_time, self.latest_tick) {
+            (Some(start), Some(latest)) => self.run.termination().budget_spent(start, latest),
+            _ => false,
+        };
 
         let mut entries = Vec::with_capacity(self.run.assertions().len());
         // Run-level verdict accumulator: flipped false the moment any assertion
@@ -59,40 +78,9 @@ impl Runner {
             // This assertion's series and state; `None` when the run isn't
             // ready to judge. A pair of references is `Copy`, so `copied`
             // lifts it out of the borrowed list.
-            let entry = judged.as_ref().and_then(|j| j.get(i)).copied();
-            // Each branch produces the two things the entry needs — a verdict
-            // and the observed value. Continuous reads its latch (its
-            // `last_value` is already an `Option`); terminal is judged now and
-            // the value pulled from the fresh result.
-            let (status, actual) = match (entry, assertion) {
-                (None, _) => (AssertionStatus::Pending, None),
-                // Never saw a sample: fails as no samples.
-                (Some((_, state)), Assertion::Continuous(_))
-                    if *state.status() == ContinuousStatus::Pending =>
-                {
-                    (AssertionStatus::Failed, None)
-                }
-                (Some((_, state)), Assertion::Continuous(_)) => (
-                    AssertionStatus::from(state.status()),
-                    state.last_value().clone(),
-                ),
-                (Some((series, state)), Assertion::Terminal(_)) => {
-                    let result = match evaluate_latest(
-                        assertion,
-                        series.rejection(),
-                        state.reached(series.samples()),
-                    ) {
-                        AssertionResult::Pending => AssertionResult::Failed {
-                            kind: FailureKind::NoSamples,
-                            actual: None,
-                        },
-                        judged => judged,
-                    };
-                    // `from(&result)` borrows for the verdict; `into_actual`
-                    // then moves the value out — borrow ends before the move,
-                    // so this tuple order is what keeps both legal.
-                    (AssertionStatus::from(&result), result.into_actual())
-                }
+            let (status, actual) = match judged.as_ref().and_then(|j| j.get(i)).copied() {
+                Some((series, state)) => judge(assertion, series, state, covered),
+                None => (AssertionStatus::Unjudged, None),
             };
 
             if !matches!(status, AssertionStatus::Passed) {
@@ -139,28 +127,91 @@ impl Runner {
     }
 }
 
+/// One assertion's report verdict and observed value. `covered` is whether
+/// the run reached the end of the assertion's window: a pass, or a failure for
+/// silence, needs it; a failure the assertion already met is final either way.
+fn judge(
+    assertion: &Assertion,
+    series: &Series,
+    state: &AssertionState,
+    covered: bool,
+) -> (AssertionStatus, Option<AssertionValue>) {
+    match assertion {
+        Assertion::Continuous(_) => {
+            let status = match state.status() {
+                ContinuousStatus::FailedAt { .. } => AssertionStatus::Failed,
+                _ if !covered => AssertionStatus::Unjudged,
+                ContinuousStatus::Holding => AssertionStatus::Passed,
+                // Silent over its whole window: a drop.
+                ContinuousStatus::Pending => AssertionStatus::Failed,
+            };
+            (status, state.last_value().clone())
+        }
+        Assertion::Terminal(_) => {
+            let reached = state.reached(series.samples());
+            // A value turned away before the run stopped is a fault however
+            // it stopped; any other verdict belongs to an end the run never
+            // reached. The value it stopped at is still shown.
+            if !covered && state.rejection().is_none() {
+                let last = reached.last().map(|sample| sample.value.clone());
+                return (AssertionStatus::Unjudged, last);
+            }
+            let result = match evaluate_latest(assertion, state.rejection(), reached) {
+                AssertionResult::Pending => AssertionResult::Failed {
+                    kind: FailureKind::NoSamples,
+                    actual: None,
+                },
+                judged => judged,
+            };
+            // `from(&result)` borrows for the verdict; `into_actual` then
+            // moves the value out — borrow ends before the move, so this
+            // tuple order is what keeps both legal.
+            (AssertionStatus::from(&result), result.into_actual())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::{
         assertion::AssertionValue,
-        runner::fixtures::{at, cont, ready, report, run, term, CAR},
+        runner::{
+            fixtures::{at, cont, ready, report, report_unreadable, run, term, CAR, TRUCK},
+            TickAction,
+        },
     };
 
-    const BUDGET: &str = "max_simulated_seconds = 5.0";
+    const BUDGET_SECS: f64 = 5.0;
 
-    // Build the report the way `finalize_system` does.
-    fn finalize(r: &Runner, collector: &ObservationCollector) -> Report {
-        r.finalize(
-            at(0.0),
-            0.0,
-            "run".to_string(),
-            TerminationReason::MaxSimulatedSeconds,
-            collector,
-            None,
-        )
+    // `{:?}` forces a decimal point so TOML reads it as a float.
+    fn budget() -> String {
+        format!("max_simulated_seconds = {BUDGET_SECS:?}")
     }
+
+    // Tick from the run's start to its budget, so it covers its window. Each
+    // tick reaches whatever has arrived by then.
+    fn run_out(r: &mut Runner, collector: &ObservationCollector) {
+        r.tick(at(0.0), collector);
+        r.tick(at(BUDGET_SECS), collector);
+    }
+
+    // Build the report the way `finalize_system` does, for a run the host
+    // says ran out its budget.
+    fn finalize(r: &Runner, collector: &ObservationCollector) -> Report {
+        finalize_stopped_by(r, collector, TerminationReason::MaxSimulatedSeconds)
+    }
+
+    fn finalize_stopped_by(
+        r: &Runner,
+        collector: &ObservationCollector,
+        reason: TerminationReason,
+    ) -> Report {
+        r.finalize(at(0.0), 0.0, "run".to_string(), reason, collector, None)
+    }
+
+    const FAILED_FIRST: TerminationReason = TerminationReason::AssertionFailed { number: 1 };
 
     fn statuses(report: &Report) -> Vec<AssertionStatus> {
         report
@@ -174,10 +225,10 @@ mod tests {
     fn a_terminal_assertion_is_judged_on_the_latest_sample_reached() {
         // The 9.0 arrives after the run's last tick, past its end, so the
         // verdict rests on the 5.0 the run reached.
-        let (mut r, mut collector) = ready(run(BUDGET, &[&term(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut collector) = ready(run(&budget(), &[&term(CAR, 5.0)]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
-        r.tick(at(1.0), &collector);
-        report(&mut collector, CAR, 1.5, 9.0);
+        run_out(&mut r, &collector);
+        report(&mut collector, CAR, 5.5, 9.0);
 
         let report = finalize(&r, &collector);
 
@@ -193,8 +244,8 @@ mod tests {
     fn an_assertion_that_never_saw_a_sample_fails() {
         // "Never emitted" is how a silent drop looks, so it can't pass, for
         // either kind of assertion.
-        let (mut r, collector) = ready(run(BUDGET, &[&term(CAR, 5.0), &cont(CAR, 5.0)]), &[CAR]);
-        r.tick(at(1.0), &collector);
+        let (mut r, collector) = ready(run(&budget(), &[&term(CAR, 5.0), &cont(CAR, 5.0)]), &[CAR]);
+        run_out(&mut r, &collector);
 
         let report = finalize(&r, &collector);
 
@@ -206,10 +257,55 @@ mod tests {
     }
 
     #[test]
-    fn a_continuous_assertion_reports_its_latch() {
-        let (mut r, mut collector) = ready(run(BUDGET, &[&cont(CAR, 5.0)]), &[CAR]);
-        report(&mut collector, CAR, 0.5, 5.0);
+    fn an_early_stop_leaves_what_had_not_failed_unjudged() {
+        // Assertion 1 failed and stopped the run. Assertion 2 held so far,
+        // 3 never saw a sample, and 4 is terminal: none of them saw the end
+        // of its window, so none is passed, or failed for silence.
+        let assertions = [
+            cont(CAR, 5.0),
+            cont(CAR, 9.0),
+            cont(TRUCK, 5.0),
+            term(CAR, 9.0),
+        ];
+        let blocks: Vec<&str> = assertions.iter().map(String::as_str).collect();
+        let (mut r, mut collector) = ready(run(&budget(), &blocks), &[CAR, TRUCK]);
+        report(&mut collector, CAR, 0.5, 9.0);
         r.tick(at(1.0), &collector);
+
+        let report = finalize_stopped_by(&r, &collector, FAILED_FIRST);
+
+        assert_eq!(
+            statuses(&report),
+            [
+                AssertionStatus::Failed,
+                AssertionStatus::Unjudged,
+                AssertionStatus::Unjudged,
+                AssertionStatus::Unjudged,
+            ]
+        );
+        assert_eq!(report.status(), &ReportStatus::Failed);
+    }
+
+    #[test]
+    fn an_unjudged_terminal_assertion_shows_the_value_it_stopped_at() {
+        let (mut r, mut collector) =
+            ready(run(&budget(), &[&cont(CAR, 5.0), &term(CAR, 5.0)]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 7.0);
+        r.tick(at(1.0), &collector);
+
+        let report = finalize_stopped_by(&r, &collector, FAILED_FIRST);
+
+        assert_eq!(
+            report.assertions()[1].actual(),
+            Some(&AssertionValue::Float(7.0))
+        );
+    }
+
+    #[test]
+    fn a_continuous_assertion_reports_its_latch() {
+        let (mut r, mut collector) = ready(run(&budget(), &[&cont(CAR, 5.0)]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 5.0);
+        run_out(&mut r, &collector);
 
         let report = finalize(&r, &collector);
 
@@ -218,8 +314,73 @@ mod tests {
     }
 
     #[test]
+    fn a_failure_on_the_tick_the_budget_runs_out_leaves_the_rest_judged() {
+        // The failure names the stop, but the run still reached its end, so
+        // the truck's assertion passed rather than going unjudged.
+        let termination = format!("{}, fail_fast = true", budget());
+        let (mut r, mut collector) = ready(
+            run(&termination, &[&cont(CAR, 5.0), &cont(TRUCK, 5.0)]),
+            &[CAR, TRUCK],
+        );
+        r.tick(at(0.0), &collector);
+        report(&mut collector, CAR, 4.5, 9.0);
+        report(&mut collector, TRUCK, 4.5, 5.0);
+        assert_eq!(
+            r.tick(at(BUDGET_SECS), &collector),
+            TickAction::Terminate {
+                reason: FAILED_FIRST,
+            }
+        );
+
+        let report = finalize_stopped_by(&r, &collector, FAILED_FIRST);
+
+        assert_eq!(
+            statuses(&report),
+            [AssertionStatus::Failed, AssertionStatus::Passed]
+        );
+    }
+
+    #[test]
+    fn the_stop_reason_the_host_passes_does_not_decide_coverage() {
+        // The host says the budget ran out, but the runner's own ticks only
+        // reached 1 s of 5: a pass would be claimed for time never run.
+        let (mut r, mut collector) = ready(run(&budget(), &[&cont(CAR, 5.0)]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 5.0);
+        r.tick(at(1.0), &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(statuses(&report), [AssertionStatus::Unjudged]);
+    }
+
+    #[test]
+    fn a_value_turned_away_before_the_end_fails_the_assertion() {
+        let (mut r, mut collector) = ready(run(&budget(), &[&term(CAR, 5.0)]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 5.0);
+        report_unreadable(&mut collector, CAR, 1.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(statuses(&report), [AssertionStatus::Failed]);
+    }
+
+    #[test]
+    fn a_value_turned_away_after_the_last_tick_is_past_the_end() {
+        // Like a late sample, a late rejection is outside the run.
+        let (mut r, mut collector) = ready(run(&budget(), &[&term(CAR, 5.0)]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 5.0);
+        run_out(&mut r, &collector);
+        report_unreadable(&mut collector, CAR, 5.5);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(statuses(&report), [AssertionStatus::Passed]);
+    }
+
+    #[test]
     fn finalizing_with_another_runs_collector_fails_the_run() {
-        let (mut r, mut own) = ready(run(BUDGET, &[&term(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut own) = ready(run(&budget(), &[&term(CAR, 5.0)]), &[CAR]);
         report(&mut own, CAR, 0.5, 5.0);
         r.tick(at(1.0), &own);
         let other = r.collector();
@@ -228,14 +389,14 @@ mod tests {
 
         assert_eq!(report.status(), &ReportStatus::Failed);
         assert_eq!(report.setup_failures(), [FOREIGN_COLLECTOR]);
-        assert_eq!(statuses(&report), [AssertionStatus::Pending]);
+        assert_eq!(statuses(&report), [AssertionStatus::Unjudged]);
     }
 
     #[test]
     fn finalizing_a_run_never_set_up_fails_it() {
         // With no assertions there is nothing else to fail it: it would
         // otherwise report a pass for a run that never ran.
-        let r = Runner::new(run(BUDGET, &[])).expect("valid run");
+        let r = Runner::new(run(&budget(), &[])).expect("valid run");
         let collector = r.collector();
 
         let report = finalize(&r, &collector);
@@ -250,7 +411,7 @@ mod tests {
         // usually has no assertion naming it either. Judged on assertions
         // alone, an empty set is a vacuous pass and the run reports success
         // for a scene that could never have been tested.
-        let mut r = Runner::new(run(BUDGET, &[])).expect("valid run");
+        let mut r = Runner::new(run(&budget(), &[])).expect("valid run");
         let collector = r.collector();
         r.fail_setup("agent 'car' has no autonomy pipeline".to_string());
 
@@ -264,7 +425,7 @@ mod tests {
     fn a_setup_failure_is_reported_with_its_reason() {
         // status alone tells CI a run failed; without the reason there is
         // nothing in the report to say why, since no assertion failed.
-        let mut r = Runner::new(run(BUDGET, &[])).expect("valid run");
+        let mut r = Runner::new(run(&budget(), &[])).expect("valid run");
         let collector = r.collector();
         r.fail_setup("first".to_string());
         r.fail_setup("second".to_string());
@@ -276,7 +437,7 @@ mod tests {
 
     #[test]
     fn a_clean_run_records_no_setup_failures() {
-        let (r, collector) = ready(run(BUDGET, &[]), &[]);
+        let (r, collector) = ready(run(&budget(), &[]), &[]);
 
         let report = finalize(&r, &collector);
 
