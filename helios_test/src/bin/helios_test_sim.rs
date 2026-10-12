@@ -20,8 +20,9 @@ use helios_test::{
         ActiveRunner, MetricsCollector, MetricsPlugin, ReportOutputPath, RunMetadata, RunOutcome,
         RunVerdict, WallClockStart,
     },
+    standard_extractors,
     statistics::{standard_statistics, StatId},
-    AggregateReport, Runner,
+    AggregateReport, ObservationCollector, Runner,
 };
 
 use clap::Parser;
@@ -152,6 +153,12 @@ fn main() {
             }
         };
         app.insert_resource(ActiveRunner::new(runner));
+        // Fresh per run, like the runner: asks the host to record every value
+        // the run's assertions name.
+        app.add_observation_sink(ObservationCollector::new(
+            run.assertions().iter().map(|assertion| assertion.target()),
+            standard_extractors(),
+        ));
         app.insert_resource(WallClockStart::new(std::time::Instant::now()));
         app.insert_resource(RunOutcome::new(run_name.clone()));
         app.init_resource::<RunVerdict>(); // defaults to Failed (fail-closed)
