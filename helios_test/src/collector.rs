@@ -17,11 +17,22 @@ use helios_runtime::observe::{
     sink::{ObservationSink, WatchRequest},
 };
 
-use std::{any::TypeId, collections::HashMap, sync::Arc};
+use std::{
+    any::TypeId,
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 /// An observation's agent, node and leaf: the parts of its path, held the
 /// way the observation carries them.
 type LeafKey = (AgentId, Arc<str>, Arc<str>);
+
+/// The id the next collector built takes. Counts up for the life of the
+/// process, so no two collectors share one.
+static NEXT_COLLECTOR: AtomicU64 = AtomicU64::new(0);
 
 /// _Per-step._ Collects, per run-file target, every value the brain reports
 /// for it, turned into an [`AssertionValue`] on arrival.
@@ -30,6 +41,9 @@ type LeafKey = (AgentId, Arc<str>, Arc<str>);
 /// dropped, so a channel carrying a large payload costs what a scalar does:
 /// the series holds the extracted value, never the payload.
 pub struct ObservationCollector {
+    /// Stamped into every [`SeriesId`] this collector hands out, so an id is
+    /// never read against another run's collector.
+    id: CollectorId,
     /// Each target's index into `series`.
     by_target: HashMap<AssertionTarget, usize>,
     /// The same indices by the parts an observation carries, so an arrival
@@ -48,6 +62,7 @@ impl ObservationCollector {
         extractors: ExtractorTable,
     ) -> Self {
         let mut collector = Self {
+            id: CollectorId(NEXT_COLLECTOR.fetch_add(1, Ordering::Relaxed)),
             by_target: HashMap::new(),
             by_leaf: HashMap::new(),
             series: Vec::new(),
@@ -60,12 +75,24 @@ impl ObservationCollector {
         collector
     }
 
-    /// What arrived for `target` so far. `None` when `target` was never
-    /// requested; a requested target that nothing has reported yet has an
-    /// empty series.
-    pub fn series(&self, target: &AssertionTarget) -> Option<&Series> {
+    /// The series `target` is recorded in. `None` when `target` was never
+    /// requested.
+    pub fn series_id(&self, target: &AssertionTarget) -> Option<SeriesId> {
         let index = self.by_target.get(target)?;
-        self.series.get(*index)
+        Some(SeriesId {
+            collector: self.id,
+            index: *index,
+        })
+    }
+
+    /// What arrived so far in the series `id` names. `None` when `id` came
+    /// from another collector. A series nothing has reported to yet is
+    /// empty.
+    pub fn series(&self, id: SeriesId) -> Option<&Series> {
+        if id.collector != self.id {
+            return None;
+        }
+        self.series.get(id.index)
     }
 
     /// Whether a channel value whose payload is of type `payload` can be
@@ -146,6 +173,18 @@ fn extract(
     }
 }
 
+/// _Per-step._ Which collector a [`SeriesId`] came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct CollectorId(u64);
+
+/// _Per-step._ Names one series in one collector, handed out by
+/// [`ObservationCollector::series_id`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SeriesId {
+    collector: CollectorId,
+    index: usize,
+}
+
 /// _Per-step._ Everything that arrived for one target.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Series {
@@ -178,11 +217,13 @@ pub struct Sample {
 }
 
 /// _Per-step._ Why an arrived value isn't in its series.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Rejection {
     /// A channel value with no comparable value.
+    #[error(transparent)]
     Extract(ExtractError),
     /// A kind of observation assertions can't read.
+    #[error("a kind of observation assertions can't read")]
     UnsupportedKind,
 }
 
@@ -242,9 +283,17 @@ mod tests {
         }
     }
 
-    fn samples_of(collector: &ObservationCollector, target: &AssertionTarget) -> Vec<Sample> {
+    fn series_of<'c>(
+        collector: &'c ObservationCollector,
+        target: &AssertionTarget,
+    ) -> Option<&'c Series> {
         collector
-            .series(target)
+            .series_id(target)
+            .and_then(|id| collector.series(id))
+    }
+
+    fn samples_of(collector: &ObservationCollector, target: &AssertionTarget) -> Vec<Sample> {
+        series_of(collector, target)
             .expect("target is requested")
             .samples()
             .to_vec()
@@ -271,14 +320,27 @@ mod tests {
         let nis = target(CAR, NIS);
         let collector = collector(std::slice::from_ref(&nis));
 
-        assert_eq!(collector.series(&nis), Some(&Series::default()));
+        assert_eq!(series_of(&collector, &nis), Some(&Series::default()));
     }
 
     #[test]
     fn an_unrequested_target_has_no_series() {
         let collector = collector(&[target(CAR, NIS)]);
 
-        assert_eq!(collector.series(&target(CAR, SPEED)), None);
+        assert_eq!(collector.series_id(&target(CAR, SPEED)), None);
+    }
+
+    #[test]
+    fn a_series_id_reads_nothing_from_another_collector() {
+        // Two runs' collectors over the same targets: an id from the first
+        // must not read the second's series, which looks just the same.
+        let nis = target(CAR, NIS);
+        let first = collector(std::slice::from_ref(&nis));
+        let second = collector(std::slice::from_ref(&nis));
+        let id = first.series_id(&nis).expect("target is requested");
+
+        assert!(first.series(id).is_some());
+        assert_eq!(second.series(id), None);
     }
 
     #[test]
@@ -315,7 +377,7 @@ mod tests {
 
         collector.receive(&[observed(CAR, SPEED, 1.0, tapped(Unregistered, 1.0))]);
 
-        let series = collector.series(&speed).expect("target is requested");
+        let series = series_of(&collector, &speed).expect("target is requested");
         assert!(series.samples().is_empty());
         assert_eq!(
             series.rejection(),

@@ -1,20 +1,43 @@
 use super::{ActiveRunner, RunOutcome, RunVerdict, WallClockStart};
 use crate::run::termination::TerminationReason;
 use crate::sim::{ReportOutputPath, RunMetadata};
-use crate::{ObservationCollector, ReportStatus, TickAction};
+use crate::{ObservationCollector, ReportStatus, Runner, TickAction};
 
 use helios_core::prelude::{AgentId, MonotonicTime};
-use helios_runtime::port::PortBus;
 use helios_runtime::AutonomyPipeline;
 use helios_sim::brain_bridge::{
     components::{AgentIdComponent, AutonomyPipelineComponent, PipelineBuildFailed},
-    RegisteredSink,
+    ObservationSinkAppExt, RegisteredSink,
 };
 use helios_sim::prelude::{AppState, SimulationSet};
 
 use bevy::prelude::*;
 
-pub struct TestRunnerPlugin;
+/// Sets up one test run on an [`App`].
+pub trait TestRunAppExt {
+    /// Holds `runner`, registers the collector it reads as an observation
+    /// sink, and adds the systems that set it up, tick it and finalize it.
+    /// The runner and its collector are only ever added together, so the
+    /// systems always find both and both describe the same run.
+    fn add_test_run(&mut self, runner: Runner) -> &mut Self;
+}
+
+impl TestRunAppExt for App {
+    fn add_test_run(&mut self, runner: Runner) -> &mut Self {
+        // Built before the runner moves into the world.
+        let collector = runner.collector();
+
+        self.add_observation_sink(collector);
+        self.insert_resource(ActiveRunner::new(runner));
+        self.add_plugins(TestRunnerPlugin);
+
+        self
+    }
+}
+
+/// The three runner systems. Added only by [`TestRunAppExt::add_test_run`],
+/// which also supplies the runner and collector they read.
+struct TestRunnerPlugin;
 
 impl Plugin for TestRunnerPlugin {
     fn build(&self, app: &mut App) {
@@ -92,14 +115,14 @@ fn on_pipeline_built_system(
 }
 
 /// System 2 — runs every `FixedUpdate` in `SimulationSet::Validation`, which is
-/// ordered after `Estimation`/`StateSync`, so the brain's outputs and the oracle
-/// channels are already fresh when the runner observes the buses.
+/// ordered after `SimulationSet::Observation`, so the collector already holds
+/// what the brain reported this tick when the runner judges it.
 ///
 /// The runner owns termination (via the run file's `termination` block); this
 /// system only honors the `Terminate` it is handed by stashing the reason and
 /// routing to `Flushing`. No host-side timeout lives here.
 fn tick_system(
-    query: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
+    collector: Res<RegisteredSink<ObservationCollector>>,
     time: Res<Time<Fixed>>,
     mut runner: ResMut<ActiveRunner>,
     mut outcome: ResMut<RunOutcome>,
@@ -119,13 +142,7 @@ fn tick_system(
     // never disagree.
     let now = MonotonicTime(time.elapsed_secs_f64());
 
-    let mut pairs: Vec<(AgentId, &PortBus)> = Vec::new();
-
-    for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
-        pairs.push((agent_id_comp.0.clone(), autonomy_pipeline_comp.0.bus()));
-    }
-
-    match runner.0.tick(now, &pairs) {
+    match runner.0.tick(now, &collector.0) {
         TickAction::Terminate { reason } => {
             outcome.terminate(now, reason);
             next_state.set(AppState::Flushing);
@@ -143,7 +160,7 @@ fn tick_system(
 // clippy's default threshold; that's idiomatic here, not a smell.
 #[allow(clippy::too_many_arguments)]
 fn finalize_system(
-    query: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
+    collector: Res<RegisteredSink<ObservationCollector>>,
     // `Time<Fixed>`, not the generic `Time`. This system runs on a state
     // transition, which the frame orders *before* the fixed loop — so generic
     // `Time` here resolves to `Time<Virtual>` and reads a moment up to one
@@ -172,15 +189,14 @@ fn finalize_system(
     // misleading stand-in like the time budget.
     let reason = outcome.reason.clone().unwrap_or(TerminationReason::Aborted);
 
-    // TODO(perf): SmallVec / scratch buffer at swarm scale.
-    let mut pairs: Vec<(AgentId, &PortBus)> = Vec::new();
-    for (agent_id_comp, autonomy_pipeline_comp) in query.iter() {
-        pairs.push((agent_id_comp.0.clone(), autonomy_pipeline_comp.0.bus()));
-    }
-
-    let report = runner
-        .0
-        .finalize(now, wall_secs, run_name, reason, &pairs, metadata.seed);
+    let report = runner.0.finalize(
+        now,
+        wall_secs,
+        run_name,
+        reason,
+        &collector.0,
+        metadata.seed,
+    );
 
     // Two surfaces: machine-readable TOML for CI, human summary for the console.
     // A failed write is logged, not panicked — runtime paths never unwrap.

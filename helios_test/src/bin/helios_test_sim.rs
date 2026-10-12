@@ -3,7 +3,8 @@
 //!
 //! Exit codes are the contract:
 //! - `0` — the run passed.
-//! - `1` — the run ran but an assertion failed (or a target was unresolved).
+//! - `1` — the run ran but an assertion failed, or setup found one it can't
+//!   judge.
 //! - `2` — the run file is malformed: unreadable, unparseable, incoherent, or
 //!   it names a scenario that doesn't exist. Detected *before* the sim starts.
 //!
@@ -17,12 +18,11 @@ use helios_test::{
     monte_carlo::seed_for_run,
     report::aggregate::{console::print, toml_writer::write},
     sim::{
-        ActiveRunner, MetricsCollector, MetricsPlugin, ReportOutputPath, RunMetadata, RunOutcome,
-        RunVerdict, WallClockStart,
+        MetricsCollector, MetricsPlugin, ReportOutputPath, RunMetadata, RunOutcome, RunVerdict,
+        TestRunAppExt, WallClockStart,
     },
-    standard_extractors,
     statistics::{standard_statistics, StatId},
-    AggregateReport, ObservationCollector, Runner,
+    AggregateReport, Runner,
 };
 
 use clap::Parser;
@@ -137,13 +137,13 @@ fn main() {
         // metrics alive to be read afterward.
         let collector = MetricsCollector::new();
 
-        // The test layer wraps the host: resources first, then the plugin that
-        // registers the three runner systems against them.
+        // The test layer wraps the host: the run's resources, and the runner
+        // with the systems that pump it.
         app.insert_resource(collector.clone()); // the world's clone of the collector
         app.insert_resource(RunMetadata::new(i as u32, seed));
 
         // Fresh runner per run: `Runner::new` re-validates and allocates fresh
-        // per-run state (empty registry, pending latches). Pre-flight already
+        // per-run state (awaiting its pipelines, pending latches). Pre-flight already
         // proved coherence, so an Err here is unexpected — treat it as exit 2.
         let runner = match Runner::new(run.clone()) {
             Ok(runner) => runner,
@@ -152,13 +152,9 @@ fn main() {
                 std::process::exit(2);
             }
         };
-        app.insert_resource(ActiveRunner::new(runner));
-        // Fresh per run, like the runner: asks the host to record every value
-        // the run's assertions name.
-        app.add_observation_sink(ObservationCollector::new(
-            run.assertions().iter().map(|assertion| assertion.target()),
-            standard_extractors(),
-        ));
+        // The runner and the collector it reads go in together: the collector
+        // asks the host to record every value the run's assertions name.
+        app.add_test_run(runner);
         app.insert_resource(WallClockStart::new(std::time::Instant::now()));
         app.insert_resource(RunOutcome::new(run_name.clone()));
         app.init_resource::<RunVerdict>(); // defaults to Failed (fail-closed)
@@ -166,7 +162,6 @@ fn main() {
                                            // each run gets a `.run{i}` suffix so the N single-run reports don't
                                            // clobber each other (and `--out` stays free for the aggregate below).
         app.insert_resource(ReportOutputPath::new(per_run_report_path(&args.out, i, n)));
-        app.add_plugins(helios_test::sim::TestRunnerPlugin);
         app.add_plugins(MetricsPlugin);
 
         // `run()` returns the AppExit that `finalize` wrote (it carries the verdict

@@ -1,32 +1,40 @@
+pub mod finalize;
 pub mod lifecycle;
 pub mod resolve;
 pub mod state;
 pub mod termination_check;
 pub mod tick;
 
+#[cfg(test)]
+mod fixtures;
+
 pub use tick::TickAction;
 
 use crate::{
-    assertion::{
-        extract::{standard_extractors, ExtractorTable},
-        target::TargetRegistry,
-    },
+    assertion::{extract::standard_extractors, Assertion},
+    collector::ObservationCollector,
     run::{
         validation::{self, ValidationError},
         Run,
     },
-    runner::state::AssertionState,
+    runner::{resolve::ResolvedPlan, state::AssertionState},
 };
 
 use helios_core::prelude::MonotonicTime;
 
-/// _Per-step._ The state machine the host pumps across a run: owns the run, the
-/// resolved registry, the extractor table, per-assertion state, and the clock
-/// origin.
+/// Why a run aborts when the host ticks or finishes it without having set
+/// it up.
+const NEVER_SET_UP: &str = "the host never called on_pipeline_built";
+
+/// Why a run aborts when the host hands it a collector it wasn't set up
+/// against.
+const FOREIGN_COLLECTOR: &str = "the collector is not the one the run was set up against";
+
+/// _Per-step._ The state machine the host pumps across a run: owns the run,
+/// its phase, per-assertion state, and the clock origin.
 pub struct Runner {
     run: Run,
-    registry: TargetRegistry,
-    extractors: ExtractorTable,
+    phase: Phase,
     states: Vec<AssertionState>,
     start_time: Option<MonotonicTime>,
     setup_failures: Vec<String>,
@@ -35,8 +43,8 @@ pub struct Runner {
 impl Runner {
     /// Build a runner from a parsed run, rejecting an incoherent one up front.
     /// Validation runs here so a bad run fails at *construction*, never partway
-    /// through a simulation. The registry starts empty — it's populated later in
-    /// `on_pipeline_built`, the one moment the pipeline exists to walk.
+    /// through a simulation. It can't tick until `on_pipeline_built`, the one
+    /// moment the pipelines exist to check its assertions against.
     pub fn new(run: Run) -> Result<Self, ValidationError> {
         // Coherence check first: `?` bails with the validation error before any
         // state is allocated, so an invalid run never gets a half-built runner.
@@ -53,13 +61,7 @@ impl Runner {
 
         Ok(Self {
             run,
-            // Empty until `on_pipeline_built` walks each pipeline and registers
-            // its declared channels.
-            registry: TargetRegistry::new(),
-            // The standard f64/bool/i64 extractors. An empty table here would
-            // make every assertion fail with `NoExtractor`, since the evaluator
-            // couldn't turn any payload into a comparable value.
-            extractors: standard_extractors(),
+            phase: Phase::AwaitingPipelines,
             states,
             start_time: None,
             // Filled only if the run is doomed before it ticks. Assertions
@@ -70,15 +72,41 @@ impl Runner {
         })
     }
 
+    /// The collector this run reads: one requesting every target its
+    /// assertions name. A host builds it here, beside the runner, so the
+    /// two always describe the same run.
+    pub fn collector(&self) -> ObservationCollector {
+        ObservationCollector::new(
+            self.run.assertions().iter().map(Assertion::target),
+            standard_extractors(),
+        )
+    }
+
     /// Record that the run is unfit to produce a meaningful result, and why.
     ///
     /// Called before the first tick, by the host, for conditions no assertion
     /// can observe. Any recorded failure forces the run's verdict to
     /// [`ReportStatus::Failed`] in [`Self::finalize`], independent of how the
-    /// assertions land — including when there are none.
+    /// assertions land — including when there are none. From then on the
+    /// run judges nothing, whatever phase it was in.
     pub fn fail_setup(&mut self, reason: String) {
         self.setup_failures.push(reason);
+        self.phase = Phase::Aborted;
     }
+}
+
+/// _Per-step._ Where the run is in its life, so each step can tell whether
+/// it may judge.
+// An enum field rather than a type parameter (`Runner<Ready>`): the runner is
+// held in a Bevy resource, which can't change type in place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Phase {
+    /// Built, but not yet checked against the pipelines.
+    AwaitingPipelines,
+    /// Every assertion can be judged, from the series the plan names.
+    Ready(ResolvedPlan),
+    /// Setup failed; nothing is judged.
+    Aborted,
 }
 
 #[cfg(test)]
@@ -134,6 +162,21 @@ mod tests {
         let body = format!(r#"termination = {{ max_simulated_seconds = 5.0 }}{ASSERT}"#);
         let r = Runner::new(run_with(&body)).expect("valid run");
         assert_eq!(r.states[0].status(), &ContinuousStatus::Pending);
+    }
+
+    #[test]
+    fn a_new_runner_awaits_its_pipelines() {
+        let r = Runner::new(run_with("termination = { max_simulated_seconds = 5.0 }"))
+            .expect("valid run");
+        assert_eq!(r.phase, Phase::AwaitingPipelines);
+    }
+
+    #[test]
+    fn a_setup_failure_aborts_the_run() {
+        let mut r = Runner::new(run_with("termination = { max_simulated_seconds = 5.0 }"))
+            .expect("valid run");
+        r.fail_setup("no pipeline".to_string());
+        assert_eq!(r.phase, Phase::Aborted);
     }
 
     #[test]

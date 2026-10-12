@@ -1,15 +1,16 @@
 //! Checks, once the pipelines exist, that the run can judge every assertion:
 //! its target is a leaf its agent reports, a channel value there can be
-//! extracted, and a nondeterministic leaf is asserted on only with
-//! permission.
+//! extracted, a nondeterministic leaf is asserted on only with permission,
+//! and the collector records it.
 //!
 //! Done against what each agent declares it reports, before the first tick,
 //! so a run that could never pass stops before it starts and names every
-//! problem at once.
+//! problem at once. What the checks find is kept as the run's plan, so a
+//! tick never looks a target up again.
 
 use crate::{
     assertion::{Assertion, AssertionTarget},
-    collector::ObservationCollector,
+    collector::{ObservationCollector, Series, SeriesId},
 };
 
 use helios_core::prelude::AgentId;
@@ -24,6 +25,25 @@ use thiserror::Error;
 
 /// Between the problems of one assertion. No problem's message holds it.
 const PROBLEM_SEPARATOR: &str = " and ";
+
+/// _Pre-step._ What setup found for each assertion, kept for every tick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedPlan {
+    /// Each assertion's series in the collector, in run-file order like the
+    /// runner's states.
+    series: Vec<SeriesId>,
+}
+
+impl ResolvedPlan {
+    /// Each assertion's series in `collector`, in run-file order. `None`
+    /// when `collector` isn't the one the plan was resolved against.
+    pub(super) fn series_in<'c>(
+        &self,
+        collector: &'c ObservationCollector,
+    ) -> Option<Vec<&'c Series>> {
+        self.series.iter().map(|id| collector.series(*id)).collect()
+    }
+}
 
 /// _Pre-step._ An assertion the run can't judge, and every reason why.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -56,6 +76,10 @@ pub enum TargetProblem {
     /// `allow_nondeterministic = true`.
     #[error("it is nondeterministic (set allow_nondeterministic = true to assert on it)")]
     Nondeterministic,
+    /// The collector doesn't record it: the host built the collector from
+    /// another run's assertions.
+    #[error("the run's collector doesn't record it")]
+    Unrequested,
 }
 
 /// What one agent reports, listed once for every assertion to search.
@@ -65,13 +89,13 @@ struct Catalog<'a> {
     observables: Vec<(&'a str, Observable)>,
 }
 
-/// Every assertion in `assertions` the run can't judge, in run-file order.
-/// Empty when it can judge them all.
+/// The plan for judging `assertions`, or every one the run can't judge, in
+/// run-file order.
 pub(super) fn resolve(
     assertions: &[Assertion],
     pipelines: &[(AgentId, &AutonomyPipeline)],
     collector: &ObservationCollector,
-) -> Vec<UnusableAssertion> {
+) -> Result<ResolvedPlan, Vec<UnusableAssertion>> {
     let catalogs: Vec<Catalog> = pipelines
         .iter()
         .map(|(agent, pipeline)| Catalog {
@@ -80,28 +104,35 @@ pub(super) fn resolve(
         })
         .collect();
 
-    assertions
-        .iter()
-        .enumerate()
-        .filter_map(|(index, assertion)| {
-            let problems = check(assertion, &catalogs, collector);
-            (!problems.is_empty()).then(|| UnusableAssertion {
+    let mut series = Vec::with_capacity(assertions.len());
+    let mut unusable = Vec::new();
+    for (index, assertion) in assertions.iter().enumerate() {
+        match check(assertion, &catalogs, collector) {
+            Ok(id) => series.push(id),
+            Err(problems) => unusable.push(UnusableAssertion {
                 number: index + 1,
                 target: assertion.target().clone(),
                 problems,
-            })
-        })
-        .collect()
+            }),
+        }
+    }
+
+    if unusable.is_empty() {
+        Ok(ResolvedPlan { series })
+    } else {
+        Err(unusable)
+    }
 }
 
-/// Every reason the run can't judge `assertion`, checked against the one
-/// agent its target names. A target its agent doesn't report has no other
-/// properties to check, so that problem is reported alone.
+/// The series `assertion` is judged from, or every reason the run can't
+/// judge it, checked against the one agent its target names. A target its
+/// agent doesn't report has no other properties to check, so that problem
+/// is reported alone.
 fn check(
     assertion: &Assertion,
     catalogs: &[Catalog],
     collector: &ObservationCollector,
-) -> Vec<TargetProblem> {
+) -> Result<SeriesId, Vec<TargetProblem>> {
     let target = assertion.target();
     let node = target.node().as_ref();
     let leaf = target.leaf().as_ref();
@@ -110,7 +141,7 @@ fn check(
         .iter()
         .find(|catalog| catalog.agent == target.agent())
     else {
-        return vec![TargetProblem::UnknownAgent];
+        return Err(vec![TargetProblem::UnknownAgent]);
     };
     let Some(observable) = catalog
         .observables
@@ -118,7 +149,7 @@ fn check(
         .find(|(name, observable)| *name == node && observable.leaf_name().as_ref() == leaf)
         .map(|(_, observable)| observable)
     else {
-        return vec![TargetProblem::Unreported];
+        return Err(vec![TargetProblem::Unreported]);
     };
 
     let mut problems = Vec::new();
@@ -134,7 +165,15 @@ fn check(
             problems.push(TargetProblem::NoExtractor(type_name))
         }
     }
-    problems
+    let series = collector.series_id(target);
+    if series.is_none() {
+        problems.push(TargetProblem::Unrequested);
+    }
+
+    match series {
+        Some(id) if problems.is_empty() => Ok(id),
+        _ => Err(problems),
+    }
 }
 
 /// `items` on one line, `separator` between each.
@@ -254,13 +293,64 @@ mod tests {
         }
     }
 
-    fn errors(assertions: &[Assertion]) -> Vec<UnusableAssertion> {
+    /// `assertions` resolved against [`pipeline`] and a collector built for
+    /// `requested`.
+    fn resolve_with(
+        assertions: &[Assertion],
+        requested: &[AssertionTarget],
+    ) -> (
+        ObservationCollector,
+        Result<ResolvedPlan, Vec<UnusableAssertion>>,
+    ) {
         let pipeline = pipeline();
-        let collector = ObservationCollector::new(
-            assertions.iter().map(Assertion::target),
-            standard_extractors(),
+        let collector = ObservationCollector::new(requested, standard_extractors());
+        let resolved = resolve(assertions, &[(AgentId::new(CAR), &pipeline)], &collector);
+        (collector, resolved)
+    }
+
+    /// The assertions the run can't judge, against a collector built for
+    /// them.
+    fn errors(assertions: &[Assertion]) -> Vec<UnusableAssertion> {
+        let targets: Vec<AssertionTarget> = assertions.iter().map(|a| a.target().clone()).collect();
+        resolve_with(assertions, &targets)
+            .1
+            .err()
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn the_plan_names_each_assertions_series_in_run_file_order() {
+        // Two assertions on NIS share one series; SPEED has its own.
+        let nis = estimator(NIS);
+        let speed = estimator(SPEED);
+        let (collector, resolved) = resolve_with(
+            &[
+                assertion(nis.clone(), false),
+                assertion(speed.clone(), false),
+                assertion(nis.clone(), true),
+            ],
+            &[nis.clone(), speed.clone()],
         );
-        resolve(assertions, &[(AgentId::new(CAR), &pipeline)], &collector)
+
+        let ids = |t: &AssertionTarget| collector.series_id(t).expect("target is requested");
+        assert_eq!(
+            resolved,
+            Ok(ResolvedPlan {
+                series: vec![ids(&nis), ids(&speed), ids(&nis)],
+            })
+        );
+    }
+
+    #[test]
+    fn a_target_the_collector_does_not_record_is_unrequested() {
+        // The collector was built for another run's assertions.
+        let nis = estimator(NIS);
+        let (_, resolved) = resolve_with(&[assertion(nis.clone(), false)], &[estimator(SPEED)]);
+
+        assert_eq!(
+            resolved,
+            Err(vec![unusable(1, nis, vec![TargetProblem::Unrequested])])
+        );
     }
 
     #[test]

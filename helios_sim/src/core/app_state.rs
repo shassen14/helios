@@ -115,6 +115,11 @@ pub enum SimulationSet {
     /// Sync ground-truth state back from Avian3D after the physics step.
     StateSync,
 
+    /// Hand the tick's observation batch to every registered sink. After
+    /// `StateSync` and before `Validation`, so a per-tick check reads sinks
+    /// that already hold the tick.
+    Observation,
+
     /// Post-`StateSync` observation slot: runs last, once ground-truth state and
     /// the oracle channels are fresh. External harnesses, data logging, and
     /// per-tick checks read the buses here. Empty within this crate itself —

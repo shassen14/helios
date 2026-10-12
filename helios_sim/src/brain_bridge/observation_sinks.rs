@@ -77,12 +77,12 @@ impl ObservationSinkAppExt for App {
 
         self.insert_resource(RegisteredSink(sink));
 
-        // `Validation` runs after `BrainTick`, so the batch holds the tick
-        // that just ran.
+        // `Observation` runs after `BrainTick`, so the batch holds the tick
+        // that just ran, and before `Validation`, where a sink is read.
         self.add_systems(
             FixedUpdate,
             feed_sink::<S>
-                .in_set(SimulationSet::Validation)
+                .in_set(SimulationSet::Observation)
                 .run_if(in_state(AppState::Running)),
         );
 

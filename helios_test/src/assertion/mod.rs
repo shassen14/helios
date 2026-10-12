@@ -7,9 +7,9 @@ pub mod terminal;
 
 pub use condition::{AssertionValue, Condition};
 use continuous::ContinuousAssertion;
-use extract::ExtractError;
 pub use target::AssertionTarget;
 use terminal::TerminalAssertion;
+use crate::collector::Rejection;
 
 use serde::Deserialize;
 
@@ -67,9 +67,8 @@ impl Assertion {
 
 /// _Per-step._ The evaluator's verdict for one assertion, produced each tick.
 // Three outcomes, not two: `Pending` is distinct from `Failed` because a target
-// whose channel hasn't published yet is not a failure — it just has no value to
-// judge. A continuous assertion sits `Pending` until first data arrives; a
-// terminal one resolved as `Pending` at finalize means "never observed".
+// with no value yet is not a failure mid-run — it just has nothing to judge. At
+// finalize an assertion that never saw a value fails as `NoSamples` instead.
 // Derives are required by the evaluator's tests — `assert_eq!` against a result
 // needs `PartialEq`, and failure output needs `Debug`.
 #[derive(Clone, Debug, PartialEq)]
@@ -86,8 +85,8 @@ pub enum AssertionResult {
 
 impl AssertionResult {
     /// The observed value carried out of a result, if any. `Passed` always has
-    /// one; `Failed` has one for a condition failure but not for a resolve /
-    /// extract failure; `Pending` never does. Consuming `self`, since
+    /// one; `Failed` has one for a condition failure but not for a rejected
+    /// value or no samples; `Pending` never does. Consuming `self`, since
     /// `finalize` owns the result locally and only needs the value moved out
     /// into the report entry.
     pub(crate) fn into_actual(self) -> Option<AssertionValue> {
@@ -99,17 +98,17 @@ impl AssertionResult {
     }
 }
 
-/// _Per-step._ Which evaluator stage rejected an assertion.
-// Each variant names the evaluator stage that rejected the assertion, so the
-// report can phrase the cause precisely instead of a generic "failed":
-// target didn't resolve, no extractor for the payload type, a payload unlike
-// its own type id, types didn't match, the condition returned false, or
-// `WithinRange` lacked usable bounds.
+/// _Per-step._ Why an assertion failed.
+// Each variant names a distinct cause, so the report can phrase it precisely
+// instead of a generic "failed": the target's values were turned away on
+// arrival, none arrived, a value of the wrong type, the condition returned
+// false, or `WithinRange` lacked usable bounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureKind {
-    UnresolvedTarget,
-    NoExtractor,
-    PayloadMismatch,
+    /// A value arrived for the target but couldn't be read.
+    Rejected(Rejection),
+    /// No value arrived for the target in the whole run.
+    NoSamples,
     TypeMismatch,
     ConditionFailed,
     InvalidBounds,
@@ -118,21 +117,11 @@ pub enum FailureKind {
 impl std::fmt::Display for FailureKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FailureKind::UnresolvedTarget => write!(f, "unresolved target"),
-            FailureKind::NoExtractor => write!(f, "no extractor"),
-            FailureKind::PayloadMismatch => write!(f, "payload mismatch"),
+            FailureKind::Rejected(rejection) => write!(f, "value rejected: {rejection}"),
+            FailureKind::NoSamples => write!(f, "no samples"),
             FailureKind::TypeMismatch => write!(f, "type mismatch"),
             FailureKind::ConditionFailed => write!(f, "condition failed"),
             FailureKind::InvalidBounds => write!(f, "invalid bounds"),
-        }
-    }
-}
-
-impl From<ExtractError> for FailureKind {
-    fn from(error: ExtractError) -> Self {
-        match error {
-            ExtractError::NoExtractor { .. } => FailureKind::NoExtractor,
-            ExtractError::PayloadMismatch { .. } => FailureKind::PayloadMismatch,
         }
     }
 }

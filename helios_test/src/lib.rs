@@ -14,12 +14,12 @@
 //!   `ScenarioRef`, `ObservationRef`, `Termination`, `OnAssertion`,
 //!   `ValidationError`, `Assertion`, `TerminalAssertion`,
 //!   `ContinuousAssertion`, `MalformedTarget`, `UnusableAssertion`,
-//!   `TargetProblem`.
+//!   `TargetProblem`, `ResolvedPlan`.
 //! - **`_Per-step._`** — live state and verdicts produced *while* ticking; no
 //!   serde, never serialized. `Runner`, `AssertionState`, `ContinuousStatus`,
 //!   `TickAction`, `AssertionResult`, `FailureKind`, `ConditionError`,
 //!   `TerminationReason`, `TargetRegistry`, `ExtractorTable`, `Extractor`,
-//!   `ObservationCollector`, `Series`, `Sample`.
+//!   `ObservationCollector`, `SeriesId`, `Series`, `Sample`, `Rejection`.
 //! - **`_Per/Post-step._`** — measurement data filled *during* a run, then
 //!   read back *after* it to build the serialized aggregate. `RunMetrics`.
 //! - **`_Post-step._`** — built *after* the run and serialized out. Its job is

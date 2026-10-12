@@ -12,7 +12,7 @@ mod metrics;
 mod plugin;
 
 pub use metrics::MetricsPlugin;
-pub use plugin::TestRunnerPlugin;
+pub use plugin::TestRunAppExt;
 
 use crate::report::ReportStatus;
 use crate::run::termination::TerminationReason;
@@ -28,13 +28,13 @@ use std::time::Instant;
 
 /// Holds the live [`Runner`] across ticks. Wraps it because `Runner` lives in
 /// the Bevy-free base crate and cannot derive `Resource` itself. Mutated by
-/// systems 1–2 (`ResMut`), read by system 3 (`Res`). Inserted by the bin so a
-/// `Runner::new` failure becomes a clean exit code *before* the app spins up.
+/// systems 1–2 (`ResMut`), read by system 3 (`Res`). Inserted by
+/// [`TestRunAppExt::add_test_run`], beside the collector the runner reads.
 #[derive(Resource)]
 pub struct ActiveRunner(Runner);
 
 impl ActiveRunner {
-    pub fn new(runner: Runner) -> Self {
+    fn new(runner: Runner) -> Self {
         Self(runner)
     }
 }
