@@ -1,6 +1,6 @@
 pub mod finalize;
-pub mod lifecycle;
 pub mod resolve;
+pub mod setup;
 pub mod state;
 pub mod termination_check;
 pub mod tick;

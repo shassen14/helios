@@ -20,9 +20,9 @@ impl Runner {
         &mut self,
         pipelines: &[(AgentId, &AutonomyPipeline)],
         collector: &ObservationCollector,
-    ) -> Result<(), LifecycleError> {
+    ) -> Result<(), SetupError> {
         if self.phase != Phase::AwaitingPipelines {
-            return Err(LifecycleError::AlreadySetUp);
+            return Err(SetupError::AlreadySetUp);
         }
 
         match resolve(self.run.assertions(), pipelines, collector) {
@@ -32,7 +32,7 @@ impl Runner {
             }
             Err(unusable) => {
                 self.phase = Phase::Aborted;
-                Err(LifecycleError::UnusableAssertions(unusable))
+                Err(SetupError::UnusableAssertions(unusable))
             }
         }
     }
@@ -43,7 +43,7 @@ impl Runner {
 const ASSERTION_SEPARATOR: &str = "; ";
 
 #[derive(Debug, Clone, PartialEq, Error)]
-pub enum LifecycleError {
+pub enum SetupError {
     /// Assertions the run can't judge, each with its reasons, so the
     /// operator sees every one to fix at once.
     #[error(
@@ -110,7 +110,7 @@ mod tests {
         let collector = r.collector();
         assert_eq!(
             r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &collector),
-            Err(LifecycleError::UnusableAssertions(vec![
+            Err(SetupError::UnusableAssertions(vec![
                 UnusableAssertion {
                     number: 1,
                     target: target("agent.car.estimator.a"),
@@ -136,7 +136,7 @@ mod tests {
 
         assert_eq!(
             r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &collector),
-            Err(LifecycleError::AlreadySetUp)
+            Err(SetupError::AlreadySetUp)
         );
         assert!(matches!(r.phase, Phase::Ready(_)));
     }

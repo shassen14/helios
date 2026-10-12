@@ -87,7 +87,7 @@ pub(crate) fn is_path_segment(name: &str) -> bool {
 /// `oracle.pose`: `.` is the one level separator in paths, and `_` stays a
 /// word joiner. An unnamed channel falls back to the last part of its type
 /// name in snake_case (`FrameAwareState` → `frame_aware_state`).
-pub fn channel_to_path_segment(key: &ChannelKey) -> String {
+pub(crate) fn channel_to_path_segment(key: &ChannelKey) -> String {
     let raw = key.instance();
     if !raw.trim().is_empty() {
         raw.replace('/', PATH_SEPARATOR)
