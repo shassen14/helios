@@ -7,8 +7,8 @@ use crate::{
 
 /// Decide whether the run should stop this tick, and if so why. Pure and
 /// read-only: it judges nothing itself, it only reads the verdicts the
-/// evaluator already produced (`results`, one per assertion this tick) against
-/// the run's stop config. `Some(reason)` means stop; `None` means keep going.
+/// evaluator already produced (`results`, one per assertion this tick, each
+/// with the assertion's number) against the run's stop config. `Some(reason)` means stop; `None` means keep going.
 /// The caller acts on the decision — this never terminates anything.
 ///
 /// Precedence: an assertion outcome is checked before the time budget, because
@@ -18,24 +18,26 @@ pub fn check(
     now: MonotonicTime,
     start: MonotonicTime,
     termination: &Termination,
-    results: &[AssertionResult],
+    results: &[(usize, AssertionResult)],
 ) -> Option<TerminationReason> {
     // Assertion trigger. Both variants do the same thing — find the first
     // result matching the watched state and report *that* result — so they
     // share one shape and differ only in the pattern. Reporting the matched
     // result (rather than a freshly built `Passed`) means the `Failed` case
-    // carries its kind and observed value through to the report unchanged.
+    // carries its kind and observed value through to the report unchanged,
+    // and its number says which assertion it was.
     if let Some(on_assertion) = termination.on_assertion() {
         let triggered = match on_assertion {
             OnAssertion::AnyPassed => results
                 .iter()
-                .find(|r| matches!(r, AssertionResult::Passed { .. })),
+                .find(|(_, r)| matches!(r, AssertionResult::Passed { .. })),
             OnAssertion::AnyFailed => results
                 .iter()
-                .find(|r| matches!(r, AssertionResult::Failed { .. })),
+                .find(|(_, r)| matches!(r, AssertionResult::Failed { .. })),
         };
-        if let Some(result) = triggered {
+        if let Some((number, result)) = triggered {
             return Some(TerminationReason::OnAssertion {
+                number: *number,
                 result: result.clone(),
             });
         }
@@ -91,7 +93,7 @@ mod tests {
         // Empty termination → both triggers `None`. Even with decisive results
         // present, there's nothing configured to act on them.
         let t = term("");
-        let results = [passed(), failed()];
+        let results = [(1, passed()), (2, failed())];
         assert_eq!(check(at(100.0), at(0.0), &t, &results), None);
     }
 
@@ -130,36 +132,43 @@ mod tests {
     #[test]
     fn any_passed_fires_on_a_pass() {
         let t = term(r#"on_assertion = "any_passed""#);
-        let results = [AssertionResult::Pending, passed()];
+        let results = [(1, AssertionResult::Pending), (2, passed())];
         assert_eq!(
             check(at(0.0), at(0.0), &t, &results),
-            Some(TerminationReason::OnAssertion { result: passed() })
+            Some(TerminationReason::OnAssertion {
+                number: 2,
+                result: passed(),
+            })
         );
     }
 
     #[test]
     fn any_passed_ignores_failures_and_pending() {
         let t = term(r#"on_assertion = "any_passed""#);
-        let results = [AssertionResult::Pending, failed()];
+        let results = [(1, AssertionResult::Pending), (2, failed())];
         assert_eq!(check(at(0.0), at(0.0), &t, &results), None);
     }
 
     #[test]
     fn any_failed_fires_and_carries_the_failing_result() {
         // The reason must forward the real failure (kind + observed value), not
-        // a placeholder, so the report can explain what tripped.
+        // a placeholder, and the number of the assertion that failed, so the
+        // report can explain what tripped.
         let t = term(r#"on_assertion = "any_failed""#);
-        let results = [passed(), failed()];
+        let results = [(1, passed()), (2, failed())];
         assert_eq!(
             check(at(0.0), at(0.0), &t, &results),
-            Some(TerminationReason::OnAssertion { result: failed() })
+            Some(TerminationReason::OnAssertion {
+                number: 2,
+                result: failed(),
+            })
         );
     }
 
     #[test]
     fn any_failed_ignores_passes_and_pending() {
         let t = term(r#"on_assertion = "any_failed""#);
-        let results = [passed(), AssertionResult::Pending];
+        let results = [(1, passed()), (2, AssertionResult::Pending)];
         assert_eq!(check(at(0.0), at(0.0), &t, &results), None);
     }
 
@@ -173,10 +182,13 @@ mod tests {
             on_assertion = "any_failed"
             "#,
         );
-        let results = [failed()];
+        let results = [(1, failed())];
         assert_eq!(
             check(at(10.0), at(0.0), &t, &results),
-            Some(TerminationReason::OnAssertion { result: failed() })
+            Some(TerminationReason::OnAssertion {
+                number: 1,
+                result: failed(),
+            })
         );
     }
 
@@ -189,7 +201,7 @@ mod tests {
             on_assertion = "any_failed"
             "#,
         );
-        let results = [passed()];
+        let results = [(1, passed())];
         assert_eq!(
             check(at(6.0), at(0.0), &t, &results),
             Some(TerminationReason::MaxSimulatedSeconds)

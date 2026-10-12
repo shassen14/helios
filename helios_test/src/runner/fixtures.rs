@@ -2,7 +2,7 @@
 //! estimator declares one scalar leaf, and a collector that leaf is reported
 //! to.
 
-use super::Runner;
+use super::{state::AssertionState, Phase, Runner};
 use crate::{collector::ObservationCollector, run::Run};
 use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
 use helios_runtime::{
@@ -125,4 +125,13 @@ pub(super) fn report(collector: &mut ObservationCollector, agent: &str, secs: f6
             value: ObservedValue::Scalar(value),
         },
     }]);
+}
+
+/// The state of each of `runner`'s assertions, in run-file order; none
+/// unless the run is ready.
+pub(super) fn states(runner: &Runner) -> Vec<&AssertionState> {
+    match &runner.phase {
+        Phase::Ready(plan) => plan.states().collect(),
+        Phase::AwaitingPipelines | Phase::Aborted => Vec::new(),
+    }
 }

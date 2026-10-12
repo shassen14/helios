@@ -116,21 +116,27 @@ pub enum TerminatedBy {
     Aborted,
     /// The simulated-time budget elapsed.
     TimeBudget,
-    /// An assertion reached the configured `on_assertion` state; `outcome` is
-    /// the triggering assertion's verdict.
-    Assertion { outcome: AssertionStatus },
+    /// An assertion reached the configured `on_assertion` state; `number` is
+    /// its position in the run file, counting from 1, and `outcome` its
+    /// verdict.
+    Assertion {
+        number: usize,
+        outcome: AssertionStatus,
+    },
 }
 
 /// Project the per-step stop reason into the report's stable vocabulary.
 /// `MaxSimulatedSeconds` becomes `TimeBudget`; an assertion-triggered stop
-/// carries the triggering result reduced to a bare `AssertionStatus`, so the
+/// carries the triggering assertion's number and its result reduced to a bare
+/// `AssertionStatus`, so the
 /// live `AssertionResult` / `FailureKind` types never reach the serialized form.
 impl From<&TerminationReason> for TerminatedBy {
     fn from(value: &TerminationReason) -> Self {
         match value {
             TerminationReason::Aborted => TerminatedBy::Aborted,
             TerminationReason::MaxSimulatedSeconds => TerminatedBy::TimeBudget,
-            TerminationReason::OnAssertion { result } => TerminatedBy::Assertion {
+            TerminationReason::OnAssertion { number, result } => TerminatedBy::Assertion {
+                number: *number,
                 outcome: AssertionStatus::from(result),
             },
         }

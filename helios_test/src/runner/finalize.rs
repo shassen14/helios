@@ -35,13 +35,13 @@ impl Runner {
         // A host that finalizes without having set the run up, or with
         // another run's collector, fails it here as `tick` would have.
         let mut setup_failures = self.setup_failures.clone();
-        let series = match &self.phase {
+        let judged = match &self.phase {
             Phase::Ready(plan) => {
-                let series = plan.series_in(collector);
-                if series.is_none() {
+                let judged = plan.with_series(collector);
+                if judged.is_none() {
                     setup_failures.push(FOREIGN_COLLECTOR.to_string());
                 }
-                series
+                judged
             }
             Phase::AwaitingPipelines => {
                 setup_failures.push(NEVER_SET_UP.to_string());
@@ -56,28 +56,31 @@ impl Runner {
         let mut all_passed = true;
 
         for (i, assertion) in self.run.assertions().iter().enumerate() {
-            let state = &self.states[i];
+            // This assertion's series and state; `None` when the run isn't
+            // ready to judge. A pair of references is `Copy`, so `copied`
+            // lifts it out of the borrowed list.
+            let entry = judged.as_ref().and_then(|j| j.get(i)).copied();
             // Each branch produces the two things the entry needs — a verdict
             // and the observed value. Continuous reads its latch (its
             // `last_value` is already an `Option`); terminal is judged now and
             // the value pulled from the fresh result.
-            let (status, actual) = match (&series, assertion) {
+            let (status, actual) = match (entry, assertion) {
                 (None, _) => (AssertionStatus::Pending, None),
                 // Never saw a sample: fails as no samples.
-                (Some(_), Assertion::Continuous(_))
+                (Some((_, state)), Assertion::Continuous(_))
                     if *state.status() == ContinuousStatus::Pending =>
                 {
                     (AssertionStatus::Failed, None)
                 }
-                (Some(_), Assertion::Continuous(_)) => (
+                (Some((_, state)), Assertion::Continuous(_)) => (
                     AssertionStatus::from(state.status()),
                     state.last_value().clone(),
                 ),
-                (Some(series), Assertion::Terminal(_)) => {
+                (Some((series, state)), Assertion::Terminal(_)) => {
                     let result = match evaluate_latest(
                         assertion,
-                        series[i].rejection(),
-                        state.reached(series[i].samples()),
+                        series.rejection(),
+                        state.reached(series.samples()),
                     ) {
                         AssertionResult::Pending => AssertionResult::Failed {
                             kind: FailureKind::NoSamples,

@@ -6,11 +6,13 @@
 //! Done against what each agent declares it reports, before the first tick,
 //! so a run that could never pass stops before it starts and names every
 //! problem at once. What the checks find is kept as the run's plan, so a
-//! tick never looks a target up again.
+//! tick never looks a target up again, and the plan carries each assertion's
+//! state, so only a run that can judge has any.
 
 use crate::{
     assertion::{Assertion, AssertionTarget},
     collector::{ObservationCollector, Series, SeriesId},
+    runner::state::AssertionState,
 };
 
 use helios_core::prelude::AgentId;
@@ -26,23 +28,62 @@ use thiserror::Error;
 /// Between the problems of one assertion. No problem's message holds it.
 const PROBLEM_SEPARATOR: &str = " and ";
 
-/// _Pre-step._ What setup found for each assertion, kept for every tick.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// _Per-step._ What setup found for each assertion, and the state each
+/// tick folds into it.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedPlan {
-    /// Each assertion's series in the collector, in run-file order like the
-    /// runner's states.
-    series: Vec<SeriesId>,
+    /// One per assertion, in run-file order.
+    entries: Vec<PlanEntry>,
 }
 
 impl ResolvedPlan {
-    /// Each assertion's series in `collector`, in run-file order. `None`
-    /// when `collector` isn't the one the plan was resolved against.
-    pub(super) fn series_in<'c>(
-        &self,
+    /// Each assertion's series in `collector` beside its state, in run-file
+    /// order. `None` when `collector` isn't the one the plan was resolved
+    /// against.
+    pub(super) fn with_series<'p, 'c>(
+        &'p self,
         collector: &'c ObservationCollector,
-    ) -> Option<Vec<&'c Series>> {
-        self.series.iter().map(|id| collector.series(*id)).collect()
+    ) -> Option<Vec<(&'c Series, &'p AssertionState)>> {
+        self.entries
+            .iter()
+            .map(|entry| Some((collector.series(entry.series)?, &entry.state)))
+            .collect()
     }
+
+    /// As [`with_series`](Self::with_series), with each assertion's number
+    /// and its state open to update.
+    pub(super) fn with_series_mut<'p, 'c>(
+        &'p mut self,
+        collector: &'c ObservationCollector,
+    ) -> Option<Vec<(usize, &'c Series, &'p mut AssertionState)>> {
+        self.entries
+            .iter_mut()
+            .map(|entry| {
+                Some((
+                    entry.number,
+                    collector.series(entry.series)?,
+                    &mut entry.state,
+                ))
+            })
+            .collect()
+    }
+
+    /// Each assertion's state, in run-file order.
+    #[cfg(test)]
+    pub(super) fn states(&self) -> impl Iterator<Item = &AssertionState> {
+        self.entries.iter().map(|entry| &entry.state)
+    }
+}
+
+/// One assertion in the plan: its number, the series it is judged from,
+/// and its state so far.
+#[derive(Debug, Clone, PartialEq)]
+struct PlanEntry {
+    /// Its position in the run file, counting from 1, as in
+    /// [`UnusableAssertion`].
+    number: usize,
+    series: SeriesId,
+    state: AssertionState,
 }
 
 /// _Pre-step._ An assertion the run can't judge, and every reason why.
@@ -104,13 +145,18 @@ pub(super) fn resolve(
         })
         .collect();
 
-    let mut series = Vec::with_capacity(assertions.len());
+    let mut entries = Vec::with_capacity(assertions.len());
     let mut unusable = Vec::new();
     for (index, assertion) in assertions.iter().enumerate() {
+        let number = index + 1;
         match check(assertion, &catalogs, collector) {
-            Ok(id) => series.push(id),
+            Ok(series) => entries.push(PlanEntry {
+                number,
+                series,
+                state: AssertionState::new(),
+            }),
             Err(problems) => unusable.push(UnusableAssertion {
-                number: index + 1,
+                number,
                 target: assertion.target().clone(),
                 problems,
             }),
@@ -118,7 +164,7 @@ pub(super) fn resolve(
     }
 
     if unusable.is_empty() {
-        Ok(ResolvedPlan { series })
+        Ok(ResolvedPlan { entries })
     } else {
         Err(unusable)
     }
@@ -319,8 +365,9 @@ mod tests {
     }
 
     #[test]
-    fn the_plan_names_each_assertions_series_in_run_file_order() {
-        // Two assertions on NIS share one series; SPEED has its own.
+    fn the_plan_numbers_each_assertion_and_names_its_series_in_run_file_order() {
+        // Two assertions on NIS share one series; SPEED has its own. Each
+        // starts with a fresh state of its own.
         let nis = estimator(NIS);
         let speed = estimator(SPEED);
         let (collector, resolved) = resolve_with(
@@ -332,11 +379,15 @@ mod tests {
             &[nis.clone(), speed.clone()],
         );
 
-        let ids = |t: &AssertionTarget| collector.series_id(t).expect("target is requested");
+        let entry = |number, t: &AssertionTarget| PlanEntry {
+            number,
+            series: collector.series_id(t).expect("target is requested"),
+            state: AssertionState::new(),
+        };
         assert_eq!(
             resolved,
             Ok(ResolvedPlan {
-                series: vec![ids(&nis), ids(&speed), ids(&nis)],
+                entries: vec![entry(1, &nis), entry(2, &speed), entry(3, &nis)],
             })
         );
     }

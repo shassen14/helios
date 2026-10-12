@@ -27,7 +27,7 @@ impl Runner {
         let aborted = TickAction::Terminate {
             reason: TerminationReason::Aborted,
         };
-        let plan = match &self.phase {
+        let plan = match &mut self.phase {
             Phase::Ready(plan) => plan,
             Phase::Aborted => return aborted,
             Phase::AwaitingPipelines => {
@@ -35,7 +35,7 @@ impl Runner {
                 return aborted;
             }
         };
-        let Some(series) = plan.series_in(collector) else {
+        let Some(entries) = plan.with_series_mut(collector) else {
             self.fail_setup(FOREIGN_COLLECTOR.to_string());
             return aborted;
         };
@@ -48,24 +48,27 @@ impl Runner {
         // Judge every assertion on the samples that arrived since the last
         // tick. Terminal assertions are judged too, because the stop-decision
         // reads them for `on_assertion` triggers; only continuous ones latch.
-        // `self.run` and `self.states` are disjoint fields, so the immutable
-        // borrow of one and the mutable borrow of the other coexist.
-        let results: Vec<AssertionResult> = self
+        // The states are borrowed mutably out of `self.phase` and the
+        // assertions immutably out of `self.run`: disjoint fields, so the two
+        // borrows coexist.
+        let results: Vec<(usize, AssertionResult)> = self
             .run
             .assertions()
             .iter()
-            .zip(self.states.iter_mut())
-            .zip(series)
-            .map(|((assertion, state), series)| match assertion {
-                Assertion::Continuous(_) => check_new(assertion, state, series, t),
-                Assertion::Terminal(_) => {
-                    state.reach_new(series.samples());
-                    evaluate_latest(
-                        assertion,
-                        series.rejection(),
-                        state.reached(series.samples()),
-                    )
-                }
+            .zip(entries)
+            .map(|(assertion, (number, series, state))| {
+                let result = match assertion {
+                    Assertion::Continuous(_) => check_new(assertion, state, series, t),
+                    Assertion::Terminal(_) => {
+                        state.reach_new(series.samples());
+                        evaluate_latest(
+                            assertion,
+                            series.rejection(),
+                            state.reached(series.samples()),
+                        )
+                    }
+                };
+                (number, result)
             })
             .collect();
 
@@ -128,15 +131,15 @@ mod tests {
     use crate::{
         assertion::AssertionValue,
         runner::{
-            fixtures::{at, cont, ready, report, run, term, CAR, TRUCK},
+            fixtures::{at, cont, ready, report, run, states, term, CAR, TRUCK},
             state::ContinuousStatus,
         },
     };
 
     #[test]
     fn a_failed_setup_stops_the_run_without_judging() {
-        // The value would pass, so a latch that moved would show the tick
-        // judged it.
+        // The plan, and with it every state, is gone once setup fails; an
+        // unstamped clock shows the tick returned before judging anything.
         let a = cont(CAR, 5.0);
         let (mut r, mut collector) = ready(run("max_simulated_seconds = 10.0", &[&a]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
@@ -148,7 +151,7 @@ mod tests {
                 reason: TerminationReason::Aborted,
             }
         );
-        assert_eq!(r.states[0].status(), &ContinuousStatus::Pending);
+        assert!(states(&r).is_empty());
         assert_eq!(r.start_time, None);
     }
 
@@ -186,7 +189,7 @@ mod tests {
             }
         );
         assert_eq!(r.setup_failures, [FOREIGN_COLLECTOR]);
-        assert_eq!(r.states[0].status(), &ContinuousStatus::Pending);
+        assert_eq!(r.start_time, None);
     }
 
     #[test]
@@ -198,7 +201,7 @@ mod tests {
         report(&mut collector, CAR, 0.0, 5.0);
 
         assert_eq!(r.tick(at(0.0), &collector), TickAction::Continue);
-        assert_eq!(r.states[0].status(), &ContinuousStatus::Holding);
+        assert_eq!(states(&r)[0].status(), &ContinuousStatus::Holding);
     }
 
     #[test]
@@ -213,6 +216,7 @@ mod tests {
             r.tick(at(2.0), &collector),
             TickAction::Terminate {
                 reason: TerminationReason::OnAssertion {
+                    number: 1,
                     result: AssertionResult::Failed {
                         kind: FailureKind::ConditionFailed,
                         actual: Some(AssertionValue::Float(9.0)),
@@ -221,7 +225,7 @@ mod tests {
             }
         );
         assert_eq!(
-            r.states[0].status(),
+            states(&r)[0].status(),
             &ContinuousStatus::FailedAt {
                 t: at(1.5),
                 reason: "condition failed".into(),
@@ -245,7 +249,7 @@ mod tests {
             }
         ));
         assert!(matches!(
-            r.states[0].status(),
+            states(&r)[0].status(),
             ContinuousStatus::FailedAt { .. }
         ));
     }
@@ -273,6 +277,23 @@ mod tests {
     }
 
     #[test]
+    fn an_assertion_trigger_names_the_assertion_that_tripped_it() {
+        // Both assertions are on the car; only the second fails, so the stop
+        // must say it was assertion 2, not merely that one failed.
+        let a = cont(CAR, 5.0);
+        let b = cont(CAR, 6.0);
+        let (mut r, mut collector) = ready(run("on_assertion = \"any_failed\"", &[&a, &b]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 5.0);
+
+        assert!(matches!(
+            r.tick(at(1.0), &collector),
+            TickAction::Terminate {
+                reason: TerminationReason::OnAssertion { number: 2, .. }
+            }
+        ));
+    }
+
+    #[test]
     fn terminal_pass_terminates_without_latching() {
         // A terminal assertion drives the stop-decision (`any_passed` fires on
         // its pass) but is never folded into the latch — terminals are judged at
@@ -285,13 +306,14 @@ mod tests {
             r.tick(at(1.0), &collector),
             TickAction::Terminate {
                 reason: TerminationReason::OnAssertion {
+                    number: 1,
                     result: AssertionResult::Passed {
                         actual: AssertionValue::Float(5.0),
                     },
                 },
             }
         );
-        assert_eq!(r.states[0].status(), &ContinuousStatus::Pending);
+        assert_eq!(states(&r)[0].status(), &ContinuousStatus::Pending);
     }
 
     #[test]
@@ -308,7 +330,7 @@ mod tests {
         );
 
         assert_eq!(r.tick(at(0.0), &collector), TickAction::Continue);
-        assert_eq!(r.states[0].status(), &ContinuousStatus::Pending);
+        assert_eq!(states(&r)[0].status(), &ContinuousStatus::Pending);
     }
 
     #[test]
@@ -343,9 +365,9 @@ mod tests {
         report(&mut collector, TRUCK, 0.5, 1.0);
 
         assert_eq!(r.tick(at(1.0), &collector), TickAction::Continue);
-        assert_eq!(r.states[0].status(), &ContinuousStatus::Holding);
+        assert_eq!(states(&r)[0].status(), &ContinuousStatus::Holding);
         assert_eq!(
-            r.states[1].status(),
+            states(&r)[1].status(),
             &ContinuousStatus::FailedAt {
                 t: at(0.5),
                 reason: "condition failed".into(),

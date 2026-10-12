@@ -56,8 +56,12 @@ pub enum TerminationReason {
     Aborted,
     /// The simulated-time budget elapsed.
     MaxSimulatedSeconds,
-    /// An assertion reached the configured `on_assertion` state.
-    OnAssertion { result: AssertionResult },
+    /// An assertion reached the configured `on_assertion` state. `number`
+    /// is its position in the run file, counting from 1.
+    OnAssertion {
+        number: usize,
+        result: AssertionResult,
+    },
 }
 
 #[cfg(test)]

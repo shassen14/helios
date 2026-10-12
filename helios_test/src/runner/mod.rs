@@ -17,7 +17,7 @@ use crate::{
         validation::{self, ValidationError},
         Run,
     },
-    runner::{resolve::ResolvedPlan, state::AssertionState},
+    runner::resolve::ResolvedPlan,
 };
 
 use helios_core::prelude::MonotonicTime;
@@ -31,11 +31,11 @@ const NEVER_SET_UP: &str = "the host never called on_pipeline_built";
 const FOREIGN_COLLECTOR: &str = "the collector is not the one the run was set up against";
 
 /// _Per-step._ The state machine the host pumps across a run: owns the run,
-/// its phase, per-assertion state, and the clock origin.
+/// its phase (which holds the per-assertion state once the run is ready), and
+/// the clock origin.
 pub struct Runner {
     run: Run,
     phase: Phase,
-    states: Vec<AssertionState>,
     start_time: Option<MonotonicTime>,
     setup_failures: Vec<String>,
 }
@@ -46,23 +46,13 @@ impl Runner {
     /// through a simulation. It can't tick until `on_pipeline_built`, the one
     /// moment the pipelines exist to check its assertions against.
     pub fn new(run: Run) -> Result<Self, ValidationError> {
-        // Coherence check first: `?` bails with the validation error before any
-        // state is allocated, so an invalid run never gets a half-built runner.
+        // Coherence check first: `?` bails with the validation error, so an
+        // invalid run never gets a half-built runner.
         validation::validate(&run)?;
-
-        // One fresh latch per assertion, index-aligned with `run.assertions()`
-        // so the runner addresses an assertion and its state by the same index.
-        // Built from a borrow that ends here, before `run` is moved into Self.
-        let states: Vec<AssertionState> = run
-            .assertions()
-            .iter()
-            .map(|_| AssertionState::new())
-            .collect();
 
         Ok(Self {
             run,
             phase: Phase::AwaitingPipelines,
-            states,
             start_time: None,
             // Filled only if the run is doomed before it ticks. Assertions
             // cannot speak for this class of failure: a scenario whose agent
@@ -99,11 +89,12 @@ impl Runner {
 /// it may judge.
 // An enum field rather than a type parameter (`Runner<Ready>`): the runner is
 // held in a Bevy resource, which can't change type in place.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Phase {
     /// Built, but not yet checked against the pipelines.
     AwaitingPipelines,
-    /// Every assertion can be judged, from the series the plan names.
+    /// Every assertion can be judged, from the series the plan names, and
+    /// the plan holds each one's state.
     Ready(ResolvedPlan),
     /// Setup failed; nothing is judged.
     Aborted,
@@ -112,8 +103,6 @@ enum Phase {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::runner::state::ContinuousStatus;
 
     // Parse a `Run` from TOML, filling in the header fields every run needs so
     // each test supplies only its termination + assertion body.
@@ -129,14 +118,6 @@ mod tests {
         toml::from_str(&toml).expect("valid run toml")
     }
 
-    const ASSERT: &str = r#"
-        [[assert]]
-        when = "continuous"
-        target = "agent.car.estimator.x"
-        condition = "equals"
-        value = 0.0
-    "#;
-
     #[test]
     fn rejects_an_incoherent_run() {
         // Empty termination never stops; `new` must surface the validation
@@ -147,21 +128,6 @@ mod tests {
             Runner::new(run),
             Err(ValidationError::NoTermination)
         ));
-    }
-
-    #[test]
-    fn allocates_one_state_per_assertion() {
-        // States are index-aligned with the assertions, so the count must match.
-        let body = format!(r#"termination = {{ max_simulated_seconds = 5.0 }}{ASSERT}{ASSERT}"#);
-        let r = Runner::new(run_with(&body)).expect("valid run");
-        assert_eq!(r.states.len(), 2);
-    }
-
-    #[test]
-    fn fresh_states_start_pending() {
-        let body = format!(r#"termination = {{ max_simulated_seconds = 5.0 }}{ASSERT}"#);
-        let r = Runner::new(run_with(&body)).expect("valid run");
-        assert_eq!(r.states[0].status(), &ContinuousStatus::Pending);
     }
 
     #[test]
@@ -177,13 +143,5 @@ mod tests {
             .expect("valid run");
         r.fail_setup("no pipeline".to_string());
         assert_eq!(r.phase, Phase::Aborted);
-    }
-
-    #[test]
-    fn a_smoke_run_has_no_states() {
-        // Zero assertions is valid when a time budget guarantees termination.
-        let r = Runner::new(run_with("termination = { max_simulated_seconds = 5.0 }"))
-            .expect("valid run");
-        assert!(r.states.is_empty());
     }
 }

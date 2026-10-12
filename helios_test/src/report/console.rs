@@ -93,14 +93,14 @@ fn render(report: &Report) -> String {
 
 /// Phrase the termination reason as "<cause> at t=<sim-seconds>s". The sim time
 /// is the report's `simulated_duration_secs`; for an assertion-triggered stop we
-/// also say which way the triggering assertion went.
+/// also say which assertion it was and which way it went.
 fn termination_line(report: &Report) -> String {
     let at = format!("t={:.1}s", report.simulated_duration_secs);
     match &report.terminated_by {
         TerminatedBy::Aborted => "aborted during setup, before the first tick".to_string(),
         TerminatedBy::TimeBudget => format!("time budget reached at {at}"),
-        TerminatedBy::Assertion { outcome } => {
-            format!("assertion {} at {at}", status_label(outcome))
+        TerminatedBy::Assertion { number, outcome } => {
+            format!("assertion {number} {} at {at}", status_label(outcome))
         }
     }
 }
