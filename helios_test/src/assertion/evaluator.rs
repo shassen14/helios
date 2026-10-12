@@ -40,15 +40,16 @@ pub fn evaluate(
     };
 
     // Stage 3 — project the erased payload into the comparable `AssertionValue`
-    // space. `payload_type_id()` keys the lookup on the payload `T`, not the
-    // `Stamped<T>` envelope that `Any::type_id()` would report. A present value
-    // we have no extractor for is a real failure, distinct from stage 2's "no
-    // value yet".
-    let Some(actual) = extractors.extract(erased.payload_type_id(), erased.payload()) else {
-        return AssertionResult::Failed {
-            kind: FailureKind::NoExtractor,
-            actual: None,
-        };
+    // space. A present value we can't project is a real failure, distinct
+    // from stage 2's "no value yet".
+    let actual = match extractors.extract(erased.as_ref()) {
+        Ok(actual) => actual,
+        Err(error) => {
+            return AssertionResult::Failed {
+                kind: error.into(),
+                actual: None,
+            }
+        }
     };
 
     // Stage 4 — compare. `check` decides pass vs which failure kind; we attach

@@ -1,25 +1,26 @@
 use crate::assertion::condition::AssertionValue;
 
+use helios_runtime::ErasedStamped;
+
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
 };
 
-/// _Per-step._ Projects one typed bus payload into an `AssertionValue`.
-// `fn` (not `Fn`) means only captureless closures coerce in. That's deliberate —
-// the table stores function pointers, not boxed closures, so registrations stay
-// cheap to copy and free of per-entry allocation. If you ever need a registration
-// that closes over state, switch the alias to `Box<dyn Fn(...)>` and pay the
-// allocation; until then, every extractor is a pure type projection.
-pub type Extractor = fn(&dyn Any) -> Option<AssertionValue>;
+/// _Per-step._ Projects one payload type into an `AssertionValue`. Total:
+/// every value of the type has one, so an extractor never declines.
+pub type Extractor<T> = fn(&T) -> AssertionValue;
 
-/// _Per-step._ The `TypeId`-keyed table of payload extractors the evaluator uses.
-// Bridges typed bus payloads to the untyped `AssertionValue` space the evaluator
-// compares against TOML. Keyed by the *payload* `TypeId` — the evaluator unwraps
-// `Stamped<T>` before calling `extract`, so registrations target `T`, never
-// `Stamped<T>`.
+/// An [`Extractor`] behind the downcast to its payload type. `None` only when
+/// handed a payload of another type.
+type ErasedExtractor = Box<dyn Fn(&dyn Any) -> Option<AssertionValue> + Send + Sync>;
+
+/// _Per-step._ The `TypeId`-keyed table of payload extractors.
+// Bridges typed channel values to the untyped `AssertionValue` space assertions
+// compare against TOML. Keyed by the *payload* type, never `Stamped<T>`: the
+// table reads the payload out of the stamped value itself.
 pub struct ExtractorTable {
-    by_type: HashMap<TypeId, Extractor>,
+    by_type: HashMap<TypeId, ErasedExtractor>,
 }
 
 impl ExtractorTable {
@@ -32,18 +33,25 @@ impl ExtractorTable {
     // Last-writer-wins: registering twice for the same `T` silently overwrites.
     // Intentional — lets tests install fixture extractors over the standard set
     // without a separate "override" entry point.
-    pub fn register<T: 'static>(&mut self, extractor: Extractor) {
-        self.by_type.insert(TypeId::of::<T>(), extractor);
+    pub fn register<T: 'static>(&mut self, extractor: Extractor<T>) {
+        self.by_type.insert(
+            TypeId::of::<T>(),
+            Box::new(move |payload| payload.downcast_ref::<T>().map(extractor)),
+        );
     }
 
-    // Returns `None` for two distinct cases collapsed for now: (1) no extractor
-    // registered for `type_id`, (2) extractor returned `None` (downcast failed,
-    // which would indicate the caller passed a `TypeId` that doesn't match the
-    // `&dyn Any`'s real type). Split into a richer error when a test needs to
-    // distinguish them.
-    pub fn extract(&self, type_id: TypeId, value: &dyn Any) -> Option<AssertionValue> {
-        let extractor = self.by_type.get(&type_id)?;
-        extractor(value)
+    /// The comparable value of `stamped`'s payload.
+    pub fn extract(&self, stamped: &dyn ErasedStamped) -> Result<AssertionValue, ExtractError> {
+        let extractor =
+            self.by_type
+                .get(&stamped.payload_type_id())
+                .ok_or(ExtractError::NoExtractor {
+                    payload: stamped.payload_type_name(),
+                })?;
+
+        extractor(stamped.payload()).ok_or(ExtractError::PayloadMismatch {
+            payload: stamped.payload_type_name(),
+        })
     }
 }
 
@@ -53,11 +61,23 @@ impl Default for ExtractorTable {
     }
 }
 
+/// _Per-step._ Why a payload has no comparable value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ExtractError {
+    #[error("no extractor for payload type {payload}")]
+    NoExtractor { payload: &'static str },
+    /// The value's `payload_type_id` names a type its `payload` isn't: an
+    /// `ErasedStamped` that disagrees with itself. The impl for `Stamped<T>`
+    /// can't.
+    #[error("payload type {payload} disagrees with its own type id")]
+    PayloadMismatch { payload: &'static str },
+}
+
 pub fn standard_extractors() -> ExtractorTable {
     let mut table = ExtractorTable::new();
-    table.register::<f64>(|x| x.downcast_ref::<f64>().copied().map(AssertionValue::Float));
-    table.register::<i64>(|x| x.downcast_ref::<i64>().copied().map(AssertionValue::Int));
-    table.register::<bool>(|x| x.downcast_ref::<bool>().copied().map(AssertionValue::Bool));
+    table.register::<f64>(|x| AssertionValue::Float(*x));
+    table.register::<i64>(|x| AssertionValue::Int(*x));
+    table.register::<bool>(|x| AssertionValue::Bool(*x));
     table
 }
 
@@ -65,74 +85,106 @@ pub fn standard_extractors() -> ExtractorTable {
 mod tests {
     use super::*;
 
+    use helios_core::prelude::MonotonicTime;
+    use helios_runtime::prelude::{Health, Stamped};
+
+    /// A payload as a channel carries it.
+    fn stamped<T: Send + Sync + 'static>(value: T) -> Stamped<T> {
+        Stamped {
+            value,
+            timestamp: MonotonicTime(0.0),
+            health: Health::Ok,
+            producer: 0,
+        }
+    }
+
+    /// Claims to carry an `f64` but holds an `i64`.
+    struct Disagreeing(Stamped<i64>);
+
+    impl ErasedStamped for Disagreeing {
+        fn payload(&self) -> &dyn Any {
+            &self.0.value
+        }
+
+        fn payload_type_id(&self) -> TypeId {
+            TypeId::of::<f64>()
+        }
+
+        fn payload_type_name(&self) -> &'static str {
+            std::any::type_name::<f64>()
+        }
+
+        fn timestamp(&self) -> MonotonicTime {
+            self.0.timestamp
+        }
+
+        fn into_any(self: std::sync::Arc<Self>) -> std::sync::Arc<dyn Any + Send + Sync> {
+            self
+        }
+    }
+
     #[test]
     fn standard_extractors_handles_f64() {
-        let table = standard_extractors();
-        let v: f64 = 2.5;
         assert_eq!(
-            table.extract(TypeId::of::<f64>(), &v as &dyn Any),
-            Some(AssertionValue::Float(2.5))
+            standard_extractors().extract(&stamped(2.5_f64)),
+            Ok(AssertionValue::Float(2.5))
         );
     }
 
     #[test]
     fn standard_extractors_handles_i64() {
-        let table = standard_extractors();
-        let v: i64 = 42;
         assert_eq!(
-            table.extract(TypeId::of::<i64>(), &v as &dyn Any),
-            Some(AssertionValue::Int(42))
+            standard_extractors().extract(&stamped(42_i64)),
+            Ok(AssertionValue::Int(42))
         );
     }
 
     #[test]
     fn standard_extractors_handles_bool() {
-        let table = standard_extractors();
-        let v: bool = true;
         assert_eq!(
-            table.extract(TypeId::of::<bool>(), &v as &dyn Any),
-            Some(AssertionValue::Bool(true))
+            standard_extractors().extract(&stamped(true)),
+            Ok(AssertionValue::Bool(true))
         );
     }
 
     #[test]
-    fn extract_returns_none_for_unregistered_type() {
-        let table = standard_extractors();
-        let v: String = "hello".to_string();
-        assert_eq!(table.extract(TypeId::of::<String>(), &v as &dyn Any), None);
+    fn an_unregistered_payload_has_no_extractor() {
+        assert_eq!(
+            standard_extractors().extract(&stamped(String::from("hello"))),
+            Err(ExtractError::NoExtractor {
+                payload: std::any::type_name::<String>()
+            })
+        );
     }
 
     #[test]
-    fn extract_returns_none_when_type_id_mismatches_payload() {
-        // Caller passed `TypeId::of::<f64>()` but the payload is actually `i64`.
-        // The downcast inside the extractor fails and we get `None`.
-        let table = standard_extractors();
-        let wrong: i64 = 7;
-        assert_eq!(table.extract(TypeId::of::<f64>(), &wrong as &dyn Any), None);
+    fn a_payload_unlike_its_type_id_is_a_mismatch_not_a_missing_extractor() {
+        let disagreeing = Disagreeing(stamped(7_i64));
+
+        assert_eq!(
+            standard_extractors().extract(&disagreeing),
+            Err(ExtractError::PayloadMismatch {
+                payload: std::any::type_name::<f64>()
+            })
+        );
     }
 
     #[test]
     fn register_overrides_previous_entry() {
         let mut table = standard_extractors();
-        table.register::<f64>(|_| Some(AssertionValue::Float(99.0)));
-        let v: f64 = 1.0;
+        table.register::<f64>(|_| AssertionValue::Float(99.0));
+
         assert_eq!(
-            table.extract(TypeId::of::<f64>(), &v as &dyn Any),
-            Some(AssertionValue::Float(99.0))
+            table.extract(&stamped(1.0_f64)),
+            Ok(AssertionValue::Float(99.0))
         );
     }
 
     #[test]
-    fn empty_table_returns_none() {
-        let table = ExtractorTable::new();
-        let v: f64 = 1.0;
-        assert_eq!(table.extract(TypeId::of::<f64>(), &v as &dyn Any), None);
-    }
-
-    #[test]
     fn default_is_empty() {
-        let table = ExtractorTable::default();
-        let v: f64 = 1.0;
-        assert_eq!(table.extract(TypeId::of::<f64>(), &v as &dyn Any), None);
+        assert!(matches!(
+            ExtractorTable::default().extract(&stamped(1.0_f64)),
+            Err(ExtractError::NoExtractor { .. })
+        ));
     }
 }

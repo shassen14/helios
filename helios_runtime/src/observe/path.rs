@@ -16,12 +16,41 @@ pub(crate) const PATH_SEPARATOR: &str = ".";
 /// The first segment of every watcher path.
 pub(crate) const AGENT_ROOT: &str = "agent";
 
+/// A watcher path split back into the parts [`agent_path`] joined, borrowed
+/// from the path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentPathParts<'a> {
+    pub agent: &'a str,
+    pub node: &'a str,
+    /// The leaf or channel segment, dots included.
+    pub rest: &'a str,
+}
+
+impl<'a> AgentPathParts<'a> {
+    /// Splits `path`, the inverse of [`agent_path`]. The agent and node hold
+    /// no separator, so the first two separators after the root end them,
+    /// and everything after is `rest`. `None` when `path` isn't under the
+    /// root or a part is empty.
+    pub fn split(path: &'a str) -> Option<Self> {
+        let mut parts = path.splitn(4, PATH_SEPARATOR);
+        if parts.next()? != AGENT_ROOT {
+            return None;
+        }
+        let (agent, node, rest) = (parts.next()?, parts.next()?, parts.next()?);
+        if agent.is_empty() || node.is_empty() || rest.is_empty() {
+            return None;
+        }
+
+        Some(Self { agent, node, rest })
+    }
+}
+
 /// The watcher path `agent.<agent>.<node>.<rest>`.
 ///
 /// `agent` and `node` must each be a [path segment](is_path_segment); the
 /// build refuses names that aren't. `rest` may hold dots: it is a leaf the
 /// node declared (`aiding.gps.nis`) or one of its channels' segments
-/// (`oracle.pose`). Paths are only ever built here, never split apart.
+/// (`oracle.pose`). [`AgentPathParts::split`] takes it apart again.
 pub fn agent_path(agent: &str, node: &str, rest: &str) -> String {
     [AGENT_ROOT, agent, node, rest].join(PATH_SEPARATOR)
 }
@@ -98,6 +127,34 @@ mod tests {
             agent_path("car", "estimator", "aiding.gps.nis"),
             "agent.car.estimator.aiding.gps.nis"
         );
+    }
+
+    #[test]
+    fn split_takes_back_what_agent_path_joined() {
+        let path = agent_path("car", "estimator", "aiding.gps.nis");
+
+        assert_eq!(
+            AgentPathParts::split(&path),
+            Some(AgentPathParts {
+                agent: "car",
+                node: "estimator",
+                rest: "aiding.gps.nis",
+            })
+        );
+    }
+
+    #[test]
+    fn split_refuses_a_path_outside_the_root() {
+        assert_eq!(AgentPathParts::split("agents.car.estimator.nis"), None);
+        assert_eq!(AgentPathParts::split("car.estimator.nis"), None);
+    }
+
+    #[test]
+    fn split_refuses_a_missing_or_empty_part() {
+        assert_eq!(AgentPathParts::split("agent.car.estimator"), None);
+        assert_eq!(AgentPathParts::split("agent.car.estimator."), None);
+        assert_eq!(AgentPathParts::split("agent..estimator.nis"), None);
+        assert_eq!(AgentPathParts::split("agent.car..nis"), None);
     }
 
     #[test]

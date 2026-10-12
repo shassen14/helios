@@ -3,8 +3,7 @@
 //! Sinks name full paths across every agent; a pipeline watches `(node,
 //! leaf)` pairs and doesn't know its agent. A host resolves between the two
 //! by formatting every path each pipeline can report and looking its
-//! requests up among them. Paths are only ever formatted, never split apart:
-//! a leaf may hold dots, so a path can't be split back into node and leaf.
+//! requests up among them, once per build.
 
 use crate::{
     observe::{

@@ -7,6 +7,7 @@ pub mod terminal;
 
 pub use condition::{AssertionValue, Condition};
 use continuous::ContinuousAssertion;
+use extract::ExtractError;
 pub use target::AssertionTarget;
 use terminal::TerminalAssertion;
 
@@ -94,12 +95,14 @@ impl AssertionResult {
 /// _Per-step._ Which evaluator stage rejected an assertion.
 // Each variant names the evaluator stage that rejected the assertion, so the
 // report can phrase the cause precisely instead of a generic "failed":
-// target didn't resolve, no extractor for the payload type, types didn't match,
-// the condition returned false, or `WithinRange` lacked usable bounds.
+// target didn't resolve, no extractor for the payload type, a payload unlike
+// its own type id, types didn't match, the condition returned false, or
+// `WithinRange` lacked usable bounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FailureKind {
     UnresolvedTarget,
     NoExtractor,
+    PayloadMismatch,
     TypeMismatch,
     ConditionFailed,
     InvalidBounds,
@@ -110,9 +113,19 @@ impl std::fmt::Display for FailureKind {
         match self {
             FailureKind::UnresolvedTarget => write!(f, "unresolved target"),
             FailureKind::NoExtractor => write!(f, "no extractor"),
+            FailureKind::PayloadMismatch => write!(f, "payload mismatch"),
             FailureKind::TypeMismatch => write!(f, "type mismatch"),
             FailureKind::ConditionFailed => write!(f, "condition failed"),
             FailureKind::InvalidBounds => write!(f, "invalid bounds"),
+        }
+    }
+}
+
+impl From<ExtractError> for FailureKind {
+    fn from(error: ExtractError) -> Self {
+        match error {
+            ExtractError::NoExtractor { .. } => FailureKind::NoExtractor,
+            ExtractError::PayloadMismatch { .. } => FailureKind::PayloadMismatch,
         }
     }
 }
