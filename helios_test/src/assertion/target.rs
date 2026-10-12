@@ -1,25 +1,86 @@
 use helios_core::prelude::AgentId;
 use helios_runtime::{
-    observe::path::{agent_path, channel_to_path_segment},
+    observe::path::{agent_path, channel_to_path_segment, AgentPathParts},
     AutonomyPipeline, ChannelKey,
 };
 
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt, sync::Arc};
 
-/// _Shared (pre + per)._ A symbolic subsystem path naming what an assertion
-/// watches. Parsed from the run file, then used as a per-step registry key.
+/// _Shared (pre + per)._ The watcher path an assertion watches,
+/// `agent.<agent>.<node>.<leaf>`, held whole and in its parts.
+///
+/// Only a path that splits into an agent, a node and a leaf becomes a
+/// target, so a run file naming anything else is refused when it is read,
+/// before a sim starts.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
-pub struct AssertionTarget(String);
+#[serde(try_from = "String")]
+pub struct AssertionTarget {
+    path: String,
+    agent: AgentId,
+    node: Arc<str>,
+    leaf: Arc<str>,
+}
 
 impl AssertionTarget {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
+    /// The target `path` names, or why it names none.
+    pub fn parse(path: impl Into<String>) -> Result<Self, MalformedTarget> {
+        let path = path.into();
+        let Some(parts) = AgentPathParts::split(&path) else {
+            return Err(MalformedTarget { path });
+        };
+        let (agent, node, leaf) = (
+            AgentId::new(parts.agent),
+            parts.node.into(),
+            parts.rest.into(),
+        );
+
+        Ok(Self {
+            path,
+            agent,
+            node,
+            leaf,
+        })
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.path
     }
+
+    pub fn agent(&self) -> &AgentId {
+        &self.agent
+    }
+
+    pub fn node(&self) -> &Arc<str> {
+        &self.node
+    }
+
+    /// The leaf or channel segment, dots included.
+    pub fn leaf(&self) -> &Arc<str> {
+        &self.leaf
+    }
+}
+
+impl TryFrom<String> for AssertionTarget {
+    type Error = MalformedTarget;
+
+    fn try_from(path: String) -> Result<Self, Self::Error> {
+        Self::parse(path)
+    }
+}
+
+impl fmt::Display for AssertionTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.path)
+    }
+}
+
+/// _Pre-step._ A run-file target that doesn't split into an agent, a node
+/// and a leaf.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("target '{path}' is not a watcher path agent.<agent>.<node>.<leaf>")]
+pub struct MalformedTarget {
+    path: String,
 }
 
 /// _Per-step._ Resolves an assertion target to a bus channel; built at
@@ -66,9 +127,12 @@ pub fn build_for_pipeline(
 ) -> Vec<(AssertionTarget, ChannelKey)> {
     let mut pairs: Vec<(AssertionTarget, ChannelKey)> = pipeline
         .channels()
-        .map(|(node_name, key)| {
-            let target_str = agent_path(agent.as_str(), node_name, &channel_to_path_segment(key));
-            (AssertionTarget::new(target_str), key.clone())
+        // A channel whose path doesn't parse is left out: no target can
+        // name it, since every target parses.
+        .filter_map(|(node_name, key)| {
+            let path = agent_path(agent.as_str(), node_name, &channel_to_path_segment(key));
+            let target = AssertionTarget::parse(path).ok()?;
+            Some((target, key.clone()))
         })
         .collect();
 
@@ -93,10 +157,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_keeps_the_path_and_its_parts() {
+        let target =
+            AssertionTarget::parse("agent.car.estimator.aiding.gps.nis").expect("valid target");
+
+        assert_eq!(target.as_str(), "agent.car.estimator.aiding.gps.nis");
+        assert_eq!(target.agent(), &AgentId::new("car"));
+        assert_eq!(target.node().as_ref(), "estimator");
+        assert_eq!(target.leaf().as_ref(), "aiding.gps.nis");
+    }
+
+    #[test]
+    fn parse_refuses_a_path_with_no_leaf() {
+        assert_eq!(
+            AssertionTarget::parse("agent.car.estimator"),
+            Err(MalformedTarget {
+                path: "agent.car.estimator".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_refuses_a_path_outside_the_agent_root() {
+        assert!(AssertionTarget::parse("car.estimator.speed.x").is_err());
+    }
+
+    #[test]
     fn register_and_resolve_roundtrip() {
         let mut reg = TargetRegistry::new();
         let agent = AgentId::new("car_1");
-        let target = AssertionTarget::new("agent.car_1.estimator.position");
+        let target =
+            AssertionTarget::parse("agent.car_1.estimator.position").expect("valid target");
         let channel = channel_unnamed::<f64>();
 
         reg.register(agent.clone(), target.clone(), channel.clone());
@@ -108,7 +199,7 @@ mod tests {
     fn resolve_returns_none_for_missing_pair() {
         let reg = TargetRegistry::new();
         let agent = AgentId::new("car_1");
-        let target = AssertionTarget::new("agent.car_1.unknown");
+        let target = AssertionTarget::parse("agent.car_1.estimator.unknown").expect("valid target");
 
         assert_eq!(reg.resolve(&agent, &target), None);
     }
@@ -118,7 +209,7 @@ mod tests {
         let mut reg = TargetRegistry::new();
         let agent_a = AgentId::new("car_a");
         let agent_b = AgentId::new("car_b");
-        let target = AssertionTarget::new("agent.shared.scalar");
+        let target = AssertionTarget::parse("agent.shared.estimator.scalar").expect("valid target");
         let channel = channel_unnamed::<f64>();
 
         reg.register(agent_a.clone(), target.clone(), channel);
@@ -131,7 +222,7 @@ mod tests {
     fn register_overrides_previous_entry() {
         let mut reg = TargetRegistry::new();
         let agent = AgentId::new("car_1");
-        let target = AssertionTarget::new("agent.car_1.scalar");
+        let target = AssertionTarget::parse("agent.car_1.estimator.scalar").expect("valid target");
         let first = channel_unnamed::<f64>();
         let second = channel_unnamed::<i64>();
 
@@ -145,7 +236,7 @@ mod tests {
     fn default_is_empty() {
         let reg = TargetRegistry::default();
         let agent = AgentId::new("x");
-        let target = AssertionTarget::new("y");
+        let target = AssertionTarget::parse("agent.x.estimator.y").expect("valid target");
         assert!(reg.resolve(&agent, &target).is_none());
     }
 }

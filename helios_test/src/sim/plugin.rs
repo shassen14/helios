@@ -1,13 +1,14 @@
 use super::{ActiveRunner, RunOutcome, RunVerdict, WallClockStart};
 use crate::run::termination::TerminationReason;
 use crate::sim::{ReportOutputPath, RunMetadata};
-use crate::{ReportStatus, TickAction};
+use crate::{ObservationCollector, ReportStatus, TickAction};
 
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::port::PortBus;
 use helios_runtime::AutonomyPipeline;
-use helios_sim::brain_bridge::components::{
-    AgentIdComponent, AutonomyPipelineComponent, PipelineBuildFailed,
+use helios_sim::brain_bridge::{
+    components::{AgentIdComponent, AutonomyPipelineComponent, PipelineBuildFailed},
+    RegisteredSink,
 };
 use helios_sim::prelude::{AppState, SimulationSet};
 
@@ -32,11 +33,14 @@ impl Plugin for TestRunnerPlugin {
 
 /// System 1 — runs once at `OnEnter(AppState::Running)`, after the scene is
 /// built and every agent's pipeline exists. Hands the runner the per-agent
-/// pipelines so it can resolve assertion targets to bus channels.
+/// pipelines and the run's collector, so it can check that every assertion
+/// can be judged.
 ///
 /// Two setup failures share one exit here, both legitimate **test failures**
 /// (exit 1) rather than crashes: an agent whose pipeline could not be
-/// assembled at all, and an assertion naming a target no agent produces.
+/// assembled at all, and an assertion the run can't judge (a target no agent
+/// reports, a payload with no extractor, a nondeterministic leaf asserted on
+/// without permission).
 /// Either marks the verdict failed and routes to `Flushing`, so both flow
 /// through the normal report path.
 ///
@@ -47,6 +51,7 @@ impl Plugin for TestRunnerPlugin {
 fn on_pipeline_built_system(
     query: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
     failed_query: Query<(&AgentIdComponent, &PipelineBuildFailed)>,
+    collector: Res<RegisteredSink<ObservationCollector>>,
     mut runner: ResMut<ActiveRunner>,
     mut next_state: ResMut<NextState<AppState>>,
     mut run_verdict: ResMut<RunVerdict>,
@@ -74,7 +79,7 @@ fn on_pipeline_built_system(
         pairs.push((agent_id_comp.0.clone(), &autonomy_pipeline_comp.0));
     }
 
-    match runner.0.on_pipeline_built(&pairs) {
+    match runner.0.on_pipeline_built(&pairs, &collector.0) {
         Ok(()) => (),
         Err(e) => {
             let reason = format!("on_pipeline_built failed: {e}");

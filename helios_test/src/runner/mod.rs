@@ -1,4 +1,5 @@
 pub mod lifecycle;
+pub mod resolve;
 pub mod state;
 pub mod termination_check;
 pub mod tick;
@@ -103,7 +104,7 @@ mod tests {
     const ASSERT: &str = r#"
         [[assert]]
         when = "continuous"
-        target = "agent.car.x"
+        target = "agent.car.estimator.x"
         condition = "equals"
         value = 0.0
     "#;

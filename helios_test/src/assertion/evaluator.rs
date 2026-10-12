@@ -105,7 +105,7 @@ mod tests {
     use helios_runtime::port::InternalChannel;
     use helios_runtime::prelude::{ChannelKey, Health, Stamped};
 
-    const TARGET: &str = "agent.car.x";
+    const TARGET: &str = "agent.car.estimator.x";
 
     // Build a registry + bus that share one `InternalChannel<T>` slot, with the
     // registry resolving `TARGET` for agent "car" to that channel. The slot
@@ -120,7 +120,11 @@ mod tests {
 
         let agent = AgentId::new("car");
         let mut registry = TargetRegistry::new();
-        registry.register(agent.clone(), AssertionTarget::new(TARGET), channel.clone());
+        registry.register(
+            agent.clone(),
+            AssertionTarget::parse(TARGET).expect("valid target"),
+            channel.clone(),
+        );
 
         (agent, registry, bus, channel)
     }
@@ -140,21 +144,23 @@ mod tests {
 
     fn terminal(condition: Condition, value: AssertionValue) -> Assertion {
         Assertion::Terminal(TerminalAssertion {
-            target: AssertionTarget::new(TARGET),
+            target: AssertionTarget::parse(TARGET).expect("valid target"),
             condition,
             value,
             low: None,
             high: None,
+            allow_nondeterministic: false,
         })
     }
 
     fn terminal_range(low: Option<f64>, high: Option<f64>) -> Assertion {
         Assertion::Terminal(TerminalAssertion {
-            target: AssertionTarget::new(TARGET),
+            target: AssertionTarget::parse(TARGET).expect("valid target"),
             condition: Condition::WithinRange,
             value: AssertionValue::Float(0.0),
             low,
             high,
+            allow_nondeterministic: false,
         })
     }
 

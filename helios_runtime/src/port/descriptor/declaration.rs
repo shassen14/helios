@@ -2,7 +2,7 @@
 //! bus, with each input as an [`InputPort`] record of channel, need and timing,
 //! and each `ActuatorCommand` output with the actuators it drives. It also
 //! declares what the node can emit for watchers, each value an [`Observable`]
-//! record of leaf name and [`Determinism`].
+//! record of leaf name, [`Determinism`] and [`ObservedValueKind`].
 //!
 //! The build reads these declarations to allocate bus slots, order nodes, and
 //! check that every channel has exactly one producer. Outside this crate a
@@ -10,7 +10,7 @@
 //! [`AlgorithmNodePortDescriptor`](crate::port::AlgorithmNodePortDescriptor) or
 //! [`MockNodePortDescriptor`](crate::port::MockNodePortDescriptor).
 
-use crate::port::channel::ChannelKey;
+use crate::{observe::observation::ObservedValueKind, port::channel::ChannelKey};
 
 use helios_core::control::actuators::ActuatorDrive;
 
@@ -235,8 +235,9 @@ pub enum InputTiming {
     PreviousTick,
 }
 
-/// One value a node declares it can emit for watchers: its leaf name and
-/// whether it is [deterministic](Determinism).
+/// One value a node can emit for watchers: its leaf name, whether it is
+/// [deterministic](Determinism), and the [kind of value](ObservedValueKind)
+/// it arrives as.
 ///
 /// The leaf name is relative to the node (`aiding.gps.nis`); the pipeline adds
 /// the node's name and the host adds the agent. Only the descriptor builders
@@ -245,13 +246,33 @@ pub enum InputTiming {
 pub struct Observable {
     leaf_name: Arc<str>,
     determinism: Determinism,
+    kind: ObservedValueKind,
 }
 
 impl Observable {
-    pub(crate) fn new(leaf_name: impl Into<Arc<str>>, determinism: Determinism) -> Self {
+    /// A value that arrives as a number: every leaf a node declares, and the
+    /// pipeline's own measurements.
+    pub(crate) fn scalar(leaf_name: impl Into<Arc<str>>, determinism: Determinism) -> Self {
         Self {
             leaf_name: leaf_name.into(),
             determinism,
+            kind: ObservedValueKind::Scalar,
+        }
+    }
+
+    /// A value that arrives as what the node wrote to `channel`.
+    pub(crate) fn typed(
+        leaf_name: impl Into<Arc<str>>,
+        determinism: Determinism,
+        channel: &ChannelKey,
+    ) -> Self {
+        Self {
+            leaf_name: leaf_name.into(),
+            determinism,
+            kind: ObservedValueKind::Typed {
+                type_id: channel.type_id(),
+                type_name: channel.type_name(),
+            },
         }
     }
 
@@ -264,6 +285,12 @@ impl Observable {
     /// and its seed.
     pub fn determinism(&self) -> Determinism {
         self.determinism
+    }
+
+    /// The kind of [`ObservedValue`](crate::observe::observation::ObservedValue)
+    /// this leaf arrives as.
+    pub fn kind(&self) -> ObservedValueKind {
+        self.kind
     }
 }
 
@@ -301,6 +328,8 @@ pub enum Determinism {
 mod tests {
     use super::*;
     use crate::port::channel::InternalChannel;
+
+    use std::any::TypeId;
 
     fn ikey<T: 'static>() -> ChannelKey {
         InternalChannel::of::<T>().into()
@@ -396,8 +425,8 @@ mod tests {
 
     #[test]
     fn with_observables_keeps_declaration_order() {
-        let nis = Observable::new("aiding.gps.nis", Determinism::Deterministic);
-        let duration = Observable::new("duration", Determinism::Nondeterministic);
+        let nis = Observable::scalar("aiding.gps.nis", Determinism::Deterministic);
+        let duration = Observable::scalar("duration", Determinism::Nondeterministic);
         let d = PortDescriptor::new(vec![], vec![], vec![], None)
             .with_observables(vec![nis.clone(), duration.clone()]);
 
@@ -406,9 +435,22 @@ mod tests {
 
     #[test]
     fn observable_reads_back_its_name_and_determinism() {
-        let o = Observable::new("aiding.gps.nis", Determinism::Deterministic);
+        let o = Observable::scalar("aiding.gps.nis", Determinism::Deterministic);
         assert_eq!(o.leaf_name().as_ref(), "aiding.gps.nis");
         assert_eq!(o.determinism(), Determinism::Deterministic);
+        assert_eq!(o.kind(), ObservedValueKind::Scalar);
+    }
+
+    #[test]
+    fn a_typed_observable_carries_its_channels_payload_type() {
+        let o = Observable::typed("est.cov", Determinism::Deterministic, &ikey::<u32>());
+        assert_eq!(
+            o.kind(),
+            ObservedValueKind::Typed {
+                type_id: TypeId::of::<u32>(),
+                type_name: std::any::type_name::<u32>(),
+            }
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use crate::{observe::path::agent_path, ErasedStamped};
 
 use helios_core::prelude::{AgentId, MonotonicTime};
 
-use std::{fmt::Debug, sync::Arc};
+use std::{any::TypeId, fmt::Debug, sync::Arc};
 
 /// One sample a node emitted, named relative to that node.
 ///
@@ -48,6 +48,21 @@ pub enum ObservedValue {
     Typed(Arc<dyn ErasedStamped>),
 }
 
+impl ObservedValue {
+    /// Which kind of value this is.
+    pub fn kind(&self) -> ObservedValueKind {
+        // No wildcard: a new variant is a compile error here until it says
+        // which kind it is, so the two enums can't drift apart.
+        match self {
+            Self::Scalar(_) => ObservedValueKind::Scalar,
+            Self::Typed(stamped) => ObservedValueKind::Typed {
+                type_id: stamped.payload_type_id(),
+                type_name: stamped.payload_type_name(),
+            },
+        }
+    }
+}
+
 impl Debug for ObservedValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -80,6 +95,29 @@ impl From<f64> for ObservedValue {
     }
 }
 
+/// The kind of an [`ObservedValue`], without the value: what a leaf promises
+/// before anything arrives, as its [`Observable`](crate::port::Observable)
+/// records.
+///
+/// So a watcher can check, when it asks for a leaf, that it can read what
+/// will arrive there: an assertion that it can extract a comparable value, a
+/// viewer that it has a renderer for the payload.
+/// [`ObservedValue::kind`] maps each value to its kind, so a new
+/// `ObservedValue` variant doesn't compile until it has one here.
+///
+/// Exhaustive, unlike `ObservedValue`: a new kind must make every reader's
+/// `match` decide what to do with it, before a value of it can arrive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ObservedValueKind {
+    /// Arrives as [`ObservedValue::Scalar`].
+    Scalar,
+    /// Arrives as [`ObservedValue::Typed`], with a payload of this type.
+    Typed {
+        type_id: TypeId,
+        type_name: &'static str,
+    },
+}
+
 /// An observation with the agent whose pipeline emitted it: what a host hands
 /// its sinks.
 ///
@@ -107,6 +145,31 @@ impl AgentObservation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::prelude::{Health, Stamped};
+
+    #[test]
+    fn a_scalar_is_of_the_scalar_kind() {
+        assert_eq!(ObservedValue::Scalar(0.5).kind(), ObservedValueKind::Scalar);
+    }
+
+    #[test]
+    fn a_typed_value_is_of_its_payloads_kind() {
+        let stamped: Arc<dyn ErasedStamped> = Arc::new(Stamped {
+            value: 7_u32,
+            timestamp: MonotonicTime(0.0),
+            health: Health::Ok,
+            producer: 0,
+        });
+
+        assert_eq!(
+            ObservedValue::Typed(stamped).kind(),
+            ObservedValueKind::Typed {
+                type_id: TypeId::of::<u32>(),
+                type_name: std::any::type_name::<u32>(),
+            }
+        );
+    }
 
     #[test]
     fn path_names_the_agent_node_and_leaf() {

@@ -85,8 +85,9 @@ impl<'a> TickContext<'a> {
         }
     }
 
-    /// Records `value` under `leaf` if a watcher asked for it, else does
-    /// nothing.
+    /// Records `value`, a number in SI units, under `leaf` if a watcher asked
+    /// for it, else does nothing. A node emits only numbers, so a leaf it
+    /// declares is always [`Scalar`](crate::observe::observation::ObservedValueKind::Scalar).
     ///
     /// `leaf` is the name the node declares for the value, e.g.
     /// `aiding.gps.nis`. `timestamp` is the time the value describes, which
@@ -95,27 +96,29 @@ impl<'a> TickContext<'a> {
     ///
     /// In debug builds, emitting a leaf the node didn't declare panics, naming
     /// the node and the leaf.
-    pub fn emit(&self, leaf: &str, timestamp: MonotonicTime, value: impl Into<ObservedValue>) {
+    pub fn emit(&self, leaf: &str, timestamp: MonotonicTime, value: f64) {
         let Some((buffer, leaf)) = self.watched(leaf) else {
             return;
         };
 
-        buffer.record(leaf, timestamp, value.into());
+        buffer.record(leaf, timestamp, ObservedValue::Scalar(value));
     }
 
     /// Like [`emit`](Self::emit), but `make_value` runs only when `leaf` is
     /// watched, so an unwatched value costs one check.
     ///
     /// `make_value` must not change the node's state; it may not run at all.
-    pub fn emit_with<V>(&self, leaf: &str, timestamp: MonotonicTime, make_value: impl FnOnce() -> V)
-    where
-        V: Into<ObservedValue>,
-    {
+    pub fn emit_with(
+        &self,
+        leaf: &str,
+        timestamp: MonotonicTime,
+        make_value: impl FnOnce() -> f64,
+    ) {
         let Some((buffer, leaf)) = self.watched(leaf) else {
             return;
         };
 
-        buffer.record(leaf, timestamp, make_value().into());
+        buffer.record(leaf, timestamp, ObservedValue::Scalar(make_value()));
     }
 
     /// The buffer and stored leaf name to record into, if this context has a

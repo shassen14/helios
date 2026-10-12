@@ -36,6 +36,12 @@ pub struct ContinuousAssertion {
     // intended guard; the evaluator's `InvalidBounds` failure is the backstop.
     pub low: Option<f64>,
     pub high: Option<f64>,
+    /// Lets the target be a nondeterministic leaf, one whose value varies
+    /// between runs on the same inputs (a tick's duration). Off by default, so
+    /// a run file that asserts on one says so where it's read. Unused on a
+    /// deterministic leaf.
+    #[serde(default)]
+    pub allow_nondeterministic: bool,
 }
 
 #[cfg(test)]
@@ -52,13 +58,14 @@ mod tests {
         let parsed: ContinuousAssertion = toml::from_str(toml).unwrap();
         assert_eq!(
             parsed.target,
-            AssertionTarget::new("agent.car.estimator.speed")
+            AssertionTarget::parse("agent.car.estimator.speed").expect("valid target")
         );
         assert_eq!(parsed.condition, Condition::LessThan);
         assert_eq!(parsed.value, AssertionValue::Float(5.0));
         // Absent bounds default to None.
         assert_eq!(parsed.low, None);
         assert_eq!(parsed.high, None);
+        assert!(!parsed.allow_nondeterministic);
     }
 
     #[test]

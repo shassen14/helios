@@ -167,12 +167,13 @@ impl AlgorithmNodePortDescriptor {
         self
     }
 
-    /// Declares a value the node can emit for watchers, under `leaf` (relative
-    /// to the node, e.g. `aiding.gps.nis`). Declaring makes a leaf watchable;
-    /// an emit of a leaf the node didn't declare is dropped. A leaf declared
-    /// twice, or one that collides with an output channel, fails the build.
+    /// Declares a number the node can emit for watchers, under `leaf`
+    /// (relative to the node, e.g. `aiding.gps.nis`). Declaring makes a leaf
+    /// watchable; an emit of a leaf the node didn't declare is dropped. A
+    /// leaf declared twice, or one that collides with an output channel,
+    /// fails the build.
     pub fn observable(mut self, leaf: impl Into<Arc<str>>, determinism: Determinism) -> Self {
-        self.observables.push(Observable::new(leaf, determinism));
+        self.observables.push(Observable::scalar(leaf, determinism));
         self
     }
 
@@ -311,7 +312,7 @@ impl MockNodePortDescriptor {
     /// Declares a value the node can emit for watchers, as
     /// [`AlgorithmNodePortDescriptor::observable`] does.
     pub fn observable(mut self, leaf: impl Into<Arc<str>>, determinism: Determinism) -> Self {
-        self.observables.push(Observable::new(leaf, determinism));
+        self.observables.push(Observable::scalar(leaf, determinism));
         self
     }
 
@@ -432,8 +433,8 @@ mod tests {
         assert_eq!(
             d.observables(),
             [
-                Observable::new("aiding.gps.nis", Determinism::Deterministic),
-                Observable::new("aiding.gps.dropped", Determinism::Deterministic),
+                Observable::scalar("aiding.gps.nis", Determinism::Deterministic),
+                Observable::scalar("aiding.gps.dropped", Determinism::Deterministic),
             ]
         );
     }
@@ -448,8 +449,8 @@ mod tests {
         assert_eq!(
             d.observables(),
             [
-                Observable::new("value", Determinism::Deterministic),
-                Observable::new("search_time", Determinism::Nondeterministic),
+                Observable::scalar("value", Determinism::Deterministic),
+                Observable::scalar("search_time", Determinism::Nondeterministic),
             ]
         );
     }

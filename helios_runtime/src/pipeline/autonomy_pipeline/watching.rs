@@ -122,7 +122,10 @@ mod tests {
     use super::*;
 
     use crate::{
-        observe::{observation::ObservedValue, watch::WatchedLeaf},
+        observe::{
+            observation::{ObservedValue, ObservedValueKind},
+            watch::WatchedLeaf,
+        },
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
         port::{
             ChannelKey, Determinism, InternalChannel, MockNodePortDescriptor, PortBus,
@@ -650,6 +653,50 @@ mod tests {
         run(&pipeline, &[1.0]);
 
         assert_eq!(drained(&pipeline), vec![emitted(WRITER, NIS, 1.0)]);
+    }
+
+    #[test]
+    fn every_recorded_value_is_the_kind_its_leaf_promises() {
+        let mut pipeline = tapped_pipeline(&[1.0]);
+        pipeline.watch(&WatchSet::Everything).expect("cannot fail");
+        let promised: Vec<(String, String, ObservedValueKind)> = pipeline
+            .observables()
+            .map(|(node, observable)| {
+                (
+                    node.to_string(),
+                    observable.leaf_name().to_string(),
+                    observable.kind(),
+                )
+            })
+            .collect();
+
+        run(&pipeline, &[1.0]);
+        let observations = drained(&pipeline);
+
+        // Both kinds are covered: declared leaves and durations are scalars,
+        // the estimate tap is typed.
+        assert!(observations
+            .iter()
+            .any(|o| matches!(o.value, ObservedValue::Scalar(_))));
+        assert!(observations
+            .iter()
+            .any(|o| matches!(o.value, ObservedValue::Typed(_))));
+        for observation in &observations {
+            let kind = promised
+                .iter()
+                .find(|(node, leaf, _)| {
+                    node.as_str() == observation.node.as_ref()
+                        && leaf.as_str() == observation.leaf.as_ref()
+                })
+                .map(|(_, _, kind)| *kind);
+            assert_eq!(
+                kind,
+                Some(observation.value.kind()),
+                "{}.{} arrived as another kind than its catalog entry promises",
+                observation.node,
+                observation.leaf
+            );
+        }
     }
 
     #[test]

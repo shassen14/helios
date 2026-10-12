@@ -14,11 +14,10 @@ use crate::assertion::{
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::observe::{
     observation::{AgentObservation, ObservedValue},
-    path::AgentPathParts,
     sink::{ObservationSink, WatchRequest},
 };
 
-use std::{collections::HashMap, sync::Arc};
+use std::{any::TypeId, collections::HashMap, sync::Arc};
 
 /// An observation's agent, node and leaf: the parts of its path, held the
 /// way the observation carries them.
@@ -31,11 +30,10 @@ type LeafKey = (AgentId, Arc<str>, Arc<str>);
 /// dropped, so a channel carrying a large payload costs what a scalar does:
 /// the series holds the extracted value, never the payload.
 pub struct ObservationCollector {
-    /// Each target's index into `series`, by the path the run file names.
-    by_target: HashMap<String, usize>,
+    /// Each target's index into `series`.
+    by_target: HashMap<AssertionTarget, usize>,
     /// The same indices by the parts an observation carries, so an arrival
-    /// is matched without building its path. A target that doesn't split as
-    /// a path is absent here: nothing can arrive for it.
+    /// is matched without building its path.
     by_leaf: HashMap<LeafKey, usize>,
     series: Vec<Series>,
     extractors: ExtractorTable,
@@ -56,7 +54,7 @@ impl ObservationCollector {
             extractors,
         };
         for target in targets {
-            collector.add(target.as_str());
+            collector.add(target);
         }
 
         collector
@@ -66,34 +64,43 @@ impl ObservationCollector {
     /// requested; a requested target that nothing has reported yet has an
     /// empty series.
     pub fn series(&self, target: &AssertionTarget) -> Option<&Series> {
-        let index = self.by_target.get(target.as_str())?;
+        let index = self.by_target.get(target)?;
         self.series.get(*index)
     }
 
-    /// Gives `path` a series, unless it has one already.
-    fn add(&mut self, path: &str) {
-        if self.by_target.contains_key(path) {
+    /// Whether a channel value whose payload is of type `payload` can be
+    /// turned into an [`AssertionValue`].
+    pub fn can_extract(&self, payload: TypeId) -> bool {
+        self.extractors.handles(payload)
+    }
+
+    /// Gives `target` a series, unless it has one already.
+    fn add(&mut self, target: &AssertionTarget) {
+        if self.by_target.contains_key(target) {
             return;
         }
         let index = self.series.len();
         self.series.push(Series::default());
-        self.by_target.insert(path.to_owned(), index);
-        if let Some(parts) = AgentPathParts::split(path) {
-            self.by_leaf.insert(
-                (
-                    AgentId::new(parts.agent),
-                    parts.node.into(),
-                    parts.rest.into(),
-                ),
-                index,
-            );
-        }
+        self.by_target.insert(target.clone(), index);
+        self.by_leaf.insert(
+            (
+                target.agent().clone(),
+                target.node().clone(),
+                target.leaf().clone(),
+            ),
+            index,
+        );
     }
 }
 
 impl ObservationSink for ObservationCollector {
     fn request(&self) -> WatchRequest {
-        WatchRequest::Paths(self.by_target.keys().cloned().collect())
+        WatchRequest::Paths(
+            self.by_target
+                .keys()
+                .map(|target| target.as_str().to_owned())
+                .collect(),
+        )
     }
 
     fn receive(&mut self, batch: &[AgentObservation]) {
@@ -196,11 +203,9 @@ mod tests {
     const ESTIMATOR: &str = "estimator";
     const NIS: &str = "aiding.gps.nis";
     const SPEED: &str = "speed";
-    /// Has no node, so it can't name a leaf.
-    const MALFORMED: &str = "agent.car";
 
     fn target(agent: &str, leaf: &str) -> AssertionTarget {
-        AssertionTarget::new(agent_path(agent, ESTIMATOR, leaf))
+        AssertionTarget::parse(agent_path(agent, ESTIMATOR, leaf)).expect("valid target")
     }
 
     fn collector(targets: &[AssertionTarget]) -> ObservationCollector {
@@ -318,20 +323,6 @@ mod tests {
                 payload: std::any::type_name::<Unregistered>()
             }))
         );
-    }
-
-    #[test]
-    fn a_target_that_is_not_a_path_is_requested_but_never_filled() {
-        let malformed = AssertionTarget::new(MALFORMED);
-        let mut collector = collector(std::slice::from_ref(&malformed));
-
-        collector.receive(&[observed(CAR, NIS, 1.0, ObservedValue::Scalar(2.0))]);
-
-        assert_eq!(
-            collector.request(),
-            WatchRequest::Paths([MALFORMED.to_owned()].into_iter().collect())
-        );
-        assert_eq!(collector.series(&malformed), Some(&Series::default()));
     }
 
     #[test]

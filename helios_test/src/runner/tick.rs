@@ -132,7 +132,11 @@ mod tests {
     }
 
     fn seed(registry: &mut TargetRegistry, agent: &AgentId, target: &str, channel: &ChannelKey) {
-        registry.register(agent.clone(), AssertionTarget::new(target), channel.clone());
+        registry.register(
+            agent.clone(),
+            AssertionTarget::parse(target).expect("valid target"),
+            channel.clone(),
+        );
     }
 
     // `{value:?}` forces a decimal point so TOML reads it as a float, not an int.
@@ -162,9 +166,9 @@ mod tests {
         let (b, ch) = bus();
         publish(&b, &ch, 5.0);
         let mut reg = TargetRegistry::new();
-        seed(&mut reg, &agent, "agent.car.x", &ch);
+        seed(&mut reg, &agent, "agent.car.estimator.x", &ch);
 
-        let a = cont("agent.car.x", 5.0);
+        let a = cont("agent.car.estimator.x", 5.0);
         let mut r = runner(run("max_simulated_seconds = 10.0", &[&a]), reg);
 
         assert_eq!(r.tick(at(0.0), &[(agent, &b)]), TickAction::Continue);
@@ -181,9 +185,9 @@ mod tests {
         let (b, ch) = bus();
         publish(&b, &ch, 9.0);
         let mut reg = TargetRegistry::new();
-        seed(&mut reg, &agent, "agent.car.x", &ch);
+        seed(&mut reg, &agent, "agent.car.estimator.x", &ch);
 
-        let a = cont("agent.car.x", 5.0);
+        let a = cont("agent.car.estimator.x", 5.0);
         let mut r = runner(run("on_assertion = \"any_failed\"", &[&a]), reg);
 
         assert_eq!(
@@ -215,9 +219,9 @@ mod tests {
         let (b, ch) = bus();
         publish(&b, &ch, 5.0);
         let mut reg = TargetRegistry::new();
-        seed(&mut reg, &agent, "agent.car.x", &ch);
+        seed(&mut reg, &agent, "agent.car.estimator.x", &ch);
 
-        let a = term("agent.car.x", 5.0);
+        let a = term("agent.car.estimator.x", 5.0);
         let mut r = runner(run("on_assertion = \"any_passed\"", &[&a]), reg);
 
         assert_eq!(
@@ -241,9 +245,9 @@ mod tests {
         let agent = AgentId::new("car");
         let (b, ch) = bus();
         let mut reg = TargetRegistry::new();
-        seed(&mut reg, &agent, "agent.car.x", &ch);
+        seed(&mut reg, &agent, "agent.car.estimator.x", &ch);
 
-        let a = cont("agent.car.x", 5.0);
+        let a = cont("agent.car.estimator.x", 5.0);
         let mut r = runner(
             run(
                 "max_simulated_seconds = 10.0, on_assertion = \"any_failed\"",
@@ -285,9 +289,9 @@ mod tests {
         let agent = AgentId::new("car");
         let (_b, ch) = bus();
         let mut reg = TargetRegistry::new();
-        seed(&mut reg, &agent, "agent.car.x", &ch);
+        seed(&mut reg, &agent, "agent.car.estimator.x", &ch);
 
-        let a = cont("agent.car.x", 5.0);
+        let a = cont("agent.car.estimator.x", 5.0);
         let mut r = runner(run("on_assertion = \"any_failed\"", &[&a]), reg);
 
         assert_eq!(
@@ -325,11 +329,11 @@ mod tests {
         publish(&bus_b, &ch_b, 1.0);
 
         let mut reg = TargetRegistry::new();
-        seed(&mut reg, &car_a, "agent.car_a.x", &ch_a);
-        seed(&mut reg, &car_b, "agent.car_b.x", &ch_b);
+        seed(&mut reg, &car_a, "agent.car_a.estimator.x", &ch_a);
+        seed(&mut reg, &car_b, "agent.car_b.estimator.x", &ch_b);
 
-        let a = cont("agent.car_a.x", 5.0);
-        let b = cont("agent.car_b.x", 5.0);
+        let a = cont("agent.car_a.estimator.x", 5.0);
+        let b = cont("agent.car_b.estimator.x", 5.0);
         let mut r = runner(run("max_simulated_seconds = 100.0", &[&a, &b]), reg);
 
         assert_eq!(

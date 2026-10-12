@@ -40,6 +40,11 @@ impl ExtractorTable {
         );
     }
 
+    /// Whether a payload of type `payload` has an extractor.
+    pub fn handles(&self, payload: TypeId) -> bool {
+        self.by_type.contains_key(&payload)
+    }
+
     /// The comparable value of `stamped`'s payload.
     pub fn extract(&self, stamped: &dyn ErasedStamped) -> Result<AssertionValue, ExtractError> {
         let extractor =
@@ -167,6 +172,14 @@ mod tests {
                 payload: std::any::type_name::<f64>()
             })
         );
+    }
+
+    #[test]
+    fn handles_only_registered_payload_types() {
+        let table = standard_extractors();
+
+        assert!(table.handles(TypeId::of::<f64>()));
+        assert!(!table.handles(TypeId::of::<String>()));
     }
 
     #[test]

@@ -11,7 +11,7 @@
 //!   job is to be *strict*: reject unknown keys, fail loudly on a bad file.
 //!   `Run`, `RunLoadError`, `ScenarioRef`, `ObservationRef`, `Termination`,
 //!   `OnAssertion`, `ValidationError`, `Assertion`, `TerminalAssertion`,
-//!   `ContinuousAssertion`.
+//!   `ContinuousAssertion`, `MalformedTarget`, `TargetError`.
 //! - **`_Per-step._`** — live state and verdicts produced *while* ticking; no
 //!   serde, never serialized. `Runner`, `AssertionState`, `ContinuousStatus`,
 //!   `TickAction`, `AssertionResult`, `FailureKind`, `ConditionError`,

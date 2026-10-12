@@ -207,8 +207,8 @@ mod tests {
     #[test]
     fn only_nondeterministic_leaves_are_marked() {
         let observables = [
-            Observable::new("aiding.gps.nis", Determinism::Deterministic),
-            Observable::new("tick.duration", Determinism::Nondeterministic),
+            Observable::scalar("aiding.gps.nis", Determinism::Deterministic),
+            Observable::scalar("tick.duration", Determinism::Nondeterministic),
         ];
         assert_eq!(
             format_observables(&observables),

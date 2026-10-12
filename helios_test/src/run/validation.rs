@@ -71,7 +71,7 @@ mod tests {
     const ASSERT: &str = r#"
         [[assert]]
         when = "at_completion"
-        target = "agent.car.x"
+        target = "agent.car.estimator.x"
         condition = "equals"
         value = 0.0
     "#;

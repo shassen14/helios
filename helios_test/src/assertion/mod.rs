@@ -48,6 +48,13 @@ impl Assertion {
         }
     }
 
+    pub fn allow_nondeterministic(&self) -> bool {
+        match self {
+            Assertion::Terminal(t) => t.allow_nondeterministic,
+            Assertion::Continuous(c) => c.allow_nondeterministic,
+        }
+    }
+
     // `Some` only when both bounds are present; either missing → `None`. The
     // evaluator reads this for `WithinRange` and treats `None` as `InvalidBounds`.
     pub fn bounds(&self) -> Option<(f64, f64)> {
@@ -168,20 +175,55 @@ mod tests {
     fn target_accessor_reads_both_variants() {
         let terminal = r#"
             when = "at_completion"
-            target = "agent.car.a"
+            target = "agent.car.estimator.a"
             condition = "equals"
             value = 1
         "#;
         let continuous = r#"
             when = "continuous"
-            target = "agent.car.b"
+            target = "agent.car.estimator.b"
             condition = "equals"
             value = 1
         "#;
         let t: Assertion = toml::from_str(terminal).unwrap();
         let c: Assertion = toml::from_str(continuous).unwrap();
-        assert_eq!(t.target(), &AssertionTarget::new("agent.car.a"));
-        assert_eq!(c.target(), &AssertionTarget::new("agent.car.b"));
+        assert_eq!(t.target(), &AssertionTarget::parse("agent.car.estimator.a").expect("valid target"));
+        assert_eq!(c.target(), &AssertionTarget::parse("agent.car.estimator.b").expect("valid target"));
+    }
+
+    #[test]
+    fn allow_nondeterministic_reads_both_variants() {
+        let terminal = r#"
+            when = "at_completion"
+            target = "agent.car.estimator.a"
+            condition = "equals"
+            value = 1
+            allow_nondeterministic = true
+        "#;
+        let continuous = r#"
+            when = "continuous"
+            target = "agent.car.estimator.b"
+            condition = "equals"
+            value = 1
+            allow_nondeterministic = true
+        "#;
+        let t: Assertion = toml::from_str(terminal).unwrap();
+        let c: Assertion = toml::from_str(continuous).unwrap();
+        assert!(t.allow_nondeterministic());
+        assert!(c.allow_nondeterministic());
+    }
+
+    #[test]
+    fn rejects_a_target_that_is_not_a_watcher_path() {
+        // No leaf after the node: refused as the run file is read, not when
+        // the sim finds nothing to watch.
+        let toml = r#"
+            when = "at_completion"
+            target = "agent.car.estimator"
+            condition = "equals"
+            value = 0.0
+        "#;
+        assert!(toml::from_str::<Assertion>(toml).is_err());
     }
 
     #[test]
@@ -190,7 +232,7 @@ mod tests {
         // reached through the internally-tagged `when` discriminant.
         let toml = r#"
             when = "at_completion"
-            target = "agent.car.x"
+            target = "agent.car.estimator.x"
             condition = "equals"
             valeu = 0.0
         "#;
@@ -201,7 +243,7 @@ mod tests {
     fn rejects_unknown_when_value() {
         let toml = r#"
             when = "sometimes"
-            target = "agent.car.x"
+            target = "agent.car.estimator.x"
             condition = "equals"
             value = 0.0
         "#;

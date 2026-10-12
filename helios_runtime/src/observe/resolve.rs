@@ -86,7 +86,12 @@ mod tests {
     fn observables() -> Vec<(&'static str, Observable)> {
         [NIS, DROPPED]
             .into_iter()
-            .map(|leaf| (ESTIMATOR, Observable::new(leaf, Determinism::Deterministic)))
+            .map(|leaf| {
+                (
+                    ESTIMATOR,
+                    Observable::scalar(leaf, Determinism::Deterministic),
+                )
+            })
             .collect()
     }
 

@@ -152,12 +152,14 @@ pub(in crate::pipeline) struct PendingTap<'a> {
 /// pipeline adds.
 ///
 /// A tap is deterministic: a node's outputs depend only on its inputs, the
-/// tick's time and its seed.
+/// tick's time and its seed. It arrives typed, as its channel's payload.
 pub(crate) fn observable_catalog(node: &dyn PipelineNode) -> Vec<Observable> {
     let mut observables = node.port_descriptor().observables().to_vec();
-    observables
-        .extend(output_taps(node).map(|tap| Observable::new(tap.leaf, Determinism::Deterministic)));
-    observables.push(Observable::new(
+    observables.extend(
+        output_taps(node)
+            .map(|tap| Observable::typed(tap.leaf, Determinism::Deterministic, &tap.channel)),
+    );
+    observables.push(Observable::scalar(
         TICK_DURATION_LEAF,
         Determinism::Nondeterministic,
     ));
@@ -234,15 +236,16 @@ mod tests {
     #[test]
     fn catalog_lists_declared_leaves_then_taps_then_tick_duration() {
         let node = declaring_with_outputs(&[NIS, DROPPED], &two_outputs());
+        let [covariance, unnamed] = two_outputs().map(ChannelKey::from);
 
         assert_eq!(
             observable_catalog(node.as_ref()),
             vec![
-                Observable::new(NIS, Determinism::Deterministic),
-                Observable::new(DROPPED, Determinism::Deterministic),
-                Observable::new(COVARIANCE_TAP, Determinism::Deterministic),
-                Observable::new(UNNAMED_TAP, Determinism::Deterministic),
-                Observable::new(TICK_DURATION_LEAF, Determinism::Nondeterministic),
+                Observable::scalar(NIS, Determinism::Deterministic),
+                Observable::scalar(DROPPED, Determinism::Deterministic),
+                Observable::typed(COVARIANCE_TAP, Determinism::Deterministic, &covariance),
+                Observable::typed(UNNAMED_TAP, Determinism::Deterministic, &unnamed),
+                Observable::scalar(TICK_DURATION_LEAF, Determinism::Nondeterministic),
             ]
         );
     }
@@ -253,7 +256,7 @@ mod tests {
 
         assert_eq!(
             observable_catalog(node.as_ref()),
-            vec![Observable::new(
+            vec![Observable::scalar(
                 TICK_DURATION_LEAF,
                 Determinism::Nondeterministic
             )]
