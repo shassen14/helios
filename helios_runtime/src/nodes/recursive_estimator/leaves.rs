@@ -42,7 +42,7 @@ impl AidingLeaf {
     /// Whether the leaf's values repeat when the same inputs are replayed.
     pub(crate) fn determinism(self) -> Determinism {
         match self {
-            Self::Nis | Self::Dropped => Determinism::Reproducible,
+            Self::Nis | Self::Dropped => Determinism::Deterministic,
         }
     }
 }

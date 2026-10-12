@@ -239,8 +239,8 @@ mod tests {
             .init_resource::<ObservationBatch>();
 
         let descriptor = MockNodePortDescriptor::new()
-            .observable(NIS, Determinism::Reproducible)
-            .observable(DROPPED, Determinism::Reproducible)
+            .observable(NIS, Determinism::Deterministic)
+            .observable(DROPPED, Determinism::Deterministic)
             .build();
         let pipeline = PipelineBuilder::new()
             .add_node(Box::new(Emitting { descriptor }))

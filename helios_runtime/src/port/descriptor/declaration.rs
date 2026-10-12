@@ -236,7 +236,7 @@ pub enum InputTiming {
 }
 
 /// One value a node declares it can emit for watchers: its leaf name and
-/// whether it repeats across runs.
+/// whether it is [deterministic](Determinism).
 ///
 /// The leaf name is relative to the node (`aiding.gps.nis`); the pipeline adds
 /// the node's name and the host adds the agent. Only the descriptor builders
@@ -260,27 +260,41 @@ impl Observable {
         &self.leaf_name
     }
 
-    /// Whether two runs with the same seed and inputs give the same samples.
+    /// Whether the value depends only on the node's inputs, the tick's time
+    /// and its seed.
     pub fn determinism(&self) -> Determinism {
         self.determinism
     }
 }
 
-/// Whether a declared value repeats exactly across runs.
+/// Whether a value depends only on its node's inputs, the tick's time and its
+/// seed.
+///
+/// A promise about the node, not the run: a [`Deterministic`](Self::Deterministic)
+/// node given the same inputs reports the same value, bit for bit. Whether a
+/// host feeds it the same inputs twice is the host's own property. Only the
+/// node knows which kind a value is, since both arrive as plain numbers.
 ///
 /// A sink comparing two runs (a regression check, a seeded Monte Carlo batch,
-/// the everything-watched vs nothing-watched gate) expects every
-/// [`Reproducible`](Self::Reproducible) value to match bit for bit, and skips
-/// [`WallClock`](Self::WallClock) values, which differ on every run. Only the
-/// node knows which kind a value is, since both arrive as plain numbers.
+/// the everything-watched vs nothing-watched gate) expects every deterministic
+/// value to match and skips every nondeterministic one. An assertion on a
+/// nondeterministic value must say it accepts one.
+///
+/// Exhaustive on purpose: a new kind of value, such as one deterministic only
+/// within a float tolerance (a parallel solver whose last bits vary, which a
+/// comparison would check within that tolerance rather than skip), must make
+/// every reader's `match` decide what to do with it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Determinism {
-    /// The same on every run with the same seed and inputs: a statistic of the
-    /// computation, such as NIS or a drop count.
-    Reproducible,
-    /// Depends on the machine and its load, such as how long a node took to
-    /// run. Differs between runs; a comparison skips it.
-    WallClock,
+    /// Depends only on the node's inputs, the tick's time and its seed: NIS,
+    /// a drop count, a channel the node writes. Seeded randomness counts,
+    /// since the seed is an input.
+    Deterministic,
+    /// Also depends on something outside the node's inputs: wall-clock time
+    /// or machine load (how long a node took to run), thread scheduling (a
+    /// parallel sum with no fixed order), or hardware state. Differs between
+    /// runs; a comparison skips it.
+    Nondeterministic,
 }
 
 #[cfg(test)]
@@ -382,8 +396,8 @@ mod tests {
 
     #[test]
     fn with_observables_keeps_declaration_order() {
-        let nis = Observable::new("aiding.gps.nis", Determinism::Reproducible);
-        let duration = Observable::new("duration", Determinism::WallClock);
+        let nis = Observable::new("aiding.gps.nis", Determinism::Deterministic);
+        let duration = Observable::new("duration", Determinism::Nondeterministic);
         let d = PortDescriptor::new(vec![], vec![], vec![], None)
             .with_observables(vec![nis.clone(), duration.clone()]);
 
@@ -392,9 +406,9 @@ mod tests {
 
     #[test]
     fn observable_reads_back_its_name_and_determinism() {
-        let o = Observable::new("aiding.gps.nis", Determinism::Reproducible);
+        let o = Observable::new("aiding.gps.nis", Determinism::Deterministic);
         assert_eq!(o.leaf_name().as_ref(), "aiding.gps.nis");
-        assert_eq!(o.determinism(), Determinism::Reproducible);
+        assert_eq!(o.determinism(), Determinism::Deterministic);
     }
 
     #[test]

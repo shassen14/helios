@@ -422,18 +422,18 @@ mod tests {
     #[test]
     fn algorithm_builder_keeps_observables_in_declaration_order() {
         let d = AlgorithmNodePortDescriptor::new()
-            .observable("aiding.gps.nis", Determinism::Reproducible)
+            .observable("aiding.gps.nis", Determinism::Deterministic)
             .observable(
                 format!("aiding.{}.dropped", "gps"),
-                Determinism::Reproducible,
+                Determinism::Deterministic,
             )
             .build();
 
         assert_eq!(
             d.observables(),
             [
-                Observable::new("aiding.gps.nis", Determinism::Reproducible),
-                Observable::new("aiding.gps.dropped", Determinism::Reproducible),
+                Observable::new("aiding.gps.nis", Determinism::Deterministic),
+                Observable::new("aiding.gps.dropped", Determinism::Deterministic),
             ]
         );
     }
@@ -441,15 +441,15 @@ mod tests {
     #[test]
     fn mock_builder_keeps_observables_in_declaration_order() {
         let d = MockNodePortDescriptor::new()
-            .observable("value", Determinism::Reproducible)
-            .observable("search_time", Determinism::WallClock)
+            .observable("value", Determinism::Deterministic)
+            .observable("search_time", Determinism::Nondeterministic)
             .build();
 
         assert_eq!(
             d.observables(),
             [
-                Observable::new("value", Determinism::Reproducible),
-                Observable::new("search_time", Determinism::WallClock),
+                Observable::new("value", Determinism::Deterministic),
+                Observable::new("search_time", Determinism::Nondeterministic),
             ]
         );
     }

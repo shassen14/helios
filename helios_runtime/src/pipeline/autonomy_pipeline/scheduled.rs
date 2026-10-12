@@ -151,13 +151,16 @@ pub(in crate::pipeline) struct PendingTap<'a> {
 /// goes through here, so none of them needs to know which leaves the
 /// pipeline adds.
 ///
-/// A tap is reproducible: a node's outputs depend only on its inputs and the
-/// tick's time.
+/// A tap is deterministic: a node's outputs depend only on its inputs, the
+/// tick's time and its seed.
 pub(crate) fn observable_catalog(node: &dyn PipelineNode) -> Vec<Observable> {
     let mut observables = node.port_descriptor().observables().to_vec();
     observables
-        .extend(output_taps(node).map(|tap| Observable::new(tap.leaf, Determinism::Reproducible)));
-    observables.push(Observable::new(TICK_DURATION_LEAF, Determinism::WallClock));
+        .extend(output_taps(node).map(|tap| Observable::new(tap.leaf, Determinism::Deterministic)));
+    observables.push(Observable::new(
+        TICK_DURATION_LEAF,
+        Determinism::Nondeterministic,
+    ));
     observables
 }
 
@@ -209,7 +212,7 @@ mod tests {
         let builder = leaves
             .iter()
             .fold(MockNodePortDescriptor::new(), |builder, leaf| {
-                builder.observable(*leaf, Determinism::Reproducible)
+                builder.observable(*leaf, Determinism::Deterministic)
             });
         let descriptor = outputs
             .iter()
@@ -235,11 +238,11 @@ mod tests {
         assert_eq!(
             observable_catalog(node.as_ref()),
             vec![
-                Observable::new(NIS, Determinism::Reproducible),
-                Observable::new(DROPPED, Determinism::Reproducible),
-                Observable::new(COVARIANCE_TAP, Determinism::Reproducible),
-                Observable::new(UNNAMED_TAP, Determinism::Reproducible),
-                Observable::new(TICK_DURATION_LEAF, Determinism::WallClock),
+                Observable::new(NIS, Determinism::Deterministic),
+                Observable::new(DROPPED, Determinism::Deterministic),
+                Observable::new(COVARIANCE_TAP, Determinism::Deterministic),
+                Observable::new(UNNAMED_TAP, Determinism::Deterministic),
+                Observable::new(TICK_DURATION_LEAF, Determinism::Nondeterministic),
             ]
         );
     }
@@ -250,7 +253,10 @@ mod tests {
 
         assert_eq!(
             observable_catalog(node.as_ref()),
-            vec![Observable::new(TICK_DURATION_LEAF, Determinism::WallClock)]
+            vec![Observable::new(
+                TICK_DURATION_LEAF,
+                Determinism::Nondeterministic
+            )]
         );
     }
 

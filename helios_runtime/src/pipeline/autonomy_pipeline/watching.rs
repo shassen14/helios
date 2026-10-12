@@ -23,7 +23,7 @@ impl AutonomyPipeline {
     ///
     /// A host formats its own paths from these pairs and looks its requests
     /// up in them, rather than parsing paths apart. A comparison across runs
-    /// reads each [`Observable`]'s determinism to skip wall-clock leaves.
+    /// reads each [`Observable`]'s determinism to skip nondeterministic leaves.
     pub fn observables(&self) -> impl Iterator<Item = (&str, Observable)> + '_ {
         self.levels.iter().flatten().flat_map(|scheduled| {
             let name = scheduled.node.name();
@@ -230,7 +230,7 @@ mod tests {
         leaves
             .iter()
             .fold(MockNodePortDescriptor::new(), |builder, leaf| {
-                builder.observable(*leaf, Determinism::Reproducible)
+                builder.observable(*leaf, Determinism::Deterministic)
             })
     }
 

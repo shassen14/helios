@@ -35,7 +35,7 @@ impl DeclaringNode {
             .iter()
             .fold(
                 AlgorithmNodePortDescriptor::new().outputs_from_slice(outputs),
-                |builder, leaf| builder.observable(*leaf, Determinism::Reproducible),
+                |builder, leaf| builder.observable(*leaf, Determinism::Deterministic),
             )
             .build();
         Self {

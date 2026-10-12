@@ -12,7 +12,7 @@ use std::{collections::BTreeSet, error::Error, fmt::Display};
 /// The default is an empty set of leaves, which watches nothing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WatchSet {
-    /// Every leaf of every node, including wall-clock leaves such as each
+    /// Every leaf of every node, including nondeterministic leaves such as each
     /// node's run duration.
     Everything,
     /// Exactly these leaves. Held in order, so the same leaf named twice is

@@ -146,14 +146,16 @@ fn format_keys<'a>(keys: impl IntoIterator<Item = &'a ChannelKey>) -> Vec<String
     keys.into_iter().map(format_key_compact).collect()
 }
 
-/// Each leaf, a wall-clock leaf marked so a reader knows not to expect it to
-/// repeat across runs.
+/// Each leaf, a nondeterministic leaf marked so a reader knows not to expect
+/// it to repeat across runs.
 fn format_observables(observables: &[Observable]) -> Vec<String> {
     observables
         .iter()
         .map(|observable| match observable.determinism() {
-            Determinism::Reproducible => observable.leaf_name().to_string(),
-            Determinism::WallClock => format!("{} (wall clock)", observable.leaf_name()),
+            Determinism::Deterministic => observable.leaf_name().to_string(),
+            Determinism::Nondeterministic => {
+                format!("{} (nondeterministic)", observable.leaf_name())
+            }
         })
         .collect()
 }
@@ -203,14 +205,14 @@ mod tests {
     }
 
     #[test]
-    fn only_wall_clock_leaves_are_marked() {
+    fn only_nondeterministic_leaves_are_marked() {
         let observables = [
-            Observable::new("aiding.gps.nis", Determinism::Reproducible),
-            Observable::new("tick.duration", Determinism::WallClock),
+            Observable::new("aiding.gps.nis", Determinism::Deterministic),
+            Observable::new("tick.duration", Determinism::Nondeterministic),
         ];
         assert_eq!(
             format_observables(&observables),
-            ["aiding.gps.nis", "tick.duration (wall clock)"]
+            ["aiding.gps.nis", "tick.duration (nondeterministic)"]
         );
     }
 }

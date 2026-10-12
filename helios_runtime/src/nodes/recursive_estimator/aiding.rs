@@ -254,8 +254,8 @@ mod tests {
         assert_eq!(
             declared,
             [
-                ("aiding.accel.nis", Determinism::Reproducible),
-                ("aiding.accel.dropped", Determinism::Reproducible),
+                ("aiding.accel.nis", Determinism::Deterministic),
+                ("aiding.accel.dropped", Determinism::Deterministic),
             ]
         );
     }
