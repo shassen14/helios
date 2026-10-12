@@ -2,9 +2,11 @@
 //! every node's catalog.
 
 use crate::{
-    observe::{buffer::NodeObservations, path::channel_to_path_segment},
+    observe::{
+        buffer::NodeObservations, observation::ObservedValue, path::channel_to_path_segment,
+    },
     pipeline::rate_gate::RateTimer,
-    port::{ChannelKey, Determinism, Observable},
+    port::{ChannelKey, Determinism, Observable, PortBus, SlotVersion},
     prelude::PipelineNode,
     NodeId,
 };
@@ -64,6 +66,45 @@ impl ScheduledNode {
             taps,
         }
     }
+
+    /// Each watched tap with its channel's version before the node runs, for
+    /// [`record_tap_writes`](Self::record_tap_writes) to compare after. Empty,
+    /// and without allocating, when no tap is watched.
+    pub(in crate::pipeline) fn watched_tap_versions(&self, bus: &PortBus) -> Vec<PendingTap<'_>> {
+        self.taps
+            .iter()
+            .filter_map(|tap| {
+                let leaf = self.observations.watched_leaf(&tap.leaf)?;
+                Some(PendingTap {
+                    leaf,
+                    channel: &tap.channel,
+                    before: bus
+                        .read_erased_versioned(&tap.channel)
+                        .map(|(_, version)| version),
+                })
+            })
+            .collect()
+    }
+
+    /// Records the value of each pending tap whose channel the node wrote
+    /// during its run, stamped with the value's own time. A channel whose
+    /// version is unchanged was not written, so it records nothing.
+    pub(in crate::pipeline) fn record_tap_writes(
+        &self,
+        bus: &PortBus,
+        pending: Vec<PendingTap<'_>>,
+    ) {
+        for tap in pending {
+            let Some((value, version)) = bus.read_erased_versioned(tap.channel) else {
+                continue;
+            };
+            if Some(version) == tap.before {
+                continue;
+            }
+            self.observations
+                .record(tap.leaf, value.timestamp(), ObservedValue::Typed(value));
+        }
+    }
 }
 
 /// A leaf that reports what a node writes to one of its output channels: the
@@ -83,6 +124,19 @@ fn output_taps(node: &dyn PipelineNode) -> impl Iterator<Item = Tap> + '_ {
         leaf: channel_to_path_segment(channel).into(),
         channel: channel.clone(),
     })
+}
+
+/// A watched tap during one run of its node: the channel's version before the
+/// run, `None` while the channel has never been written.
+///
+/// Borrows the channel from the node's [`Tap`], so it lives only as long as
+/// the run it belongs to.
+pub(in crate::pipeline) struct PendingTap<'a> {
+    /// The buffer's own name for the leaf, from
+    /// [`watched_leaf`](NodeObservations::watched_leaf).
+    leaf: Arc<str>,
+    channel: &'a ChannelKey,
+    before: Option<SlotVersion>,
 }
 
 /// Everything `node` can emit for watchers: the leaves it declares on its

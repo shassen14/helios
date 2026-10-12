@@ -67,7 +67,11 @@ impl AutonomyPipeline {
     /// provider nodes query for the tick.
     ///
     /// When a node's [`TICK_DURATION_LEAF`] is watched, its run is timed on a
-    /// wall clock and recorded in seconds, stamped with `now`.
+    /// wall clock and recorded in seconds, stamped with `now`. When one of its
+    /// output channels is watched, the value the node wrote there is recorded
+    /// once per run that wrote it, stamped with the value's own time. A node
+    /// records its taps before its duration, and both after what it emitted
+    /// itself.
     pub fn tick(&self, now: MonotonicTime, dt: f64, tf: &dyn TfProvider) {
         self.bus.set_tick_time(now.0);
 
@@ -89,6 +93,10 @@ impl AutonomyPipeline {
                     )
                     .entered();
 
+                    // Read the watched taps' versions before the clock starts,
+                    // so the duration measures the node alone.
+                    let taps = scheduled.watched_tap_versions(&self.bus);
+
                     // Time the run only when a watcher asked for it, so an
                     // unwatched node pays one check and never reads the clock.
                     let timing = scheduled
@@ -102,12 +110,13 @@ impl AutonomyPipeline {
                         TickContext::new(now, dt, scheduled.node_id, &scheduled.observations),
                     );
 
-                    if let Some((leaf, start)) = timing {
-                        scheduled.observations.record(
-                            leaf,
-                            now,
-                            start.elapsed().as_secs_f64().into(),
-                        );
+                    let elapsed = timing.map(|(leaf, start)| (leaf, start.elapsed()));
+
+                    scheduled.record_tap_writes(&self.bus, taps);
+                    if let Some((leaf, elapsed)) = elapsed {
+                        scheduled
+                            .observations
+                            .record(leaf, now, elapsed.as_secs_f64().into());
                     }
                 }
             }

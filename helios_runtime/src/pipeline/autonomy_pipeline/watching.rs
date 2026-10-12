@@ -124,9 +124,12 @@ mod tests {
     use crate::{
         observe::{observation::ObservedValue, watch::WatchedLeaf},
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
-        port::{Determinism, MockNodePortDescriptor, PortBus, PortDescriptor},
-        prelude::{PipelineNode, TickContext},
-        PipelineBuilder,
+        port::{
+            ChannelKey, Determinism, InternalChannel, MockNodePortDescriptor, PortBus,
+            PortDescriptor,
+        },
+        prelude::{Health, PipelineNode, Stamped, TickContext},
+        ErasedStamped, PipelineBuilder,
     };
 
     use helios_core::{
@@ -134,19 +137,34 @@ mod tests {
         spatial::transforms::ErasedTransform,
     };
 
+    use std::sync::Arc;
+
     const FIRST: &str = "first";
     const SECOND: &str = "second";
+    const WRITER: &str = "writer";
     const NIS: &str = "aiding.gps.nis";
     const DROPPED: &str = "aiding.gps.dropped";
     const UNDECLARED: &str = "aiding.gps.undeclared";
     const MISSING_NODE: &str = "missing";
+    /// The writer's output instance, and the tap leaf it is watched at.
+    const ESTIMATE: &str = "odom/estimate";
+    const ESTIMATE_TAP: &str = "odom.estimate";
     const STEP: f64 = 0.01;
+    /// How far before the tick's `now` a written value is stamped, so a tap's
+    /// timestamp can be told apart from the tick's.
+    const MEASUREMENT_LAG: f64 = 0.5;
+    /// A rate whose period, 1/30 s, falls between whole steps: the node runs on
+    /// the fourth tick and then not before the eighth.
+    const SLOWER_THAN_STEP_HZ: f64 = 30.0;
 
     /// A node that, each run, emits every leaf it declares once, valued and
-    /// stamped with the tick's `now`.
+    /// stamped with the tick's `now`, then writes each of its outputs when
+    /// `now` is one of `writes_at`. The written value is `now`, stamped
+    /// [`MEASUREMENT_LAG`] earlier.
     struct Emitting {
         name: String,
         descriptor: PortDescriptor,
+        writes_at: Vec<f64>,
     }
 
     impl PipelineNode for Emitting {
@@ -158,30 +176,88 @@ mod tests {
             &self.descriptor
         }
 
-        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
+        fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
             for observable in self.descriptor.observables() {
                 tick.emit(observable.leaf_name(), tick.now, tick.now.0);
+            }
+            if !self.writes_at.contains(&tick.now.0) {
+                return;
+            }
+            for output in self.descriptor.outputs() {
+                let stamped = Stamped {
+                    value: tick.now.0,
+                    timestamp: MonotonicTime(tick.now.0 - MEASUREMENT_LAG),
+                    health: Health::Ok,
+                    producer: tick.node_id,
+                };
+                bus.write(output.clone(), stamped)
+                    .expect("the bus has a slot for every declared output");
             }
         }
     }
 
     fn emitting(name: &str, leaves: &[&str]) -> Box<dyn PipelineNode> {
-        let descriptor = leaves
+        Box::new(Emitting {
+            name: name.to_string(),
+            descriptor: declaring(leaves).build(),
+            writes_at: vec![],
+        })
+    }
+
+    /// A node declaring `leaves` and outputting [`ESTIMATE`], written on the
+    /// runs at `writes_at`.
+    fn writing(leaves: &[&str], writes_at: &[f64]) -> Box<dyn PipelineNode> {
+        writing_with(declaring(leaves), writes_at)
+    }
+
+    /// [`writing`] gated to `hz`.
+    fn writing_at_rate(hz: f64, writes_at: &[f64]) -> Box<dyn PipelineNode> {
+        writing_with(declaring(&[]).rate_hz(hz), writes_at)
+    }
+
+    fn writing_with(
+        descriptor: MockNodePortDescriptor,
+        writes_at: &[f64],
+    ) -> Box<dyn PipelineNode> {
+        Box::new(Emitting {
+            name: WRITER.to_string(),
+            descriptor: descriptor.output_internal(estimate()).build(),
+            writes_at: writes_at.to_vec(),
+        })
+    }
+
+    fn declaring(leaves: &[&str]) -> MockNodePortDescriptor {
+        leaves
             .iter()
             .fold(MockNodePortDescriptor::new(), |builder, leaf| {
                 builder.observable(*leaf, Determinism::Reproducible)
             })
-            .build();
-        Box::new(Emitting {
-            name: name.to_string(),
-            descriptor,
-        })
+    }
+
+    fn estimate() -> InternalChannel {
+        InternalChannel::named::<f64>(ESTIMATE)
     }
 
     /// `first` declares NIS and the drop count; `second` declares NIS only.
     fn pipeline() -> AutonomyPipeline {
         PipelineBuilder::new()
             .add_node(emitting(FIRST, &[NIS, DROPPED]))
+            .add_node(emitting(SECOND, &[NIS]))
+            .build()
+            .expect("two independent nodes build")
+    }
+
+    /// `writer` declares NIS and outputs [`ESTIMATE`], written on the runs at
+    /// `writes_at`; `second` declares NIS and outputs nothing.
+    fn tapped_pipeline(writes_at: &[f64]) -> AutonomyPipeline {
+        built(writing(&[NIS], writes_at))
+    }
+
+    /// `writer` in a pipeline beside `second`. Neither reads the other, so they
+    /// share a level, where nodes run in name order: `second` first.
+    fn built(writer: Box<dyn PipelineNode>) -> AutonomyPipeline {
+        PipelineBuilder::new()
+            .add_node(writer)
             .add_node(emitting(SECOND, &[NIS]))
             .build()
             .expect("two independent nodes build")
@@ -259,6 +335,25 @@ mod tests {
             timestamp: MonotonicTime(t),
             value: ObservedValue::Scalar(t),
         }
+    }
+
+    /// What a watched tap on [`ESTIMATE`] records for `written`: the bus
+    /// value itself, at the writer's tap leaf, stamped with the value's time.
+    fn tapped(written: Arc<dyn ErasedStamped>) -> Observation {
+        Observation {
+            node: WRITER.into(),
+            leaf: ESTIMATE_TAP.into(),
+            timestamp: written.timestamp(),
+            value: ObservedValue::Typed(written),
+        }
+    }
+
+    /// The value now in the writer's [`ESTIMATE`] slot.
+    fn written(pipeline: &AutonomyPipeline) -> Arc<dyn ErasedStamped> {
+        pipeline
+            .bus()
+            .read_erased(&ChannelKey::from(estimate()))
+            .expect("the writer has written its output")
     }
 
     /// The `(node, leaf)` of each observation, in drained order.
@@ -455,6 +550,123 @@ mod tests {
                 (FIRST, TICK_DURATION_LEAF),
                 (SECOND, NIS),
                 (SECOND, TICK_DURATION_LEAF),
+            ])
+        );
+    }
+
+    #[test]
+    fn observables_list_a_tap_per_output_between_declared_leaves_and_tick_duration() {
+        assert_eq!(
+            catalog(&tapped_pipeline(&[])),
+            pairs(&[
+                (SECOND, NIS),
+                (SECOND, TICK_DURATION_LEAF),
+                (WRITER, NIS),
+                (WRITER, ESTIMATE_TAP),
+                (WRITER, TICK_DURATION_LEAF),
+            ])
+        );
+    }
+
+    #[test]
+    fn watching_a_channel_the_node_does_not_output_is_refused() {
+        let mut pipeline = tapped_pipeline(&[]);
+
+        let errors = pipeline
+            .watch(&leaves(&[(SECOND, ESTIMATE_TAP)]))
+            .expect_err("only the writer outputs the estimate");
+
+        assert_eq!(
+            errors,
+            vec![WatchError::UndeclaredLeaf {
+                node: SECOND.to_string(),
+                leaf: ESTIMATE_TAP.to_string(),
+            }]
+        );
+    }
+
+    // The first write to a slot moves its version from none to some, so this
+    // also covers a channel that held nothing before the run.
+    #[test]
+    fn watched_tap_records_the_bus_value_itself_stamped_with_its_own_time() {
+        let mut pipeline = tapped_pipeline(&[1.0]);
+        pipeline
+            .watch(&leaves(&[(WRITER, ESTIMATE_TAP)]))
+            .expect("the writer outputs the estimate");
+
+        run(&pipeline, &[1.0]);
+        let observations = drained(&pipeline);
+
+        // `Typed` compares by `Arc::ptr_eq`, so equality means the tap holds
+        // the bus's own value, not a copy.
+        assert_eq!(observations, vec![tapped(written(&pipeline))]);
+        assert_eq!(
+            observations[0].timestamp,
+            MonotonicTime(1.0 - MEASUREMENT_LAG)
+        );
+    }
+
+    #[test]
+    fn run_that_leaves_its_output_unwritten_records_nothing() {
+        let mut pipeline = tapped_pipeline(&[1.0, 3.0]);
+        pipeline
+            .watch(&leaves(&[(WRITER, ESTIMATE_TAP)]))
+            .expect("the writer outputs the estimate");
+
+        run(&pipeline, &[1.0]);
+        let first = drained(&pipeline);
+        run(&pipeline, &[2.0]);
+        let unwritten = drained(&pipeline);
+        run(&pipeline, &[3.0]);
+        let second = drained(&pipeline);
+
+        // On the run at 2.0 the slot still holds the first value; only its
+        // unchanged version says the node didn't write it again.
+        assert_eq!(first.len(), 1);
+        assert!(unwritten.is_empty(), "recorded {unwritten:?}");
+        assert_eq!(second, vec![tapped(written(&pipeline))]);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn rate_skipped_node_records_nothing() {
+        let mut pipeline = built(writing_at_rate(SLOWER_THAN_STEP_HZ, &[4.0, 5.0, 6.0, 7.0]));
+        pipeline
+            .watch(&leaves(&[(WRITER, ESTIMATE_TAP)]))
+            .expect("the writer outputs the estimate");
+
+        // The node would write at 5.0–7.0, but its rate keeps it from running
+        // after 4.0.
+        run(&pipeline, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+
+        assert_eq!(drained(&pipeline), vec![tapped(written(&pipeline))]);
+    }
+
+    #[test]
+    fn unwatched_tap_records_nothing_beside_a_watched_leaf() {
+        let mut pipeline = tapped_pipeline(&[1.0]);
+        pipeline.watch(&leaves(&[(WRITER, NIS)])).expect("declared");
+
+        run(&pipeline, &[1.0]);
+
+        assert_eq!(drained(&pipeline), vec![emitted(WRITER, NIS, 1.0)]);
+    }
+
+    #[test]
+    fn everything_records_taps_after_the_nodes_emits_and_before_its_duration() {
+        let mut pipeline = tapped_pipeline(&[1.0]);
+        pipeline.watch(&WatchSet::Everything).expect("cannot fail");
+
+        run(&pipeline, &[1.0]);
+
+        assert_eq!(
+            sources(&drained(&pipeline)),
+            pairs(&[
+                (SECOND, NIS),
+                (SECOND, TICK_DURATION_LEAF),
+                (WRITER, NIS),
+                (WRITER, ESTIMATE_TAP),
+                (WRITER, TICK_DURATION_LEAF),
             ])
         );
     }
