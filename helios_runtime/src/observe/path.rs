@@ -29,20 +29,37 @@ pub struct AgentPathParts<'a> {
 impl<'a> AgentPathParts<'a> {
     /// Splits `path`, the inverse of [`agent_path`]. The agent and node hold
     /// no separator, so the first two separators after the root end them,
-    /// and everything after is `rest`. `None` when `path` isn't under the
-    /// root or a part is empty.
-    pub fn split(path: &'a str) -> Option<Self> {
+    /// and everything after is `rest`. On failure, names the first part that
+    /// is wrong: a root other than [`AGENT_ROOT`], or a part that is missing
+    /// or empty.
+    pub fn split(path: &'a str) -> Result<Self, PathPart> {
         let mut parts = path.splitn(4, PATH_SEPARATOR);
-        if parts.next()? != AGENT_ROOT {
-            return None;
+        if parts.next() != Some(AGENT_ROOT) {
+            return Err(PathPart::Root);
         }
-        let (agent, node, rest) = (parts.next()?, parts.next()?, parts.next()?);
-        if agent.is_empty() || node.is_empty() || rest.is_empty() {
-            return None;
-        }
+        let mut next = |part| {
+            parts
+                .next()
+                .filter(|segment| !segment.is_empty())
+                .ok_or(part)
+        };
+        let agent = next(PathPart::Agent)?;
+        let node = next(PathPart::Node)?;
+        let rest = next(PathPart::Rest)?;
 
-        Some(Self { agent, node, rest })
+        Ok(Self { agent, node, rest })
     }
+}
+
+/// One of the four parts of a watcher path, `agent.<agent>.<node>.<rest>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathPart {
+    /// The leading `agent`.
+    Root,
+    Agent,
+    Node,
+    /// The leaf or channel segment.
+    Rest,
 }
 
 /// The watcher path `agent.<agent>.<node>.<rest>`.
@@ -135,7 +152,7 @@ mod tests {
 
         assert_eq!(
             AgentPathParts::split(&path),
-            Some(AgentPathParts {
+            Ok(AgentPathParts {
                 agent: "car",
                 node: "estimator",
                 rest: "aiding.gps.nis",
@@ -145,16 +162,33 @@ mod tests {
 
     #[test]
     fn split_refuses_a_path_outside_the_root() {
-        assert_eq!(AgentPathParts::split("agents.car.estimator.nis"), None);
-        assert_eq!(AgentPathParts::split("car.estimator.nis"), None);
+        assert_eq!(
+            AgentPathParts::split("agents.car.estimator.nis"),
+            Err(PathPart::Root)
+        );
+        assert_eq!(
+            AgentPathParts::split("car.estimator.nis"),
+            Err(PathPart::Root)
+        );
     }
 
     #[test]
-    fn split_refuses_a_missing_or_empty_part() {
-        assert_eq!(AgentPathParts::split("agent.car.estimator"), None);
-        assert_eq!(AgentPathParts::split("agent.car.estimator."), None);
-        assert_eq!(AgentPathParts::split("agent..estimator.nis"), None);
-        assert_eq!(AgentPathParts::split("agent.car..nis"), None);
+    fn split_names_the_first_missing_or_empty_part() {
+        assert_eq!(AgentPathParts::split("agent"), Err(PathPart::Agent));
+        assert_eq!(
+            AgentPathParts::split("agent..estimator.nis"),
+            Err(PathPart::Agent)
+        );
+        assert_eq!(AgentPathParts::split("agent.car"), Err(PathPart::Node));
+        assert_eq!(AgentPathParts::split("agent.car..nis"), Err(PathPart::Node));
+        assert_eq!(
+            AgentPathParts::split("agent.car.estimator"),
+            Err(PathPart::Rest)
+        );
+        assert_eq!(
+            AgentPathParts::split("agent.car.estimator."),
+            Err(PathPart::Rest)
+        );
     }
 
     #[test]

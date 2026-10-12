@@ -11,7 +11,18 @@ impl Runner {
     /// assertion against the agents' buses and reporting whether to stop. Pure
     /// w.r.t. the buses — it reads them, never writes — so the host stays the
     /// sole source of simulation state.
+    ///
+    /// A run whose setup failed stops on its first tick without judging
+    /// anything: a host may tick again before it acts on the failure, and a
+    /// verdict from those ticks would be judged against a run already declared
+    /// unfit.
     pub fn tick(&mut self, t: MonotonicTime, blackboards: &[(AgentId, &PortBus)]) -> TickAction {
+        if !self.setup_failures.is_empty() {
+            return TickAction::Terminate {
+                reason: TerminationReason::Aborted,
+            };
+        }
+
         // The run's clock origin: stamped on the first tick and fixed thereafter,
         // so the time budget is measured from when the run actually began, not
         // from zero. Copied out so the borrow of `start_time` ends here.
@@ -156,6 +167,30 @@ mod tests {
              condition = \"equals\"\n\
              value = {value:?}"
         )
+    }
+
+    #[test]
+    fn a_failed_setup_stops_the_run_without_judging() {
+        // The value would pass, so a latch that moved would show the tick
+        // judged it.
+        let agent = AgentId::new("car");
+        let (b, ch) = bus();
+        publish(&b, &ch, 5.0);
+        let mut reg = TargetRegistry::new();
+        seed(&mut reg, &agent, "agent.car.estimator.x", &ch);
+
+        let a = cont("agent.car.estimator.x", 5.0);
+        let mut r = runner(run("max_simulated_seconds = 10.0", &[&a]), reg);
+        r.fail_setup("unusable".to_string());
+
+        assert_eq!(
+            r.tick(at(1.0), &[(agent, &b)]),
+            TickAction::Terminate {
+                reason: TerminationReason::Aborted,
+            }
+        );
+        assert_eq!(r.states[0].status(), &ContinuousStatus::Pending);
+        assert_eq!(r.start_time, None);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use super::{
-    resolve::{resolve, TargetError},
+    resolve::{join, resolve, UnusableAssertion},
     Runner,
 };
 use crate::{
@@ -31,11 +31,11 @@ impl Runner {
             }
         }
 
-        let errors = resolve(self.run.assertions(), pipelines, collector);
-        if errors.is_empty() {
+        let unusable = resolve(self.run.assertions(), pipelines, collector);
+        if unusable.is_empty() {
             Ok(())
         } else {
-            Err(LifecycleError::UnusableTargets(errors))
+            Err(LifecycleError::UnusableAssertions(unusable))
         }
     }
 
@@ -159,21 +159,19 @@ impl Runner {
     }
 }
 
+/// Between the unusable assertions in one message. An assertion's own
+/// message holds a `,` but never this.
+const ASSERTION_SEPARATOR: &str = "; ";
+
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum LifecycleError {
-    /// Assertions the run can't judge, each with its reason, so the operator
-    /// sees every one to fix at once.
-    #[error("the run can't judge these assertions: {}", join(.0))]
-    UnusableTargets(Vec<TargetError>),
-}
-
-/// `errors` on one line, separated by `; `.
-fn join(errors: &[TargetError]) -> String {
-    errors
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("; ")
+    /// Assertions the run can't judge, each with its reasons, so the
+    /// operator sees every one to fix at once.
+    #[error(
+        "the run can't judge these assertions: {}",
+        join(.0, ASSERTION_SEPARATOR)
+    )]
+    UnusableAssertions(Vec<UnusableAssertion>),
 }
 
 #[cfg(test)]
@@ -184,6 +182,7 @@ mod tests {
     use crate::assertion::target::TargetRegistry;
     use crate::assertion::AssertionTarget;
     use crate::run::Run;
+    use crate::runner::resolve::TargetProblem;
 
     use helios_runtime::PipelineBuilder;
 
@@ -263,9 +262,17 @@ mod tests {
         let collector = collector(&r);
         assert_eq!(
             r.on_pipeline_built(&[(agent, &pipeline)], &collector),
-            Err(LifecycleError::UnusableTargets(vec![
-                TargetError::Unresolved(target("agent.car.estimator.a")),
-                TargetError::Unresolved(target("agent.car.estimator.b")),
+            Err(LifecycleError::UnusableAssertions(vec![
+                UnusableAssertion {
+                    number: 1,
+                    target: target("agent.car.estimator.a"),
+                    problems: vec![TargetProblem::Unreported],
+                },
+                UnusableAssertion {
+                    number: 2,
+                    target: target("agent.car.estimator.b"),
+                    problems: vec![TargetProblem::Unreported],
+                },
             ]))
         );
     }

@@ -151,8 +151,11 @@ pub(in crate::pipeline) struct PendingTap<'a> {
 /// goes through here, so none of them needs to know which leaves the
 /// pipeline adds.
 ///
-/// A tap is deterministic: a node's outputs depend only on its inputs, the
-/// tick's time and its seed. It arrives typed, as its channel's payload.
+/// Every tap is marked deterministic, because every node today writes outputs
+/// that depend only on its inputs, the tick's time and its seed. A node whose
+/// outputs depend on wall time (an anytime planner) would make its taps
+/// nondeterministic, and the catalog can't tell yet. A tap arrives typed, as
+/// its channel's payload.
 pub(crate) fn observable_catalog(node: &dyn PipelineNode) -> Vec<Observable> {
     let mut observables = node.port_descriptor().observables().to_vec();
     observables.extend(

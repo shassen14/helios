@@ -7,11 +7,14 @@
 //! exists and what it's for. Each public type's doc comment is tagged with its
 //! phase, so you can tell at a glance (and `grep` for a whole phase):
 //!
-//! - **`_Pre-step._`** — parsed from the run file *before* the run starts. Its
-//!   job is to be *strict*: reject unknown keys, fail loudly on a bad file.
-//!   `Run`, `RunLoadError`, `ScenarioRef`, `ObservationRef`, `Termination`,
-//!   `OnAssertion`, `ValidationError`, `Assertion`, `TerminalAssertion`,
-//!   `ContinuousAssertion`, `MalformedTarget`, `TargetError`.
+//! - **`_Pre-step._`** — settled *before* the first tick: parsed from the run
+//!   file, or checked against the pipelines once they are built. Its job is
+//!   to be *strict*: reject unknown keys, fail loudly on a bad file or on an
+//!   assertion the run could never judge. `Run`, `RunLoadError`,
+//!   `ScenarioRef`, `ObservationRef`, `Termination`, `OnAssertion`,
+//!   `ValidationError`, `Assertion`, `TerminalAssertion`,
+//!   `ContinuousAssertion`, `MalformedTarget`, `UnusableAssertion`,
+//!   `TargetProblem`.
 //! - **`_Per-step._`** — live state and verdicts produced *while* ticking; no
 //!   serde, never serialized. `Runner`, `AssertionState`, `ContinuousStatus`,
 //!   `TickAction`, `AssertionResult`, `FailureKind`, `ConditionError`,

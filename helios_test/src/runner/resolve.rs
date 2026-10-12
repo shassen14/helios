@@ -14,79 +14,136 @@ use crate::{
 
 use helios_core::prelude::AgentId;
 use helios_runtime::{
-    observe::observation::ObservedValueKind, port::Determinism, AutonomyPipeline,
+    observe::observation::ObservedValueKind,
+    port::{Determinism, Observable},
+    AutonomyPipeline,
 };
 
+use std::fmt::Display;
 use thiserror::Error;
 
-/// _Pre-step._ Why the run can't judge an assertion.
+/// Between the problems of one assertion. No problem's message holds it.
+const PROBLEM_SEPARATOR: &str = " and ";
+
+/// _Pre-step._ An assertion the run can't judge, and every reason why.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum TargetError {
-    /// No agent of that name, or its agent reports nothing there.
-    #[error("'{0}' matches nothing its agent reports")]
-    Unresolved(AssertionTarget),
-    /// A channel whose payload type has no extractor, so no value from it
-    /// could be compared.
-    #[error("'{target}' carries {payload}, which has no extractor")]
-    NoExtractor {
-        target: AssertionTarget,
-        payload: &'static str,
-    },
-    /// A nondeterministic leaf, asserted on without
-    /// `allow_nondeterministic = true`.
-    #[error("'{0}' is nondeterministic; set allow_nondeterministic = true to assert on it")]
-    Nondeterministic(AssertionTarget),
+#[error(
+    "assertion {number} on '{target}': {}",
+    join(.problems, PROBLEM_SEPARATOR)
+)]
+pub struct UnusableAssertion {
+    /// Its position in the run file, counting from 1, so two assertions on
+    /// one target can be told apart.
+    pub(super) number: usize,
+    pub(super) target: AssertionTarget,
+    pub(super) problems: Vec<TargetProblem>,
 }
 
-/// Every reason the run can't judge one of `assertions`, in run-file order.
+/// _Pre-step._ One reason the run can't judge an assertion.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum TargetProblem {
+    /// The scenario has no agent of that name with a pipeline.
+    #[error("no agent by that name has a pipeline")]
+    UnknownAgent,
+    /// Its agent reports nothing at that node and leaf.
+    #[error("its agent reports nothing there")]
+    Unreported,
+    /// A channel whose payload type has no extractor, so no value from it
+    /// could be compared.
+    #[error("it carries {0}, which has no extractor")]
+    NoExtractor(&'static str),
+    /// A nondeterministic leaf, asserted on without
+    /// `allow_nondeterministic = true`.
+    #[error("it is nondeterministic (set allow_nondeterministic = true to assert on it)")]
+    Nondeterministic,
+}
+
+/// What one agent reports, listed once for every assertion to search.
+struct Catalog<'a> {
+    agent: &'a AgentId,
+    /// Each leaf with the name of the node that reports it.
+    observables: Vec<(&'a str, Observable)>,
+}
+
+/// Every assertion in `assertions` the run can't judge, in run-file order.
 /// Empty when it can judge them all.
 pub(super) fn resolve(
     assertions: &[Assertion],
     pipelines: &[(AgentId, &AutonomyPipeline)],
     collector: &ObservationCollector,
-) -> Vec<TargetError> {
+) -> Vec<UnusableAssertion> {
+    let catalogs: Vec<Catalog> = pipelines
+        .iter()
+        .map(|(agent, pipeline)| Catalog {
+            agent,
+            observables: pipeline.observables().collect(),
+        })
+        .collect();
+
     assertions
         .iter()
-        .filter_map(|assertion| check(assertion, pipelines, collector).err())
+        .enumerate()
+        .filter_map(|(index, assertion)| {
+            let problems = check(assertion, &catalogs, collector);
+            (!problems.is_empty()).then(|| UnusableAssertion {
+                number: index + 1,
+                target: assertion.target().clone(),
+                problems,
+            })
+        })
         .collect()
 }
 
-/// Checks one assertion against the one agent its target names.
+/// Every reason the run can't judge `assertion`, checked against the one
+/// agent its target names. A target its agent doesn't report has no other
+/// properties to check, so that problem is reported alone.
 fn check(
     assertion: &Assertion,
-    pipelines: &[(AgentId, &AutonomyPipeline)],
+    catalogs: &[Catalog],
     collector: &ObservationCollector,
-) -> Result<(), TargetError> {
+) -> Vec<TargetProblem> {
     let target = assertion.target();
     let node = target.node().as_ref();
     let leaf = target.leaf().as_ref();
-    let unresolved = || TargetError::Unresolved(target.clone());
 
-    let pipeline = pipelines
+    let Some(catalog) = catalogs
         .iter()
-        .find(|(agent, _)| agent == target.agent())
-        .map(|(_, pipeline)| *pipeline)
-        .ok_or_else(unresolved)?;
-    let observable = pipeline
-        .observables()
+        .find(|catalog| catalog.agent == target.agent())
+    else {
+        return vec![TargetProblem::UnknownAgent];
+    };
+    let Some(observable) = catalog
+        .observables
+        .iter()
         .find(|(name, observable)| *name == node && observable.leaf_name().as_ref() == leaf)
         .map(|(_, observable)| observable)
-        .ok_or_else(unresolved)?;
+    else {
+        return vec![TargetProblem::Unreported];
+    };
 
+    let mut problems = Vec::new();
     match observable.determinism() {
         Determinism::Deterministic => {}
         Determinism::Nondeterministic if assertion.allow_nondeterministic() => {}
-        Determinism::Nondeterministic => return Err(TargetError::Nondeterministic(target.clone())),
+        Determinism::Nondeterministic => problems.push(TargetProblem::Nondeterministic),
     }
-
     match observable.kind() {
-        ObservedValueKind::Scalar => Ok(()),
-        ObservedValueKind::Typed { type_id, .. } if collector.can_extract(type_id) => Ok(()),
-        ObservedValueKind::Typed { type_name, .. } => Err(TargetError::NoExtractor {
-            target: target.clone(),
-            payload: type_name,
-        }),
+        ObservedValueKind::Scalar => {}
+        ObservedValueKind::Typed { type_id, .. } if collector.can_extract(type_id) => {}
+        ObservedValueKind::Typed { type_name, .. } => {
+            problems.push(TargetProblem::NoExtractor(type_name))
+        }
     }
+    problems
+}
+
+/// `items` on one line, `separator` between each.
+pub(super) fn join(items: &[impl Display], separator: &str) -> String {
+    items
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(separator)
 }
 
 #[cfg(test)]
@@ -108,22 +165,27 @@ mod tests {
 
     const CAR: &str = "car";
     const ESTIMATOR: &str = "estimator";
+    const PLANNER: &str = "planner";
     /// A scalar leaf the estimator declares.
     const NIS: &str = "aiding.gps.nis";
     /// A channel the estimator writes whose payload has an extractor.
     const SPEED: &str = "speed";
     /// A channel the estimator writes whose payload has none.
     const LABEL: &str = "label";
+    /// A scalar leaf the estimator declares, and a channel the planner writes
+    /// whose payload has no extractor.
+    const SHARED: &str = "shared";
 
-    /// Writes nothing; exists only to carry a descriptor with outputs and
-    /// leaves.
+    /// Writes nothing; exists only to carry a name and a descriptor with
+    /// outputs and leaves.
     struct DeclaringNode {
+        name: &'static str,
         descriptor: PortDescriptor,
     }
 
     impl PipelineNode for DeclaringNode {
         fn name(&self) -> &str {
-            ESTIMATOR
+            self.name
         }
 
         fn port_descriptor(&self) -> &PortDescriptor {
@@ -133,23 +195,40 @@ mod tests {
         fn execute(&self, _: &PortBus, _: &dyn TfProvider, _: TickContext) {}
     }
 
-    /// One estimator declaring [`NIS`] and writing [`SPEED`] and [`LABEL`].
+    /// An estimator declaring [`NIS`] and [`SHARED`] and writing [`SPEED`]
+    /// and [`LABEL`], and a planner writing [`SHARED`].
     fn pipeline() -> AutonomyPipeline {
-        let descriptor = AlgorithmNodePortDescriptor::new()
+        let estimator = AlgorithmNodePortDescriptor::new()
             .outputs_from_slice(&[
                 InternalChannel::named::<f64>(SPEED).into(),
                 InternalChannel::named::<String>(LABEL).into(),
             ])
             .observable(NIS, Determinism::Deterministic)
+            .observable(SHARED, Determinism::Deterministic)
+            .build();
+        let planner = AlgorithmNodePortDescriptor::new()
+            .outputs_from_slice(&[InternalChannel::named::<String>(SHARED).into()])
             .build();
         PipelineBuilder::new()
-            .add_node(Box::new(DeclaringNode { descriptor }))
+            .add_node(Box::new(DeclaringNode {
+                name: ESTIMATOR,
+                descriptor: estimator,
+            }))
+            .add_node(Box::new(DeclaringNode {
+                name: PLANNER,
+                descriptor: planner,
+            }))
             .build()
-            .expect("the estimator builds alone")
+            .expect("two nodes with no inputs build")
     }
 
-    fn target(agent: &str, leaf: &str) -> AssertionTarget {
-        AssertionTarget::parse(agent_path(agent, ESTIMATOR, leaf)).expect("valid target")
+    fn target(agent: &str, node: &str, leaf: &str) -> AssertionTarget {
+        AssertionTarget::parse(agent_path(agent, node, leaf)).expect("valid target")
+    }
+
+    /// A target on the car's estimator.
+    fn estimator(leaf: &str) -> AssertionTarget {
+        target(CAR, ESTIMATOR, leaf)
     }
 
     fn assertion(target: AssertionTarget, allow_nondeterministic: bool) -> Assertion {
@@ -163,7 +242,19 @@ mod tests {
         })
     }
 
-    fn errors(assertions: &[Assertion]) -> Vec<TargetError> {
+    fn unusable(
+        number: usize,
+        target: AssertionTarget,
+        problems: Vec<TargetProblem>,
+    ) -> UnusableAssertion {
+        UnusableAssertion {
+            number,
+            target,
+            problems,
+        }
+    }
+
+    fn errors(assertions: &[Assertion]) -> Vec<UnusableAssertion> {
         let pipeline = pipeline();
         let collector = ObservationCollector::new(
             assertions.iter().map(Assertion::target),
@@ -176,84 +267,135 @@ mod tests {
     fn a_declared_leaf_and_an_extractable_tap_resolve() {
         assert_eq!(
             errors(&[
-                assertion(target(CAR, NIS), false),
-                assertion(target(CAR, SPEED), false),
+                assertion(estimator(NIS), false),
+                assertion(estimator(SPEED), false),
             ]),
             vec![]
         );
     }
 
     #[test]
-    fn a_leaf_its_agent_does_not_report_is_unresolved() {
-        let missing = target(CAR, "missing");
+    fn a_leaf_its_agent_does_not_report_is_unreported() {
+        let missing = estimator("missing");
 
         assert_eq!(
             errors(&[assertion(missing.clone(), false)]),
-            vec![TargetError::Unresolved(missing)]
+            vec![unusable(1, missing, vec![TargetProblem::Unreported])]
         );
     }
 
     #[test]
-    fn a_leaf_only_another_agent_reports_is_unresolved() {
-        let elsewhere = target("truck", NIS);
+    fn an_agent_with_no_pipeline_is_unknown() {
+        let elsewhere = target("truck", ESTIMATOR, NIS);
 
         assert_eq!(
             errors(&[assertion(elsewhere.clone(), false)]),
-            vec![TargetError::Unresolved(elsewhere)]
+            vec![unusable(1, elsewhere, vec![TargetProblem::UnknownAgent])]
+        );
+    }
+
+    #[test]
+    fn a_leaf_is_checked_on_the_node_the_target_names() {
+        // The estimator declares SHARED as a number; the planner's SHARED is
+        // a tap with no extractor. Only the planner's is refused.
+        let on_planner = target(CAR, PLANNER, SHARED);
+
+        assert_eq!(
+            errors(&[
+                assertion(estimator(SHARED), false),
+                assertion(on_planner.clone(), false),
+            ]),
+            vec![unusable(
+                2,
+                on_planner,
+                vec![TargetProblem::NoExtractor(std::any::type_name::<String>())]
+            )]
         );
     }
 
     #[test]
     fn a_tap_whose_payload_has_no_extractor_is_refused() {
-        let label = target(CAR, LABEL);
+        let label = estimator(LABEL);
 
         assert_eq!(
             errors(&[assertion(label.clone(), false)]),
-            vec![TargetError::NoExtractor {
-                target: label,
-                payload: std::any::type_name::<String>(),
-            }]
+            vec![unusable(
+                1,
+                label,
+                vec![TargetProblem::NoExtractor(std::any::type_name::<String>())]
+            )]
         );
     }
 
     #[test]
     fn a_nondeterministic_leaf_is_refused_without_permission() {
-        let duration = target(CAR, TICK_DURATION_LEAF);
+        let duration = estimator(TICK_DURATION_LEAF);
 
         assert_eq!(
             errors(&[assertion(duration.clone(), false)]),
-            vec![TargetError::Nondeterministic(duration)]
+            vec![unusable(1, duration, vec![TargetProblem::Nondeterministic])]
         );
     }
 
     #[test]
     fn a_nondeterministic_leaf_is_accepted_with_permission() {
         assert_eq!(
-            errors(&[assertion(target(CAR, TICK_DURATION_LEAF), true)]),
+            errors(&[assertion(estimator(TICK_DURATION_LEAF), true)]),
             vec![]
         );
     }
 
     #[test]
     fn permission_on_a_deterministic_leaf_is_accepted() {
-        assert_eq!(errors(&[assertion(target(CAR, NIS), true)]), vec![]);
+        assert_eq!(errors(&[assertion(estimator(NIS), true)]), vec![]);
     }
 
     #[test]
-    fn every_problem_is_reported_in_run_file_order() {
-        let missing = target(CAR, "missing");
-        let duration = target(CAR, TICK_DURATION_LEAF);
+    fn two_assertions_on_one_target_are_judged_apart() {
+        // Permission is per assertion, so only the one without it is
+        // refused, and its number says which.
+        let duration = estimator(TICK_DURATION_LEAF);
+
+        assert_eq!(
+            errors(&[
+                assertion(duration.clone(), true),
+                assertion(duration.clone(), false),
+            ]),
+            vec![unusable(2, duration, vec![TargetProblem::Nondeterministic])]
+        );
+    }
+
+    #[test]
+    fn every_unusable_assertion_is_reported_in_run_file_order() {
+        let missing = estimator("missing");
+        let duration = estimator(TICK_DURATION_LEAF);
 
         assert_eq!(
             errors(&[
                 assertion(missing.clone(), false),
-                assertion(target(CAR, NIS), false),
+                assertion(estimator(NIS), false),
                 assertion(duration.clone(), false),
             ]),
             vec![
-                TargetError::Unresolved(missing),
-                TargetError::Nondeterministic(duration),
+                unusable(1, missing, vec![TargetProblem::Unreported]),
+                unusable(3, duration, vec![TargetProblem::Nondeterministic]),
             ]
+        );
+    }
+
+    #[test]
+    fn the_message_names_the_assertion_its_target_and_every_problem() {
+        let label = estimator(LABEL);
+        let problems = vec![
+            TargetProblem::Nondeterministic,
+            TargetProblem::NoExtractor("String"),
+        ];
+
+        assert_eq!(
+            unusable(4, label, problems).to_string(),
+            "assertion 4 on 'agent.car.estimator.label': it is nondeterministic \
+             (set allow_nondeterministic = true to assert on it) and it carries String, \
+             which has no extractor"
         );
     }
 }

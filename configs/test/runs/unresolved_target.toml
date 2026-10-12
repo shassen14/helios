@@ -1,7 +1,7 @@
 # Failure-path proof: an assertion whose target no agent produces.
 #
 # No agent named `nobody` reports `no_such_node.value`, so `on_pipeline_built`
-# returns `UnusableTargets` — a legitimate test FAILURE (exit 1), not a crash.
+# returns `UnusableAssertions` — a legitimate test FAILURE (exit 1), not a crash.
 # Confirms the failing exit code flows through the same report path as a pass.
 
 schema_version = "1.0"

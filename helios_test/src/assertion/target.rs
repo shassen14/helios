@@ -1,6 +1,6 @@
 use helios_core::prelude::AgentId;
 use helios_runtime::{
-    observe::path::{agent_path, channel_to_path_segment, AgentPathParts},
+    observe::path::{agent_path, channel_to_path_segment, AgentPathParts, PathPart},
     AutonomyPipeline, ChannelKey,
 };
 
@@ -26,8 +26,9 @@ impl AssertionTarget {
     /// The target `path` names, or why it names none.
     pub fn parse(path: impl Into<String>) -> Result<Self, MalformedTarget> {
         let path = path.into();
-        let Some(parts) = AgentPathParts::split(&path) else {
-            return Err(MalformedTarget { path });
+        let parts = match AgentPathParts::split(&path) {
+            Ok(parts) => parts,
+            Err(part) => return Err(MalformedTarget { path, part }),
         };
         let (agent, node, leaf) = (
             AgentId::new(parts.agent),
@@ -76,11 +77,25 @@ impl fmt::Display for AssertionTarget {
 }
 
 /// _Pre-step._ A run-file target that doesn't split into an agent, a node
-/// and a leaf.
+/// and a leaf, and the first part that is wrong.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("target '{path}' is not a watcher path agent.<agent>.<node>.<leaf>")]
+#[error(
+    "target '{path}' is not a watcher path agent.<agent>.<node>.<leaf>: {}",
+    what_is_wrong(*.part)
+)]
 pub struct MalformedTarget {
     path: String,
+    part: PathPart,
+}
+
+/// What is wrong with a target whose `part` is the first to fail.
+fn what_is_wrong(part: PathPart) -> &'static str {
+    match part {
+        PathPart::Root => "it starts with something else",
+        PathPart::Agent => "the agent is missing",
+        PathPart::Node => "the node is missing",
+        PathPart::Rest => "the leaf is missing",
+    }
 }
 
 /// _Per-step._ Resolves an assertion target to a bus channel; built at
@@ -172,8 +187,19 @@ mod tests {
         assert_eq!(
             AssertionTarget::parse("agent.car.estimator"),
             Err(MalformedTarget {
-                path: "agent.car.estimator".to_owned()
+                path: "agent.car.estimator".to_owned(),
+                part: PathPart::Rest,
             })
+        );
+    }
+
+    #[test]
+    fn a_malformed_target_says_which_part_is_wrong() {
+        let error = AssertionTarget::parse("agent.car").expect_err("no node or leaf");
+
+        assert!(
+            error.to_string().ends_with("the node is missing"),
+            "{error}"
         );
     }
 
