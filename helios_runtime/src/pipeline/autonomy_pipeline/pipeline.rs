@@ -133,9 +133,8 @@ impl AutonomyPipeline {
     /// appear here. A node that declares multiple outputs yields one entry per
     /// output, all sharing the same node name.
     ///
-    /// Two consumers today: `helios_test` walks these pairs to build the
-    /// assertion-target paths (`agent.<agent>.<node>.<channel>`) that tests
-    /// reference, and host viz walks them to discover which plural channels
+    /// [`tf_edge_channels`](Self::tf_edge_channels) filters these for the tf
+    /// edges, and host viz walks them to discover which plural channels
     /// (`Path`, `MapData`) a stack actually declares before reading each by key.
     /// This is metadata about the graph's wiring — to read live values off the
     /// bus, use [`AutonomyPipeline::bus`].

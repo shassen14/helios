@@ -165,10 +165,7 @@ impl PortBus {
     }
 
     pub fn read<T: Any + Send + Sync>(&self, channel: ChannelKey) -> Option<Arc<Stamped<T>>> {
-        let guard = self.slots.get(&channel)?.load();
-        let any_arc = guard.data.as_ref()?;
-
-        Arc::clone(any_arc).into_any().downcast::<Stamped<T>>().ok()
+        self.read_versioned(channel).map(|(stamped, _)| stamped)
     }
 
     /// [`read`](Self::read) plus the slot's [`SlotVersion`], both taken from one
@@ -180,14 +177,10 @@ impl PortBus {
         &self,
         channel: ChannelKey,
     ) -> Option<(Arc<Stamped<T>>, SlotVersion)> {
-        let guard = self.slots.get(&channel)?.load();
-        let any_arc = guard.data.as_ref()?;
-        let stamped = Arc::clone(any_arc)
-            .into_any()
-            .downcast::<Stamped<T>>()
-            .ok()?;
+        let (erased, version) = self.read_erased_versioned(&channel)?;
+        let stamped = erased.into_any().downcast::<Stamped<T>>().ok()?;
 
-        Some((stamped, guard.version))
+        Some((stamped, version))
     }
 
     pub fn read_fresh<T: Any + Send + Sync>(
@@ -205,24 +198,16 @@ impl PortBus {
         }
     }
 
-    /// Read a slot's current value without naming its Rust type — the one
-    /// primitive a runtime consumer (assertion evaluator, bus inspector) can
-    /// call when it only has a [`ChannelKey`] and not a compile-time `T`.
+    /// A slot's current value, without naming its Rust type, and its
+    /// [`SlotVersion`], both taken from one load so the pair always belongs to
+    /// the same write. Every read goes through here; the typed reads downcast
+    /// what it returns. The pipeline also calls it directly, comparing versions
+    /// around a node's run to tell whether that node wrote a channel it has no
+    /// compile-time `T` for. `None` for an unknown channel or an empty slot.
     ///
     /// Returns an owned `Arc`, not a borrow: `load()` hands back a temporary
     /// guard, so cloning the inner `Arc` out is what lets the value outlive
-    /// this call. `None` covers both an unknown channel and an empty slot.
-    pub fn read_erased(&self, key: &ChannelKey) -> Option<Arc<dyn ErasedStamped>> {
-        let guard = self.slots.get(key)?.load();
-        let erased = guard.data.as_ref()?;
-        Some(Arc::clone(erased))
-    }
-
-    /// [`read_erased`](Self::read_erased) plus the slot's [`SlotVersion`], both
-    /// taken from one load so the pair always belongs to the same write. What
-    /// the pipeline compares around a node's run to tell whether that node
-    /// wrote a channel it has no compile-time `T` for. `None` for an unknown
-    /// channel or an empty slot.
+    /// this call.
     pub(crate) fn read_erased_versioned(
         &self,
         key: &ChannelKey,
@@ -412,27 +397,27 @@ mod tests {
         assert!(bus.read_fresh::<u32>(key, 5.0).is_none());
     }
 
-    // --- read_erased / ErasedStamped tests ---
+    // --- ErasedStamped tests ---
 
     #[test]
-    fn read_erased_payload_downcasts_to_value() {
+    fn erased_payload_downcasts_to_value() {
         let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.write(key.clone(), make_stamped(42u32, 1.0)).unwrap();
 
-        let erased = bus.read_erased(&key).unwrap();
+        let (erased, _) = bus.read_erased_versioned(&key).unwrap();
         // Payload is the bare value, not the Stamped envelope.
         let value = erased.payload().downcast_ref::<u32>().unwrap();
         assert_eq!(*value, 42);
     }
 
     #[test]
-    fn read_erased_payload_type_matches_typeid() {
+    fn erased_payload_type_matches_typeid() {
         let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
 
-        let erased = bus.read_erased(&key).unwrap();
+        let (erased, _) = bus.read_erased_versioned(&key).unwrap();
         // The payload TypeId is what a consumer keys its extractor on, and it
         // must agree with the channel key's own type_id.
         assert_eq!(erased.payload_type_id(), TypeId::of::<u32>());
@@ -440,35 +425,22 @@ mod tests {
     }
 
     #[test]
-    fn read_erased_exposes_timestamp() {
+    fn erased_exposes_timestamp() {
         let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.write(key.clone(), make_stamped(1u32, 7.5)).unwrap();
 
-        let erased = bus.read_erased(&key).unwrap();
+        let (erased, _) = bus.read_erased_versioned(&key).unwrap();
         assert_eq!(erased.timestamp(), MonotonicTime(7.5));
     }
 
     #[test]
-    fn read_erased_returns_none_for_empty_slot() {
-        let key = ikey::<u32>();
-        let bus = bus_with_outputs(vec![key.clone()]);
-        assert!(bus.read_erased(&key).is_none());
-    }
-
-    #[test]
-    fn read_erased_returns_none_for_unknown_channel() {
-        let bus = PortBus::new(&[]);
-        assert!(bus.read_erased(&ikey::<u32>()).is_none());
-    }
-
-    #[test]
-    fn read_erased_payload_rejects_wrong_type() {
+    fn erased_payload_rejects_wrong_type() {
         let key = ikey::<u32>();
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.write(key.clone(), make_stamped(1u32, 0.0)).unwrap();
 
-        let erased = bus.read_erased(&key).unwrap();
+        let (erased, _) = bus.read_erased_versioned(&key).unwrap();
         // Downcasting to the wrong payload type fails rather than mis-reads.
         assert!(erased.payload().downcast_ref::<i64>().is_none());
     }
@@ -479,9 +451,9 @@ mod tests {
         let bus = bus_with_outputs(vec![key.clone()]);
         bus.write(key.clone(), make_stamped(99u32, 2.0)).unwrap();
 
-        let erased = bus.read_erased(&key).unwrap();
+        let (erased, _) = bus.read_erased_versioned(&key).unwrap();
         // The escape hatch recovers the full Stamped<T>, the same path the
-        // typed read::<T> takes internally.
+        // typed reads take.
         let stamped = erased.into_any().downcast::<Stamped<u32>>().unwrap();
         assert_eq!(stamped.value, 99);
         assert_eq!(stamped.timestamp, MonotonicTime(2.0));
@@ -597,9 +569,10 @@ mod tests {
 
         let (erased, version) = bus.read_erased_versioned(&key).unwrap();
         let (_, typed_version) = bus.read_versioned::<u32>(key.clone()).unwrap();
+        let (again, _) = bus.read_erased_versioned(&key).unwrap();
         // The same allocation the slot holds, so a tap shares the value
         // rather than copying it.
-        assert!(Arc::ptr_eq(&erased, &bus.read_erased(&key).unwrap()));
+        assert!(Arc::ptr_eq(&erased, &again));
         assert_eq!(version, typed_version);
     }
 

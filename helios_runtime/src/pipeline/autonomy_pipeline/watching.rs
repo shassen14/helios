@@ -355,7 +355,8 @@ mod tests {
     fn written(pipeline: &AutonomyPipeline) -> Arc<dyn ErasedStamped> {
         pipeline
             .bus()
-            .read_erased(&ChannelKey::from(estimate()))
+            .read_erased_versioned(&ChannelKey::from(estimate()))
+            .map(|(written, _)| written)
             .expect("the writer has written its output")
     }
 
