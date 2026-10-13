@@ -11,7 +11,7 @@
 //! `AssertionReportEntry`'s private fields directly rather than widening their
 //! public accessor set for what is purely presentation glue.
 
-use super::{AssertionStatus, Report, ReportStatus, TerminatedBy};
+use super::{AssertionStatus, FailureReason, Report, ReportStatus, TerminatedBy, Verdict};
 
 use crate::assertion::{AssertionValue, Condition};
 
@@ -63,12 +63,18 @@ fn render(report: &Report) -> String {
         let mut line = format!(
             "{head:<width$} {label}",
             width = STATUS_COLUMN,
-            label = status_label(&entry.status),
+            label = status_label(&entry.status()),
         );
 
-        // On a failure, show what was actually observed next to what we wanted.
-        if let (AssertionStatus::Failed, Some(actual)) = (&entry.status, &entry.actual) {
-            line.push_str(&format!(" (got {})", value_string(actual)));
+        // On a failure, show what was observed, when it broke and why.
+        if let Verdict::Failed {
+            actual,
+            reason,
+            failed_at_secs,
+        } = entry.verdict()
+        {
+            let detail = failure_detail(actual.as_ref(), *reason, *failed_at_secs);
+            line.push_str(&format!(" ({detail})"));
         }
 
         lines.push(line);
@@ -103,6 +109,40 @@ fn termination_line(report: &Report) -> String {
             "assertion {number} {} at {at}",
             status_label(&AssertionStatus::Failed)
         ),
+    }
+}
+
+/// Phrase a failure as "got <value> at t=<secs>s: <reason>", leaving out the
+/// value and the time when the failure has none.
+fn failure_detail(
+    actual: Option<&AssertionValue>,
+    reason: FailureReason,
+    failed_at_secs: Option<f64>,
+) -> String {
+    let mut observed = Vec::new();
+    if let Some(actual) = actual {
+        observed.push(format!("got {}", value_string(actual)));
+    }
+    if let Some(at) = failed_at_secs {
+        observed.push(format!("at t={at:.2}s"));
+    }
+    let reason = reason_phrase(reason);
+    if observed.is_empty() {
+        reason.to_string()
+    } else {
+        format!("{}: {reason}", observed.join(" "))
+    }
+}
+
+/// The human phrase for why an assertion failed — a phrasebook, like
+/// [`condition_glyph`]; the TOML carries the snake_case name instead.
+fn reason_phrase(reason: FailureReason) -> &'static str {
+    match reason {
+        FailureReason::Rejected => "value rejected",
+        FailureReason::NoSamples => "no samples",
+        FailureReason::TypeMismatch => "type mismatch",
+        FailureReason::ConditionFailed => "condition failed",
+        FailureReason::InvalidBounds => "invalid bounds",
     }
 }
 
@@ -171,15 +211,19 @@ mod tests {
                     "agent.car.mission_state".to_string(),
                     Condition::Equals,
                     AssertionValue::String("Succeeded".to_string()),
-                    Some(AssertionValue::String("Succeeded".to_string())),
-                    AssertionStatus::Passed,
+                    Verdict::Passed {
+                        actual: AssertionValue::String("Succeeded".to_string()),
+                    },
                 ),
                 AssertionReportEntry::new(
                     "agent.car.speed".to_string(),
                     Condition::LessThan,
                     AssertionValue::Float(5.0),
-                    Some(AssertionValue::Float(7.0)),
-                    AssertionStatus::Failed,
+                    Verdict::Failed {
+                        actual: Some(AssertionValue::Float(7.0)),
+                        reason: FailureReason::ConditionFailed,
+                        failed_at_secs: None,
+                    },
                 ),
             ],
         )
@@ -201,7 +245,39 @@ mod tests {
         assert!(text.contains("PASSED"));
         // Failing line: the `<` glyph, FAILED, and the observed value.
         assert!(text.contains("[assert] agent.car.speed < 5"));
-        assert!(text.contains("FAILED (got 7)"));
+        assert!(text.contains("FAILED (got 7: condition failed)"));
+    }
+
+    #[test]
+    fn a_failure_shows_its_time_and_reason() {
+        let mut report = sample_report();
+        report.assertions[1] = AssertionReportEntry::new(
+            "agent.car.speed".to_string(),
+            Condition::LessThan,
+            AssertionValue::Float(5.0),
+            Verdict::Failed {
+                actual: Some(AssertionValue::Float(7.0)),
+                reason: FailureReason::ConditionFailed,
+                failed_at_secs: Some(1.25),
+            },
+        );
+        assert!(render(&report).contains("FAILED (got 7 at t=1.25s: condition failed)"));
+    }
+
+    #[test]
+    fn a_failure_with_no_value_shows_only_its_reason() {
+        let mut report = sample_report();
+        report.assertions[1] = AssertionReportEntry::new(
+            "agent.car.speed".to_string(),
+            Condition::LessThan,
+            AssertionValue::Float(5.0),
+            Verdict::Failed {
+                actual: None,
+                reason: FailureReason::NoSamples,
+                failed_at_secs: None,
+            },
+        );
+        assert!(render(&report).contains("FAILED (no samples)"));
     }
 
     #[test]
@@ -219,8 +295,7 @@ mod tests {
                 "agent.car.position".to_string(),
                 Condition::Equals,
                 AssertionValue::Float(0.0),
-                None,
-                AssertionStatus::Unjudged,
+                Verdict::Unjudged { actual: None },
             )],
         );
         let text = render(&report);

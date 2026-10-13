@@ -23,8 +23,8 @@
 //!   read back *after* it to build the serialized aggregate. `RunMetrics`.
 //! - **`_Post-step._`** — built *after* the run and serialized out. Its job is
 //!   to be *stable*: never break the consumer that parses it. `Report`,
-//!   `ReportStatus`, `TerminatedBy`, `AssertionStatus`, `AssertionReportEntry`,
-//!   `AggregateReport`, `MetricRow`.
+//!   `ReportStatus`, `TerminatedBy`, `AssertionReportEntry`, `Verdict`,
+//!   `AssertionStatus`, `FailureReason`, `AggregateReport`, `MetricRow`.
 //! - **`_Shared._`** — leaf values that cross phases, so they carry both serde
 //!   directions. `AssertionValue`, `Condition` (pre + post); `AssertionTarget`
 //!   (pre + per).

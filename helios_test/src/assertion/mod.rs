@@ -83,21 +83,6 @@ pub enum AssertionResult {
     Pending,
 }
 
-impl AssertionResult {
-    /// The observed value carried out of a result, if any. `Passed` always has
-    /// one; `Failed` has one for a condition failure but not for a rejected
-    /// value or no samples; `Pending` never does. Consuming `self`, since
-    /// `finalize` owns the result locally and only needs the value moved out
-    /// into the report entry.
-    pub(crate) fn into_actual(self) -> Option<AssertionValue> {
-        match self {
-            AssertionResult::Passed { actual } => Some(actual),
-            AssertionResult::Failed { actual, .. } => actual,
-            AssertionResult::Pending => None,
-        }
-    }
-}
-
 /// _Per-step._ Why an assertion failed.
 // Each variant names a distinct cause, so the report can phrase it precisely
 // instead of a generic "failed": the target's values were turned away on

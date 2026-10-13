@@ -91,7 +91,7 @@ fn check_new(assertion: &Assertion, state: &mut AssertionState, series: &Series,
     let new = state.reach_new(series.samples(), series.rejection());
     if let Some(rejection) = state.rejection() {
         let kind = FailureKind::Rejected(rejection);
-        state.record(None, Err(kind.to_string()), t);
+        state.record(None, Err(kind), t);
         return;
     }
 
@@ -101,7 +101,7 @@ fn check_new(assertion: &Assertion, state: &mut AssertionState, series: &Series,
                 state.record(Some(actual), Ok(()), sample.timestamp);
             }
             AssertionResult::Failed { kind, actual } => {
-                state.record(actual, Err(kind.to_string()), sample.timestamp);
+                state.record(actual, Err(kind), sample.timestamp);
             }
             AssertionResult::Pending => {}
         }
@@ -112,7 +112,10 @@ fn check_new(assertion: &Assertion, state: &mut AssertionState, series: &Series,
 mod tests {
     use super::*;
 
-    use crate::runner::fixtures::{at, cont, ready, report, run, states, term, CAR, TRUCK};
+    use crate::{
+        assertion::AssertionValue,
+        runner::fixtures::{at, cont, ready, report, run, states, term, CAR, TRUCK},
+    };
 
     const BUDGET: &str = "max_simulated_seconds = 10.0";
 
@@ -204,7 +207,8 @@ mod tests {
             states(&r)[0].status(),
             &ContinuousStatus::FailedAt {
                 t: at(1.5),
-                reason: "condition failed".into(),
+                value: Some(AssertionValue::Float(9.0)),
+                kind: FailureKind::ConditionFailed,
             }
         );
     }
@@ -322,7 +326,8 @@ mod tests {
             states(&r)[1].status(),
             &ContinuousStatus::FailedAt {
                 t: at(0.5),
-                reason: "condition failed".into(),
+                value: Some(AssertionValue::Float(1.0)),
+                kind: FailureKind::ConditionFailed,
             }
         );
     }

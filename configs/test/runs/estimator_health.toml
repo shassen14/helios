@@ -16,8 +16,7 @@
 #     the bound is loose; it means most under --monte-carlo.
 #
 # Both sources measure 3 axes (GPS position, magnetometer field), so one
-# bound serves both. Bounds are floats on purpose: an integer `value` is a
-# different type from the float NIS and fails as a mismatch.
+# bound serves both.
 
 schema_version = "1.0"
 

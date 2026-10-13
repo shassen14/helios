@@ -44,7 +44,7 @@ mod tests {
     use super::*;
 
     use crate::assertion::{AssertionValue, Condition};
-    use crate::report::{AssertionReportEntry, AssertionStatus, ReportStatus, TerminatedBy};
+    use crate::report::{AssertionReportEntry, FailureReason, ReportStatus, TerminatedBy, Verdict};
 
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -67,15 +67,19 @@ mod tests {
                     "agent.car.estimator.position".to_string(),
                     Condition::Equals,
                     AssertionValue::Float(0.0),
-                    Some(AssertionValue::Float(0.0)),
-                    AssertionStatus::Passed,
+                    Verdict::Passed {
+                        actual: AssertionValue::Float(0.0),
+                    },
                 ),
                 AssertionReportEntry::new(
                     "agent.car.speed".to_string(),
                     Condition::LessThan,
                     AssertionValue::Float(5.0),
-                    Some(AssertionValue::Float(7.0)),
-                    AssertionStatus::Failed,
+                    Verdict::Failed {
+                        actual: Some(AssertionValue::Float(7.0)),
+                        reason: FailureReason::ConditionFailed,
+                        failed_at_secs: Some(2.5),
+                    },
                 ),
             ],
         )
@@ -112,7 +116,38 @@ mod tests {
         let assertions = value["assertions"].as_array().unwrap();
         assert_eq!(assertions.len(), 2);
         assert_eq!(assertions[0]["status"].as_str(), Some("passed"));
+        assert_eq!(assertions[0]["actual"].as_float(), Some(0.0));
+        // A pass carries no failure fields at all.
+        assert!(assertions[0].get("reason").is_none());
+        assert_eq!(assertions[1]["target"].as_str(), Some("agent.car.speed"));
         assert_eq!(assertions[1]["status"].as_str(), Some("failed"));
+        assert_eq!(assertions[1]["actual"].as_float(), Some(7.0));
+        assert_eq!(assertions[1]["reason"].as_str(), Some("condition_failed"));
+        assert_eq!(assertions[1]["failed_at_secs"].as_float(), Some(2.5));
+    }
+
+    #[test]
+    fn a_failure_with_nothing_observed_omits_the_absent_fields() {
+        let mut report = sample_report();
+        report.assertions[1] = AssertionReportEntry::new(
+            "agent.car.speed".to_string(),
+            Condition::LessThan,
+            AssertionValue::Float(5.0),
+            Verdict::Failed {
+                actual: None,
+                reason: FailureReason::NoSamples,
+                failed_at_secs: None,
+            },
+        );
+        let path = write_to_temp(&report);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        let value: toml::Value = toml::from_str(&text).unwrap();
+        let failed = &value["assertions"].as_array().unwrap()[1];
+        assert_eq!(failed["reason"].as_str(), Some("no_samples"));
+        assert!(failed.get("actual").is_none());
+        assert!(failed.get("failed_at_secs").is_none());
     }
 
     #[test]

@@ -3,11 +3,12 @@ use super::{
     Phase, Runner, FOREIGN_COLLECTOR, NEVER_SET_UP,
 };
 use crate::{
-    assertion::{
-        evaluator::evaluate_latest, Assertion, AssertionResult, AssertionValue, FailureKind,
-    },
+    assertion::{evaluator::evaluate_latest, Assertion, AssertionResult},
     collector::{ObservationCollector, Series},
-    report::{AssertionReportEntry, AssertionStatus, Report, ReportStatus, TerminatedBy},
+    report::{
+        AssertionReportEntry, AssertionStatus, FailureReason, Report, ReportStatus, TerminatedBy,
+        Verdict,
+    },
     run::termination::TerminationReason,
 };
 use helios_core::prelude::MonotonicTime;
@@ -78,12 +79,12 @@ impl Runner {
             // This assertion's series and state; `None` when the run isn't
             // ready to judge. A pair of references is `Copy`, so `copied`
             // lifts it out of the borrowed list.
-            let (status, actual) = match judged.as_ref().and_then(|j| j.get(i)).copied() {
-                Some((series, state)) => judge(assertion, series, state, covered),
-                None => (AssertionStatus::Unjudged, None),
+            let verdict = match judged.as_ref().and_then(|j| j.get(i)).copied() {
+                Some((series, state)) => judge(assertion, series, state, covered, self.start_time),
+                None => Verdict::Unjudged { actual: None },
             };
 
-            if !matches!(status, AssertionStatus::Passed) {
+            if verdict.status() != AssertionStatus::Passed {
                 all_passed = false;
             }
 
@@ -91,8 +92,7 @@ impl Runner {
                 assertion.target().as_str().to_string(),
                 *assertion.condition(),
                 assertion.expected().clone(),
-                actual,
-                status,
+                verdict,
             ));
         }
 
@@ -127,47 +127,63 @@ impl Runner {
     }
 }
 
-/// One assertion's report verdict and observed value. `covered` is whether
-/// the run reached the end of the assertion's window: a pass, or a failure for
-/// silence, needs it; a failure the assertion already met is final either way.
+/// One assertion's report verdict. `covered` is whether the run reached the
+/// end of the assertion's window: a pass, or a failure for silence, needs it;
+/// a failure the assertion already met is final either way. `start` is the
+/// run's first tick, which a continuous failure's time is measured from.
 fn judge(
     assertion: &Assertion,
     series: &Series,
     state: &AssertionState,
     covered: bool,
-) -> (AssertionStatus, Option<AssertionValue>) {
+    start: Option<MonotonicTime>,
+) -> Verdict {
     match assertion {
-        Assertion::Continuous(_) => {
-            let status = match state.status() {
-                ContinuousStatus::FailedAt { .. } => AssertionStatus::Failed,
-                _ if !covered => AssertionStatus::Unjudged,
-                ContinuousStatus::Holding => AssertionStatus::Passed,
-                // Silent over its whole window: a drop.
-                ContinuousStatus::Pending => AssertionStatus::Failed,
-            };
-            (status, state.last_value().clone())
-        }
+        Assertion::Continuous(_) => match state.status() {
+            // The value that broke it, not whatever arrived after: a run that
+            // recovered would otherwise show a healthy number beside FAILED.
+            ContinuousStatus::FailedAt { t, value, kind } => Verdict::Failed {
+                actual: value.clone(),
+                reason: FailureReason::from(kind),
+                failed_at_secs: start.map(|start| t.0 - start.0),
+            },
+            _ if !covered => Verdict::Unjudged {
+                actual: state.last_value().clone(),
+            },
+            // Holding means at least one value held, so there is one to show.
+            ContinuousStatus::Holding => match state.last_value() {
+                Some(actual) => Verdict::Passed {
+                    actual: actual.clone(),
+                },
+                None => no_samples(),
+            },
+            // Silent over its whole window: a drop.
+            ContinuousStatus::Pending => no_samples(),
+        },
         Assertion::Terminal(_) => {
             let reached = state.reached(series.samples());
             // A value turned away before the run stopped is a fault however
             // it stopped; any other verdict belongs to an end the run never
             // reached. The value it stopped at is still shown.
             if !covered && state.rejection().is_none() {
-                let last = reached.last().map(|sample| sample.value.clone());
-                return (AssertionStatus::Unjudged, last);
+                return Verdict::Unjudged {
+                    actual: reached.last().map(|sample| sample.value.clone()),
+                };
             }
-            let result = match evaluate_latest(assertion, state.rejection(), reached) {
-                AssertionResult::Pending => AssertionResult::Failed {
-                    kind: FailureKind::NoSamples,
-                    actual: None,
-                },
-                judged => judged,
-            };
-            // `from(&result)` borrows for the verdict; `into_actual` then
-            // moves the value out — borrow ends before the move, so this
-            // tuple order is what keeps both legal.
-            (AssertionStatus::from(&result), result.into_actual())
+            match evaluate_latest(assertion, state.rejection(), reached) {
+                AssertionResult::Pending => no_samples(),
+                judged => Verdict::from(judged),
+            }
         }
+    }
+}
+
+/// The verdict of an assertion that saw no value over its whole window.
+fn no_samples() -> Verdict {
+    Verdict::Failed {
+        actual: None,
+        reason: FailureReason::NoSamples,
+        failed_at_secs: None,
     }
 }
 
@@ -217,7 +233,7 @@ mod tests {
         report
             .assertions()
             .iter()
-            .map(|entry| entry.status().clone())
+            .map(|entry| entry.status())
             .collect()
     }
 
@@ -234,7 +250,7 @@ mod tests {
 
         assert_eq!(statuses(&report), [AssertionStatus::Passed]);
         assert_eq!(
-            report.assertions()[0].actual(),
+            report.assertions()[0].verdict().actual(),
             Some(&AssertionValue::Float(5.0))
         );
         assert_eq!(report.status(), &ReportStatus::Passed);
@@ -253,7 +269,40 @@ mod tests {
             statuses(&report),
             [AssertionStatus::Failed, AssertionStatus::Failed]
         );
+        for entry in report.assertions() {
+            assert_eq!(
+                entry.verdict(),
+                &Verdict::Failed {
+                    actual: None,
+                    reason: FailureReason::NoSamples,
+                    failed_at_secs: None,
+                }
+            );
+        }
         assert_eq!(report.status(), &ReportStatus::Failed);
+    }
+
+    #[test]
+    fn a_continuous_failure_reports_the_value_that_broke_it() {
+        // It breaks at 1.0 s and recovers at 1.5 s; the report shows the
+        // breaking value and its time, not the healthy value that came last.
+        let (mut r, mut collector) = ready(run(&budget(), &[&cont(CAR, 5.0)]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 5.0);
+        report(&mut collector, CAR, 1.0, 9.0);
+        report(&mut collector, CAR, 1.5, 5.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+        let entry = &report.assertions()[0];
+
+        assert_eq!(
+            entry.verdict(),
+            &Verdict::Failed {
+                actual: Some(AssertionValue::Float(9.0)),
+                reason: FailureReason::ConditionFailed,
+                failed_at_secs: Some(1.0),
+            }
+        );
     }
 
     #[test]
@@ -296,7 +345,7 @@ mod tests {
         let report = finalize_stopped_by(&r, &collector, FAILED_FIRST);
 
         assert_eq!(
-            report.assertions()[1].actual(),
+            report.assertions()[1].verdict().actual(),
             Some(&AssertionValue::Float(7.0))
         );
     }

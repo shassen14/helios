@@ -16,9 +16,11 @@ pub enum AssertionValue {
 }
 
 impl AssertionValue {
-    // The type gate for strict comparison: `apply` compares `kind()` before
-    // comparing values, so `Int(5)` vs `Float(5.0)` is a `TypeMismatch` error,
-    // never a silent coercion. A mistyped TOML value should fail loud, not pass.
+    // The type gate for equality: `equals` / `not_equals` compare `kind()`
+    // before comparing values, so `Int(5)` vs `Float(5.0)` is a `TypeMismatch`
+    // error, never a silent coercion. Ordering is the exception: a bound of
+    // `200` against a float reading means 200.0, so `less_than` /
+    // `greater_than` (like `within_range`) read an int as f64.
     pub fn kind(&self) -> &'static str {
         match self {
             AssertionValue::Bool(_) => "bool",
@@ -102,23 +104,21 @@ fn compare_ordered(
     actual: &AssertionValue,
     expected: &AssertionValue,
 ) -> Result<bool, ConditionError> {
-    let (a, b) = match (actual, expected) {
-        (AssertionValue::Float(a), AssertionValue::Float(b)) => (*a, *b),
-        // Same-kind Int pairs promote to f64 only to share one comparison path;
-        // mixed Int/Float still falls through to the `TypeMismatch` arm below.
-        (AssertionValue::Int(a), AssertionValue::Int(b)) => (*a as f64, *b as f64),
-        _ if actual.kind() != expected.kind() => {
-            return Err(ConditionError::TypeMismatch {
+    // Any pair of numbers compares as f64: an ordering bound is a threshold,
+    // and `200` and `200.0` mean the same one. An i64 past 2^53 rounds, which
+    // no threshold today comes near.
+    let (Some(a), Some(b)) = (as_number(actual), as_number(expected)) else {
+        return Err(if actual.kind() != expected.kind() {
+            ConditionError::TypeMismatch {
                 expected_kind: expected.kind(),
                 actual_kind: actual.kind(),
-            });
-        }
-        _ => {
-            return Err(ConditionError::NotComparable {
+            }
+        } else {
+            ConditionError::NotComparable {
                 condition,
                 value_kind: actual.kind(),
-            });
-        }
+            }
+        });
     };
 
     Ok(match condition {
@@ -126,6 +126,16 @@ fn compare_ordered(
         Condition::GreaterThan => a > b,
         _ => unreachable!("compare_ordered called with non-ordering condition"),
     })
+}
+
+/// `value` as f64 if it is a number, for comparisons that read an int and a
+/// float alike.
+fn as_number(value: &AssertionValue) -> Option<f64> {
+    match value {
+        AssertionValue::Int(x) => Some(*x as f64),
+        AssertionValue::Float(x) => Some(*x),
+        AssertionValue::Bool(_) | AssertionValue::String(_) => None,
+    }
 }
 
 /// _Per-step._ A comparison that couldn't be carried out, produced during evaluation.
@@ -231,9 +241,27 @@ mod tests {
     }
 
     #[test]
-    fn ordered_rejects_int_vs_float_strict() {
+    fn ordered_reads_an_int_bound_against_a_float_as_a_number() {
+        // A run file's `value = 200` is an int; the reading it bounds is a
+        // float. Either side may be the int.
+        assert_eq!(
+            Condition::LessThan.apply(&AssertionValue::Float(0.9), &AssertionValue::Int(200)),
+            Ok(true)
+        );
+        assert_eq!(
+            Condition::GreaterThan.apply(&AssertionValue::Int(3), &AssertionValue::Float(2.5)),
+            Ok(true)
+        );
+        assert_eq!(
+            Condition::LessThan.apply(&AssertionValue::Float(250.0), &AssertionValue::Int(200)),
+            Ok(false)
+        );
+    }
+
+    #[test]
+    fn ordered_rejects_a_number_against_a_non_number() {
         let result =
-            Condition::LessThan.apply(&AssertionValue::Int(1), &AssertionValue::Float(2.0));
+            Condition::LessThan.apply(&AssertionValue::Bool(true), &AssertionValue::Float(2.0));
         assert!(matches!(result, Err(ConditionError::TypeMismatch { .. })));
     }
 

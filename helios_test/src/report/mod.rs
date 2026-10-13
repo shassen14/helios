@@ -3,7 +3,7 @@ pub mod console;
 pub mod toml_writer;
 
 use crate::{
-    assertion::{AssertionResult, AssertionValue, Condition},
+    assertion::{AssertionResult, AssertionValue, Condition, FailureKind},
     run::termination::TerminationReason,
 };
 
@@ -134,73 +134,153 @@ impl From<&TerminationReason> for TerminatedBy {
     }
 }
 
-/// _Post-step._ One assertion's line in the report. Its own type — rather than
-/// serializing the per-step `AssertionResult` — so the output schema is
-/// decoupled from the evaluator.
+/// _Post-step._ One assertion's line in the report: what was asserted and
+/// its verdict. Its own type — rather than serializing the per-step
+/// `AssertionResult` — so the output schema is decoupled from the evaluator.
 #[derive(Debug, Clone, Serialize)]
 pub struct AssertionReportEntry {
     target: String,
     condition: Condition,
     expected: AssertionValue,
-    /// `None` when no value was observed (a silent or unresolved assertion,
-    /// or one whose values were turned away).
-    actual: Option<AssertionValue>,
-    status: AssertionStatus,
+    /// Written inline: `status` and the verdict's own fields sit beside
+    /// `target` in the entry's table.
+    #[serde(flatten)]
+    verdict: Verdict,
 }
 
 impl AssertionReportEntry {
     /// Build one report line. The caller supplies an already-projected
-    /// `status` and `actual`; this type never sees the live evaluator types.
+    /// verdict; this type never sees the live evaluator types.
     pub fn new(
         target: String,
         condition: Condition,
         expected: AssertionValue,
-        actual: Option<AssertionValue>,
-        status: AssertionStatus,
+        verdict: Verdict,
     ) -> Self {
         Self {
             target,
             condition,
             expected,
-            actual,
-            status,
+            verdict,
         }
     }
 
-    /// This assertion's verdict.
-    pub fn status(&self) -> &AssertionStatus {
-        &self.status
+    /// This assertion's verdict, with what it observed.
+    pub fn verdict(&self) -> &Verdict {
+        &self.verdict
     }
 
-    /// The observed value, if one was captured.
-    pub fn actual(&self) -> Option<&AssertionValue> {
-        self.actual.as_ref()
+    /// Which verdict, without its fields.
+    pub fn status(&self) -> AssertionStatus {
+        self.verdict.status()
     }
 }
 
-/// _Post-step._ Per-assertion verdict. Distinct from `ReportStatus`, which is
-/// the run-level outcome rather than any single assertion's.
+/// _Post-step._ One assertion's verdict and what it rests on. The variant
+/// decides which fields exist, so a pass can't carry a failure reason and a
+/// failure can't lack one.
 #[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AssertionStatus {
-    Passed,
-    Failed,
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum Verdict {
+    Passed {
+        actual: AssertionValue,
+    },
+    Failed {
+        /// The value that failed it: for a continuous assertion the one that
+        /// broke it, not the last one seen. `None` when no value was observed
+        /// (none arrived, or the ones that did were turned away).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        actual: Option<AssertionValue>,
+        reason: FailureReason,
+        /// When a continuous assertion broke: simulated seconds from the
+        /// run's first tick to the reading that broke it. `None` for a
+        /// terminal assertion and a failure with no reading to place.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        failed_at_secs: Option<f64>,
+    },
     /// No verdict: the run stopped before the assertion's window ended (a
     /// `fail_fast` stop or an aborted setup) and it hadn't failed by then.
     /// Neither passes nor fails a run on its own; a run with one has already
-    /// failed for another reason.
+    /// failed for another reason. `actual` is the value it stopped at.
+    Unjudged {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        actual: Option<AssertionValue>,
+    },
+}
+
+impl Verdict {
+    /// Which verdict, without its fields.
+    pub fn status(&self) -> AssertionStatus {
+        match self {
+            Verdict::Passed { .. } => AssertionStatus::Passed,
+            Verdict::Failed { .. } => AssertionStatus::Failed,
+            Verdict::Unjudged { .. } => AssertionStatus::Unjudged,
+        }
+    }
+
+    /// The observed value shown with the verdict, if any.
+    pub fn actual(&self) -> Option<&AssertionValue> {
+        match self {
+            Verdict::Passed { actual } => Some(actual),
+            Verdict::Failed { actual, .. } | Verdict::Unjudged { actual } => actual.as_ref(),
+        }
+    }
+}
+
+/// A freshly evaluated result as a report verdict, for a terminal assertion
+/// judged at finalize. A terminal failure has no time of breaking: it is
+/// judged once, at the end.
+impl From<AssertionResult> for Verdict {
+    fn from(value: AssertionResult) -> Self {
+        match value {
+            AssertionResult::Passed { actual } => Verdict::Passed { actual },
+            AssertionResult::Failed { kind, actual } => Verdict::Failed {
+                actual,
+                reason: FailureReason::from(&kind),
+                failed_at_secs: None,
+            },
+            AssertionResult::Pending => Verdict::Unjudged { actual: None },
+        }
+    }
+}
+
+/// _Post-step._ Which verdict an assertion reached, without what it rests
+/// on. Distinct from `ReportStatus`, which is the run-level outcome rather
+/// than any single assertion's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssertionStatus {
+    Passed,
+    Failed,
     Unjudged,
 }
 
-/// A freshly evaluated result reduced to a report verdict, for a terminal
-/// assertion judged at finalize. The observed value is pulled out separately
-/// via `AssertionResult::into_actual`; this only projects the verdict.
-impl From<&AssertionResult> for AssertionStatus {
-    fn from(value: &AssertionResult) -> Self {
+/// _Post-step._ Why an assertion failed — the report's own projection of the
+/// per-step `FailureKind`, so rewording an error message can't change the
+/// schema a CI reader matches on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureReason {
+    /// A value arrived for the target but couldn't be read.
+    Rejected,
+    /// No value arrived for the target in the whole run.
+    NoSamples,
+    /// The observed value and the expected one are types the condition
+    /// can't compare.
+    TypeMismatch,
+    /// The comparison ran and didn't hold.
+    ConditionFailed,
+    /// A `within_range` assertion lacked usable bounds.
+    InvalidBounds,
+}
+
+impl From<&FailureKind> for FailureReason {
+    fn from(value: &FailureKind) -> Self {
         match value {
-            AssertionResult::Passed { .. } => AssertionStatus::Passed,
-            AssertionResult::Failed { .. } => AssertionStatus::Failed,
-            AssertionResult::Pending => AssertionStatus::Unjudged,
+            FailureKind::Rejected(_) => FailureReason::Rejected,
+            FailureKind::NoSamples => FailureReason::NoSamples,
+            FailureKind::TypeMismatch => FailureReason::TypeMismatch,
+            FailureKind::ConditionFailed => FailureReason::ConditionFailed,
+            FailureKind::InvalidBounds => FailureReason::InvalidBounds,
         }
     }
 }
