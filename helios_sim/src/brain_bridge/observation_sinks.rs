@@ -157,7 +157,7 @@ mod tests {
         spatial::transforms::ErasedTransform,
     };
     use helios_runtime::{
-        observe::{observation::AgentObservation, path::agent_path},
+        observe::{observation::AgentObservation, path::node_path},
         port::{Determinism, MockNodePortDescriptor, PortBus, PortDescriptor},
         PipelineBuilder, PipelineNode, TickContext,
     };
@@ -274,7 +274,7 @@ mod tests {
     #[test]
     fn a_requested_path_reaches_the_sink_tagged_with_its_agent() {
         let mut app = app_with_car();
-        app.add_observation_sink(Recording::asking_for(&[agent_path(CAR, ESTIMATOR, NIS)]));
+        app.add_observation_sink(Recording::asking_for(&[node_path(CAR, ESTIMATOR, NIS)]));
 
         let world = app.world_mut();
         watch_tick_and_drain(world);

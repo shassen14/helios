@@ -53,14 +53,14 @@ mod tests {
     #[test]
     fn parses_minimal_equals_assertion() {
         let toml = r#"
-            target = "agent.car.estimator.position"
+            target = "agent.car.node.estimator.position"
             condition = "equals"
             value = 0.0
         "#;
         let parsed: TerminalAssertion = toml::from_str(toml).unwrap();
         assert_eq!(
             parsed.target,
-            AssertionTarget::parse("agent.car.estimator.position").expect("valid target")
+            AssertionTarget::parse("agent.car.node.estimator.position").expect("valid target")
         );
         assert_eq!(parsed.condition, Condition::Equals);
         assert_eq!(parsed.value, AssertionValue::Float(0.0));
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn parses_within_range_with_bounds() {
         let toml = r#"
-            target = "agent.car.estimator.speed"
+            target = "agent.car.node.estimator.speed"
             condition = "within_range"
             value = 0.0
             low = 1.0
@@ -90,7 +90,7 @@ mod tests {
         // The `deny_unknown_fields` typo-catcher: a misspelled key is a hard
         // parse error, not a silent default.
         let toml = r#"
-            target = "agent.car.estimator.position"
+            target = "agent.car.node.estimator.position"
             condition = "equals"
             valeu = 0.0
         "#;

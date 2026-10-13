@@ -83,7 +83,7 @@ mod tests {
     const TERMINAL: &str = r#"
         [[assert]]
         when = "at_completion"
-        target = "agent.car.estimator.x"
+        target = "agent.car.node.estimator.x"
         condition = "equals"
         value = 0.0
     "#;
@@ -91,7 +91,7 @@ mod tests {
     const CONTINUOUS: &str = r#"
         [[assert]]
         when = "continuous"
-        target = "agent.car.estimator.x"
+        target = "agent.car.node.estimator.x"
         condition = "less_than"
         value = 1.0
     "#;

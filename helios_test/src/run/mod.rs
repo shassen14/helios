@@ -103,7 +103,7 @@ mod tests {
 
         [[assert]]
         when = "at_completion"
-        target = "agent.car.estimator.position"
+        target = "agent.car.node.estimator.position"
         condition = "equals"
         value = 0.0
     "#;

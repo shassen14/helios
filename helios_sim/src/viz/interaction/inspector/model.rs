@@ -136,7 +136,7 @@ mod tests {
             subject: SubjectId("human_8".into()),
             at: MonotonicTime(12.5),
             sections: vec![Section {
-                id: SubsystemPath("agent.robot_3.tracker.human_8".into()),
+                id: SubsystemPath("agent.robot_3.node.tracker.human_8".into()),
                 title: "Tracked by robot_3".into(),
                 rows: vec![
                     Row {
@@ -186,10 +186,10 @@ mod tests {
     /// newtype-struct behavior as a guarded contract, not an accident.
     #[test]
     fn path_newtypes_serialize_as_plain_strings() {
-        let path = SubsystemPath("agent.robot_3.tracker.human_8".into());
+        let path = SubsystemPath("agent.robot_3.node.tracker.human_8".into());
         assert_eq!(
             serde_json::to_string(&path).expect("path serializes"),
-            "\"agent.robot_3.tracker.human_8\"",
+            "\"agent.robot_3.node.tracker.human_8\"",
         );
 
         let subject = SubjectId("human_8".into());

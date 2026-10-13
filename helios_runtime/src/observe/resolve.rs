@@ -7,7 +7,7 @@
 
 use crate::{
     observe::{
-        path::agent_path,
+        path::node_path,
         sink::WatchRequest,
         watch::{WatchSet, WatchedLeaf},
     },
@@ -51,7 +51,7 @@ impl WatchResolver {
         let leaves: BTreeSet<WatchedLeaf> = observables
             .into_iter()
             .filter(|(node, observable)| {
-                pending.remove(&agent_path(agent.as_str(), node, observable.leaf_name()))
+                pending.remove(&node_path(agent.as_str(), node, observable.leaf_name()))
             })
             .map(|(node, observable)| WatchedLeaf::new(node, observable.leaf_name().as_ref()))
             .collect();
@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn requested_paths_resolve_to_their_pairs() {
-        let mut resolver = WatchResolver::new(request(&[agent_path(CAR, ESTIMATOR, NIS)]));
+        let mut resolver = WatchResolver::new(request(&[node_path(CAR, ESTIMATOR, NIS)]));
 
         let set = resolver.watch_set_for(&AgentId::new(CAR), observables());
 
@@ -125,8 +125,8 @@ mod tests {
     #[test]
     fn a_path_for_another_agent_is_left_to_that_agent() {
         let mut resolver = WatchResolver::new(request(&[
-            agent_path(CAR, ESTIMATOR, NIS),
-            agent_path(TRUCK, ESTIMATOR, DROPPED),
+            node_path(CAR, ESTIMATOR, NIS),
+            node_path(TRUCK, ESTIMATOR, DROPPED),
         ]));
 
         let car = resolver.watch_set_for(&AgentId::new(CAR), observables());
@@ -139,11 +139,11 @@ mod tests {
 
     #[test]
     fn unknown_agent_node_and_leaf_are_returned_unresolved() {
-        let unknown_agent = agent_path("bus", ESTIMATOR, NIS);
-        let unknown_node = agent_path(CAR, "planner", NIS);
-        let undeclared_leaf = agent_path(CAR, ESTIMATOR, "aiding.gps.nsi");
+        let unknown_agent = node_path("bus", ESTIMATOR, NIS);
+        let unknown_node = node_path(CAR, "planner", NIS);
+        let undeclared_leaf = node_path(CAR, ESTIMATOR, "aiding.gps.nsi");
         let mut resolver = WatchResolver::new(request(&[
-            agent_path(CAR, ESTIMATOR, NIS),
+            node_path(CAR, ESTIMATOR, NIS),
             unknown_agent.clone(),
             unknown_node.clone(),
             undeclared_leaf.clone(),

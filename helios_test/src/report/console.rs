@@ -208,7 +208,7 @@ mod tests {
             TerminatedBy::TimeBudget,
             vec![
                 AssertionReportEntry::new(
-                    "agent.car.mission_state".to_string(),
+                    "agent.car.node.mission.state".to_string(),
                     Condition::Equals,
                     AssertionValue::String("Succeeded".to_string()),
                     Verdict::Passed {
@@ -216,7 +216,7 @@ mod tests {
                     },
                 ),
                 AssertionReportEntry::new(
-                    "agent.car.speed".to_string(),
+                    "agent.car.node.estimator.speed".to_string(),
                     Condition::LessThan,
                     AssertionValue::Float(5.0),
                     Verdict::Failed {
@@ -241,10 +241,10 @@ mod tests {
     fn renders_each_assertion_line() {
         let text = render(&sample_report());
         // Passing line: quoted string and the `==` glyph, labelled PASSED.
-        assert!(text.contains("[assert] agent.car.mission_state == \"Succeeded\""));
+        assert!(text.contains("[assert] agent.car.node.mission.state == \"Succeeded\""));
         assert!(text.contains("PASSED"));
         // Failing line: the `<` glyph, FAILED, and the observed value.
-        assert!(text.contains("[assert] agent.car.speed < 5"));
+        assert!(text.contains("[assert] agent.car.node.estimator.speed < 5"));
         assert!(text.contains("FAILED (got 7: condition failed)"));
     }
 
@@ -252,7 +252,7 @@ mod tests {
     fn a_failure_shows_its_time_and_reason() {
         let mut report = sample_report();
         report.assertions[1] = AssertionReportEntry::new(
-            "agent.car.speed".to_string(),
+            "agent.car.node.estimator.speed".to_string(),
             Condition::LessThan,
             AssertionValue::Float(5.0),
             Verdict::Failed {
@@ -268,7 +268,7 @@ mod tests {
     fn a_failure_with_no_value_shows_only_its_reason() {
         let mut report = sample_report();
         report.assertions[1] = AssertionReportEntry::new(
-            "agent.car.speed".to_string(),
+            "agent.car.node.estimator.speed".to_string(),
             Condition::LessThan,
             AssertionValue::Float(5.0),
             Verdict::Failed {
@@ -292,7 +292,7 @@ mod tests {
             0.1,
             TerminatedBy::TimeBudget,
             vec![AssertionReportEntry::new(
-                "agent.car.position".to_string(),
+                "agent.car.node.estimator.position".to_string(),
                 Condition::Equals,
                 AssertionValue::Float(0.0),
                 Verdict::Unjudged { actual: None },

@@ -10,7 +10,7 @@ use helios_core::control::actuators::SetpointKind;
 #[derive(Debug)]
 pub enum PipelineAssemblyError {
     /// The agent's name is empty or contains `.`. It fills one part of every
-    /// watcher path for this agent (`agent.<agent>.<node>.<leaf>`), and `.`
+    /// watcher path for this agent (`agent.<agent>.node.<node>.<leaf>`), and `.`
     /// separates the parts, so such a path could not be split back.
     MalformedAgentName { agent: String },
     /// The assembled node graph failed topological validation.

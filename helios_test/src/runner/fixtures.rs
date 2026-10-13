@@ -8,6 +8,7 @@ use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
 use helios_runtime::{
     observe::{
         observation::{AgentObservation, Observation, ObservedValue},
+        path::node_path,
         sink::ObservationSink,
     },
     port::{AlgorithmNodePortDescriptor, Determinism, PortBus, PortDescriptor},
@@ -44,7 +45,7 @@ pub(super) fn at(secs: f64) -> MonotonicTime {
 
 /// The target on `agent`'s [`LEAF`].
 fn target(agent: &str) -> String {
-    format!("agent.{agent}.{ESTIMATOR}.{LEAF}")
+    node_path(agent, ESTIMATOR, LEAF)
 }
 
 /// A `Run` from a termination body and zero or more assertion blocks.

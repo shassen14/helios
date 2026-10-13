@@ -57,7 +57,7 @@ pub enum PipelineBuildError {
     /// level all identify a node by its name, so names must be unique.
     DuplicateNodeName { name: String },
     /// A node's name is empty or contains `.`. The name fills one part of
-    /// every watcher path under the node (`agent.<agent>.<node>.<leaf>`), and
+    /// every watcher path under the node (`agent.<agent>.node.<node>.<leaf>`), and
     /// `.` separates the parts, so such a path could not be split back.
     MalformedNodeName { name: String },
     /// A node declares a watchable leaf that isn't a well-formed path: it is
@@ -103,7 +103,7 @@ pub enum PipelineBuildError {
         second: ChannelKey,
     },
     /// A node declares a leaf that has the same path as one of its own output
-    /// channels: under `agent.<agent>.<node>`, `leaf` and the channel's path
+    /// channels: under `agent.<agent>.node.<node>`, `leaf` and the channel's path
     /// segment are the same string, so a watcher or an assertion target
     /// would name two things. Only an exact match is refused; a shared
     /// dotted prefix (`estimate` beside `estimate.cov`) is a group.

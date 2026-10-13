@@ -103,8 +103,8 @@ mod tests {
     fn every_unusable_target_is_rejected_at_once() {
         // Caught here, before anything runs, and all reported together:
         // fixing one only to meet the next is a slow loop.
-        let a = "when = \"at_completion\"\ntarget = \"agent.car.estimator.a\"\ncondition = \"equals\"\nvalue = 0.0";
-        let b = "when = \"at_completion\"\ntarget = \"agent.car.estimator.b\"\ncondition = \"equals\"\nvalue = 0.0";
+        let a = "when = \"at_completion\"\ntarget = \"agent.car.node.estimator.a\"\ncondition = \"equals\"\nvalue = 0.0";
+        let b = "when = \"at_completion\"\ntarget = \"agent.car.node.estimator.b\"\ncondition = \"equals\"\nvalue = 0.0";
         let pipeline = empty_pipeline();
         let mut r = Runner::new(run("max_simulated_seconds = 5.0", &[a, b])).expect("valid run");
         let collector = r.collector();
@@ -113,12 +113,12 @@ mod tests {
             Err(SetupError::UnusableAssertions(vec![
                 UnusableAssertion {
                     number: 1,
-                    target: target("agent.car.estimator.a"),
+                    target: target("agent.car.node.estimator.a"),
                     problems: vec![TargetProblem::Unreported],
                 },
                 UnusableAssertion {
                     number: 2,
-                    target: target("agent.car.estimator.b"),
+                    target: target("agent.car.node.estimator.b"),
                     problems: vec![TargetProblem::Unreported],
                 },
             ]))

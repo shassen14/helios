@@ -1,22 +1,23 @@
 use helios_core::prelude::AgentId;
-use helios_runtime::observe::path::{AgentPathParts, PathPart};
+use helios_runtime::observe::path::{AgentPathParts, PathPart, PathSubject, SUBJECT_WORDS};
 
 use serde::Deserialize;
 use std::{fmt, sync::Arc};
 
-/// _Shared (pre + per)._ The watcher path an assertion watches,
-/// `agent.<agent>.<node>.<leaf>`, held whole and in its parts.
+/// _Shared (pre + per)._ The watcher path an assertion watches, held whole
+/// and in its parts: `agent.<agent>.node.<node>.<leaf>` or
+/// `agent.<agent>.channel.<instance>`.
 ///
-/// Only a path that splits into an agent, a node and a leaf becomes a
-/// target, so a run file naming anything else is refused when it is read,
-/// before a sim starts.
+/// Only a path that splits into its parts becomes a target, so a run file
+/// naming anything else is refused when it is read, before a sim starts.
+/// Whether the agent reports what the path names is checked later, against
+/// the built pipelines.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(try_from = "String")]
 pub struct AssertionTarget {
     path: String,
     agent: AgentId,
-    node: Arc<str>,
-    leaf: Arc<str>,
+    subject: TargetSubject,
 }
 
 impl AssertionTarget {
@@ -27,17 +28,13 @@ impl AssertionTarget {
             Ok(parts) => parts,
             Err(part) => return Err(MalformedTarget { path, part }),
         };
-        let (agent, node, leaf) = (
-            AgentId::new(parts.agent),
-            parts.node.into(),
-            parts.rest.into(),
-        );
+        let agent = AgentId::new(parts.agent);
+        let subject = TargetSubject::from(parts.subject);
 
         Ok(Self {
             path,
             agent,
-            node,
-            leaf,
+            subject,
         })
     }
 
@@ -49,13 +46,8 @@ impl AssertionTarget {
         &self.agent
     }
 
-    pub fn node(&self) -> &Arc<str> {
-        &self.node
-    }
-
-    /// The leaf or channel segment, dots included.
-    pub fn leaf(&self) -> &Arc<str> {
-        &self.leaf
+    pub fn subject(&self) -> &TargetSubject {
+        &self.subject
     }
 }
 
@@ -73,25 +65,59 @@ impl fmt::Display for AssertionTarget {
     }
 }
 
-/// _Pre-step._ A run-file target that doesn't split into an agent, a node
-/// and a leaf, and the first part that is wrong.
+/// _Shared (pre + per)._ What kind of value a target names, with its parts
+/// after the subject word.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TargetSubject {
+    /// What a pipeline node said about itself, or wrote to an output channel.
+    Node {
+        node: Arc<str>,
+        /// The leaf or output channel segment, dots included.
+        leaf: Arc<str>,
+    },
+    /// A value on one of the agent's channels, by its segment.
+    Channel { instance: Arc<str> },
+}
+
+impl From<PathSubject<'_>> for TargetSubject {
+    fn from(subject: PathSubject<'_>) -> Self {
+        match subject {
+            PathSubject::Node { node, leaf } => TargetSubject::Node {
+                node: node.into(),
+                leaf: leaf.into(),
+            },
+            PathSubject::Channel { instance } => TargetSubject::Channel {
+                instance: instance.into(),
+            },
+        }
+    }
+}
+
+/// _Pre-step._ A run-file target that doesn't split into the parts of a
+/// watcher path, and the first part that is wrong.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "target '{path}' is not a watcher path agent.<agent>.<node>.<leaf>: {}",
-    what_is_wrong(*.part)
+    "target '{path}' is not a watcher path agent.<agent>.node.<node>.<leaf> \
+     or agent.<agent>.channel.<instance>: {}",
+    what_is_wrong(*part)
 )]
 pub struct MalformedTarget {
     path: String,
     part: PathPart,
 }
 
-/// What is wrong with a target whose `part` is the first to fail.
-fn what_is_wrong(part: PathPart) -> &'static str {
+/// What is wrong with a target whose `part` is the first that is.
+fn what_is_wrong(part: PathPart) -> String {
     match part {
-        PathPart::Root => "it starts with something else",
-        PathPart::Agent => "the agent is missing",
-        PathPart::Node => "the node is missing",
-        PathPart::Rest => "the leaf is missing",
+        PathPart::Root => "it starts with something else".to_owned(),
+        PathPart::Agent => "the agent is missing".to_owned(),
+        PathPart::Subject => format!(
+            "the word after the agent is missing or not one of {}",
+            SUBJECT_WORDS.join(", ")
+        ),
+        PathPart::Node => "the node is missing".to_owned(),
+        PathPart::Leaf => "the leaf is missing".to_owned(),
+        PathPart::Instance => "the channel is missing".to_owned(),
     }
 }
 
@@ -101,32 +127,60 @@ mod tests {
 
     #[test]
     fn parse_keeps_the_path_and_its_parts() {
-        let target =
-            AssertionTarget::parse("agent.car.estimator.aiding.gps.nis").expect("valid target");
+        let target = AssertionTarget::parse("agent.car.node.estimator.aiding.gps.nis")
+            .expect("valid target");
 
-        assert_eq!(target.as_str(), "agent.car.estimator.aiding.gps.nis");
+        assert_eq!(target.as_str(), "agent.car.node.estimator.aiding.gps.nis");
         assert_eq!(target.agent(), &AgentId::new("car"));
-        assert_eq!(target.node().as_ref(), "estimator");
-        assert_eq!(target.leaf().as_ref(), "aiding.gps.nis");
+        assert_eq!(
+            target.subject(),
+            &TargetSubject::Node {
+                node: "estimator".into(),
+                leaf: "aiding.gps.nis".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_keeps_a_channel_target() {
+        let target = AssertionTarget::parse("agent.car.channel.oracle.pose").expect("valid target");
+
+        assert_eq!(
+            target.subject(),
+            &TargetSubject::Channel {
+                instance: "oracle.pose".into(),
+            }
+        );
     }
 
     #[test]
     fn parse_refuses_a_path_with_no_leaf() {
         assert_eq!(
-            AssertionTarget::parse("agent.car.estimator"),
+            AssertionTarget::parse("agent.car.node.estimator"),
             Err(MalformedTarget {
-                path: "agent.car.estimator".to_owned(),
-                part: PathPart::Rest,
+                path: "agent.car.node.estimator".to_owned(),
+                part: PathPart::Leaf,
             })
         );
     }
 
     #[test]
     fn a_malformed_target_says_which_part_is_wrong() {
-        let error = AssertionTarget::parse("agent.car").expect_err("no node or leaf");
+        let error = AssertionTarget::parse("agent.car.node").expect_err("no node or leaf");
 
         assert!(
             error.to_string().ends_with("the node is missing"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_target_without_a_subject_says_which_subjects_exist() {
+        let error =
+            AssertionTarget::parse("agent.car.estimator.speed").expect_err("no subject word");
+
+        assert!(
+            error.to_string().ends_with("not one of node, channel"),
             "{error}"
         );
     }

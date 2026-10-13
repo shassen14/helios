@@ -8,7 +8,7 @@
 
 use crate::assertion::{
     extract::{ExtractError, ExtractorTable},
-    AssertionTarget, AssertionValue,
+    AssertionTarget, AssertionValue, TargetSubject,
 };
 
 use helios_core::prelude::{AgentId, MonotonicTime};
@@ -109,14 +109,12 @@ impl ObservationCollector {
         let index = self.series.len();
         self.series.push(Series::default());
         self.by_target.insert(target.clone(), index);
-        self.by_leaf.insert(
-            (
-                target.agent().clone(),
-                target.node().clone(),
-                target.leaf().clone(),
-            ),
-            index,
-        );
+        // Only a node's leaves are recorded, so a channel target's series
+        // never receives a sample; setup refuses it as unreported.
+        if let TargetSubject::Node { node, leaf } = target.subject() {
+            self.by_leaf
+                .insert((target.agent().clone(), node.clone(), leaf.clone()), index);
+        }
     }
 }
 
@@ -234,7 +232,7 @@ mod tests {
     use crate::assertion::extract::standard_extractors;
 
     use helios_runtime::{
-        observe::{observation::Observation, path::agent_path},
+        observe::{observation::Observation, path::node_path},
         prelude::{Health, Stamped},
         ErasedStamped,
     };
@@ -246,7 +244,7 @@ mod tests {
     const SPEED: &str = "speed";
 
     fn target(agent: &str, leaf: &str) -> AssertionTarget {
-        AssertionTarget::parse(agent_path(agent, ESTIMATOR, leaf)).expect("valid target")
+        AssertionTarget::parse(node_path(agent, ESTIMATOR, leaf)).expect("valid target")
     }
 
     fn collector(targets: &[AssertionTarget]) -> ObservationCollector {

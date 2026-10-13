@@ -11,6 +11,6 @@ termination = { max_simulated_seconds = 2.0 }
 
 [[assert]]
 when = "at_completion"
-target = "agent.nobody.no_such_node.value"
+target = "agent.nobody.node.no_such_node.value"
 condition = "equals"
 value = 0.0

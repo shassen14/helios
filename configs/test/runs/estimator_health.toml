@@ -32,24 +32,24 @@ termination = { max_simulated_seconds = 60.0 }
 
 [[assert]]
 when = "continuous"
-target = "agent.ProvingCar.primary.aiding.gps.nis"
+target = "agent.ProvingCar.node.primary.aiding.gps.nis"
 condition = "less_than"
 value = 25.0
 
 [[assert]]
 when = "continuous"
-target = "agent.ProvingCar.primary.aiding.mag.nis"
+target = "agent.ProvingCar.node.primary.aiding.mag.nis"
 condition = "less_than"
 value = 25.0
 
 [[assert]]
 when = "at_completion"
-target = "agent.ProvingCar.primary.aiding.gps.nis"
+target = "agent.ProvingCar.node.primary.aiding.gps.nis"
 condition = "less_than"
 value = 7.0
 
 [[assert]]
 when = "at_completion"
-target = "agent.ProvingCar.primary.aiding.mag.nis"
+target = "agent.ProvingCar.node.primary.aiding.mag.nis"
 condition = "less_than"
 value = 7.0

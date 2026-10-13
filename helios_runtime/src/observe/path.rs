@@ -1,12 +1,22 @@
 //! How names are spelled inside a watcher path.
 //!
-//! Watchers address everything under a node by a dotted path,
-//! `agent.<agent>.<node>.<rest>`. The agent and the node each fill exactly
-//! one part, so their names must be [path segments](is_path_segment). A
-//! node's observations fill `<rest>` with the leaf the node declared; a
-//! node's output channels fill it with the segment built here. Both share one
-//! namespace, so the build compares leaves against these segments, and
-//! assertion targets use the same rule to find a channel.
+//! Watchers address everything recorded about an agent by a dotted path,
+//! `agent.<agent>.<subject>.…`. The subject word says what kind of value the
+//! path names, and decides what follows it:
+//!
+//! - `node.<node>.<leaf>`: what a pipeline node said about itself, under a
+//!   leaf it declared, or a value it wrote to one of its output channels.
+//! - `channel.<instance>`: a value on one of the agent's channels, whoever
+//!   wrote it.
+//!
+//! Who wrote a value is not part of its path; the path names only what the
+//! value is, so swapping the writer (one estimator for another, a host for a
+//! replay) keeps every path. The subject words are fixed and sit in a part no
+//! config fills, so a name a profile chooses never collides with one. The
+//! agent and the node each fill exactly one part, so their names must be
+//! [path segments](is_path_segment). A node's leaves and its output channels'
+//! segments, built here, share the part after the node, so the build compares
+//! the two.
 
 use crate::port::ChannelKey;
 
@@ -16,60 +26,136 @@ pub(crate) const PATH_SEPARATOR: &str = ".";
 /// The first segment of every watcher path.
 pub(crate) const AGENT_ROOT: &str = "agent";
 
-/// A watcher path split back into the parts [`agent_path`] joined, borrowed
-/// from the path.
+/// The subject word for what a pipeline node said or wrote.
+const NODE_SUBJECT: &str = "node";
+
+/// The subject word for a value on one of the agent's channels.
+const CHANNEL_SUBJECT: &str = "channel";
+
+/// Every subject word, in the order [`PathSubject`] declares them, for
+/// messages that list what a path may hold.
+pub const SUBJECT_WORDS: [&str; 2] = [NODE_SUBJECT, CHANNEL_SUBJECT];
+
+/// A watcher path split into its parts, borrowed from the path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AgentPathParts<'a> {
     pub agent: &'a str,
-    pub node: &'a str,
-    /// The leaf or channel segment, dots included.
-    pub rest: &'a str,
+    pub subject: PathSubject<'a>,
 }
 
 impl<'a> AgentPathParts<'a> {
-    /// Splits `path`, the inverse of [`agent_path`]. The agent and node hold
-    /// no separator, so the first two separators after the root end them,
-    /// and everything after is `rest`. On failure, names the first part that
-    /// is wrong: a root other than [`AGENT_ROOT`], or a part that is missing
-    /// or empty.
+    /// Splits `path`, the inverse of [`join`](Self::join). The agent, the
+    /// subject word and a node hold no separator, so the separators after
+    /// each end them, and everything after is the leaf or the instance. On
+    /// failure, names the first part that is wrong: a root other than
+    /// [`AGENT_ROOT`], a subject word that isn't one of [`SUBJECT_WORDS`],
+    /// or a part that is missing or empty.
     pub fn split(path: &'a str) -> Result<Self, PathPart> {
         let mut parts = path.splitn(4, PATH_SEPARATOR);
         if parts.next() != Some(AGENT_ROOT) {
             return Err(PathPart::Root);
         }
-        let mut next = |part| {
-            parts
-                .next()
-                .filter(|segment| !segment.is_empty())
-                .ok_or(part)
+        let agent = non_empty(parts.next()).ok_or(PathPart::Agent)?;
+        let word = parts.next().ok_or(PathPart::Subject)?;
+        let after = parts.next();
+        let subject = match word {
+            NODE_SUBJECT => {
+                let mut node_parts = after.unwrap_or_default().splitn(2, PATH_SEPARATOR);
+                let node = non_empty(node_parts.next()).ok_or(PathPart::Node)?;
+                let leaf = non_empty(node_parts.next()).ok_or(PathPart::Leaf)?;
+                PathSubject::Node { node, leaf }
+            }
+            CHANNEL_SUBJECT => PathSubject::Channel {
+                instance: non_empty(after).ok_or(PathPart::Instance)?,
+            },
+            _ => return Err(PathPart::Subject),
         };
-        let agent = next(PathPart::Agent)?;
-        let node = next(PathPart::Node)?;
-        let rest = next(PathPart::Rest)?;
 
-        Ok(Self { agent, node, rest })
+        Ok(Self { agent, subject })
+    }
+
+    /// The watcher path these parts spell. The agent and a node must each be
+    /// a [path segment](is_path_segment); the build refuses names that
+    /// aren't. A leaf and an instance may hold dots: a leaf a node declared
+    /// (`aiding.gps.nis`) or a channel's segment (`oracle.pose`).
+    pub fn join(&self) -> String {
+        let mut parts = vec![AGENT_ROOT, self.agent, self.subject.word()];
+        match self.subject {
+            PathSubject::Node { node, leaf } => parts.extend([node, leaf]),
+            PathSubject::Channel { instance } => parts.push(instance),
+        }
+        parts.join(PATH_SEPARATOR)
     }
 }
 
-/// One of the four parts of a watcher path, `agent.<agent>.<node>.<rest>`.
+/// What kind of value a watcher path names, with the parts its path holds
+/// after the subject word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathSubject<'a> {
+    /// What a pipeline node said about itself, or wrote to an output channel.
+    Node {
+        node: &'a str,
+        /// The leaf or output channel segment, dots included.
+        leaf: &'a str,
+    },
+    /// A value on one of the agent's channels, spelled by its
+    /// [segment](channel_to_path_segment).
+    Channel { instance: &'a str },
+}
+
+impl PathSubject<'_> {
+    /// The word that spells this subject in a path.
+    pub fn word(&self) -> &'static str {
+        match self {
+            PathSubject::Node { .. } => NODE_SUBJECT,
+            PathSubject::Channel { .. } => CHANNEL_SUBJECT,
+        }
+    }
+}
+
+/// One of the parts of a watcher path, `agent.<agent>.<subject>.…`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathPart {
     /// The leading `agent`.
     Root,
     Agent,
+    /// The subject word, one of [`SUBJECT_WORDS`].
+    Subject,
+    /// The node, under the `node` subject.
     Node,
-    /// The leaf or channel segment.
-    Rest,
+    /// The node's leaf or output channel segment.
+    Leaf,
+    /// The channel's segment, under the `channel` subject.
+    Instance,
 }
 
-/// The watcher path `agent.<agent>.<node>.<rest>`.
-///
-/// `agent` and `node` must each be a [path segment](is_path_segment); the
-/// build refuses names that aren't. `rest` may hold dots: it is a leaf the
-/// node declared (`aiding.gps.nis`) or one of its channels' segments
-/// (`oracle.pose`). [`AgentPathParts::split`] takes it apart again.
-pub fn agent_path(agent: &str, node: &str, rest: &str) -> String {
-    [AGENT_ROOT, agent, node, rest].join(PATH_SEPARATOR)
+/// The watcher path of what `node` of `agent` said or wrote,
+/// `agent.<agent>.node.<node>.<leaf>`. [`AgentPathParts::split`] takes it
+/// apart again.
+pub fn node_path(agent: &str, node: &str, leaf: &str) -> String {
+    AgentPathParts {
+        agent,
+        subject: PathSubject::Node { node, leaf },
+    }
+    .join()
+}
+
+/// The watcher path of the value on `channel` of `agent`,
+/// `agent.<agent>.channel.<segment>`. [`AgentPathParts::split`] takes it
+/// apart again.
+pub fn channel_path(agent: &str, channel: &ChannelKey) -> String {
+    AgentPathParts {
+        agent,
+        subject: PathSubject::Channel {
+            instance: &channel_to_path_segment(channel),
+        },
+    }
+    .join()
+}
+
+/// `part` unless it is missing or empty.
+fn non_empty(part: Option<&str>) -> Option<&str> {
+    part.filter(|part| !part.is_empty())
 }
 
 /// Whether `name` can fill exactly one part of a watcher path: it is not
@@ -131,63 +217,132 @@ mod tests {
     }
 
     #[test]
-    fn agent_path_puts_the_parts_in_order_under_the_root() {
+    fn node_path_puts_the_parts_in_order_under_the_root() {
         assert_eq!(
-            agent_path("car", "estimator", "position"),
-            "agent.car.estimator.position"
+            node_path("car", "estimator", "position"),
+            "agent.car.node.estimator.position"
         );
     }
 
     #[test]
-    fn agent_path_keeps_a_dotted_rest_whole() {
+    fn node_path_keeps_a_dotted_rest_whole() {
         assert_eq!(
-            agent_path("car", "estimator", "aiding.gps.nis"),
-            "agent.car.estimator.aiding.gps.nis"
+            node_path("car", "estimator", "aiding.gps.nis"),
+            "agent.car.node.estimator.aiding.gps.nis"
         );
     }
 
     #[test]
-    fn split_takes_back_what_agent_path_joined() {
-        let path = agent_path("car", "estimator", "aiding.gps.nis");
+    fn channel_path_spells_the_channel_by_its_segment() {
+        assert_eq!(
+            channel_path("car", &channel_named::<f64>("oracle/pose")),
+            "agent.car.channel.oracle.pose"
+        );
+        assert_eq!(
+            channel_path("car", &channel_unnamed::<f64>()),
+            "agent.car.channel.f64"
+        );
+    }
+
+    #[test]
+    fn split_takes_back_what_node_path_joined() {
+        let path = node_path("car", "estimator", "aiding.gps.nis");
 
         assert_eq!(
             AgentPathParts::split(&path),
             Ok(AgentPathParts {
                 agent: "car",
-                node: "estimator",
-                rest: "aiding.gps.nis",
+                subject: PathSubject::Node {
+                    node: "estimator",
+                    leaf: "aiding.gps.nis",
+                },
             })
+        );
+    }
+
+    #[test]
+    fn split_takes_back_what_channel_path_joined() {
+        let path = channel_path("car", &channel_named::<f64>("oracle/pose"));
+
+        assert_eq!(
+            AgentPathParts::split(&path),
+            Ok(AgentPathParts {
+                agent: "car",
+                subject: PathSubject::Channel {
+                    instance: "oracle.pose",
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn subject_words_sit_where_a_node_would_never_collide() {
+        let parts = AgentPathParts::split("agent.car.node.channel.speed").expect("node path");
+
+        assert_eq!(
+            parts.subject,
+            PathSubject::Node {
+                node: "channel",
+                leaf: "speed",
+            }
         );
     }
 
     #[test]
     fn split_refuses_a_path_outside_the_root() {
         assert_eq!(
-            AgentPathParts::split("agents.car.estimator.nis"),
+            AgentPathParts::split("agents.car.node.estimator.nis"),
             Err(PathPart::Root)
         );
         assert_eq!(
-            AgentPathParts::split("car.estimator.nis"),
+            AgentPathParts::split("car.node.estimator.nis"),
             Err(PathPart::Root)
         );
+    }
+
+    #[test]
+    fn split_refuses_a_missing_or_unknown_subject() {
+        for path in [
+            "agent.car",
+            "agent.car..estimator.nis",
+            "agent.car.estimator.nis",
+            "agent.car.body.oracle.pose",
+        ] {
+            assert_eq!(
+                AgentPathParts::split(path),
+                Err(PathPart::Subject),
+                "{path}"
+            );
+        }
     }
 
     #[test]
     fn split_names_the_first_missing_or_empty_part() {
         assert_eq!(AgentPathParts::split("agent"), Err(PathPart::Agent));
         assert_eq!(
-            AgentPathParts::split("agent..estimator.nis"),
+            AgentPathParts::split("agent..node.estimator.nis"),
             Err(PathPart::Agent)
         );
-        assert_eq!(AgentPathParts::split("agent.car"), Err(PathPart::Node));
-        assert_eq!(AgentPathParts::split("agent.car..nis"), Err(PathPart::Node));
+        assert_eq!(AgentPathParts::split("agent.car.node"), Err(PathPart::Node));
         assert_eq!(
-            AgentPathParts::split("agent.car.estimator"),
-            Err(PathPart::Rest)
+            AgentPathParts::split("agent.car.node..nis"),
+            Err(PathPart::Node)
         );
         assert_eq!(
-            AgentPathParts::split("agent.car.estimator."),
-            Err(PathPart::Rest)
+            AgentPathParts::split("agent.car.node.estimator"),
+            Err(PathPart::Leaf)
+        );
+        assert_eq!(
+            AgentPathParts::split("agent.car.node.estimator."),
+            Err(PathPart::Leaf)
+        );
+        assert_eq!(
+            AgentPathParts::split("agent.car.channel"),
+            Err(PathPart::Instance)
+        );
+        assert_eq!(
+            AgentPathParts::split("agent.car.channel."),
+            Err(PathPart::Instance)
         );
     }
 

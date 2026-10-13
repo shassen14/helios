@@ -5,7 +5,7 @@
 //! computes statistics over them (a mean, a settling time, a rate across
 //! runs), so the node never fixes which summaries exist.
 
-use crate::{observe::path::agent_path, ErasedStamped};
+use crate::{observe::path::node_path, ErasedStamped};
 
 use helios_core::prelude::{AgentId, MonotonicTime};
 
@@ -131,10 +131,10 @@ pub struct AgentObservation {
 }
 
 impl AgentObservation {
-    /// The sample's full watcher path, `agent.<agent>.<node>.<leaf>`: the
+    /// The sample's full watcher path, `agent.<agent>.node.<node>.<leaf>`: the
     /// spelling sinks request it by.
     pub fn path(&self) -> String {
-        agent_path(
+        node_path(
             self.agent.as_str(),
             &self.observation.node,
             &self.observation.leaf,
@@ -183,6 +183,6 @@ mod tests {
             },
         };
 
-        assert_eq!(tagged.path(), "agent.car.estimator.aiding.gps.nis");
+        assert_eq!(tagged.path(), "agent.car.node.estimator.aiding.gps.nis");
     }
 }

@@ -64,7 +64,7 @@ mod tests {
             TerminatedBy::TimeBudget,
             vec![
                 AssertionReportEntry::new(
-                    "agent.car.estimator.position".to_string(),
+                    "agent.car.node.estimator.position".to_string(),
                     Condition::Equals,
                     AssertionValue::Float(0.0),
                     Verdict::Passed {
@@ -72,7 +72,7 @@ mod tests {
                     },
                 ),
                 AssertionReportEntry::new(
-                    "agent.car.speed".to_string(),
+                    "agent.car.node.estimator.speed".to_string(),
                     Condition::LessThan,
                     AssertionValue::Float(5.0),
                     Verdict::Failed {
@@ -119,7 +119,7 @@ mod tests {
         assert_eq!(assertions[0]["actual"].as_float(), Some(0.0));
         // A pass carries no failure fields at all.
         assert!(assertions[0].get("reason").is_none());
-        assert_eq!(assertions[1]["target"].as_str(), Some("agent.car.speed"));
+        assert_eq!(assertions[1]["target"].as_str(), Some("agent.car.node.estimator.speed"));
         assert_eq!(assertions[1]["status"].as_str(), Some("failed"));
         assert_eq!(assertions[1]["actual"].as_float(), Some(7.0));
         assert_eq!(assertions[1]["reason"].as_str(), Some("condition_failed"));
@@ -130,7 +130,7 @@ mod tests {
     fn a_failure_with_nothing_observed_omits_the_absent_fields() {
         let mut report = sample_report();
         report.assertions[1] = AssertionReportEntry::new(
-            "agent.car.speed".to_string(),
+            "agent.car.node.estimator.speed".to_string(),
             Condition::LessThan,
             AssertionValue::Float(5.0),
             Verdict::Failed {

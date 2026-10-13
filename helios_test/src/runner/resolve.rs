@@ -10,7 +10,7 @@
 //! state, so only a run that can judge has any.
 
 use crate::{
-    assertion::{Assertion, AssertionTarget},
+    assertion::{Assertion, AssertionTarget, TargetSubject},
     collector::{ObservationCollector, Series, SeriesId},
     runner::state::AssertionState,
 };
@@ -180,19 +180,22 @@ fn check(
     collector: &ObservationCollector,
 ) -> Result<SeriesId, Vec<TargetProblem>> {
     let target = assertion.target();
-    let node = target.node().as_ref();
-    let leaf = target.leaf().as_ref();
-
     let Some(catalog) = catalogs
         .iter()
         .find(|catalog| catalog.agent == target.agent())
     else {
         return Err(vec![TargetProblem::UnknownAgent]);
     };
+    // A pipeline reports only its nodes' leaves; nothing records a channel.
+    let TargetSubject::Node { node, leaf } = target.subject() else {
+        return Err(vec![TargetProblem::Unreported]);
+    };
     let Some(observable) = catalog
         .observables
         .iter()
-        .find(|(name, observable)| *name == node && observable.leaf_name().as_ref() == leaf)
+        .find(|(name, observable)| {
+            *name == node.as_ref() && observable.leaf_name().as_ref() == leaf.as_ref()
+        })
         .map(|(_, observable)| observable)
     else {
         return Err(vec![TargetProblem::Unreported]);
@@ -241,7 +244,7 @@ mod tests {
 
     use helios_core::prelude::TfProvider;
     use helios_runtime::{
-        observe::path::agent_path,
+        observe::path::node_path,
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
         port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus, PortDescriptor},
         prelude::{PipelineNode, TickContext},
@@ -308,7 +311,7 @@ mod tests {
     }
 
     fn target(agent: &str, node: &str, leaf: &str) -> AssertionTarget {
-        AssertionTarget::parse(agent_path(agent, node, leaf)).expect("valid target")
+        AssertionTarget::parse(node_path(agent, node, leaf)).expect("valid target")
     }
 
     /// A target on the car's estimator.
@@ -426,6 +429,17 @@ mod tests {
     }
 
     #[test]
+    fn a_channel_target_is_unreported() {
+        let channel = AssertionTarget::parse(format!("agent.{CAR}.channel.oracle.pose"))
+            .expect("channel target");
+
+        assert_eq!(
+            errors(&[assertion(channel.clone(), false)]),
+            vec![unusable(1, channel, vec![TargetProblem::Unreported])]
+        );
+    }
+
+    #[test]
     fn an_agent_with_no_pipeline_is_unknown() {
         let elsewhere = target("truck", ESTIMATOR, NIS);
 
@@ -534,7 +548,7 @@ mod tests {
 
         assert_eq!(
             unusable(4, label, problems).to_string(),
-            "assertion 4 on 'agent.car.estimator.label': it is nondeterministic \
+            "assertion 4 on 'agent.car.node.estimator.label': it is nondeterministic \
              (set allow_nondeterministic = true to assert on it) and it carries String, \
              which has no extractor"
         );

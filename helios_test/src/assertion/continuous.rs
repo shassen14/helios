@@ -51,14 +51,14 @@ mod tests {
     #[test]
     fn parses_minimal_less_than_assertion() {
         let toml = r#"
-            target = "agent.car.estimator.speed"
+            target = "agent.car.node.estimator.speed"
             condition = "less_than"
             value = 5.0
         "#;
         let parsed: ContinuousAssertion = toml::from_str(toml).unwrap();
         assert_eq!(
             parsed.target,
-            AssertionTarget::parse("agent.car.estimator.speed").expect("valid target")
+            AssertionTarget::parse("agent.car.node.estimator.speed").expect("valid target")
         );
         assert_eq!(parsed.condition, Condition::LessThan);
         assert_eq!(parsed.value, AssertionValue::Float(5.0));
@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn parses_within_range_with_bounds() {
         let toml = r#"
-            target = "agent.car.estimator.altitude"
+            target = "agent.car.node.estimator.altitude"
             condition = "within_range"
             value = 0.0
             low = -0.5
@@ -87,7 +87,7 @@ mod tests {
     fn rejects_unknown_field() {
         // The `deny_unknown_fields` typo-catcher in action.
         let toml = r#"
-            target = "agent.car.estimator.speed"
+            target = "agent.car.node.estimator.speed"
             condition = "less_than"
             valeu = 5.0
         "#;

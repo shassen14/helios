@@ -5,11 +5,11 @@ pub mod extract;
 pub mod target;
 pub mod terminal;
 
+use crate::collector::Rejection;
 pub use condition::{AssertionValue, Condition};
 use continuous::ContinuousAssertion;
-pub use target::AssertionTarget;
+pub use target::{AssertionTarget, TargetSubject};
 use terminal::TerminalAssertion;
-use crate::collector::Rejection;
 
 use serde::Deserialize;
 
@@ -119,7 +119,7 @@ mod tests {
     fn parses_terminal_via_when_tag() {
         let toml = r#"
             when = "at_completion"
-            target = "agent.car.estimator.position"
+            target = "agent.car.node.estimator.position"
             condition = "equals"
             value = 0.0
         "#;
@@ -134,7 +134,7 @@ mod tests {
     fn parses_continuous_via_when_tag() {
         let toml = r#"
             when = "continuous"
-            target = "agent.car.estimator.speed"
+            target = "agent.car.node.estimator.speed"
             condition = "within_range"
             value = 0.0
             low = 1.0
@@ -149,34 +149,40 @@ mod tests {
     fn target_accessor_reads_both_variants() {
         let terminal = r#"
             when = "at_completion"
-            target = "agent.car.estimator.a"
+            target = "agent.car.node.estimator.a"
             condition = "equals"
             value = 1
         "#;
         let continuous = r#"
             when = "continuous"
-            target = "agent.car.estimator.b"
+            target = "agent.car.node.estimator.b"
             condition = "equals"
             value = 1
         "#;
         let t: Assertion = toml::from_str(terminal).unwrap();
         let c: Assertion = toml::from_str(continuous).unwrap();
-        assert_eq!(t.target(), &AssertionTarget::parse("agent.car.estimator.a").expect("valid target"));
-        assert_eq!(c.target(), &AssertionTarget::parse("agent.car.estimator.b").expect("valid target"));
+        assert_eq!(
+            t.target(),
+            &AssertionTarget::parse("agent.car.node.estimator.a").expect("valid target")
+        );
+        assert_eq!(
+            c.target(),
+            &AssertionTarget::parse("agent.car.node.estimator.b").expect("valid target")
+        );
     }
 
     #[test]
     fn allow_nondeterministic_reads_both_variants() {
         let terminal = r#"
             when = "at_completion"
-            target = "agent.car.estimator.a"
+            target = "agent.car.node.estimator.a"
             condition = "equals"
             value = 1
             allow_nondeterministic = true
         "#;
         let continuous = r#"
             when = "continuous"
-            target = "agent.car.estimator.b"
+            target = "agent.car.node.estimator.b"
             condition = "equals"
             value = 1
             allow_nondeterministic = true
@@ -193,7 +199,7 @@ mod tests {
         // the sim finds nothing to watch.
         let toml = r#"
             when = "at_completion"
-            target = "agent.car.estimator"
+            target = "agent.car.node.estimator"
             condition = "equals"
             value = 0.0
         "#;
@@ -206,7 +212,7 @@ mod tests {
         // reached through the internally-tagged `when` discriminant.
         let toml = r#"
             when = "at_completion"
-            target = "agent.car.estimator.x"
+            target = "agent.car.node.estimator.x"
             condition = "equals"
             valeu = 0.0
         "#;
@@ -217,7 +223,7 @@ mod tests {
     fn rejects_unknown_when_value() {
         let toml = r#"
             when = "sometimes"
-            target = "agent.car.estimator.x"
+            target = "agent.car.node.estimator.x"
             condition = "equals"
             value = 0.0
         "#;

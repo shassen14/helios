@@ -76,7 +76,7 @@ mod tests {
 
     use helios_core::prelude::MonotonicTime;
 
-    const TARGET: &str = "agent.car.estimator.x";
+    const TARGET: &str = "agent.car.node.estimator.x";
 
     fn terminal(condition: Condition, value: AssertionValue) -> Assertion {
         Assertion::Terminal(TerminalAssertion {

@@ -37,7 +37,7 @@ pub trait ObservationSink {
 pub enum WatchRequest {
     /// Every leaf of every node of every agent.
     Everything,
-    /// Exactly these paths, each `agent.<agent>.<node>.<leaf>`. Held in
+    /// Exactly these paths, each `agent.<agent>.node.<node>.<leaf>`. Held in
     /// order, so the same path named twice is kept once.
     Paths(BTreeSet<String>),
 }
@@ -68,8 +68,8 @@ impl Default for WatchRequest {
 mod tests {
     use super::*;
 
-    const NIS: &str = "agent.car.estimator.aiding.gps.nis";
-    const DROPPED: &str = "agent.car.estimator.aiding.gps.dropped";
+    const NIS: &str = "agent.car.node.estimator.aiding.gps.nis";
+    const DROPPED: &str = "agent.car.node.estimator.aiding.gps.dropped";
 
     fn paths(paths: &[&str]) -> WatchRequest {
         WatchRequest::Paths(paths.iter().map(|path| path.to_string()).collect())
