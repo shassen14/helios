@@ -1,0 +1,56 @@
+# Estimator health: is the proving-ground car's filter honest about its own
+# uncertainty?
+#
+# Each aiding source reports NIS ÷ dof (normalized innovation squared per
+# degree of freedom) for every correction it applies. A filter whose claimed
+# covariance matches its real error averages about 1; one well above 1 is
+# overconfident, its estimate further off than it believes.
+#
+# Two checks per source:
+#   - continuous, < 25: a ceiling a consistent filter essentially never
+#     reaches (a 3-dof NIS of 75 has odds below 1e-15 per sample). It catches
+#     gross overconfidence anywhere in the run, including start-up, where an
+#     unknown starting attitude once read about 70.
+#   - at completion, < 7.0: the 99.99% point of NIS ÷ dof for 3 dof, judged
+#     on the last correction, with the car at rest. One sample is noisy, so
+#     the bound is loose; it means most under --monte-carlo.
+#
+# Both sources measure 3 axes (GPS position, magnetometer field), so one
+# bound serves both. Bounds are floats on purpose: an integer `value` is a
+# different type from the float NIS and fails as a mismatch.
+
+schema_version = "1.0"
+
+# Resolved relative to --config-root (default "configs").
+scenario = { from = "sim/scenarios/01_proving_ground.toml" }
+
+# Carried but unused (observation presets aren't resolved yet).
+observation = { from = "default" }
+
+# Long enough to drive to the goal and settle at rest, so the completion
+# check judges a stationary car.
+termination = { max_simulated_seconds = 60.0 }
+
+[[assert]]
+when = "continuous"
+target = "agent.ProvingCar.primary.aiding.gps.nis"
+condition = "less_than"
+value = 25.0
+
+[[assert]]
+when = "continuous"
+target = "agent.ProvingCar.primary.aiding.mag.nis"
+condition = "less_than"
+value = 25.0
+
+[[assert]]
+when = "at_completion"
+target = "agent.ProvingCar.primary.aiding.gps.nis"
+condition = "less_than"
+value = 7.0
+
+[[assert]]
+when = "at_completion"
+target = "agent.ProvingCar.primary.aiding.mag.nis"
+condition = "less_than"
+value = 7.0
