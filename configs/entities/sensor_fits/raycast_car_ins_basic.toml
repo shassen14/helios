@@ -8,7 +8,7 @@
 
 [imu_basic]
 device = { from = "entities.sensors.imu_basic" }
-transform = { translation = [-1.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
 accel_channel = "sensor.imu.accel"
 gyro_channel = "sensor.imu.gyro"
 
