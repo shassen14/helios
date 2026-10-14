@@ -136,6 +136,6 @@ mod tests {
             child: FrameId::base_link(agent.clone()),
             parent: FrameId::odom(agent),
         };
-        assert_eq!(edge.to_string(), "bot/base_link->bot/odom");
+        assert_eq!(edge.to_string(), "agent.bot.base_link->agent.bot.odom");
     }
 }

@@ -6,7 +6,8 @@ use crate::config::structs::{BodyKind, ObjectPlacement, ObjectPrefab};
 use crate::config::LoadedWorldLayout;
 
 use helios_core::interchange::perception::semantic_class::{SemanticClass, SemanticTaxonomy};
-use helios_core::kernel::identifier::is_snake_case;
+use helios_core::kernel::identifier::{is_dotted_name, is_snake_case};
+use helios_core::spatial::FrameId;
 
 use bevy::prelude::Resource;
 use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
@@ -29,6 +30,8 @@ const DYNAMIC_SCALE: [f64; 3] = [1.0; 3];
 #[derive(Resource, Debug, Clone)]
 pub struct ResolvedWorldLayout {
     name: String,
+    /// The global frame at the world's origin, the root of its truth frames.
+    datum: FrameId,
     /// One entry per prefab key, shared by every placement of it.
     prefabs: Vec<ResolvedPrefab>,
     placements: Vec<ResolvedPlacement>,
@@ -45,6 +48,11 @@ impl ResolvedWorldLayout {
         if !is_snake_case(&layout.name) {
             errors.push(LayoutError::LayoutNameNotSnakeCase {
                 name: layout.name.clone(),
+            });
+        }
+        if !is_dotted_name(&layout.datum.name) {
+            errors.push(LayoutError::MalformedDatumName {
+                name: layout.datum.name.clone(),
             });
         }
 
@@ -83,6 +91,7 @@ impl ResolvedWorldLayout {
         }
         Ok(Self {
             name: layout.name.clone(),
+            datum: FrameId::global(layout.datum.name.as_str()),
             prefabs,
             placements,
             taxonomy: loaded.taxonomy.clone(),
@@ -92,6 +101,12 @@ impl ResolvedWorldLayout {
     /// The layout's declared name: the prefix of every instance ID in it.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The global frame at the world's origin: every placement's position and
+    /// every truth pose is measured from it.
+    pub fn datum(&self) -> &FrameId {
+        &self.datum
     }
 
     pub fn placements(&self) -> &[ResolvedPlacement] {

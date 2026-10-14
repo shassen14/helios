@@ -346,6 +346,9 @@ mod tests {
     use crate::spatial::{FrameAwareState, FrameId};
     use nalgebra::{DMatrix, DVector, Isometry3};
 
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+
     const AT: MonotonicTime = MonotonicTime(0.0);
 
     struct IdentityTf;
@@ -431,14 +434,14 @@ mod tests {
         fn schema(&self) -> std::sync::Arc<StateSchema> {
             std::sync::Arc::new(StateSchema::compose(vec![
                 StateSchemaBlock::new(
-                    Quantity::Position(FrameId::world()),
+                    Quantity::Position(FrameId::global(DATUM)),
                     Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),
                 ),
                 StateSchemaBlock::new(
-                    Quantity::Velocity(FrameId::world()),
+                    Quantity::Velocity(FrameId::global(DATUM)),
                     Convention::Enu,
                     None,
                     DVector::zeros(3),

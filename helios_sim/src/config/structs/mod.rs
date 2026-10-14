@@ -37,4 +37,6 @@ pub use vehicle::{
     TopologyConfig, Vehicle, VisualConfig, WheelConfig, WheelVisual, CUBOID, RAYCAST_WHEELS,
     RIGID_BODY_WITH_MOUNT, WHEELED_PRIMITIVES,
 };
-pub use world_layout::{BodyKind, CatalogRef, ObjectPlacement, ObjectPrefab, WorldLayout};
+pub use world_layout::{
+    BodyKind, CatalogRef, DatumConfig, ObjectPlacement, ObjectPrefab, WorldLayout,
+};

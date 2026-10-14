@@ -40,6 +40,8 @@ use std::sync::{Arc, Mutex as StdMutex};
 const DT: f64 = 0.1;
 /// The aiding entry the accelerometer source is read for.
 const ACCEL_ENTRY: &str = "accel";
+/// An arbitrary global frame the fixture expresses quantities in.
+const DATUM: &str = "test_datum";
 
 fn agent() -> AgentId {
     AgentId::new("car")
@@ -116,7 +118,7 @@ struct ZeroModel;
 impl MeasurementModel for ZeroModel {
     fn schema(&self) -> MeasurementSchema {
         MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
-            Quantity::Position(FrameId::world()),
+            Quantity::Position(FrameId::global(DATUM)),
             Convention::Enu,
         )])
     }

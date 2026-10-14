@@ -28,7 +28,7 @@
 //! state does not track that quantity" — or a setter's
 //! [`BlockWriteError::Absent`], while a block that exists but is named in the
 //! wrong convention asserts or errors. Asking a state that holds only
-//! `Position(World)` for `position::<F>(some_body)` still yields `None`, never a
+//! `Position(global.datum)` for `position::<F>(some_body)` still yields `None`, never a
 //! panic.
 
 use crate::spatial::{
@@ -379,6 +379,9 @@ mod tests {
     use nalgebra::{DMatrix, DVector, Isometry3, Translation3};
     use std::sync::Arc;
 
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+
     const TOL: f64 = 1e-12;
 
     fn body() -> FrameId {
@@ -393,7 +396,7 @@ mod tests {
 
     fn position_block() -> StateSchemaBlock {
         StateSchemaBlock::new(
-            Quantity::Position(FrameId::world()),
+            Quantity::Position(FrameId::global(DATUM)),
             Convention::Enu,
             noise(),
             DVector::zeros(3),
@@ -404,7 +407,7 @@ mod tests {
     fn orientation_block() -> StateSchemaBlock {
         StateSchemaBlock::orientation(
             body(),
-            FrameId::world(),
+            FrameId::global(DATUM),
             Convention::Flu,
             Convention::Enu,
             noise(),
@@ -417,14 +420,14 @@ mod tests {
         FrameAwareState::from_schema(Arc::new(StateSchema::compose(blocks)), MonotonicTime(0.0))
     }
 
-    // Position + velocity in World (ENU), then a body (FLU) → World
+    // Position + velocity in the test datum (ENU), then a body (FLU) → datum
     // orientation. The orientation seeds an identity quaternion `[0, 0, 0, 1]`,
     // the flat blocks seed zeros; each test overwrites the slots it touches.
     fn pose_state() -> FrameAwareState {
         state_of(vec![
             position_block(),
             StateSchemaBlock::new(
-                Quantity::Velocity(FrameId::world()),
+                Quantity::Velocity(FrameId::global(DATUM)),
                 Convention::Enu,
                 noise(),
                 DVector::zeros(3),
@@ -454,7 +457,7 @@ mod tests {
     fn body_to_world() -> Quantity {
         Quantity::Orientation {
             from: body(),
-            to: FrameId::world(),
+            to: FrameId::global(DATUM),
         }
     }
 
@@ -470,7 +473,7 @@ mod tests {
         let mut s = pose_state();
         seed(
             &mut s,
-            Quantity::Position(FrameId::world()),
+            Quantity::Position(FrameId::global(DATUM)),
             &[
                 (Component::X, 1.0),
                 (Component::Y, 2.0),
@@ -478,7 +481,7 @@ mod tests {
             ],
         );
 
-        let p = s.position::<Enu>(FrameId::world()).unwrap();
+        let p = s.position::<Enu>(FrameId::global(DATUM)).unwrap();
         assert_eq!(p.raw(), &Vector3::new(1.0, 2.0, 3.0));
     }
 
@@ -489,7 +492,7 @@ mod tests {
         let mut s = pose_state();
         seed(
             &mut s,
-            Quantity::Velocity(FrameId::world()),
+            Quantity::Velocity(FrameId::global(DATUM)),
             &[
                 (Component::X, 4.0),
                 (Component::Y, 5.0),
@@ -497,7 +500,7 @@ mod tests {
             ],
         );
 
-        let v = s.velocity::<Enu>(FrameId::world()).unwrap();
+        let v = s.velocity::<Enu>(FrameId::global(DATUM)).unwrap();
         assert_eq!(v.raw(), &Vector3::new(4.0, 5.0, 6.0));
     }
 
@@ -518,7 +521,9 @@ mod tests {
             ],
         );
 
-        let r = s.orientation::<Flu, Enu>(body(), FrameId::world()).unwrap();
+        let r = s
+            .orientation::<Flu, Enu>(body(), FrameId::global(DATUM))
+            .unwrap();
         let expected = UnitQuaternion::from_quaternion(Quaternion::new(0.0, 0.0, 0.0, 1.0));
         assert!(quat_eq(&r.into_inner(), &expected));
     }
@@ -528,7 +533,7 @@ mod tests {
         let mut s = pose_state();
         seed(
             &mut s,
-            Quantity::Position(FrameId::world()),
+            Quantity::Position(FrameId::global(DATUM)),
             &[
                 (Component::X, 1.0),
                 (Component::Y, 2.0),
@@ -541,7 +546,7 @@ mod tests {
             &[(Component::Z, 1.0), (Component::W, 0.0)],
         );
 
-        let pose = s.pose::<Flu, Enu>(body(), FrameId::world()).unwrap();
+        let pose = s.pose::<Flu, Enu>(body(), FrameId::global(DATUM)).unwrap();
         let iso = pose.into_inner();
 
         // Translation is the reference-frame position …
@@ -555,12 +560,12 @@ mod tests {
     fn absent_kind_is_none() {
         // No acceleration block was composed, so the read finds nothing.
         let s = pose_state();
-        assert!(s.acceleration::<Enu>(FrameId::world()).is_none());
+        assert!(s.acceleration::<Enu>(FrameId::global(DATUM)).is_none());
     }
 
     #[test]
     fn wrong_frame_identity_is_none() {
-        // Position exists only for World; the same kind under a different frame
+        // Position exists only in the test datum; the same kind under a different frame
         // identity is a different block, and is absent.
         let s = pose_state();
         assert!(s.position::<Flu>(body()).is_none());
@@ -569,21 +574,21 @@ mod tests {
     #[test]
     #[should_panic(expected = "read as FLU")]
     fn flat_read_in_wrong_convention_panics() {
-        // `World` is composed as ENU, so reading its (present) position block as
+        // The test datum is composed as ENU, so reading its (present) position block as
         // FLU is a wiring bug. The block exists, so the convention check fires
         // rather than returning `None`.
         let s = pose_state();
-        let _ = s.position::<Flu>(FrameId::world());
+        let _ = s.position::<Flu>(FrameId::global(DATUM));
     }
 
     #[test]
     #[should_panic(expected = "read as ENU→ENU")]
     fn orientation_read_in_wrong_convention_panics() {
-        // The body→World block is composed as FLU→ENU. Reading the `from`
+        // The body→datum block is composed as FLU→ENU. Reading the `from`
         // endpoint as ENU disagrees with the schema, so the check fires on a
         // block that is present.
         let s = pose_state();
-        let _ = s.orientation::<Enu, Enu>(body(), FrameId::world());
+        let _ = s.orientation::<Enu, Enu>(body(), FrameId::global(DATUM));
     }
 
     #[test]
@@ -591,9 +596,9 @@ mod tests {
         let mut s = pose_state();
         let written = sample_pose();
 
-        s.set_pose(body(), FrameId::world(), written).unwrap();
+        s.set_pose(body(), FrameId::global(DATUM), written).unwrap();
 
-        let read = s.pose::<Flu, Enu>(body(), FrameId::world()).unwrap();
+        let read = s.pose::<Flu, Enu>(body(), FrameId::global(DATUM)).unwrap();
         let (w, r) = (written.into_inner(), read.into_inner());
         assert!((w.translation.vector - r.translation.vector).norm() < TOL);
         assert!(w.rotation.angle_to(&r.rotation) < TOL);
@@ -605,7 +610,7 @@ mod tests {
         let mut s = pose_state();
         let q = sample_pose().rotation().into_inner();
 
-        s.set_orientation(body(), FrameId::world(), sample_pose().rotation())
+        s.set_orientation(body(), FrameId::global(DATUM), sample_pose().rotation())
             .unwrap();
 
         let off = s.schema.storage_offset_of_block(&body_to_world()).unwrap();
@@ -617,12 +622,12 @@ mod tests {
         let mut s = pose_state();
 
         s.set_velocity(
-            FrameId::world(),
+            FrameId::global(DATUM),
             FreeVector::<Enu>::from_raw(Vector3::new(4.0, 5.0, 6.0)),
         )
         .unwrap();
 
-        let v = s.velocity::<Enu>(FrameId::world()).unwrap();
+        let v = s.velocity::<Enu>(FrameId::global(DATUM)).unwrap();
         assert_eq!(v.into_inner(), Vector3::new(4.0, 5.0, 6.0));
     }
 
@@ -632,12 +637,15 @@ mod tests {
         let before = s.mean.clone();
 
         let err = s
-            .set_angular_velocity(FrameId::world(), FreeVector::<Enu>::from_raw(Vector3::z()))
+            .set_angular_velocity(
+                FrameId::global(DATUM),
+                FreeVector::<Enu>::from_raw(Vector3::z()),
+            )
             .unwrap_err();
 
         assert_eq!(
             err,
-            BlockWriteError::Absent(Quantity::AngularVelocity(FrameId::world()))
+            BlockWriteError::Absent(Quantity::AngularVelocity(FrameId::global(DATUM)))
         );
         assert!(err.to_string().contains("angular velocity"), "{err}");
         assert_eq!(s.mean, before);
@@ -645,18 +653,18 @@ mod tests {
 
     #[test]
     fn writing_in_the_wrong_convention_errors() {
-        // World is declared ENU; a FLU position into it is a wiring bug.
+        // The test datum is declared ENU; a FLU position into it is a wiring bug.
         let mut s = pose_state();
         let before = s.mean.clone();
 
         let err = s
-            .set_position(FrameId::world(), Point::<Flu>::from_raw(Vector3::x()))
+            .set_position(FrameId::global(DATUM), Point::<Flu>::from_raw(Vector3::x()))
             .unwrap_err();
 
         assert_eq!(
             err,
             BlockWriteError::ConventionMismatch {
-                frame: FrameId::world(),
+                frame: FrameId::global(DATUM),
                 requested: Convention::Flu,
                 declared: Some(Convention::Enu),
             }
@@ -671,7 +679,7 @@ mod tests {
         let err = s
             .set_orientation(
                 body(),
-                FrameId::world(),
+                FrameId::global(DATUM),
                 Rotation::<Enu, Flu>::from_unit_quaternion(UnitQuaternion::identity()),
             )
             .unwrap_err();
@@ -694,12 +702,12 @@ mod tests {
         let before = s.mean.clone();
 
         let err = s
-            .set_pose(body(), FrameId::world(), sample_pose())
+            .set_pose(body(), FrameId::global(DATUM), sample_pose())
             .unwrap_err();
 
         assert_eq!(
             err,
-            BlockWriteError::Absent(Quantity::Position(FrameId::world()))
+            BlockWriteError::Absent(Quantity::Position(FrameId::global(DATUM)))
         );
         assert_eq!(s.mean, before);
     }

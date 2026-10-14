@@ -24,6 +24,8 @@ use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 // =========================================================================
 
 const AT: MonotonicTime = MonotonicTime(0.0);
+/// An arbitrary global frame the bench expresses quantities in.
+const DATUM: &str = "test_datum";
 
 struct IdentityTf;
 
@@ -53,14 +55,14 @@ impl EstimationDynamics for ConstantVelocity3D {
     fn schema(&self) -> Arc<StateSchema> {
         Arc::new(StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::world()),
+                Quantity::Position(FrameId::global(DATUM)),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::new(
-                Quantity::Velocity(FrameId::world()),
+                Quantity::Velocity(FrameId::global(DATUM)),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
@@ -131,7 +133,7 @@ fn make_state() -> FrameAwareState {
     // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
     let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), MonotonicTime(0.0));
     state.set_variable(
-        &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
+        &StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::X),
         1.0,
     ); // vx = 1.0 m/s
     state

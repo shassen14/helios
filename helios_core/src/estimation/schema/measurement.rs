@@ -52,11 +52,20 @@ mod tests {
     use crate::spatial::transforms::Convention;
     use crate::spatial::FrameId;
 
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+
     #[test]
     fn compose_carries_the_blocks_layout_and_dim_through() {
         let schema = MeasurementSchema::compose(vec![
-            MeasurementSchemaBlock::new(Quantity::Position(FrameId::world()), Convention::Enu),
-            MeasurementSchemaBlock::new(Quantity::Velocity(FrameId::world()), Convention::Enu),
+            MeasurementSchemaBlock::new(
+                Quantity::Position(FrameId::global(DATUM)),
+                Convention::Enu,
+            ),
+            MeasurementSchemaBlock::new(
+                Quantity::Velocity(FrameId::global(DATUM)),
+                Convention::Enu,
+            ),
         ]);
         assert_eq!(schema.dim(), 6);
         assert_eq!(schema.blocks().len(), 2);

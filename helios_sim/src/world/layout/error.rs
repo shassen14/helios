@@ -18,6 +18,9 @@ pub enum LayoutError {
     LayoutNameNotSnakeCase {
         name: String,
     },
+    MalformedDatumName {
+        name: String,
+    },
     PlacementNameNotSnakeCase {
         placement: String,
     },
@@ -69,6 +72,11 @@ impl fmt::Display for LayoutError {
                 f,
                 "layout name `{name}` is not snake_case; use lowercase letters, digits \
                  and single underscores, starting with a letter"
+            ),
+            Self::MalformedDatumName { name } => write!(
+                f,
+                "datum name `{name}` is not one or more levels joined by '.', each \
+                 only letters, digits and '_'"
             ),
             Self::PlacementNameNotSnakeCase { placement } => write!(
                 f,

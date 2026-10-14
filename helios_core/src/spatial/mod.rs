@@ -112,21 +112,24 @@ mod frame_aware_state_tests {
 
     use nalgebra::Vector3;
 
-    // A composed position + orientation state in World, built from real
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+
+    // A composed position + orientation state in the test datum, built from real
     // `Quantity` blocks via `compose`. The orientation block seeds the identity
     // quaternion `[0, 0, 0, 1]`; the position block seeds zeros.
     fn pose_schema() -> Arc<StateSchema> {
         Arc::new(StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::world()),
+                Quantity::Position(FrameId::global(DATUM)),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::orientation(
-                FrameId::world(),
-                FrameId::world(),
+                FrameId::global(DATUM),
+                FrameId::global(DATUM),
                 Convention::Enu,
                 Convention::Enu,
                 Some(TangentNoise::from_variances(DVector::from_element(3, 0.1)).unwrap()),
@@ -149,8 +152,8 @@ mod frame_aware_state_tests {
             .schema
             .storage_offset_of(&StateVariable::new(
                 Quantity::Orientation {
-                    from: FrameId::world(),
-                    to: FrameId::world(),
+                    from: FrameId::global(DATUM),
+                    to: FrameId::global(DATUM),
                 },
                 Component::W,
             ))
@@ -162,15 +165,15 @@ mod frame_aware_state_tests {
     fn set_variable_writes_reach_the_mean() {
         let mut s = pose_state();
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::X),
             1.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::Y),
             2.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Z),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::Z),
             3.0,
         );
 
@@ -182,7 +185,7 @@ mod frame_aware_state_tests {
     fn set_variable_absent_is_noop() {
         let mut s = pose_state();
         assert!(!s.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
+            &StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::X),
             9.0
         ));
     }
@@ -192,7 +195,7 @@ mod frame_aware_state_tests {
         // A position block is Euclidean, so `oplus_assign` reduces to `mean += delta`.
         let mut s = FrameAwareState::from_schema(
             Arc::new(StateSchema::compose(vec![StateSchemaBlock::new(
-                Quantity::Position(FrameId::world()),
+                Quantity::Position(FrameId::global(DATUM)),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
@@ -201,11 +204,11 @@ mod frame_aware_state_tests {
             MonotonicTime(0.0),
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::X),
             1.0,
         );
         s.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::Y),
             2.0,
         );
 

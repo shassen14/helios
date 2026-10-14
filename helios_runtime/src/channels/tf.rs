@@ -19,9 +19,10 @@
 //! assembler assert that list covers every declared edge.
 //!
 //! The [`TF_EDGE_PREFIX`] marks these instances (`tf/…`), the discriminator
-//! [`is_tf_edge`] keys off. An edge name holds two frame ids, `/` included,
-//! so it is the one channel name outside the `.`-joined level grammar, and the
-//! pipeline build skips its form check. Edges are [`InternalChannel`]s (node-produced), so
+//! [`is_tf_edge`] keys off. An edge name joins two frame spellings with `->`
+//! under the `/` prefix (`tf/agent.car.base_link->agent.car.odom`), so it is
+//! the one channel name outside the `.`-joined level grammar, and the pipeline
+//! build skips its form check. Edges are [`InternalChannel`]s (node-produced), so
 //! the value drops straight into the `output_internal` descriptor builder; a
 //! hardware `/tf` bridge or a Zenoh peer publishes onto the same channel by
 //! projecting its foreign stream through [`tf_edge`].
@@ -157,7 +158,8 @@ mod tests {
         // The prefix alone is not enough: a `tf/`-named slot carrying a different
         // payload is not a transform edge.
         let key: ChannelKey =
-            InternalChannel::named::<NotATransform>("tf/bot/base_link->bot/odom").into();
+            InternalChannel::named::<NotATransform>("tf/agent.bot.base_link->agent.bot.odom")
+                .into();
         assert!(!is_tf_edge(&key));
     }
 

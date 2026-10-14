@@ -218,6 +218,9 @@ mod tests {
 
     use nalgebra::{DMatrix, DVector};
 
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+
     // A single agent and a sensor mounted on it. Distinct leaves so a frame
     // mixup would surface as a mismatched id rather than an accidental match.
     fn agent() -> AgentId {
@@ -233,7 +236,7 @@ mod tests {
 
     /// A state that anchors two frames' conventions: `Odom(agent) → ENU` via the
     /// position block, and `Body(agent) → FLU` via the body↦odom orientation.
-    /// `World` is deliberately left untracked so it can stand in for the
+    /// The test datum is deliberately left untracked so it can stand in for the
     /// unanchorable case. Neither block observes `SpecificForce`, so any
     /// measurement of it references a frame the state anchors without the state
     /// tracking the same quantity.
@@ -348,14 +351,17 @@ mod tests {
 
     #[test]
     fn derived_measurement_in_an_untracked_non_sensor_frame_is_unanchorable() {
-        // World is neither tracked by this state nor a sensor frame, so there is
+        // The test datum is neither tracked by this state nor a sensor frame, so there is
         // no convention to check against.
         let state = anchored_state();
-        let m = one(Quantity::SpecificForce(FrameId::world()), Convention::Enu);
+        let m = one(
+            Quantity::SpecificForce(FrameId::global(DATUM)),
+            Convention::Enu,
+        );
 
         match check_measurement_state_agreement(&state, &m).unwrap_err() {
             MeasurementAgreementError::UnanchorableFrame { frame, .. } => {
-                assert_eq!(frame, FrameId::world());
+                assert_eq!(frame, FrameId::global(DATUM));
             }
             other => panic!("expected UnanchorableFrame, got {other:?}"),
         }

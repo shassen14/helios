@@ -149,6 +149,9 @@ mod tests {
     const YARD: &str = r#"
         name = "yard"
 
+        [datum]
+        name = "yard"
+
         [[objects]]
         name     = "cone_a"
         prefab   = "entities.objects.traffic_cone"

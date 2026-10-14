@@ -87,8 +87,25 @@ pub struct WorldLayout {
     /// Declared rather than taken from the file path, so moving the file
     /// does not change any ID.
     pub name: String,
+    /// The world's origin, the root of its truth frames. Required: every
+    /// truth pose is measured from it.
+    pub datum: DatumConfig,
     #[serde(default)]
     pub objects: Vec<ObjectPlacement>,
+}
+
+/// The world's datum: the global frame at its origin, with ENU axes, that
+/// every placement and truth pose is measured from. A table so the geodetic
+/// origin can join the name.
+///
+/// Declared by the world, not the scenario: two scenarios in one world share
+/// its datum, so their logs join on it, and two worlds never do.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct DatumConfig {
+    /// The datum frame's name, one or more levels joined by `.`
+    /// (`proving_ground`).
+    pub name: String,
 }
 
 /// A reference to one catalog entry, used whole: `{ from = "<key>" }`.
@@ -237,6 +254,9 @@ mod tests {
             r#"
             name = "yard"
 
+            [datum]
+            name = "yard"
+
             [[objects]]
             name     = "ground"
             prefab   = "entities.objects.ground_100m"
@@ -252,6 +272,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(layout.name, "yard");
+        assert_eq!(layout.datum.name, "yard");
         let names: Vec<&str> = layout.objects.iter().map(|o| o.name.as_str()).collect();
         assert_eq!(names, ["ground", "crate_a"]);
     }
@@ -260,6 +281,9 @@ mod tests {
     fn layout_requires_a_name() {
         let err = parse::<WorldLayout>(
             r#"
+            [datum]
+            name = "yard"
+
             [[objects]]
             name     = "crate_a"
             prefab   = "entities.objects.crate_1m"
@@ -269,6 +293,18 @@ mod tests {
         .unwrap_err();
 
         assert!(err.contains("name"), "{err}");
+    }
+
+    #[test]
+    fn layout_requires_a_datum() {
+        let err = parse::<WorldLayout>(
+            r#"
+            name = "yard"
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(err.contains("datum"), "{err}");
     }
 
     #[test]

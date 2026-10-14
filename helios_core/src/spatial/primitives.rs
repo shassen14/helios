@@ -66,6 +66,11 @@ impl AddAssign<MonotonicDuration> for MonotonicTime {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 pub struct MonotonicDuration(pub f64);
 
+/// The first level of every name spelled under one agent: its frames
+/// (`agent.<agent>.<leaf>`) and its watcher paths (`agent.<agent>.node.…`).
+/// One word for both, so the spellings of one agent never drift apart.
+pub const AGENT_SCOPE: &str = "agent";
+
 /// Stable string identity of one agent, shared by every subsystem that names it
 /// (frame scope, determinism seeding, observability paths) — a reserved string
 /// whose sides must agree. Backed by `Arc<str>` so cloning it (onto a `FrameId`,

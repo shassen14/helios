@@ -393,6 +393,9 @@ mod tests {
 
     use super::{AStarConfig, AStarPlanner};
 
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+
     // -------------------------------------------------------------------------
     // Test helpers
     // -------------------------------------------------------------------------
@@ -415,7 +418,7 @@ mod tests {
     /// Build a minimal world-frame state carrying only a `Position(World)` block.
     fn make_state(x: f64, y: f64) -> FrameAwareState {
         let schema = StateSchema::compose(vec![StateSchemaBlock::new(
-            Quantity::Position(FrameId::world()),
+            Quantity::Position(FrameId::global(DATUM)),
             Convention::Enu,
             None,
             DVector::from_vec(vec![x, y, 0.0]),

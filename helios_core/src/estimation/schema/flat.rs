@@ -174,14 +174,21 @@ mod tests {
     use crate::prelude::AgentId;
     use crate::spatial::state::Component;
 
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+
     // ── FlatSchemaBlock: convention tagging and the constructor split ──
 
     #[test]
     fn new_records_a_flat_block_as_one_frame_convention_entry() {
         // A flat kind touches one frame, so `new` records exactly one
         // (frame, convention) entry: the quantity's frame in the given convention.
-        let block = FlatSchemaBlock::new(Quantity::Position(FrameId::world()), Convention::Enu);
-        assert_eq!(block.conventions, vec![(FrameId::world(), Convention::Enu)]);
+        let block =
+            FlatSchemaBlock::new(Quantity::Position(FrameId::global(DATUM)), Convention::Enu);
+        assert_eq!(
+            block.conventions,
+            vec![(FrameId::global(DATUM), Convention::Enu)]
+        );
         // A flat block occupies as many components as it names.
         assert_eq!(block.dim(), 3);
     }
@@ -229,8 +236,8 @@ mod tests {
     fn pos_vel() -> FlatSchema {
         FlatSchema::compose(
             vec![
-                FlatSchemaBlock::new(Quantity::Position(FrameId::world()), Convention::Enu),
-                FlatSchemaBlock::new(Quantity::Velocity(FrameId::world()), Convention::Enu),
+                FlatSchemaBlock::new(Quantity::Position(FrameId::global(DATUM)), Convention::Enu),
+                FlatSchemaBlock::new(Quantity::Velocity(FrameId::global(DATUM)), Convention::Enu),
             ],
             "test",
         )
@@ -250,11 +257,11 @@ mod tests {
         assert_eq!(schema.layout().len(), schema.dim());
         assert_eq!(
             schema.layout()[0],
-            StateVariable::new(Quantity::Position(FrameId::world()), Component::X)
+            StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::X)
         );
         assert_eq!(
             schema.layout()[3],
-            StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X)
+            StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::X)
         );
     }
 
@@ -263,14 +270,14 @@ mod tests {
         let schema = pos_vel();
         assert_eq!(
             schema.offset_of(&StateVariable::new(
-                Quantity::Velocity(FrameId::world()),
+                Quantity::Velocity(FrameId::global(DATUM)),
                 Component::Y
             )),
             Some(4)
         );
         assert_eq!(
             schema.offset_of(&StateVariable::new(
-                Quantity::Acceleration(FrameId::world()),
+                Quantity::Acceleration(FrameId::global(DATUM)),
                 Component::X
             )),
             None

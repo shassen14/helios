@@ -26,7 +26,8 @@ impl Plugin for WorldLayoutPlugin {
             )
             .add_systems(
                 OnEnter(AppState::SceneBuilding),
-                spawn_world_objects.in_set(SceneBuildSet::ProcessWorldObjects),
+                (spawn_world_objects, root_truth_frames_at_datum)
+                    .in_set(SceneBuildSet::ProcessWorldObjects),
             )
             .add_observer(remove_collider_parts_when_ready);
     }
@@ -56,6 +57,18 @@ fn resolve_world_layout(mut commands: Commands, loaded: Option<Res<LoadedWorldLa
     }
 }
 
+/// Roots the truth frame tree at the world's datum, so every tracked pose is
+/// measured from the frame the world declares.
+fn root_truth_frames_at_datum(
+    layout: Option<Res<ResolvedWorldLayout>>,
+    mut tf_tree: ResMut<TfTree>,
+) {
+    let Some(layout) = layout else {
+        return;
+    };
+    tf_tree.set_datum(layout.datum().clone());
+}
+
 /// The heading of a rejected layout's report.
 fn invalid_layout(name: &str) -> String {
     format!("world layout `{name}` is invalid")
@@ -65,7 +78,9 @@ fn invalid_layout(name: &str) -> String {
 mod tests {
     use super::*;
 
-    use crate::config::structs::{BodyKind, ObjectPlacement, ObjectPrefab, World, WorldLayout};
+    use crate::config::structs::{
+        BodyKind, DatumConfig, ObjectPlacement, ObjectPrefab, World, WorldLayout,
+    };
     use crate::config::{load_world_layout, read_catalog, PrefabCatalog};
     use crate::world::layout::{read_scene, PrefabGeometry};
 
@@ -90,7 +105,7 @@ mod tests {
             (
                 "sim.catalog.worlds.test".to_string(),
                 value(
-                    "name = \"test\"\n[[objects]]\nname = \"cone_a\"\n\
+                    "name = \"test\"\n[datum]\nname = \"test\"\n[[objects]]\nname = \"cone_a\"\n\
                      prefab = \"entities.objects.traffic_cone\"\nposition = [0.0, 0.0, 0.0]\n",
                 ),
             ),
@@ -244,6 +259,9 @@ mod tests {
         let loaded = LoadedWorldLayout {
             layout: WorldLayout {
                 name: "every_prefab".to_string(),
+                datum: DatumConfig {
+                    name: "every_prefab".to_string(),
+                },
                 objects,
             },
             prefabs,

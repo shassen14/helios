@@ -4,7 +4,7 @@
 //! rest on, hit and are hit by one another.
 
 use super::*;
-use crate::config::structs::{BodyKind, ObjectPlacement, ObjectPrefab, WorldLayout};
+use crate::config::structs::{BodyKind, DatumConfig, ObjectPlacement, ObjectPrefab, WorldLayout};
 use crate::config::LoadedWorldLayout;
 use crate::world::layout::AssetNode;
 
@@ -92,6 +92,9 @@ fn layout(placements: Vec<ObjectPlacement>) -> ResolvedWorldLayout {
     let loaded = LoadedWorldLayout {
         layout: WorldLayout {
             name: "physics".to_string(),
+            datum: DatumConfig {
+                name: "physics".to_string(),
+            },
             objects,
         },
         prefabs: BTreeMap::from([

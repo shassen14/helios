@@ -13,6 +13,11 @@
 # forward (+X) from east to north.
 name = "proving_ground"
 
+# The origin every position here is measured from: the global frame
+# `global.proving_ground`, ENU axes, root of the world's truth frames.
+[datum]
+name = "proving_ground"
+
 # --- Ground: an ordinary placed object, top face at z = 0 ---------------
 
 [[objects]]

@@ -17,6 +17,9 @@ use std::sync::Arc;
 // == Fixtures ==
 // =========================================================================
 
+/// An arbitrary global frame the bench expresses quantities in.
+const DATUM: &str = "test_datum";
+
 fn bench_config() -> AStarConfig {
     AStarConfig {
         rate_hz: 0.0, // Disable rate gate — replan every call.
@@ -32,7 +35,7 @@ fn bench_config() -> AStarConfig {
 
 fn make_state(x: f64, y: f64) -> FrameAwareState {
     let schema = Arc::new(StateSchema::compose(vec![StateSchemaBlock::new(
-        Quantity::Position(FrameId::world()),
+        Quantity::Position(FrameId::global(DATUM)),
         Convention::Enu,
         None,
         DVector::zeros(3),
@@ -40,11 +43,11 @@ fn make_state(x: f64, y: f64) -> FrameAwareState {
     )]));
     let mut state = FrameAwareState::from_schema(schema, MonotonicTime(0.0));
     state.set_variable(
-        &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
+        &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::X),
         x,
     );
     state.set_variable(
-        &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
+        &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::Y),
         y,
     );
     state

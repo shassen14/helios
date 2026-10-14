@@ -249,6 +249,9 @@ mod tests {
     use nalgebra::DVector;
     use std::collections::HashSet;
 
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+
     const NODE: &str = "primary";
 
     /// A filter and an IMU-driven INS reading `imu.accel` and `imu.gyro`.
@@ -382,7 +385,7 @@ mod tests {
     impl MeasurementModel for WorldPositionModel {
         fn schema(&self) -> MeasurementSchema {
             MeasurementSchema::compose(vec![MeasurementSchemaBlock::new(
-                Quantity::Position(FrameId::world()),
+                Quantity::Position(FrameId::global(DATUM)),
                 Convention::Enu,
             )])
         }

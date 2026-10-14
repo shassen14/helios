@@ -25,7 +25,6 @@ pub use body_twist::enu_twist_to_body_flu;
 
 use bevy::prelude::{GlobalTransform, *};
 use helios_core::spatial::conventions::{Enu, Flu};
-use helios_core::spatial::id::FrameScope;
 use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform as CoreTransform};
 use helios_core::spatial::FrameId;
 use nalgebra::Isometry3;
@@ -88,11 +87,21 @@ pub struct TfTree {
     /// gone.
     entity_to_frame: HashMap<Entity, FrameId>,
 
+    /// The world's datum: the global frame at the scene origin, whose pose is
+    /// the identity. `None` until the world layout resolves.
+    datum: Option<FrameId>,
+
     /// Elapsed simulation time at the last rebuild.
     pub sim_time: f64,
 }
 
 impl TfTree {
+    /// Roots the tree at the world's datum, the frame every tracked pose is
+    /// measured from.
+    pub fn set_datum(&mut self, datum: FrameId) {
+        self.datum = Some(datum);
+    }
+
     /// Resolves the transform between two frames at the tree's *current* state.
     ///
     /// The tree is latest-only: one pose per frame (the most recent physics
@@ -114,13 +123,13 @@ impl TfTree {
 
     /// Resolves one frame to its world pose and convention.
     ///
-    /// Predicate dispatch over the frame's identity: the shared `World` and —
+    /// Predicate dispatch over the frame's identity: the world's datum and —
     /// until a localizer publishes a `map -> odom` correction — every agent's
     /// `map`/`odom` root resolve to the identity ENU pose, the world→odom drift
     /// living in the estimate values rather than these edges. Every other frame
     /// (a `base_link`, a sensor) is one lookup into the pose store.
     fn resolve(&self, frame: FrameId) -> Option<(Isometry3<f64>, Convention)> {
-        if matches!(frame.scope(), FrameScope::World) {
+        if self.datum.as_ref() == Some(&frame) {
             return Some((Isometry3::identity(), Convention::Enu));
         }
 
@@ -199,4 +208,54 @@ pub fn tf_tree_incremental_update_system(
     }
 
     tf_tree.sim_time = time.elapsed_secs_f64();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use helios_core::prelude::AgentId;
+
+    const DATUM: &str = "yard";
+
+    fn rooted() -> TfTree {
+        let mut tree = TfTree::default();
+        tree.set_datum(FrameId::global(DATUM));
+        tree
+    }
+
+    #[test]
+    fn the_datum_resolves_to_the_scene_origin() {
+        let datum = FrameId::global(DATUM);
+        let transform = rooted()
+            .erased(datum.clone(), datum)
+            .expect("the datum resolves");
+        assert_eq!(transform.isometry(), Isometry3::identity());
+    }
+
+    #[test]
+    fn a_global_frame_other_than_the_datum_is_not_the_origin() {
+        // A fixture or another site's datum is not this world's origin; until
+        // something tracks it, it does not resolve.
+        let tree = rooted();
+        let elsewhere = FrameId::global("other_site");
+        assert!(tree.erased(FrameId::global(DATUM), elsewhere).is_none());
+    }
+
+    #[test]
+    fn nothing_is_the_origin_before_the_world_resolves() {
+        let datum = FrameId::global(DATUM);
+        assert!(TfTree::default().erased(datum.clone(), datum).is_none());
+    }
+
+    #[test]
+    fn an_agent_root_still_resolves_to_the_origin() {
+        // Until a localizer anchors `odom`, the truth tree places it at the
+        // scene origin, so it relates to the datum by the identity.
+        let odom = FrameId::odom(AgentId::new("car"));
+        let transform = rooted()
+            .erased(FrameId::global(DATUM), odom)
+            .expect("odom resolves");
+        assert_eq!(transform.isometry(), Isometry3::identity());
+    }
 }

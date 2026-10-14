@@ -22,9 +22,7 @@
 use crate::port::ChannelKey;
 
 use helios_core::kernel::identifier::LEVEL_SEPARATOR;
-
-/// The first segment of every watcher path.
-pub(crate) const AGENT_ROOT: &str = "agent";
+use helios_core::spatial::primitives::AGENT_SCOPE;
 
 /// The subject word for what a pipeline node said or wrote.
 const NODE_SUBJECT: &str = "node";
@@ -48,11 +46,11 @@ impl<'a> AgentPathParts<'a> {
     /// subject word and a node hold no separator, so the separators after
     /// each end them, and everything after is the leaf or the instance. On
     /// failure, names the first part that is wrong: a root other than
-    /// [`AGENT_ROOT`], a subject word that isn't one of [`SUBJECT_WORDS`],
+    /// [`AGENT_SCOPE`], a subject word that isn't one of [`SUBJECT_WORDS`],
     /// or a part that is missing or empty.
     pub fn split(path: &'a str) -> Result<Self, PathPart> {
         let mut parts = path.splitn(4, LEVEL_SEPARATOR);
-        if parts.next() != Some(AGENT_ROOT) {
+        if parts.next() != Some(AGENT_SCOPE) {
             return Err(PathPart::Root);
         }
         let agent = non_empty(parts.next()).ok_or(PathPart::Agent)?;
@@ -80,7 +78,7 @@ impl<'a> AgentPathParts<'a> {
     /// leaf a node declared (`aiding.gps.nis`) or a channel's name
     /// (`oracle.pose`).
     pub fn join(&self) -> String {
-        let mut parts = vec![AGENT_ROOT, self.agent, self.subject.word()];
+        let mut parts = vec![AGENT_SCOPE, self.agent, self.subject.word()];
         match self.subject {
             PathSubject::Node { node, leaf } => parts.extend([node, leaf]),
             PathSubject::Channel { instance } => parts.push(instance),

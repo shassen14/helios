@@ -4,12 +4,17 @@
 //! ECS entity or runtime handle, so the same identifier is valid in simulation and
 //! on hardware. Identity has two parts:
 //!
-//! - [`FrameScope`] — the shared `World` frame, or one specific agent's private
-//!   frame tree. Two agents each own a `base_link`; the scope is what keeps them
-//!   distinct (`agent_a/base_link != agent_b/base_link`).
+//! - [`FrameScope`] — a global frame no agent owns, or one specific agent's
+//!   private frame tree. Two agents each own a `base_link`; the scope is what
+//!   keeps them distinct (`agent.a.base_link != agent.b.base_link`).
 //! - [`FrameName`] — the leaf name within that scope (`base_link`, `odom`, a
-//!   sensor's own name). Held as an `Arc<str>` so a `FrameId` is cheap to clone
-//!   and hash while carrying a human-readable, wire-compatible name.
+//!   sensor's own name, a datum's name). Held as an `Arc<str>` so a `FrameId` is
+//!   cheap to clone and hash while carrying a human-readable, wire-compatible
+//!   name.
+//!
+//! A global frame is any frame no agent owns: a datum (a fixed origin a site or
+//! world declares), a surveyed fixture, a celestial frame. Each is named, so two
+//! sites' origins are two frames and nothing joins them unless an edge does.
 //!
 //! The spine leaf names ([`MAP`], [`ODOM`], [`BASE_LINK`]) are single-sourced here
 //! and reused everywhere a producer and consumer must agree on them. A frame's
@@ -17,7 +22,8 @@
 //! sensor) is read back from the leaf via the predicates, never re-encoded in a
 //! separate field.
 
-use crate::prelude::AgentId;
+use crate::kernel::identifier::LEVEL_SEPARATOR;
+use crate::spatial::primitives::{AgentId, AGENT_SCOPE};
 
 use std::fmt::Display;
 use std::sync::Arc;
@@ -34,10 +40,13 @@ pub const ODOM: &str = "odom";
 /// extrinsic and the estimated pose are expressed against.
 pub const BASE_LINK: &str = "base_link";
 
+/// The first level of a global frame's spelling (`global.<leaf>`).
+pub const GLOBAL_SCOPE: &str = "global";
+
 /// A hashable, clone-cheap identifier for one coordinate frame.
 ///
 /// Two `FrameId`s are equal iff both their scope and leaf match, so an agent's
-/// frames never collide with the shared world frame or with another agent's.
+/// frames never collide with a global frame or with another agent's.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct FrameId {
     scope: FrameScope,
@@ -45,12 +54,11 @@ pub struct FrameId {
 }
 
 impl FrameId {
-    /// The shared global frame. Its leaf is empty — `World` is identified by scope
-    /// alone, and [`Display`] renders it as `world`.
-    pub fn world() -> Self {
+    /// A global frame, named by its leaf (a datum, a surveyed fixture).
+    pub fn global(leaf: impl Into<Arc<str>>) -> Self {
         Self {
-            scope: FrameScope::World,
-            leaf: FrameName(Arc::from("")),
+            scope: FrameScope::Global,
+            leaf: FrameName(leaf.into()),
         }
     }
 
@@ -89,23 +97,23 @@ impl FrameId {
 
     /// Whether this frame is an agent's `map` root, regardless of which agent.
     pub fn is_map(&self) -> bool {
-        self.leaf.as_str() == MAP
+        self.is_agent_leaf(MAP)
     }
 
     /// Whether this frame is an agent's `odom` origin, regardless of which agent.
     pub fn is_odom(&self) -> bool {
-        self.leaf.as_str() == ODOM
+        self.is_agent_leaf(ODOM)
     }
 
     /// Whether this frame is an agent's `base_link`, regardless of which agent.
     pub fn is_base_link(&self) -> bool {
-        self.leaf.as_str() == BASE_LINK
+        self.is_agent_leaf(BASE_LINK)
     }
 
     /// Whether this frame is a sensor frame: agent-scoped, but not one of the
     /// spine roles. A sensor's leaf is its own device name, so it is defined by
     /// exclusion — an agent frame that is neither `map`, `odom`, nor `base_link`
-    /// is a sensor's own frame. The shared `World` frame is never a sensor.
+    /// is a sensor's own frame. A global frame is never a sensor.
     pub fn is_sensor(&self) -> bool {
         matches!(self.scope, FrameScope::Agent(_))
             && !self.is_map()
@@ -120,21 +128,36 @@ impl FrameId {
     pub fn leaf(&self) -> &FrameName {
         &self.leaf
     }
+
+    /// Whether this is an agent's frame with the given leaf. A spine role is an
+    /// agent's, so a global frame that happens to share a spine leaf holds no
+    /// role.
+    fn is_agent_leaf(&self, leaf: &str) -> bool {
+        matches!(self.scope, FrameScope::Agent(_)) && self.leaf.as_str() == leaf
+    }
 }
 
+/// Spells the frame as levels: `agent.<agent>.<leaf>` or `global.<leaf>`.
+///
+/// The scope word comes first, where no config name goes, so no agent or frame
+/// name is reserved. The spelling inverts because an agent name is one level:
+/// whatever follows `agent.<agent>.` or `global.` is the leaf.
 impl Display for FrameId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sep = LEVEL_SEPARATOR;
+        let leaf = self.leaf.as_str();
         match &self.scope {
-            FrameScope::World => f.write_str("world"),
-            FrameScope::Agent(id) => write!(f, "{}/{}", id, self.leaf.as_str()),
+            FrameScope::Global => write!(f, "{GLOBAL_SCOPE}{sep}{leaf}"),
+            FrameScope::Agent(id) => write!(f, "{AGENT_SCOPE}{sep}{id}{sep}{leaf}"),
         }
     }
 }
 
-/// Which frame tree a [`FrameId`] belongs to: the shared world, or one agent's own.
+/// Which frame tree a [`FrameId`] belongs to: the global frames no agent owns,
+/// or one agent's own.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FrameScope {
-    World,
+    Global,
     Agent(AgentId),
 }
 
@@ -173,6 +196,8 @@ mod tests {
     use super::*;
 
     use crate::prelude::AgentId;
+
+    const DATUM: &str = "test_datum";
 
     fn agent() -> AgentId {
         AgentId::new("pickup_1")
@@ -216,12 +241,25 @@ mod tests {
         assert!(!base_link.is_sensor());
         assert!(!FrameId::map(agent()).is_sensor());
         assert!(!FrameId::odom(agent()).is_sensor());
-        // The shared world frame is never a sensor.
-        assert!(!FrameId::world().is_sensor());
+        // A global frame is never a sensor.
+        assert!(!FrameId::global(DATUM).is_sensor());
     }
 
     #[test]
-    fn scope_distinguishes_agents_and_the_world() {
+    fn a_global_frame_with_a_spine_leaf_holds_no_spine_role() {
+        // Spine roles belong to an agent; a datum or fixture that happens to be
+        // named like one must not be read as an agent's root or body.
+        for leaf in [MAP, ODOM, BASE_LINK] {
+            let frame = FrameId::global(leaf);
+            assert!(!frame.is_map());
+            assert!(!frame.is_odom());
+            assert!(!frame.is_base_link());
+            assert!(!frame.is_sensor());
+        }
+    }
+
+    #[test]
+    fn scope_distinguishes_agents_and_global_frames() {
         let a = FrameId::base_link(AgentId::new("a"));
         let b = FrameId::base_link(AgentId::new("b"));
 
@@ -229,27 +267,43 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(a, FrameId::base_link(AgentId::new("a")));
 
-        assert!(matches!(FrameId::world().scope(), FrameScope::World));
+        assert!(matches!(FrameId::global(DATUM).scope(), FrameScope::Global));
+        // Same leaf, global vs agent scope -> different frame.
+        assert_ne!(FrameId::global(BASE_LINK), a);
         assert!(matches!(a.scope(), FrameScope::Agent(_)));
     }
 
     #[test]
-    fn display_renders_the_wire_form() {
-        assert_eq!(FrameId::world().to_string(), "world");
+    fn display_spells_scope_then_levels() {
+        assert_eq!(FrameId::global(DATUM).to_string(), "global.test_datum");
         assert_eq!(
             FrameId::base_link(agent()).to_string(),
-            "pickup_1/base_link"
+            "agent.pickup_1.base_link"
         );
         assert_eq!(
             FrameId::sensor(agent(), "imu0").to_string(),
-            "pickup_1/imu0"
+            "agent.pickup_1.imu0"
+        );
+    }
+
+    #[test]
+    fn display_keeps_dotted_leaves_whole() {
+        // Everything after the fixed scope prefix is the leaf, so a dotted leaf
+        // spells as its own levels and the spelling still splits back apart.
+        assert_eq!(
+            FrameId::sensor(agent(), "front.lidar").to_string(),
+            "agent.pickup_1.front.lidar"
+        );
+        assert_eq!(
+            FrameId::global("lbl.beacon_3").to_string(),
+            "global.lbl.beacon_3"
         );
     }
 
     #[test]
     fn serde_round_trips() {
         for frame in [
-            FrameId::world(),
+            FrameId::global(DATUM),
             FrameId::map(agent()),
             FrameId::base_link(agent()),
             FrameId::sensor(agent(), "gps_antenna"),

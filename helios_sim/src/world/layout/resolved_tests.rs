@@ -42,6 +42,9 @@ const CRATE: &str = r#"
 const YARD: &str = r#"
     name = "yard"
 
+    [datum]
+    name = "yard_origin"
+
     [[objects]]
     name     = "cone_a"
     prefab   = "entities.objects.traffic_cone"
@@ -115,6 +118,9 @@ fn one_cone(extra: &str) -> LoadedWorldLayout {
             r#"
             name = "test"
 
+            [datum]
+            name = "test"
+
             [[objects]]
             name     = "cone_a"
             prefab   = "entities.objects.traffic_cone"
@@ -145,6 +151,7 @@ fn valid_layout_resolves() {
     let layout = ResolvedWorldLayout::resolve(&yard()).unwrap();
 
     assert_eq!(layout.name(), "yard");
+    assert_eq!(layout.datum(), &FrameId::global("yard_origin"));
     assert_eq!(layout.placements().len(), 3);
     let (cone, cone_prefab) = object(&layout, "cone_a");
     assert_eq!(cone_prefab.class.id(), 15);
@@ -247,6 +254,43 @@ fn rejects_layout_name_not_snake_case() {
 }
 
 #[test]
+fn rejects_malformed_datum_name() {
+    // The datum's name is a frame leaf, so it follows the one name grammar:
+    // a `/` or `-` would make its spelling ambiguous.
+    for name in ["yard/origin", "yard-origin", "", "yard..origin"] {
+        let loaded = load(
+            &YARD.replace("\"yard_origin\"", &format!("\"{name}\"")),
+            &[
+                ("entities.objects.traffic_cone", CONE),
+                ("entities.objects.crate_1m", CRATE),
+            ],
+        );
+
+        assert_eq!(
+            resolve_err(&loaded),
+            [LayoutError::MalformedDatumName {
+                name: name.to_string()
+            }],
+            "{name:?}"
+        );
+    }
+}
+
+#[test]
+fn a_dotted_datum_name_resolves() {
+    let loaded = load(
+        &YARD.replace("\"yard_origin\"", "\"site.yard\""),
+        &[
+            ("entities.objects.traffic_cone", CONE),
+            ("entities.objects.crate_1m", CRATE),
+        ],
+    );
+
+    let layout = ResolvedWorldLayout::resolve(&loaded).unwrap();
+    assert_eq!(layout.datum().to_string(), "global.site.yard");
+}
+
+#[test]
 fn rejects_placement_name_not_snake_case() {
     let loaded = load(
         &YARD.replace("\"crate_a\"", "\"crates/a\""),
@@ -312,7 +356,7 @@ fn rejects_mesh_that_is_not_a_relative_glb() {
     for mesh in ["objects/traffic_cone.gltf", "/abs/traffic_cone.glb"] {
         let cone = CONE.replace("objects/traffic_cone.glb", mesh);
         let loaded = load(
-            "name = \"test\"\n[[objects]]\nname = \"cone_a\"\n\
+            "name = \"test\"\n[datum]\nname = \"test\"\n[[objects]]\nname = \"cone_a\"\n\
              prefab = \"entities.objects.traffic_cone\"\nposition = [0.0, 0.0, 0.0]\n",
             &[("entities.objects.traffic_cone", &cone)],
         );

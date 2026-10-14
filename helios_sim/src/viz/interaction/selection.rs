@@ -307,7 +307,7 @@ fn unselectable_classes(names: &[String], taxonomy: &SemanticTaxonomy) -> Vec<Se
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::structs::WorldLayout;
+    use crate::config::structs::{DatumConfig, WorldLayout};
     use crate::config::LoadedWorldLayout;
 
     use figment::{
@@ -329,6 +329,9 @@ mod tests {
         let loaded = LoadedWorldLayout {
             layout: WorldLayout {
                 name: "yard".to_string(),
+                datum: DatumConfig {
+                    name: "yard".to_string(),
+                },
                 objects: Vec::new(),
             },
             prefabs: BTreeMap::new(),

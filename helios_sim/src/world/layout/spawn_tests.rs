@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::structs::{BodyKind, ObjectPlacement, ObjectPrefab, WorldLayout};
+use crate::config::structs::{BodyKind, DatumConfig, ObjectPlacement, ObjectPrefab, WorldLayout};
 use crate::config::LoadedWorldLayout;
 use crate::core::components::BoundingBox3D;
 use crate::world::layout::AssetNode;
@@ -41,6 +41,9 @@ fn yard() -> ResolvedWorldLayout {
     let loaded = LoadedWorldLayout {
         layout: WorldLayout {
             name: "yard".to_string(),
+            datum: DatumConfig {
+                name: "yard".to_string(),
+            },
             objects: vec![
                 ObjectPlacement {
                     name: "crate_a".to_string(),

@@ -323,6 +323,9 @@ mod tests {
 
     use nalgebra::Isometry3;
 
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+
     /// A bare app carrying just the inspector's resources, ready to run one gather
     /// system against a hand-built world.
     fn inspector_app() -> App {
@@ -477,32 +480,32 @@ mod tests {
             )
         };
         let schema = StateSchema::compose(vec![
-            flat(Quantity::Position(FrameId::world()), Convention::Enu),
-            flat(Quantity::Velocity(FrameId::world()), Convention::Enu),
+            flat(Quantity::Position(FrameId::global(DATUM)), Convention::Enu),
+            flat(Quantity::Velocity(FrameId::global(DATUM)), Convention::Enu),
         ]);
         let mut state = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::X),
             position[0],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::Y),
             position[1],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Z),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::Z),
             position[2],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
+            &StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::X),
             velocity[0],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Y),
+            &StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::Y),
             velocity[1],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Z),
+            &StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::Z),
             velocity[2],
         );
         state
