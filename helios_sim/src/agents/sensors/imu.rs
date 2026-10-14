@@ -225,7 +225,7 @@ fn spawn_imu_sensors(
                         SensorTimer::from_rate(imu_config.rate),
                         accel_rng,
                         TrackedFrame::new(
-                            FrameId::sensor(agent_id.0.clone(), accel_channel.to_string()),
+                            FrameId::agent(agent_id.0.clone(), accel_channel.to_string()),
                             Convention::Flu,
                         ),
                         sensor_pose.to_bevy_local_transform(),
@@ -243,7 +243,7 @@ fn spawn_imu_sensors(
                         SensorTimer::from_rate(imu_config.rate),
                         gyro_rng,
                         TrackedFrame::new(
-                            FrameId::sensor(agent_id.0.clone(), gyro_channel.to_string()),
+                            FrameId::agent(agent_id.0.clone(), gyro_channel.to_string()),
                             Convention::Flu,
                         ),
                         sensor_pose.to_bevy_local_transform(),

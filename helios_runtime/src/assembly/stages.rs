@@ -16,7 +16,7 @@
 //!   on hardware.
 //! - `sensor_channels` — the set of sensor channel names the host actually
 //!   publishes for this agent. Each channel name is also the leaf of the
-//!   sensor's [`FrameId`](helios_core::spatial::FrameId) (`FrameId::sensor(agent, channel_name)`), so a node
+//!   sensor's [`FrameId`](helios_core::spatial::FrameId) (`FrameId::agent(agent, channel_name)`), so a node
 //!   that reads a channel the host does not provide, and no node derives, is
 //!   rejected at build time rather than silently never running.
 //! - `host_capabilities` — the body as the host describes it: its name, its

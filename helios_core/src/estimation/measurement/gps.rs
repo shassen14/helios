@@ -134,7 +134,7 @@ mod tests {
     }
 
     fn sensor() -> FrameId {
-        FrameId::sensor(agent(), "gps_antenna")
+        FrameId::agent(agent(), "gps_antenna")
     }
 
     const AT: MonotonicTime = MonotonicTime(0.0);

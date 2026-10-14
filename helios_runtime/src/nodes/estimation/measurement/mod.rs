@@ -131,7 +131,7 @@ where
         + 'static,
 {
     move |config: C, ctx: &BuildContext<'_>, wiring: MeasurementWiring| {
-        let sensor = FrameId::sensor(ctx.agent().clone(), wiring.input.as_str());
+        let sensor = FrameId::agent(ctx.agent().clone(), wiring.input.as_str());
         let model = build_model(config, ctx, &sensor)?;
         let source = TypedMeasurementSource::<P>::new(&wiring.input, model, wiring.noise)?;
         Ok(Box::new(source) as Box<dyn MeasurementSource>)
@@ -252,7 +252,7 @@ mod tests {
             expected,
             Stamped {
                 value: vec![SensorReading {
-                    sensor: FrameId::sensor(agent(), INPUT),
+                    sensor: FrameId::agent(agent(), INPUT),
                     timestamp: MonotonicTime(1.0),
                     data: GpsPosition {
                         position: Vector3::new(1.0, 2.0, 3.0),
@@ -276,7 +276,7 @@ mod tests {
         let ctx = BuildContext::new(agent(), NODE, &channels);
         let factory = source_factory::<GpsPosition, NoParams, _>(
             |_: NoParams, _: &BuildContext<'_>, sensor: &FrameId| {
-                assert_eq!(sensor, &FrameId::sensor(agent(), INPUT));
+                assert_eq!(sensor, &FrameId::agent(agent(), INPUT));
                 Ok(Box::new(MocapModel) as Box<dyn MeasurementModel>)
             },
         );

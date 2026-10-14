@@ -56,7 +56,7 @@ fn odom() -> FrameId {
     FrameId::odom(agent())
 }
 fn imu() -> FrameId {
-    FrameId::sensor(agent(), "imu")
+    FrameId::agent(agent(), "imu")
 }
 
 /// The `imu → base_link` sensor mount: time-invariant calibration, seeded into

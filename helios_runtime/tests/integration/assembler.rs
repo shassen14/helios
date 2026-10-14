@@ -1190,7 +1190,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     // augmentation is assembled, then driven with biased readings. This exercises
     // the correctness crux the mechanism exists for — the augmentation `sensor`
     // and the `MagneticFieldModel`'s sensor frame must resolve to the *same*
-    // `FrameId`, because both are built as `FrameId::sensor(agent, channel_name)`
+    // `FrameId`, because both are built as `FrameId::agent(agent, channel_name)`
     // from the same channel name — otherwise the appended `MagBias` slots would
     // carry a `FrameId` the model never reads and the block would ride inert.
     // Here they agree, so the bias state absorbs the injected offset and its
@@ -1267,7 +1267,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
                 mag_key.clone(),
                 Stamped {
                     value: vec![SensorReading {
-                        sensor: FrameId::sensor(agent.clone(), MAG_CHANNEL),
+                        sensor: FrameId::agent(agent.clone(), MAG_CHANNEL),
                         timestamp: t,
                         data: MagneticField(measured),
                     }],
@@ -1283,7 +1283,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     let state = pipeline
         .read_state()
         .expect("the estimator must publish a state");
-    let sensor = FrameId::sensor(agent.clone(), MAG_CHANNEL);
+    let sensor = FrameId::agent(agent.clone(), MAG_CHANNEL);
 
     // The appended block exists and the base grew by exactly 3 storage dims.
     assert_eq!(
@@ -1366,7 +1366,7 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
     .expect("a lone deproject node over a host channel must build");
 
     let batch_time = MonotonicTime(0.5);
-    let sensor = FrameId::sensor(AgentId::new("test_agent"), "lidar_front");
+    let sensor = FrameId::agent(AgentId::new("test_agent"), "lidar_front");
     pipeline
         .bus()
         .write(
@@ -1578,7 +1578,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
             SensorChannel::named::<Vec<SensorReading<RangeField<Flu>>>>("lidar").into(),
             Stamped {
                 value: vec![SensorReading {
-                    sensor: FrameId::sensor(agent, "lidar"),
+                    sensor: FrameId::agent(agent, "lidar"),
                     timestamp: now,
                     data: two_return_field(),
                 }],

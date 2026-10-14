@@ -146,7 +146,7 @@ mod tests {
     }
 
     fn sensor() -> FrameId {
-        FrameId::sensor(agent(), "imu")
+        FrameId::agent(agent(), "imu")
     }
 
     const AT: MonotonicTime = MonotonicTime(0.0);

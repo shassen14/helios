@@ -103,7 +103,7 @@ mod tests {
     /// A reading at `at` whose east coordinate is `at`, so order is visible.
     fn reading(at: f64) -> SensorReading<GpsPosition> {
         SensorReading {
-            sensor: FrameId::sensor(AgentId::new("car"), CHANNEL),
+            sensor: FrameId::agent(AgentId::new("car"), CHANNEL),
             timestamp: MonotonicTime(at),
             data: GpsPosition {
                 position: Vector3::new(at, 0.0, 0.0),

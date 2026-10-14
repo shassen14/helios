@@ -182,7 +182,7 @@ mod tests {
     const TOLERANCE: f32 = 1e-5;
 
     fn frame(name: &str) -> FrameId {
-        FrameId::sensor(AgentId::new(AGENT), name.to_string())
+        FrameId::agent(AgentId::new(AGENT), name.to_string())
     }
 
     fn tracked(name: &str) -> TrackedFrame {

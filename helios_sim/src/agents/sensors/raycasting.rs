@@ -142,7 +142,7 @@ fn spawn_raycasting_sensors(
                     },
                     sensor_rng,
                     TrackedFrame::new(
-                        FrameId::sensor(agent_id.0.clone(), channel.to_string()),
+                        FrameId::agent(agent_id.0.clone(), channel.to_string()),
                         Convention::Flu,
                     ),
                     LastCapturePose::default(),
@@ -387,7 +387,7 @@ mod tests {
                 LastCapturePose::default(),
                 SensorPublishChannel(CHANNEL.to_string()),
                 TrackedFrame::new(
-                    FrameId::sensor(AgentId::new("agent"), CHANNEL.to_string()),
+                    FrameId::agent(AgentId::new("agent"), CHANNEL.to_string()),
                     Convention::Flu,
                 ),
                 sensor_pose,

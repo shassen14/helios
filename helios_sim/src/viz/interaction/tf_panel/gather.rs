@@ -244,7 +244,7 @@ mod tests {
         let agent = AgentId::new("robot_1");
         let base_link = FrameId::base_link(agent.clone());
         let odom = FrameId::odom(agent.clone());
-        let imu = FrameId::sensor(agent.clone(), "imu");
+        let imu = FrameId::agent(agent.clone(), "imu");
 
         let graph = build_agent_graph(
             agent.clone(),

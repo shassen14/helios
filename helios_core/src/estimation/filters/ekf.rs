@@ -1262,7 +1262,7 @@ mod tests {
         // off `base_tangent`.
         let base_storage = base.storage_dim();
         let base_tangent = base.tangent_dim();
-        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
+        let sensor = FrameId::agent(AgentId::new("test_agent"), "sensor9");
 
         let augmented = Arc::new(base.extended(vec![mag_bias_block(sensor.clone())]));
         let state = FrameAwareState::from_schema(augmented.clone(), MonotonicTime(0.0));
@@ -1343,8 +1343,8 @@ mod tests {
         use crate::prelude::AgentId;
 
         // Distinct sensors so the two bias blocks are independent, not aliased.
-        let s9 = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
-        let s10 = FrameId::sensor(AgentId::new("test_agent"), "sensor10");
+        let s9 = FrameId::agent(AgentId::new("test_agent"), "sensor9");
+        let s10 = FrameId::agent(AgentId::new("test_agent"), "sensor10");
         let base_dim = ins_model().schema().tangent_dim();
 
         // Cardinality is a load-time property (a Vec length): each added block
@@ -1407,7 +1407,7 @@ mod tests {
         // The mean is storage-indexed, so the base sub-vector spans `base_storage`
         // (16) slots — the full quaternion included — and the bias appends after it.
         let base_storage = ins_model().schema().storage_dim();
-        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
+        let sensor = FrameId::agent(AgentId::new("test_agent"), "sensor9");
         let mut base = base_ins_ekf();
         let mut aug = augmented_ins_ekf(&[sensor]);
 
@@ -1447,7 +1447,7 @@ mod tests {
         use crate::prelude::AgentId;
 
         let base_dim = ins_model().schema().tangent_dim();
-        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
+        let sensor = FrameId::agent(AgentId::new("test_agent"), "sensor9");
         let mut aug = augmented_ins_ekf(&[sensor]);
 
         let inputs = EstimatorInputs {
@@ -1504,7 +1504,7 @@ mod tests {
         // tangent-indexed (offset 15) — the SO(3) block splits the two.
         let base_storage = ins_model().schema().storage_dim();
         let base_tangent = ins_model().schema().tangent_dim();
-        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
+        let sensor = FrameId::agent(AgentId::new("test_agent"), "sensor9");
         let mut ekf = augmented_ins_ekf(std::slice::from_ref(&sensor));
 
         let model = MagneticFieldModel {

@@ -40,7 +40,7 @@ pub fn build_rigid_body_with_mount(ctx: &mut TopologyBuildContext) -> Result<(),
             .spawn((
                 mount.pose.to_bevy_local_transform(),
                 TrackedFrame::new(
-                    FrameId::sensor(ctx.agent.clone(), mount.name.clone()),
+                    FrameId::agent(ctx.agent.clone(), mount.name.clone()),
                     Convention::Flu,
                 ),
                 MountFrame(mount.name.clone()),

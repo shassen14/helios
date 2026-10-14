@@ -325,7 +325,7 @@ mod tests {
     fn declutter_leaves_separated_labels_where_they_are() {
         let a = agent();
         let base = FrameId::base_link(a.clone());
-        let lidar = FrameId::sensor(a.clone(), "lidar");
+        let lidar = FrameId::agent(a.clone(), "lidar");
         let near = Vec2::new(100.0, 100.0);
         let far = Vec2::new(500.0, 400.0);
         let t = TfLabelTuning::default();
@@ -344,7 +344,7 @@ mod tests {
     fn spawns_desired_frames_that_have_no_label_yet() {
         let a = agent();
         let base = FrameId::base_link(a.clone());
-        let lidar = FrameId::sensor(a.clone(), "lidar");
+        let lidar = FrameId::agent(a.clone(), "lidar");
         let desired = HashSet::from([base.clone(), lidar.clone()]);
 
         let (to_spawn, to_despawn) = reconcile_labels(&desired, &[]);
@@ -359,7 +359,7 @@ mod tests {
     fn despawns_labels_whose_frame_is_no_longer_desired() {
         let a = agent();
         let base = FrameId::base_link(a.clone());
-        let lidar = FrameId::sensor(a.clone(), "lidar");
+        let lidar = FrameId::agent(a.clone(), "lidar");
         let desired = HashSet::from([base.clone()]);
         let existing = [(entity(0), base.clone()), (entity(1), lidar.clone())];
 
@@ -373,7 +373,7 @@ mod tests {
     fn steady_state_spawns_and_despawns_nothing() {
         let a = agent();
         let base = FrameId::base_link(a.clone());
-        let lidar = FrameId::sensor(a.clone(), "lidar");
+        let lidar = FrameId::agent(a.clone(), "lidar");
         let desired = HashSet::from([base.clone(), lidar.clone()]);
         let existing = [(entity(0), base), (entity(1), lidar)];
 
@@ -413,7 +413,7 @@ mod tests {
         let a = agent();
         let existing = [
             (entity(0), FrameId::base_link(a.clone())),
-            (entity(1), FrameId::sensor(a.clone(), "lidar")),
+            (entity(1), FrameId::agent(a.clone(), "lidar")),
         ];
 
         let (to_spawn, to_despawn) = reconcile_labels(&HashSet::new(), &existing);

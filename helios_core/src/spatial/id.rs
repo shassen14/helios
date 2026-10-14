@@ -86,9 +86,9 @@ impl FrameId {
         }
     }
 
-    /// A sensor frame on the agent, named by the sensor's own config name (a leaf
-    /// that is not part of the spine, e.g. `imu0`, `gps_antenna`).
-    pub fn sensor(agent: AgentId, name: impl Into<Arc<str>>) -> Self {
+    /// A frame on the agent's body, named by its leaf (a sensor mount, a wheel
+    /// hub, an arm link; e.g. `imu0`, `gps_antenna`, `wheel_fl`).
+    pub fn agent(agent: AgentId, name: impl Into<Arc<str>>) -> Self {
         Self {
             scope: FrameScope::Agent(agent),
             leaf: FrameName(name.into()),
@@ -231,7 +231,7 @@ mod tests {
         assert!(!base_link.is_odom());
 
         // A sensor leaf is on the spine's agent scope but holds no spine role.
-        let sensor = FrameId::sensor(agent(), "imu0");
+        let sensor = FrameId::agent(agent(), "imu0");
         assert!(!sensor.is_map());
         assert!(!sensor.is_odom());
         assert!(!sensor.is_base_link());
@@ -281,7 +281,7 @@ mod tests {
             "agent.pickup_1.base_link"
         );
         assert_eq!(
-            FrameId::sensor(agent(), "imu0").to_string(),
+            FrameId::agent(agent(), "imu0").to_string(),
             "agent.pickup_1.imu0"
         );
     }
@@ -291,7 +291,7 @@ mod tests {
         // Everything after the fixed scope prefix is the leaf, so a dotted leaf
         // spells as its own levels and the spelling still splits back apart.
         assert_eq!(
-            FrameId::sensor(agent(), "front.lidar").to_string(),
+            FrameId::agent(agent(), "front.lidar").to_string(),
             "agent.pickup_1.front.lidar"
         );
         assert_eq!(
@@ -306,7 +306,7 @@ mod tests {
             FrameId::global(DATUM),
             FrameId::map(agent()),
             FrameId::base_link(agent()),
-            FrameId::sensor(agent(), "gps_antenna"),
+            FrameId::agent(agent(), "gps_antenna"),
         ] {
             let json = serde_json::to_string(&frame).expect("serialize");
             let back: FrameId = serde_json::from_str(&json).expect("deserialize");

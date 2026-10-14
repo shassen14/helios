@@ -48,7 +48,7 @@ fn agent() -> AgentId {
 }
 
 fn sensor() -> FrameId {
-    FrameId::sensor(agent(), "sensor0")
+    FrameId::agent(agent(), "sensor0")
 }
 
 const AT: MonotonicTime = MonotonicTime(0.0);

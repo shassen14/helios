@@ -737,7 +737,7 @@ mod tests {
         FrameId::map(agent())
     }
     fn sensor(name: &str) -> FrameId {
-        FrameId::sensor(agent(), name)
+        FrameId::agent(agent(), name)
     }
 
     // A pure translation along +X, identity rotation — enough to tell samples

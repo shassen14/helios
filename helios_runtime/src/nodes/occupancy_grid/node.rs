@@ -498,12 +498,12 @@ mod tests {
             &bus,
             vec![
                 SensorReading {
-                    sensor: FrameId::sensor(agent(), unknown), // skipped
+                    sensor: FrameId::agent(agent(), unknown), // skipped
                     timestamp: MonotonicTime(0.0),
                     data: flu_cloud(&[(1.0, 0.0)]),
                 },
                 SensorReading {
-                    sensor: FrameId::sensor(agent(), known),
+                    sensor: FrameId::agent(agent(), known),
                     timestamp: MonotonicTime(0.0),
                     data: flu_cloud(&[(2.0, 0.0)]),
                 },
@@ -541,7 +541,7 @@ mod tests {
         publish_scans(
             &bus,
             vec![SensorReading {
-                sensor: FrameId::sensor(agent(), sensor),
+                sensor: FrameId::agent(agent(), sensor),
                 timestamp: MonotonicTime(0.0),
                 data: flu_cloud(&[(2.0, 0.0)]),
             }],

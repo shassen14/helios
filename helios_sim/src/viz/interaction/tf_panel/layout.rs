@@ -182,7 +182,7 @@ mod tests {
         let agent = AgentId::new("robot_1");
         let odom = FrameId::odom(agent.clone());
         let base_link = FrameId::base_link(agent.clone());
-        let imu = FrameId::sensor(agent.clone(), "imu");
+        let imu = FrameId::agent(agent.clone(), "imu");
 
         let layout = tree_layout(&[
             edge(base_link.clone(), odom.clone()),
@@ -215,9 +215,9 @@ mod tests {
     fn parent_centres_over_an_odd_fan() {
         let agent = AgentId::new("robot_1");
         let base_link = FrameId::base_link(agent.clone());
-        let gps = FrameId::sensor(agent.clone(), "gps");
-        let imu = FrameId::sensor(agent.clone(), "imu");
-        let mag = FrameId::sensor(agent.clone(), "mag");
+        let gps = FrameId::agent(agent.clone(), "gps");
+        let imu = FrameId::agent(agent.clone(), "imu");
+        let mag = FrameId::agent(agent.clone(), "mag");
 
         let layout = tree_layout(&[
             edge(gps.clone(), base_link.clone()),
@@ -242,7 +242,7 @@ mod tests {
         let base_link = FrameId::base_link(agent.clone());
         let odom = FrameId::odom(agent.clone());
         let map = FrameId::map(agent.clone());
-        let imu = FrameId::sensor(agent.clone(), "imu");
+        let imu = FrameId::agent(agent.clone(), "imu");
 
         let forward = [
             edge(base_link.clone(), odom.clone()),

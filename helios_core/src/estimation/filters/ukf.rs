@@ -844,7 +844,7 @@ mod tests {
         let mut ukf = make_ukf(3.0, 0.0);
         let agent = AgentId::new("test_agent");
         let model = LeverArmDependent {
-            sensor: FrameId::sensor(agent.clone(), "gps_antenna"),
+            sensor: FrameId::agent(agent.clone(), "gps_antenna"),
             base: FrameId::base_link(agent),
         };
         let r = gps_r();
@@ -856,7 +856,7 @@ mod tests {
         assert_eq!(
             outcome,
             UpdateOutcome::Skipped(SkipReason::Model(Unavailable::MissingTransform {
-                from: FrameId::sensor(AgentId::new("test_agent"), "gps_antenna"),
+                from: FrameId::agent(AgentId::new("test_agent"), "gps_antenna"),
                 to: FrameId::base_link(AgentId::new("test_agent")),
             }))
         );

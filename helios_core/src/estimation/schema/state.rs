@@ -787,7 +787,7 @@ mod tests {
     const AUG_RANDOM_WALK: f64 = 0.02;
 
     fn mag_sensor() -> FrameId {
-        FrameId::sensor(agent(), "sensor0")
+        FrameId::agent(agent(), "sensor0")
     }
 
     fn mag_bias_block() -> StateSchemaBlock {

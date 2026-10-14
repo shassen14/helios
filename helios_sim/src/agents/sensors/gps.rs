@@ -119,7 +119,7 @@ fn spawn_gps_sensors(
                         SensorTimer::from_rate(gps_config.rate),
                         sensor_rng,
                         TrackedFrame::new(
-                            FrameId::sensor(agent_id.0.clone(), channel.to_string()),
+                            FrameId::agent(agent_id.0.clone(), channel.to_string()),
                             Convention::Flu,
                         ),
                         installation.transform.to_bevy_local_transform(),

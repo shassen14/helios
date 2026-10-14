@@ -186,7 +186,7 @@ mod tests {
     }
 
     fn sensor(name: &str) -> FrameId {
-        FrameId::sensor(AgentId::new("bot"), name)
+        FrameId::agent(AgentId::new("bot"), name)
     }
 
     /// A planar four-beam scan: two returns, one cell with no information

@@ -307,7 +307,7 @@ impl LidarConfig {
 mod tests {
     //! `frame_mounts` is the single source of the `(channel → base_link → sensor)`
     //! mounts that seed the estimated tf buffer (`brain_bridge::spawn::
-    //! build_static_seeds`). The leaf of each mount's `FrameId::sensor(agent,
+    //! build_static_seeds`). The leaf of each mount's `FrameId::agent(agent,
     //! channel)` is this channel string, which is *also* what the assembler wires
     //! as the estimator's aiding-input frame — so if `frame_mounts` surfaces the
     //! wrong channel, or drops one, the sensor's frame silently fails to resolve

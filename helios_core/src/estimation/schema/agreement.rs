@@ -227,7 +227,7 @@ mod tests {
         AgentId::new("test_agent")
     }
     fn sensor() -> FrameId {
-        FrameId::sensor(agent(), "sensor0")
+        FrameId::agent(agent(), "sensor0")
     }
 
     fn noise(var: f64) -> Option<TangentNoise> {

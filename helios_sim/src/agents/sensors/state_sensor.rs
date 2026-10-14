@@ -227,7 +227,7 @@ mod tests {
                 GlobalTransform::default(),
                 SensorPublishChannel("test.channel".to_string()),
                 TrackedFrame::new(
-                    FrameId::sensor(AgentId::new("test_agent"), "test.channel"),
+                    FrameId::agent(AgentId::new("test_agent"), "test.channel"),
                     Convention::Flu,
                 ),
                 ChildOf(agent),
@@ -345,7 +345,7 @@ mod tests {
                     GlobalTransform::default(),
                     SensorPublishChannel("test.channel".to_string()),
                     TrackedFrame::new(
-                        FrameId::sensor(AgentId::new("car_1"), *name),
+                        FrameId::agent(AgentId::new("car_1"), *name),
                         Convention::Flu,
                     ),
                     ChildOf(agent),

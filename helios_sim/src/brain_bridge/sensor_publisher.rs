@@ -102,7 +102,7 @@ mod tests {
 
     fn gps_reading() -> SensorReading<GpsPosition> {
         SensorReading {
-            sensor: FrameId::sensor(AgentId::new("test_agent"), "gps"),
+            sensor: FrameId::agent(AgentId::new("test_agent"), "gps"),
             timestamp: MonotonicTime(0.0),
             data: GpsPosition {
                 position: Vector3::zeros(),

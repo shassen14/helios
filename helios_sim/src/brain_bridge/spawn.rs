@@ -41,12 +41,12 @@ pub fn spawn_autonomy_pipeline(
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
         // The canonical scope stamped on the shell at `CreateRequests`; the
-        // assembler builds every sensor's `FrameId::sensor(agent, channel)` from
+        // assembler builds every sensor's `FrameId::agent(agent, channel)` from
         // it, matching what the sensor spawners stamped on the tf tree.
         let agent = agent_id.0.clone();
 
         // The set of sensor channel names this agent's host publishes. The
-        // assembler builds each sensor's `FrameId::sensor(agent, channel)` from
+        // assembler builds each sensor's `FrameId::agent(agent, channel)` from
         // these names — the same identity the sensor spawners stamp on the tf
         // tree — so the map of old is now just the name set.
         let sensor_channels: HashSet<String> = children
@@ -141,7 +141,7 @@ fn build_static_seeds(agent_config: &AgentConfig, agent: &AgentId) -> Vec<Stampe
         .values()
         .flat_map(|sensor| sensor.frame_mounts())
         .map(|(channel, pose, convention)| StampedTransform {
-            child: FrameId::sensor(agent.clone(), channel),
+            child: FrameId::agent(agent.clone(), channel),
             parent: base_link.clone(),
             stamp: MonotonicTime(0.0),
             transform: ErasedTransform::from_parts(pose.to_isometry(), convention, Convention::Flu),

@@ -148,7 +148,7 @@ mod tests {
         FrameId::map(agent())
     }
     fn sensor(name: &str) -> FrameId {
-        FrameId::sensor(agent(), name)
+        FrameId::agent(agent(), name)
     }
 
     // A permissive window: neither bound bites unless a test asks it to.

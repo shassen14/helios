@@ -114,7 +114,7 @@ mod tests {
     const RANDOM_WALK: f64 = 0.01;
 
     fn sensor_frame() -> FrameId {
-        FrameId::sensor(AgentId::new("test_agent"), "sensor0")
+        FrameId::agent(AgentId::new("test_agent"), "sensor0")
     }
 
     fn mag_block() -> StateSchemaBlock {

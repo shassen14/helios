@@ -164,7 +164,7 @@ fn augmentation_blocks(
                     entry.kind, entry.sensor
                 ));
             }
-            let sensor = FrameId::sensor(ctx.agent().clone(), entry.sensor.as_str());
+            let sensor = FrameId::agent(ctx.agent().clone(), entry.sensor.as_str());
             augmentation_block(
                 &entry.kind,
                 sensor,
@@ -543,7 +543,7 @@ mod tests {
 
         assert_eq!(state.schema().storage_dim(), 19, "16 INS + 3 bias");
         let bias = StateVariable::new(
-            Quantity::MagBias(FrameId::sensor(agent(), "mag")),
+            Quantity::MagBias(FrameId::agent(agent(), "mag")),
             Component::X,
         );
         assert!(state.schema().storage_offset_of(&bias).is_some());

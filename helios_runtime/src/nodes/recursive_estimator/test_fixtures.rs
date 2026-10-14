@@ -264,7 +264,7 @@ pub(super) fn write_accel(bus: &PortBus, times: &[f64]) {
     let readings = times
         .iter()
         .map(|&t| SensorReading {
-            sensor: FrameId::sensor(agent(), "accel"),
+            sensor: FrameId::agent(agent(), "accel"),
             timestamp: MonotonicTime(t),
             data: Acceleration::default(),
         })

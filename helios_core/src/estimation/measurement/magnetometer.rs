@@ -151,7 +151,7 @@ mod tests {
     }
 
     fn sensor() -> FrameId {
-        FrameId::sensor(agent(), "magnetometer")
+        FrameId::agent(agent(), "magnetometer")
     }
 
     const AT: MonotonicTime = MonotonicTime(0.0);
