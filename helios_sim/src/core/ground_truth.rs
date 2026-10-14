@@ -82,7 +82,7 @@ pub fn ground_truth_sync_system(
 ///
 /// `bus.write` returns `Err(UnknownChannel)` if no node in the graph
 /// consumes the slot. For the oracle that is expected, not a bug: nothing
-/// reads `oracle/pose` or `oracle/twist` until a consumer — a mock-oracle
+/// reads `oracle.pose` or `oracle.twist` until a consumer — a mock-oracle
 /// estimator or a visualization layer — is wired into the pipeline. So instead
 /// of the crate-wide "warn loudly" rule for a dropped write, this system traces
 /// the miss once (naming the channel), then stays quiet — a real wiring bug

@@ -215,7 +215,7 @@ mod tests {
 
         [sensors.gps]
         transform = { translation = [0.0, 0.0, 0.0] }
-        channel = "gps/fix"
+        channel = "gps.fix"
 
         [sensors.gps.device]
         kind = "Gps"

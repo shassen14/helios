@@ -118,7 +118,7 @@ fn node_names(pipeline: &AutonomyPipeline) -> Vec<&str> {
     pipeline.channels().map(|(name, _)| name).collect()
 }
 
-const IMU_CHANNELS: [&str; 2] = ["imu/accel", "imu/gyro"];
+const IMU_CHANNELS: [&str; 2] = ["imu.accel", "imu.gyro"];
 
 #[test]
 fn a_kind_registered_from_outside_the_crate_is_built() {
@@ -202,7 +202,7 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
             [nodes.nav_ekf]
             kind = "RecursiveEstimator"
             filter = {{ kind = "Ekf" }}
-            dynamics = {{ kind = "IntegratedImu", accel_channel = "imu/accel", gyro_channel = "imu/gyro", accel_noise_stddev = 0.1, gyro_noise_stddev = 0.01, accel_bias_instability = 0.001, gyro_bias_instability = 0.0001 }}
+            dynamics = {{ kind = "IntegratedImu", accel_channel = "imu.accel", gyro_channel = "imu.gyro", accel_noise_stddev = 0.1, gyro_noise_stddev = 0.01, accel_bias_instability = 0.001, gyro_bias_instability = 0.0001 }}
 
             [nodes.grid]
             kind = "OccupancyGrid2D"
@@ -346,7 +346,7 @@ fn a_mock_oracle_entry_is_refused_on_a_body_without_truth() {
     // like any other node: oracle truth only reaches a node through the body.
     let errors = build_on(body())
         .err()
-        .expect("a body without oracle/pose must refuse the mock");
+        .expect("a body without oracle.pose must refuse the mock");
 
     assert!(
         errors.iter().any(|e| matches!(

@@ -13,10 +13,10 @@ use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
     channels::tf::tf_edge,
-    pipeline::{CycleEdge, PipelineBuildError, PipelineBuilder, Supplier},
+    pipeline::{ChannelUses, CycleEdge, PipelineBuildError, PipelineBuilder, Supplier},
     port::{
         AlgorithmNodePortDescriptor, ChannelKey, InputNeed, InternalChannel,
-        MockNodePortDescriptor, OracleChannel, PortBus, PortDescriptor,
+        MockNodePortDescriptor, OracleChannel, PortBus, PortDescriptor, SensorChannel,
     },
     prelude::{Health, PipelineNode, Stamped, TickContext},
     BodyCapabilities, Provenance, PublishedChannel,
@@ -27,16 +27,11 @@ use crate::common::MockRuntime;
 /// Test-only sugar: every channel in this file is internal (algorithm-to-
 /// algorithm wiring), so go through the `InternalChannel` constructor and
 /// convert into the enum key once.
-fn ikey_of<T: 'static>() -> ChannelKey {
-    InternalChannel::of::<T>().into()
-}
-
 fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
     InternalChannel::named::<T>(instance).into()
 }
 
-/// Oracle-channel sugar — only mocks/viz/tests may mint these. The instance
-/// must start with `oracle/` (enforced by `OracleChannel::named`).
+/// Oracle-channel sugar — only mocks/viz/tests may mint these.
 fn okey_named<T: 'static>(instance: &'static str) -> ChannelKey {
     OracleChannel::named::<T>(instance).into()
 }
@@ -347,7 +342,7 @@ fn edge(producer: &str, consumer: &str, channel: &ChannelKey) -> CycleEdge {
 
 #[test]
 fn single_node_executes() {
-    let out = ikey_of::<ChA>();
+    let out = ikey_named::<ChA>("a");
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", out.clone(), 42)))
         .build()
@@ -364,8 +359,8 @@ fn single_node_executes() {
 
 #[test]
 fn two_node_chain_level_ordering() {
-    let a = ikey_of::<ChA>();
-    let b = ikey_of::<ChB>();
+    let a = ikey_named::<ChA>("a");
+    let b = ikey_named::<ChB>("b");
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 7)))
@@ -393,8 +388,8 @@ fn two_node_chain_level_ordering() {
 #[test]
 fn two_node_chain_with_builder_inserted_out_of_order() {
     // B added before A — toposort must still resolve A→B.
-    let a = ikey_of::<ChA>();
-    let b = ikey_of::<ChB>();
+    let a = ikey_named::<ChA>("a");
+    let b = ikey_named::<ChB>("b");
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
@@ -419,10 +414,10 @@ fn two_node_chain_with_builder_inserted_out_of_order() {
 #[test]
 fn three_node_diamond_resolves() {
     // A → (B, C) → D, with D summing B and C's outputs.
-    let a = ikey_of::<ChA>();
-    let b = ikey_of::<ChB>();
-    let c = ikey_of::<ChC>();
-    let d = ikey_of::<ChD>();
+    let a = ikey_named::<ChA>("a");
+    let b = ikey_named::<ChB>("b");
+    let c = ikey_named::<ChC>("c");
+    let d = ikey_named::<ChD>("d");
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 1)))
@@ -495,7 +490,7 @@ fn cycle_detected() {
 fn self_loop_is_a_cycle_of_one() {
     // The node is its channel's only writer, so wiring passes, but it cannot
     // run before itself.
-    let own = ikey_of::<ChA>();
+    let own = ikey_named::<ChA>("a");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
@@ -522,7 +517,7 @@ fn node_downstream_of_a_cycle_is_left_out() {
     // it is neither a participant nor an edge endpoint.
     let a_out = ikey_named::<ChA>("a_out");
     let b_out = ikey_named::<ChB>("b_out");
-    let c_out = ikey_of::<ChC>();
+    let c_out = ikey_named::<ChC>("c");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
@@ -692,7 +687,7 @@ fn cycle_message_names_each_read_in_the_loop() {
 #[test]
 fn unsatisfied_input_detected() {
     let missing = ikey_named::<ChA>("missing");
-    let out = ikey_of::<ChB>();
+    let out = ikey_named::<ChB>("b");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
@@ -718,7 +713,7 @@ fn unsatisfied_input_detected() {
 
 #[test]
 fn multiple_suppliers_detected() {
-    let shared = ikey_of::<ChA>();
+    let shared = ikey_named::<ChA>("a");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
@@ -787,7 +782,7 @@ fn optional_input_satisfied_by_body_capability_builds() {
 fn node_and_body_supplying_one_channel_is_rejected() {
     // The node-vs-node check alone would pass this: one channel written by
     // both a node and the body has two writers racing one slot.
-    let shared = ikey_of::<ChA>();
+    let shared = ikey_named::<ChA>("a");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
@@ -818,7 +813,7 @@ fn node_and_body_supplying_one_channel_is_rejected() {
 
 #[test]
 fn node_and_outside_input_supplying_one_channel_is_rejected() {
-    let shared = ikey_of::<ChA>();
+    let shared = ikey_named::<ChA>("a");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
@@ -846,8 +841,8 @@ fn missing_input_is_not_also_reported_as_a_cycle() {
     // supplies. The one real error is the missing input; the stranded
     // downstream node must not also show up as a cycle.
     let missing = ikey_named::<ChA>("missing");
-    let mid = ikey_of::<ChB>();
-    let out = ikey_of::<ChC>();
+    let mid = ikey_named::<ChB>("b");
+    let out = ikey_named::<ChC>("c");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
@@ -878,9 +873,21 @@ fn duplicate_node_name_is_rejected_once() {
     // Three nodes share one name. The within-level order is by name, so a
     // shared name would leave their order to insertion; it is reported once.
     let result = PipelineBuilder::new()
-        .add_node(Box::new(ProducerNode::new("dup", ikey_of::<ChA>(), 0)))
-        .add_node(Box::new(ProducerNode::new("dup", ikey_of::<ChB>(), 0)))
-        .add_node(Box::new(ProducerNode::new("dup", ikey_of::<ChC>(), 0)))
+        .add_node(Box::new(ProducerNode::new(
+            "dup",
+            ikey_named::<ChA>("a"),
+            0,
+        )))
+        .add_node(Box::new(ProducerNode::new(
+            "dup",
+            ikey_named::<ChB>("b"),
+            0,
+        )))
+        .add_node(Box::new(ProducerNode::new(
+            "dup",
+            ikey_named::<ChC>("c"),
+            0,
+        )))
         .build();
 
     let Err(errors) = result else {
@@ -901,10 +908,22 @@ fn empty_or_dotted_node_names_are_refused_once_each() {
     // A node name is one part of every watcher path under the node. Two nodes
     // sharing a dotted name give one malformed-name error (and one duplicate).
     let result = PipelineBuilder::new()
-        .add_node(Box::new(ProducerNode::new("a.b", ikey_of::<ChA>(), 0)))
-        .add_node(Box::new(ProducerNode::new("a.b", ikey_of::<ChB>(), 0)))
-        .add_node(Box::new(ProducerNode::new("", ikey_of::<ChC>(), 0)))
-        .add_node(Box::new(ProducerNode::new("fine", ikey_of::<ChD>(), 0)))
+        .add_node(Box::new(ProducerNode::new(
+            "a.b",
+            ikey_named::<ChA>("a"),
+            0,
+        )))
+        .add_node(Box::new(ProducerNode::new(
+            "a.b",
+            ikey_named::<ChB>("b"),
+            0,
+        )))
+        .add_node(Box::new(ProducerNode::new("", ikey_named::<ChC>("c"), 0)))
+        .add_node(Box::new(ProducerNode::new(
+            "fine",
+            ikey_named::<ChD>("d"),
+            0,
+        )))
         .build();
 
     let Err(errors) = result else {
@@ -921,12 +940,156 @@ fn empty_or_dotted_node_names_are_refused_once_each() {
 }
 
 #[test]
+fn malformed_channel_names_are_refused_once_each() {
+    // A slash, an empty level and an unnamed channel. The slashed channel's
+    // reader is not also reported as unsupplied.
+    let slashed = ikey_named::<ChA>("gps/fix");
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("gps", slashed.clone(), 0)))
+        .add_node(Box::new(SinkNode::new("reader", slashed)))
+        .add_node(Box::new(ProducerNode::new(
+            "trailing",
+            ikey_named::<ChB>("gps."),
+            0,
+        )))
+        .add_node(Box::new(ProducerNode::new(
+            "unnamed",
+            InternalChannel::of::<ChC>().into(),
+            0,
+        )))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: three channel names are malformed");
+    };
+    let malformed: Vec<&str> = errors
+        .iter()
+        .filter_map(|e| match e {
+            PipelineBuildError::MalformedChannelName { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(malformed, ["", "gps.", "gps/fix"], "got {errors:?}");
+    assert_eq!(errors.len(), 3, "nothing else reported: {errors:?}");
+}
+
+#[test]
+fn body_channel_with_a_malformed_name_names_the_body_and_its_reader() {
+    let truth = okey_named::<Truth>("oracle/pose");
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(SinkNode::new("mock_oracle", truth.clone())))
+        .with_body_capabilities(BodyCapabilities {
+            name: "sim".to_string(),
+            publishes: vec![PublishedChannel {
+                key: truth.clone(),
+                provenance: Provenance::Exact,
+            }],
+            ..Default::default()
+        })
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: the body's channel name holds a '/'");
+    };
+    let expected = [ChannelUses {
+        key: truth,
+        writers: vec![Supplier::Body("sim".to_string())],
+        readers: vec!["mock_oracle".to_string()],
+    }];
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::MalformedChannelName { name, uses }]
+                if name == "oracle/pose" && *uses == expected
+        ),
+        "got {errors:?}"
+    );
+}
+
+#[test]
+fn reader_and_writer_disagreeing_on_type_are_reported_together() {
+    // One error showing both channels, instead of "nothing supplies" the
+    // reader's.
+    let written = ikey_named::<ChA>("estimate");
+    let read = ikey_named::<ChB>("estimate");
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("ekf", written.clone(), 0)))
+        .add_node(Box::new(SinkNode::new("controller", read.clone())))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: one name, two types");
+    };
+    let expected = [
+        ChannelUses {
+            key: written,
+            writers: vec![Supplier::Node("ekf".to_string())],
+            readers: vec![],
+        },
+        ChannelUses {
+            key: read,
+            writers: vec![],
+            readers: vec!["controller".to_string()],
+        },
+    ];
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::ChannelNameReused { name, uses }]
+                if name == "estimate" && *uses == expected
+        ),
+        "got {errors:?}"
+    );
+    let message = errors[0].to_string();
+    assert!(
+        message.contains("written by node \"ekf\"")
+            && message.contains("read by node \"controller\""),
+        "{message}"
+    );
+}
+
+#[test]
+fn one_name_across_kinds_is_refused() {
+    // The body's sensor channel and a node's internal channel share a name
+    // and a type; the kind still makes them two channels.
+    let sensor: ChannelKey = SensorChannel::named::<ChA>("imu").into();
+    let internal = ikey_named::<ChA>("imu");
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(ProducerNode::new("relay", internal, 0)))
+        .with_body_capabilities(BodyCapabilities {
+            name: "sim".to_string(),
+            publishes: vec![PublishedChannel {
+                key: sensor,
+                provenance: Provenance::Exact,
+            }],
+            ..Default::default()
+        })
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: one name, two kinds");
+    };
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::ChannelNameReused { name, uses }]
+                if name == "imu" && uses.len() == 2
+        ),
+        "got {errors:?}"
+    );
+}
+
+#[test]
 fn level_order_does_not_depend_on_insertion_order() {
     // Three independent producers share level 0. Within a level nodes are
     // sorted by name, so either insertion order yields the same order (and
     // the same node ids).
     let build = |names: [&str; 3]| {
-        let keys = [ikey_of::<ChA>(), ikey_of::<ChB>(), ikey_of::<ChC>()];
+        let keys = [
+            ikey_named::<ChA>("a"),
+            ikey_named::<ChB>("b"),
+            ikey_named::<ChC>("c"),
+        ];
         let mut builder = PipelineBuilder::new();
         for (name, key) in names.into_iter().zip(keys) {
             builder = builder.add_node(Box::new(ProducerNode::new(name, key, 0)));
@@ -947,8 +1110,8 @@ fn optional_input_producer_runs_first() {
     // The reader's name sorts before the producer's, so if the optional edge
     // did not order them, both would share level 0 and the reader would run
     // first, see nothing, and write nothing on the first tick.
-    let source = ikey_of::<ChA>();
-    let out = ikey_of::<ChB>();
+    let source = ikey_named::<ChA>("a");
+    let out = ikey_named::<ChB>("b");
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("b_producer", source.clone(), 7)))
@@ -1026,7 +1189,7 @@ fn body_capabilities_satisfy_required_inputs() {
 fn oracle_input_satisfied_by_body_capability() {
     // A mock-style node declares an Oracle channel as a required input.
     // When the body advertises it, the build succeeds.
-    let oracle_key = okey_named::<Truth>("oracle/pose");
+    let oracle_key = okey_named::<Truth>("oracle.pose");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("mock_oracle", oracle_key.clone())))
@@ -1049,7 +1212,7 @@ fn oracle_input_without_body_capability_errors() {
     // build must fail with UnsatisfiedBodyCapabilities naming the node and
     // body — not the generic UnsatisfiedInput. Oracle channels are never
     // produced by a node, so the only possible supplier is the body.
-    let oracle_key = okey_named::<Truth>("oracle/pose");
+    let oracle_key = okey_named::<Truth>("oracle.pose");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("mock_oracle", oracle_key.clone())))
@@ -1203,7 +1366,7 @@ fn tf_edge_channels_returns_only_declared_tf_edges() {
     let edge_key: ChannelKey = tf_edge(&edge).into();
     // A plain (non-tf) output on a second, independent producer: it must be
     // filtered out, proving the accessor keys off `is_tf_edge`, not "every output".
-    let plain_key = ikey_of::<u32>();
+    let plain_key = ikey_named::<u32>("plain");
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new(
@@ -1223,7 +1386,11 @@ fn tf_edge_channels_returns_only_declared_tf_edges() {
 #[test]
 fn tf_edge_channels_is_empty_without_an_edge_producer() {
     let pipeline = PipelineBuilder::new()
-        .add_node(Box::new(ProducerNode::new("plain", ikey_of::<u32>(), 0)))
+        .add_node(Box::new(ProducerNode::new(
+            "plain",
+            ikey_named::<u32>("plain"),
+            0,
+        )))
         .build()
         .expect("single plain producer builds");
 

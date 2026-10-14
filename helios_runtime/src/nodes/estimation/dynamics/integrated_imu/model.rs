@@ -149,8 +149,8 @@ mod tests {
         gyro_noise_stddev = 0.01
         accel_bias_instability = 0.001
         gyro_bias_instability = 0.0001
-        accel_channel = "imu/accel"
-        gyro_channel = "imu/gyro"
+        accel_channel = "imu.accel"
+        gyro_channel = "imu.gyro"
     "#;
 
     /// The component and its resolved sub-table.

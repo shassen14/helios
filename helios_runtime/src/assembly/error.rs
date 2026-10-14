@@ -9,8 +9,9 @@ use helios_core::control::actuators::SetpointKind;
 /// Errors that can occur while assembling a pipeline from config.
 #[derive(Debug)]
 pub enum PipelineAssemblyError {
-    /// The agent's name is empty or contains `.`. It fills one part of every
-    /// watcher path for this agent (`agent.<agent>.node.<node>.<leaf>`), and `.`
+    /// The agent's name is not one level: empty, or holding something other
+    /// than ASCII letters, digits and `_`. It fills one part of every watcher
+    /// path for this agent (`agent.<agent>.node.<node>.<leaf>`), and `.`
     /// separates the parts, so such a path could not be split back.
     MalformedAgentName { agent: String },
     /// The assembled node graph failed topological validation.
@@ -104,8 +105,8 @@ impl std::fmt::Display for PipelineAssemblyError {
         match self {
             PipelineAssemblyError::MalformedAgentName { agent } => write!(
                 f,
-                "agent name '{agent}' is empty or contains '.'; an agent name is one part of \
-                 a watcher path, and '.' separates the parts"
+                "agent name '{agent}' is not one level: an agent name is one part of a \
+                 watcher path, so it is non-empty and holds only letters, digits and '_'"
             ),
             PipelineAssemblyError::PipelineBuild(errs) => {
                 write!(f, "pipeline graph errors: ")?;

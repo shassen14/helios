@@ -16,8 +16,8 @@ use std::collections::HashSet;
 ///
 /// Build sequence:
 /// 1. Register every node with [`add_node`](Self::add_node).
-/// 2. Declare the channels the body publishes — sensor channels, `oracle/*`
-///    reference channels, `health/*` status — via
+/// 2. Declare the channels the body publishes — sensor channels, oracle
+///    reference channels, health status — via
 ///    [`with_body_capabilities`](Self::with_body_capabilities). These count
 ///    as supplied, so consumers don't trip
 ///    [`PipelineBuildError::UnsatisfiedInput`].
@@ -92,29 +92,30 @@ impl PipelineBuilder {
     ///
     /// Errors are checked in two stages, and every error within a stage is
     /// collected:
-    /// 1. Wiring. Node names are unique, non-empty and free of `.`, each
-    ///    node's watchable leaves and output channels' paths are well formed,
-    ///    outside the pipeline's own group and distinct, and every
-    ///    input, required or optional, has exactly one supplier: a node
-    ///    output, a body channel, or a declared outside input.
+    /// 1. Wiring. Node names are unique and one level each, channel names
+    ///    are well formed and each names one channel, each node's watchable
+    ///    leaves are well formed, leaves and output channels sit outside the
+    ///    pipeline's own group and apart, and every input, required or
+    ///    optional, has exactly one supplier: a node output, a body channel,
+    ///    or a declared outside input.
     ///    - [`PipelineBuildError::DuplicateNodeName`] — two nodes share a
     ///      name.
-    ///    - [`PipelineBuildError::MalformedNodeName`] — a node name is empty
-    ///      or contains `.`.
-    ///    - [`PipelineBuildError::MalformedObservable`] — a leaf has an
-    ///      empty part or a `/`.
-    ///    - [`PipelineBuildError::MalformedOutputPath`] — an output's path
-    ///      has an empty part.
+    ///    - [`PipelineBuildError::MalformedNodeName`] — a node name is not
+    ///      one level.
+    ///    - [`PipelineBuildError::MalformedChannelName`] — a channel name is
+    ///      not levels joined by `.`.
+    ///    - [`PipelineBuildError::ChannelNameReused`] — one name names
+    ///      channels of different kinds or types.
+    ///    - [`PipelineBuildError::MalformedObservable`] — a leaf is not
+    ///      levels joined by `.`.
     ///    - [`PipelineBuildError::ReservedObservable`] — a node declares a
     ///      leaf in the pipeline's own group.
-    ///    - [`PipelineBuildError::ReservedOutputPath`] — an output's path is
+    ///    - [`PipelineBuildError::ReservedOutputPath`] — an output's name is
     ///      in the pipeline's own group.
     ///    - [`PipelineBuildError::DuplicateObservable`] — a node names a
     ///      watchable leaf twice.
-    ///    - [`PipelineBuildError::DuplicateOutputPath`] — two of a node's
-    ///      outputs have the same path.
     ///    - [`PipelineBuildError::ObservableCollidesWithOutput`] — a leaf has
-    ///      the same path as one of the node's output channels.
+    ///      the name of one of the node's output channels.
     ///    - [`PipelineBuildError::MultipleSuppliers`] — two suppliers
     ///      provide the same channel.
     ///    - [`PipelineBuildError::UnsatisfiedInput`] /

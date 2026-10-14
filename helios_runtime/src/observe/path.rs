@@ -13,15 +13,15 @@
 //! value is, so swapping the writer (one estimator for another, a host for a
 //! replay) keeps every path. The subject words are fixed and sit in a part no
 //! config fills, so a name a profile chooses never collides with one. The
-//! agent and the node each fill exactly one part, so their names must be
-//! [path segments](is_path_segment). A node's leaves and its output channels'
-//! segments, built here, share the part after the node, so the build compares
-//! the two.
+//! agent and the node each fill exactly one part, so their names must be one
+//! [level](helios_core::kernel::identifier::is_level); a leaf and a channel
+//! name may hold several. A channel sits in a path under its own name,
+//! verbatim. A node's leaves and its output channels' names share the part
+//! after the node, so the build compares the two.
 
 use crate::port::ChannelKey;
 
-/// The one level separator in watcher paths.
-pub(crate) const PATH_SEPARATOR: &str = ".";
+use helios_core::kernel::identifier::LEVEL_SEPARATOR;
 
 /// The first segment of every watcher path.
 pub(crate) const AGENT_ROOT: &str = "agent";
@@ -51,7 +51,7 @@ impl<'a> AgentPathParts<'a> {
     /// [`AGENT_ROOT`], a subject word that isn't one of [`SUBJECT_WORDS`],
     /// or a part that is missing or empty.
     pub fn split(path: &'a str) -> Result<Self, PathPart> {
-        let mut parts = path.splitn(4, PATH_SEPARATOR);
+        let mut parts = path.splitn(4, LEVEL_SEPARATOR);
         if parts.next() != Some(AGENT_ROOT) {
             return Err(PathPart::Root);
         }
@@ -60,7 +60,7 @@ impl<'a> AgentPathParts<'a> {
         let after = parts.next();
         let subject = match word {
             NODE_SUBJECT => {
-                let mut node_parts = after.unwrap_or_default().splitn(2, PATH_SEPARATOR);
+                let mut node_parts = after.unwrap_or_default().splitn(2, LEVEL_SEPARATOR);
                 let node = non_empty(node_parts.next()).ok_or(PathPart::Node)?;
                 let leaf = non_empty(node_parts.next()).ok_or(PathPart::Leaf)?;
                 PathSubject::Node { node, leaf }
@@ -75,16 +75,17 @@ impl<'a> AgentPathParts<'a> {
     }
 
     /// The watcher path these parts spell. The agent and a node must each be
-    /// a [path segment](is_path_segment); the build refuses names that
-    /// aren't. A leaf and an instance may hold dots: a leaf a node declared
-    /// (`aiding.gps.nis`) or a channel's segment (`oracle.pose`).
+    /// one [level](helios_core::kernel::identifier::is_level); the build
+    /// refuses names that aren't. A leaf and an instance may hold dots: a
+    /// leaf a node declared (`aiding.gps.nis`) or a channel's name
+    /// (`oracle.pose`).
     pub fn join(&self) -> String {
         let mut parts = vec![AGENT_ROOT, self.agent, self.subject.word()];
         match self.subject {
             PathSubject::Node { node, leaf } => parts.extend([node, leaf]),
             PathSubject::Channel { instance } => parts.push(instance),
         }
-        parts.join(PATH_SEPARATOR)
+        parts.join(LEVEL_SEPARATOR)
     }
 }
 
@@ -95,11 +96,10 @@ pub enum PathSubject<'a> {
     /// What a pipeline node said about itself, or wrote to an output channel.
     Node {
         node: &'a str,
-        /// The leaf or output channel segment, dots included.
+        /// The leaf or output channel name, dots included.
         leaf: &'a str,
     },
-    /// A value on one of the agent's channels, spelled by its
-    /// [segment](channel_to_path_segment).
+    /// A value on one of the agent's channels, spelled by its name.
     Channel { instance: &'a str },
 }
 
@@ -123,9 +123,9 @@ pub enum PathPart {
     Subject,
     /// The node, under the `node` subject.
     Node,
-    /// The node's leaf or output channel segment.
+    /// The node's leaf or output channel name.
     Leaf,
-    /// The channel's segment, under the `channel` subject.
+    /// The channel's name, under the `channel` subject.
     Instance,
 }
 
@@ -141,13 +141,13 @@ pub fn node_path(agent: &str, node: &str, leaf: &str) -> String {
 }
 
 /// The watcher path of the value on `channel` of `agent`,
-/// `agent.<agent>.channel.<segment>`. [`AgentPathParts::split`] takes it
+/// `agent.<agent>.channel.<instance>`. [`AgentPathParts::split`] takes it
 /// apart again.
 pub fn channel_path(agent: &str, channel: &ChannelKey) -> String {
     AgentPathParts {
         agent,
         subject: PathSubject::Channel {
-            instance: &channel_to_path_segment(channel),
+            instance: channel.instance(),
         },
     }
     .join()
@@ -158,50 +158,6 @@ fn non_empty(part: Option<&str>) -> Option<&str> {
     part.filter(|part| !part.is_empty())
 }
 
-/// Whether `name` can fill exactly one part of a watcher path: it is not
-/// empty and holds no [`PATH_SEPARATOR`]. Agent and node names must be; an
-/// empty name or a dotted one would make the path impossible to split back
-/// into its parts.
-pub(crate) fn is_path_segment(name: &str) -> bool {
-    !name.is_empty() && !name.contains(PATH_SEPARATOR)
-}
-
-/// The path segment for `key`: its instance, else its type's name.
-///
-/// The instance is preferred because it is the name a person wrote in the
-/// config. Each `/` in it becomes `.`, so `oracle/pose` sits at
-/// `oracle.pose`: `.` is the one level separator in paths, and `_` stays a
-/// word joiner. An unnamed channel falls back to the last part of its type
-/// name in snake_case (`FrameAwareState` → `frame_aware_state`).
-pub(crate) fn channel_to_path_segment(key: &ChannelKey) -> String {
-    let raw = key.instance();
-    if !raw.trim().is_empty() {
-        raw.replace('/', PATH_SEPARATOR)
-    } else {
-        to_snake_case(last_segment(key.type_name()))
-    }
-}
-
-/// The part of a type name after its last `::`.
-fn last_segment(type_name: &'static str) -> &'static str {
-    type_name.rsplit("::").next().unwrap_or(type_name)
-}
-
-/// Lowercase, with `_` before each uppercase letter after the first:
-/// `FrameAwareState` → `frame_aware_state`, `f64` → `f64`. Enough for Rust
-/// type names; not a general snake_case (no digit boundaries, no acronym
-/// handling).
-fn to_snake_case(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 4);
-    for (i, ch) in s.chars().enumerate() {
-        if i > 0 && ch.is_uppercase() {
-            out.push('_');
-        }
-        out.extend(ch.to_lowercase());
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,10 +166,6 @@ mod tests {
 
     fn channel_named<T: 'static>(instance: &'static str) -> ChannelKey {
         InternalChannel::named::<T>(instance).into()
-    }
-
-    fn channel_unnamed<T: 'static>() -> ChannelKey {
-        InternalChannel::of::<T>().into()
     }
 
     #[test]
@@ -233,14 +185,10 @@ mod tests {
     }
 
     #[test]
-    fn channel_path_spells_the_channel_by_its_segment() {
+    fn channel_path_spells_the_channel_by_its_name() {
         assert_eq!(
-            channel_path("car", &channel_named::<f64>("oracle/pose")),
+            channel_path("car", &channel_named::<f64>("oracle.pose")),
             "agent.car.channel.oracle.pose"
-        );
-        assert_eq!(
-            channel_path("car", &channel_unnamed::<f64>()),
-            "agent.car.channel.f64"
         );
     }
 
@@ -262,7 +210,7 @@ mod tests {
 
     #[test]
     fn split_takes_back_what_channel_path_joined() {
-        let path = channel_path("car", &channel_named::<f64>("oracle/pose"));
+        let path = channel_path("car", &channel_named::<f64>("oracle.pose"));
 
         assert_eq!(
             AgentPathParts::split(&path),
@@ -344,58 +292,5 @@ mod tests {
             AgentPathParts::split("agent.car.channel."),
             Err(PathPart::Instance)
         );
-    }
-
-    #[test]
-    fn plain_name_is_a_path_segment() {
-        assert!(is_path_segment("primary"));
-        assert!(is_path_segment("front_lidar_deproject"));
-    }
-
-    #[test]
-    fn dotted_or_empty_name_is_not_a_path_segment() {
-        assert!(!is_path_segment("a.b"));
-        assert!(!is_path_segment(".a"));
-        assert!(!is_path_segment(""));
-    }
-
-    #[test]
-    fn channel_to_path_segment_uses_instance() {
-        let key = channel_named::<f64>("oracle/pose");
-        assert_eq!(channel_to_path_segment(&key), "oracle.pose");
-    }
-
-    #[test]
-    fn channel_to_path_segment_replaces_all_slashes() {
-        let key = channel_named::<f64>("debug/inner/value");
-        assert_eq!(channel_to_path_segment(&key), "debug.inner.value");
-    }
-
-    #[test]
-    fn channel_to_path_segment_keeps_dots_and_underscores() {
-        let key = channel_named::<f64>("sensor.gps.front_left");
-        assert_eq!(channel_to_path_segment(&key), "sensor.gps.front_left");
-    }
-
-    #[test]
-    fn channel_to_path_segment_falls_back_to_type_name() {
-        let key = channel_unnamed::<f64>();
-        assert_eq!(channel_to_path_segment(&key), "f64");
-    }
-
-    #[test]
-    fn last_segment_strips_module_path() {
-        assert_eq!(last_segment("foo::bar::Baz"), "Baz");
-        assert_eq!(last_segment("Baz"), "Baz");
-        assert_eq!(last_segment("f64"), "f64");
-    }
-
-    #[test]
-    fn to_snake_case_basic_cases() {
-        assert_eq!(to_snake_case("FrameAwareState"), "frame_aware_state");
-        assert_eq!(to_snake_case("f64"), "f64");
-        assert_eq!(to_snake_case("A"), "a");
-        assert_eq!(to_snake_case(""), "");
-        assert_eq!(to_snake_case("MyType"), "my_type");
     }
 }

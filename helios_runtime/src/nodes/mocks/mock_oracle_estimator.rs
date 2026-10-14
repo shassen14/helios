@@ -7,9 +7,9 @@
 //!
 //! ## Execution
 //!
-//! 1. Read `oracle/pose`. If absent → cold-start, return (downstream sees the
+//! 1. Read `oracle.pose`. If absent → cold-start, return (downstream sees the
 //!    last-known-good `FrameAwareState` from the previous tick, if any).
-//! 2. Read `oracle/twist` (optional).
+//! 2. Read `oracle.twist` (optional).
 //! 3. Build a `FrameAwareState` on the kinematic carrier schema from the pose
 //!    and twist — position, linear/angular velocity, and attitude.
 //! 4. Publish on the channel named after the node. Like any estimator it
@@ -17,8 +17,8 @@
 //!
 //! ## Body capability requirement
 //!
-//! The descriptor declares `oracle/pose` as a required oracle input. A body
-//! that does not publish `oracle/pose` fails the build with
+//! The descriptor declares `oracle.pose` as a required oracle input. A body
+//! that does not publish `oracle.pose` fails the build with
 //! [`PipelineBuildError::UnsatisfiedBodyCapabilities`]. This is the
 //! type-level fence that keeps oracle-reading nodes off bodies without truth.
 //!
@@ -93,7 +93,7 @@ impl PipelineNode for MockOracleEstimatorNode {
     }
 
     fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
-        // Cold-start: no oracle/pose yet → skip. The output slot keeps its
+        // Cold-start: no oracle.pose yet → skip. The output slot keeps its
         // previous value under last-known-good semantics, or stays empty
         // if this is the first tick.
         let Some(pose_stamped) = bus.read::<Isometry3<f64>>(oracle_pose_channel().into()) else {
@@ -112,7 +112,7 @@ impl PipelineNode for MockOracleEstimatorNode {
         let written =
             write_pose_into(&mut state, &pose_stamped.value, &self.agent).and_then(|()| {
                 match &twist {
-                    // oracle/twist and the odom velocity blocks are both ENU —
+                    // oracle.twist and the odom velocity blocks are both ENU —
                     // straight passthrough of linear and angular velocity.
                     Some(t) => write_world_twist_into(&mut state, t, &self.agent),
                     None => Ok(()),
@@ -178,7 +178,7 @@ mod tests {
     //! 1. Descriptor shape — oracle inputs + FrameAwareState output.
     //! 2. Execute round-trip — pose + twist published correctly.
     //! 3. Cold-start — no oracle → no publish.
-    //! 4. Body-capability gate — build fails without `oracle/pose`,
+    //! 4. Body-capability gate — build fails without `oracle.pose`,
     //!    succeeds with it. Locks the headline guarantee:
     //!    an oracle node cannot run on a body without truth.
 
@@ -264,7 +264,7 @@ mod tests {
             node.port_descriptor()
                 .required_inputs()
                 .any(|k| *k == ChannelKey::from(oracle_pose_channel())),
-            "oracle/pose must be a required input"
+            "oracle.pose must be a required input"
         );
     }
 
@@ -275,7 +275,7 @@ mod tests {
             node.port_descriptor()
                 .optional_inputs()
                 .any(|k| *k == ChannelKey::from(oracle_twist_channel())),
-            "oracle/twist must be optional, not required"
+            "oracle.twist must be optional, not required"
         );
     }
 
@@ -293,7 +293,7 @@ mod tests {
         let node = MockOracleEstimatorNode::new("mock", agent.clone());
         let bus = make_bus_with_oracle_producer(&node);
 
-        // Write a known pose to oracle/pose.
+        // Write a known pose to oracle.pose.
         let pose = Isometry3::from_parts(
             Translation3::new(1.5, -2.0, 0.5),
             UnitQuaternion::identity(),
@@ -307,7 +307,7 @@ mod tests {
                 producer: 99,
             },
         )
-        .expect("oracle/pose slot must exist");
+        .expect("oracle.pose slot must exist");
 
         node.execute(&bus, &MockRuntime, tick_at(0.0, 0.01));
 
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn republishes_world_twist_into_state_world_slots() {
-        // oracle/twist is already ENU; mock passes both linear and angular
+        // oracle.twist is already ENU; mock passes both linear and angular
         // velocity straight through into the estimate's odom-frame blocks.
         let agent = AgentId::new("test_agent");
         let node = MockOracleEstimatorNode::new("mock", agent.clone());
@@ -346,7 +346,7 @@ mod tests {
                 producer: 99,
             },
         )
-        .expect("oracle/pose slot must exist");
+        .expect("oracle.pose slot must exist");
 
         let twist = Twist {
             linear: Vector3::new(2.0, -1.0, 0.5),
@@ -361,7 +361,7 @@ mod tests {
                 producer: 99,
             },
         )
-        .expect("oracle/twist slot must exist");
+        .expect("oracle.twist slot must exist");
 
         node.execute(&bus, &MockRuntime, tick_at(0.0, 0.01));
 
@@ -390,12 +390,12 @@ mod tests {
         let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
         let bus = make_bus_with_oracle_producer(&node);
 
-        // No write to oracle/pose. Cold start.
+        // No write to oracle.pose. Cold start.
         node.execute(&bus, &MockRuntime, tick_at(0.0, 0.01));
 
         assert!(
             bus.read::<FrameAwareState>(state_channel()).is_none(),
-            "must not publish without oracle/pose"
+            "must not publish without oracle.pose"
         );
     }
 
@@ -440,7 +440,7 @@ mod tests {
             .with_body_capabilities(empty_body)
             .build()
             .map(|_| ())
-            .expect_err("build must reject mock without oracle/pose");
+            .expect_err("build must reject mock without oracle.pose");
 
         let saw = errs.iter().any(|e| {
             matches!(
@@ -451,7 +451,7 @@ mod tests {
         });
         assert!(
             saw,
-            "expected UnsatisfiedBodyCapabilities for oracle/pose, got: {errs:?}"
+            "expected UnsatisfiedBodyCapabilities for oracle.pose, got: {errs:?}"
         );
     }
 

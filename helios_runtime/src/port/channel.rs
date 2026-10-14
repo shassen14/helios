@@ -18,15 +18,14 @@
 //! | [`OracleChannel`] | Body, when truth is known | ❌ | ✅ |
 //! | [`HealthChannel`] | Body driver layer | ❌ (today) | ❌ (today) |
 //!
-//! # Naming convention
+//! # Naming
 //!
-//! Within a kind, the `instance` string is just a disambiguator. Across kinds,
-//! prefix conventions help humans read the DAG dump:
-//!
-//! - `OracleChannel` instances start with `oracle/` (enforced by `debug_assert!`).
-//! - `HealthChannel` instances start with `health/` (enforced by `debug_assert!`).
-//! - `SensorChannel` and `InternalChannel` are unconstrained — the type plus
-//!   role disambiguator is enough.
+//! The `instance` string is the channel's name: its one address on the agent,
+//! in watcher paths, recordings and bridges. It is one or more levels joined
+//! by `.` ([`is_dotted_name`](helios_core::kernel::identifier::is_dotted_name)),
+//! and names exactly one channel per agent; the pipeline build refuses a
+//! malformed name and a name shared by two keys. The kind lives in the key,
+//! never in the name, so an oracle channel needs no `oracle` prefix.
 
 use std::{any::TypeId, sync::Arc};
 
@@ -147,8 +146,6 @@ impl InternalChannel {
 /// must not declare these as inputs** — only mocks, viz, recorders, and
 /// tests may consume them.
 ///
-/// `instance` must start with `oracle/` (enforced by `debug_assert!`) so
-/// the prefix is visible in the bus inspector and DAG dump.
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct OracleChannel {
     type_id: TypeId,
@@ -158,15 +155,10 @@ pub struct OracleChannel {
 
 impl OracleChannel {
     pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        let instance: Arc<str> = instance.into();
-        debug_assert!(
-            instance.starts_with("oracle/"),
-            "OracleChannel instance must start with \"oracle/\", got \"{instance}\""
-        );
         Self {
             type_id: TypeId::of::<T>(),
             type_name: std::any::type_name::<T>(),
-            instance,
+            instance: instance.into(),
         }
     }
 
@@ -184,8 +176,6 @@ impl OracleChannel {
 /// Driver / fault status published by a body. Reserved for the future
 /// safety-supervisor consumer; no descriptor
 /// builder accepts `HealthChannel` as input today.
-///
-/// `instance` must start with `health/` (enforced by `debug_assert!`).
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct HealthChannel {
     type_id: TypeId,
@@ -195,15 +185,10 @@ pub struct HealthChannel {
 
 impl HealthChannel {
     pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        let instance: Arc<str> = instance.into();
-        debug_assert!(
-            instance.starts_with("health/"),
-            "HealthChannel instance must start with \"health/\", got \"{instance}\""
-        );
         Self {
             type_id: TypeId::of::<T>(),
             type_name: std::any::type_name::<T>(),
-            instance,
+            instance: instance.into(),
         }
     }
 
@@ -225,7 +210,7 @@ impl HealthChannel {
 /// The kind tag is the type-system fence that keeps algorithm nodes from
 /// declaring body-only channels (Oracle, Health) as inputs. Two channel
 /// keys are equal when their kind, `TypeId`, and `instance` all match —
-/// so `oracle/pose` and `pose` are distinct slots even when their Rust
+/// so an oracle `pose` and an internal `pose` are distinct slots even when their Rust
 /// payload type is the same.
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub enum ChannelKey {
@@ -376,8 +361,8 @@ mod tests {
         assert_eq!(SensorChannel::of::<Foo>().type_id(), TypeId::of::<Foo>());
         let s: ChannelKey = SensorChannel::of::<Foo>().into();
         let i: ChannelKey = InternalChannel::of::<Foo>().into();
-        let o: ChannelKey = OracleChannel::named::<Foo>("oracle/x").into();
-        let h: ChannelKey = HealthChannel::named::<Foo>("health/x").into();
+        let o: ChannelKey = OracleChannel::named::<Foo>("x").into();
+        let h: ChannelKey = HealthChannel::named::<Foo>("x").into();
         assert_eq!(s.kind(), ChannelKind::Sensor);
         assert_eq!(i.kind(), ChannelKind::Internal);
         assert_eq!(o.kind(), ChannelKind::Oracle);

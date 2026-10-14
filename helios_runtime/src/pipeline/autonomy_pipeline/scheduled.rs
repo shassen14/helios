@@ -2,9 +2,7 @@
 //! every node's catalog.
 
 use crate::{
-    observe::{
-        buffer::NodeObservations, observation::ObservedValue, path::channel_to_path_segment,
-    },
+    observe::{buffer::NodeObservations, observation::ObservedValue},
     pipeline::rate_gate::RateTimer,
     port::{ChannelKey, Determinism, Observable, PortBus, SlotVersion},
     prelude::PipelineNode,
@@ -111,7 +109,7 @@ impl ScheduledNode {
 /// value itself, shared with the bus, once per run that wrote it.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::pipeline) struct Tap {
-    /// The channel's [path segment](channel_to_path_segment).
+    /// The channel's name.
     pub(in crate::pipeline) leaf: Arc<str>,
     pub(in crate::pipeline) channel: ChannelKey,
 }
@@ -121,7 +119,7 @@ pub(in crate::pipeline) struct Tap {
 /// for always has a channel behind it.
 fn output_taps(node: &dyn PipelineNode) -> impl Iterator<Item = Tap> + '_ {
     node.port_descriptor().outputs().iter().map(|channel| Tap {
-        leaf: channel_to_path_segment(channel).into(),
+        leaf: channel.instance().clone(),
         channel: channel.clone(),
     })
 }
@@ -182,11 +180,9 @@ mod tests {
 
     const NIS: &str = "aiding.gps.nis";
     const DROPPED: &str = "aiding.gps.dropped";
-    /// An output's instance, and the tap leaf it becomes.
-    const COVARIANCE: &str = "est/cov";
-    const COVARIANCE_TAP: &str = "est.cov";
-    /// The tap leaf of an unnamed `f64` output.
-    const UNNAMED_TAP: &str = "f64";
+    /// Output channel names, which are also their tap leaves.
+    const COVARIANCE: &str = "est.cov";
+    const MEAN: &str = "est.mean";
 
     /// A node that only declares; it never runs in these tests.
     struct Declaring {
@@ -228,26 +224,25 @@ mod tests {
         Box::new(Declaring { descriptor })
     }
 
-    /// One named and one unnamed output.
     fn two_outputs() -> [InternalChannel; 2] {
         [
             InternalChannel::named::<f64>(COVARIANCE),
-            InternalChannel::of::<f64>(),
+            InternalChannel::named::<f64>(MEAN),
         ]
     }
 
     #[test]
     fn catalog_lists_declared_leaves_then_taps_then_tick_duration() {
         let node = declaring_with_outputs(&[NIS, DROPPED], &two_outputs());
-        let [covariance, unnamed] = two_outputs().map(ChannelKey::from);
+        let [covariance, mean] = two_outputs().map(ChannelKey::from);
 
         assert_eq!(
             observable_catalog(node.as_ref()),
             vec![
                 Observable::scalar(NIS, Determinism::Deterministic),
                 Observable::scalar(DROPPED, Determinism::Deterministic),
-                Observable::typed(COVARIANCE_TAP, Determinism::Deterministic, &covariance),
-                Observable::typed(UNNAMED_TAP, Determinism::Deterministic, &unnamed),
+                Observable::typed(COVARIANCE, Determinism::Deterministic, &covariance),
+                Observable::typed(MEAN, Determinism::Deterministic, &mean),
                 Observable::scalar(TICK_DURATION_LEAF, Determinism::Nondeterministic),
             ]
         );
@@ -293,11 +288,11 @@ mod tests {
             scheduled.taps,
             vec![
                 Tap {
-                    leaf: COVARIANCE_TAP.into(),
+                    leaf: COVARIANCE.into(),
                     channel: outputs[0].clone().into(),
                 },
                 Tap {
-                    leaf: UNNAMED_TAP.into(),
+                    leaf: MEAN.into(),
                     channel: outputs[1].clone().into(),
                 },
             ]
@@ -309,8 +304,8 @@ mod tests {
         let mut scheduled = ScheduledNode::new(0, declaring_with_outputs(&[NIS], &two_outputs()));
 
         assert!(scheduled.observations.set_watched(NIS, true));
-        assert!(scheduled.observations.set_watched(COVARIANCE_TAP, true));
-        assert!(scheduled.observations.set_watched(UNNAMED_TAP, true));
+        assert!(scheduled.observations.set_watched(COVARIANCE, true));
+        assert!(scheduled.observations.set_watched(MEAN, true));
         assert!(scheduled.observations.set_watched(TICK_DURATION_LEAF, true));
         assert!(!scheduled.observations.set_watched(DROPPED, true));
     }

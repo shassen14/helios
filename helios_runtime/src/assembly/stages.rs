@@ -22,7 +22,7 @@
 //! - `host_capabilities` — the body as the host describes it: its name, its
 //!   actuators (which the actuator seam checks every driven actuator against),
 //!   and the body channels that are not config-derived sensors (today:
-//!   `oracle/*` reference channels; later: `health/*`). The
+//!   oracle reference channels; later: health channels). The
 //!   assembler appends config-derived sensor channels onto
 //!   `host_capabilities.publishes` before handing the merged value to
 //!   [`PipelineBuilder::with_body_capabilities`]. Only host-published sensor
@@ -49,13 +49,12 @@ use super::seams::reference::reference_selector;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
 use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
-use crate::observe::path::is_path_segment;
 use crate::pipeline::dag_log::log_resolved_dag;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
 use crate::port::ChannelKey;
 
-use helios_core::prelude::AgentId;
+use helios_core::{kernel::identifier::is_level, prelude::AgentId};
 
 use std::collections::HashSet;
 
@@ -78,7 +77,7 @@ use std::collections::HashSet;
 ///   derived by no node, is an
 ///   [`UnpublishedSensorInput`](PipelineAssemblyError::UnpublishedSensorInput).
 /// - `host_capabilities` — the body's capabilities as the host describes them
-///   (name, actuators, reference channels such as `oracle/*`).
+///   (name, actuators, oracle reference channels).
 ///   The assembler extends `host_capabilities.publishes` with the
 ///   config-derived sensor channels before building. Goals and teleop intent
 ///   are declared separately as outside inputs.
@@ -91,7 +90,7 @@ pub fn build_pipeline(
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
     // Checked first and alone: every frame and watcher path for this agent
     // is built from its name, so anything checked after would only repeat it.
-    if !is_path_segment(agent.as_str()) {
+    if !is_level(agent.as_str()) {
         return Err(vec![PipelineAssemblyError::MalformedAgentName {
             agent: agent.to_string(),
         }]);

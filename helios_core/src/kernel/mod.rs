@@ -8,7 +8,8 @@
 //!   reproducible RNG stream instead of sharing one generator.
 //! - [`manifold`] — state-manifold blocks (Euclidean, quaternion) with their
 //!   retraction pairs and tangent-space noise.
-//! - [`identifier`] — the `snake_case` rule every config-written name follows.
+//! - [`identifier`] — the rules config-written names follow: `snake_case`, and
+//!   levels joined by `.` for names that address something.
 
 pub mod determinism;
 pub mod identifier;

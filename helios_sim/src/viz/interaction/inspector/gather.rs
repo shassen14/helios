@@ -48,7 +48,7 @@ use std::sync::Arc;
 ///
 /// `SubjectId` is derived from `Name` here rather than stored as a component, so no
 /// Bevy coupling leaks into the pure model layer. `time` is a placeholder — swap it
-/// for the same clock `oracle/pose` is stamped with so the model's `at` lines up
+/// for the same clock `oracle.pose` is stamped with so the model's `at` lines up
 /// with bus payload timestamps.
 pub fn begin_inspection(
     selected: Query<&Name, With<Selected>>,

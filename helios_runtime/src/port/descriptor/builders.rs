@@ -80,7 +80,7 @@ use std::any::TypeId;
 /// use helios_runtime::port::OracleChannel;
 ///
 /// struct Pose;
-/// let oracle = OracleChannel::named::<Pose>("oracle/pose");
+/// let oracle = OracleChannel::named::<Pose>("oracle.pose");
 /// // No `input_oracle` method on AlgorithmNodePortDescriptor:
 /// let _ = AlgorithmNodePortDescriptor::new().input_oracle(oracle);
 /// ```
@@ -495,7 +495,7 @@ mod tests {
     #[test]
     fn mock_builder_accepts_oracle_input() {
         let d = MockNodePortDescriptor::new()
-            .input_oracle(OracleChannel::named::<Pose>("oracle/pose"))
+            .input_oracle(OracleChannel::named::<Pose>("oracle.pose"))
             .output_internal(InternalChannel::of::<State>())
             .build();
         assert_eq!(d.required_inputs().count(), 1);
@@ -518,7 +518,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "must be Sensor or Internal")]
     fn inputs_from_slices_panics_on_oracle() {
-        let bad: Vec<ChannelKey> = vec![OracleChannel::named::<Pose>("oracle/pose").into()];
+        let bad: Vec<ChannelKey> = vec![OracleChannel::named::<Pose>("oracle.pose").into()];
         let _ = AlgorithmNodePortDescriptor::new().inputs_from_slices(&bad, &[]);
     }
 
@@ -537,14 +537,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "algorithm node output must be Sensor or Internal")]
     fn algorithm_outputs_from_slice_panics_on_oracle() {
-        let bad: Vec<ChannelKey> = vec![OracleChannel::named::<Pose>("oracle/pose").into()];
+        let bad: Vec<ChannelKey> = vec![OracleChannel::named::<Pose>("oracle.pose").into()];
         let _ = AlgorithmNodePortDescriptor::new().outputs_from_slice(&bad);
     }
 
     #[test]
     fn mock_inputs_from_slices_accepts_oracle_beside_algorithm_kinds() {
         let required: Vec<ChannelKey> = vec![
-            OracleChannel::named::<Pose>("oracle/pose").into(),
+            OracleChannel::named::<Pose>("oracle.pose").into(),
             SensorChannel::of::<Reading>().into(),
         ];
         let optional: Vec<ChannelKey> = vec![InternalChannel::of::<State>().into()];
@@ -597,11 +597,11 @@ mod tests {
 
     #[test]
     fn mock_oracle_methods_record_need_with_same_tick_timing() {
-        let pose: ChannelKey = OracleChannel::named::<Pose>("oracle/pose").into();
-        let twist: ChannelKey = OracleChannel::named::<Pose>("oracle/twist").into();
+        let pose: ChannelKey = OracleChannel::named::<Pose>("oracle.pose").into();
+        let twist: ChannelKey = OracleChannel::named::<Pose>("oracle.twist").into();
         let d = MockNodePortDescriptor::new()
-            .input_oracle(OracleChannel::named::<Pose>("oracle/pose"))
-            .optional_oracle(OracleChannel::named::<Pose>("oracle/twist"))
+            .input_oracle(OracleChannel::named::<Pose>("oracle.pose"))
+            .optional_oracle(OracleChannel::named::<Pose>("oracle.twist"))
             .build();
 
         assert_eq!(
@@ -651,10 +651,10 @@ mod tests {
         let d = MockNodePortDescriptor::new()
             .input_sensor(SensorChannel::of::<Reading>())
             .input_internal(InternalChannel::of::<State>())
-            .input_oracle(OracleChannel::named::<Pose>("oracle/pose"))
+            .input_oracle(OracleChannel::named::<Pose>("oracle.pose"))
             .optional_sensor(SensorChannel::named::<Reading>("opt"))
             .optional_internal(InternalChannel::named::<State>("opt"))
-            .optional_oracle(OracleChannel::named::<Pose>("oracle/opt"))
+            .optional_oracle(OracleChannel::named::<Pose>("oracle.opt"))
             .build();
 
         assert!(d.inputs().all(|i| i.timing() == InputTiming::SameTick));

@@ -18,9 +18,10 @@
 //! service drains an *explicit* list of edge keys, and [`is_tf_edge`] lets the
 //! assembler assert that list covers every declared edge.
 //!
-//! The [`TF_EDGE_PREFIX`] marks these instances (`tf/…`) the way `oracle/` and
-//! `health/` mark theirs — visible in the DAG dump, and the discriminator
-//! [`is_tf_edge`] keys off. Edges are [`InternalChannel`]s (node-produced), so
+//! The [`TF_EDGE_PREFIX`] marks these instances (`tf/…`), the discriminator
+//! [`is_tf_edge`] keys off. An edge name holds two frame ids, `/` included,
+//! so it is the one channel name outside the `.`-joined level grammar, and the
+//! pipeline build skips its form check. Edges are [`InternalChannel`]s (node-produced), so
 //! the value drops straight into the `output_internal` descriptor builder; a
 //! hardware `/tf` bridge or a Zenoh peer publishes onto the same channel by
 //! projecting its foreign stream through [`tf_edge`].
@@ -147,7 +148,7 @@ mod tests {
         // A `StampedTransform` channel that did not go through `tf_edge` (no
         // `tf/` prefix) is not an edge — this is the clause that keeps the drain
         // list from swallowing unrelated transform slots.
-        let key: ChannelKey = InternalChannel::named::<StampedTransform>("some/other").into();
+        let key: ChannelKey = InternalChannel::named::<StampedTransform>("some.other").into();
         assert!(!is_tf_edge(&key));
     }
 

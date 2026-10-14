@@ -1,7 +1,7 @@
-// Build checks on watcher paths: each declared leaf and each output
-// channel's path segment is a well-formed path outside the pipeline's own
-// group, and within a node the leaves are distinct, the output paths are
-// distinct, and no leaf has an output's path.
+// Build checks on watcher paths: each declared leaf is a well-formed path,
+// leaves and output channels sit outside the pipeline's own group, within a
+// node the leaves are distinct and no leaf has an output's name, and output
+// names that the channel-name check refused are not reported again here.
 
 use helios_runtime::{
     pipeline::{
@@ -21,7 +21,6 @@ use std::sync::Arc;
 /// channel.
 struct ChA;
 struct ChB;
-struct Estimate;
 
 /// Writes nothing; exists only to carry a descriptor with outputs and leaves.
 struct DeclaringNode {
@@ -59,10 +58,6 @@ impl PipelineNode for DeclaringNode {
 
 fn named<T: 'static>(instance: impl Into<Arc<str>>) -> ChannelKey {
     InternalChannel::named::<T>(instance).into()
-}
-
-fn unnamed<T: 'static>() -> ChannelKey {
-    InternalChannel::of::<T>().into()
 }
 
 fn build_errors(nodes: Vec<DeclaringNode>) -> Vec<PipelineBuildError> {
@@ -131,21 +126,6 @@ fn collisions(errors: &[PipelineBuildError]) -> Vec<(&str, &str, &ChannelKey)> {
         .collect()
 }
 
-/// `(node, channel, segment)` of every malformed-output-path error.
-fn malformed_outputs(errors: &[PipelineBuildError]) -> Vec<(&str, &ChannelKey, &str)> {
-    errors
-        .iter()
-        .filter_map(|e| match e {
-            PipelineBuildError::MalformedOutputPath {
-                node_name,
-                channel,
-                segment,
-            } => Some((node_name.as_str(), channel, segment.as_str())),
-            _ => None,
-        })
-        .collect()
-}
-
 /// `(node, channel, segment)` of every reserved-output-path error.
 fn reserved_outputs(errors: &[PipelineBuildError]) -> Vec<(&str, &ChannelKey, &str)> {
     errors
@@ -161,17 +141,12 @@ fn reserved_outputs(errors: &[PipelineBuildError]) -> Vec<(&str, &ChannelKey, &s
         .collect()
 }
 
-/// `(node, segment, first, second)` of every duplicate-output-path error.
-fn duplicate_outputs(errors: &[PipelineBuildError]) -> Vec<(&str, &str, &ChannelKey, &ChannelKey)> {
+/// The name of every reused-channel-name error.
+fn reused_names(errors: &[PipelineBuildError]) -> Vec<&str> {
     errors
         .iter()
         .filter_map(|e| match e {
-            PipelineBuildError::DuplicateOutputPath {
-                node_name,
-                segment,
-                first,
-                second,
-            } => Some((node_name.as_str(), segment.as_str(), first, second)),
+            PipelineBuildError::ChannelNameReused { name, .. } => Some(name.as_str()),
             _ => None,
         })
         .collect()
@@ -181,7 +156,7 @@ fn duplicate_outputs(errors: &[PipelineBuildError]) -> Vec<(&str, &str, &Channel
 fn leaf_declared_twice_is_rejected_once() {
     let errors = build_errors(vec![DeclaringNode::new(
         "ekf",
-        &[unnamed::<ChA>()],
+        &[named::<ChA>("a")],
         &["nis", "nis", "nis"],
     )]);
 
@@ -194,7 +169,7 @@ fn node_declaring_the_tick_duration_leaf_is_rejected_as_reserved() {
     // leaf the pipeline adds.
     let errors = build_errors(vec![DeclaringNode::new(
         "ekf",
-        &[unnamed::<ChA>()],
+        &[named::<ChA>("a")],
         &[TICK_DURATION_LEAF],
     )]);
 
@@ -211,7 +186,7 @@ fn leaves_in_the_pipeline_group_are_rejected() {
     let overrun = format!("{PIPELINE_LEAF_GROUP}.overrun");
     let errors = build_errors(vec![DeclaringNode::new(
         "ekf",
-        &[unnamed::<ChA>()],
+        &[named::<ChA>("a")],
         &[PIPELINE_LEAF_GROUP, &overrun],
     )]);
 
@@ -227,7 +202,7 @@ fn leaf_only_starting_with_the_group_name_builds() {
     let ticker = format!("{PIPELINE_LEAF_GROUP}er.count");
     let errors = build_errors(vec![DeclaringNode::new(
         "ekf",
-        &[unnamed::<ChA>()],
+        &[named::<ChA>("a")],
         &[&ticker],
     )]);
 
@@ -243,7 +218,7 @@ fn malformed_leaves_are_rejected_once_each() {
     let leaves: Vec<&str> = bad.iter().chain(bad.iter()).copied().collect();
     let errors = build_errors(vec![DeclaringNode::new(
         "ekf",
-        &[unnamed::<ChA>()],
+        &[named::<ChA>("a")],
         &leaves,
     )]);
 
@@ -256,7 +231,7 @@ fn malformed_leaves_are_rejected_once_each() {
 fn output_at_the_tick_duration_path_is_rejected_as_reserved() {
     // Refused for its group only: not also reported as colliding with the
     // leaf the pipeline adds.
-    let output = named::<ChA>("tick/duration");
+    let output = named::<ChA>("tick.duration");
     let errors = build_errors(vec![DeclaringNode::new("ekf", &[output.clone()], &[])]);
 
     assert_eq!(
@@ -270,7 +245,7 @@ fn output_at_the_tick_duration_path_is_rejected_as_reserved() {
 #[test]
 fn outputs_in_the_pipeline_group_are_rejected() {
     let group = named::<ChA>(PIPELINE_LEAF_GROUP);
-    let overrun = named::<ChB>(format!("{PIPELINE_LEAF_GROUP}/overrun"));
+    let overrun = named::<ChB>(format!("{PIPELINE_LEAF_GROUP}.overrun"));
     let overrun_path = format!("{PIPELINE_LEAF_GROUP}.overrun");
     let errors = build_errors(vec![DeclaringNode::new(
         "ekf",
@@ -289,109 +264,44 @@ fn outputs_in_the_pipeline_group_are_rejected() {
 }
 
 #[test]
-fn malformed_output_paths_are_rejected() {
-    let trailing = named::<ChA>("gps/");
-    let doubled = named::<ChB>("aiding//gps");
-    let errors = build_errors(vec![DeclaringNode::new(
-        "ekf",
-        &[trailing.clone(), doubled.clone()],
-        &[],
-    )]);
+fn output_under_a_malformed_name_is_reported_once() {
+    // The channel-name check refuses the name; the path checks skip it.
+    let output = named::<ChA>("est/cov");
+    let errors = build_errors(vec![DeclaringNode::new("ekf", &[output], &["est.cov"])]);
 
-    assert_eq!(
-        malformed_outputs(&errors),
-        [("ekf", &trailing, "gps."), ("ekf", &doubled, "aiding..gps")],
-        "got {errors:?}"
-    );
-    assert_eq!(errors.len(), 2, "nothing else reported: {errors:?}");
-}
-
-#[test]
-fn outputs_at_one_path_through_a_slash_are_rejected() {
-    // `/` in an instance becomes `.`, so `est/cov` and `est.cov` sit at one
-    // path.
-    let slashed = named::<ChA>("est/cov");
-    let dotted = named::<ChB>("est.cov");
-    let errors = build_errors(vec![DeclaringNode::new(
-        "ekf",
-        &[slashed.clone(), dotted.clone()],
-        &[],
-    )]);
-
-    assert_eq!(
-        duplicate_outputs(&errors),
-        [("ekf", "est.cov", &slashed, &dotted)],
-        "got {errors:?}"
-    );
-    assert_eq!(errors.len(), 1, "got {errors:?}");
-}
-
-#[test]
-fn unnamed_output_at_a_named_outputs_path_is_rejected() {
-    // An unnamed output sits at its type's snake_case name.
-    let unnamed_estimate = unnamed::<Estimate>();
-    let named_estimate = named::<ChA>("estimate");
-    let errors = build_errors(vec![DeclaringNode::new(
-        "ekf",
-        &[unnamed_estimate.clone(), named_estimate.clone()],
-        &[],
-    )]);
-
-    assert_eq!(
-        duplicate_outputs(&errors),
-        [("ekf", "estimate", &unnamed_estimate, &named_estimate)],
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::MalformedChannelName { name, .. }] if name == "est/cov"
+        ),
         "got {errors:?}"
     );
 }
 
 #[test]
-fn each_later_output_at_one_path_is_reported_against_the_first() {
-    let first = named::<ChA>("est/cov");
-    let second = named::<ChB>("est.cov");
-    let third = named::<Estimate>("est/cov");
+fn leaf_at_a_reused_output_name_is_not_compared() {
+    // Two outputs under one name are refused by the channel-name check, so
+    // the leaf is not also reported as colliding with each.
     let errors = build_errors(vec![DeclaringNode::new(
         "ekf",
-        &[first.clone(), second.clone(), third.clone()],
-        &[],
-    )]);
-
-    assert_eq!(
-        duplicate_outputs(&errors),
-        [
-            ("ekf", "est.cov", &first, &second),
-            ("ekf", "est.cov", &first, &third)
-        ],
-        "got {errors:?}"
-    );
-}
-
-#[test]
-fn leaf_at_a_duplicated_output_path_collides_once() {
-    // The later output is refused, so the leaf is compared with the first
-    // only.
-    let first = named::<ChA>("est/cov");
-    let second = named::<ChB>("est.cov");
-    let errors = build_errors(vec![DeclaringNode::new(
-        "ekf",
-        &[first.clone(), second.clone()],
+        &[named::<ChA>("est.cov"), named::<ChB>("est.cov")],
         &["est.cov"],
     )]);
 
-    assert_eq!(
-        collisions(&errors),
-        [("ekf", "est.cov", &first)],
-        "got {errors:?}"
-    );
+    assert_eq!(reused_names(&errors), ["est.cov"], "got {errors:?}");
+    assert!(collisions(&errors).is_empty(), "got {errors:?}");
 }
 
 #[test]
-fn outputs_at_one_path_on_two_nodes_build() {
+fn one_output_name_on_two_nodes_is_rejected() {
+    // Output paths include the node, but a channel name is the channel's
+    // address on the whole agent.
     let errors = build_errors(vec![
         DeclaringNode::new("ekf", &[named::<ChA>("estimate")], &[]),
         DeclaringNode::new("ukf", &[named::<ChB>("estimate")], &[]),
     ]);
 
-    assert!(errors.is_empty(), "paths include the node: {errors:?}");
+    assert_eq!(reused_names(&errors), ["estimate"], "got {errors:?}");
 }
 
 #[test]
@@ -402,40 +312,6 @@ fn leaf_equal_to_a_named_output_is_rejected() {
     assert_eq!(
         collisions(&errors),
         [("ekf", "nis", &output)],
-        "got {errors:?}"
-    );
-}
-
-#[test]
-fn leaf_equal_to_an_unnamed_outputs_type_segment_is_rejected() {
-    let output = unnamed::<Estimate>();
-    let errors = build_errors(vec![DeclaringNode::new(
-        "ekf",
-        &[output.clone()],
-        &["estimate"],
-    )]);
-
-    assert_eq!(
-        collisions(&errors),
-        [("ekf", "estimate", &output)],
-        "got {errors:?}"
-    );
-}
-
-#[test]
-fn leaf_equal_to_an_output_with_slashes_is_rejected() {
-    // `/` in an instance becomes `.` in the path, so `est/cov` sits at
-    // `est.cov`, the same path as the leaf.
-    let output = named::<ChA>("est/cov");
-    let errors = build_errors(vec![DeclaringNode::new(
-        "ekf",
-        &[output.clone()],
-        &["est.cov"],
-    )]);
-
-    assert_eq!(
-        collisions(&errors),
-        [("ekf", "est.cov", &output)],
         "got {errors:?}"
     );
 }
@@ -455,7 +331,7 @@ fn leaves_grouped_under_an_output_build() {
 fn leaf_beside_a_longer_leaf_builds() {
     let errors = build_errors(vec![DeclaringNode::new(
         "ekf",
-        &[unnamed::<ChA>()],
+        &[named::<ChA>("a")],
         &["nis", "nis.mean"],
     )]);
 
@@ -465,8 +341,8 @@ fn leaf_beside_a_longer_leaf_builds() {
 #[test]
 fn same_leaf_on_two_nodes_builds() {
     let errors = build_errors(vec![
-        DeclaringNode::new("ekf", &[unnamed::<ChA>()], &["nis"]),
-        DeclaringNode::new("ukf", &[unnamed::<ChB>()], &["nis"]),
+        DeclaringNode::new("ekf", &[named::<ChA>("a")], &["nis"]),
+        DeclaringNode::new("ukf", &[named::<ChB>("b")], &["nis"]),
     ]);
 
     assert!(errors.is_empty(), "paths include the node: {errors:?}");
@@ -476,7 +352,7 @@ fn same_leaf_on_two_nodes_builds() {
 fn leaf_equal_to_another_nodes_output_builds() {
     let errors = build_errors(vec![
         DeclaringNode::new("ekf", &[named::<ChA>("nis")], &[]),
-        DeclaringNode::new("monitor", &[unnamed::<ChB>()], &["nis"]),
+        DeclaringNode::new("monitor", &[named::<ChB>("b")], &["nis"]),
     ]);
 
     assert!(errors.is_empty(), "the check is per node: {errors:?}");

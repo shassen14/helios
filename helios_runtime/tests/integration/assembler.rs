@@ -80,7 +80,7 @@ fn teleop_only_stack() -> AutonomyStackConfig {
 /// file predict from, plus `others`. The assembler rejects an estimator whose
 /// predict inputs the host does not publish.
 fn host_channels_with_imu(others: &[&str]) -> HashSet<String> {
-    ["imu/accel", "imu/gyro"]
+    ["imu.accel", "imu.gyro"]
         .iter()
         .chain(others)
         .map(|name| name.to_string())
@@ -285,8 +285,8 @@ fn two_grids_publish_to_distinct_channels() {
     // `DuplicateProducer` and fail the build.
     let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([
-            occupancy_grid("local", "scan/near"),
-            occupancy_grid("global", "scan/far"),
+            occupancy_grid("local", "scan.near"),
+            occupancy_grid("global", "scan.far"),
             imu_ekf("nav_ekf"),
         ]),
         estimate: Some(estimate_seam("nav_ekf")),
@@ -303,7 +303,7 @@ fn two_grids_publish_to_distinct_channels() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["scan/near", "scan/far"]),
+        &host_channels_with_imu(&["scan.near", "scan.far"]),
         body,
     )
     .expect("two grids under distinct keys must build");
@@ -1196,7 +1196,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     // Here they agree, so the bias state absorbs the injected offset and its
     // variance collapses below the prior.
     let agent = AgentId::new("rover");
-    const MAG_CHANNEL: &str = "mag/primary";
+    const MAG_CHANNEL: &str = "mag.primary";
 
     // North-pointing world field (ENU, µT) and a purely vertical hard-iron bias.
     // A Z bias against a horizontal field is unconfounded with heading — no
@@ -1398,7 +1398,7 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
     assert_eq!(clouds.value[0].data.len(), 2);
 }
 
-/// The section of an IMU-only EKF reading `imu/accel` and `imu/gyro`, as a
+/// The section of an IMU-only EKF reading `imu.accel` and `imu.gyro`, as a
 /// profile would write it. Tables can follow it.
 const IMU_EKF: &str = r#"
     kind = "RecursiveEstimator"
@@ -1406,8 +1406,8 @@ const IMU_EKF: &str = r#"
 
     [dynamics]
     kind = "IntegratedImu"
-    accel_channel = "imu/accel"
-    gyro_channel = "imu/gyro"
+    accel_channel = "imu.accel"
+    gyro_channel = "imu.gyro"
     accel_noise_stddev = 0.1
     gyro_noise_stddev = 0.01
     accel_bias_instability = 0.001
@@ -1617,7 +1617,7 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::from(["imu/gyro".to_string()]),
+        &HashSet::from(["imu.gyro".to_string()]),
         perception_body(),
     )
     .err()
@@ -1627,9 +1627,9 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
         errors.iter().any(|e| matches!(
             e,
             PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
-                if node_name == "nav_ekf" && channel == "imu/accel"
+                if node_name == "nav_ekf" && channel == "imu.accel"
         )),
-        "expected UnpublishedSensorInput for `nav_ekf` / `imu/accel`, got {errors:?}"
+        "expected UnpublishedSensorInput for `nav_ekf` / `imu.accel`, got {errors:?}"
     );
 }
 
@@ -1653,7 +1653,7 @@ fn estimator_aided_by_a_host_channel_builds() {
     // because the generic sensor-input pass seeds optional inputs too; were it
     // to skip them, this build would fail with an unsatisfied input.
     let stack = AutonomyStackConfig {
-        nodes: BTreeMap::from([mag_aided_imu_ekf("mag/primary")]),
+        nodes: BTreeMap::from([mag_aided_imu_ekf("mag.primary")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
@@ -1662,7 +1662,7 @@ fn estimator_aided_by_a_host_channel_builds() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["mag/primary"]),
+        &host_channels_with_imu(&["mag.primary"]),
         perception_body(),
     );
 
@@ -1678,7 +1678,7 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
     // An aiding channel the host does not publish is caught by the sensor-input
     // check every node gets, named with the estimator node.
     let stack = AutonomyStackConfig {
-        nodes: BTreeMap::from([mag_aided_imu_ekf("mag/typo")]),
+        nodes: BTreeMap::from([mag_aided_imu_ekf("mag.typo")]),
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
@@ -1687,7 +1687,7 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["mag/primary"]),
+        &host_channels_with_imu(&["mag.primary"]),
         perception_body(),
     )
     .err()
@@ -1697,9 +1697,9 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
         errors.iter().any(|e| matches!(
             e,
             PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
-                if node_name == "nav_ekf" && channel == "mag/typo"
+                if node_name == "nav_ekf" && channel == "mag.typo"
         )),
-        "expected UnpublishedSensorInput for `nav_ekf` / `mag/typo`, got {errors:?}"
+        "expected UnpublishedSensorInput for `nav_ekf` / `mag.typo`, got {errors:?}"
     );
 }
 

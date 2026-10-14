@@ -150,8 +150,7 @@ mod tests {
     const UNDECLARED: &str = "aiding.gps.undeclared";
     const MISSING_NODE: &str = "missing";
     /// The writer's output instance, and the tap leaf it is watched at.
-    const ESTIMATE: &str = "odom/estimate";
-    const ESTIMATE_TAP: &str = "odom.estimate";
+    const ESTIMATE: &str = "odom.estimate";
     const STEP: f64 = 0.01;
     /// How far before the tick's `now` a written value is stamped, so a tap's
     /// timestamp can be told apart from the tick's.
@@ -345,7 +344,7 @@ mod tests {
     fn tapped(written: Arc<dyn ErasedStamped>) -> Observation {
         Observation {
             node: WRITER.into(),
-            leaf: ESTIMATE_TAP.into(),
+            leaf: ESTIMATE.into(),
             timestamp: written.timestamp(),
             value: ObservedValue::Typed(written),
         }
@@ -566,7 +565,7 @@ mod tests {
                 (SECOND, NIS),
                 (SECOND, TICK_DURATION_LEAF),
                 (WRITER, NIS),
-                (WRITER, ESTIMATE_TAP),
+                (WRITER, ESTIMATE),
                 (WRITER, TICK_DURATION_LEAF),
             ])
         );
@@ -577,14 +576,14 @@ mod tests {
         let mut pipeline = tapped_pipeline(&[]);
 
         let errors = pipeline
-            .watch(&leaves(&[(SECOND, ESTIMATE_TAP)]))
+            .watch(&leaves(&[(SECOND, ESTIMATE)]))
             .expect_err("only the writer outputs the estimate");
 
         assert_eq!(
             errors,
             vec![WatchError::UndeclaredLeaf {
                 node: SECOND.to_string(),
-                leaf: ESTIMATE_TAP.to_string(),
+                leaf: ESTIMATE.to_string(),
             }]
         );
     }
@@ -595,7 +594,7 @@ mod tests {
     fn watched_tap_records_the_bus_value_itself_stamped_with_its_own_time() {
         let mut pipeline = tapped_pipeline(&[1.0]);
         pipeline
-            .watch(&leaves(&[(WRITER, ESTIMATE_TAP)]))
+            .watch(&leaves(&[(WRITER, ESTIMATE)]))
             .expect("the writer outputs the estimate");
 
         run(&pipeline, &[1.0]);
@@ -614,7 +613,7 @@ mod tests {
     fn run_that_leaves_its_output_unwritten_records_nothing() {
         let mut pipeline = tapped_pipeline(&[1.0, 3.0]);
         pipeline
-            .watch(&leaves(&[(WRITER, ESTIMATE_TAP)]))
+            .watch(&leaves(&[(WRITER, ESTIMATE)]))
             .expect("the writer outputs the estimate");
 
         run(&pipeline, &[1.0]);
@@ -636,7 +635,7 @@ mod tests {
     fn rate_skipped_node_records_nothing() {
         let mut pipeline = built(writing_at_rate(SLOWER_THAN_STEP_HZ, &[4.0, 5.0, 6.0, 7.0]));
         pipeline
-            .watch(&leaves(&[(WRITER, ESTIMATE_TAP)]))
+            .watch(&leaves(&[(WRITER, ESTIMATE)]))
             .expect("the writer outputs the estimate");
 
         // The node would write at 5.0–7.0, but its rate keeps it from running
@@ -713,7 +712,7 @@ mod tests {
                 (SECOND, NIS),
                 (SECOND, TICK_DURATION_LEAF),
                 (WRITER, NIS),
-                (WRITER, ESTIMATE_TAP),
+                (WRITER, ESTIMATE),
                 (WRITER, TICK_DURATION_LEAF),
             ])
         );

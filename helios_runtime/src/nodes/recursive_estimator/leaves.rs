@@ -1,8 +1,9 @@
 //! What a recursive estimator reports to watchers: for each aiding source,
 //! the leaves in [`AidingLeaf`], under `aiding.<entry>.<leaf>`.
 
-use crate::observe::path::PATH_SEPARATOR;
 use crate::port::Determinism;
+
+use helios_core::kernel::identifier::LEVEL_SEPARATOR;
 
 use std::sync::Arc;
 
@@ -58,7 +59,7 @@ impl AidingLeaves {
     pub(crate) fn new(entry: &str) -> Self {
         Self {
             paths: AidingLeaf::ALL.map(|leaf| {
-                let path = [AIDING_LEAF_GROUP, entry, leaf.name()].join(PATH_SEPARATOR);
+                let path = [AIDING_LEAF_GROUP, entry, leaf.name()].join(LEVEL_SEPARATOR);
                 (leaf, Arc::from(path))
             }),
         }

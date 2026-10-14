@@ -370,8 +370,8 @@ mod tests {
                 gyro_noise_stddev: [0.0; 3],
             }),
             &[
-                (ACCEL_CHANNEL_FIELD, "body/accel"),
-                (GYRO_CHANNEL_FIELD, "body/gyro"),
+                (ACCEL_CHANNEL_FIELD, "body.accel"),
+                (GYRO_CHANNEL_FIELD, "body.gyro"),
             ],
         );
 
@@ -379,8 +379,8 @@ mod tests {
 
         assert_eq!(mounts.len(), 2);
         let channels: Vec<&str> = mounts.iter().map(|(c, _, _)| c.as_str()).collect();
-        assert!(channels.contains(&"body/accel"));
-        assert!(channels.contains(&"body/gyro"));
+        assert!(channels.contains(&"body.accel"));
+        assert!(channels.contains(&"body.gyro"));
         // Both share the IMU's single pose and are body-frame (FLU).
         for (_, pose, convention) in &mounts {
             assert_eq!(pose.translation, mount_pose().translation);

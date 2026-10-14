@@ -28,7 +28,7 @@ use nalgebra::Isometry3;
 /// nodes (`MockNodePortDescriptor`) may declare this as an input — the type
 /// system forbids algorithm nodes from doing so.
 pub fn oracle_pose_channel() -> OracleChannel {
-    OracleChannel::named::<Isometry3<f64>>("oracle/pose")
+    OracleChannel::named::<Isometry3<f64>>("oracle.pose")
 }
 
 /// Oracle channel carrying the agent body's twist at the current tick.
@@ -42,7 +42,7 @@ pub fn oracle_pose_channel() -> OracleChannel {
 /// Published by the sim host's `publish_oracle_channels_system`. Only mock
 /// nodes may declare this as an input.
 pub fn oracle_twist_channel() -> OracleChannel {
-    OracleChannel::named::<Twist>("oracle/twist")
+    OracleChannel::named::<Twist>("oracle.twist")
 }
 
 #[cfg(test)]

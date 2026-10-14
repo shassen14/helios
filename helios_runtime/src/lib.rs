@@ -19,7 +19,7 @@ pub mod tf_service;
 pub use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{
-    AutonomyPipeline, CycleEdge, PipelineBuildError, PipelineBuilder, Supplier,
+    AutonomyPipeline, ChannelUses, CycleEdge, PipelineBuildError, PipelineBuilder, Supplier,
 };
 pub use crate::port::{
     ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, PortDescriptor, SlotVersion,

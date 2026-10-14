@@ -17,4 +17,4 @@ mod ordering;
 mod wiring;
 
 pub use builder::PipelineBuilder;
-pub use error::{CycleEdge, PipelineBuildError, Supplier};
+pub use error::{ChannelUses, CycleEdge, PipelineBuildError, Supplier};

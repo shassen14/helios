@@ -1,6 +1,6 @@
 //! [`PipelineBuildError`], everything [`build`](super::PipelineBuilder::build)
-//! can reject, [`Supplier`], who supplies a channel, and [`CycleEdge`], one
-//! read inside a dependency loop.
+//! can reject, [`Supplier`], who supplies a channel, [`ChannelUses`], who
+//! writes and reads one, and [`CycleEdge`], one read inside a dependency loop.
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
@@ -56,30 +56,42 @@ pub enum PipelineBuildError {
     /// Two or more nodes share a name. Errors, logs and node order within a
     /// level all identify a node by its name, so names must be unique.
     DuplicateNodeName { name: String },
-    /// A node's name is empty or contains `.`. The name fills one part of
-    /// every watcher path under the node (`agent.<agent>.node.<node>.<leaf>`), and
+    /// A node's name is not one level: empty, or holding something other
+    /// than ASCII letters, digits and `_`. The name fills one part of every
+    /// watcher path under the node (`agent.<agent>.node.<node>.<leaf>`), and
     /// `.` separates the parts, so such a path could not be split back.
     MalformedNodeName { name: String },
-    /// A node declares a watchable leaf that isn't a well-formed path: it is
-    /// empty, has an empty part between dots (`.nis`, `nis.`, `aiding..nis`),
-    /// or contains `/`. Paths split on `.`, so such a leaf would mis-split in
-    /// a glob or a tree-shaped sink.
-    MalformedObservable { node_name: String, leaf: String },
-    /// A node's output channel watches at a path that isn't well formed: its
-    /// instance has an empty part between `/`s (`gps/`, `a//b`), and `/`
-    /// becomes `.` in a watcher path. `segment` is that path.
-    MalformedOutputPath {
-        node_name: String,
-        channel: ChannelKey,
-        segment: String,
+    /// A channel's name is not one or more levels joined by `.`: it is empty
+    /// (an unnamed channel), has an empty level (`gps.`, `a..b`), or holds
+    /// something other than ASCII letters, digits and `_` (`oracle/pose`,
+    /// `gps-fix`). The name is the channel's address in every watcher path,
+    /// recording and bridge, so each must split back into its levels.
+    /// Reported once per name, with every channel under it.
+    MalformedChannelName {
+        name: String,
+        uses: Vec<ChannelUses>,
     },
+    /// One name names more than one channel on the agent: the channels
+    /// differ in kind or payload type. A name is the one address of a
+    /// channel, so it names exactly one. Often a reader and a writer that
+    /// disagree on the type, which `uses` shows side by side.
+    ChannelNameReused {
+        name: String,
+        uses: Vec<ChannelUses>,
+    },
+    /// A node declares a watchable leaf that isn't one or more levels joined
+    /// by `.`: it is empty, has an empty level (`.nis`, `nis.`,
+    /// `aiding..nis`), or holds something other than ASCII letters, digits
+    /// and `_`. Paths split on `.`, so such a leaf would mis-split in a glob
+    /// or a tree-shaped sink.
+    MalformedObservable { node_name: String, leaf: String },
     /// A node declares a watchable leaf in the pipeline's own group
     /// ([`PIPELINE_LEAF_GROUP`]), which holds the leaves the pipeline adds to
     /// every node. Refused even when the pipeline doesn't add that leaf yet,
     /// so adding one later never breaks a node.
     ReservedObservable { node_name: String, leaf: String },
     /// A node's output channel watches at a path in the pipeline's own group
-    /// ([`PIPELINE_LEAF_GROUP`]), such as an instance named `tick/duration`.
+    /// ([`PIPELINE_LEAF_GROUP`]), such as a channel named `tick.duration`.
     /// Refused like a declared leaf there, so the pipeline's leaves never
     /// share a path with a channel.
     ReservedOutputPath {
@@ -91,20 +103,9 @@ pub enum PipelineBuildError {
     /// watcher's path would point at two values. Reported once per leaf per
     /// node.
     DuplicateObservable { node_name: String, leaf: String },
-    /// Two of a node's output channels watch at the same path, so a watcher
-    /// asking for it would get two channels: instances `a/b` and `a.b` both
-    /// sit at `a.b`, and an unnamed `Estimate` sits where an instance named
-    /// `estimate` does. With more than two, each later one is reported
-    /// against the first.
-    DuplicateOutputPath {
-        node_name: String,
-        segment: String,
-        first: ChannelKey,
-        second: ChannelKey,
-    },
     /// A node declares a leaf that has the same path as one of its own output
-    /// channels: under `agent.<agent>.node.<node>`, `leaf` and the channel's path
-    /// segment are the same string, so a watcher or an assertion target
+    /// channels: under `agent.<agent>.node.<node>`, `leaf` and the channel's
+    /// name are the same string, so a watcher or an assertion target
     /// would name two things. Only an exact match is refused; a shared
     /// dotted prefix (`estimate` beside `estimate.cov`) is a group.
     ObservableCollidesWithOutput {
@@ -186,27 +187,33 @@ impl std::fmt::Display for PipelineBuildError {
             PipelineBuildError::MalformedNodeName { name } => {
                 write!(
                     f,
-                    "node name \"{name}\" is empty or contains '.' — a node name is one part \
-                     of a watcher path, and '.' separates the parts"
+                    "node name \"{name}\" is not one level — a node name is one part of a \
+                     watcher path, so it is non-empty and holds only letters, digits and '_'"
                 )
+            }
+            PipelineBuildError::MalformedChannelName { name, uses } => {
+                write!(
+                    f,
+                    "channel name \"{name}\" is not one or more levels joined by '.', each \
+                     only letters, digits and '_':"
+                )?;
+                write_uses(f, uses)
+            }
+            PipelineBuildError::ChannelNameReused { name, uses } => {
+                write!(
+                    f,
+                    "channel name \"{name}\" names {} channels — a name names one channel \
+                     per agent:",
+                    uses.len()
+                )?;
+                write_uses(f, uses)
             }
             PipelineBuildError::MalformedObservable { node_name, leaf } => {
                 write!(
                     f,
                     "node \"{node_name}\" declares watchable leaf \"{leaf}\", which is not a \
-                     path — a leaf is one or more non-empty parts joined by '.', with no '/'"
-                )
-            }
-            PipelineBuildError::MalformedOutputPath {
-                node_name,
-                channel,
-                segment,
-            } => {
-                write!(
-                    f,
-                    "node \"{node_name}\" writes channel {channel}, which watchers would ask \
-                     for at \"{segment}\", not a path — an instance's parts between '/' must \
-                     be non-empty"
+                     path — a leaf is one or more levels joined by '.', each only letters, \
+                     digits and '_'"
                 )
             }
             PipelineBuildError::ReservedObservable { node_name, leaf } => {
@@ -234,18 +241,6 @@ impl std::fmt::Display for PipelineBuildError {
                     f,
                     "node \"{node_name}\" declares watchable leaf \"{leaf}\" more than once — \
                      each leaf names one value"
-                )
-            }
-            PipelineBuildError::DuplicateOutputPath {
-                node_name,
-                segment,
-                first,
-                second,
-            } => {
-                write!(
-                    f,
-                    "node \"{node_name}\" writes channels {first} and {second}, which watchers \
-                     would both ask for at \"{segment}\" — rename one of them"
                 )
             }
             PipelineBuildError::ObservableCollidesWithOutput {
@@ -293,6 +288,37 @@ impl std::fmt::Display for Supplier {
     }
 }
 
+/// One channel under a name, with everything that writes it and every node
+/// that reads it, as listed in [`PipelineBuildError::MalformedChannelName`]
+/// and [`PipelineBuildError::ChannelNameReused`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelUses {
+    pub key: ChannelKey,
+    /// Each supplier of `key`, in the order the build met them.
+    pub writers: Vec<Supplier>,
+    /// The name of each node that reads `key`.
+    pub readers: Vec<String>,
+}
+
+impl std::fmt::Display for ChannelUses {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.key)?;
+        if !self.writers.is_empty() {
+            let writers: Vec<String> = self.writers.iter().map(ToString::to_string).collect();
+            write!(f, " written by {}", writers.join(", "))?;
+        }
+        if !self.readers.is_empty() {
+            let readers: Vec<String> = self
+                .readers
+                .iter()
+                .map(|reader| Supplier::Node(reader.clone()).to_string())
+                .collect();
+            write!(f, " read by {}", readers.join(", "))?;
+        }
+        Ok(())
+    }
+}
+
 /// One same-tick read inside a dependency loop, as listed in a
 /// [`PipelineBuildError::Cycle`] error: `consumer` reads `channel`, which
 /// `producer` writes, so `consumer` must run after `producer`.
@@ -314,6 +340,14 @@ impl std::fmt::Display for CycleEdge {
             self.consumer, self.channel, self.producer
         )
     }
+}
+
+/// Each of `uses` after an error's opening sentence, one per channel.
+fn write_uses(f: &mut std::fmt::Formatter<'_>, uses: &[ChannelUses]) -> std::fmt::Result {
+    for channel in uses {
+        write!(f, " {channel};")?;
+    }
+    Ok(())
 }
 
 /// The word an error message uses for an input's need.

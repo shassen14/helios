@@ -251,15 +251,15 @@ mod tests {
 
     const NODE: &str = "primary";
 
-    /// A filter and an IMU-driven INS reading `imu/accel` and `imu/gyro`.
+    /// A filter and an IMU-driven INS reading `imu.accel` and `imu.gyro`.
     const BASE: &str = r#"
         [filter]
         kind = "Ekf"
 
         [dynamics]
         kind = "IntegratedImu"
-        accel_channel = "imu/accel"
-        gyro_channel = "imu/gyro"
+        accel_channel = "imu.accel"
+        gyro_channel = "imu.gyro"
         accel_noise_stddev = 0.1
         gyro_noise_stddev = 0.01
         accel_bias_instability = 0.001
@@ -434,7 +434,7 @@ mod tests {
             .required_inputs()
             .map(|key| key.instance().to_string())
             .collect();
-        assert_eq!(required, ["imu/accel", "imu/gyro"]);
+        assert_eq!(required, ["imu.accel", "imu.gyro"]);
         let optional: Vec<String> = descriptor
             .optional_inputs()
             .map(|key| key.instance().to_string())

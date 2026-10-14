@@ -46,15 +46,15 @@ pub struct PublishedChannel {
 ///
 /// This describes what one body carries, not the robot's morphology. Two bodies
 /// of the same drone model can differ: a simulated one carries a perfect truth
-/// sensor (`oracle/*`), a test vehicle may carry an RTK reference rig, and a
+/// sensor (oracle channels), a test vehicle may carry an RTK reference rig, and a
 /// production unit carries no reference sensor at all. Morphology (vehicle
 /// plugin, dynamics) lives elsewhere, never here.
 #[derive(Clone, Debug, Default)]
 pub struct BodyCapabilities {
     /// The body's name, used in build errors and the startup log.
     pub name: String,
-    /// Channels the body measures onto the bus: sensor channels, `oracle/*`
-    /// reference channels, and `health/*` driver/sensor status. The host writes
+    /// Channels the body measures onto the bus: sensor channels, oracle
+    /// reference channels, and health driver/sensor status. The host writes
     /// them on the body's behalf; each counts as already written when the
     /// pipeline is built.
     pub publishes: Vec<PublishedChannel>,

@@ -192,7 +192,7 @@ pub fn spawn_actuator_command(
 /// graph — distinct from anything the autonomy stack itself declares.
 /// Two responsibilities split between host and assembler:
 /// - **Host (this fn)** knows the agent's name, the body's actuators, and
-///   which host-owned channels exist (`oracle/*`, later `health/*`).
+///   which host-owned channels exist (oracle channels, later health).
 /// - **Assembler** ([`build_pipeline`]) knows the sensor channels derived
 ///   from the autonomy config and merges them into `publishes` before
 ///   handing the merged `BodyCapabilities` to [`PipelineBuilder`].
@@ -201,8 +201,8 @@ pub fn spawn_actuator_command(
 ///
 /// - `name`: cloned from `agent_name`; used by error messages
 ///   (`PipelineBuildError::UnsatisfiedBodyCapabilities`) and the DAG dump.
-/// - `publishes`: only the two oracle channels — `oracle/pose` (world ENU)
-///   and `oracle/twist` (body FLU). Both tagged `Provenance::Exact`
+/// - `publishes`: only the two oracle channels — `oracle.pose` (world ENU)
+///   and `oracle.twist` (body FLU). Both tagged `Provenance::Exact`
 ///   because the sim is ground truth. Health channels are intentionally
 ///   omitted: no sim publisher exists for them yet, and advertising a
 ///   channel the host never writes would let a consumer build and then
