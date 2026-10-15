@@ -125,11 +125,15 @@ impl EstimatorComponents {
     /// sub-table names in its `kind` key.
     ///
     /// `check` refuses a config that is unusable on its own, as for a filter;
-    /// pass [`no_check`] when parsing is check enough. `build` returns a
-    /// [`DynamicsComponent`]: the process model, the input builder feeding it
-    /// (checked against each other when the component is made) and how a pose
-    /// prior maps into its state. `C` must carry
-    /// `#[serde(deny_unknown_fields)]`.
+    /// pass [`no_check`] when parsing is check enough. `build` runs when the
+    /// node is declared and returns a [`DynamicsComponent`]: the process model,
+    /// how a pose prior maps into its state, and the input builder feeding it
+    /// as a [`DeclaredInput`], which states the input it assembles and the
+    /// channels it reads now (checked against the model when the component is
+    /// made) and is built with the node, from those channels' mounts. `C`
+    /// must carry `#[serde(deny_unknown_fields)]`.
+    ///
+    /// [`DeclaredInput`]: super::DeclaredInput
     ///
     /// Fails if `kind` is already a dynamics kind; the first registration is
     /// kept.

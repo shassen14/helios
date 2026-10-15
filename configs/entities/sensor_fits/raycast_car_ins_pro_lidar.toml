@@ -6,9 +6,14 @@
 #
 # The table key names the sensor and seeds its noise (`<agent>/<key>`).
 
+# The IMU board sits behind and above base_link, mounted upside down under a
+# plate and turned sideways: no axis lines up with the car's, and the offset
+# adds lever-arm terms while the car turns. The estimator moves its readings
+# to base_link, so this mount must cost nothing; a filter that took them raw
+# would fail estimator_health.
 [imu_pro]
 device = { from = "entities.sensors.imu_pro" }
-transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+transform = { translation = [-0.6, 0.2, 0.3], rotation = [180.0, 0.0, 90.0] }
 accel_channel = "sensor.imu.accel"
 gyro_channel = "sensor.imu.gyro"
 

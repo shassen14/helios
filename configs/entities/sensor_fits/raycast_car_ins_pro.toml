@@ -6,9 +6,11 @@
 #
 # The table key names the sensor and seeds its noise (`<agent>/<key>`).
 
+# The IMU board sits ahead of and above base_link, turned sideways: its
+# forward axis points left. The estimator moves its readings to base_link.
 [imu_pro]
 device = { from = "entities.sensors.imu_pro" }
-transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+transform = { translation = [0.5, 0.0, 0.2], rotation = [0.0, 0.0, 90.0] }
 accel_channel = "sensor.imu.accel"
 gyro_channel = "sensor.imu.gyro"
 

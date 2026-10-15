@@ -8,9 +8,10 @@
 //! pose.
 //!
 //! Declaring parses and checks every component and the node's own config, and
-//! builds the dynamics, whose input builder names the channels the node
-//! reads; the aiding channels come from the measurement kinds. The rest is
-//! built with the node, from the [`EstimatorPlan`] declaring leaves.
+//! builds the dynamics, whose declared input builder names the channels the
+//! node reads; the aiding channels come from the measurement kinds. The rest,
+//! the input builder included, is built with the node, from the
+//! [`EstimatorPlan`] declaring leaves.
 
 use super::config::{AidingConfig, AugmentationConfig, RecursiveEstimatorConfig};
 use super::nis_health::NisWindow;
@@ -30,7 +31,7 @@ pub(crate) const RECURSIVE_ESTIMATOR_KIND: &str = "RecursiveEstimator";
 /// The `filter` sub-table's key, which is also its path in errors and the dump.
 const FILTER_KEY: &str = "filter";
 /// The `dynamics` sub-table's key, likewise.
-const DYNAMICS_KEY: &str = "dynamics";
+pub(super) const DYNAMICS_KEY: &str = "dynamics";
 /// The key of the aiding table, and the first segment of each model's path.
 pub(super) const AIDING_KEY: &str = "aiding";
 /// The key of an aiding entry's model sub-table.
@@ -76,9 +77,11 @@ fn build(
     let augmentation = declare_augmentation(&config.augmentation, &aiding)?;
     let filter = components.parse_filter(FILTER_KEY, config.filter, ctx)?;
 
+    let input = dynamics.component.input();
     let descriptor = RecursiveEstimatorNode::declare_ports(
         ctx.node_name(),
-        dynamics.component.input(),
+        input.required_channels(),
+        input.optional_channels(),
         aiding
             .iter()
             .map(|entry| (entry.name.as_str(), &entry.channel)),

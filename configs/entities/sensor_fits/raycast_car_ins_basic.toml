@@ -6,9 +6,12 @@
 #
 # The table key names the sensor and seeds its noise (`<agent>/<key>`).
 
+# The IMU board sits ahead of and above base_link, aligned with the car: the
+# offset alone adds lever-arm terms while the car turns. The estimator moves
+# its readings to base_link.
 [imu_basic]
 device = { from = "entities.sensors.imu_basic" }
-transform = { translation = [0.0, 0.0, 0.0], rotation = [0.0, 0.0, 0.0] }
+transform = { translation = [0.3, 0.0, 0.15], rotation = [0.0, 0.0, 0.0] }
 accel_channel = "sensor.imu.accel"
 gyro_channel = "sensor.imu.gyro"
 

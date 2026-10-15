@@ -2,14 +2,15 @@
 //! wired, and its construction into a [`RecursiveEstimatorNode`].
 //!
 //! Constructing builds the measurement models, the augmentation blocks, the
-//! seeded state and the filter, checking each against the others. Each model
-//! and block is built for the mount its sensor channel's writer states.
+//! seeded state, the input builder and the filter, checking each against the
+//! others. Each model, block and the input builder is built for the mounts its
+//! channels' writers state.
 
 use super::aiding::Aiding;
 use super::config::InitialPoseConfig;
 use super::nis_health::NisWindow;
 use super::node::RecursiveEstimatorNode;
-use super::register::AIDING_KEY;
+use super::register::{AIDING_KEY, DYNAMICS_KEY};
 
 use crate::assembly::{BuildContext, BuildFailure, DeferredComponent};
 use crate::nodes::estimation::{
@@ -47,8 +48,8 @@ pub(super) struct EstimatorPlan {
 impl EstimatorPlan {
     /// Builds each aiding source for its channel's mount in `mounts`, then
     /// the state they agree on, seeded with the starting pose, then the
-    /// filter around it, and the node with the ports `descriptor` declared
-    /// for it.
+    /// input builder for its channels' mounts and the filter around the
+    /// state, and the node with the ports `descriptor` declared for it.
     pub(super) fn construct(
         self,
         descriptor: PortDescriptor,
@@ -84,6 +85,9 @@ impl EstimatorPlan {
 
         let initial_state = seeded_state(&dynamics, augmentation, &sources, &initial_pose, &ctx)?;
         let (process, input) = dynamics.into_parts();
+        let input = input
+            .build(&mounts)
+            .map_err(|err| format!("{DYNAMICS_KEY}: {err}"))?;
         let filter = filter.build(&ctx, FilterParts::new(initial_state, process))?;
 
         let aiding = sources

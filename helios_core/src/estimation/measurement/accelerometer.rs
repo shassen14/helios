@@ -1,3 +1,4 @@
+use crate::estimation::imu_mount::sensor_specific_force;
 use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
 use crate::prelude::AgentId;
@@ -108,17 +109,17 @@ impl MeasurementModel for SpecificForceModel {
             .map(Rotation::into_inner)
             .unwrap_or_default();
 
-        let tangential_accel = angular_accel_body.cross(&lever_arm_body);
-        let centripetal_accel = angular_vel_body.cross(&angular_vel_body.cross(&lever_arm_body));
-        let total_kinematic_accel_at_sensor =
-            linear_accel_body + tangential_accel + centripetal_accel;
-
-        let q_body_from_world = orientation_body_to_world.inverse();
-
-        let gravity_effect_in_body = q_body_from_world * self.gravity_world;
-
-        let proper_accel_in_body_frame = total_kinematic_accel_at_sensor - gravity_effect_in_body;
-        let predicted_accel = rot_body_from_sensor.inverse() * proper_accel_in_body_frame;
+        // Specific force at the body origin: kinematic acceleration minus
+        // gravity, both in body axes. The mount adds its lever-arm terms.
+        let gravity_in_body = orientation_body_to_world.inverse() * self.gravity_world;
+        let specific_force_body = linear_accel_body - gravity_in_body;
+        let predicted_accel = sensor_specific_force(
+            &rot_body_from_sensor,
+            &lever_arm_body,
+            &specific_force_body,
+            &angular_vel_body,
+            Some(&angular_accel_body),
+        );
 
         let mut z_pred = DVector::zeros(3);
         z_pred.fixed_rows_mut::<3>(0).copy_from(&predicted_accel);

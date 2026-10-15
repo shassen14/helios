@@ -23,7 +23,10 @@ mod gravity;
 mod measurement;
 
 pub use components::EstimatorComponents;
-pub use dynamics::{DynamicsComponent, EstimatorInputBuilder, SeedPose};
+pub use dynamics::{
+    AssembledInput, DeclaredInput, DynamicsComponent, EstimatorInputBuilder, InputUnavailable,
+    SeedPose,
+};
 pub use filter::FilterParts;
 
 #[cfg(test)]

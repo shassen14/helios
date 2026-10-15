@@ -12,9 +12,9 @@
 //!    holding that input over the whole interval. If the builder can't
 //!    assemble yet (cold start, dropout), predict is skipped and the tick
 //!    goes on to the updates; the interval is not lost, since the next predict
-//!    starts from the same valid-at time. A predict the filter itself skips
-//!    for a fault (a misshapen input) is warned, rate-limited, and likewise
-//!    caught up later.
+//!    starts from the same valid-at time. A predict skipped for a fault, the
+//!    builder's (a mount's transform missing) or the filter's (a misshapen
+//!    input), is warned, rate-limited, and likewise caught up later.
 //! 2. **Update.** Each aiding source hands over the readings it has not handed
 //!    over before, oldest first, and each is applied to the filter. A dropped
 //!    correction that stems from a fault is warned, rate-limited per source.
@@ -30,9 +30,9 @@
 //! ## Health
 //!
 //! The state carries `Health::Degraded` while either holds:
-//! - the last predict the filter attempted was skipped for a fault, so the
-//!   estimate is no longer being propagated (cleared by the next applied
-//!   predict);
+//! - the last predict attempted was skipped for a fault, the input builder's
+//!   or the filter's, so the estimate is no longer being propagated (cleared
+//!   by the next applied predict);
 //! - an aiding sensor with a NIS window has a full window whose mean
 //!   NIS ÷ dof lies outside its band.
 //!
@@ -46,7 +46,7 @@ use super::aiding::{aiding_ports, Aiding};
 use super::throttle::passes_warn_throttle;
 
 use crate::channels::estimate::estimator_output;
-use crate::nodes::estimation::EstimatorInputBuilder;
+use crate::nodes::estimation::{AssembledInput, EstimatorInputBuilder};
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{AlgorithmNodePortDescriptor, ChannelKey, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
@@ -81,19 +81,21 @@ pub(crate) struct RecursiveEstimatorNode {
 }
 
 impl RecursiveEstimatorNode {
-    /// The ports of the node named `name` predicting from what `input`
-    /// assembles and correcting from each aiding entry, given by its name and
-    /// the channel it reads: the builder's channels as it declares them, each
-    /// aiding channel optional, since the filter still predicts and publishes
-    /// without it, each entry's leaves, its NIS and its drop count, and the
-    /// state output on the channel named after the node.
+    /// The ports of the node named `name` predicting from an input builder
+    /// that reads `input_required` and `input_optional`, and correcting from
+    /// each aiding entry, given by its name and the channel it reads: the
+    /// builder's channels as it declares them, each aiding channel optional,
+    /// since the filter still predicts and publishes without it, each entry's
+    /// leaves, its NIS and its drop count, and the state output on the
+    /// channel named after the node.
     pub(crate) fn declare_ports<'a>(
         name: &str,
-        input: &dyn EstimatorInputBuilder,
+        input_required: &[ChannelKey],
+        input_optional: &[ChannelKey],
         aiding: impl IntoIterator<Item = (&'a str, &'a ChannelKey)>,
     ) -> PortDescriptor {
         let mut builder = AlgorithmNodePortDescriptor::new()
-            .inputs_from_slices(input.required_channels(), input.optional_channels())
+            .inputs_from_slices(input_required, input_optional)
             .output_internal(estimator_output(name));
         for (entry, channel) in aiding {
             builder = aiding_ports(builder, entry, channel);
@@ -157,30 +159,33 @@ impl PipelineNode for RecursiveEstimatorNode {
             filter.set_valid_at(tick.now);
         }
 
-        // 1. Predict, from when the state last held to now. A skip the filter
-        // reports as a fault is surfaced: predicting on the prior alone is
-        // the same silent drift as an unaided update.
-        let inputs = if starting {
+        // 1. Predict, from when the state last held to now. A skip for a
+        // fault, the builder's or the filter's, is surfaced: predicting on the
+        // prior alone is the same silent drift as an unaided update.
+        let fault = if starting {
             None
         } else {
-            self.input.assemble(bus, &tick)
-        };
-        if let Some(inputs) = inputs {
-            let dt = tick.now.0 - filter.state().timestamp.0;
-            let outcome = filter.predict(dt, &inputs);
-            if outcome == PredictOutcome::Applied {
-                *predict_fault = None;
-            }
-            if let Some(cause) = predict_skip_cause(&outcome) {
-                if passes_warn_throttle(&self.last_predict_warned, tick.now.0) {
-                    warn!(
-                        "estimator '{}' predict skipped: {cause} at t={:.3}; \
-                         estimate not propagated.",
-                        self.name, tick.now.0,
-                    );
+            match self.input.assemble(bus, tf, &tick) {
+                AssembledInput::Ready(inputs) => {
+                    let dt = tick.now.0 - filter.state().timestamp.0;
+                    let outcome = filter.predict(dt, &inputs);
+                    if outcome == PredictOutcome::Applied {
+                        *predict_fault = None;
+                    }
+                    predict_skip_cause(&outcome)
                 }
-                *predict_fault = Some(cause);
+                AssembledInput::Unavailable(reason) => reason.loud_cause(),
             }
+        };
+        if let Some(cause) = fault {
+            if passes_warn_throttle(&self.last_predict_warned, tick.now.0) {
+                warn!(
+                    "estimator '{}' predict skipped: {cause} at t={:.3}; \
+                     estimate not propagated.",
+                    self.name, tick.now.0,
+                );
+            }
+            *predict_fault = Some(cause);
         }
 
         // 2. Update from each aiding source.
@@ -273,7 +278,11 @@ mod tests {
     //! in, and what it publishes. Filter math is tested in `helios_core`.
 
     use super::*;
+    use crate::nodes::estimation::InputUnavailable;
     use crate::nodes::recursive_estimator::test_fixtures::*;
+
+    use helios_core::prelude::AgentId;
+    use helios_core::spatial::FrameId;
 
     /// The filter still predicts and publishes without an aiding sensor, so
     /// each aiding channel is an optional input.
@@ -369,6 +378,35 @@ mod tests {
         probe.input_ready.store(true, Ordering::Relaxed);
         node.execute(&bus, &NoTransforms, tick(1.3));
         assert!(matches!(published_health(&bus), Health::Ok));
+    }
+
+    /// An input withheld for a missing extrinsic degrades the estimate, naming
+    /// the edge, until a predict applies; a dropout leaves it healthy.
+    #[test]
+    fn a_missing_extrinsic_degrades_until_a_predict_applies() {
+        let (node, probe) = node();
+        let bus = bus_for(&node);
+        node.execute(&bus, &NoTransforms, tick(1.0));
+
+        probe.withhold_input(InputUnavailable::NoReading);
+        node.execute(&bus, &NoTransforms, tick(1.1));
+        assert!(matches!(published_health(&bus), Health::Ok));
+
+        probe.withhold_input(InputUnavailable::MissingTransform {
+            from: FrameId::agent(AgentId::new("car"), "imu"),
+            to: FrameId::base_link(AgentId::new("car")),
+        });
+        node.execute(&bus, &NoTransforms, tick(1.2));
+        let Health::Degraded { reason } = published_health(&bus) else {
+            panic!("a missing extrinsic degrades the estimate");
+        };
+        assert!(reason.starts_with("predict skipped: transform"), "{reason}");
+        assert!(probe.predict_dts().is_empty(), "nothing was predicted");
+
+        probe.input_ready.store(true, Ordering::Relaxed);
+        node.execute(&bus, &NoTransforms, tick(1.3));
+        assert!(matches!(published_health(&bus), Health::Ok));
+        assert_eq!(probe.predict_dts().len(), 1, "one predict covers the gap");
     }
 
     /// Applied predicts and expected skips are quiet; faults are loud.

@@ -7,6 +7,7 @@ pub mod augmentation;
 pub mod carrier;
 pub mod dynamics;
 pub mod filters;
+pub mod imu_mount;
 pub mod measurement;
 pub mod schema;
 

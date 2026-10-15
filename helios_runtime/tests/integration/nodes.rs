@@ -13,6 +13,7 @@ use helios_runtime::{
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::prelude::{Acceleration, AgentId, AngularRate, PointCloud, TfProvider};
 use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::FrameId;
 
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +87,8 @@ fn stack_with_nodes(nodes_toml: &str) -> AutonomyStackConfig {
 const LIDAR_UNIT: &str = "lidar";
 /// The unit the IMU channels come from.
 const IMU_UNIT: &str = "imu";
+/// The frame the IMU is mounted at.
+const IMU_MOUNT: &str = "imu_link";
 /// The unit the oracle channels come from.
 const TRUTH_UNIT: &str = "truth";
 
@@ -249,10 +252,11 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
         ))
     };
 
+    let mount = FrameId::agent(AgentId::new("test_agent"), IMU_MOUNT);
     let imu = BodyCapabilities {
         publishes: vec![
-            sensor_channel::<Acceleration>("imu.accel", IMU_UNIT),
-            sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT),
+            sensor_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
+            sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
         ],
         ..Default::default()
     };

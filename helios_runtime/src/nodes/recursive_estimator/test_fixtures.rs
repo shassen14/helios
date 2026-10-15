@@ -8,7 +8,8 @@ use super::node::RecursiveEstimatorNode;
 
 use crate::channels::estimate::estimator_output;
 use crate::nodes::estimation::{
-    EstimatorInputBuilder, Measurement, MeasurementSource, PayloadReader,
+    AssembledInput, EstimatorInputBuilder, InputUnavailable, Measurement, MeasurementSource,
+    PayloadReader,
 };
 use crate::observe::buffer::NodeObservations;
 use crate::observe::observation::{Observation, ObservedValue};
@@ -158,19 +159,26 @@ impl MeasurementSource for AccelSource {
     }
 }
 
-/// An input builder with nothing to read, ready while its flag is set
-/// (clear it to stand for an input dropout).
-struct ToggledInput(Arc<AtomicBool>);
+/// An input builder with nothing to read, ready while its flag is set; clear
+/// it and the builder gives its reason, a dropout unless told otherwise.
+struct ToggledInput {
+    ready: Arc<AtomicBool>,
+    reason: Arc<StdMutex<InputUnavailable>>,
+}
 
 impl EstimatorInputBuilder for ToggledInput {
     fn input_schema(&self) -> Arc<InputSchema> {
         Arc::new(InputSchema::compose(vec![]))
     }
 
-    fn assemble(&self, _: &PortBus, _: &TickContext) -> Option<EstimatorInputs> {
-        self.0.load(Ordering::Relaxed).then(|| EstimatorInputs {
-            control: DVector::zeros(0),
-        })
+    fn assemble(&self, _: &PortBus, _: &dyn TfProvider, _: &TickContext) -> AssembledInput {
+        if self.ready.load(Ordering::Relaxed) {
+            AssembledInput::Ready(EstimatorInputs {
+                control: DVector::zeros(0),
+            })
+        } else {
+            AssembledInput::Unavailable(self.reason.lock().expect("test lock").clone())
+        }
     }
 
     fn required_channels(&self) -> &[ChannelKey] {
@@ -186,6 +194,7 @@ impl EstimatorInputBuilder for ToggledInput {
 pub(super) struct Probe {
     calls: Arc<StdMutex<Calls>>,
     pub(super) input_ready: Arc<AtomicBool>,
+    input_reason: Arc<StdMutex<InputUnavailable>>,
 }
 
 impl Probe {
@@ -207,6 +216,12 @@ impl Probe {
 
     pub(super) fn skip_updates(&self, reason: SkipReason) {
         self.calls.lock().expect("test lock").skip_update = Some(reason);
+    }
+
+    /// Withholds the input for `reason` until it is ready again.
+    pub(super) fn withhold_input(&self, reason: InputUnavailable) {
+        *self.input_reason.lock().expect("test lock") = reason;
+        self.input_ready.store(false, Ordering::Relaxed);
     }
 }
 
@@ -236,9 +251,17 @@ pub(super) fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Prob
         model: ZeroModel,
         noise: DMatrix::identity(3, 3),
     };
-    let input = ToggledInput(Arc::clone(&input_ready));
-    let descriptor =
-        RecursiveEstimatorNode::declare_ports("primary", &input, [(ACCEL_ENTRY, &accel_channel())]);
+    let input_reason = Arc::new(StdMutex::new(InputUnavailable::NoReading));
+    let input = ToggledInput {
+        ready: Arc::clone(&input_ready),
+        reason: Arc::clone(&input_reason),
+    };
+    let descriptor = RecursiveEstimatorNode::declare_ports(
+        "primary",
+        input.required_channels(),
+        input.optional_channels(),
+        [(ACCEL_ENTRY, &accel_channel())],
+    );
     let node = RecursiveEstimatorNode::new(
         "primary",
         Box::new(filter),
@@ -249,7 +272,14 @@ pub(super) fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Prob
         }],
         descriptor,
     );
-    (node, Probe { calls, input_ready })
+    (
+        node,
+        Probe {
+            calls,
+            input_ready,
+            input_reason,
+        },
+    )
 }
 
 /// A bus carrying everything `node` reads and writes.

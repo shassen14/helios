@@ -1,13 +1,19 @@
 //! The dynamics component: a process model, the input builder that feeds its
 //! predict, and how a pose prior is written into its state.
 //!
-//! - `input` — [`EstimatorInputBuilder`], which assembles the control vector.
+//! The model and the pose seeding depend only on config and the agent, so
+//! they are made when the estimator is declared. The input builder is only
+//! declared then: it is built with the node, once the mounts of the channels
+//! it reads are known.
+//!
+//! - `input` — [`EstimatorInputBuilder`], which assembles the control vector,
+//!   and [`DeclaredInput`], a builder waiting for its channels' mounts.
 //! - `integrated_imu` — the built-in `IntegratedImu` kind.
 
 mod input;
 mod integrated_imu;
 
-pub use input::EstimatorInputBuilder;
+pub use input::{AssembledInput, DeclaredInput, EstimatorInputBuilder, InputUnavailable};
 
 use crate::nodes::estimation::EstimatorComponents;
 
@@ -23,26 +29,28 @@ use helios_core::spatial::{FrameAwareState, FrameId};
 pub type SeedPose = fn(&mut FrameAwareState, &AgentId, Transform<Flu, Enu>) -> Result<(), String>;
 
 /// What a dynamics factory returns: the process model, the input builder that
-/// feeds it, and how a pose prior maps into its state.
+/// feeds it, declared and built later, and how a pose prior maps into its
+/// state.
 ///
-/// The model and builder are checked against each other on construction, so
-/// a pair that disagrees on the input layout can't be built.
+/// The model and the declared input are checked against each other on
+/// construction, so a pair that disagrees on the input layout can't be
+/// declared.
 pub struct DynamicsComponent {
     dynamics: Box<dyn EstimationDynamics>,
-    input: Box<dyn EstimatorInputBuilder>,
+    input: DeclaredInput,
     seed_pose: SeedPose,
 }
 
 impl DynamicsComponent {
-    /// Pairs `dynamics` with the builder that feeds it, seeding a pose prior
-    /// as a full 3D pose of `base_link` in `odom`.
+    /// Pairs `dynamics` with the builder that will feed it, seeding a pose
+    /// prior as a full 3D pose of `base_link` in `odom`.
     ///
     /// Fails if the builder's declared input differs, block by block, from the
     /// input the dynamics consume: same length is not enough, because an
     /// accelerometer/gyro swap is the same length.
     pub fn new(
         dynamics: Box<dyn EstimationDynamics>,
-        input: Box<dyn EstimatorInputBuilder>,
+        input: DeclaredInput,
     ) -> Result<Self, InputAgreementError> {
         check_input_agreement(&dynamics.input_schema(), &input.input_schema())?;
         Ok(Self {
@@ -64,9 +72,9 @@ impl DynamicsComponent {
         &*self.dynamics
     }
 
-    /// The input builder feeding the model's predict.
-    pub(crate) fn input(&self) -> &dyn EstimatorInputBuilder {
-        &*self.input
+    /// The input builder that will feed the model's predict, as declared.
+    pub(crate) fn input(&self) -> &DeclaredInput {
+        &self.input
     }
 
     /// Writes `pose` into `state` the way this dynamics' state holds a pose.
@@ -79,10 +87,9 @@ impl DynamicsComponent {
         (self.seed_pose)(state, agent, pose)
     }
 
-    /// Takes the model and the builder out, for the filter and the node.
-    pub(crate) fn into_parts(
-        self,
-    ) -> (Box<dyn EstimationDynamics>, Box<dyn EstimatorInputBuilder>) {
+    /// Takes the model and the declared builder out, for the filter and the
+    /// node.
+    pub(crate) fn into_parts(self) -> (Box<dyn EstimationDynamics>, DeclaredInput) {
         (self.dynamics, self.input)
     }
 }
@@ -113,21 +120,23 @@ mod tests {
     use super::*;
 
     use crate::assembly::{no_check, AutonomyRegistry, BuildContext, ComponentError, NoParams};
-    use crate::port::{ChannelKey, PortBus};
+    use crate::pipeline::InputMounts;
+    use crate::port::{AlgorithmNodePortDescriptor, ChannelKey, PortBus};
     use crate::prelude::TickContext;
 
     use helios_core::estimation::dynamics::integrated_imu::{
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };
     use helios_core::estimation::schema::{InputSchema, InputSchemaBlock, StateSchema};
-    use helios_core::estimation::EstimatorInputs;
     use helios_core::kernel::integrators::Integrator;
     use helios_core::prelude::MonotonicTime;
     use helios_core::spatial::state::{Component, Quantity};
+    use helios_core::spatial::tf::TfProvider;
     use helios_core::spatial::transforms::Convention;
     use helios_core::spatial::StateVariable;
 
     use nalgebra::{DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     const NODE: &str = "primary";
@@ -212,8 +221,8 @@ mod tests {
             Arc::clone(&self.0)
         }
 
-        fn assemble(&self, _bus: &PortBus, _tick: &TickContext) -> Option<EstimatorInputs> {
-            None
+        fn assemble(&self, _: &PortBus, _: &dyn TfProvider, _: &TickContext) -> AssembledInput {
+            AssembledInput::Unavailable(InputUnavailable::NoReading)
         }
 
         fn required_channels(&self) -> &[ChannelKey] {
@@ -225,6 +234,13 @@ mod tests {
         }
     }
 
+    /// [`Declares`] `schema`, declared reading nothing.
+    fn declared(schema: Arc<InputSchema>) -> DeclaredInput {
+        DeclaredInput::new(Arc::clone(&schema), vec![], vec![], move |_| {
+            Ok(Box::new(Declares(schema)) as Box<dyn EstimatorInputBuilder>)
+        })
+    }
+
     /// The same length as [`rate_input`], but a different quantity.
     fn force_input() -> Arc<InputSchema> {
         Arc::new(InputSchema::compose(vec![InputSchemaBlock::new(
@@ -234,19 +250,13 @@ mod tests {
     }
 
     fn build_stationary(_: NoParams, _: &BuildContext<'_>) -> Result<DynamicsComponent, String> {
-        DynamicsComponent::new(
-            Box::new(Stationary::new()),
-            Box::new(Declares(rate_input())),
-        )
-        .map_err(|e| e.to_string())
+        DynamicsComponent::new(Box::new(Stationary::new()), declared(rate_input()))
+            .map_err(|e| e.to_string())
     }
 
     fn build_mismatched(_: NoParams, _: &BuildContext<'_>) -> Result<DynamicsComponent, String> {
-        DynamicsComponent::new(
-            Box::new(Stationary::new()),
-            Box::new(Declares(force_input())),
-        )
-        .map_err(|e| e.to_string())
+        DynamicsComponent::new(Box::new(Stationary::new()), declared(force_input()))
+            .map_err(|e| e.to_string())
     }
 
     fn build(
@@ -315,6 +325,26 @@ mod tests {
         );
     }
 
+    /// A builder built assembling another input than it declared is refused:
+    /// the dynamics were checked against the declaration.
+    #[test]
+    fn a_builder_built_unlike_its_declaration_is_refused() {
+        let lying = DeclaredInput::new(rate_input(), vec![], vec![], |_| {
+            Ok(Box::new(Declares(force_input())) as Box<dyn EstimatorInputBuilder>)
+        });
+        let mounts = InputMounts::new(
+            NODE,
+            &AlgorithmNodePortDescriptor::new().build(),
+            &HashMap::new(),
+        );
+
+        let Err(err) = lying.build(&mounts) else {
+            panic!("a builder unlike its declaration must not build");
+        };
+        assert!(err.contains("another input than it declared"), "{err}");
+        assert!(declared(rate_input()).build(&mounts).is_ok());
+    }
+
     fn pose() -> Transform<Flu, Enu> {
         Transform::from_isometry(Isometry3::from_parts(
             Translation3::new(4.0, -2.0, 0.5),
@@ -326,11 +356,8 @@ mod tests {
     /// blocks.
     #[test]
     fn default_seeding_writes_the_body_pose_in_odom() {
-        let component = DynamicsComponent::new(
-            Box::new(Stationary::new()),
-            Box::new(Declares(rate_input())),
-        )
-        .expect("agreeing pair");
+        let component = DynamicsComponent::new(Box::new(Stationary::new()), declared(rate_input()))
+            .expect("agreeing pair");
         let mut state =
             FrameAwareState::from_schema(component.dynamics().schema(), MonotonicTime(0.0));
 
@@ -364,12 +391,9 @@ mod tests {
             Err("planar state: no 3D pose".to_string())
         }
 
-        let component = DynamicsComponent::new(
-            Box::new(Stationary::new()),
-            Box::new(Declares(rate_input())),
-        )
-        .expect("agreeing pair")
-        .with_pose_seeding(refuse);
+        let component = DynamicsComponent::new(Box::new(Stationary::new()), declared(rate_input()))
+            .expect("agreeing pair")
+            .with_pose_seeding(refuse);
         let mut state =
             FrameAwareState::from_schema(component.dynamics().schema(), MonotonicTime(0.0));
 

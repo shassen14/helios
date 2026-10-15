@@ -1,65 +1,144 @@
 //! The `IntegratedImu` model's input builder and factory.
 
-use super::super::{DynamicsComponent, EstimatorInputBuilder};
+use super::super::{
+    AssembledInput, DeclaredInput, DynamicsComponent, EstimatorInputBuilder, InputUnavailable,
+};
 use super::config::IntegratedImuConfig;
 use crate::assembly::BuildContext;
 use crate::nodes::estimation::EstimatorComponents;
+use crate::pipeline::InputMounts;
 use crate::port::{ChannelKey, PortBus, SensorChannel};
 use crate::prelude::TickContext;
 
 use helios_core::estimation::dynamics::integrated_imu::{
     ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
 };
+use helios_core::estimation::imu_mount::{body_angular_velocity, body_specific_force};
 use helios_core::estimation::schema::{InputSchema, InputSchemaBlock};
 use helios_core::estimation::EstimatorInputs;
-use helios_core::prelude::{Acceleration, AgentId, AngularRate, SensorReading};
-use helios_core::spatial::state::Quantity;
+use helios_core::prelude::{Acceleration, AgentId, AngularRate, MonotonicTime, SensorReading};
+use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::state::{Component, Quantity};
+use helios_core::spatial::tf::TfProvider;
 use helios_core::spatial::transforms::Convention;
-use helios_core::spatial::FrameId;
+use helios_core::spatial::{FrameId, StateVariable};
 
-use nalgebra::{DVector, Vector3};
+use nalgebra::{DVector, Isometry3, Vector3};
 use std::sync::Arc;
 
 /// The `kind` a `dynamics` sub-table writes for the IMU-driven INS.
 pub(crate) const INTEGRATED_IMU_KIND: &str = "IntegratedImu";
 
-/// Assembles a 6-element IMU control vector `[ax, ay, az, wx, wy, wz]` from
-/// the most recent linear acceleration and angular velocity readings on the bus.
-/// Returns `None` if either channel is empty (cold-start or sensor dropout).
+/// Assembles a 6-element IMU control vector `[fx, fy, fz, wx, wy, wz]`, body
+/// (`base_link`) specific force and angular velocity in FLU, from the most
+/// recent accelerometer and gyro readings on the bus.
 ///
-/// Declares its input as body (`base_link`) specific force and angular
-/// velocity in FLU. The readings are in the IMU's own frame, so the
-/// declaration holds only for an IMU mounted at identity on `base_link`.
+/// Each reading is in its own mount's axes, so each tick the builder looks up
+/// `base_link ← mount` for both and moves the readings to the body origin:
+/// the rate rotated, the specific force rotated and cleared of the
+/// centripetal term its lever arm adds. It never reads the state, so the
+/// tangential term is left in (see [`body_specific_force`]). The transforms
+/// are read each tick, so an extrinsic updated while running is used.
 pub(crate) struct IntegratedImuInputBuilder {
     input_schema: Arc<InputSchema>,
-    accel_channel: ChannelKey,
-    gyro_channel: ChannelKey,
+    /// Row of the input where the specific force starts.
+    specific_force_row: usize,
+    /// Row of the input where the angular velocity starts.
+    angular_velocity_row: usize,
+    body: FrameId,
+    accel: MountedChannel,
+    gyro: MountedChannel,
     required: Vec<ChannelKey>,
 }
 
 impl IntegratedImuInputBuilder {
-    pub(crate) fn new(
-        agent: AgentId,
-        accel_channel: impl Into<Arc<str>>,
-        gyro_channel: impl Into<Arc<str>>,
-    ) -> Self {
+    /// A builder for `agent` reading `accel` and `gyro`, each mounted where
+    /// its writer states. Each quantity is written at the row its schema
+    /// gives it, so the schema is the one place the order is stated.
+    fn new(agent: AgentId, accel: MountedChannel, gyro: MountedChannel) -> Result<Self, String> {
         let body = FrameId::base_link(agent);
-        let input_schema = Arc::new(InputSchema::compose(vec![
-            InputSchemaBlock::new(Quantity::SpecificForce(body.clone()), Convention::Flu),
-            InputSchemaBlock::new(Quantity::AngularVelocity(body), Convention::Flu),
-        ]));
-
-        let accel_channel: ChannelKey =
-            SensorChannel::named::<Vec<SensorReading<Acceleration>>>(accel_channel).into();
-        let gyro_channel: ChannelKey =
-            SensorChannel::named::<Vec<SensorReading<AngularRate>>>(gyro_channel).into();
-
-        Self {
+        let input_schema = imu_input_schema(&body);
+        let row_of = |quantity: Quantity| {
+            input_schema
+                .offset_of(&StateVariable::new(quantity.clone(), Component::X))
+                .ok_or_else(|| format!("the IMU input schema has no {quantity:?} block"))
+        };
+        Ok(Self {
+            specific_force_row: row_of(Quantity::SpecificForce(body.clone()))?,
+            angular_velocity_row: row_of(Quantity::AngularVelocity(body.clone()))?,
             input_schema,
-            accel_channel: accel_channel.clone(),
-            gyro_channel: gyro_channel.clone(),
-            required: vec![accel_channel, gyro_channel],
-        }
+            body,
+            required: vec![accel.channel.clone(), gyro.channel.clone()],
+            accel,
+            gyro,
+        })
+    }
+
+    /// `base_link ← mount` for `channel`'s mount at `at`, as an isometry in
+    /// FLU, or why it can't be had.
+    fn mount_in_body(
+        &self,
+        channel: &MountedChannel,
+        tf: &dyn TfProvider,
+        at: MonotonicTime,
+    ) -> Result<Isometry3<f64>, InputUnavailable> {
+        let erased = tf
+            .get_transform(channel.mount.clone(), self.body.clone(), at)
+            .ok_or_else(|| InputUnavailable::MissingTransform {
+                from: channel.mount.clone(),
+                to: self.body.clone(),
+            })?;
+        erased
+            .typed::<Flu, Flu>()
+            .map(|transform| transform.into_inner())
+            .map_err(|_| InputUnavailable::ConventionMismatch {
+                from: channel.mount.clone(),
+                to: self.body.clone(),
+            })
+    }
+
+    /// The input from the latest reading on each channel, moved to the body
+    /// origin, or why there is none.
+    fn try_assemble(
+        &self,
+        bus: &PortBus,
+        tf: &dyn TfProvider,
+    ) -> Result<EstimatorInputs, InputUnavailable> {
+        let accel_stamped = bus
+            .read::<Vec<SensorReading<Acceleration>>>(self.accel.channel.clone())
+            .ok_or(InputUnavailable::NoReading)?;
+        let gyro_stamped = bus
+            .read::<Vec<SensorReading<AngularRate>>>(self.gyro.channel.clone())
+            .ok_or(InputUnavailable::NoReading)?;
+        let accel = accel_stamped
+            .value
+            .last()
+            .ok_or(InputUnavailable::NoReading)?;
+        let gyro = gyro_stamped
+            .value
+            .last()
+            .ok_or(InputUnavailable::NoReading)?;
+
+        let gyro_in_body = self.mount_in_body(&self.gyro, tf, gyro.timestamp)?;
+        let accel_in_body = self.mount_in_body(&self.accel, tf, accel.timestamp)?;
+
+        let rate = body_angular_velocity(&gyro_in_body.rotation, &gyro.data.0);
+        let force = body_specific_force(
+            &accel_in_body.rotation,
+            &accel_in_body.translation.vector,
+            &accel.data.0,
+            &rate,
+            None,
+        );
+
+        let mut control = DVector::zeros(self.input_schema.dim());
+        control
+            .fixed_rows_mut::<3>(self.specific_force_row)
+            .copy_from(&force);
+        control
+            .fixed_rows_mut::<3>(self.angular_velocity_row)
+            .copy_from(&rate);
+        Ok(EstimatorInputs { control })
     }
 }
 
@@ -68,25 +147,11 @@ impl EstimatorInputBuilder for IntegratedImuInputBuilder {
         Arc::clone(&self.input_schema)
     }
 
-    fn assemble(&self, bus: &PortBus, _tick: &TickContext) -> Option<EstimatorInputs> {
-        let accel_stamped =
-            bus.read::<Vec<SensorReading<Acceleration>>>(self.accel_channel.clone())?;
-        let gyro_stamped =
-            bus.read::<Vec<SensorReading<AngularRate>>>(self.gyro_channel.clone())?;
-
-        let accel = accel_stamped.value.last()?;
-        let gyro = gyro_stamped.value.last()?;
-
-        let control = DVector::from_row_slice(&[
-            accel.data.0.x,
-            accel.data.0.y,
-            accel.data.0.z,
-            gyro.data.0.x,
-            gyro.data.0.y,
-            gyro.data.0.z,
-        ]);
-
-        Some(EstimatorInputs { control })
+    fn assemble(&self, bus: &PortBus, tf: &dyn TfProvider, _tick: &TickContext) -> AssembledInput {
+        match self.try_assemble(bus, tf) {
+            Ok(inputs) => AssembledInput::Ready(inputs),
+            Err(reason) => AssembledInput::Unavailable(reason),
+        }
     }
 
     fn required_channels(&self) -> &[ChannelKey] {
@@ -96,6 +161,32 @@ impl EstimatorInputBuilder for IntegratedImuInputBuilder {
     fn optional_channels(&self) -> &[ChannelKey] {
         &[]
     }
+}
+
+/// A channel the builder reads, with the mount its writer states.
+struct MountedChannel {
+    channel: ChannelKey,
+    mount: FrameId,
+}
+
+impl MountedChannel {
+    /// `channel` at its mount in `mounts`.
+    fn new(channel: ChannelKey, mounts: &InputMounts) -> Result<Self, String> {
+        let mount = mounts
+            .mount(&channel)
+            .map_err(|err| err.to_string())?
+            .clone();
+        Ok(Self { channel, mount })
+    }
+}
+
+/// The input the builder assembles: specific force and angular velocity of
+/// `body`, FLU.
+fn imu_input_schema(body: &FrameId) -> Arc<InputSchema> {
+    Arc::new(InputSchema::compose(vec![
+        InputSchemaBlock::new(Quantity::SpecificForce(body.clone()), Convention::Flu),
+        InputSchemaBlock::new(Quantity::AngularVelocity(body.clone()), Convention::Flu),
+    ]))
 }
 
 pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponents) {
@@ -123,13 +214,26 @@ fn build(config: IntegratedImuConfig, ctx: &BuildContext<'_>) -> Result<Dynamics
             gyro_bias_var: prior.gyro_bias_radps.powi(2),
         },
     );
-    let input = IntegratedImuInputBuilder::new(
-        ctx.agent().clone(),
-        config.accel_channel.as_str(),
-        config.gyro_channel.as_str(),
+    let accel: ChannelKey =
+        SensorChannel::named::<Vec<SensorReading<Acceleration>>>(config.accel_channel).into();
+    let gyro: ChannelKey =
+        SensorChannel::named::<Vec<SensorReading<AngularRate>>>(config.gyro_channel).into();
+    let agent = ctx.agent().clone();
+    let input = DeclaredInput::new(
+        imu_input_schema(&FrameId::base_link(agent.clone())),
+        vec![accel.clone(), gyro.clone()],
+        vec![],
+        move |mounts: &InputMounts| {
+            let accel = MountedChannel::new(accel, mounts)?;
+            let gyro = MountedChannel::new(gyro, mounts)?;
+            Ok(
+                Box::new(IntegratedImuInputBuilder::new(agent, accel, gyro)?)
+                    as Box<dyn EstimatorInputBuilder>,
+            )
+        },
     );
 
-    DynamicsComponent::new(Box::new(dynamics), Box::new(input)).map_err(|e| e.to_string())
+    DynamicsComponent::new(Box::new(dynamics), input).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
@@ -138,6 +242,17 @@ mod tests {
     use super::*;
 
     use crate::assembly::{AutonomyRegistry, ComponentError};
+    use crate::port::{
+        AlgorithmNodePortDescriptor, ChannelDescription, PortDescriptor, Provenance,
+    };
+    use crate::stamped::{Health, Stamped};
+    use crate::BodyChannel;
+
+    use helios_core::spatial::transforms::ErasedTransform;
+
+    use nalgebra::{Translation3, UnitQuaternion};
+    use std::collections::HashMap;
+    use std::f64::consts::FRAC_PI_2;
 
     const NODE: &str = "primary";
     /// The kind of the node drawing the component; the table never reads it.
@@ -280,5 +395,203 @@ mod tests {
             panic!("expected InvalidConfig, got {err}");
         };
         assert_eq!(key, "initial_uncertainty.positon_m");
+    }
+
+    /// The unit the IMU channels come from.
+    const UNIT: &str = "imu";
+    /// The frame the IMU is mounted at.
+    const MOUNT: &str = "imu_link";
+    /// Tolerance on an input built from a rotation and a few cross products.
+    const EPS: f64 = 1e-12;
+    const G: f64 = 9.81;
+    /// A steady yaw rate (rad/s).
+    const YAW_RATE: f64 = 2.0;
+
+    fn agent() -> AgentId {
+        AgentId::new("car")
+    }
+
+    fn mount() -> FrameId {
+        FrameId::agent(agent(), MOUNT)
+    }
+
+    /// A TF provider holding one edge: the IMU's mount in `base_link`, if
+    /// given.
+    struct MountEdge(Option<Isometry3<f64>>);
+
+    impl TfProvider for MountEdge {
+        fn get_transform(
+            &self,
+            from: FrameId,
+            to: FrameId,
+            _: MonotonicTime,
+        ) -> Option<ErasedTransform> {
+            let edge = self.0?;
+            (from == mount() && to == FrameId::base_link(agent()))
+                .then(|| ErasedTransform::from_parts(edge, Convention::Flu, Convention::Flu))
+        }
+    }
+
+    /// The `IntegratedImu` input declared from [`SECTION`].
+    fn declared_input() -> DeclaredInput {
+        let Ok(built) = build_section(SECTION) else {
+            panic!("the built-in kind builds");
+        };
+        built.component.into_parts().1
+    }
+
+    /// The node's ports for `input`'s channels.
+    fn ports(input: &DeclaredInput) -> PortDescriptor {
+        AlgorithmNodePortDescriptor::new()
+            .inputs_from_slices(input.required_channels(), input.optional_channels())
+            .build()
+    }
+
+    /// Builds the declared input with every channel described by `describe`.
+    fn build_input(
+        describe: fn(ChannelKey) -> ChannelDescription,
+    ) -> Result<Box<dyn EstimatorInputBuilder>, String> {
+        let input = declared_input();
+        let descriptor = ports(&input);
+        let descriptions: Vec<ChannelDescription> = input
+            .required_channels()
+            .iter()
+            .cloned()
+            .map(describe)
+            .collect();
+        let by_key: HashMap<&ChannelKey, &ChannelDescription> = descriptions
+            .iter()
+            .map(|description| (description.key(), description))
+            .collect();
+        input.build(&InputMounts::new(NODE, &descriptor, &by_key))
+    }
+
+    fn mounted(key: ChannelKey) -> ChannelDescription {
+        ChannelDescription::body(
+            &BodyChannel::new(key, UNIT, Provenance::Simulated).with_mount(mount()),
+        )
+    }
+
+    fn unmounted(key: ChannelKey) -> ChannelDescription {
+        ChannelDescription::body(&BodyChannel::new(key, UNIT, Provenance::Simulated))
+    }
+
+    /// Assembles one input from a bus carrying one accelerometer and one gyro
+    /// reading, in the mount's axes, with the mount at `edge` in `base_link`.
+    fn assemble(
+        force: Vector3<f64>,
+        rate: Vector3<f64>,
+        edge: Option<Isometry3<f64>>,
+    ) -> AssembledInput {
+        let builder = match build_input(mounted) {
+            Ok(builder) => builder,
+            Err(err) => panic!("the mounted input builds: {err}"),
+        };
+        let bus = PortBus::new(&[PortDescriptor::new(
+            vec![],
+            vec![],
+            builder.required_channels().to_vec(),
+            None,
+        )]);
+        let at = MonotonicTime(1.0);
+        fn stamped<T>(value: T, at: MonotonicTime) -> Stamped<T> {
+            Stamped {
+                value,
+                timestamp: at,
+                health: Health::Ok,
+                producer: 0,
+            }
+        }
+        bus.write(
+            builder.required_channels()[0].clone(),
+            stamped(
+                vec![SensorReading {
+                    sensor: mount(),
+                    timestamp: at,
+                    data: Acceleration(force),
+                }],
+                at,
+            ),
+        )
+        .expect("the bus carries the accelerometer channel");
+        bus.write(
+            builder.required_channels()[1].clone(),
+            stamped(
+                vec![SensorReading {
+                    sensor: mount(),
+                    timestamp: at,
+                    data: AngularRate(rate),
+                }],
+                at,
+            ),
+        )
+        .expect("the bus carries the gyro channel");
+
+        builder.assemble(&bus, &MountEdge(edge), &TickContext::detached(at, 0.1, 0))
+    }
+
+    fn ready(assembled: AssembledInput) -> DVector<f64> {
+        match assembled {
+            AssembledInput::Ready(inputs) => inputs.control,
+            AssembledInput::Unavailable(reason) => panic!("expected an input, got {reason:?}"),
+        }
+    }
+
+    /// An IMU turned a quarter turn and mounted off the origin, on a body
+    /// turning at a steady rate, assembles the input an IMU at identity on the
+    /// origin would: the same input, so the same estimate.
+    #[test]
+    fn a_rotated_offset_mount_assembles_the_identity_mount_input() {
+        let origin_force = Vector3::new(0.4, 0.0, G);
+        let omega = Vector3::new(0.0, 0.0, YAW_RATE);
+        let offset = Vector3::new(0.5, 0.2, 0.1);
+        let rotation = UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2);
+        let edge = Isometry3::from_parts(Translation3::from(offset), rotation);
+
+        let at_sensor = origin_force + omega.cross(&omega.cross(&offset));
+        let rotated = ready(assemble(
+            rotation.inverse() * at_sensor,
+            rotation.inverse() * omega,
+            Some(edge),
+        ));
+        let identity = ready(assemble(origin_force, omega, Some(Isometry3::identity())));
+
+        assert!(
+            (&rotated - &identity).amax() < EPS,
+            "rotated {rotated:?} vs identity {identity:?}"
+        );
+    }
+
+    /// A mount whose transform is missing is a loud reason naming the edge,
+    /// never the quiet one a dropout gives.
+    #[test]
+    fn a_missing_extrinsic_is_a_loud_reason() {
+        let AssembledInput::Unavailable(reason) =
+            assemble(Vector3::zeros(), Vector3::zeros(), None)
+        else {
+            panic!("no transform, no input");
+        };
+        assert_eq!(
+            reason,
+            InputUnavailable::MissingTransform {
+                from: mount(),
+                to: FrameId::base_link(agent()),
+            }
+        );
+        assert!(reason.loud_cause().is_some());
+        assert_eq!(InputUnavailable::NoReading.loud_cause(), None);
+    }
+
+    /// The builder is built for its channels' mounts, so an IMU channel whose
+    /// writer states none is refused when the node is built, naming the node.
+    #[test]
+    fn an_unmounted_imu_channel_is_refused() {
+        let Err(err) = build_input(unmounted) else {
+            panic!("an unmounted IMU must not build");
+        };
+        assert!(
+            err.contains(&format!("node \"{NODE}\" needs the mount of channel")),
+            "{err}"
+        );
     }
 }

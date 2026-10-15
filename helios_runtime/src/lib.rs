@@ -36,6 +36,7 @@ pub use crate::assembly::{
     ReferenceSeamConfig, Site,
 };
 pub use crate::nodes::estimation::{
-    DynamicsComponent, EstimatorInputBuilder, FilterParts, SeedPose,
+    AssembledInput, DeclaredInput, DynamicsComponent, EstimatorInputBuilder, FilterParts,
+    InputUnavailable, SeedPose,
 };
 pub use crate::tf_service::TfBufferConfig;

@@ -1,5 +1,6 @@
 use nalgebra::DVector;
 
+use crate::estimation::imu_mount::sensor_angular_velocity;
 use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
 use crate::prelude::AgentId;
@@ -85,7 +86,7 @@ impl MeasurementModel for AngularRateModel {
             .map(FreeVector::into_inner)
             .unwrap_or_default();
 
-        let predicted_gyro = rot_body_from_sensor.inverse() * angular_vel_body;
+        let predicted_gyro = sensor_angular_velocity(&rot_body_from_sensor, &angular_vel_body);
         let mut z_pred = DVector::zeros(3);
         z_pred.fixed_rows_mut::<3>(0).copy_from(&predicted_gyro);
         Prediction::Ready(z_pred)

@@ -80,6 +80,8 @@ fn teleop_only_stack() -> AutonomyStackConfig {
 /// The unit the IMU-EKF fixtures' accelerometer and gyroscope channels come
 /// from.
 const IMU_UNIT: &str = "imu";
+/// The frame the IMU-EKF fixtures' IMU is mounted at.
+const IMU_MOUNT: &str = "imu_link";
 /// The unit every lidar channel in this file comes from.
 const LIDAR_UNIT: &str = "lidar";
 /// The unit every magnetometer channel in this file comes from.
@@ -107,13 +109,15 @@ fn range_field(name: &str) -> BodyChannel {
     sensor_channel::<RangeField<Flu>>(name, LIDAR_UNIT)
 }
 
-/// The IMU channels the IMU-EKF fixtures in this file predict from, plus
-/// `others`. The assembler rejects an estimator whose predict inputs the body
-/// does not publish.
-fn channels_with_imu(others: Vec<BodyChannel>) -> Vec<BodyChannel> {
+/// The IMU channels the IMU-EKF fixtures in this file predict from, mounted on
+/// `agent`'s IMU frame, plus `others`. The assembler rejects an estimator whose
+/// predict inputs the body does not publish, and the estimator's input builder
+/// needs their mount.
+fn channels_with_imu(agent: &AgentId, others: Vec<BodyChannel>) -> Vec<BodyChannel> {
+    let mount = FrameId::agent(agent.clone(), IMU_MOUNT);
     let mut channels = vec![
-        sensor_channel::<Acceleration>("imu.accel", IMU_UNIT),
-        sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT),
+        sensor_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
+        sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
     ];
     channels.extend(others);
     channels
@@ -303,7 +307,10 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![cloud("scan")])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![cloud("scan")],
+        )),
     )
     .expect("estimator + grid stack must build");
 
@@ -338,10 +345,10 @@ fn two_grids_publish_to_distinct_channels() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![
-            cloud("scan.near"),
-            cloud("scan.far"),
-        ])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![cloud("scan.near"), cloud("scan.far")],
+        )),
     )
     .expect("two grids under distinct keys must build");
 
@@ -1002,7 +1009,10 @@ fn planner_without_a_map_fails_the_build_naming_it() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![cloud("scan")])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![cloud("scan")],
+        )),
     ) else {
         panic!("a planner with no map must not build");
     };
@@ -1042,7 +1052,10 @@ fn follower_reads_the_path_of_the_planner_its_section_names() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![cloud("scan")])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![cloud("scan")],
+        )),
     );
     assert!(
         built.is_ok(),
@@ -1063,7 +1076,10 @@ fn follower_naming_no_planner_fails_the_build_naming_it() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![cloud("scan")])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![cloud("scan")],
+        )),
     ) else {
         panic!("a follower naming no planner must not build");
     };
@@ -1102,7 +1118,10 @@ fn teleop_preferred_over_a_follower_wins_the_reference_while_fresh() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![cloud("scan")])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![cloud("scan")],
+        )),
     )
     .expect("a follower and teleop sharing the seam must build");
 
@@ -1258,11 +1277,11 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         &stack,
         &AutonomyRegistry::default(),
         agent.clone(),
-        body_publishing(channels_with_imu(vec![sensor_channel::<MagneticField>(
-            MAG_CHANNEL,
-            MAG_UNIT,
-        )
-        .with_mount(FrameId::agent(agent.clone(), MAG_MOUNT))])),
+        body_publishing(channels_with_imu(
+            &agent,
+            vec![sensor_channel::<MagneticField>(MAG_CHANNEL, MAG_UNIT)
+                .with_mount(FrameId::agent(agent.clone(), MAG_MOUNT))],
+        )),
     )
     .expect("mag-bias augmentation stack must build");
 
@@ -1474,7 +1493,10 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![range_field("lidar")])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![range_field("lidar")],
+        )),
     )
     .expect("a mapper reading a deprojected channel must build");
 
@@ -1505,7 +1527,10 @@ fn mapper_reading_an_unpublished_channel_fails_the_build() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![range_field("lidar")])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![range_field("lidar")],
+        )),
     )
     .err()
     .expect("a mapper reading an unpublished channel must not build");
@@ -1642,11 +1667,11 @@ fn estimator_aided_by_a_host_channel_builds() {
         &stack,
         &AutonomyRegistry::default(),
         agent.clone(),
-        body_publishing(channels_with_imu(vec![sensor_channel::<MagneticField>(
-            "mag.primary",
-            MAG_UNIT,
-        )
-        .with_mount(FrameId::agent(agent, "mag.primary"))])),
+        body_publishing(channels_with_imu(
+            &agent,
+            vec![sensor_channel::<MagneticField>("mag.primary", MAG_UNIT)
+                .with_mount(FrameId::agent(agent.clone(), "mag.primary"))],
+        )),
     );
 
     assert!(
@@ -1670,10 +1695,10 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![sensor_channel::<MagneticField>(
-            "mag.primary",
-            MAG_UNIT,
-        )])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![sensor_channel::<MagneticField>("mag.primary", MAG_UNIT)],
+        )),
     )
     .err()
     .expect("an estimator aided by an unpublished channel must not build");
@@ -1725,7 +1750,10 @@ fn planner_goals_are_declared_once_per_goal_channel() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![cloud("scan")])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![cloud("scan")],
+        )),
     )
     .expect("a stack of planners over a declared grid must build");
 
@@ -1775,7 +1803,10 @@ fn stack_without_planner_or_teleop_declares_no_outside_inputs() {
         &planner_stack(&[]),
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(channels_with_imu(vec![cloud("scan")])),
+        body_publishing(channels_with_imu(
+            &AgentId::new("test_agent"),
+            vec![cloud("scan")],
+        )),
     )
     .expect("an estimator and a mapper must build");
 
