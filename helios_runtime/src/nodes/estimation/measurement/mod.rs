@@ -89,7 +89,7 @@ impl<P: SensorPayload> TypedMeasurementSource<P> {
         }
 
         Ok(Self {
-            reader: PayloadReader::new(SensorChannel::named::<Vec<SensorReading<P>>>(input)),
+            reader: PayloadReader::new(readings_channel::<P>(input)),
             model,
             noise,
         })
@@ -112,6 +112,21 @@ impl<P: SensorPayload> MeasurementSource for TypedMeasurementSource<P> {
     fn take_new(&self, bus: &PortBus) -> Vec<Measurement> {
         self.reader.take_new(bus)
     }
+}
+
+/// The channel a measurement kind reads, from the input its aiding entry
+/// names. Registered with the kind, so a node knows the typed channel before
+/// the model is built.
+pub(crate) type ReadingChannel = fn(&str) -> ChannelKey;
+
+/// The typed channel readings of payload `P` arrive on, named `input`.
+fn readings_channel<P: SensorPayload>(input: &str) -> SensorChannel {
+    SensorChannel::named::<Vec<SensorReading<P>>>(input)
+}
+
+/// The [`ReadingChannel`] of payload `P`.
+pub(crate) fn reading_channel<P: SensorPayload>() -> ReadingChannel {
+    |input| readings_channel::<P>(input).into()
 }
 
 /// Turns a model factory into the measurement table's factory: builds the
@@ -147,7 +162,7 @@ mod tests {
     use super::models::GPS_POSITION_KIND;
     use super::*;
 
-    use crate::assembly::{AutonomyRegistry, ComponentError, NoParams};
+    use crate::assembly::{no_check, AutonomyRegistry, ComponentError, NoParams};
     use crate::port::PortDescriptor;
     use crate::stamped::{Health, Stamped};
 
@@ -162,6 +177,8 @@ mod tests {
     use nalgebra::{DVector, Vector3};
 
     const NODE: &str = "primary";
+    /// The kind of the node drawing the component; the table never reads it.
+    const NODE_KIND: &str = "TestEstimator";
     const DUMMY_KIND: &str = "mocap_position";
     const INPUT: &str = "mocap";
 
@@ -203,7 +220,7 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         registry
             .extension_mut::<EstimatorComponents>()
-            .register_measurement::<GpsPosition, _, _>(DUMMY_KIND, build_mocap)
+            .register_measurement::<GpsPosition, _, _, _>(DUMMY_KIND, no_check, build_mocap)
             .expect("not a built-in kind");
         registry
     }
@@ -214,7 +231,7 @@ mod tests {
         r_len: usize,
     ) -> Result<Box<dyn MeasurementSource>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE);
+        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
         let wiring = MeasurementWiring {
             input: INPUT.to_string(),
             noise: DMatrix::identity(r_len, r_len),
@@ -222,21 +239,34 @@ mod tests {
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")
-            .build_measurement("aiding.mocap.model", section, &ctx, wiring)
-            .map(|built| built.component)
+            .parse_measurement("aiding.mocap.model", section, &ctx)
+            .and_then(|parsed| parsed.deferred.build(&ctx, wiring))
     }
 
     /// A registered model yields a source reading its payload's type on the
     /// wired channel, with the model built for that channel's sensor frame.
+    /// The kind declares that channel before the source is built.
     #[test]
     fn a_registered_model_reads_its_payload_on_the_wired_channel() {
-        let Ok(source) = build(&registry(), &format!("kind = \"{DUMMY_KIND}\""), 3) else {
+        let registry = registry();
+        let section = format!("kind = \"{DUMMY_KIND}\"");
+        let Ok(source) = build(&registry, &section, 3) else {
             panic!("the dummy model builds");
         };
 
         let expected: ChannelKey =
             SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(INPUT).into();
         assert_eq!(source.channel(), &expected);
+        let parsed = registry
+            .extension::<EstimatorComponents>()
+            .expect("the default registry has estimator components")
+            .parse_measurement(
+                "aiding.mocap.model",
+                toml::from_str(&section).expect("test TOML parses"),
+                &BuildContext::new(agent(), NODE, NODE_KIND),
+            )
+            .expect("the dummy model parses");
+        assert_eq!((parsed.declared)(INPUT), expected);
         assert_eq!(source.noise().nrows(), 3);
 
         // The source reads that channel end to end.
@@ -270,7 +300,7 @@ mod tests {
     /// The model is built for the sensor frame named by the wiring's channel.
     #[test]
     fn the_model_is_built_for_the_wired_sensor_frame() {
-        let ctx = BuildContext::new(agent(), NODE);
+        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
         let factory = source_factory::<GpsPosition, NoParams, _>(
             |_: NoParams, _: &BuildContext<'_>, sensor: &FrameId| {
                 assert_eq!(sensor, &FrameId::agent(agent(), INPUT));
@@ -308,7 +338,7 @@ mod tests {
         let mut registry = registry();
         registry
             .extension_mut::<EstimatorComponents>()
-            .register_measurement::<MagneticField, _, _>("mocap_as_field", build_mocap)
+            .register_measurement::<MagneticField, _, _, _>("mocap_as_field", no_check, build_mocap)
             .expect("distinct name");
 
         let field = build(&registry, "kind = \"mocap_as_field\"", 3).expect("builds");
@@ -322,7 +352,7 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         let err = registry
             .extension_mut::<EstimatorComponents>()
-            .register_measurement::<GpsPosition, _, _>(GPS_POSITION_KIND, build_mocap)
+            .register_measurement::<GpsPosition, _, _, _>(GPS_POSITION_KIND, no_check, build_mocap)
             .expect_err("gps_position is a built-in");
         assert_eq!(
             err.to_string(),

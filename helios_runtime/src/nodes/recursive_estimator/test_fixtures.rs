@@ -236,14 +236,18 @@ pub(super) fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Prob
         model: ZeroModel,
         noise: DMatrix::identity(3, 3),
     };
+    let input = ToggledInput(Arc::clone(&input_ready));
+    let descriptor =
+        RecursiveEstimatorNode::declare_ports("primary", &input, [(ACCEL_ENTRY, &accel_channel())]);
     let node = RecursiveEstimatorNode::new(
         "primary",
         Box::new(filter),
-        Box::new(ToggledInput(Arc::clone(&input_ready))),
+        Box::new(input),
         vec![match nis {
             Some(window) => Aiding::new(ACCEL_ENTRY, Box::new(source)).with_nis_window(window),
             None => Aiding::new(ACCEL_ENTRY, Box::new(source)),
         }],
+        descriptor,
     );
     (node, Probe { calls, input_ready })
 }

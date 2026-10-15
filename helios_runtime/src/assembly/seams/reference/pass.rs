@@ -7,6 +7,7 @@ use crate::assembly::error::PipelineAssemblyError;
 use crate::channels::control;
 use crate::nodes::combinators::{Selector, SelectorPolicy};
 use crate::pipeline::node::PipelineNode;
+use crate::pipeline::NodeDeclaration;
 
 use helios_core::control::BodyTwistRef;
 
@@ -27,7 +28,7 @@ const SEAM: &str = "reference";
 /// exactly one reference output.
 pub(in crate::assembly) fn reference_selector(
     config: Option<&ReferenceSeamConfig>,
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
 ) -> Result<Option<Box<dyn PipelineNode>>, Vec<PipelineAssemblyError>> {
     let Some(config) = config else {
         return Ok(None);
@@ -70,8 +71,8 @@ mod tests {
 
     /// A node writing its reference on a channel named after itself, as every
     /// follower and teleop mapper does.
-    fn contender(name: &str) -> Box<dyn PipelineNode> {
-        stub(name, vec![InternalChannel::named::<BodyTwistRef>(name)])
+    fn contender(name: &str) -> NodeDeclaration {
+        stub(name, vec![InternalChannel::named::<BodyTwistRef>(name)]).into()
     }
 
     fn reference_key(name: &str) -> ChannelKey {
@@ -196,7 +197,8 @@ mod tests {
         let nodes = vec![stub(
             "local_path",
             vec![InternalChannel::named::<f64>("local_path")],
-        )];
+        )
+        .into()];
 
         let errors = errors_of(reference_selector(
             Some(&section("local_path", &[])),

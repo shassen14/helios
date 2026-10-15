@@ -1,7 +1,8 @@
-//! Builds every `[nodes.<name>]` entry through the factory registered for its
-//! `kind`.
+//! Declares every `[nodes.<name>]` entry through the factory registered for
+//! its `kind`: a node built, or a plan the pipeline builder builds once the
+//! graph checks out.
 //!
-//! All or nothing: either every node builds, or every node that failed is
+//! All or nothing: either every node is declared, or every node that failed is
 //! reported and none are returned. A pipeline missing a node is never built,
 //! and stopping here keeps one broken node from showing up again downstream
 //! as unsupplied inputs on every node that reads its outputs.
@@ -11,23 +12,23 @@ use super::error::PipelineAssemblyError;
 use super::factory::{BuildContext, KIND_KEY};
 use super::registry::AutonomyRegistry;
 
-use crate::pipeline::node::PipelineNode;
+use crate::pipeline::NodeDeclaration;
 use crate::port::ChannelKey;
 
 use helios_core::prelude::AgentId;
 
-/// Every `[nodes]` entry, built.
+/// Every `[nodes]` entry, declared.
 pub(super) struct Instantiated {
-    /// The built nodes, in name order.
-    pub(super) nodes: Vec<Box<dyn PipelineNode>>,
+    /// The declared nodes, in name order.
+    pub(super) nodes: Vec<NodeDeclaration>,
     /// Every outside input the factories declared, in node-name order. Two
     /// nodes reading one outside channel each declare it, so it can repeat.
     pub(super) outside_inputs: Vec<ChannelKey>,
 }
 
-/// Builds every node in `stack.nodes`, in name order.
+/// Declares every node in `stack.nodes`, in name order.
 ///
-/// Fails with one error per node that could not be built.
+/// Fails with one error per node that could not be declared.
 pub(super) fn instantiate(
     stack: &AutonomyStackConfig,
     registry: &AutonomyRegistry,
@@ -58,26 +59,26 @@ pub(super) fn instantiate(
     }
 }
 
-/// Builds node `name` from its `section`: takes `kind` out of the section and
-/// hands the rest to that kind's factory, then checks the factory named the
-/// node `name`. Returns the node and the outside inputs its factory declared.
+/// Declares node `name` from its `section`: takes `kind` out of the section
+/// and hands the rest to that kind's factory, then checks the factory named
+/// the node `name`. Returns the node and the outside inputs its factory
+/// declared.
 fn instantiate_node(
     name: &str,
     mut section: toml::Table,
     registry: &AutonomyRegistry,
     agent: &AgentId,
-) -> Result<(Box<dyn PipelineNode>, Vec<ChannelKey>), PipelineAssemblyError> {
+) -> Result<(NodeDeclaration, Vec<ChannelKey>), PipelineAssemblyError> {
     let Some(toml::Value::String(kind)) = section.remove(KIND_KEY) else {
         return Err(PipelineAssemblyError::MissingNodeKind {
             node_name: name.to_string(),
         });
     };
 
-    let ctx = BuildContext::new(agent.clone(), name);
+    let ctx = BuildContext::new(agent.clone(), name, &kind);
 
-    let built = registry.build_node(&kind, section, &ctx)?;
-    let outside_inputs = built.output.outside_inputs().to_vec();
-    let node = built.output.into_node();
+    let built = registry.build_node(section, &ctx)?;
+    let node = built.declaration;
 
     if node.name() != name {
         return Err(PipelineAssemblyError::NodeNameMismatch {
@@ -87,7 +88,7 @@ fn instantiate_node(
         });
     }
 
-    Ok((node, outside_inputs))
+    Ok((node, built.outside_inputs))
 }
 
 #[cfg(test)]
@@ -95,7 +96,7 @@ mod tests {
     use super::*;
 
     use crate::assembly::factory::FactoryOutput;
-    use crate::pipeline::node::TickContext;
+    use crate::pipeline::node::{PipelineNode, TickContext};
     use crate::port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus, PortDescriptor};
 
     use helios_core::prelude::TfProvider;
@@ -180,7 +181,7 @@ mod tests {
         instantiate(&stack, &registry(), &AgentId::new("car"))
     }
 
-    /// Unwraps the failure of [`run`]; `dyn PipelineNode` has no `Debug`, so
+    /// Unwraps the failure of [`run`]; a declared node has no `Debug`, so
     /// `unwrap_err` isn't available.
     fn run_err(stack_toml: &str) -> Vec<PipelineAssemblyError> {
         match run(stack_toml) {

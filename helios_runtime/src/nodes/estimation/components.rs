@@ -3,10 +3,13 @@
 
 use super::dynamics::DynamicsComponent;
 use super::filter::FilterParts;
-use super::measurement::{source_factory, MeasurementSource, MeasurementWiring};
+use super::measurement::{
+    reading_channel, source_factory, MeasurementSource, MeasurementWiring, ReadingChannel,
+};
 
 use crate::assembly::{
     BuildContext, BuiltComponent, ComponentError, ComponentTable, DuplicateComponentKind,
+    ParsedComponent,
 };
 
 use helios_core::estimation::measurement::MeasurementModel;
@@ -24,9 +27,9 @@ use serde::Serialize;
 /// `registry.extension_mut::<EstimatorComponents>().register_filter(…)` and its
 /// siblings.
 pub struct EstimatorComponents {
-    filters: ComponentTable<FilterParts, Box<dyn GaussianStateEstimator>>,
-    dynamics: ComponentTable<(), DynamicsComponent>,
-    measurements: ComponentTable<MeasurementWiring, Box<dyn MeasurementSource>>,
+    filters: ComponentTable<FilterParts, Box<dyn GaussianStateEstimator>, ()>,
+    dynamics: ComponentTable<(), DynamicsComponent, ()>,
+    measurements: ComponentTable<MeasurementWiring, Box<dyn MeasurementSource>, ReadingChannel>,
 }
 
 impl Default for EstimatorComponents {
@@ -42,16 +45,17 @@ impl Default for EstimatorComponents {
 impl EstimatorComponents {
     // --- Build ---
 
-    /// Builds the filter described by `section`, the sub-table at `path` in
-    /// node `ctx.node_name()`'s section, around `parts`.
-    pub(crate) fn build_filter(
+    /// Parses the filter described by `section`, the sub-table at `path` in
+    /// node `ctx.node_name()`'s section, and runs its kind's check; it is
+    /// built later, around the [`FilterParts`] the node builds.
+    pub(crate) fn parse_filter(
         &self,
         path: &str,
         section: toml::Table,
         ctx: &BuildContext<'_>,
-        parts: FilterParts,
-    ) -> Result<BuiltComponent<Box<dyn GaussianStateEstimator>>, ComponentError> {
-        self.filters.build(path, section, ctx, parts)
+    ) -> Result<ParsedComponent<FilterParts, Box<dyn GaussianStateEstimator>, ()>, ComponentError>
+    {
+        self.filters.parse(path, section, ctx)
     }
 
     /// Builds the dynamics described by `section`, the sub-table at `path` in
@@ -65,17 +69,20 @@ impl EstimatorComponents {
         self.dynamics.build(path, section, ctx, ())
     }
 
-    /// Builds the measurement source for the model described by `section`, the
-    /// sub-table at `path` in node `ctx.node_name()`'s section, reading the
-    /// channel and using the R that `wiring` names.
-    pub(crate) fn build_measurement(
+    /// Parses the measurement model described by `section`, the sub-table at
+    /// `path` in node `ctx.node_name()`'s section, and runs its kind's check.
+    /// Its kind declares the channel it reads; the source is built later, from
+    /// the [`MeasurementWiring`] naming that channel and R.
+    pub(crate) fn parse_measurement(
         &self,
         path: &str,
         section: toml::Table,
         ctx: &BuildContext<'_>,
-        wiring: MeasurementWiring,
-    ) -> Result<BuiltComponent<Box<dyn MeasurementSource>>, ComponentError> {
-        self.measurements.build(path, section, ctx, wiring)
+    ) -> Result<
+        ParsedComponent<MeasurementWiring, Box<dyn MeasurementSource>, ReadingChannel>,
+        ComponentError,
+    > {
+        self.measurements.parse(path, section, ctx)
     }
 
     // --- Registration ---
@@ -83,57 +90,76 @@ impl EstimatorComponents {
     /// Registers a filter kind under `kind`, the string a node's `filter`
     /// sub-table names in its `kind` key.
     ///
-    /// `build` takes the kind's own typed config, the node's build context and
-    /// the [`FilterParts`] the node built (the seeded state, Q and the
-    /// dynamics), and returns the filter. Parsing, rejecting unknown keys and
-    /// naming the node, sub-table and kind in errors are the table's job. `C`
-    /// must carry `#[serde(deny_unknown_fields)]`.
+    /// `check` refuses a config that is unusable on its own (a non-finite
+    /// tuning value), when the node is declared; pass [`no_check`] when
+    /// parsing is check enough. `build` takes the kind's own typed config,
+    /// which `check` accepted, the node's build context and the
+    /// [`FilterParts`] the node built (the seeded state, Q and the dynamics),
+    /// and returns the filter, refusing parts it can't run on. Parsing,
+    /// rejecting unknown keys and naming the node, sub-table and kind in
+    /// errors are the table's job. `C` must carry
+    /// `#[serde(deny_unknown_fields)]`.
     ///
     /// Fails if `kind` is already a filter kind; the first registration is
     /// kept.
-    pub fn register_filter<C, F>(
+    ///
+    /// [`no_check`]: crate::assembly::no_check
+    pub fn register_filter<C, K, F>(
         &mut self,
         kind: impl Into<String>,
+        check: K,
         build: F,
     ) -> Result<(), DuplicateComponentKind>
     where
-        C: DeserializeOwned + Serialize + 'static,
+        C: DeserializeOwned + Serialize + Send + 'static,
+        K: Fn(&C) -> Result<(), String> + Send + Sync + 'static,
         F: Fn(C, &BuildContext<'_>, FilterParts) -> Result<Box<dyn GaussianStateEstimator>, String>
             + Send
             + Sync
             + 'static,
     {
-        self.filters.register(kind, build)
+        self.filters.register(kind, check, build)
     }
 
     /// Registers a dynamics kind under `kind`, the string a node's `dynamics`
     /// sub-table names in its `kind` key.
     ///
-    /// `build` returns a [`DynamicsComponent`]: the process model, the input
-    /// builder feeding it (checked against each other when the component is
-    /// made) and how a pose prior maps into its state. `C` must carry
+    /// `check` refuses a config that is unusable on its own, as for a filter;
+    /// pass [`no_check`] when parsing is check enough. `build` returns a
+    /// [`DynamicsComponent`]: the process model, the input builder feeding it
+    /// (checked against each other when the component is made) and how a pose
+    /// prior maps into its state. `C` must carry
     /// `#[serde(deny_unknown_fields)]`.
     ///
     /// Fails if `kind` is already a dynamics kind; the first registration is
     /// kept.
-    pub fn register_dynamics<C, F>(
+    ///
+    /// [`no_check`]: crate::assembly::no_check
+    pub fn register_dynamics<C, K, F>(
         &mut self,
         kind: impl Into<String>,
+        check: K,
         build: F,
     ) -> Result<(), DuplicateComponentKind>
     where
-        C: DeserializeOwned + Serialize + 'static,
+        C: DeserializeOwned + Serialize + Send + 'static,
+        K: Fn(&C) -> Result<(), String> + Send + Sync + 'static,
         F: Fn(C, &BuildContext<'_>) -> Result<DynamicsComponent, String> + Send + Sync + 'static,
     {
-        self.dynamics
-            .register(kind, move |config: C, ctx: &BuildContext<'_>, (): ()| {
-                build(config, ctx)
-            })
+        self.dynamics.register(
+            kind,
+            check,
+            move |config: C, ctx: &BuildContext<'_>, (): ()| build(config, ctx),
+        )
     }
 
     /// Registers a measurement kind under `kind`, reading payload type `P`.
     ///
-    /// `build` takes the kind's own typed config, the node's build context and
+    /// `check` refuses a config that is unusable on its own, when the node is
+    /// declared; pass [`no_check`] when parsing is check enough. The kind
+    /// declares the channel it reads from `P`, so `check` states nothing
+    /// else. `build` takes the kind's own typed config, which `check`
+    /// accepted, the node's build context and
     /// the frame of the sensor whose readings it predicts, and returns the
     /// model. Registering the payload with the model is what lets one entry
     /// yield the model, the typed reader and the typed channel: config names
@@ -143,20 +169,30 @@ impl EstimatorComponents {
     ///
     /// Fails if `kind` is already a measurement kind; the first registration
     /// is kept.
-    pub fn register_measurement<P, C, F>(
+    ///
+    /// [`no_check`]: crate::assembly::no_check
+    pub fn register_measurement<P, C, K, F>(
         &mut self,
         kind: impl Into<String>,
+        check: K,
         build: F,
     ) -> Result<(), DuplicateComponentKind>
     where
         P: SensorPayload,
-        C: DeserializeOwned + Serialize + 'static,
+        C: DeserializeOwned + Serialize + Send + 'static,
+        K: Fn(&C) -> Result<(), String> + Send + Sync + 'static,
         F: Fn(C, &BuildContext<'_>, &FrameId) -> Result<Box<dyn MeasurementModel>, String>
             + Send
             + Sync
             + 'static,
     {
-        self.measurements
-            .register(kind, source_factory::<P, C, F>(build))
+        self.measurements.register(
+            kind,
+            move |config: &C| {
+                check(config)?;
+                Ok(reading_channel::<P>())
+            },
+            source_factory::<P, C, F>(build),
+        )
     }
 }

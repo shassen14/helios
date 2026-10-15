@@ -1,7 +1,7 @@
 //! Config-to-pipeline assembly: turns a resolved [`AutonomyStackConfig`] into a
 //! ready-to-tick [`AutonomyPipeline`].
 //!
-//! - `stages` — [`build_pipeline`], the single entry point: builds the
+//! - `stages` — [`build_pipeline`], the single entry point: declares the
 //!   `[nodes]` entries, runs the seam passes and hands the result to the
 //!   pipeline builder.
 //! - `registry` — [`AutonomyRegistry`]: the node map and the extension store
@@ -11,9 +11,10 @@
 //!   [`FactoryError`]: the interface every node-kind factory shares.
 //! - `component` — `ComponentTable`, the kind → factory table a node factory
 //!   draws one of its parts from (an estimator's filter, dynamics and
-//!   measurement models), and [`ComponentError`]. The tables themselves live
-//!   in the extension of the concept that owns them.
-//! - `instantiate` — builds every `[nodes]` entry through the factory
+//!   measurement models), parsing a part apart from building it, and
+//!   [`ComponentError`]. The tables themselves live in the extension of the
+//!   concept that owns them.
+//! - `instantiate` — declares every `[nodes]` entry through the factory
 //!   registered for its kind.
 //! - `config` — [`AutonomyStackConfig`], the stack's root config, one field per
 //!   section, and [`AgentBaseConfig`], the portable agent profile.
@@ -35,8 +36,10 @@ mod stages;
 #[cfg(test)]
 mod test_stub;
 
-pub(crate) use self::component::{BuiltComponent, ComponentTable};
-pub use self::component::{ComponentError, DuplicateComponentKind, NoParams, Site};
+pub use self::component::{no_check, ComponentError, DuplicateComponentKind, NoParams, Site};
+pub(crate) use self::component::{
+    BuiltComponent, ComponentTable, DeferredComponent, ParsedComponent,
+};
 pub use self::config::{AgentBaseConfig, AutonomyStackConfig};
 pub use self::error::PipelineAssemblyError;
 pub use self::factory::{BuildContext, BuildFailure, FactoryError, FactoryOutput};

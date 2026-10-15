@@ -124,8 +124,8 @@ mod tests {
     use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle};
     use helios_core::prelude::AgentId;
 
-    fn context(name: &str) -> BuildContext<'_> {
-        BuildContext::new(AgentId::new("test_agent"), name)
+    fn context<'a>(name: &'a str, kind: &'a str) -> BuildContext<'a> {
+        BuildContext::new(AgentId::new("test_agent"), name, kind)
     }
 
     fn output_of(output: FactoryOutput) -> Vec<ChannelKey> {
@@ -139,12 +139,18 @@ mod tests {
 
     #[test]
     fn node_name_is_the_table_key_not_the_kind() {
-        let left = build_direct_twist(DirectTwistConfig {}, &context("left_wheels"))
-            .expect("DirectTwist builds")
-            .into_node();
-        let right = build_direct_twist(DirectTwistConfig {}, &context("right_wheels"))
-            .expect("DirectTwist builds")
-            .into_node();
+        let left = build_direct_twist(
+            DirectTwistConfig {},
+            &context("left_wheels", DIRECT_TWIST_KIND),
+        )
+        .expect("DirectTwist builds")
+        .into_node();
+        let right = build_direct_twist(
+            DirectTwistConfig {},
+            &context("right_wheels", DIRECT_TWIST_KIND),
+        )
+        .expect("DirectTwist builds")
+        .into_node();
 
         assert_eq!(left.name(), "left_wheels");
         assert_eq!(right.name(), "right_wheels");
@@ -165,21 +171,33 @@ mod tests {
 
         let cases = [
             (
-                output_of(build_direct_twist(DirectTwistConfig {}, &context("twist")).unwrap()),
+                output_of(
+                    build_direct_twist(DirectTwistConfig {}, &context("twist", DIRECT_TWIST_KIND))
+                        .unwrap(),
+                ),
                 ChannelKey::from(InternalChannel::named::<BodyTwist>("twist")),
             ),
             (
-                output_of(build_longitudinal_velocity(speed, &context("speed")).unwrap()),
+                output_of(
+                    build_longitudinal_velocity(
+                        speed,
+                        &context("speed", LONGITUDINAL_VELOCITY_KIND),
+                    )
+                    .unwrap(),
+                ),
                 InternalChannel::named::<DriveForce>("speed").into(),
             ),
             (
-                output_of(build_road_load(road_load, &context("ff")).unwrap()),
+                output_of(build_road_load(road_load, &context("ff", ROAD_LOAD_KIND)).unwrap()),
                 InternalChannel::named::<DriveForce>("ff").into(),
             ),
             (
                 output_of(
-                    build_bicycle_steer(BicycleSteerConfig { wheelbase: 2.5 }, &context("steer"))
-                        .unwrap(),
+                    build_bicycle_steer(
+                        BicycleSteerConfig { wheelbase: 2.5 },
+                        &context("steer", BICYCLE_STEER_KIND),
+                    )
+                    .unwrap(),
                 ),
                 InternalChannel::named::<SteerAngle>("steer").into(),
             ),
@@ -193,8 +211,11 @@ mod tests {
     #[test]
     fn a_controller_declares_no_outside_input() {
         // Its reference and state both come from inside the graph.
-        let output = build_bicycle_steer(BicycleSteerConfig { wheelbase: 2.5 }, &context("steer"))
-            .expect("BicycleSteer builds");
+        let output = build_bicycle_steer(
+            BicycleSteerConfig { wheelbase: 2.5 },
+            &context("steer", BICYCLE_STEER_KIND),
+        )
+        .expect("BicycleSteer builds");
 
         assert!(output.outside_inputs().is_empty());
     }

@@ -6,6 +6,7 @@ use super::{CommandFoldConfig, CommandTypes};
 use crate::assembly::error::PipelineAssemblyError;
 use crate::assembly::registry::AutonomyRegistry;
 use crate::pipeline::node::PipelineNode;
+use crate::pipeline::NodeDeclaration;
 
 use std::collections::BTreeMap;
 
@@ -18,7 +19,7 @@ use std::collections::BTreeMap;
 pub(in crate::assembly) fn command_sums(
     folds: &BTreeMap<String, CommandFoldConfig>,
     registry: &AutonomyRegistry,
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
 ) -> Result<Vec<Box<dyn PipelineNode>>, Vec<PipelineAssemblyError>> {
     let mut sums = vec![];
     let mut errors = vec![];
@@ -42,7 +43,7 @@ fn command_sum(
     fold_name: &str,
     fold: &CommandFoldConfig,
     registry: &AutonomyRegistry,
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
 ) -> Result<Box<dyn PipelineNode>, Vec<PipelineAssemblyError>> {
     let types = registry.extension::<CommandTypes>();
     let Some(command_type) = types.and_then(|types| types.get(&fold.type_name)) else {
@@ -83,8 +84,8 @@ mod tests {
 
     /// A node writing a command of type `T` on a channel named after itself, as
     /// every controller does.
-    fn controller<T: 'static>(name: &str) -> Box<dyn PipelineNode> {
-        stub(name, vec![InternalChannel::named::<T>(name)])
+    fn controller<T: 'static>(name: &str) -> NodeDeclaration {
+        stub(name, vec![InternalChannel::named::<T>(name)]).into()
     }
 
     fn key<T: 'static>(name: &str) -> ChannelKey {
@@ -111,7 +112,7 @@ mod tests {
 
     /// The raycast car's control nodes: a drive feedback and feedforward leg,
     /// and a steer feedforward.
-    fn car_controllers() -> Vec<Box<dyn PipelineNode>> {
+    fn car_controllers() -> Vec<NodeDeclaration> {
         vec![
             controller::<DriveForce>("drive_speed"),
             controller::<DriveForce>("drive_ff"),
@@ -121,7 +122,7 @@ mod tests {
 
     fn build(
         folds: &BTreeMap<String, CommandFoldConfig>,
-        nodes: &[Box<dyn PipelineNode>],
+        nodes: &[NodeDeclaration],
     ) -> Result<Vec<Box<dyn PipelineNode>>, Vec<PipelineAssemblyError>> {
         command_sums(folds, &AutonomyRegistry::default(), nodes)
     }

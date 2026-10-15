@@ -1,14 +1,16 @@
 //! What a node factory receives and returns.
 //!
 //! A node kind is built by a factory: given the node's own config section and
-//! a [`BuildContext`], it returns a [`FactoryOutput`] holding the built node
-//! and the outside inputs it reads, or a [`BuildFailure`]. The assembler turns
-//! a failure into a [`FactoryError`] naming the node and kind that failed.
+//! a [`BuildContext`], it returns a [`FactoryOutput`] holding the built node,
+//! or the node's ports and how to build it once the graph is checked, and the
+//! outside inputs it reads; or a [`BuildFailure`]. The assembler turns a
+//! failure into a [`FactoryError`] naming the node and kind that failed.
 
 use super::component::ComponentError;
 use super::registry::AutonomyRegistry;
 
-use crate::port::ChannelKey;
+use crate::pipeline::{NodeConstructor, NodeDeclaration, NodePlan};
+use crate::port::{ChannelKey, PortDescriptor};
 use crate::prelude::PipelineNode;
 
 use helios_core::prelude::AgentId;
@@ -21,19 +23,24 @@ use std::{error::Error, fmt::Display};
 /// kind, or a component sub-table's component kind.
 pub(crate) const KIND_KEY: &str = "kind";
 
-/// What every factory receives besides its own config: the values that come
-/// from the agent and the host rather than from the node's section.
+/// What every factory receives besides its own config: who and what the node
+/// is, its agent, its name and its kind.
 ///
 /// Fields are private behind accessors, so a new field doesn't break the
 /// factories that don't read it.
 pub struct BuildContext<'a> {
     agent: AgentId,
     node_name: &'a str,
+    kind: &'a str,
 }
 
 impl<'a> BuildContext<'a> {
-    pub(crate) fn new(agent: AgentId, node_name: &'a str) -> Self {
-        Self { agent, node_name }
+    pub(crate) fn new(agent: AgentId, node_name: &'a str, kind: &'a str) -> Self {
+        Self {
+            agent,
+            node_name,
+            kind,
+        }
     }
 
     /// The agent this node belongs to; scopes the node's frames.
@@ -45,14 +52,20 @@ impl<'a> BuildContext<'a> {
     pub fn node_name(&self) -> &'a str {
         self.node_name
     }
+
+    /// The node's kind: the `kind` its config section names. A component
+    /// built for the node sees the node's kind here, never its own.
+    pub fn kind(&self) -> &'a str {
+        self.kind
+    }
 }
 
 /// What a factory returns on success.
 ///
-/// Fields are private behind a constructor, so adding a field doesn't break
+/// Fields are private behind constructors, so adding a field doesn't break
 /// factories written outside this crate.
 pub struct FactoryOutput {
-    node: Box<dyn PipelineNode>,
+    node: NodeDeclaration,
     outside_inputs: Vec<ChannelKey>,
     resolved_components: Vec<(Vec<String>, toml::Table)>,
 }
@@ -60,6 +73,30 @@ pub struct FactoryOutput {
 impl FactoryOutput {
     /// Wraps the built node, declaring no outside inputs.
     pub fn new(node: Box<dyn PipelineNode>) -> Self {
+        Self::with_node(node.into())
+    }
+
+    /// Declares the node `ctx` names by its ports, `descriptor`, to be built
+    /// by `constructor` once the graph is wired and ordered. The constructor
+    /// is handed the same descriptor, which the node keeps, and must name the
+    /// node `ctx.node_name()`. Its failure is reported naming the node and
+    /// kind, like a failure of the factory itself.
+    pub fn plan<E, F>(ctx: &BuildContext<'_>, descriptor: PortDescriptor, constructor: F) -> Self
+    where
+        E: Into<BuildFailure>,
+        F: FnOnce(PortDescriptor) -> Result<Box<dyn PipelineNode>, E> + Send + 'static,
+    {
+        let (node_name, kind) = (ctx.node_name().to_string(), ctx.kind().to_string());
+        let constructor: NodeConstructor = Box::new(move |descriptor| {
+            constructor(descriptor).map_err(|failure| {
+                Box::new(name_failure(failure.into(), &node_name, &kind))
+                    as Box<dyn Error + Send + Sync>
+            })
+        });
+        Self::with_node(NodePlan::new(ctx.node_name(), descriptor, constructor).into())
+    }
+
+    fn with_node(node: NodeDeclaration) -> Self {
         Self {
             node,
             outside_inputs: Vec::new(),
@@ -97,6 +134,7 @@ impl FactoryOutput {
     }
 
     /// The outside inputs this factory declared, in declaration order.
+    #[cfg(test)]
     pub(crate) fn outside_inputs(&self) -> &[ChannelKey] {
         &self.outside_inputs
     }
@@ -110,9 +148,16 @@ impl FactoryOutput {
         }
     }
 
-    /// Takes the built node out, for the assembler to add to the pipeline.
+    /// The built node. A planned node has none until the pipeline builder
+    /// builds it, so a test of a planning factory builds through that.
+    #[cfg(test)]
     pub(crate) fn into_node(self) -> Box<dyn PipelineNode> {
-        self.node
+        match self.node {
+            NodeDeclaration::Built(node) => node,
+            NodeDeclaration::Planned(_) => {
+                panic!("a planned node is built by the pipeline builder")
+            }
+        }
     }
 }
 
@@ -242,11 +287,12 @@ impl Display for FactoryError {
 
 impl Error for FactoryError {}
 
-/// What the registry gets back from an [`ErasedFactory`]: the factory's output
-/// plus the node's resolved config section, defaults filled in, for the
-/// resolved-config dump.
+/// What the registry gets back from an [`ErasedFactory`]: the node, built or
+/// planned, the outside inputs it reads, and the node's resolved config
+/// section, defaults filled in, for the resolved-config dump.
 pub(crate) struct BuiltNode {
-    pub(crate) output: FactoryOutput,
+    pub(crate) declaration: NodeDeclaration,
+    pub(crate) outside_inputs: Vec<ChannelKey>,
     pub(crate) resolved: toml::Table,
 }
 
@@ -264,8 +310,8 @@ pub(crate) type ErasedFactory = Box<
 /// Wraps a kind's typed build function into an [`ErasedFactory`].
 ///
 /// The returned closure runs [`build_erased`] on the section; `build` needs
-/// nothing from the registry. `kind` is kept only to name the kind in errors.
-pub(crate) fn erase<C, E, F>(kind: String, build: F) -> ErasedFactory
+/// nothing from the registry.
+pub(crate) fn erase<C, E, F>(build: F) -> ErasedFactory
 where
     C: DeserializeOwned + Serialize + 'static,
     E: Into<BuildFailure>,
@@ -273,7 +319,7 @@ where
 {
     Box::new(
         move |section: toml::Table, ctx: &BuildContext<'_>, _registry: &AutonomyRegistry| {
-            build_erased(&kind, section, ctx, |config| build(config, ctx))
+            build_erased(section, ctx, |config| build(config, ctx))
         },
     )
 }
@@ -286,7 +332,7 @@ where
 /// [`build_erased`], passing `build` the extension. Registering through
 /// [`AutonomyRegistry::register_node_with`] creates `T`, so the lookup only
 /// fails if that invariant is broken; it fails as a build error naming `T`.
-pub(crate) fn erase_with<T, C, E, F>(kind: String, build: F) -> ErasedFactory
+pub(crate) fn erase_with<T, C, E, F>(build: F) -> ErasedFactory
 where
     T: Any + Send + Sync,
     C: DeserializeOwned + Serialize + 'static,
@@ -298,14 +344,14 @@ where
             let Some(extension) = registry.extension::<T>() else {
                 return Err(FactoryError::BuildFailed {
                     node_name: ctx.node_name().to_string(),
-                    kind: kind.clone(),
+                    kind: ctx.kind().to_string(),
                     reason: format!(
                         "the registry holds no `{}`, which this kind declares",
                         type_name::<T>()
                     ),
                 });
             };
-            build_erased(&kind, section, ctx, |config| build(config, ctx, extension))
+            build_erased(section, ctx, |config| build(config, ctx, extension))
         },
     )
 }
@@ -315,9 +361,9 @@ where
 /// serializes the parsed config back as the resolved section, then calls
 /// `build` and splices in the resolved sub-tables of the components it built.
 /// Serializing comes before building because `build` takes the config by
-/// value. Every error names the node and `kind`.
+/// value. Every error names the node and its kind, a planned node's
+/// constructor failure included.
 fn build_erased<C, E>(
-    kind: &str,
     section: toml::Table,
     ctx: &BuildContext<'_>,
     build: impl FnOnce(C) -> Result<FactoryOutput, E>,
@@ -329,7 +375,7 @@ where
     let config: C =
         serde_path_to_error::deserialize(section).map_err(|err| FactoryError::InvalidConfig {
             node_name: ctx.node_name().to_string(),
-            kind: kind.to_string(),
+            kind: ctx.kind().to_string(),
             key: err.path().to_string(),
             message: err.inner().to_string().trim_end().to_string(),
         })?;
@@ -337,21 +383,32 @@ where
     let mut resolved =
         toml::Table::try_from(&config).map_err(|err| FactoryError::ResolveFailed {
             node_name: ctx.node_name().to_string(),
-            kind: kind.to_string(),
+            kind: ctx.kind().to_string(),
             message: err.to_string().trim_end().to_string(),
         })?;
 
-    let mut output = build(config).map_err(|err| match err.into() {
+    let mut output =
+        build(config).map_err(|err| name_failure(err.into(), ctx.node_name(), ctx.kind()))?;
+    output.splice_resolved_components(&mut resolved);
+
+    Ok(BuiltNode {
+        declaration: output.node,
+        outside_inputs: output.outside_inputs,
+        resolved,
+    })
+}
+
+/// `failure` as a [`FactoryError`] naming node `node_name` and `kind`. A
+/// component's error already names both, so it is kept as is.
+fn name_failure(failure: BuildFailure, node_name: &str, kind: &str) -> FactoryError {
+    match failure {
         BuildFailure::Reason(reason) => FactoryError::BuildFailed {
-            node_name: ctx.node_name().to_string(),
+            node_name: node_name.to_string(),
             kind: kind.to_string(),
             reason,
         },
         BuildFailure::Component(err) => FactoryError::Component(err),
-    })?;
-    output.splice_resolved_components(&mut resolved);
-
-    Ok(BuiltNode { output, resolved })
+    }
 }
 
 #[cfg(test)]
@@ -420,9 +477,9 @@ mod tests {
 
     /// Runs the erased stub factory on `section`, written as TOML.
     fn run(section: &str) -> Result<BuiltNode, FactoryError> {
-        let factory = erase(KIND.to_string(), build_stub);
+        let factory = erase(build_stub);
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
         factory(section, &ctx, &AutonomyRegistry::empty())
     }
 
@@ -540,9 +597,9 @@ mod tests {
     /// path, and tables missing along a path are added.
     #[test]
     fn resolved_components_are_spliced_into_the_section() {
-        let factory = erase(KIND.to_string(), build_with_components);
+        let factory = erase(build_with_components);
         let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
         let Ok(built) = factory(section, &ctx, &AutonomyRegistry::empty()) else {
             panic!("expected the factory to succeed");
         };
@@ -570,9 +627,9 @@ mod tests {
     /// the sub-table, so it is not wrapped in the node's own prefix.
     #[test]
     fn a_component_failure_is_reported_as_itself() {
-        let factory = erase(KIND.to_string(), build_failing_component);
+        let factory = erase(build_failing_component);
         let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
         let err = match factory(section, &ctx, &AutonomyRegistry::empty()) {
             Ok(_) => panic!("expected the factory to fail"),
             Err(err) => err,
@@ -582,6 +639,43 @@ mod tests {
         assert_eq!(
             err.to_string(),
             format!("nodes.{NODE}.filter: no `kind` string")
+        );
+    }
+
+    /// Declares a plan whose constructor rejects the config.
+    fn build_failing_plan(
+        _config: StubConfig,
+        ctx: &BuildContext<'_>,
+    ) -> Result<FactoryOutput, String> {
+        Ok(FactoryOutput::plan(
+            ctx,
+            AlgorithmNodePortDescriptor::new().build(),
+            |_| -> Result<Box<dyn PipelineNode>, String> {
+                Err(format!("output '{REJECTED_OUTPUT}' is not allowed"))
+            },
+        ))
+    }
+
+    /// A planned node is declared under its config key, and its constructor's
+    /// failure names the node and the kind, as a factory's own failure does.
+    #[test]
+    fn a_plans_construction_failure_names_node_and_kind() {
+        let factory = erase(build_failing_plan);
+        let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
+        let Ok(built) = factory(section, &ctx, &AutonomyRegistry::empty()) else {
+            panic!("expected the plan to be declared");
+        };
+        assert_eq!(built.declaration.name(), NODE);
+
+        let Err(err) = built.declaration.construct() else {
+            panic!("expected the construction to fail");
+        };
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "nodes.{NODE} (kind '{KIND}'): build failed: output '{REJECTED_OUTPUT}' is not allowed"
+            )
         );
     }
 
@@ -624,9 +718,10 @@ mod tests {
 
     #[test]
     fn context_accessors_return_what_it_was_built_with() {
-        let ctx = BuildContext::new(AgentId::new("car"), "front_deproject");
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
         assert_eq!(ctx.agent(), &AgentId::new("car"));
-        assert_eq!(ctx.node_name(), "front_deproject");
+        assert_eq!(ctx.node_name(), NODE);
+        assert_eq!(ctx.kind(), KIND);
     }
 
     /// An output declares no outside inputs until the factory adds them, and

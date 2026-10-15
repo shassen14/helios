@@ -64,6 +64,11 @@ impl DynamicsComponent {
         &*self.dynamics
     }
 
+    /// The input builder feeding the model's predict.
+    pub(crate) fn input(&self) -> &dyn EstimatorInputBuilder {
+        &*self.input
+    }
+
     /// Writes `pose` into `state` the way this dynamics' state holds a pose.
     pub(crate) fn seed_pose(
         &self,
@@ -107,7 +112,7 @@ mod tests {
     use super::integrated_imu::INTEGRATED_IMU_KIND;
     use super::*;
 
-    use crate::assembly::{AutonomyRegistry, BuildContext, ComponentError, NoParams};
+    use crate::assembly::{no_check, AutonomyRegistry, BuildContext, ComponentError, NoParams};
     use crate::port::{ChannelKey, PortBus};
     use crate::prelude::TickContext;
 
@@ -126,6 +131,8 @@ mod tests {
     use std::sync::Arc;
 
     const NODE: &str = "primary";
+    /// The kind of the node drawing the component; the table never reads it.
+    const NODE_KIND: &str = "TestEstimator";
     const DUMMY_KIND: &str = "Stationary";
 
     fn agent() -> AgentId {
@@ -247,7 +254,7 @@ mod tests {
         section: &str,
     ) -> Result<DynamicsComponent, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE);
+        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")
@@ -262,7 +269,7 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         registry
             .extension_mut::<EstimatorComponents>()
-            .register_dynamics(DUMMY_KIND, build_stationary)
+            .register_dynamics(DUMMY_KIND, no_check, build_stationary)
             .expect("not a built-in kind");
 
         let Ok(component) = build(&registry, &format!("kind = \"{DUMMY_KIND}\"")) else {
@@ -279,7 +286,7 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         let err = registry
             .extension_mut::<EstimatorComponents>()
-            .register_dynamics(INTEGRATED_IMU_KIND, build_stationary)
+            .register_dynamics(INTEGRATED_IMU_KIND, no_check, build_stationary)
             .expect_err("IntegratedImu is a built-in");
         assert_eq!(
             err.to_string(),
@@ -294,7 +301,7 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         registry
             .extension_mut::<EstimatorComponents>()
-            .register_dynamics(DUMMY_KIND, build_mismatched)
+            .register_dynamics(DUMMY_KIND, no_check, build_mismatched)
             .expect("not a built-in kind");
 
         let Err(err) = build(&registry, &format!("kind = \"{DUMMY_KIND}\"")) else {

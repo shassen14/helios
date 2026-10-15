@@ -19,7 +19,8 @@ pub mod tf_service;
 pub use crate::body::{BodyCapabilities, BodyChannel};
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{
-    AutonomyPipeline, ChannelUses, CycleEdge, PipelineBuildError, PipelineBuilder,
+    AutonomyPipeline, ChannelUses, CycleEdge, NodeConstructor, NodePlan, PipelineBuildError,
+    PipelineBuilder,
 };
 pub use crate::port::{
     ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming,
@@ -28,9 +29,9 @@ pub use crate::port::{
 pub use crate::stamped::{Health, Stamped};
 
 pub use crate::assembly::{
-    build_pipeline, ActuatorSeamConfig, AgentBaseConfig, ArbitrationPolicyConfig, AutonomyRegistry,
-    AutonomyStackConfig, BuildContext, BuildFailure, CommandFoldConfig, CommandTypes,
-    ComponentError, DuplicateCommandType, DuplicateComponentKind, DuplicateKind,
+    build_pipeline, no_check, ActuatorSeamConfig, AgentBaseConfig, ArbitrationPolicyConfig,
+    AutonomyRegistry, AutonomyStackConfig, BuildContext, BuildFailure, CommandFoldConfig,
+    CommandTypes, ComponentError, DuplicateCommandType, DuplicateComponentKind, DuplicateKind,
     EstimateSeamConfig, FactoryError, FactoryOutput, NoParams, PipelineAssemblyError,
     ReferenceSeamConfig, Site,
 };

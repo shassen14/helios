@@ -8,6 +8,7 @@ use crate::body::BodyCapabilities;
 use crate::channels::control;
 use crate::nodes::combinators::Merge;
 use crate::pipeline::node::PipelineNode;
+use crate::pipeline::NodeDeclaration;
 use crate::port::ChannelKey;
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
@@ -33,7 +34,7 @@ const SEAM: &str = "actuators";
 pub(in crate::assembly) fn actuator_merge(
     config: Option<&ActuatorSeamConfig>,
     body: &BodyCapabilities,
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
 ) -> Result<Option<Box<dyn PipelineNode>>, Vec<PipelineAssemblyError>> {
     let Some(config) = config else {
         return Ok(None);
@@ -108,7 +109,7 @@ pub(in crate::assembly) fn actuator_merge(
 fn declared_drives<'a>(
     member: &str,
     output: &ChannelKey,
-    nodes: &'a [Box<dyn PipelineNode>],
+    nodes: &'a [NodeDeclaration],
 ) -> Vec<&'a ActuatorDrive> {
     let mut unique = Vec::new();
     if let Some(node) = nodes.iter().find(|node| node.name() == member) {
@@ -158,7 +159,7 @@ mod tests {
 
     /// A node writing its partial command on a channel named after itself, as
     /// every allocator does, driving `drives` as `(actuator, kind)` pairs.
-    fn allocator(name: &str, drives: &[(&str, SetpointKind)]) -> Box<dyn PipelineNode> {
+    fn allocator(name: &str, drives: &[(&str, SetpointKind)]) -> NodeDeclaration {
         stub_driving(
             name,
             drives
@@ -166,6 +167,7 @@ mod tests {
                 .map(|(actuator, kind)| ActuatorDrive::new(ActuatorId::new(*actuator), *kind))
                 .collect(),
         )
+        .into()
     }
 
     fn partial_key(name: &str) -> ChannelKey {
@@ -200,11 +202,11 @@ mod tests {
     }
 
     /// The car's two allocators, as the proving ground wires them.
-    fn car_drive() -> Box<dyn PipelineNode> {
+    fn car_drive() -> NodeDeclaration {
         allocator("drive", &[("wheels", SetpointKind::Torque)])
     }
 
-    fn car_steer() -> Box<dyn PipelineNode> {
+    fn car_steer() -> NodeDeclaration {
         allocator("steer", &[("steer_axle", SetpointKind::Position)])
     }
 
@@ -267,7 +269,7 @@ mod tests {
     fn unknown_duplicate_and_wrong_type_members_are_rejected() {
         let nodes = vec![
             car_drive(),
-            stub("speed", vec![InternalChannel::named::<DriveForce>("speed")]),
+            stub("speed", vec![InternalChannel::named::<DriveForce>("speed")]).into(),
         ];
 
         let errors = errors_of(actuator_merge(
@@ -298,7 +300,8 @@ mod tests {
             stub(
                 "direct",
                 vec![InternalChannel::named::<ActuatorCommand>("direct")],
-            ),
+            )
+            .into(),
         ];
 
         let errors = errors_of(actuator_merge(

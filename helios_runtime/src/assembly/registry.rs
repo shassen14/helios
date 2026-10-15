@@ -38,7 +38,7 @@
 //! registry.extension_mut::<CommandTypes>().register::<Thrust>("Thrust")?;
 //! registry
 //!     .extension_mut::<EstimatorComponents>()
-//!     .register_filter("IteratedEkf", build_iterated_ekf)?;
+//!     .register_filter("IteratedEkf", no_check, build_iterated_ekf)?;
 //! ```
 
 use super::error::PipelineAssemblyError;
@@ -125,7 +125,7 @@ impl AutonomyRegistry {
             return Err(DuplicateKind { kind });
         }
 
-        self.nodes.insert(kind.clone(), erase(kind, build));
+        self.nodes.insert(kind, erase(build));
 
         Ok(())
     }
@@ -157,8 +157,7 @@ impl AutonomyRegistry {
         }
 
         self.extension_mut::<T>();
-        self.nodes
-            .insert(kind.clone(), erase_with::<T, _, _, _>(kind, build));
+        self.nodes.insert(kind, erase_with::<T, _, _, _>(build));
 
         Ok(())
     }
@@ -199,22 +198,21 @@ impl AutonomyRegistry {
     // --- Build ---
 
     /// Builds the node `ctx.node_name()` with the factory registered for
-    /// `kind`, from its config `section` with the common keys removed.
+    /// `ctx.kind()`, from its config `section` with the common keys removed.
     ///
     /// Fails with [`PipelineAssemblyError::UnknownNodeKind`], listing every
-    /// registered kind, if no factory is registered for `kind`, or with
+    /// registered kind, if no factory is registered for that kind, or with
     /// [`PipelineAssemblyError::Factory`] if the factory rejects the section
     /// or fails to build.
     pub(crate) fn build_node(
         &self,
-        kind: &str,
         section: toml::Table,
         ctx: &BuildContext<'_>,
     ) -> Result<BuiltNode, PipelineAssemblyError> {
-        let Some(factory) = self.nodes.get(kind) else {
+        let Some(factory) = self.nodes.get(ctx.kind()) else {
             return Err(PipelineAssemblyError::UnknownNodeKind {
                 node_name: ctx.node_name().to_string(),
-                kind: kind.to_string(),
+                kind: ctx.kind().to_string(),
                 registered: self.nodes.keys().cloned().collect(),
             });
         };
@@ -291,8 +289,8 @@ mod tests {
         section: &str,
     ) -> Result<BuiltNode, PipelineAssemblyError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE);
-        registry.build_node(kind, section, &ctx)
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, kind);
+        registry.build_node(section, &ctx)
     }
 
     /// Unwraps the failure of [`build`]; `BuiltNode` has no `Debug`, so

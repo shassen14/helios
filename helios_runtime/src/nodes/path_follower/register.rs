@@ -105,18 +105,24 @@ mod tests {
             .expect("a valid steering-PID section")
     }
 
-    fn context(name: &str) -> BuildContext<'_> {
-        BuildContext::new(AgentId::new("test_agent"), name)
+    fn context<'a>(name: &'a str, kind: &'a str) -> BuildContext<'a> {
+        BuildContext::new(AgentId::new("test_agent"), name, kind)
     }
 
     #[test]
     fn node_name_is_the_table_key_not_the_kind() {
-        let fast = build_pure_pursuit(pure_pursuit("local_path"), &context("fast"))
-            .expect("pure pursuit builds")
-            .into_node();
-        let careful = build_steering_pid(steering_pid("local_path"), &context("careful"))
-            .expect("steering PID builds")
-            .into_node();
+        let fast = build_pure_pursuit(
+            pure_pursuit("local_path"),
+            &context("fast", PURE_PURSUIT_KIND),
+        )
+        .expect("pure pursuit builds")
+        .into_node();
+        let careful = build_steering_pid(
+            steering_pid("local_path"),
+            &context("careful", STEERING_PID_KIND),
+        )
+        .expect("steering PID builds")
+        .into_node();
 
         assert_eq!(fast.name(), "fast");
         assert_eq!(careful.name(), "careful");
@@ -124,9 +130,12 @@ mod tests {
 
     #[test]
     fn reads_the_named_path_and_writes_a_reference_named_after_the_node() {
-        let node = build_pure_pursuit(pure_pursuit("global_path"), &context("pp"))
-            .expect("pure pursuit builds")
-            .into_node();
+        let node = build_pure_pursuit(
+            pure_pursuit("global_path"),
+            &context("pp", PURE_PURSUIT_KIND),
+        )
+        .expect("pure pursuit builds")
+        .into_node();
         let descriptor = node.port_descriptor();
 
         let path: ChannelKey = InternalChannel::named::<Path>("global_path").into();
@@ -142,8 +151,11 @@ mod tests {
     fn a_follower_declares_no_outside_input() {
         // Its path comes from a planner and its state from the estimator, both
         // inside the graph.
-        let output = build_steering_pid(steering_pid("local_path"), &context("pid"))
-            .expect("steering PID builds");
+        let output = build_steering_pid(
+            steering_pid("local_path"),
+            &context("pid", STEERING_PID_KIND),
+        )
+        .expect("steering PID builds");
 
         assert!(output.outside_inputs().is_empty());
     }

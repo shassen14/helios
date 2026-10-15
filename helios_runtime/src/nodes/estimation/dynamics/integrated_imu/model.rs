@@ -100,7 +100,7 @@ impl EstimatorInputBuilder for IntegratedImuInputBuilder {
 
 pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponents) {
     components
-        .register_dynamics(INTEGRATED_IMU_KIND, build)
+        .register_dynamics(INTEGRATED_IMU_KIND, IntegratedImuConfig::check, build)
         .expect("IntegratedImu is registered once, by the default components");
 }
 
@@ -140,6 +140,8 @@ mod tests {
     use crate::assembly::{AutonomyRegistry, ComponentError};
 
     const NODE: &str = "primary";
+    /// The kind of the node drawing the component; the table never reads it.
+    const NODE_KIND: &str = "TestEstimator";
 
     const SECTION: &str = r#"
         kind = "IntegratedImu"
@@ -160,7 +162,7 @@ mod tests {
     fn build_section(section: &str) -> Result<Built, ComponentError> {
         let registry = AutonomyRegistry::default();
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, NODE_KIND);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")
@@ -226,6 +228,46 @@ mod tests {
             .clone();
         assert_eq!(p0[(0, 0)], 9.0, "position variance");
         assert!((p0[(6, 6)] - 10.0_f64.to_radians().powi(2)).abs() < 1e-15);
+    }
+
+    /// A zero std dev would make Q or P₀ singular, and a non-finite one
+    /// would poison the state; each is refused naming its key, never reaching
+    /// the model.
+    #[test]
+    fn an_unusable_std_dev_is_refused_naming_its_key() {
+        for value in ["0.0", "-0.1", "nan", "inf"] {
+            for (key, section) in [
+                (
+                    "accel_noise_stddev",
+                    SECTION.replace(
+                        "accel_noise_stddev = 0.1",
+                        &format!("accel_noise_stddev = {value}"),
+                    ),
+                ),
+                (
+                    "initial_uncertainty.velocity_mps",
+                    format!("{SECTION}\n[initial_uncertainty]\nvelocity_mps = {value}"),
+                ),
+            ] {
+                let Err(err) = build_section(&section) else {
+                    panic!("{key} = {value} must not build");
+                };
+                assert!(matches!(err, ComponentError::BuildFailed { .. }), "{err}");
+                assert!(
+                    err.to_string().contains(&format!("{key} must be finite")),
+                    "{err}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_non_finite_gravity_is_refused() {
+        let section = format!("{SECTION}\ngravity_enu = [0.0, nan, -9.81]");
+        let Err(err) = build_section(&section) else {
+            panic!("a non-finite gravity must not build");
+        };
+        assert!(err.to_string().contains("gravity_enu"), "{err}");
     }
 
     #[test]

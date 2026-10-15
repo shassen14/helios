@@ -7,13 +7,16 @@ use crate::{
     port::{ChannelKey, ChannelKind, InputNeed, Writer},
 };
 
+use std::error::Error;
+
 /// Errors produced by [`PipelineBuilder::build`](super::PipelineBuilder::build).
 ///
 /// `build` returns every error found in a stage as a `Vec` rather than
 /// stopping at the first. Wiring errors are reported before ordering runs,
 /// so a pipeline with both reports the wiring errors first. A node's own
 /// config is checked earlier, by its kind's factory; this type checks DAG
-/// structure.
+/// structure, and carries the failures of nodes built by plan once the
+/// structure is sound.
 #[derive(Debug)]
 pub enum PipelineBuildError {
     /// A set of nodes wait on each other's outputs in the same tick, so no
@@ -124,10 +127,23 @@ pub enum PipelineBuildError {
     /// the build, not a mistake in the pipeline's configuration. `nodes`
     /// names the nodes left, in no particular order.
     StuckWithoutCycle { nodes: Vec<String> },
+    /// A planned node failed to build once wiring and ordering passed.
+    /// `error` is the constructor's own and is displayed alone, so it names
+    /// the node: a factory's error names the node's config entry.
+    ConstructionFailed {
+        node_name: String,
+        error: Box<dyn Error + Send + Sync>,
+    },
+    /// A planned node was built under a name other than its plan's. The plan's
+    /// name is the one wiring checked, so the node is refused.
+    ConstructedNodeMisnamed {
+        node_name: String,
+        built_name: String,
+    },
 }
 
 // default source() returns None which is okay
-impl std::error::Error for PipelineBuildError {}
+impl Error for PipelineBuildError {}
 
 impl std::fmt::Display for PipelineBuildError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -279,6 +295,17 @@ impl std::fmt::Display for PipelineBuildError {
                     "internal error: ordering stopped with nodes left but found no cycle \
                      among them: [{}]",
                     nodes.join(", ")
+                )
+            }
+            PipelineBuildError::ConstructionFailed { error, .. } => write!(f, "{error}"),
+            PipelineBuildError::ConstructedNodeMisnamed {
+                node_name,
+                built_name,
+            } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" was planned under that name but built as \
+                     \"{built_name}\"; a node keeps the name its plan declared"
                 )
             }
         }

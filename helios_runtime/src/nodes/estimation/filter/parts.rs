@@ -53,10 +53,10 @@ impl FilterParts {
 
 pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponents) {
     components
-        .register_filter(EKF_FILTER_KIND, build_ekf)
+        .register_filter(EKF_FILTER_KIND, EkfConfig::check, build_ekf)
         .expect("Ekf is registered once, by the default components");
     components
-        .register_filter(UKF_FILTER_KIND, build_ukf)
+        .register_filter(UKF_FILTER_KIND, UkfConfig::check, build_ukf)
         .expect("Ukf is registered once, by the default components");
 }
 
@@ -65,14 +65,15 @@ fn build_ekf(
     _ctx: &BuildContext<'_>,
     parts: FilterParts,
 ) -> Result<Box<dyn GaussianStateEstimator>, String> {
-    let conditioning = params.conditioning()?;
+    let conditioning = params.conditioning();
     Ok(Box::new(
         ExtendedKalmanFilter::new(parts.initial_state, parts.process_noise, parts.dynamics)
             .with_conditioning(conditioning),
     ))
 }
 
-/// Builds a UKF, refusing a state with a curved block.
+/// Builds a UKF, refusing a state with a curved block or one too small for
+/// its `kappa`.
 ///
 /// The UKF's predicted mean is a plain weighted sum of the sigma points. That
 /// is the mean only on a flat block; on a rotation it leaves the manifold
@@ -104,7 +105,7 @@ fn build_ukf(
 mod tests {
     use super::*;
 
-    use crate::assembly::{AutonomyRegistry, ComponentError};
+    use crate::assembly::{no_check, AutonomyRegistry, ComponentError};
     use crate::nodes::estimation::flat_position::FlatPosition;
 
     use helios_core::estimation::dynamics::integrated_imu::{
@@ -117,6 +118,8 @@ mod tests {
     use serde::{Deserialize, Serialize};
 
     const NODE: &str = "primary";
+    /// The kind of the node drawing the component; the table never reads it.
+    const NODE_KIND: &str = "TestEstimator";
     const DUMMY_KIND: &str = "FrozenEkf";
     const DT: f64 = 0.02;
 
@@ -173,12 +176,24 @@ mod tests {
         parts: FilterParts,
     ) -> Result<Box<dyn GaussianStateEstimator>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE);
+        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")
-            .build_filter("filter", section, &ctx, parts)
-            .map(|built| built.component)
+            .parse_filter("filter", section, &ctx)
+            .and_then(|parsed| parsed.deferred.build(&ctx, parts))
+    }
+
+    /// Parses and checks the filter `section` without building it, as the
+    /// node does at declaration.
+    fn declare(registry: &AutonomyRegistry, section: &str) -> Result<(), ComponentError> {
+        let section: toml::Table = toml::from_str(section).expect("test TOML parses");
+        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
+        registry
+            .extension::<EstimatorComponents>()
+            .expect("the default registry has estimator components")
+            .parse_filter("filter", section, &ctx)
+            .map(|_| ())
     }
 
     /// A UKF section with the usual Gaussian spread.
@@ -223,14 +238,16 @@ mod tests {
         assert!(build(&registry, section).is_ok());
     }
 
+    /// A conditioning value is checked on its own, so it is refused at
+    /// declaration, before any part is built.
     #[test]
-    fn a_non_positive_or_non_finite_conditioning_value_is_rejected() {
+    fn a_non_positive_or_non_finite_conditioning_value_is_rejected_at_declaration() {
         let registry = AutonomyRegistry::default();
         for value in ["0.0", "-1e-9", "nan", "inf"] {
             for key in ["covariance_floor", "covariance_jitter"] {
                 let section = format!("kind = \"Ekf\"\n{key} = {value}");
-                let Err(err) = build(&registry, &section) else {
-                    panic!("{key} = {value} must not build");
+                let Err(err) = declare(&registry, &section) else {
+                    panic!("{key} = {value} must not be declared");
                 };
                 assert!(matches!(err, ComponentError::BuildFailed { .. }), "{err}");
             }
@@ -288,26 +305,41 @@ mod tests {
         }
     }
 
+    /// A spread unusable on any state is refused at declaration.
     #[test]
-    fn an_unusable_ukf_spread_is_rejected() {
+    fn an_unusable_ukf_spread_is_rejected_at_declaration() {
         let registry = AutonomyRegistry::default();
-        // The flat state has 3 degrees of freedom, so kappa must exceed -3.
         for (alpha, beta, kappa) in [
             ("0.0", "2.0", "0.0"),
             ("-1e-3", "2.0", "0.0"),
             ("nan", "2.0", "0.0"),
             ("1e-3", "inf", "0.0"),
             ("1e-3", "2.0", "nan"),
-            ("1e-3", "2.0", "-3.0"),
         ] {
             let section = format!(
                 "kind = \"{UKF_FILTER_KIND}\"\nalpha = {alpha}\nbeta = {beta}\nkappa = {kappa}"
             );
-            let Err(err) = build_on(&registry, &section, flat_parts()) else {
-                panic!("alpha = {alpha}, beta = {beta}, kappa = {kappa} must not build");
+            let Err(err) = declare(&registry, &section) else {
+                panic!("alpha = {alpha}, beta = {beta}, kappa = {kappa} must not be declared");
             };
             assert!(matches!(err, ComponentError::BuildFailed { .. }), "{err}");
         }
+    }
+
+    /// `n + kappa` must be positive for the state's `n` degrees of freedom,
+    /// so a `kappa` too negative for the state passes declaration and is
+    /// refused when the filter is built on that state.
+    #[test]
+    fn a_kappa_too_negative_for_the_state_is_rejected_at_build() {
+        let registry = AutonomyRegistry::default();
+        // The flat state has 3 degrees of freedom, so kappa must exceed -3.
+        let section =
+            format!("kind = \"{UKF_FILTER_KIND}\"\nalpha = 1e-3\nbeta = 2.0\nkappa = -3.0");
+        assert!(declare(&registry, &section).is_ok());
+        let Err(err) = build_on(&registry, &section, flat_parts()) else {
+            panic!("kappa = -3 must not build on a 3-dof state");
+        };
+        assert!(matches!(err, ComponentError::BuildFailed { .. }), "{err}");
     }
 
     /// A dummy filter kind with its own strictly-parsed parameter, registered
@@ -335,7 +367,7 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         registry
             .extension_mut::<EstimatorComponents>()
-            .register_filter(DUMMY_KIND, build_frozen)
+            .register_filter(DUMMY_KIND, no_check, build_frozen)
             .expect("not a built-in kind");
 
         assert!(build(
@@ -357,7 +389,7 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         let err = registry
             .extension_mut::<EstimatorComponents>()
-            .register_filter(EKF_FILTER_KIND, build_frozen)
+            .register_filter(EKF_FILTER_KIND, no_check, build_frozen)
             .expect_err("Ekf is a built-in");
         assert_eq!(err.to_string(), "filter kind 'Ekf' is already registered");
     }

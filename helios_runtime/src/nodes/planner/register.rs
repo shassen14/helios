@@ -76,7 +76,7 @@ mod tests {
             map_channel: "local".to_string(),
             goal_channel: goal_channel.to_string(),
         };
-        let ctx = BuildContext::new(AgentId::new("test_agent"), name);
+        let ctx = BuildContext::new(AgentId::new("test_agent"), name, ASTAR_KIND);
         build_astar(config, &ctx).expect("a valid section builds")
     }
 

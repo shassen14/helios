@@ -69,7 +69,7 @@ mod tests {
             height_m: 10.0,
             pose_source: Default::default(),
         };
-        let ctx = BuildContext::new(AgentId::new("test_agent"), name);
+        let ctx = BuildContext::new(AgentId::new("test_agent"), name, OCCUPANCY_GRID_2D_KIND);
         build_occupancy_grid_2d(config, &ctx)
             .expect("a valid section builds")
             .into_node()

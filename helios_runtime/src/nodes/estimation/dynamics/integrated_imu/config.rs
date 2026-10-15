@@ -17,6 +17,9 @@ pub(crate) const DEFAULT_ACCEL_BIAS_UNCERTAINTY_MPS2: f64 = 0.1;
 /// Default prior std dev on gyro bias (rad/s).
 pub(crate) const DEFAULT_GYRO_BIAS_UNCERTAINTY_RADPS: f64 = 0.01;
 
+/// The key of the prior's sub-table, named in its errors.
+const INITIAL_UNCERTAINTY_KEY: &str = "initial_uncertainty";
+
 /// The `[dynamics]` sub-table of the `IntegratedImu` kind.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +42,44 @@ pub(super) struct IntegratedImuConfig {
     pub(super) accel_channel: String,
     /// Channel the predict step reads `Vec<SensorReading<AngularRate>>` from.
     pub(super) gyro_channel: String,
+}
+
+impl IntegratedImuConfig {
+    /// Why a value is unusable, if one is. Every std dev must be finite and
+    /// positive: a zero one gives a singular Q or P₀, so the block it sets is
+    /// never moved or never corrected. Gravity must be finite.
+    pub(super) fn check(&self) -> Result<(), String> {
+        if let Some(axis) = self.gravity_enu.iter().find(|axis| !axis.is_finite()) {
+            return Err(format!("gravity_enu must be finite, got {axis}"));
+        }
+        for (key, value) in [
+            ("accel_noise_stddev", self.accel_noise_stddev),
+            ("gyro_noise_stddev", self.gyro_noise_stddev),
+            ("accel_bias_instability", self.accel_bias_instability),
+            ("gyro_bias_instability", self.gyro_bias_instability),
+        ] {
+            check_std_dev(key, value)?;
+        }
+        let prior = &self.initial_uncertainty;
+        for (key, value) in [
+            ("position_m", prior.position_m),
+            ("velocity_mps", prior.velocity_mps),
+            ("orientation_deg", prior.orientation_deg),
+            ("accel_bias_mps2", prior.accel_bias_mps2),
+            ("gyro_bias_radps", prior.gyro_bias_radps),
+        ] {
+            check_std_dev(&format!("{INITIAL_UNCERTAINTY_KEY}.{key}"), value)?;
+        }
+        Ok(())
+    }
+}
+
+/// Fails unless std dev `value`, at `key`, is finite and positive.
+fn check_std_dev(key: &str, value: f64) -> Result<(), String> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(format!("{key} must be finite and positive, got {value}"));
+    }
+    Ok(())
 }
 
 /// Prior std dev on each INS block: the state's P₀, which the model bakes

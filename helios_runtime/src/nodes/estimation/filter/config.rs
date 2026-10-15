@@ -24,8 +24,8 @@ pub(crate) struct EkfConfig {
 }
 
 impl EkfConfig {
-    /// The conditioning these keys ask for, or why a value is unusable.
-    pub(super) fn conditioning(&self) -> Result<CovarianceConditioning, String> {
+    /// Why a value is unusable, if one is.
+    pub(super) fn check(&self) -> Result<(), String> {
         for (key, value) in [
             ("covariance_floor", self.covariance_floor),
             ("covariance_jitter", self.covariance_jitter),
@@ -36,10 +36,16 @@ impl EkfConfig {
                 }
             }
         }
-        Ok(CovarianceConditioning {
+        Ok(())
+    }
+
+    /// The conditioning these keys ask for. The values are usable once
+    /// [`check`](Self::check) accepted them.
+    pub(super) fn conditioning(&self) -> CovarianceConditioning {
+        CovarianceConditioning {
             floor: self.covariance_floor,
             jitter: self.covariance_jitter,
-        })
+        }
     }
 }
 
@@ -60,9 +66,8 @@ pub(crate) struct UkfConfig {
 }
 
 impl UkfConfig {
-    /// The core parameters for a state with `dof` degrees of freedom, or why
-    /// a value is unusable.
-    pub(super) fn for_dof(&self, dof: usize) -> Result<ukf::UkfParams, String> {
+    /// Why a value is unusable on any state, if one is.
+    pub(super) fn check(&self) -> Result<(), String> {
         if !self.alpha.is_finite() || self.alpha <= 0.0 {
             return Err(format!(
                 "alpha must be finite and positive, got {}",
@@ -74,6 +79,13 @@ impl UkfConfig {
                 return Err(format!("{key} must be finite, got {value}"));
             }
         }
+        Ok(())
+    }
+
+    /// The core parameters for a state with `dof` degrees of freedom, or why
+    /// `kappa` gives its sigma points no spread. The values are otherwise
+    /// usable once [`check`](Self::check) accepted them.
+    pub(super) fn for_dof(&self, dof: usize) -> Result<ukf::UkfParams, String> {
         if dof as f64 + self.kappa <= 0.0 {
             return Err(format!(
                 "kappa must exceed -{dof}, the state's degrees of freedom, got {}",

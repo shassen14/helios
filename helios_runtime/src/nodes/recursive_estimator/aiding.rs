@@ -8,7 +8,7 @@ use super::throttle::passes_warn_throttle;
 
 use crate::nodes::estimation::{Measurement, MeasurementSource};
 use crate::pipeline::node::TickContext;
-use crate::port::{AlgorithmNodePortDescriptor, PortBus};
+use crate::port::{AlgorithmNodePortDescriptor, ChannelKey, PortBus};
 use crate::stamped::Health;
 
 use helios_core::estimation::measurement::Unavailable;
@@ -50,21 +50,6 @@ impl Aiding {
     pub(crate) fn with_nis_window(mut self, window: NisWindow) -> Self {
         self.nis = Some(Mutex::new(window));
         self
-    }
-
-    /// `builder` with this source's channel as an optional input, since the
-    /// filter still predicts and publishes without it, and its leaves.
-    pub(super) fn declare(
-        &self,
-        mut builder: AlgorithmNodePortDescriptor,
-    ) -> AlgorithmNodePortDescriptor {
-        // The source holds only an erased key, so it goes through the slice
-        // path, which asserts the key is a sensor or internal channel.
-        builder = builder.inputs_from_slices(&[], &[self.source.channel().clone()]);
-        for (leaf, path) in self.leaves.iter() {
-            builder = builder.observable(path.clone(), leaf.determinism());
-        }
-        builder
     }
 
     /// `Degraded` while the NIS window is full and its mean is out of band;
@@ -142,6 +127,23 @@ impl Aiding {
             tick.emit(path, at, value);
         }
     }
+}
+
+/// `builder` with the channel aiding entry `entry` reads as an optional input,
+/// since the filter still predicts and publishes without it, and the entry's
+/// leaves, named as [`Aiding`] reports them.
+pub(super) fn aiding_ports(
+    mut builder: AlgorithmNodePortDescriptor,
+    entry: &str,
+    channel: &ChannelKey,
+) -> AlgorithmNodePortDescriptor {
+    // The channel is an erased key, so it goes through the slice path, which
+    // asserts the key is a sensor or internal channel.
+    builder = builder.inputs_from_slices(&[], std::slice::from_ref(channel));
+    for (leaf, path) in AidingLeaves::new(entry).iter() {
+        builder = builder.observable(path.clone(), leaf.determinism());
+    }
+    builder
 }
 
 /// The cause of a *loud* aiding drop, or `None` for an applied update or an

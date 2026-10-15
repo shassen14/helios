@@ -6,6 +6,7 @@ use super::config::EstimateSeamConfig;
 use crate::assembly::error::PipelineAssemblyError;
 use crate::nodes::estimate_relay::EstimateRelay;
 use crate::pipeline::node::PipelineNode;
+use crate::pipeline::NodeDeclaration;
 
 use helios_core::prelude::AgentId;
 use helios_core::spatial::FrameAwareState;
@@ -24,7 +25,7 @@ const SEAM: &str = "estimate";
 /// Fails if the source is unknown or lacks exactly one state output.
 pub(in crate::assembly) fn estimate_relay(
     config: Option<&EstimateSeamConfig>,
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
     agent: &AgentId,
 ) -> Result<Option<Box<dyn PipelineNode>>, Vec<PipelineAssemblyError>> {
     let Some(config) = config else {
@@ -64,10 +65,10 @@ mod tests {
         }
     }
 
-    fn estimators() -> Vec<Box<dyn PipelineNode>> {
+    fn estimators() -> Vec<NodeDeclaration> {
         vec![
-            stub("primary", vec![estimator_output("primary")]),
-            stub("shadow", vec![estimator_output("shadow")]),
+            stub("primary", vec![estimator_output("primary")]).into(),
+            stub("shadow", vec![estimator_output("shadow")]).into(),
         ]
     }
 
@@ -110,7 +111,7 @@ mod tests {
 
     #[test]
     fn a_source_without_a_state_output_is_refused() {
-        let nodes = vec![stub("primary", vec![])];
+        let nodes = vec![stub("primary", vec![]).into()];
         let errors = estimate_relay(Some(&section("primary")), &nodes, &agent())
             .err()
             .expect("a source writing no state fails");

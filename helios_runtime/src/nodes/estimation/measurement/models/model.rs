@@ -2,7 +2,7 @@
 
 use super::config::{AccelerometerConfig, MagnetometerConfig};
 
-use crate::assembly::{BuildContext, NoParams};
+use crate::assembly::{no_check, BuildContext, NoParams};
 use crate::nodes::estimation::EstimatorComponents;
 
 use helios_core::estimation::measurement::{
@@ -28,16 +28,28 @@ pub(crate) const MAGNETOMETER_KIND: &str = "magnetometer";
 pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponents) {
     const ONCE: &str = "built-in measurement kinds are registered once, by the default components";
     components
-        .register_measurement::<GpsPosition, _, _>(GPS_POSITION_KIND, build_gps_position)
+        .register_measurement::<GpsPosition, _, _, _>(
+            GPS_POSITION_KIND,
+            no_check,
+            build_gps_position,
+        )
         .expect(ONCE);
     components
-        .register_measurement::<Acceleration, _, _>(ACCELEROMETER_KIND, build_accelerometer)
+        .register_measurement::<Acceleration, _, _, _>(
+            ACCELEROMETER_KIND,
+            no_check,
+            build_accelerometer,
+        )
         .expect(ONCE);
     components
-        .register_measurement::<AngularRate, _, _>(GYROSCOPE_KIND, build_gyroscope)
+        .register_measurement::<AngularRate, _, _, _>(GYROSCOPE_KIND, no_check, build_gyroscope)
         .expect(ONCE);
     components
-        .register_measurement::<MagneticField, _, _>(MAGNETOMETER_KIND, build_magnetometer)
+        .register_measurement::<MagneticField, _, _, _>(
+            MAGNETOMETER_KIND,
+            no_check,
+            build_magnetometer,
+        )
         .expect(ONCE);
 }
 
@@ -102,12 +114,14 @@ mod tests {
     use nalgebra::DMatrix;
 
     const NODE: &str = "primary";
+    /// The kind of the node drawing the component; the table never reads it.
+    const NODE_KIND: &str = "TestEstimator";
     const INPUT: &str = "sensor";
 
     fn build(section: &str) -> Result<Box<dyn MeasurementSource>, ComponentError> {
         let registry = AutonomyRegistry::default();
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE, NODE_KIND);
         let wiring = MeasurementWiring {
             input: INPUT.to_string(),
             noise: DMatrix::identity(3, 3),
@@ -115,8 +129,8 @@ mod tests {
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")
-            .build_measurement("aiding.sensor.model", section, &ctx, wiring)
-            .map(|built| built.component)
+            .parse_measurement("aiding.sensor.model", section, &ctx)
+            .and_then(|parsed| parsed.deferred.build(&ctx, wiring))
     }
 
     fn reads<P: SensorPayload>(source: &dyn MeasurementSource) -> bool {

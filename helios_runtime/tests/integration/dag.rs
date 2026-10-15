@@ -4,7 +4,7 @@
 #![allow(dead_code)]
 
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
 };
 
@@ -13,7 +13,7 @@ use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
     channels::tf::tf_edge,
-    pipeline::{ChannelUses, CycleEdge, PipelineBuildError, PipelineBuilder},
+    pipeline::{ChannelUses, CycleEdge, NodePlan, PipelineBuildError, PipelineBuilder},
     port::{
         AlgorithmNodePortDescriptor, ChannelKey, InputNeed, InternalChannel,
         MockNodePortDescriptor, OracleChannel, PortBus, PortDescriptor, SensorChannel,
@@ -1423,4 +1423,184 @@ fn tf_edge_channels_is_empty_without_an_edge_producer() {
         .expect("single plain producer builds");
 
     assert!(pipeline.tf_edge_channels().is_empty());
+}
+
+// =========================================================================
+// == Planned nodes ==
+// =========================================================================
+
+/// A plan for a [`ProducerNode`]. The node keeps the descriptor it is handed.
+fn producer_plan(name: &str, output: ChannelKey, value: u32) -> NodePlan {
+    let descriptor = ProducerNode::new(name, output.clone(), value).descriptor;
+    let name = name.to_string();
+    NodePlan::new(
+        name.clone(),
+        descriptor,
+        Box::new(move |descriptor| {
+            let mut node = ProducerNode::new(&name, output, value);
+            node.descriptor = descriptor;
+            Ok(Box::new(node) as Box<dyn PipelineNode>)
+        }),
+    )
+}
+
+/// A plan for a [`TransformNode`]. The node keeps the descriptor it is
+/// handed.
+fn transform_plan(
+    name: &str,
+    input: ChannelKey,
+    output: ChannelKey,
+    transform: fn(u32) -> u32,
+) -> NodePlan {
+    let descriptor = TransformNode::new(name, input.clone(), output.clone(), transform).descriptor;
+    let name = name.to_string();
+    NodePlan::new(
+        name.clone(),
+        descriptor,
+        Box::new(move |descriptor| {
+            let mut node = TransformNode::new(&name, input, output, transform);
+            node.descriptor = descriptor;
+            Ok(Box::new(node) as Box<dyn PipelineNode>)
+        }),
+    )
+}
+
+/// A plan for a node named `name` writing `output`, whose constructor fails
+/// with `reason` and records that it ran.
+fn failing_plan(
+    name: &str,
+    output: ChannelKey,
+    reason: &'static str,
+    ran: Arc<AtomicBool>,
+) -> NodePlan {
+    let descriptor = ProducerNode::new(name, output, 0).descriptor;
+    NodePlan::new(
+        name,
+        descriptor,
+        Box::new(move |_| {
+            ran.store(true, Ordering::Relaxed);
+            Err(reason.into())
+        }),
+    )
+}
+
+/// Plans are wired and ordered on their declared ports like built nodes, then
+/// built and run in that order.
+#[test]
+fn plans_are_ordered_on_their_declared_ports_then_built() {
+    let a = ikey_named::<u32>("a");
+    let b = ikey_named::<u32>("b");
+
+    let pipeline = PipelineBuilder::new()
+        .add_plan(transform_plan("b", a.clone(), b.clone(), |v| v * 3))
+        .add_plan(producer_plan("a", a, 5))
+        .build()
+        .expect("build should succeed");
+
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
+
+    let result = pipeline
+        .bus()
+        .read::<u32>(b)
+        .expect("b output should exist");
+    assert_eq!(result.value, 15);
+}
+
+/// Every failed construction is reported, each with its constructor's own
+/// message.
+#[test]
+fn every_failed_construction_is_reported() {
+    let ran = Arc::new(AtomicBool::new(false));
+    let errors = match PipelineBuilder::new()
+        .add_plan(failing_plan(
+            "a",
+            ikey_named::<u32>("a"),
+            "no a",
+            Arc::clone(&ran),
+        ))
+        .add_plan(failing_plan(
+            "b",
+            ikey_named::<u32>("b"),
+            "no b",
+            Arc::clone(&ran),
+        ))
+        .build()
+    {
+        Ok(_) => panic!("expected both constructions to fail"),
+        Err(errors) => errors,
+    };
+
+    let failed: Vec<(&str, String)> = errors
+        .iter()
+        .map(|error| match error {
+            PipelineBuildError::ConstructionFailed { node_name, .. } => {
+                (node_name.as_str(), error.to_string())
+            }
+            other => panic!("expected ConstructionFailed, got {other}"),
+        })
+        .collect();
+    assert_eq!(
+        failed,
+        [("a", "no a".to_string()), ("b", "no b".to_string())]
+    );
+}
+
+/// A plan is built only once wiring passes, so a constructor never runs on a
+/// graph that is refused.
+#[test]
+fn a_plan_is_not_built_when_wiring_fails() {
+    let ran = Arc::new(AtomicBool::new(false));
+    let result = PipelineBuilder::new()
+        .add_plan(failing_plan(
+            "a",
+            ikey_named::<u32>("a"),
+            "no a",
+            Arc::clone(&ran),
+        ))
+        .add_node(Box::new(TransformNode::new(
+            "b",
+            ikey_named::<u32>("missing"),
+            ikey_named::<u32>("b"),
+            |v| v,
+        )))
+        .build();
+
+    let Err(errors) = result else {
+        panic!("expected the missing input to be refused");
+    };
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::UnsatisfiedInput { .. }]
+        ),
+        "{errors:?}"
+    );
+    assert!(!ran.load(Ordering::Relaxed), "the constructor ran");
+}
+
+/// The plan's name is the one wiring checked, so a node built under another
+/// is refused.
+#[test]
+fn a_plan_built_under_another_name_is_refused() {
+    let output = ikey_named::<u32>("a");
+    let descriptor = ProducerNode::new("planned_as", output.clone(), 0).descriptor;
+    let plan = NodePlan::new(
+        "planned_as",
+        descriptor,
+        Box::new(move |_| {
+            Ok(Box::new(ProducerNode::new("built_as", output, 0)) as Box<dyn PipelineNode>)
+        }),
+    );
+
+    let Err(errors) = PipelineBuilder::new().add_plan(plan).build() else {
+        panic!("expected the misnamed node to be refused");
+    };
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::ConstructedNodeMisnamed { node_name, built_name }]
+                if node_name == "planned_as" && built_name == "built_as"
+        ),
+        "{errors:?}"
+    );
 }

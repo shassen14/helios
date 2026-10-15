@@ -1,9 +1,10 @@
 //! The stack-to-pipeline stages behind [`build_pipeline`].
 //!
 //! [`build_pipeline`] is the single entry point: given a fully-resolved
-//! [`AutonomyStackConfig`] and an [`AutonomyRegistry`], it constructs every
-//! [`PipelineNode`](crate::pipeline::node::PipelineNode), validates the graph, and
-//! returns a ready-to-tick [`AutonomyPipeline`].
+//! [`AutonomyStackConfig`] and an [`AutonomyRegistry`], it declares every
+//! [`PipelineNode`](crate::pipeline::node::PipelineNode), validates the graph,
+//! builds the nodes declared by plan, and returns a ready-to-tick
+//! [`AutonomyPipeline`].
 //!
 //! ## What the host provides
 //!
@@ -53,7 +54,8 @@ use std::collections::HashSet;
 ///
 /// Each node's own config is checked by its kind's factory; the stack-level
 /// checks (an input nothing supplies, a name naming two channels) follow once
-/// every node is built.
+/// every node is declared, and a node declared by plan is built only after
+/// they pass.
 ///
 /// # Parameters
 ///
@@ -138,7 +140,7 @@ pub fn build_pipeline(
     }
 
     for node in nodes {
-        builder = builder.add_node(node);
+        builder = builder.add_declaration(node);
     }
 
     if !errors.is_empty() {

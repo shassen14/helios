@@ -2,9 +2,9 @@
 //! producers of its same-tick inputs, required or optional. Runs only after the
 //! wiring checks pass.
 
-use super::cycle::find_cycles;
+use super::{cycle::find_cycles, declaration::NodeDeclaration};
 
-use crate::{ChannelKey, NodeId, PipelineBuildError, PipelineNode};
+use crate::{ChannelKey, NodeId, PipelineBuildError};
 
 use std::collections::HashSet;
 
@@ -21,14 +21,14 @@ use std::collections::HashSet;
 /// remaining node. One [`PipelineBuildError::Cycle`] is returned per loop
 /// among them, leaving out nodes that are only downstream of a loop.
 pub(super) fn order_into_levels(
-    mut remaining: Vec<Box<dyn PipelineNode>>,
+    mut remaining: Vec<NodeDeclaration>,
     mut produced: HashSet<ChannelKey>,
-) -> Result<Vec<Vec<(NodeId, Box<dyn PipelineNode>)>>, Vec<PipelineBuildError>> {
+) -> Result<Vec<Vec<(NodeId, NodeDeclaration)>>, Vec<PipelineBuildError>> {
     // Kahn's algorithm (level-by-level form). Each iteration pulls out
     // every node whose same-tick inputs are already produced, assigns
     // it a NodeId, and pushes it into the current level. The level's
     // outputs then enter `produced` so the next iteration can advance.
-    let mut levels: Vec<Vec<(NodeId, Box<dyn PipelineNode>)>> = Vec::new();
+    let mut levels: Vec<Vec<(NodeId, NodeDeclaration)>> = Vec::new();
     let mut next_id: NodeId = 0;
 
     while !remaining.is_empty() {
@@ -70,7 +70,7 @@ pub(super) fn order_into_levels(
         // same order the rate-timer array will be indexed by at tick
         // time, so the two stay in lockstep without a second pass.
         ready.sort_by(|a, b| a.name().cmp(b.name()));
-        let mut level: Vec<(NodeId, Box<dyn PipelineNode>)> = Vec::with_capacity(ready.len());
+        let mut level: Vec<(NodeId, NodeDeclaration)> = Vec::with_capacity(ready.len());
         for node in ready {
             level.push((next_id, node));
             next_id += 1;

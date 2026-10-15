@@ -58,7 +58,13 @@ pub struct TangentNoise {
 }
 
 impl TangentNoise {
+    /// The noise with `covariance`, or `None` unless it is finite and
+    /// positive-definite. Finiteness is checked first: a Cholesky factor
+    /// exists for an infinite diagonal, but no Gaussian has one.
     pub fn from_covariance(covariance: DMatrix<f64>) -> Option<Self> {
+        if !covariance.iter().all(|entry| entry.is_finite()) {
+            return None;
+        }
         let l = covariance.clone().cholesky()?.l();
 
         Some(Self {
@@ -120,6 +126,18 @@ mod tests {
         // Eigenvalues 3 and -1 → indefinite, so there is no Cholesky factor.
         let indefinite = DMatrix::from_row_slice(2, 2, &[1.0, 2.0, 2.0, 1.0]);
         assert!(TangentNoise::from_covariance(indefinite).is_none());
+    }
+
+    #[test]
+    fn non_finite_covariance_is_rejected() {
+        for value in [f64::INFINITY, f64::NAN] {
+            let covariance = DMatrix::from_diagonal(&DVector::from_vec(vec![1.0, value]));
+            assert!(
+                TangentNoise::from_covariance(covariance).is_none(),
+                "{value} on the diagonal"
+            );
+            assert!(TangentNoise::from_std_devs(DVector::from_vec(vec![1.0, value])).is_none());
+        }
     }
 
     #[test]

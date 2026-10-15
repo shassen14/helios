@@ -42,7 +42,7 @@
 //! The state's valid-at time is the node's only clock memory. The tick's
 //! `dt` is never read: a tick that does not predict would lose it.
 
-use super::aiding::Aiding;
+use super::aiding::{aiding_ports, Aiding};
 use super::throttle::passes_warn_throttle;
 
 use crate::channels::estimate::estimator_output;
@@ -63,10 +63,9 @@ use tracing::warn;
 
 /// A recursive filter run as a pipeline node.
 ///
-/// The port descriptor is derived from the input builder and the aiding
-/// sources: the builder's channels as it declares them, each aiding channel
-/// optional, since the filter still predicts and publishes without it, and
-/// each aiding source's two leaves, its NIS and its drop count.
+/// Its ports are declared before it is built, by
+/// [`declare_ports`](Self::declare_ports), and it keeps the descriptor it is
+/// given.
 pub(crate) struct RecursiveEstimatorNode {
     name: String,
     output: ChannelKey,
@@ -82,23 +81,39 @@ pub(crate) struct RecursiveEstimatorNode {
 }
 
 impl RecursiveEstimatorNode {
+    /// The ports of the node named `name` predicting from what `input`
+    /// assembles and correcting from each aiding entry, given by its name and
+    /// the channel it reads: the builder's channels as it declares them, each
+    /// aiding channel optional, since the filter still predicts and publishes
+    /// without it, each entry's leaves, its NIS and its drop count, and the
+    /// state output on the channel named after the node.
+    pub(crate) fn declare_ports<'a>(
+        name: &str,
+        input: &dyn EstimatorInputBuilder,
+        aiding: impl IntoIterator<Item = (&'a str, &'a ChannelKey)>,
+    ) -> PortDescriptor {
+        let mut builder = AlgorithmNodePortDescriptor::new()
+            .inputs_from_slices(input.required_channels(), input.optional_channels())
+            .output_internal(estimator_output(name));
+        for (entry, channel) in aiding {
+            builder = aiding_ports(builder, entry, channel);
+        }
+        builder.build()
+    }
+
     /// A node named `name` that runs `filter`, predicting from what `input`
     /// assembles and correcting from each of `aiding`, in order. It writes its
-    /// state on the channel named after it.
+    /// state on the channel named after it, and has the ports `descriptor`,
+    /// declared by [`declare_ports`](Self::declare_ports) for the same parts.
     pub(crate) fn new(
         name: impl Into<String>,
         filter: Box<dyn GaussianStateEstimator>,
         input: Box<dyn EstimatorInputBuilder>,
         aiding: Vec<Aiding>,
+        descriptor: PortDescriptor,
     ) -> Self {
         let name = name.into();
         let output = estimator_output(&name);
-        let mut builder = AlgorithmNodePortDescriptor::new()
-            .inputs_from_slices(input.required_channels(), input.optional_channels())
-            .output_internal(output.clone());
-        for aiding in &aiding {
-            builder = aiding.declare(builder);
-        }
 
         Self {
             name,
@@ -109,7 +124,7 @@ impl RecursiveEstimatorNode {
             }),
             input,
             aiding,
-            descriptor: builder.build(),
+            descriptor,
             started: AtomicBool::new(false),
             last_predict_warned: AtomicF64::new(f64::NEG_INFINITY),
         }

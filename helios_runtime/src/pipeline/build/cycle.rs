@@ -6,7 +6,9 @@
 //! nodes, splits it into strongly connected components with Tarjan's
 //! algorithm, and reports each component that is a loop.
 
-use crate::{ChannelKey, CycleEdge, PipelineBuildError, PipelineNode};
+use super::declaration::NodeDeclaration;
+
+use crate::{ChannelKey, CycleEdge, PipelineBuildError};
 
 use std::collections::HashMap;
 
@@ -23,8 +25,8 @@ use std::collections::HashMap;
 /// Every stuck node waits on another stuck node, so following those waits
 /// always comes back round to some node: a non-empty `stuck` always yields at
 /// least one error.
-pub(super) fn find_cycles(stuck: &[Box<dyn PipelineNode>]) -> Vec<PipelineBuildError> {
-    let mut nodes: Vec<&dyn PipelineNode> = stuck.iter().map(|n| n.as_ref()).collect();
+pub(super) fn find_cycles(stuck: &[NodeDeclaration]) -> Vec<PipelineBuildError> {
+    let mut nodes: Vec<&NodeDeclaration> = stuck.iter().collect();
 
     // From here on a node is named by its position in `nodes`. Sorting by name
     // first means position order is name order.

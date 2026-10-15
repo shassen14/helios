@@ -40,11 +40,11 @@ mod tests {
     /// default registry's node map, as the assembler does.
     fn build_entry(name: &str, section: &str) -> Result<Box<dyn PipelineNode>, String> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("test_agent"), name);
+        let ctx = BuildContext::new(AgentId::new("test_agent"), name, MOCK_ORACLE_KIND);
         AutonomyRegistry::default()
-            .build_node(MOCK_ORACLE_KIND, section, &ctx)
-            .map(|built| built.output.into_node())
+            .build_node(section, &ctx)
             .map_err(|err| err.to_string())
+            .and_then(|built| built.declaration.construct().map_err(|err| err.to_string()))
     }
 
     // The node name is the table key, not the kind: two `MockOracle` entries

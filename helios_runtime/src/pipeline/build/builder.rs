@@ -1,13 +1,17 @@
-//! [`PipelineBuilder`]: collects the nodes, the body's capabilities and the
-//! outside inputs, then [`build`](PipelineBuilder::build) checks them and
-//! assembles the [`AutonomyPipeline`].
+//! [`PipelineBuilder`]: collects the nodes and node plans, the body's
+//! capabilities and the outside inputs, then [`build`](PipelineBuilder::build)
+//! checks them, builds the plans and assembles the [`AutonomyPipeline`].
 
-use super::{ordering::order_into_levels, wiring::check_wiring};
+use super::{
+    declaration::{NodeDeclaration, NodePlan},
+    ordering::order_into_levels,
+    wiring::check_wiring,
+};
 
 use crate::{
     pipeline::autonomy_pipeline::ScheduledNode,
     port::{ChannelDescription, PortBus, Writer},
-    AutonomyPipeline, BodyCapabilities, ChannelKey, PipelineBuildError, PipelineNode,
+    AutonomyPipeline, BodyCapabilities, ChannelKey, NodeId, PipelineBuildError, PipelineNode,
 };
 
 use std::collections::HashSet;
@@ -16,7 +20,9 @@ use std::collections::HashSet;
 /// [`BodyCapabilities`] of the body the graph runs against.
 ///
 /// Build sequence:
-/// 1. Register every node with [`add_node`](Self::add_node).
+/// 1. Register every node with [`add_node`](Self::add_node), or declare it
+///    with [`add_plan`](Self::add_plan) to have it built once the graph
+///    checks out.
 /// 2. Declare the channels the body publishes — sensor channels, oracle
 ///    reference channels, health status — via
 ///    [`with_body_capabilities`](Self::with_body_capabilities). These count
@@ -32,7 +38,7 @@ use std::collections::HashSet;
 /// Consumers that must process each reading at most once track their own
 /// last-seen [`Stamped::timestamp`](crate::Stamped::timestamp) internally.
 pub struct PipelineBuilder {
-    nodes: Vec<Box<dyn PipelineNode>>,
+    nodes: Vec<NodeDeclaration>,
     capabilities: BodyCapabilities,
     outside_inputs: Vec<ChannelKey>,
 }
@@ -60,7 +66,21 @@ impl PipelineBuilder {
     /// places each node in the correct level based on its declared inputs
     /// and outputs.
     pub fn add_node(mut self, node: Box<dyn PipelineNode>) -> Self {
-        self.nodes.push(node);
+        self.nodes.push(node.into());
+        self
+    }
+
+    /// Declares one node by its plan. The graph is checked and ordered on the
+    /// plan's declared ports; [`build`](Self::build) builds the node only once
+    /// both pass.
+    pub fn add_plan(mut self, plan: NodePlan) -> Self {
+        self.nodes.push(plan.into());
+        self
+    }
+
+    /// Registers one node, built or planned.
+    pub(crate) fn add_declaration(mut self, declaration: NodeDeclaration) -> Self {
+        self.nodes.push(declaration);
         self
     }
 
@@ -130,6 +150,12 @@ impl PipelineBuilder {
     ///      outputs in the same tick; one error per loop.
     ///    - [`PipelineBuildError::StuckWithoutCycle`] — the sort stopped but
     ///      found no loop, which means a bug in the build.
+    /// 3. Construction, run only when ordering succeeds. Every plan is built
+    ///    from its declared ports, level by level.
+    ///    - [`PipelineBuildError::ConstructionFailed`] — a plan's constructor
+    ///      failed.
+    ///    - [`PipelineBuildError::ConstructedNodeMisnamed`] — a plan built a
+    ///      node under another name.
     ///
     /// Within a level, nodes are sorted by name, so levels and [`NodeId`](crate::NodeId)s
     /// do not depend on the order nodes were added.
@@ -156,7 +182,7 @@ impl PipelineBuilder {
 
         let levels = order_into_levels(self.nodes, produced)?;
 
-        // Bus slots are allocated from the union of all node descriptors.
+        // Bus slots are allocated from the union of all declared descriptors.
         // A channel the body advertises via `capabilities.publishes` but
         // which no in-graph node consumes intentionally has no slot — the
         // host's `bus.write(...)` for such a channel returns
@@ -169,17 +195,7 @@ impl PipelineBuilder {
 
         let bus = PortBus::new(descriptor_iter);
 
-        // Each node gets the state the pipeline keeps for it, keeping the
-        // levels and the order within them.
-        let levels = levels
-            .into_iter()
-            .map(|level| {
-                level
-                    .into_iter()
-                    .map(|(node_id, node)| ScheduledNode::new(node_id, node))
-                    .collect()
-            })
-            .collect();
+        let levels = construct_levels(levels)?;
 
         Ok(AutonomyPipeline {
             levels,
@@ -208,5 +224,31 @@ impl PipelineBuilder {
                 .map(|channel| ChannelDescription::node(channel.clone(), node.name()))
         });
         body.chain(outside).chain(nodes).collect()
+    }
+}
+
+/// Builds every planned node, level by level, and gives each node the state
+/// the pipeline keeps for it, keeping the levels and the order within them.
+/// Every failure is collected.
+fn construct_levels(
+    levels: Vec<Vec<(NodeId, NodeDeclaration)>>,
+) -> Result<Vec<Vec<ScheduledNode>>, Vec<PipelineBuildError>> {
+    let mut errors = vec![];
+    let mut constructed = Vec::with_capacity(levels.len());
+    for level in levels {
+        let mut scheduled = Vec::with_capacity(level.len());
+        for (node_id, declaration) in level {
+            match declaration.construct() {
+                Ok(node) => scheduled.push(ScheduledNode::new(node_id, node)),
+                Err(error) => errors.push(error),
+            }
+        }
+        constructed.push(scheduled);
+    }
+
+    if errors.is_empty() {
+        Ok(constructed)
+    } else {
+        Err(errors)
     }
 }

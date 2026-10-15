@@ -1,7 +1,7 @@
 //! Resolving the members a seam section names to the channels they write.
 
 use crate::assembly::error::PipelineAssemblyError;
-use crate::pipeline::node::PipelineNode;
+use crate::pipeline::NodeDeclaration;
 use crate::port::{ChannelKey, InternalChannel};
 
 use std::any::{type_name, TypeId};
@@ -50,7 +50,7 @@ pub(super) fn member_output(
     seam: &str,
     ty: SeamType,
     member: &str,
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
 ) -> Result<InternalChannel, PipelineAssemblyError> {
     let Some(node) = nodes.iter().find(|node| node.name() == member) else {
         return Err(PipelineAssemblyError::UnknownSeamMember {
@@ -84,7 +84,7 @@ pub(super) fn member_outputs(
     seam: &str,
     ty: SeamType,
     members: &[String],
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
     errors: &mut Vec<PipelineAssemblyError>,
 ) -> Vec<InternalChannel> {
     members

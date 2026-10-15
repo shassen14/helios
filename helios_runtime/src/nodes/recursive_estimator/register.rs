@@ -1,10 +1,17 @@
-//! Registers the `RecursiveEstimator` kind, which assembles a
-//! [`RecursiveEstimatorNode`] from the parts its `[nodes.<name>]` entry names.
+//! Registers the `RecursiveEstimator` kind, which declares a
+//! [`RecursiveEstimatorNode`] from the parts its `[nodes.<name>]` entry names
+//! and builds it once the pipeline is wired.
 //!
 //! The filter, the dynamics and every aiding model come from the
 //! [`EstimatorComponents`] tables; the node's own config adds only what ties
 //! them together: the aiding wiring, the augmentation blocks and the starting
 //! pose.
+//!
+//! Declaring parses and checks every component and the node's own config, and
+//! builds the dynamics, whose input builder names the channels the node
+//! reads; the aiding channels come from the measurement kinds. The
+//! measurement models, the augmentation blocks, the seeded state and the
+//! filter are built with the node, where each is checked against the others.
 
 use super::aiding::Aiding;
 use super::config::{
@@ -13,13 +20,19 @@ use super::config::{
 use super::nis_health::NisWindow;
 use super::node::RecursiveEstimatorNode;
 
-use crate::assembly::{AutonomyRegistry, BuildContext, BuildFailure, FactoryOutput};
+use crate::assembly::{
+    AutonomyRegistry, BuildContext, BuildFailure, DeferredComponent, FactoryOutput,
+};
 use crate::nodes::estimation::{
     DynamicsComponent, EstimatorComponents, FilterParts, MeasurementSource, MeasurementWiring,
 };
+use crate::pipeline::node::PipelineNode;
+use crate::port::{ChannelKey, PortDescriptor};
 
-use helios_core::estimation::augmentation::augmentation_block;
+use helios_core::estimation::augmentation::AugmentationSpec;
 use helios_core::estimation::schema::{check_measurement_state_agreement, StateSchemaBlock};
+use helios_core::estimation::GaussianStateEstimator;
+use helios_core::prelude::AgentId;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::transforms::Transform;
@@ -41,6 +54,86 @@ const AIDING_KEY: &str = "aiding";
 const MODEL_KEY: &str = "model";
 /// The key of an aiding entry's NIS health check, named in its errors.
 const NIS_HEALTH_KEY: &str = "nis_health";
+/// The key of an aiding entry's R diagonal, named in its errors.
+const R_DIAG_KEY: &str = "r_diag";
+/// The key of the augmentation list, named in its errors.
+const AUGMENTATION_KEY: &str = "augmentation";
+
+/// Everything a declared estimator needs to be built: the parts checked,
+/// parsed or built at declaration, and the starting pose, read only at
+/// construction.
+struct EstimatorPlan {
+    agent: AgentId,
+    node_name: String,
+    kind: String,
+    dynamics: DynamicsComponent,
+    filter: DeferredComponent<FilterParts, Box<dyn GaussianStateEstimator>>,
+    aiding: Vec<AidingPlan>,
+    augmentation: Vec<AugmentationPlan>,
+    initial_pose: InitialPoseConfig,
+}
+
+impl EstimatorPlan {
+    /// Builds each aiding source, then the state they agree on, seeded with
+    /// the starting pose, then the filter around it, and the node with the
+    /// ports `descriptor` declared for it.
+    fn construct(self, descriptor: PortDescriptor) -> Result<Box<dyn PipelineNode>, BuildFailure> {
+        let EstimatorPlan {
+            agent,
+            node_name,
+            kind,
+            dynamics,
+            filter,
+            aiding,
+            augmentation,
+            initial_pose,
+        } = self;
+        let ctx = BuildContext::new(agent, &node_name, &kind);
+
+        let mut sources = Vec::with_capacity(aiding.len());
+        // Each entry's name, which names its leaves, with its NIS window.
+        let mut entry_windows = Vec::with_capacity(aiding.len());
+        for entry in aiding {
+            let source = entry.model.build(&ctx, entry.wiring)?;
+            check_source_channel(&entry.name, &entry.channel, source.channel())?;
+            sources.push(source);
+            entry_windows.push((entry.name, entry.nis_window));
+        }
+        let augmentation = augmentation_blocks(&augmentation, &ctx);
+
+        let initial_state = seeded_state(&dynamics, augmentation, &sources, &initial_pose, &ctx)?;
+        let (process, input) = dynamics.into_parts();
+        let filter = filter.build(&ctx, FilterParts::new(initial_state, process))?;
+
+        let aiding = sources
+            .into_iter()
+            .zip(entry_windows)
+            .map(|(source, (name, window))| match window {
+                Some(window) => Aiding::new(&name, source).with_nis_window(window),
+                None => Aiding::new(&name, source),
+            })
+            .collect();
+        let node = RecursiveEstimatorNode::new(ctx.node_name(), filter, input, aiding, descriptor);
+        Ok(Box::new(node))
+    }
+}
+
+/// One aiding entry as declared: the channel its model's kind reads, its NIS
+/// window, and the source still to build.
+struct AidingPlan {
+    name: String,
+    channel: ChannelKey,
+    nis_window: Option<NisWindow>,
+    wiring: MeasurementWiring,
+    model: DeferredComponent<MeasurementWiring, Box<dyn MeasurementSource>>,
+}
+
+/// One augmentation entry as declared: the checked block, and the channel
+/// name of the sensor it calibrates, whose frame it is tied to when built.
+struct AugmentationPlan {
+    sensor: String,
+    spec: AugmentationSpec,
+}
 
 /// Adds the `RecursiveEstimator` kind to `registry`.
 pub(crate) fn register(registry: &mut AutonomyRegistry) {
@@ -49,9 +142,10 @@ pub(crate) fn register(registry: &mut AutonomyRegistry) {
         .expect("RecursiveEstimator is registered once, by the default registry")
 }
 
-/// Builds the node for one entry: the dynamics, then each aiding source, then
-/// the state they agree on, seeded with the starting pose, then the filter
-/// around it.
+/// Declares the node for one entry: builds the dynamics, parses and checks
+/// each aiding entry and the filter, checks every augmentation, and declares
+/// the node's ports from the dynamics' input and the aiding channels. The
+/// node is built from an [`EstimatorPlan`] once the pipeline is wired.
 fn build(
     config: RecursiveEstimatorConfig,
     ctx: &BuildContext<'_>,
@@ -60,74 +154,81 @@ fn build(
     let dynamics = components.build_dynamics(DYNAMICS_KEY, config.dynamics, ctx)?;
     let mut resolved_aiding = Vec::with_capacity(config.aiding.len());
     let mut aiding = Vec::with_capacity(config.aiding.len());
-    // Each entry's name, which names its leaves, with its NIS window.
-    let mut entry_windows = Vec::with_capacity(config.aiding.len());
     let inputs: Vec<String> = config
         .aiding
         .values()
         .map(|entry| entry.input.clone())
         .collect();
     for (name, entry) in config.aiding {
-        let nis_window = nis_window(&name, &entry)?;
-        let (source, resolved) = build_aiding(components, &name, entry, ctx)?;
-        aiding.push(source);
-        entry_windows.push((name.clone(), nis_window));
+        let (plan, resolved) = declare_aiding(components, name, entry, ctx)?;
         resolved_aiding.push((
-            [AIDING_KEY.to_string(), name, MODEL_KEY.to_string()],
+            [
+                AIDING_KEY.to_string(),
+                plan.name.clone(),
+                MODEL_KEY.to_string(),
+            ],
             resolved,
         ));
+        aiding.push(plan);
     }
-    let augmentation = augmentation_blocks(&config.augmentation, &inputs, ctx)?;
+    let augmentation = declare_augmentation(&config.augmentation, &inputs)?;
+    let filter = components.parse_filter(FILTER_KEY, config.filter, ctx)?;
 
-    let initial_state = seeded_state(
-        &dynamics.component,
+    let descriptor = RecursiveEstimatorNode::declare_ports(
+        ctx.node_name(),
+        dynamics.component.input(),
+        aiding
+            .iter()
+            .map(|entry| (entry.name.as_str(), &entry.channel)),
+    );
+    let plan = EstimatorPlan {
+        agent: ctx.agent().clone(),
+        node_name: ctx.node_name().to_string(),
+        kind: ctx.kind().to_string(),
+        dynamics: dynamics.component,
+        filter: filter.deferred,
+        aiding,
         augmentation,
-        &aiding,
-        &config.initial_pose,
-        ctx,
-    )?;
-    let (process, input) = dynamics.component.into_parts();
-    let filter = components.build_filter(
-        FILTER_KEY,
-        config.filter,
-        ctx,
-        FilterParts::new(initial_state, process),
-    )?;
+        initial_pose: config.initial_pose,
+    };
 
-    let aiding = aiding
-        .into_iter()
-        .zip(entry_windows)
-        .map(|(source, (name, window))| match window {
-            Some(window) => Aiding::new(&name, source).with_nis_window(window),
-            None => Aiding::new(&name, source),
-        })
-        .collect();
-    let node = RecursiveEstimatorNode::new(ctx.node_name(), filter.component, input, aiding);
-
-    let mut output = FactoryOutput::new(Box::new(node))
-        .with_resolved_component([FILTER_KEY], filter.resolved)
-        .with_resolved_component([DYNAMICS_KEY], dynamics.resolved);
+    let mut output = FactoryOutput::plan(ctx, descriptor, move |descriptor| {
+        plan.construct(descriptor)
+    })
+    .with_resolved_component([FILTER_KEY], filter.resolved)
+    .with_resolved_component([DYNAMICS_KEY], dynamics.resolved);
     for (path, resolved) in resolved_aiding {
         output = output.with_resolved_component(path, resolved);
     }
     Ok(output)
 }
 
-/// Builds the source for aiding entry `name`, returning it with its model's
-/// resolved sub-table.
-fn build_aiding(
+/// Declares aiding entry `name`: its NIS window, its R, the channel its
+/// model's kind reads, and the source still to build. Returns it with its
+/// model's resolved sub-table.
+fn declare_aiding(
     components: &EstimatorComponents,
-    name: &str,
+    name: String,
     entry: AidingConfig,
     ctx: &BuildContext<'_>,
-) -> Result<(Box<dyn MeasurementSource>, toml::Table), BuildFailure> {
+) -> Result<(AidingPlan, toml::Table), BuildFailure> {
+    let nis_window = nis_window(&name, &entry)?;
+    check_r_diag(&name, &entry.r_diag)?;
+    let path = format!("{AIDING_KEY}.{name}.{MODEL_KEY}");
+    let parsed = components.parse_measurement(&path, entry.model, ctx)?;
+    let channel = (parsed.declared)(&entry.input);
     let wiring = MeasurementWiring {
         input: entry.input,
         noise: DMatrix::from_diagonal(&DVector::from_vec(entry.r_diag)),
     };
-    let path = format!("{AIDING_KEY}.{name}.{MODEL_KEY}");
-    let built = components.build_measurement(&path, entry.model, ctx, wiring)?;
-    Ok((built.component, built.resolved))
+    let plan = AidingPlan {
+        name,
+        channel,
+        nis_window,
+        wiring,
+        model: parsed.deferred,
+    };
+    Ok((plan, parsed.resolved))
 }
 
 /// The NIS window aiding entry `name` asks for, if any, or why its
@@ -141,37 +242,80 @@ fn nis_window(name: &str, entry: &AidingConfig) -> Result<Option<NisWindow>, Str
         .map_err(|err| format!("{AIDING_KEY}.{name}.{NIS_HEALTH_KEY}: {err}"))
 }
 
-/// Turns every augmentation entry into a state block tagged with its sensor's
-/// frame.
-///
-/// Fails if an entry names a sensor no aiding entry reads: nothing would
-/// observe the block, so it would ride through predict and never be
-/// corrected. The aiding source builds its sensor frame from the same channel
-/// name, so the block's frame is the one its model reads back.
-fn augmentation_blocks(
+/// Fails if an entry of aiding entry `name`'s R diagonal is not a finite,
+/// positive variance: the filter would skip or mis-weigh every update from
+/// that sensor. R's length against the model's measurement is checked when
+/// the source is built.
+fn check_r_diag(name: &str, r_diag: &[f64]) -> Result<(), String> {
+    for (index, variance) in r_diag.iter().enumerate() {
+        if !variance.is_finite() || *variance <= 0.0 {
+            return Err(format!(
+                "{AIDING_KEY}.{name}.{R_DIAG_KEY}[{index}] must be a finite, positive \
+                 variance, got {variance}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Fails unless aiding entry `name`'s built source reads `built`, the channel
+/// its kind `declared`. The node's ports carry the declared channel, so a
+/// source reading another would find no bus slot and never be updated.
+fn check_source_channel(
+    name: &str,
+    declared: &ChannelKey,
+    built: &ChannelKey,
+) -> Result<(), String> {
+    if built != declared {
+        return Err(format!(
+            "{AIDING_KEY}.{name}: the source was built reading {built}, but its kind \
+             declared {declared}"
+        ));
+    }
+    Ok(())
+}
+
+/// Checks every augmentation entry: its kind and noise, and that an aiding
+/// entry reads its sensor. An unobserved block would ride through predict and
+/// never be corrected.
+fn declare_augmentation(
     entries: &[AugmentationConfig],
     aiding_inputs: &[String],
-    ctx: &BuildContext<'_>,
-) -> Result<Vec<StateSchemaBlock>, String> {
+) -> Result<Vec<AugmentationPlan>, String> {
     entries
         .iter()
         .enumerate()
         .map(|(index, entry)| {
             if !aiding_inputs.contains(&entry.sensor) {
                 return Err(format!(
-                    "augmentation[{index}] (kind '{}') names sensor '{}', but no aiding entry \
-                     reads that channel; the block would never be observed",
+                    "{AUGMENTATION_KEY}[{index}] (kind '{}') names sensor '{}', but no aiding \
+                     entry reads that channel; the block would never be observed",
                     entry.kind, entry.sensor
                 ));
             }
-            let sensor = FrameId::agent(ctx.agent().clone(), entry.sensor.as_str());
-            augmentation_block(
-                &entry.kind,
-                sensor,
-                entry.init_uncertainty,
-                entry.random_walk,
-            )
-            .map_err(|err| format!("augmentation[{index}]: {err}"))
+            let spec =
+                AugmentationSpec::new(&entry.kind, entry.init_uncertainty, entry.random_walk)
+                    .map_err(|err| format!("{AUGMENTATION_KEY}[{index}]: {err}"))?;
+            Ok(AugmentationPlan {
+                sensor: entry.sensor.clone(),
+                spec,
+            })
+        })
+        .collect()
+}
+
+/// Turns every declared augmentation into a state block tagged with its
+/// sensor's frame. The aiding source builds its sensor frame from the same
+/// channel name, so the block's frame is the one its model reads back.
+fn augmentation_blocks(
+    plans: &[AugmentationPlan],
+    ctx: &BuildContext<'_>,
+) -> Vec<StateSchemaBlock> {
+    plans
+        .iter()
+        .map(|plan| {
+            plan.spec
+                .block(FrameId::agent(ctx.agent().clone(), plan.sensor.as_str()))
         })
         .collect()
 }
@@ -231,15 +375,16 @@ fn body_pose(pose: &InitialPoseConfig) -> Transform<Flu, Enu> {
 mod tests {
     use super::*;
 
-    use crate::assembly::NoParams;
+    use crate::assembly::{no_check, NoParams};
     use crate::channels::estimate::estimator_output;
     use crate::pipeline::node::{PipelineNode, TickContext};
-    use crate::port::{ChannelKey, InputPort, PortBus, PortDescriptor};
+    use crate::port::{ChannelKey, InputPort, PortBus, PortDescriptor, SensorChannel};
 
     use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
     use helios_core::estimation::measurement::{MeasurementModel, Prediction};
     use helios_core::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
-    use helios_core::interchange::measurement::sensor::GpsPosition;
+    use helios_core::interchange::measurement::envelope::SensorReading;
+    use helios_core::interchange::measurement::sensor::{GpsPosition, MagneticField};
     use helios_core::prelude::AgentId;
     use helios_core::spatial::state::{Component, Quantity};
     use helios_core::spatial::tf::TfProvider;
@@ -288,18 +433,23 @@ mod tests {
         AgentId::new("car")
     }
 
-    /// Builds node [`NODE`] from `section` through `registry`'s node map, as
-    /// the assembler does, returning the node and its resolved section.
+    /// Declares node [`NODE`] from `section` through `registry`'s node map,
+    /// as the assembler does, then builds it as the pipeline builder does,
+    /// returning the node and its resolved section.
     fn build_with(
         registry: &AutonomyRegistry,
         section: &str,
     ) -> Result<(Box<dyn PipelineNode>, toml::Table), String> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE);
-        registry
-            .build_node(RECURSIVE_ESTIMATOR_KIND, section, &ctx)
-            .map(|built| (built.output.into_node(), built.resolved))
-            .map_err(|err| err.to_string())
+        let ctx = BuildContext::new(agent(), NODE, RECURSIVE_ESTIMATOR_KIND);
+        let built = registry
+            .build_node(section, &ctx)
+            .map_err(|err| err.to_string())?;
+        let node = built
+            .declaration
+            .construct()
+            .map_err(|err| err.to_string())?;
+        Ok((node, built.resolved))
     }
 
     fn build_section(section: &str) -> (Box<dyn PipelineNode>, toml::Table) {
@@ -313,6 +463,17 @@ mod tests {
         match build_with(&AutonomyRegistry::default(), section) {
             Ok(_) => panic!("expected the build to fail"),
             Err(err) => err,
+        }
+    }
+
+    /// Declares node [`NODE`] from `section`, as the assembler does, without
+    /// building it, and returns the declaration's error.
+    fn declare_err(section: &str) -> String {
+        let section: toml::Table = toml::from_str(section).expect("test TOML parses");
+        let ctx = BuildContext::new(agent(), NODE, RECURSIVE_ESTIMATOR_KIND);
+        match AutonomyRegistry::default().build_node(section, &ctx) {
+            Ok(_) => panic!("expected the declaration to fail"),
+            Err(err) => err.to_string(),
         }
     }
 
@@ -405,16 +566,18 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         let components = registry.extension_mut::<EstimatorComponents>();
         components
-            .register_measurement::<GpsPosition, _, _>(
+            .register_measurement::<GpsPosition, _, _, _>(
                 "test_odom_position",
+                no_check,
                 |_: NoParams, _: &BuildContext<'_>, _: &FrameId| {
                     Ok(Box::new(OdomPositionModel) as Box<dyn MeasurementModel>)
                 },
             )
             .expect("test kind is new");
         components
-            .register_measurement::<GpsPosition, _, _>(
+            .register_measurement::<GpsPosition, _, _, _>(
                 "test_world_position",
+                no_check,
                 |_: NoParams, _: &BuildContext<'_>, _: &FrameId| {
                     Ok(Box::new(WorldPositionModel) as Box<dyn MeasurementModel>)
                 },
@@ -510,11 +673,11 @@ mod tests {
         assert!(err.contains("aiding.gps.nis_health: band"), "{err}");
     }
 
-    /// An augmentation no aiding entry observes is refused rather than left
-    /// to ride through predict uncorrected.
+    /// An augmentation no aiding entry observes is refused at declaration
+    /// rather than left to ride through predict uncorrected.
     #[test]
     fn an_unobserved_augmentation_is_refused() {
-        let err = build_err(&format!(
+        let err = declare_err(&format!(
             "{BASE}{GPS}
             [[augmentation]]
             kind = \"{MAGNETOMETER_BIAS}\"
@@ -523,6 +686,70 @@ mod tests {
             random_walk = 0.01"
         ));
         assert!(err.contains("no aiding entry reads that channel"), "{err}");
+    }
+
+    /// An augmentation's kind is checked at declaration, before the sensor
+    /// frame it is tied to exists.
+    #[test]
+    fn an_unknown_augmentation_kind_is_refused_at_declaration() {
+        let err = declare_err(&format!(
+            "{BASE}{MAG}
+            [[augmentation]]
+            kind = \"gyro_scale_factor\"
+            sensor = \"mag\"
+            init_uncertainty = 5.0
+            random_walk = 0.01"
+        ));
+        assert!(err.contains("augmentation[0]"), "{err}");
+        assert!(err.contains("gyro_scale_factor"), "{err}");
+    }
+
+    /// A filter value unusable on its own is refused at declaration.
+    #[test]
+    fn a_bad_filter_value_is_refused_at_declaration() {
+        let ekf = BASE.replace("kind = \"Ekf\"", "kind = \"Ekf\"\ncovariance_floor = -1.0");
+        let err = declare_err(&format!("{ekf}{GPS}"));
+        assert!(
+            err.starts_with("nodes.primary.filter (kind 'Ekf')"),
+            "{err}"
+        );
+        assert!(err.contains("covariance_floor"), "{err}");
+
+        let ukf = BASE.replace(
+            "kind = \"Ekf\"",
+            "kind = \"Ukf\"\nalpha = nan\nbeta = 2.0\nkappa = 0.0",
+        );
+        let err = declare_err(&format!("{ukf}{GPS}"));
+        assert!(
+            err.starts_with("nodes.primary.filter (kind 'Ukf')"),
+            "{err}"
+        );
+        assert!(err.contains("alpha"), "{err}");
+    }
+
+    /// An R variance that is not finite and positive is refused at
+    /// declaration, naming its entry.
+    #[test]
+    fn a_bad_r_variance_is_refused_at_declaration() {
+        for variance in ["0.0", "-1.0", "nan", "inf"] {
+            let gps = GPS.replace("[1.0, 1.0, 1.0]", &format!("[1.0, {variance}, 1.0]"));
+            let err = declare_err(&format!("{BASE}{gps}"));
+            assert!(err.contains("aiding.gps.r_diag[1]"), "{variance}: {err}");
+        }
+    }
+
+    /// A source built reading another channel than its kind declared is
+    /// refused, since the node's ports carry only the declared one.
+    #[test]
+    fn a_source_reading_an_undeclared_channel_is_refused() {
+        let declared: ChannelKey =
+            SensorChannel::named::<Vec<SensorReading<GpsPosition>>>("gps").into();
+        let built: ChannelKey =
+            SensorChannel::named::<Vec<SensorReading<MagneticField>>>("gps").into();
+
+        assert!(check_source_channel("gps", &declared, &declared).is_ok());
+        let err = check_source_channel("gps", &declared, &built).expect_err("channels differ");
+        assert!(err.starts_with("aiding.gps:"), "{err}");
     }
 
     /// An augmentation grows the filter's state by its block, under the

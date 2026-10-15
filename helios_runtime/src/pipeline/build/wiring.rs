@@ -4,11 +4,13 @@
 //! group and apart, and every input has exactly one supplier. These need only
 //! the declarations, not an order, so they run before the sort.
 
+use super::declaration::NodeDeclaration;
+
 use crate::{
     channels::tf::is_tf_edge,
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
     port::{ChannelDescription, ChannelKind, Writer},
-    ChannelKey, ChannelUses, PipelineBuildError, PipelineNode,
+    ChannelKey, ChannelUses, PipelineBuildError,
 };
 
 use helios_core::kernel::identifier::{is_dotted_name, is_level, LEVEL_SEPARATOR};
@@ -27,7 +29,7 @@ use std::{
 /// one supplier: a node output, a body channel, or a declared outside input.
 /// `descriptions` holds every channel some writer declares.
 pub(super) fn check_wiring(
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
     descriptions: &[ChannelDescription],
 ) -> Vec<PipelineBuildError> {
     let mut errors = vec![];
@@ -44,7 +46,7 @@ pub(super) fn check_wiring(
 /// shared name is reported once per name. A node's name is also one part of
 /// every watcher path under it, so a name that isn't one level is reported,
 /// once per name.
-fn check_node_names(nodes: &[Box<dyn PipelineNode>], errors: &mut Vec<PipelineBuildError>) {
+fn check_node_names(nodes: &[NodeDeclaration], errors: &mut Vec<PipelineBuildError>) {
     let mut seen_names: HashSet<&str> = HashSet::new();
     let mut reported_names: HashSet<&str> = HashSet::new();
     let mut malformed_names: HashSet<&str> = HashSet::new();
@@ -87,7 +89,7 @@ fn check_unit_names(descriptions: &[ChannelDescription], errors: &mut Vec<Pipeli
 /// Transform-edge channels keep their own spelling until the transform tree
 /// gets a channel of its own, so their names are not checked for form.
 fn check_channel_names(
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
     descriptions: &[ChannelDescription],
     errors: &mut Vec<PipelineBuildError>,
 ) -> HashSet<Arc<str>> {
@@ -118,7 +120,7 @@ fn check_channel_names(
 /// channels under a name keep the order the build met them: described
 /// channels first, then channels only read.
 fn map_channel_uses(
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
     descriptions: &[ChannelDescription],
 ) -> BTreeMap<Arc<str>, Vec<ChannelUses>> {
     let mut uses_by_name: BTreeMap<Arc<str>, Vec<ChannelUses>> = BTreeMap::new();
@@ -181,14 +183,14 @@ fn push_once<T: PartialEq>(list: &mut Vec<T>, item: T) {
 /// nodes never clash. Only exact matches are refused; a shared dotted prefix
 /// is a group.
 fn check_observables(
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
     refused_names: &HashSet<Arc<str>>,
     errors: &mut Vec<PipelineBuildError>,
 ) {
     for node in nodes {
-        let refused_leaves = check_declared_leaves(node.as_ref(), errors);
-        let output_paths = check_output_paths(node.as_ref(), refused_names, errors);
-        check_leaves_distinct(node.as_ref(), &refused_leaves, &output_paths, errors);
+        let refused_leaves = check_declared_leaves(node, errors);
+        let output_paths = check_output_paths(node, refused_names, errors);
+        check_leaves_distinct(node, &refused_leaves, &output_paths, errors);
     }
 }
 
@@ -196,7 +198,7 @@ fn check_observables(
 /// pipeline's own group. Returns the refused leaves, each reported once, so
 /// the later checks skip them.
 fn check_declared_leaves(
-    node: &dyn PipelineNode,
+    node: &NodeDeclaration,
     errors: &mut Vec<PipelineBuildError>,
 ) -> HashSet<Arc<str>> {
     let node_name = node.name();
@@ -232,7 +234,7 @@ fn check_declared_leaves(
 /// channel under a refused name is skipped too, since its error is already
 /// reported.
 fn check_output_paths<'a>(
-    node: &'a dyn PipelineNode,
+    node: &'a NodeDeclaration,
     refused_names: &HashSet<Arc<str>>,
     errors: &mut Vec<PipelineBuildError>,
 ) -> Vec<(&'a Arc<str>, &'a ChannelKey)> {
@@ -261,7 +263,7 @@ fn check_output_paths<'a>(
 /// differ from every accepted output name. A duplicate is reported once per
 /// leaf.
 fn check_leaves_distinct(
-    node: &dyn PipelineNode,
+    node: &NodeDeclaration,
     refused_leaves: &HashSet<Arc<str>>,
     output_paths: &[(&Arc<str>, &ChannelKey)],
     errors: &mut Vec<PipelineBuildError>,
@@ -332,7 +334,7 @@ fn map_suppliers<'a>(
 /// the node runs without a value. An input under a name the channel-name
 /// check refused is skipped: that error already lists who writes and reads it.
 fn check_inputs_supplied(
-    nodes: &[Box<dyn PipelineNode>],
+    nodes: &[NodeDeclaration],
     supplier_of: &HashMap<&ChannelKey, &Writer>,
     refused_names: &HashSet<Arc<str>>,
     errors: &mut Vec<PipelineBuildError>,
