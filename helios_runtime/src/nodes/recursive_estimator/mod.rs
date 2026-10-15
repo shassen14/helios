@@ -11,6 +11,8 @@
 //! - `nis_health` — `NisWindow`, the windowed-NIS health check on one aiding
 //!   sensor.
 //! - `leaves` — `AidingLeaf`, what each aiding source reports to watchers.
+//! - `plan` — `EstimatorPlan`, a declared node waiting to be built, and its
+//!   construction.
 //! - `register` — registers the `RecursiveEstimator` kind and its factory.
 
 mod aiding;
@@ -18,6 +20,7 @@ mod config;
 mod leaves;
 mod nis_health;
 mod node;
+mod plan;
 mod register;
 #[cfg(test)]
 mod test_fixtures;
