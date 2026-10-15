@@ -5,7 +5,7 @@ use super::scheduled::{ScheduledNode, TICK_DURATION_LEAF};
 
 use crate::{
     channels::{control, estimate::estimate, tf::is_tf_edge},
-    port::{ChannelKey, PortBus},
+    port::{ChannelDescription, ChannelKey, PortBus, Writer},
     prelude::{Stamped, TickContext},
 };
 
@@ -33,8 +33,9 @@ pub struct AutonomyPipeline {
     /// the only way values from outside the graph enter it: the host writes
     /// body measurements and operator or mission inputs here.
     pub(in crate::pipeline) bus: PortBus,
-    /// Inputs declared as sent from outside the robot, kept from the build.
-    pub(in crate::pipeline) outside_inputs: Vec<ChannelKey>,
+    /// Every channel some writer declared, kept from the build: the body's,
+    /// then the outside inputs, then the nodes' outputs.
+    pub(in crate::pipeline) descriptions: Vec<ChannelDescription>,
 }
 
 impl AutonomyPipeline {
@@ -50,11 +51,21 @@ impl AutonomyPipeline {
         &self.bus
     }
 
+    /// Every channel some writer declared: the body's, then the outside
+    /// inputs, then the nodes' outputs. Channels only read are not listed;
+    /// the build refuses a read without a writer.
+    pub fn descriptions(&self) -> &[ChannelDescription] {
+        &self.descriptions
+    }
+
     /// The inputs declared as sent from outside the robot (goals, teleop
     /// intent), in declaration order. A host can check each one has something
     /// feeding it.
-    pub fn outside_inputs(&self) -> &[ChannelKey] {
-        &self.outside_inputs
+    pub fn outside_inputs(&self) -> impl Iterator<Item = &ChannelKey> {
+        self.descriptions
+            .iter()
+            .filter(|description| *description.writer() == Writer::Outside)
+            .map(ChannelDescription::key)
     }
 
     /// Executes one tick: stamps the bus clock, then runs every rate-due

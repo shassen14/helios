@@ -5,8 +5,9 @@
 use super::{ordering::order_into_levels, wiring::check_wiring};
 
 use crate::{
-    pipeline::autonomy_pipeline::ScheduledNode, port::PortBus, AutonomyPipeline, BodyCapabilities,
-    ChannelKey, PipelineBuildError, PipelineNode,
+    pipeline::autonomy_pipeline::ScheduledNode,
+    port::{ChannelDescription, PortBus, Writer},
+    AutonomyPipeline, BodyCapabilities, ChannelKey, PipelineBuildError, PipelineNode,
 };
 
 use std::collections::HashSet;
@@ -134,7 +135,8 @@ impl PipelineBuilder {
     /// On success, [`NodeId`](crate::NodeId)s are assigned in level-major order starting
     /// at `0`, indexing into the pipeline's rate-timer array.
     pub fn build(self) -> Result<AutonomyPipeline, Vec<PipelineBuildError>> {
-        let errors = check_wiring(&self.nodes, &self.capabilities, &self.outside_inputs);
+        let descriptions = self.describe_channels();
+        let errors = check_wiring(&self.nodes, &descriptions, &self.capabilities.name);
 
         // Stop before ordering: a node downstream of a missing input would
         // otherwise be reported as a cycle member too.
@@ -142,11 +144,13 @@ impl PipelineBuilder {
             return Err(errors);
         }
 
-        // Seed `produced` with channels supplied from outside the graph, so
+        // Seed `produced` with channels written from outside the graph, so
         // the sort treats them as already written.
-        let mut produced: HashSet<ChannelKey> = HashSet::new();
-        produced.extend(self.capabilities.publishes.iter().map(|p| p.key.clone()));
-        produced.extend(self.outside_inputs.iter().cloned());
+        let produced: HashSet<ChannelKey> = descriptions
+            .iter()
+            .filter(|description| !matches!(description.writer(), Writer::Node { .. }))
+            .map(|description| description.key().clone())
+            .collect();
 
         let levels = order_into_levels(self.nodes, produced)?;
 
@@ -178,7 +182,27 @@ impl PipelineBuilder {
         Ok(AutonomyPipeline {
             levels,
             bus,
-            outside_inputs: self.outside_inputs,
+            descriptions,
         })
+    }
+
+    /// Every channel some writer declares, described with the writer whose
+    /// declaration it came in: the body's, then the outside inputs, then each
+    /// node's outputs in the order nodes were added. A channel two writers
+    /// declare appears twice; the wiring check refuses it.
+    fn describe_channels(&self) -> Vec<ChannelDescription> {
+        let body = self.capabilities.publishes.iter().map(|published| {
+            ChannelDescription::body(published.key().clone(), published.provenance())
+        });
+        let outside = self
+            .outside_inputs
+            .iter()
+            .map(|key| ChannelDescription::outside(key.clone()));
+        let nodes = self.nodes.iter().flat_map(|node| {
+            node.port_descriptor()
+                .outputs()
+                .map(|channel| ChannelDescription::node(channel.clone(), node.name()))
+        });
+        body.chain(outside).chain(nodes).collect()
     }
 }

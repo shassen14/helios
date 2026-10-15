@@ -48,11 +48,11 @@ use super::seams::estimate::estimate_relay;
 use super::seams::reference::reference_selector;
 use super::sensor_inputs::{derived_channels, SensorInputs};
 
-use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
+use crate::body::{BodyCapabilities, BodyChannel};
 use crate::pipeline::dag_log::log_resolved_dag;
 use crate::pipeline::AutonomyPipeline;
 use crate::pipeline::PipelineBuilder;
-use crate::port::ChannelKey;
+use crate::port::{ChannelKey, Provenance};
 
 use helios_core::{kernel::identifier::is_level, prelude::AgentId};
 
@@ -183,16 +183,15 @@ pub fn build_pipeline(
     let mut seen_outside = HashSet::new();
     outside_inputs.retain(|key| seen_outside.insert(key.clone()));
 
-    host_capabilities
-        .publishes
-        .extend(external_channels.into_iter().map(|key| PublishedChannel {
-            key,
-            provenance: Provenance::Exact,
-        }));
+    host_capabilities.publishes.extend(
+        external_channels
+            .into_iter()
+            .map(|key| BodyChannel::new(key, Provenance::Exact)),
+    );
 
-    // Kept for the startup log, which shows the body the graph was built
+    // Kept for the startup log, which names the body the graph was built
     // against.
-    let capabilities = host_capabilities.clone();
+    let body_name = host_capabilities.name.clone();
     let pipeline = builder
         .with_body_capabilities(host_capabilities)
         .with_outside_inputs(outside_inputs)
@@ -201,6 +200,6 @@ pub fn build_pipeline(
 
     // Each `[nodes]` entry is labelled with its kind; a seam's node has no
     // entry and shows its name alone.
-    log_resolved_dag(&pipeline, &capabilities, |name| stack.node_kind(name));
+    log_resolved_dag(&pipeline, &body_name, |name| stack.node_kind(name));
     Ok(pipeline)
 }

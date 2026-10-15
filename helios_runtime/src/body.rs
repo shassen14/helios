@@ -14,30 +14,9 @@
 //! `execute` beside the bus. `BodyCapabilities` is the *static* declaration
 //! made once at assembly time.
 
-use crate::port::ChannelKey;
+use crate::port::{ChannelKey, Provenance};
 
 use helios_core::control::actuation_model::ActuationModel;
-
-/// How a value published onto a channel was produced.
-///
-/// Modelled as an enum (rather than a unit) because hardware will introduce
-/// further variants — e.g. `Instrument` (read off a real sensor) or `Recorded`
-/// (replayed from a log). Only `Exact` exists today; the others land with the
-/// first hardware host.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum Provenance {
-    /// Ground truth, exact to the limits of the simulation (e.g. physics state
-    /// read by a perfect sensor in sim).
-    #[default]
-    Exact,
-}
-
-/// One channel the body fills on the bus, paired with how its value was produced.
-#[derive(Clone, Debug)]
-pub struct PublishedChannel {
-    pub key: ChannelKey,
-    pub provenance: Provenance,
-}
 
 /// Everything the agent's body offers the pipeline at the bus seam: the
 /// channels it measures, and the actuators that take the command back off the
@@ -57,7 +36,7 @@ pub struct BodyCapabilities {
     /// reference channels, and health driver/sensor status. The host writes
     /// them on the body's behalf; each counts as already written when the
     /// pipeline is built.
-    pub publishes: Vec<PublishedChannel>,
+    pub publishes: Vec<BodyChannel>,
     /// The actuators the body exposes and the setpoint kind each accepts.
     /// The build checks every actuator the pipeline drives against it, so a
     /// misnamed actuator or a setpoint of the wrong kind fails the build
@@ -65,32 +44,43 @@ pub struct BodyCapabilities {
     pub actuation: ActuationModel,
 }
 
+/// One channel the body publishes, as the host declares it: the channel and
+/// how its values are produced.
+///
+/// The build completes each into a
+/// [`ChannelDescription`](crate::port::ChannelDescription) whose writer is the
+/// body, so a host never states a channel's writer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyChannel {
+    key: ChannelKey,
+    provenance: Provenance,
+}
+
+impl BodyChannel {
+    pub fn new(key: impl Into<ChannelKey>, provenance: Provenance) -> Self {
+        Self {
+            key: key.into(),
+            provenance,
+        }
+    }
+
+    pub fn key(&self) -> &ChannelKey {
+        &self.key
+    }
+
+    pub fn provenance(&self) -> Provenance {
+        self.provenance
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::port::InternalChannel;
 
     #[test]
     fn default_is_empty() {
         let caps = BodyCapabilities::default();
         assert!(caps.publishes.is_empty());
         assert_eq!(caps.actuation, ActuationModel::default());
-    }
-
-    #[test]
-    fn published_channel_records_key_and_provenance() {
-        let key: ChannelKey = InternalChannel::of::<f64>().into();
-        let caps = BodyCapabilities {
-            name: String::default(),
-            publishes: vec![PublishedChannel {
-                key: key.clone(),
-                provenance: Provenance::default(),
-            }],
-            actuation: ActuationModel::default(),
-        };
-        assert_eq!(caps.publishes.len(), 1);
-        assert_eq!(caps.publishes[0].key, key);
-        assert_eq!(caps.publishes[0].provenance, Provenance::Exact);
     }
 }

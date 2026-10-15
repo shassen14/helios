@@ -1,0 +1,140 @@
+//! [`ChannelDescription`]: what the pipeline knows about one channel, whoever
+//! writes it, with its [`Writer`] and, for a body channel, its [`Provenance`].
+//!
+//! Every writer's channels are described alike, and only the pipeline
+//! builder makes descriptions. Each writer declares its channels through its
+//! own door: the body as [`BodyChannel`](crate::body::BodyChannel)s in
+//! [`BodyCapabilities`](crate::BodyCapabilities), outside inputs as keys, a
+//! node as [`OutputPort`](crate::port::OutputPort)s. The builder chooses the
+//! [`Writer`] from the door a channel came through, so no declaration can
+//! state the wrong writer.
+
+use crate::port::channel::ChannelKey;
+
+/// One channel the pipeline sees, and who writes it.
+///
+/// Readers are not part of a description: who reads a channel is a fact of the
+/// graph, not of the channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelDescription {
+    key: ChannelKey,
+    writer: Writer,
+}
+
+impl ChannelDescription {
+    /// A channel the body publishes, produced as `provenance` says.
+    pub(crate) fn body(key: ChannelKey, provenance: Provenance) -> Self {
+        Self {
+            key,
+            writer: Writer::Body { provenance },
+        }
+    }
+
+    /// A channel sent from outside the robot, such as a mission goal or the
+    /// operator's teleop intent.
+    pub(crate) fn outside(key: ChannelKey) -> Self {
+        Self {
+            key,
+            writer: Writer::Outside,
+        }
+    }
+
+    /// A channel node `node` writes, from one of its output ports.
+    pub(crate) fn node(key: ChannelKey, node: impl Into<String>) -> Self {
+        Self {
+            key,
+            writer: Writer::Node { node: node.into() },
+        }
+    }
+
+    pub fn key(&self) -> &ChannelKey {
+        &self.key
+    }
+
+    pub fn writer(&self) -> &Writer {
+        &self.writer
+    }
+}
+
+/// Who writes a channel onto the bus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Writer {
+    /// The body publishes it: a sensor, an oracle reference, a health status.
+    /// The host writes it on the body's behalf.
+    Body { provenance: Provenance },
+    /// A node in the graph writes it; carries the node's name.
+    Node { node: String },
+    /// It is sent from outside the robot by an operator or mission system.
+    Outside,
+}
+
+/// Names the writer as build errors do. A pipeline serves one body, so the
+/// body needs no name; the host prefixes every build error with the agent.
+impl std::fmt::Display for Writer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Writer::Body { .. } => write!(f, "the body"),
+            Writer::Node { node } => write!(f, "node \"{node}\""),
+            Writer::Outside => write!(f, "an outside input"),
+        }
+    }
+}
+
+/// How a value the body publishes was produced.
+///
+/// Modelled as an enum (rather than a unit) because hardware will introduce
+/// further variants — e.g. `Instrument` (read off a real sensor) or `Recorded`
+/// (replayed from a log). Only `Exact` exists today; the others land with the
+/// first hardware host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Provenance {
+    /// Ground truth, exact to the limits of the simulation (e.g. physics state
+    /// read by a perfect sensor in sim).
+    #[default]
+    Exact,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::port::InternalChannel;
+
+    fn key() -> ChannelKey {
+        InternalChannel::named::<f64>("drive").into()
+    }
+
+    #[test]
+    fn each_constructor_records_its_writer() {
+        assert_eq!(
+            ChannelDescription::body(key(), Provenance::Exact).writer(),
+            &Writer::Body {
+                provenance: Provenance::Exact
+            }
+        );
+        assert_eq!(
+            ChannelDescription::outside(key()).writer(),
+            &Writer::Outside
+        );
+        assert_eq!(
+            ChannelDescription::node(key(), "ekf").writer(),
+            &Writer::Node {
+                node: "ekf".to_string()
+            }
+        );
+        assert_eq!(ChannelDescription::outside(key()).key(), &key());
+    }
+
+    #[test]
+    fn writers_display_as_errors_name_them() {
+        let body = Writer::Body {
+            provenance: Provenance::Exact,
+        };
+        let node = Writer::Node {
+            node: "ekf".to_string(),
+        };
+        assert_eq!(body.to_string(), "the body");
+        assert_eq!(node.to_string(), "node \"ekf\"");
+        assert_eq!(Writer::Outside.to_string(), "an outside input");
+    }
+}

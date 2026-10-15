@@ -283,8 +283,8 @@ mod tests {
     use helios_runtime::port::AlgorithmNodePortDescriptor;
     use helios_runtime::port::{PortBus, SensorChannel};
     use helios_runtime::{
-        BodyCapabilities, ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor, Provenance,
-        PublishedChannel, Stamped, TickContext,
+        BodyCapabilities, BodyChannel, ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor,
+        Provenance, Stamped, TickContext,
     };
 
     use avian3d::collider_tree::ColliderTrees;
@@ -367,10 +367,7 @@ mod tests {
             .add_node(Box::new(FakeScanConsumer::new()))
             .with_body_capabilities(BodyCapabilities {
                 name: "agent".to_string(),
-                publishes: vec![PublishedChannel {
-                    key: field_channel(),
-                    provenance: Provenance::Exact,
-                }],
+                publishes: vec![BodyChannel::new(field_channel(), Provenance::Exact)],
                 ..Default::default()
             })
             .build()

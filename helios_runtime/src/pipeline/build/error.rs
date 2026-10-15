@@ -1,10 +1,10 @@
 //! [`PipelineBuildError`], everything [`build`](super::PipelineBuilder::build)
-//! can reject, [`Supplier`], who supplies a channel, [`ChannelUses`], who
-//! writes and reads one, and [`CycleEdge`], one read inside a dependency loop.
+//! can reject, [`ChannelUses`], who writes and reads one channel, and
+//! [`CycleEdge`], one read inside a dependency loop.
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
-    port::{ChannelKey, InputNeed},
+    port::{ChannelKey, InputNeed, Writer},
 };
 
 /// Errors produced by [`PipelineBuilder::build`](super::PipelineBuilder::build).
@@ -50,8 +50,8 @@ pub enum PipelineBuildError {
     /// supplier, so every read has one writer.
     MultipleSuppliers {
         channel: ChannelKey,
-        first: Supplier,
-        second: Supplier,
+        first: Writer,
+        second: Writer,
     },
     /// Two or more nodes share a name. Errors, logs and node order within a
     /// level all identify a node by its name, so names must be unique.
@@ -266,36 +266,14 @@ impl std::fmt::Display for PipelineBuildError {
     }
 }
 
-/// Who supplies a channel to the graph, as named in a
-/// [`PipelineBuildError::MultipleSuppliers`] error.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Supplier {
-    /// A node writes it; carries the node's name.
-    Node(String),
-    /// The body publishes it; carries the body's name.
-    Body(String),
-    /// It is declared as sent from outside the robot.
-    OutsideInput,
-}
-
-impl std::fmt::Display for Supplier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Supplier::Node(name) => write!(f, "node \"{name}\""),
-            Supplier::Body(name) => write!(f, "body \"{name}\""),
-            Supplier::OutsideInput => write!(f, "an outside input"),
-        }
-    }
-}
-
 /// One channel under a name, with everything that writes it and every node
 /// that reads it, as listed in [`PipelineBuildError::MalformedChannelName`]
 /// and [`PipelineBuildError::ChannelNameReused`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelUses {
     pub key: ChannelKey,
-    /// Each supplier of `key`, in the order the build met them.
-    pub writers: Vec<Supplier>,
+    /// Each writer of `key`, in the order the build met them.
+    pub writers: Vec<Writer>,
     /// The name of each node that reads `key`.
     pub readers: Vec<String>,
 }
@@ -311,7 +289,7 @@ impl std::fmt::Display for ChannelUses {
             let readers: Vec<String> = self
                 .readers
                 .iter()
-                .map(|reader| Supplier::Node(reader.clone()).to_string())
+                .map(|reader| format!("node \"{reader}\""))
                 .collect();
             write!(f, " read by {}", readers.join(", "))?;
         }

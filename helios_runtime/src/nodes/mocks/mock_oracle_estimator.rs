@@ -183,9 +183,10 @@ mod tests {
     //!    an oracle node cannot run on a body without truth.
 
     use super::*;
-    use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
+    use crate::body::{BodyCapabilities, BodyChannel};
     use crate::pipeline::PipelineBuildError;
     use crate::pipeline::PipelineBuilder;
+    use crate::port::Provenance;
     use crate::port::{ChannelKey, PortDescriptor};
     use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
@@ -242,14 +243,8 @@ mod tests {
         BodyCapabilities {
             name: "test_body".to_string(),
             publishes: vec![
-                PublishedChannel {
-                    key: oracle_pose_channel().into(),
-                    provenance: Provenance::Exact,
-                },
-                PublishedChannel {
-                    key: oracle_twist_channel().into(),
-                    provenance: Provenance::Exact,
-                },
+                BodyChannel::new(oracle_pose_channel(), Provenance::Exact),
+                BodyChannel::new(oracle_twist_channel(), Provenance::Exact),
             ],
             ..Default::default()
         }

@@ -13,13 +13,13 @@ use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
     channels::tf::tf_edge,
-    pipeline::{ChannelUses, CycleEdge, PipelineBuildError, PipelineBuilder, Supplier},
+    pipeline::{ChannelUses, CycleEdge, PipelineBuildError, PipelineBuilder},
     port::{
         AlgorithmNodePortDescriptor, ChannelKey, InputNeed, InternalChannel,
         MockNodePortDescriptor, OracleChannel, PortBus, PortDescriptor, SensorChannel,
     },
     prelude::{Health, PipelineNode, Stamped, TickContext},
-    BodyCapabilities, Provenance, PublishedChannel,
+    BodyCapabilities, BodyChannel, Provenance, Writer,
 };
 
 use crate::common::MockRuntime;
@@ -728,8 +728,8 @@ fn multiple_suppliers_detected() {
             e,
             PipelineBuildError::MultipleSuppliers { channel, first, second }
                 if *channel == shared
-                    && *first == Supplier::Node("a".to_string())
-                    && *second == Supplier::Node("b".to_string())
+                    && *first == Writer::Node { node: "a".to_string() }
+                    && *second == Writer::Node { node: "b".to_string() }
         )),
         "expected MultipleSuppliers naming nodes a and b, got {errors:?}"
     );
@@ -767,10 +767,7 @@ fn optional_input_satisfied_by_body_capability_builds() {
         .add_node(Box::new(SinkNode::optional("ekf", gps.clone())))
         .with_body_capabilities(BodyCapabilities {
             name: "test_body".to_string(),
-            publishes: vec![PublishedChannel {
-                key: gps,
-                provenance: Provenance::Exact,
-            }],
+            publishes: vec![BodyChannel::new(gps, Provenance::Exact)],
             ..Default::default()
         })
         .build();
@@ -788,10 +785,7 @@ fn node_and_body_supplying_one_channel_is_rejected() {
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
         .with_body_capabilities(BodyCapabilities {
             name: "test_body".to_string(),
-            publishes: vec![PublishedChannel {
-                key: shared.clone(),
-                provenance: Provenance::Exact,
-            }],
+            publishes: vec![BodyChannel::new(shared.clone(), Provenance::Exact)],
             ..Default::default()
         })
         .build();
@@ -804,8 +798,8 @@ fn node_and_body_supplying_one_channel_is_rejected() {
             e,
             PipelineBuildError::MultipleSuppliers { channel, first, second }
                 if *channel == shared
-                    && *first == Supplier::Body("test_body".to_string())
-                    && *second == Supplier::Node("a".to_string())
+                    && *first == Writer::Body { provenance: Provenance::Exact }
+                    && *second == Writer::Node { node: "a".to_string() }
         )),
         "expected MultipleSuppliers naming the body then node a, got {errors:?}"
     );
@@ -828,8 +822,8 @@ fn node_and_outside_input_supplying_one_channel_is_rejected() {
             e,
             PipelineBuildError::MultipleSuppliers { channel, first, second }
                 if *channel == shared
-                    && *first == Supplier::OutsideInput
-                    && *second == Supplier::Node("a".to_string())
+                    && *first == Writer::Outside
+                    && *second == Writer::Node { node: "a".to_string() }
         )),
         "expected MultipleSuppliers naming the outside input then node a, got {errors:?}"
     );
@@ -980,10 +974,7 @@ fn body_channel_with_a_malformed_name_names_the_body_and_its_reader() {
         .add_node(Box::new(SinkNode::new("mock_oracle", truth.clone())))
         .with_body_capabilities(BodyCapabilities {
             name: "sim".to_string(),
-            publishes: vec![PublishedChannel {
-                key: truth.clone(),
-                provenance: Provenance::Exact,
-            }],
+            publishes: vec![BodyChannel::new(truth.clone(), Provenance::Exact)],
             ..Default::default()
         })
         .build();
@@ -993,7 +984,9 @@ fn body_channel_with_a_malformed_name_names_the_body_and_its_reader() {
     };
     let expected = [ChannelUses {
         key: truth,
-        writers: vec![Supplier::Body("sim".to_string())],
+        writers: vec![Writer::Body {
+            provenance: Provenance::Exact,
+        }],
         readers: vec!["mock_oracle".to_string()],
     }];
     assert!(
@@ -1023,7 +1016,9 @@ fn reader_and_writer_disagreeing_on_type_are_reported_together() {
     let expected = [
         ChannelUses {
             key: written,
-            writers: vec![Supplier::Node("ekf".to_string())],
+            writers: vec![Writer::Node {
+                node: "ekf".to_string(),
+            }],
             readers: vec![],
         },
         ChannelUses {
@@ -1058,10 +1053,7 @@ fn one_name_across_kinds_is_refused() {
         .add_node(Box::new(ProducerNode::new("relay", internal, 0)))
         .with_body_capabilities(BodyCapabilities {
             name: "sim".to_string(),
-            publishes: vec![PublishedChannel {
-                key: sensor,
-                provenance: Provenance::Exact,
-            }],
+            publishes: vec![BodyChannel::new(sensor, Provenance::Exact)],
             ..Default::default()
         })
         .build();
@@ -1174,10 +1166,7 @@ fn body_capabilities_satisfy_required_inputs() {
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
         .with_body_capabilities(BodyCapabilities {
             name: "test_body".to_string(),
-            publishes: vec![PublishedChannel {
-                key: sensor_key,
-                provenance: Provenance::Exact,
-            }],
+            publishes: vec![BodyChannel::new(sensor_key, Provenance::Exact)],
             ..Default::default()
         })
         .build();
@@ -1195,10 +1184,7 @@ fn oracle_input_satisfied_by_body_capability() {
         .add_node(Box::new(SinkNode::new("mock_oracle", oracle_key.clone())))
         .with_body_capabilities(BodyCapabilities {
             name: "sim".to_string(),
-            publishes: vec![PublishedChannel {
-                key: oracle_key,
-                provenance: Provenance::Exact,
-            }],
+            publishes: vec![BodyChannel::new(oracle_key, Provenance::Exact)],
             ..Default::default()
         })
         .build();
@@ -1320,10 +1306,7 @@ fn tick_preserves_externally_written_values() {
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
         .with_body_capabilities(BodyCapabilities {
             name: "test_body".to_string(),
-            publishes: vec![PublishedChannel {
-                key: sensor_key.clone(),
-                provenance: Provenance::Exact,
-            }],
+            publishes: vec![BodyChannel::new(sensor_key.clone(), Provenance::Exact)],
             ..Default::default()
         })
         .build()

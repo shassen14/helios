@@ -16,7 +16,7 @@ use helios_core::spatial::FrameId;
 use helios_runtime::channels::control;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::tf_service::TfService;
-use helios_runtime::{build_pipeline, BodyCapabilities, ChannelKey, Provenance, PublishedChannel};
+use helios_runtime::{build_pipeline, BodyCapabilities, BodyChannel, ChannelKey, Provenance};
 
 use std::any::TypeId;
 use std::collections::{BTreeSet, HashSet};
@@ -215,15 +215,9 @@ pub fn spawn_actuator_command(
 /// Construct one of these in [`spawn_autonomy_pipeline`] per agent and
 /// pass it to [`build_pipeline`].
 fn build_host_body_capabilities(agent_name: &str, actuation: &ActuationModel) -> BodyCapabilities {
-    let published_pose = PublishedChannel {
-        key: oracle_pose_channel().into(),
-        provenance: Provenance::Exact,
-    };
+    let published_pose = BodyChannel::new(oracle_pose_channel(), Provenance::Exact);
 
-    let published_twist = PublishedChannel {
-        key: oracle_twist_channel().into(),
-        provenance: Provenance::Exact,
-    };
+    let published_twist = BodyChannel::new(oracle_twist_channel(), Provenance::Exact);
 
     BodyCapabilities {
         name: agent_name.to_string(),
@@ -239,9 +233,11 @@ fn build_host_body_capabilities(agent_name: &str, actuation: &ActuationModel) ->
 /// default `"mission"`) fold to one entry, and the order is stable across runs —
 /// which the resolved-config dump and determinism hashing will want. Empty when
 /// no node declares a goal input, so there is nowhere for a goal to go.
-fn mission_goal_channels(outside_inputs: &[ChannelKey]) -> BTreeSet<String> {
+fn mission_goal_channels<'a>(
+    outside_inputs: impl IntoIterator<Item = &'a ChannelKey>,
+) -> BTreeSet<String> {
     outside_inputs
-        .iter()
+        .into_iter()
         .filter(|key| key.type_id() == TypeId::of::<PlannerGoal>())
         .map(|key| key.instance().to_string())
         .collect()
@@ -251,9 +247,9 @@ fn mission_goal_channels(outside_inputs: &[ChannelKey]) -> BTreeSet<String> {
 /// does the host publish intent to it: the pipeline's declared outside inputs
 /// say what it reads from outside the robot, whatever its config calls the
 /// node that reads it.
-fn reads_teleop_intent(outside_inputs: &[ChannelKey]) -> bool {
+fn reads_teleop_intent<'a>(outside_inputs: impl IntoIterator<Item = &'a ChannelKey>) -> bool {
     let intent: ChannelKey = control::intent::<TwistIntent>().into();
-    outside_inputs.contains(&intent)
+    outside_inputs.into_iter().any(|key| *key == intent)
 }
 
 #[cfg(test)]
@@ -358,7 +354,7 @@ mod tests {
         let caps = build_host_body_capabilities("any", &ActuationModel::default());
         assert_eq!(caps.publishes.len(), 2);
 
-        let keys: Vec<_> = caps.publishes.iter().map(|p| &p.key).collect();
+        let keys: Vec<_> = caps.publishes.iter().map(BodyChannel::key).collect();
         assert!(keys.contains(&&ChannelKey::from(oracle_pose_channel())));
         assert!(keys.contains(&&ChannelKey::from(oracle_twist_channel())));
     }
@@ -367,7 +363,7 @@ mod tests {
     fn all_published_channels_are_provenance_exact() {
         let caps = build_host_body_capabilities("any", &ActuationModel::default());
         for pc in &caps.publishes {
-            assert_eq!(pc.provenance, Provenance::Exact);
+            assert_eq!(pc.provenance(), Provenance::Exact);
         }
     }
 }

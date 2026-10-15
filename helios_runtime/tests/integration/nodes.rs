@@ -7,8 +7,9 @@ use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel};
 use helios_runtime::{
     build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
-    BuildContext, EstimateSeamConfig, FactoryOutput, PipelineAssemblyError, PipelineBuildError,
-    PipelineNode, PortDescriptor, Provenance, PublishedChannel, TickContext,
+    BodyChannel, BuildContext, ChannelKey, EstimateSeamConfig, FactoryOutput,
+    PipelineAssemblyError, PipelineBuildError, PipelineNode, PortDescriptor, Provenance,
+    TickContext,
 };
 
 use helios_core::interchange::measurement::envelope::SensorReading;
@@ -327,10 +328,7 @@ fn a_mock_oracle_entry_builds_on_a_body_with_truth() {
     let truth = BodyCapabilities {
         publishes: [oracle_pose_channel().into(), oracle_twist_channel().into()]
             .into_iter()
-            .map(|key| PublishedChannel {
-                key,
-                provenance: Provenance::Exact,
-            })
+            .map(|key: ChannelKey| BodyChannel::new(key, Provenance::Exact))
             .collect(),
         ..body()
     };

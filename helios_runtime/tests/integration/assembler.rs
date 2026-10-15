@@ -7,8 +7,8 @@ use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
     build_pipeline, ActuatorSeamConfig, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
-    CommandFoldConfig, EstimateSeamConfig, PipelineAssemblyError, PipelineBuildError, Provenance,
-    PublishedChannel, ReferenceSeamConfig,
+    BodyChannel, CommandFoldConfig, EstimateSeamConfig, PipelineAssemblyError, PipelineBuildError,
+    Provenance, ReferenceSeamConfig,
 };
 
 use helios_core::control::actuation_model::{ActuationModel, ActuatorSpec, SignConvention};
@@ -437,14 +437,8 @@ fn state_and_reference_body() -> BodyCapabilities {
     BodyCapabilities {
         name: "oracle_state".to_string(),
         publishes: vec![
-            PublishedChannel {
-                key: estimate::estimate().into(),
-                provenance: Provenance::Exact,
-            },
-            PublishedChannel {
-                key: control::reference::<BodyTwistRef>().into(),
-                provenance: Provenance::Exact,
-            },
+            BodyChannel::new(estimate::estimate(), Provenance::Exact),
+            BodyChannel::new(control::reference::<BodyTwistRef>(), Provenance::Exact),
         ],
         actuation: test_actuation(),
     }
@@ -1540,10 +1534,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
     };
     let body = BodyCapabilities {
         name: "rover".to_string(),
-        publishes: vec![PublishedChannel {
-            key: state_key.clone(),
-            provenance: Provenance::Exact,
-        }],
+        publishes: vec![BodyChannel::new(state_key.clone(), Provenance::Exact)],
         ..Default::default()
     };
 
@@ -1749,7 +1740,7 @@ fn planner_goals_are_declared_once_per_goal_channel() {
     )
     .expect("a stack of planners over a declared grid must build");
 
-    let declared = pipeline.outside_inputs();
+    let declared: Vec<ChannelKey> = pipeline.outside_inputs().cloned().collect();
     let mission: ChannelKey = InternalChannel::named::<PlannerGoal>("mission").into();
     let waypoints: ChannelKey = InternalChannel::named::<PlannerGoal>("waypoints").into();
 
@@ -1785,7 +1776,7 @@ fn teleop_intent_is_declared_as_an_outside_input() {
     .expect("teleop-only stack must build");
 
     let intent: ChannelKey = control::intent::<TwistIntent>().into();
-    assert_eq!(pipeline.outside_inputs(), [intent].as_slice());
+    assert_eq!(pipeline.outside_inputs().collect::<Vec<_>>(), [&intent]);
 }
 
 #[test]
@@ -1801,9 +1792,9 @@ fn stack_without_planner_or_teleop_declares_no_outside_inputs() {
     )
     .expect("an estimator and a mapper must build");
 
+    let declared: Vec<ChannelKey> = pipeline.outside_inputs().cloned().collect();
     assert!(
-        pipeline.outside_inputs().is_empty(),
-        "no planner and no teleop must declare nothing, got {:?}",
-        pipeline.outside_inputs()
+        declared.is_empty(),
+        "no planner and no teleop must declare nothing, got {declared:?}"
     );
 }

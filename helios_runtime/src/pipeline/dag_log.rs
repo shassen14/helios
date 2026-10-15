@@ -13,26 +13,26 @@
 
 use crate::{
     pipeline::{autonomy_pipeline::observable_catalog, key_format::format_key_compact},
-    port::{Determinism, Observable},
-    AutonomyPipeline, BodyCapabilities, ChannelKey, NodeId, PipelineNode,
+    port::{Determinism, Observable, Writer},
+    AutonomyPipeline, ChannelKey, NodeId, PipelineNode,
 };
 
 use tracing::info;
 
-/// One-shot startup dump of a built pipeline. `capabilities` is the body it
+/// One-shot startup dump of a built pipeline. `body_name` names the body it
 /// was built against; `label` gives a node's label by its name, `None` for a
 /// node without one. Emits at `info` so it's visible with the default
 /// `helios=info` filter; nothing else in the per-tick path emits at that
 /// level, so this stays a single block.
 pub(crate) fn log_resolved_dag<'a>(
     pipeline: &AutonomyPipeline,
-    capabilities: &BodyCapabilities,
+    body_name: &str,
     label: impl Fn(&str) -> Option<&'a str>,
 ) {
     info!(
         target: "helios_runtime::pipeline",
         "{}",
-        render_dag(pipeline, capabilities, label).trim_end()
+        render_dag(pipeline, body_name, label).trim_end()
     );
 }
 
@@ -40,7 +40,7 @@ pub(crate) fn log_resolved_dag<'a>(
 /// node, with a blank line before every section so they read as blocks.
 fn render_dag<'a>(
     pipeline: &AutonomyPipeline,
-    capabilities: &BodyCapabilities,
+    body_name: &str,
     label: impl Fn(&str) -> Option<&'a str>,
 ) -> String {
     let levels = &pipeline.levels;
@@ -51,20 +51,26 @@ fn render_dag<'a>(
         levels.len()
     );
 
+    let published: Vec<_> = pipeline
+        .descriptions()
+        .iter()
+        .filter_map(|description| match description.writer() {
+            Writer::Body { provenance } => Some((description.key(), provenance)),
+            _ => None,
+        })
+        .collect();
     out.push_str(&format!(
-        "\nbody {}: publishes {} channels\n",
-        capabilities.name,
-        capabilities.publishes.len()
+        "\nbody {body_name}: publishes {} channels\n",
+        published.len()
     ));
-    for pc in &capabilities.publishes {
+    for (key, provenance) in published {
         out.push_str(&format!(
-            "  {} [provenance: {:?}]\n",
-            format_key_compact(&pc.key),
-            pc.provenance
+            "  {} [provenance: {provenance:?}]\n",
+            format_key_compact(key)
         ));
     }
 
-    let outside_inputs = pipeline.outside_inputs();
+    let outside_inputs: Vec<&ChannelKey> = pipeline.outside_inputs().collect();
     out.push_str(&format!(
         "\noutside inputs: {} channels sent by an operator or mission system\n",
         outside_inputs.len()

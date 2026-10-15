@@ -16,13 +16,14 @@ pub mod prelude;
 pub mod stamped;
 pub mod tf_service;
 
-pub use crate::body::{BodyCapabilities, Provenance, PublishedChannel};
+pub use crate::body::{BodyCapabilities, BodyChannel};
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{
-    AutonomyPipeline, ChannelUses, CycleEdge, PipelineBuildError, PipelineBuilder, Supplier,
+    AutonomyPipeline, ChannelUses, CycleEdge, PipelineBuildError, PipelineBuilder,
 };
 pub use crate::port::{
-    ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, PortDescriptor, SlotVersion,
+    ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming,
+    PortDescriptor, Provenance, SlotVersion, Writer,
 };
 pub use crate::stamped::{Health, Stamped};
 

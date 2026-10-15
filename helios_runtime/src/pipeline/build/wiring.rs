@@ -5,8 +5,10 @@
 //! the declarations, not an order, so they run before the sort.
 
 use crate::{
-    channels::tf::is_tf_edge, pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP, port::ChannelKind,
-    BodyCapabilities, ChannelKey, ChannelUses, PipelineBuildError, PipelineNode, Supplier,
+    channels::tf::is_tf_edge,
+    pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
+    port::{ChannelDescription, ChannelKind, Writer},
+    ChannelKey, ChannelUses, PipelineBuildError, PipelineNode,
 };
 
 use helios_core::kernel::identifier::{is_dotted_name, is_level, LEVEL_SEPARATOR};
@@ -23,23 +25,19 @@ use std::{
 /// pipeline's own group, no node names a leaf twice or gives a leaf the name
 /// of one of its outputs, and every input, required or optional, has exactly
 /// one supplier: a node output, a body channel, or a declared outside input.
+/// `descriptions` holds every channel some writer declares; `body_name` names
+/// the body in the error for an oracle or health channel it doesn't publish.
 pub(super) fn check_wiring(
     nodes: &[Box<dyn PipelineNode>],
-    capabilities: &BodyCapabilities,
-    outside_inputs: &[ChannelKey],
+    descriptions: &[ChannelDescription],
+    body_name: &str,
 ) -> Vec<PipelineBuildError> {
     let mut errors = vec![];
     check_node_names(nodes, &mut errors);
-    let refused_names = check_channel_names(nodes, capabilities, outside_inputs, &mut errors);
+    let refused_names = check_channel_names(nodes, descriptions, &mut errors);
     check_observables(nodes, &refused_names, &mut errors);
-    let supplier_of = map_suppliers(nodes, capabilities, outside_inputs, &mut errors);
-    check_inputs_supplied(
-        nodes,
-        &supplier_of,
-        &refused_names,
-        &capabilities.name,
-        &mut errors,
-    );
+    let supplier_of = map_suppliers(descriptions, &mut errors);
+    check_inputs_supplied(nodes, &supplier_of, &refused_names, body_name, &mut errors);
     errors
 }
 
@@ -68,8 +66,7 @@ fn check_node_names(nodes: &[Box<dyn PipelineNode>], errors: &mut Vec<PipelineBu
 
 /// A channel's name is its one address on the agent, so every name the graph
 /// sees must be well formed and name one channel: one kind and one payload
-/// type. Covers the body's channels, the outside inputs, and every node's
-/// inputs and outputs. Each refused name is reported once, with every channel
+/// type. Covers every described channel and every node's inputs. Each refused name is reported once, with every channel
 /// under it and who writes and reads each, so a reader and a writer that
 /// disagree on the type are shown side by side. Returns the refused names,
 /// so the supplier check doesn't report their inputs again.
@@ -78,11 +75,10 @@ fn check_node_names(nodes: &[Box<dyn PipelineNode>], errors: &mut Vec<PipelineBu
 /// gets a channel of its own, so their names are not checked for form.
 fn check_channel_names(
     nodes: &[Box<dyn PipelineNode>],
-    capabilities: &BodyCapabilities,
-    outside_inputs: &[ChannelKey],
+    descriptions: &[ChannelDescription],
     errors: &mut Vec<PipelineBuildError>,
 ) -> HashSet<Arc<str>> {
-    let uses_by_name = map_channel_uses(nodes, capabilities, outside_inputs);
+    let uses_by_name = map_channel_uses(nodes, descriptions);
     let mut refused_names: HashSet<Arc<str>> = HashSet::new();
     for (name, uses) in uses_by_name {
         let error = if !is_dotted_name(&name) && !uses.iter().all(|used| is_tf_edge(&used.key)) {
@@ -106,34 +102,21 @@ fn check_channel_names(
 
 /// Every channel the graph sees, grouped by name, each with who writes and
 /// reads it. Names sort so errors come out in one order every build; the
-/// channels under a name keep the order the build met them.
+/// channels under a name keep the order the build met them: described
+/// channels first, then channels only read.
 fn map_channel_uses(
     nodes: &[Box<dyn PipelineNode>],
-    capabilities: &BodyCapabilities,
-    outside_inputs: &[ChannelKey],
+    descriptions: &[ChannelDescription],
 ) -> BTreeMap<Arc<str>, Vec<ChannelUses>> {
     let mut uses_by_name: BTreeMap<Arc<str>, Vec<ChannelUses>> = BTreeMap::new();
-    for published in &capabilities.publishes {
+    for description in descriptions {
         push_once(
-            &mut uses_of(&mut uses_by_name, &published.key).writers,
-            Supplier::Body(capabilities.name.clone()),
-        );
-    }
-    for key in outside_inputs {
-        push_once(
-            &mut uses_of(&mut uses_by_name, key).writers,
-            Supplier::OutsideInput,
+            &mut uses_of(&mut uses_by_name, description.key()).writers,
+            description.writer().clone(),
         );
     }
     for node in nodes {
-        let descriptor = node.port_descriptor();
-        for output in descriptor.outputs() {
-            push_once(
-                &mut uses_of(&mut uses_by_name, output).writers,
-                Supplier::Node(node.name().to_string()),
-            );
-        }
-        for input in descriptor.inputs() {
+        for input in node.port_descriptor().inputs() {
             push_once(
                 &mut uses_of(&mut uses_by_name, input.channel()).readers,
                 node.name().to_string(),
@@ -308,39 +291,25 @@ fn is_in_pipeline_group(leaf: &str) -> bool {
     }
 }
 
-/// Records who supplies each channel. The body and the outside inputs go in
-/// first, so a conflict names the outside-world supplier before the node. Any
-/// second supplier of a key is an error.
-fn map_suppliers(
-    nodes: &[Box<dyn PipelineNode>],
-    capabilities: &BodyCapabilities,
-    outside_inputs: &[ChannelKey],
+/// Records who writes each channel, in description order: the body and the
+/// outside inputs come before the nodes, so a conflict names the
+/// outside-world writer before the node. Any second writer of a key is an
+/// error.
+fn map_suppliers<'a>(
+    descriptions: &'a [ChannelDescription],
     errors: &mut Vec<PipelineBuildError>,
-) -> HashMap<ChannelKey, Supplier> {
-    let mut supplier_of: HashMap<ChannelKey, Supplier> = HashMap::new();
-    let body_supplies = capabilities.publishes.iter().map(|published| {
-        (
-            published.key.clone(),
-            Supplier::Body(capabilities.name.clone()),
-        )
-    });
-    let outside_supplies = outside_inputs
-        .iter()
-        .map(|key| (key.clone(), Supplier::OutsideInput));
-    let node_supplies = nodes.iter().flat_map(|node| {
-        node.port_descriptor()
-            .outputs()
-            .map(|output| (output.clone(), Supplier::Node(node.name().to_string())))
-    });
-    for (channel, supplier) in body_supplies.chain(outside_supplies).chain(node_supplies) {
-        if let Some(first) = supplier_of.get(&channel) {
+) -> HashMap<&'a ChannelKey, &'a Writer> {
+    let mut supplier_of: HashMap<&ChannelKey, &Writer> = HashMap::new();
+    for description in descriptions {
+        let channel = description.key();
+        if let Some(first) = supplier_of.get(channel) {
             errors.push(PipelineBuildError::MultipleSuppliers {
-                channel,
-                first: first.clone(),
-                second: supplier,
+                channel: channel.clone(),
+                first: (*first).clone(),
+                second: description.writer().clone(),
             });
         } else {
-            supplier_of.insert(channel, supplier);
+            supplier_of.insert(channel, description.writer());
         }
     }
     supplier_of
@@ -351,7 +320,7 @@ fn map_suppliers(
 /// check refused is skipped: that error already lists who writes and reads it.
 fn check_inputs_supplied(
     nodes: &[Box<dyn PipelineNode>],
-    supplier_of: &HashMap<ChannelKey, Supplier>,
+    supplier_of: &HashMap<&ChannelKey, &Writer>,
     refused_names: &HashSet<Arc<str>>,
     body_name: &str,
     errors: &mut Vec<PipelineBuildError>,
