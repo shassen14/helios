@@ -11,12 +11,13 @@ use helios_core::control::actuation_model::ActuationModel;
 use helios_core::control::actuators::ActuatorCommand;
 use helios_core::control::commands::TwistIntent;
 use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::spatial::transforms::tf::buffer::TfWindow;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
 use helios_core::spatial::transforms::{Convention, ErasedTransform};
 use helios_core::spatial::FrameId;
 use helios_runtime::channels::control;
 use helios_runtime::tf_service::TfService;
-use helios_runtime::{build_pipeline, BodyCapabilities, BodyChannel, ChannelKey};
+use helios_runtime::{build_pipeline, AutonomyPipeline, BodyCapabilities, BodyChannel, ChannelKey};
 
 use std::any::TypeId;
 use std::collections::BTreeSet;
@@ -55,33 +56,32 @@ pub fn spawn_autonomy_pipeline(
 
         let body = build_host_body_capabilities(sensor_channels, &agent_config.vehicle.actuation);
 
-        match build_pipeline(stack, &registry.0, agent.clone(), body) {
-            Ok(pipeline) => {
+        // A pipeline is bound only with a tf service that serves every mount
+        // it reads; either failing leaves the agent without both.
+        let bound = build_pipeline(stack, &registry.0, agent.clone(), body)
+            .map_err(|errors| errors.iter().map(ToString::to_string).collect())
+            .and_then(|pipeline| {
+                let static_seeds = build_static_seeds(agent_config, &agent);
+                estimated_tf_service(&pipeline, stack.tf.to_window(), static_seeds, &agent)
+                    .map(|service| (pipeline, service))
+            });
+
+        match bound {
+            Ok((pipeline, service)) => {
                 // `AgentIdComponent` is already on the shell (stamped at
                 // `CreateRequests`), so the test bridge's
                 // `(&AgentIdComponent, &AutonomyPipelineComponent)` query still
                 // never sees a pipeline without its identity.
                 //
-                // The TfService is seeded with the static sensor mounts and
-                // drains exactly the tf-edge channels this pipeline declares, so
-                // its estimated tree is fed only by the graph's own producers —
-                // never the sim's truth tree.
-                let window = stack.tf.to_window();
-                let drain_keys = pipeline.tf_edge_channels();
                 // The distinct channels this agent's planners read their goal
                 // from; a mission goal fans out to each. Empty when no node
                 // declares a goal input.
                 let goal_channels = mission_goal_channels(pipeline.outside_inputs());
                 let teleop_controlled = reads_teleop_intent(pipeline.outside_inputs());
-                let static_seeds = build_static_seeds(agent_config, &agent);
 
                 let mut cmds = commands.entity(agent_entity);
                 cmds.insert(AutonomyPipelineComponent(pipeline));
-                cmds.insert(TfServiceComponent(TfService::new(
-                    window,
-                    drain_keys,
-                    static_seeds,
-                )));
+                cmds.insert(TfServiceComponent(service));
 
                 if !goal_channels.is_empty() {
                     cmds.insert(MissionGoalChannels(goal_channels.into_iter().collect()));
@@ -106,12 +106,39 @@ pub fn spawn_autonomy_pipeline(
                 // Mark the agent so the failure outlives the log line. The
                 // agent gets no pipeline, so nothing downstream would
                 // otherwise notice it is inert.
-                commands.entity(agent_entity).insert(PipelineBuildFailed {
-                    errors: errors.iter().map(|e| e.to_string()).collect(),
-                });
+                commands
+                    .entity(agent_entity)
+                    .insert(PipelineBuildFailed { errors });
             }
         }
     }
+}
+
+/// The agent's estimated tf service, checked against `pipeline`.
+///
+/// Seeded with the static sensor mounts and draining exactly the tf-edge
+/// channels the pipeline declares, so its tree is fed only by the graph's own
+/// producers, never the sim's truth tree. Fails with every rejected seed, or
+/// with the mounts the pipeline reads that are not below `base_link`. The
+/// pipeline's tf edges do not yet say which frames they join, so none is
+/// declared; the one today, `odom → base_link`, lies above `base_link`, on no
+/// mount's way to it.
+fn estimated_tf_service(
+    pipeline: &AutonomyPipeline,
+    window: TfWindow,
+    static_seeds: Vec<StampedTransform>,
+    agent: &AgentId,
+) -> Result<TfService, Vec<String>> {
+    let service = TfService::new(window, pipeline.tf_edge_channels(), static_seeds)
+        .map_err(|rejected| rejected.iter().map(ToString::to_string).collect::<Vec<_>>())?;
+    service
+        .check_mounts_reach(
+            &pipeline.read_mounts(),
+            &FrameId::base_link(agent.clone()),
+            &[],
+        )
+        .map_err(|unreached| vec![unreached.to_string()])?;
+    Ok(service)
 }
 
 /// The static transform edges seeding this agent's estimated tf buffer: one

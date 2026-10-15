@@ -5,14 +5,14 @@ use super::scheduled::{ScheduledNode, TICK_DURATION_LEAF};
 
 use crate::{
     channels::{control, estimate::estimate, tf::is_tf_edge},
-    port::{ChannelDescription, ChannelKey, PortBus, Writer},
+    port::{ChannelDescription, ChannelKey, InputPort, PortBus, Writer},
     prelude::{Stamped, TickContext},
 };
 
 use helios_core::{
     control::actuators::ActuatorCommand,
     prelude::{MonotonicTime, TfProvider},
-    spatial::FrameAwareState,
+    spatial::{FrameAwareState, FrameId},
 };
 
 use std::{sync::Arc, time::Instant};
@@ -66,6 +66,33 @@ impl AutonomyPipeline {
             .iter()
             .filter(|description| *description.writer() == Writer::Outside)
             .map(ChannelDescription::key)
+    }
+
+    /// The mounts of the channels some node reads, each once, in execution
+    /// order. A host checks each sits below `base_link` in the tree it serves the
+    /// pipeline, once its static feed is complete. A channel no node reads is
+    /// left out: an unused sensor's frame is not the pipeline's concern.
+    pub fn read_mounts(&self) -> Vec<FrameId> {
+        let mut mounts: Vec<FrameId> = Vec::new();
+        let read = self
+            .levels
+            .iter()
+            .flatten()
+            .flat_map(|scheduled| scheduled.node.port_descriptor().inputs())
+            .map(InputPort::channel);
+        for channel in read {
+            let mount = self
+                .descriptions
+                .iter()
+                .find(|description| description.key() == channel)
+                .and_then(ChannelDescription::mount);
+            if let Some(mount) = mount {
+                if !mounts.contains(mount) {
+                    mounts.push(mount.clone());
+                }
+            }
+        }
+        mounts
     }
 
     /// Executes one tick: stamps the bus clock, then runs every rate-due

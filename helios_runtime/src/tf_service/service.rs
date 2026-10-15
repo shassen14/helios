@@ -5,11 +5,16 @@ use crate::{port::PortBus, ChannelKey};
 
 use helios_core::{
     prelude::{MonotonicTime, TfProvider},
-    spatial::transforms::tf::{
-        buffer::{TfBuffer, TfWindow},
-        stamped::StampedTransform,
+    spatial::{
+        transforms::tf::{
+            buffer::{TfBuffer, TfIngestError, TfWindow},
+            stamped::{FrameEdge, StampedTransform},
+        },
+        FrameId,
     },
 };
+
+use std::fmt::{self, Display, Formatter};
 
 /// Owns the transform buffer and the set of edges it drains into it.
 ///
@@ -26,20 +31,30 @@ pub struct TfService {
 }
 
 impl TfService {
+    /// A service draining `drain_keys`, its tree seeded with the static edges.
+    ///
+    /// Fails with every seed the tree rejects (a cycle, a second parent, a
+    /// convention conflict), each judged against the seeds folded before it:
+    /// a wiring error in the host's static feed, which the host reports with
+    /// the pipeline's build errors rather than panic on.
     pub fn new(
         window: TfWindow,
         drain_keys: Vec<ChannelKey>,
         static_seeds: Vec<StampedTransform>,
-    ) -> Self {
+    ) -> Result<Self, Vec<SeedRejected>> {
         let mut buffer = TfBuffer::new(window);
-        for tf in static_seeds {
-            // A static seed that fails to ingest is a config/wiring error caught
-            // at assembly, not a runtime fault — so a startup panic is correct
-            // here. The error's Debug names the offending frame(s) and the
-            // invariant they broke (cycle, multiple parents, convention conflict).
-            buffer
-                .insert_static(tf)
-                .unwrap_or_else(|e| panic!("tf static seed rejected at assembly: {e:?}"));
+        let mut rejected = Vec::new();
+        for seed in static_seeds {
+            let edge = FrameEdge {
+                child: seed.child.clone(),
+                parent: seed.parent.clone(),
+            };
+            if let Err(error) = buffer.insert_static(seed) {
+                rejected.push(SeedRejected { edge, error });
+            }
+        }
+        if !rejected.is_empty() {
+            return Err(rejected);
         }
         let edges = drain_keys
             .into_iter()
@@ -49,7 +64,7 @@ impl TfService {
             })
             .collect();
 
-        Self { buffer, edges }
+        Ok(Self { buffer, edges })
     }
 
     /// The tree as a read-only [`TfProvider`], for consumers to query this tick.
@@ -72,6 +87,36 @@ impl TfService {
     /// nothing on the pipeline path calls it.
     pub fn buffer(&self) -> &TfBuffer {
         &self.buffer
+    }
+
+    /// Checks that every frame in `mounts` sits below `base_link`, through the
+    /// tree or the `declared` edges, the ones whose samples have not arrived
+    /// yet. Below, not merely in the same tree: a mount that meets `base_link`
+    /// only through `odom` would move with the estimate.
+    ///
+    /// Run once the host's static feed is complete, before the first tick: a
+    /// mount that does not join would otherwise surface only as a lookup
+    /// failure on every tick of every node reading it. Wiring only: whether a
+    /// frame is in the tree, never whether its edge's value is right.
+    pub fn check_mounts_reach(
+        &self,
+        mounts: &[FrameId],
+        base_link: &FrameId,
+        declared: &[FrameEdge],
+    ) -> Result<(), UnreachedMounts> {
+        let unreached: Vec<FrameId> = mounts
+            .iter()
+            .filter(|mount| !self.buffer.reaches(mount, base_link, declared))
+            .cloned()
+            .collect();
+        if unreached.is_empty() {
+            Ok(())
+        } else {
+            Err(UnreachedMounts {
+                base_link: base_link.clone(),
+                mounts: unreached,
+            })
+        }
     }
 
     /// Drain every edge's freshest sample into the buffer, once.
@@ -114,6 +159,39 @@ impl TfService {
 pub struct DrainedEdge {
     channel: ChannelKey,
     last_seen: MonotonicTime,
+}
+
+/// A static seed the tree refused at [`TfService::new`].
+#[derive(Debug)]
+pub struct SeedRejected {
+    pub edge: FrameEdge,
+    pub error: TfIngestError,
+}
+
+impl Display for SeedRejected {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "tf static seed {} rejected: {:?}", self.edge, self.error)
+    }
+}
+
+/// Mounts a pipeline reads that are not below `base_link` in the tree, found by
+/// [`TfService::check_mounts_reach`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreachedMounts {
+    pub base_link: FrameId,
+    pub mounts: Vec<FrameId>,
+}
+
+impl Display for UnreachedMounts {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mounts: Vec<String> = self.mounts.iter().map(ToString::to_string).collect();
+        write!(
+            f,
+            "mounts not below {} in the estimated tf tree: {}",
+            self.base_link,
+            mounts.join(", ")
+        )
+    }
 }
 
 #[cfg(test)]
@@ -221,7 +299,8 @@ mod tests {
     #[test]
     fn folded_edge_is_queryable() {
         let key = edge_key(base_link(), odom());
-        let mut service = TfService::new(window(), vec![key.clone()], vec![]);
+        let mut service = TfService::new(window(), vec![key.clone()], vec![])
+            .expect("the seeds form a valid tree");
         let bus = edge_bus(vec![key]);
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
 
@@ -237,7 +316,8 @@ mod tests {
     #[test]
     fn fold_skips_when_envelope_has_not_advanced() {
         let key = edge_key(base_link(), odom());
-        let mut service = TfService::new(window(), vec![key.clone()], vec![]);
+        let mut service = TfService::new(window(), vec![key.clone()], vec![])
+            .expect("the seeds form a valid tree");
         let bus = edge_bus(vec![key]);
 
         // A sample stamped (inner) at t=1, envelope 1.
@@ -269,7 +349,8 @@ mod tests {
         let good = edge_key(base_link(), odom());
         // `bad` is drained first, so the error precedes the good edge — the loop
         // must warn-and-continue, not panic or abort.
-        let mut service = TfService::new(window(), vec![bad.clone(), good.clone()], vec![]);
+        let mut service = TfService::new(window(), vec![bad.clone(), good.clone()], vec![])
+            .expect("the seeds form a valid tree");
         let bus = edge_bus(vec![bad, good]);
 
         publish(
@@ -306,7 +387,8 @@ mod tests {
             0.0,
             0.1,
         );
-        let service = TfService::new(window(), vec![], vec![mount]);
+        let service =
+            TfService::new(window(), vec![], vec![mount]).expect("the seeds form a valid tree");
 
         // No fold: a static edge answers every time straight from the seed.
         let tf =
@@ -320,7 +402,8 @@ mod tests {
     fn fold_composes_a_two_edge_chain() {
         let e1 = edge_key(base_link(), odom());
         let e2 = edge_key(odom(), map());
-        let mut service = TfService::new(window(), vec![e1.clone(), e2.clone()], vec![]);
+        let mut service = TfService::new(window(), vec![e1.clone(), e2.clone()], vec![])
+            .expect("the seeds form a valid tree");
         let bus = edge_bus(vec![e1, e2]);
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
         publish(&bus, odom_map(1.0, 3.0), 1.0);
@@ -350,7 +433,8 @@ mod tests {
             0.1,
         );
         let key = edge_key(base_link(), odom());
-        let mut service = TfService::new(window(), vec![key.clone()], vec![mount]);
+        let mut service = TfService::new(window(), vec![key.clone()], vec![mount])
+            .expect("the seeds form a valid tree");
         let bus = edge_bus(vec![key]);
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
 
@@ -367,5 +451,137 @@ mod tests {
         };
         assert!(has(sensor("lidar"), base_link(), EdgeKindTag::Static));
         assert!(has(base_link(), odom(), EdgeKindTag::Dynamic));
+    }
+
+    // --- bind ---
+
+    // A static mount of `name` on `parent`, both FLU.
+    fn seed(name: &str, parent: FrameId) -> StampedTransform {
+        message(
+            sensor(name),
+            parent,
+            Convention::Flu,
+            Convention::Flu,
+            0.0,
+            0.1,
+        )
+    }
+
+    fn seeded(seeds: Vec<StampedTransform>) -> TfService {
+        TfService::new(window(), vec![], seeds).expect("the seeds form a valid tree")
+    }
+
+    #[test]
+    fn seeded_mounts_reach_base_link() {
+        let service = seeded(vec![seed("gps", base_link()), seed("imu", base_link())]);
+
+        let mounts = [sensor("gps"), sensor("imu")];
+        assert_eq!(
+            service.check_mounts_reach(&mounts, &base_link(), &[]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn every_unseeded_mount_is_named() {
+        let service = seeded(vec![seed("gps", base_link())]);
+
+        let mounts = [sensor("gps"), sensor("imu"), sensor("mag")];
+        let refused = service.check_mounts_reach(&mounts, &base_link(), &[]);
+
+        assert_eq!(
+            refused,
+            Err(UnreachedMounts {
+                base_link: base_link(),
+                mounts: vec![sensor("imu"), sensor("mag")],
+            })
+        );
+    }
+
+    #[test]
+    fn a_mount_seeded_in_another_tree_does_not_reach() {
+        // Seeded under the wrong parent: in the tree, but not below
+        // base_link.
+        let service = seeded(vec![seed("gps", sensor("rig"))]);
+
+        assert!(service
+            .check_mounts_reach(&[sensor("gps")], &base_link(), &[])
+            .is_err());
+    }
+
+    #[test]
+    fn a_mount_reaches_through_a_declared_edge() {
+        // A lidar on a pan unit whose motor edge is declared but not yet
+        // sampled.
+        let service = seeded(vec![seed("lidar", sensor("pan"))]);
+        let motor = FrameEdge {
+            child: sensor("pan"),
+            parent: base_link(),
+        };
+
+        assert!(service
+            .check_mounts_reach(&[sensor("lidar")], &base_link(), &[])
+            .is_err());
+        assert_eq!(
+            service.check_mounts_reach(&[sensor("lidar")], &base_link(), &[motor]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn every_rejected_seed_is_named() {
+        // Two mounts each seeded under a second parent; the valid seeds
+        // around them do not hide either.
+        let result = TfService::new(
+            window(),
+            vec![],
+            vec![
+                seed("gps", base_link()),
+                seed("gps", sensor("rig")),
+                seed("imu", base_link()),
+                seed("imu", sensor("rig")),
+            ],
+        );
+
+        let Err(rejected) = result else {
+            panic!("a second parent must reject the seed");
+        };
+        let edges: Vec<FrameEdge> = rejected.into_iter().map(|r| r.edge).collect();
+        assert_eq!(
+            edges,
+            [
+                FrameEdge {
+                    child: sensor("gps"),
+                    parent: sensor("rig"),
+                },
+                FrameEdge {
+                    child: sensor("imu"),
+                    parent: sensor("rig"),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_mount_under_odom_does_not_reach_with_the_estimate_edge_declared() {
+        // In one tree with base_link once odom -> base_link is declared, but
+        // not mounted on the body: its lever arm would move with the estimate.
+        let misplaced = message(
+            sensor("gps"),
+            odom(),
+            Convention::Flu,
+            Convention::Enu,
+            0.0,
+            0.1,
+        );
+        let service = seeded(vec![misplaced]);
+        let estimate = FrameEdge {
+            child: base_link(),
+            parent: odom(),
+        };
+
+        assert!(service
+            .check_mounts_reach(&[sensor("gps")], &base_link(), &[estimate])
+            .is_err());
     }
 }

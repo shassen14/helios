@@ -238,7 +238,8 @@ fn present_static_extrinsic_aids_the_consumer() {
         )))
         .build()
         .expect("single consumer builds");
-    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![imu_mount()]);
+    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![imu_mount()])
+        .expect("the seeds form a valid tree");
 
     drive(&pipeline, &mut service, 1.0, 0.1);
 
@@ -265,7 +266,8 @@ fn missing_extrinsic_yields_none_never_a_fabricated_transform() {
         )))
         .build()
         .expect("single consumer builds");
-    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![]);
+    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![])
+        .expect("the seeds form a valid tree");
 
     for t in 1..=3 {
         drive(&pipeline, &mut service, t as f64, 0.1);
@@ -307,7 +309,8 @@ fn dual_published_edge_reaches_the_consumer_after_the_fold() {
     // The drain list is derived from the graph's own tf-edge outputs, so the
     // service folds exactly what the estimator dual-publishes — no hand-authored
     // second list to drift from the graph.
-    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![]);
+    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![])
+        .expect("the seeds form a valid tree");
 
     // `now` is held constant so a single dynamic sample (which answers only at
     // its exact stamp) is queryable across both ticks; the latency here is driven
@@ -361,7 +364,8 @@ fn aiding_chain_composes_static_mount_with_folded_dynamic_edge() {
         )))
         .build()
         .expect("producer + consumer build");
-    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![imu_mount()]);
+    let mut service = TfService::new(window(), pipeline.tf_edge_channels(), vec![imu_mount()])
+        .expect("the seeds form a valid tree");
 
     // Tick 1: the static mount resolves, but base_link → odom has not folded yet,
     // so the chain to odom is broken — the static leg alone cannot reach it.

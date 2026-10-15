@@ -1554,6 +1554,39 @@ fn a_plan_is_built_with_the_mounts_its_inputs_resolve_to() {
     assert_eq!(cloud_description.mount(), Some(&lidar_mount));
 }
 
+/// The pipeline lists the mounts of the channels its nodes read, each once:
+/// two readers of one channel and two channels on one mount give one entry,
+/// and a mounted channel no node reads gives none.
+#[test]
+fn read_mounts_lists_each_read_mount_once() {
+    let agent = AgentId::new(AGENT);
+    let imu_mount = FrameId::agent(agent.clone(), "imu");
+    let accel = SensorChannel::named::<Sensor>("imu.accel");
+    let gyro = SensorChannel::named::<Truth>("imu.gyro");
+    let unread = SensorChannel::named::<ChA>("mag");
+    let body = BodyCapabilities {
+        publishes: vec![
+            BodyChannel::new(accel.clone(), BODY_UNIT, Provenance::Simulated)
+                .with_mount(imu_mount.clone()),
+            BodyChannel::new(gyro.clone(), BODY_UNIT, Provenance::Simulated)
+                .with_mount(imu_mount.clone()),
+            BodyChannel::new(unread, BODY_UNIT, Provenance::Simulated)
+                .with_mount(FrameId::agent(agent.clone(), "mag")),
+        ],
+        ..Default::default()
+    };
+
+    let pipeline = PipelineBuilder::new(agent)
+        .add_node(Box::new(SinkNode::new("first", accel.clone().into())))
+        .add_node(Box::new(SinkNode::new("second", accel.into())))
+        .add_node(Box::new(SinkNode::optional("third", gyro.into())))
+        .with_body_capabilities(body)
+        .build()
+        .expect("build should succeed");
+
+    assert_eq!(pipeline.read_mounts(), vec![imu_mount]);
+}
+
 /// A body channel mounted on another agent's frame is refused at build.
 #[test]
 fn a_body_mount_on_another_agent_is_refused() {

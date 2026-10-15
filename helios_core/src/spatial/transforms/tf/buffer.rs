@@ -327,6 +327,42 @@ impl TfBuffer {
         Ok(from_to_lca.then(to_to_lca.inverse()))
     }
 
+    /// Whether climbing parent-ward from `frame` reaches `ancestor`, through
+    /// the folded edges or the `declared` ones: a question about the tree's
+    /// shape, never a pose or a time. A frame reaches itself.
+    ///
+    /// Ancestry, not membership of one tree: a sensor mounted on a body sits
+    /// below the body's root, so a mount that only meets it higher up (seeded
+    /// under `odom` while `odom → base_link` exists) does not reach it.
+    ///
+    /// `declared` are edges known to exist before their first sample arrives
+    /// (a joint a node will publish), which the buffer cannot hold until then.
+    /// Where a folded edge and a declared one give a frame different parents,
+    /// the folded edge is followed. Declared edges are not validated, so the
+    /// climb is bounded by the number of edges, which an acyclic chain never
+    /// exceeds: a loop among them ends the climb instead of hanging it.
+    pub fn reaches(&self, frame: &FrameId, ancestor: &FrameId, declared: &[FrameEdge]) -> bool {
+        let max_hops = self.child_to_parent.len() + declared.len();
+        let mut cursor = frame;
+        for _ in 0..=max_hops {
+            if cursor == ancestor {
+                return true;
+            }
+            let folded = self.child_to_parent.get(cursor).map(|(parent, _)| parent);
+            let parent = folded.or_else(|| {
+                declared
+                    .iter()
+                    .find(|edge| &edge.child == cursor)
+                    .map(|edge| &edge.parent)
+            });
+            match parent {
+                Some(parent) => cursor = parent,
+                None => return false,
+            }
+        }
+        false
+    }
+
     /// The shared structural validation both inserts run before storing anything —
     /// every invariant the tree relies on is checked here, once, so the lookup walk
     /// can assume a single-parent, acyclic, convention-consistent tree.
@@ -1036,6 +1072,80 @@ mod tests {
             buf.lowest_common_ancestor(&gps, &base_link()),
             Some(base_link())
         );
+    }
+
+    // --- reaches ---
+
+    #[test]
+    fn reaches_up_through_several_folded_hops_and_only_up() {
+        // A head camera on a neck on base_link: two hops up. base_link is
+        // the camera's ancestor, not the other way round.
+        let mut buf = TfBuffer::new(window());
+        let neck = mount(&mut buf, "neck", 0.5);
+        let cam = mount_on(&mut buf, "cam", neck, Convention::Flu, 0.1);
+
+        assert!(buf.reaches(&cam, &base_link(), &[]));
+        assert!(!buf.reaches(&base_link(), &cam, &[]));
+    }
+
+    #[test]
+    fn reaches_refuses_a_separate_tree_and_an_unknown_frame() {
+        let mut buf = TfBuffer::new(window());
+        assert!(buf.insert_dynamic(bl_odom(1.0, 1.0)).is_ok());
+        let floating = mount_on(&mut buf, "floating", map(), Convention::Enu, 1.0);
+
+        assert!(!buf.reaches(&floating, &base_link(), &[]));
+        assert!(!buf.reaches(&sensor("ghost"), &base_link(), &[]));
+    }
+
+    #[test]
+    fn reaches_refuses_a_frame_that_only_meets_the_ancestor_higher_up() {
+        // A mount seeded under odom shares a tree with base_link through the
+        // odom -> base_link edge, but is not mounted on the body.
+        let mut buf = TfBuffer::new(window());
+        let misplaced = mount_on(&mut buf, "misplaced", odom(), Convention::Enu, 1.0);
+        let estimate = FrameEdge {
+            child: base_link(),
+            parent: odom(),
+        };
+
+        assert!(!buf.reaches(&misplaced, &base_link(), &[estimate]));
+    }
+
+    #[test]
+    fn reaches_through_a_declared_edge_the_buffer_has_not_seen() {
+        // A pan unit's motor edge, declared but not yet sampled, carries the
+        // lidar mounted on it to base_link.
+        let mut buf = TfBuffer::new(window());
+        let pan = sensor("pan");
+        let lidar = mount_on(&mut buf, "lidar", pan.clone(), Convention::Flu, 0.1);
+        let motor = FrameEdge {
+            child: pan,
+            parent: base_link(),
+        };
+
+        assert!(!buf.reaches(&lidar, &base_link(), &[]));
+        assert!(buf.reaches(&lidar, &base_link(), &[motor]));
+    }
+
+    #[test]
+    fn reaches_ends_on_a_loop_among_declared_edges() {
+        // Declared edges are not validated; a loop among them must not hang
+        // the climb.
+        let buf = TfBuffer::new(window());
+        let (a, b) = (sensor("a"), sensor("b"));
+        let loop_edges = [
+            FrameEdge {
+                child: a.clone(),
+                parent: b.clone(),
+            },
+            FrameEdge {
+                child: b,
+                parent: a.clone(),
+            },
+        ];
+
+        assert!(!buf.reaches(&a, &base_link(), &loop_edges));
     }
 
     // --- accumulate ---
