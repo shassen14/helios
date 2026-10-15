@@ -314,7 +314,13 @@ mod tests {
             Box::new(AlwaysReadyBuilder::new()),
             InternalChannel::of::<BodyTwist>(),
         );
-        assert_eq!(node.port_descriptor().outputs(), vec![twist_channel()]);
+        assert_eq!(
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![twist_channel()]
+        );
         assert!(node.port_descriptor().rate().is_none());
     }
 
@@ -380,7 +386,10 @@ mod tests {
             InternalChannel::of::<BodyWrench>(),
         );
         assert_eq!(
-            node.port_descriptor().outputs(),
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![wrench_channel.clone()]
         );
 

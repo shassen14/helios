@@ -100,7 +100,7 @@ mod tests {
 
         let path: ChannelKey = InternalChannel::named::<Path>("local_path").into();
         let map: ChannelKey = InternalChannel::named::<MapData>("local").into();
-        assert_eq!(descriptor.outputs(), [path]);
+        assert_eq!(descriptor.outputs().cloned().collect::<Vec<_>>(), [path]);
         assert!(descriptor.required_inputs().any(|key| *key == map));
     }
 

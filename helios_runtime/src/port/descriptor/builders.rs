@@ -56,7 +56,7 @@
 
 use crate::port::{
     ChannelKey, ChannelKind, Determinism, HealthChannel, InternalChannel, Observable,
-    OracleChannel, PortDescriptor, SensorChannel,
+    OracleChannel, OutputPort, PortDescriptor, SensorChannel,
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
@@ -88,8 +88,7 @@ use std::any::TypeId;
 pub struct AlgorithmNodePortDescriptor {
     required_inputs: Vec<ChannelKey>,
     optional_inputs: Vec<ChannelKey>,
-    outputs: Vec<ChannelKey>,
-    drives: Vec<(ChannelKey, Vec<ActuatorDrive>)>,
+    outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
     rate: Option<f64>,
 }
@@ -128,7 +127,7 @@ impl AlgorithmNodePortDescriptor {
 
     /// Declares an internal channel this node writes. One producer per channel.
     pub fn output_internal(mut self, c: InternalChannel) -> Self {
-        self.outputs.push(c.into());
+        self.outputs.push(OutputPort::undriven(c.into()));
         self
     }
 
@@ -151,9 +150,7 @@ impl AlgorithmNodePortDescriptor {
             c.type_name(),
             c.instance()
         );
-        let key = ChannelKey::from(c);
-        self.outputs.push(key.clone());
-        self.drives.push((key, drives));
+        self.outputs.push(OutputPort::new(c.into(), drives));
         self
     }
 
@@ -163,7 +160,7 @@ impl AlgorithmNodePortDescriptor {
     /// channel. Channel kind says what the data is, not who produced it.
     /// Algorithm results (state, maps, paths, commands) are `Internal`.
     pub fn output_sensor(mut self, c: SensorChannel) -> Self {
-        self.outputs.push(c.into());
+        self.outputs.push(OutputPort::undriven(c.into()));
         self
     }
 
@@ -228,7 +225,7 @@ impl AlgorithmNodePortDescriptor {
                 c.kind(),
                 c
             );
-            self.outputs.push(c.clone());
+            self.outputs.push(OutputPort::undriven(c.clone()));
         }
         self
     }
@@ -238,10 +235,10 @@ impl AlgorithmNodePortDescriptor {
         PortDescriptor::new(
             self.required_inputs,
             self.optional_inputs,
-            self.outputs,
+            Vec::new(),
             self.rate,
         )
-        .with_drives(self.drives)
+        .with_outputs(self.outputs)
         .with_observables(self.observables)
     }
 }
@@ -416,7 +413,7 @@ mod tests {
             .rate_hz(50.0)
             .build();
         assert_eq!(d.required_inputs().count(), 2);
-        assert_eq!(d.outputs().len(), 1);
+        assert_eq!(d.outputs().count(), 1);
         assert_eq!(d.rate(), Some(50.0));
     }
 
@@ -480,7 +477,10 @@ mod tests {
             .output_actuator_command(command.clone(), drives.clone())
             .build();
 
-        assert_eq!(d.outputs(), [other.clone().into(), command.clone().into()]);
+        assert_eq!(
+            d.outputs().cloned().collect::<Vec<_>>(),
+            [other.clone().into(), command.clone().into()]
+        );
         assert_eq!(d.drives(&command.into()), drives);
         assert!(d.drives(&other.into()).is_empty());
     }
@@ -499,7 +499,7 @@ mod tests {
             .output_internal(InternalChannel::of::<State>())
             .build();
         assert_eq!(d.required_inputs().count(), 1);
-        assert_eq!(d.outputs().len(), 1);
+        assert_eq!(d.outputs().count(), 1);
     }
 
     #[test]
@@ -531,7 +531,7 @@ mod tests {
         let d = AlgorithmNodePortDescriptor::new()
             .outputs_from_slice(&outputs)
             .build();
-        assert_eq!(d.outputs(), outputs);
+        assert_eq!(d.outputs().cloned().collect::<Vec<_>>(), outputs);
     }
 
     #[test]

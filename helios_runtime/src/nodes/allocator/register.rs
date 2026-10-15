@@ -119,7 +119,10 @@ mod tests {
                 vec![input]
             );
             assert_eq!(
-                node.port_descriptor().outputs(),
+                node.port_descriptor()
+                    .outputs()
+                    .cloned()
+                    .collect::<Vec<_>>(),
                 vec![ChannelKey::from(InternalChannel::named::<ActuatorCommand>(
                     name
                 ))]

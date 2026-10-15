@@ -429,7 +429,10 @@ mod tests {
         let d = node.port_descriptor();
         assert!(d.required_inputs().any(|k| k == &state_channel()));
         assert!(d.required_inputs().any(|k| k == &scan_channel()));
-        assert_eq!(d.outputs(), vec![map_channel()]);
+        assert_eq!(
+            d.outputs().cloned().collect::<Vec<_>>(),
+            vec![map_channel()]
+        );
         assert_eq!(d.rate(), Some(5.0));
     }
 

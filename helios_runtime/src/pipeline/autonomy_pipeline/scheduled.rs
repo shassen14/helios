@@ -118,7 +118,7 @@ pub(in crate::pipeline) struct Tap {
 /// scheduled node both build their taps here, so a tap leaf a watcher can ask
 /// for always has a channel behind it.
 fn output_taps(node: &dyn PipelineNode) -> impl Iterator<Item = Tap> + '_ {
-    node.port_descriptor().outputs().iter().map(|channel| Tap {
+    node.port_descriptor().outputs().map(|channel| Tap {
         leaf: channel.instance().clone(),
         channel: channel.clone(),
     })

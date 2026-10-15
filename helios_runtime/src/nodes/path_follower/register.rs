@@ -136,7 +136,10 @@ mod tests {
         let path: ChannelKey = InternalChannel::named::<Path>("global_path").into();
         let reference: ChannelKey = InternalChannel::named::<BodyTwistRef>("pp").into();
         assert!(descriptor.required_inputs().any(|key| *key == path));
-        assert_eq!(descriptor.outputs(), std::slice::from_ref(&reference));
+        assert_eq!(
+            descriptor.outputs().cloned().collect::<Vec<_>>(),
+            std::slice::from_ref(&reference)
+        );
     }
 
     #[test]

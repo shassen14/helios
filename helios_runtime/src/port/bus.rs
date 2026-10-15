@@ -127,7 +127,7 @@ impl PortBus {
             for key in descriptor
                 .required_inputs()
                 .chain(descriptor.optional_inputs())
-                .chain(descriptor.outputs().iter())
+                .chain(descriptor.outputs())
             {
                 slots
                     .entry(key.clone())

@@ -330,7 +330,6 @@ fn map_suppliers(
     let node_supplies = nodes.iter().flat_map(|node| {
         node.port_descriptor()
             .outputs()
-            .iter()
             .map(|output| (output.clone(), Supplier::Node(node.name().to_string())))
     });
     for (channel, supplier) in body_supplies.chain(outside_supplies).chain(node_supplies) {

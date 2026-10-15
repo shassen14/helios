@@ -61,7 +61,7 @@ pub(super) fn order_into_levels(
         produced.extend(
             ready
                 .iter()
-                .flat_map(|node| node.port_descriptor().outputs().iter())
+                .flat_map(|node| node.port_descriptor().outputs())
                 .cloned(),
         );
 

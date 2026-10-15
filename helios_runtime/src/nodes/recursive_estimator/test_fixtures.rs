@@ -256,7 +256,7 @@ pub(super) fn bus_for(node: &RecursiveEstimatorNode) -> PortBus {
         .map(InputPort::channel)
         .cloned()
         .collect();
-    channels.extend(descriptor.outputs().iter().cloned());
+    channels.extend(descriptor.outputs().cloned());
     PortBus::new(&[PortDescriptor::new(vec![], vec![], channels, None)])
 }
 

@@ -167,12 +167,19 @@ mod tests {
             drive.optional_inputs().cloned().collect::<Vec<_>>(),
             vec![key::<DriveForce>("drive_ff")]
         );
-        assert_eq!(drive.outputs(), [key::<DriveForce>("drive_cmd")].as_slice());
+        assert_eq!(
+            drive.outputs().cloned().collect::<Vec<_>>(),
+            [key::<DriveForce>("drive_cmd")].as_slice()
+        );
 
         assert_eq!(steer.name(), "steer_cmd");
         assert_eq!(steer.port_descriptor().required_inputs().count(), 0);
         assert_eq!(
-            steer.port_descriptor().outputs(),
+            steer
+                .port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
             [key::<SteerAngle>("steer_cmd")].as_slice()
         );
     }
@@ -193,7 +200,7 @@ mod tests {
 
         let outputs: Vec<ChannelKey> = sums
             .iter()
-            .flat_map(|sum| sum.port_descriptor().outputs().to_vec())
+            .flat_map(|sum| sum.port_descriptor().outputs().cloned().collect::<Vec<_>>())
             .collect();
         assert_eq!(
             outputs,
@@ -229,7 +236,11 @@ mod tests {
         let sums = command_sums(&config, &registry, &nodes).expect("a registered type folds");
 
         assert_eq!(
-            sums[0].port_descriptor().outputs(),
+            sums[0]
+                .port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
             [key::<Thrust>("lift")].as_slice()
         );
     }

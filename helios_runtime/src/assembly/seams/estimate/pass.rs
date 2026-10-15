@@ -90,7 +90,7 @@ mod tests {
             required,
             vec![&ChannelKey::from(estimator_output("shadow"))]
         );
-        let outputs = descriptor.outputs();
+        let outputs: Vec<ChannelKey> = descriptor.outputs().cloned().collect();
         assert!(outputs.contains(&estimate().into()));
         assert_eq!(outputs.iter().filter(|key| is_tf_edge(key)).count(), 1);
     }

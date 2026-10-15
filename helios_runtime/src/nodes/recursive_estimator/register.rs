@@ -341,7 +341,7 @@ mod tests {
             .map(InputPort::channel)
             .cloned()
             .collect();
-        channels.extend(descriptor.outputs().iter().cloned());
+        channels.extend(descriptor.outputs().cloned());
         let bus = PortBus::new(&[PortDescriptor::new(vec![], vec![], channels, None)]);
 
         node.execute(
@@ -445,7 +445,7 @@ mod tests {
         assert_eq!(optional, ["gps"]);
         assert!(descriptor
             .outputs()
-            .contains(&estimator_output(NODE).into()));
+            .any(|key| *key == estimator_output(NODE).into()));
     }
 
     /// The resolved section carries each component's resolved sub-table, so

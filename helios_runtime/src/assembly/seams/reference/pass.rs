@@ -121,7 +121,7 @@ mod tests {
         );
         assert_eq!(descriptor.optional_inputs().count(), 0);
         assert_eq!(
-            descriptor.outputs(),
+            descriptor.outputs().cloned().collect::<Vec<_>>(),
             [ChannelKey::from(control::reference::<BodyTwistRef>())].as_slice()
         );
     }

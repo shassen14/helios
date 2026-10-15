@@ -282,7 +282,13 @@ mod tests {
     #[test]
     fn descriptor_outputs_frame_aware_state() {
         let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
-        assert_eq!(node.port_descriptor().outputs(), vec![state_channel()]);
+        assert_eq!(
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![state_channel()]
+        );
     }
 
     // --- Execute behavior ---

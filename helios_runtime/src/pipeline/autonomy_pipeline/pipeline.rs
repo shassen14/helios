@@ -146,7 +146,6 @@ impl AutonomyPipeline {
                     .node
                     .port_descriptor()
                     .outputs()
-                    .iter()
                     .map(move |key| (name, key))
             })
         })

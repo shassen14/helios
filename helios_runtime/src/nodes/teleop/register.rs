@@ -76,7 +76,10 @@ mod tests {
             descriptor.required_inputs().cloned().collect::<Vec<_>>(),
             vec![intent]
         );
-        assert_eq!(descriptor.outputs(), std::slice::from_ref(&reference));
+        assert_eq!(
+            descriptor.outputs().cloned().collect::<Vec<_>>(),
+            std::slice::from_ref(&reference)
+        );
     }
 
     #[test]

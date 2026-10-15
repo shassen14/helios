@@ -61,7 +61,6 @@ pub(super) fn member_output(
 
     let outputs = node.port_descriptor().outputs();
     let matching: Vec<&InternalChannel> = outputs
-        .iter()
         .filter_map(|key| match key {
             ChannelKey::Internal(channel) if channel.type_id() == ty.id => Some(channel),
             _ => None,

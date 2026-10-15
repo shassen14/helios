@@ -299,7 +299,7 @@ mod tests {
             d.optional_inputs().cloned().collect::<Vec<_>>(),
             vec![preferred]
         );
-        assert_eq!(d.outputs(), vec![output]);
+        assert_eq!(d.outputs().cloned().collect::<Vec<_>>(), vec![output]);
         assert!(d.rate().is_none());
     }
 

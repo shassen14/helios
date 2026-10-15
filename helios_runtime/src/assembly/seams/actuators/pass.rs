@@ -246,7 +246,11 @@ mod tests {
             [partial_key("drive"), partial_key("steer")]
         );
         assert_eq!(
-            merge.port_descriptor().outputs(),
+            merge
+                .port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
             [ChannelKey::from(control::actuators())]
         );
     }

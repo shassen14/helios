@@ -131,7 +131,12 @@ mod tests {
     }
 
     fn output_of(output: FactoryOutput) -> Vec<ChannelKey> {
-        output.into_node().port_descriptor().outputs().to_vec()
+        output
+            .into_node()
+            .port_descriptor()
+            .outputs()
+            .cloned()
+            .collect::<Vec<_>>()
     }
 
     #[test]

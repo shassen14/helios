@@ -208,7 +208,10 @@ mod tests {
             vec![command_channel().into()]
         );
         assert_eq!(
-            node.port_descriptor().outputs(),
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
             vec![actuator_channel().into()]
         );
         assert!(node.port_descriptor().rate().is_none());

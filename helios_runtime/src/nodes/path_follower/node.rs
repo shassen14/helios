@@ -399,7 +399,13 @@ mod tests {
             path_channel(),
             out_channel_internal(),
         );
-        assert_eq!(node.port_descriptor().outputs(), vec![out_channel()]);
+        assert_eq!(
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![out_channel()]
+        );
         assert!(node.port_descriptor().rate().is_none());
         assert!(node
             .port_descriptor()

@@ -94,7 +94,6 @@ mod tests {
         let output_instance = |node: Box<dyn PipelineNode>| -> String {
             node.port_descriptor()
                 .outputs()
-                .iter()
                 .find(|key| key.type_id() == map_type)
                 .map(|key| key.instance().to_string())
                 .expect("occupancy node must declare a MapData output")

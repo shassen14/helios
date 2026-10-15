@@ -245,7 +245,10 @@ mod tests {
             descriptor.required_inputs().cloned().collect::<Vec<_>>(),
             vec![input_key()]
         );
-        assert_eq!(descriptor.outputs(), vec![output_key()]);
+        assert_eq!(
+            descriptor.outputs().cloned().collect::<Vec<_>>(),
+            vec![output_key()]
+        );
     }
 
     #[test]

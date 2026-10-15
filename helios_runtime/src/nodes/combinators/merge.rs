@@ -418,7 +418,7 @@ mod tests {
             vec![drive, steer]
         );
         assert!(d.optional_inputs().next().is_none());
-        assert_eq!(d.outputs(), vec![out]);
+        assert_eq!(d.outputs().cloned().collect::<Vec<_>>(), vec![out]);
         assert!(d.rate().is_none());
     }
 }

@@ -353,7 +353,7 @@ mod tests {
         let d = node.port_descriptor();
         assert_eq!(d.required_inputs().cloned().collect::<Vec<_>>(), vec![fb]);
         assert_eq!(d.optional_inputs().cloned().collect::<Vec<_>>(), vec![ff]);
-        assert_eq!(d.outputs(), vec![out]);
+        assert_eq!(d.outputs().cloned().collect::<Vec<_>>(), vec![out]);
         assert!(d.rate().is_none());
     }
 }

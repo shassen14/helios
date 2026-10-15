@@ -1,7 +1,8 @@
 //! What a node declares it reads from and writes to the bus.
 //!
-//! - [`declaration`] — the [`PortDescriptor`] itself and its per-input
-//!   [`InputPort`] records ([`InputNeed`], [`InputTiming`]), and the
+//! - [`declaration`] — the [`PortDescriptor`] itself, its per-input
+//!   [`InputPort`] records ([`InputNeed`], [`InputTiming`]) and per-output
+//!   [`OutputPort`] records, and the
 //!   [`Observable`] records of what a node can emit for watchers
 //!   ([`Determinism`]).
 //! - [`builders`] — [`AlgorithmNodePortDescriptor`] and
@@ -12,4 +13,6 @@ pub mod builders;
 pub mod declaration;
 
 pub use builders::{AlgorithmNodePortDescriptor, MockNodePortDescriptor};
-pub use declaration::{Determinism, InputNeed, InputPort, InputTiming, Observable, PortDescriptor};
+pub use declaration::{
+    Determinism, InputNeed, InputPort, InputTiming, Observable, OutputPort, PortDescriptor,
+};

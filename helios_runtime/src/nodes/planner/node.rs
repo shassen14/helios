@@ -292,7 +292,13 @@ mod tests {
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
         );
-        assert_eq!(node.port_descriptor().outputs(), vec![path_channel_key()]);
+        assert_eq!(
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![path_channel_key()]
+        );
         assert!(node.port_descriptor().rate().is_none());
     }
 

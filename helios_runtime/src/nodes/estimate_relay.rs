@@ -215,7 +215,7 @@ mod tests {
 
         let required: Vec<&ChannelKey> = descriptor.required_inputs().collect();
         assert_eq!(required, vec![&ChannelKey::from(source())]);
-        let outputs = descriptor.outputs();
+        let outputs: Vec<ChannelKey> = descriptor.outputs().cloned().collect();
         assert_eq!(outputs.len(), 2);
         assert!(outputs.contains(&estimate::estimate().into()));
         assert!(outputs.contains(&tf_edge(&edge()).into()));

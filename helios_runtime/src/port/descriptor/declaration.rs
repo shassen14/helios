@@ -1,6 +1,7 @@
 //! [`PortDescriptor`]: what a node declares it reads from and writes to the
 //! bus, with each input as an [`InputPort`] record of channel, need and timing,
-//! and each `ActuatorCommand` output with the actuators it drives. It also
+//! and each output as an [`OutputPort`] record of channel and the actuators it
+//! drives. It also
 //! declares what the node can emit for watchers, each value an [`Observable`]
 //! record of leaf name, [`Determinism`] and [`ObservedValueKind`].
 //!
@@ -36,9 +37,12 @@ use std::sync::Arc;
 /// records; [`required_inputs`](Self::required_inputs) and
 /// [`optional_inputs`](Self::optional_inputs) yield just the channel keys.
 ///
-/// An `ActuatorCommand` output also carries the actuators it drives, read
-/// with [`drives`](Self::drives), so the actuator seam can check them against
-/// the body without knowing what kind of node wrote them.
+/// Each output is stored as an [`OutputPort`] record. An `ActuatorCommand`
+/// output also carries the actuators it drives, read with
+/// [`drives`](Self::drives), so the actuator seam can check them against the
+/// body without knowing what kind of node wrote them.
+/// [`output_ports`](Self::output_ports) yields the records;
+/// [`outputs`](Self::outputs) yields just the channel keys.
 ///
 /// Each value the node can emit for watchers is declared as an [`Observable`],
 /// read with [`observables`](Self::observables). These never touch the bus:
@@ -56,8 +60,7 @@ use std::sync::Arc;
 pub struct PortDescriptor {
     required_inputs: Vec<InputPort>,
     optional_inputs: Vec<InputPort>,
-    outputs: Vec<ChannelKey>,
-    drives: Vec<(ChannelKey, Vec<ActuatorDrive>)>,
+    outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
     rate: Option<f64>,
 }
@@ -68,7 +71,8 @@ impl PortDescriptor {
     /// that only need a bus with slots for a given set of channels.
     ///
     /// Every input is recorded as [`InputTiming::SameTick`]; the need comes
-    /// from which list the key arrives in.
+    /// from which list the key arrives in. Every output is recorded as driving
+    /// no actuators.
     pub(crate) fn new(
         required_inputs: Vec<ChannelKey>,
         optional_inputs: Vec<ChannelKey>,
@@ -88,17 +92,16 @@ impl PortDescriptor {
         Self {
             required_inputs: required,
             optional_inputs: optional,
-            outputs,
-            drives: Vec::new(),
+            outputs: outputs.into_iter().map(OutputPort::undriven).collect(),
             observables: Vec::new(),
             rate,
         }
     }
 
-    /// Records the actuators each `ActuatorCommand` output drives. For the
+    /// Replaces the outputs with full records, drives included. For the
     /// builders, which check each channel's type before recording it.
-    pub(crate) fn with_drives(mut self, drives: Vec<(ChannelKey, Vec<ActuatorDrive>)>) -> Self {
-        self.drives = drives;
+    pub(crate) fn with_outputs(mut self, outputs: Vec<OutputPort>) -> Self {
+        self.outputs = outputs;
         self
     }
 
@@ -143,19 +146,24 @@ impl PortDescriptor {
         })
     }
 
-    /// Channels this node writes when it executes.
-    pub fn outputs(&self) -> &[ChannelKey] {
+    /// Every output record, in declaration order.
+    pub fn output_ports(&self) -> &[OutputPort] {
         &self.outputs
+    }
+
+    /// Channels this node writes when it executes.
+    pub fn outputs(&self) -> impl Iterator<Item = &ChannelKey> {
+        self.outputs.iter().map(|o| &o.channel)
     }
 
     /// The actuators `output` drives, as the node declared with its
     /// `ActuatorCommand` output. Empty for an output that declared none,
     /// including every output of another type.
     pub fn drives(&self, output: &ChannelKey) -> &[ActuatorDrive] {
-        self.drives
+        self.outputs
             .iter()
-            .find(|(channel, _)| channel == output)
-            .map_or(&[], |(_, drives)| drives.as_slice())
+            .find(|o| &o.channel == output)
+            .map_or(&[], |o| o.drives.as_slice())
     }
 
     /// The values this node declares it can emit for watchers, in declaration
@@ -205,6 +213,40 @@ impl InputPort {
     /// Which tick's value this input expects.
     pub fn timing(&self) -> InputTiming {
         self.timing
+    }
+}
+
+/// One declared output of a node: which channel it writes, and the actuators
+/// its commands drive when the channel carries `ActuatorCommand`.
+///
+/// Only the descriptor builders create records, so the kind fence on
+/// channels holds and only an `ActuatorCommand` output carries drives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputPort {
+    channel: ChannelKey,
+    drives: Vec<ActuatorDrive>,
+}
+
+impl OutputPort {
+    pub(crate) fn new(channel: ChannelKey, drives: Vec<ActuatorDrive>) -> Self {
+        Self { channel, drives }
+    }
+
+    /// An output that drives no actuators: every output not of
+    /// `ActuatorCommand` type.
+    pub(crate) fn undriven(channel: ChannelKey) -> Self {
+        Self::new(channel, Vec::new())
+    }
+
+    /// The channel this output writes.
+    pub fn channel(&self) -> &ChannelKey {
+        &self.channel
+    }
+
+    /// The actuators this output's commands drive. Empty unless the channel
+    /// carries `ActuatorCommand`.
+    pub fn drives(&self) -> &[ActuatorDrive] {
+        &self.drives
     }
 }
 
@@ -409,7 +451,6 @@ mod tests {
                 InputTiming::PreviousTick,
             )],
             outputs: vec![],
-            drives: vec![],
             observables: vec![],
             rate: None,
         };
