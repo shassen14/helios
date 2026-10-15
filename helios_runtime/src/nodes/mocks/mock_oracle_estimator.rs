@@ -36,7 +36,7 @@
 use crate::channels::estimate::estimator_output;
 use crate::channels::{oracle_pose_channel, oracle_twist_channel};
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelError, ChannelKey, MockNodePortDescriptor, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, MockNodePortDescriptor, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::carrier::kinematic_carrier_schema;
@@ -130,10 +130,11 @@ impl PipelineNode for MockOracleEstimatorNode {
             producer: tick.node_id,
         };
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), stamped) {
+        if let Err(error) = bus.write(self.output.clone(), stamped) {
             tracing::warn!(
                 channel = %self.output,
-                "mock oracle estimator state output channel is not wired into the DAG"
+                error = %error,
+                "mock oracle estimator state output channel write failed"
             );
         }
     }

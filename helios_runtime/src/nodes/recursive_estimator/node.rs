@@ -48,7 +48,7 @@ use super::throttle::passes_warn_throttle;
 use crate::channels::estimate::estimator_output;
 use crate::nodes::estimation::EstimatorInputBuilder;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{AlgorithmNodePortDescriptor, ChannelError, ChannelKey, PortBus, PortDescriptor};
+use crate::port::{AlgorithmNodePortDescriptor, ChannelKey, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::{GaussianStateEstimator, PredictOutcome, PredictSkipReason};
@@ -218,10 +218,11 @@ pub(crate) fn publish_estimate(
         health,
         producer: tick.node_id,
     };
-    if let Err(ChannelError::UnknownChannel) = bus.write(output.clone(), stamped) {
+    if let Err(error) = bus.write(output.clone(), stamped) {
         warn!(
             channel = %output,
-            "estimator state output channel is not wired into the DAG"
+            error = %error,
+            "estimator state output channel write failed"
         );
     }
 }

@@ -18,7 +18,7 @@ use crate::channels::estimate;
 use crate::channels::tf::{publish_edge, tf_edge};
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor,
+    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
 };
 use crate::stamped::Stamped;
 
@@ -112,8 +112,8 @@ impl PipelineNode for EstimateRelay {
             );
         }
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), stamped) {
-            warn!(channel = %self.output, "estimate output channel is not wired into the DAG");
+        if let Err(error) = bus.write(self.output.clone(), stamped) {
+            warn!(channel = %self.output, error = %error, "estimate output channel write failed");
         }
     }
 }

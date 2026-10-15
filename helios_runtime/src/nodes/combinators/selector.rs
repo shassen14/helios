@@ -37,7 +37,7 @@
 //! inputs are `Internal` by construction.
 
 use crate::{
-    port::{AlgorithmNodePortDescriptor, ChannelError, InternalChannel},
+    port::{AlgorithmNodePortDescriptor, InternalChannel},
     ChannelKey, PipelineNode, PortDescriptor,
 };
 
@@ -129,8 +129,8 @@ impl<T: Send + Sync + Clone + 'static> PipelineNode for Selector<T> {
 
         let forwarded = (*winner).clone();
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), forwarded) {
-            tracing::warn!(channel = %self.output, "selector output channel is not wired into the DAG");
+        if let Err(error) = bus.write(self.output.clone(), forwarded) {
+            tracing::warn!(channel = %self.output, error = %error, "selector output channel write failed");
         }
     }
 }

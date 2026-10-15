@@ -30,7 +30,7 @@
 use super::input::ControlInputBuilder;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor,
+    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
 };
 use crate::stamped::{Health, Stamped};
 
@@ -115,10 +115,11 @@ where
             health: Health::Ok,
             producer: tick.node_id,
         };
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output_key.clone(), stamped) {
+        if let Err(error) = bus.write(self.output_key.clone(), stamped) {
             tracing::warn!(
                 channel = %self.output_key,
-                "controller command output channel is not wired into the DAG"
+                error = %error,
+                "controller command output channel write failed"
             );
         }
     }

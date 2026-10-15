@@ -8,7 +8,7 @@
 //! dropped by the conversion.
 
 use crate::{
-    port::{AlgorithmNodePortDescriptor, ChannelError, PortBus, SensorChannel},
+    port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel},
     ChannelKey, PipelineNode, PortDescriptor, Stamped, TickContext,
 };
 
@@ -115,10 +115,11 @@ impl<F: Frame> PipelineNode for DeprojectNode<F> {
             producer: tick.node_id,
         };
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), stamped) {
+        if let Err(error) = bus.write(self.output.clone(), stamped) {
             tracing::warn!(
                 channel = %self.output,
-                "deproject output channel is not wired into the DAG"
+                error = %error,
+                "deproject output channel write failed"
             );
         }
 

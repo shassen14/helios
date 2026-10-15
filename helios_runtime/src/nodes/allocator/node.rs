@@ -1,4 +1,4 @@
-use crate::port::{AlgorithmNodePortDescriptor, ChannelError, InternalChannel, PortBus};
+use crate::port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus};
 use crate::{ChannelKey, Health, PipelineNode, PortDescriptor, Stamped, TickContext};
 
 use helios_core::control::allocation::Allocator;
@@ -60,7 +60,7 @@ where
 
         let out = allocator.allocate(&command.value, &());
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(
+        if let Err(error) = bus.write(
             self.output_key.clone(),
             Stamped {
                 value: out,
@@ -69,7 +69,7 @@ where
                 producer: tick.node_id,
             },
         ) {
-            tracing::warn!(channel = %self.output_key, "allocator output channel is not wired into the DAG");
+            tracing::warn!(channel = %self.output_key, error = %error, "allocator output channel write failed");
         }
     }
 }

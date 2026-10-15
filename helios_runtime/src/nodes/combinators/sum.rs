@@ -37,7 +37,7 @@
 use std::{marker::PhantomData, ops::Add, sync::Arc};
 
 use crate::{
-    port::{AlgorithmNodePortDescriptor, ChannelError, InternalChannel},
+    port::{AlgorithmNodePortDescriptor, InternalChannel},
     ChannelKey, Health, PipelineNode, PortDescriptor, Stamped,
 };
 
@@ -148,8 +148,8 @@ impl<T: Send + Sync + Clone + Add<Output = T> + 'static> PipelineNode for Sum<T>
             producer: tick.node_id,
         };
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), stamped) {
-            tracing::warn!(channel = %self.output, "sum output channel is not wired into the DAG");
+        if let Err(error) = bus.write(self.output.clone(), stamped) {
+            tracing::warn!(channel = %self.output, error = %error, "sum output channel write failed");
         }
     }
 }

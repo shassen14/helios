@@ -57,8 +57,8 @@ use std::sync::Mutex;
 use crate::channels::estimate::estimate;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus,
-    PortDescriptor, SensorChannel,
+    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
+    SensorChannel,
 };
 use crate::stamped::{Health, Stamped};
 use atomic_float::AtomicF64;
@@ -211,10 +211,11 @@ impl PipelineNode for OccupancyGridNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.map_channel.clone(), stamped) {
+        if let Err(error) = bus.write(self.map_channel.clone(), stamped) {
             tracing::warn!(
                 channel = %self.map_channel,
-                "mapper map output channel is not wired into the DAG"
+                error = %error,
+                "mapper map output channel write failed"
             );
         }
     }

@@ -33,7 +33,7 @@ use helios_core::prelude::TfProvider;
 use super::input::SearchPlannerInputBuilder;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus, PortDescriptor,
+    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
 };
 use crate::stamped::{Health, Stamped};
 
@@ -115,10 +115,11 @@ impl PipelineNode for SearchPlannerNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.path_channel.clone(), stamped) {
+        if let Err(error) = bus.write(self.path_channel.clone(), stamped) {
             tracing::warn!(
                 channel = %self.path_channel,
-                "planner path output channel is not wired into the DAG"
+                error = %error,
+                "planner path output channel write failed"
             );
         }
     }

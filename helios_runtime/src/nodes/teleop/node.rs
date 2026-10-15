@@ -23,7 +23,7 @@ use helios_core::{
 };
 
 use crate::{
-    port::{AlgorithmNodePortDescriptor, ChannelError, InternalChannel, PortBus},
+    port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus},
     ChannelKey, PipelineNode, PortDescriptor, Stamped, TickContext,
 };
 
@@ -112,9 +112,8 @@ impl PipelineNode for TwistTeleopNode {
             producer: tick.node_id,
         };
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), stamped) {
-            tracing::warn!(channel = %self.output, "teleop mapper
-  output channel is not wired into the DAG");
+        if let Err(error) = bus.write(self.output.clone(), stamped) {
+            tracing::warn!(channel = %self.output, error = %error, "teleop mapper output channel write failed");
         }
     }
 }

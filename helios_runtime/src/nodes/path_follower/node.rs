@@ -42,8 +42,7 @@ use helios_core::prelude::TfProvider;
 use super::input::PathFollowerInputBuilder;
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelError, ChannelKey, InternalChannel, PortBus,
-    PortDescriptor, SlotVersion,
+    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor, SlotVersion,
 };
 use crate::stamped::{Health, Stamped};
 
@@ -164,10 +163,11 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output_channel.clone(), stamped) {
+        if let Err(error) = bus.write(self.output_channel.clone(), stamped) {
             tracing::warn!(
                 channel = %self.output_channel,
-                "path follower reference output channel is not wired into the DAG"
+                error = %error,
+                "path follower reference output channel write failed"
             );
         }
     }
