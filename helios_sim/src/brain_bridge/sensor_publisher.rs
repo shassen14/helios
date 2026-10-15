@@ -4,15 +4,17 @@
 //! stay in each sensor's own system — those differ per sensor. Everything
 //! after that is identical for GPS, IMU, magnetometer, lidar, and a future
 //! camera: resolve the agent's pipeline, wrap the batch in a `Stamped`
-//! envelope with the host producer id, build the named channel key, write, and
-//! turn a dropped write into one loud warning. That shared tail lives here as
+//! envelope with the host producer id, write to the sensor's described key,
+//! and turn a dropped write into one loud warning. That shared tail lives here as
 //! [`SensorPublisher`], so there is exactly one place that constructs the
 //! envelope and one place that handles a missing channel.
 
+use crate::brain_bridge::components::SensorPublishChannel;
 use crate::prelude::AutonomyPipelineComponent;
 
 use helios_core::prelude::SensorReading;
-use helios_runtime::{port::SensorChannel, ChannelKey, Health, Stamped, HOST_PRODUCER_ID};
+use helios_runtime::port::ChannelError;
+use helios_runtime::{Health, Stamped, HOST_PRODUCER_ID};
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -44,13 +46,13 @@ impl SensorPublisher<'_, '_> {
     ///   brainless prop) is a silent no-op — legal, not an error.
     /// - The envelope timestamp is taken from the last reading, so an
     ///   accumulated batch carries its freshest time.
-    /// - A write to an unwired channel warns exactly once per channel name,
-    ///   naming it: that means the profile's declared channel and a consumer's
-    ///   configured input channel disagree, and readings are being dropped.
+    /// - A refused write warns exactly once per channel name, naming it and
+    ///   why, since readings are being dropped: no node reads the channel, or
+    ///   the readings are not of the type the channel was described with.
     pub fn publish<T: Send + Sync + 'static>(
         &mut self,
         agent: Entity,
-        channel: &str,
+        channel: &SensorPublishChannel,
         readings: Vec<SensorReading<T>>,
     ) {
         let Ok(pipeline) = self.pipelines.get(agent) else {
@@ -70,21 +72,35 @@ impl SensorPublisher<'_, '_> {
             producer: HOST_PRODUCER_ID,
         };
 
-        let channel_key: ChannelKey = SensorChannel::named::<Vec<SensorReading<T>>>(channel).into();
+        let channel_key = channel.description().key();
+        let write_result = pipeline
+            .0
+            .bus()
+            .write(channel_key.clone(), stamped_readings);
 
-        let write_result = pipeline.0.bus().write(channel_key, stamped_readings);
-
-        // A failed write means no consumer is wired to this channel — a config
-        // defect (the profile's channel name and a consumer's input channel
-        // disagree), unlike an oracle channel where a missing consumer is
-        // expected. Warn once per channel: `insert` returns true only the first
-        // time a name is seen, so a fixed-rate sensor cannot flood the log.
-        if write_result.is_err() && self.warned_channels.insert(channel.to_string()) {
-            warn!(
+        // Warn once per channel: `insert` returns true only the first time a
+        // name is seen, so a fixed-rate sensor cannot flood the log.
+        let Err(error) = write_result else {
+            return;
+        };
+        let name = channel_key.instance();
+        if !self.warned_channels.insert(name.to_string()) {
+            return;
+        }
+        match error {
+            // The fit installs a sensor no node reads; the build accepts
+            // that, since a body lists what is installed.
+            ChannelError::UnknownChannel => warn!(
                 "Channel '{}' has no slot in the autonomy DAG; readings are being \
                  dropped.",
-                channel
-            );
+                name
+            ),
+            // The spawner described the channel with another payload than the
+            // sensor publishes: a host bug every reader would see as silence.
+            ChannelError::TypeMismatch { .. } => warn!(
+                "Channel '{}' refused a write ({}); readings are being dropped.",
+                name, error
+            ),
         }
     }
 }
@@ -110,6 +126,10 @@ mod tests {
         }
     }
 
+    fn gps_channel() -> SensorPublishChannel {
+        SensorPublishChannel::new::<GpsPosition>("gps.primary", "gps")
+    }
+
     /// An agent without an `AutonomyPipelineComponent` — a prop, or an agent
     /// mid-scene-build — must be a silent no-op, not a panic.
     #[test]
@@ -120,7 +140,7 @@ mod tests {
         let mut state: SystemState<SensorPublisher> = SystemState::new(&mut world);
         let mut publisher = state.get_mut(&mut world).unwrap();
 
-        publisher.publish(agent, "sensor.gps.primary", vec![gps_reading()]);
+        publisher.publish(agent, &gps_channel(), vec![gps_reading()]);
     }
 
     /// An empty batch never touches the bus and never warns.
@@ -132,6 +152,6 @@ mod tests {
         let mut state: SystemState<SensorPublisher> = SystemState::new(&mut world);
         let mut publisher = state.get_mut(&mut world).unwrap();
 
-        publisher.publish::<GpsPosition>(agent, "sensor.gps.primary", Vec::new());
+        publisher.publish::<GpsPosition>(agent, &gps_channel(), Vec::new());
     }
 }

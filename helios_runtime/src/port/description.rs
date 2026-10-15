@@ -1,5 +1,6 @@
 //! [`ChannelDescription`]: what the pipeline knows about one channel, whoever
-//! writes it, with its [`Writer`] and, for a body channel, its [`Provenance`].
+//! writes it, with its [`Writer`] and, for a body channel, the unit that
+//! produces it and its [`Provenance`].
 //!
 //! Every writer's channels are described alike, and only the pipeline
 //! builder makes descriptions. Each writer declares its channels through its
@@ -9,6 +10,7 @@
 //! [`Writer`] from the door a channel came through, so no declaration can
 //! state the wrong writer.
 
+use crate::body::BodyChannel;
 use crate::port::channel::ChannelKey;
 
 /// One channel the pipeline sees, and who writes it.
@@ -22,11 +24,14 @@ pub struct ChannelDescription {
 }
 
 impl ChannelDescription {
-    /// A channel the body publishes, produced as `provenance` says.
-    pub(crate) fn body(key: ChannelKey, provenance: Provenance) -> Self {
+    /// A channel the body publishes, as the host declared it.
+    pub(crate) fn body(channel: &BodyChannel) -> Self {
         Self {
-            key,
-            writer: Writer::Body { provenance },
+            key: channel.key().clone(),
+            writer: Writer::Body {
+                unit: channel.unit().to_string(),
+                provenance: channel.provenance(),
+            },
         }
     }
 
@@ -60,20 +65,25 @@ impl ChannelDescription {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Writer {
     /// The body publishes it: a sensor, an oracle reference, a health status.
-    /// The host writes it on the body's behalf.
-    Body { provenance: Provenance },
+    /// The host writes it on the body's behalf. `unit` names the installed
+    /// part that produces it, such as a sensor's installation.
+    Body {
+        unit: String,
+        provenance: Provenance,
+    },
     /// A node in the graph writes it; carries the node's name.
     Node { node: String },
     /// It is sent from outside the robot by an operator or mission system.
     Outside,
 }
 
-/// Names the writer as build errors do. A pipeline serves one body, so the
-/// body needs no name; the host prefixes every build error with the agent.
+/// Names the writer as build errors do. A pipeline serves one body, so a body
+/// writer is named by its unit; the host prefixes every build error with the
+/// agent.
 impl std::fmt::Display for Writer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Writer::Body { .. } => write!(f, "the body"),
+            Writer::Body { unit, .. } => write!(f, "unit \"{unit}\""),
             Writer::Node { node } => write!(f, "node \"{node}\""),
             Writer::Outside => write!(f, "an outside input"),
         }
@@ -82,16 +92,17 @@ impl std::fmt::Display for Writer {
 
 /// How a value the body publishes was produced.
 ///
-/// Modelled as an enum (rather than a unit) because hardware will introduce
-/// further variants — e.g. `Instrument` (read off a real sensor) or `Recorded`
-/// (replayed from a log). Only `Exact` exists today; the others land with the
-/// first hardware host.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+/// Hardware will add further variants, e.g. `Instrument` (read off a real
+/// sensor) or `Recorded` (replayed from a log); they land with the first
+/// hardware host.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Provenance {
     /// Ground truth, exact to the limits of the simulation (e.g. physics state
     /// read by a perfect sensor in sim).
-    #[default]
     Exact,
+    /// Produced by a model of a sensor: a forward model applied to the
+    /// simulated world, with its noise and bias, or with them off.
+    Simulated,
 }
 
 #[cfg(test)]
@@ -106,12 +117,15 @@ mod tests {
 
     #[test]
     fn each_constructor_records_its_writer() {
+        let channel = BodyChannel::new(key(), "imu", Provenance::Simulated);
         assert_eq!(
-            ChannelDescription::body(key(), Provenance::Exact).writer(),
+            ChannelDescription::body(&channel).writer(),
             &Writer::Body {
-                provenance: Provenance::Exact
+                unit: "imu".to_string(),
+                provenance: Provenance::Simulated
             }
         );
+        assert_eq!(ChannelDescription::body(&channel).key(), &key());
         assert_eq!(
             ChannelDescription::outside(key()).writer(),
             &Writer::Outside
@@ -128,12 +142,13 @@ mod tests {
     #[test]
     fn writers_display_as_errors_name_them() {
         let body = Writer::Body {
+            unit: "imu".to_string(),
             provenance: Provenance::Exact,
         };
         let node = Writer::Node {
             node: "ekf".to_string(),
         };
-        assert_eq!(body.to_string(), "the body");
+        assert_eq!(body.to_string(), "unit \"imu\"");
         assert_eq!(node.to_string(), "node \"ekf\"");
         assert_eq!(Writer::Outside.to_string(), "an outside input");
     }

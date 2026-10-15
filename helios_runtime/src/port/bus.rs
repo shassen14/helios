@@ -6,7 +6,9 @@
 //! until it is overwritten — there is no per-tick clear and no queue. Slots are
 //! allocated from node [`PortDescriptor`]s at build time, so a write to a
 //! channel no node declared is a
-//! [`ChannelError::UnknownChannel`](crate::port::ChannelError).
+//! [`ChannelError::UnknownChannel`](crate::port::ChannelError), and a write of
+//! a value whose type is not the key's is a
+//! [`ChannelError::TypeMismatch`](crate::port::ChannelError).
 //!
 //! Every slot also carries a [`SlotVersion`] the bus bumps on each write, so a
 //! consumer can tell a new write from an unchanged value without trusting the
@@ -152,6 +154,15 @@ impl PortBus {
             .slots
             .get(&channel)
             .ok_or(ChannelError::UnknownChannel)?;
+        // A value under a key of another type would land, and every typed
+        // read of the key would downcast it to nothing: the reader runs as if
+        // the channel were never written.
+        if channel.type_id() != TypeId::of::<T>() {
+            return Err(ChannelError::TypeMismatch {
+                key_type: channel.type_name(),
+                written_type: std::any::type_name::<T>(),
+            });
+        }
         // Load-then-store is not one atomic step; it cannot race because the
         // build admits exactly one writer per channel.
         let version = slot.load().version.next();
@@ -358,6 +369,15 @@ mod tests {
         let bus = PortBus::new(&[]);
         let result = bus.write(ikey::<u32>(), make_stamped(1u32, 0.0));
         assert!(matches!(result, Err(ChannelError::UnknownChannel)));
+    }
+
+    #[test]
+    fn write_of_another_type_is_refused_and_leaves_the_slot_empty() {
+        let key = ikey::<u32>();
+        let bus = bus_with_outputs(vec![key.clone()]);
+        let result = bus.write(key.clone(), make_stamped(1i64, 0.0));
+        assert!(matches!(result, Err(ChannelError::TypeMismatch { .. })));
+        assert!(bus.read_erased_versioned(&key).is_none());
     }
 
     #[test]

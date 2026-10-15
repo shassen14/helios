@@ -54,13 +54,10 @@ mod tests {
 
     use helios_core::prelude::AgentId;
 
-    use std::collections::HashSet;
-
     fn build(name: &str) -> FactoryOutput {
         let config: TwistTeleopConfig =
             toml::from_str("surge = 5.0\nyaw = 1.0").expect("a car's section parses");
-        let sensors = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("test_agent"), name, &sensors);
+        let ctx = BuildContext::new(AgentId::new("test_agent"), name);
         build_twist_teleop(config, &ctx).expect("the mapper builds")
     }
 

@@ -9,11 +9,16 @@ use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::quantities::FreeVector;
 use helios_core::spatial::transforms::Transform as CoreTransform;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::{ChannelKey, Health, Stamped, HOST_PRODUCER_ID};
+use helios_runtime::port::ChannelError;
+use helios_runtime::{BodyChannel, ChannelKey, Health, Provenance, Stamped, HOST_PRODUCER_ID};
 
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
 use nalgebra::Isometry3;
+
+/// The unit that publishes ground truth: the simulator's truth rig, a perfect
+/// sensor every simulated body carries.
+pub const TRUTH_RIG_UNIT: &str = "truth_rig";
 
 /// Mirrors Avian3D physics state into [`GroundTruthState`] each tick:
 /// pose (world ENU), linear/angular velocity (world ENU), and derived
@@ -66,6 +71,16 @@ pub fn ground_truth_sync_system(
     }
 }
 
+/// The channels [`publish_oracle_channels_system`] writes, as the body
+/// publishes them: `oracle.pose` (world ENU) and `oracle.twist`, exact
+/// because the simulator is ground truth.
+pub fn oracle_body_channels() -> [BodyChannel; 2] {
+    [
+        BodyChannel::new(oracle_pose_channel(), TRUTH_RIG_UNIT, Provenance::Exact),
+        BodyChannel::new(oracle_twist_channel(), TRUTH_RIG_UNIT, Provenance::Exact),
+    ]
+}
+
 /// Publishes ground-truth pose and twist onto each agent's autonomy bus on
 /// the canonical [`oracle_pose_channel`] and [`oracle_twist_channel`]
 /// slots. Runs in [`SimulationSet::StateSync`](crate::core::app_state::SimulationSet::StateSync) after
@@ -87,12 +102,14 @@ pub fn ground_truth_sync_system(
 /// of the crate-wide "warn loudly" rule for a dropped write, this system traces
 /// the miss once (naming the channel), then stays quiet — a real wiring bug
 /// elsewhere still screams; this known no-consumer case says its piece once and
-/// does not spam the fixed-rate tick.
+/// does not spam the fixed-rate tick. A write of the wrong type is a bug, so it
+/// warns, once.
 pub fn publish_oracle_channels_system(
     query: Query<(&GroundTruthState, &AutonomyPipelineComponent)>,
     time: Res<Time>,
     mut has_logged_first_tick: Local<bool>,
     mut has_warned_no_consumer: Local<bool>,
+    mut has_warned_type_mismatch: Local<bool>,
 ) {
     let now = MonotonicTime(time.elapsed_secs_f64());
 
@@ -141,23 +158,26 @@ pub fn publish_oracle_channels_system(
         let pose_result = bus.write(pose_key.clone(), stamped_pose);
         let twist_result = bus.write(twist_key.clone(), stamped_twist);
 
-        // TODO: should check for actual error if we have more variants
-        if pose_result.is_err() && !*has_warned_no_consumer {
-            tracing::trace!(
-                target: "helios_sim::oracle",
-                channel = %pose_key,
-                "oracle channel has no consumer; write dropped"
-            );
-            *has_warned_no_consumer = true;
-        }
-
-        if twist_result.is_err() && !*has_warned_no_consumer {
-            tracing::trace!(
-                target: "helios_sim::oracle",
-                channel = %twist_key,
-                "oracle channel has no consumer; write dropped"
-            );
-            *has_warned_no_consumer = true;
+        for (key, result) in [(&pose_key, pose_result), (&twist_key, twist_result)] {
+            match result {
+                Ok(()) => {}
+                Err(ChannelError::UnknownChannel) => {
+                    if !*has_warned_no_consumer {
+                        tracing::trace!(
+                            target: "helios_sim::oracle",
+                            channel = %key,
+                            "oracle channel has no consumer; write dropped"
+                        );
+                        *has_warned_no_consumer = true;
+                    }
+                }
+                Err(error @ ChannelError::TypeMismatch { .. }) => {
+                    if !*has_warned_type_mismatch {
+                        warn!("Oracle channel {key} refused a write ({error}); truth is being dropped.");
+                        *has_warned_type_mismatch = true;
+                    }
+                }
+            }
         }
     }
 }

@@ -248,7 +248,6 @@ mod tests {
     use helios_core::prelude::AgentId;
 
     use serde::Deserialize;
-    use std::collections::HashSet;
 
     const NODE: &str = "front_deproject";
     const KIND: &str = "Deproject";
@@ -292,8 +291,7 @@ mod tests {
         section: &str,
     ) -> Result<BuiltNode, PipelineAssemblyError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE);
         registry.build_node(kind, section, &ctx)
     }
 

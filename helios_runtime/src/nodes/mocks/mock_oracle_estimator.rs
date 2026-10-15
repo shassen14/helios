@@ -240,11 +240,11 @@ mod tests {
     }
 
     fn body_with_oracle() -> BodyCapabilities {
+        let truth = |key: ChannelKey| BodyChannel::new(key, "truth", Provenance::Exact);
         BodyCapabilities {
-            name: "test_body".to_string(),
             publishes: vec![
-                BodyChannel::new(oracle_pose_channel(), Provenance::Exact),
-                BodyChannel::new(oracle_twist_channel(), Provenance::Exact),
+                truth(oracle_pose_channel().into()),
+                truth(oracle_twist_channel().into()),
             ],
             ..Default::default()
         }
@@ -429,7 +429,6 @@ mod tests {
     fn build_fails_when_body_lacks_oracle_pose() {
         let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
         let empty_body = BodyCapabilities {
-            name: "no_oracle_body".to_string(),
             publishes: vec![],
             ..Default::default()
         };
@@ -446,8 +445,8 @@ mod tests {
         let saw = errs.iter().any(|e| {
             matches!(
                 e,
-                PipelineBuildError::UnsatisfiedBodyCapabilities { body, channel_key, .. }
-                    if body == "no_oracle_body" && *channel_key == ChannelKey::from(oracle_pose_channel())
+                PipelineBuildError::UnsatisfiedBodyCapabilities { channel_key, .. }
+                    if *channel_key == ChannelKey::from(oracle_pose_channel())
             )
         });
         assert!(

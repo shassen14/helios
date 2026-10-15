@@ -123,7 +123,6 @@ mod tests {
     use helios_core::spatial::StateVariable;
 
     use nalgebra::{DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
-    use std::collections::HashSet;
     use std::sync::Arc;
 
     const NODE: &str = "primary";
@@ -248,8 +247,7 @@ mod tests {
         section: &str,
     ) -> Result<DynamicsComponent, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(agent(), NODE, &channels);
+        let ctx = BuildContext::new(agent(), NODE);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")

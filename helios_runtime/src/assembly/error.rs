@@ -16,16 +16,6 @@ pub enum PipelineAssemblyError {
     MalformedAgentName { agent: String },
     /// The assembled node graph failed topological validation.
     PipelineBuild(Vec<PipelineBuildError>),
-    /// A node reads a sensor channel that neither the host publishes
-    /// (absent from `sensor_channels`) nor any node in the graph derives, so
-    /// its slot would stay empty forever and the node would silently never run
-    /// its work.
-    UnpublishedSensorInput { node_name: String, channel: String },
-    /// Node `node_name` writes a sensor channel under the name of one the host
-    /// publishes. Both are sensor channels, so a same-typed output would share
-    /// the host's slot; even differently typed, one name for two channels
-    /// misleads anyone reading the graph.
-    SensorOutputShadowsHost { node_name: String, channel: String },
     /// The `kind` of node `node_name` matches no registered factory.
     /// `registered` lists the kinds that do exist, sorted.
     UnknownNodeKind {
@@ -82,13 +72,9 @@ pub enum PipelineAssemblyError {
         actuator: String,
         members: Vec<String>,
     },
-    /// Member `member` of `[actuators]` drives `actuator`, which body `body`
+    /// Member `member` of `[actuators]` drives `actuator`, which the body
     /// does not have: usually a typo in the actuator name.
-    ActuatorNotOnBody {
-        member: String,
-        actuator: String,
-        body: String,
-    },
+    ActuatorNotOnBody { member: String, actuator: String },
     /// Member `member` of `[actuators]` writes a `writes` setpoint to
     /// `actuator`, which accepts only `accepts`: a torque into a
     /// velocity-driven wheel, which nothing downstream could detect.
@@ -117,18 +103,6 @@ impl std::fmt::Display for PipelineAssemblyError {
                     write!(f, "{e}")?;
                 }
                 Ok(())
-            }
-            PipelineAssemblyError::UnpublishedSensorInput { node_name, channel } => {
-                write!(
-                    f,
-                    "node '{node_name}' reads sensor channel '{channel}', which the host does not publish and no node produces"
-                )
-            }
-            PipelineAssemblyError::SensorOutputShadowsHost { node_name, channel } => {
-                write!(
-                    f,
-                    "node '{node_name}' writes sensor channel '{channel}', which is already a host sensor channel; give the output its own name"
-                )
             }
             PipelineAssemblyError::UnknownNodeKind {
                 node_name,
@@ -201,13 +175,9 @@ impl std::fmt::Display for PipelineAssemblyError {
                 "actuators: actuator '{actuator}' is driven by more than one member ({}); each actuator takes one",
                 members.join(", ")
             ),
-            PipelineAssemblyError::ActuatorNotOnBody {
-                member,
-                actuator,
-                body,
-            } => write!(
+            PipelineAssemblyError::ActuatorNotOnBody { member, actuator } => write!(
                 f,
-                "actuators: member '{member}' drives actuator '{actuator}', which body '{body}' does not have"
+                "actuators: member '{member}' drives actuator '{actuator}', which the body does not have"
             ),
             PipelineAssemblyError::ActuatorKindMismatch {
                 member,

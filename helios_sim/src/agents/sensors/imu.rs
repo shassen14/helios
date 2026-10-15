@@ -220,7 +220,10 @@ fn spawn_imu_sensors(
                 let accel_entity = commands
                     .spawn((
                         Name::new(accel_label),
-                        SensorPublishChannel(accel_channel.to_string()),
+                        SensorPublishChannel::new::<<Accelerometer as StateSensor>::Payload>(
+                            accel_channel,
+                            sensor_name,
+                        ),
                         Accelerometer::new(accel_model, gravity_world, sensor_pose.translation),
                         SensorTimer::from_rate(imu_config.rate),
                         accel_rng,
@@ -238,7 +241,10 @@ fn spawn_imu_sensors(
                 let gyro_entity = commands
                     .spawn((
                         Name::new(gyro_label),
-                        SensorPublishChannel(gyro_channel.to_string()),
+                        SensorPublishChannel::new::<<Gyroscope as StateSensor>::Payload>(
+                            gyro_channel,
+                            sensor_name,
+                        ),
                         Gyroscope::new(gyro_model),
                         SensorTimer::from_rate(imu_config.rate),
                         gyro_rng,

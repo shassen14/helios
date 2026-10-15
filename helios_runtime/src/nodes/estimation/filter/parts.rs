@@ -115,7 +115,6 @@ mod tests {
 
     use nalgebra::{DVector, Vector3};
     use serde::{Deserialize, Serialize};
-    use std::collections::HashSet;
 
     const NODE: &str = "primary";
     const DUMMY_KIND: &str = "FrozenEkf";
@@ -174,8 +173,7 @@ mod tests {
         parts: FilterParts,
     ) -> Result<Box<dyn GaussianStateEstimator>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(agent(), NODE, &channels);
+        let ctx = BuildContext::new(agent(), NODE);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")

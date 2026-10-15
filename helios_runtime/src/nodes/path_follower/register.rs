@@ -93,8 +93,6 @@ mod tests {
 
     use helios_core::prelude::AgentId;
 
-    use std::collections::HashSet;
-
     fn pure_pursuit(path: &str) -> PurePursuitConfig {
         toml::from_str(&format!(
             "path = \"{path}\"\nmax_speed_m_s = 5.0\nmin_speed_m_s = 0.5"
@@ -107,17 +105,16 @@ mod tests {
             .expect("a valid steering-PID section")
     }
 
-    fn context<'a>(name: &'a str, sensors: &'a HashSet<String>) -> BuildContext<'a> {
-        BuildContext::new(AgentId::new("test_agent"), name, sensors)
+    fn context(name: &str) -> BuildContext<'_> {
+        BuildContext::new(AgentId::new("test_agent"), name)
     }
 
     #[test]
     fn node_name_is_the_table_key_not_the_kind() {
-        let sensors = HashSet::new();
-        let fast = build_pure_pursuit(pure_pursuit("local_path"), &context("fast", &sensors))
+        let fast = build_pure_pursuit(pure_pursuit("local_path"), &context("fast"))
             .expect("pure pursuit builds")
             .into_node();
-        let careful = build_steering_pid(steering_pid("local_path"), &context("careful", &sensors))
+        let careful = build_steering_pid(steering_pid("local_path"), &context("careful"))
             .expect("steering PID builds")
             .into_node();
 
@@ -127,8 +124,7 @@ mod tests {
 
     #[test]
     fn reads_the_named_path_and_writes_a_reference_named_after_the_node() {
-        let sensors = HashSet::new();
-        let node = build_pure_pursuit(pure_pursuit("global_path"), &context("pp", &sensors))
+        let node = build_pure_pursuit(pure_pursuit("global_path"), &context("pp"))
             .expect("pure pursuit builds")
             .into_node();
         let descriptor = node.port_descriptor();
@@ -146,8 +142,7 @@ mod tests {
     fn a_follower_declares_no_outside_input() {
         // Its path comes from a planner and its state from the estimator, both
         // inside the graph.
-        let sensors = HashSet::new();
-        let output = build_steering_pid(steering_pid("local_path"), &context("pid", &sensors))
+        let output = build_steering_pid(steering_pid("local_path"), &context("pid"))
             .expect("steering PID builds");
 
         assert!(output.outside_inputs().is_empty());

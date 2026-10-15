@@ -139,8 +139,6 @@ mod tests {
 
     use crate::assembly::{AutonomyRegistry, ComponentError};
 
-    use std::collections::HashSet;
-
     const NODE: &str = "primary";
 
     const SECTION: &str = r#"
@@ -162,8 +160,7 @@ mod tests {
     fn build_section(section: &str) -> Result<Built, ComponentError> {
         let registry = AutonomyRegistry::default();
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")

@@ -59,8 +59,6 @@ mod tests {
 
     use helios_core::prelude::AgentId;
 
-    use std::collections::HashSet;
-
     /// Builds a grid named `name` from a small valid section.
     fn build(name: &str) -> Box<dyn PipelineNode> {
         let config = OccupancyGridConfig {
@@ -71,8 +69,7 @@ mod tests {
             height_m: 10.0,
             pose_source: Default::default(),
         };
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("test_agent"), name, &channels);
+        let ctx = BuildContext::new(AgentId::new("test_agent"), name);
         build_occupancy_grid_2d(config, &ctx)
             .expect("a valid section builds")
             .into_node()

@@ -30,12 +30,15 @@ use helios_core::control::actuation_model::ActuationModel;
 /// plugin, dynamics) lives elsewhere, never here.
 #[derive(Clone, Debug, Default)]
 pub struct BodyCapabilities {
-    /// The body's name, used in build errors and the startup log.
-    pub name: String,
-    /// Channels the body measures onto the bus: sensor channels, oracle
-    /// reference channels, and health driver/sensor status. The host writes
-    /// them on the body's behalf; each counts as already written when the
-    /// pipeline is built.
+    /// Every channel the body measures onto the bus, read by the stack or
+    /// not: sensor channels, oracle reference channels, and health
+    /// driver/sensor status. The host writes them on the body's behalf; each
+    /// counts as already written when the pipeline is built.
+    ///
+    /// It lists what is installed, as the body's config describes it, never
+    /// what came up at boot. A device that fails is a health fact at run
+    /// time; leaving it out here would refuse the build of a stack that reads
+    /// it, even as an optional input.
     pub publishes: Vec<BodyChannel>,
     /// The actuators the body exposes and the setpoint kind each accepts.
     /// The build checks every actuator the pipeline drives against it, so a
@@ -44,8 +47,12 @@ pub struct BodyCapabilities {
     pub actuation: ActuationModel,
 }
 
-/// One channel the body publishes, as the host declares it: the channel and
-/// how its values are produced.
+/// One channel the body publishes, as the host declares it: the typed
+/// channel, the unit that produces it, and how its values are produced.
+///
+/// A unit is one installed part of the body, such as a sensor's installation
+/// or the simulator's truth rig; an IMU's accelerometer and gyroscope channels
+/// share one. Its name is one level, like an agent's or a node's.
 ///
 /// The build completes each into a
 /// [`ChannelDescription`](crate::port::ChannelDescription) whose writer is the
@@ -53,19 +60,29 @@ pub struct BodyCapabilities {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyChannel {
     key: ChannelKey,
+    unit: String,
     provenance: Provenance,
 }
 
 impl BodyChannel {
-    pub fn new(key: impl Into<ChannelKey>, provenance: Provenance) -> Self {
+    pub fn new(
+        key: impl Into<ChannelKey>,
+        unit: impl Into<String>,
+        provenance: Provenance,
+    ) -> Self {
         Self {
             key: key.into(),
+            unit: unit.into(),
             provenance,
         }
     }
 
     pub fn key(&self) -> &ChannelKey {
         &self.key
+    }
+
+    pub fn unit(&self) -> &str {
+        &self.unit
     }
 
     pub fn provenance(&self) -> Provenance {

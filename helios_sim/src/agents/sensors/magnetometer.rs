@@ -130,7 +130,10 @@ fn spawn_magnetometer_sensors(
                 let sensor_entity = commands
                     .spawn((
                         Name::new(sensor_label),
-                        SensorPublishChannel(channel.to_string()),
+                        SensorPublishChannel::new::<<Magnetometer as StateSensor>::Payload>(
+                            channel,
+                            sensor_name,
+                        ),
                         Magnetometer::new(mag_model),
                         SensorTimer::from_rate(mag_config.rate),
                         sensor_rng,

@@ -3,6 +3,7 @@ use crate::brain_bridge::components::{
     PipelineBuildFailed, SensorPublishChannel, TeleopControlled, TfServiceComponent,
 };
 use crate::core::components::{ActuatorCommandComponent, ControllerStateSource};
+use crate::core::ground_truth::oracle_body_channels;
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
@@ -14,17 +15,16 @@ use helios_core::spatial::transforms::tf::stamped::StampedTransform;
 use helios_core::spatial::transforms::{Convention, ErasedTransform};
 use helios_core::spatial::FrameId;
 use helios_runtime::channels::control;
-use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::tf_service::TfService;
-use helios_runtime::{build_pipeline, BodyCapabilities, BodyChannel, ChannelKey, Provenance};
+use helios_runtime::{build_pipeline, BodyCapabilities, BodyChannel, ChannelKey};
 
 use std::any::TypeId;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 /// Spawns the autonomy pipeline for agents with real estimation.
 ///
-/// Queries each agent's sensor children for `SensorPublishChannel` to build
-/// the set of sensor channel names passed to `build_pipeline()`.
+/// Collects each agent's sensor children's [`SensorPublishChannel`]s into the
+/// body passed to `build_pipeline()`.
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
     agent_query: Query<(
@@ -45,25 +45,17 @@ pub fn spawn_autonomy_pipeline(
         // it, matching what the sensor spawners stamped on the tf tree.
         let agent = agent_id.0.clone();
 
-        // The set of sensor channel names this agent's host publishes. The
-        // assembler builds each sensor's `FrameId::agent(agent, channel)` from
-        // these names — the same identity the sensor spawners stamp on the tf
-        // tree — so the map of old is now just the name set.
-        let sensor_channels: HashSet<String> = children
+        // Every channel this agent's sensors publish, as their spawners
+        // described them.
+        let sensor_channels: Vec<BodyChannel> = children
             .iter()
-            .filter_map(|child| channel_query.get(child).ok().map(|ch| ch.0.clone()))
+            .filter_map(|child| channel_query.get(child).ok())
+            .map(|channel| channel.description().clone())
             .collect();
 
-        let host_capabilities =
-            build_host_body_capabilities(agent_config.name(), &agent_config.vehicle.actuation);
+        let body = build_host_body_capabilities(sensor_channels, &agent_config.vehicle.actuation);
 
-        match build_pipeline(
-            stack,
-            &registry.0,
-            agent.clone(),
-            &sensor_channels,
-            host_capabilities,
-        ) {
+        match build_pipeline(stack, &registry.0, agent.clone(), body) {
             Ok(pipeline) => {
                 // `AgentIdComponent` is already on the shell (stamped at
                 // `CreateRequests`), so the test bridge's
@@ -186,42 +178,29 @@ pub fn spawn_actuator_command(
     }
 }
 
-/// Builds the sim host's [`BodyCapabilities`] for one agent.
+/// Builds the sim host's [`BodyCapabilities`] for one agent: everything the
+/// body offers the autonomy graph, distinct from anything the autonomy stack
+/// itself declares.
 ///
-/// This is the host's view of what the body advertises to the autonomy
-/// graph — distinct from anything the autonomy stack itself declares.
-/// Two responsibilities split between host and assembler:
-/// - **Host (this fn)** knows the agent's name, the body's actuators, and
-///   which host-owned channels exist (oracle channels, later health).
-/// - **Assembler** ([`build_pipeline`]) knows the sensor channels derived
-///   from the autonomy config and merges them into `publishes` before
-///   handing the merged `BodyCapabilities` to [`PipelineBuilder`].
-///
-/// # Field rationale
-///
-/// - `name`: cloned from `agent_name`; used by error messages
-///   (`PipelineBuildError::UnsatisfiedBodyCapabilities`) and the DAG dump.
-/// - `publishes`: only the two oracle channels — `oracle.pose` (world ENU)
-///   and `oracle.twist` (body FLU). Both tagged `Provenance::Exact`
-///   because the sim is ground truth. Health channels are intentionally
-///   omitted: no sim publisher exists for them yet, and advertising a
-///   channel the host never writes would let a consumer build and then
-///   read `None` forever.
+/// - `publishes`: the truth rig's two oracle channels
+///   ([`oracle_body_channels`]), then `sensor_channels`, each sensor's
+///   channel as its spawner described it. Every installed sensor is listed,
+///   read by the stack or not. Health channels are intentionally omitted: no
+///   sim publisher exists for them yet, and advertising a channel the host
+///   never writes would let a consumer build and then read `None` forever.
 /// - `actuation`: the vehicle's actuators, from its entity file. The
 ///   assembler checks every actuator the pipeline drives against it, so an
 ///   allocator naming a missing actuator or writing the wrong setpoint kind
 ///   fails the build.
-///
-/// Construct one of these in [`spawn_autonomy_pipeline`] per agent and
-/// pass it to [`build_pipeline`].
-fn build_host_body_capabilities(agent_name: &str, actuation: &ActuationModel) -> BodyCapabilities {
-    let published_pose = BodyChannel::new(oracle_pose_channel(), Provenance::Exact);
-
-    let published_twist = BodyChannel::new(oracle_twist_channel(), Provenance::Exact);
-
+fn build_host_body_capabilities(
+    sensor_channels: Vec<BodyChannel>,
+    actuation: &ActuationModel,
+) -> BodyCapabilities {
     BodyCapabilities {
-        name: agent_name.to_string(),
-        publishes: vec![published_pose, published_twist],
+        publishes: oracle_body_channels()
+            .into_iter()
+            .chain(sensor_channels)
+            .collect(),
         actuation: actuation.clone(),
     }
 }
@@ -258,6 +237,7 @@ mod tests {
 
     use helios_core::control::actuation_model::{ActuatorSpec, SignConvention};
     use helios_core::control::actuators::{ActuatorId, SetpointKind};
+    use helios_core::interchange::measurement::sensor::{GpsPosition, MagneticField};
     use helios_runtime::channels::control::intent;
     use helios_runtime::port::InternalChannel;
 
@@ -329,12 +309,6 @@ mod tests {
     }
 
     #[test]
-    fn name_is_copied_from_argument() {
-        let caps = build_host_body_capabilities("rover_1", &ActuationModel::default());
-        assert_eq!(caps.name, "rover_1");
-    }
-
-    #[test]
     fn actuation_is_the_vehicles() {
         let actuation = ActuationModel::new(vec![ActuatorSpec::new(
             ActuatorId::new("drive"),
@@ -344,26 +318,23 @@ mod tests {
             SignConvention::Normal,
         )]);
 
-        let caps = build_host_body_capabilities("any", &actuation);
+        let caps = build_host_body_capabilities(vec![], &actuation);
 
         assert_eq!(caps.actuation, actuation);
     }
 
+    /// The body publishes the truth rig's channels and every sensor's, each
+    /// as described.
     #[test]
-    fn publishes_exactly_pose_and_twist() {
-        let caps = build_host_body_capabilities("any", &ActuationModel::default());
-        assert_eq!(caps.publishes.len(), 2);
+    fn publishes_the_oracle_and_every_sensor_channel() {
+        let gps = SensorPublishChannel::new::<GpsPosition>("gps", "gps_pro");
+        let mag = SensorPublishChannel::new::<MagneticField>("mag", "mag_basic");
+        let sensors = vec![gps.description().clone(), mag.description().clone()];
 
-        let keys: Vec<_> = caps.publishes.iter().map(BodyChannel::key).collect();
-        assert!(keys.contains(&&ChannelKey::from(oracle_pose_channel())));
-        assert!(keys.contains(&&ChannelKey::from(oracle_twist_channel())));
-    }
+        let caps = build_host_body_capabilities(sensors.clone(), &ActuationModel::default());
 
-    #[test]
-    fn all_published_channels_are_provenance_exact() {
-        let caps = build_host_body_capabilities("any", &ActuationModel::default());
-        for pc in &caps.publishes {
-            assert_eq!(pc.provenance(), Provenance::Exact);
-        }
+        let expected: Vec<BodyChannel> =
+            oracle_body_channels().into_iter().chain(sensors).collect();
+        assert_eq!(caps.publishes, expected);
     }
 }

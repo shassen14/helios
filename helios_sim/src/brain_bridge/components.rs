@@ -1,5 +1,6 @@
-use helios_core::prelude::AgentId;
-use helios_runtime::{pipeline::AutonomyPipeline, tf_service::TfService};
+use helios_core::prelude::{AgentId, SensorReading};
+use helios_runtime::port::SensorChannel;
+use helios_runtime::{pipeline::AutonomyPipeline, tf_service::TfService, BodyChannel, Provenance};
 
 use bevy::prelude::{Component, Entity};
 
@@ -64,11 +65,34 @@ pub struct PipelineBuildFailed {
     pub errors: Vec<String>,
 }
 
-/// Declares the bus channel name this sensor publishes on.
-/// Attached to GPS, magnetometer, and LiDAR sensor child entities at spawn time.
-/// Queried by `spawn_autonomy_pipeline` to build `sensor_frame_handles` for `build_pipeline`.
+/// The channel a sensor publishes on, described as the body publishes it:
+/// typed by the sensor's payload, from the installation the sensor belongs to,
+/// and simulated.
+///
+/// Attached to every sensor entity at spawn, where the payload type, the
+/// installation and the channel name from the fit are all known. Read twice:
+/// `spawn_autonomy_pipeline` collects each agent's into the body it builds the
+/// pipeline against, and [`SensorPublisher`](super::SensorPublisher) writes to
+/// its key. One description serves both, so the channel the build checked is
+/// the channel written.
 #[derive(Component, Clone)]
-pub struct SensorPublishChannel(pub String);
+pub struct SensorPublishChannel(BodyChannel);
+
+impl SensorPublishChannel {
+    /// Channel `name` of installation `unit`, carrying batches of `P` readings
+    /// as [`SensorPublisher`](super::SensorPublisher) writes them.
+    pub fn new<P: Send + Sync + 'static>(name: &str, unit: &str) -> Self {
+        Self(BodyChannel::new(
+            SensorChannel::named::<Vec<SensorReading<P>>>(name),
+            unit,
+            Provenance::Simulated,
+        ))
+    }
+
+    pub fn description(&self) -> &BodyChannel {
+        &self.0
+    }
+}
 
 /// Declares the bus channel names the host writes this agent's mission goal to.
 /// The host-input counterpart to [`SensorPublishChannel`]: that one names where a

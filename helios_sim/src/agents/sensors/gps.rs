@@ -114,7 +114,10 @@ fn spawn_gps_sensors(
                 let sensor_entity = commands
                     .spawn((
                         Name::new(sensor_label),
-                        SensorPublishChannel(channel.to_string()),
+                        SensorPublishChannel::new::<<Gps as StateSensor>::Payload>(
+                            channel,
+                            sensor_name,
+                        ),
                         Gps::new(model),
                         SensorTimer::from_rate(gps_config.rate),
                         sensor_rng,

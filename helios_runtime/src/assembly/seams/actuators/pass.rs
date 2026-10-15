@@ -132,7 +132,6 @@ fn body_disagreement(
         None => Some(PipelineAssemblyError::ActuatorNotOnBody {
             member: member.to_string(),
             actuator: drive.actuator().as_str().to_string(),
-            body: body.name.clone(),
         }),
         Some(spec) if spec.kind() != drive.kind() => {
             Some(PipelineAssemblyError::ActuatorKindMismatch {
@@ -192,7 +191,6 @@ mod tests {
             )
         };
         BodyCapabilities {
-            name: "car".to_string(),
             actuation: ActuationModel::new(vec![
                 spec("wheels", SetpointKind::Torque),
                 spec("steer_axle", SetpointKind::Position),
@@ -396,8 +394,8 @@ mod tests {
         assert!(
             matches!(
                 errors.as_slice(),
-                [PipelineAssemblyError::ActuatorNotOnBody { member, actuator, body }]
-                    if member == "drive" && actuator == "traction" && body == "car"
+                [PipelineAssemblyError::ActuatorNotOnBody { member, actuator }]
+                    if member == "drive" && actuator == "traction"
             ),
             "got {errors:?}"
         );

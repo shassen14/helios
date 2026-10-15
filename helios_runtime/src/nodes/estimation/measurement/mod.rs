@@ -160,7 +160,6 @@ mod tests {
     use helios_core::spatial::FrameAwareState;
 
     use nalgebra::{DVector, Vector3};
-    use std::collections::HashSet;
 
     const NODE: &str = "primary";
     const DUMMY_KIND: &str = "mocap_position";
@@ -215,8 +214,7 @@ mod tests {
         r_len: usize,
     ) -> Result<Box<dyn MeasurementSource>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(agent(), NODE, &channels);
+        let ctx = BuildContext::new(agent(), NODE);
         let wiring = MeasurementWiring {
             input: INPUT.to_string(),
             noise: DMatrix::identity(r_len, r_len),
@@ -272,8 +270,7 @@ mod tests {
     /// The model is built for the sensor frame named by the wiring's channel.
     #[test]
     fn the_model_is_built_for_the_wired_sensor_frame() {
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(agent(), NODE, &channels);
+        let ctx = BuildContext::new(agent(), NODE);
         let factory = source_factory::<GpsPosition, NoParams, _>(
             |_: NoParams, _: &BuildContext<'_>, sensor: &FrameId| {
                 assert_eq!(sensor, &FrameId::agent(agent(), INPUT));

@@ -57,7 +57,8 @@ pub enum SceneBuildSet {
 
     /// Pass 5: Build each agent's `AutonomyPipeline` and attach
     /// `AutonomyPipelineComponent`. Runs after `ProcessSensors` because pipeline
-    /// assembly reads the sensors' `SensorPublishChannel` to wire the DAG's inputs.
+    /// assembly collects the sensors' `SensorPublishChannel` descriptions into
+    /// the body.
     SpawnPipeline,
 
     /// Pass 6: Bind host-side ECS state to the freshly-spawned pipeline — the

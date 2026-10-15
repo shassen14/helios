@@ -151,7 +151,7 @@ pub fn publish_state_sensor<S: StateSensor>(
             data: payload,
         };
 
-        publisher.publish(parent.parent(), channel.0.as_str(), vec![reading]);
+        publisher.publish(parent.parent(), channel, vec![reading]);
     }
 }
 
@@ -225,7 +225,7 @@ mod tests {
                 SensorTimer::from_rate(RATE_HZ),
                 SensorRng(ChaCha8Rng::seed_from_u64(TEST_SEED)),
                 GlobalTransform::default(),
-                SensorPublishChannel("test.channel".to_string()),
+                SensorPublishChannel::new::<GpsPosition>("test.channel", "test_unit"),
                 TrackedFrame::new(
                     FrameId::agent(AgentId::new("test_agent"), "test.channel"),
                     Convention::Flu,
@@ -343,7 +343,7 @@ mod tests {
                     SensorTimer::from_rate(RATE_HZ),
                     SensorRng::from_sensor(TEST_MASTER_SEED, name),
                     GlobalTransform::default(),
-                    SensorPublishChannel("test.channel".to_string()),
+                    SensorPublishChannel::new::<GpsPosition>("test.channel", "test_unit"),
                     TrackedFrame::new(
                         FrameId::agent(AgentId::new("car_1"), *name),
                         Convention::Flu,

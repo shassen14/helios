@@ -7,7 +7,7 @@ use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
 use crate::prelude::*;
 
 use helios_core::interchange::measurement::envelope::SensorReading;
-use helios_core::prelude::SphericalAngular;
+use helios_core::prelude::{RangeField, SphericalAngular};
 use helios_core::sensors::lidar::{LidarModel, LidarNoise};
 use helios_core::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel};
 use helios_core::spatial::conventions::Flu;
@@ -132,7 +132,7 @@ fn spawn_raycasting_sensors(
 
                 sensor_entity_commands.insert((
                     Name::new(sensor_label),
-                    SensorPublishChannel(channel.to_string()),
+                    SensorPublishChannel::new::<RangeField<Flu>>(channel, sensor_name),
                     RaycastingSensor {
                         timer: Timer::new(
                             Duration::from_secs_f64(1.0 / lidar_config.get_rate()),
@@ -258,7 +258,7 @@ fn raycasting_sensor_system(
             data: field,
         };
 
-        publisher.publish(agent, sensor_publish_channel.0.as_str(), vec![reading]);
+        publisher.publish(agent, sensor_publish_channel, vec![reading]);
     }
 }
 
@@ -279,12 +279,12 @@ fn is_inside_own_body(
 mod tests {
     use super::*;
 
-    use helios_core::prelude::{AgentId, RangeField, TfProvider};
+    use helios_core::prelude::{AgentId, TfProvider};
     use helios_runtime::port::AlgorithmNodePortDescriptor;
     use helios_runtime::port::{PortBus, SensorChannel};
     use helios_runtime::{
-        BodyCapabilities, BodyChannel, ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor,
-        Provenance, Stamped, TickContext,
+        BodyCapabilities, ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor, Stamped,
+        TickContext,
     };
 
     use avian3d::collider_tree::ColliderTrees;
@@ -293,6 +293,8 @@ mod tests {
     use std::sync::Arc;
 
     const CHANNEL: &str = "sensor.lidar.test";
+    /// The installation the test lidar belongs to.
+    const UNIT: &str = "test_lidar";
     const RATE_HZ: f64 = 10.0;
     const AZIMUTH_BEAMS: u32 = 8;
     const RANGE_MIN: f64 = 0.1;
@@ -357,6 +359,7 @@ mod tests {
     /// clock advanced by `advance`. Returns the world and the sensor entity.
     fn world_with_lidar(sensor_pose: GlobalTransform, advance: Duration) -> (World, Entity) {
         let mut world = World::new();
+        let channel = SensorPublishChannel::new::<RangeField<Flu>>(CHANNEL, UNIT);
 
         let mut time = Time::<()>::default();
         time.advance_by(advance);
@@ -366,8 +369,7 @@ mod tests {
         let pipeline = PipelineBuilder::new()
             .add_node(Box::new(FakeScanConsumer::new()))
             .with_body_capabilities(BodyCapabilities {
-                name: "agent".to_string(),
-                publishes: vec![BodyChannel::new(field_channel(), Provenance::Exact)],
+                publishes: vec![channel.description().clone()],
                 ..Default::default()
             })
             .build()
@@ -382,7 +384,7 @@ mod tests {
                 },
                 SensorRng::from_sensor(SEED, CHANNEL),
                 LastCapturePose::default(),
-                SensorPublishChannel(CHANNEL.to_string()),
+                channel,
                 TrackedFrame::new(
                     FrameId::agent(AgentId::new("agent"), CHANNEL.to_string()),
                     Convention::Flu,

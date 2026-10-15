@@ -1,19 +1,17 @@
 // `[nodes]` integration tests: entries built through registered factories by
 // build_pipeline, using only the public API.
 
-use std::collections::HashSet;
-
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel};
 use helios_runtime::{
     build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
     BodyChannel, BuildContext, ChannelKey, EstimateSeamConfig, FactoryOutput,
     PipelineAssemblyError, PipelineBuildError, PipelineNode, PortDescriptor, Provenance,
-    TickContext,
+    TickContext, Writer,
 };
 
 use helios_core::interchange::measurement::envelope::SensorReading;
-use helios_core::prelude::{AgentId, PointCloud, TfProvider};
+use helios_core::prelude::{Acceleration, AgentId, AngularRate, PointCloud, TfProvider};
 use helios_core::spatial::conventions::Flu;
 
 use serde::{Deserialize, Serialize};
@@ -84,42 +82,66 @@ fn stack_with_nodes(nodes_toml: &str) -> AutonomyStackConfig {
     toml::from_str(nodes_toml).expect("test TOML parses")
 }
 
-fn host_channels(names: &[&str]) -> HashSet<String> {
-    names.iter().map(|name| name.to_string()).collect()
+/// The unit every point-cloud channel in this file comes from.
+const LIDAR_UNIT: &str = "lidar";
+/// The unit the IMU channels come from.
+const IMU_UNIT: &str = "imu";
+/// The unit the oracle channels come from.
+const TRUTH_UNIT: &str = "truth";
+
+/// A channel `unit` publishes, carrying batches of `P` readings.
+fn sensor_channel<P: Send + Sync + 'static>(name: &str, unit: &str) -> BodyChannel {
+    BodyChannel::new(
+        SensorChannel::named::<Vec<SensorReading<P>>>(name),
+        unit,
+        Provenance::Simulated,
+    )
 }
 
-fn body() -> BodyCapabilities {
+/// A body publishing one point-cloud channel per name in `clouds`.
+fn body_with_clouds(clouds: &[&str]) -> BodyCapabilities {
     BodyCapabilities {
-        name: "rover".to_string(),
-        publishes: vec![],
+        publishes: clouds
+            .iter()
+            .map(|name| sensor_channel::<PointCloud<Flu>>(name, LIDAR_UNIT))
+            .collect(),
         ..Default::default()
     }
 }
 
 fn build(
     stack: &AutonomyStackConfig,
-    host: &[&str],
+    body: BodyCapabilities,
 ) -> Result<AutonomyPipeline, Vec<PipelineAssemblyError>> {
     build_pipeline(
         stack,
         &registry_with_test_kind(),
         AgentId::new("test_agent"),
-        &host_channels(host),
-        body(),
+        body,
     )
 }
 
-fn build_err(stack: &AutonomyStackConfig, host: &[&str]) -> Vec<PipelineAssemblyError> {
-    build(stack, host)
+fn build_err(stack: &AutonomyStackConfig, body: BodyCapabilities) -> Vec<PipelineAssemblyError> {
+    build(stack, body)
         .err()
         .expect("expected the build to fail")
+}
+
+/// The build errors inside `errors`, which a `[nodes]` stack reports after
+/// every node is built.
+fn build_errors(errors: &[PipelineAssemblyError]) -> Vec<&PipelineBuildError> {
+    errors
+        .iter()
+        .flat_map(|e| match e {
+            PipelineAssemblyError::PipelineBuild(build_errors) => build_errors.iter().collect(),
+            _ => vec![],
+        })
+        .collect()
 }
 
 fn node_names(pipeline: &AutonomyPipeline) -> Vec<&str> {
     pipeline.channels().map(|(name, _)| name).collect()
 }
-
-const IMU_CHANNELS: [&str; 2] = ["imu.accel", "imu.gyro"];
 
 #[test]
 fn a_kind_registered_from_outside_the_crate_is_built() {
@@ -133,7 +155,8 @@ fn a_kind_registered_from_outside_the_crate_is_built() {
         "#
     ));
 
-    let pipeline = build(&stack, &[]).expect("a registered kind under [nodes] must build");
+    let pipeline = build(&stack, BodyCapabilities::default())
+        .expect("a registered kind under [nodes] must build");
 
     assert!(
         node_names(&pipeline).contains(&"front_source"),
@@ -143,8 +166,8 @@ fn a_kind_registered_from_outside_the_crate_is_built() {
 }
 
 #[test]
-fn a_nodes_entry_reading_a_host_channel_is_seeded_from_it() {
-    // The node's sensor input is a host channel, so the build counts it as
+fn a_nodes_entry_reading_a_body_channel_builds() {
+    // The node's sensor input is a body channel, so the build counts it as
     // supplied by the body rather than demanding a producer in the graph.
     let stack = stack_with_nodes(&format!(
         r#"
@@ -155,7 +178,8 @@ fn a_nodes_entry_reading_a_host_channel_is_seeded_from_it() {
         "#
     ));
 
-    let pipeline = build(&stack, &["lidar"]).expect("an input the host publishes must build");
+    let pipeline = build(&stack, body_with_clouds(&["lidar"]))
+        .expect("an input the body publishes must build");
 
     assert!(
         node_names(&pipeline).contains(&"relay"),
@@ -175,25 +199,30 @@ fn a_nodes_entry_reading_an_unpublished_channel_fails_the_build() {
         "#
     ));
 
-    let errors = build_err(&stack, &["lidar"]);
+    let errors = build_err(&stack, body_with_clouds(&["lidar"]));
 
     assert!(
-        errors.iter().any(|e| matches!(
+        build_errors(&errors).iter().any(|e| matches!(
             e,
-            PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
-                if node_name == "relay" && channel == "lidar.typo"
+            PipelineBuildError::UnsatisfiedInput { node_name, channel, .. }
+                if node_name == "relay" && channel.instance().as_ref() == "lidar.typo"
         )),
-        "expected UnpublishedSensorInput for `relay` / `lidar.typo`, got {errors:?}"
+        "expected UnsatisfiedInput for `relay` / `lidar.typo`, got {errors:?}"
+    );
+    assert!(
+        errors.iter().any(|e| e
+            .to_string()
+            .contains("the body does not publish it and no node writes it")),
+        "a sensor input's error says where it could come from, got {errors:?}"
     );
 }
 
 #[test]
 fn a_nodes_entry_reads_a_channel_another_derives() {
-    // The host publishes only the IMU. The grid's scan channel is written by
-    // another `[nodes]` entry, so it is a derived channel: no host publisher
-    // needed, and the producer is ordered ahead of the grid. The grid sorts
-    // first by name, so it is built before its producer; the derived set must
-    // already hold the producer's output when the grid is seeded.
+    // The body publishes only the IMU. The grid's scan channel is written by
+    // another `[nodes]` entry, so it needs no body channel, and the producer
+    // is ordered ahead of the grid. The grid sorts first by name, so it is
+    // built before its producer; the build must not depend on that order.
     let stack = AutonomyStackConfig {
         estimate: Some(EstimateSeamConfig {
             source: "nav_ekf".to_string(),
@@ -220,8 +249,14 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
         ))
     };
 
-    let pipeline =
-        build(&stack, &IMU_CHANNELS).expect("a grid reading another node's output must build");
+    let imu = BodyCapabilities {
+        publishes: vec![
+            sensor_channel::<Acceleration>("imu.accel", IMU_UNIT),
+            sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT),
+        ],
+        ..Default::default()
+    };
+    let pipeline = build(&stack, imu).expect("a grid reading another node's output must build");
 
     let order = node_names(&pipeline);
     let position = |node: &str| {
@@ -237,7 +272,9 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
 }
 
 #[test]
-fn a_nodes_output_reusing_a_host_channel_name_fails_the_build() {
+fn a_nodes_output_reusing_a_body_channel_name_fails_the_build() {
+    // The output and the body's channel are one channel with two writers,
+    // and the error names both.
     let stack = stack_with_nodes(&format!(
         r#"
         [nodes.front_source]
@@ -246,15 +283,17 @@ fn a_nodes_output_reusing_a_host_channel_name_fails_the_build() {
         "#
     ));
 
-    let errors = build_err(&stack, &["lidar"]);
+    let errors = build_err(&stack, body_with_clouds(&["lidar"]));
 
     assert!(
-        errors.iter().any(|e| matches!(
+        build_errors(&errors).iter().any(|e| matches!(
             e,
-            PipelineAssemblyError::SensorOutputShadowsHost { node_name, channel }
-                if node_name == "front_source" && channel == "lidar"
+            PipelineBuildError::MultipleSuppliers { channel, first, second }
+                if channel.instance().as_ref() == "lidar"
+                    && matches!(first, Writer::Body { unit, .. } if unit == LIDAR_UNIT)
+                    && *second == Writer::Node { node: "front_source".to_string() }
         )),
-        "expected SensorOutputShadowsHost for `front_source`, got {errors:?}"
+        "expected MultipleSuppliers naming the body and `front_source`, got {errors:?}"
     );
 }
 
@@ -268,7 +307,7 @@ fn an_unknown_kind_fails_the_build_listing_the_registered_ones() {
         "#,
     );
 
-    let errors = build_err(&stack, &[]);
+    let errors = build_err(&stack, BodyCapabilities::default());
 
     assert!(
         errors.iter().any(|e| matches!(
@@ -291,7 +330,7 @@ fn a_nodes_entry_without_a_kind_fails_the_build() {
         "#,
     );
 
-    let errors = build_err(&stack, &[]);
+    let errors = build_err(&stack, BodyCapabilities::default());
 
     assert!(
         errors.iter().any(|e| matches!(
@@ -318,7 +357,6 @@ fn build_on(body: BodyCapabilities) -> Result<AutonomyPipeline, Vec<PipelineAsse
         &mock_oracle_stack(),
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         body,
     )
 }
@@ -328,9 +366,9 @@ fn a_mock_oracle_entry_builds_on_a_body_with_truth() {
     let truth = BodyCapabilities {
         publishes: [oracle_pose_channel().into(), oracle_twist_channel().into()]
             .into_iter()
-            .map(|key: ChannelKey| BodyChannel::new(key, Provenance::Exact))
+            .map(|key: ChannelKey| BodyChannel::new(key, TRUTH_UNIT, Provenance::Exact))
             .collect(),
-        ..body()
+        ..Default::default()
     };
 
     let pipeline = build_on(truth).expect("a body publishing oracle truth must build");
@@ -342,7 +380,7 @@ fn a_mock_oracle_entry_builds_on_a_body_with_truth() {
 fn a_mock_oracle_entry_is_refused_on_a_body_without_truth() {
     // The fence is the pipeline builder's, so it holds for a `[nodes]` entry
     // like any other node: oracle truth only reaches a node through the body.
-    let errors = build_on(body())
+    let errors = build_on(BodyCapabilities::default())
         .err()
         .expect("a body without oracle.pose must refuse the mock");
 

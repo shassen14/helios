@@ -29,12 +29,34 @@
 
 use std::{any::TypeId, sync::Arc};
 
-/// Error returned when a bus operation references a channel that was not
-/// declared in any node's [`PortDescriptor`](crate::port::PortDescriptor) at
-/// build time.
+/// Why the bus refused a write.
 #[derive(Debug)]
 pub enum ChannelError {
+    /// The channel was not declared in any node's
+    /// [`PortDescriptor`](crate::port::PortDescriptor) at build time, so it
+    /// has no slot.
     UnknownChannel,
+    /// The value written is not of the key's payload type. Stored, it would
+    /// read back as nothing for every reader of the key.
+    TypeMismatch {
+        key_type: &'static str,
+        written_type: &'static str,
+    },
+}
+
+impl std::fmt::Display for ChannelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChannelError::UnknownChannel => write!(f, "no node reads or writes the channel"),
+            ChannelError::TypeMismatch {
+                key_type,
+                written_type,
+            } => write!(
+                f,
+                "the channel carries {key_type} but the value written is {written_type}"
+            ),
+        }
+    }
 }
 
 /// Discriminator returned by [`ChannelKey::kind`].

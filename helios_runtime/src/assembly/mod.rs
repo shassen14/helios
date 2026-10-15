@@ -4,8 +4,6 @@
 //! - `stages` — [`build_pipeline`], the single entry point: builds the
 //!   `[nodes]` entries, runs the seam passes and hands the result to the
 //!   pipeline builder.
-//! - `sensor_inputs` — where a node's sensor inputs may come from, and the
-//!   check that each one has a source.
 //! - `registry` — [`AutonomyRegistry`]: the node map and the extension store
 //!   other tables live in (the command seam's [`CommandTypes`], the
 //!   estimator's component tables); [`DuplicateKind`].
@@ -33,7 +31,6 @@ mod factory;
 mod instantiate;
 mod registry;
 mod seams;
-mod sensor_inputs;
 mod stages;
 #[cfg(test)]
 mod test_stub;

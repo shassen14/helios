@@ -1,6 +1,6 @@
 // Assembler integration tests: build_pipeline topology resolution.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use helios_runtime::channels::{control, estimate};
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
@@ -22,7 +22,8 @@ use helios_core::interchange::measurement::sensor::MagneticField;
 use helios_core::interchange::path::{Path, PlannerGoal};
 use helios_core::interchange::perception::map::MapData;
 use helios_core::prelude::{
-    AgentId, DirectionModel, PointCloud, RangeField, RangeFieldBuilder, SphericalAngular,
+    Acceleration, AgentId, AngularRate, DirectionModel, PointCloud, RangeField, RangeFieldBuilder,
+    SphericalAngular,
 };
 use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::primitives::MonotonicTime;
@@ -76,24 +77,75 @@ fn teleop_only_stack() -> AutonomyStackConfig {
     }
 }
 
-/// A host channel set holding the IMU channels the IMU-EKF fixtures in this
-/// file predict from, plus `others`. The assembler rejects an estimator whose
-/// predict inputs the host does not publish.
-fn host_channels_with_imu(others: &[&str]) -> HashSet<String> {
-    ["imu.accel", "imu.gyro"]
-        .iter()
-        .chain(others)
-        .map(|name| name.to_string())
-        .collect()
+/// The unit the IMU-EKF fixtures' accelerometer and gyroscope channels come
+/// from.
+const IMU_UNIT: &str = "imu";
+/// The unit every lidar channel in this file comes from.
+const LIDAR_UNIT: &str = "lidar";
+/// The unit every magnetometer channel in this file comes from.
+const MAG_UNIT: &str = "mag";
+/// The unit the oracle state and reference channels come from.
+const TRUTH_UNIT: &str = "truth";
+
+/// A channel `unit` publishes, carrying batches of `P` readings, as a sensor
+/// publishes them.
+fn sensor_channel<P: Send + Sync + 'static>(name: &str, unit: &str) -> BodyChannel {
+    BodyChannel::new(
+        SensorChannel::named::<Vec<SensorReading<P>>>(name),
+        unit,
+        Provenance::Simulated,
+    )
+}
+
+/// A lidar's point-cloud channel, the kind a mapper reads.
+fn cloud(name: &str) -> BodyChannel {
+    sensor_channel::<PointCloud<Flu>>(name, LIDAR_UNIT)
+}
+
+/// A lidar's range-field channel, the kind a deproject node reads.
+fn range_field(name: &str) -> BodyChannel {
+    sensor_channel::<RangeField<Flu>>(name, LIDAR_UNIT)
+}
+
+/// The IMU channels the IMU-EKF fixtures in this file predict from, plus
+/// `others`. The assembler rejects an estimator whose predict inputs the body
+/// does not publish.
+fn channels_with_imu(others: Vec<BodyChannel>) -> Vec<BodyChannel> {
+    let mut channels = vec![
+        sensor_channel::<Acceleration>("imu.accel", IMU_UNIT),
+        sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT),
+    ];
+    channels.extend(others);
+    channels
+}
+
+/// A body publishing `channels` and driving no actuators.
+fn body_publishing(channels: Vec<BodyChannel>) -> BodyCapabilities {
+    BodyCapabilities {
+        publishes: channels,
+        ..Default::default()
+    }
+}
+
+/// Whether `errors` report node `node` reading the channel named `channel`
+/// with nothing supplying it.
+fn reports_unsupplied(errors: &[PipelineAssemblyError], node: &str, channel: &str) -> bool {
+    errors.iter().any(|e| {
+        matches!(
+            e,
+            PipelineAssemblyError::PipelineBuild(build_errors)
+                if build_errors.iter().any(|b| matches!(
+                    b,
+                    PipelineBuildError::UnsatisfiedInput { node_name, channel: key, .. }
+                        if node_name == node && key.instance().as_ref() == channel
+                ))
+        )
+    })
 }
 
 /// A body with no autonomy stack and no published channels.
 fn teleop_body() -> BodyCapabilities {
-    BodyCapabilities {
-        name: "teleop_only".to_string(),
-        publishes: vec![],
-        ..Default::default()
-    }
+    BodyCapabilities::default()
 }
 
 /// The setpoint an [`ActuatorCommand`] carries for `id`, failing if absent.
@@ -120,7 +172,6 @@ fn teleop_only_stack_builds_without_a_controller() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         teleop_body(),
     );
 
@@ -140,7 +191,6 @@ fn empty_or_dotted_agent_name_is_refused_alone() {
             &teleop_only_stack(),
             &AutonomyRegistry::default(),
             AgentId::new(name),
-            &HashSet::new(),
             teleop_body(),
         );
         let Err(errors) = result else {
@@ -167,7 +217,6 @@ fn teleop_reference_is_intent_driven_not_free_running() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         teleop_body(),
     )
     .expect("teleop-only stack must build");
@@ -194,7 +243,6 @@ fn teleop_intent_is_mapped_into_the_reference() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         teleop_body(),
     )
     .expect("teleop stack with a mapper config must build");
@@ -251,18 +299,11 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
         ..Default::default()
     };
 
-    let body = BodyCapabilities {
-        name: "rover".to_string(),
-        publishes: vec![],
-        ..Default::default()
-    };
-
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["scan"]),
-        body,
+        body_publishing(channels_with_imu(vec![cloud("scan")])),
     )
     .expect("estimator + grid stack must build");
 
@@ -293,18 +334,14 @@ fn two_grids_publish_to_distinct_channels() {
         ..Default::default()
     };
 
-    let body = BodyCapabilities {
-        name: "rover".to_string(),
-        publishes: vec![],
-        ..Default::default()
-    };
-
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["scan.near", "scan.far"]),
-        body,
+        body_publishing(channels_with_imu(vec![
+            cloud("scan.near"),
+            cloud("scan.far"),
+        ])),
     )
     .expect("two grids under distinct keys must build");
 
@@ -435,10 +472,13 @@ fn drive_force_stack() -> AutonomyStackConfig {
 /// actuators.
 fn state_and_reference_body() -> BodyCapabilities {
     BodyCapabilities {
-        name: "oracle_state".to_string(),
         publishes: vec![
-            BodyChannel::new(estimate::estimate(), Provenance::Exact),
-            BodyChannel::new(control::reference::<BodyTwistRef>(), Provenance::Exact),
+            BodyChannel::new(estimate::estimate(), TRUTH_UNIT, Provenance::Exact),
+            BodyChannel::new(
+                control::reference::<BodyTwistRef>(),
+                TRUTH_UNIT,
+                Provenance::Exact,
+            ),
         ],
         actuation: test_actuation(),
     }
@@ -452,7 +492,6 @@ fn drive_force_stack_builds_both_controllers_and_the_allocator() {
         &drive_force_stack(),
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     )
     .expect("DriveForce stack must build");
@@ -493,7 +532,6 @@ fn feedback_and_feedforward_fold_into_the_wheel_torque_terminal() {
         &drive_force_stack(),
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     )
     .expect("DriveForce stack must build");
@@ -595,7 +633,6 @@ fn decoupled_stack_builds_both_spaces_and_both_allocators() {
         &decoupled_car_stack(),
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     )
     .expect("decoupled two-allocator stack must build");
@@ -634,7 +671,6 @@ fn decoupled_legs_merge_into_one_actuator_terminal() {
         &decoupled_car_stack(),
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     )
     .expect("decoupled two-allocator stack must build");
@@ -708,7 +744,6 @@ fn a_controller_of_the_wrong_type_fails_the_build_naming_it() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     ) else {
         panic!("a controller of the wrong type must not build");
@@ -756,7 +791,6 @@ fn two_folds_of_one_type_drive_two_allocators() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     )
     .expect("two folds of one type must build");
@@ -802,7 +836,6 @@ fn an_allocator_with_no_command_fold_fails_the_build_naming_its_input() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     ) else {
         panic!("an allocator with no command source must not build");
@@ -835,7 +868,6 @@ fn an_actuator_the_body_lacks_fails_the_build_naming_the_body() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     ) else {
         panic!("an actuator the body lacks must not build");
@@ -844,8 +876,8 @@ fn an_actuator_the_body_lacks_fails_the_build_naming_the_body() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            PipelineAssemblyError::ActuatorNotOnBody { member, actuator, body }
-                if member == "steer_axle" && actuator == "front_steer" && body == "oracle_state"
+            PipelineAssemblyError::ActuatorNotOnBody { member, actuator }
+                if member == "steer_axle" && actuator == "front_steer"
         )),
         "expected ActuatorNotOnBody for `steer_axle`, got {errors:?}"
     );
@@ -864,7 +896,6 @@ fn a_setpoint_kind_the_body_does_not_accept_fails_the_build() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     ) else {
         panic!("a setpoint kind the actuator does not accept must not build");
@@ -894,7 +925,6 @@ fn two_allocators_driving_one_actuator_fail_the_build_naming_both() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     ) else {
         panic!("two members driving one actuator must not build");
@@ -920,7 +950,6 @@ fn an_allocator_outside_the_actuator_seam_does_not_reach_the_body() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         state_and_reference_body(),
     )
     .expect("an unmerged allocator is not an error");
@@ -973,8 +1002,7 @@ fn planner_without_a_map_fails_the_build_naming_it() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["scan"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![cloud("scan")])),
     ) else {
         panic!("a planner with no map must not build");
     };
@@ -1014,8 +1042,7 @@ fn follower_reads_the_path_of_the_planner_its_section_names() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["scan"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![cloud("scan")])),
     );
     assert!(
         built.is_ok(),
@@ -1036,8 +1063,7 @@ fn follower_naming_no_planner_fails_the_build_naming_it() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["scan"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![cloud("scan")])),
     ) else {
         panic!("a follower naming no planner must not build");
     };
@@ -1076,8 +1102,7 @@ fn teleop_preferred_over_a_follower_wins_the_reference_while_fresh() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["scan"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![cloud("scan")])),
     )
     .expect("a follower and teleop sharing the seam must build");
 
@@ -1125,7 +1150,6 @@ fn reference_naming_no_node_fails_the_build_naming_it() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         teleop_body(),
     ) else {
         panic!("a seam naming a missing node must not build");
@@ -1147,13 +1171,12 @@ fn controllers_without_a_reference_section_fail_naming_the_reference() {
     // reference input is unsatisfied and the build names it.
     let body = BodyCapabilities {
         actuation: test_actuation(),
-        ..perception_body()
+        ..Default::default()
     };
     let Err(errors) = build_pipeline(
         &drive_force_stack(),
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         body,
     ) else {
         panic!("controllers with no reference must not build");
@@ -1229,20 +1252,14 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         ..Default::default()
     };
 
-    let sensor_channels = host_channels_with_imu(&[MAG_CHANNEL]);
-
-    let body = BodyCapabilities {
-        name: "rover".to_string(),
-        publishes: vec![],
-        ..Default::default()
-    };
-
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
         agent.clone(),
-        &sensor_channels,
-        body,
+        body_publishing(channels_with_imu(vec![sensor_channel::<MagneticField>(
+            MAG_CHANNEL,
+            MAG_UNIT,
+        )])),
     )
     .expect("mag-bias augmentation stack must build");
 
@@ -1334,8 +1351,8 @@ fn two_return_field() -> RangeField<Flu> {
 #[test]
 fn deproject_node_turns_host_range_fields_into_clouds() {
     // A stack with only a deproject entry must build on its own: the node's
-    // input is a host sensor channel, so the assembler seeds it as external.
-    // One tick later the host's field batch is on the derived cloud channel,
+    // input is a channel the body publishes, so the build counts it as
+    // supplied. One tick later the host's field batch is on the cloud channel,
     // stamped with the batch's time rather than the tick's.
     let input = "sensor.lidar.front";
     let output = "lidar.front.points";
@@ -1344,18 +1361,12 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
         nodes: BTreeMap::from([deproject("front_deproject", input, output)]),
         ..Default::default()
     };
-    let body = BodyCapabilities {
-        name: "rover".to_string(),
-        publishes: vec![],
-        ..Default::default()
-    };
 
     let pipeline = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::from([input.to_string()]),
-        body,
+        body_publishing(vec![range_field(input)]),
     )
     .expect("a lone deproject node over a host channel must build");
 
@@ -1441,19 +1452,11 @@ fn deproject(name: &str, input: &str, output: &str) -> (String, toml::Table) {
     (name.to_string(), section)
 }
 
-fn perception_body() -> BodyCapabilities {
-    BodyCapabilities {
-        name: "rover".to_string(),
-        publishes: vec![],
-        ..Default::default()
-    }
-}
-
 #[test]
 fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
-    // The host publishes only the range field. The mapper's scan channel is the
-    // deproject node's output, a derived sensor channel, so it needs no host
-    // publisher, and the producer is ordered ahead of the mapper.
+    // The body publishes only the range field. The mapper's scan channel is the
+    // deproject node's output, so it needs no body channel, and the producer is
+    // ordered ahead of the mapper.
     let stack = AutonomyStackConfig {
         estimate: Some(estimate_seam("nav_ekf")),
         nodes: BTreeMap::from([
@@ -1468,8 +1471,7 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["lidar"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![range_field("lidar")])),
     )
     .expect("a mapper reading a deprojected channel must build");
 
@@ -1500,19 +1502,14 @@ fn mapper_reading_an_unpublished_channel_fails_the_build() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["lidar"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![range_field("lidar")])),
     )
     .err()
     .expect("a mapper reading an unpublished channel must not build");
 
     assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
-                if node_name == "local" && channel == "lidar.typo"
-        )),
-        "expected UnpublishedSensorInput for `local` / `lidar.typo`, got {errors:?}"
+        reports_unsupplied(&errors, "local", "lidar.typo"),
+        "expected UnsatisfiedInput for `local` / `lidar.typo`, got {errors:?}"
     );
 }
 
@@ -1532,20 +1529,13 @@ fn mapper_builds_a_map_from_a_host_range_field() {
         ]),
         ..Default::default()
     };
-    let body = BodyCapabilities {
-        name: "rover".to_string(),
-        publishes: vec![BodyChannel::new(state_key.clone(), Provenance::Exact)],
-        ..Default::default()
-    };
+    let body = body_publishing(vec![
+        BodyChannel::new(state_key.clone(), TRUTH_UNIT, Provenance::Exact),
+        range_field("lidar"),
+    ]);
 
-    let pipeline = build_pipeline(
-        &stack,
-        &AutonomyRegistry::default(),
-        agent.clone(),
-        &HashSet::from(["lidar".to_string()]),
-        body,
-    )
-    .expect("deproject feeding a mapper must build");
+    let pipeline = build_pipeline(&stack, &AutonomyRegistry::default(), agent.clone(), body)
+        .expect("deproject feeding a mapper must build");
 
     let now = MonotonicTime(1.0);
     pipeline
@@ -1608,19 +1598,14 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::from(["imu.gyro".to_string()]),
-        perception_body(),
+        body_publishing(vec![sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT)]),
     )
     .err()
     .expect("an estimator without its accelerometer channel must not build");
 
     assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
-                if node_name == "nav_ekf" && channel == "imu.accel"
-        )),
-        "expected UnpublishedSensorInput for `nav_ekf` / `imu.accel`, got {errors:?}"
+        reports_unsupplied(&errors, "nav_ekf", "imu.accel"),
+        "expected UnsatisfiedInput for `nav_ekf` / `imu.accel`, got {errors:?}"
     );
 }
 
@@ -1640,9 +1625,9 @@ fn mag_aided_imu_ekf(mag_channel: &str) -> (String, toml::Table) {
 
 #[test]
 fn estimator_aided_by_a_host_channel_builds() {
-    // Aiding inputs are optional ports. The build counts one as supplied only
-    // because the generic sensor-input pass seeds optional inputs too; were it
-    // to skip them, this build would fail with an unsatisfied input.
+    // Aiding inputs are optional ports. The build counts one as supplied
+    // because the body publishes it; an optional input needs a supplier just
+    // as a required one does.
     let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([mag_aided_imu_ekf("mag.primary")]),
         estimate: Some(estimate_seam("nav_ekf")),
@@ -1653,8 +1638,10 @@ fn estimator_aided_by_a_host_channel_builds() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["mag.primary"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![sensor_channel::<MagneticField>(
+            "mag.primary",
+            MAG_UNIT,
+        )])),
     );
 
     assert!(
@@ -1666,7 +1653,7 @@ fn estimator_aided_by_a_host_channel_builds() {
 
 #[test]
 fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
-    // An aiding channel the host does not publish is caught by the sensor-input
+    // An aiding channel the body does not publish is caught by the supplier
     // check every node gets, named with the estimator node.
     let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([mag_aided_imu_ekf("mag.typo")]),
@@ -1678,19 +1665,17 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["mag.primary"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![sensor_channel::<MagneticField>(
+            "mag.primary",
+            MAG_UNIT,
+        )])),
     )
     .err()
     .expect("an estimator aided by an unpublished channel must not build");
 
     assert!(
-        errors.iter().any(|e| matches!(
-            e,
-            PipelineAssemblyError::UnpublishedSensorInput { node_name, channel }
-                if node_name == "nav_ekf" && channel == "mag.typo"
-        )),
-        "expected UnpublishedSensorInput for `nav_ekf` / `mag.typo`, got {errors:?}"
+        reports_unsupplied(&errors, "nav_ekf", "mag.typo"),
+        "expected UnsatisfiedInput for `nav_ekf` / `mag.typo`, got {errors:?}"
     );
 }
 
@@ -1735,8 +1720,7 @@ fn planner_goals_are_declared_once_per_goal_channel() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["scan"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![cloud("scan")])),
     )
     .expect("a stack of planners over a declared grid must build");
 
@@ -1770,7 +1754,6 @@ fn teleop_intent_is_declared_as_an_outside_input() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &HashSet::new(),
         teleop_body(),
     )
     .expect("teleop-only stack must build");
@@ -1787,8 +1770,7 @@ fn stack_without_planner_or_teleop_declares_no_outside_inputs() {
         &planner_stack(&[]),
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        &host_channels_with_imu(&["scan"]),
-        perception_body(),
+        body_publishing(channels_with_imu(vec![cloud("scan")])),
     )
     .expect("an estimator and a mapper must build");
 

@@ -68,6 +68,13 @@ pub fn publish_edge(bus: &PortBus, stamped: Stamped<StampedTransform>) {
                 "tf edge dropped: no channel wired for this edge; \
                  the TfService drain list is missing it",
             ),
+            // The edge key is built from the transform type, so this means
+            // the bus itself is broken; name the edge all the same.
+            ChannelError::TypeMismatch { .. } => tracing::warn!(
+                edge = %edge,
+                error = %e,
+                "tf edge dropped",
+            ),
         }
     }
 }

@@ -62,8 +62,6 @@ mod tests {
 
     use helios_core::prelude::{AgentId, PlannerGoal};
 
-    use std::collections::HashSet;
-
     /// Builds a planner named `name` over the `local` map, reading its goal
     /// from `goal_channel`.
     fn build(name: &str, goal_channel: &str) -> FactoryOutput {
@@ -78,8 +76,7 @@ mod tests {
             map_channel: "local".to_string(),
             goal_channel: goal_channel.to_string(),
         };
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("test_agent"), name, &channels);
+        let ctx = BuildContext::new(AgentId::new("test_agent"), name);
         build_astar(config, &ctx).expect("a valid section builds")
     }
 

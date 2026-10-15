@@ -4,7 +4,7 @@
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
-    port::{ChannelKey, InputNeed, Writer},
+    port::{ChannelKey, ChannelKind, InputNeed, Writer},
 };
 
 /// Errors produced by [`PipelineBuilder::build`](super::PipelineBuilder::build).
@@ -32,17 +32,18 @@ pub enum PipelineBuildError {
     /// node writes it, the body does not publish it, and it is not declared
     /// as an outside input. Raised for optional inputs too, since optional
     /// means the node runs without a value, not that the wiring is unchecked.
+    /// For a sensor channel, often a misspelled name or a sensor missing from
+    /// the body's fit.
     UnsatisfiedInput {
         node_name: String,
         channel: ChannelKey,
         need: InputNeed,
     },
     /// A node reads an oracle or health channel that the body does not
-    /// publish. Only a body supplies these, so the error names the body.
+    /// publish. Only a body supplies these.
     UnsatisfiedBodyCapabilities {
         node_name: String,
         channel_key: ChannelKey,
-        body: String,
         need: InputNeed,
     },
     /// Two suppliers provide the same channel: two nodes, or a node and the
@@ -56,6 +57,11 @@ pub enum PipelineBuildError {
     /// Two or more nodes share a name. Errors, logs and node order within a
     /// level all identify a node by its name, so names must be unique.
     DuplicateNodeName { name: String },
+    /// A unit the body declares is not one level: empty, or holding something
+    /// other than ASCII letters, digits and `_`. Errors and the channel
+    /// catalog name a body channel's writer by its unit, so it follows the
+    /// node-name grammar. Reported once per unit.
+    MalformedUnitName { unit: String },
     /// A node's name is not one level: empty, or holding something other
     /// than ASCII letters, digits and `_`. The name fills one part of every
     /// watcher path under the node (`agent.<agent>.node.<node>.<leaf>`), and
@@ -147,24 +153,30 @@ impl std::fmt::Display for PipelineBuildError {
                 need,
             } => {
                 let need = need_label(*need);
-                write!(
-                    f,
-                    "node \"{node_name}\" reads channel {channel} ({need}) but nothing supplies it: \
-                     no node writes it, the body does not publish it, and it is not declared as an \
-                     outside input"
-                )
+                match channel.kind() {
+                    ChannelKind::Sensor => write!(
+                        f,
+                        "node \"{node_name}\" reads channel {channel} ({need}) but nothing \
+                         supplies it: the body does not publish it and no node writes it"
+                    ),
+                    _ => write!(
+                        f,
+                        "node \"{node_name}\" reads channel {channel} ({need}) but nothing \
+                         supplies it: no node writes it, the body does not publish it, and it is \
+                         not declared as an outside input"
+                    ),
+                }
             }
             PipelineBuildError::UnsatisfiedBodyCapabilities {
                 node_name,
                 channel_key,
-                body,
                 need,
             } => {
                 let need = need_label(*need);
                 write!(
                     f,
-                    "node \"{node_name}\" reads channel {channel_key} ({need}); body \"{body}\" \
-                     does not publish it"
+                    "node \"{node_name}\" reads channel {channel_key} ({need}); the body does not \
+                     publish it"
                 )
             }
             PipelineBuildError::MultipleSuppliers {
@@ -182,6 +194,13 @@ impl std::fmt::Display for PipelineBuildError {
                 write!(
                     f,
                     "more than one node is named \"{name}\" — node names must be unique"
+                )
+            }
+            PipelineBuildError::MalformedUnitName { unit } => {
+                write!(
+                    f,
+                    "the body declares unit \"{unit}\", which is not one level — a unit name \
+                     is non-empty and holds only letters, digits and '_'"
                 )
             }
             PipelineBuildError::MalformedNodeName { name } => {

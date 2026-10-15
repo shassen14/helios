@@ -36,14 +36,11 @@ mod tests {
 
     use helios_core::prelude::AgentId;
 
-    use std::collections::HashSet;
-
     /// Builds a `[nodes]` entry named `name` from `section` through the
     /// default registry's node map, as the assembler does.
     fn build_entry(name: &str, section: &str) -> Result<Box<dyn PipelineNode>, String> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("test_agent"), name, &channels);
+        let ctx = BuildContext::new(AgentId::new("test_agent"), name);
         AutonomyRegistry::default()
             .build_node(MOCK_ORACLE_KIND, section, &ctx)
             .map(|built| built.output.into_node())

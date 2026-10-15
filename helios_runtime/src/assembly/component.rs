@@ -314,8 +314,6 @@ mod tests {
 
     use helios_core::prelude::AgentId;
 
-    use std::collections::HashSet;
-
     const NODE: &str = "primary";
     const SLOT: &str = "filter";
     const PATH: &str = "filter";
@@ -359,8 +357,7 @@ mod tests {
         section: &str,
     ) -> Result<BuiltComponent<f64>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE);
         table.build(PATH, section, &ctx, 2.0)
     }
 
@@ -491,8 +488,7 @@ mod tests {
         table
             .register(KIND, |_: NoParams, _: &BuildContext<'_>, ()| Ok(()))
             .expect("one registration");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE);
         let section: toml::Table =
             toml::from_str(&format!("kind = \"{KIND}\"\nalpha = 1.0")).expect("parses");
         assert!(matches!(

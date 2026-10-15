@@ -15,7 +15,7 @@ use helios_core::prelude::AgentId;
 use serde::{de::DeserializeOwned, Serialize};
 
 use std::any::{type_name, Any};
-use std::{collections::HashSet, error::Error, fmt::Display};
+use std::{error::Error, fmt::Display};
 
 /// The key naming a config section's kind: a `[nodes.<name>]` table's node
 /// kind, or a component sub-table's component kind.
@@ -29,20 +29,11 @@ pub(crate) const KIND_KEY: &str = "kind";
 pub struct BuildContext<'a> {
     agent: AgentId,
     node_name: &'a str,
-    sensor_channels: &'a HashSet<String>,
 }
 
 impl<'a> BuildContext<'a> {
-    pub(crate) fn new(
-        agent: AgentId,
-        node_name: &'a str,
-        sensor_channels: &'a HashSet<String>,
-    ) -> Self {
-        Self {
-            agent,
-            node_name,
-            sensor_channels,
-        }
+    pub(crate) fn new(agent: AgentId, node_name: &'a str) -> Self {
+        Self { agent, node_name }
     }
 
     /// The agent this node belongs to; scopes the node's frames.
@@ -53,11 +44,6 @@ impl<'a> BuildContext<'a> {
     /// The node's name: its key in the config's node table.
     pub fn node_name(&self) -> &'a str {
         self.node_name
-    }
-
-    /// Names of the sensor channels the host publishes for this agent.
-    pub fn sensor_channels(&self) -> &'a HashSet<String> {
-        self.sensor_channels
     }
 }
 
@@ -436,8 +422,7 @@ mod tests {
     fn run(section: &str) -> Result<BuiltNode, FactoryError> {
         let factory = erase(KIND.to_string(), build_stub);
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE);
         factory(section, &ctx, &AutonomyRegistry::empty())
     }
 
@@ -557,8 +542,7 @@ mod tests {
     fn resolved_components_are_spliced_into_the_section() {
         let factory = erase(KIND.to_string(), build_with_components);
         let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE);
         let Ok(built) = factory(section, &ctx, &AutonomyRegistry::empty()) else {
             panic!("expected the factory to succeed");
         };
@@ -588,8 +572,7 @@ mod tests {
     fn a_component_failure_is_reported_as_itself() {
         let factory = erase(KIND.to_string(), build_failing_component);
         let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE);
         let err = match factory(section, &ctx, &AutonomyRegistry::empty()) {
             Ok(_) => panic!("expected the factory to fail"),
             Err(err) => err,
@@ -641,11 +624,9 @@ mod tests {
 
     #[test]
     fn context_accessors_return_what_it_was_built_with() {
-        let channels: HashSet<String> = ["front_lidar".to_string()].into();
-        let ctx = BuildContext::new(AgentId::new("car"), "front_deproject", &channels);
+        let ctx = BuildContext::new(AgentId::new("car"), "front_deproject");
         assert_eq!(ctx.agent(), &AgentId::new("car"));
         assert_eq!(ctx.node_name(), "front_deproject");
-        assert!(ctx.sensor_channels().contains("front_lidar"));
     }
 
     /// An output declares no outside inputs until the factory adds them, and

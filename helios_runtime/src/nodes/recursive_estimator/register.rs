@@ -247,7 +247,6 @@ mod tests {
     use helios_core::spatial::StateVariable;
 
     use nalgebra::DVector;
-    use std::collections::HashSet;
 
     /// An arbitrary global frame the test expresses quantities in.
     const DATUM: &str = "test_datum";
@@ -296,8 +295,7 @@ mod tests {
         section: &str,
     ) -> Result<(Box<dyn PipelineNode>, toml::Table), String> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(agent(), NODE, &channels);
+        let ctx = BuildContext::new(agent(), NODE);
         registry
             .build_node(RECURSIVE_ESTIMATOR_KIND, section, &ctx)
             .map(|built| (built.output.into_node(), built.resolved))

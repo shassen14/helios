@@ -4,7 +4,7 @@
 //! All or nothing: either every node builds, or every node that failed is
 //! reported and none are returned. A pipeline missing a node is never built,
 //! and stopping here keeps one broken node from showing up again downstream
-//! as unpublished inputs on every node that reads its outputs.
+//! as unsupplied inputs on every node that reads its outputs.
 
 use super::config::AutonomyStackConfig;
 use super::error::PipelineAssemblyError;
@@ -15,8 +15,6 @@ use crate::pipeline::node::PipelineNode;
 use crate::port::ChannelKey;
 
 use helios_core::prelude::AgentId;
-
-use std::collections::HashSet;
 
 /// Every `[nodes]` entry, built.
 pub(super) struct Instantiated {
@@ -34,7 +32,6 @@ pub(super) fn instantiate(
     stack: &AutonomyStackConfig,
     registry: &AutonomyRegistry,
     agent: &AgentId,
-    sensor_channels: &HashSet<String>,
 ) -> Result<Instantiated, Vec<PipelineAssemblyError>> {
     let mut nodes = Vec::new();
     let mut outside_inputs = Vec::new();
@@ -42,7 +39,7 @@ pub(super) fn instantiate(
 
     for (name, section) in &stack.nodes {
         let section = section.clone();
-        match instantiate_node(name, section, registry, agent, sensor_channels) {
+        match instantiate_node(name, section, registry, agent) {
             Ok((node, node_outside_inputs)) => {
                 nodes.push(node);
                 outside_inputs.extend(node_outside_inputs);
@@ -69,7 +66,6 @@ fn instantiate_node(
     mut section: toml::Table,
     registry: &AutonomyRegistry,
     agent: &AgentId,
-    sensor_channels: &HashSet<String>,
 ) -> Result<(Box<dyn PipelineNode>, Vec<ChannelKey>), PipelineAssemblyError> {
     let Some(toml::Value::String(kind)) = section.remove(KIND_KEY) else {
         return Err(PipelineAssemblyError::MissingNodeKind {
@@ -77,7 +73,7 @@ fn instantiate_node(
         });
     };
 
-    let ctx = BuildContext::new(agent.clone(), name, sensor_channels);
+    let ctx = BuildContext::new(agent.clone(), name);
 
     let built = registry.build_node(&kind, section, &ctx)?;
     let outside_inputs = built.output.outside_inputs().to_vec();
@@ -181,7 +177,7 @@ mod tests {
 
     fn run(stack_toml: &str) -> Result<Instantiated, Vec<PipelineAssemblyError>> {
         let stack: AutonomyStackConfig = toml::from_str(stack_toml).expect("test TOML parses");
-        instantiate(&stack, &registry(), &AgentId::new("car"), &HashSet::new())
+        instantiate(&stack, &registry(), &AgentId::new("car"))
     }
 
     /// Unwraps the failure of [`run`]; `dyn PipelineNode` has no `Debug`, so

@@ -1,5 +1,5 @@
-//! Wiring checks: node names are unique levels, channel names are well
-//! formed and each names one channel, each node's watchable leaves are well
+//! Wiring checks: node names are unique levels, the body's unit names are
+//! levels, channel names are well formed and each names one channel, each node's watchable leaves are well
 //! formed, and leaves and output channels sit outside the pipeline's own
 //! group and apart, and every input has exactly one supplier. These need only
 //! the declarations, not an order, so they run before the sort.
@@ -20,24 +20,23 @@ use std::{
 
 /// Checks the graph's wiring and returns every problem found. An empty list
 /// means each node name is unique and fits one part of a watcher path, every
-/// channel name is well formed and names one channel, every watchable leaf a
+/// unit the body declares is one level, every channel name is well formed and names one channel, every watchable leaf a
 /// node declares is well formed, no leaf or output channel sits in the
 /// pipeline's own group, no node names a leaf twice or gives a leaf the name
 /// of one of its outputs, and every input, required or optional, has exactly
 /// one supplier: a node output, a body channel, or a declared outside input.
-/// `descriptions` holds every channel some writer declares; `body_name` names
-/// the body in the error for an oracle or health channel it doesn't publish.
+/// `descriptions` holds every channel some writer declares.
 pub(super) fn check_wiring(
     nodes: &[Box<dyn PipelineNode>],
     descriptions: &[ChannelDescription],
-    body_name: &str,
 ) -> Vec<PipelineBuildError> {
     let mut errors = vec![];
     check_node_names(nodes, &mut errors);
+    check_unit_names(descriptions, &mut errors);
     let refused_names = check_channel_names(nodes, descriptions, &mut errors);
     check_observables(nodes, &refused_names, &mut errors);
     let supplier_of = map_suppliers(descriptions, &mut errors);
-    check_inputs_supplied(nodes, &supplier_of, &refused_names, body_name, &mut errors);
+    check_inputs_supplied(nodes, &supplier_of, &refused_names, &mut errors);
     errors
 }
 
@@ -60,6 +59,20 @@ fn check_node_names(nodes: &[Box<dyn PipelineNode>], errors: &mut Vec<PipelineBu
             errors.push(PipelineBuildError::DuplicateNodeName {
                 name: name.to_string(),
             });
+        }
+    }
+}
+
+/// Errors name a body channel's writer by its unit, so each unit must be one
+/// level, as a node name is. Several channels share a unit, so a malformed
+/// one is reported once.
+fn check_unit_names(descriptions: &[ChannelDescription], errors: &mut Vec<PipelineBuildError>) {
+    let mut malformed_units: HashSet<&str> = HashSet::new();
+    for description in descriptions {
+        if let Writer::Body { unit, .. } = description.writer() {
+            if !is_level(unit) && malformed_units.insert(unit) {
+                errors.push(PipelineBuildError::MalformedUnitName { unit: unit.clone() });
+            }
         }
     }
 }
@@ -322,7 +335,6 @@ fn check_inputs_supplied(
     nodes: &[Box<dyn PipelineNode>],
     supplier_of: &HashMap<&ChannelKey, &Writer>,
     refused_names: &HashSet<Arc<str>>,
-    body_name: &str,
     errors: &mut Vec<PipelineBuildError>,
 ) {
     for node in nodes {
@@ -340,12 +352,11 @@ fn check_inputs_supplied(
                     }
                 }
                 // Only a body supplies oracle and health channels, so a
-                // missing one is the body's gap and the error names it.
+                // missing one is the body's gap.
                 ChannelKind::Health | ChannelKind::Oracle => {
                     PipelineBuildError::UnsatisfiedBodyCapabilities {
                         node_name: node.name().to_string(),
                         channel_key: channel.clone(),
-                        body: body_name.to_string(),
                         need: input.need(),
                     }
                 }

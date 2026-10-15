@@ -100,7 +100,6 @@ mod tests {
     use helios_core::prelude::AgentId;
 
     use nalgebra::DMatrix;
-    use std::collections::HashSet;
 
     const NODE: &str = "primary";
     const INPUT: &str = "sensor";
@@ -108,8 +107,7 @@ mod tests {
     fn build(section: &str) -> Result<Box<dyn MeasurementSource>, ComponentError> {
         let registry = AutonomyRegistry::default();
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let channels = HashSet::new();
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, &channels);
+        let ctx = BuildContext::new(AgentId::new("car"), NODE);
         let wiring = MeasurementWiring {
             input: INPUT.to_string(),
             noise: DMatrix::identity(3, 3),

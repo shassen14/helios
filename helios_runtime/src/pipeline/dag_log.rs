@@ -17,22 +17,24 @@ use crate::{
     AutonomyPipeline, ChannelKey, NodeId, PipelineNode,
 };
 
+use helios_core::prelude::AgentId;
+
 use tracing::info;
 
-/// One-shot startup dump of a built pipeline. `body_name` names the body it
-/// was built against; `label` gives a node's label by its name, `None` for a
+/// One-shot startup dump of a built pipeline. `agent` names the agent whose
+/// body it was built against; `label` gives a node's label by its name, `None` for a
 /// node without one. Emits at `info` so it's visible with the default
 /// `helios=info` filter; nothing else in the per-tick path emits at that
 /// level, so this stays a single block.
 pub(crate) fn log_resolved_dag<'a>(
     pipeline: &AutonomyPipeline,
-    body_name: &str,
+    agent: &AgentId,
     label: impl Fn(&str) -> Option<&'a str>,
 ) {
     info!(
         target: "helios_runtime::pipeline",
         "{}",
-        render_dag(pipeline, body_name, label).trim_end()
+        render_dag(pipeline, agent, label).trim_end()
     );
 }
 
@@ -40,7 +42,7 @@ pub(crate) fn log_resolved_dag<'a>(
 /// node, with a blank line before every section so they read as blocks.
 fn render_dag<'a>(
     pipeline: &AutonomyPipeline,
-    body_name: &str,
+    agent: &AgentId,
     label: impl Fn(&str) -> Option<&'a str>,
 ) -> String {
     let levels = &pipeline.levels;
@@ -55,17 +57,17 @@ fn render_dag<'a>(
         .descriptions()
         .iter()
         .filter_map(|description| match description.writer() {
-            Writer::Body { provenance } => Some((description.key(), provenance)),
+            Writer::Body { unit, provenance } => Some((description.key(), unit, provenance)),
             _ => None,
         })
         .collect();
     out.push_str(&format!(
-        "\nbody {body_name}: publishes {} channels\n",
+        "\nbody of agent {agent}: publishes {} channels\n",
         published.len()
     ));
-    for (key, provenance) in published {
+    for (key, unit, provenance) in published {
         out.push_str(&format!(
-            "  {} [provenance: {provenance:?}]\n",
+            "  {} [unit: {unit}, provenance: {provenance:?}]\n",
             format_key_compact(key)
         ));
     }

@@ -24,6 +24,9 @@ use helios_runtime::{
 
 use crate::common::MockRuntime;
 
+/// The unit every body channel in this file comes from.
+const BODY_UNIT: &str = "test_unit";
+
 /// Test-only sugar: every channel in this file is internal (algorithm-to-
 /// algorithm wiring), so go through the `InternalChannel` constructor and
 /// convert into the enum key once.
@@ -303,7 +306,9 @@ impl PipelineNode for SinkNode {
     }
 }
 
-// Tag types so each test can mint distinct ChannelKeys without colliding.
+// Tag types so each test can mint distinct ChannelKeys without colliding. A
+// test that writes or reads values keys its channels by the value's type
+// instead, since the bus refuses a value of another type than its key's.
 struct ChA;
 struct ChB;
 struct ChC;
@@ -342,7 +347,7 @@ fn edge(producer: &str, consumer: &str, channel: &ChannelKey) -> CycleEdge {
 
 #[test]
 fn single_node_executes() {
-    let out = ikey_named::<ChA>("a");
+    let out = ikey_named::<u32>("a");
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", out.clone(), 42)))
         .build()
@@ -359,8 +364,8 @@ fn single_node_executes() {
 
 #[test]
 fn two_node_chain_level_ordering() {
-    let a = ikey_named::<ChA>("a");
-    let b = ikey_named::<ChB>("b");
+    let a = ikey_named::<u32>("a");
+    let b = ikey_named::<u32>("b");
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 7)))
@@ -388,8 +393,8 @@ fn two_node_chain_level_ordering() {
 #[test]
 fn two_node_chain_with_builder_inserted_out_of_order() {
     // B added before A — toposort must still resolve A→B.
-    let a = ikey_named::<ChA>("a");
-    let b = ikey_named::<ChB>("b");
+    let a = ikey_named::<u32>("a");
+    let b = ikey_named::<u32>("b");
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(TransformNode::new(
@@ -414,10 +419,10 @@ fn two_node_chain_with_builder_inserted_out_of_order() {
 #[test]
 fn three_node_diamond_resolves() {
     // A → (B, C) → D, with D summing B and C's outputs.
-    let a = ikey_named::<ChA>("a");
-    let b = ikey_named::<ChB>("b");
-    let c = ikey_named::<ChC>("c");
-    let d = ikey_named::<ChD>("d");
+    let a = ikey_named::<u32>("a");
+    let b = ikey_named::<u32>("b");
+    let c = ikey_named::<u32>("c");
+    let d = ikey_named::<u32>("d");
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 1)))
@@ -766,8 +771,7 @@ fn optional_input_satisfied_by_body_capability_builds() {
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::optional("ekf", gps.clone())))
         .with_body_capabilities(BodyCapabilities {
-            name: "test_body".to_string(),
-            publishes: vec![BodyChannel::new(gps, Provenance::Exact)],
+            publishes: vec![BodyChannel::new(gps, BODY_UNIT, Provenance::Exact)],
             ..Default::default()
         })
         .build();
@@ -784,8 +788,11 @@ fn node_and_body_supplying_one_channel_is_rejected() {
     let result = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
         .with_body_capabilities(BodyCapabilities {
-            name: "test_body".to_string(),
-            publishes: vec![BodyChannel::new(shared.clone(), Provenance::Exact)],
+            publishes: vec![BodyChannel::new(
+                shared.clone(),
+                BODY_UNIT,
+                Provenance::Exact,
+            )],
             ..Default::default()
         })
         .build();
@@ -798,7 +805,10 @@ fn node_and_body_supplying_one_channel_is_rejected() {
             e,
             PipelineBuildError::MultipleSuppliers { channel, first, second }
                 if *channel == shared
-                    && *first == Writer::Body { provenance: Provenance::Exact }
+                    && *first == Writer::Body {
+            unit: BODY_UNIT.to_string(),
+            provenance: Provenance::Exact,
+        }
                     && *second == Writer::Node { node: "a".to_string() }
         )),
         "expected MultipleSuppliers naming the body then node a, got {errors:?}"
@@ -973,8 +983,11 @@ fn body_channel_with_a_malformed_name_names_the_body_and_its_reader() {
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("mock_oracle", truth.clone())))
         .with_body_capabilities(BodyCapabilities {
-            name: "sim".to_string(),
-            publishes: vec![BodyChannel::new(truth.clone(), Provenance::Exact)],
+            publishes: vec![BodyChannel::new(
+                truth.clone(),
+                BODY_UNIT,
+                Provenance::Exact,
+            )],
             ..Default::default()
         })
         .build();
@@ -985,6 +998,7 @@ fn body_channel_with_a_malformed_name_names_the_body_and_its_reader() {
     let expected = [ChannelUses {
         key: truth,
         writers: vec![Writer::Body {
+            unit: BODY_UNIT.to_string(),
             provenance: Provenance::Exact,
         }],
         readers: vec!["mock_oracle".to_string()],
@@ -1052,8 +1066,7 @@ fn one_name_across_kinds_is_refused() {
     let result = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("relay", internal, 0)))
         .with_body_capabilities(BodyCapabilities {
-            name: "sim".to_string(),
-            publishes: vec![BodyChannel::new(sensor, Provenance::Exact)],
+            publishes: vec![BodyChannel::new(sensor, BODY_UNIT, Provenance::Exact)],
             ..Default::default()
         })
         .build();
@@ -1102,8 +1115,8 @@ fn optional_input_producer_runs_first() {
     // The reader's name sorts before the producer's, so if the optional edge
     // did not order them, both would share level 0 and the reader would run
     // first, see nothing, and write nothing on the first tick.
-    let source = ikey_named::<ChA>("a");
-    let out = ikey_named::<ChB>("b");
+    let source = ikey_named::<u32>("a");
+    let out = ikey_named::<u32>("b");
 
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(ProducerNode::new("b_producer", source.clone(), 7)))
@@ -1165,13 +1178,44 @@ fn body_capabilities_satisfy_required_inputs() {
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
         .with_body_capabilities(BodyCapabilities {
-            name: "test_body".to_string(),
-            publishes: vec![BodyChannel::new(sensor_key, Provenance::Exact)],
+            publishes: vec![BodyChannel::new(sensor_key, BODY_UNIT, Provenance::Exact)],
             ..Default::default()
         })
         .build();
 
     assert!(result.is_ok(), "build should succeed: {:?}", result.err());
+}
+
+#[test]
+fn malformed_unit_is_reported_once_for_all_its_channels() {
+    // Errors name a body channel's writer by its unit, so a unit follows the
+    // node-name grammar. An IMU's two channels share one unit; a bad name is
+    // one mistake, reported once.
+    let accel = ikey_named::<Sensor>("imu.accel");
+    let gyro = ikey_named::<Truth>("imu.gyro");
+    let unit = "imu.front";
+
+    let result = PipelineBuilder::new()
+        .add_node(Box::new(SinkNode::new("consumer", accel.clone())))
+        .with_body_capabilities(BodyCapabilities {
+            publishes: vec![
+                BodyChannel::new(accel, unit, Provenance::Simulated),
+                BodyChannel::new(gyro, unit, Provenance::Simulated),
+            ],
+            ..Default::default()
+        })
+        .build();
+
+    let Err(errors) = result else {
+        panic!("should fail: the unit name holds a '.'");
+    };
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::MalformedUnitName { unit: reported }] if reported == unit
+        ),
+        "expected one MalformedUnitName for {unit:?}, got {errors:?}"
+    );
 }
 
 #[test]
@@ -1183,8 +1227,7 @@ fn oracle_input_satisfied_by_body_capability() {
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("mock_oracle", oracle_key.clone())))
         .with_body_capabilities(BodyCapabilities {
-            name: "sim".to_string(),
-            publishes: vec![BodyChannel::new(oracle_key, Provenance::Exact)],
+            publishes: vec![BodyChannel::new(oracle_key, BODY_UNIT, Provenance::Exact)],
             ..Default::default()
         })
         .build();
@@ -1195,15 +1238,14 @@ fn oracle_input_satisfied_by_body_capability() {
 #[test]
 fn oracle_input_without_body_capability_errors() {
     // Same node, but the body does not advertise the oracle channel. The
-    // build must fail with UnsatisfiedBodyCapabilities naming the node and
-    // body — not the generic UnsatisfiedInput. Oracle channels are never
+    // build must fail with UnsatisfiedBodyCapabilities naming the node —
+    // not the generic UnsatisfiedInput. Oracle channels are never
     // produced by a node, so the only possible supplier is the body.
     let oracle_key = okey_named::<Truth>("oracle.pose");
 
     let result = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("mock_oracle", oracle_key.clone())))
         .with_body_capabilities(BodyCapabilities {
-            name: "hw".to_string(),
             publishes: vec![],
             ..Default::default()
         })
@@ -1215,8 +1257,8 @@ fn oracle_input_without_body_capability_errors() {
     assert!(
         errors.iter().any(|e| matches!(
             e,
-            PipelineBuildError::UnsatisfiedBodyCapabilities { node_name, channel_key, body, .. }
-                if node_name == "mock_oracle" && *channel_key == oracle_key && body == "hw"
+            PipelineBuildError::UnsatisfiedBodyCapabilities { node_name, channel_key, .. }
+                if node_name == "mock_oracle" && *channel_key == oracle_key
         )),
         "expected UnsatisfiedBodyCapabilities for 'mock_oracle'/{oracle_key:?}, got {errors:?}"
     );
@@ -1301,12 +1343,15 @@ fn unrated_node_fires_every_tick() {
 fn tick_preserves_externally_written_values() {
     // All bus slots are last-known-good — a value written from outside
     // the graph must still be readable after `tick()`.
-    let sensor_key = ikey_named::<Sensor>("imu");
+    let sensor_key = ikey_named::<u32>("imu");
     let pipeline = PipelineBuilder::new()
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
         .with_body_capabilities(BodyCapabilities {
-            name: "test_body".to_string(),
-            publishes: vec![BodyChannel::new(sensor_key.clone(), Provenance::Exact)],
+            publishes: vec![BodyChannel::new(
+                sensor_key.clone(),
+                BODY_UNIT,
+                Provenance::Exact,
+            )],
             ..Default::default()
         })
         .build()

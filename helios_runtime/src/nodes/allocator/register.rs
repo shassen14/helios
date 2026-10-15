@@ -65,10 +65,8 @@ mod tests {
     use helios_core::control::actuators::{ActuatorDrive, SetpointKind};
     use helios_core::prelude::AgentId;
 
-    use std::collections::HashSet;
-
-    fn context<'a>(name: &'a str, sensors: &'a HashSet<String>) -> BuildContext<'a> {
-        BuildContext::new(AgentId::new("test_agent"), name, sensors)
+    fn context(name: &str) -> BuildContext<'_> {
+        BuildContext::new(AgentId::new("test_agent"), name)
     }
 
     fn wheel_torque(input: &str, drive: &str) -> WheelTorqueConfig {
@@ -88,21 +86,14 @@ mod tests {
 
     #[test]
     fn each_kind_reads_its_fold_and_writes_a_partial_named_after_the_node() {
-        let sensors = HashSet::new();
         let cases = [
             (
-                build_wheel_torque(
-                    wheel_torque("drive_cmd", "rear"),
-                    &context("drive", &sensors),
-                ),
+                build_wheel_torque(wheel_torque("drive_cmd", "rear"), &context("drive")),
                 ChannelKey::from(InternalChannel::named::<DriveForce>("drive_cmd")),
                 "drive",
             ),
             (
-                build_steer_position(
-                    steer_position("steer_cmd", "front"),
-                    &context("steer", &sensors),
-                ),
+                build_steer_position(steer_position("steer_cmd", "front"), &context("steer")),
                 InternalChannel::named::<SteerAngle>("steer_cmd").into(),
                 "steer",
             ),
@@ -132,18 +123,14 @@ mod tests {
 
     #[test]
     fn each_kinds_output_carries_the_actuator_it_drives_and_the_kind_it_writes() {
-        let sensors = HashSet::new();
         let cases = [
             (
-                build_wheel_torque(wheel_torque("drive_cmd", "rear"), &context("d", &sensors)),
+                build_wheel_torque(wheel_torque("drive_cmd", "rear"), &context("d")),
                 "d",
                 ActuatorDrive::new(ActuatorId::new("rear"), SetpointKind::Torque),
             ),
             (
-                build_steer_position(
-                    steer_position("steer_cmd", "front"),
-                    &context("s", &sensors),
-                ),
+                build_steer_position(steer_position("steer_cmd", "front"), &context("s")),
                 "s",
                 ActuatorDrive::new(ActuatorId::new("front"), SetpointKind::Position),
             ),

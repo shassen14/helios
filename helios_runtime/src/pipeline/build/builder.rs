@@ -69,8 +69,7 @@ impl PipelineBuilder {
     /// [`build`](Self::build), so consumers, required or optional, don't trip
     /// [`PipelineBuildError::UnsatisfiedInput`]; an unmet `Oracle`/`Health`
     /// input instead surfaces as
-    /// [`PipelineBuildError::UnsatisfiedBodyCapabilities`], naming the body
-    /// that failed to advertise it.
+    /// [`PipelineBuildError::UnsatisfiedBodyCapabilities`].
     pub fn with_body_capabilities(mut self, capabilities: BodyCapabilities) -> Self {
         self.capabilities = capabilities;
         self
@@ -93,7 +92,8 @@ impl PipelineBuilder {
     ///
     /// Errors are checked in two stages, and every error within a stage is
     /// collected:
-    /// 1. Wiring. Node names are unique and one level each, channel names
+    /// 1. Wiring. Node names are unique and one level each, the body's unit
+    ///    names are one level each, channel names
     ///    are well formed and each names one channel, each node's watchable
     ///    leaves are well formed, leaves and output channels sit outside the
     ///    pipeline's own group and apart, and every input, required or
@@ -103,6 +103,8 @@ impl PipelineBuilder {
     ///      name.
     ///    - [`PipelineBuildError::MalformedNodeName`] — a node name is not
     ///      one level.
+    ///    - [`PipelineBuildError::MalformedUnitName`] — a unit the body
+    ///      declares is not one level.
     ///    - [`PipelineBuildError::MalformedChannelName`] — a channel name is
     ///      not levels joined by `.`.
     ///    - [`PipelineBuildError::ChannelNameReused`] — one name names
@@ -136,7 +138,7 @@ impl PipelineBuilder {
     /// at `0`, indexing into the pipeline's rate-timer array.
     pub fn build(self) -> Result<AutonomyPipeline, Vec<PipelineBuildError>> {
         let descriptions = self.describe_channels();
-        let errors = check_wiring(&self.nodes, &descriptions, &self.capabilities.name);
+        let errors = check_wiring(&self.nodes, &descriptions);
 
         // Stop before ordering: a node downstream of a missing input would
         // otherwise be reported as a cycle member too.
@@ -191,9 +193,11 @@ impl PipelineBuilder {
     /// node's outputs in the order nodes were added. A channel two writers
     /// declare appears twice; the wiring check refuses it.
     fn describe_channels(&self) -> Vec<ChannelDescription> {
-        let body = self.capabilities.publishes.iter().map(|published| {
-            ChannelDescription::body(published.key().clone(), published.provenance())
-        });
+        let body = self
+            .capabilities
+            .publishes
+            .iter()
+            .map(ChannelDescription::body);
         let outside = self
             .outside_inputs
             .iter()
