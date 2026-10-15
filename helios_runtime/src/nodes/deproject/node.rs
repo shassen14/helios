@@ -58,7 +58,7 @@ impl<F: Frame> DeprojectNode<F> {
         let output = SensorChannel::named::<CloudBatch<F>>(output);
         let descriptor = AlgorithmNodePortDescriptor::new()
             .input_sensor(input.clone())
-            .output_sensor(output.clone())
+            .output_sensor_at_mount_of(output.clone(), input.clone())
             .build();
 
         Self {

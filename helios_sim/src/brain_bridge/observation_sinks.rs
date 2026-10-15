@@ -242,7 +242,7 @@ mod tests {
             .observable(NIS, Determinism::Deterministic)
             .observable(DROPPED, Determinism::Deterministic)
             .build();
-        let pipeline = PipelineBuilder::new()
+        let pipeline = PipelineBuilder::new(AgentId::new(CAR))
             .add_node(Box::new(Emitting { descriptor }))
             .build()
             .expect("one node builds");

@@ -17,6 +17,7 @@
 use crate::port::{ChannelKey, Provenance};
 
 use helios_core::control::actuation_model::ActuationModel;
+use helios_core::spatial::FrameId;
 
 /// Everything the agent's body offers the pipeline at the bus seam: the
 /// channels it measures, and the actuators that take the command back off the
@@ -48,11 +49,17 @@ pub struct BodyCapabilities {
 }
 
 /// One channel the body publishes, as the host declares it: the typed
-/// channel, the unit that produces it, and how its values are produced.
+/// channel, the unit that produces it, how its values are produced, and the
+/// frame its values are measured in, if they have one.
 ///
 /// A unit is one installed part of the body, such as a sensor's installation
 /// or the simulator's truth rig; an IMU's accelerometer and gyroscope channels
 /// share one. Its name is one level, like an agent's or a node's.
+///
+/// The mount is the frame on the agent's body the unit measures in, such as
+/// a sensor's installation, fixed for the run. A value with no frame, such
+/// as a battery voltage or the oracle's pose (whose value names its own
+/// frame), has none.
 ///
 /// The build completes each into a
 /// [`ChannelDescription`](crate::port::ChannelDescription) whose writer is the
@@ -62,6 +69,7 @@ pub struct BodyChannel {
     key: ChannelKey,
     unit: String,
     provenance: Provenance,
+    mount: Option<FrameId>,
 }
 
 impl BodyChannel {
@@ -74,7 +82,15 @@ impl BodyChannel {
             key: key.into(),
             unit: unit.into(),
             provenance,
+            mount: None,
         }
+    }
+
+    /// States the frame the channel's values are measured in. The build
+    /// refuses a mount that is not one of this agent's frames off its spine.
+    pub fn with_mount(mut self, mount: FrameId) -> Self {
+        self.mount = Some(mount);
+        self
     }
 
     pub fn key(&self) -> &ChannelKey {
@@ -87,6 +103,10 @@ impl BodyChannel {
 
     pub fn provenance(&self) -> Provenance {
         self.provenance
+    }
+
+    pub fn mount(&self) -> Option<&FrameId> {
+        self.mount.as_ref()
     }
 }
 

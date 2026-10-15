@@ -228,7 +228,7 @@ fn present_static_extrinsic_aids_the_consumer() {
     // dynamic edge needed, so the consumer is aided on the very first tick.
     let applied = Arc::new(AtomicU32::new(0));
     let unaided = Arc::new(AtomicU32::new(0));
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(agent())
         .add_node(Box::new(AidingConsumerNode::new(
             "imu_aiding",
             imu(),
@@ -255,7 +255,7 @@ fn missing_extrinsic_yields_none_never_a_fabricated_transform() {
     // runtime did — so the drop stays visible at the seam.
     let applied = Arc::new(AtomicU32::new(0));
     let unaided = Arc::new(AtomicU32::new(0));
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(agent())
         .add_node(Box::new(AidingConsumerNode::new(
             "imu_aiding",
             imu(),
@@ -288,7 +288,7 @@ fn dual_published_edge_reaches_the_consumer_after_the_fold() {
         child: base_link(),
         parent: odom(),
     };
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(agent())
         .add_node(Box::new(EdgeProducerNode::new(
             "estimator",
             edge.clone(),
@@ -345,7 +345,7 @@ fn aiding_chain_composes_static_mount_with_folded_dynamic_edge() {
         child: base_link(),
         parent: odom(),
     };
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(agent())
         .add_node(Box::new(EdgeProducerNode::new(
             "estimator",
             edge.clone(),

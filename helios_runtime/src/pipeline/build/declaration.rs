@@ -2,14 +2,22 @@
 //! ports, either already built or a [`NodePlan`] built once the graph is
 //! known to be sound.
 
-use crate::{PipelineBuildError, PipelineNode, PortDescriptor};
+use super::mounts::InputMounts;
 
-use std::error::Error;
+use crate::{
+    port::ChannelDescription, ChannelKey, PipelineBuildError, PipelineNode, PortDescriptor,
+};
 
-/// Builds a planned node from the ports it declared. The node keeps the
-/// descriptor it is given, so what the builder checked is what it runs.
+use std::{collections::HashMap, error::Error};
+
+/// Builds a planned node from the ports it declared and the mounts of its
+/// inputs. The node keeps the descriptor it is given, so what the builder
+/// checked is what it runs.
 pub type NodeConstructor = Box<
-    dyn FnOnce(PortDescriptor) -> Result<Box<dyn PipelineNode>, Box<dyn Error + Send + Sync>>
+    dyn FnOnce(
+            PortDescriptor,
+            InputMounts,
+        ) -> Result<Box<dyn PipelineNode>, Box<dyn Error + Send + Sync>>
         + Send,
 >;
 
@@ -17,8 +25,10 @@ pub type NodeConstructor = Box<
 /// how to build it.
 ///
 /// The builder checks wiring and orders levels on the declared ports, and
-/// builds the node only after both pass. A node whose construction needs
-/// something the graph knows only once it is wired is declared this way.
+/// builds the node only after both pass, handing it the mounts of its
+/// inputs. A node whose construction needs something the graph knows only
+/// once it is wired, such as the frame a sensor it reads is mounted in, is
+/// declared this way.
 pub struct NodePlan {
     name: String,
     descriptor: PortDescriptor,
@@ -50,9 +60,10 @@ impl NodePlan {
         &self.descriptor
     }
 
-    /// Builds the node, refusing one the constructor names differently.
-    fn construct(self) -> Result<Box<dyn PipelineNode>, PipelineBuildError> {
-        let node = (self.constructor)(self.descriptor).map_err(|error| {
+    /// Builds the node with the mounts of its inputs, refusing one the
+    /// constructor names differently.
+    fn construct(self, mounts: InputMounts) -> Result<Box<dyn PipelineNode>, PipelineBuildError> {
+        let node = (self.constructor)(self.descriptor, mounts).map_err(|error| {
             PipelineBuildError::ConstructionFailed {
                 node_name: self.name.clone(),
                 error,
@@ -94,11 +105,18 @@ impl NodeDeclaration {
         }
     }
 
-    /// The node, built if it was planned.
-    pub(crate) fn construct(self) -> Result<Box<dyn PipelineNode>, PipelineBuildError> {
+    /// The node, built if it was planned, with the mounts of its inputs from
+    /// `descriptions`, every channel's resolved description by key.
+    pub(crate) fn construct(
+        self,
+        descriptions: &HashMap<&ChannelKey, &ChannelDescription>,
+    ) -> Result<Box<dyn PipelineNode>, PipelineBuildError> {
         match self {
             Self::Built(node) => Ok(node),
-            Self::Planned(plan) => plan.construct(),
+            Self::Planned(plan) => {
+                let mounts = InputMounts::new(plan.name(), plan.port_descriptor(), descriptions);
+                plan.construct(mounts)
+            }
         }
     }
 }

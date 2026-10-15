@@ -7,8 +7,11 @@
 //! - `wiring` checks names and suppliers from the declarations alone;
 //! - `ordering` sorts the nodes into levels and, if it gets stuck, reports
 //!   the loops `cycle` finds;
-//! - `builder` allocates bus slots from the declared ports, builds each plan,
-//!   adds rate timers, and hands back the pipeline.
+//! - `mounts` checks the mounts writers state and resolves each node
+//!   output's mount in level order;
+//! - `builder` allocates bus slots from the declared ports, builds each plan
+//!   with the mounts of its inputs, adds rate timers, and hands back the
+//!   pipeline.
 //!
 //! Errors from every stage are [`PipelineBuildError`]s, defined in `error`.
 
@@ -16,10 +19,12 @@ mod builder;
 mod cycle;
 mod declaration;
 mod error;
+mod mounts;
 mod ordering;
 mod wiring;
 
 pub use builder::PipelineBuilder;
 pub(crate) use declaration::NodeDeclaration;
 pub use declaration::{NodeConstructor, NodePlan};
-pub use error::{ChannelUses, CycleEdge, PipelineBuildError};
+pub use error::{ChannelUses, CycleEdge, MountRefusal, PipelineBuildError};
+pub use mounts::{InputMounts, MountLookupError};

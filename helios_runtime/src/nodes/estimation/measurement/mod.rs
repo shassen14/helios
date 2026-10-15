@@ -46,12 +46,15 @@ pub(crate) trait MeasurementSource: Send + Sync {
 }
 
 /// What the measurement table receives besides the model's config: where the
-/// readings come from and how noisy they are. Both come from the estimator's
-/// aiding entry, not from the model.
+/// readings come from, the frame they are measured in, and how noisy they
+/// are. These come from the estimator's aiding entry and the channel's
+/// writer, not from the model.
 pub(crate) struct MeasurementWiring {
-    /// The sensor channel name. Also the sensor frame's leaf: the host stamps
-    /// its sensor with the same name, so the model's TF lookups resolve.
+    /// The sensor channel name.
     pub(crate) input: String,
+    /// The channel's mount, as its writer states it: the sensor frame the
+    /// model predicts readings in.
+    pub(crate) mount: FrameId,
     /// The measurement noise covariance R.
     pub(crate) noise: DMatrix<f64>,
 }
@@ -130,8 +133,8 @@ pub(crate) fn reading_channel<P: SensorPayload>() -> ReadingChannel {
 }
 
 /// Turns a model factory into the measurement table's factory: builds the
-/// model for the sensor frame the wiring names, then pairs it with a reader
-/// for payload `P` and the wiring's R.
+/// model for the wiring's mount, then pairs it with a reader for payload `P`
+/// and the wiring's R.
 pub(crate) fn source_factory<P, C, F>(
     build_model: F,
 ) -> impl Fn(C, &BuildContext<'_>, MeasurementWiring) -> Result<Box<dyn MeasurementSource>, String>
@@ -146,8 +149,7 @@ where
         + 'static,
 {
     move |config: C, ctx: &BuildContext<'_>, wiring: MeasurementWiring| {
-        let sensor = FrameId::agent(ctx.agent().clone(), wiring.input.as_str());
-        let model = build_model(config, ctx, &sensor)?;
+        let model = build_model(config, ctx, &wiring.mount)?;
         let source = TypedMeasurementSource::<P>::new(&wiring.input, model, wiring.noise)?;
         Ok(Box::new(source) as Box<dyn MeasurementSource>)
     }
@@ -181,6 +183,9 @@ mod tests {
     const NODE_KIND: &str = "TestEstimator";
     const DUMMY_KIND: &str = "mocap_position";
     const INPUT: &str = "mocap";
+    /// The mount the wiring states, apart from the channel name, so a model
+    /// built for the name instead would be caught.
+    const MOUNT: &str = "mocap_marker";
 
     fn agent() -> AgentId {
         AgentId::new("car")
@@ -234,6 +239,7 @@ mod tests {
         let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
         let wiring = MeasurementWiring {
             input: INPUT.to_string(),
+            mount: FrameId::agent(agent(), MOUNT),
             noise: DMatrix::identity(r_len, r_len),
         };
         registry
@@ -297,18 +303,20 @@ mod tests {
         assert_eq!(taken[0].z, DVector::from_row_slice(&[1.0, 2.0, 3.0]));
     }
 
-    /// The model is built for the sensor frame named by the wiring's channel.
+    /// The model is built for the mount the wiring states, not a frame named
+    /// after the channel.
     #[test]
-    fn the_model_is_built_for_the_wired_sensor_frame() {
+    fn the_model_is_built_for_the_wired_mount() {
         let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
         let factory = source_factory::<GpsPosition, NoParams, _>(
             |_: NoParams, _: &BuildContext<'_>, sensor: &FrameId| {
-                assert_eq!(sensor, &FrameId::agent(agent(), INPUT));
+                assert_eq!(sensor, &FrameId::agent(agent(), MOUNT));
                 Ok(Box::new(MocapModel) as Box<dyn MeasurementModel>)
             },
         );
         let wiring = MeasurementWiring {
             input: INPUT.to_string(),
+            mount: FrameId::agent(agent(), MOUNT),
             noise: DMatrix::identity(3, 3),
         };
         assert!(factory(NoParams {}, &ctx, wiring).is_ok());

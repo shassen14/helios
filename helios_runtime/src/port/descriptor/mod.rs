@@ -14,5 +14,6 @@ pub mod declaration;
 
 pub use builders::{AlgorithmNodePortDescriptor, MockNodePortDescriptor};
 pub use declaration::{
-    Determinism, InputNeed, InputPort, InputTiming, Observable, OutputPort, PortDescriptor,
+    Determinism, InputNeed, InputPort, InputTiming, MountRule, Observable, OutputPort,
+    PortDescriptor,
 };

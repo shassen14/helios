@@ -9,7 +9,7 @@
 use super::component::ComponentError;
 use super::registry::AutonomyRegistry;
 
-use crate::pipeline::{NodeConstructor, NodeDeclaration, NodePlan};
+use crate::pipeline::{InputMounts, NodeConstructor, NodeDeclaration, NodePlan};
 use crate::port::{ChannelKey, PortDescriptor};
 use crate::prelude::PipelineNode;
 
@@ -78,17 +78,18 @@ impl FactoryOutput {
 
     /// Declares the node `ctx` names by its ports, `descriptor`, to be built
     /// by `constructor` once the graph is wired and ordered. The constructor
-    /// is handed the same descriptor, which the node keeps, and must name the
-    /// node `ctx.node_name()`. Its failure is reported naming the node and
-    /// kind, like a failure of the factory itself.
+    /// is handed the same descriptor, which the node keeps, and the mounts of
+    /// the inputs it declares, and must name the node `ctx.node_name()`. Its
+    /// failure is reported naming the node and kind, like a failure of the
+    /// factory itself.
     pub fn plan<E, F>(ctx: &BuildContext<'_>, descriptor: PortDescriptor, constructor: F) -> Self
     where
         E: Into<BuildFailure>,
-        F: FnOnce(PortDescriptor) -> Result<Box<dyn PipelineNode>, E> + Send + 'static,
+        F: FnOnce(PortDescriptor, InputMounts) -> Result<Box<dyn PipelineNode>, E> + Send + 'static,
     {
         let (node_name, kind) = (ctx.node_name().to_string(), ctx.kind().to_string());
-        let constructor: NodeConstructor = Box::new(move |descriptor| {
-            constructor(descriptor).map_err(|failure| {
+        let constructor: NodeConstructor = Box::new(move |descriptor, mounts| {
+            constructor(descriptor, mounts).map_err(|failure| {
                 Box::new(name_failure(failure.into(), &node_name, &kind))
                     as Box<dyn Error + Send + Sync>
             })
@@ -421,6 +422,8 @@ mod tests {
 
     use helios_core::prelude::TfProvider;
 
+    use std::collections::HashMap;
+
     use serde::Deserialize;
 
     const NODE: &str = "front_deproject";
@@ -650,7 +653,7 @@ mod tests {
         Ok(FactoryOutput::plan(
             ctx,
             AlgorithmNodePortDescriptor::new().build(),
-            |_| -> Result<Box<dyn PipelineNode>, String> {
+            |_, _| -> Result<Box<dyn PipelineNode>, String> {
                 Err(format!("output '{REJECTED_OUTPUT}' is not allowed"))
             },
         ))
@@ -668,7 +671,7 @@ mod tests {
         };
         assert_eq!(built.declaration.name(), NODE);
 
-        let Err(err) = built.declaration.construct() else {
+        let Err(err) = built.declaration.construct(&HashMap::new()) else {
             panic!("expected the construction to fail");
         };
         assert_eq!(

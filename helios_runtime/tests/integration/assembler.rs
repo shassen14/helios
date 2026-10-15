@@ -1207,13 +1207,15 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     // augmentation is assembled, then driven with biased readings. This exercises
     // the correctness crux the mechanism exists for — the augmentation `sensor`
     // and the `MagneticFieldModel`'s sensor frame must resolve to the *same*
-    // `FrameId`, because both are built as `FrameId::agent(agent, channel_name)`
-    // from the same channel name — otherwise the appended `MagBias` slots would
-    // carry a `FrameId` the model never reads and the block would ride inert.
-    // Here they agree, so the bias state absorbs the injected offset and its
-    // variance collapses below the prior.
+    // `FrameId`, because both take the mount the body states for the channel —
+    // otherwise the appended `MagBias` slots would carry a `FrameId` the model
+    // never reads and the block would ride inert. The mount is named apart from
+    // the channel, so a frame derived from the name would be caught. Here they
+    // agree, so the bias state absorbs the injected offset and its variance
+    // collapses below the prior.
     let agent = AgentId::new("rover");
     const MAG_CHANNEL: &str = "mag.primary";
+    const MAG_MOUNT: &str = "mag_primary_mount";
 
     // North-pointing world field (ENU, µT) and a purely vertical hard-iron bias.
     // A Z bias against a horizontal field is unconfounded with heading — no
@@ -1227,8 +1229,8 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     // the update. Orientation is pinned tightly so the residual lands on the
     // bias, not on a spurious tilt (belt-and-suspenders with the Z-bias choice
     // above). The augmentation's `sensor` must string-match the aiding
-    // `input`: that shared key is what ties the block's sensor FrameId to the
-    // model observing it.
+    // `input`: that shared channel is the one whose mount both the block and
+    // the model observing it take.
     let section = format!(
         r#"{IMU_EKF}
         [dynamics.initial_uncertainty]
@@ -1259,7 +1261,8 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         body_publishing(channels_with_imu(vec![sensor_channel::<MagneticField>(
             MAG_CHANNEL,
             MAG_UNIT,
-        )])),
+        )
+        .with_mount(FrameId::agent(agent.clone(), MAG_MOUNT))])),
     )
     .expect("mag-bias augmentation stack must build");
 
@@ -1278,7 +1281,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
                 mag_key.clone(),
                 Stamped {
                     value: vec![SensorReading {
-                        sensor: FrameId::agent(agent.clone(), MAG_CHANNEL),
+                        sensor: FrameId::agent(agent.clone(), MAG_MOUNT),
                         timestamp: t,
                         data: MagneticField(measured),
                     }],
@@ -1294,7 +1297,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     let state = pipeline
         .read_state()
         .expect("the estimator must publish a state");
-    let sensor = FrameId::agent(agent.clone(), MAG_CHANNEL);
+    let sensor = FrameId::agent(agent.clone(), MAG_MOUNT);
 
     // The appended block exists and the base grew by exactly 3 storage dims.
     assert_eq!(
@@ -1633,15 +1636,17 @@ fn estimator_aided_by_a_host_channel_builds() {
         estimate: Some(estimate_seam("nav_ekf")),
         ..Default::default()
     };
+    let agent = AgentId::new("test_agent");
 
     let result = build_pipeline(
         &stack,
         &AutonomyRegistry::default(),
-        AgentId::new("test_agent"),
+        agent.clone(),
         body_publishing(channels_with_imu(vec![sensor_channel::<MagneticField>(
             "mag.primary",
             MAG_UNIT,
-        )])),
+        )
+        .with_mount(FrameId::agent(agent, "mag.primary"))])),
     );
 
     assert!(

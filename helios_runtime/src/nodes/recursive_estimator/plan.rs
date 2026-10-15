@@ -2,7 +2,8 @@
 //! wired, and its construction into a [`RecursiveEstimatorNode`].
 //!
 //! Constructing builds the measurement models, the augmentation blocks, the
-//! seeded state and the filter, checking each against the others.
+//! seeded state and the filter, checking each against the others. Each model
+//! and block is built for the mount its sensor channel's writer states.
 
 use super::aiding::Aiding;
 use super::config::InitialPoseConfig;
@@ -14,7 +15,7 @@ use crate::assembly::{BuildContext, BuildFailure, DeferredComponent};
 use crate::nodes::estimation::{
     DynamicsComponent, FilterParts, MeasurementSource, MeasurementWiring,
 };
-use crate::pipeline::node::PipelineNode;
+use crate::pipeline::{node::PipelineNode, InputMounts};
 use crate::port::{ChannelKey, PortDescriptor};
 
 use helios_core::estimation::augmentation::AugmentationSpec;
@@ -26,7 +27,7 @@ use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::transforms::Transform;
 use helios_core::spatial::{FrameAwareState, FrameId};
 
-use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion};
+use nalgebra::{DMatrix, Isometry3, Quaternion, Translation3, UnitQuaternion};
 use std::sync::Arc;
 
 /// Everything a declared estimator needs to be built: the parts checked,
@@ -44,12 +45,14 @@ pub(super) struct EstimatorPlan {
 }
 
 impl EstimatorPlan {
-    /// Builds each aiding source, then the state they agree on, seeded with
-    /// the starting pose, then the filter around it, and the node with the
-    /// ports `descriptor` declared for it.
+    /// Builds each aiding source for its channel's mount in `mounts`, then
+    /// the state they agree on, seeded with the starting pose, then the
+    /// filter around it, and the node with the ports `descriptor` declared
+    /// for it.
     pub(super) fn construct(
         self,
         descriptor: PortDescriptor,
+        mounts: InputMounts,
     ) -> Result<Box<dyn PipelineNode>, BuildFailure> {
         let EstimatorPlan {
             agent,
@@ -67,12 +70,17 @@ impl EstimatorPlan {
         // Each entry's name, which names its leaves, with its NIS window.
         let mut entry_windows = Vec::with_capacity(aiding.len());
         for entry in aiding {
-            let source = entry.model.build(&ctx, entry.wiring)?;
+            let wiring = MeasurementWiring {
+                input: entry.input,
+                mount: mount_of(&mounts, &entry.channel)?,
+                noise: entry.noise,
+            };
+            let source = entry.model.build(&ctx, wiring)?;
             check_source_channel(&entry.name, &entry.channel, source.channel())?;
             sources.push(source);
             entry_windows.push((entry.name, entry.nis_window));
         }
-        let augmentation = augmentation_blocks(&augmentation, &ctx);
+        let augmentation = augmentation_blocks(&augmentation, &mounts)?;
 
         let initial_state = seeded_state(&dynamics, augmentation, &sources, &initial_pose, &ctx)?;
         let (process, input) = dynamics.into_parts();
@@ -91,20 +99,21 @@ impl EstimatorPlan {
     }
 }
 
-/// One aiding entry as declared: the channel its model's kind reads, its NIS
-/// window, and the source still to build.
+/// One aiding entry as declared: the channel its model's kind reads, named
+/// `input` in config, its NIS window, its R, and the source still to build.
 pub(super) struct AidingPlan {
     pub(super) name: String,
+    pub(super) input: String,
     pub(super) channel: ChannelKey,
     pub(super) nis_window: Option<NisWindow>,
-    pub(super) wiring: MeasurementWiring,
+    pub(super) noise: DMatrix<f64>,
     pub(super) model: DeferredComponent<MeasurementWiring, Box<dyn MeasurementSource>>,
 }
 
-/// One augmentation entry as declared: the checked block, and the channel
-/// name of the sensor it calibrates, whose frame it is tied to when built.
+/// One augmentation entry as declared: the checked block, and the channel of
+/// the sensor it calibrates, whose mount it is tied to when built.
 pub(super) struct AugmentationPlan {
-    pub(super) sensor: String,
+    pub(super) channel: ChannelKey,
     pub(super) spec: AugmentationSpec,
 }
 
@@ -125,19 +134,24 @@ fn check_source_channel(
     Ok(())
 }
 
+/// The mount of `channel`, one of the node's inputs, or why it has none.
+fn mount_of(mounts: &InputMounts, channel: &ChannelKey) -> Result<FrameId, String> {
+    mounts
+        .mount(channel)
+        .cloned()
+        .map_err(|err| err.to_string())
+}
+
 /// Turns every declared augmentation into a state block tagged with its
-/// sensor's frame. The aiding source builds its sensor frame from the same
-/// channel name, so the block's frame is the one its model reads back.
+/// sensor channel's mount. The aiding source reading that channel is built
+/// for the same mount, so the block's frame is the one its model reads back.
 fn augmentation_blocks(
     plans: &[AugmentationPlan],
-    ctx: &BuildContext<'_>,
-) -> Vec<StateSchemaBlock> {
+    mounts: &InputMounts,
+) -> Result<Vec<StateSchemaBlock>, String> {
     plans
         .iter()
-        .map(|plan| {
-            plan.spec
-                .block(FrameId::agent(ctx.agent().clone(), plan.sensor.as_str()))
-        })
+        .map(|plan| Ok(plan.spec.block(mount_of(mounts, &plan.channel)?)))
         .collect()
 }
 

@@ -238,6 +238,7 @@ mod tests {
     use helios_core::control::actuation_model::{ActuatorSpec, SignConvention};
     use helios_core::control::actuators::{ActuatorId, SetpointKind};
     use helios_core::interchange::measurement::sensor::{GpsPosition, MagneticField};
+    use helios_core::prelude::{AgentId, FrameId};
     use helios_runtime::channels::control::intent;
     use helios_runtime::port::InternalChannel;
 
@@ -327,8 +328,17 @@ mod tests {
     /// as described.
     #[test]
     fn publishes_the_oracle_and_every_sensor_channel() {
-        let gps = SensorPublishChannel::new::<GpsPosition>("gps", "gps_pro");
-        let mag = SensorPublishChannel::new::<MagneticField>("mag", "mag_basic");
+        let agent = AgentId::new("car");
+        let gps = SensorPublishChannel::new::<GpsPosition>(
+            "gps",
+            "gps_pro",
+            FrameId::agent(agent.clone(), "gps"),
+        );
+        let mag = SensorPublishChannel::new::<MagneticField>(
+            "mag",
+            "mag_basic",
+            FrameId::agent(agent, "mag"),
+        );
         let sensors = vec![gps.description().clone(), mag.description().clone()];
 
         let caps = build_host_body_capabilities(sensors.clone(), &ActuationModel::default());

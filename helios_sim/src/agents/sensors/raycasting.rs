@@ -124,6 +124,7 @@ fn spawn_raycasting_sensors(
                 };
                 let core_model: Box<dyn RaycastingSensorModel> = Box::new(model);
 
+                let frame = FrameId::agent(agent_id.0.clone(), channel.to_string());
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
@@ -132,7 +133,11 @@ fn spawn_raycasting_sensors(
 
                 sensor_entity_commands.insert((
                     Name::new(sensor_label),
-                    SensorPublishChannel::new::<RangeField<Flu>>(channel, sensor_name),
+                    SensorPublishChannel::new::<RangeField<Flu>>(
+                        channel,
+                        sensor_name,
+                        frame.clone(),
+                    ),
                     RaycastingSensor {
                         timer: Timer::new(
                             Duration::from_secs_f64(1.0 / lidar_config.get_rate()),
@@ -141,10 +146,7 @@ fn spawn_raycasting_sensors(
                         model: core_model,
                     },
                     sensor_rng,
-                    TrackedFrame::new(
-                        FrameId::agent(agent_id.0.clone(), channel.to_string()),
-                        Convention::Flu,
-                    ),
+                    TrackedFrame::new(frame, Convention::Flu),
                     LastCapturePose::default(),
                     installation.transform.to_bevy_local_transform(),
                 ));
@@ -292,6 +294,8 @@ mod tests {
     use std::f64::consts::TAU;
     use std::sync::Arc;
 
+    /// The agent the test lidar is mounted on.
+    const AGENT: &str = "agent";
     const CHANNEL: &str = "sensor.lidar.test";
     /// The installation the test lidar belongs to.
     const UNIT: &str = "test_lidar";
@@ -359,14 +363,18 @@ mod tests {
     /// clock advanced by `advance`. Returns the world and the sensor entity.
     fn world_with_lidar(sensor_pose: GlobalTransform, advance: Duration) -> (World, Entity) {
         let mut world = World::new();
-        let channel = SensorPublishChannel::new::<RangeField<Flu>>(CHANNEL, UNIT);
+        let channel = SensorPublishChannel::new::<RangeField<Flu>>(
+            CHANNEL,
+            UNIT,
+            FrameId::agent(AgentId::new(AGENT), CHANNEL),
+        );
 
         let mut time = Time::<()>::default();
         time.advance_by(advance);
         world.insert_resource(time);
         world.insert_resource(ColliderTrees::default());
 
-        let pipeline = PipelineBuilder::new()
+        let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(Box::new(FakeScanConsumer::new()))
             .with_body_capabilities(BodyCapabilities {
                 publishes: vec![channel.description().clone()],
@@ -386,7 +394,7 @@ mod tests {
                 LastCapturePose::default(),
                 channel,
                 TrackedFrame::new(
-                    FrameId::agent(AgentId::new("agent"), CHANNEL.to_string()),
+                    FrameId::agent(AgentId::new(AGENT), CHANNEL.to_string()),
                     Convention::Flu,
                 ),
                 sensor_pose,

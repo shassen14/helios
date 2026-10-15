@@ -111,20 +111,19 @@ fn spawn_gps_sensors(
                 let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
                 let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
 
+                let frame = FrameId::agent(agent_id.0.clone(), channel.to_string());
                 let sensor_entity = commands
                     .spawn((
                         Name::new(sensor_label),
                         SensorPublishChannel::new::<<Gps as StateSensor>::Payload>(
                             channel,
                             sensor_name,
+                            frame.clone(),
                         ),
                         Gps::new(model),
                         SensorTimer::from_rate(gps_config.rate),
                         sensor_rng,
-                        TrackedFrame::new(
-                            FrameId::agent(agent_id.0.clone(), channel.to_string()),
-                            Convention::Flu,
-                        ),
+                        TrackedFrame::new(frame, Convention::Flu),
                         installation.transform.to_bevy_local_transform(),
                     ))
                     .id();

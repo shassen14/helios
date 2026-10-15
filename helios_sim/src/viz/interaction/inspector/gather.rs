@@ -308,7 +308,7 @@ mod tests {
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
     use helios_core::control::commands::BodyTwist;
     use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
-    use helios_core::prelude::TfProvider;
+    use helios_core::prelude::{AgentId, TfProvider};
     use helios_core::spatial::quantities::FluVector;
     use helios_core::spatial::state::{Component, Quantity};
     use helios_core::spatial::transforms::Convention;
@@ -325,6 +325,8 @@ mod tests {
 
     /// An arbitrary global frame the test expresses quantities in.
     const DATUM: &str = "test_datum";
+    /// The agent every test pipeline serves.
+    const AGENT: &str = "car";
 
     /// A bare app carrying just the inspector's resources, ready to run one gather
     /// system against a hand-built world.
@@ -545,7 +547,7 @@ mod tests {
     /// optionally with a state already written to it (`Some` = a produced estimate;
     /// `None` = the cold-start / no-value case).
     fn pipeline_with_estimate(state: Option<FrameAwareState>) -> AutonomyPipelineComponent {
-        let pipeline = PipelineBuilder::new()
+        let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(Box::new(FakeEstimatorNode::new()))
             .build()
             .expect("a single-node pipeline builds");
@@ -751,7 +753,7 @@ mod tests {
     /// optionally with a value already written (`Some` = a resolved reference; `None` =
     /// the cold-start / no-guidance case).
     fn pipeline_with_reference(reference: Option<BodyTwistRef>) -> AutonomyPipelineComponent {
-        let pipeline = PipelineBuilder::new()
+        let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(Box::new(FakeReferenceNode::new()))
             .build()
             .expect("a single-node pipeline builds");
@@ -856,7 +858,7 @@ mod tests {
     /// optionally with a command already written (`Some` = a produced terminal command;
     /// `None` = the cold-start / no-allocator case).
     fn pipeline_with_actuators(command: Option<ActuatorCommand>) -> AutonomyPipelineComponent {
-        let pipeline = PipelineBuilder::new()
+        let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(Box::new(FakeActuatorNode::new()))
             .build()
             .expect("a single-node pipeline builds");

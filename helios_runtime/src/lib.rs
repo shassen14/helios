@@ -19,11 +19,11 @@ pub mod tf_service;
 pub use crate::body::{BodyCapabilities, BodyChannel};
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{
-    AutonomyPipeline, ChannelUses, CycleEdge, NodeConstructor, NodePlan, PipelineBuildError,
-    PipelineBuilder,
+    AutonomyPipeline, ChannelUses, CycleEdge, InputMounts, MountLookupError, MountRefusal,
+    NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder,
 };
 pub use crate::port::{
-    ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming,
+    ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, MountRule,
     PortDescriptor, Provenance, SlotVersion, Writer,
 };
 pub use crate::stamped::{Health, Stamped};

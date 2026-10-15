@@ -36,6 +36,8 @@ mod tests {
 
     use helios_core::prelude::AgentId;
 
+    use std::collections::HashMap;
+
     /// Builds a `[nodes]` entry named `name` from `section` through the
     /// default registry's node map, as the assembler does.
     fn build_entry(name: &str, section: &str) -> Result<Box<dyn PipelineNode>, String> {
@@ -44,7 +46,12 @@ mod tests {
         AutonomyRegistry::default()
             .build_node(section, &ctx)
             .map_err(|err| err.to_string())
-            .and_then(|built| built.declaration.construct().map_err(|err| err.to_string()))
+            .and_then(|built| {
+                built
+                    .declaration
+                    .construct(&HashMap::new())
+                    .map_err(|err| err.to_string())
+            })
     }
 
     // The node name is the table key, not the kind: two `MockOracle` entries

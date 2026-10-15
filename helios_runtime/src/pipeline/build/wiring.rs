@@ -1,10 +1,12 @@
 //! Wiring checks: node names are unique levels, the body's unit names are
-//! levels, channel names are well formed and each names one channel, each node's watchable leaves are well
+//! levels, the body's mounts are its own frames, output mount rules name
+//! inputs, channel names are well formed and each names one channel, each node's watchable leaves are well
 //! formed, and leaves and output channels sit outside the pipeline's own
 //! group and apart, and every input has exactly one supplier. These need only
 //! the declarations, not an order, so they run before the sort.
 
 use super::declaration::NodeDeclaration;
+use super::mounts::{check_body_mounts, check_mount_rules};
 
 use crate::{
     channels::tf::is_tf_edge,
@@ -14,6 +16,7 @@ use crate::{
 };
 
 use helios_core::kernel::identifier::{is_dotted_name, is_level, LEVEL_SEPARATOR};
+use helios_core::prelude::AgentId;
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -22,19 +25,24 @@ use std::{
 
 /// Checks the graph's wiring and returns every problem found. An empty list
 /// means each node name is unique and fits one part of a watcher path, every
-/// unit the body declares is one level, every channel name is well formed and names one channel, every watchable leaf a
+/// unit the body declares is one level, every mount the body states is a frame
+/// on `agent`'s body off its spine, every output mounted at an input's mount
+/// names a channel its node reads in the same tick, every channel name is well formed and names one channel, every watchable leaf a
 /// node declares is well formed, no leaf or output channel sits in the
 /// pipeline's own group, no node names a leaf twice or gives a leaf the name
 /// of one of its outputs, and every input, required or optional, has exactly
 /// one supplier: a node output, a body channel, or a declared outside input.
 /// `descriptions` holds every channel some writer declares.
 pub(super) fn check_wiring(
+    agent: &AgentId,
     nodes: &[NodeDeclaration],
     descriptions: &[ChannelDescription],
 ) -> Vec<PipelineBuildError> {
     let mut errors = vec![];
     check_node_names(nodes, &mut errors);
     check_unit_names(descriptions, &mut errors);
+    check_body_mounts(agent, descriptions, &mut errors);
+    check_mount_rules(nodes, &mut errors);
     let refused_names = check_channel_names(nodes, descriptions, &mut errors);
     check_observables(nodes, &refused_names, &mut errors);
     let supplier_of = map_suppliers(descriptions, &mut errors);

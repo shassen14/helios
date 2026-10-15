@@ -136,12 +136,13 @@ mod tests {
     };
 
     use helios_core::{
-        prelude::{FrameId, MonotonicTime, TfProvider},
+        prelude::{AgentId, FrameId, MonotonicTime, TfProvider},
         spatial::transforms::ErasedTransform,
     };
 
     use std::sync::Arc;
 
+    const AGENT: &str = "car";
     const FIRST: &str = "first";
     const SECOND: &str = "second";
     const WRITER: &str = "writer";
@@ -242,7 +243,7 @@ mod tests {
 
     /// `first` declares NIS and the drop count; `second` declares NIS only.
     fn pipeline() -> AutonomyPipeline {
-        PipelineBuilder::new()
+        PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(emitting(FIRST, &[NIS, DROPPED]))
             .add_node(emitting(SECOND, &[NIS]))
             .build()
@@ -258,7 +259,7 @@ mod tests {
     /// `writer` in a pipeline beside `second`. Neither reads the other, so they
     /// share a level, where nodes run in name order: `second` first.
     fn built(writer: Box<dyn PipelineNode>) -> AutonomyPipeline {
-        PipelineBuilder::new()
+        PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(writer)
             .add_node(emitting(SECOND, &[NIS]))
             .build()

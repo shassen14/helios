@@ -83,7 +83,7 @@ pub fn build_pipeline(
     }
 
     let mut errors: Vec<PipelineAssemblyError> = vec![];
-    let mut builder = PipelineBuilder::new();
+    let mut builder = PipelineBuilder::new(agent.clone());
     // Inputs sent from outside the robot that the stack reads, such as each
     // planner's goal and the operator's teleop intent. Declared to the builder
     // apart from the body's channels.

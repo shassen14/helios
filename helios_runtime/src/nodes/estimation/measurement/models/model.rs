@@ -124,6 +124,7 @@ mod tests {
         let ctx = BuildContext::new(AgentId::new("car"), NODE, NODE_KIND);
         let wiring = MeasurementWiring {
             input: INPUT.to_string(),
+            mount: FrameId::agent(AgentId::new("car"), INPUT),
             noise: DMatrix::identity(3, 3),
         };
         registry

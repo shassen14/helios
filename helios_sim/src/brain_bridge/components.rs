@@ -1,4 +1,4 @@
-use helios_core::prelude::{AgentId, SensorReading};
+use helios_core::prelude::{AgentId, FrameId, SensorReading};
 use helios_runtime::port::SensorChannel;
 use helios_runtime::{pipeline::AutonomyPipeline, tf_service::TfService, BodyChannel, Provenance};
 
@@ -67,10 +67,11 @@ pub struct PipelineBuildFailed {
 
 /// The channel a sensor publishes on, described as the body publishes it:
 /// typed by the sensor's payload, from the installation the sensor belongs to,
-/// and simulated.
+/// simulated, and mounted at the sensor's frame.
 ///
 /// Attached to every sensor entity at spawn, where the payload type, the
-/// installation and the channel name from the fit are all known. Read twice:
+/// installation, the channel name from the fit and the sensor's frame are all
+/// known. Read twice:
 /// `spawn_autonomy_pipeline` collects each agent's into the body it builds the
 /// pipeline against, and [`SensorPublisher`](super::SensorPublisher) writes to
 /// its key. One description serves both, so the channel the build checked is
@@ -80,13 +81,17 @@ pub struct SensorPublishChannel(BodyChannel);
 
 impl SensorPublishChannel {
     /// Channel `name` of installation `unit`, carrying batches of `P` readings
-    /// as [`SensorPublisher`](super::SensorPublisher) writes them.
-    pub fn new<P: Send + Sync + 'static>(name: &str, unit: &str) -> Self {
-        Self(BodyChannel::new(
-            SensorChannel::named::<Vec<SensorReading<P>>>(name),
-            unit,
-            Provenance::Simulated,
-        ))
+    /// as [`SensorPublisher`](super::SensorPublisher) writes them, measured in
+    /// `mount`, the frame the sensor's entity tracks.
+    pub fn new<P: Send + Sync + 'static>(name: &str, unit: &str, mount: FrameId) -> Self {
+        Self(
+            BodyChannel::new(
+                SensorChannel::named::<Vec<SensorReading<P>>>(name),
+                unit,
+                Provenance::Simulated,
+            )
+            .with_mount(mount),
+        )
     }
 
     pub fn description(&self) -> &BodyChannel {

@@ -92,7 +92,7 @@ pub(super) fn pipeline() -> AutonomyPipeline {
     let descriptor = AlgorithmNodePortDescriptor::new()
         .observable(LEAF, Determinism::Deterministic)
         .build();
-    PipelineBuilder::new()
+    PipelineBuilder::new(AgentId::new(CAR))
         .add_node(Box::new(Estimator(descriptor)))
         .build()
         .expect("one node with no inputs builds")

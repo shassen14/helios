@@ -1,6 +1,6 @@
 //! [`ChannelDescription`]: what the pipeline knows about one channel, whoever
-//! writes it, with its [`Writer`] and, for a body channel, the unit that
-//! produces it and its [`Provenance`].
+//! writes it, with its [`Writer`], its mount, and, for a body channel, the
+//! unit that produces it and its [`Provenance`].
 //!
 //! Every writer's channels are described alike, and only the pipeline
 //! builder makes descriptions. Each writer declares its channels through its
@@ -9,9 +9,16 @@
 //! node as [`OutputPort`](crate::port::OutputPort)s. The builder chooses the
 //! [`Writer`] from the door a channel came through, so no declaration can
 //! state the wrong writer.
+//!
+//! A channel's mount, the frame its values are measured in, is stated by its
+//! writer: the body states it with the channel, a node by its output's
+//! [`MountRule`](crate::port::MountRule), which the builder resolves once the
+//! graph is ordered. An outside input has none.
 
 use crate::body::BodyChannel;
 use crate::port::channel::ChannelKey;
+
+use helios_core::spatial::FrameId;
 
 /// One channel the pipeline sees, and who writes it.
 ///
@@ -21,6 +28,7 @@ use crate::port::channel::ChannelKey;
 pub struct ChannelDescription {
     key: ChannelKey,
     writer: Writer,
+    mount: Option<FrameId>,
 }
 
 impl ChannelDescription {
@@ -32,6 +40,7 @@ impl ChannelDescription {
                 unit: channel.unit().to_string(),
                 provenance: channel.provenance(),
             },
+            mount: channel.mount().cloned(),
         }
     }
 
@@ -41,15 +50,25 @@ impl ChannelDescription {
         Self {
             key,
             writer: Writer::Outside,
+            mount: None,
         }
     }
 
-    /// A channel node `node` writes, from one of its output ports.
+    /// A channel node `node` writes, from one of its output ports. It has no
+    /// mount until the builder resolves the output's rule.
     pub(crate) fn node(key: ChannelKey, node: impl Into<String>) -> Self {
         Self {
             key,
             writer: Writer::Node { node: node.into() },
+            mount: None,
         }
+    }
+
+    /// The description with `mount` as its mount, as the builder resolves it
+    /// from a node output's rule.
+    pub(crate) fn with_mount(mut self, mount: Option<FrameId>) -> Self {
+        self.mount = mount;
+        self
     }
 
     pub fn key(&self) -> &ChannelKey {
@@ -58,6 +77,12 @@ impl ChannelDescription {
 
     pub fn writer(&self) -> &Writer {
         &self.writer
+    }
+
+    /// The frame the channel's values are measured in, fixed for the run, if
+    /// its writer states one.
+    pub fn mount(&self) -> Option<&FrameId> {
+        self.mount.as_ref()
     }
 }
 
@@ -111,6 +136,8 @@ mod tests {
 
     use crate::port::InternalChannel;
 
+    use helios_core::prelude::AgentId;
+
     fn key() -> ChannelKey {
         InternalChannel::named::<f64>("drive").into()
     }
@@ -137,6 +164,22 @@ mod tests {
             }
         );
         assert_eq!(ChannelDescription::outside(key()).key(), &key());
+    }
+
+    /// A body channel's description carries the mount the host stated; an
+    /// outside input and a node output have none until the builder resolves
+    /// one.
+    #[test]
+    fn a_body_channel_keeps_its_mount() {
+        let mount = FrameId::agent(AgentId::new("car"), "gps");
+        let channel =
+            BodyChannel::new(key(), "gps", Provenance::Simulated).with_mount(mount.clone());
+        assert_eq!(ChannelDescription::body(&channel).mount(), Some(&mount));
+
+        let unmounted = BodyChannel::new(key(), "battery", Provenance::Simulated);
+        assert_eq!(ChannelDescription::body(&unmounted).mount(), None);
+        assert_eq!(ChannelDescription::outside(key()).mount(), None);
+        assert_eq!(ChannelDescription::node(key(), "ekf").mount(), None);
     }
 
     #[test]

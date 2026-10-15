@@ -18,7 +18,7 @@ use super::node::RecursiveEstimatorNode;
 use super::plan::{AidingPlan, AugmentationPlan, EstimatorPlan};
 
 use crate::assembly::{AutonomyRegistry, BuildContext, BuildFailure, FactoryOutput};
-use crate::nodes::estimation::{EstimatorComponents, MeasurementWiring};
+use crate::nodes::estimation::EstimatorComponents;
 
 use helios_core::estimation::augmentation::AugmentationSpec;
 
@@ -61,11 +61,6 @@ fn build(
     let dynamics = components.build_dynamics(DYNAMICS_KEY, config.dynamics, ctx)?;
     let mut resolved_aiding = Vec::with_capacity(config.aiding.len());
     let mut aiding = Vec::with_capacity(config.aiding.len());
-    let inputs: Vec<String> = config
-        .aiding
-        .values()
-        .map(|entry| entry.input.clone())
-        .collect();
     for (name, entry) in config.aiding {
         let (plan, resolved) = declare_aiding(components, name, entry, ctx)?;
         resolved_aiding.push((
@@ -78,7 +73,7 @@ fn build(
         ));
         aiding.push(plan);
     }
-    let augmentation = declare_augmentation(&config.augmentation, &inputs)?;
+    let augmentation = declare_augmentation(&config.augmentation, &aiding)?;
     let filter = components.parse_filter(FILTER_KEY, config.filter, ctx)?;
 
     let descriptor = RecursiveEstimatorNode::declare_ports(
@@ -99,8 +94,8 @@ fn build(
         initial_pose: config.initial_pose,
     };
 
-    let mut output = FactoryOutput::plan(ctx, descriptor, move |descriptor| {
-        plan.construct(descriptor)
+    let mut output = FactoryOutput::plan(ctx, descriptor, move |descriptor, mounts| {
+        plan.construct(descriptor, mounts)
     })
     .with_resolved_component([FILTER_KEY], filter.resolved)
     .with_resolved_component([DYNAMICS_KEY], dynamics.resolved);
@@ -124,15 +119,12 @@ fn declare_aiding(
     let path = format!("{AIDING_KEY}.{name}.{MODEL_KEY}");
     let parsed = components.parse_measurement(&path, entry.model, ctx)?;
     let channel = (parsed.declared)(&entry.input);
-    let wiring = MeasurementWiring {
-        input: entry.input,
-        noise: DMatrix::from_diagonal(&DVector::from_vec(entry.r_diag)),
-    };
     let plan = AidingPlan {
         name,
+        input: entry.input,
         channel,
         nis_window,
-        wiring,
+        noise: DMatrix::from_diagonal(&DVector::from_vec(entry.r_diag)),
         model: parsed.deferred,
     };
     Ok((plan, parsed.resolved))
@@ -166,28 +158,28 @@ fn check_r_diag(name: &str, r_diag: &[f64]) -> Result<(), String> {
 }
 
 /// Checks every augmentation entry: its kind and noise, and that an aiding
-/// entry reads its sensor. An unobserved block would ride through predict and
-/// never be corrected.
+/// entry reads its sensor, whose channel the block takes its mount from. An
+/// unobserved block would ride through predict and never be corrected.
 fn declare_augmentation(
     entries: &[AugmentationConfig],
-    aiding_inputs: &[String],
+    aiding: &[AidingPlan],
 ) -> Result<Vec<AugmentationPlan>, String> {
     entries
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            if !aiding_inputs.contains(&entry.sensor) {
+            let Some(reader) = aiding.iter().find(|plan| plan.input == entry.sensor) else {
                 return Err(format!(
                     "{AUGMENTATION_KEY}[{index}] (kind '{}') names sensor '{}', but no aiding \
                      entry reads that channel; the block would never be observed",
                     entry.kind, entry.sensor
                 ));
-            }
+            };
             let spec =
                 AugmentationSpec::new(&entry.kind, entry.init_uncertainty, entry.random_walk)
                     .map_err(|err| format!("{AUGMENTATION_KEY}[{index}]: {err}"))?;
             Ok(AugmentationPlan {
-                sensor: entry.sensor.clone(),
+                channel: reader.channel.clone(),
                 spec,
             })
         })
@@ -201,7 +193,11 @@ mod tests {
     use crate::assembly::{no_check, NoParams};
     use crate::channels::estimate::estimator_output;
     use crate::pipeline::node::{PipelineNode, TickContext};
-    use crate::port::{ChannelKey, InputPort, PortBus, PortDescriptor};
+    use crate::pipeline::NodeDeclaration;
+    use crate::port::{
+        ChannelDescription, ChannelKey, InputPort, PortBus, PortDescriptor, Provenance,
+    };
+    use crate::BodyChannel;
 
     use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
     use helios_core::estimation::measurement::{MeasurementModel, Prediction};
@@ -217,10 +213,18 @@ mod tests {
 
     use nalgebra::DVector;
 
+    use std::collections::HashMap;
+
     /// An arbitrary global frame the test expresses quantities in.
     const DATUM: &str = "test_datum";
 
     const NODE: &str = "primary";
+    /// The unit every input here comes from.
+    const UNIT: &str = "test_unit";
+    /// Appended to a channel's name to name its mount, so every input is
+    /// mounted apart from its name: a block or model tagged by the name
+    /// instead of the mount would be caught.
+    const MOUNT_SUFFIX: &str = "_mount";
 
     /// A filter and an IMU-driven INS reading `imu.accel` and `imu.gyro`.
     const BASE: &str = r#"
@@ -257,23 +261,69 @@ mod tests {
         AgentId::new("car")
     }
 
+    /// The frame the channel named `channel` is mounted at.
+    fn mount(channel: &str) -> FrameId {
+        FrameId::agent(agent(), format!("{channel}{MOUNT_SUFFIX}"))
+    }
+
+    /// Input `key` as the body publishes it, at its [`mount`].
+    fn mounted_input(key: ChannelKey) -> ChannelDescription {
+        let mount = mount(key.instance());
+        ChannelDescription::body(
+            &BodyChannel::new(key, UNIT, Provenance::Simulated).with_mount(mount),
+        )
+    }
+
+    /// Input `key` as the body publishes it, with no mount.
+    fn unmounted_input(key: ChannelKey) -> ChannelDescription {
+        ChannelDescription::body(&BodyChannel::new(key, UNIT, Provenance::Simulated))
+    }
+
     /// Declares node [`NODE`] from `section` through `registry`'s node map,
     /// as the assembler does, then builds it as the pipeline builder does,
-    /// returning the node and its resolved section.
-    fn build_with(
+    /// with every input described by `describe`, returning the node and its
+    /// resolved section.
+    fn build_with_inputs(
         registry: &AutonomyRegistry,
         section: &str,
+        describe: fn(ChannelKey) -> ChannelDescription,
     ) -> Result<(Box<dyn PipelineNode>, toml::Table), String> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
         let ctx = BuildContext::new(agent(), NODE, RECURSIVE_ESTIMATOR_KIND);
         let built = registry
             .build_node(section, &ctx)
             .map_err(|err| err.to_string())?;
+        let inputs: Vec<ChannelDescription> = declared_inputs(&built.declaration)
+            .into_iter()
+            .map(describe)
+            .collect();
+        let by_key: HashMap<&ChannelKey, &ChannelDescription> = inputs
+            .iter()
+            .map(|description| (description.key(), description))
+            .collect();
         let node = built
             .declaration
-            .construct()
+            .construct(&by_key)
             .map_err(|err| err.to_string())?;
         Ok((node, built.resolved))
+    }
+
+    /// Every channel `declaration` reads.
+    fn declared_inputs(declaration: &NodeDeclaration) -> Vec<ChannelKey> {
+        declaration
+            .port_descriptor()
+            .inputs()
+            .map(InputPort::channel)
+            .cloned()
+            .collect()
+    }
+
+    /// [`build_with_inputs`] with every input mounted.
+    fn build_with(
+        registry: &AutonomyRegistry,
+        section: &str,
+    ) -> Result<(Box<dyn PipelineNode>, toml::Table), String> {
+        build_with_inputs(registry, section, mounted_input)
     }
 
     fn build_section(section: &str) -> (Box<dyn PipelineNode>, toml::Table) {
@@ -563,7 +613,7 @@ mod tests {
     }
 
     /// An augmentation grows the filter's state by its block, under the
-    /// frame of the sensor it calibrates.
+    /// mount of the sensor channel it calibrates.
     #[test]
     fn an_augmentation_extends_the_published_state() {
         let (node, _) = build_section(&format!(
@@ -577,11 +627,27 @@ mod tests {
         let state = published_state(node.as_ref());
 
         assert_eq!(state.schema().storage_dim(), 19, "16 INS + 3 bias");
-        let bias = StateVariable::new(
-            Quantity::MagBias(FrameId::agent(agent(), "mag")),
-            Component::X,
-        );
+        let bias = StateVariable::new(Quantity::MagBias(mount("mag")), Component::X);
         assert!(state.schema().storage_offset_of(&bias).is_some());
+    }
+
+    /// An aiding source is built for its channel's mount, so a channel whose
+    /// writer states none is refused when the node is built, naming the node
+    /// and the channel.
+    #[test]
+    fn an_aiding_channel_without_a_mount_is_refused() {
+        let Err(err) = build_with_inputs(
+            &AutonomyRegistry::default(),
+            &format!("{BASE}{GPS}"),
+            unmounted_input,
+        ) else {
+            panic!("expected the unmounted GPS to be refused");
+        };
+        assert!(
+            err.contains(&format!("node \"{NODE}\" needs the mount of channel")),
+            "{err}"
+        );
+        assert!(err.contains("gps"), "{err}");
     }
 
     /// Without augmentation the state is the dynamics' own.

@@ -3,6 +3,7 @@
 // node the leaves are distinct and no leaf has an output's name, and output
 // names that the channel-name check refused are not reported again here.
 
+use helios_core::prelude::AgentId;
 use helios_runtime::{
     pipeline::{
         autonomy_pipeline::{PIPELINE_LEAF_GROUP, TICK_DURATION_LEAF},
@@ -16,6 +17,9 @@ use helios_runtime::{
 };
 
 use std::sync::Arc;
+
+/// The agent every pipeline here serves.
+const AGENT: &str = "car";
 
 /// Distinct output types, so nodes in one pipeline never supply the same
 /// channel.
@@ -61,11 +65,10 @@ fn named<T: 'static>(instance: impl Into<Arc<str>>) -> ChannelKey {
 }
 
 fn build_errors(nodes: Vec<DeclaringNode>) -> Vec<PipelineBuildError> {
-    let builder = nodes
-        .into_iter()
-        .fold(PipelineBuilder::new(), |builder, node| {
-            builder.add_node(Box::new(node))
-        });
+    let builder = nodes.into_iter().fold(
+        PipelineBuilder::new(AgentId::new(AGENT)),
+        |builder, node| builder.add_node(Box::new(node)),
+    );
     match builder.build() {
         Ok(_) => vec![],
         Err(errors) => errors,

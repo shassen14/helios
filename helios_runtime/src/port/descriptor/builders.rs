@@ -55,7 +55,7 @@
 //! node is constructed, at startup, never mid-run.
 
 use crate::port::{
-    ChannelKey, ChannelKind, Determinism, HealthChannel, InternalChannel, Observable,
+    ChannelKey, ChannelKind, Determinism, HealthChannel, InternalChannel, MountRule, Observable,
     OracleChannel, OutputPort, PortDescriptor, SensorChannel,
 };
 
@@ -161,6 +161,16 @@ impl AlgorithmNodePortDescriptor {
     /// Algorithm results (state, maps, paths, commands) are `Internal`.
     pub fn output_sensor(mut self, c: SensorChannel) -> Self {
         self.outputs.push(OutputPort::undriven(c.into()));
+        self
+    }
+
+    /// Declares a derived measurement, as [`output_sensor`](Self::output_sensor)
+    /// does, measured in the mount of `input`, which the node must read in
+    /// the same tick. The build gives the output that mount, so its readers
+    /// learn the frame from the channel without the node knowing it.
+    pub fn output_sensor_at_mount_of(mut self, c: SensorChannel, input: SensorChannel) -> Self {
+        self.outputs
+            .push(OutputPort::undriven(c.into()).with_mount(MountRule::FromInput(input.into())));
         self
     }
 
@@ -490,6 +500,25 @@ mod tests {
     fn actuator_command_output_panics_on_another_type() {
         let _ = AlgorithmNodePortDescriptor::new()
             .output_actuator_command(InternalChannel::named::<State>("drive"), vec![]);
+    }
+
+    /// An output declared at an input's mount carries that rule; every other
+    /// output has none.
+    #[test]
+    fn a_sensor_output_at_an_inputs_mount_names_that_input() {
+        let range = SensorChannel::named::<Reading>("lidar");
+        let cloud = SensorChannel::named::<Reading>("lidar.cloud");
+        let d = AlgorithmNodePortDescriptor::new()
+            .input_sensor(range.clone())
+            .output_sensor_at_mount_of(cloud, range.clone())
+            .output_internal(InternalChannel::of::<State>())
+            .build();
+
+        let rules: Vec<&MountRule> = d.output_ports().iter().map(OutputPort::mount).collect();
+        assert_eq!(
+            rules,
+            [&MountRule::FromInput(range.into()), &MountRule::None]
+        );
     }
 
     #[test]

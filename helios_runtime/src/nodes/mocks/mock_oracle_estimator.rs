@@ -436,7 +436,7 @@ mod tests {
 
         // .map(|_| ()) drops the AutonomyPipeline so expect_err / Debug
         // formatting work — AutonomyPipeline doesn't implement Debug.
-        let errs = PipelineBuilder::new()
+        let errs = PipelineBuilder::new(AgentId::new("test_agent"))
             .add_node(Box::new(node))
             .with_body_capabilities(empty_body)
             .build()
@@ -460,7 +460,7 @@ mod tests {
     fn build_succeeds_when_body_publishes_oracle_pose() {
         let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
 
-        let result = PipelineBuilder::new()
+        let result = PipelineBuilder::new(AgentId::new("test_agent"))
             .add_node(Box::new(node))
             .with_body_capabilities(body_with_oracle())
             .build()

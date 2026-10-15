@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn an_agent_watching_nothing_leaves_the_batch_empty() {
         let mut world = world_with_batch(ObservationBatch::default());
-        let pipeline = PipelineBuilder::new()
+        let pipeline = PipelineBuilder::new(AgentId::new(CAR))
             .build()
             .expect("an empty pipeline builds");
         world.spawn((

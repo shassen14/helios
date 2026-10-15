@@ -217,20 +217,19 @@ fn spawn_imu_sensors(
                 let accel_label = format!("{}/{}/accelerometer", agent_name.as_str(), sensor_name);
                 let accel_rng = SensorRng::from_sensor(master_seed.0, &accel_label);
 
+                let accel_frame = FrameId::agent(agent_id.0.clone(), accel_channel.to_string());
                 let accel_entity = commands
                     .spawn((
                         Name::new(accel_label),
                         SensorPublishChannel::new::<<Accelerometer as StateSensor>::Payload>(
                             accel_channel,
                             sensor_name,
+                            accel_frame.clone(),
                         ),
                         Accelerometer::new(accel_model, gravity_world, sensor_pose.translation),
                         SensorTimer::from_rate(imu_config.rate),
                         accel_rng,
-                        TrackedFrame::new(
-                            FrameId::agent(agent_id.0.clone(), accel_channel.to_string()),
-                            Convention::Flu,
-                        ),
+                        TrackedFrame::new(accel_frame, Convention::Flu),
                         sensor_pose.to_bevy_local_transform(),
                     ))
                     .id();
@@ -238,20 +237,19 @@ fn spawn_imu_sensors(
                 let gyro_label = format!("{}/{}/gyroscope", agent_name.as_str(), sensor_name);
                 let gyro_rng = SensorRng::from_sensor(master_seed.0, &gyro_label);
 
+                let gyro_frame = FrameId::agent(agent_id.0.clone(), gyro_channel.to_string());
                 let gyro_entity = commands
                     .spawn((
                         Name::new(gyro_label),
                         SensorPublishChannel::new::<<Gyroscope as StateSensor>::Payload>(
                             gyro_channel,
                             sensor_name,
+                            gyro_frame.clone(),
                         ),
                         Gyroscope::new(gyro_model),
                         SensorTimer::from_rate(imu_config.rate),
                         gyro_rng,
-                        TrackedFrame::new(
-                            FrameId::agent(agent_id.0.clone(), gyro_channel.to_string()),
-                            Convention::Flu,
-                        ),
+                        TrackedFrame::new(gyro_frame, Convention::Flu),
                         sensor_pose.to_bevy_local_transform(),
                     ))
                     .id();

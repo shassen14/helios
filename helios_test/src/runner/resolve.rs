@@ -297,7 +297,7 @@ mod tests {
         let planner = AlgorithmNodePortDescriptor::new()
             .outputs_from_slice(&[InternalChannel::named::<String>(SHARED).into()])
             .build();
-        PipelineBuilder::new()
+        PipelineBuilder::new(AgentId::new(CAR))
             .add_node(Box::new(DeclaringNode {
                 name: ESTIMATOR,
                 descriptor: estimator,

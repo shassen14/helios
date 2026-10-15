@@ -5,7 +5,7 @@
 
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 use helios_core::prelude::{AgentId, MonotonicTime};
@@ -13,17 +13,21 @@ use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
 use helios_runtime::{
     channels::tf::tf_edge,
-    pipeline::{ChannelUses, CycleEdge, NodePlan, PipelineBuildError, PipelineBuilder},
+    pipeline::{
+        ChannelUses, CycleEdge, MountLookupError, NodePlan, PipelineBuildError, PipelineBuilder,
+    },
     port::{
         AlgorithmNodePortDescriptor, ChannelKey, InputNeed, InternalChannel,
         MockNodePortDescriptor, OracleChannel, PortBus, PortDescriptor, SensorChannel,
     },
     prelude::{Health, PipelineNode, Stamped, TickContext},
-    BodyCapabilities, BodyChannel, Provenance, Writer,
+    BodyCapabilities, BodyChannel, MountRefusal, Provenance, Writer,
 };
 
 use crate::common::MockRuntime;
 
+/// The agent every pipeline in this file serves.
+const AGENT: &str = "bot";
 /// The unit every body channel in this file comes from.
 const BODY_UNIT: &str = "test_unit";
 
@@ -348,7 +352,7 @@ fn edge(producer: &str, consumer: &str, channel: &ChannelKey) -> CycleEdge {
 #[test]
 fn single_node_executes() {
     let out = ikey_named::<u32>("a");
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("a", out.clone(), 42)))
         .build()
         .expect("build should succeed");
@@ -367,7 +371,7 @@ fn two_node_chain_level_ordering() {
     let a = ikey_named::<u32>("a");
     let b = ikey_named::<u32>("b");
 
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 7)))
         .add_node(Box::new(TransformNode::new(
             "b",
@@ -396,7 +400,7 @@ fn two_node_chain_with_builder_inserted_out_of_order() {
     let a = ikey_named::<u32>("a");
     let b = ikey_named::<u32>("b");
 
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(TransformNode::new(
             "b",
             a.clone(),
@@ -424,7 +428,7 @@ fn three_node_diamond_resolves() {
     let c = ikey_named::<u32>("c");
     let d = ikey_named::<u32>("d");
 
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("a", a.clone(), 1)))
         .add_node(Box::new(TransformNode::new(
             "b",
@@ -463,7 +467,7 @@ fn cycle_detected() {
     let a_out = ikey_named::<ChA>("a_out");
     let b_out = ikey_named::<ChB>("b_out");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(TransformNode::new(
             "a",
             b_out.clone(),
@@ -497,7 +501,7 @@ fn self_loop_is_a_cycle_of_one() {
     // run before itself.
     let own = ikey_named::<ChA>("a");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(TransformNode::new(
             "echo",
             own.clone(),
@@ -524,7 +528,7 @@ fn node_downstream_of_a_cycle_is_left_out() {
     let b_out = ikey_named::<ChB>("b_out");
     let c_out = ikey_named::<ChC>("c");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(TransformNode::new(
             "a",
             b_out.clone(),
@@ -569,7 +573,7 @@ fn separate_cycles_give_one_error_each_sorted_by_name() {
     let d_out = ikey_named::<ChA>("d_out");
     let m_out = ikey_named::<ChA>("m_out");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(TransformNode::new(
             "c",
             d_out.clone(),
@@ -634,7 +638,7 @@ fn cycle_error_does_not_depend_on_insertion_order() {
         ("c", b_out.clone(), c_out.clone()),
     ];
     let build = |order: [usize; 3]| {
-        let mut builder = PipelineBuilder::new();
+        let mut builder = PipelineBuilder::new(AgentId::new(AGENT));
         for i in order {
             let (name, input, output) = nodes[i].clone();
             builder = builder.add_node(Box::new(TransformNode::new(name, input, output, |v| v)));
@@ -668,7 +672,7 @@ fn cycle_message_names_each_read_in_the_loop() {
     let a_out = ikey_named::<ChA>("a_out");
     let b_out = ikey_named::<ChB>("b_out");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(TransformNode::new(
             "a",
             b_out.clone(),
@@ -694,7 +698,7 @@ fn unsatisfied_input_detected() {
     let missing = ikey_named::<ChA>("missing");
     let out = ikey_named::<ChB>("b");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(TransformNode::new(
             "needs_missing",
             missing.clone(),
@@ -720,7 +724,7 @@ fn unsatisfied_input_detected() {
 fn multiple_suppliers_detected() {
     let shared = ikey_named::<ChA>("a");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
         .add_node(Box::new(ProducerNode::new("b", shared.clone(), 2)))
         .build();
@@ -747,7 +751,7 @@ fn misspelled_optional_input_is_rejected() {
     // channel must fail the build instead of leaving the node silently unaided.
     let misspelled = ikey_named::<Sensor>("gps.primry");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(SinkNode::optional("ekf", misspelled.clone())))
         .build();
 
@@ -768,7 +772,7 @@ fn misspelled_optional_input_is_rejected() {
 fn optional_input_satisfied_by_body_capability_builds() {
     let gps = ikey_named::<Sensor>("gps.primary");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(SinkNode::optional("ekf", gps.clone())))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![BodyChannel::new(gps, BODY_UNIT, Provenance::Exact)],
@@ -785,7 +789,7 @@ fn node_and_body_supplying_one_channel_is_rejected() {
     // both a node and the body has two writers racing one slot.
     let shared = ikey_named::<ChA>("a");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![BodyChannel::new(
@@ -819,7 +823,7 @@ fn node_and_body_supplying_one_channel_is_rejected() {
 fn node_and_outside_input_supplying_one_channel_is_rejected() {
     let shared = ikey_named::<ChA>("a");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("a", shared.clone(), 1)))
         .with_outside_inputs(vec![shared.clone()])
         .build();
@@ -848,7 +852,7 @@ fn missing_input_is_not_also_reported_as_a_cycle() {
     let mid = ikey_named::<ChB>("b");
     let out = ikey_named::<ChC>("c");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(TransformNode::new(
             "upstream",
             missing,
@@ -876,7 +880,7 @@ fn missing_input_is_not_also_reported_as_a_cycle() {
 fn duplicate_node_name_is_rejected_once() {
     // Three nodes share one name. The within-level order is by name, so a
     // shared name would leave their order to insertion; it is reported once.
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new(
             "dup",
             ikey_named::<ChA>("a"),
@@ -911,7 +915,7 @@ fn duplicate_node_name_is_rejected_once() {
 fn empty_or_dotted_node_names_are_refused_once_each() {
     // A node name is one part of every watcher path under the node. Two nodes
     // sharing a dotted name give one malformed-name error (and one duplicate).
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new(
             "a.b",
             ikey_named::<ChA>("a"),
@@ -948,7 +952,7 @@ fn malformed_channel_names_are_refused_once_each() {
     // A slash, an empty level and an unnamed channel. The slashed channel's
     // reader is not also reported as unsupplied.
     let slashed = ikey_named::<ChA>("gps/fix");
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("gps", slashed.clone(), 0)))
         .add_node(Box::new(SinkNode::new("reader", slashed)))
         .add_node(Box::new(ProducerNode::new(
@@ -980,7 +984,7 @@ fn malformed_channel_names_are_refused_once_each() {
 #[test]
 fn body_channel_with_a_malformed_name_names_the_body_and_its_reader() {
     let truth = okey_named::<Truth>("oracle/pose");
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(SinkNode::new("mock_oracle", truth.clone())))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![BodyChannel::new(
@@ -1019,7 +1023,7 @@ fn reader_and_writer_disagreeing_on_type_are_reported_together() {
     // reader's.
     let written = ikey_named::<ChA>("estimate");
     let read = ikey_named::<ChB>("estimate");
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("ekf", written.clone(), 0)))
         .add_node(Box::new(SinkNode::new("controller", read.clone())))
         .build();
@@ -1063,7 +1067,7 @@ fn one_name_across_kinds_is_refused() {
     // and a type; the kind still makes them two channels.
     let sensor: ChannelKey = SensorChannel::named::<ChA>("imu").into();
     let internal = ikey_named::<ChA>("imu");
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("relay", internal, 0)))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![BodyChannel::new(sensor, BODY_UNIT, Provenance::Exact)],
@@ -1095,7 +1099,7 @@ fn level_order_does_not_depend_on_insertion_order() {
             ikey_named::<ChB>("b"),
             ikey_named::<ChC>("c"),
         ];
-        let mut builder = PipelineBuilder::new();
+        let mut builder = PipelineBuilder::new(AgentId::new(AGENT));
         for (name, key) in names.into_iter().zip(keys) {
             builder = builder.add_node(Box::new(ProducerNode::new(name, key, 0)));
         }
@@ -1118,7 +1122,7 @@ fn optional_input_producer_runs_first() {
     let source = ikey_named::<u32>("a");
     let out = ikey_named::<u32>("b");
 
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("b_producer", source.clone(), 7)))
         .add_node(Box::new(TransformNode::optional(
             "a_reader",
@@ -1147,7 +1151,7 @@ fn cycle_through_optional_input_is_detected() {
     let a_out = ikey_named::<ChA>("a_out");
     let b_out = ikey_named::<ChB>("b_out");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(TransformNode::new(
             "a",
             b_out.clone(),
@@ -1175,7 +1179,7 @@ fn body_capabilities_satisfy_required_inputs() {
     // succeed.
     let sensor_key = ikey_named::<Sensor>("imu");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![BodyChannel::new(sensor_key, BODY_UNIT, Provenance::Exact)],
@@ -1195,7 +1199,7 @@ fn malformed_unit_is_reported_once_for_all_its_channels() {
     let gyro = ikey_named::<Truth>("imu.gyro");
     let unit = "imu.front";
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(SinkNode::new("consumer", accel.clone())))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![
@@ -1224,7 +1228,7 @@ fn oracle_input_satisfied_by_body_capability() {
     // When the body advertises it, the build succeeds.
     let oracle_key = okey_named::<Truth>("oracle.pose");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(SinkNode::new("mock_oracle", oracle_key.clone())))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![BodyChannel::new(oracle_key, BODY_UNIT, Provenance::Exact)],
@@ -1243,7 +1247,7 @@ fn oracle_input_without_body_capability_errors() {
     // produced by a node, so the only possible supplier is the body.
     let oracle_key = okey_named::<Truth>("oracle.pose");
 
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(SinkNode::new("mock_oracle", oracle_key.clone())))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![],
@@ -1272,7 +1276,7 @@ fn oracle_input_without_body_capability_errors() {
 fn rate_gated_node_fires_at_correct_interval() {
     // Period = 1 / 2 Hz = 0.5s. dt = 0.1s → fires on the 5th tick only.
     let counter = Arc::new(AtomicU32::new(0));
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(CountingNode::new(
             "rated",
             Some(2.0),
@@ -1299,7 +1303,7 @@ fn rate_gated_node_does_not_double_fire() {
     // dt = 1.0s with period = 0.5s would cover two periods; node must
     // still fire exactly once (no catch-up).
     let counter = Arc::new(AtomicU32::new(0));
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(CountingNode::new(
             "rated",
             Some(2.0),
@@ -1320,7 +1324,7 @@ fn rate_gated_node_does_not_double_fire() {
 fn unrated_node_fires_every_tick() {
     // rate: None means fire every tick.
     let counter = Arc::new(AtomicU32::new(0));
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(CountingNode::new(
             "every_tick",
             None,
@@ -1344,7 +1348,7 @@ fn tick_preserves_externally_written_values() {
     // All bus slots are last-known-good — a value written from outside
     // the graph must still be readable after `tick()`.
     let sensor_key = ikey_named::<u32>("imu");
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(SinkNode::new("consumer", sensor_key.clone())))
         .with_body_capabilities(BodyCapabilities {
             publishes: vec![BodyChannel::new(
@@ -1396,7 +1400,7 @@ fn tf_edge_channels_returns_only_declared_tf_edges() {
     // filtered out, proving the accessor keys off `is_tf_edge`, not "every output".
     let plain_key = ikey_named::<u32>("plain");
 
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new(
             "edge_producer",
             edge_key.clone(),
@@ -1413,7 +1417,7 @@ fn tf_edge_channels_returns_only_declared_tf_edges() {
 /// drains nothing, which is correct for a stack whose only tf need is statics.
 #[test]
 fn tf_edge_channels_is_empty_without_an_edge_producer() {
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new(
             "plain",
             ikey_named::<u32>("plain"),
@@ -1436,7 +1440,7 @@ fn producer_plan(name: &str, output: ChannelKey, value: u32) -> NodePlan {
     NodePlan::new(
         name.clone(),
         descriptor,
-        Box::new(move |descriptor| {
+        Box::new(move |descriptor, _| {
             let mut node = ProducerNode::new(&name, output, value);
             node.descriptor = descriptor;
             Ok(Box::new(node) as Box<dyn PipelineNode>)
@@ -1457,12 +1461,128 @@ fn transform_plan(
     NodePlan::new(
         name.clone(),
         descriptor,
-        Box::new(move |descriptor| {
+        Box::new(move |descriptor, _| {
             let mut node = TransformNode::new(&name, input, output, transform);
             node.descriptor = descriptor;
             Ok(Box::new(node) as Box<dyn PipelineNode>)
         }),
     )
+}
+
+/// A plan named `name` declaring `descriptor`, built as a node that does
+/// nothing and keeps the descriptor.
+fn idle_plan(name: &str, descriptor: PortDescriptor) -> NodePlan {
+    let built_name = name.to_string();
+    NodePlan::new(
+        name,
+        descriptor,
+        Box::new(move |descriptor, _| {
+            let mut node = ProducerNode::new(&built_name, ikey_named::<u32>("unused"), 0);
+            node.descriptor = descriptor;
+            Ok(Box::new(node) as Box<dyn PipelineNode>)
+        }),
+    )
+}
+
+/// A plan reading a body channel's mount and one resolved through another
+/// node's output is built with both: the body's stated mount, and for the
+/// derived channel the mount of the input its writer's rule names.
+#[test]
+fn a_plan_is_built_with_the_mounts_its_inputs_resolve_to() {
+    struct Scan;
+    let agent = AgentId::new(AGENT);
+    let lidar_mount = FrameId::agent(agent.clone(), "lidar");
+    let range = SensorChannel::named::<Scan>("lidar");
+    let cloud = SensorChannel::named::<Scan>("lidar.cloud");
+    let cloud_key: ChannelKey = cloud.clone().into();
+
+    let flatten = idle_plan(
+        "flatten",
+        AlgorithmNodePortDescriptor::new()
+            .input_sensor(range.clone())
+            .output_sensor_at_mount_of(cloud.clone(), range.clone())
+            .build(),
+    );
+    let seen: Arc<Mutex<Vec<Result<FrameId, MountLookupError>>>> = Arc::default();
+    let record = Arc::clone(&seen);
+    let (range_key, lookup) = (ChannelKey::from(range.clone()), cloud_key.clone());
+    let reader = NodePlan::new(
+        "reader",
+        AlgorithmNodePortDescriptor::new()
+            .input_sensor(cloud)
+            .build(),
+        Box::new(move |descriptor, mounts| {
+            let mut record = record.lock().expect("not poisoned");
+            record.push(mounts.mount(&lookup).cloned());
+            record.push(mounts.mount(&range_key).cloned());
+            let mut node = ProducerNode::new("reader", ikey_named::<u32>("reader_out"), 0);
+            node.descriptor = descriptor;
+            Ok(Box::new(node) as Box<dyn PipelineNode>)
+        }),
+    );
+    let body = BodyCapabilities {
+        publishes: vec![
+            BodyChannel::new(range.clone(), BODY_UNIT, Provenance::Simulated)
+                .with_mount(lidar_mount.clone()),
+        ],
+        ..Default::default()
+    };
+
+    let pipeline = PipelineBuilder::new(agent)
+        .add_plan(reader)
+        .add_plan(flatten)
+        .with_body_capabilities(body)
+        .build()
+        .expect("build should succeed");
+
+    // The reader reads only the cloud, so the range's mount is not its to see.
+    assert_eq!(
+        *seen.lock().expect("not poisoned"),
+        [
+            Ok(lidar_mount.clone()),
+            Err(MountLookupError::NotRead {
+                reader: "reader".to_string(),
+                channel: range.into(),
+            }),
+        ]
+    );
+    let cloud_description = pipeline
+        .descriptions()
+        .iter()
+        .find(|description| description.key() == &cloud_key)
+        .expect("the cloud is described");
+    assert_eq!(cloud_description.mount(), Some(&lidar_mount));
+}
+
+/// A body channel mounted on another agent's frame is refused at build.
+#[test]
+fn a_body_mount_on_another_agent_is_refused() {
+    let body = BodyCapabilities {
+        publishes: vec![BodyChannel::new(
+            SensorChannel::named::<u32>("gps"),
+            BODY_UNIT,
+            Provenance::Simulated,
+        )
+        .with_mount(FrameId::agent(AgentId::new("other"), "gps"))],
+        ..Default::default()
+    };
+
+    let Err(errors) = PipelineBuilder::new(AgentId::new(AGENT))
+        .with_body_capabilities(body)
+        .build()
+    else {
+        panic!("expected the mount to be refused");
+    };
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::RefusedBodyMount {
+                refusal: MountRefusal::OtherAgent,
+                ..
+            }]
+        ),
+        "{errors:?}"
+    );
 }
 
 /// A plan for a node named `name` writing `output`, whose constructor fails
@@ -1477,7 +1597,7 @@ fn failing_plan(
     NodePlan::new(
         name,
         descriptor,
-        Box::new(move |_| {
+        Box::new(move |_, _| {
             ran.store(true, Ordering::Relaxed);
             Err(reason.into())
         }),
@@ -1491,7 +1611,7 @@ fn plans_are_ordered_on_their_declared_ports_then_built() {
     let a = ikey_named::<u32>("a");
     let b = ikey_named::<u32>("b");
 
-    let pipeline = PipelineBuilder::new()
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
         .add_plan(transform_plan("b", a.clone(), b.clone(), |v| v * 3))
         .add_plan(producer_plan("a", a, 5))
         .build()
@@ -1511,7 +1631,7 @@ fn plans_are_ordered_on_their_declared_ports_then_built() {
 #[test]
 fn every_failed_construction_is_reported() {
     let ran = Arc::new(AtomicBool::new(false));
-    let errors = match PipelineBuilder::new()
+    let errors = match PipelineBuilder::new(AgentId::new(AGENT))
         .add_plan(failing_plan(
             "a",
             ikey_named::<u32>("a"),
@@ -1550,7 +1670,7 @@ fn every_failed_construction_is_reported() {
 #[test]
 fn a_plan_is_not_built_when_wiring_fails() {
     let ran = Arc::new(AtomicBool::new(false));
-    let result = PipelineBuilder::new()
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_plan(failing_plan(
             "a",
             ikey_named::<u32>("a"),
@@ -1587,12 +1707,15 @@ fn a_plan_built_under_another_name_is_refused() {
     let plan = NodePlan::new(
         "planned_as",
         descriptor,
-        Box::new(move |_| {
+        Box::new(move |_, _| {
             Ok(Box::new(ProducerNode::new("built_as", output, 0)) as Box<dyn PipelineNode>)
         }),
     );
 
-    let Err(errors) = PipelineBuilder::new().add_plan(plan).build() else {
+    let Err(errors) = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_plan(plan)
+        .build()
+    else {
         panic!("expected the misnamed node to be refused");
     };
     assert!(

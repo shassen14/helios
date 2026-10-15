@@ -24,6 +24,7 @@ pub mod rate_gate;
 pub use autonomy_pipeline::AutonomyPipeline;
 pub(crate) use build::NodeDeclaration;
 pub use build::{
-    ChannelUses, CycleEdge, NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder,
+    ChannelUses, CycleEdge, InputMounts, MountLookupError, MountRefusal, NodeConstructor, NodePlan,
+    PipelineBuildError, PipelineBuilder,
 };
 pub use node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};

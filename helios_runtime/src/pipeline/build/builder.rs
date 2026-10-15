@@ -1,9 +1,11 @@
-//! [`PipelineBuilder`]: collects the nodes and node plans, the body's
+//! [`PipelineBuilder`]: collects one agent's nodes and node plans, the body's
 //! capabilities and the outside inputs, then [`build`](PipelineBuilder::build)
-//! checks them, builds the plans and assembles the [`AutonomyPipeline`].
+//! checks them, resolves every channel's mount, builds the plans and
+//! assembles the [`AutonomyPipeline`].
 
 use super::{
     declaration::{NodeDeclaration, NodePlan},
+    mounts::resolve_mounts,
     ordering::order_into_levels,
     wiring::check_wiring,
 };
@@ -14,12 +16,16 @@ use crate::{
     AutonomyPipeline, BodyCapabilities, ChannelKey, NodeId, PipelineBuildError, PipelineNode,
 };
 
-use std::collections::HashSet;
+use helios_core::prelude::AgentId;
+
+use std::collections::{HashMap, HashSet};
 
 /// Constructs a [`AutonomyPipeline`] from a set of [`PipelineNode`]s and the
 /// [`BodyCapabilities`] of the body the graph runs against.
 ///
 /// Build sequence:
+/// 0. Create the builder with [`new`](Self::new) for the agent the pipeline
+///    serves. The body's mounts are checked against it.
 /// 1. Register every node with [`add_node`](Self::add_node), or declare it
 ///    with [`add_plan`](Self::add_plan) to have it built once the graph
 ///    checks out.
@@ -38,24 +44,20 @@ use std::collections::HashSet;
 /// Consumers that must process each reading at most once track their own
 /// last-seen [`Stamped::timestamp`](crate::Stamped::timestamp) internally.
 pub struct PipelineBuilder {
+    agent: AgentId,
     nodes: Vec<NodeDeclaration>,
     capabilities: BodyCapabilities,
     outside_inputs: Vec<ChannelKey>,
 }
 
-impl Default for PipelineBuilder {
-    fn default() -> Self {
-        PipelineBuilder::new()
-    }
-}
-
 impl PipelineBuilder {
-    /// Creates an empty builder with a default (empty)
+    /// Creates an empty builder for `agent`'s pipeline with a default (empty)
     /// [`BodyCapabilities`]. Add nodes and declare the body's published
     /// channels via [`with_body_capabilities`](Self::with_body_capabilities)
     /// before calling [`build`](Self::build).
-    pub fn new() -> Self {
+    pub fn new(agent: AgentId) -> Self {
         PipelineBuilder {
+            agent,
             nodes: vec![],
             capabilities: BodyCapabilities::default(),
             outside_inputs: vec![],
@@ -113,7 +115,9 @@ impl PipelineBuilder {
     /// Errors are checked in two stages, and every error within a stage is
     /// collected:
     /// 1. Wiring. Node names are unique and one level each, the body's unit
-    ///    names are one level each, channel names
+    ///    names are one level each, every mount the body states is a frame on
+    ///    this agent's body off its spine, every output mounted at an input's
+    ///    mount names a channel its node reads in the same tick, channel names
     ///    are well formed and each names one channel, each node's watchable
     ///    leaves are well formed, leaves and output channels sit outside the
     ///    pipeline's own group and apart, and every input, required or
@@ -125,6 +129,11 @@ impl PipelineBuilder {
     ///      one level.
     ///    - [`PipelineBuildError::MalformedUnitName`] — a unit the body
     ///      declares is not one level.
+    ///    - [`PipelineBuildError::RefusedBodyMount`] — the body states a
+    ///      mount off its own body, on its spine, or with a malformed leaf.
+    ///    - [`PipelineBuildError::MountFromUnreadInput`] — a node mounts an
+    ///      output at the mount of a channel it does not read in the same
+    ///      tick.
     ///    - [`PipelineBuildError::MalformedChannelName`] — a channel name is
     ///      not levels joined by `.`.
     ///    - [`PipelineBuildError::ChannelNameReused`] — one name names
@@ -150,8 +159,10 @@ impl PipelineBuilder {
     ///      outputs in the same tick; one error per loop.
     ///    - [`PipelineBuildError::StuckWithoutCycle`] — the sort stopped but
     ///      found no loop, which means a bug in the build.
-    /// 3. Construction, run only when ordering succeeds. Every plan is built
-    ///    from its declared ports, level by level.
+    /// 3. Construction, run only when ordering succeeds. Each node output's
+    ///    mount is resolved from its rule in level order, then every plan is
+    ///    built from its declared ports and its inputs' mounts, level by
+    ///    level.
     ///    - [`PipelineBuildError::ConstructionFailed`] — a plan's constructor
     ///      failed.
     ///    - [`PipelineBuildError::ConstructedNodeMisnamed`] — a plan built a
@@ -164,7 +175,7 @@ impl PipelineBuilder {
     /// at `0`, indexing into the pipeline's rate-timer array.
     pub fn build(self) -> Result<AutonomyPipeline, Vec<PipelineBuildError>> {
         let descriptions = self.describe_channels();
-        let errors = check_wiring(&self.nodes, &descriptions);
+        let errors = check_wiring(&self.agent, &self.nodes, &descriptions);
 
         // Stop before ordering: a node downstream of a missing input would
         // otherwise be reported as a cycle member too.
@@ -181,6 +192,7 @@ impl PipelineBuilder {
             .collect();
 
         let levels = order_into_levels(self.nodes, produced)?;
+        let descriptions = resolve_mounts(&levels, descriptions);
 
         // Bus slots are allocated from the union of all declared descriptors.
         // A channel the body advertises via `capabilities.publishes` but
@@ -195,7 +207,7 @@ impl PipelineBuilder {
 
         let bus = PortBus::new(descriptor_iter);
 
-        let levels = construct_levels(levels)?;
+        let levels = construct_levels(levels, &descriptions)?;
 
         Ok(AutonomyPipeline {
             levels,
@@ -227,18 +239,24 @@ impl PipelineBuilder {
     }
 }
 
-/// Builds every planned node, level by level, and gives each node the state
-/// the pipeline keeps for it, keeping the levels and the order within them.
-/// Every failure is collected.
+/// Builds every planned node, level by level, with the mounts of its inputs
+/// from `descriptions`, and gives each node the state the pipeline keeps for
+/// it, keeping the levels and the order within them. Every failure is
+/// collected.
 fn construct_levels(
     levels: Vec<Vec<(NodeId, NodeDeclaration)>>,
+    descriptions: &[ChannelDescription],
 ) -> Result<Vec<Vec<ScheduledNode>>, Vec<PipelineBuildError>> {
+    let descriptions: HashMap<&ChannelKey, &ChannelDescription> = descriptions
+        .iter()
+        .map(|description| (description.key(), description))
+        .collect();
     let mut errors = vec![];
     let mut constructed = Vec::with_capacity(levels.len());
     for level in levels {
         let mut scheduled = Vec::with_capacity(level.len());
         for (node_id, declaration) in level {
-            match declaration.construct() {
+            match declaration.construct(&descriptions) {
                 Ok(node) => scheduled.push(ScheduledNode::new(node_id, node)),
                 Err(error) => errors.push(error),
             }

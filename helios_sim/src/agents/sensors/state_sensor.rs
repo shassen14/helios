@@ -225,7 +225,11 @@ mod tests {
                 SensorTimer::from_rate(RATE_HZ),
                 SensorRng(ChaCha8Rng::seed_from_u64(TEST_SEED)),
                 GlobalTransform::default(),
-                SensorPublishChannel::new::<GpsPosition>("test.channel", "test_unit"),
+                SensorPublishChannel::new::<GpsPosition>(
+                    "test.channel",
+                    "test_unit",
+                    FrameId::agent(AgentId::new("test_agent"), "test.channel"),
+                ),
                 TrackedFrame::new(
                     FrameId::agent(AgentId::new("test_agent"), "test.channel"),
                     Convention::Flu,
@@ -343,7 +347,11 @@ mod tests {
                     SensorTimer::from_rate(RATE_HZ),
                     SensorRng::from_sensor(TEST_MASTER_SEED, name),
                     GlobalTransform::default(),
-                    SensorPublishChannel::new::<GpsPosition>("test.channel", "test_unit"),
+                    SensorPublishChannel::new::<GpsPosition>(
+                        "test.channel",
+                        "test_unit",
+                        FrameId::agent(AgentId::new("car_1"), *name),
+                    ),
                     TrackedFrame::new(
                         FrameId::agent(AgentId::new("car_1"), *name),
                         Convention::Flu,

@@ -1,7 +1,7 @@
 //! [`PortDescriptor`]: what a node declares it reads from and writes to the
 //! bus, with each input as an [`InputPort`] record of channel, need and timing,
-//! and each output as an [`OutputPort`] record of channel and the actuators it
-//! drives. It also
+//! and each output as an [`OutputPort`] record of channel, the actuators it
+//! drives and the [`MountRule`] that gives its mount. It also
 //! declares what the node can emit for watchers, each value an [`Observable`]
 //! record of leaf name, [`Determinism`] and [`ObservedValueKind`].
 //!
@@ -216,8 +216,9 @@ impl InputPort {
     }
 }
 
-/// One declared output of a node: which channel it writes, and the actuators
-/// its commands drive when the channel carries `ActuatorCommand`.
+/// One declared output of a node: which channel it writes, the actuators its
+/// commands drive when the channel carries `ActuatorCommand`, and the rule
+/// that gives the channel's mount.
 ///
 /// Only the descriptor builders create records, so the kind fence on
 /// channels holds and only an `ActuatorCommand` output carries drives.
@@ -225,11 +226,17 @@ impl InputPort {
 pub struct OutputPort {
     channel: ChannelKey,
     drives: Vec<ActuatorDrive>,
+    mount: MountRule,
 }
 
 impl OutputPort {
+    /// An output with no mount.
     pub(crate) fn new(channel: ChannelKey, drives: Vec<ActuatorDrive>) -> Self {
-        Self { channel, drives }
+        Self {
+            channel,
+            drives,
+            mount: MountRule::None,
+        }
     }
 
     /// An output that drives no actuators: every output not of
@@ -243,11 +250,36 @@ impl OutputPort {
         &self.channel
     }
 
+    /// The output with its mount given by `rule`.
+    pub(crate) fn with_mount(mut self, rule: MountRule) -> Self {
+        self.mount = rule;
+        self
+    }
+
     /// The actuators this output's commands drive. Empty unless the channel
     /// carries `ActuatorCommand`.
     pub fn drives(&self) -> &[ActuatorDrive] {
         &self.drives
     }
+
+    /// The rule that gives this output's mount.
+    pub fn mount(&self) -> &MountRule {
+        &self.mount
+    }
+}
+
+/// Where a node output's mount, the frame its values are measured in, comes
+/// from. The node states the rule; the builder resolves it once the graph is
+/// ordered, so the node never needs to know the frame itself.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MountRule {
+    /// The output has no mount: its values carry their frame, or have none
+    /// (a state, a path, a map, a command).
+    None,
+    /// The output is measured in the mount of one of the node's same-tick
+    /// inputs: a cloud flattened from a range field, a de-skewed scan. The
+    /// build refuses a rule naming a channel the node does not read so.
+    FromInput(ChannelKey),
 }
 
 /// Whether a node can run without a value on an input.

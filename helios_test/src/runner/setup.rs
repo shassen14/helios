@@ -73,7 +73,7 @@ mod tests {
     // A node-less pipeline: its agent reports nothing, so every target on it
     // is unreported. What resolves is tested beside `resolve`.
     fn empty_pipeline() -> AutonomyPipeline {
-        PipelineBuilder::new()
+        PipelineBuilder::new(AgentId::new(CAR))
             .build()
             .expect("an empty pipeline builds without errors")
     }

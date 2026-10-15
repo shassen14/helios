@@ -127,7 +127,11 @@ mod tests {
     }
 
     fn gps_channel() -> SensorPublishChannel {
-        SensorPublishChannel::new::<GpsPosition>("gps.primary", "gps")
+        SensorPublishChannel::new::<GpsPosition>(
+            "gps.primary",
+            "gps",
+            FrameId::agent(AgentId::new("test_agent"), "gps.primary"),
+        )
     }
 
     /// An agent without an `AutonomyPipelineComponent` — a prop, or an agent

@@ -1,11 +1,14 @@
 //! [`PipelineBuildError`], everything [`build`](super::PipelineBuilder::build)
-//! can reject, [`ChannelUses`], who writes and reads one channel, and
-//! [`CycleEdge`], one read inside a dependency loop.
+//! can reject, [`ChannelUses`], who writes and reads one channel,
+//! [`CycleEdge`], one read inside a dependency loop, and [`MountRefusal`], why
+//! a mount the body states is refused.
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
     port::{ChannelKey, ChannelKind, InputNeed, Writer},
 };
+
+use helios_core::spatial::FrameId;
 
 use std::error::Error;
 
@@ -65,6 +68,23 @@ pub enum PipelineBuildError {
     /// catalog name a body channel's writer by its unit, so it follows the
     /// node-name grammar. Reported once per unit.
     MalformedUnitName { unit: String },
+    /// The body states a mount for a channel that is not a frame on this
+    /// agent's body off its spine, with a well-formed leaf. A mount is where
+    /// an installed part measures. Reported once per channel.
+    RefusedBodyMount {
+        unit: String,
+        channel: ChannelKey,
+        mount: FrameId,
+        refusal: MountRefusal,
+    },
+    /// A node mounts an output at the mount of a channel it does not read in
+    /// the same tick, so no mount could be resolved for it before the node is
+    /// built.
+    MountFromUnreadInput {
+        node_name: String,
+        output: ChannelKey,
+        input: ChannelKey,
+    },
     /// A node's name is not one level: empty, or holding something other
     /// than ASCII letters, digits and `_`. The name fills one part of every
     /// watcher path under the node (`agent.<agent>.node.<node>.<leaf>`), and
@@ -219,6 +239,28 @@ impl std::fmt::Display for PipelineBuildError {
                      is non-empty and holds only letters, digits and '_'"
                 )
             }
+            PipelineBuildError::RefusedBodyMount {
+                unit,
+                channel,
+                mount,
+                refusal,
+            } => {
+                write!(
+                    f,
+                    "unit \"{unit}\" states channel {channel} is mounted at {mount}, {refusal}"
+                )
+            }
+            PipelineBuildError::MountFromUnreadInput {
+                node_name,
+                output,
+                input,
+            } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" mounts output {output} at the mount of {input}, which \
+                     it does not read in the same tick"
+                )
+            }
             PipelineBuildError::MalformedNodeName { name } => {
                 write!(
                     f,
@@ -308,6 +350,45 @@ impl std::fmt::Display for PipelineBuildError {
                      \"{built_name}\"; a node keeps the name its plan declared"
                 )
             }
+        }
+    }
+}
+
+/// Why the build refuses a mount the body states, as reported in
+/// [`PipelineBuildError::RefusedBodyMount`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MountRefusal {
+    /// The frame belongs to another agent.
+    OtherAgent,
+    /// The frame belongs to no agent.
+    Global,
+    /// The frame is the agent's `map`, `odom` or `base_link`, not an
+    /// installed part's own.
+    Spine,
+    /// The frame's leaf is not levels joined by `.`.
+    MalformedLeaf,
+}
+
+impl std::fmt::Display for MountRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MountRefusal::OtherAgent => write!(
+                f,
+                "a frame of another agent — a body mounts its channels on its own frames"
+            ),
+            MountRefusal::Global => write!(
+                f,
+                "a global frame — a body mounts its channels on its own frames"
+            ),
+            MountRefusal::Spine => write!(
+                f,
+                "a frame of the agent's spine — a mount is the installed part's own frame"
+            ),
+            MountRefusal::MalformedLeaf => write!(
+                f,
+                "whose leaf is not one or more levels joined by '.', each only letters, digits \
+                 and '_'"
+            ),
         }
     }
 }

@@ -2,9 +2,9 @@
 //! reads.
 //!
 //! Every model resolves its sensor's geometry from the TF tree at tick time,
-//! so each is built for the sensor frame its channel names. Physical constants
-//! the model believes (gravity, the local magnetic field) come from its own
-//! config.
+//! so each is built for the mount its channel's writer states. Physical
+//! constants the model believes (gravity, the local magnetic field) come from
+//! its own config.
 //!
 //! - `config` — the configs of the kinds that take keys.
 //! - `model` — each kind's factory and the registration.
