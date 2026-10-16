@@ -5,7 +5,7 @@
 //! after that is identical for GPS, IMU, magnetometer, lidar, and a future
 //! camera: resolve the agent's pipeline, wrap the batch in a `Stamped`
 //! envelope with the host producer id, write to the sensor's described key,
-//! and turn a dropped write into one loud warning. That shared tail lives here as
+//! and report a dropped write once. That shared tail lives here as
 //! [`SensorPublisher`], so there is exactly one place that constructs the
 //! envelope and one place that handles a missing channel.
 
@@ -22,14 +22,14 @@ use std::collections::HashSet;
 
 /// Bundles the two things every sensor system needs to publish: the query
 /// that resolves an agent entity to its `AutonomyPipeline`, and a per-system
-/// set of channels already warned about. A sensor system takes this one param
+/// set of channels already reported. A sensor system takes this one param
 /// in place of both, and its publish tail collapses to a single
 /// [`publish`](Self::publish) call.
 ///
 /// `warned_channels` is a [`Local`], so each system that takes a
 /// `SensorPublisher` gets its own set. That is deliberate: a channel is
-/// published by exactly one sensor system, so per-system dedup warns once per
-/// broken channel — the same guarantee a global set would give, without the
+/// published by exactly one sensor system, so per-system dedup reports once
+/// per channel — the same guarantee a global set would give, without the
 /// shared-mutable resource that would serialize the sensor systems against
 /// each other.
 #[derive(SystemParam)]
@@ -46,10 +46,14 @@ impl SensorPublisher<'_, '_> {
     ///   brainless prop) is a silent no-op — legal, not an error.
     /// - The envelope timestamp is taken from the last reading, so an
     ///   accumulated batch carries its freshest time.
-    /// - A refused write warns exactly once per channel name, naming it and
-    ///   why, since readings are being dropped: no node reads the channel,
-    ///   the readings are not of the type the channel was described with, or
-    ///   a reading names another frame than the channel's mount.
+    /// - A write to a channel no node reads is traced once per channel name.
+    ///   The body lists every installed sensor, read or not, and the key
+    ///   written is the one the body declared, so no slot means only that
+    ///   this stack does not read the sensor.
+    /// - Any other refused write warns exactly once per channel name, naming
+    ///   it and why, since readings are being dropped: the readings are not
+    ///   of the type the channel was described with, or a reading names
+    ///   another frame than the channel's mount.
     pub fn publish<T: Send + Sync + 'static>(
         &mut self,
         agent: Entity,
@@ -79,8 +83,8 @@ impl SensorPublisher<'_, '_> {
             .bus()
             .write_mounted(channel_key.clone(), stamped_readings);
 
-        // Warn once per channel: `insert` returns true only the first time a
-        // name is seen, so a fixed-rate sensor cannot flood the log.
+        // Report once per channel: `insert` returns true only the first time
+        // a name is seen, so a fixed-rate sensor cannot flood the log.
         let Err(error) = write_result else {
             return;
         };
@@ -90,11 +94,11 @@ impl SensorPublisher<'_, '_> {
         }
         match error {
             // The fit installs a sensor no node reads; the build accepts
-            // that, since a body lists what is installed.
-            ChannelError::UnknownChannel => warn!(
-                "Channel '{}' has no slot in the autonomy DAG; readings are being \
-                 dropped.",
-                name
+            // that, since a body lists what is installed. Not a wiring bug:
+            // the key is the one the body declared, so it cannot be misspelt.
+            ChannelError::UnknownChannel => tracing::trace!(
+                channel = %name,
+                "sensor channel has no reader in the autonomy DAG; readings are dropped"
             ),
             // The spawner described the channel with another payload or shape
             // than the sensor publishes: a host bug every reader would see as

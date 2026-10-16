@@ -109,6 +109,11 @@ impl TfTree {
         self.datum = Some(datum);
     }
 
+    /// The world's datum, once the world layout has resolved.
+    pub fn datum(&self) -> Option<&FrameId> {
+        self.datum.as_ref()
+    }
+
     /// Resolves the transform between two frames at the tree's *current* state.
     ///
     /// The tree is latest-only: one pose per frame (the most recent physics

@@ -16,7 +16,7 @@ pub use crate::interchange::measurement::sensor::SensorPayload;
 pub use crate::interchange::measurement::sensor::{
     Acceleration, AngularRate, DepthImage, GpsPosition, GpsVelocity, MagneticField, RgbImage,
 };
-pub use crate::interchange::motion::{Odometry, Twist};
+pub use crate::interchange::motion::Odometry;
 pub use crate::spatial::primitives::{AgentId, MonotonicDuration, MonotonicTime};
 pub use crate::spatial::tf::TfProvider;
 

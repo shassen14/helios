@@ -8,7 +8,7 @@
 //! - [`perception`] — interpretations that required a world model, an ontology,
 //!   or association across time (maps, detections, tracks).
 //! - [`motion`] — estimator/control I/O ([`Odometry`](motion::Odometry),
-//!   [`Twist`](motion::Twist)).
+//!   [`StampedTwist`](motion::StampedTwist)).
 //! - [`path`] — planner output ([`Path`](path::Path),
 //!   [`PlannerGoal`](path::PlannerGoal)) consumed by path following.
 //!

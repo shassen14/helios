@@ -3,7 +3,7 @@ use crate::brain_bridge::components::{
     SensorPublishChannel, TeleopControlled, TfServiceComponent,
 };
 use crate::core::components::{ActuatorCommandComponent, ControllerStateSource};
-use crate::core::ground_truth::oracle_body_channels;
+use crate::core::ground_truth::truth_body_channels;
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
@@ -51,7 +51,8 @@ pub fn spawn_autonomy_pipeline(
             .map(|channel| channel.description().clone())
             .collect();
 
-        let body = build_host_body_capabilities(sensor_channels, &agent_config.vehicle.actuation);
+        let body =
+            build_host_body_capabilities(&agent, sensor_channels, &agent_config.vehicle.actuation);
 
         // A pipeline is bound only with a tf service that serves every mount
         // it reads; either failing leaves the agent without both.
@@ -190,8 +191,8 @@ pub fn spawn_actuator_command(
 /// body offers the autonomy graph, distinct from anything the autonomy stack
 /// itself declares.
 ///
-/// - `publishes`: the truth rig's two oracle channels
-///   ([`oracle_body_channels`]), then `sensor_channels`, each sensor's
+/// - `publishes`: the truth rig's two channels for `agent`
+///   ([`truth_body_channels`]), then `sensor_channels`, each sensor's
 ///   channel as its spawner described it. Every installed sensor is listed,
 ///   read by the stack or not. Health channels are intentionally omitted: no
 ///   sim publisher exists for them yet, and advertising a channel the host
@@ -201,11 +202,12 @@ pub fn spawn_actuator_command(
 ///   allocator naming a missing actuator or writing the wrong setpoint kind
 ///   fails the build.
 fn build_host_body_capabilities(
+    agent: &AgentId,
     sensor_channels: Vec<BodyChannel>,
     actuation: &ActuationModel,
 ) -> BodyCapabilities {
     BodyCapabilities {
-        publishes: oracle_body_channels()
+        publishes: truth_body_channels(agent)
             .into_iter()
             .chain(sensor_channels)
             .collect(),
@@ -327,7 +329,7 @@ mod tests {
             SignConvention::Normal,
         )]);
 
-        let caps = build_host_body_capabilities(vec![], &actuation);
+        let caps = build_host_body_capabilities(&AgentId::new("car"), vec![], &actuation);
 
         assert_eq!(caps.actuation, actuation);
     }
@@ -335,21 +337,27 @@ mod tests {
     /// The body publishes the truth rig's channels and every sensor's, each
     /// as described.
     #[test]
-    fn publishes_the_oracle_and_every_sensor_channel() {
+    fn publishes_the_truth_rig_and_every_sensor_channel() {
         let agent = AgentId::new("car");
         let gps = SensorPublishChannel::new::<GpsPosition>(
             "gps",
             "gps",
             FrameId::agent(agent.clone(), "gps"),
         );
-        let mag =
-            SensorPublishChannel::new::<MagneticField>("mag", "mag", FrameId::agent(agent, "mag"));
+        let mag = SensorPublishChannel::new::<MagneticField>(
+            "mag",
+            "mag",
+            FrameId::agent(agent.clone(), "mag"),
+        );
         let sensors = vec![gps.description().clone(), mag.description().clone()];
 
-        let caps = build_host_body_capabilities(sensors.clone(), &ActuationModel::default());
+        let caps =
+            build_host_body_capabilities(&agent, sensors.clone(), &ActuationModel::default());
 
-        let expected: Vec<BodyChannel> =
-            oracle_body_channels().into_iter().chain(sensors).collect();
+        let expected: Vec<BodyChannel> = truth_body_channels(&agent)
+            .into_iter()
+            .chain(sensors)
+            .collect();
         assert_eq!(caps.publishes, expected);
     }
 }

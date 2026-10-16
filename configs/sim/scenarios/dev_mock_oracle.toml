@@ -8,9 +8,9 @@
 #
 # What to verify when running this:
 #   1. DAG dump at startup lists `primary` as the mock oracle node.
-#   2. F10 oracle-pose gizmo lights up — consumer-side declaration of
-#      oracle/pose is what allocates the bus slot the publisher writes to.
-#   3. `\` bus dump shows `oracle/pose`, `oracle/twist`,
+#   2. The mock's declaration of `truth.tf` is what allocates the bus slot
+#      the truth rig writes `base_link`'s instance to.
+#   3. `\` bus dump shows `truth.tf`, `truth.twist`,
 #      `FrameAwareState @ primary` (the mock's output) and
 #      `FrameAwareState @ estimate` (the relay's) all `[set]`.
 #   4. The TF tree shows `odom → base_link`, published by the estimate relay.

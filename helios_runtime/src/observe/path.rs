@@ -76,7 +76,7 @@ impl<'a> AgentPathParts<'a> {
     /// one [level](helios_core::kernel::identifier::is_level); the build
     /// refuses names that aren't. A leaf and a channel may hold dots: a
     /// leaf a node declared (`aiding.gps.nis`) or a channel's name
-    /// (`oracle.pose`).
+    /// (`truth.tf`).
     pub fn join(&self) -> String {
         let mut parts = vec![AGENT_SCOPE, self.agent, self.subject.word()];
         match self.subject {
@@ -185,8 +185,8 @@ mod tests {
     #[test]
     fn channel_path_spells_the_channel_by_its_name() {
         assert_eq!(
-            channel_path("car", &channel_named::<f64>("oracle.pose")),
-            "agent.car.channel.oracle.pose"
+            channel_path("car", &channel_named::<f64>("truth.tf")),
+            "agent.car.channel.truth.tf"
         );
     }
 
@@ -208,14 +208,14 @@ mod tests {
 
     #[test]
     fn split_takes_back_what_channel_path_joined() {
-        let path = channel_path("car", &channel_named::<f64>("oracle.pose"));
+        let path = channel_path("car", &channel_named::<f64>("truth.tf"));
 
         assert_eq!(
             AgentPathParts::split(&path),
             Ok(AgentPathParts {
                 agent: "car",
                 subject: PathSubject::Channel {
-                    channel: "oracle.pose",
+                    channel: "truth.tf",
                 },
             })
         );
@@ -252,7 +252,7 @@ mod tests {
             "agent.car",
             "agent.car..estimator.nis",
             "agent.car.estimator.nis",
-            "agent.car.body.oracle.pose",
+            "agent.car.body.truth.tf",
         ] {
             assert_eq!(
                 AgentPathParts::split(path),

@@ -60,7 +60,7 @@ mod tests {
 
     #[test]
     fn a_dotted_name_is_one_or_more_levels() {
-        for name in ["estimate", "oracle.pose", "sensor.gps.front_left"] {
+        for name in ["estimate", "truth.tf", "sensor.gps.front_left"] {
             assert!(is_dotted_name(name), "{name} should pass");
         }
     }

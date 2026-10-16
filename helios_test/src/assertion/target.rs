@@ -143,12 +143,12 @@ mod tests {
 
     #[test]
     fn parse_keeps_a_channel_target() {
-        let target = AssertionTarget::parse("agent.car.channel.oracle.pose").expect("valid target");
+        let target = AssertionTarget::parse("agent.car.channel.truth.tf").expect("valid target");
 
         assert_eq!(
             target.subject(),
             &TargetSubject::Channel {
-                channel: "oracle.pose".into(),
+                channel: "truth.tf".into(),
             }
         );
     }

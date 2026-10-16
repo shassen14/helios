@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use helios_runtime::channels::{control, estimate, oracle_pose_channel, oracle_twist_channel};
+use helios_runtime::channels::{control, estimate, truth_tf, truth_twist};
 use helios_runtime::port::ChannelKey;
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
@@ -20,6 +20,7 @@ use helios_core::estimation::carrier::kinematic_carrier_schema;
 use helios_core::estimation::frames::EstimationFrames;
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::measurement::sensor::MagneticField;
+use helios_core::interchange::motion::StampedTwist;
 use helios_core::interchange::path::{Path, PlannerGoal};
 use helios_core::interchange::perception::map::MapData;
 use helios_core::prelude::{
@@ -30,6 +31,8 @@ use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::quantities::{FluVector, FreeVector};
 use helios_core::spatial::state::{Component, Quantity};
+use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+use helios_core::spatial::transforms::{Convention, ErasedTransform};
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 use nalgebra::{Isometry3, Vector3};
@@ -85,6 +88,8 @@ const IMU_UNIT: &str = "imu";
 const IMU_MOUNT: &str = "imu_link";
 /// The unit every lidar channel in this file comes from.
 const LIDAR_UNIT: &str = "lidar";
+/// The frame every lidar channel in this file is mounted at.
+const LIDAR_MOUNT: &str = "lidar";
 /// The unit every magnetometer channel in this file comes from.
 const MAG_UNIT: &str = "mag";
 /// The unit the oracle state and reference channels come from.
@@ -100,14 +105,17 @@ fn measurement_channel<P: Send + Sync + 'static>(name: &str, unit: &str) -> Body
     )
 }
 
-/// A lidar's point-cloud channel, the kind a mapper reads.
-fn cloud(name: &str) -> BodyChannel {
+/// A lidar's point-cloud channel on `agent`, the kind a mapper reads. The
+/// mapper reads its mount through the tf tree, so it is mounted.
+fn cloud(agent: &AgentId, name: &str) -> BodyChannel {
     measurement_channel::<PointCloud<Flu>>(name, LIDAR_UNIT)
+        .with_mount(FrameId::agent(agent.clone(), LIDAR_MOUNT))
 }
 
-/// A lidar's range-field channel, the kind a deproject node reads.
-fn range_field(name: &str) -> BodyChannel {
+/// A lidar's range-field channel on `agent`, the kind a deproject node reads.
+fn range_field(agent: &AgentId, name: &str) -> BodyChannel {
     measurement_channel::<RangeField<Flu>>(name, LIDAR_UNIT)
+        .with_mount(FrameId::agent(agent.clone(), LIDAR_MOUNT))
 }
 
 /// The IMU channels the IMU-EKF fixtures in this file predict from, mounted on
@@ -310,7 +318,7 @@ fn nodes_are_named_by_their_config_key_not_their_kind() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![cloud("scan")],
+            vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
     )
     .expect("estimator + grid stack must build");
@@ -348,7 +356,10 @@ fn two_grids_publish_to_distinct_channels() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![cloud("scan.near"), cloud("scan.far")],
+            vec![
+                cloud(&AgentId::new("test_agent"), "scan.near"),
+                cloud(&AgentId::new("test_agent"), "scan.far"),
+            ],
         )),
     )
     .expect("two grids under distinct keys must build");
@@ -1012,7 +1023,7 @@ fn planner_without_a_map_fails_the_build_naming_it() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![cloud("scan")],
+            vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
     ) else {
         panic!("a planner with no map must not build");
@@ -1055,7 +1066,7 @@ fn follower_reads_the_path_of_the_planner_its_section_names() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![cloud("scan")],
+            vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
     );
     assert!(
@@ -1079,7 +1090,7 @@ fn follower_naming_no_planner_fails_the_build_naming_it() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![cloud("scan")],
+            vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
     ) else {
         panic!("a follower naming no planner must not build");
@@ -1121,7 +1132,7 @@ fn teleop_preferred_over_a_follower_wins_the_reference_while_fresh() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![cloud("scan")],
+            vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
     )
     .expect("a follower and teleop sharing the seam must build");
@@ -1388,7 +1399,11 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(vec![range_field(input)]),
+        // Unmounted: the deproject node reads no mount, so the field may
+        // name any sensor.
+        body_publishing(vec![measurement_channel::<RangeField<Flu>>(
+            input, LIDAR_UNIT,
+        )]),
     )
     .expect("a lone deproject node over a host channel must build");
 
@@ -1495,7 +1510,7 @@ fn mapper_reads_a_deprojected_channel_the_host_does_not_publish() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![range_field("lidar")],
+            vec![range_field(&AgentId::new("test_agent"), "lidar")],
         )),
     )
     .expect("a mapper reading a deprojected channel must build");
@@ -1529,7 +1544,7 @@ fn mapper_reading_an_unpublished_channel_fails_the_build() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![range_field("lidar")],
+            vec![range_field(&AgentId::new("test_agent"), "lidar")],
         )),
     )
     .err()
@@ -1559,7 +1574,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
     };
     let body = body_publishing(vec![
         BodyChannel::new(state_key.clone(), TRUTH_UNIT, Provenance::Exact),
-        range_field("lidar"),
+        range_field(&agent, "lidar"),
     ]);
 
     let pipeline = build_pipeline(&stack, &AutonomyRegistry::default(), agent.clone(), body)
@@ -1585,11 +1600,11 @@ fn mapper_builds_a_map_from_a_host_range_field() {
         .expect("the state slot must exist");
     pipeline
         .bus()
-        .write(
+        .write_mounted(
             ChannelKey::measurement::<Vec<SensorReading<RangeField<Flu>>>>("lidar"),
             Stamped {
                 value: vec![SensorReading {
-                    sensor: FrameId::agent(agent, "lidar"),
+                    sensor: FrameId::agent(agent, LIDAR_MOUNT),
                     timestamp: now,
                     data: two_return_field(),
                 }],
@@ -1761,7 +1776,7 @@ fn planner_goals_are_declared_once_per_goal_channel() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![cloud("scan")],
+            vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
     )
     .expect("a stack of planners over a declared grid must build");
@@ -1814,7 +1829,7 @@ fn stack_without_planner_or_teleop_declares_no_outside_inputs() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![cloud("scan")],
+            vec![cloud(&AgentId::new("test_agent"), "scan")],
         )),
     )
     .expect("an estimator and a mapper must build");
@@ -1853,8 +1868,10 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
         vec![
             measurement_channel::<MagneticField>("mag.primary", MAG_UNIT)
                 .with_mount(FrameId::agent(agent.clone(), "mag.primary")),
-            BodyChannel::new(oracle_pose_channel(), TRUTH_UNIT, Provenance::Exact),
-            BodyChannel::new(oracle_twist_channel(), TRUTH_UNIT, Provenance::Exact),
+            BodyChannel::new(truth_tf(), TRUTH_UNIT, Provenance::Exact)
+                .with_instances::<StampedTransform>([FrameId::base_link(agent.clone())]),
+            BodyChannel::new(truth_twist(), TRUTH_UNIT, Provenance::Exact)
+                .with_instances::<StampedTwist<Flu>>([FrameId::base_link(agent.clone())]),
         ],
     ));
     let pipeline = build_pipeline(&stack, &AutonomyRegistry::default(), agent.clone(), body)
@@ -1866,16 +1883,25 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
 
     pipeline
         .bus()
-        .write(
-            oracle_pose_channel(),
+        .write_keyed(
+            truth_tf(),
             Stamped {
-                value: Isometry3::<f64>::identity(),
+                value: StampedTransform {
+                    parent: FrameId::global("datum"),
+                    child: FrameId::base_link(agent.clone()),
+                    stamp: MonotonicTime(0.0),
+                    transform: ErasedTransform::from_parts(
+                        Isometry3::identity(),
+                        Convention::Flu,
+                        Convention::Enu,
+                    ),
+                },
                 timestamp: MonotonicTime(0.0),
                 health: Health::Ok,
                 producer: HOST_PRODUCER_ID,
             },
         )
-        .expect("the oracle pose slot exists");
+        .expect("the body's truth.tf instance exists");
     pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
     let estimate = pipeline

@@ -1,8 +1,9 @@
 //! Mounts, the frame each channel's values are measured in, stated by the
 //! channel's writer: the body's checked against the agent, each node output's
 //! [`MountRule`] checked against the node's inputs, the rules resolved down
-//! the graph in level order, and [`InputMounts`], the mounts of one node's
-//! inputs that a planned node is built with.
+//! the graph in level order, each mount a node reads through the tf tree
+//! checked to exist, and [`InputMounts`], the mounts of one node's inputs
+//! that a planned node is built with.
 
 use super::declaration::NodeDeclaration;
 
@@ -16,7 +17,10 @@ use helios_core::prelude::AgentId;
 use helios_core::spatial::id::FrameScope;
 use helios_core::spatial::FrameId;
 
-use std::{collections::HashMap, error::Error};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+};
 
 /// The mounts of one planned node's declared inputs, as their writers state
 /// them. The builder hands it to the node's constructor once the graph is
@@ -201,12 +205,43 @@ pub(super) fn resolve_mounts(
         .collect()
 }
 
+/// Every input a node reads the mount of through the tf tree must have a
+/// mount once `descriptions` are resolved. Without one, the node would look up
+/// whatever frame each value names: nothing checks an unmounted channel's
+/// values against a frame, and the host checks only stated mounts for reach
+/// and axes. Reported once per node and channel.
+pub(super) fn check_mount_readings(
+    levels: &[Vec<(NodeId, NodeDeclaration)>],
+    descriptions: &[ChannelDescription],
+    errors: &mut Vec<PipelineBuildError>,
+) {
+    let mounted: HashSet<&ChannelKey> = descriptions
+        .iter()
+        .filter(|description| description.mount().is_some())
+        .map(ChannelDescription::key)
+        .collect();
+    for (_, node) in levels.iter().flatten() {
+        let mut reported: HashSet<&ChannelKey> = HashSet::new();
+        for reading in node.port_descriptor().mount_readings() {
+            let channel = reading.channel();
+            if !mounted.contains(channel) && reported.insert(channel) {
+                errors.push(PipelineBuildError::MountReadWithoutMount {
+                    node_name: node.name().to_string(),
+                    channel: channel.clone(),
+                });
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::port::{ChannelKey, PortDescriptorBuilder, Provenance};
     use crate::BodyChannel;
+
+    use helios_core::spatial::transforms::Convention;
 
     const AGENT: &str = "car";
     const OTHER_AGENT: &str = "truck";
@@ -350,6 +385,49 @@ mod tests {
         assert_eq!(
             mounts,
             [Some(&lidar), None, None, Some(&lidar), Some(&lidar), None]
+        );
+    }
+
+    /// A node reading `channel`'s mount through the tree in both FLU and ENU.
+    fn mount_reader(name: &str, channel: &str) -> NodeDeclaration {
+        let channel = sensor(channel);
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .input(channel.clone())
+            .reads_mount_in(&channel, Convention::Flu)
+            .reads_mount_in(&channel, Convention::Enu)
+            .build();
+        planned(name, descriptor)
+    }
+
+    /// A node reading the mount of a mounted input passes; one reading the
+    /// mount of an unmounted input is refused once, however many axes it
+    /// reads it in.
+    #[test]
+    fn a_mount_read_through_the_tree_must_exist() {
+        let levels = vec![vec![
+            (0, mount_reader("mapper", "lidar")),
+            (1, mount_reader("tracker", "radar")),
+        ]];
+        let descriptions = [
+            body("lidar", Some(FrameId::agent(agent(), "lidar"))),
+            body("radar", None),
+        ];
+
+        let mut errors = vec![];
+        check_mount_readings(&levels, &descriptions, &mut errors);
+
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        let PipelineBuildError::MountReadWithoutMount { node_name, channel } = &errors[0] else {
+            panic!("unexpected error {}", errors[0]);
+        };
+        assert_eq!((node_name.as_str(), channel), ("tracker", &sensor("radar")));
+        assert_eq!(
+            errors[0].to_string(),
+            format!(
+                "node \"tracker\" reads the mount of {radar} through the tf tree, but no writer \
+                 of {radar} states a mount",
+                radar = sensor("radar")
+            )
         );
     }
 

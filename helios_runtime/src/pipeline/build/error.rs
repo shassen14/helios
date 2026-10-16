@@ -122,6 +122,14 @@ pub enum PipelineBuildError {
         output: ChannelKey,
         input: ChannelKey,
     },
+    /// A node resolves the mount of an input through the tf tree, but no
+    /// writer of that input states a mount, so the node would look up
+    /// whatever frame each value names, unchecked: the header check and the
+    /// host's reach and convention checks pass over an unmounted channel.
+    MountReadWithoutMount {
+        node_name: String,
+        channel: ChannelKey,
+    },
     /// A node's name is not one level: empty, or holding something other
     /// than ASCII letters, digits and `_`. The name fills one part of every
     /// watcher path under the node (`agent.<agent>.node.<node>.<leaf>`), and
@@ -349,6 +357,13 @@ impl std::fmt::Display for PipelineBuildError {
                     f,
                     "node \"{node_name}\" mounts output {output} at the mount of {input}, which \
                      it does not read in the same tick"
+                )
+            }
+            PipelineBuildError::MountReadWithoutMount { node_name, channel } => {
+                write!(
+                    f,
+                    "node \"{node_name}\" reads the mount of {channel} through the tf tree, but \
+                     no writer of {channel} states a mount"
                 )
             }
             PipelineBuildError::MalformedNodeName { name } => {

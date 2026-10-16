@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     fn a_channel_target_is_unreported() {
-        let channel = AssertionTarget::parse(format!("agent.{CAR}.channel.oracle.pose"))
+        let channel = AssertionTarget::parse(format!("agent.{CAR}.channel.truth.tf"))
             .expect("channel target");
 
         assert_eq!(

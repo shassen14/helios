@@ -22,4 +22,4 @@ pub mod simulation_setup;
 pub mod spawn_requests;
 pub mod transforms;
 
-pub use ground_truth::{ground_truth_sync_system, publish_oracle_channels_system};
+pub use ground_truth::{ground_truth_sync_system, publish_truth_channels_system};

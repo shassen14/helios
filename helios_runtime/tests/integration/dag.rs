@@ -14,6 +14,7 @@ use helios_core::spatial::transforms::tf::stamped::StampedTransform;
 use helios_core::spatial::transforms::Convention;
 use helios_runtime::{
     channels::tf::tf,
+    channels::truth_tf,
     pipeline::{
         ChannelUses, CycleEdge, MountLookupError, NodePlan, PipelineBuildError, PipelineBuilder,
         ReadMount,
@@ -1563,6 +1564,49 @@ fn a_keyed_output_without_instances_is_refused() {
         ),
         "{errors:?}"
     );
+}
+
+/// The body states the instances of its keyed channels as a node does, and
+/// is judged alike: a truth rig naming no frames is refused, naming the unit.
+#[test]
+fn a_keyed_body_channel_without_instances_is_refused() {
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(Box::new(SinkNode::new("mock_oracle", truth_tf())))
+        .with_body_capabilities(BodyCapabilities {
+            publishes: vec![BodyChannel::new(truth_tf(), BODY_UNIT, Provenance::Exact)],
+            ..Default::default()
+        })
+        .build();
+    let Err(errors) = result else {
+        panic!("the truth rig names no instances");
+    };
+
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::KeyedWithoutInstances {
+                channel,
+                writer: Writer::Body { unit, .. },
+            }] if *channel == truth_tf() && unit == BODY_UNIT
+        ),
+        "{errors:?}"
+    );
+}
+
+/// A keyed body channel stating its instances builds.
+#[test]
+fn a_keyed_body_channel_with_instances_builds() {
+    let base_link = FrameId::base_link(AgentId::new(AGENT));
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(Box::new(SinkNode::new("mock_oracle", truth_tf())))
+        .with_body_capabilities(BodyCapabilities {
+            publishes: vec![BodyChannel::new(truth_tf(), BODY_UNIT, Provenance::Exact)
+                .with_instances::<StampedTransform>([base_link])],
+            ..Default::default()
+        })
+        .build();
+
+    assert!(result.is_ok(), "{:?}", result.err());
 }
 
 /// A loop through each of two writers of one keyed channel reports both

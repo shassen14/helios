@@ -1,7 +1,7 @@
 // `[nodes]` integration tests: entries built through registered factories by
 // build_pipeline, using only the public API.
 
-use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
+use helios_runtime::channels::{truth_tf, truth_twist};
 use helios_runtime::port::{ChannelKey, PortBus, PortDescriptorBuilder};
 use helios_runtime::{
     build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
@@ -10,8 +10,10 @@ use helios_runtime::{
 };
 
 use helios_core::interchange::measurement::envelope::SensorReading;
+use helios_core::interchange::motion::StampedTwist;
 use helios_core::prelude::{Acceleration, AgentId, AngularRate, PointCloud, TfProvider};
 use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::transforms::tf::stamped::StampedTransform;
 use helios_core::spatial::FrameId;
 
 use serde::{Deserialize, Serialize};
@@ -24,7 +26,8 @@ const TEST_KIND: &str = "TestCloudSource";
 type CloudBatch = Vec<SensorReading<PointCloud<Flu>>>;
 
 /// A node that writes one point-cloud measurement channel and optionally reads
-/// another. It never runs; these tests only build pipelines.
+/// another, writing at its mount. It never runs; these tests only build
+/// pipelines.
 struct CloudSourceNode {
     name: String,
     descriptor: PortDescriptor,
@@ -55,12 +58,16 @@ fn build_cloud_source(
     config: CloudSourceConfig,
     ctx: &BuildContext<'_>,
 ) -> Result<FactoryOutput, String> {
-    let mut ports = PortDescriptorBuilder::algorithm().output(
-        ChannelKey::measurement::<CloudBatch>(config.output.as_str()),
-    );
-    if let Some(input) = &config.input {
-        ports = ports.input(ChannelKey::measurement::<CloudBatch>(input.as_str()));
-    }
+    let output = ChannelKey::measurement::<CloudBatch>(config.output.as_str());
+    let ports = match &config.input {
+        Some(input) => {
+            let input = ChannelKey::measurement::<CloudBatch>(input.as_str());
+            PortDescriptorBuilder::algorithm()
+                .input(input.clone())
+                .output_at_mount_of(output, input)
+        }
+        None => PortDescriptorBuilder::algorithm().output(output),
+    };
     Ok(FactoryOutput::new(Box::new(CloudSourceNode {
         name: ctx.node_name().to_string(),
         descriptor: ports.build(),
@@ -89,6 +96,8 @@ const LIDAR_UNIT: &str = "lidar";
 const IMU_UNIT: &str = "imu";
 /// The frame the IMU is mounted at.
 const IMU_MOUNT: &str = "imu_link";
+/// The frame the lidar is mounted at.
+const LIDAR_MOUNT: &str = "lidar";
 /// The unit the oracle channels come from.
 const TRUTH_UNIT: &str = "truth";
 
@@ -222,10 +231,69 @@ fn a_nodes_entry_reading_an_unpublished_channel_fails_the_build() {
 
 #[test]
 fn a_nodes_entry_reads_a_channel_another_derives() {
-    // The body publishes only the IMU. The grid's scan channel is written by
-    // another `[nodes]` entry, so it needs no body channel, and the producer
-    // is ordered ahead of the grid. The grid sorts first by name, so it is
+    // The body publishes the IMU and a lidar. The grid's scan channel is
+    // written by another `[nodes]` entry at the lidar's mount, so it needs no
+    // body channel, and the producer is ordered ahead of the grid. The grid sorts first by name, so it is
     // built before its producer; the build must not depend on that order.
+    let stack = AutonomyStackConfig {
+        estimate: Some(EstimateSeamConfig {
+            source: "nav_ekf".to_string(),
+        }),
+        ..stack_with_nodes(&format!(
+            r#"
+            [nodes.nav_ekf]
+            kind = "RecursiveEstimator"
+            filter = {{ kind = "Ekf" }}
+            dynamics = {{ kind = "IntegratedImu", accel_channel = "imu.accel", gyro_channel = "imu.gyro", accel_noise_stddev = 0.1, gyro_noise_stddev = 0.01, accel_bias_instability = 0.001, gyro_bias_instability = 0.0001 }}
+
+            [nodes.grid]
+            kind = "OccupancyGrid2D"
+            rate = 5.0
+            resolution = 0.1
+            scan_channel = "lidar.points"
+            width_m = 10.0
+            height_m = 10.0
+
+            [nodes.scan_source]
+            kind = "{TEST_KIND}"
+            input = "lidar"
+            output = "lidar.points"
+            "#
+        ))
+    };
+
+    let agent = AgentId::new("test_agent");
+    let mount = FrameId::agent(agent.clone(), IMU_MOUNT);
+    let body = BodyCapabilities {
+        publishes: vec![
+            measurement_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
+            measurement_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
+            measurement_channel::<PointCloud<Flu>>("lidar", LIDAR_UNIT)
+                .with_mount(FrameId::agent(agent, LIDAR_MOUNT)),
+        ],
+        ..Default::default()
+    };
+    let pipeline = build(&stack, body).expect("a grid reading another node's output must build");
+
+    let order = node_names(&pipeline);
+    let position = |node: &str| {
+        order
+            .iter()
+            .position(|name| *name == node)
+            .unwrap_or_else(|| panic!("node `{node}` missing from {order:?}"))
+    };
+    assert!(
+        position("scan_source") < position("grid"),
+        "the source must run before the grid that reads it, got {order:?}"
+    );
+}
+
+#[test]
+fn a_grid_reading_an_unmounted_cloud_fails_the_build() {
+    // A node writing clouds with no mount, as one re-expressing points
+    // elsewhere would: the grid would ray-cast from whatever frame each
+    // reading names, unchecked, so the build refuses it, naming the grid and
+    // the channel.
     let stack = AutonomyStackConfig {
         estimate: Some(EstimateSeamConfig {
             source: "nav_ekf".to_string(),
@@ -253,26 +321,25 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
     };
 
     let mount = FrameId::agent(AgentId::new("test_agent"), IMU_MOUNT);
-    let imu = BodyCapabilities {
+    let body = BodyCapabilities {
         publishes: vec![
             measurement_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
             measurement_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
         ],
         ..Default::default()
     };
-    let pipeline = build(&stack, imu).expect("a grid reading another node's output must build");
+    let errors = build_err(&stack, body);
 
-    let order = node_names(&pipeline);
-    let position = |node: &str| {
-        order
-            .iter()
-            .position(|name| *name == node)
-            .unwrap_or_else(|| panic!("node `{node}` missing from {order:?}"))
-    };
-    assert!(
-        position("scan_source") < position("grid"),
-        "the source must run before the grid that reads it, got {order:?}"
-    );
+    let refused: Vec<String> = build_errors(&errors)
+        .iter()
+        .filter_map(|error| match error {
+            PipelineBuildError::MountReadWithoutMount { node_name, channel } => {
+                Some(format!("{node_name} {}", channel.name()))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(refused, ["grid lidar.points"], "got {errors:?}");
 }
 
 #[test]
@@ -367,15 +434,18 @@ fn build_on(body: BodyCapabilities) -> Result<AutonomyPipeline, Vec<PipelineAsse
 
 #[test]
 fn a_mock_oracle_entry_builds_on_a_body_with_truth() {
+    let body = FrameId::base_link(AgentId::new("test_agent"));
     let truth = BodyCapabilities {
-        publishes: [oracle_pose_channel(), oracle_twist_channel()]
-            .into_iter()
-            .map(|key: ChannelKey| BodyChannel::new(key, TRUTH_UNIT, Provenance::Exact))
-            .collect(),
+        publishes: vec![
+            BodyChannel::new(truth_tf(), TRUTH_UNIT, Provenance::Exact)
+                .with_instances::<StampedTransform>([body.clone()]),
+            BodyChannel::new(truth_twist(), TRUTH_UNIT, Provenance::Exact)
+                .with_instances::<StampedTwist<Flu>>([body]),
+        ],
         ..Default::default()
     };
 
-    let pipeline = build_on(truth).expect("a body publishing oracle truth must build");
+    let pipeline = build_on(truth).expect("a body publishing truth must build");
 
     assert!(node_names(&pipeline).contains(&"primary"));
 }
@@ -386,7 +456,7 @@ fn a_mock_oracle_entry_is_refused_on_a_body_without_truth() {
     // like any other node: oracle truth only reaches a node through the body.
     let errors = build_on(BodyCapabilities::default())
         .err()
-        .expect("a body without oracle.pose must refuse the mock");
+        .expect("a body without truth.tf must refuse the mock");
 
     assert!(
         errors.iter().any(|e| matches!(

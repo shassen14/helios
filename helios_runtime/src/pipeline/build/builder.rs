@@ -5,7 +5,7 @@
 
 use super::{
     declaration::{NodeDeclaration, NodePlan},
-    mounts::resolve_mounts,
+    mounts::{check_mount_readings, resolve_mounts},
     ordering::order_into_levels,
     wiring::check_wiring,
 };
@@ -175,9 +175,12 @@ impl PipelineBuilder {
     ///    - [`PipelineBuildError::StuckWithoutCycle`] — the sort stopped but
     ///      found no loop, which means a bug in the build.
     /// 3. Construction, run only when ordering succeeds. Each node output's
-    ///    mount is resolved from its rule in level order, then every plan is
+    ///    mount is resolved from its rule in level order, every mount a node
+    ///    reads through the tf tree is checked to exist, then every plan is
     ///    built from its declared ports and its inputs' mounts, level by
     ///    level.
+    ///    - [`PipelineBuildError::MountReadWithoutMount`] — a node reads the
+    ///      mount of an input no writer states a mount for.
     ///    - [`PipelineBuildError::ConstructionFailed`] — a plan's constructor
     ///      failed.
     ///    - [`PipelineBuildError::ConstructedNodeMisnamed`] — a plan built a
@@ -208,6 +211,11 @@ impl PipelineBuilder {
 
         let levels = order_into_levels(self.nodes, produced)?;
         let descriptions = resolve_mounts(&levels, descriptions);
+        let mut errors = vec![];
+        check_mount_readings(&levels, &descriptions, &mut errors);
+        if !errors.is_empty() {
+            return Err(errors);
+        }
 
         // The bus holds the channels nodes use. A channel the body offers
         // but no node reads has no slot, so the host's write to it returns

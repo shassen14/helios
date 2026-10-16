@@ -15,8 +15,8 @@
 //! [`MountRule`](crate::port::MountRule), which the builder resolves once the
 //! graph is ordered. An outside input has none.
 //!
-//! A writer of a keyed channel also states the instances it writes: a node on
-//! its output port. Several writers may share a keyed channel, each
+//! A writer of a keyed channel also states the instances it writes: the body
+//! with the channel, a node on its output port. Several writers may share a keyed channel, each
 //! described with its own instances.
 
 use crate::body::BodyChannel;
@@ -47,7 +47,7 @@ impl ChannelDescription {
                 provenance: channel.provenance(),
             },
             mount: channel.mount().cloned(),
-            instances: Vec::new(),
+            instances: channel.instances().to_vec(),
         }
     }
 
@@ -81,7 +81,8 @@ impl ChannelDescription {
     }
 
     /// The description with `instances` as the instances of its keyed channel
-    /// the writer writes, as a node's output port declares them.
+    /// the writer writes, as a node's output port declares them. A body
+    /// channel carries its own.
     pub(crate) fn with_instances(mut self, instances: Vec<InstanceKey>) -> Self {
         self.instances = instances;
         self
@@ -202,6 +203,23 @@ mod tests {
         assert_eq!(ChannelDescription::body(&unmounted).mount(), None);
         assert_eq!(ChannelDescription::outside(key()).mount(), None);
         assert_eq!(ChannelDescription::node(key(), "ekf").mount(), None);
+    }
+
+    /// A keyed body channel's description carries the instances the host
+    /// stated, so the instance checks judge the body as they judge a node.
+    #[test]
+    fn a_body_channel_keeps_its_instances() {
+        use crate::channels::truth_tf;
+
+        use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+
+        let base_link = FrameId::base_link(AgentId::new("car"));
+        let channel = BodyChannel::new(truth_tf(), "truth_rig", Provenance::Exact)
+            .with_instances::<StampedTransform>([base_link.clone()]);
+        assert_eq!(
+            ChannelDescription::body(&channel).instances(),
+            [InstanceKey::of::<StampedTransform>(&base_link)]
+        );
     }
 
     #[test]

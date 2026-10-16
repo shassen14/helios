@@ -9,7 +9,7 @@ use super::components::GroundTruthState;
 use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 use crate::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::core::components::ConfiguredMissionGoal;
-use crate::core::ground_truth::publish_oracle_channels_system;
+use crate::core::ground_truth::publish_truth_channels_system;
 use crate::core::ground_truth_sync_system;
 use crate::core::host::TimePolicy;
 use crate::core::prng::MasterSeed;
@@ -71,7 +71,7 @@ impl Plugin for SimulationSetupPlugin {
                     .in_set(SimulationSet::Precomputation)
                     .run_if(in_state(AppState::Running)),
                 ground_truth_sync_system.in_set(SimulationSet::StateSync),
-                publish_oracle_channels_system
+                publish_truth_channels_system
                     .after(ground_truth_sync_system)
                     .in_set(SimulationSet::StateSync)
                     .run_if(in_state(AppState::Running)),
