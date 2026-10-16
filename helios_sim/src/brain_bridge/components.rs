@@ -2,7 +2,7 @@ use helios_core::prelude::{AgentId, FrameId, SensorReading};
 use helios_runtime::port::SensorChannel;
 use helios_runtime::{pipeline::AutonomyPipeline, tf_service::TfService, BodyChannel, Provenance};
 
-use bevy::prelude::{Component, Entity};
+use bevy::prelude::Component;
 
 /// Holds the fully-assembled autonomy pipeline for an agent.
 /// Written at spawn time by `spawn_autonomy_pipeline`. Ticked every frame
@@ -126,11 +126,3 @@ pub struct MissionGoalChannels(pub Vec<String>);
 
 #[derive(Component)]
 pub struct TeleopControlled;
-
-/// Marker on a virtual "odom frame" entity that links it back to its agent.
-///
-/// The odom entity carries `TrackedFrame` + `Transform` + `GlobalTransform`.
-/// Its `Transform` is updated every tick by `update_odom_frames` to match
-/// the pipeline's current pose estimate.
-#[derive(Component)]
-pub struct OdomFrameOf(pub Entity);

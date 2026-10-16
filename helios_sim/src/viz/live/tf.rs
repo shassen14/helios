@@ -17,22 +17,23 @@
 //! independently (a map→odom correction, or online-estimated extrinsics).
 //!
 //! Topology comes from the buffer's `edges()`; each frame is placed by looking
-//! it up relative to `odom`, the same tree root and ENU→Bevy path `estimate.rs`
-//! uses, so a triad lands exactly where the estimator believes the frame is.
-//! Each edge also draws a parent→child segment, so the frames read as a tree
-//! rather than a loose scatter of triads.
+//! it up relative to the estimate's root (the relay's parent, `odom`), the
+//! same tree root and ENU→Bevy path `estimate.rs` uses, so a triad lands
+//! exactly where the estimator believes the frame is. Each edge also draws a
+//! parent→child segment, so the frames read as a tree rather than a loose
+//! scatter of triads.
 //!
-//! Anchoring at `odom`, each frame draws in its own native robotics axes: the
+//! Anchoring at the root, each frame draws in its own native robotics axes: the
 //! child's convention is baked into the looked-up isometry, so the triad's arrows
 //! point where the frame actually points (RViz-style, no `<Flu, Enu>` hardcode),
 //! crossing one-sided to Bevy through `frame_triad_to_bevy`. The only assumption
-//! left is that the anchor resolves to an ENU root — which `odom` (and `map`,
-//! once SLAM lands) does. A frame whose lookup fails, or a non-ENU anchor, is
-//! skipped this pass.
+//! left is that the anchor resolves to an ENU root — which an estimator's root
+//! (and `map`, once SLAM lands) does. A frame whose lookup fails, or a non-ENU
+//! anchor, is skipped this pass.
 
 use crate::{
     core::transforms::{frame_triad_to_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3},
-    prelude::{AgentIdComponent, GroundTruthState, TfServiceComponent},
+    prelude::{AgentIdComponent, AutonomyPipelineComponent, GroundTruthState, TfServiceComponent},
     viz::interaction::{
         actions::{
             handle::{ActionHandle, ActionId},
@@ -143,20 +144,31 @@ impl TfOverlayTuning {
 
 pub fn tf_overlay_system(
     tuning: Res<TfOverlayTuning>,
-    query: Query<(&TfServiceComponent, &AgentIdComponent, &GroundTruthState), With<Selected>>,
+    query: Query<
+        (
+            &TfServiceComponent,
+            &AutonomyPipelineComponent,
+            &AgentIdComponent,
+            &GroundTruthState,
+        ),
+        With<Selected>,
+    >,
     mut gizmos: Gizmos,
 ) {
-    for (tf_service, agent_id, ground_truth) in query {
+    for (tf_service, pipeline, agent_id, ground_truth) in query {
         let agent = agent_id.0.clone();
-        let root = FrameId::odom(agent.clone());
+        // A stack naming no estimate has no root to place the tree in.
+        let Some(root) = pipeline.0.estimate_root() else {
+            continue;
+        };
         // Each non-root frame is the child of exactly one edge (single-parent
         // tree), so iterating children visits every drawable frame once — no
-        // dedup. The root (`odom`) is identity, nothing to draw. `_kind` is the
+        // dedup. The root is identity, nothing to draw. `_kind` is the
         // static/dynamic tag, unused until a full per-frame truth walk branches
         // on it (today only `base_link` carries a truth pose, below).
         for (edge, _kind) in tf_service.0.buffer().edges() {
             let Some((child_origin, child_axes)) =
-                frame_triad_in_root(tf_service.0.buffer(), &edge.child, &root)
+                frame_triad_in_root(tf_service.0.buffer(), &edge.child, root)
             else {
                 continue;
             };
@@ -165,7 +177,7 @@ pub fn tf_overlay_system(
             // Connector, drawn after the triad so a parent that fails to
             // resolve drops only the line — never the child's triad.
             if let Some(parent_origin) =
-                frame_origin_in_root(tf_service.0.buffer(), &edge.parent, &root)
+                frame_origin_in_root(tf_service.0.buffer(), &edge.parent, root)
             {
                 gizmos.line(parent_origin, child_origin, tuning.connector_color);
             }
@@ -176,9 +188,9 @@ pub fn tf_overlay_system(
         // the whole estimator error; the static mounts below repeat that rigid
         // offset and are not re-drawn from truth. Truth pose is `GroundTruthState`
         // (ENU world), the same source `pose.rs` uses, through the one sanctioned
-        // ENU→Bevy helper. While the tree is `map`-less, `odom` coincides with the
-        // world origin, so the estimated (odom-anchored) and truth (world) triads
-        // share a frame and the segment length reads as drift.
+        // ENU→Bevy helper. While the tree is `map`-less, the estimate's root
+        // coincides with the world origin, so the estimated (root-anchored) and
+        // truth (world) triads share a frame and the segment length reads as drift.
         // Ground truth is a `base_link` (FLU) pose in the ENU world, so its triad
         // crosses through the one sanctioned ENU root — the same `frame_triad_to_bevy`
         // the estimated frames take, just from `GroundTruthState` instead of a tf
@@ -200,7 +212,7 @@ pub fn tf_overlay_system(
             // passes the threshold, so a large drift reads without measuring the line.
             let base_link = FrameId::base_link(agent.clone());
             if let Some(estimate_origin) =
-                frame_origin_in_root(tf_service.0.buffer(), &base_link, &root)
+                frame_origin_in_root(tf_service.0.buffer(), &base_link, root)
             {
                 let gap = estimate_origin.distance(truth_origin);
                 let color = if diverged(gap, tuning.divergence_threshold) {

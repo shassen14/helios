@@ -119,7 +119,7 @@ pub fn gather_pose(
 }
 
 /// Packs the ego state estimate into a Section. Pure — the estimate's kinematics
-/// are already in its reference (odom) ENU frame, so unlike [`pose_section`] there
+/// are already in its root ENU frame, so unlike [`pose_section`] there
 /// is no frame conversion here; the components pass straight through tagged
 /// [`Frame::Enu`]. Position and velocity are each optional: a layout that omits one
 /// simply drops that row.

@@ -19,7 +19,7 @@
 //! — the right tradeoff for a diagnostic overlay. The projected position is the
 //! same one `tf.rs` draws the triad at, so label and triad coincide.
 
-use crate::prelude::{AgentIdComponent, TfServiceComponent};
+use crate::prelude::{AutonomyPipelineComponent, TfServiceComponent};
 use crate::viz::interaction::selection::Selected;
 use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 use crate::viz::live::tf::{frame_origin_in_root, TfOverlayVisible};
@@ -133,7 +133,7 @@ impl TfLabelTuning {
 pub(crate) fn tf_label_system(
     overlay_visible: Res<TfOverlayVisible>,
     tuning: Res<TfLabelTuning>,
-    agents: Query<(&TfServiceComponent, &AgentIdComponent), With<Selected>>,
+    agents: Query<(&TfServiceComponent, &AutonomyPipelineComponent), With<Selected>>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     mut labels: Query<(Entity, &FrameLabel, &mut Node, &mut Visibility)>,
     mut commands: Commands,
@@ -149,10 +149,12 @@ pub(crate) fn tf_label_system(
     let mut on_screen: Vec<(FrameId, Vec2)> = Vec::new();
     let mut off_screen: Vec<FrameId> = Vec::new();
     if overlay_visible.0 {
-        for (tf_service, agent_id) in &agents {
-            let root = FrameId::odom(agent_id.0.clone());
+        for (tf_service, pipeline) in &agents {
+            let Some(root) = pipeline.0.estimate_root() else {
+                continue;
+            };
             for (edge, _kind) in tf_service.0.buffer().edges() {
-                match frame_origin_in_root(tf_service.0.buffer(), &edge.child, &root)
+                match frame_origin_in_root(tf_service.0.buffer(), &edge.child, root)
                     .and_then(|origin| camera.world_to_viewport(camera_transform, origin).ok())
                 {
                     Some(viewport) => on_screen.push((edge.child, viewport + tuning.screen_offset)),

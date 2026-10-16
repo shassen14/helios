@@ -62,9 +62,9 @@ pub enum SceneBuildSet {
     SpawnPipeline,
 
     /// Pass 6: Bind host-side ECS state to the freshly-spawned pipeline — the
-    /// odom-frame entity that tracks its pose estimate and the
-    /// `ActuatorCommandComponent` the vehicle plugin drains. Both consumers only
-    /// require `AutonomyPipelineComponent` to exist (from `SpawnPipeline`) and are
+    /// `ActuatorCommandComponent` the vehicle plugin drains, and the watch set
+    /// the observation sinks asked for. Both only require
+    /// `AutonomyPipelineComponent` to exist (from `SpawnPipeline`) and are
     /// independent of each other, so they share this one pass.
     BindPipeline,
 

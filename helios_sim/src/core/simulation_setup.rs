@@ -282,9 +282,9 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
         commands.spawn((
             Name::new(format!("{}/base_link", agent_config.name())),
             // The agent's canonical frame-scope identity, built once here and read
-            // by every downstream frame producer (topology, sensors, odom,
-            // pipeline). Stamping it on the shell — before any producer runs — is
-            // what leaves no name string in scope for a producer to re-derive a
+            // by every downstream frame producer (topology, sensors, pipeline).
+            // Stamping it on the shell — before any producer runs — is what
+            // leaves no name string in scope for a producer to re-derive a
             // divergent scope from. See `AgentIdComponent`.
             AgentIdComponent(AgentId::new(agent_config.name())),
             GroundTruthState {
