@@ -9,7 +9,7 @@
 
 use crate::{
     brain_bridge::ObservationBatch,
-    prelude::{AgentIdComponent, AppState, AutonomyPipelineComponent, SimulationSet},
+    prelude::{AppState, AutonomyPipelineComponent, SimulationSet},
 };
 
 use helios_runtime::observe::{
@@ -103,7 +103,7 @@ where
 /// Runs once at scene build, after the pipelines are spawned.
 pub fn watch_requested_observables(
     request: Res<HostWatchRequest>,
-    mut pipelines: Query<(&mut AutonomyPipelineComponent, &AgentIdComponent)>,
+    mut pipelines: Query<&mut AutonomyPipelineComponent>,
 ) {
     watch_requested(&request.0, &mut pipelines);
 }
@@ -112,24 +112,23 @@ pub fn watch_requested_observables(
 ///
 /// Separate from the system so that a system run mid-run can watch a new
 /// request the same way.
-fn watch_requested(
-    request: &WatchRequest,
-    pipelines: &mut Query<(&mut AutonomyPipelineComponent, &AgentIdComponent)>,
-) {
+fn watch_requested(request: &WatchRequest, pipelines: &mut Query<&mut AutonomyPipelineComponent>) {
     let mut resolver = WatchResolver::new(request.clone());
 
-    for (mut pipeline, agent) in pipelines.iter_mut() {
+    for mut pipeline in pipelines.iter_mut() {
+        let pipeline = &mut pipeline.0;
         // The set is owned, so the borrow `observables` takes ends here,
         // before `watch` needs the pipeline mutably.
-        let set = resolver.watch_set_for(&agent.0, pipeline.0.observables());
+        let set = resolver.watch_set_for(pipeline.agent(), pipeline.observables());
 
         // Can't fail for a set resolved from the pipeline's own observables;
         // if it does, the pipeline keeps watching what it watched before.
-        if let Err(errors) = pipeline.0.watch(&set) {
+        if let Err(errors) = pipeline.watch(&set) {
             for error in errors {
                 warn!(
                     "Agent '{}' could not watch a requested observable: {}",
-                    agent.0, error
+                    pipeline.agent(),
+                    error
                 );
             }
         }
@@ -157,7 +156,7 @@ mod tests {
         spatial::transforms::ErasedTransform,
     };
     use helios_runtime::{
-        observe::{observation::AgentObservation, path::node_path},
+        observe::{observation::Observation, path::node_path},
         port::{Determinism, PortBus, PortDescriptor, PortDescriptorBuilder},
         PipelineBuilder, PipelineNode, TickContext,
     };
@@ -209,7 +208,7 @@ mod tests {
     /// Asks for `request` and keeps every batch it receives.
     struct Recording {
         request: WatchRequest,
-        received: Vec<AgentObservation>,
+        received: Vec<Observation>,
     }
 
     impl Recording {
@@ -226,7 +225,7 @@ mod tests {
             self.request.clone()
         }
 
-        fn receive(&mut self, batch: &[AgentObservation]) {
+        fn receive(&mut self, batch: &[Observation]) {
             self.received.extend_from_slice(batch);
         }
     }
@@ -246,10 +245,7 @@ mod tests {
             .add_node(Box::new(Emitting { descriptor }))
             .build()
             .expect("one node builds");
-        app.world_mut().spawn((
-            AutonomyPipelineComponent(pipeline),
-            AgentIdComponent(AgentId::new(CAR)),
-        ));
+        app.world_mut().spawn(AutonomyPipelineComponent(pipeline));
         app
     }
 
@@ -272,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn a_requested_path_reaches_the_sink_tagged_with_its_agent() {
+    fn a_requested_path_reaches_the_sink_keyed_by_its_agent() {
         let mut app = app_with_car();
         app.add_observation_sink(Recording::asking_for(&[node_path(CAR, ESTIMATOR, NIS)]));
 
@@ -283,17 +279,8 @@ mod tests {
             .expect("feed_sink runs");
 
         let received = &world.resource::<RegisteredSink<Recording>>().0.received;
-        let sources: Vec<(&str, &str, &str)> = received
-            .iter()
-            .map(|o| {
-                (
-                    o.agent.as_str(),
-                    o.observation.node.as_ref(),
-                    o.observation.leaf.as_ref(),
-                )
-            })
-            .collect();
-        assert_eq!(sources, [(CAR, ESTIMATOR, NIS)]);
+        let paths: Vec<String> = received.iter().map(|o| o.key.path()).collect();
+        assert_eq!(paths, [node_path(CAR, ESTIMATOR, NIS)]);
     }
 
     #[test]

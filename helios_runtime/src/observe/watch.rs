@@ -1,66 +1,53 @@
-//! Which declared leaves record what their nodes emit.
+//! Which subjects of one pipeline record what is emitted or written there.
 //!
-//! A watch set names leaves relative to the pipeline, as `(node, leaf)`
-//! pairs, because a pipeline doesn't know which agent runs it. A host builds
-//! one from the pipeline's catalog of observables and hands it to the
-//! pipeline between ticks.
+//! A watch set names [`Subject`]s, without the agent: a pipeline records
+//! only its own agent's values, so the agent adds nothing to a set it is
+//! handed. A host builds one from the pipeline's catalog of observables and
+//! hands it to the pipeline between ticks.
+
+use crate::{
+    observe::key::Subject,
+    port::{ChannelKey, InstanceKey},
+};
 
 use std::{collections::BTreeSet, error::Error, fmt::Display};
 
-/// The leaves a pipeline records, replaced whole each time it is set.
+/// The subjects a pipeline records, replaced whole each time it is set.
 ///
-/// The default is an empty set of leaves, which watches nothing.
+/// The default is an empty set of subjects, which watches nothing.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WatchSet {
-    /// Every leaf of every node, including nondeterministic leaves such as each
-    /// node's run duration.
+    /// Every emission of every node, including nondeterministic ones such as
+    /// each node's run duration, and every channel instance a node writes.
     Everything,
-    /// Exactly these leaves. Held in order, so the same leaf named twice is
-    /// kept once.
-    Leaves(BTreeSet<WatchedLeaf>),
+    /// Exactly these subjects. Held in order, so the same subject named twice
+    /// is kept once.
+    Subjects(BTreeSet<Subject>),
 }
 
 impl Default for WatchSet {
     fn default() -> Self {
-        Self::Leaves(BTreeSet::default())
-    }
-}
-
-/// One leaf of one node, named relative to the pipeline.
-///
-/// Ordered by node, then leaf, so a set of them groups each node's leaves
-/// together.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WatchedLeaf {
-    /// The node's name.
-    pub node: String,
-    /// The leaf the node declared, e.g. `aiding.gps.nis`.
-    pub leaf: String,
-}
-
-impl WatchedLeaf {
-    pub fn new(node: impl Into<String>, leaf: impl Into<String>) -> Self {
-        Self {
-            node: node.into(),
-            leaf: leaf.into(),
-        }
+        Self::Subjects(BTreeSet::default())
     }
 }
 
 /// Why one entry of a watch set was refused.
 ///
-/// Non-exhaustive, so later ways of naming leaves can add their own refusals.
+/// Non-exhaustive, so later ways of naming subjects can add their own
+/// refusals.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum WatchError {
     /// No node in the pipeline has this name.
     UnknownNode { node: String, leaf: String },
-    /// The node exists but declares no leaf with this name.
+    /// The node exists but declares no watchable leaf with this name.
     UndeclaredLeaf { node: String, leaf: String },
-    /// The leaf names an output on a keyed channel that the node writes
-    /// several instances of. A leaf names one series, so it can't hold them
-    /// all.
-    SeveralInstances { node: String, leaf: String },
+    /// No node writes this channel, or this instance of it. A channel only
+    /// the body or the outside world writes is not recorded yet.
+    UnrecordedChannel {
+        channel: ChannelKey,
+        instance: Option<InstanceKey>,
+    },
 }
 
 impl Display for WatchError {
@@ -72,11 +59,17 @@ impl Display for WatchError {
             Self::UndeclaredLeaf { node, leaf } => {
                 write!(f, "node \"{node}\" declares no watchable leaf \"{leaf}\"")
             }
-            Self::SeveralInstances { node, leaf } => write!(
+            Self::UnrecordedChannel {
+                channel,
+                instance: Some(instance),
+            } => write!(
                 f,
-                "node \"{node}\" writes several instances of keyed channel \"{leaf}\", and a \
-                 leaf names one series, so the channel can't be watched as a node leaf"
+                "no node writes instance \"{instance}\" of {channel}, so nothing records it"
             ),
+            Self::UnrecordedChannel {
+                channel,
+                instance: None,
+            } => write!(f, "no node writes {channel}, so nothing records it"),
         }
     }
 }

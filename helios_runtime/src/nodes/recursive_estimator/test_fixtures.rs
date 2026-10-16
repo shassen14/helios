@@ -12,6 +12,7 @@ use crate::nodes::estimation::{
     PayloadReader,
 };
 use crate::observe::buffer::NodeObservations;
+use crate::observe::key::{RecordedKey, Subject};
 use crate::observe::observation::{Observation, ObservedValue};
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, InputPort, PortBus, PortDescriptor};
@@ -337,7 +338,7 @@ pub(super) fn watching(node: &RecursiveEstimatorNode) -> NodeObservations {
         .observables()
         .iter()
         .map(|observable| observable.leaf_name().clone());
-    let mut buffer = NodeObservations::new(node.name(), leaves);
+    let mut buffer = NodeObservations::new(&agent(), node.name(), leaves);
     buffer.set_all_watched(true);
     buffer
 }
@@ -356,8 +357,10 @@ pub(super) fn drain(buffer: &NodeObservations) -> Vec<Observation> {
 /// What the `primary` node reports on `leaf` for a reading at `t`.
 pub(super) fn reported(leaf: &str, t: f64, value: f64) -> Observation {
     Observation {
-        node: "primary".into(),
-        leaf: leaf.into(),
+        key: RecordedKey {
+            agent: agent(),
+            subject: Subject::emission("primary", leaf),
+        },
         timestamp: MonotonicTime(t),
         value: ObservedValue::Scalar(value),
     }

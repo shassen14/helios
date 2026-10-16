@@ -422,9 +422,11 @@ pub enum InputTiming {
 /// [deterministic](Determinism), and the [kind of value](ObservedValueKind)
 /// it arrives as.
 ///
-/// The leaf name is relative to the node (`aiding.gps.nis`); the pipeline adds
-/// the node's name and the host adds the agent. Only the descriptor builder
-/// creates records, so every declaration goes through one place.
+/// The leaf name is relative to the node (`aiding.gps.nis`), or, for the
+/// values on a channel, the channel's name. It is a label: the pipeline's
+/// catalog pairs each record with the [`Subject`](crate::observe::key::Subject)
+/// that identifies it. Only the descriptor builder and the pipeline's
+/// catalog create records.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Observable {
     leaf_name: Arc<str>,
@@ -443,7 +445,7 @@ impl Observable {
         }
     }
 
-    /// A value that arrives as what the node wrote to `channel`.
+    /// A value that arrives as what was written to `channel`.
     pub(crate) fn typed(
         leaf_name: impl Into<Arc<str>>,
         determinism: Determinism,

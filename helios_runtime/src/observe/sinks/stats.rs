@@ -6,7 +6,7 @@
 //! nothing watched to show that watching changes nothing.
 
 use crate::observe::{
-    observation::AgentObservation,
+    observation::Observation,
     sink::{ObservationSink, WatchRequest},
 };
 
@@ -49,8 +49,8 @@ impl StatsSink {
     /// can arrive behind a later observation. One from a bucket already
     /// finished counts toward the current bucket. Buckets nothing landed in
     /// are skipped, not reported.
-    fn add(&mut self, observation: &AgentObservation) -> Option<Vec<(AgentId, f64)>> {
-        let bucket = self.bucket_of(observation.observation.timestamp);
+    fn add(&mut self, observation: &Observation) -> Option<Vec<(AgentId, f64)>> {
+        let bucket = self.bucket_of(observation.timestamp);
 
         let report = match self.bucket {
             Some(current) if bucket > current => {
@@ -69,10 +69,10 @@ impl StatsSink {
         match self
             .counts
             .iter_mut()
-            .find(|(agent, _)| *agent == observation.agent)
+            .find(|(agent, _)| *agent == observation.key.agent)
         {
             Some((_, count)) => *count += 1,
-            None => self.counts.push((observation.agent.clone(), 1)),
+            None => self.counts.push((observation.key.agent.clone(), 1)),
         }
 
         report
@@ -100,7 +100,7 @@ impl ObservationSink for StatsSink {
         WatchRequest::Everything
     }
 
-    fn receive(&mut self, batch: &[AgentObservation]) {
+    fn receive(&mut self, batch: &[Observation]) {
         for observation in batch {
             // Printing is this sink's whole output, so it logs; a node never
             // does, it emits.
@@ -117,29 +117,28 @@ impl ObservationSink for StatsSink {
 mod tests {
     use super::*;
 
-    use crate::observe::observation::{Observation, ObservedValue};
+    use crate::observe::{
+        key::{RecordedKey, Subject},
+        observation::ObservedValue,
+    };
 
     const CAR: &str = "car";
     const TRUCK: &str = "truck";
     const PERIOD: MonotonicDuration = MonotonicDuration(1.0);
 
-    fn observed(agent: &str, at: f64) -> AgentObservation {
-        AgentObservation {
-            agent: AgentId::new(agent),
-            observation: Observation {
-                node: "estimator".into(),
-                leaf: "aiding.gps.nis".into(),
-                timestamp: MonotonicTime(at),
-                value: ObservedValue::Scalar(0.0),
+    fn observed(agent: &str, at: f64) -> Observation {
+        Observation {
+            key: RecordedKey {
+                agent: AgentId::new(agent),
+                subject: Subject::emission("estimator", "aiding.gps.nis"),
             },
+            timestamp: MonotonicTime(at),
+            value: ObservedValue::Scalar(0.0),
         }
     }
 
     /// Adds each observation in turn and keeps every report that comes out.
-    fn add_all(
-        sink: &mut StatsSink,
-        observations: &[AgentObservation],
-    ) -> Vec<Vec<(AgentId, f64)>> {
+    fn add_all(sink: &mut StatsSink, observations: &[Observation]) -> Vec<Vec<(AgentId, f64)>> {
         observations
             .iter()
             .filter_map(|observation| sink.add(observation))

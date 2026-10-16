@@ -17,7 +17,10 @@
 
 /// What a channel's data is. Carried in the channel's key so the build can
 /// check who reads and writes it; the name alone still names one channel.
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+///
+/// Ordered as declared, so keys that share a name sort the same in every
+/// build.
+#[derive(Clone, Copy, Eq, PartialEq, PartialOrd, Ord, Hash, Debug)]
 pub enum ChannelKind {
     /// A measurement: what a sensor, drive or other device reports, or what
     /// a node derives from one without estimating (a range field flattened

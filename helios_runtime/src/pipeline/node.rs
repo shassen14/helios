@@ -1,11 +1,10 @@
 use crate::observe::buffer::NodeObservations;
+use crate::observe::key::RecordedKey;
 use crate::observe::observation::ObservedValue;
 use crate::port::{PortBus, PortDescriptor};
 
 use helios_core::prelude::TfProvider;
 use helios_core::spatial::primitives::MonotonicTime;
-
-use std::sync::Arc;
 
 /// One unit of computation in an [`AutonomyPipeline`].
 ///
@@ -97,11 +96,11 @@ impl<'a> TickContext<'a> {
     /// In debug builds, emitting a leaf the node didn't declare panics, naming
     /// the node and the leaf.
     pub fn emit(&self, leaf: &str, timestamp: MonotonicTime, value: f64) {
-        let Some((buffer, leaf)) = self.watched(leaf) else {
+        let Some((buffer, key)) = self.watched(leaf) else {
             return;
         };
 
-        buffer.record(leaf, timestamp, ObservedValue::Scalar(value));
+        buffer.record(key, timestamp, ObservedValue::Scalar(value));
     }
 
     /// Like [`emit`](Self::emit), but `make_value` runs only when `leaf` is
@@ -114,23 +113,23 @@ impl<'a> TickContext<'a> {
         timestamp: MonotonicTime,
         make_value: impl FnOnce() -> f64,
     ) {
-        let Some((buffer, leaf)) = self.watched(leaf) else {
+        let Some((buffer, key)) = self.watched(leaf) else {
             return;
         };
 
-        buffer.record(leaf, timestamp, ObservedValue::Scalar(make_value()));
+        buffer.record(key, timestamp, ObservedValue::Scalar(make_value()));
     }
 
-    /// The buffer and stored leaf name to record into, if this context has a
+    /// The buffer and the leaf's key to record into, if this context has a
     /// buffer and `leaf` is watched in it.
     ///
     /// Checks that `leaf` is declared before asking whether it is watched, so
     /// an undeclared emit is caught even when nothing on the node is watched.
-    fn watched(&self, leaf: &str) -> Option<(&'a NodeObservations, Arc<str>)> {
+    fn watched(&self, leaf: &str) -> Option<(&'a NodeObservations, RecordedKey)> {
         let buffer = self.observations?;
         buffer.assert_declared(leaf);
-        let leaf = buffer.watched_leaf(leaf)?;
-        Some((buffer, leaf))
+        let key = buffer.watched_leaf(leaf)?;
+        Some((buffer, key))
     }
 }
 
@@ -152,10 +151,13 @@ pub const HOST_PRODUCER_ID: NodeId = NodeId::MAX;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observe::observation::Observation;
+    use crate::observe::{key::Subject, observation::Observation};
+
+    use helios_core::prelude::AgentId;
 
     use std::cell::Cell;
 
+    const AGENT: &str = "car";
     const NODE: &str = "estimator";
     const NODE_ID: NodeId = 0;
     const NIS: &str = "aiding.gps.nis";
@@ -163,7 +165,7 @@ mod tests {
     const DT: f64 = 0.01;
 
     fn buffer(watched: bool) -> NodeObservations {
-        let mut buffer = NodeObservations::new(NODE, [NIS]);
+        let mut buffer = NodeObservations::new(&AgentId::new(AGENT), NODE, [NIS]);
         buffer.set_watched(NIS, watched);
         buffer
     }
@@ -180,8 +182,10 @@ mod tests {
 
     fn observation(t: f64, value: f64) -> Observation {
         Observation {
-            node: NODE.into(),
-            leaf: NIS.into(),
+            key: RecordedKey {
+                agent: AgentId::new(AGENT),
+                subject: Subject::emission(NODE, NIS),
+            },
             timestamp: MonotonicTime(t),
             value: ObservedValue::Scalar(value),
         }

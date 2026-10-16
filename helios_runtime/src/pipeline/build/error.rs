@@ -164,29 +164,10 @@ pub enum PipelineBuildError {
     /// every node. Refused even when the pipeline doesn't add that leaf yet,
     /// so adding one later never breaks a node.
     ReservedObservable { node_name: String, leaf: String },
-    /// A node's output channel watches at a path in the pipeline's own group
-    /// ([`PIPELINE_LEAF_GROUP`]), such as a channel named `tick.duration`.
-    /// Refused like a declared leaf there, so the pipeline's leaves never
-    /// share a path with a channel.
-    ReservedOutputPath {
-        node_name: String,
-        channel: ChannelKey,
-        segment: String,
-    },
     /// A node declares the same watchable leaf more than once, so a
     /// watcher's path would point at two values. Reported once per leaf per
     /// node.
     DuplicateObservable { node_name: String, leaf: String },
-    /// A node declares a leaf that has the same path as one of its own output
-    /// channels: under `agent.<agent>.node.<node>`, `leaf` and the channel's
-    /// name are the same string, so a watcher or an assertion target
-    /// would name two things. Only an exact match is refused; a shared
-    /// dotted prefix (`estimate` beside `estimate.cov`) is a group.
-    ObservableCollidesWithOutput {
-        node_name: String,
-        leaf: String,
-        channel: ChannelKey,
-    },
     /// The level sort stopped with nodes left but no loop was found among
     /// them. Wiring and ordering together rule this out, so it means a bug in
     /// the build, not a mistake in the pipeline's configuration. `nodes`
@@ -406,34 +387,11 @@ impl std::fmt::Display for PipelineBuildError {
                      node — use another name"
                 )
             }
-            PipelineBuildError::ReservedOutputPath {
-                node_name,
-                channel,
-                segment,
-            } => {
-                write!(
-                    f,
-                    "node \"{node_name}\" writes channel {channel}, which watchers would ask \
-                     for at \"{segment}\", in the \"{PIPELINE_LEAF_GROUP}\" group the pipeline \
-                     owns — rename the channel"
-                )
-            }
             PipelineBuildError::DuplicateObservable { node_name, leaf } => {
                 write!(
                     f,
                     "node \"{node_name}\" declares watchable leaf \"{leaf}\" more than once — \
                      each leaf names one value"
-                )
-            }
-            PipelineBuildError::ObservableCollidesWithOutput {
-                node_name,
-                leaf,
-                channel,
-            } => {
-                write!(
-                    f,
-                    "node \"{node_name}\" declares watchable leaf \"{leaf}\", which is also \
-                     the path of its output channel {channel} — rename the leaf or the channel"
                 )
             }
             PipelineBuildError::StuckWithoutCycle { nodes } => {

@@ -7,7 +7,8 @@ use crate::{collector::ObservationCollector, run::Run};
 use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
 use helios_runtime::{
     observe::{
-        observation::{AgentObservation, Observation, ObservedValue},
+        key::{RecordedKey, Subject},
+        observation::{Observation, ObservedValue},
         path::node_path,
         sink::ObservationSink,
     },
@@ -162,14 +163,13 @@ pub(super) fn report_unreadable(collector: &mut ObservationCollector, agent: &st
 }
 
 fn observe(collector: &mut ObservationCollector, agent: &str, secs: f64, value: ObservedValue) {
-    collector.receive(&[AgentObservation {
-        agent: AgentId::new(agent),
-        observation: Observation {
-            node: ESTIMATOR.into(),
-            leaf: LEAF.into(),
-            timestamp: at(secs),
-            value,
+    collector.receive(&[Observation {
+        key: RecordedKey {
+            agent: AgentId::new(agent),
+            subject: Subject::emission(ESTIMATOR, LEAF),
         },
+        timestamp: at(secs),
+        value,
     }]);
 }
 

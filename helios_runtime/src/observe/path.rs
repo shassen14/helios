@@ -5,7 +5,7 @@
 //! path names, and decides what follows it:
 //!
 //! - `node.<node>.<leaf>`: what a pipeline node said about itself, under a
-//!   leaf it declared, or a value it wrote to one of its output channels.
+//!   leaf it declared or one the pipeline adds to every node.
 //! - `channel.<channel>`: a value on one of the agent's channels, whoever
 //!   wrote it.
 //!
@@ -16,8 +16,9 @@
 //! agent and the node each fill exactly one part, so their names must be one
 //! [level](helios_core::kernel::identifier::is_level); a leaf and a channel
 //! name may hold several. A channel sits in a path under its own name,
-//! verbatim. A node's leaves and its output channels' names share the part
-//! after the node, so the build compares the two.
+//! verbatim, and names every instance of a keyed channel: the path is a
+//! spelling, and a [`RecordedKey`](crate::observe::key::RecordedKey) is the
+//! identity.
 
 use crate::port::ChannelKey;
 
@@ -91,10 +92,10 @@ impl<'a> AgentPathParts<'a> {
 /// after the subject word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathSubject<'a> {
-    /// What a pipeline node said about itself, or wrote to an output channel.
+    /// What a pipeline node said about itself.
     Node {
         node: &'a str,
-        /// The leaf or output channel name, dots included.
+        /// The leaf, dots included.
         leaf: &'a str,
     },
     /// A value on one of the agent's channels, by the channel's name.
@@ -121,13 +122,13 @@ pub enum PathPart {
     Subject,
     /// The node, under the `node` subject.
     Node,
-    /// The node's leaf or output channel name.
+    /// The node's leaf.
     Leaf,
     /// The channel's name, under the `channel` subject.
     Channel,
 }
 
-/// The watcher path of what `node` of `agent` said or wrote,
+/// The watcher path of what `node` of `agent` said about itself,
 /// `agent.<agent>.node.<node>.<leaf>`. [`AgentPathParts::split`] takes it
 /// apart again.
 pub fn node_path(agent: &str, node: &str, leaf: &str) -> String {

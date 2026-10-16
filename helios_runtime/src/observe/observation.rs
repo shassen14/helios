@@ -1,28 +1,27 @@
-//! A value a node emitted for watchers: tests, visualizers, recorders.
+//! A value recorded for watchers (tests, visualizers, recorders): what a
+//! node emitted about itself, or a value written to a channel.
 //!
 //! Observations leave the brain and are never read back by it; the bus
 //! carries what nodes consume. A node emits raw samples, and whoever watches
 //! computes statistics over them (a mean, a settling time, a rate across
 //! runs), so the node never fixes which summaries exist.
 
-use crate::{observe::path::node_path, ErasedStamped};
+use crate::{observe::key::RecordedKey, ErasedStamped};
 
-use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::prelude::MonotonicTime;
 
 use std::{any::TypeId, fmt::Debug, sync::Arc};
 
-/// One sample a node emitted, named relative to that node.
+/// One recorded value, with the key of the series it belongs to: what a
+/// pipeline drains and a host hands its sinks.
 ///
-/// `node` + `leaf` name the value inside one pipeline; the host adds the
-/// agent when it drains, since a pipeline doesn't know which agent runs it.
-/// Fields are public so sinks can read them and host-side scorers can build
-/// their own observations.
+/// The key names the agent, so a host draining several pipelines into one
+/// batch adds nothing. Fields are public so sinks can read them and
+/// host-side scorers can build their own observations; every field is
+/// shared, so a sink keeps a sample by cloning it cheaply.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Observation {
-    /// The emitting node's name.
-    pub node: Arc<str>,
-    /// The name the node declared for this value, e.g. `aiding.gps.nis`.
-    pub leaf: Arc<str>,
+    pub key: RecordedKey,
     /// The time the value describes, not when it was emitted: a measurement
     /// update stamps the reading's time.
     pub timestamp: MonotonicTime,
@@ -41,8 +40,8 @@ pub enum ObservedValue {
     /// A number in SI units: a statistic such as NIS, a count (each event
     /// emits `1.0`), or a duration in seconds.
     Scalar(f64),
-    /// A value a node wrote to one of its output channels: the bus slot's own
-    /// `Arc`, shared rather than copied. The observation's timestamp is the
+    /// A value written to a channel: the bus slot's own `Arc`, shared rather
+    /// than copied. The observation's timestamp is the
     /// value's own. Two are equal only when they are the same write, never by
     /// comparing payloads.
     Typed(Arc<dyn ErasedStamped>),
@@ -118,30 +117,6 @@ pub enum ObservedValueKind {
     },
 }
 
-/// An observation with the agent whose pipeline emitted it: what a host hands
-/// its sinks.
-///
-/// The agent is a field rather than part of a path string, so tagging a
-/// sample builds no string; every field is shared, so a sink keeps a sample
-/// by cloning it cheaply.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AgentObservation {
-    pub agent: AgentId,
-    pub observation: Observation,
-}
-
-impl AgentObservation {
-    /// The sample's full watcher path, `agent.<agent>.node.<node>.<leaf>`: the
-    /// spelling sinks request it by.
-    pub fn path(&self) -> String {
-        node_path(
-            self.agent.as_str(),
-            &self.observation.node,
-            &self.observation.leaf,
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,20 +144,5 @@ mod tests {
                 type_name: std::any::type_name::<u32>(),
             }
         );
-    }
-
-    #[test]
-    fn path_names_the_agent_node_and_leaf() {
-        let tagged = AgentObservation {
-            agent: AgentId::new("car"),
-            observation: Observation {
-                node: "estimator".into(),
-                leaf: "aiding.gps.nis".into(),
-                timestamp: MonotonicTime(1.0),
-                value: ObservedValue::Scalar(0.5),
-            },
-        };
-
-        assert_eq!(tagged.path(), "agent.car.node.estimator.aiding.gps.nis");
     }
 }

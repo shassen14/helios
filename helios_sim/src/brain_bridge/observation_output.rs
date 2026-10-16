@@ -1,26 +1,27 @@
 //! Egress: collects what every agent's pipeline recorded this tick into one
-//! batch, each observation tagged with its agent.
+//! batch. Each observation's key already names its agent.
 //!
 //! Sinks read the batch; only the drain writes it.
 
-use crate::prelude::{AgentIdComponent, AutonomyPipelineComponent};
+use crate::prelude::AutonomyPipelineComponent;
 
-use helios_runtime::observe::observation::{AgentObservation, Observation};
+use helios_runtime::observe::observation::Observation;
 
 use bevy::prelude::*;
 
 /// One tick's observations from every agent, in agent query order, and per
-/// agent in the order its pipeline drained them.
+/// agent in the order its pipeline drained them. Each names its agent in its
+/// key.
 ///
 /// A resource the drain clears itself, not Bevy `Messages`: messages are
 /// cleared once per frame, but the drain runs in `FixedUpdate`, which runs
 /// zero or several times a frame, so a frame could lose ticks or see the same
 /// tick twice.
 #[derive(Debug, Default, Resource)]
-pub struct ObservationBatch(Vec<AgentObservation>);
+pub struct ObservationBatch(Vec<Observation>);
 
 impl ObservationBatch {
-    pub fn observations(&self) -> &[AgentObservation] {
+    pub fn observations(&self) -> &[Observation] {
         &self.0
     }
 }
@@ -31,22 +32,13 @@ impl ObservationBatch {
 /// the tick that just ran. It drains every agent every tick, watched or not:
 /// a pipeline's buffers are emptied only by a drain.
 pub fn drain_observations(
-    pipelines: Query<(&AutonomyPipelineComponent, &AgentIdComponent)>,
+    pipelines: Query<&AutonomyPipelineComponent>,
     mut batch: ResMut<ObservationBatch>,
-    // Reused every tick, so its allocation is kept; `drain(..)` empties it.
-    mut scratch: Local<Vec<Observation>>,
 ) {
     batch.0.clear();
 
-    for (pipeline, agent) in &pipelines {
-        pipeline.0.drain_into(&mut scratch);
-
-        let tagged = scratch.drain(..).map(|observation| AgentObservation {
-            agent: agent.0.clone(),
-            observation,
-        });
-
-        batch.0.extend(tagged);
+    for pipeline in &pipelines {
+        pipeline.0.drain_into(&mut batch.0);
     }
 }
 
@@ -55,7 +47,13 @@ mod tests {
     use super::*;
 
     use helios_core::prelude::{AgentId, MonotonicTime};
-    use helios_runtime::{observe::observation::ObservedValue, pipeline::PipelineBuilder};
+    use helios_runtime::{
+        observe::{
+            key::{RecordedKey, Subject},
+            observation::ObservedValue,
+        },
+        pipeline::PipelineBuilder,
+    };
 
     use bevy::ecs::system::RunSystemOnce;
 
@@ -75,14 +73,13 @@ mod tests {
 
     #[test]
     fn last_ticks_batch_is_cleared_even_with_no_agents() {
-        let stale = AgentObservation {
-            agent: AgentId::new(CAR),
-            observation: Observation {
-                node: "estimator".into(),
-                leaf: "aiding.gps.nis".into(),
-                timestamp: MonotonicTime(0.0),
-                value: ObservedValue::Scalar(1.0),
+        let stale = Observation {
+            key: RecordedKey {
+                agent: AgentId::new(CAR),
+                subject: Subject::emission("estimator", "aiding.gps.nis"),
             },
+            timestamp: MonotonicTime(0.0),
+            value: ObservedValue::Scalar(1.0),
         };
         let mut world = world_with_batch(ObservationBatch(vec![stale]));
 
@@ -100,10 +97,7 @@ mod tests {
         let pipeline = PipelineBuilder::new(AgentId::new(CAR))
             .build()
             .expect("an empty pipeline builds");
-        world.spawn((
-            AutonomyPipelineComponent(pipeline),
-            AgentIdComponent(AgentId::new(CAR)),
-        ));
+        world.spawn(AutonomyPipelineComponent(pipeline));
 
         drain(&mut world);
         drain(&mut world);

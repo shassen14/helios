@@ -7,7 +7,7 @@
 //! drain. A sink that only consumes data needs nothing from the host, so the
 //! same sink runs in simulation and on hardware.
 
-use crate::observe::observation::AgentObservation;
+use crate::observe::observation::Observation;
 
 use std::collections::BTreeSet;
 
@@ -21,24 +21,27 @@ pub trait ObservationSink {
     fn request(&self) -> WatchRequest;
 
     /// One tick's observations, from every agent the host runs, possibly
-    /// none. Only what some sink requested is recorded, so the batch may hold
-    /// more than this sink asked for when several sinks share a host.
-    fn receive(&mut self, batch: &[AgentObservation]);
+    /// none, each naming its agent in its key. Only what some sink requested
+    /// is recorded, so the batch may hold more than this sink asked for when
+    /// several sinks share a host.
+    fn receive(&mut self, batch: &[Observation]);
 }
 
 /// What a sink asks to have recorded, named by full watcher path across
 /// every agent.
 ///
 /// The default is an empty set of paths, which asks for nothing. Unlike a
-/// [`WatchSet`](crate::observe::watch::WatchSet), which names `(node, leaf)`
-/// pairs inside one pipeline, a request names the agent too, in the spelling
-/// a person writes.
+/// [`WatchSet`](crate::observe::watch::WatchSet), which names typed subjects
+/// inside one pipeline, a request names the agent too, in the spelling a
+/// person writes. A path is a selection: `agent.<agent>.channel.<channel>`
+/// selects every instance of a keyed channel.
 #[derive(Debug, Clone, PartialEq)]
 pub enum WatchRequest {
-    /// Every leaf of every node of every agent.
+    /// Everything every agent can record.
     Everything,
-    /// Exactly these paths, each `agent.<agent>.node.<node>.<leaf>`. Held in
-    /// order, so the same path named twice is kept once.
+    /// Exactly these paths, each `agent.<agent>.node.<node>.<leaf>` or
+    /// `agent.<agent>.channel.<channel>`. Held in order, so the same path
+    /// named twice is kept once.
     Paths(BTreeSet<String>),
 }
 

@@ -2,9 +2,8 @@
 //! levels, the body's mounts are its own frames, every frame has one owner,
 //! output mount rules name inputs, each node reads and writes only the channel
 //! kinds its class may, channel names are well formed and each names one
-//! channel, each node's watchable leaves are well formed, and leaves and
-//! output channels sit outside the pipeline's own group and apart, every
-//! input has exactly one supplier, and every instance of a keyed channel has
+//! channel, each node's watchable leaves are well formed, distinct and
+//! outside the pipeline's own group, every input has exactly one supplier, and every instance of a keyed channel has
 //! one writer. These need only the declarations, not an order, so they run
 //! before the sort.
 
@@ -35,9 +34,9 @@ use std::{
 /// owns has one owner, every output mounted at an input's mount names a
 /// channel its node reads in the same tick, every node reads and writes only
 /// the channel kinds its class may, every channel name is well formed and
-/// names one channel, every watchable leaf a node declares is well formed, no
-/// leaf or output channel sits in the pipeline's own group, no node names a
-/// leaf twice or gives a leaf the name of one of its outputs, and every input,
+/// names one channel, every watchable leaf a node declares is well formed and
+/// outside the pipeline's own group, no node names a leaf twice, and every
+/// input,
 /// required or optional, has exactly one supplier: a node output, a body
 /// channel, or a declared outside input, and every writer of a keyed channel
 /// declares instances no other writer does. `descriptions` holds every
@@ -55,7 +54,7 @@ pub(super) fn check_wiring(
     check_mount_rules(nodes, &mut errors);
     check_kind_access(nodes, &mut errors);
     let refused_names = check_channel_names(nodes, descriptions, &mut errors);
-    check_observables(nodes, &refused_names, &mut errors);
+    check_observables(nodes, &mut errors);
     let supplier_of = map_suppliers(descriptions, &mut errors);
     check_instances(descriptions, &mut errors);
     check_inputs_supplied(nodes, &supplier_of, &refused_names, &mut errors);
@@ -187,27 +186,18 @@ fn push_once<T: PartialEq>(list: &mut Vec<T>, item: T) {
     }
 }
 
-/// A watcher addresses a node's leaves and its output channels by one dotted
-/// path under that node, so each path must name exactly one value. Each
-/// source of paths is checked for its own form, then against the others:
-/// declared leaves must be well formed, leaves and output names must stay out
-/// of the pipeline's own group, and declared leaves must differ from each
-/// other and from every output name. Output names are checked for form and
-/// against each other with every channel name, so an output under a refused
-/// name is skipped here.
-/// The pipeline's own leaves need no comparison, since nothing else may sit
-/// in their group. Checked per node: paths include the node name, so two
-/// nodes never clash. Only exact matches are refused; a shared dotted prefix
-/// is a group.
-fn check_observables(
-    nodes: &[NodeDeclaration],
-    refused_names: &HashSet<Arc<str>>,
-    errors: &mut Vec<PipelineBuildError>,
-) {
+/// A watcher addresses a node's leaves by one dotted path under that node,
+/// so each path must name exactly one value: declared leaves must be well
+/// formed, outside the pipeline's own group, and distinct. The pipeline's own
+/// leaves need no comparison, since nothing else may sit in their group.
+/// Checked per node: paths include the node name, so two nodes never clash.
+/// Only exact matches are refused; a shared dotted prefix is a group. A
+/// node's output channels are recorded under their own names, not the
+/// node's, so a leaf may share a name with one.
+fn check_observables(nodes: &[NodeDeclaration], errors: &mut Vec<PipelineBuildError>) {
     for node in nodes {
         let refused_leaves = check_declared_leaves(node, errors);
-        let output_paths = check_output_paths(node, refused_names, errors);
-        check_leaves_distinct(node, &refused_leaves, &output_paths, errors);
+        check_leaves_distinct(node, &refused_leaves, errors);
     }
 }
 
@@ -242,47 +232,11 @@ fn check_declared_leaves(
     refused_leaves
 }
 
-/// Each output channel is also watched under its node, at its name, so it
-/// must stay outside the pipeline's own group like a declared leaf. Returns
-/// the accepted names with their channels.
-///
-/// A channel listed twice is skipped after its first listing: it is one
-/// channel with one name, and the supplier check reports the repeat. A
-/// channel under a refused name is skipped too, since its error is already
-/// reported.
-fn check_output_paths<'a>(
-    node: &'a NodeDeclaration,
-    refused_names: &HashSet<Arc<str>>,
-    errors: &mut Vec<PipelineBuildError>,
-) -> Vec<(&'a Arc<str>, &'a ChannelKey)> {
-    let node_name = node.name();
-    let mut seen_channels: HashSet<&ChannelKey> = HashSet::new();
-    let mut accepted: Vec<(&Arc<str>, &ChannelKey)> = vec![];
-    for channel in node.port_descriptor().outputs() {
-        let name = channel.name();
-        if !seen_channels.insert(channel) || refused_names.contains(name) {
-            continue;
-        }
-        if is_in_pipeline_group(name) {
-            errors.push(PipelineBuildError::ReservedOutputPath {
-                node_name: node_name.to_string(),
-                channel: channel.clone(),
-                segment: name.to_string(),
-            });
-        } else {
-            accepted.push((name, channel));
-        }
-    }
-    accepted
-}
-
-/// Each declared leaf the earlier check accepted must be named once and
-/// differ from every accepted output name. A duplicate is reported once per
-/// leaf.
+/// Each declared leaf the earlier check accepted must be named once. A
+/// duplicate is reported once per leaf.
 fn check_leaves_distinct(
     node: &NodeDeclaration,
     refused_leaves: &HashSet<Arc<str>>,
-    output_paths: &[(&Arc<str>, &ChannelKey)],
     errors: &mut Vec<PipelineBuildError>,
 ) {
     let node_name = node.name();
@@ -290,26 +244,14 @@ fn check_leaves_distinct(
     let mut reported_leaves: HashSet<Arc<str>> = HashSet::new();
     for observable in node.port_descriptor().observables() {
         let leaf = observable.leaf_name();
-        if refused_leaves.contains(leaf) {
+        if refused_leaves.contains(leaf) || seen_leaves.insert(leaf.clone()) {
             continue;
         }
-        if !seen_leaves.insert(leaf.clone()) {
-            if reported_leaves.insert(leaf.clone()) {
-                errors.push(PipelineBuildError::DuplicateObservable {
-                    node_name: node_name.to_string(),
-                    leaf: leaf.to_string(),
-                });
-            }
-            continue;
-        }
-        for (name, channel) in output_paths {
-            if *name == leaf {
-                errors.push(PipelineBuildError::ObservableCollidesWithOutput {
-                    node_name: node_name.to_string(),
-                    leaf: leaf.to_string(),
-                    channel: (*channel).clone(),
-                });
-            }
+        if reported_leaves.insert(leaf.clone()) {
+            errors.push(PipelineBuildError::DuplicateObservable {
+                node_name: node_name.to_string(),
+                leaf: leaf.to_string(),
+            });
         }
     }
 }

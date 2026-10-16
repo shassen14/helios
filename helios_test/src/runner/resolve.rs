@@ -1,7 +1,7 @@
 //! Checks, once the pipelines exist, that the run can judge every assertion:
-//! its target is a leaf its agent reports, a channel value there can be
-//! extracted, a nondeterministic leaf is asserted on only with permission,
-//! and the collector records it.
+//! its target names one series its agent records, a channel value there can
+//! be extracted, a nondeterministic value is asserted on only with
+//! permission, and the collector records it.
 //!
 //! Done against what each agent declares it reports, before the first tick,
 //! so a run that could never pass stops before it starts and names every
@@ -17,8 +17,8 @@ use crate::{
 
 use helios_core::prelude::AgentId;
 use helios_runtime::{
-    observe::observation::ObservedValueKind,
-    port::{Determinism, Observable},
+    observe::{key::Subject, observation::ObservedValueKind, path::channel_path},
+    port::{ChannelKey, Determinism, Observable, Writer},
     AutonomyPipeline,
 };
 
@@ -106,9 +106,23 @@ pub enum TargetProblem {
     /// The scenario has no agent of that name with a pipeline.
     #[error("no agent by that name has a pipeline")]
     UnknownAgent,
-    /// Its agent reports nothing at that node and leaf.
+    /// Its agent reports nothing at that node and leaf, or has no channel
+    /// by that name.
     #[error("its agent reports nothing there")]
     Unreported,
+    /// A node path whose leaf is a channel that node writes. A channel is
+    /// recorded under its own name, never its writer's, so the path to
+    /// watch it is the one held here.
+    #[error("a channel is not a node's leaf; to watch what the node writes there, use '{0}'")]
+    ChannelUnderNode(String),
+    /// A channel only the body or the outside world writes. Nothing records
+    /// those yet, so no value would arrive.
+    #[error("no node writes it, and only channels a node writes are recorded")]
+    NotNodeWritten,
+    /// A keyed channel written in several instances. The path names every
+    /// instance, and an assertion judges one series.
+    #[error("it names {0} instances of a keyed channel, and an assertion judges one series")]
+    SeveralInstances(usize),
     /// A channel whose payload type has no extractor, so no value from it
     /// could be compared.
     #[error("it carries {0}, which has no extractor")]
@@ -126,8 +140,36 @@ pub enum TargetProblem {
 /// What one agent reports, listed once for every assertion to search.
 struct Catalog<'a> {
     agent: &'a AgentId,
-    /// Each leaf with the name of the node that reports it.
-    observables: Vec<(&'a str, Observable)>,
+    /// Each subject the agent's pipeline records, with what it records.
+    observables: Vec<(Subject, Observable)>,
+    /// The names of the channels only the body or the outside world write.
+    host_written: Vec<&'a str>,
+    /// Each channel a node writes, with the node's name.
+    node_written: Vec<(&'a str, &'a ChannelKey)>,
+}
+
+impl Catalog<'_> {
+    /// Every entry `subject`, a target's subject, names: at most one
+    /// emission, or every instance of a channel.
+    fn matching(&self, subject: &TargetSubject) -> Vec<&Observable> {
+        self.observables
+            .iter()
+            .filter(|(entry, _)| match (subject, entry) {
+                (
+                    TargetSubject::Node { node, leaf },
+                    Subject::Emission {
+                        node: entry_node,
+                        leaf: entry_leaf,
+                    },
+                ) => node == entry_node && leaf == entry_leaf,
+                (TargetSubject::Channel { channel }, Subject::Channel { channel: key, .. }) => {
+                    channel == key.name()
+                }
+                _ => false,
+            })
+            .map(|(_, observable)| observable)
+            .collect()
+    }
 }
 
 /// The plan for judging `assertions`, or every one the run can't judge, in
@@ -142,6 +184,20 @@ pub(super) fn resolve(
         .map(|(agent, pipeline)| Catalog {
             agent,
             observables: pipeline.observables().collect(),
+            host_written: pipeline
+                .descriptions()
+                .iter()
+                .filter(|description| !matches!(description.writer(), Writer::Node { .. }))
+                .map(|description| description.key().name().as_ref())
+                .collect(),
+            node_written: pipeline
+                .descriptions()
+                .iter()
+                .filter_map(|description| match description.writer() {
+                    Writer::Node { node } => Some((node.as_str(), description.key())),
+                    _ => None,
+                })
+                .collect(),
         })
         .collect();
 
@@ -171,9 +227,9 @@ pub(super) fn resolve(
 }
 
 /// The series `assertion` is judged from, or every reason the run can't
-/// judge it, checked against the one agent its target names. A target its
-/// agent doesn't report has no other properties to check, so that problem
-/// is reported alone.
+/// judge it, checked against the one agent its target names. A target that
+/// doesn't name exactly one series its agent records has no other
+/// properties to check, so that problem is reported alone.
 fn check(
     assertion: &Assertion,
     catalogs: &[Catalog],
@@ -186,19 +242,10 @@ fn check(
     else {
         return Err(vec![TargetProblem::UnknownAgent]);
     };
-    // A pipeline reports only its nodes' leaves; nothing records a channel.
-    let TargetSubject::Node { node, leaf } = target.subject() else {
-        return Err(vec![TargetProblem::Unreported]);
-    };
-    let Some(observable) = catalog
-        .observables
-        .iter()
-        .find(|(name, observable)| {
-            *name == node.as_ref() && observable.leaf_name().as_ref() == leaf.as_ref()
-        })
-        .map(|(_, observable)| observable)
-    else {
-        return Err(vec![TargetProblem::Unreported]);
+    let observable = match catalog.matching(target.subject()).as_slice() {
+        [observable] => *observable,
+        [] => return Err(vec![unreported(catalog, target.subject())]),
+        several => return Err(vec![TargetProblem::SeveralInstances(several.len())]),
     };
 
     let mut problems = Vec::new();
@@ -225,6 +272,26 @@ fn check(
     }
 }
 
+/// Why `subject` matched nothing `catalog` records: a channel only the body
+/// or the outside world writes, a channel spelled as a leaf of the node
+/// that writes it, or nothing by that name.
+fn unreported(catalog: &Catalog, subject: &TargetSubject) -> TargetProblem {
+    match subject {
+        TargetSubject::Channel { channel } if catalog.host_written.contains(&channel.as_ref()) => {
+            TargetProblem::NotNodeWritten
+        }
+        TargetSubject::Node { node, leaf } => catalog
+            .node_written
+            .iter()
+            .find(|(writer, channel)| *writer == node.as_ref() && channel.name() == leaf)
+            .map(|(_, channel)| {
+                TargetProblem::ChannelUnderNode(channel_path(catalog.agent.as_str(), channel))
+            })
+            .unwrap_or(TargetProblem::Unreported),
+        TargetSubject::Channel { .. } => TargetProblem::Unreported,
+    }
+}
+
 /// `items` on one line, `separator` between each.
 pub(super) fn join(items: &[impl Display], separator: &str) -> String {
     items
@@ -244,9 +311,9 @@ mod tests {
 
     use helios_core::prelude::TfProvider;
     use helios_runtime::{
-        observe::path::node_path,
+        observe::path::{channel_path, node_path},
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
-        port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder},
+        port::{ChannelKey, ChannelKind, Keyed, PortBus, PortDescriptor, PortDescriptorBuilder},
         prelude::{PipelineNode, TickContext},
         PipelineBuilder,
     };
@@ -263,6 +330,27 @@ mod tests {
     /// A scalar leaf the estimator declares, and a channel the planner writes
     /// whose payload has no extractor.
     const SHARED: &str = "shared";
+    /// A keyed channel the planner writes in two instances.
+    const EDGES: &str = "edges";
+    /// A keyed channel the planner writes in one instance.
+    const ROOT: &str = "root";
+    /// A channel sent from outside the robot, which no node writes.
+    const GOAL: &str = "goal";
+
+    /// A value about one frame, keyed by the frame. No extractor reads it.
+    struct FrameSample(&'static str);
+
+    impl Keyed for FrameSample {
+        type Instance = &'static str;
+
+        fn instance(&self) -> &&'static str {
+            &self.0
+        }
+    }
+
+    fn keyed(name: &'static str) -> ChannelKey {
+        ChannelKey::keyed::<FrameSample>(ChannelKind::Internal, name)
+    }
 
     /// Writes nothing; exists only to carry a name and a descriptor with
     /// outputs and leaves.
@@ -284,7 +372,8 @@ mod tests {
     }
 
     /// An estimator declaring [`NIS`] and [`SHARED`] and writing [`SPEED`]
-    /// and [`LABEL`], and a planner writing [`SHARED`].
+    /// and [`LABEL`]; a planner writing [`SHARED`], two instances of
+    /// [`EDGES`] and one of [`ROOT`]; and [`GOAL`] sent from outside.
     fn pipeline() -> AutonomyPipeline {
         let estimator = PortDescriptorBuilder::algorithm()
             .outputs_from_slice(&[
@@ -296,8 +385,11 @@ mod tests {
             .build();
         let planner = PortDescriptorBuilder::algorithm()
             .outputs_from_slice(&[ChannelKey::internal::<String>(SHARED)])
+            .output_keyed::<FrameSample>(keyed(EDGES), ["base", "wheel"])
+            .output_keyed::<FrameSample>(keyed(ROOT), ["base"])
             .build();
         PipelineBuilder::new(AgentId::new(CAR))
+            .with_outside_inputs(vec![ChannelKey::internal::<f64>(GOAL)])
             .add_node(Box::new(DeclaringNode {
                 name: ESTIMATOR,
                 descriptor: estimator,
@@ -317,6 +409,13 @@ mod tests {
     /// A target on the car's estimator.
     fn estimator(leaf: &str) -> AssertionTarget {
         target(CAR, ESTIMATOR, leaf)
+    }
+
+    /// A target on the car's channel named `name`. Only the name is spelled,
+    /// so the key's type here is arbitrary.
+    fn channel(name: &str) -> AssertionTarget {
+        AssertionTarget::parse(channel_path(CAR, &ChannelKey::internal::<f64>(name)))
+            .expect("valid target")
     }
 
     fn assertion(target: AssertionTarget, allow_nondeterministic: bool) -> Assertion {
@@ -372,7 +471,7 @@ mod tests {
         // Two assertions on NIS share one series; SPEED has its own. Each
         // starts with a fresh state of its own.
         let nis = estimator(NIS);
-        let speed = estimator(SPEED);
+        let speed = channel(SPEED);
         let (collector, resolved) = resolve_with(
             &[
                 assertion(nis.clone(), false),
@@ -399,7 +498,7 @@ mod tests {
     fn a_target_the_collector_does_not_record_is_unrequested() {
         // The collector was built for another run's assertions.
         let nis = estimator(NIS);
-        let (_, resolved) = resolve_with(&[assertion(nis.clone(), false)], &[estimator(SPEED)]);
+        let (_, resolved) = resolve_with(&[assertion(nis.clone(), false)], &[channel(SPEED)]);
 
         assert_eq!(
             resolved,
@@ -408,13 +507,39 @@ mod tests {
     }
 
     #[test]
-    fn a_declared_leaf_and_an_extractable_tap_resolve() {
+    fn a_declared_leaf_and_an_extractable_channel_resolve() {
         assert_eq!(
             errors(&[
                 assertion(estimator(NIS), false),
-                assertion(estimator(SPEED), false),
+                assertion(channel(SPEED), false),
             ]),
             vec![]
+        );
+    }
+
+    #[test]
+    fn a_channel_spelled_as_its_writers_leaf_is_refused_with_its_channel_path() {
+        let speed = estimator(SPEED);
+
+        assert_eq!(
+            errors(&[assertion(speed.clone(), false)]),
+            vec![unusable(
+                1,
+                speed,
+                vec![TargetProblem::ChannelUnderNode(format!(
+                    "agent.{CAR}.channel.{SPEED}"
+                ))]
+            )]
+        );
+    }
+
+    #[test]
+    fn a_channel_spelled_under_a_node_that_does_not_write_it_is_unreported() {
+        let speed = target(CAR, PLANNER, SPEED);
+
+        assert_eq!(
+            errors(&[assertion(speed.clone(), false)]),
+            vec![unusable(1, speed, vec![TargetProblem::Unreported])]
         );
     }
 
@@ -429,13 +554,49 @@ mod tests {
     }
 
     #[test]
-    fn a_channel_target_is_unreported() {
-        let channel = AssertionTarget::parse(format!("agent.{CAR}.channel.truth.tf"))
-            .expect("channel target");
+    fn a_channel_the_agent_has_no_writer_for_is_unreported() {
+        let truth = channel("truth.tf");
 
         assert_eq!(
-            errors(&[assertion(channel.clone(), false)]),
-            vec![unusable(1, channel, vec![TargetProblem::Unreported])]
+            errors(&[assertion(truth.clone(), false)]),
+            vec![unusable(1, truth, vec![TargetProblem::Unreported])]
+        );
+    }
+
+    #[test]
+    fn a_channel_no_node_writes_is_refused_as_not_node_written() {
+        let goal = channel(GOAL);
+
+        assert_eq!(
+            errors(&[assertion(goal.clone(), false)]),
+            vec![unusable(1, goal, vec![TargetProblem::NotNodeWritten])]
+        );
+    }
+
+    #[test]
+    fn a_keyed_channel_of_several_instances_is_refused_naming_the_count() {
+        let edges = channel(EDGES);
+
+        assert_eq!(
+            errors(&[assertion(edges.clone(), false)]),
+            vec![unusable(1, edges, vec![TargetProblem::SeveralInstances(2)])]
+        );
+    }
+
+    #[test]
+    fn a_keyed_channel_of_one_instance_is_checked_as_that_series() {
+        // It names one series, so it gets as far as the extractor check.
+        let root = channel(ROOT);
+
+        assert_eq!(
+            errors(&[assertion(root.clone(), false)]),
+            vec![unusable(
+                1,
+                root,
+                vec![TargetProblem::NoExtractor(
+                    std::any::type_name::<FrameSample>()
+                )]
+            )]
         );
     }
 
@@ -450,27 +611,40 @@ mod tests {
     }
 
     #[test]
-    fn a_leaf_is_checked_on_the_node_the_target_names() {
-        // The estimator declares SHARED as a number; the planner's SHARED is
-        // a tap with no extractor. Only the planner's is refused.
+    fn a_leaf_and_a_channel_of_one_name_are_told_apart() {
+        // The estimator declares SHARED as a number; the planner writes a
+        // SHARED channel with no extractor. The leaf resolves, the channel is
+        // refused for its payload, and the channel spelled under the planner
+        // is pointed to its own path.
+        let on_channel = channel(SHARED);
         let on_planner = target(CAR, PLANNER, SHARED);
 
         assert_eq!(
             errors(&[
                 assertion(estimator(SHARED), false),
+                assertion(on_channel.clone(), false),
                 assertion(on_planner.clone(), false),
             ]),
-            vec![unusable(
-                2,
-                on_planner,
-                vec![TargetProblem::NoExtractor(std::any::type_name::<String>())]
-            )]
+            vec![
+                unusable(
+                    2,
+                    on_channel,
+                    vec![TargetProblem::NoExtractor(std::any::type_name::<String>())]
+                ),
+                unusable(
+                    3,
+                    on_planner,
+                    vec![TargetProblem::ChannelUnderNode(format!(
+                        "agent.{CAR}.channel.{SHARED}"
+                    ))]
+                ),
+            ]
         );
     }
 
     #[test]
-    fn a_tap_whose_payload_has_no_extractor_is_refused() {
-        let label = estimator(LABEL);
+    fn a_channel_whose_payload_has_no_extractor_is_refused() {
+        let label = channel(LABEL);
 
         assert_eq!(
             errors(&[assertion(label.clone(), false)]),
@@ -540,7 +714,7 @@ mod tests {
 
     #[test]
     fn the_message_names_the_assertion_its_target_and_every_problem() {
-        let label = estimator(LABEL);
+        let label = channel(LABEL);
         let problems = vec![
             TargetProblem::Nondeterministic,
             TargetProblem::NoExtractor("String"),
@@ -548,7 +722,7 @@ mod tests {
 
         assert_eq!(
             unusable(4, label, problems).to_string(),
-            "assertion 4 on 'agent.car.node.estimator.label': it is nondeterministic \
+            "assertion 4 on 'agent.car.channel.label': it is nondeterministic \
              (set allow_nondeterministic = true to assert on it) and it carries String, \
              which has no extractor"
         );

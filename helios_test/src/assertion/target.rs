@@ -69,13 +69,14 @@ impl fmt::Display for AssertionTarget {
 /// after the subject word.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TargetSubject {
-    /// What a pipeline node said about itself, or wrote to an output channel.
+    /// What a pipeline node said about itself.
     Node {
         node: Arc<str>,
-        /// The leaf or output channel segment, dots included.
+        /// The leaf, dots included.
         leaf: Arc<str>,
     },
-    /// A value on one of the agent's channels, by its segment.
+    /// The values on one of the agent's channels, by its name: every
+    /// instance of a keyed channel.
     Channel { channel: Arc<str> },
 }
 

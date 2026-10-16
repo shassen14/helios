@@ -1,20 +1,26 @@
-//! One node's buffer of the values it emits for watchers.
+//! One node's buffer of what is recorded during its runs.
 //!
 //! Each node owns one buffer, created by the pipeline at build. During a tick
-//! the node records into its own buffer only; after the tick the host drains
-//! every buffer. Nothing in the brain reads a buffer, so what is watched can
-//! never change what the pipeline computes.
+//! the node's emissions, and the values it wrote to watched channels, are
+//! recorded into its own buffer only; after the tick the host drains every
+//! buffer. Nothing in the brain reads a buffer, so what is watched can never
+//! change what the pipeline computes.
 
-use crate::observe::observation::{Observation, ObservedValue};
+use crate::observe::{
+    key::{RecordedKey, Subject},
+    observation::{Observation, ObservedValue},
+};
 
-use helios_core::prelude::MonotonicTime;
+use helios_core::prelude::{AgentId, MonotonicTime};
 
 use std::sync::{Arc, Mutex};
 
-/// The observations one node emitted since the last drain, and which of its
-/// declared leaves are watched.
+/// The observations recorded during one node's runs since the last drain,
+/// and which of its leaves are watched.
 ///
-/// Observations are kept in the order the node emitted them. The host must
+/// The leaves are the node's emissions only; which of its channels are
+/// watched, the pipeline keeps beside each channel. Observations are kept in
+/// the order they were recorded. The host must
 /// drain after every tick: a buffer with watched leaves that is never drained
 /// grows without bound.
 ///
@@ -32,33 +38,42 @@ pub(crate) struct NodeObservations {
 }
 
 impl NodeObservations {
-    /// A buffer for `node_name` declaring `leaf_names`, none of them watched.
+    /// A buffer for `node_name`, a node of `agent`'s pipeline, declaring
+    /// `leaf_names`, none of them watched.
     pub(crate) fn new(
+        agent: &AgentId,
         node_name: impl Into<Arc<str>>,
         leaf_names: impl IntoIterator<Item = impl Into<Arc<str>>>,
     ) -> Self {
+        let node_name: Arc<str> = node_name.into();
         let leaves = leaf_names
             .into_iter()
-            .map(|n| Leaf {
-                name: n.into(),
-                watched: false,
+            .map(|name| {
+                let name: Arc<str> = name.into();
+                Leaf {
+                    key: RecordedKey {
+                        agent: agent.clone(),
+                        subject: Subject::emission(node_name.clone(), name.clone()),
+                    },
+                    name,
+                    watched: false,
+                }
             })
             .collect();
 
         Self {
-            node_name: node_name.into(),
+            node_name,
             leaves,
             any_watched: false,
             recorded: Mutex::default(),
         }
     }
 
-    /// The stored name of `leaf_name` if it is declared and watched, else
-    /// `None`.
+    /// The key of `leaf_name` if it is declared and watched, else `None`.
     ///
-    /// Returning the stored name lets [`record`](Self::record) build an
-    /// observation without allocating the leaf string again.
-    pub(crate) fn watched_leaf(&self, leaf_name: &str) -> Option<Arc<str>> {
+    /// Returning the stored key lets [`record`](Self::record) build an
+    /// observation without allocating.
+    pub(crate) fn watched_leaf(&self, leaf_name: &str) -> Option<RecordedKey> {
         if !self.any_watched {
             return None;
         }
@@ -66,7 +81,7 @@ impl NodeObservations {
         self.leaves
             .iter()
             .find(|leaf| leaf.name.as_ref() == leaf_name && leaf.watched)
-            .map(|leaf| leaf.name.clone())
+            .map(|leaf| leaf.key.clone())
     }
 
     /// Whether the node declares `leaf_name`, watched or not.
@@ -89,18 +104,18 @@ impl NodeObservations {
         );
     }
 
-    /// Appends one observation of `leaf`. Callers pass a name returned by
-    /// [`watched_leaf`](Self::watched_leaf).
+    /// Appends one observation under `key`: a key returned by
+    /// [`watched_leaf`](Self::watched_leaf), or the key of a watched channel
+    /// the node wrote.
     ///
     /// A poisoned lock drops the sample.
-    pub(crate) fn record(&self, leaf: Arc<str>, timestamp: MonotonicTime, value: ObservedValue) {
+    pub(crate) fn record(&self, key: RecordedKey, timestamp: MonotonicTime, value: ObservedValue) {
         let Ok(mut list) = self.recorded.lock() else {
             return;
         };
 
         list.push(Observation {
-            node: self.node_name.clone(),
-            leaf,
+            key,
             timestamp,
             value,
         });
@@ -146,9 +161,10 @@ impl NodeObservations {
     }
 }
 
-/// One declared leaf and whether it is watched.
+/// One declared leaf, the key it records under, and whether it is watched.
 struct Leaf {
     name: Arc<str>,
+    key: RecordedKey,
     watched: bool,
 }
 
@@ -156,13 +172,14 @@ struct Leaf {
 mod tests {
     use super::*;
 
+    const AGENT: &str = "car";
     const NODE: &str = "estimator";
     const NIS: &str = "aiding.gps.nis";
     const DROPPED: &str = "aiding.gps.dropped";
     const UNDECLARED: &str = "aiding.gps.undeclared";
 
     fn buffer() -> NodeObservations {
-        NodeObservations::new(NODE, [NIS, DROPPED])
+        NodeObservations::new(&AgentId::new(AGENT), NODE, [NIS, DROPPED])
     }
 
     /// Records `value` on `leaf` the way an emit does: look up, then record.
@@ -180,8 +197,10 @@ mod tests {
 
     fn observation(node: &str, leaf: &str, t: f64, value: f64) -> Observation {
         Observation {
-            node: node.into(),
-            leaf: leaf.into(),
+            key: RecordedKey {
+                agent: AgentId::new(AGENT),
+                subject: Subject::emission(node, leaf),
+            },
             timestamp: MonotonicTime(t),
             value: ObservedValue::Scalar(value),
         }
@@ -318,7 +337,7 @@ mod tests {
 
     #[test]
     fn buffer_declaring_nothing_stays_unwatched() {
-        let mut buffer = NodeObservations::new(NODE, Vec::<&str>::new());
+        let mut buffer = NodeObservations::new(&AgentId::new(AGENT), NODE, Vec::<&str>::new());
         buffer.set_all_watched(true);
         assert!(!buffer.any_watched);
     }

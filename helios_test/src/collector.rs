@@ -13,22 +13,21 @@ use crate::assertion::{
 
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::observe::{
-    observation::{AgentObservation, ObservedValue},
+    key::{RecordedKey, Subject},
+    observation::{Observation, ObservedValue},
     sink::{ObservationSink, WatchRequest},
 };
 
 use std::{
     any::TypeId,
     collections::HashMap,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicU64, Ordering},
 };
 
-/// An observation's agent, node and leaf: the parts of its path, held the
-/// way the observation carries them.
-type LeafKey = (AgentId, Arc<str>, Arc<str>);
+/// The parts of an observation's path: its agent and what its path names
+/// there. Every instance of a keyed channel shares one, as they share one
+/// path.
+type PathKey = (AgentId, TargetSubject);
 
 /// The id the next collector built takes. Counts up for the life of the
 /// process, so no two collectors share one.
@@ -46,9 +45,9 @@ pub struct ObservationCollector {
     id: CollectorId,
     /// Each target's index into `series`.
     by_target: HashMap<AssertionTarget, usize>,
-    /// The same indices by the parts an observation carries, so an arrival
+    /// The same indices by the parts of each target's path, so an arrival
     /// is matched without building its path.
-    by_leaf: HashMap<LeafKey, usize>,
+    by_path: HashMap<PathKey, usize>,
     series: Vec<Series>,
     extractors: ExtractorTable,
 }
@@ -64,7 +63,7 @@ impl ObservationCollector {
         let mut collector = Self {
             id: CollectorId(NEXT_COLLECTOR.fetch_add(1, Ordering::Relaxed)),
             by_target: HashMap::new(),
-            by_leaf: HashMap::new(),
+            by_path: HashMap::new(),
             series: Vec::new(),
             extractors,
         };
@@ -109,12 +108,8 @@ impl ObservationCollector {
         let index = self.series.len();
         self.series.push(Series::default());
         self.by_target.insert(target.clone(), index);
-        // Only a node's leaves are recorded, so a channel target's series
-        // never receives a sample; setup refuses it as unreported.
-        if let TargetSubject::Node { node, leaf } = target.subject() {
-            self.by_leaf
-                .insert((target.agent().clone(), node.clone(), leaf.clone()), index);
-        }
+        self.by_path
+            .insert((target.agent().clone(), target.subject().clone()), index);
     }
 }
 
@@ -128,24 +123,21 @@ impl ObservationSink for ObservationCollector {
         )
     }
 
-    fn receive(&mut self, batch: &[AgentObservation]) {
-        for tagged in batch {
-            // Clones three `Arc`s: a reference count each, no allocation.
-            let key = (
-                tagged.agent.clone(),
-                tagged.observation.node.clone(),
-                tagged.observation.leaf.clone(),
-            );
+    /// Every instance of a keyed channel lands in the one series its path
+    /// names; setup refuses an assertion whose target has several, so a
+    /// judged series never mixes two.
+    fn receive(&mut self, batch: &[Observation]) {
+        for observation in batch {
             let Some(series) = self
-                .by_leaf
-                .get(&key)
+                .by_path
+                .get(&path_key(&observation.key))
                 .and_then(|index| self.series.get_mut(*index))
             else {
                 continue;
             };
-            match extract(&self.extractors, &tagged.observation.value) {
+            match extract(&self.extractors, &observation.value) {
                 Ok(value) => series.samples.push(Sample {
-                    timestamp: tagged.observation.timestamp,
+                    timestamp: observation.timestamp,
                     value,
                 }),
                 Err(rejection) => {
@@ -154,6 +146,21 @@ impl ObservationSink for ObservationCollector {
             }
         }
     }
+}
+
+/// The parts of `key`'s path. Clones `Arc`s only: a reference count each,
+/// no allocation.
+fn path_key(key: &RecordedKey) -> PathKey {
+    let subject = match &key.subject {
+        Subject::Emission { node, leaf } => TargetSubject::Node {
+            node: node.clone(),
+            leaf: leaf.clone(),
+        },
+        Subject::Channel { channel, .. } => TargetSubject::Channel {
+            channel: channel.name().clone(),
+        },
+    };
+    (key.agent.clone(), subject)
 }
 
 /// The comparable value inside `value`: a scalar is a float, a channel value
@@ -232,10 +239,13 @@ mod tests {
     use crate::assertion::extract::standard_extractors;
 
     use helios_runtime::{
-        observe::{observation::Observation, path::node_path},
+        observe::path::{channel_path, node_path},
+        port::ChannelKey,
         prelude::{Health, Stamped},
         ErasedStamped,
     };
+
+    use std::sync::Arc;
 
     const CAR: &str = "car";
     const TRUCK: &str = "truck";
@@ -247,19 +257,43 @@ mod tests {
         AssertionTarget::parse(node_path(agent, ESTIMATOR, leaf)).expect("valid target")
     }
 
+    /// The target on `agent`'s channel named `name`.
+    fn channel_target(agent: &str, name: &str) -> AssertionTarget {
+        AssertionTarget::parse(channel_path(agent, &speed_channel(name))).expect("valid target")
+    }
+
+    /// A channel named `name`. The collector matches channels by name, so
+    /// the payload type here is arbitrary.
+    fn speed_channel(name: &str) -> ChannelKey {
+        ChannelKey::internal::<bool>(name)
+    }
+
     fn collector(targets: &[AssertionTarget]) -> ObservationCollector {
         ObservationCollector::new(targets, standard_extractors())
     }
 
-    fn observed(agent: &str, leaf: &str, at: f64, value: ObservedValue) -> AgentObservation {
-        AgentObservation {
-            agent: AgentId::new(agent),
-            observation: Observation {
-                node: ESTIMATOR.into(),
-                leaf: leaf.into(),
-                timestamp: MonotonicTime(at),
-                value,
+    fn observed(agent: &str, leaf: &str, at: f64, value: ObservedValue) -> Observation {
+        recorded(agent, Subject::emission(ESTIMATOR, leaf), at, value)
+    }
+
+    /// A value written to `agent`'s channel named `name`.
+    fn written(agent: &str, name: &str, at: f64, value: ObservedValue) -> Observation {
+        recorded(
+            agent,
+            Subject::channel(speed_channel(name), None),
+            at,
+            value,
+        )
+    }
+
+    fn recorded(agent: &str, subject: Subject, at: f64, value: ObservedValue) -> Observation {
+        Observation {
+            key: RecordedKey {
+                agent: AgentId::new(agent),
+                subject,
             },
+            timestamp: MonotonicTime(at),
+            value,
         }
     }
 
@@ -300,7 +334,7 @@ mod tests {
     #[test]
     fn request_names_each_target_once() {
         let nis = target(CAR, NIS);
-        let speed = target(CAR, SPEED);
+        let speed = channel_target(CAR, SPEED);
         let collector = collector(&[nis.clone(), speed.clone(), nis.clone()]);
 
         assert_eq!(
@@ -325,7 +359,7 @@ mod tests {
     fn an_unrequested_target_has_no_series() {
         let collector = collector(&[target(CAR, NIS)]);
 
-        assert_eq!(collector.series_id(&target(CAR, SPEED)), None);
+        assert_eq!(collector.series_id(&channel_target(CAR, SPEED)), None);
     }
 
     #[test]
@@ -356,10 +390,10 @@ mod tests {
 
     #[test]
     fn a_channel_value_arrives_through_its_payload_extractor() {
-        let speed = target(CAR, SPEED);
+        let speed = channel_target(CAR, SPEED);
         let mut collector = collector(std::slice::from_ref(&speed));
 
-        collector.receive(&[observed(CAR, SPEED, 1.0, tapped(true, 1.0))]);
+        collector.receive(&[written(CAR, SPEED, 1.0, tapped(true, 1.0))]);
 
         assert_eq!(
             samples_of(&collector, &speed),
@@ -370,10 +404,10 @@ mod tests {
     #[test]
     fn a_channel_value_with_no_extractor_is_rejected_with_its_reason() {
         struct Unregistered;
-        let speed = target(CAR, SPEED);
+        let speed = channel_target(CAR, SPEED);
         let mut collector = collector(std::slice::from_ref(&speed));
 
-        collector.receive(&[observed(CAR, SPEED, 1.0, tapped(Unregistered, 1.0))]);
+        collector.receive(&[written(CAR, SPEED, 1.0, tapped(Unregistered, 1.0))]);
 
         let series = series_of(&collector, &speed).expect("target is requested");
         assert!(series.samples().is_empty());
@@ -386,13 +420,14 @@ mod tests {
     }
 
     #[test]
-    fn only_requested_targets_are_kept_and_agents_are_told_apart() {
+    fn only_requested_targets_are_kept_and_agents_and_subjects_are_told_apart() {
         let car_nis = target(CAR, NIS);
         let mut collector = collector(std::slice::from_ref(&car_nis));
 
         collector.receive(&[
             observed(TRUCK, NIS, 1.0, ObservedValue::Scalar(9.0)),
             observed(CAR, SPEED, 1.0, ObservedValue::Scalar(9.0)),
+            written(CAR, NIS, 1.0, ObservedValue::Scalar(9.0)),
             observed(CAR, NIS, 1.0, ObservedValue::Scalar(2.0)),
         ]);
 

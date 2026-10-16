@@ -1,16 +1,12 @@
 //! Turning what sinks requested into what each pipeline watches.
 //!
-//! Sinks name full paths across every agent; a pipeline watches `(node,
-//! leaf)` pairs and doesn't know its agent. A host resolves between the two
-//! by formatting every path each pipeline can report and looking its
-//! requests up among them, once per build.
+//! Sinks name full paths across every agent; a pipeline watches typed
+//! [`Subject`]s of its own agent. A host resolves between the two by spelling
+//! every subject each pipeline can record and looking its requests up among
+//! them, once per build.
 
 use crate::{
-    observe::{
-        path::node_path,
-        sink::WatchRequest,
-        watch::{WatchSet, WatchedLeaf},
-    },
+    observe::{key::Subject, sink::WatchRequest, watch::WatchSet},
     port::Observable,
 };
 
@@ -22,8 +18,10 @@ use std::collections::BTreeSet;
 ///
 /// A requested path is unresolved only once every agent has had its turn, so
 /// the resolver carries what is still unmatched from one agent to the next.
-/// Each path names one agent, one node and one leaf, so it matches at most
-/// once, and matching removes it; what remains at the end matched nothing.
+/// Each path names one agent, so it matches only during that agent's turn,
+/// and matching removes it; what remains at the end matched nothing. Within
+/// the turn a path may match several subjects: a channel path matches every
+/// instance of its channel.
 #[derive(Debug)]
 pub struct WatchResolver {
     /// The merged request; for [`WatchRequest::Paths`], the paths no agent
@@ -38,25 +36,31 @@ impl WatchResolver {
 
     /// The watch set for `agent`, whose pipeline reports `observables`, as
     /// [`observables`](crate::AutonomyPipeline::observables) lists them.
-    pub fn watch_set_for<'a>(
+    pub fn watch_set_for(
         &mut self,
         agent: &AgentId,
-        observables: impl IntoIterator<Item = (&'a str, Observable)>,
+        observables: impl IntoIterator<Item = (Subject, Observable)>,
     ) -> WatchSet {
         let pending = match &mut self.pending {
             WatchRequest::Everything => return WatchSet::Everything,
             WatchRequest::Paths(pending) => pending,
         };
 
-        let leaves: BTreeSet<WatchedLeaf> = observables
+        let mut matched: BTreeSet<String> = BTreeSet::new();
+        let subjects: BTreeSet<Subject> = observables
             .into_iter()
-            .filter(|(node, observable)| {
-                pending.remove(&node_path(agent.as_str(), node, observable.leaf_name()))
+            .filter_map(|(subject, _)| {
+                let path = subject.path(agent);
+                if !pending.contains(&path) {
+                    return None;
+                }
+                matched.insert(path);
+                Some(subject)
             })
-            .map(|(node, observable)| WatchedLeaf::new(node, observable.leaf_name().as_ref()))
             .collect();
+        pending.retain(|path| !matched.contains(path));
 
-        WatchSet::Leaves(leaves)
+        WatchSet::Subjects(subjects)
     }
 
     /// The requested paths no agent reports. The caller must report them
@@ -74,38 +78,60 @@ impl WatchResolver {
 mod tests {
     use super::*;
 
-    use crate::port::Determinism;
+    use crate::{
+        observe::path::{channel_path, node_path},
+        port::{ChannelKey, ChannelKind, Determinism, InstanceKey, Keyed},
+    };
 
     const CAR: &str = "car";
     const TRUCK: &str = "truck";
     const ESTIMATOR: &str = "estimator";
     const NIS: &str = "aiding.gps.nis";
     const DROPPED: &str = "aiding.gps.dropped";
+    const TF: &str = "tf";
 
-    /// What an agent's pipeline reports: one estimator with NIS and drops.
-    fn observables() -> Vec<(&'static str, Observable)> {
-        [NIS, DROPPED]
-            .into_iter()
-            .map(|leaf| {
-                (
-                    ESTIMATOR,
-                    Observable::scalar(leaf, Determinism::Deterministic),
-                )
-            })
-            .collect()
+    struct Edge(&'static str);
+
+    impl Keyed for Edge {
+        type Instance = &'static str;
+
+        fn instance(&self) -> &&'static str {
+            &self.0
+        }
+    }
+
+    fn tf() -> ChannelKey {
+        ChannelKey::keyed::<Edge>(ChannelKind::Internal, TF)
+    }
+
+    fn edge(frame: &'static str) -> Subject {
+        Subject::channel(tf(), Some(InstanceKey::of::<Edge>(&frame)))
+    }
+
+    /// What an agent's pipeline reports: one estimator with NIS and drops,
+    /// and two instances of a keyed channel.
+    fn observables() -> Vec<(Subject, Observable)> {
+        let emissions = [NIS, DROPPED].into_iter().map(|leaf| {
+            (
+                Subject::emission(ESTIMATOR, leaf),
+                Observable::scalar(leaf, Determinism::Deterministic),
+            )
+        });
+        let edges = ["base_link", "imu"].into_iter().map(|frame| {
+            (
+                edge(frame),
+                Observable::typed(TF, Determinism::Deterministic, &tf()),
+            )
+        });
+        emissions.chain(edges).collect()
     }
 
     fn request(paths: &[String]) -> WatchRequest {
         WatchRequest::Paths(paths.iter().cloned().collect())
     }
 
-    fn leaves(pairs: &[(&str, &str)]) -> WatchSet {
-        WatchSet::Leaves(
-            pairs
-                .iter()
-                .map(|(node, leaf)| WatchedLeaf::new(*node, *leaf))
-                .collect(),
-        )
+    fn subjects(subjects: impl IntoIterator<Item = Subject>) -> WatchSet {
+        WatchSet::Subjects(subjects.into_iter().collect())
     }
 
     fn unresolved(paths: &[&String]) -> BTreeSet<String> {
@@ -113,12 +139,22 @@ mod tests {
     }
 
     #[test]
-    fn requested_paths_resolve_to_their_pairs() {
+    fn requested_paths_resolve_to_their_subjects() {
         let mut resolver = WatchResolver::new(request(&[node_path(CAR, ESTIMATOR, NIS)]));
 
         let set = resolver.watch_set_for(&AgentId::new(CAR), observables());
 
-        assert_eq!(set, leaves(&[(ESTIMATOR, NIS)]));
+        assert_eq!(set, subjects([Subject::emission(ESTIMATOR, NIS)]));
+        assert!(resolver.into_unresolved().is_empty());
+    }
+
+    #[test]
+    fn a_channel_path_resolves_to_every_instance_of_its_channel() {
+        let mut resolver = WatchResolver::new(request(&[channel_path(CAR, &tf())]));
+
+        let set = resolver.watch_set_for(&AgentId::new(CAR), observables());
+
+        assert_eq!(set, subjects([edge("base_link"), edge("imu")]));
         assert!(resolver.into_unresolved().is_empty());
     }
 
@@ -132,29 +168,36 @@ mod tests {
         let car = resolver.watch_set_for(&AgentId::new(CAR), observables());
         let truck = resolver.watch_set_for(&AgentId::new(TRUCK), observables());
 
-        assert_eq!(car, leaves(&[(ESTIMATOR, NIS)]));
-        assert_eq!(truck, leaves(&[(ESTIMATOR, DROPPED)]));
+        assert_eq!(car, subjects([Subject::emission(ESTIMATOR, NIS)]));
+        assert_eq!(truck, subjects([Subject::emission(ESTIMATOR, DROPPED)]));
         assert!(resolver.into_unresolved().is_empty());
     }
 
     #[test]
-    fn unknown_agent_node_and_leaf_are_returned_unresolved() {
+    fn unknown_agent_node_leaf_and_channel_are_returned_unresolved() {
         let unknown_agent = node_path("bus", ESTIMATOR, NIS);
         let unknown_node = node_path(CAR, "planner", NIS);
         let undeclared_leaf = node_path(CAR, ESTIMATOR, "aiding.gps.nsi");
+        let unwritten_channel = channel_path(CAR, &ChannelKey::internal::<f64>("truth.tf"));
         let mut resolver = WatchResolver::new(request(&[
             node_path(CAR, ESTIMATOR, NIS),
             unknown_agent.clone(),
             unknown_node.clone(),
             undeclared_leaf.clone(),
+            unwritten_channel.clone(),
         ]));
 
         let set = resolver.watch_set_for(&AgentId::new(CAR), observables());
 
-        assert_eq!(set, leaves(&[(ESTIMATOR, NIS)]));
+        assert_eq!(set, subjects([Subject::emission(ESTIMATOR, NIS)]));
         assert_eq!(
             resolver.into_unresolved(),
-            unresolved(&[&unknown_agent, &unknown_node, &undeclared_leaf])
+            unresolved(&[
+                &unknown_agent,
+                &unknown_node,
+                &undeclared_leaf,
+                &unwritten_channel
+            ])
         );
     }
 

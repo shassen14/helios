@@ -37,6 +37,9 @@ use std::{any::TypeId, sync::Arc};
 /// Two keys are equal when all four match. The pipeline build still refuses
 /// one name used for two keys, so a name differing only in kind or type
 /// never reaches the bus.
+///
+/// Ordered by name first, so a sorted set of keys (a watch set, a report)
+/// reads the same in every build: see the `Ord` impl.
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct ChannelKey {
     kind: ChannelKind,
@@ -117,6 +120,28 @@ impl ChannelKey {
     /// value.
     pub fn is_keyed(&self) -> bool {
         self.keyed
+    }
+}
+
+impl Ord for ChannelKey {
+    /// By name, then kind, type name and keyedness, with the `TypeId` last.
+    /// A `TypeId`'s order differs between compiles, so ordering by it first,
+    /// as a derive would, could reorder a report from one build to the next.
+    /// Names are unique per agent, so past the name nothing decides in
+    /// practice; the rest keeps the order consistent with `Eq`.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name
+            .cmp(&other.name)
+            .then(self.kind.cmp(&other.kind))
+            .then(self.type_name.cmp(other.type_name))
+            .then(self.keyed.cmp(&other.keyed))
+            .then(self.type_id.cmp(&other.type_id))
+    }
+}
+
+impl PartialOrd for ChannelKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -239,6 +264,27 @@ mod tests {
         fn instance(&self) -> &u32 {
             &self.child
         }
+    }
+
+    #[test]
+    fn keys_order_by_name_before_kind_or_type() {
+        let mut keys = vec![
+            ChannelKey::oracle::<Foo>("b"),
+            ChannelKey::internal::<Bar>("c"),
+            ChannelKey::measurement::<Bar>("a"),
+            ChannelKey::internal::<Foo>("b"),
+        ];
+        keys.sort();
+
+        assert_eq!(
+            keys,
+            vec![
+                ChannelKey::measurement::<Bar>("a"),
+                ChannelKey::internal::<Foo>("b"),
+                ChannelKey::oracle::<Foo>("b"),
+                ChannelKey::internal::<Bar>("c"),
+            ]
+        );
     }
 
     #[test]

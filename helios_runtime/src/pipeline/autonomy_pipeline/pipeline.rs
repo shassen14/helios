@@ -11,7 +11,7 @@ use crate::{
 
 use helios_core::{
     control::actuators::ActuatorCommand,
-    prelude::{MonotonicTime, TfProvider},
+    prelude::{AgentId, MonotonicTime, TfProvider},
     spatial::{transforms::Convention, FrameAwareState, FrameId},
 };
 
@@ -25,6 +25,10 @@ use tracing::{debug_span, trace_span};
 /// per-node timer counters, and the per-node observation buffers, all of
 /// which use interior mutability so [`tick`](Self::tick) can take `&self`.
 pub struct AutonomyPipeline {
+    /// The agent whose brain this is, by its config name. Every frame the
+    /// pipeline reads is scoped by it, and every recorded key names it. The
+    /// agent owns the pipeline; this is only its name.
+    pub(in crate::pipeline) agent: AgentId,
     /// Nodes grouped by topological level, in execution order, each with
     /// the state the pipeline keeps for it. Walking levels in order visits
     /// nodes in [`NodeId`] order.
@@ -42,6 +46,11 @@ pub struct AutonomyPipeline {
 }
 
 impl AutonomyPipeline {
+    /// The agent whose brain this is.
+    pub fn agent(&self) -> &AgentId {
+        &self.agent
+    }
+
     /// Returns a reference to the [`PortBus`] for direct read/write access.
     ///
     /// External callers use this to:
@@ -133,11 +142,11 @@ impl AutonomyPipeline {
     /// provider nodes query for the tick.
     ///
     /// When a node's [`TICK_DURATION_LEAF`] is watched, its run is timed on a
-    /// wall clock and recorded in seconds, stamped with `now`. When one of its
-    /// output channels is watched, the value the node wrote there is recorded
-    /// once per run that wrote it, stamped with the value's own time. A node
-    /// records its taps before its duration, and both after what it emitted
-    /// itself.
+    /// wall clock and recorded in seconds, stamped with `now`. When a channel
+    /// instance it writes is watched, the value the node wrote there is
+    /// recorded under the channel's key once per run that wrote it, stamped
+    /// with the value's own time. A node's run records its channels before
+    /// its duration, and both after what it emitted itself.
     pub fn tick(&self, now: MonotonicTime, dt: f64, tf: &dyn TfProvider) {
         self.bus.set_tick_time(now.0);
 

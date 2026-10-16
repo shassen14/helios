@@ -1,11 +1,12 @@
 //! What a watching host calls on [`AutonomyPipeline`]: the catalog of what
-//! each node can report, the watch set that picks what it does report, and
-//! the drain that collects what was reported.
+//! the pipeline can record, the watch set that picks what it does record,
+//! and the drain that collects what was recorded.
 
-use super::{observable_catalog, writes_several_instances, ScheduledNode};
+use super::{observable_catalog, ScheduledNode};
 
 use crate::{
     observe::{
+        key::Subject,
         observation::Observation,
         watch::{WatchError, WatchSet},
     },
@@ -14,34 +15,50 @@ use crate::{
 };
 
 impl AutonomyPipeline {
-    /// Iterates over every leaf a watcher can ask for, paired with the name of
-    /// the node that reports it.
+    /// Iterates over every subject a watcher can ask for, with what it
+    /// records.
     ///
-    /// Nodes come in [`NodeId`](crate::NodeId) order. Within a node, the
-    /// leaves it declares come first, in declaration order, then the leaves
-    /// the pipeline adds to every node.
+    /// Nodes come in [`NodeId`](crate::NodeId) order. For each node: the
+    /// leaves it declares, in declaration order, then the leaves the pipeline
+    /// adds to every node, as [`Subject::Emission`]s; then each channel it
+    /// writes, in output order, once per instance it declares on a keyed
+    /// channel, as [`Subject::Channel`]s. A channel no node writes is not
+    /// listed: nothing records it yet.
     ///
-    /// A host formats its own paths from these pairs and looks its requests
-    /// up in them, rather than parsing paths apart. A comparison across runs
-    /// reads each [`Observable`]'s determinism to skip nondeterministic leaves.
-    pub fn observables(&self) -> impl Iterator<Item = (&str, Observable)> + '_ {
+    /// A host spells its own paths from these subjects and looks its
+    /// requests up in them, rather than parsing paths apart. A comparison
+    /// across runs reads each [`Observable`]'s determinism to skip
+    /// nondeterministic ones.
+    pub fn observables(&self) -> impl Iterator<Item = (Subject, Observable)> + '_ {
         self.levels.iter().flatten().flat_map(|scheduled| {
             let name = scheduled.node.name();
-            observable_catalog(scheduled.node.as_ref())
-                .into_iter()
-                .map(move |observable| (name, observable))
+            let emissions =
+                observable_catalog(scheduled.node.as_ref())
+                    .into_iter()
+                    .map(move |observable| {
+                        (
+                            Subject::emission(name, observable.leaf_name().clone()),
+                            observable,
+                        )
+                    });
+            let channels = scheduled
+                .taps
+                .iter()
+                .map(|tap| (tap.subject().clone(), tap.observable()));
+            emissions.chain(channels)
         })
     }
 
     /// Moves everything recorded since the last drain onto the end of `out`,
-    /// leaving every node's buffer empty.
+    /// leaving every node's buffer empty. Each observation's key names this
+    /// pipeline's agent.
     ///
-    /// Observations come grouped by node, in [`NodeId`](crate::NodeId) order,
-    /// and in emit order within a node; a caller wanting one timeline sorts
-    /// by timestamp. Appending lets a host reuse one list every tick, and
-    /// drain several pipelines into it.
+    /// Observations come grouped by the node whose run recorded them, in
+    /// [`NodeId`](crate::NodeId) order, and in record order within a node; a
+    /// caller wanting one timeline sorts by timestamp. Appending lets a host
+    /// reuse one list every tick, and drain several pipelines into it.
     ///
-    /// The host must drain after every tick: a node with watched leaves
+    /// The host must drain after every tick: a node with anything watched
     /// records on every run, and nothing else empties its buffer.
     pub fn drain_into(&self, out: &mut Vec<Observation>) {
         for scheduled in self.levels.iter().flatten() {
@@ -49,51 +66,34 @@ impl AutonomyPipeline {
         }
     }
 
-    /// Replaces the whole watch set: from now on, exactly the leaves `set`
-    /// names record what their nodes emit. A built pipeline watches nothing.
+    /// Replaces the whole watch set: from now on, exactly the subjects `set`
+    /// names are recorded. A built pipeline watches nothing.
     ///
-    /// All or nothing: if any entry names a node that doesn't exist, or a leaf
-    /// its node doesn't declare, every such entry is reported and the previous
-    /// watch set stays in place.
+    /// All or nothing: if any entry names a node that doesn't exist, a leaf
+    /// its node doesn't declare, or a channel instance no node writes, every
+    /// such entry is reported and the previous watch set stays in place.
     ///
     /// Observations already recorded are kept until the next drain, including
-    /// those of leaves this call stops watching, so drain before changing the
-    /// watch set.
+    /// those of subjects this call stops watching, so drain before changing
+    /// the watch set.
     pub fn watch(&mut self, set: &WatchSet) -> Result<(), Vec<WatchError>> {
-        let leaves = match set {
+        let subjects = match set {
             WatchSet::Everything => {
                 for scheduled in self.levels.iter_mut().flatten() {
                     scheduled.observations.set_all_watched(true);
+                    for tap in &mut scheduled.taps {
+                        tap.watched = true;
+                    }
                 }
                 return Ok(());
             }
-            WatchSet::Leaves(leaves) => leaves,
+            WatchSet::Subjects(subjects) => subjects,
         };
 
-        let errors: Vec<WatchError> = leaves
+        let errors: Vec<WatchError> = subjects
             .iter()
-            .filter_map(|entry| match self.scheduled(&entry.node) {
-                None => Some(WatchError::UnknownNode {
-                    node: entry.node.clone(),
-                    leaf: entry.leaf.clone(),
-                }),
-                Some(scheduled) if !scheduled.observations.declares(&entry.leaf) => {
-                    if writes_several_instances(scheduled.node.as_ref(), &entry.leaf) {
-                        Some(WatchError::SeveralInstances {
-                            node: entry.node.clone(),
-                            leaf: entry.leaf.clone(),
-                        })
-                    } else {
-                        Some(WatchError::UndeclaredLeaf {
-                            node: entry.node.clone(),
-                            leaf: entry.leaf.clone(),
-                        })
-                    }
-                }
-                Some(_) => None,
-            })
+            .filter_map(|subject| self.refusal(subject))
             .collect();
-
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -105,13 +105,51 @@ impl AutonomyPipeline {
             scheduled.observations.set_all_watched(false);
 
             let name = scheduled.node.name();
-            for entry in leaves.iter().filter(|entry| entry.node == name) {
-                let declared = scheduled.observations.set_watched(&entry.leaf, true);
-                debug_assert!(declared, "leaf \"{}\" was checked above", entry.leaf);
+            for subject in subjects {
+                if let Subject::Emission { node, leaf } = subject {
+                    if node.as_ref() == name {
+                        let declared = scheduled.observations.set_watched(leaf, true);
+                        debug_assert!(declared, "leaf \"{leaf}\" was checked above");
+                    }
+                }
+            }
+            for tap in &mut scheduled.taps {
+                tap.watched = subjects.contains(tap.subject());
             }
         }
 
         Ok(())
+    }
+
+    /// Why `subject` can't be watched, or `None` when it can.
+    fn refusal(&self, subject: &Subject) -> Option<WatchError> {
+        match subject {
+            Subject::Emission { node, leaf } => match self.scheduled(node) {
+                None => Some(WatchError::UnknownNode {
+                    node: node.to_string(),
+                    leaf: leaf.to_string(),
+                }),
+                Some(scheduled) if !scheduled.observations.declares(leaf) => {
+                    Some(WatchError::UndeclaredLeaf {
+                        node: node.to_string(),
+                        leaf: leaf.to_string(),
+                    })
+                }
+                Some(_) => None,
+            },
+            Subject::Channel { channel, instance } => {
+                let tapped = self
+                    .levels
+                    .iter()
+                    .flatten()
+                    .flat_map(|scheduled| &scheduled.taps)
+                    .any(|tap| tap.subject() == subject);
+                (!tapped).then(|| WatchError::UnrecordedChannel {
+                    channel: channel.clone(),
+                    instance: instance.clone(),
+                })
+            }
+        }
     }
 
     /// The node named `name`, if any. Node names are unique; the build
@@ -130,8 +168,8 @@ mod tests {
 
     use crate::{
         observe::{
+            key::RecordedKey,
             observation::{ObservedValue, ObservedValueKind},
-            watch::WatchedLeaf,
         },
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
         port::{
@@ -157,7 +195,7 @@ mod tests {
     const DROPPED: &str = "aiding.gps.dropped";
     const UNDECLARED: &str = "aiding.gps.undeclared";
     const MISSING_NODE: &str = "missing";
-    /// The writer's output instance, and the tap leaf it is watched at.
+    /// The writer's output channel.
     const ESTIMATE: &str = "odom.estimate";
     const STEP: f64 = 0.01;
     /// How far before the tick's `now` a written value is stamped, so a tap's
@@ -270,40 +308,40 @@ mod tests {
             .expect("two independent nodes build")
     }
 
-    fn leaves(pairs: &[(&str, &str)]) -> WatchSet {
-        WatchSet::Leaves(
-            pairs
-                .iter()
-                .map(|(node, leaf)| WatchedLeaf::new(*node, *leaf))
-                .collect(),
-        )
+    fn emission(node: &str, leaf: &str) -> Subject {
+        Subject::emission(node, leaf)
     }
 
-    /// Every `(node, leaf)` in the catalog, in node-id order.
-    fn catalog(pipeline: &AutonomyPipeline) -> Vec<(String, String)> {
-        pipeline
-            .observables()
-            .map(|(node, observable)| (node.to_string(), observable.leaf_name().to_string()))
-            .collect()
+    /// The [`ESTIMATE`] channel's subject.
+    fn estimate_channel() -> Subject {
+        Subject::channel(estimate(), None)
     }
 
-    /// Every `(node, leaf)` currently watched, in node-id order.
-    fn watched(pipeline: &AutonomyPipeline) -> Vec<(String, String)> {
+    fn subjects(subjects: impl IntoIterator<Item = Subject>) -> WatchSet {
+        WatchSet::Subjects(subjects.into_iter().collect())
+    }
+
+    /// Every subject in the catalog, in catalog order.
+    fn catalog(pipeline: &AutonomyPipeline) -> Vec<Subject> {
+        pipeline.observables().map(|(subject, _)| subject).collect()
+    }
+
+    /// Every subject currently watched, in catalog order.
+    fn watched(pipeline: &AutonomyPipeline) -> Vec<Subject> {
         catalog(pipeline)
             .into_iter()
-            .filter(|(node, leaf)| {
-                pipeline
+            .filter(|subject| match subject {
+                Subject::Emission { node, leaf } => pipeline
                     .scheduled(node)
                     .and_then(|scheduled| scheduled.observations.watched_leaf(leaf))
-                    .is_some()
+                    .is_some(),
+                Subject::Channel { .. } => pipeline
+                    .levels
+                    .iter()
+                    .flatten()
+                    .flat_map(|scheduled| &scheduled.taps)
+                    .any(|tap| tap.subject() == subject && tap.watched),
             })
-            .collect()
-    }
-
-    fn pairs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs
-            .iter()
-            .map(|(node, leaf)| (node.to_string(), leaf.to_string()))
             .collect()
     }
 
@@ -334,22 +372,27 @@ mod tests {
         out
     }
 
+    fn key(subject: Subject) -> RecordedKey {
+        RecordedKey {
+            agent: AgentId::new(AGENT),
+            subject,
+        }
+    }
+
     /// What an [`Emitting`] node records for `leaf` on the run at `t`.
     fn emitted(node: &str, leaf: &str, t: f64) -> Observation {
         Observation {
-            node: node.into(),
-            leaf: leaf.into(),
+            key: key(emission(node, leaf)),
             timestamp: MonotonicTime(t),
             value: ObservedValue::Scalar(t),
         }
     }
 
     /// What a watched tap on [`ESTIMATE`] records for `written`: the bus
-    /// value itself, at the writer's tap leaf, stamped with the value's time.
+    /// value itself, under the channel's key, stamped with the value's time.
     fn tapped(written: Arc<dyn ErasedStamped>) -> Observation {
         Observation {
-            node: WRITER.into(),
-            leaf: ESTIMATE.into(),
+            key: key(estimate_channel()),
             timestamp: written.timestamp(),
             value: ObservedValue::Typed(written),
         }
@@ -364,66 +407,75 @@ mod tests {
             .expect("the writer has written its output")
     }
 
-    /// The `(node, leaf)` of each observation, in drained order.
-    fn sources(observations: &[Observation]) -> Vec<(String, String)> {
-        observations
-            .iter()
-            .map(|o| (o.node.to_string(), o.leaf.to_string()))
-            .collect()
+    /// The subject of each observation, in drained order.
+    fn sources(observations: &[Observation]) -> Vec<Subject> {
+        observations.iter().map(|o| o.key.subject.clone()).collect()
     }
 
     #[test]
     fn observables_list_every_node_in_order_each_ending_with_tick_duration() {
         assert_eq!(
             catalog(&pipeline()),
-            pairs(&[
-                (FIRST, NIS),
-                (FIRST, DROPPED),
-                (FIRST, TICK_DURATION_LEAF),
-                (SECOND, NIS),
-                (SECOND, TICK_DURATION_LEAF),
-            ])
+            vec![
+                emission(FIRST, NIS),
+                emission(FIRST, DROPPED),
+                emission(FIRST, TICK_DURATION_LEAF),
+                emission(SECOND, NIS),
+                emission(SECOND, TICK_DURATION_LEAF),
+            ]
         );
     }
 
     #[test]
     fn built_pipeline_watches_nothing() {
-        assert!(watched(&pipeline()).is_empty());
+        assert!(watched(&tapped_pipeline(&[])).is_empty());
     }
 
     #[test]
-    fn everything_watches_every_leaf_on_every_node() {
-        let mut pipeline = pipeline();
+    fn everything_watches_every_emission_and_channel() {
+        let mut pipeline = tapped_pipeline(&[]);
         pipeline.watch(&WatchSet::Everything).expect("cannot fail");
 
         assert_eq!(watched(&pipeline), catalog(&pipeline));
     }
 
     #[test]
-    fn leaves_watch_exactly_the_listed_pairs() {
-        let mut pipeline = pipeline();
+    fn subjects_watch_exactly_the_listed_ones() {
+        let mut pipeline = tapped_pipeline(&[]);
         pipeline
-            .watch(&leaves(&[(FIRST, NIS), (SECOND, TICK_DURATION_LEAF)]))
-            .expect("both pairs are declared");
+            .watch(&subjects([
+                emission(WRITER, NIS),
+                emission(SECOND, TICK_DURATION_LEAF),
+                estimate_channel(),
+            ]))
+            .expect("all are recorded");
 
         assert_eq!(
             watched(&pipeline),
-            pairs(&[(FIRST, NIS), (SECOND, TICK_DURATION_LEAF)])
+            vec![
+                emission(SECOND, TICK_DURATION_LEAF),
+                emission(WRITER, NIS),
+                estimate_channel(),
+            ]
         );
     }
 
     #[test]
     fn replacing_the_set_unwatches_what_it_drops() {
-        let mut pipeline = pipeline();
-        pipeline.watch(&leaves(&[(FIRST, NIS)])).expect("declared");
-        pipeline.watch(&leaves(&[(SECOND, NIS)])).expect("declared");
+        let mut pipeline = tapped_pipeline(&[]);
+        pipeline
+            .watch(&subjects([emission(WRITER, NIS), estimate_channel()]))
+            .expect("recorded");
+        pipeline
+            .watch(&subjects([emission(SECOND, NIS)]))
+            .expect("declared");
 
-        assert_eq!(watched(&pipeline), pairs(&[(SECOND, NIS)]));
+        assert_eq!(watched(&pipeline), vec![emission(SECOND, NIS)]);
     }
 
     #[test]
     fn default_set_after_everything_watches_nothing() {
-        let mut pipeline = pipeline();
+        let mut pipeline = tapped_pipeline(&[]);
         pipeline.watch(&WatchSet::Everything).expect("cannot fail");
         pipeline
             .watch(&WatchSet::default())
@@ -433,17 +485,21 @@ mod tests {
     }
 
     #[test]
-    fn unknown_node_and_undeclared_leaf_are_refused_together_and_change_nothing() {
+    fn unknown_node_undeclared_leaf_and_unwritten_channel_are_refused_together() {
         let mut pipeline = pipeline();
-        pipeline.watch(&leaves(&[(FIRST, NIS)])).expect("declared");
+        pipeline
+            .watch(&subjects([emission(FIRST, NIS)]))
+            .expect("declared");
+        let unwritten = ChannelKey::internal::<f64>("truth.tf");
 
         let errors = pipeline
-            .watch(&leaves(&[
-                (SECOND, NIS),
-                (FIRST, UNDECLARED),
-                (MISSING_NODE, NIS),
+            .watch(&subjects([
+                emission(SECOND, NIS),
+                emission(FIRST, UNDECLARED),
+                emission(MISSING_NODE, NIS),
+                Subject::channel(unwritten.clone(), None),
             ]))
-            .expect_err("two entries are unknown");
+            .expect_err("three entries are unknown");
 
         assert_eq!(
             errors,
@@ -456,9 +512,13 @@ mod tests {
                     node: MISSING_NODE.to_string(),
                     leaf: NIS.to_string(),
                 },
+                WatchError::UnrecordedChannel {
+                    channel: unwritten,
+                    instance: None,
+                },
             ]
         );
-        assert_eq!(watched(&pipeline), pairs(&[(FIRST, NIS)]));
+        assert_eq!(watched(&pipeline), vec![emission(FIRST, NIS)]);
     }
 
     #[test]
@@ -466,7 +526,7 @@ mod tests {
         let mut pipeline = pipeline();
 
         let errors = pipeline
-            .watch(&leaves(&[(SECOND, DROPPED)]))
+            .watch(&subjects([emission(SECOND, DROPPED)]))
             .expect_err("only first declares the drop count");
 
         assert_eq!(
@@ -479,10 +539,31 @@ mod tests {
     }
 
     #[test]
+    fn a_channel_is_not_a_leaf_of_its_writer() {
+        let mut pipeline = tapped_pipeline(&[]);
+
+        let errors = pipeline
+            .watch(&subjects([emission(WRITER, ESTIMATE)]))
+            .expect_err("a channel is watched under its own key");
+
+        assert_eq!(
+            errors,
+            vec![WatchError::UndeclaredLeaf {
+                node: WRITER.to_string(),
+                leaf: ESTIMATE.to_string(),
+            }]
+        );
+    }
+
+    #[test]
     fn drain_gives_each_node_in_id_order_in_emit_order_then_empties() {
         let mut pipeline = pipeline();
         pipeline
-            .watch(&leaves(&[(FIRST, NIS), (FIRST, DROPPED), (SECOND, NIS)]))
+            .watch(&subjects([
+                emission(FIRST, NIS),
+                emission(FIRST, DROPPED),
+                emission(SECOND, NIS),
+            ]))
             .expect("all declared");
 
         run(&pipeline, &[1.0, 2.0]);
@@ -502,8 +583,22 @@ mod tests {
     }
 
     #[test]
+    fn every_drained_key_names_the_pipelines_agent() {
+        let mut pipeline = tapped_pipeline(&[1.0]);
+        pipeline.watch(&WatchSet::Everything).expect("cannot fail");
+
+        run(&pipeline, &[1.0]);
+        let observations = drained(&pipeline);
+
+        assert!(!observations.is_empty());
+        for observation in &observations {
+            assert_eq!(observation.key.agent, *pipeline.agent());
+        }
+    }
+
+    #[test]
     fn nothing_watched_drains_nothing() {
-        let pipeline = pipeline();
+        let pipeline = tapped_pipeline(&[1.0]);
         run(&pipeline, &[1.0]);
 
         assert!(drained(&pipeline).is_empty());
@@ -512,7 +607,9 @@ mod tests {
     #[test]
     fn unwatched_leaves_beside_a_watched_one_are_not_recorded() {
         let mut pipeline = pipeline();
-        pipeline.watch(&leaves(&[(FIRST, NIS)])).expect("declared");
+        pipeline
+            .watch(&subjects([emission(FIRST, NIS)]))
+            .expect("declared");
 
         run(&pipeline, &[1.0]);
 
@@ -523,7 +620,7 @@ mod tests {
     fn watched_tick_duration_is_one_sample_per_run_stamped_with_now() {
         let mut pipeline = pipeline();
         pipeline
-            .watch(&leaves(&[(SECOND, TICK_DURATION_LEAF)]))
+            .watch(&subjects([emission(SECOND, TICK_DURATION_LEAF)]))
             .expect("every node has a duration");
 
         run(&pipeline, &[1.0, 2.0]);
@@ -531,7 +628,10 @@ mod tests {
 
         assert_eq!(
             sources(&observations),
-            pairs(&[(SECOND, TICK_DURATION_LEAF), (SECOND, TICK_DURATION_LEAF)])
+            vec![
+                emission(SECOND, TICK_DURATION_LEAF),
+                emission(SECOND, TICK_DURATION_LEAF)
+            ]
         );
         let stamps: Vec<MonotonicTime> = observations.iter().map(|o| o.timestamp).collect();
         assert_eq!(stamps, vec![MonotonicTime(1.0), MonotonicTime(2.0)]);
@@ -552,33 +652,50 @@ mod tests {
 
         assert_eq!(
             sources(&drained(&pipeline)),
-            pairs(&[
-                (FIRST, NIS),
-                (FIRST, DROPPED),
-                (FIRST, TICK_DURATION_LEAF),
-                (SECOND, NIS),
-                (SECOND, TICK_DURATION_LEAF),
-            ])
+            vec![
+                emission(FIRST, NIS),
+                emission(FIRST, DROPPED),
+                emission(FIRST, TICK_DURATION_LEAF),
+                emission(SECOND, NIS),
+                emission(SECOND, TICK_DURATION_LEAF),
+            ]
         );
     }
 
     #[test]
-    fn observables_list_a_tap_per_output_between_declared_leaves_and_tick_duration() {
+    fn observables_list_a_nodes_channels_after_its_emissions() {
         assert_eq!(
             catalog(&tapped_pipeline(&[])),
-            pairs(&[
-                (SECOND, NIS),
-                (SECOND, TICK_DURATION_LEAF),
-                (WRITER, NIS),
-                (WRITER, ESTIMATE),
-                (WRITER, TICK_DURATION_LEAF),
-            ])
+            vec![
+                emission(SECOND, NIS),
+                emission(SECOND, TICK_DURATION_LEAF),
+                emission(WRITER, NIS),
+                emission(WRITER, TICK_DURATION_LEAF),
+                estimate_channel(),
+            ]
+        );
+    }
+
+    /// A leaf may share a name with an output: one is an emission of the
+    /// node, the other a channel, so the two are told apart by kind.
+    #[test]
+    fn a_leaf_named_like_an_output_is_its_own_subject() {
+        let mut pipeline = built(writing(&[ESTIMATE], &[1.0]));
+        pipeline
+            .watch(&subjects([emission(WRITER, ESTIMATE), estimate_channel()]))
+            .expect("both are recorded");
+
+        run(&pipeline, &[1.0]);
+
+        assert_eq!(
+            drained(&pipeline),
+            vec![emitted(WRITER, ESTIMATE, 1.0), tapped(written(&pipeline))]
         );
     }
 
     // --- keyed outputs ---
 
-    /// The keyed output's name, and its tap leaf.
+    /// The keyed output's name.
     const EDGES: &str = "edges";
 
     /// A value about one frame, keyed by the frame.
@@ -596,6 +713,10 @@ mod tests {
 
     fn edges() -> ChannelKey {
         ChannelKey::keyed::<FrameSample>(ChannelKind::Internal, EDGES)
+    }
+
+    fn edge(frame: &'static str) -> Subject {
+        Subject::channel(edges(), Some(InstanceKey::of::<FrameSample>(&frame)))
     }
 
     /// A node writing each of `frames` on [`edges`] every run.
@@ -636,66 +757,71 @@ mod tests {
         }))
     }
 
-    /// A node writing one instance of a keyed channel is watched at the
-    /// channel's name, and the tap records that instance's value itself.
-    #[test]
-    fn watched_keyed_tap_records_the_one_instance_the_node_writes() {
-        let mut pipeline = keyed_pipeline(&["base"]);
-        pipeline
-            .watch(&leaves(&[(WRITER, EDGES)]))
-            .expect("the writer writes one instance");
-
-        run(&pipeline, &[1.0]);
-        let observations = drained(&pipeline);
-
+    /// The value now in `frame`'s instance of [`edges`].
+    fn written_edge(pipeline: &AutonomyPipeline, frame: &'static str) -> Observation {
         let (written, _) = pipeline
             .bus()
-            .read_erased_instance_versioned(&edges(), &InstanceKey::of::<FrameSample>(&"base"))
+            .read_erased_instance_versioned(&edges(), &InstanceKey::of::<FrameSample>(&frame))
             .expect("the instance was written");
-        assert_eq!(
-            observations,
-            vec![Observation {
-                node: WRITER.into(),
-                leaf: EDGES.into(),
-                timestamp: MonotonicTime(1.0),
-                value: ObservedValue::Typed(written),
-            }]
-        );
+        Observation {
+            key: key(edge(frame)),
+            timestamp: written.timestamp(),
+            value: ObservedValue::Typed(written),
+        }
     }
 
-    /// A leaf names one series, so an output written in several instances has
-    /// no tap: watching it is refused saying why, and watching everything
-    /// leaves it out.
     #[test]
-    fn watching_a_keyed_output_of_several_instances_is_refused() {
+    fn observables_list_a_keyed_output_once_per_instance() {
+        let catalog = catalog(&keyed_pipeline(&["wheel", "base"]));
+
+        assert_eq!(&catalog[catalog.len() - 2..], [edge("wheel"), edge("base")]);
+    }
+
+    /// Each instance is its own series, so watching several records each
+    /// under its own key.
+    #[test]
+    fn watched_keyed_taps_record_each_instance_under_its_own_key() {
         let mut pipeline = keyed_pipeline(&["base", "wheel"]);
+        pipeline
+            .watch(&subjects([edge("base"), edge("wheel")]))
+            .expect("the writer writes both instances");
 
-        let errors = pipeline
-            .watch(&leaves(&[(WRITER, EDGES)]))
-            .expect_err("a leaf can't hold two instances");
+        run(&pipeline, &[1.0]);
+
         assert_eq!(
-            errors,
-            vec![WatchError::SeveralInstances {
-                node: WRITER.to_string(),
-                leaf: EDGES.to_string(),
-            }]
+            drained(&pipeline),
+            vec![
+                written_edge(&pipeline, "base"),
+                written_edge(&pipeline, "wheel")
+            ]
         );
-        assert!(!catalog(&pipeline).contains(&(WRITER.to_string(), EDGES.to_string())));
     }
 
     #[test]
-    fn watching_a_channel_the_node_does_not_output_is_refused() {
-        let mut pipeline = tapped_pipeline(&[]);
+    fn an_unwatched_instance_beside_a_watched_one_records_nothing() {
+        let mut pipeline = keyed_pipeline(&["base", "wheel"]);
+        pipeline
+            .watch(&subjects([edge("wheel")]))
+            .expect("the writer writes the wheel's edge");
+
+        run(&pipeline, &[1.0]);
+
+        assert_eq!(drained(&pipeline), vec![written_edge(&pipeline, "wheel")]);
+    }
+
+    #[test]
+    fn watching_an_instance_no_node_writes_is_refused() {
+        let mut pipeline = keyed_pipeline(&["base"]);
 
         let errors = pipeline
-            .watch(&leaves(&[(SECOND, ESTIMATE)]))
-            .expect_err("only the writer outputs the estimate");
+            .watch(&subjects([edge("wheel")]))
+            .expect_err("no node writes the wheel's edge");
 
         assert_eq!(
             errors,
-            vec![WatchError::UndeclaredLeaf {
-                node: SECOND.to_string(),
-                leaf: ESTIMATE.to_string(),
+            vec![WatchError::UnrecordedChannel {
+                channel: edges(),
+                instance: Some(InstanceKey::of::<FrameSample>(&"wheel")),
             }]
         );
     }
@@ -706,7 +832,7 @@ mod tests {
     fn watched_tap_records_the_bus_value_itself_stamped_with_its_own_time() {
         let mut pipeline = tapped_pipeline(&[1.0]);
         pipeline
-            .watch(&leaves(&[(WRITER, ESTIMATE)]))
+            .watch(&subjects([estimate_channel()]))
             .expect("the writer outputs the estimate");
 
         run(&pipeline, &[1.0]);
@@ -725,7 +851,7 @@ mod tests {
     fn run_that_leaves_its_output_unwritten_records_nothing() {
         let mut pipeline = tapped_pipeline(&[1.0, 3.0]);
         pipeline
-            .watch(&leaves(&[(WRITER, ESTIMATE)]))
+            .watch(&subjects([estimate_channel()]))
             .expect("the writer outputs the estimate");
 
         run(&pipeline, &[1.0]);
@@ -747,7 +873,7 @@ mod tests {
     fn rate_skipped_node_records_nothing() {
         let mut pipeline = built(writing_at_rate(SLOWER_THAN_STEP_HZ, &[4.0, 5.0, 6.0, 7.0]));
         pipeline
-            .watch(&leaves(&[(WRITER, ESTIMATE)]))
+            .watch(&subjects([estimate_channel()]))
             .expect("the writer outputs the estimate");
 
         // The node would write at 5.0–7.0, but its rate keeps it from running
@@ -760,7 +886,9 @@ mod tests {
     #[test]
     fn unwatched_tap_records_nothing_beside_a_watched_leaf() {
         let mut pipeline = tapped_pipeline(&[1.0]);
-        pipeline.watch(&leaves(&[(WRITER, NIS)])).expect("declared");
+        pipeline
+            .watch(&subjects([emission(WRITER, NIS)]))
+            .expect("declared");
 
         run(&pipeline, &[1.0]);
 
@@ -768,25 +896,19 @@ mod tests {
     }
 
     #[test]
-    fn every_recorded_value_is_the_kind_its_leaf_promises() {
+    fn every_recorded_value_is_the_kind_its_subject_promises() {
         let mut pipeline = tapped_pipeline(&[1.0]);
         pipeline.watch(&WatchSet::Everything).expect("cannot fail");
-        let promised: Vec<(String, String, ObservedValueKind)> = pipeline
+        let promised: Vec<(Subject, ObservedValueKind)> = pipeline
             .observables()
-            .map(|(node, observable)| {
-                (
-                    node.to_string(),
-                    observable.leaf_name().to_string(),
-                    observable.kind(),
-                )
-            })
+            .map(|(subject, observable)| (subject, observable.kind()))
             .collect();
 
         run(&pipeline, &[1.0]);
         let observations = drained(&pipeline);
 
         // Both kinds are covered: declared leaves and durations are scalars,
-        // the estimate tap is typed.
+        // the estimate is typed.
         assert!(observations
             .iter()
             .any(|o| matches!(o.value, ObservedValue::Scalar(_))));
@@ -796,17 +918,13 @@ mod tests {
         for observation in &observations {
             let kind = promised
                 .iter()
-                .find(|(node, leaf, _)| {
-                    node.as_str() == observation.node.as_ref()
-                        && leaf.as_str() == observation.leaf.as_ref()
-                })
-                .map(|(_, _, kind)| *kind);
+                .find(|(subject, _)| *subject == observation.key.subject)
+                .map(|(_, kind)| *kind);
             assert_eq!(
                 kind,
                 Some(observation.value.kind()),
-                "{}.{} arrived as another kind than its catalog entry promises",
-                observation.node,
-                observation.leaf
+                "{} arrived as another kind than its catalog entry promises",
+                observation.key.path()
             );
         }
     }
@@ -820,13 +938,13 @@ mod tests {
 
         assert_eq!(
             sources(&drained(&pipeline)),
-            pairs(&[
-                (SECOND, NIS),
-                (SECOND, TICK_DURATION_LEAF),
-                (WRITER, NIS),
-                (WRITER, ESTIMATE),
-                (WRITER, TICK_DURATION_LEAF),
-            ])
+            vec![
+                emission(SECOND, NIS),
+                emission(SECOND, TICK_DURATION_LEAF),
+                emission(WRITER, NIS),
+                estimate_channel(),
+                emission(WRITER, TICK_DURATION_LEAF),
+            ]
         );
     }
 }

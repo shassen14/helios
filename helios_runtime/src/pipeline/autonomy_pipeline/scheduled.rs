@@ -2,12 +2,18 @@
 //! every node's catalog.
 
 use crate::{
-    observe::{buffer::NodeObservations, observation::ObservedValue},
+    observe::{
+        buffer::NodeObservations,
+        key::{RecordedKey, Subject},
+        observation::ObservedValue,
+    },
     pipeline::rate_gate::RateTimer,
     port::{ChannelKey, Determinism, ErasedStamped, InstanceKey, Observable, PortBus, SlotVersion},
     prelude::PipelineNode,
     NodeId,
 };
+
+use helios_core::prelude::AgentId;
 
 use std::sync::Arc;
 
@@ -34,27 +40,33 @@ pub(in crate::pipeline) struct ScheduledNode {
     /// Decides each tick whether the node is due. Fires every tick when the
     /// node declares no rate.
     pub(in crate::pipeline) rate_timer: RateTimer,
-    /// What the node emitted for watchers since the last drain. Nothing in
-    /// the pipeline reads it.
+    /// What was recorded during the node's runs since the last drain: its
+    /// emissions and its watched taps. Nothing in the pipeline reads it.
     pub(in crate::pipeline) observations: NodeObservations,
-    /// One per output channel, in output order: which channel each tap leaf
-    /// in the catalog reads.
+    /// One per channel instance the node writes, in output order: what a
+    /// watched channel records once per run that wrote it.
     pub(in crate::pipeline) taps: Vec<Tap>,
 }
 
 impl ScheduledNode {
-    /// Wraps `node` with a timer at its declared rate and an empty buffer
-    /// under its name, holding every leaf in its
-    /// [`observable_catalog`], none of them watched.
-    pub(in crate::pipeline) fn new(node_id: NodeId, node: Box<dyn PipelineNode>) -> Self {
+    /// Wraps `node`, a node of `agent`'s pipeline, with a timer at its
+    /// declared rate, an empty buffer under its name holding every leaf in
+    /// its [`observable_catalog`], and a tap per channel instance it writes,
+    /// none of them watched.
+    pub(in crate::pipeline) fn new(
+        node_id: NodeId,
+        node: Box<dyn PipelineNode>,
+        agent: &AgentId,
+    ) -> Self {
         let rate_timer = RateTimer::new(node.port_descriptor().rate());
         let observations = NodeObservations::new(
+            agent,
             node.name(),
             observable_catalog(node.as_ref())
                 .into_iter()
                 .map(|o| o.leaf_name().clone()),
         );
-        let taps = output_taps(node.as_ref()).collect();
+        let taps = output_taps(node.as_ref(), agent).collect();
 
         Self {
             node_id,
@@ -71,13 +83,10 @@ impl ScheduledNode {
     pub(in crate::pipeline) fn watched_tap_versions(&self, bus: &PortBus) -> Vec<PendingTap<'_>> {
         self.taps
             .iter()
-            .filter_map(|tap| {
-                let leaf = self.observations.watched_leaf(&tap.leaf)?;
-                Some(PendingTap {
-                    leaf,
-                    tap,
-                    before: tap.read(bus).map(|(_, version)| version),
-                })
+            .filter(|tap| tap.watched)
+            .map(|tap| PendingTap {
+                tap,
+                before: tap.read(bus).map(|(_, version)| version),
             })
             .collect()
     }
@@ -90,32 +99,61 @@ impl ScheduledNode {
         bus: &PortBus,
         pending: Vec<PendingTap<'_>>,
     ) {
-        for tap in pending {
-            let Some((value, version)) = tap.tap.read(bus) else {
+        for pending in pending {
+            let Some((value, version)) = pending.tap.read(bus) else {
                 continue;
             };
-            if Some(version) == tap.before {
+            if Some(version) == pending.before {
                 continue;
             }
-            self.observations
-                .record(tap.leaf, value.timestamp(), ObservedValue::Typed(value));
+            self.observations.record(
+                pending.tap.key.clone(),
+                value.timestamp(),
+                ObservedValue::Typed(value),
+            );
         }
     }
 }
 
-/// A leaf that reports what a node writes to one of its output channels: the
-/// value itself, shared with the bus, once per run that wrote it. On a keyed
-/// channel it reports the one instance the node writes.
+/// What a node writes to one of its output channels, or to one instance of
+/// a keyed one: the value itself, shared with the bus, recorded once per run
+/// that wrote it while the tap is watched.
+///
+/// The tap sits with its writing node because only around that node's run
+/// can the pipeline tell, from the slot's version, that the node wrote it.
+/// Its key names the channel, never the node, so a value is recorded under
+/// the same key whichever node writes it.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::pipeline) struct Tap {
-    /// The channel's name.
-    pub(in crate::pipeline) leaf: Arc<str>,
+    /// The key the tap records under: a
+    /// [`Subject::Channel`] of the pipeline's agent.
+    pub(in crate::pipeline) key: RecordedKey,
     pub(in crate::pipeline) channel: ChannelKey,
-    /// The instance reported, on a keyed channel.
+    /// The instance recorded, on a keyed channel.
     pub(in crate::pipeline) instance: Option<InstanceKey>,
+    pub(in crate::pipeline) watched: bool,
 }
 
 impl Tap {
+    /// The subject this tap records.
+    pub(in crate::pipeline) fn subject(&self) -> &Subject {
+        &self.key.subject
+    }
+
+    /// The catalog entry for this tap: a value of the channel's payload.
+    ///
+    /// Marked deterministic, because every node today writes outputs that
+    /// depend only on its inputs, the tick's time and its seed. A node whose
+    /// outputs depend on wall time (an anytime planner) would make its taps
+    /// nondeterministic, and the catalog can't tell yet.
+    pub(in crate::pipeline) fn observable(&self) -> Observable {
+        Observable::typed(
+            self.channel.name().clone(),
+            Determinism::Deterministic,
+            &self.channel,
+        )
+    }
+
     /// The tapped value and its version, `None` while unwritten.
     fn read(&self, bus: &PortBus) -> Option<(Arc<dyn ErasedStamped>, SlotVersion)> {
         match &self.instance {
@@ -125,40 +163,33 @@ impl Tap {
     }
 }
 
-/// A tap for each of `node`'s outputs, in output order. The catalog and the
-/// scheduled node both build their taps here, so a tap leaf a watcher can ask
-/// for always has a channel behind it.
-///
-/// A keyed output gets a tap only when the node writes one instance of it: a
-/// leaf names one series, and the leaf grammar has no place for an instance.
-/// Watching an output the node writes several instances of is refused (see
-/// [`writes_several_instances`]).
-fn output_taps(node: &dyn PipelineNode) -> impl Iterator<Item = Tap> + '_ {
+/// An unwatched tap for each channel instance `node` writes, in output order:
+/// one per output, or on a keyed output one per instance it declares, in
+/// declaration order. The build refuses a keyed output with no instances.
+fn output_taps<'a>(
+    node: &'a dyn PipelineNode,
+    agent: &'a AgentId,
+) -> impl Iterator<Item = Tap> + 'a {
     node.port_descriptor()
         .output_ports()
         .iter()
-        .filter_map(|port| {
+        .flat_map(move |port| {
             let channel = port.channel();
-            let instance = match port.instances() {
-                [] => None,
-                [instance] => Some(instance.clone()),
-                _ => return None,
+            let instances: Vec<Option<InstanceKey>> = if channel.is_keyed() {
+                port.instances().iter().cloned().map(Some).collect()
+            } else {
+                vec![None]
             };
-            Some(Tap {
-                leaf: channel.name().clone(),
+            instances.into_iter().map(move |instance| Tap {
+                key: RecordedKey {
+                    agent: agent.clone(),
+                    subject: Subject::channel(channel.clone(), instance.clone()),
+                },
                 channel: channel.clone(),
                 instance,
+                watched: false,
             })
         })
-}
-
-/// Whether `leaf` names an output of `node` on a keyed channel the node
-/// writes several instances of, which has no tap.
-pub(in crate::pipeline) fn writes_several_instances(node: &dyn PipelineNode, leaf: &str) -> bool {
-    node.port_descriptor()
-        .output_ports()
-        .iter()
-        .any(|port| port.instances().len() > 1 && port.channel().name().as_ref() == leaf)
 }
 
 /// A watched tap during one run of its node: the channel's version before the
@@ -167,36 +198,23 @@ pub(in crate::pipeline) fn writes_several_instances(node: &dyn PipelineNode, lea
 /// Borrows the node's [`Tap`], so it lives only as long as the run it belongs
 /// to.
 pub(in crate::pipeline) struct PendingTap<'a> {
-    /// The buffer's own name for the leaf, from
-    /// [`watched_leaf`](NodeObservations::watched_leaf).
-    leaf: Arc<str>,
     tap: &'a Tap,
     before: Option<SlotVersion>,
 }
 
-/// Everything `node` can emit for watchers: the leaves it declares on its
-/// descriptor, in declaration order, then the leaves the pipeline adds to every
-/// node: a tap per output channel, in output order, then the pipeline's own
-/// measurements ([`TICK_DURATION_LEAF`]).
+/// Everything `node` can emit about itself for watchers: the leaves it
+/// declares on its descriptor, in declaration order, then the leaves the
+/// pipeline adds to every node ([`TICK_DURATION_LEAF`]).
 ///
 /// The pipeline adds a leaf only when it can see that value the same way for
-/// every node, from outside the node: what the node wrote, or how long it
-/// ran. Anything about a node's insides is the node's own declaration. Every
-/// reader of a node's catalog (its buffer, the watch set, the startup log)
-/// goes through here, so none of them needs to know which leaves the
-/// pipeline adds.
-///
-/// Every tap is marked deterministic, because every node today writes outputs
-/// that depend only on its inputs, the tick's time and its seed. A node whose
-/// outputs depend on wall time (an anytime planner) would make its taps
-/// nondeterministic, and the catalog can't tell yet. A tap arrives typed, as
-/// its channel's payload.
+/// every node, from outside the node, such as how long it ran. Anything about
+/// a node's insides is the node's own declaration. What a node writes is not
+/// here: it is recorded under its channel's key, not the node's. Every reader
+/// of a node's emissions (its buffer, the watch set, the startup log) goes
+/// through here, so none of them needs to know which leaves the pipeline
+/// adds.
 pub(crate) fn observable_catalog(node: &dyn PipelineNode) -> Vec<Observable> {
     let mut observables = node.port_descriptor().observables().to_vec();
-    observables.extend(
-        output_taps(node)
-            .map(|tap| Observable::typed(tap.leaf, Determinism::Deterministic, &tap.channel)),
-    );
     observables.push(Observable::scalar(
         TICK_DURATION_LEAF,
         Determinism::Nondeterministic,
@@ -209,17 +227,18 @@ mod tests {
     use super::*;
 
     use crate::{
-        port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder},
+        port::{ChannelKey, ChannelKind, Keyed, PortBus, PortDescriptor, PortDescriptorBuilder},
         prelude::TickContext,
     };
 
     use helios_core::prelude::TfProvider;
 
+    const AGENT: &str = "car";
     const NIS: &str = "aiding.gps.nis";
     const DROPPED: &str = "aiding.gps.dropped";
-    /// Output channel names, which are also their tap leaves.
     const COVARIANCE: &str = "est.cov";
     const MEAN: &str = "est.mean";
+    const EDGES: &str = "edges";
 
     /// A node that only declares; it never runs in these tests.
     struct Declaring {
@@ -238,20 +257,43 @@ mod tests {
         fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
     }
 
+    struct Edge(&'static str);
+
+    impl Keyed for Edge {
+        type Instance = &'static str;
+
+        fn instance(&self) -> &&'static str {
+            &self.0
+        }
+    }
+
+    fn edges() -> ChannelKey {
+        ChannelKey::keyed::<Edge>(ChannelKind::Internal, EDGES)
+    }
+
+    fn agent() -> AgentId {
+        AgentId::new(AGENT)
+    }
+
+    fn declaring_leaves(leaves: &[&str]) -> PortDescriptorBuilder {
+        leaves
+            .iter()
+            .fold(PortDescriptorBuilder::algorithm(), |builder, leaf| {
+                builder.observable(*leaf, Determinism::Deterministic)
+            })
+    }
+
     /// A node declaring `leaves` that writes no channels.
     fn declaring(leaves: &[&str]) -> Box<dyn PipelineNode> {
         declaring_with_outputs(leaves, &[])
     }
 
     fn declaring_with_outputs(leaves: &[&str], outputs: &[ChannelKey]) -> Box<dyn PipelineNode> {
-        let builder = leaves
-            .iter()
-            .fold(PortDescriptorBuilder::algorithm(), |builder, leaf| {
-                builder.observable(*leaf, Determinism::Deterministic)
-            });
         let descriptor = outputs
             .iter()
-            .fold(builder, |builder, output| builder.output(output.clone()))
+            .fold(declaring_leaves(leaves), |builder, output| {
+                builder.output(output.clone())
+            })
             .build();
         Box::new(Declaring { descriptor })
     }
@@ -263,25 +305,34 @@ mod tests {
         ]
     }
 
+    fn tap(channel: ChannelKey, instance: Option<InstanceKey>) -> Tap {
+        Tap {
+            key: RecordedKey {
+                agent: agent(),
+                subject: Subject::channel(channel.clone(), instance.clone()),
+            },
+            channel,
+            instance,
+            watched: false,
+        }
+    }
+
     #[test]
-    fn catalog_lists_declared_leaves_then_taps_then_tick_duration() {
+    fn catalog_lists_declared_leaves_then_tick_duration_and_no_outputs() {
         let node = declaring_with_outputs(&[NIS, DROPPED], &two_outputs());
-        let [covariance, mean] = two_outputs().map(ChannelKey::from);
 
         assert_eq!(
             observable_catalog(node.as_ref()),
             vec![
                 Observable::scalar(NIS, Determinism::Deterministic),
                 Observable::scalar(DROPPED, Determinism::Deterministic),
-                Observable::typed(COVARIANCE, Determinism::Deterministic, &covariance),
-                Observable::typed(MEAN, Determinism::Deterministic, &mean),
                 Observable::scalar(TICK_DURATION_LEAF, Determinism::Nondeterministic),
             ]
         );
     }
 
     #[test]
-    fn catalog_of_a_node_declaring_and_writing_nothing_is_tick_duration() {
+    fn catalog_of_a_node_declaring_nothing_is_tick_duration() {
         let node = declaring(&[]);
 
         assert_eq!(
@@ -295,14 +346,10 @@ mod tests {
 
     #[test]
     fn every_leaf_the_pipeline_measures_is_in_its_group() {
-        let node = declaring_with_outputs(&[], &two_outputs());
-        let taps: Vec<Tap> = output_taps(node.as_ref()).collect();
+        let node = declaring(&[]);
         let group = format!("{PIPELINE_LEAF_GROUP}.");
 
-        let measured = observable_catalog(node.as_ref())
-            .into_iter()
-            .filter(|observable| !taps.iter().any(|tap| &tap.leaf == observable.leaf_name()));
-        for observable in measured {
+        for observable in observable_catalog(node.as_ref()) {
             assert!(
                 observable.leaf_name().starts_with(&group),
                 "{} is outside the pipeline's group",
@@ -312,35 +359,40 @@ mod tests {
     }
 
     #[test]
-    fn scheduled_node_taps_pair_each_catalog_tap_with_its_output() {
+    fn scheduled_node_has_an_unwatched_tap_per_output_keyed_by_the_channel() {
         let outputs = two_outputs();
-        let scheduled = ScheduledNode::new(0, declaring_with_outputs(&[NIS], &outputs));
+        let scheduled = ScheduledNode::new(0, declaring_with_outputs(&[NIS], &outputs), &agent());
+
+        assert_eq!(
+            scheduled.taps,
+            vec![tap(outputs[0].clone(), None), tap(outputs[1].clone(), None)]
+        );
+    }
+
+    #[test]
+    fn a_keyed_output_has_a_tap_per_declared_instance() {
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .output_keyed::<Edge>(edges(), ["wheel", "base_link"])
+            .build();
+        let scheduled = ScheduledNode::new(0, Box::new(Declaring { descriptor }), &agent());
 
         assert_eq!(
             scheduled.taps,
             vec![
-                Tap {
-                    leaf: COVARIANCE.into(),
-                    channel: outputs[0].clone(),
-                    instance: None,
-                },
-                Tap {
-                    leaf: MEAN.into(),
-                    channel: outputs[1].clone(),
-                    instance: None,
-                },
+                tap(edges(), Some(InstanceKey::of::<Edge>(&"wheel"))),
+                tap(edges(), Some(InstanceKey::of::<Edge>(&"base_link"))),
             ]
         );
     }
 
     #[test]
-    fn scheduled_node_buffer_holds_the_whole_catalog() {
-        let mut scheduled = ScheduledNode::new(0, declaring_with_outputs(&[NIS], &two_outputs()));
+    fn scheduled_node_buffer_holds_the_emissions_only() {
+        let mut scheduled =
+            ScheduledNode::new(0, declaring_with_outputs(&[NIS], &two_outputs()), &agent());
 
         assert!(scheduled.observations.set_watched(NIS, true));
-        assert!(scheduled.observations.set_watched(COVARIANCE, true));
-        assert!(scheduled.observations.set_watched(MEAN, true));
         assert!(scheduled.observations.set_watched(TICK_DURATION_LEAF, true));
+        assert!(!scheduled.observations.set_watched(COVARIANCE, true));
         assert!(!scheduled.observations.set_watched(DROPPED, true));
     }
 }

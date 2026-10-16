@@ -157,12 +157,8 @@ impl PipelineBuilder {
     ///      levels joined by `.`.
     ///    - [`PipelineBuildError::ReservedObservable`] — a node declares a
     ///      leaf in the pipeline's own group.
-    ///    - [`PipelineBuildError::ReservedOutputPath`] — an output's name is
-    ///      in the pipeline's own group.
     ///    - [`PipelineBuildError::DuplicateObservable`] — a node names a
     ///      watchable leaf twice.
-    ///    - [`PipelineBuildError::ObservableCollidesWithOutput`] — a leaf has
-    ///      the name of one of the node's output channels.
     ///    - [`PipelineBuildError::MultipleSuppliers`] — two suppliers
     ///      provide the same channel.
     ///    - [`PipelineBuildError::UnsatisfiedInput`] /
@@ -222,9 +218,10 @@ impl PipelineBuilder {
         // write to any other channel is `ChannelError::UnknownChannel`.
         let bus = PortBus::new(&descriptions);
 
-        let levels = construct_levels(levels, &descriptions)?;
+        let levels = construct_levels(levels, &descriptions, &self.agent)?;
 
         Ok(AutonomyPipeline {
+            agent: self.agent,
             levels,
             bus,
             descriptions,
@@ -259,11 +256,12 @@ impl PipelineBuilder {
 
 /// Builds every planned node, level by level, with the mounts of its inputs
 /// from `descriptions`, and gives each node the state the pipeline keeps for
-/// it, keeping the levels and the order within them. Every failure is
-/// collected.
+/// it as a node of `agent`'s pipeline, keeping the levels and the order
+/// within them. Every failure is collected.
 fn construct_levels(
     levels: Vec<Vec<(NodeId, NodeDeclaration)>>,
     descriptions: &[ChannelDescription],
+    agent: &AgentId,
 ) -> Result<Vec<Vec<ScheduledNode>>, Vec<PipelineBuildError>> {
     let descriptions: HashMap<&ChannelKey, &ChannelDescription> = descriptions
         .iter()
@@ -275,7 +273,7 @@ fn construct_levels(
         let mut scheduled = Vec::with_capacity(level.len());
         for (node_id, declaration) in level {
             match declaration.construct(&descriptions) {
-                Ok(node) => scheduled.push(ScheduledNode::new(node_id, node)),
+                Ok(node) => scheduled.push(ScheduledNode::new(node_id, node, agent)),
                 Err(error) => errors.push(error),
             }
         }
