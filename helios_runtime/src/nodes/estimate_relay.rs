@@ -1,5 +1,6 @@
 //! [`EstimateRelay`]: forwards the authoritative estimator's state as the
-//! agent's estimate, and publishes the `odom → base_link` edge it implies.
+//! agent's estimate, and publishes the edge it implies, from the estimator's
+//! root (the agent's `odom`) to `base_link`.
 //!
 //! The estimate seam adds one per stack. Estimators write on channels named
 //! after themselves and publish no edge, so the stack decides which one is
@@ -22,7 +23,7 @@ use crate::port::{
 };
 use crate::stamped::Stamped;
 
-use helios_core::prelude::AgentId;
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::tf::TfProvider;
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
@@ -40,7 +41,7 @@ type OdomAxes = Enu;
 pub const ODOM_CONVENTION: Convention = OdomAxes::CONVENTION;
 
 /// Forwards one estimator's state onto [`estimate::estimate`] and publishes the
-/// agent's `odom → base_link` edge from it.
+/// edge from its root to `base_link`.
 pub(crate) struct EstimateRelay {
     name: String,
     source: ChannelKey,
@@ -50,12 +51,16 @@ pub(crate) struct EstimateRelay {
 }
 
 impl EstimateRelay {
-    /// A relay named `name` forwarding the state on `source`, for `agent`'s
-    /// `odom → base_link` edge.
-    pub(crate) fn new(name: impl Into<String>, source: InternalChannel, agent: &AgentId) -> Self {
+    /// A relay named `name` forwarding the state on `source`, held in
+    /// `frames`, for the `frames.root → frames.body` edge.
+    pub(crate) fn new(
+        name: impl Into<String>,
+        source: InternalChannel,
+        frames: EstimationFrames,
+    ) -> Self {
         let edge = FrameEdge {
-            child: FrameId::base_link(agent.clone()),
-            parent: FrameId::odom(agent.clone()),
+            child: frames.body,
+            parent: frames.root,
         };
         let output = estimate::estimate();
         let descriptor = AlgorithmNodePortDescriptor::new()
@@ -71,6 +76,12 @@ impl EstimateRelay {
             edge,
             descriptor,
         }
+    }
+
+    /// The frame the relayed estimate holds the body's pose in: the parent of
+    /// the edge it publishes.
+    pub(crate) fn root(&self) -> &FrameId {
+        &self.edge.parent
     }
 }
 
@@ -137,6 +148,7 @@ mod tests {
 
     use helios_core::estimation::frames::EstimationFrames;
     use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
+    use helios_core::prelude::AgentId;
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::state::Quantity;
     use helios_core::spatial::transforms::Convention;
@@ -220,7 +232,7 @@ mod tests {
 
     #[test]
     fn descriptor_reads_the_source_and_writes_the_estimate_and_the_edge() {
-        let relay = EstimateRelay::new("estimate_relay", source(), &agent());
+        let relay = EstimateRelay::new("estimate_relay", source(), EstimationFrames::odom(agent()));
         let descriptor = relay.port_descriptor();
 
         let required: Vec<&ChannelKey> = descriptor.required_inputs().collect();
@@ -233,7 +245,7 @@ mod tests {
 
     #[test]
     fn nothing_is_published_before_the_source_writes() {
-        let relay = EstimateRelay::new("estimate_relay", source(), &agent());
+        let relay = EstimateRelay::new("estimate_relay", source(), EstimationFrames::odom(agent()));
         let bus = bus_for(&relay);
 
         relay.execute(&bus, &NoTf, tick());
@@ -248,7 +260,7 @@ mod tests {
 
     #[test]
     fn the_source_is_forwarded_unchanged_with_its_edge() {
-        let relay = EstimateRelay::new("estimate_relay", source(), &agent());
+        let relay = EstimateRelay::new("estimate_relay", source(), EstimationFrames::odom(agent()));
         let bus = bus_for(&relay);
         write_source(&bus, posed_state(), Health::Ok);
 
@@ -279,8 +291,35 @@ mod tests {
     }
 
     #[test]
+    fn the_edge_runs_from_the_root_the_estimate_is_held_in() {
+        let frames = EstimationFrames {
+            body: FrameId::base_link(agent()),
+            root: FrameId::agent(agent(), "primary.odom"),
+        };
+        let relay = EstimateRelay::new("estimate_relay", source(), frames.clone());
+        let bus = bus_for(&relay);
+        let state = FrameAwareState::from_schema(
+            Arc::new(kinematic_carrier_schema(&frames)),
+            MonotonicTime(1.5),
+        );
+        write_source(&bus, state, Health::Ok);
+
+        relay.execute(&bus, &NoTf, tick());
+
+        let edge = FrameEdge {
+            child: frames.body.clone(),
+            parent: frames.root.clone(),
+        };
+        let published = bus
+            .read::<StampedTransform>(tf_edge(&edge).into())
+            .expect("the edge from the estimate's root is published");
+        assert_eq!(published.value.parent, frames.root);
+        assert_eq!(relay.root(), &frames.root);
+    }
+
+    #[test]
     fn a_degraded_source_degrades_the_estimate_and_the_edge() {
-        let relay = EstimateRelay::new("estimate_relay", source(), &agent());
+        let relay = EstimateRelay::new("estimate_relay", source(), EstimationFrames::odom(agent()));
         let bus = bus_for(&relay);
         let reason = "predict skipped";
         write_source(
@@ -308,7 +347,7 @@ mod tests {
 
     #[test]
     fn a_poseless_state_is_forwarded_without_an_edge() {
-        let relay = EstimateRelay::new("estimate_relay", source(), &agent());
+        let relay = EstimateRelay::new("estimate_relay", source(), EstimationFrames::odom(agent()));
         let bus = bus_for(&relay);
         write_source(&bus, poseless_state(), Health::Ok);
 

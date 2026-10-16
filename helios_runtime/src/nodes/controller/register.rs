@@ -125,7 +125,7 @@ mod tests {
     use helios_core::prelude::AgentId;
 
     fn context<'a>(name: &'a str, kind: &'a str) -> BuildContext<'a> {
-        BuildContext::new(AgentId::new("test_agent"), name, kind)
+        BuildContext::in_odom(AgentId::new("test_agent"), name, kind)
     }
 
     fn output_of(output: FactoryOutput) -> Vec<ChannelKey> {

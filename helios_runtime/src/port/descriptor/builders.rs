@@ -61,6 +61,7 @@ use crate::port::{
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
 use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 
 use std::sync::Arc;
 
@@ -92,6 +93,7 @@ pub struct AlgorithmNodePortDescriptor {
     mount_readings: Vec<(ChannelKey, Convention)>,
     outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
+    defined_frames: Vec<FrameId>,
     rate: Option<f64>,
 }
 
@@ -196,6 +198,14 @@ impl AlgorithmNodePortDescriptor {
         self
     }
 
+    /// Declares a frame this node defines: one whose meaning it alone gives,
+    /// such as the root an estimator holds its state in. The build refuses a
+    /// frame two nodes define, or one the body owns.
+    pub fn defines_frame(mut self, frame: FrameId) -> Self {
+        self.defined_frames.push(frame);
+        self
+    }
+
     /// Gates execution to `hz`. Without it the node fires every tick.
     pub fn rate_hz(mut self, hz: f64) -> Self {
         self.rate = Some(hz);
@@ -268,6 +278,7 @@ impl AlgorithmNodePortDescriptor {
         .with_mount_readings(self.mount_readings)
         .with_outputs(self.outputs)
         .with_observables(self.observables)
+        .with_defined_frames(self.defined_frames)
     }
 }
 
@@ -281,6 +292,7 @@ pub struct MockNodePortDescriptor {
     optional_inputs: Vec<ChannelKey>,
     outputs: Vec<ChannelKey>,
     observables: Vec<Observable>,
+    defined_frames: Vec<FrameId>,
     rate: Option<f64>,
 }
 
@@ -338,6 +350,14 @@ impl MockNodePortDescriptor {
     /// [`AlgorithmNodePortDescriptor::observable`] does.
     pub fn observable(mut self, leaf: impl Into<Arc<str>>, determinism: Determinism) -> Self {
         self.observables.push(Observable::scalar(leaf, determinism));
+        self
+    }
+
+    /// Declares a frame this node defines: one whose meaning it alone gives,
+    /// such as the root an estimator holds its state in. The build refuses a
+    /// frame two nodes define, or one the body owns.
+    pub fn defines_frame(mut self, frame: FrameId) -> Self {
+        self.defined_frames.push(frame);
         self
     }
 
@@ -403,6 +423,7 @@ impl MockNodePortDescriptor {
             self.rate,
         )
         .with_observables(self.observables)
+        .with_defined_frames(self.defined_frames)
     }
 
     fn is_mock_input_kind(c: &ChannelKey) -> bool {

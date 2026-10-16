@@ -266,6 +266,7 @@ pub(super) fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Prob
     };
     let descriptor = RecursiveEstimatorNode::declare_ports(
         "primary",
+        &FrameId::odom(agent()),
         input.required_channels(),
         input.optional_channels(),
         [(ACCEL_ENTRY, &accel_channel())],

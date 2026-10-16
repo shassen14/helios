@@ -3,7 +3,8 @@
 //! and each output as an [`OutputPort`] record of channel, the actuators it
 //! drives and the [`MountRule`] that gives its mount. It also
 //! declares what the node can emit for watchers, each value an [`Observable`]
-//! record of leaf name, [`Determinism`] and [`ObservedValueKind`].
+//! record of leaf name, [`Determinism`] and [`ObservedValueKind`], and the
+//! frames the node defines.
 //!
 //! The build reads these declarations to allocate bus slots, order nodes, and
 //! check that every channel has exactly one producer. Outside this crate a
@@ -15,6 +16,7 @@ use crate::{observe::observation::ObservedValueKind, port::channel::ChannelKey};
 
 use helios_core::control::actuators::ActuatorDrive;
 use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 
 use std::sync::Arc;
 
@@ -50,6 +52,11 @@ use std::sync::Arc;
 /// so a host can check the tree holds that frame in the axes the node reads
 /// it in before the first tick.
 ///
+/// Each frame the node defines, one whose meaning it alone gives (the root an
+/// estimator holds its state in), is listed in
+/// [`defined_frames`](Self::defined_frames), so the build can refuse a frame
+/// with two owners.
+///
 /// Each value the node can emit for watchers is declared as an [`Observable`],
 /// read with [`observables`](Self::observables). These never touch the bus:
 /// they are the node's catalog of watchable values, and an emit of a leaf the
@@ -69,6 +76,7 @@ pub struct PortDescriptor {
     mount_readings: Vec<MountReading>,
     outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
+    defined_frames: Vec<FrameId>,
     rate: Option<f64>,
 }
 
@@ -102,6 +110,7 @@ impl PortDescriptor {
             mount_readings: Vec::new(),
             outputs: outputs.into_iter().map(OutputPort::undriven).collect(),
             observables: Vec::new(),
+            defined_frames: Vec::new(),
             rate,
         }
     }
@@ -117,6 +126,12 @@ impl PortDescriptor {
     /// order. For the builders.
     pub(crate) fn with_observables(mut self, observables: Vec<Observable>) -> Self {
         self.observables = observables;
+        self
+    }
+
+    /// Records the frames the node defines. For the builders.
+    pub(crate) fn with_defined_frames(mut self, frames: Vec<FrameId>) -> Self {
+        self.defined_frames = frames;
         self
     }
 
@@ -206,6 +221,12 @@ impl PortDescriptor {
     /// order. Empty for a node that declares none.
     pub fn observables(&self) -> &[Observable] {
         &self.observables
+    }
+
+    /// The frames this node defines, in declaration order. Empty for a node
+    /// that defines none.
+    pub fn defined_frames(&self) -> &[FrameId] {
+        &self.defined_frames
     }
 
     /// Execution rate in Hz. `None` means every tick.
@@ -542,6 +563,7 @@ mod tests {
             mount_readings: vec![],
             outputs: vec![],
             observables: vec![],
+            defined_frames: vec![],
             rate: None,
         };
 

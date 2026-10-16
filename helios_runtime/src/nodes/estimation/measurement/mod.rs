@@ -257,7 +257,7 @@ mod tests {
         r_len: usize,
     ) -> Result<Box<dyn MeasurementSource>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(agent(), NODE, NODE_KIND);
         let wiring = MeasurementWiring {
             input: INPUT.to_string(),
             mount: FrameId::agent(agent(), MOUNT),
@@ -291,7 +291,7 @@ mod tests {
             .parse_measurement(
                 "aiding.mocap.model",
                 toml::from_str(&section).expect("test TOML parses"),
-                &BuildContext::new(agent(), NODE, NODE_KIND),
+                &BuildContext::in_odom(agent(), NODE, NODE_KIND),
             )
             .expect("the dummy model parses");
         assert_eq!((parsed.declared.channel)(INPUT), expected);
@@ -330,7 +330,7 @@ mod tests {
     /// after the channel.
     #[test]
     fn the_model_is_built_for_the_wired_mount() {
-        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(agent(), NODE, NODE_KIND);
         let factory = source_factory::<GpsPosition, NoParams, _>(
             |_: NoParams, _: &BuildContext<'_>, sensor: &FrameId| {
                 assert_eq!(sensor, &FrameId::agent(agent(), MOUNT));

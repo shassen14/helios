@@ -12,9 +12,9 @@
 //!
 //! - `agent` — the agent's stable [`AgentId`], the config name every subsystem
 //!   uses to key this agent's frames. It must be non-empty and free of `.`,
-//!   since it is one part of every watcher path for the agent. All spine frames (`base_link`, `odom`) and
-//!   sensor frames are built from it, so the same identity is valid in sim and
-//!   on hardware.
+//!   since it is one part of every watcher path for the agent. `base_link`,
+//!   each estimator's root and the sensor frames are built from it, so the
+//!   same identity is valid in sim and on hardware.
 //! - `body` — the body as the host describes it: its actuators (which the
 //!   actuator seam checks every driven actuator against) and every channel
 //!   it publishes, each typed and with the unit that produces it: sensor
@@ -99,9 +99,14 @@ pub fn build_pipeline(
 
     // --- Estimate seam ---
     // The `[estimate]` section names the estimator whose state the rest of
-    // the stack reads; a relay forwards it and publishes the TF edge.
+    // the stack reads; a relay forwards it and publishes the TF edge from its
+    // root, which the pipeline exposes to the host.
     match estimate_relay(stack.estimate.as_ref(), &nodes, &agent) {
-        Ok(Some(relay)) => builder = builder.add_node(relay),
+        Ok(Some(relay)) => {
+            builder = builder
+                .with_estimate_root(relay.root().clone())
+                .add_node(Box::new(relay))
+        }
         Ok(None) => {}
         Err(seam_errors) => errors.extend(seam_errors),
     }

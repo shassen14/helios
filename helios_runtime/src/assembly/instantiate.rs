@@ -11,11 +11,13 @@ use super::config::AutonomyStackConfig;
 use super::error::PipelineAssemblyError;
 use super::factory::{BuildContext, KIND_KEY};
 use super::registry::AutonomyRegistry;
+use super::seams::estimate::estimator_root;
 
 use crate::pipeline::NodeDeclaration;
 use crate::port::ChannelKey;
 
 use helios_core::prelude::AgentId;
+use helios_core::spatial::FrameId;
 
 /// Every `[nodes]` entry, declared.
 pub(super) struct Instantiated {
@@ -26,7 +28,9 @@ pub(super) struct Instantiated {
     pub(super) outside_inputs: Vec<ChannelKey>,
 }
 
-/// Declares every node in `stack.nodes`, in name order.
+/// Declares every node in `stack.nodes`, in name order, each with the root it
+/// holds any estimate in: `odom` for the stack's estimate source, its own for
+/// every other node.
 ///
 /// Fails with one error per node that could not be declared.
 pub(super) fn instantiate(
@@ -37,10 +41,12 @@ pub(super) fn instantiate(
     let mut nodes = Vec::new();
     let mut outside_inputs = Vec::new();
     let mut errors = Vec::new();
+    let source = stack.estimate.as_ref().map(|seam| seam.source.as_str());
 
     for (name, section) in &stack.nodes {
         let section = section.clone();
-        match instantiate_node(name, section, registry, agent) {
+        let root = estimator_root(agent, name, source);
+        match instantiate_node(name, section, registry, agent, root) {
             Ok((node, node_outside_inputs)) => {
                 nodes.push(node);
                 outside_inputs.extend(node_outside_inputs);
@@ -60,14 +66,15 @@ pub(super) fn instantiate(
 }
 
 /// Declares node `name` from its `section`: takes `kind` out of the section
-/// and hands the rest to that kind's factory, then checks the factory named
-/// the node `name`. Returns the node and the outside inputs its factory
-/// declared.
+/// and hands the rest to that kind's factory, with `root` as the root of any
+/// estimate it makes, then checks the factory named the node `name`. Returns
+/// the node and the outside inputs its factory declared.
 fn instantiate_node(
     name: &str,
     mut section: toml::Table,
     registry: &AutonomyRegistry,
     agent: &AgentId,
+    root: FrameId,
 ) -> Result<(NodeDeclaration, Vec<ChannelKey>), PipelineAssemblyError> {
     let Some(toml::Value::String(kind)) = section.remove(KIND_KEY) else {
         return Err(PipelineAssemblyError::MissingNodeKind {
@@ -75,7 +82,7 @@ fn instantiate_node(
         });
     };
 
-    let ctx = BuildContext::new(agent.clone(), name, &kind);
+    let ctx = BuildContext::new(agent.clone(), name, &kind, root);
 
     let built = registry.build_node(section, &ctx)?;
     let node = built.declaration;

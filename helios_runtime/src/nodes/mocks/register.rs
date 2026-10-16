@@ -19,12 +19,13 @@ pub(crate) fn register(registry: &mut AutonomyRegistry) {
         .expect("MockOracle is registered once, by the default registry")
 }
 
-/// Builds the node for one `[nodes]` entry. A body that doesn't publish the
-/// oracle channels the node reads refuses it at pipeline build.
+/// Builds the node for one `[nodes]` entry, held in the frames the stack
+/// gives it. A body that doesn't publish the oracle channels the node reads
+/// refuses it at pipeline build.
 fn build(_config: MockOracleConfig, ctx: &BuildContext) -> Result<FactoryOutput, String> {
     Ok(FactoryOutput::new(Box::new(MockOracleEstimatorNode::new(
         ctx.node_name(),
-        ctx.agent().clone(),
+        ctx.frames().clone(),
     ))))
 }
 
@@ -42,7 +43,7 @@ mod tests {
     /// default registry's node map, as the assembler does.
     fn build_entry(name: &str, section: &str) -> Result<Box<dyn PipelineNode>, String> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("test_agent"), name, MOCK_ORACLE_KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("test_agent"), name, MOCK_ORACLE_KIND);
         AutonomyRegistry::default()
             .build_node(section, &ctx)
             .map_err(|err| err.to_string())

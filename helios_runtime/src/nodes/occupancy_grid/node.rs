@@ -275,7 +275,7 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            if !from.is_sensor() {
+            if from.is_base_link() {
                 return None;
             }
             self.agent_to_sensor

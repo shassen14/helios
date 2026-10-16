@@ -20,7 +20,9 @@ use crate::pipeline::{node::PipelineNode, InputMounts};
 use crate::port::{ChannelKey, PortDescriptor};
 
 use helios_core::estimation::augmentation::AugmentationSpec;
-use helios_core::estimation::schema::{check_measurement_state_agreement, StateSchemaBlock};
+use helios_core::estimation::schema::{
+    check_measurement_state_agreement, StateSchema, StateSchemaBlock,
+};
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::prelude::AgentId;
 use helios_core::spatial::conventions::{Enu, Flu};
@@ -32,10 +34,11 @@ use nalgebra::{DMatrix, Isometry3, Quaternion, Translation3, UnitQuaternion};
 use std::sync::Arc;
 
 /// Everything a declared estimator needs to be built: the parts checked,
-/// parsed or built at declaration, and the starting pose, read only at
-/// construction.
+/// parsed or built at declaration, the root it holds its state in, and the
+/// starting pose, read only at construction.
 pub(super) struct EstimatorPlan {
     pub(super) agent: AgentId,
+    pub(super) root: FrameId,
     pub(super) node_name: String,
     pub(super) kind: String,
     pub(super) dynamics: DynamicsComponent,
@@ -57,6 +60,7 @@ impl EstimatorPlan {
     ) -> Result<Box<dyn PipelineNode>, BuildFailure> {
         let EstimatorPlan {
             agent,
+            root,
             node_name,
             kind,
             dynamics,
@@ -65,7 +69,7 @@ impl EstimatorPlan {
             augmentation,
             initial_pose,
         } = self;
-        let ctx = BuildContext::new(agent, &node_name, &kind);
+        let ctx = BuildContext::new(agent, &node_name, &kind, root);
 
         let mut sources = Vec::with_capacity(aiding.len());
         // Each entry's name, which names its leaves, with its NIS window.
@@ -165,9 +169,10 @@ fn augmentation_blocks(
 /// augmentation blocks, with P₀ and Q from that schema and the mean pose from
 /// `pose`.
 ///
-/// Fails if an aiding model's measurement disagrees with the state (a frame
-/// the state can't anchor, a convention it doesn't use), naming the sensor,
-/// or if the state can't hold the pose.
+/// Fails if the dynamics hold the state in another root than the node's (see
+/// [`check_state_root`]), if an aiding model's measurement disagrees with the
+/// state (a frame the state can't anchor, a convention it doesn't use),
+/// naming the sensor, or if the state can't hold the pose.
 ///
 /// Built valid at time zero; the node restamps it with the pipeline clock on
 /// its first tick.
@@ -185,6 +190,7 @@ fn seeded_state(
         Arc::new(base.extended(augmentation))
     };
 
+    check_state_root(&schema, ctx)?;
     for source in aiding {
         check_measurement_state_agreement(&schema, &source.model().schema(), source.sensor())
             .map_err(|err| format!("aiding channel {}: {err}", source.channel()))?;
@@ -192,12 +198,43 @@ fn seeded_state(
 
     let mut state = FrameAwareState::from_schema(schema, MonotonicTime(0.0));
     dynamics
-        .seed_pose(&mut state, ctx.agent(), body_pose(pose))
+        .seed_pose(&mut state, ctx.frames(), body_pose(pose))
         .map_err(|err| format!("initial pose: {err}"))?;
     Ok(state)
 }
 
-/// The pose of `base_link` in `odom` that `pose` describes: a translation and
+/// Fails unless the state is held in the root the node defines, `ctx`'s: a
+/// position, if the state holds one, is in that root, and the agent's `odom`
+/// appears in the state only when it is that root.
+///
+/// The node declares its root from the context, but the dynamics build the
+/// state. A dynamics that names `odom` instead of the context's root would
+/// publish a shadow estimate in the authoritative estimate's frame while the
+/// build believed it held elsewhere. A state with no position (attitude or
+/// velocity only) is checked by the second rule alone.
+fn check_state_root(schema: &StateSchema, ctx: &BuildContext<'_>) -> Result<(), String> {
+    let root = &ctx.frames().root;
+    if let Some(position) = schema.reference_frame() {
+        if &position != root {
+            return Err(format!(
+                "the dynamics hold the state's position in {position}, but this node holds \
+                 its estimate in {root}; dynamics build the state in the frames the build \
+                 context gives"
+            ));
+        }
+    }
+    let odom = FrameId::odom(ctx.agent().clone());
+    if &odom != root && schema.convention_of(&odom).is_some() {
+        return Err(format!(
+            "the dynamics hold the state in {odom}, the stack estimate's root, but this node \
+             holds its estimate in {root}; dynamics build the state in the frames the build \
+             context gives"
+        ));
+    }
+    Ok(())
+}
+
+/// The pose of `base_link` in the estimate's root that `pose` describes: a translation and
 /// a rotation about up by the heading.
 fn body_pose(pose: &InitialPoseConfig) -> Transform<Flu, Enu> {
     let yaw = pose.heading_deg.to_radians();

@@ -1,8 +1,8 @@
 //! The dynamics component: a process model, the input builder that feeds its
 //! predict, and how a pose prior is written into its state.
 //!
-//! The model and the pose seeding depend only on config and the agent, so
-//! they are made when the estimator is declared. The input builder is only
+//! The model and the pose seeding depend only on config and the estimator's
+//! frames, so they are made when the estimator is declared. The input builder is only
 //! declared then: it is built with the node, once the mounts of the channels
 //! it reads are known.
 //!
@@ -18,15 +18,17 @@ pub use input::{AssembledInput, DeclaredInput, EstimatorInputBuilder, InputUnava
 use crate::nodes::estimation::EstimatorComponents;
 
 use helios_core::estimation::dynamics::EstimationDynamics;
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::schema::{check_input_agreement, InputAgreementError};
-use helios_core::prelude::AgentId;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::transforms::Transform;
-use helios_core::spatial::{FrameAwareState, FrameId};
+use helios_core::spatial::FrameAwareState;
 
-/// Writes a body pose prior (`base_link` in `odom`) into a freshly seeded
-/// state, or says why this dynamics' state can't hold it.
-pub type SeedPose = fn(&mut FrameAwareState, &AgentId, Transform<Flu, Enu>) -> Result<(), String>;
+/// Writes a body pose prior (the body's pose in the estimate's root) into a
+/// freshly seeded state held in those frames, or says why this dynamics'
+/// state can't hold it.
+pub type SeedPose =
+    fn(&mut FrameAwareState, &EstimationFrames, Transform<Flu, Enu>) -> Result<(), String>;
 
 /// What a dynamics factory returns: the process model, the input builder that
 /// feeds it, declared and built later, and how a pose prior maps into its
@@ -43,7 +45,7 @@ pub struct DynamicsComponent {
 
 impl DynamicsComponent {
     /// Pairs `dynamics` with the builder that will feed it, seeding a pose
-    /// prior as a full 3D pose of `base_link` in `odom`.
+    /// prior as a full 3D pose of the body in the estimate's root.
     ///
     /// Fails if the builder's declared input differs, block by block, from the
     /// input the dynamics consume: same length is not enough, because an
@@ -56,7 +58,7 @@ impl DynamicsComponent {
         Ok(Self {
             dynamics,
             input,
-            seed_pose: seed_body_pose_in_odom,
+            seed_pose: seed_body_pose_in_root,
         })
     }
 
@@ -77,14 +79,15 @@ impl DynamicsComponent {
         &self.input
     }
 
-    /// Writes `pose` into `state` the way this dynamics' state holds a pose.
+    /// Writes `pose` into `state`, held in `frames`, the way this dynamics'
+    /// state holds a pose.
     pub(crate) fn seed_pose(
         &self,
         state: &mut FrameAwareState,
-        agent: &AgentId,
+        frames: &EstimationFrames,
         pose: Transform<Flu, Enu>,
     ) -> Result<(), String> {
-        (self.seed_pose)(state, agent, pose)
+        (self.seed_pose)(state, frames, pose)
     }
 
     /// Takes the model and the declared builder out, for the filter and the
@@ -94,19 +97,15 @@ impl DynamicsComponent {
     }
 }
 
-/// The default [`SeedPose`]: the state's `base_link`-in-`odom` position and
+/// The default [`SeedPose`]: the state's body-in-root position and
 /// orientation blocks, written whole or not at all.
-fn seed_body_pose_in_odom(
+fn seed_body_pose_in_root(
     state: &mut FrameAwareState,
-    agent: &AgentId,
+    frames: &EstimationFrames,
     pose: Transform<Flu, Enu>,
 ) -> Result<(), String> {
     state
-        .set_pose(
-            FrameId::base_link(agent.clone()),
-            FrameId::odom(agent.clone()),
-            pose,
-        )
+        .set_pose(frames.body.clone(), frames.root.clone(), pose)
         .map_err(|e| e.to_string())
 }
 
@@ -130,11 +129,11 @@ mod tests {
     use helios_core::estimation::frames::EstimationFrames;
     use helios_core::estimation::schema::{InputSchema, InputSchemaBlock, StateSchema};
     use helios_core::kernel::integrators::Integrator;
-    use helios_core::prelude::MonotonicTime;
+    use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::spatial::state::{Component, Quantity};
     use helios_core::spatial::tf::TfProvider;
     use helios_core::spatial::transforms::Convention;
-    use helios_core::spatial::StateVariable;
+    use helios_core::spatial::{FrameId, StateVariable};
 
     use nalgebra::{DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::collections::HashMap;
@@ -265,7 +264,7 @@ mod tests {
         section: &str,
     ) -> Result<DynamicsComponent, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(agent(), NODE, NODE_KIND);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")
@@ -353,17 +352,16 @@ mod tests {
         ))
     }
 
-    /// The default seeding writes the pose into the `base_link`-in-`odom`
-    /// blocks.
+    /// The default seeding writes the pose into the body-in-root blocks.
     #[test]
-    fn default_seeding_writes_the_body_pose_in_odom() {
+    fn default_seeding_writes_the_body_pose_in_the_root() {
         let component = DynamicsComponent::new(Box::new(Stationary::new()), declared(rate_input()))
             .expect("agreeing pair");
         let mut state =
             FrameAwareState::from_schema(component.dynamics().schema(), MonotonicTime(0.0));
 
         component
-            .seed_pose(&mut state, &agent(), pose())
+            .seed_pose(&mut state, &EstimationFrames::odom(agent()), pose())
             .expect("the INS schema holds a body pose");
 
         let east = state
@@ -386,7 +384,7 @@ mod tests {
     fn a_seeding_override_replaces_the_default() {
         fn refuse(
             _: &mut FrameAwareState,
-            _: &AgentId,
+            _: &EstimationFrames,
             _: Transform<Flu, Enu>,
         ) -> Result<(), String> {
             Err("planar state: no 3D pose".to_string())
@@ -399,7 +397,7 @@ mod tests {
             FrameAwareState::from_schema(component.dynamics().schema(), MonotonicTime(0.0));
 
         assert_eq!(
-            component.seed_pose(&mut state, &agent(), pose()),
+            component.seed_pose(&mut state, &EstimationFrames::odom(agent()), pose()),
             Err("planar state: no 3D pose".to_string())
         );
     }

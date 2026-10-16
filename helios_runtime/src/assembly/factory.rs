@@ -13,7 +13,9 @@ use crate::pipeline::{InputMounts, NodeConstructor, NodeDeclaration, NodePlan};
 use crate::port::{ChannelKey, PortDescriptor};
 use crate::prelude::PipelineNode;
 
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::prelude::AgentId;
+use helios_core::spatial::FrameId;
 use serde::{de::DeserializeOwned, Serialize};
 
 use std::any::{type_name, Any};
@@ -24,7 +26,8 @@ use std::{error::Error, fmt::Display};
 pub(crate) const KIND_KEY: &str = "kind";
 
 /// What every factory receives besides its own config: who and what the node
-/// is, its agent, its name and its kind.
+/// is, its agent, its name and its kind, and the frames it would hold an
+/// estimate in.
 ///
 /// Fields are private behind accessors, so a new field doesn't break the
 /// factories that don't read it.
@@ -32,15 +35,31 @@ pub struct BuildContext<'a> {
     agent: AgentId,
     node_name: &'a str,
     kind: &'a str,
+    frames: EstimationFrames,
 }
 
 impl<'a> BuildContext<'a> {
-    pub(crate) fn new(agent: AgentId, node_name: &'a str, kind: &'a str) -> Self {
+    /// The context of node `node_name` of `kind` on `agent`, holding any
+    /// estimate it makes in `root`.
+    pub(crate) fn new(agent: AgentId, node_name: &'a str, kind: &'a str, root: FrameId) -> Self {
         Self {
+            frames: EstimationFrames {
+                body: FrameId::base_link(agent.clone()),
+                root,
+            },
             agent,
             node_name,
             kind,
         }
+    }
+
+    /// The context of node `node_name` of `kind` on `agent`, holding any
+    /// estimate it makes in `agent`'s `odom`: the root the stack's estimate
+    /// source gets.
+    #[cfg(test)]
+    pub(crate) fn in_odom(agent: AgentId, node_name: &'a str, kind: &'a str) -> Self {
+        let root = FrameId::odom(agent.clone());
+        Self::new(agent, node_name, kind, root)
     }
 
     /// The agent this node belongs to; scopes the node's frames.
@@ -57,6 +76,16 @@ impl<'a> BuildContext<'a> {
     /// built for the node sees the node's kind here, never its own.
     pub fn kind(&self) -> &'a str {
         self.kind
+    }
+
+    /// The frames an estimator built as this node holds its state in: the
+    /// body's `base_link`, and the root the stack gives this node, the
+    /// agent's `odom` for the estimator the `[estimate]` section names and
+    /// `<node>.odom` for any other. Its dynamics and measurement models build
+    /// and read the state in these. A node that reads an estimate takes the
+    /// root from the state instead.
+    pub fn frames(&self) -> &EstimationFrames {
+        &self.frames
     }
 }
 
@@ -482,7 +511,7 @@ mod tests {
     fn run(section: &str) -> Result<BuiltNode, FactoryError> {
         let factory = erase(build_stub);
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, KIND);
         factory(section, &ctx, &AutonomyRegistry::empty())
     }
 
@@ -602,7 +631,7 @@ mod tests {
     fn resolved_components_are_spliced_into_the_section() {
         let factory = erase(build_with_components);
         let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, KIND);
         let Ok(built) = factory(section, &ctx, &AutonomyRegistry::empty()) else {
             panic!("expected the factory to succeed");
         };
@@ -632,7 +661,7 @@ mod tests {
     fn a_component_failure_is_reported_as_itself() {
         let factory = erase(build_failing_component);
         let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, KIND);
         let err = match factory(section, &ctx, &AutonomyRegistry::empty()) {
             Ok(_) => panic!("expected the factory to fail"),
             Err(err) => err,
@@ -665,7 +694,7 @@ mod tests {
     fn a_plans_construction_failure_names_node_and_kind() {
         let factory = erase(build_failing_plan);
         let section: toml::Table = toml::from_str("output = \"cloud\"").expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, KIND);
         let Ok(built) = factory(section, &ctx, &AutonomyRegistry::empty()) else {
             panic!("expected the plan to be declared");
         };
@@ -721,7 +750,7 @@ mod tests {
 
     #[test]
     fn context_accessors_return_what_it_was_built_with() {
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, KIND);
         assert_eq!(ctx.agent(), &AgentId::new("car"));
         assert_eq!(ctx.node_name(), NODE);
         assert_eq!(ctx.kind(), KIND);

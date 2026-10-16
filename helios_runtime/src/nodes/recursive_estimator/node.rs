@@ -24,8 +24,8 @@
 //!    node, stamped with the state's valid-at time. After a tick with no
 //!    predict that is earlier than the tick's: the estimate says when it
 //!    holds. The node publishes no TF edge; if the stack's estimate seam names
-//!    this node, its relay publishes the `base_link → odom` edge from this
-//!    state.
+//!    this node, its relay publishes the edge from the node's root to
+//!    `base_link` from this state.
 //!
 //! ## Health
 //!
@@ -55,7 +55,7 @@ use helios_core::estimation::{GaussianStateEstimator, PredictOutcome, PredictSki
 use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::tf::TfProvider;
 use helios_core::spatial::transforms::Convention;
-use helios_core::spatial::FrameAwareState;
+use helios_core::spatial::{FrameAwareState, FrameId};
 
 use atomic_float::AtomicF64;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -90,9 +90,11 @@ impl RecursiveEstimatorNode {
     /// leaves, its NIS and its drop count, and the state output on the
     /// channel named after the node. `mount_readings` are the channels whose
     /// mounts the builder and the aiding models resolve, each with the axes
-    /// it is read in.
+    /// it is read in. The node defines `root`, the frame it holds its state
+    /// in.
     pub(crate) fn declare_ports<'a>(
         name: &str,
+        root: &FrameId,
         input_required: &[ChannelKey],
         input_optional: &[ChannelKey],
         aiding: impl IntoIterator<Item = (&'a str, &'a ChannelKey)>,
@@ -100,7 +102,8 @@ impl RecursiveEstimatorNode {
     ) -> PortDescriptor {
         let mut builder = AlgorithmNodePortDescriptor::new()
             .inputs_from_slices(input_required, input_optional)
-            .output_internal(estimator_output(name));
+            .output_internal(estimator_output(name))
+            .defines_frame(root.clone());
         for (entry, channel) in aiding {
             builder = aiding_ports(builder, entry, channel);
         }

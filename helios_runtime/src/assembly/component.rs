@@ -464,7 +464,7 @@ mod tests {
         section: &str,
     ) -> Result<ParsedComponent<f64, f64, f64>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, NODE_KIND);
         table.parse(PATH, section, &ctx)
     }
 
@@ -473,7 +473,7 @@ mod tests {
         section: &str,
     ) -> Result<BuiltComponent<f64>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, NODE_KIND);
         table.build(PATH, section, &ctx, 2.0)
     }
 
@@ -633,7 +633,7 @@ mod tests {
         let Ok(parsed) = parse(&table, &section) else {
             panic!("a negative gain is declarable");
         };
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, NODE_KIND);
         assert!(matches!(
             parsed.deferred.build(&ctx, 2.0),
             Err(ComponentError::BuildFailed { .. })
@@ -651,7 +651,7 @@ mod tests {
                 |_: NoParams, _: &BuildContext<'_>, ()| Ok(()),
             )
             .expect("one registration");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, NODE_KIND);
         let section: toml::Table =
             toml::from_str(&format!("kind = \"{KIND}\"\nalpha = 1.0")).expect("parses");
         assert!(matches!(

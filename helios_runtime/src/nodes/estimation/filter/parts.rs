@@ -114,6 +114,7 @@ mod tests {
     use helios_core::estimation::frames::EstimationFrames;
     use helios_core::estimation::{EstimatorInputs, PredictOutcome};
     use helios_core::prelude::{AgentId, MonotonicTime};
+    use helios_core::spatial::FrameId;
 
     use nalgebra::{DVector, Vector3};
     use serde::{Deserialize, Serialize};
@@ -159,7 +160,7 @@ mod tests {
 
     /// Parts on a flat state: a still `odom` position.
     fn flat_parts() -> FilterParts {
-        let dynamics = FlatPosition::new(agent());
+        let dynamics = FlatPosition::new(FrameId::odom(agent()));
         let state = FrameAwareState::from_schema(dynamics.schema(), MonotonicTime(0.0));
         FilterParts::new(state, Box::new(dynamics))
     }
@@ -177,7 +178,7 @@ mod tests {
         parts: FilterParts,
     ) -> Result<Box<dyn GaussianStateEstimator>, ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(agent(), NODE, NODE_KIND);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")
@@ -189,7 +190,7 @@ mod tests {
     /// node does at declaration.
     fn declare(registry: &AutonomyRegistry, section: &str) -> Result<(), ComponentError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(agent(), NODE, NODE_KIND);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")

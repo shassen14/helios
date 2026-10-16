@@ -129,7 +129,8 @@ impl EstimatorComponents {
     ///
     /// `check` refuses a config that is unusable on its own, as for a filter;
     /// pass [`no_check`] when parsing is check enough. `build` runs when the
-    /// node is declared and returns a [`DynamicsComponent`]: the process model,
+    /// node is declared, holds the state in the context's
+    /// [`frames`](BuildContext::frames), and returns a [`DynamicsComponent`]: the process model,
     /// how a pose prior maps into its state, and the input builder feeding it
     /// as a [`DeclaredInput`], which states the input it assembles and the
     /// channels it reads now (checked against the model when the component is
@@ -169,8 +170,10 @@ impl EstimatorComponents {
     /// node is declared; pass [`no_check`] when parsing is check enough. The
     /// kind declares the channel it reads from `P`, so `check` states nothing
     /// else. `build` takes the kind's own typed config, which `check`
-    /// accepted, the node's build context and the frame of the sensor whose
-    /// readings it predicts, and returns the model. Registering the payload with the model is what lets one entry
+    /// accepted, the node's build context, whose
+    /// [`frames`](BuildContext::frames) are the body and root the model reads
+    /// the state in, and the frame of the sensor whose readings it predicts,
+    /// and returns the model. Registering the payload with the model is what lets one entry
     /// yield the model, the typed reader and the typed channel: config names
     /// only the kind, so a model can't be paired with a channel carrying a
     /// different payload. The same model may be registered again under another

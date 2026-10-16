@@ -107,7 +107,7 @@ mod tests {
     }
 
     fn context<'a>(name: &'a str, kind: &'a str) -> BuildContext<'a> {
-        BuildContext::new(AgentId::new("test_agent"), name, kind)
+        BuildContext::in_odom(AgentId::new("test_agent"), name, kind)
     }
 
     #[test]

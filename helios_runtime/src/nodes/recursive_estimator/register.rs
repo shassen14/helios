@@ -80,6 +80,7 @@ fn build(
     let input = dynamics.component.input();
     let descriptor = RecursiveEstimatorNode::declare_ports(
         ctx.node_name(),
+        &ctx.frames().root,
         input.required_channels(),
         input.optional_channels(),
         aiding
@@ -97,6 +98,7 @@ fn build(
     );
     let plan = EstimatorPlan {
         agent: ctx.agent().clone(),
+        root: ctx.frames().root.clone(),
         node_name: ctx.node_name().to_string(),
         kind: ctx.kind().to_string(),
         dynamics: dynamics.component,
@@ -205,6 +207,7 @@ mod tests {
 
     use crate::assembly::{no_check, NoParams};
     use crate::channels::estimate::estimator_output;
+    use crate::nodes::estimation::{DeclaredInput, DynamicsComponent};
     use crate::pipeline::node::{PipelineNode, TickContext};
     use crate::pipeline::NodeDeclaration;
     use crate::port::{
@@ -213,10 +216,14 @@ mod tests {
     use crate::BodyChannel;
 
     use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
+    use helios_core::estimation::dynamics::EstimationDynamics;
     use helios_core::estimation::measurement::gps::GpsPositionModel;
     use helios_core::estimation::measurement::{MeasurementModel, Prediction};
-    use helios_core::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
+    use helios_core::estimation::schema::{
+        InputSchema, MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
+    };
     use helios_core::interchange::measurement::sensor::GpsPosition;
+    use helios_core::kernel::integrators::Integrator;
     use helios_core::prelude::AgentId;
     use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::primitives::MonotonicTime;
@@ -228,6 +235,7 @@ mod tests {
     use nalgebra::DVector;
 
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     /// An arbitrary global frame the test expresses quantities in.
     const DATUM: &str = "test_datum";
@@ -302,8 +310,18 @@ mod tests {
         section: &str,
         describe: fn(ChannelKey) -> ChannelDescription,
     ) -> Result<(Box<dyn PipelineNode>, toml::Table), String> {
+        build_in_root(registry, section, describe, FrameId::odom(agent()))
+    }
+
+    /// [`build_with_inputs`], with the node holding its estimate in `root`.
+    fn build_in_root(
+        registry: &AutonomyRegistry,
+        section: &str,
+        describe: fn(ChannelKey) -> ChannelDescription,
+        root: FrameId,
+    ) -> Result<(Box<dyn PipelineNode>, toml::Table), String> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE, RECURSIVE_ESTIMATOR_KIND);
+        let ctx = BuildContext::new(agent(), NODE, RECURSIVE_ESTIMATOR_KIND, root);
         let built = registry
             .build_node(section, &ctx)
             .map_err(|err| err.to_string())?;
@@ -358,7 +376,7 @@ mod tests {
     /// building it, and returns the declaration's error.
     fn declare_err(section: &str) -> String {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(agent(), NODE, RECURSIVE_ESTIMATOR_KIND);
+        let ctx = BuildContext::in_odom(agent(), NODE, RECURSIVE_ESTIMATOR_KIND);
         match AutonomyRegistry::default().build_node(section, &ctx) {
             Ok(_) => panic!("expected the declaration to fail"),
             Err(err) => err.to_string(),
@@ -744,6 +762,108 @@ mod tests {
         };
         assert!(err.contains("aiding channel"), "{err}");
         assert!(err.contains("gps"), "{err}");
+    }
+
+    /// A process model whose state is the one fixed schema it holds, whatever
+    /// frames its build context gives: a dynamics that names `odom` by habit.
+    #[derive(Debug)]
+    struct FixedSchema(Arc<StateSchema>);
+
+    impl EstimationDynamics for FixedSchema {
+        fn input_schema(&self) -> Arc<InputSchema> {
+            Arc::new(InputSchema::compose(vec![]))
+        }
+
+        fn schema(&self) -> Arc<StateSchema> {
+            Arc::clone(&self.0)
+        }
+
+        fn propagate(
+            &self,
+            x: &DVector<f64>,
+            _: &DVector<f64>,
+            _: f64,
+            _: f64,
+            _: &dyn Integrator<f64>,
+        ) -> DVector<f64> {
+            x.clone()
+        }
+    }
+
+    /// The dynamics component around `quantity` alone, held in ENU, seeding
+    /// no pose and never building its input builder: the root check runs
+    /// before either is needed.
+    fn fixed(quantity: Quantity) -> Result<DynamicsComponent, String> {
+        let schema = StateSchema::compose(vec![StateSchemaBlock::new(
+            quantity,
+            Convention::Enu,
+            None,
+            DVector::zeros(3),
+            DMatrix::identity(3, 3),
+        )]);
+        let input = Arc::new(InputSchema::compose(vec![]));
+        let declared = DeclaredInput::new(input, vec![], vec![], |_| {
+            Err("the input builder is not reached".to_string())
+        });
+        DynamicsComponent::new(Box::new(FixedSchema(Arc::new(schema))), declared)
+            .map(|component| component.with_pose_seeding(|_, _, _| Ok(())))
+            .map_err(|err| err.to_string())
+    }
+
+    /// The default registry with two dynamics kinds that ignore the root
+    /// their build context gives: one holds a position in `odom`, one only a
+    /// velocity there.
+    fn registry_with_root_blind_dynamics() -> AutonomyRegistry {
+        let mut registry = AutonomyRegistry::default();
+        let components = registry.extension_mut::<EstimatorComponents>();
+        components
+            .register_dynamics(
+                "test_position_in_odom",
+                no_check,
+                |_: NoParams, _: &BuildContext<'_>| {
+                    fixed(Quantity::Position(FrameId::odom(agent())))
+                },
+            )
+            .expect("test kind is new");
+        components
+            .register_dynamics(
+                "test_velocity_in_odom",
+                no_check,
+                |_: NoParams, _: &BuildContext<'_>| {
+                    fixed(Quantity::Velocity(FrameId::odom(agent())))
+                },
+            )
+            .expect("test kind is new");
+        registry
+    }
+
+    /// A shadow whose dynamics build the state in `odom` instead of the root
+    /// it declares is refused, whether the state holds a position there or
+    /// only names `odom` through another block. The same dynamics pass as the
+    /// estimate's source, whose root is `odom`.
+    #[test]
+    fn a_state_held_outside_the_nodes_root_is_refused() {
+        let registry = registry_with_root_blind_dynamics();
+        let shadow_root = FrameId::agent(agent(), "primary.odom");
+        for kind in ["test_position_in_odom", "test_velocity_in_odom"] {
+            let section =
+                format!("filter = {{ kind = \"Ekf\" }}\ndynamics = {{ kind = \"{kind}\" }}");
+
+            let Err(err) = build_in_root(&registry, &section, mounted_input, shadow_root.clone())
+            else {
+                panic!("{kind}: a state outside the node's root must be refused");
+            };
+            assert!(err.contains("agent.car.odom"), "{kind}: {err}");
+            assert!(err.contains("agent.car.primary.odom"), "{kind}: {err}");
+
+            let Err(err) = build_with(&registry, &section) else {
+                panic!("{kind}: the fixed dynamics never build their input builder");
+            };
+            assert!(
+                err.contains("not reached"),
+                "{kind}: the root check passes in odom: {err}"
+            );
+        }
     }
 
     /// Registering the kind on an empty registry creates the tables it

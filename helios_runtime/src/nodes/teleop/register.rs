@@ -57,7 +57,7 @@ mod tests {
     fn build(name: &str) -> FactoryOutput {
         let config: TwistTeleopConfig =
             toml::from_str("surge = 5.0\nyaw = 1.0").expect("a car's section parses");
-        let ctx = BuildContext::new(AgentId::new("test_agent"), name, TWIST_TELEOP_KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("test_agent"), name, TWIST_TELEOP_KIND);
         build_twist_teleop(config, &ctx).expect("the mapper builds")
     }
 

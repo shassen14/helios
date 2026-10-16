@@ -5,7 +5,6 @@ use super::config::{AccelerometerConfig, MagnetometerConfig};
 use crate::assembly::{no_check, BuildContext, NoParams};
 use crate::nodes::estimation::EstimatorComponents;
 
-use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::measurement::{
     accelerometer::SpecificForceModel, gps::GpsPositionModel, gyroscope::AngularRateModel,
     magnetometer::MagneticFieldModel, MeasurementModel,
@@ -68,7 +67,7 @@ fn build_gps_position(
     sensor: &FrameId,
 ) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(GpsPositionModel {
-        frames: EstimationFrames::odom(ctx.agent().clone()),
+        frames: ctx.frames().clone(),
         sensor: sensor.clone(),
     }))
 }
@@ -79,7 +78,7 @@ fn build_accelerometer(
     sensor: &FrameId,
 ) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(SpecificForceModel {
-        frames: EstimationFrames::odom(ctx.agent().clone()),
+        frames: ctx.frames().clone(),
         sensor: sensor.clone(),
         gravity_world: Vector3::from(config.gravity_enu),
     }))
@@ -91,7 +90,7 @@ fn build_gyroscope(
     sensor: &FrameId,
 ) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(AngularRateModel {
-        body: FrameId::base_link(ctx.agent().clone()),
+        body: ctx.frames().body.clone(),
         sensor: sensor.clone(),
     }))
 }
@@ -102,7 +101,7 @@ fn build_magnetometer(
     sensor: &FrameId,
 ) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(MagneticFieldModel {
-        frames: EstimationFrames::odom(ctx.agent().clone()),
+        frames: ctx.frames().clone(),
         sensor: sensor.clone(),
         world_magnetic_field: Vector3::from(config.magnetic_field_enu),
     }))
@@ -130,7 +129,7 @@ mod tests {
     fn build(section: &str) -> Result<Box<dyn MeasurementSource>, ComponentError> {
         let registry = AutonomyRegistry::default();
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, NODE_KIND);
         let wiring = MeasurementWiring {
             input: INPUT.to_string(),
             mount: FrameId::agent(AgentId::new("car"), INPUT),

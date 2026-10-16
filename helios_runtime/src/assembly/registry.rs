@@ -289,7 +289,7 @@ mod tests {
         section: &str,
     ) -> Result<BuiltNode, PipelineAssemblyError> {
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, kind);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, kind);
         registry.build_node(section, &ctx)
     }
 

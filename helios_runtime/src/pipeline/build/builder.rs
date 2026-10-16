@@ -17,6 +17,7 @@ use crate::{
 };
 
 use helios_core::prelude::AgentId;
+use helios_core::spatial::FrameId;
 
 use std::collections::{HashMap, HashSet};
 
@@ -48,6 +49,7 @@ pub struct PipelineBuilder {
     nodes: Vec<NodeDeclaration>,
     capabilities: BodyCapabilities,
     outside_inputs: Vec<ChannelKey>,
+    estimate_root: Option<FrameId>,
 }
 
 impl PipelineBuilder {
@@ -61,6 +63,7 @@ impl PipelineBuilder {
             nodes: vec![],
             capabilities: BodyCapabilities::default(),
             outside_inputs: vec![],
+            estimate_root: None,
         }
     }
 
@@ -110,13 +113,22 @@ impl PipelineBuilder {
         self
     }
 
+    /// Names the frame the estimate holds the body's pose in, which the built
+    /// pipeline exposes through [`AutonomyPipeline::estimate_root`]. Set by
+    /// the estimate seam, which knows which estimator is authoritative.
+    pub(crate) fn with_estimate_root(mut self, root: FrameId) -> Self {
+        self.estimate_root = Some(root);
+        self
+    }
+
     /// Validates the registered nodes and builds a [`AutonomyPipeline`].
     ///
     /// Errors are checked in two stages, and every error within a stage is
     /// collected:
     /// 1. Wiring. Node names are unique and one level each, the body's unit
     ///    names are one level each, every mount the body states is a frame on
-    ///    this agent's body off its spine, every output mounted at an input's
+    ///    this agent's body other than `base_link`, every frame has one owner
+    ///    (the body, or the one node that defines it), every output mounted at an input's
     ///    mount names a channel its node reads in the same tick, channel names
     ///    are well formed and each names one channel, each node's watchable
     ///    leaves are well formed, leaves and output channels sit outside the
@@ -130,7 +142,10 @@ impl PipelineBuilder {
     ///    - [`PipelineBuildError::MalformedUnitName`] — a unit the body
     ///      declares is not one level.
     ///    - [`PipelineBuildError::RefusedBodyMount`] — the body states a
-    ///      mount off its own body, on its spine, or with a malformed leaf.
+    ///      mount off its own body, at `base_link`, or with a malformed leaf.
+    ///    - [`PipelineBuildError::FrameDefinedTwice`] — two nodes define one
+    ///      frame, or a node defines `base_link` or a frame the body mounts a
+    ///      channel at.
     ///    - [`PipelineBuildError::MountFromUnreadInput`] — a node mounts an
     ///      output at the mount of a channel it does not read in the same
     ///      tick.
@@ -213,6 +228,7 @@ impl PipelineBuilder {
             levels,
             bus,
             descriptions,
+            estimate_root: self.estimate_root,
         })
     }
 

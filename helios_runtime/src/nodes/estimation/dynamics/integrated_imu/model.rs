@@ -13,11 +13,10 @@ use crate::prelude::TickContext;
 use helios_core::estimation::dynamics::integrated_imu::{
     ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
 };
-use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::imu_mount::{body_angular_velocity, body_specific_force};
 use helios_core::estimation::schema::{InputSchema, InputSchemaBlock};
 use helios_core::estimation::EstimatorInputs;
-use helios_core::prelude::{Acceleration, AgentId, AngularRate, MonotonicTime, SensorReading};
+use helios_core::prelude::{Acceleration, AngularRate, MonotonicTime, SensorReading};
 use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::state::{Component, Quantity};
 use helios_core::spatial::tf::TfProvider;
@@ -56,11 +55,11 @@ pub(crate) struct IntegratedImuInputBuilder {
 }
 
 impl IntegratedImuInputBuilder {
-    /// A builder for `agent` reading `accel` and `gyro`, each mounted where
-    /// its writer states. Each quantity is written at the row its schema
-    /// gives it, so the schema is the one place the order is stated.
-    fn new(agent: AgentId, accel: MountedChannel, gyro: MountedChannel) -> Result<Self, String> {
-        let body = FrameId::base_link(agent);
+    /// A builder moving readings to `body`, reading `accel` and `gyro`, each
+    /// mounted where its writer states. Each quantity is written at the row
+    /// its schema gives it, so the schema is the one place the order is
+    /// stated.
+    fn new(body: FrameId, accel: MountedChannel, gyro: MountedChannel) -> Result<Self, String> {
         let input_schema = imu_input_schema(&body);
         let row_of = |quantity: Quantity| {
             input_schema
@@ -202,7 +201,7 @@ pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponent
 fn build(config: IntegratedImuConfig, ctx: &BuildContext<'_>) -> Result<DynamicsComponent, String> {
     let prior = &config.initial_uncertainty;
     let dynamics = IntegratedImuModel::new(
-        EstimationFrames::odom(ctx.agent().clone()),
+        ctx.frames().clone(),
         Vector3::from(config.gravity_enu),
         ImuProcessNoise {
             accel_noise_var: config.accel_noise_stddev.powi(2),
@@ -222,9 +221,9 @@ fn build(config: IntegratedImuConfig, ctx: &BuildContext<'_>) -> Result<Dynamics
         SensorChannel::named::<Vec<SensorReading<Acceleration>>>(config.accel_channel).into();
     let gyro: ChannelKey =
         SensorChannel::named::<Vec<SensorReading<AngularRate>>>(config.gyro_channel).into();
-    let agent = ctx.agent().clone();
+    let body = ctx.frames().body.clone();
     let input = DeclaredInput::new(
-        imu_input_schema(&FrameId::base_link(agent.clone())),
+        imu_input_schema(&body),
         vec![accel.clone(), gyro.clone()],
         vec![],
         {
@@ -232,10 +231,8 @@ fn build(config: IntegratedImuConfig, ctx: &BuildContext<'_>) -> Result<Dynamics
             move |mounts: &InputMounts| {
                 let accel = MountedChannel::new(accel, mounts)?;
                 let gyro = MountedChannel::new(gyro, mounts)?;
-                Ok(
-                    Box::new(IntegratedImuInputBuilder::new(agent, accel, gyro)?)
-                        as Box<dyn EstimatorInputBuilder>,
-                )
+                Ok(Box::new(IntegratedImuInputBuilder::new(body, accel, gyro)?)
+                    as Box<dyn EstimatorInputBuilder>)
             }
         },
     )
@@ -257,6 +254,7 @@ mod tests {
     use crate::stamped::{Health, Stamped};
     use crate::BodyChannel;
 
+    use helios_core::prelude::AgentId;
     use helios_core::spatial::transforms::ErasedTransform;
 
     use nalgebra::{Translation3, UnitQuaternion};
@@ -286,7 +284,7 @@ mod tests {
     fn build_section(section: &str) -> Result<Built, ComponentError> {
         let registry = AutonomyRegistry::default();
         let section: toml::Table = toml::from_str(section).expect("test TOML parses");
-        let ctx = BuildContext::new(AgentId::new("car"), NODE, NODE_KIND);
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, NODE_KIND);
         registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")

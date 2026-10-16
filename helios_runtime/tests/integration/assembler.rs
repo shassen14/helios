@@ -2,13 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use helios_runtime::channels::{control, estimate};
+use helios_runtime::channels::{control, estimate, oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
     build_pipeline, ActuatorSeamConfig, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
     BodyChannel, CommandFoldConfig, EstimateSeamConfig, PipelineAssemblyError, PipelineBuildError,
-    Provenance, ReferenceSeamConfig,
+    Provenance, ReferenceSeamConfig, HOST_PRODUCER_ID,
 };
 
 use helios_core::control::actuation_model::{ActuationModel, ActuatorSpec, SignConvention};
@@ -32,7 +32,7 @@ use helios_core::spatial::quantities::{FluVector, FreeVector};
 use helios_core::spatial::state::{Component, Quantity};
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
-use nalgebra::Vector3;
+use nalgebra::{Isometry3, Vector3};
 
 use crate::common::MockRuntime;
 
@@ -1818,4 +1818,92 @@ fn stack_without_planner_or_teleop_declares_no_outside_inputs() {
         declared.is_empty(),
         "no planner and no teleop must declare nothing, got {declared:?}"
     );
+}
+
+// =========================================================================
+// == Estimate roots: the estimate in odom, each shadow in a root of its own ==
+// =========================================================================
+
+/// A `[nodes]` entry for a `MockOracle` named `name`.
+fn mock_oracle(name: &str) -> (String, toml::Table) {
+    node_entry(name, r#"kind = "MockOracle""#)
+}
+
+#[test]
+fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
+    // The mock oracle is the estimate, so it holds its state in odom. The
+    // magnetometer-aided EKF runs in shadow and holds its state in
+    // `nav_ekf.odom`: its dynamics, its aiding model and its pose prior all
+    // take that root, or the build's model-against-state check or the
+    // seeding would refuse it.
+    let agent = AgentId::new("test_agent");
+    let stack = AutonomyStackConfig {
+        nodes: BTreeMap::from([mock_oracle("truth"), mag_aided_imu_ekf("mag.primary")]),
+        estimate: Some(estimate_seam("truth")),
+        ..Default::default()
+    };
+    let body = body_publishing(channels_with_imu(
+        &agent,
+        vec![
+            sensor_channel::<MagneticField>("mag.primary", MAG_UNIT)
+                .with_mount(FrameId::agent(agent.clone(), "mag.primary")),
+            BodyChannel::new(oracle_pose_channel(), TRUTH_UNIT, Provenance::Exact),
+            BodyChannel::new(oracle_twist_channel(), TRUTH_UNIT, Provenance::Exact),
+        ],
+    ));
+    let pipeline = build_pipeline(&stack, &AutonomyRegistry::default(), agent.clone(), body)
+        .expect("an estimate beside a shadow builds");
+    assert_eq!(
+        pipeline.estimate_root(),
+        Some(&FrameId::odom(agent.clone()))
+    );
+
+    pipeline
+        .bus()
+        .write(
+            oracle_pose_channel().into(),
+            Stamped {
+                value: Isometry3::<f64>::identity(),
+                timestamp: MonotonicTime(0.0),
+                health: Health::Ok,
+                producer: HOST_PRODUCER_ID,
+            },
+        )
+        .expect("the oracle pose slot exists");
+    pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
+
+    let estimate = pipeline
+        .read_state()
+        .expect("the oracle's state is the estimate");
+    assert_eq!(
+        estimate.value.reference_frame(),
+        Some(FrameId::odom(agent.clone()))
+    );
+    let shadow = pipeline
+        .bus()
+        .read::<FrameAwareState>(estimate::estimator_output("nav_ekf").into())
+        .expect("an estimator publishes its seeded state on its first tick");
+    assert_eq!(
+        shadow.value.reference_frame(),
+        Some(FrameId::agent(agent, "nav_ekf.odom"))
+    );
+}
+
+#[test]
+fn a_stack_naming_no_estimate_exposes_no_root() {
+    let stack = AutonomyStackConfig {
+        nodes: BTreeMap::from([imu_ekf("nav_ekf")]),
+        ..Default::default()
+    };
+    let agent = AgentId::new("test_agent");
+
+    let pipeline = build_pipeline(
+        &stack,
+        &AutonomyRegistry::default(),
+        agent.clone(),
+        body_publishing(channels_with_imu(&agent, vec![])),
+    )
+    .expect("an estimator alone builds");
+
+    assert_eq!(pipeline.estimate_root(), None);
 }

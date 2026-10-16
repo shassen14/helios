@@ -19,8 +19,8 @@ pub mod tf_service;
 pub use crate::body::{BodyCapabilities, BodyChannel};
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{
-    AutonomyPipeline, ChannelUses, CycleEdge, InputMounts, MountLookupError, MountRefusal,
-    NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder, ReadMount,
+    AutonomyPipeline, ChannelUses, CycleEdge, FrameOwner, InputMounts, MountLookupError,
+    MountRefusal, NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder, ReadMount,
 };
 pub use crate::port::{
     ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, MountReading,

@@ -108,10 +108,11 @@ impl std::fmt::Display for MountLookupError {
     }
 }
 
-/// Every mount the body states must be a frame of `agent`'s own body off its
-/// spine, with a well-formed leaf: a mount is where an installed part
-/// measures, so another agent's frame, a global frame, `map`, `odom` or
-/// `base_link` is a wiring mistake. One error per channel.
+/// Every mount the body states must be a frame of `agent`'s own body other
+/// than `base_link`, with a well-formed leaf: a mount is where an installed
+/// part measures, so another agent's frame, a global frame or `base_link` is
+/// a wiring mistake. A mount at a frame a node defines is refused with the
+/// frame's owners. One error per channel.
 pub(super) fn check_body_mounts(
     agent: &AgentId,
     descriptions: &[ChannelDescription],
@@ -138,7 +139,7 @@ fn refuse_body_mount(agent: &AgentId, mount: &FrameId) -> Option<MountRefusal> {
     match mount.scope() {
         FrameScope::Global => Some(MountRefusal::Global),
         FrameScope::Agent(owner) if owner != agent => Some(MountRefusal::OtherAgent),
-        FrameScope::Agent(_) if !mount.is_sensor() => Some(MountRefusal::Spine),
+        FrameScope::Agent(_) if mount.is_base_link() => Some(MountRefusal::BaseLink),
         FrameScope::Agent(_) if !is_dotted_name(mount.leaf().as_str()) => {
             Some(MountRefusal::MalformedLeaf)
         }
@@ -242,8 +243,8 @@ mod tests {
             .collect()
     }
 
-    /// A mount on the agent's own body, off its spine, passes; a dotted leaf
-    /// is well formed, as a channel name is.
+    /// A mount on the agent's own body other than `base_link` passes; a
+    /// dotted leaf is well formed, as a channel name is.
     #[test]
     fn a_mount_on_the_agents_own_body_passes() {
         let descriptions = [
@@ -260,16 +261,14 @@ mod tests {
             body("a", Some(FrameId::agent(AgentId::new(OTHER_AGENT), "gps"))),
             body("b", Some(FrameId::global("datum"))),
             body("c", Some(FrameId::base_link(agent()))),
-            body("d", Some(FrameId::odom(agent()))),
-            body("e", Some(FrameId::agent(agent(), "gps/antenna"))),
+            body("d", Some(FrameId::agent(agent(), "gps/antenna"))),
         ];
         assert_eq!(
             refusals(&descriptions),
             [
                 MountRefusal::OtherAgent,
                 MountRefusal::Global,
-                MountRefusal::Spine,
-                MountRefusal::Spine,
+                MountRefusal::BaseLink,
                 MountRefusal::MalformedLeaf,
             ]
         );

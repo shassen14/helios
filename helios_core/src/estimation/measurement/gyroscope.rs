@@ -171,7 +171,7 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            let iso = if from.is_sensor() {
+            let iso = if !from.is_base_link() {
                 self.0
             } else {
                 self.0.inverse()

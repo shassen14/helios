@@ -1,7 +1,7 @@
 //! [`PipelineBuildError`], everything [`build`](super::PipelineBuilder::build)
 //! can reject, [`ChannelUses`], who writes and reads one channel,
-//! [`CycleEdge`], one read inside a dependency loop, and [`MountRefusal`], why
-//! a mount the body states is refused.
+//! [`CycleEdge`], one read inside a dependency loop, [`MountRefusal`], why
+//! a mount the body states is refused, and [`FrameOwner`], who owns a frame.
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
@@ -69,13 +69,22 @@ pub enum PipelineBuildError {
     /// node-name grammar. Reported once per unit.
     MalformedUnitName { unit: String },
     /// The body states a mount for a channel that is not a frame on this
-    /// agent's body off its spine, with a well-formed leaf. A mount is where
-    /// an installed part measures. Reported once per channel.
+    /// agent's body other than `base_link`, with a well-formed leaf. A mount
+    /// is where an installed part measures. Reported once per channel.
     RefusedBodyMount {
         unit: String,
         channel: ChannelKey,
         mount: FrameId,
         refusal: MountRefusal,
+    },
+    /// A frame has two owners: two nodes define it, or a node defines one the
+    /// body owns (its `base_link`, or a frame it mounts a channel at). A frame
+    /// means what its one owner says it does, so a pose held in it can't be
+    /// two things. Reported once per extra owner.
+    FrameDefinedTwice {
+        frame: FrameId,
+        first: FrameOwner,
+        second: FrameOwner,
     },
     /// A node mounts an output at the mount of a channel it does not read in
     /// the same tick, so no mount could be resolved for it before the node is
@@ -250,6 +259,16 @@ impl std::fmt::Display for PipelineBuildError {
                     "unit \"{unit}\" states channel {channel} is mounted at {mount}, {refusal}"
                 )
             }
+            PipelineBuildError::FrameDefinedTwice {
+                frame,
+                first,
+                second,
+            } => {
+                write!(
+                    f,
+                    "frame {frame} is defined by {first} and by {second}; a frame has one owner"
+                )
+            }
             PipelineBuildError::MountFromUnreadInput {
                 node_name,
                 output,
@@ -362,9 +381,8 @@ pub enum MountRefusal {
     OtherAgent,
     /// The frame belongs to no agent.
     Global,
-    /// The frame is the agent's `map`, `odom` or `base_link`, not an
-    /// installed part's own.
-    Spine,
+    /// The frame is the agent's `base_link`, not an installed part's own.
+    BaseLink,
     /// The frame's leaf is not levels joined by `.`.
     MalformedLeaf,
 }
@@ -380,15 +398,37 @@ impl std::fmt::Display for MountRefusal {
                 f,
                 "a global frame — a body mounts its channels on its own frames"
             ),
-            MountRefusal::Spine => write!(
+            MountRefusal::BaseLink => write!(
                 f,
-                "a frame of the agent's spine — a mount is the installed part's own frame"
+                "the agent's base_link — a mount is the installed part's own frame"
             ),
             MountRefusal::MalformedLeaf => write!(
                 f,
                 "whose leaf is not one or more levels joined by '.', each only letters, digits \
                  and '_'"
             ),
+        }
+    }
+}
+
+/// Who owns a frame, as reported in [`PipelineBuildError::FrameDefinedTwice`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrameOwner {
+    /// The body, as its `base_link`.
+    Body,
+    /// The body unit that mounts a channel at the frame.
+    Unit { unit: String },
+    /// The node that declares it defines the frame, such as an estimator
+    /// holding its state in it.
+    Node { node: String },
+}
+
+impl std::fmt::Display for FrameOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameOwner::Body => write!(f, "the body"),
+            FrameOwner::Unit { unit } => write!(f, "unit \"{unit}\""),
+            FrameOwner::Node { node } => write!(f, "node \"{node}\""),
         }
     }
 }

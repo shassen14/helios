@@ -12,8 +12,9 @@
 //! 2. Read `oracle.twist` (optional).
 //! 3. Build a `FrameAwareState` on the kinematic carrier schema from the pose
 //!    and twist — position, linear/angular velocity, and attitude.
-//! 4. Publish on the channel named after the node. Like any estimator it
-//!    publishes no TF edge; the estimate seam's relay does.
+//! 4. Publish on the channel named after the node, held in the root the stack
+//!    gives it, which it defines. Like any estimator it publishes no TF edge;
+//!    the estimate seam's relay does.
 //!
 //! ## Body capability requirement
 //!
@@ -43,19 +44,18 @@ use helios_core::estimation::carrier::kinematic_carrier_schema;
 use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::schema::StateSchema;
 use helios_core::interchange::motion::Twist;
-use helios_core::prelude::AgentId;
 use helios_core::prelude::TfProvider;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::quantities::FreeVector;
 use helios_core::spatial::transforms::Transform;
-use helios_core::spatial::{BlockWriteError, FrameAwareState, FrameId};
+use helios_core::spatial::{BlockWriteError, FrameAwareState};
 
 use nalgebra::Isometry3;
 use std::sync::Arc;
 
 pub(crate) struct MockOracleEstimatorNode {
     name: String,
-    agent: AgentId,
+    frames: EstimationFrames,
     output: ChannelKey,
     descriptor: PortDescriptor,
     /// The composed kinematic carrier schema, cached at construction and shared into
@@ -66,21 +66,22 @@ pub(crate) struct MockOracleEstimatorNode {
 }
 
 impl MockOracleEstimatorNode {
-    pub(crate) fn new(name: impl Into<String>, agent: AgentId) -> Self {
+    /// A node named `name` publishing truth as an estimate held in `frames`,
+    /// whose root it defines.
+    pub(crate) fn new(name: impl Into<String>, frames: EstimationFrames) -> Self {
         let name = name.into();
         let output = estimator_output(&name);
         let descriptor = MockNodePortDescriptor::new()
             .input_oracle(oracle_pose_channel())
             .optional_oracle(oracle_twist_channel())
             .output_internal(output.clone())
+            .defines_frame(frames.root.clone())
             .build();
         Self {
             name,
             output: output.into(),
-            schema: Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(
-                agent.clone(),
-            ))),
-            agent,
+            schema: Arc::new(kinematic_carrier_schema(&frames)),
+            frames,
             descriptor,
         }
     }
@@ -113,11 +114,11 @@ impl PipelineNode for MockOracleEstimatorNode {
         // mismatch between that schema and these writers. Publishing the state
         // anyway would hand downstream a partly seeded estimate, so it is dropped.
         let written =
-            write_pose_into(&mut state, &pose_stamped.value, &self.agent).and_then(|()| {
+            write_pose_into(&mut state, &pose_stamped.value, &self.frames).and_then(|()| {
                 match &twist {
-                    // oracle.twist and the odom velocity blocks are both ENU —
-                    // straight passthrough of linear and angular velocity.
-                    Some(t) => write_world_twist_into(&mut state, t, &self.agent),
+                    // oracle.twist and the root's velocity blocks are both ENU
+                    // — straight passthrough of linear and angular velocity.
+                    Some(t) => write_world_twist_into(&mut state, t, &self.frames),
                     None => Ok(()),
                 }
             });
@@ -146,34 +147,34 @@ impl PipelineNode for MockOracleEstimatorNode {
 fn write_pose_into(
     state: &mut FrameAwareState,
     pose: &Isometry3<f64>,
-    agent: &AgentId,
+    frames: &EstimationFrames,
 ) -> Result<(), BlockWriteError> {
-    // Position and body→odom attitude in the estimate's odom frame. The oracle is
-    // a perfect estimator: it reports truth, but publishes it into the same
-    // odom-frame estimate slot the real filter fills, so downstream consumers
+    // Position and body→root attitude in the estimate's root. The oracle is a
+    // perfect estimator: it reports truth, but publishes it into the same
+    // root-frame estimate slot the real filter fills, so downstream consumers
     // read one frame.
     state.set_pose(
-        FrameId::base_link(agent.clone()),
-        FrameId::odom(agent.clone()),
+        frames.body.clone(),
+        frames.root.clone(),
         Transform::<Flu, Enu>::from_isometry(*pose),
     )
 }
 
 /// Writes the twist into the estimate's velocity blocks: linear into
-/// `Velocity(Odom)` and angular into `AngularVelocity(Odom)`.
+/// `Velocity(root)` and angular into `AngularVelocity(root)`.
 ///
 /// The oracle reports both linear and angular velocity in the ENU frame, and the
-/// odom-frame estimate is ENU-aligned, so `twist.angular` passes straight through
-/// rather than being dropped.
+/// root-frame estimate is ENU-aligned, so `twist.angular` passes straight
+/// through rather than being dropped.
 fn write_world_twist_into(
     state: &mut FrameAwareState,
     twist: &Twist,
-    agent: &AgentId,
+    frames: &EstimationFrames,
 ) -> Result<(), BlockWriteError> {
-    let odom = FrameId::odom(agent.clone());
+    let root = frames.root.clone();
 
-    state.set_velocity(odom.clone(), FreeVector::<Enu>::from_raw(twist.linear))?;
-    state.set_angular_velocity(odom, FreeVector::<Enu>::from_raw(twist.angular))
+    state.set_velocity(root.clone(), FreeVector::<Enu>::from_raw(twist.linear))?;
+    state.set_angular_velocity(root, FreeVector::<Enu>::from_raw(twist.angular))
 }
 
 #[cfg(test)]
@@ -192,8 +193,10 @@ mod tests {
     use crate::pipeline::PipelineBuilder;
     use crate::port::Provenance;
     use crate::port::{ChannelKey, PortDescriptor};
+    use helios_core::prelude::AgentId;
     use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::FrameId;
 
     use helios_core::spatial::primitives::MonotonicTime;
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
@@ -258,7 +261,10 @@ mod tests {
 
     #[test]
     fn descriptor_requires_oracle_pose() {
-        let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
+        let node = MockOracleEstimatorNode::new(
+            "mock",
+            EstimationFrames::odom(AgentId::new("test_agent")),
+        );
         assert!(
             node.port_descriptor()
                 .required_inputs()
@@ -269,7 +275,10 @@ mod tests {
 
     #[test]
     fn descriptor_marks_oracle_twist_optional() {
-        let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
+        let node = MockOracleEstimatorNode::new(
+            "mock",
+            EstimationFrames::odom(AgentId::new("test_agent")),
+        );
         assert!(
             node.port_descriptor()
                 .optional_inputs()
@@ -280,7 +289,10 @@ mod tests {
 
     #[test]
     fn descriptor_outputs_frame_aware_state() {
-        let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
+        let node = MockOracleEstimatorNode::new(
+            "mock",
+            EstimationFrames::odom(AgentId::new("test_agent")),
+        );
         assert_eq!(
             node.port_descriptor()
                 .outputs()
@@ -295,7 +307,7 @@ mod tests {
     #[test]
     fn republishes_pose_as_frame_aware_state() {
         let agent = AgentId::new("test_agent");
-        let node = MockOracleEstimatorNode::new("mock", agent.clone());
+        let node = MockOracleEstimatorNode::new("mock", EstimationFrames::odom(agent.clone()));
         let bus = make_bus_with_oracle_producer(&node);
 
         // Write a known pose to oracle.pose.
@@ -339,7 +351,7 @@ mod tests {
         // oracle.twist is already ENU; mock passes both linear and angular
         // velocity straight through into the estimate's odom-frame blocks.
         let agent = AgentId::new("test_agent");
-        let node = MockOracleEstimatorNode::new("mock", agent.clone());
+        let node = MockOracleEstimatorNode::new("mock", EstimationFrames::odom(agent.clone()));
         let bus = make_bus_with_oracle_producer(&node);
 
         bus.write(
@@ -392,7 +404,10 @@ mod tests {
 
     #[test]
     fn skips_publish_when_oracle_pose_absent() {
-        let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
+        let node = MockOracleEstimatorNode::new(
+            "mock",
+            EstimationFrames::odom(AgentId::new("test_agent")),
+        );
         let bus = make_bus_with_oracle_producer(&node);
 
         // No write to oracle.pose. Cold start.
@@ -406,7 +421,10 @@ mod tests {
 
     #[test]
     fn stamp_uses_tick_now_and_node_id() {
-        let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
+        let node = MockOracleEstimatorNode::new(
+            "mock",
+            EstimationFrames::odom(AgentId::new("test_agent")),
+        );
         let bus = make_bus_with_oracle_producer(&node);
         bus.write(
             oracle_pose_channel().into(),
@@ -431,7 +449,10 @@ mod tests {
 
     #[test]
     fn build_fails_when_body_lacks_oracle_pose() {
-        let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
+        let node = MockOracleEstimatorNode::new(
+            "mock",
+            EstimationFrames::odom(AgentId::new("test_agent")),
+        );
         let empty_body = BodyCapabilities {
             publishes: vec![],
             ..Default::default()
@@ -461,7 +482,10 @@ mod tests {
 
     #[test]
     fn build_succeeds_when_body_publishes_oracle_pose() {
-        let node = MockOracleEstimatorNode::new("mock", AgentId::new("test_agent"));
+        let node = MockOracleEstimatorNode::new(
+            "mock",
+            EstimationFrames::odom(AgentId::new("test_agent")),
+        );
 
         let result = PipelineBuilder::new(AgentId::new("test_agent"))
             .add_node(Box::new(node))
