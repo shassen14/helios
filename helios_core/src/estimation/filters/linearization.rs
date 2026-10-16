@@ -106,6 +106,7 @@ mod tests {
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };
     use crate::estimation::dynamics::ErrorStateModel;
+    use crate::estimation::frames::EstimationFrames;
     use crate::estimation::schema::{InputSchema, StateSchema};
     use crate::kernel::integrators::{Integrator, RK4};
     use crate::prelude::EstimationDynamics;
@@ -120,7 +121,7 @@ mod tests {
 
     fn ins_model() -> IntegratedImuModel {
         IntegratedImuModel::new(
-            AgentId::new("test_agent"),
+            EstimationFrames::odom(AgentId::new("test_agent")),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
                 accel_noise_var: 0.04,

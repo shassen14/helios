@@ -13,12 +13,11 @@
 //! [`StateSchema::compose`]; it is a *client* of that primitive, not a new one,
 //! which is why it is a free function and not a `StateSchema` constructor.
 
+use crate::estimation::frames::EstimationFrames;
 use crate::estimation::schema::{StateSchema, StateSchemaBlock};
 use crate::kernel::manifold::TangentNoise;
-use crate::prelude::AgentId;
 use crate::spatial::state::Quantity;
 use crate::spatial::transforms::Convention;
-use crate::spatial::FrameId;
 
 use nalgebra::{DMatrix, DVector};
 
@@ -29,17 +28,16 @@ use nalgebra::{DMatrix, DVector};
 /// that construction invariant. Flat blocks take `None` and carry none.
 const CARRIER_ORIENTATION_NOISE_VAR: f64 = 1.0;
 
-/// The kinematic state a pose + twist reference source expresses: odom-frame
-/// position, linear velocity, and angular velocity, plus the body → odom
+/// The kinematic state a pose + twist reference source expresses: position,
+/// linear velocity and angular velocity in `frames.root`, plus the body → root
 /// attitude. Every block is composed by [`Quantity`], so a consumer reads it by
 /// typed block extractor exactly as it would a filtering estimate.
 ///
 /// It carries no sensor-bias or acceleration blocks — a reference source has no
 /// biases and a pose + twist source measures no acceleration. Angular velocity
-/// is in the odom (ENU) frame, matching how the estimate reports it.
-pub fn kinematic_carrier_schema(agent: AgentId) -> StateSchema {
-    let body = FrameId::base_link(agent.clone());
-    let odom = FrameId::odom(agent);
+/// is in the root (ENU) frame, matching how the estimate reports it.
+pub fn kinematic_carrier_schema(frames: &EstimationFrames) -> StateSchema {
+    let (body, root) = (frames.body.clone(), frames.root.clone());
 
     // A flat, certain block: no process noise, zero initial covariance.
     let flat = |quantity: Quantity, convention: Convention| {
@@ -53,11 +51,11 @@ pub fn kinematic_carrier_schema(agent: AgentId) -> StateSchema {
     };
 
     StateSchema::compose(vec![
-        flat(Quantity::Position(odom.clone()), Convention::Enu),
-        flat(Quantity::Velocity(odom.clone()), Convention::Enu),
+        flat(Quantity::Position(root.clone()), Convention::Enu),
+        flat(Quantity::Velocity(root.clone()), Convention::Enu),
         StateSchemaBlock::orientation(
             body,
-            odom.clone(),
+            root.clone(),
             Convention::Flu,
             Convention::Enu,
             Some(
@@ -70,17 +68,18 @@ pub fn kinematic_carrier_schema(agent: AgentId) -> StateSchema {
             DVector::from_vec(vec![0.0, 0.0, 0.0, 1.0]),
             DMatrix::zeros(3, 3),
         ),
-        flat(Quantity::AngularVelocity(odom), Convention::Enu),
+        flat(Quantity::AngularVelocity(root), Convention::Enu),
     ])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prelude::AgentId;
     use crate::prelude::MonotonicTime;
     use crate::spatial::conventions::{Enu, Flu};
     use crate::spatial::state::Component;
-    use crate::spatial::{FrameAwareState, StateVariable};
+    use crate::spatial::{FrameAwareState, FrameId, StateVariable};
     use std::sync::Arc;
 
     fn agent() -> AgentId {
@@ -89,7 +88,7 @@ mod tests {
 
     fn carrier() -> FrameAwareState {
         FrameAwareState::from_schema(
-            Arc::new(kinematic_carrier_schema(agent())),
+            Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(agent()))),
             MonotonicTime(0.0),
         )
     }

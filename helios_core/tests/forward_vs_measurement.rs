@@ -18,6 +18,7 @@
 //! truth. Cases are drawn from a seeded RNG, so the property is checked over
 //! many random poses, rates, mounts, and fields while staying reproducible.
 
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::measurement::accelerometer::SpecificForceModel;
 use helios_core::estimation::measurement::gps::GpsPositionModel;
 use helios_core::estimation::measurement::gyroscope::AngularRateModel;
@@ -89,7 +90,7 @@ fn gps_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0001);
     let forward = GpsModel::new(Vector3::zeros(), UNIT_STDDEV).unwrap();
     let filter = GpsPositionModel {
-        agent: agent(),
+        frames: EstimationFrames::odom(agent()),
         sensor: sensor(),
     };
 
@@ -128,7 +129,7 @@ fn gyroscope_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0002);
     let forward = GyroscopeModel::new(Vector3::zeros(), UNIT_STDDEV).unwrap();
     let filter = AngularRateModel {
-        agent: agent(),
+        body: FrameId::base_link(agent()),
         sensor: sensor(),
     };
 
@@ -169,7 +170,7 @@ fn accelerometer_forward_matches_filter_prediction() {
     let mut rng = StdRng::seed_from_u64(0x6759_0003);
     let forward = AccelerometerModel::new(Vector3::zeros(), UNIT_STDDEV).unwrap();
     let filter = SpecificForceModel {
-        agent: agent(),
+        frames: EstimationFrames::odom(agent()),
         sensor: sensor(),
         gravity_world,
     };
@@ -240,7 +241,7 @@ fn magnetometer_forward_matches_filter_prediction() {
         )
         .unwrap();
         let filter = MagneticFieldModel {
-            agent: agent(),
+            frames: EstimationFrames::odom(agent()),
             sensor: sensor(),
             world_magnetic_field: field_world,
         };

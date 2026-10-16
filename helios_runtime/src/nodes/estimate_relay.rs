@@ -134,6 +134,8 @@ mod tests {
     use crate::stamped::Health;
 
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+
+    use helios_core::estimation::frames::EstimationFrames;
     use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::state::Quantity;
@@ -185,7 +187,7 @@ mod tests {
     /// base_link → odom, so its pose resolves (to the identity).
     fn posed_state() -> FrameAwareState {
         FrameAwareState::from_schema(
-            Arc::new(kinematic_carrier_schema(agent())),
+            Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(agent()))),
             MonotonicTime(1.5),
         )
     }

@@ -1,9 +1,10 @@
 use crate::{
     estimation::{
+        frames::EstimationFrames,
         measurement::{MeasurementModel, Prediction, Unavailable},
         schema::{MeasurementSchema, MeasurementSchemaBlock},
     },
-    prelude::{AgentId, MonotonicTime, TfProvider},
+    prelude::{MonotonicTime, TfProvider},
     spatial::state::Quantity,
     spatial::{
         conventions::{Enu, Flu},
@@ -23,7 +24,8 @@ type MountAxes = Flu;
 /// providing an absolute heading reference.
 #[derive(Debug, Clone)]
 pub struct MagneticFieldModel {
-    pub agent: AgentId,
+    /// The body the state tracks and the root it holds the body's pose in.
+    pub frames: EstimationFrames,
     pub sensor: FrameId,
     /// The "true" magnetic field vector in the world (ENU) frame.
     pub world_magnetic_field: Vector3<f64>,
@@ -65,30 +67,24 @@ impl MeasurementModel for MagneticFieldModel {
         };
 
         let orientation_body_to_world = filter_state
-            .orientation::<Flu, Enu>(
-                FrameId::base_link(self.agent.clone()),
-                FrameId::odom(self.agent.clone()),
-            )
+            .orientation::<Flu, Enu>(self.frames.body.clone(), self.frames.root.clone())
             .map(Rotation::into_inner)
             .unwrap_or_default();
         let q_body_from_world = orientation_body_to_world.inverse();
         let predicted_mag_body = q_body_from_world * self.world_magnetic_field;
 
-        let Some(erased) = tf.get_transform(
-            self.sensor.clone(),
-            FrameId::base_link(self.agent.clone()),
-            at,
-        ) else {
+        let Some(erased) = tf.get_transform(self.sensor.clone(), self.frames.body.clone(), at)
+        else {
             return Prediction::Unavailable(Unavailable::MissingTransform {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
         let Ok(sensor_in_body) = erased.typed::<MountAxes, Flu>() else {
             return Prediction::Unavailable(Unavailable::ConventionMismatch {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
@@ -263,7 +259,7 @@ mod tests {
 
     fn make_model() -> MagneticFieldModel {
         MagneticFieldModel {
-            agent: agent(),
+            frames: EstimationFrames::odom(agent()),
             sensor: sensor(),
             world_magnetic_field: Vector3::new(0.0, 1.0, 0.0),
         }

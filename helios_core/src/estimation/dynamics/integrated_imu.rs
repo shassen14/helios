@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use crate::estimation::dynamics::{integrate_derivatives, ContinuousDynamics, EstimationDynamics};
+use crate::estimation::frames::EstimationFrames;
 use crate::estimation::schema::{InputSchema, InputSchemaBlock, StateSchema, StateSchemaBlock};
 use crate::kernel::integrators::Integrator;
 use crate::kernel::manifold::{StateBlock, TangentNoise};
-use crate::prelude::AgentId;
 use crate::spatial::primitives::{Control, State};
 use crate::spatial::state::{Component, Quantity};
 use crate::spatial::transforms::Convention;
@@ -17,8 +17,6 @@ use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 /// This model correctly handles 3D rotations and estimates IMU biases.
 #[derive(Debug, Clone)]
 pub struct IntegratedImuModel {
-    /// The agent this model describes.
-    pub agent: AgentId,
     /// The filter's assumed gravity in the world (ENU) frame, m/s², subtracted
     /// from IMU-integrated acceleration during prediction. This is a model
     /// parameter — what the estimator *believes* gravity to be — not ground
@@ -33,6 +31,7 @@ pub struct IntegratedImuModel {
     /// constant with such a function and is deliberately out of scope here.
     pub gravity_world: Vector3<f64>,
 
+    frames: EstimationFrames,
     schema: Arc<StateSchema>,
     input_schema: Arc<InputSchema>,
     pos_off: usize,
@@ -84,17 +83,15 @@ pub struct ImuInitialUncertainty {
 }
 
 impl IntegratedImuModel {
+    /// The INS over `frames`: its state holds `frames.body`'s pose and velocity
+    /// in `frames.root`, and its input is read in `frames.body`.
     pub fn new(
-        agent: AgentId,
+        frames: EstimationFrames,
         gravity_world: Vector3<f64>,
         noise: ImuProcessNoise,
         initial_uncertainty: ImuInitialUncertainty,
     ) -> Self {
-        let schema = Arc::new(compose_ins_schema(
-            agent.clone(),
-            noise,
-            initial_uncertainty,
-        ));
+        let schema = Arc::new(compose_ins_schema(&frames, noise, initial_uncertainty));
 
         let off = |v: &StateVariable| {
             schema
@@ -102,22 +99,19 @@ impl IntegratedImuModel {
                 .expect("variable is in the schema we just built")
         };
 
-        let (body, odom) = (
-            FrameId::base_link(agent.clone()),
-            FrameId::odom(agent.clone()),
-        );
+        let (body, root) = (frames.body.clone(), frames.root.clone());
         let pos_off = off(&StateVariable::new(
-            Quantity::Position(odom.clone()),
+            Quantity::Position(root.clone()),
             Component::X,
         ));
         let vel_off = off(&StateVariable::new(
-            Quantity::Velocity(odom.clone()),
+            Quantity::Velocity(root.clone()),
             Component::X,
         ));
         let quat_off = off(&StateVariable::new(
             Quantity::Orientation {
                 from: body.clone(),
-                to: odom.clone(),
+                to: root.clone(),
             },
             Component::X,
         ));
@@ -141,14 +135,14 @@ impl IntegratedImuModel {
         let orientation_block = schema
             .block_of(&Quantity::Orientation {
                 from: body.clone(),
-                to: odom.clone(),
+                to: root.clone(),
             })
             .expect("orientation block is in the schema we just built")
             .clone();
 
         Self {
-            agent,
             gravity_world,
+            frames,
             schema,
             input_schema,
             pos_off,
@@ -161,33 +155,37 @@ impl IntegratedImuModel {
             orientation_block,
         }
     }
+
+    /// The body this model's state tracks and the root it holds it in.
+    pub fn frames(&self) -> &EstimationFrames {
+        &self.frames
+    }
 }
 
 /// Returns the standard 16-dimensional state vector layout used for high-fidelity
 /// inertial navigation system (INS) filters.
 ///
 /// The state is composed of:
-/// - Position (3) in Odom Frame
-/// - Velocity (3) in Odom Frame
-/// - Orientation (4, Quaternion) from Body to Odom Frame
+/// - Position (3) in the Root Frame
+/// - Velocity (3) in the Root Frame
+/// - Orientation (4, Quaternion) from Body to the Root Frame
 /// - Accelerometer Bias (3) in Body Frame
 /// - Gyroscope Bias (3) in Body Frame
 ///
 /// # Arguments
-/// * `agent`: The agent (body) whose state is being defined.
-pub fn ins_state_layout(agent: AgentId) -> Vec<StateVariable> {
-    let body = FrameId::base_link(agent.clone());
-    let odom = FrameId::odom(agent);
+/// * `frames`: The body whose state is being defined, and the root it is held in.
+pub fn ins_state_layout(frames: &EstimationFrames) -> Vec<StateVariable> {
+    let (body, root) = (frames.body.clone(), frames.root.clone());
 
     // Same per-block quantities, in the same order, that `compose_ins_schema`
     // builds; the layout is their concatenated variable names. Single-sourced
     // against `Quantity` so the two can never drift apart.
     [
-        Quantity::Position(odom.clone()),
-        Quantity::Velocity(odom.clone()),
+        Quantity::Position(root.clone()),
+        Quantity::Velocity(root.clone()),
         Quantity::Orientation {
             from: body.clone(),
-            to: odom.clone(),
+            to: root.clone(),
         },
         Quantity::AccelBias(body.clone()),
         Quantity::GyroBias(body.clone()),
@@ -198,12 +196,11 @@ pub fn ins_state_layout(agent: AgentId) -> Vec<StateVariable> {
 }
 
 fn compose_ins_schema(
-    agent: AgentId,
+    frames: &EstimationFrames,
     noise: ImuProcessNoise,
     initial: ImuInitialUncertainty,
 ) -> StateSchema {
-    let body = FrameId::base_link(agent.clone());
-    let odom = FrameId::odom(agent);
+    let (body, root) = (frames.body.clone(), frames.root.clone());
 
     let noise_block = |var: f64, n: usize| {
         TangentNoise::from_variances(DVector::from_element(n, var))
@@ -212,27 +209,27 @@ fn compose_ins_schema(
     let p0 = |var: f64, n: usize| DMatrix::identity(n, n) * var;
 
     let blocks = vec![
-        // 1. Position (Odom) — no process noise; P₀ from config.
+        // 1. Position (Root) — no process noise; P₀ from config.
         StateSchemaBlock::new(
-            Quantity::Position(odom.clone()),
+            Quantity::Position(root.clone()),
             Convention::Enu,
             None,
             DVector::zeros(3),
             p0(initial.pos_var, 3),
         ),
-        // 2. Velocity (Odom) — Q from accel white noise.
+        // 2. Velocity (Root) — Q from accel white noise.
         StateSchemaBlock::new(
-            Quantity::Velocity(odom.clone()),
+            Quantity::Velocity(root.clone()),
             Convention::Enu,
             Some(noise_block(noise.accel_noise_var, 3)),
             DVector::zeros(3),
             p0(initial.vel_var, 3),
         ),
-        // 3. Orientation (Body from Odom) — 4/3 quaternion block.
+        // 3. Orientation (Body from Root) — 4/3 quaternion block.
         //    Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
         StateSchemaBlock::orientation(
             body.clone(),
-            odom.clone(),
+            root.clone(),
             Convention::Flu,
             Convention::Enu,
             Some(noise_block(noise.gyro_noise_var, 3)),
@@ -398,7 +395,7 @@ mod tests {
         // Noise/uncertainty values are arbitrary here — these tests exercise the
         // derivatives and propagation, neither of which reads Q or P₀.
         IntegratedImuModel::new(
-            agent(),
+            EstimationFrames::odom(agent()),
             Vector3::new(0.0, 0.0, -G),
             ImuProcessNoise {
                 accel_noise_var: 0.1_f64.powi(2),
@@ -421,7 +418,7 @@ mod tests {
     /// Index layout mirrors [`ins_state_layout`]: 0-2 position, 3-5 velocity,
     /// 6-9 quaternion (Qx, Qy, Qz, Qw), 10-12 accel bias, 13-15 gyro bias.
     fn identity_state() -> DVector<f64> {
-        let mut x = DVector::zeros(ins_state_layout(agent()).len());
+        let mut x = DVector::zeros(ins_state_layout(&EstimationFrames::odom(agent())).len());
         x[9] = 1.0; // Qw = 1 → identity quaternion
         x
     }
@@ -511,7 +508,10 @@ mod tests {
         // standalone `ins_state_layout` are built from the same per-block groups
         // in the same order, so neither can drift from the other unnoticed.
         let schema = make_model().schema();
-        assert_eq!(schema.layout(), ins_state_layout(agent()).as_slice());
+        assert_eq!(
+            schema.layout(),
+            ins_state_layout(&EstimationFrames::odom(agent())).as_slice()
+        );
     }
 
     #[test]
@@ -618,7 +618,7 @@ mod tests {
         // value. Position carries no process noise; every other block's Q is the
         // variance passed to `new`.
         let model = IntegratedImuModel::new(
-            agent(),
+            EstimationFrames::odom(agent()),
             Vector3::new(0.0, 0.0, -G),
             ImuProcessNoise {
                 accel_noise_var: 2.0, // → velocity block
@@ -659,7 +659,7 @@ mod tests {
         // fallback. Distinct values per block so a misplaced or transposed P₀ can't
         // hide behind a shared number.
         let model = IntegratedImuModel::new(
-            agent(),
+            EstimationFrames::odom(agent()),
             Vector3::new(0.0, 0.0, -G),
             ImuProcessNoise {
                 accel_noise_var: 0.1,

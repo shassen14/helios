@@ -13,6 +13,7 @@ use helios_core::following::{
     pure_pursuit::PurePursuitPathFollower, steering_pid::SteeringPidPathFollower, PathFollower,
 };
 use helios_core::interchange::path::Path;
+use helios_core::spatial::FrameId;
 
 /// The `kind` a profile writes to get a pure-pursuit follower node.
 pub(crate) const PURE_PURSUIT_KIND: &str = "PurePursuit";
@@ -42,7 +43,7 @@ fn build_pure_pursuit(
             config.min_speed_m_s,
             config.max_speed_m_s,
             config.max_lateral_acceleration,
-            ctx.agent().clone(),
+            FrameId::base_link(ctx.agent().clone()),
         ));
 
     Ok(follower_output(follower, &config.path, ctx))
@@ -60,7 +61,7 @@ fn build_steering_pid(
             config.cruise_speed,
             config.goal_radius,
             config.lookahead_distance_m,
-            ctx.agent().clone(),
+            FrameId::base_link(ctx.agent().clone()),
         ));
 
     Ok(follower_output(follower, &config.path, ctx))

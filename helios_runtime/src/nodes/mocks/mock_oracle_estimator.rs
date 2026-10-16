@@ -40,6 +40,7 @@ use crate::port::{ChannelKey, MockNodePortDescriptor, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::carrier::kinematic_carrier_schema;
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::schema::StateSchema;
 use helios_core::interchange::motion::Twist;
 use helios_core::prelude::AgentId;
@@ -76,7 +77,9 @@ impl MockOracleEstimatorNode {
         Self {
             name,
             output: output.into(),
-            schema: Arc::new(kinematic_carrier_schema(agent.clone())),
+            schema: Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(
+                agent.clone(),
+            ))),
             agent,
             descriptor,
         }

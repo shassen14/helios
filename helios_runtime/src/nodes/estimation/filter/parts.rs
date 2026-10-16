@@ -111,6 +111,7 @@ mod tests {
     use helios_core::estimation::dynamics::integrated_imu::{
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };
+    use helios_core::estimation::frames::EstimationFrames;
     use helios_core::estimation::{EstimatorInputs, PredictOutcome};
     use helios_core::prelude::{AgentId, MonotonicTime};
 
@@ -129,7 +130,7 @@ mod tests {
 
     fn parts() -> FilterParts {
         let dynamics = IntegratedImuModel::new(
-            agent(),
+            EstimationFrames::odom(agent()),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
                 accel_noise_var: 0.04,

@@ -18,6 +18,8 @@ use crate::port::{ChannelKey, InputPort, PortBus, PortDescriptor, SensorChannel}
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::carrier::kinematic_carrier_schema;
+
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::measurement::{MeasurementModel, Prediction};
 use helios_core::estimation::schema::{InputSchema, MeasurementSchema, MeasurementSchemaBlock};
 use helios_core::estimation::{
@@ -137,6 +139,7 @@ impl MeasurementModel for ZeroModel {
 /// Accelerometer readings on [`accel_channel`], predicted by [`ZeroModel`].
 struct AccelSource {
     reader: PayloadReader<Acceleration>,
+    sensor: FrameId,
     model: ZeroModel,
     noise: DMatrix<f64>,
 }
@@ -144,6 +147,10 @@ struct AccelSource {
 impl MeasurementSource for AccelSource {
     fn channel(&self) -> &ChannelKey {
         self.reader.channel()
+    }
+
+    fn sensor(&self) -> &FrameId {
+        &self.sensor
     }
 
     fn model(&self) -> &dyn MeasurementModel {
@@ -238,7 +245,7 @@ pub(super) fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Prob
     let filter = RecordingFilter {
         // Anchors base_link in odom, so the state holds a pose.
         state: FrameAwareState::from_schema(
-            Arc::new(kinematic_carrier_schema(agent())),
+            Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(agent()))),
             MonotonicTime(0.0),
         ),
         calls: Arc::clone(&calls),
@@ -248,6 +255,7 @@ pub(super) fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Prob
         reader: PayloadReader::new(SensorChannel::named::<Vec<SensorReading<Acceleration>>>(
             "accel",
         )),
+        sensor: FrameId::agent(agent(), ACCEL_ENTRY),
         model: ZeroModel,
         noise: DMatrix::identity(3, 3),
     };

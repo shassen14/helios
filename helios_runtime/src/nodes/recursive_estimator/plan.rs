@@ -186,7 +186,7 @@ fn seeded_state(
     };
 
     for source in aiding {
-        check_measurement_state_agreement(&schema, &source.model().schema())
+        check_measurement_state_agreement(&schema, &source.model().schema(), source.sensor())
             .map_err(|err| format!("aiding channel {}: {err}", source.channel()))?;
     }
 

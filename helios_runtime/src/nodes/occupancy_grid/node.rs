@@ -11,7 +11,7 @@
 //! ## Execution skeleton
 //!
 //! 1. **Resolve robot pose.** Read the estimate (`FrameAwareState @ estimate`); pull
-//!    the body→World `pose(...)`. `None` → cold-start, skip the tick.
+//!    the body's `pose(...)` in the estimate's root. `None` → cold-start, skip the tick.
 //! 2. **Recenter.** Hand the robot pose to [`Mapper::recenter`].
 //! 3. **Integrate scans.** Read the scan channel; for each reading, look up
 //!    the static `agent → sensor` transform via the tf provider, compose
@@ -64,7 +64,6 @@ use crate::stamped::{Health, Stamped};
 use atomic_float::AtomicF64;
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::mapping::Mapper;
-use helios_core::prelude::AgentId;
 use helios_core::prelude::MonotonicTime;
 use helios_core::prelude::PointCloud;
 use helios_core::prelude::TfProvider;
@@ -82,11 +81,11 @@ use helios_core::spatial::{FrameAwareState, FrameId};
 pub(crate) struct OccupancyGridNode {
     name: String,
     mapper: Mutex<Box<dyn Mapper>>,
-    /// Agent identity used to build the `base_link` / `odom` frames that compose
-    /// `agent → sensor` static transforms from the tf provider. Combined
-    /// with the robot pose from `FrameAwareState` it yields a sensor pose in the
-    /// **estimator's** world frame, not physics ground-truth.
-    agent: AgentId,
+    /// The body frame: the estimate gives its pose, and each scan's
+    /// `sensor → body` transform comes from the tf provider. Together they
+    /// yield a sensor pose in the **estimator's** root, not physics
+    /// ground-truth.
+    body: FrameId,
     scan_channel: ChannelKey,
     map_channel: ChannelKey,
     descriptor: PortDescriptor,
@@ -98,8 +97,8 @@ pub(crate) struct OccupancyGridNode {
 }
 
 impl OccupancyGridNode {
-    /// Build a node from a mapper, the agent's identity, and the scan /
-    /// map channel keys.
+    /// Build a node from a mapper, the body frame, and the scan / map
+    /// channel keys.
     ///
     /// `rate_hz = Some(hz)` rate-gates the node; `None` fires every tick.
     /// Required inputs: the estimate (`FrameAwareState @ estimate`) and `scan_channel`.
@@ -107,7 +106,7 @@ impl OccupancyGridNode {
     pub(crate) fn new(
         name: impl Into<String>,
         mapper: Box<dyn Mapper>,
-        agent: AgentId,
+        body: FrameId,
         scan_channel: SensorChannel,
         map_channel: InternalChannel,
         rate_hz: Option<f64>,
@@ -123,7 +122,7 @@ impl OccupancyGridNode {
         Self {
             name: name.into(),
             mapper: Mutex::new(mapper),
-            agent,
+            body,
             scan_channel: scan_channel.into(),
             map_channel: map_channel.into(),
             descriptor,
@@ -146,12 +145,10 @@ impl PipelineNode for OccupancyGridNode {
         let Some(stamped_state) = bus.read::<FrameAwareState>(estimate().into()) else {
             return;
         };
-        let Some(robot_world_pose) = stamped_state
-            .value
-            .pose::<Flu, Enu>(
-                FrameId::base_link(self.agent.clone()),
-                FrameId::odom(self.agent.clone()),
-            )
+        let state = &stamped_state.value;
+        let Some(robot_world_pose) = state
+            .reference_frame()
+            .and_then(|root| state.pose::<Flu, Enu>(self.body.clone(), root))
             .map(|t| t.into_inner())
         else {
             return;
@@ -178,7 +175,7 @@ impl PipelineNode for OccupancyGridNode {
                 for reading in stamped_scans.value.iter() {
                     let Some(erased) = tf.get_transform(
                         reading.sensor.clone(),
-                        FrameId::base_link(self.agent.clone()),
+                        self.body.clone(),
                         MonotonicTime(batch_ts),
                     ) else {
                         continue;
@@ -234,6 +231,7 @@ mod tests {
 
     use super::*;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::estimation::frames::EstimationFrames;
     use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::interchange::perception::map::MapData;
     use helios_core::mapping::Mapper;
@@ -381,7 +379,7 @@ mod tests {
         // identity `base_link → odom` attitude, which is all the node's pose
         // read needs; seed the odom-x position.
         let mut s = FrameAwareState::from_schema(
-            Arc::new(kinematic_carrier_schema(agent())),
+            Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(agent()))),
             MonotonicTime(0.0),
         );
         s.set_variable(
@@ -422,7 +420,7 @@ mod tests {
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(EmptyMapper),
-            agent(),
+            FrameId::base_link(agent()),
             scan_sensor_channel(),
             map_internal_channel(),
             Some(5.0),
@@ -444,7 +442,7 @@ mod tests {
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(RecordingMapper::new()),
-            agent(),
+            FrameId::base_link(agent()),
             scan_sensor_channel(),
             map_internal_channel(),
             None,
@@ -464,7 +462,7 @@ mod tests {
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(EmptyMapper),
-            agent(),
+            FrameId::base_link(agent()),
             scan_sensor_channel(),
             map_internal_channel(),
             None,
@@ -491,7 +489,7 @@ mod tests {
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(mapper),
-            agent(),
+            FrameId::base_link(agent()),
             scan_sensor_channel(),
             map_internal_channel(),
             None,
@@ -535,7 +533,7 @@ mod tests {
         let node = OccupancyGridNode::new(
             "occ",
             Box::new(mapper),
-            agent(),
+            FrameId::base_link(agent()),
             scan_sensor_channel(),
             map_internal_channel(),
             None,

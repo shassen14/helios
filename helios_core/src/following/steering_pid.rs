@@ -13,7 +13,6 @@ use crate::control::commands::BodyTwist;
 use crate::control::kernels::siso_pid::SisoPid;
 use crate::control::BodyTwistRef;
 use crate::interchange::path::Path;
-use crate::prelude::AgentId;
 use crate::spatial::conventions::{Enu, Flu};
 use crate::spatial::quantities::Point;
 use crate::spatial::FrameId;
@@ -32,7 +31,9 @@ pub struct SteeringPidPathFollower {
     /// current position, so an inertial body coasting back outside the radius
     /// does not re-arm driving. Cleared only by `set_path`/`reset`.
     arrived: bool,
-    agent: AgentId,
+    /// The body frame being steered; its position and heading are read from
+    /// the estimate, in whatever root the estimate holds them.
+    body: FrameId,
 }
 
 impl SteeringPidPathFollower {
@@ -43,7 +44,7 @@ impl SteeringPidPathFollower {
         cruise_speed: f64,
         goal_radius: f64,
         lookahead_distance: f64,
-        agent: AgentId,
+        body: FrameId,
     ) -> Self {
         Self {
             heading_pid: SisoPid::new(kp, ki, kd),
@@ -53,7 +54,7 @@ impl SteeringPidPathFollower {
             path: None,
             lookahead_index: 0,
             arrived: false,
-            agent,
+            body,
         }
     }
 
@@ -101,14 +102,14 @@ impl PathFollower for SteeringPidPathFollower {
             return PathFollowerResult::NoPath;
         }
 
-        let agent_pos = match state.position::<Enu>(FrameId::odom(self.agent.clone())) {
+        let Some(root) = state.reference_frame() else {
+            return PathFollowerResult::Error("missing agent position".into());
+        };
+        let agent_pos = match state.position::<Enu>(root.clone()) {
             Some(p) => Vector2::new(p.x(), p.y()),
             None => return PathFollowerResult::Error("missing agent position".into()),
         };
-        let orientation = match state.orientation::<Flu, Enu>(
-            FrameId::base_link(self.agent.clone()),
-            FrameId::odom(self.agent.clone()),
-        ) {
+        let orientation = match state.orientation::<Flu, Enu>(self.body.clone(), root) {
             Some(q) => q.into_inner(),
             None => return PathFollowerResult::Error("missing agent orientation".into()),
         };

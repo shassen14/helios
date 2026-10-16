@@ -806,13 +806,14 @@ mod tests {
         use crate::estimation::dynamics::integrated_imu::{
             ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
         };
+        use crate::estimation::frames::EstimationFrames;
         use crate::prelude::AgentId;
         use nalgebra::Vector3;
 
         // Distinct per-block variances so a transposed Q or P₀ block cannot hide
         // behind a shared value.
         let model = IntegratedImuModel::new(
-            AgentId::new("test_agent"),
+            EstimationFrames::odom(AgentId::new("test_agent")),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
                 accel_noise_var: 0.04,
@@ -1203,11 +1204,12 @@ mod tests {
     /// base schema is the well-exercised one.
     fn ins_model() -> crate::estimation::dynamics::integrated_imu::IntegratedImuModel {
         use crate::estimation::dynamics::integrated_imu::{ImuInitialUncertainty, ImuProcessNoise};
+        use crate::estimation::frames::EstimationFrames;
         use crate::prelude::AgentId;
         use nalgebra::Vector3;
 
         crate::estimation::dynamics::integrated_imu::IntegratedImuModel::new(
-            AgentId::new("test_agent"),
+            EstimationFrames::odom(AgentId::new("test_agent")),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
                 accel_noise_var: 0.04,
@@ -1496,6 +1498,7 @@ mod tests {
 
     #[test]
     fn augmented_update_drives_bias_toward_truth() {
+        use crate::estimation::frames::EstimationFrames;
         use crate::estimation::measurement::magnetometer::MagneticFieldModel;
         use crate::prelude::AgentId;
         use nalgebra::Vector3;
@@ -1508,7 +1511,7 @@ mod tests {
         let mut ekf = augmented_ins_ekf(std::slice::from_ref(&sensor));
 
         let model = MagneticFieldModel {
-            agent: AgentId::new("test_agent"),
+            frames: EstimationFrames::odom(AgentId::new("test_agent")),
             sensor: sensor.clone(),
             world_magnetic_field: Vector3::new(0.2, 0.4, -0.3),
         };

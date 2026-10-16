@@ -12,6 +12,7 @@ use helios_core::interchange::perception::map::MapData;
 use helios_core::mapping::{Mapper, OccupancyGridMapper};
 use helios_core::prelude::PointCloud;
 use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::FrameId;
 
 /// The `kind` a profile writes to get an occupancy-grid node.
 pub(crate) const OCCUPANCY_GRID_2D_KIND: &str = "OccupancyGrid2D";
@@ -44,7 +45,7 @@ fn build_occupancy_grid_2d(
     Ok(FactoryOutput::new(Box::new(OccupancyGridNode::new(
         ctx.node_name(),
         mapper,
-        ctx.agent().clone(),
+        FrameId::base_link(ctx.agent().clone()),
         scan_channel,
         map_channel,
         Some(config.rate as f64),

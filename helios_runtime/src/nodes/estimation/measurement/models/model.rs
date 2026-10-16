@@ -5,6 +5,7 @@ use super::config::{AccelerometerConfig, MagnetometerConfig};
 use crate::assembly::{no_check, BuildContext, NoParams};
 use crate::nodes::estimation::EstimatorComponents;
 
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::measurement::{
     accelerometer::SpecificForceModel, gps::GpsPositionModel, gyroscope::AngularRateModel,
     magnetometer::MagneticFieldModel, MeasurementModel,
@@ -67,7 +68,7 @@ fn build_gps_position(
     sensor: &FrameId,
 ) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(GpsPositionModel {
-        agent: ctx.agent().clone(),
+        frames: EstimationFrames::odom(ctx.agent().clone()),
         sensor: sensor.clone(),
     }))
 }
@@ -78,7 +79,7 @@ fn build_accelerometer(
     sensor: &FrameId,
 ) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(SpecificForceModel {
-        agent: ctx.agent().clone(),
+        frames: EstimationFrames::odom(ctx.agent().clone()),
         sensor: sensor.clone(),
         gravity_world: Vector3::from(config.gravity_enu),
     }))
@@ -90,7 +91,7 @@ fn build_gyroscope(
     sensor: &FrameId,
 ) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(AngularRateModel {
-        agent: ctx.agent().clone(),
+        body: FrameId::base_link(ctx.agent().clone()),
         sensor: sensor.clone(),
     }))
 }
@@ -101,7 +102,7 @@ fn build_magnetometer(
     sensor: &FrameId,
 ) -> Result<Box<dyn MeasurementModel>, String> {
     Ok(Box::new(MagneticFieldModel {
-        agent: ctx.agent().clone(),
+        frames: EstimationFrames::odom(ctx.agent().clone()),
         sensor: sensor.clone(),
         world_magnetic_field: Vector3::from(config.magnetic_field_enu),
     }))

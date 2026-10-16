@@ -146,6 +146,7 @@ mod tests {
     use helios_core::control::commands::{BodyTwist, BodyWrench};
     use helios_core::control::{BodyTwistRef, ControlInputs};
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::estimation::frames::EstimationFrames;
     use helios_core::prelude::AgentId;
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::FluVector;
@@ -253,7 +254,9 @@ mod tests {
             Some(ControlInputs {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
-                    std::sync::Arc::new(kinematic_carrier_schema(AgentId::new("test_agent"))),
+                    std::sync::Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(
+                        AgentId::new("test_agent"),
+                    ))),
                     MonotonicTime(0.0),
                 ),
                 reference: None,

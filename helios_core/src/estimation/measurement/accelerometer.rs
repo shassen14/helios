@@ -1,7 +1,7 @@
+use crate::estimation::frames::EstimationFrames;
 use crate::estimation::imu_mount::sensor_specific_force;
 use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
-use crate::prelude::AgentId;
 use crate::prelude::MonotonicTime;
 use crate::spatial::conventions::{Enu, Flu};
 use crate::spatial::quantities::FreeVector;
@@ -34,7 +34,8 @@ type MountAxes = Flu;
 /// the lever-arm terms a sensor mounted off the body origin also feels.
 #[derive(Debug, Clone)]
 pub struct SpecificForceModel {
-    pub agent: AgentId,
+    /// The body the state tracks and the root it holds the body's pose in.
+    pub frames: EstimationFrames,
     pub sensor: FrameId,
     pub gravity_world: Vector3<f64>,
 }
@@ -75,23 +76,20 @@ impl MeasurementModel for SpecificForceModel {
         let Some(tf) = tf else {
             return Prediction::Unavailable(Unavailable::NoProvider);
         };
-        let body_frame = FrameId::base_link(self.agent.clone());
+        let body_frame = self.frames.body.clone();
 
-        let Some(erased) = tf.get_transform(
-            self.sensor.clone(),
-            FrameId::base_link(self.agent.clone()),
-            at,
-        ) else {
+        let Some(erased) = tf.get_transform(self.sensor.clone(), self.frames.body.clone(), at)
+        else {
             return Prediction::Unavailable(Unavailable::MissingTransform {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
         let Ok(sensor_in_body) = erased.typed::<MountAxes, Flu>() else {
             return Prediction::Unavailable(Unavailable::ConventionMismatch {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
@@ -115,7 +113,7 @@ impl MeasurementModel for SpecificForceModel {
             .map(FreeVector::into_inner)
             .unwrap_or_default();
         let orientation_body_to_world = filter_state
-            .orientation::<Flu, Enu>(body_frame.clone(), FrameId::odom(self.agent.clone()))
+            .orientation::<Flu, Enu>(body_frame.clone(), self.frames.root.clone())
             .map(Rotation::into_inner)
             .unwrap_or_default();
 
@@ -222,7 +220,7 @@ mod tests {
 
     fn make_model() -> SpecificForceModel {
         SpecificForceModel {
-            agent: agent(),
+            frames: EstimationFrames::odom(agent()),
             sensor: sensor(),
             gravity_world: Vector3::new(0.0, 0.0, -9.81),
         }
@@ -233,7 +231,7 @@ mod tests {
     // and fall back to zero, as they do against a real INS estimate.
     fn make_state() -> FrameAwareState {
         FrameAwareState::from_schema(
-            Arc::new(kinematic_carrier_schema(agent())),
+            Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(agent()))),
             MonotonicTime(0.0),
         )
     }

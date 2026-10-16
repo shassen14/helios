@@ -13,6 +13,7 @@ use crate::prelude::TickContext;
 use helios_core::estimation::dynamics::integrated_imu::{
     ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
 };
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::estimation::imu_mount::{body_angular_velocity, body_specific_force};
 use helios_core::estimation::schema::{InputSchema, InputSchemaBlock};
 use helios_core::estimation::EstimatorInputs;
@@ -201,7 +202,7 @@ pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponent
 fn build(config: IntegratedImuConfig, ctx: &BuildContext<'_>) -> Result<DynamicsComponent, String> {
     let prior = &config.initial_uncertainty;
     let dynamics = IntegratedImuModel::new(
-        ctx.agent().clone(),
+        EstimationFrames::odom(ctx.agent().clone()),
         Vector3::from(config.gravity_enu),
         ImuProcessNoise {
             accel_noise_var: config.accel_noise_stddev.powi(2),

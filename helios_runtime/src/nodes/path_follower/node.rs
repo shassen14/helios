@@ -192,6 +192,7 @@ mod tests {
     use helios_core::control::commands::BodyTwist;
     use helios_core::control::BodyTwistRef;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
+    use helios_core::estimation::frames::EstimationFrames;
     use helios_core::following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::interchange::path::Path;
     use helios_core::prelude::AgentId;
@@ -296,7 +297,9 @@ mod tests {
             Some(PathFollowerInputs {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
-                    std::sync::Arc::new(kinematic_carrier_schema(AgentId::new("test_agent"))),
+                    std::sync::Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(
+                        AgentId::new("test_agent"),
+                    ))),
                     MonotonicTime(0.0),
                 ),
             })

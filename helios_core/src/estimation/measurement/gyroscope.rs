@@ -3,7 +3,6 @@ use nalgebra::DVector;
 use crate::estimation::imu_mount::sensor_angular_velocity;
 use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
-use crate::prelude::AgentId;
 use crate::prelude::MonotonicTime;
 use crate::spatial::conventions::Flu;
 use crate::spatial::quantities::FreeVector;
@@ -26,7 +25,8 @@ type MountAxes = Flu;
 /// [`SpecificForceModel`]: crate::estimation::measurement::accelerometer::SpecificForceModel
 #[derive(Debug, Clone)]
 pub struct AngularRateModel {
-    pub agent: AgentId,
+    /// The body whose angular velocity the sensor reads.
+    pub body: FrameId,
     pub sensor: FrameId,
 }
 
@@ -65,23 +65,19 @@ impl MeasurementModel for AngularRateModel {
         let Some(tf) = tf else {
             return Prediction::Unavailable(Unavailable::NoProvider);
         };
-        let body_frame = FrameId::base_link(self.agent.clone());
+        let body_frame = self.body.clone();
 
-        let Some(erased) = tf.get_transform(
-            self.sensor.clone(),
-            FrameId::base_link(self.agent.clone()),
-            at,
-        ) else {
+        let Some(erased) = tf.get_transform(self.sensor.clone(), self.body.clone(), at) else {
             return Prediction::Unavailable(Unavailable::MissingTransform {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.body.clone(),
             });
         };
 
         let Ok(sensor_in_body) = erased.typed::<MountAxes, Flu>() else {
             return Prediction::Unavailable(Unavailable::ConventionMismatch {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.body.clone(),
             });
         };
 
@@ -107,6 +103,7 @@ impl MeasurementModel for AngularRateModel {
 mod tests {
     use super::*;
     use crate::estimation::carrier::kinematic_carrier_schema;
+    use crate::estimation::frames::EstimationFrames;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
     use crate::kernel::manifold::TangentNoise;
     use crate::prelude::AgentId;
@@ -189,7 +186,7 @@ mod tests {
 
     fn make_model() -> AngularRateModel {
         AngularRateModel {
-            agent: agent(),
+            body: FrameId::base_link(agent()),
             sensor: sensor(),
         }
     }
@@ -200,7 +197,7 @@ mod tests {
     // not the rate value.
     fn make_state() -> FrameAwareState {
         FrameAwareState::from_schema(
-            Arc::new(kinematic_carrier_schema(agent())),
+            Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(agent()))),
             MonotonicTime(0.0),
         )
     }

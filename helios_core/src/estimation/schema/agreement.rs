@@ -11,10 +11,11 @@ use crate::{
 ///
 /// For each frame a measurement block references, the state either assigns that
 /// frame a convention — which the measurement must match — or it does not, in
-/// which case the frame must be the sensor's own device frame, whose convention
-/// is the sensor model's concern and is accepted here as declared; anything else
-/// is unanchorable. This one rule subsumes both a direct readout (the state
-/// tracks the same quantity, so its frame is in the map) and a derived
+/// which case the frame must be `sensor`, the frame the model was built for,
+/// whose convention is the sensor model's concern and is accepted here as
+/// declared. Anything else is unanchorable, including another sensor's frame or
+/// another estimator's root. This one rule subsumes both a direct readout (the
+/// state tracks the same quantity, so its frame is in the map) and a derived
 /// measurement (the state tracks only the frame): both reduce to looking the
 /// frame up in the state's convention map. A disagreement is a construction-time
 /// config error, returned rather than panicked so the assembler can name the
@@ -24,18 +25,20 @@ use crate::{
 pub fn check_measurement_state_agreement(
     state: &StateSchema,
     measurement: &MeasurementSchema,
+    sensor: &FrameId,
 ) -> Result<(), MeasurementAgreementError> {
     for block in measurement.blocks() {
-        check_block(block, state)?;
+        check_block(block, state, sensor)?;
     }
     Ok(())
 }
 
 /// Checks one measurement block: every frame it references must agree with the
-/// state's convention for that frame, or be a sensor's own device frame.
+/// state's convention for that frame, or be `sensor`.
 fn check_block(
     block: &MeasurementSchemaBlock,
     state: &StateSchema,
+    sensor: &FrameId,
 ) -> Result<(), MeasurementAgreementError> {
     for (frame, convention) in &block.conventions {
         match state.convention_of(frame) {
@@ -53,11 +56,11 @@ fn check_block(
             }
             // The state anchors this frame and the conventions agree.
             Some(_) => {}
-            // Not anchored by the state, but the sensor's own device frame — its
-            // convention is the sensor model's to declare, not ours to check.
-            None if frame.is_sensor() => {}
-            // Neither anchored by the state nor a sensor frame: nothing to check
-            // against.
+            // Not anchored by the state, but the frame the model was built for —
+            // its convention is the sensor model's to declare, not ours to check.
+            None if frame == sensor => {}
+            // Neither anchored by the state nor the model's sensor: nothing to
+            // check against.
             None => {
                 return Err(MeasurementAgreementError::UnanchorableFrame {
                     quantity: block.quantity().clone(),
@@ -81,8 +84,8 @@ pub enum MeasurementAgreementError {
         state: Convention,
         measurement: Convention,
     },
-    /// The measurement's frame is neither tracked by the state nor a sensor
-    /// frame, so no convention exists to check it against.
+    /// The measurement's frame is neither tracked by the state nor the frame
+    /// the model was built for, so no convention exists to check it against.
     UnanchorableFrame { quantity: Quantity, frame: FrameId },
     /// The measurement schema's innovation length disagrees with the size of the
     /// noise matrix `R` it is paired with.
@@ -105,9 +108,10 @@ impl std::fmt::Display for MeasurementAgreementError {
             ),
             Self::UnanchorableFrame { quantity, frame } => write!(
                 f,
-                "measurement of {quantity} references {frame}, which the state neither tracks \
-                 nor recognizes as a sensor frame; there is no convention to check it against. \
-                 Add this frame to the estimator's state, or fix the sensor's target frame."
+                "measurement of {quantity} references {frame}, which the state does not track \
+                 and which is not the frame the model was built for; there is no convention to \
+                 check it against. Add this frame to the estimator's state, or fix the sensor's \
+                 target frame."
             ),
             Self::DimensionMismatch {
                 schema_dim,
@@ -229,6 +233,12 @@ mod tests {
     fn sensor() -> FrameId {
         FrameId::agent(agent(), "sensor0")
     }
+    fn other_sensor() -> FrameId {
+        FrameId::agent(agent(), "sensor1")
+    }
+
+    /// A root other than `odom`, as a second estimator of the same body holds.
+    const OTHER_ROOT: &str = "shadow_odom";
 
     fn noise(var: f64) -> Option<TangentNoise> {
         Some(TangentNoise::from_variances(DVector::from_element(3, var)).unwrap())
@@ -274,7 +284,7 @@ mod tests {
     fn direct_readout_with_matching_convention_agrees() {
         let state = anchored_state();
         let m = one(Quantity::Position(FrameId::odom(agent())), Convention::Enu);
-        assert!(check_measurement_state_agreement(&state, &m).is_ok());
+        assert!(check_measurement_state_agreement(&state, &m, &sensor()).is_ok());
     }
 
     #[test]
@@ -284,7 +294,7 @@ mod tests {
         let state = anchored_state();
         let m = one(Quantity::Position(FrameId::odom(agent())), Convention::Flu);
 
-        let err = check_measurement_state_agreement(&state, &m).unwrap_err();
+        let err = check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err();
         assert!(matches!(
             err,
             MeasurementAgreementError::FrameConventionMismatch { .. }
@@ -303,7 +313,7 @@ mod tests {
             Quantity::SpecificForce(FrameId::base_link(agent())),
             Convention::Flu,
         );
-        assert!(check_measurement_state_agreement(&state, &m).is_ok());
+        assert!(check_measurement_state_agreement(&state, &m, &sensor()).is_ok());
     }
 
     #[test]
@@ -319,7 +329,7 @@ mod tests {
             Convention::Enu,
         );
 
-        match check_measurement_state_agreement(&state, &m).unwrap_err() {
+        match check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err() {
             MeasurementAgreementError::FrameConventionMismatch {
                 frame,
                 state,
@@ -345,25 +355,47 @@ mod tests {
         let state = anchored_state();
         for convention in [Convention::Flu, Convention::Enu] {
             let m = one(Quantity::SpecificForce(sensor()), convention);
-            assert!(check_measurement_state_agreement(&state, &m).is_ok());
+            assert!(check_measurement_state_agreement(&state, &m, &sensor()).is_ok());
         }
     }
 
     #[test]
     fn derived_measurement_in_an_untracked_non_sensor_frame_is_unanchorable() {
-        // The test datum is neither tracked by this state nor a sensor frame, so there is
-        // no convention to check against.
+        // The test datum is neither tracked by this state nor the model's sensor
+        // frame, so there is no convention to check against.
         let state = anchored_state();
         let m = one(
             Quantity::SpecificForce(FrameId::global(DATUM)),
             Convention::Enu,
         );
 
-        match check_measurement_state_agreement(&state, &m).unwrap_err() {
+        match check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err() {
             MeasurementAgreementError::UnanchorableFrame { frame, .. } => {
                 assert_eq!(frame, FrameId::global(DATUM));
             }
             other => panic!("expected UnanchorableFrame, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_untracked_frame_the_model_was_not_built_for_is_unanchorable() {
+        // Both are agent frames the state does not track: another sensor's
+        // mount, and the root a second estimator holds the body in. Only the
+        // model's own sensor frame is exempt.
+        let state = anchored_state();
+        for quantity in [
+            Quantity::SpecificForce(other_sensor()),
+            Quantity::Position(FrameId::agent(agent(), OTHER_ROOT)),
+        ] {
+            let m = one(quantity.clone(), Convention::Enu);
+            match check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err() {
+                MeasurementAgreementError::UnanchorableFrame {
+                    quantity: refused, ..
+                } => {
+                    assert_eq!(refused, quantity);
+                }
+                other => panic!("expected UnanchorableFrame, got {other:?}"),
+            }
         }
     }
 
@@ -379,7 +411,7 @@ mod tests {
             ),
             MeasurementSchemaBlock::new(Quantity::SpecificForce(sensor()), Convention::Flu),
         ]);
-        assert!(check_measurement_state_agreement(&state, &m).is_ok());
+        assert!(check_measurement_state_agreement(&state, &m, &sensor()).is_ok());
     }
 
     #[test]
@@ -396,7 +428,7 @@ mod tests {
         ]);
 
         assert!(matches!(
-            check_measurement_state_agreement(&state, &m).unwrap_err(),
+            check_measurement_state_agreement(&state, &m, &sensor()).unwrap_err(),
             MeasurementAgreementError::FrameConventionMismatch { .. }
         ));
     }

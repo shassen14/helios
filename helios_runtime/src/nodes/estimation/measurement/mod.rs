@@ -35,6 +35,9 @@ pub(crate) trait MeasurementSource: Send + Sync {
     /// The sensor channel the readings arrive on.
     fn channel(&self) -> &ChannelKey;
 
+    /// The sensor frame the model was built for: the channel's mount.
+    fn sensor(&self) -> &FrameId;
+
     /// The model predicting each reading from the state.
     fn model(&self) -> &dyn MeasurementModel;
 
@@ -63,6 +66,7 @@ pub(crate) struct MeasurementWiring {
 /// The [`MeasurementSource`] for payload `P`.
 struct TypedMeasurementSource<P: SensorPayload> {
     reader: PayloadReader<P>,
+    sensor: FrameId,
     model: Box<dyn MeasurementModel>,
     noise: DMatrix<f64>,
 }
@@ -73,6 +77,7 @@ impl<P: SensorPayload> TypedMeasurementSource<P> {
     /// dead sensor rather than a config error.
     fn new(
         input: &str,
+        sensor: FrameId,
         model: Box<dyn MeasurementModel>,
         noise: DMatrix<f64>,
     ) -> Result<Self, String> {
@@ -94,6 +99,7 @@ impl<P: SensorPayload> TypedMeasurementSource<P> {
 
         Ok(Self {
             reader: PayloadReader::new(readings_channel::<P>(input)),
+            sensor,
             model,
             noise,
         })
@@ -103,6 +109,10 @@ impl<P: SensorPayload> TypedMeasurementSource<P> {
 impl<P: SensorPayload> MeasurementSource for TypedMeasurementSource<P> {
     fn channel(&self) -> &ChannelKey {
         self.reader.channel()
+    }
+
+    fn sensor(&self) -> &FrameId {
+        &self.sensor
     }
 
     fn model(&self) -> &dyn MeasurementModel {
@@ -160,7 +170,8 @@ where
 {
     move |config: C, ctx: &BuildContext<'_>, wiring: MeasurementWiring| {
         let model = build_model(config, ctx, &wiring.mount)?;
-        let source = TypedMeasurementSource::<P>::new(&wiring.input, model, wiring.noise)?;
+        let source =
+            TypedMeasurementSource::<P>::new(&wiring.input, wiring.mount, model, wiring.noise)?;
         Ok(Box::new(source) as Box<dyn MeasurementSource>)
     }
 }
@@ -273,6 +284,7 @@ mod tests {
         let expected: ChannelKey =
             SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(INPUT).into();
         assert_eq!(source.channel(), &expected);
+        assert_eq!(source.sensor(), &FrameId::agent(agent(), MOUNT));
         let parsed = registry
             .extension::<EstimatorComponents>()
             .expect("the default registry has estimator components")
@@ -346,7 +358,12 @@ mod tests {
     #[test]
     fn a_non_square_r_is_refused() {
         let model: Box<dyn MeasurementModel> = Box::new(MocapModel);
-        let result = TypedMeasurementSource::<GpsPosition>::new(INPUT, model, DMatrix::zeros(3, 2));
+        let result = TypedMeasurementSource::<GpsPosition>::new(
+            INPUT,
+            FrameId::agent(agent(), MOUNT),
+            model,
+            DMatrix::zeros(3, 2),
+        );
         assert!(result.is_err());
     }
 

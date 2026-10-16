@@ -127,6 +127,7 @@ mod tests {
     use helios_core::estimation::dynamics::integrated_imu::{
         ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
     };
+    use helios_core::estimation::frames::EstimationFrames;
     use helios_core::estimation::schema::{InputSchema, InputSchemaBlock, StateSchema};
     use helios_core::kernel::integrators::Integrator;
     use helios_core::prelude::MonotonicTime;
@@ -170,7 +171,7 @@ mod tests {
         /// Borrows the INS state layout, so the state holds a body pose.
         fn new() -> Self {
             let ins = IntegratedImuModel::new(
-                agent(),
+                EstimationFrames::odom(agent()),
                 Vector3::new(0.0, 0.0, -9.81),
                 ImuProcessNoise {
                     accel_noise_var: 0.04,

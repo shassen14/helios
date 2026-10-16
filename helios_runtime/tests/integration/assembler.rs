@@ -17,6 +17,7 @@ use helios_core::control::commands::{DriveForce, SteerAngle, TwistIntent};
 use helios_core::control::BodyTwistRef;
 use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
 use helios_core::estimation::carrier::kinematic_carrier_schema;
+use helios_core::estimation::frames::EstimationFrames;
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::measurement::sensor::MagneticField;
 use helios_core::interchange::path::{Path, PlannerGoal};
@@ -1572,7 +1573,9 @@ fn mapper_builds_a_map_from_a_host_range_field() {
             state_key,
             Stamped {
                 value: FrameAwareState::from_schema(
-                    std::sync::Arc::new(kinematic_carrier_schema(agent.clone())),
+                    std::sync::Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(
+                        agent.clone(),
+                    ))),
                     now,
                 ),
                 timestamp: now,
