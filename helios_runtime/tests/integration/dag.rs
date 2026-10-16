@@ -8,7 +8,7 @@ use std::sync::{
     Arc, Mutex,
 };
 
-use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::prelude::{AgentId, MonotonicTime, SensorReading};
 use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
 use helios_core::spatial::transforms::Convention;
@@ -18,7 +18,10 @@ use helios_runtime::{
         ChannelUses, CycleEdge, MountLookupError, NodePlan, PipelineBuildError, PipelineBuilder,
         ReadMount,
     },
-    port::{ChannelKey, InputNeed, InstanceKey, PortBus, PortDescriptor, PortDescriptorBuilder},
+    port::{
+        ChannelError, ChannelKey, InputNeed, InstanceKey, PortBus, PortDescriptor,
+        PortDescriptorBuilder,
+    },
     prelude::{Health, PipelineNode, Stamped, TickContext},
     BodyCapabilities, BodyChannel, MountRefusal, Provenance, Writer,
 };
@@ -1389,6 +1392,78 @@ fn tick_preserves_externally_written_values() {
         .read::<u32>(sensor_key)
         .expect("value should still be present after tick");
     assert_eq!(after.value, 99);
+}
+
+/// The bus holds the channels nodes use: a channel the body offers but no
+/// node reads has no slot.
+#[test]
+fn a_body_channel_no_node_reads_has_no_slot() {
+    let read = ikey_named::<u32>("imu");
+    let unread = ikey_named::<u32>("battery");
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(Box::new(SinkNode::new("consumer", read.clone())))
+        .with_body_capabilities(BodyCapabilities {
+            publishes: vec![
+                BodyChannel::new(read.clone(), BODY_UNIT, Provenance::Exact),
+                BodyChannel::new(unread.clone(), BODY_UNIT, Provenance::Exact),
+            ],
+            ..Default::default()
+        })
+        .build()
+        .expect("build should succeed");
+
+    let stamped = |value: u32| Stamped {
+        value,
+        timestamp: MonotonicTime(0.0),
+        health: Health::Ok,
+        producer: 0,
+    };
+    assert!(pipeline.bus().write(read, stamped(1)).is_ok());
+    assert!(matches!(
+        pipeline.bus().write(unread, stamped(2)),
+        Err(ChannelError::UnknownChannel)
+    ));
+}
+
+/// The body's mount reaches the bus: a reading naming another frame than
+/// the channel's mount is refused, and so is an unchecked write.
+#[test]
+fn a_body_channels_mount_is_checked_on_write() {
+    type Batch = Vec<SensorReading<u32>>;
+    let gps = ChannelKey::measurement::<Batch>("gps");
+    let frame = |leaf: &str| FrameId::agent(AgentId::new(AGENT), leaf);
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(Box::new(SinkNode::new("consumer", gps.clone())))
+        .with_body_capabilities(BodyCapabilities {
+            publishes: vec![
+                BodyChannel::new(gps.clone(), BODY_UNIT, Provenance::Simulated)
+                    .with_mount(frame("gps")),
+            ],
+            ..Default::default()
+        })
+        .build()
+        .expect("build should succeed");
+
+    let batch = |leaf: &str| Stamped {
+        value: vec![SensorReading {
+            sensor: frame(leaf),
+            timestamp: MonotonicTime(0.0),
+            data: 0u32,
+        }],
+        timestamp: MonotonicTime(0.0),
+        health: Health::Ok,
+        producer: 0,
+    };
+    let bus = pipeline.bus();
+    assert!(bus.write_mounted(gps.clone(), batch("gps")).is_ok());
+    assert!(matches!(
+        bus.write_mounted(gps.clone(), batch("imu")),
+        Err(ChannelError::UndeclaredMount { written, .. }) if written == frame("imu")
+    ));
+    assert!(matches!(
+        bus.write(gps, batch("gps")),
+        Err(ChannelError::MountedChannel)
+    ));
 }
 
 // =========================================================================

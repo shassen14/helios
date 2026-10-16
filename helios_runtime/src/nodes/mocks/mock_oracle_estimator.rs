@@ -243,7 +243,7 @@ mod tests {
 
     fn make_bus_with_oracle_producer(node: &MockOracleEstimatorNode) -> PortBus {
         let producer = oracle_producer_descriptor();
-        PortBus::new([node.port_descriptor(), &producer])
+        PortBus::of_descriptors([node.port_descriptor(), &producer])
     }
 
     fn body_with_oracle() -> BodyCapabilities {

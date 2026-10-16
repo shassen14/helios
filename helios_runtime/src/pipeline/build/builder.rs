@@ -209,18 +209,27 @@ impl PipelineBuilder {
         let levels = order_into_levels(self.nodes, produced)?;
         let descriptions = resolve_mounts(&levels, descriptions);
 
-        // Bus slots are allocated from the union of all declared descriptors.
-        // A channel the body advertises via `capabilities.publishes` but
-        // which no in-graph node consumes intentionally has no slot — the
-        // host's `bus.write(...)` for such a channel returns
-        // `ChannelError::UnknownChannel` and drops silently. The body
-        // declares what it offers; the bus tracks intra-graph flow. The
-        // two overlap iff a consumer exists.
-        let descriptor_iter = levels
+        // The bus holds the channels nodes use. A channel the body offers
+        // but no node reads has no slot, so the host's write to it returns
+        // `ChannelError::UnknownChannel`: the body declares what it offers,
+        // the bus what the graph uses. Every channel a node reads has a
+        // description, since the wiring check found each a supplier.
+        let used: HashSet<&ChannelKey> = levels
             .iter()
-            .flat_map(|level| level.iter().map(|(_, node)| node.port_descriptor()));
-
-        let bus = PortBus::new(descriptor_iter);
+            .flatten()
+            .flat_map(|(_, node)| {
+                let descriptor = node.port_descriptor();
+                descriptor
+                    .required_inputs()
+                    .chain(descriptor.optional_inputs())
+                    .chain(descriptor.outputs())
+            })
+            .collect();
+        let bus = PortBus::new(
+            descriptions
+                .iter()
+                .filter(|description| used.contains(description.key())),
+        );
 
         let levels = construct_levels(levels, &descriptions)?;
 

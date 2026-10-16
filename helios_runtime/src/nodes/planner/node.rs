@@ -266,7 +266,7 @@ mod tests {
 
     fn make_bus() -> PortBus {
         let descriptor = PortDescriptor::new(vec![], vec![], vec![path_channel()], None);
-        PortBus::new(&[descriptor])
+        PortBus::of_descriptors(&[descriptor])
     }
 
     fn tick_at(now: f64, dt: f64) -> TickContext<'static> {

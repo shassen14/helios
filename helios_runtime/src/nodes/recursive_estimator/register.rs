@@ -407,7 +407,7 @@ mod tests {
             .cloned()
             .collect();
         channels.extend(descriptor.outputs().cloned());
-        let bus = PortBus::new(&[PortDescriptor::new(vec![], vec![], channels, None)]);
+        let bus = PortBus::of_descriptors(&[PortDescriptor::new(vec![], vec![], channels, None)]);
 
         node.execute(
             &bus,

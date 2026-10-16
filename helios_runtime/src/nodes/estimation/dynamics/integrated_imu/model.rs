@@ -490,7 +490,7 @@ mod tests {
             Ok(builder) => builder,
             Err(err) => panic!("the mounted input builds: {err}"),
         };
-        let bus = PortBus::new(&[PortDescriptor::new(
+        let bus = PortBus::of_descriptors(&[PortDescriptor::new(
             vec![],
             vec![],
             builder.required_channels().to_vec(),

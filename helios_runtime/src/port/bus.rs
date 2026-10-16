@@ -6,11 +6,15 @@
 //! such slot per instance its writers declare, in instance order, written
 //! with [`PortBus::write_keyed`] and read per instance. A read returns that value
 //! until it is overwritten — there is no per-tick clear and no queue. Slots are
-//! allocated from node [`PortDescriptor`]s at build time, so a write to a
-//! channel no node declared is a
+//! allocated from the pipeline's [`ChannelDescription`]s at build time, so a
+//! write to a channel without one is a
 //! [`ChannelError::UnknownChannel`](crate::port::ChannelError), and a write of
 //! a value whose type is not the key's is a
 //! [`ChannelError::TypeMismatch`](crate::port::ChannelError).
+//!
+//! A single-value channel whose writers declare mounts takes
+//! [`Mounted`] values only, through [`PortBus::write_mounted`], which refuses
+//! a value naming a frame no writer declared.
 //!
 //! Every slot also carries a [`SlotVersion`] the bus bumps on each write, so a
 //! consumer can tell a new write from an unchanged value without trusting the
@@ -36,11 +40,14 @@ use helios_core::prelude::MonotonicTime;
 use crate::{
     port::{
         channel::{ChannelError, ChannelKey},
-        descriptor::PortDescriptor,
+        description::ChannelDescription,
         keyed::{InstanceKey, Keyed},
+        mounted::Mounted,
     },
     Stamped,
 };
+
+use helios_core::spatial::FrameId;
 
 /// Type-agnostic view of a [`Stamped<T>`] value on the bus.
 ///
@@ -99,8 +106,8 @@ impl<T: Any + Send + Sync> ErasedStamped for Stamped<T> {
 
 /// Typed, lock-free in-memory blackboard for intra-pipeline data exchange.
 ///
-/// All slots are pre-populated at construction from the union of every node's
-/// declared inputs and outputs. Reads and writes never block — each slot uses
+/// All slots are pre-populated at construction, one per channel description
+/// the build hands it. Reads and writes never block — each slot uses
 /// an [`ArcSwap`] for atomic pointer swap with concurrent read access.
 ///
 /// All slots use **last-known-good** semantics — a write replaces the current
@@ -125,43 +132,55 @@ pub struct PortBus {
 }
 
 impl PortBus {
-    /// Constructs a [`PortBus`] pre-populated with one empty slot per unique
-    /// [`ChannelKey`] found across all `descriptors`, and for a keyed channel
-    /// one per instance some descriptor's output declares.
+    /// Constructs a [`PortBus`] with one empty slot per channel in
+    /// `descriptions`. Several descriptions of one channel, its writers'
+    /// shares of a keyed channel, make one slot holding every instance they
+    /// declare; a single-value channel's slot keeps the mounts they declare.
     ///
-    /// The bus represents intra-graph flow: a slot exists iff some node in
-    /// the graph mentions the channel. Channels the body *advertises*
-    /// via [`BodyCapabilities`](crate::BodyCapabilities) but which no node
-    /// consumes intentionally have no slot — host writes return
-    /// [`ChannelError::UnknownChannel`] until a consumer is added. The body
-    /// declares what it offers; the bus tracks what the graph uses.
-    pub fn new<'a>(descriptors: impl IntoIterator<Item = &'a PortDescriptor>) -> Self {
-        let mut slots = HashMap::new();
-
-        for descriptor in descriptors {
-            for key in descriptor
-                .required_inputs()
-                .chain(descriptor.optional_inputs())
-            {
-                slots.entry(key.clone()).or_insert_with(|| Slot::empty(key));
-            }
-            for output in descriptor.output_ports() {
-                let key = output.channel();
-                let slot = slots.entry(key.clone()).or_insert_with(|| Slot::empty(key));
-                if let Slot::Keyed { instances, .. } = slot {
-                    for instance in output.instances() {
-                        instances
-                            .entry(instance.clone())
-                            .or_insert_with(SlotEntry::empty);
-                    }
-                }
-            }
+    /// Which channels get a slot is the caller's choice: the pipeline build
+    /// passes the descriptions of channels some node reads or writes, so a
+    /// host write to a channel the body offers but no node uses is
+    /// [`ChannelError::UnknownChannel`].
+    pub(crate) fn new<'a>(descriptions: impl IntoIterator<Item = &'a ChannelDescription>) -> Self {
+        let mut slots: HashMap<ChannelKey, Slot> = HashMap::new();
+        for description in descriptions {
+            let key = description.key();
+            slots
+                .entry(key.clone())
+                .or_insert_with(|| Slot::empty(key))
+                .declare(description);
         }
 
         Self {
             slots,
             tick_now: AtomicF64::new(0.0),
         }
+    }
+
+    /// A bus for testing nodes alone: each descriptor's outputs described as
+    /// a node's, with their instances and no mounts, and its inputs as
+    /// outside inputs.
+    #[cfg(test)]
+    pub(crate) fn of_descriptors<'a>(
+        descriptors: impl IntoIterator<Item = &'a crate::port::PortDescriptor>,
+    ) -> Self {
+        const TEST_WRITER: &str = "node_under_test";
+
+        let descriptions: Vec<ChannelDescription> = descriptors
+            .into_iter()
+            .flat_map(|descriptor| {
+                let inputs = descriptor
+                    .required_inputs()
+                    .chain(descriptor.optional_inputs())
+                    .map(|key| ChannelDescription::outside(key.clone()));
+                let outputs = descriptor.output_ports().iter().map(|output| {
+                    ChannelDescription::node(output.channel().clone(), TEST_WRITER)
+                        .with_instances(output.instances().to_vec())
+                });
+                inputs.chain(outputs).collect::<Vec<_>>()
+            })
+            .collect();
+        Self::new(&descriptions)
     }
 }
 
@@ -175,10 +194,36 @@ impl PortBus {
             .slots
             .get(&channel)
             .ok_or(ChannelError::UnknownChannel)?;
-        let Slot::Single(entry) = slot else {
+        let Slot::Single { entry, mounts } = slot else {
+            return Err(ChannelError::KeyedChannel);
+        };
+        if !mounts.is_empty() {
+            return Err(ChannelError::MountedChannel);
+        }
+        check_payload_type::<T>(&channel)?;
+        store(entry, stamped);
+
+        Ok(())
+    }
+
+    /// Writes `stamped`, whose values each name the frame they were measured
+    /// in, to single-value `channel`. Refused whole if any value names a
+    /// frame no writer of the channel declared; a channel whose writers
+    /// declare no mount takes any frame.
+    pub fn write_mounted<T: Mounted>(
+        &self,
+        channel: ChannelKey,
+        stamped: Stamped<T>,
+    ) -> Result<(), ChannelError> {
+        let slot = self
+            .slots
+            .get(&channel)
+            .ok_or(ChannelError::UnknownChannel)?;
+        let Slot::Single { entry, mounts } = slot else {
             return Err(ChannelError::KeyedChannel);
         };
         check_payload_type::<T>(&channel)?;
+        check_mounts(mounts, &stamped.value)?;
         store(entry, stamped);
 
         Ok(())
@@ -289,7 +334,7 @@ impl PortBus {
         key: &ChannelKey,
     ) -> Option<(Arc<dyn ErasedStamped>, SlotVersion)> {
         match self.slots.get(key)? {
-            Slot::Single(entry) => load(entry),
+            Slot::Single { entry, .. } => load(entry),
             Slot::Keyed { misread_warned, .. } => {
                 if !misread_warned.swap(true, Ordering::Relaxed) {
                     tracing::warn!(
@@ -330,7 +375,7 @@ impl PortBus {
             .iter()
             .map(|(key, slot)| {
                 let present = match slot {
-                    Slot::Single(entry) => entry.load().data.is_some(),
+                    Slot::Single { entry, .. } => entry.load().data.is_some(),
                     Slot::Keyed { instances, .. } => {
                         instances.values().any(|entry| entry.load().data.is_some())
                     }
@@ -345,7 +390,12 @@ impl PortBus {
 /// instance. The instances are fixed when the bus is built, so writes and
 /// reads of one instance never touch another's.
 enum Slot {
-    Single(ArcSwap<SlotEntry>),
+    Single {
+        entry: ArcSwap<SlotEntry>,
+        /// The frames the channel's writers declare its values are measured
+        /// in. Empty when none declares one, and then writes go unchecked.
+        mounts: Vec<FrameId>,
+    },
     Keyed {
         instances: BTreeMap<InstanceKey, ArcSwap<SlotEntry>>,
         /// Whether a single-value read of the channel has been warned of.
@@ -363,7 +413,31 @@ impl Slot {
                 misread_warned: AtomicBool::new(false),
             }
         } else {
-            Slot::Single(SlotEntry::empty())
+            Slot::Single {
+                entry: SlotEntry::empty(),
+                mounts: Vec::new(),
+            }
+        }
+    }
+
+    /// Adds what `description` declares: its instances to a keyed channel,
+    /// its mount to a single-value one.
+    fn declare(&mut self, description: &ChannelDescription) {
+        match self {
+            Slot::Keyed { instances, .. } => {
+                for instance in description.instances() {
+                    instances
+                        .entry(instance.clone())
+                        .or_insert_with(SlotEntry::empty);
+                }
+            }
+            Slot::Single { mounts, .. } => {
+                if let Some(mount) = description.mount() {
+                    if !mounts.contains(mount) {
+                        mounts.push(mount.clone());
+                    }
+                }
+            }
         }
     }
 }
@@ -429,6 +503,21 @@ fn check_payload_type<T: Any>(channel: &ChannelKey) -> Result<(), ChannelError> 
     }
 }
 
+/// Refuses `value` if one of its values names a frame outside `declared`,
+/// naming the first. Nothing is checked when `declared` is empty.
+fn check_mounts<T: Mounted>(declared: &[FrameId], value: &T) -> Result<(), ChannelError> {
+    if declared.is_empty() {
+        return Ok(());
+    }
+    match value.mounts().find(|frame| !declared.contains(frame)) {
+        Some(written) => Err(ChannelError::UndeclaredMount {
+            declared: declared.to_vec(),
+            written: written.clone(),
+        }),
+        None => Ok(()),
+    }
+}
+
 /// Puts `stamped` in `entry` under the next version.
 fn store<T: Any + Send + Sync>(entry: &ArcSwap<SlotEntry>, stamped: Stamped<T>) {
     // Load-then-store is not one atomic step; it cannot race because the
@@ -457,9 +546,11 @@ fn load(entry: &ArcSwap<SlotEntry>) -> Option<(Arc<dyn ErasedStamped>, SlotVersi
 mod tests {
     use super::*;
     use crate::port::channel::ChannelKey;
-    use crate::port::descriptor::PortDescriptorBuilder;
+    use crate::port::descriptor::{PortDescriptor, PortDescriptorBuilder};
     use crate::port::kind::ChannelKind;
     use crate::prelude::Health;
+
+    use helios_core::prelude::{AgentId, SensorReading};
 
     fn make_stamped<T>(value: T, timestamp_secs: f64) -> Stamped<T> {
         Stamped {
@@ -472,7 +563,7 @@ mod tests {
 
     fn bus_with_outputs(outputs: Vec<ChannelKey>) -> PortBus {
         let descriptor = PortDescriptor::new(vec![], vec![], outputs, None);
-        PortBus::new(&[descriptor])
+        PortBus::of_descriptors(&[descriptor])
     }
 
     fn ikey<T: 'static>() -> ChannelKey {
@@ -483,7 +574,7 @@ mod tests {
         ChannelKey::internal::<T>(name)
     }
 
-    // --- PortBus::new tests ---
+    // --- construction tests ---
 
     #[test]
     fn new_populates_slots_from_all_descriptor_sections() {
@@ -496,7 +587,7 @@ mod tests {
             vec![out.clone()],
             None,
         );
-        let bus = PortBus::new(&[descriptor]);
+        let bus = PortBus::of_descriptors(&[descriptor]);
         assert!(bus.write(req, make_stamped(1u32, 0.0)).is_ok());
         assert!(bus.write(opt, make_stamped(2u32, 0.0)).is_ok());
         assert!(bus.write(out, make_stamped(3u32, 0.0)).is_ok());
@@ -507,7 +598,7 @@ mod tests {
         let shared = ikey::<u32>();
         let d1 = PortDescriptor::new(vec![shared.clone()], vec![], vec![], None);
         let d2 = PortDescriptor::new(vec![shared.clone()], vec![], vec![], None);
-        let bus = PortBus::new(&[d1, d2]);
+        let bus = PortBus::of_descriptors(&[d1, d2]);
         assert_eq!(bus.slots.len(), 1);
     }
 
@@ -530,13 +621,13 @@ mod tests {
 
     #[test]
     fn read_unknown_channel_returns_none() {
-        let bus = PortBus::new(&[]);
+        let bus = PortBus::of_descriptors(&[]);
         assert!(bus.read::<u32>(ikey::<u32>()).is_none());
     }
 
     #[test]
     fn write_unknown_channel_returns_error() {
-        let bus = PortBus::new(&[]);
+        let bus = PortBus::of_descriptors(&[]);
         let result = bus.write(ikey::<u32>(), make_stamped(1u32, 0.0));
         assert!(matches!(result, Err(ChannelError::UnknownChannel)));
     }
@@ -830,7 +921,20 @@ mod tests {
         let descriptor = PortDescriptorBuilder::algorithm()
             .output_keyed::<Edge>(edges(), children.iter().copied())
             .build();
-        PortBus::new(&[descriptor])
+        PortBus::of_descriptors(&[descriptor])
+    }
+
+    /// Two writers' shares of one keyed channel make one slot holding both.
+    #[test]
+    fn writers_of_one_keyed_channel_share_its_slot() {
+        let bus = PortBus::new(&[
+            ChannelDescription::node(edges(), "relay").with_instances(vec![instance("base")]),
+            ChannelDescription::node(edges(), "localizer").with_instances(vec![instance("odom")]),
+        ]);
+        assert_eq!(bus.slots.len(), 1);
+        bus.write_keyed(edges(), edge("base", 1.0)).unwrap();
+        bus.write_keyed(edges(), edge("odom", 2.0)).unwrap();
+        assert_eq!(bus.read_instances::<Edge>(edges()).len(), 2);
     }
 
     #[test]
@@ -933,5 +1037,99 @@ mod tests {
         assert_eq!(bus.slot_presence(), vec![(edges(), false)]);
         bus.write_keyed(edges(), edge("wheel", 1.0)).unwrap();
         assert_eq!(bus.slot_presence(), vec![(edges(), true)]);
+    }
+
+    // --- mounted channels ---
+
+    type Batch = Vec<SensorReading<f64>>;
+
+    fn scans() -> ChannelKey {
+        ChannelKey::measurement::<Batch>("scans")
+    }
+
+    fn frame(leaf: &str) -> FrameId {
+        FrameId::agent(AgentId::new("car"), leaf)
+    }
+
+    fn batch(leaves: &[&str]) -> Stamped<Batch> {
+        let readings = leaves
+            .iter()
+            .map(|leaf| SensorReading {
+                sensor: frame(leaf),
+                timestamp: MonotonicTime(0.0),
+                data: 0.0,
+            })
+            .collect();
+        make_stamped(readings, 0.0)
+    }
+
+    /// A bus whose `scans` channel is written by one node, mounted at
+    /// `mount` or at none.
+    fn bus_mounted_at(mount: Option<&str>) -> PortBus {
+        PortBus::new(&[ChannelDescription::node(scans(), "deproject").with_mount(mount.map(frame))])
+    }
+
+    #[test]
+    fn a_batch_at_the_declared_mount_is_written() {
+        let bus = bus_mounted_at(Some("lidar"));
+        bus.write_mounted(scans(), batch(&["lidar", "lidar"]))
+            .unwrap();
+        assert_eq!(bus.read::<Batch>(scans()).unwrap().value.len(), 2);
+    }
+
+    /// One reading at another frame refuses the whole batch, naming the
+    /// declared and written frames.
+    #[test]
+    fn a_batch_naming_an_undeclared_frame_is_refused_whole() {
+        let bus = bus_mounted_at(Some("lidar"));
+        let result = bus.write_mounted(scans(), batch(&["lidar", "radar"]));
+        let Err(error) = result else {
+            panic!("a reading at radar must be refused");
+        };
+        assert!(matches!(
+            &error,
+            ChannelError::UndeclaredMount { declared, written }
+                if declared == &[frame("lidar")] && written == &frame("radar")
+        ));
+        let message = error.to_string();
+        assert!(message.contains("agent.car.radar"), "{message}");
+        assert!(message.contains("agent.car.lidar"), "{message}");
+        assert!(bus.read::<Batch>(scans()).is_none());
+    }
+
+    /// Several writers' mounts are a set: a batch may mix any of them.
+    #[test]
+    fn a_batch_may_mix_frames_the_channel_declares() {
+        let bus = PortBus::new(&[
+            ChannelDescription::node(scans(), "front").with_mount(Some(frame("lidar_front"))),
+            ChannelDescription::node(scans(), "rear").with_mount(Some(frame("lidar_rear"))),
+        ]);
+        bus.write_mounted(scans(), batch(&["lidar_front", "lidar_rear"]))
+            .unwrap();
+    }
+
+    /// A channel whose writers declare no mount takes any frame, and plain
+    /// writes too.
+    #[test]
+    fn an_unmounted_channel_goes_unchecked() {
+        let bus = bus_mounted_at(None);
+        bus.write_mounted(scans(), batch(&["anything"])).unwrap();
+        bus.write(scans(), batch(&["anything"])).unwrap();
+    }
+
+    #[test]
+    fn a_plain_write_to_a_mounted_channel_is_refused() {
+        let bus = bus_mounted_at(Some("lidar"));
+        assert!(matches!(
+            bus.write(scans(), batch(&["lidar"])),
+            Err(ChannelError::MountedChannel)
+        ));
+        assert!(bus.read::<Batch>(scans()).is_none());
+    }
+
+    #[test]
+    fn an_empty_batch_passes_the_mount_check() {
+        let bus = bus_mounted_at(Some("lidar"));
+        bus.write_mounted(scans(), batch(&[])).unwrap();
     }
 }

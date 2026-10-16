@@ -47,8 +47,9 @@ impl SensorPublisher<'_, '_> {
     /// - The envelope timestamp is taken from the last reading, so an
     ///   accumulated batch carries its freshest time.
     /// - A refused write warns exactly once per channel name, naming it and
-    ///   why, since readings are being dropped: no node reads the channel, or
-    ///   the readings are not of the type the channel was described with.
+    ///   why, since readings are being dropped: no node reads the channel,
+    ///   the readings are not of the type the channel was described with, or
+    ///   a reading names another frame than the channel's mount.
     pub fn publish<T: Send + Sync + 'static>(
         &mut self,
         agent: Entity,
@@ -76,7 +77,7 @@ impl SensorPublisher<'_, '_> {
         let write_result = pipeline
             .0
             .bus()
-            .write(channel_key.clone(), stamped_readings);
+            .write_mounted(channel_key.clone(), stamped_readings);
 
         // Warn once per channel: `insert` returns true only the first time a
         // name is seen, so a fixed-rate sensor cannot flood the log.

@@ -183,7 +183,7 @@ mod tests {
     }
 
     fn bus_for(node: &TwistTeleopNode) -> PortBus {
-        PortBus::new(std::slice::from_ref(node.port_descriptor()))
+        PortBus::of_descriptors(std::slice::from_ref(node.port_descriptor()))
     }
 
     fn write_intent(bus: &PortBus, intent: TwistIntent, timestamp: f64) {

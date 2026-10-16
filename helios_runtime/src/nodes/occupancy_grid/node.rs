@@ -362,7 +362,7 @@ mod tests {
         let host_state = PortDescriptor::new(vec![], vec![], vec![state_channel()], None);
         let host_scans = PortDescriptor::new(vec![], vec![], vec![scan_channel()], None);
         let map_producer = PortDescriptor::new(vec![], vec![], vec![map_channel()], None);
-        PortBus::new(&[host_state, host_scans, map_producer])
+        PortBus::of_descriptors(&[host_state, host_scans, map_producer])
     }
 
     fn make_state_at(x: f64) -> FrameAwareState {

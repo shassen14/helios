@@ -19,7 +19,10 @@ use helios_core::{
 
 use std::{
     marker::PhantomData,
-    sync::{atomic::Ordering, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use atomic_float::AtomicF64;
@@ -47,6 +50,9 @@ pub(crate) struct DeprojectNode<F: Frame> {
     /// Timestamp of the last batch converted; the bus is last-known-good, so
     /// without this every tick would re-publish the same batch.
     last_processed: AtomicF64,
+    /// Whether a refused write has been warned of. A refusal is a wiring
+    /// fault that repeats every batch, so it is warned once.
+    write_warned: AtomicBool,
     _data: PhantomData<fn() -> F>,
 }
 
@@ -67,6 +73,7 @@ impl<F: Frame> DeprojectNode<F> {
             input,
             output,
             last_processed: AtomicF64::new(f64::NEG_INFINITY),
+            write_warned: AtomicBool::new(false),
             _data: PhantomData,
         }
     }
@@ -115,12 +122,14 @@ impl<F: Frame> PipelineNode for DeprojectNode<F> {
             producer: tick.node_id,
         };
 
-        if let Err(error) = bus.write(self.output.clone(), stamped) {
-            tracing::warn!(
-                channel = %self.output,
-                error = %error,
-                "deproject output channel write failed"
-            );
+        if let Err(error) = bus.write_mounted(self.output.clone(), stamped) {
+            if !self.write_warned.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    channel = %self.output,
+                    error = %error,
+                    "deproject output channel write refused; later refusals are not warned"
+                );
+            }
         }
 
         self.last_processed.store(batch_ts, Ordering::Relaxed);
@@ -135,7 +144,8 @@ mod tests {
     //! converts each reading, and publishes each batch exactly once.
 
     use super::*;
-    use crate::{Health, NodeId};
+    use crate::port::{ChannelDescription, Provenance};
+    use crate::{BodyChannel, Health, NodeId};
 
     use helios_core::{
         prelude::{DirectionModel, FrameId, RangeFieldBuilder, SphericalAngular, NO_INFORMATION},
@@ -182,8 +192,21 @@ mod tests {
         ChannelKey::measurement::<CloudBatch<Flu>>(OUTPUT)
     }
 
+    /// A bus whose channels declare no mounts, as when the input's writer
+    /// states none, so a batch may mix sensors.
     fn bus_for(node: &Node) -> PortBus {
-        PortBus::new(std::slice::from_ref(node.port_descriptor()))
+        PortBus::of_descriptors(std::slice::from_ref(node.port_descriptor()))
+    }
+
+    /// A bus whose input is mounted at `mount`, and whose output at the
+    /// same frame, as the build resolves the node's rule.
+    fn mounted_bus(mount: &FrameId) -> PortBus {
+        let input =
+            BodyChannel::new(input_key(), "lidar", Provenance::Simulated).with_mount(mount.clone());
+        PortBus::new(&[
+            ChannelDescription::body(&input),
+            ChannelDescription::node(output_key(), "deproject").with_mount(Some(mount.clone())),
+        ])
     }
 
     fn sensor(name: &str) -> FrameId {
@@ -217,7 +240,7 @@ mod tests {
     }
 
     fn write_batch(bus: &PortBus, batch: FieldBatch<Flu>, timestamp: f64, health: Health) {
-        bus.write(
+        bus.write_mounted(
             input_key(),
             Stamped {
                 value: batch,
@@ -281,6 +304,20 @@ mod tests {
         assert_eq!(out.value[0].timestamp, MonotonicTime(0.9));
         assert_eq!(out.value[1].sensor, sensor("lidar_rear"));
         assert_eq!(out.value[1].timestamp, MonotonicTime(0.95));
+    }
+
+    /// The output's mount is checked on write, which a plain write would be
+    /// refused for.
+    #[test]
+    fn a_mounted_output_is_written_with_its_frames_checked() {
+        let node = make_node();
+        let bus = mounted_bus(&sensor("lidar_front"));
+        write_batch(&bus, vec![reading("lidar_front", 0.9)], 1.0, Health::Ok);
+
+        node.execute(&bus, &NoTf, tick_at(1.0));
+
+        let out = read_output(&bus).expect("the cloud is written at the lidar's mount");
+        assert_eq!(out.value[0].sensor, sensor("lidar_front"));
     }
 
     #[test]

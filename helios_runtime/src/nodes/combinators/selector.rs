@@ -218,7 +218,7 @@ mod tests {
     }
 
     fn bus_for(node: &Selector<Cmd>) -> PortBus {
-        PortBus::new(std::slice::from_ref(node.port_descriptor()))
+        PortBus::of_descriptors(std::slice::from_ref(node.port_descriptor()))
     }
 
     #[test]
@@ -314,7 +314,7 @@ mod tests {
             output.clone(),
             SelectorPolicy::FreshnessOverride { max_age: 3.0 },
         );
-        let bus = PortBus::new(std::slice::from_ref(node.port_descriptor()));
+        let bus = PortBus::of_descriptors(std::slice::from_ref(node.port_descriptor()));
         bus.set_tick_time(10.0);
         bus.write(
             base,

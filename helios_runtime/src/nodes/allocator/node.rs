@@ -174,7 +174,7 @@ mod tests {
     }
 
     fn make_bus(node: &AllocatorNode<StubAllocator>) -> PortBus {
-        PortBus::new([node.port_descriptor()])
+        PortBus::of_descriptors([node.port_descriptor()])
     }
 
     fn tick_at(now: f64, dt: f64) -> TickContext<'static> {

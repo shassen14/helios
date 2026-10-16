@@ -1296,7 +1296,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         let t = MonotonicTime(i as f64 * dt);
         pipeline
             .bus()
-            .write(
+            .write_mounted(
                 mag_key.clone(),
                 Stamped {
                     value: vec![SensorReading {

@@ -298,7 +298,7 @@ mod tests {
         assert_eq!(source.noise().nrows(), 3);
 
         // The source reads that channel end to end.
-        let bus = PortBus::new(&[PortDescriptor::new(
+        let bus = PortBus::of_descriptors(&[PortDescriptor::new(
             vec![],
             vec![],
             vec![expected.clone()],

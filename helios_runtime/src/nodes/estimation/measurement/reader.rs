@@ -97,7 +97,7 @@ mod tests {
 
     fn bus() -> PortBus {
         let key = channel();
-        PortBus::new(&[PortDescriptor::new(vec![], vec![], vec![key], None)])
+        PortBus::of_descriptors(&[PortDescriptor::new(vec![], vec![], vec![key], None)])
     }
 
     /// A reading at `at` whose east coordinate is `at`, so order is visible.

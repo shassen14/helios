@@ -301,7 +301,7 @@ pub(super) fn bus_for(node: &RecursiveEstimatorNode) -> PortBus {
         .cloned()
         .collect();
     channels.extend(descriptor.outputs().cloned());
-    PortBus::new(&[PortDescriptor::new(vec![], vec![], channels, None)])
+    PortBus::of_descriptors(&[PortDescriptor::new(vec![], vec![], channels, None)])
 }
 
 pub(super) fn write_accel(bus: &PortBus, times: &[f64]) {

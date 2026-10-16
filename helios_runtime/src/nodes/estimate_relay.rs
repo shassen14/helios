@@ -28,6 +28,8 @@ use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform}
 use helios_core::spatial::transforms::{Convention, ConventionOf, ErasedTransform};
 use helios_core::spatial::{FrameAwareState, FrameId};
 
+use std::sync::atomic::AtomicBool;
+
 use tracing::warn;
 
 /// The axes the relay reads the estimate's `odom` frame in.
@@ -46,6 +48,8 @@ pub(crate) struct EstimateRelay {
     output: ChannelKey,
     edge: FrameEdge,
     descriptor: PortDescriptor,
+    /// Whether a dropped edge has been warned of.
+    edge_warned: AtomicBool,
 }
 
 impl EstimateRelay {
@@ -73,6 +77,7 @@ impl EstimateRelay {
             output,
             edge,
             descriptor,
+            edge_warned: AtomicBool::new(false),
         }
     }
 
@@ -126,6 +131,7 @@ impl PipelineNode for EstimateRelay {
                     health: stamped.health.clone(),
                     producer: stamped.producer,
                 },
+                &self.edge_warned,
             );
         }
 
@@ -192,7 +198,7 @@ mod tests {
     /// and every output of `relay`.
     fn bus_for(relay: &EstimateRelay) -> PortBus {
         let estimator = PortDescriptor::new(vec![], vec![], vec![source()], None);
-        PortBus::new([relay.port_descriptor(), &estimator])
+        PortBus::of_descriptors([relay.port_descriptor(), &estimator])
     }
 
     fn tick() -> TickContext<'static> {

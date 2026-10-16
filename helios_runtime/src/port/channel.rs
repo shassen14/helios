@@ -27,6 +27,8 @@
 use crate::port::keyed::{InstanceKey, Keyed};
 use crate::port::kind::ChannelKind;
 
+use helios_core::spatial::FrameId;
+
 use std::{any::TypeId, sync::Arc};
 
 /// Identifier for a single bus slot: the channel's kind, payload type and
@@ -138,9 +140,7 @@ impl std::fmt::Display for ChannelKey {
 /// Why the bus refused a write.
 #[derive(Debug)]
 pub enum ChannelError {
-    /// The channel was not declared in any node's
-    /// [`PortDescriptor`](crate::port::PortDescriptor) at build time, so it
-    /// has no slot.
+    /// No node reads or writes the channel, so it has no slot.
     UnknownChannel,
     /// The value written is not of the key's payload type. Stored, it would
     /// read back as nothing for every reader of the key.
@@ -157,6 +157,18 @@ pub enum ChannelError {
     /// The value belongs to an instance no writer of the channel declared.
     /// Stored, it would have a writer the build never checked.
     UndeclaredInstance { instance: InstanceKey },
+    /// A plain write was made to a channel whose writers declare the frames
+    /// its values are measured in; write it with
+    /// [`write_mounted`](crate::port::PortBus::write_mounted), which checks
+    /// them.
+    MountedChannel,
+    /// A value names a frame no writer of the channel declares. Stored, a
+    /// reader trusting the declared mount and a reader trusting the value's
+    /// header would see different frames for it.
+    UndeclaredMount {
+        declared: Vec<FrameId>,
+        written: FrameId,
+    },
 }
 
 impl std::fmt::Display for ChannelError {
@@ -184,6 +196,25 @@ impl std::fmt::Display for ChannelError {
                     f,
                     "no writer of the channel declares instance \"{instance}\""
                 )
+            }
+            ChannelError::MountedChannel => {
+                write!(
+                    f,
+                    "the channel's writers declare its mounts, so it takes mounted writes only"
+                )
+            }
+            ChannelError::UndeclaredMount { declared, written } => {
+                write!(
+                    f,
+                    "a value names frame {written}, but the channel declares "
+                )?;
+                for (index, frame) in declared.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{frame}")?;
+                }
+                Ok(())
             }
         }
     }

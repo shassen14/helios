@@ -320,7 +320,7 @@ mod tests {
         let descriptor = PortDescriptorBuilder::algorithm()
             .output_keyed::<StampedTransform>(tf(), children)
             .build();
-        PortBus::new(&[descriptor])
+        PortBus::of_descriptors(&[descriptor])
     }
 
     // Dual-publish one edge message onto its child's instance, stamping the

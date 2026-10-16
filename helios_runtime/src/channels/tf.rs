@@ -25,6 +25,8 @@ use crate::{
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
 use helios_core::spatial::FrameId;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 const TF: &str = "tf";
 
 /// A transform belongs to the instance of its child frame.
@@ -48,8 +50,9 @@ pub fn tf() -> ChannelKey {
 /// A dropped write here is a wiring bug (the producer did not declare the
 /// edge's child, or nothing wired `tf`), unlike the oracle channel's
 /// *expected* no-consumer miss, so it warns loudly and names the edge rather
-/// than going out on `.ok()`.
-pub fn publish_edge(bus: &PortBus, stamped: Stamped<StampedTransform>) {
+/// than going out on `.ok()`. It repeats every write, so it warns once per
+/// `warned`, a latch the producer keeps.
+pub fn publish_edge(bus: &PortBus, stamped: Stamped<StampedTransform>, warned: &AtomicBool) {
     let edge = FrameEdge {
         child: stamped.value.child.clone(),
         parent: stamped.value.parent.clone(),
@@ -58,7 +61,13 @@ pub fn publish_edge(bus: &PortBus, stamped: Stamped<StampedTransform>) {
     if let Err(error) = bus.write_keyed(tf(), stamped) {
         // A silently unfed edge only surfaces far away, as a missing lookup
         // at some consumer, so name the edge here at the source.
-        tracing::warn!(edge = %edge, error = %error, "tf edge dropped");
+        if !warned.swap(true, Ordering::Relaxed) {
+            tracing::warn!(
+                edge = %edge,
+                error = %error,
+                "tf edge dropped; later drops are not warned"
+            );
+        }
     }
 }
 
@@ -127,7 +136,7 @@ mod tests {
         let descriptor = PortDescriptorBuilder::algorithm()
             .output_keyed::<StampedTransform>(tf(), edges.iter().map(|edge| edge.child.clone()))
             .build();
-        PortBus::new(&[descriptor])
+        PortBus::of_descriptors(&[descriptor])
     }
 
     fn child_key(edge: &FrameEdge) -> InstanceKey {
@@ -147,8 +156,10 @@ mod tests {
     fn publish_edge_lands_each_transform_on_its_childs_instance() {
         let bus = bus_wired_for(&[base_to_odom(), odom_to_map()]);
 
-        publish_edge(&bus, sample_message(&base_to_odom()));
-        publish_edge(&bus, sample_message(&odom_to_map()));
+        let warned = AtomicBool::new(false);
+        publish_edge(&bus, sample_message(&base_to_odom()), &warned);
+        publish_edge(&bus, sample_message(&odom_to_map()), &warned);
+        assert!(!warned.load(Ordering::Relaxed));
 
         for edge in [base_to_odom(), odom_to_map()] {
             let read = bus
@@ -163,11 +174,13 @@ mod tests {
     fn publish_edge_of_an_undeclared_child_drops_without_panicking() {
         // The producer declares only `odom`, so `base_link` has no instance.
         // The helper must warn and return (the loud-drop path), never panic,
-        // and nothing lands.
+        // and nothing lands. The latch is set, so the next drop is quiet.
         let bus = bus_wired_for(&[odom_to_map()]);
+        let warned = AtomicBool::new(false);
 
-        publish_edge(&bus, sample_message(&base_to_odom()));
+        publish_edge(&bus, sample_message(&base_to_odom()), &warned);
 
         assert!(bus.read_instances::<StampedTransform>(tf()).is_empty());
+        assert!(warned.load(Ordering::Relaxed));
     }
 }

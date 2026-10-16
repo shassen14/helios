@@ -19,7 +19,7 @@
 #![allow(dead_code)]
 
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
 };
 
@@ -154,6 +154,7 @@ struct EdgeProducerNode {
     edge: FrameEdge,
     from_conv: Convention,
     to_conv: Convention,
+    edge_warned: AtomicBool,
 }
 
 impl EdgeProducerNode {
@@ -171,6 +172,7 @@ impl EdgeProducerNode {
             edge,
             from_conv,
             to_conv,
+            edge_warned: AtomicBool::new(false),
         }
     }
 }
@@ -203,6 +205,7 @@ impl PipelineNode for EdgeProducerNode {
                 health: Health::Ok,
                 producer: tick.node_id,
             },
+            &self.edge_warned,
         );
     }
 }

@@ -216,7 +216,7 @@ mod tests {
     }
 
     fn bus_for(node: &Merge) -> PortBus {
-        PortBus::new(std::slice::from_ref(node.port_descriptor()))
+        PortBus::of_descriptors(std::slice::from_ref(node.port_descriptor()))
     }
 
     /// The canonical decoupled wiring: a drive leg and a steer leg merged into one

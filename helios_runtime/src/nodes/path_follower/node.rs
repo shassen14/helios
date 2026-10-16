@@ -339,7 +339,7 @@ mod tests {
         // the node under test will publish.
         let path_producer = PortDescriptor::new(vec![], vec![], vec![path_channel()], None);
         let traj_producer = PortDescriptor::new(vec![], vec![], vec![out_channel()], None);
-        PortBus::new(&[path_producer, traj_producer])
+        PortBus::of_descriptors(&[path_producer, traj_producer])
     }
 
     fn tick_at(now: f64, dt: f64) -> TickContext<'static> {
@@ -451,7 +451,7 @@ mod tests {
         let named_producer = PortDescriptor::new(vec![], vec![], vec![named_output.clone()], None);
         let unnamed_producer = PortDescriptor::new(vec![], vec![], vec![out_channel()], None);
         let path_producer = PortDescriptor::new(vec![], vec![], vec![path_channel()], None);
-        let bus = PortBus::new(&[named_producer, unnamed_producer, path_producer]);
+        let bus = PortBus::of_descriptors(&[named_producer, unnamed_producer, path_producer]);
         publish_path(&bus, 1.0);
 
         node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
