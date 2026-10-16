@@ -77,25 +77,36 @@ pub struct PipelineBuildFailed {
 /// its key. One description serves both, so the channel the build checked is
 /// the channel written.
 #[derive(Component, Clone)]
-pub struct SensorPublishChannel(BodyChannel);
+pub struct SensorPublishChannel {
+    description: BodyChannel,
+    /// The description's mount, held unwrapped: every sensor channel has one,
+    /// and each reading's header names it.
+    mount: FrameId,
+}
 
 impl SensorPublishChannel {
     /// Channel `name` of installation `unit`, carrying batches of `P` readings
     /// as [`SensorPublisher`](super::SensorPublisher) writes them, measured in
-    /// `mount`, the frame the sensor's entity tracks.
+    /// `mount`, the installation's frame.
     pub fn new<P: Send + Sync + 'static>(name: &str, unit: &str, mount: FrameId) -> Self {
-        Self(
-            BodyChannel::new(
+        Self {
+            description: BodyChannel::new(
                 SensorChannel::named::<Vec<SensorReading<P>>>(name),
                 unit,
                 Provenance::Simulated,
             )
-            .with_mount(mount),
-        )
+            .with_mount(mount.clone()),
+            mount,
+        }
     }
 
     pub fn description(&self) -> &BodyChannel {
-        &self.0
+        &self.description
+    }
+
+    /// The frame the channel's readings are measured in.
+    pub fn mount(&self) -> &FrameId {
+        &self.mount
     }
 }
 

@@ -2,9 +2,10 @@
 //! configured IMU and publishes their readings through the generic
 //! state-sensor system.
 //!
-//! An IMU is one config entry but two sensors: it measures two independent
+//! An IMU is one installation but two sensors: it measures two independent
 //! physical quantities that publish on separate channels, so each spawns as
-//! its own self-contained state-sensor entity.
+//! its own self-contained state-sensor entity. Both hang under one entity
+//! carrying the installation's frame, since they measure from one place.
 
 use super::state_sensor::{publish_state_sensor, SensorTimer, StateSensor};
 
@@ -19,8 +20,6 @@ use helios_core::sensors::accelerometer::AccelerometerModel;
 use helios_core::sensors::gyroscope::GyroscopeModel;
 use helios_core::spatial::conventions::Enu;
 use helios_core::spatial::quantities::FreeVector;
-use helios_core::spatial::transforms::Convention;
-use helios_core::spatial::FrameId;
 
 use avian3d::prelude::Gravity;
 use nalgebra::{Isometry3, Vector3};
@@ -146,8 +145,9 @@ impl Plugin for ImuPlugin {
     }
 }
 
-/// Spawns one accelerometer and one gyroscope child entity per IMU entry in
-/// each agent's spawn request.
+/// Spawns, per IMU installation in each agent's spawn request, one entity
+/// carrying the installation's frame, and under it at identity one
+/// accelerometer and one gyroscope entity, both mounted at that frame.
 ///
 /// Model construction doubles as config validation: the core models refuse a
 /// stddev with any non-positive axis, so a bad config skips the whole IMU
@@ -184,7 +184,7 @@ fn spawn_imu_sensors(
                     imu_config.get_rate()
                 );
 
-                let sensor_pose = installation.transform;
+                let frame = installation.frame(&agent_id.0, sensor_name);
                 let (accel_std, gyro_std) = imu_config.get_noise_stddevs();
                 let (accel_bias, gyro_bias) = imu_config.get_biases();
 
@@ -214,50 +214,52 @@ fn spawn_imu_sensors(
                     continue;
                 };
 
-                let accel_label = format!("{}/{}/accelerometer", agent_name.as_str(), sensor_name);
+                let accel_label = format!("{}/{}/accelerometer", agent_id.0, sensor_name);
                 let accel_rng = SensorRng::from_sensor(master_seed.0, &accel_label);
 
-                let accel_frame = FrameId::agent(agent_id.0.clone(), accel_channel.to_string());
                 let accel_entity = commands
                     .spawn((
                         Name::new(accel_label),
                         SensorPublishChannel::new::<<Accelerometer as StateSensor>::Payload>(
                             accel_channel,
                             sensor_name,
-                            accel_frame.clone(),
+                            frame.id.clone(),
                         ),
-                        Accelerometer::new(accel_model, gravity_world, sensor_pose.translation),
+                        Accelerometer::new(accel_model, gravity_world, frame.pose.translation),
                         SensorTimer::from_rate(imu_config.rate),
                         accel_rng,
-                        TrackedFrame::new(accel_frame, Convention::Flu),
-                        sensor_pose.to_bevy_local_transform(),
+                        Transform::IDENTITY,
                     ))
                     .id();
 
-                let gyro_label = format!("{}/{}/gyroscope", agent_name.as_str(), sensor_name);
+                let gyro_label = format!("{}/{}/gyroscope", agent_id.0, sensor_name);
                 let gyro_rng = SensorRng::from_sensor(master_seed.0, &gyro_label);
 
-                let gyro_frame = FrameId::agent(agent_id.0.clone(), gyro_channel.to_string());
                 let gyro_entity = commands
                     .spawn((
                         Name::new(gyro_label),
                         SensorPublishChannel::new::<<Gyroscope as StateSensor>::Payload>(
                             gyro_channel,
                             sensor_name,
-                            gyro_frame.clone(),
+                            frame.id.clone(),
                         ),
                         Gyroscope::new(gyro_model),
                         SensorTimer::from_rate(imu_config.rate),
                         gyro_rng,
-                        TrackedFrame::new(gyro_frame, Convention::Flu),
-                        sensor_pose.to_bevy_local_transform(),
+                        Transform::IDENTITY,
                     ))
                     .id();
 
-                commands
-                    .entity(agent_entity)
-                    .add_child(accel_entity)
-                    .add_child(gyro_entity);
+                let installation_entity = commands
+                    .spawn((
+                        Name::new(format!("{}/{}", agent_id.0, sensor_name)),
+                        frame.pose.to_bevy_local_transform(),
+                        TrackedFrame::new(frame.id, frame.convention),
+                    ))
+                    .add_children(&[accel_entity, gyro_entity])
+                    .id();
+
+                commands.entity(agent_entity).add_child(installation_entity);
             }
         }
     }

@@ -24,33 +24,30 @@ use std::collections::BTreeSet;
 
 /// Spawns the autonomy pipeline for agents with real estimation.
 ///
-/// Collects each agent's sensor children's [`SensorPublishChannel`]s into the
-/// body passed to `build_pipeline()`.
+/// Collects the [`SensorPublishChannel`]s of each agent's descendants into the
+/// body passed to `build_pipeline()`. Descendants, not children: a sensor
+/// entity may hang under its installation's frame entity, as an IMU's two do.
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
-    agent_query: Query<(
-        Entity,
-        &SpawnAgentConfigRequest,
-        &AgentIdComponent,
-        &Children,
-    )>,
+    agent_query: Query<(Entity, &SpawnAgentConfigRequest, &AgentIdComponent)>,
+    children: Query<&Children>,
     channel_query: Query<&SensorPublishChannel>,
     registry: Res<RuntimeAutonomyRegistry>,
 ) {
     let _span = tracing::info_span!("sim.scene_build.autonomy").entered();
-    for (agent_entity, request, agent_id, children) in &agent_query {
+    for (agent_entity, request, agent_id) in &agent_query {
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
         // The canonical scope stamped on the shell at `CreateRequests`; the
-        // assembler builds every sensor's `FrameId::agent(agent, channel)` from
-        // it, matching what the sensor spawners stamped on the tf tree.
+        // static seeds name every installation's frame under it, matching what
+        // the sensor spawners stamped on the tf tree.
         let agent = agent_id.0.clone();
 
         // Every channel this agent's sensors publish, as their spawners
         // described them.
         let sensor_channels: Vec<BodyChannel> = children
-            .iter()
-            .filter_map(|child| channel_query.get(child).ok())
+            .iter_descendants(agent_entity)
+            .filter_map(|descendant| channel_query.get(descendant).ok())
             .map(|channel| channel.description().clone())
             .collect();
 
@@ -142,28 +139,33 @@ fn estimated_tf_service(
 }
 
 /// The static transform edges seeding this agent's estimated tf buffer: one
-/// `base_link → sensor` mount per sensor frame, built from the same sensor
-/// configs the sensor spawners read.
+/// `base_link → installation` edge per sensor installation, built from the
+/// same [`frame`](crate::config::structs::SensorInstallationConfig::frame) the
+/// sensor spawners stamp on the truth tree.
 ///
 /// Single-sourcing the mount here (rather than reading it back off the truth
 /// tree) is what keeps the estimated and truth trees from disagreeing on a mount
 /// while leaving the estimated buffer structurally unable to reach the truth
 /// tree. Each mount is time-invariant, so it is stamped at `t = 0` and folded
-/// once when the [`TfService`] is constructed. The pose is `sensor` expressed in
-/// `base_link` (FLU); `from_parts` takes the sensor's own convention first, the
-/// `base_link` convention (FLU) second.
+/// once when the [`TfService`] is constructed. `from_parts` takes the
+/// installation's own convention first, the `base_link` convention (FLU)
+/// second.
 fn build_static_seeds(agent_config: &AgentConfig, agent: &AgentId) -> Vec<StampedTransform> {
     let base_link = FrameId::base_link(agent.clone());
 
     agent_config
         .sensors
-        .values()
-        .flat_map(|sensor| sensor.frame_mounts())
-        .map(|(channel, pose, convention)| StampedTransform {
-            child: FrameId::agent(agent.clone(), channel),
+        .iter()
+        .map(|(key, installation)| installation.frame(agent, key))
+        .map(|frame| StampedTransform {
+            transform: ErasedTransform::from_parts(
+                frame.pose.to_isometry(),
+                frame.convention,
+                Convention::Flu,
+            ),
+            child: frame.id,
             parent: base_link.clone(),
             stamp: MonotonicTime(0.0),
-            transform: ErasedTransform::from_parts(pose.to_isometry(), convention, Convention::Flu),
         })
         .collect()
 }
@@ -358,14 +360,11 @@ mod tests {
         let agent = AgentId::new("car");
         let gps = SensorPublishChannel::new::<GpsPosition>(
             "gps",
-            "gps_pro",
+            "gps",
             FrameId::agent(agent.clone(), "gps"),
         );
-        let mag = SensorPublishChannel::new::<MagneticField>(
-            "mag",
-            "mag_basic",
-            FrameId::agent(agent, "mag"),
-        );
+        let mag =
+            SensorPublishChannel::new::<MagneticField>("mag", "mag", FrameId::agent(agent, "mag"));
         let sensors = vec![gps.description().clone(), mag.description().clone()];
 
         let caps = build_host_body_capabilities(sensors.clone(), &ActuationModel::default());

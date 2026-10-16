@@ -47,11 +47,12 @@ pub struct SensorRng(pub ChaCha8Rng);
 impl SensorRng {
     /// Derives a sensor's stream from the run's master seed and its name.
     ///
-    /// `sensor_name` must be the sensor's **full entity name** — the
-    /// agent-qualified path, not the config map key on its own. A map key is
-    /// unique only within one agent, so keying on it would hand every agent's
-    /// GPS the same stream, and a fleet's worth of receivers would report
-    /// identical noise.
+    /// `sensor_name` must be the sensor's **agent-qualified path**,
+    /// `<agent>/<fit key>` with the agent's identity (`AgentIdComponent`),
+    /// never its cosmetic `Name` label — not the config map key on its own. A
+    /// map key is unique only within one agent, so keying on it would hand
+    /// every agent's GPS the same stream, and a fleet's worth of receivers
+    /// would report identical noise.
     ///
     /// For the same reason the IMU's two children pass their own distinct paths
     /// rather than the shared IMU entry's: an accelerometer and a gyroscope

@@ -7,7 +7,9 @@
 
 use super::pose::Pose;
 
+use helios_core::prelude::AgentId;
 use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 
 use figment::value::Value;
 use serde::Deserialize;
@@ -47,18 +49,17 @@ impl SensorInstallationConfig {
         self.channels.get(field).map(String::as_str)
     }
 
-    /// The tf-tree frame mounts this unit contributes: for each bus channel it
-    /// publishes, the `(channel, pose, convention)` of that sensor frame
-    /// relative to `base_link`. The pose and convention are the same values the
-    /// sensor spawners stamp onto the truth tf tree, so seeding the estimated
-    /// buffer from here cannot fork a mount between the two trees. An IMU
-    /// yields two mounts (accelerometer and gyroscope share one pose but
-    /// publish on separate channels); every other sensor yields one.
-    pub fn frame_mounts(&self) -> Vec<(String, Pose, Convention)> {
-        self.channels
-            .values()
-            .map(|channel| (channel.clone(), self.transform, self.device.convention()))
-            .collect()
+    /// The frame this unit contributes to `agent`'s body, where `key` is its
+    /// table key in the sensor fit: one frame per installation, named by the
+    /// key, whatever channels the unit publishes on. The sensor spawners stamp
+    /// it on the truth tree and as each channel's mount, and the estimated tf
+    /// buffer is seeded from it, so the two trees cannot fork a mount.
+    pub fn frame(&self, agent: &AgentId, key: &str) -> InstallationFrame {
+        InstallationFrame {
+            id: FrameId::agent(agent.clone(), key),
+            pose: self.transform,
+            convention: self.device.convention(),
+        }
     }
 }
 
@@ -125,6 +126,20 @@ struct SensorInstallationToml {
     transform: Pose,
     #[serde(flatten)]
     channel_fields: BTreeMap<String, Value>,
+}
+
+/// One installation's frame on its body: its identity, its pose relative to
+/// `base_link`, and the frame's axis convention.
+///
+/// Always a child of `base_link`: the spawners attach the frame's entity to
+/// the agent's root, the IMU's lever arm is the pose's translation, and the
+/// static seed names `base_link` as parent. A fit naming another parent needs
+/// all three to follow it, or the truth and estimated trees fork.
+#[derive(Debug, Clone)]
+pub struct InstallationFrame {
+    pub id: FrameId,
+    pub pose: Pose,
+    pub convention: Convention,
 }
 
 /// A sensor device: the properties every unit of one model shares. Where a
@@ -305,14 +320,11 @@ impl LidarConfig {
 
 #[cfg(test)]
 mod tests {
-    //! `frame_mounts` is the single source of the `(channel → base_link → sensor)`
-    //! mounts that seed the estimated tf buffer (`brain_bridge::spawn::
-    //! build_static_seeds`). The leaf of each mount's `FrameId::agent(agent,
-    //! channel)` is this channel string, which is *also* what the assembler wires
-    //! as the estimator's aiding-input frame — so if `frame_mounts` surfaces the
-    //! wrong channel, or drops one, the sensor's frame silently fails to resolve
-    //! and the filter runs unaided. These assert the channel/convention contract
-    //! that keeps those two sites from forking.
+    //! `frame` is the single source of an installation's frame: the spawners
+    //! stamp it on the truth tree and as every channel's mount, and the
+    //! estimated tf buffer is seeded from it (`brain_bridge::spawn::
+    //! build_static_seeds`). These pin that it is named by the installation,
+    //! never by a channel, and carries the installation's pose.
     //!
     //! The channel-check tests parse TOML, since the check runs as part of
     //! deserializing an installation.
@@ -353,14 +365,15 @@ mod tests {
             .map_err(|e| e.to_string())
     }
 
-    /// An IMU is one installation but two frames: accelerometer and gyroscope
-    /// share a pose yet publish on separate channels, so each must surface as
-    /// its own mount keyed by its own channel. This is the leaf-granularity
-    /// decision the estimated seed and the assembler both depend on — collapse
-    /// it to one mount, or key it off the wrong string, and one of the two
-    /// aiding inputs silently resolves to no frame.
+    fn agent() -> AgentId {
+        AgentId::new("car")
+    }
+
+    /// An IMU publishes on two channels but is one device in one place: its
+    /// frame is named by its installation, not by either channel, so the
+    /// accelerometer and gyroscope share one mount.
     #[test]
-    fn imu_yields_one_mount_per_channel() {
+    fn an_imu_is_one_frame_named_by_its_installation() {
         let imu = installed(
             SensorDeviceConfig::Imu(ImuConfig {
                 rate: 100.0,
@@ -375,59 +388,29 @@ mod tests {
             ],
         );
 
-        let mounts = imu.frame_mounts();
+        let frame = imu.frame(&agent(), "imu");
 
-        assert_eq!(mounts.len(), 2);
-        let channels: Vec<&str> = mounts.iter().map(|(c, _, _)| c.as_str()).collect();
-        assert!(channels.contains(&"body.accel"));
-        assert!(channels.contains(&"body.gyro"));
-        // Both share the IMU's single pose and are body-frame (FLU).
-        for (_, pose, convention) in &mounts {
-            assert_eq!(pose.translation, mount_pose().translation);
-            assert_eq!(*convention, Convention::Flu);
-        }
+        assert_eq!(frame.id, FrameId::agent(agent(), "imu"));
+        assert_eq!(frame.convention, Convention::Flu);
     }
 
-    /// A GPS is one frame on one channel; the mount carries its channel verbatim
-    /// and the sensor's own convention.
+    /// The frame carries the installation's pose.
     #[test]
-    fn gps_yields_a_single_mount_on_its_channel() {
+    fn the_frame_is_placed_at_the_installation_pose() {
         let gps = installed(
             SensorDeviceConfig::Gps(GpsConfig {
                 rate: 10.0,
                 bias: [0.0; 3],
                 noise_stddev: [0.0; 3],
             }),
-            &[(CHANNEL_FIELD, "gps")],
+            &[(CHANNEL_FIELD, "sensor.gps.primary")],
         );
 
-        let mounts = gps.frame_mounts();
+        let frame = gps.frame(&agent(), "gps");
 
-        assert_eq!(mounts.len(), 1);
-        assert_eq!(mounts[0].0, "gps");
-        assert_eq!(mounts[0].1.translation, mount_pose().translation);
-        assert_eq!(mounts[0].2, Convention::Flu);
-    }
-
-    /// A magnetometer follows the same single-mount shape as the GPS — this pins
-    /// the second single-channel sensor so the one-mount path is not tied to one
-    /// variant's quirks.
-    #[test]
-    fn magnetometer_yields_a_single_mount_on_its_channel() {
-        let mag = installed(
-            SensorDeviceConfig::Magnetometer(MagnetometerConfig {
-                rate: 50.0,
-                bias: [0.0; 3],
-                noise_stddev: [0.0; 3],
-            }),
-            &[(CHANNEL_FIELD, "mag")],
-        );
-
-        let mounts = mag.frame_mounts();
-
-        assert_eq!(mounts.len(), 1);
-        assert_eq!(mounts[0].0, "mag");
-        assert_eq!(mounts[0].2, Convention::Flu);
+        assert_eq!(frame.id, FrameId::agent(agent(), "gps"));
+        assert_eq!(frame.pose.translation, mount_pose().translation);
+        assert_eq!(frame.pose.rotation, mount_pose().rotation);
     }
 
     /// An IMU publishes two quantities, so an installation naming only one of

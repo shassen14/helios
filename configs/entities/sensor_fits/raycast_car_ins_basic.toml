@@ -4,23 +4,24 @@
 # is mounted in the car's base_link (FLU: Forward, Left, Up), and the
 # channel(s) it publishes on.
 #
-# The table key names the sensor and seeds its noise (`<agent>/<key>`).
+# The table key names the sensor and its frame (`agent.<agent>.<key>`, one
+# level, shared by all its channels) and seeds its noise (`<agent>/<key>`).
 
 # The IMU board sits ahead of and above base_link, aligned with the car: the
 # offset alone adds lever-arm terms while the car turns. The estimator moves
 # its readings to base_link.
-[imu_basic]
+[imu]
 device = { from = "entities.sensors.imu_basic" }
 transform = { translation = [0.3, 0.0, 0.15], rotation = [0.0, 0.0, 0.0] }
 accel_channel = "sensor.imu.accel"
 gyro_channel = "sensor.imu.gyro"
 
-[gps_basic]
+[gps]
 device = { from = "entities.sensors.gps_basic" }
 transform = { translation = [1.0, -0.5, 0.0], rotation = [0, 0, 0] }
 channel = "sensor.gps.primary"
 
-[magnetometer_basic]
+[magnetometer]
 device = { from = "entities.sensors.magnetometer_basic" }
 transform = { translation = [-1.5, 1.0, 0.0], rotation = [90.0, 0.0, 90.0] }
 channel = "sensor.mag.body"

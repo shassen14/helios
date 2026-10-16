@@ -1,6 +1,7 @@
 //! This module handles loading, resolving, and validating all simulation
 //! configuration from disk, including the prefab catalog system.
 
+mod body_frames;
 mod catalog;
 mod resolver;
 mod world_layout;
@@ -43,20 +44,32 @@ impl Plugin for ConfigPlugin {
 }
 
 /// Takes one raw agent value all the way to a typed [`AgentConfig`], resolving
-/// its `from` references and then checking the result against the schema.
+/// its `from` references, checking the result against the schema, and then
+/// checking its body's frame names.
 ///
-/// The two failures are labelled distinctly because they send the reader to
-/// different files. A resolution failure means a `from` reference did not land
+/// The three failures are labelled distinctly because they send the reader to
+/// different places. A resolution failure means a `from` reference did not land
 /// — the referenced prefab is missing or misspelled. A deserialization failure
 /// means the reference resolved fine but the fields it produced do not match
 /// what `AgentConfig` expects, and serde's message names the offending field
-/// and the valid alternatives.
+/// and the valid alternatives. A body-frame failure names the topology mount or
+/// sensor-fit key whose name is malformed, reserved, or taken.
 fn resolve_agent(agent_value: &Value, catalog: &PrefabCatalog) -> Result<AgentConfig, String> {
     let resolved_value = resolver::resolve_agent_value(agent_value, catalog)
         .map_err(|e| format!("failed to resolve: {}", e))?;
 
-    Value::deserialize::<AgentConfig>(&resolved_value)
-        .map_err(|e| format!("failed to deserialize: {}", e))
+    let agent = Value::deserialize::<AgentConfig>(&resolved_value)
+        .map_err(|e| format!("failed to deserialize: {}", e))?;
+
+    let topology_mounts = agent.vehicle.topology.mounts().iter();
+    let errors = body_frames::check_body_frames(
+        topology_mounts.map(|mount| mount.name.as_str()),
+        agent.sensors.keys().map(String::as_str),
+    );
+    if !errors.is_empty() {
+        return Err(format!("bad body frame names: {}", errors.join("; ")));
+    }
+    Ok(agent)
 }
 
 fn load_and_resolve_scenario(mut commands: Commands, cli: Res<Cli>, catalog: Res<PrefabCatalog>) {
@@ -285,6 +298,19 @@ mod tests {
         assert!(
             error.starts_with("failed to resolve"),
             "a missing prefab should fail resolution, not deserialization, got: {error}"
+        );
+    }
+
+    #[test]
+    fn a_sensor_named_like_a_spine_frame_is_rejected() {
+        let spine = MINIMAL_AGENT.replace("[sensors.gps", "[sensors.base_link");
+
+        let error = resolve_agent(&agent_value(&spine), &empty_catalog())
+            .expect_err("a sensor named base_link should be rejected");
+
+        assert!(
+            error.starts_with("bad body frame names") && error.contains("base_link"),
+            "a reserved name should fail the frame check and name the key, got: {error}"
         );
     }
 

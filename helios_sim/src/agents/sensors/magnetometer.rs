@@ -16,8 +16,6 @@ use crate::prelude::*;
 
 use helios_core::interchange::measurement::sensor::MagneticField;
 use helios_core::sensors::magnetometer::MagnetometerModel;
-use helios_core::spatial::transforms::Convention;
-use helios_core::spatial::FrameId;
 
 use nalgebra::{Isometry3, Vector3};
 use rand::RngCore;
@@ -124,23 +122,23 @@ fn spawn_magnetometer_sensors(
                     continue;
                 };
 
-                let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
+                let sensor_label = format!("{}/{}", agent_id.0, sensor_name);
                 let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
 
-                let frame = FrameId::agent(agent_id.0.clone(), channel.to_string());
+                let frame = installation.frame(&agent_id.0, sensor_name);
                 let sensor_entity = commands
                     .spawn((
                         Name::new(sensor_label),
                         SensorPublishChannel::new::<<Magnetometer as StateSensor>::Payload>(
                             channel,
                             sensor_name,
-                            frame.clone(),
+                            frame.id.clone(),
                         ),
                         Magnetometer::new(mag_model),
                         SensorTimer::from_rate(mag_config.rate),
                         sensor_rng,
-                        TrackedFrame::new(frame, Convention::Flu),
-                        installation.transform.to_bevy_local_transform(),
+                        TrackedFrame::new(frame.id, frame.convention),
+                        frame.pose.to_bevy_local_transform(),
                     ))
                     .id();
 

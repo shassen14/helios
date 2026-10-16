@@ -13,8 +13,6 @@ use helios_core::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel};
 use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::quantities::FreeVector;
-use helios_core::spatial::transforms::Convention;
-use helios_core::spatial::FrameId;
 
 use avian3d::prelude::{ColliderOf, SpatialQuery, SpatialQueryFilter};
 use std::time::Duration;
@@ -124,11 +122,11 @@ fn spawn_raycasting_sensors(
                 };
                 let core_model: Box<dyn RaycastingSensorModel> = Box::new(model);
 
-                let frame = FrameId::agent(agent_id.0.clone(), channel.to_string());
+                let frame = installation.frame(&agent_id.0, sensor_name);
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
-                let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
+                let sensor_label = format!("{}/{}", agent_id.0, sensor_name);
                 let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
 
                 sensor_entity_commands.insert((
@@ -136,7 +134,7 @@ fn spawn_raycasting_sensors(
                     SensorPublishChannel::new::<RangeField<Flu>>(
                         channel,
                         sensor_name,
-                        frame.clone(),
+                        frame.id.clone(),
                     ),
                     RaycastingSensor {
                         timer: Timer::new(
@@ -146,9 +144,9 @@ fn spawn_raycasting_sensors(
                         model: core_model,
                     },
                     sensor_rng,
-                    TrackedFrame::new(frame, Convention::Flu),
+                    TrackedFrame::new(frame.id, frame.convention),
                     LastCapturePose::default(),
-                    installation.transform.to_bevy_local_transform(),
+                    frame.pose.to_bevy_local_transform(),
                 ));
 
                 commands.entity(agent_entity).add_child(sensor_entity);
@@ -170,7 +168,6 @@ fn raycasting_sensor_system(
         &mut SensorRng,
         &mut LastCapturePose,
         &SensorPublishChannel,
-        &TrackedFrame,
         &GlobalTransform,
         &ChildOf,
     )>,
@@ -180,15 +177,8 @@ fn raycasting_sensor_system(
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (
-        mut sensor,
-        mut rng,
-        mut capture,
-        sensor_publish_channel,
-        tracked,
-        sensor_transform,
-        parent,
-    ) in &mut sensor_query
+    for (mut sensor, mut rng, mut capture, sensor_publish_channel, sensor_transform, parent) in
+        &mut sensor_query
     {
         sensor.timer.tick(dt);
         if !sensor.timer.just_finished() {
@@ -214,7 +204,7 @@ fn raycasting_sensor_system(
                     "Sensor '{}' is mounted inside its own agent's body (Bevy world position {:?}): \
                      every ray hits the body at zero range, so it will report almost no \
                      returns. Check its mount `transform` if this is not intended.",
-                    tracked.id, sensor_origin,
+                    sensor_publish_channel.mount(), sensor_origin,
                 );
             }
         }
@@ -255,7 +245,7 @@ fn raycasting_sensor_system(
         let RaycastingOutput::RangeField(field) = output;
 
         let reading = SensorReading {
-            sensor: tracked.id.clone(),
+            sensor: sensor_publish_channel.mount().clone(),
             timestamp: capture_time,
             data: field,
         };
@@ -282,6 +272,8 @@ mod tests {
     use super::*;
 
     use helios_core::prelude::{AgentId, TfProvider};
+    use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::FrameId;
     use helios_runtime::port::AlgorithmNodePortDescriptor;
     use helios_runtime::port::{PortBus, SensorChannel};
     use helios_runtime::{
@@ -347,6 +339,11 @@ mod tests {
         Duration::from_secs_f64(1.0 / RATE_HZ)
     }
 
+    /// The test lidar's installation frame, named apart from its channel.
+    fn mount() -> FrameId {
+        FrameId::agent(AgentId::new(AGENT), UNIT)
+    }
+
     fn lidar_model() -> Box<dyn RaycastingSensorModel> {
         let geometry = SphericalAngular::from_field_of_view(vec![0.0], TAU, AZIMUTH_BEAMS)
             .expect("a single full-circle ring is a valid layout");
@@ -363,11 +360,7 @@ mod tests {
     /// clock advanced by `advance`. Returns the world and the sensor entity.
     fn world_with_lidar(sensor_pose: GlobalTransform, advance: Duration) -> (World, Entity) {
         let mut world = World::new();
-        let channel = SensorPublishChannel::new::<RangeField<Flu>>(
-            CHANNEL,
-            UNIT,
-            FrameId::agent(AgentId::new(AGENT), CHANNEL),
-        );
+        let channel = SensorPublishChannel::new::<RangeField<Flu>>(CHANNEL, UNIT, mount());
 
         let mut time = Time::<()>::default();
         time.advance_by(advance);
@@ -393,10 +386,7 @@ mod tests {
                 SensorRng::from_sensor(SEED, CHANNEL),
                 LastCapturePose::default(),
                 channel,
-                TrackedFrame::new(
-                    FrameId::agent(AgentId::new(AGENT), CHANNEL.to_string()),
-                    Convention::Flu,
-                ),
+                TrackedFrame::new(mount(), Convention::Flu),
                 sensor_pose,
                 ChildOf(agent),
             ))
@@ -432,6 +422,21 @@ mod tests {
 
         assert_eq!(capture.timestamp, reading.timestamp);
         assert_eq!(capture.pose, sensor_pose);
+    }
+
+    /// The header names the channel's mount, the installation's frame; the
+    /// occupancy grid looks the sensor up in the tf tree by it.
+    #[test]
+    fn a_scan_is_stamped_with_its_channels_mount() {
+        let (mut world, _) = world_with_lidar(GlobalTransform::IDENTITY, period());
+
+        world
+            .run_system_once(raycasting_sensor_system)
+            .expect("the system runs");
+
+        let batch = agent_bus_field(&mut world).expect("the scan was published");
+        let reading = batch.value.last().expect("one reading in the batch");
+        assert_eq!(reading.sensor, mount());
     }
 
     /// The component holds the *newest* capture: a second scan replaces the
