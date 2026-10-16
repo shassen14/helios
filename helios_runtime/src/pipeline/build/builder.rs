@@ -217,27 +217,10 @@ impl PipelineBuilder {
             return Err(errors);
         }
 
-        // The bus holds the channels nodes use. A channel the body offers
-        // but no node reads has no slot, so the host's write to it returns
-        // `ChannelError::UnknownChannel`: the body declares what it offers,
-        // the bus what the graph uses. Every channel a node reads has a
-        // description, since the wiring check found each a supplier.
-        let used: HashSet<&ChannelKey> = levels
-            .iter()
-            .flatten()
-            .flat_map(|(_, node)| {
-                let descriptor = node.port_descriptor();
-                descriptor
-                    .required_inputs()
-                    .chain(descriptor.optional_inputs())
-                    .chain(descriptor.outputs())
-            })
-            .collect();
-        let bus = PortBus::new(
-            descriptions
-                .iter()
-                .filter(|description| used.contains(description.key())),
-        );
+        // The bus holds every channel a writer declares, read or not, so a
+        // host's write to a channel its body declared always lands and a
+        // write to any other channel is `ChannelError::UnknownChannel`.
+        let bus = PortBus::new(&descriptions);
 
         let levels = construct_levels(levels, &descriptions)?;
 

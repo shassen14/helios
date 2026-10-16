@@ -8,6 +8,7 @@ pub mod tick;
 #[cfg(test)]
 mod fixtures;
 
+pub use finalize::HostFacts;
 pub use tick::TickAction;
 
 use crate::{

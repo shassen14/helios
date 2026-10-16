@@ -138,9 +138,9 @@ impl std::fmt::Display for ChannelKey {
 }
 
 /// Why the bus refused a write.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ChannelError {
-    /// No node reads or writes the channel, so it has no slot.
+    /// No writer declares the channel, so it has no slot.
     UnknownChannel,
     /// The value written is not of the key's payload type. Stored, it would
     /// read back as nothing for every reader of the key.
@@ -174,7 +174,7 @@ pub enum ChannelError {
 impl std::fmt::Display for ChannelError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ChannelError::UnknownChannel => write!(f, "no node reads or writes the channel"),
+            ChannelError::UnknownChannel => write!(f, "no writer declares the channel"),
             ChannelError::TypeMismatch {
                 key_type,
                 written_type,

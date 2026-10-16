@@ -56,7 +56,7 @@ pub use metrics::{MetricId, RunMetrics};
 pub use report::aggregate::AggregateReport;
 pub use report::{Report, ReportStatus};
 pub use run::{Run, RunLoadError};
-pub use runner::{Runner, TickAction};
+pub use runner::{HostFacts, Runner, TickAction};
 
 // features
 #[cfg(feature = "sim")]

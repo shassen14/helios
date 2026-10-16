@@ -8,10 +8,12 @@ use std::sync::{
     Arc, Mutex,
 };
 
+use nalgebra::Isometry3;
+
 use helios_core::prelude::{AgentId, MonotonicTime, SensorReading};
 use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
-use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::transforms::{Convention, ErasedTransform};
 use helios_runtime::{
     channels::tf::tf,
     channels::truth_tf,
@@ -43,6 +45,16 @@ fn ikey_named<T: 'static>(name: &'static str) -> ChannelKey {
 /// Oracle-channel sugar — only mocks/viz/tests may mint these.
 fn okey_named<T: 'static>(name: &'static str) -> ChannelKey {
     ChannelKey::oracle::<T>(name)
+}
+
+/// `value` as a healthy write stamped at time zero.
+fn stamped_at_zero<T>(value: T) -> Stamped<T> {
+    Stamped {
+        value,
+        timestamp: MonotonicTime(0.0),
+        health: Health::Ok,
+        producer: 0,
+    }
 }
 
 // =========================================================================
@@ -1395,10 +1407,10 @@ fn tick_preserves_externally_written_values() {
     assert_eq!(after.value, 99);
 }
 
-/// The bus holds the channels nodes use: a channel the body offers but no
-/// node reads has no slot.
+/// The bus holds every channel a writer declares: a channel the body offers
+/// but no node reads still has a slot, and a write to it reads back.
 #[test]
-fn a_body_channel_no_node_reads_has_no_slot() {
+fn a_body_channel_no_node_reads_has_a_slot() {
     let read = ikey_named::<u32>("imu");
     let unread = ikey_named::<u32>("battery");
     let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
@@ -1413,16 +1425,83 @@ fn a_body_channel_no_node_reads_has_no_slot() {
         .build()
         .expect("build should succeed");
 
-    let stamped = |value: u32| Stamped {
-        value,
-        timestamp: MonotonicTime(0.0),
-        health: Health::Ok,
-        producer: 0,
-    };
-    assert!(pipeline.bus().write(read, stamped(1)).is_ok());
+    assert!(pipeline.bus().write(read, stamped_at_zero(1_u32)).is_ok());
+    assert!(pipeline
+        .bus()
+        .write(unread.clone(), stamped_at_zero(2_u32))
+        .is_ok());
+    let stored = pipeline
+        .bus()
+        .read::<u32>(unread)
+        .expect("the unread channel's write should land");
+    assert_eq!(stored.value, 2);
+}
+
+/// A channel no writer declares has no slot, so a write to it is refused.
+#[test]
+fn a_channel_no_writer_declares_has_no_slot() {
+    let read = ikey_named::<u32>("imu");
+    let undeclared = ikey_named::<u32>("battery");
+    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(Box::new(SinkNode::new("consumer", read.clone())))
+        .with_body_capabilities(BodyCapabilities {
+            publishes: vec![BodyChannel::new(read, BODY_UNIT, Provenance::Exact)],
+            ..Default::default()
+        })
+        .build()
+        .expect("build should succeed");
+
     assert!(matches!(
-        pipeline.bus().write(unread, stamped(2)),
+        pipeline.bus().write(undeclared, stamped_at_zero(2_u32)),
         Err(ChannelError::UnknownChannel)
+    ));
+}
+
+/// A keyed body channel no node reads has a slot for each instance the body
+/// declares: a write to a declared instance lands, and a write to any other
+/// instance is refused.
+#[test]
+fn an_unread_keyed_body_channel_has_a_slot_per_declared_instance() {
+    let agent = AgentId::new(AGENT);
+    let read = ikey_named::<u32>("imu");
+    let base_link = FrameId::base_link(agent.clone());
+    let pipeline = PipelineBuilder::new(agent)
+        .add_node(Box::new(SinkNode::new("consumer", read.clone())))
+        .with_body_capabilities(BodyCapabilities {
+            publishes: vec![
+                BodyChannel::new(read, BODY_UNIT, Provenance::Exact),
+                BodyChannel::new(truth_tf(), BODY_UNIT, Provenance::Exact)
+                    .with_instances::<StampedTransform>([base_link.clone()]),
+            ],
+            ..Default::default()
+        })
+        .build()
+        .expect("build should succeed");
+    let pose_of = |child: FrameId| StampedTransform {
+        parent: FrameId::global("datum"),
+        child,
+        stamp: MonotonicTime(0.0),
+        transform: ErasedTransform::from_parts(
+            Isometry3::identity(),
+            Convention::Flu,
+            Convention::Enu,
+        ),
+    };
+
+    assert!(pipeline
+        .bus()
+        .write_keyed(truth_tf(), stamped_at_zero(pose_of(base_link.clone())))
+        .is_ok());
+    let instance = InstanceKey::of::<StampedTransform>(&base_link);
+    assert!(pipeline
+        .bus()
+        .read_instance::<StampedTransform>(truth_tf(), &instance)
+        .is_some());
+    assert!(matches!(
+        pipeline
+            .bus()
+            .write_keyed(truth_tf(), stamped_at_zero(pose_of(bot_frame("imu")))),
+        Err(ChannelError::UndeclaredInstance { .. })
     ));
 }
 

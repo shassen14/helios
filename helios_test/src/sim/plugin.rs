@@ -1,10 +1,10 @@
 use super::{ActiveRunner, RunOutcome, RunVerdict, WallClockStart};
 use crate::run::termination::TerminationReason;
 use crate::sim::{ReportOutputPath, RunMetadata};
-use crate::{ObservationCollector, ReportStatus, Runner, TickAction};
+use crate::{HostFacts, ObservationCollector, ReportStatus, Runner, TickAction};
 
 use helios_core::prelude::{AgentId, MonotonicTime};
-use helios_runtime::AutonomyPipeline;
+use helios_runtime::{port::RefusedWrites, AutonomyPipeline};
 use helios_sim::brain_bridge::{
     components::{AgentIdComponent, AutonomyPipelineComponent, PipelineBuildFailed},
     ObservationSinkAppExt, RegisteredSink,
@@ -153,7 +153,8 @@ fn tick_system(
 
 /// System 3 — runs once at `OnEnter(AppState::Flushing)`. Builds the final
 /// `Report` (terminal assertions judged now; continuous ones already folded
-/// across ticks into their latches), writes it to disk and the console, records
+/// across ticks into their latches, every agent's refused writes read from
+/// its pipeline's bus), writes it to disk and the console, records
 /// the verdict, and ends the Bevy loop. Takes the runner as `Res` because
 /// `finalize` only reads.
 // Bevy systems declare their dependencies as parameters, so the count exceeds
@@ -171,6 +172,7 @@ fn finalize_system(
     outcome: Res<RunOutcome>,
     out_path: Res<ReportOutputPath>,
     metadata: Res<RunMetadata>,
+    pipelines: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
     mut verdict: ResMut<RunVerdict>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -189,14 +191,30 @@ fn finalize_system(
     // misleading stand-in like the time budget.
     let reason = outcome.reason.clone().unwrap_or(TerminationReason::Aborted);
 
-    let report = runner.0.finalize(
-        now,
-        wall_secs,
+    // Sorted by agent, since query order is not stable across runs and the
+    // report must be.
+    let mut refused_writes: Vec<(AgentId, RefusedWrites)> = pipelines
+        .iter()
+        .flat_map(|(agent, pipeline)| {
+            pipeline
+                .0
+                .bus()
+                .refused_writes()
+                .into_iter()
+                .map(|refused| (agent.0.clone(), refused))
+        })
+        .collect();
+    refused_writes.sort_by_cached_key(|(agent, _)| agent.to_string());
+
+    let host = HostFacts {
+        sim_now: now,
+        wall_duration_secs: wall_secs,
         run_name,
-        reason,
-        &collector.0,
-        metadata.seed,
-    );
+        terminated_by_reason: reason,
+        master_seed: metadata.seed,
+        refused_writes,
+    };
+    let report = runner.0.finalize(host, &collector.0);
 
     // Two surfaces: machine-readable TOML for CI, human summary for the console.
     // A failed write is logged, not panicked — runtime paths never unwrap.

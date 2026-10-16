@@ -17,6 +17,7 @@ use helios_runtime::{BodyChannel, Health, Provenance, Stamped, HOST_PRODUCER_ID}
 
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
+use std::collections::HashSet;
 
 /// The unit that publishes ground truth: the simulator's truth rig, a perfect
 /// sensor every simulated body carries.
@@ -100,13 +101,9 @@ pub fn truth_body_channels(agent: &AgentId) -> [BodyChannel; 2] {
 /// the `now` the host passes into `pipeline.tick` in the autonomy tick — so
 /// `read_fresh(max_age)` comparisons across systems work without skew.
 ///
-/// A truth channel no node reads has no slot, so its write returns
-/// `Err(UnknownChannel)`. For truth that is expected, not a bug: nothing
-/// reads it until a consumer, such as a mock-oracle estimator, is wired into
-/// the pipeline. So instead of the crate-wide "warn loudly" rule for a
-/// dropped write, this system traces the miss once (naming the channel), then
-/// stays quiet. Any other refusal (a wrong type, an undeclared instance) is a
-/// bug, so it warns, once.
+/// The body declares both channels, so each write has a slot whether or not
+/// a node reads it. A refused write (an undeclared channel or instance, a
+/// wrong type) is a host bug, so it warns, once per agent and channel.
 pub fn publish_truth_channels_system(
     query: Query<(
         &GroundTruthState,
@@ -117,17 +114,15 @@ pub fn publish_truth_channels_system(
     time: Res<Time>,
     mut has_logged_first_tick: Local<bool>,
     mut has_warned_no_datum: Local<bool>,
-    mut has_warned_no_consumer: Local<bool>,
-    mut has_warned_refused: Local<bool>,
+    mut warned_refused: Local<HashSet<(AgentId, ChannelKey)>>,
 ) {
     let now = MonotonicTime(time.elapsed_secs_f64());
 
     // One-shot verification trace: fires exactly once the first time this
     // system actually executes. Used to confirm the schedule wiring is
     // correct (system is in StateSync, run_if(Running) is satisfied) — a
-    // silent run cannot otherwise be observed from outside, because the
-    // bus writes below land on slots that don't exist yet until a
-    // consumer is built. Cheap to leave in; remove if it ever becomes
+    // silent run cannot otherwise be observed from outside unless a node
+    // reads the truth channels. Cheap to leave in; remove if it ever becomes
     // noise. Enable with RUST_LOG=helios_sim::oracle=trace.
     if !*has_logged_first_tick {
         tracing::trace!(
@@ -151,17 +146,14 @@ pub fn publish_truth_channels_system(
     for (ground_truth, agent, autonomy_pipeline) in query {
         let (pose, twist) = truth_messages(ground_truth, &agent.0, datum, now);
 
+        // Each key is named once, so the warning names the key written.
         let bus = autonomy_pipeline.0.bus();
-        let pose_result = bus.write_keyed(truth_tf(), stamped_now(pose, now));
-        let twist_result = bus.write_keyed(truth_twist(), stamped_now(twist, now));
+        let (pose_key, twist_key) = (truth_tf(), truth_twist());
+        let pose_result = bus.write_keyed(pose_key.clone(), stamped_now(pose, now));
+        let twist_result = bus.write_keyed(twist_key.clone(), stamped_now(twist, now));
 
-        for (key, result) in [(truth_tf(), pose_result), (truth_twist(), twist_result)] {
-            warn_dropped_truth(
-                &key,
-                result,
-                &mut has_warned_no_consumer,
-                &mut has_warned_refused,
-            );
+        for (key, result) in [(pose_key, pose_result), (twist_key, twist_result)] {
+            warn_dropped_truth(&agent.0, key, result, &mut warned_refused);
         }
     }
 }
@@ -207,33 +199,22 @@ fn stamped_now<T>(value: T, now: MonotonicTime) -> Stamped<T> {
     }
 }
 
-/// Traces a write to a truth channel no node reads once, and warns about any
-/// other refusal once.
+/// Warns about a refused truth write, once per agent and channel.
 fn warn_dropped_truth(
-    key: &ChannelKey,
+    agent: &AgentId,
+    key: ChannelKey,
     result: Result<(), ChannelError>,
-    has_warned_no_consumer: &mut bool,
-    has_warned_refused: &mut bool,
+    warned_refused: &mut HashSet<(AgentId, ChannelKey)>,
 ) {
-    match result {
-        Ok(()) => {}
-        Err(ChannelError::UnknownChannel) => {
-            if !*has_warned_no_consumer {
-                tracing::trace!(
-                    target: "helios_sim::oracle",
-                    channel = %key,
-                    "truth channel has no consumer; write dropped"
-                );
-                *has_warned_no_consumer = true;
-            }
-        }
-        Err(error) => {
-            if !*has_warned_refused {
-                warn!("Truth channel {key} refused a write ({error}); truth is being dropped.");
-                *has_warned_refused = true;
-            }
-        }
+    let Err(error) = result else {
+        return;
+    };
+    if !warned_refused.insert((agent.clone(), key.clone())) {
+        return;
     }
+    warn!(
+        "Truth channel {key} of agent '{agent}' refused a write ({error}); truth is being dropped."
+    );
 }
 
 #[cfg(test)]

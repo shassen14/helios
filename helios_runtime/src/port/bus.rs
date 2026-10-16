@@ -43,6 +43,7 @@ use crate::{
         description::ChannelDescription,
         keyed::{InstanceKey, Keyed},
         mounted::Mounted,
+        refusals::{RefusalLog, RefusedWrites},
     },
     Stamped,
 };
@@ -126,9 +127,13 @@ impl<T: Any + Send + Sync> ErasedStamped for Stamped<T> {
 /// return `None` for a keyed channel, and warn the first time, since the
 /// caller meant [`read_instance`](Self::read_instance) or
 /// [`read_instances`](Self::read_instances).
+///
+/// Every refused write is counted per channel, with the error the first was
+/// refused with, read back through [`refused_writes`](Self::refused_writes).
 pub struct PortBus {
     slots: HashMap<ChannelKey, Slot>,
     tick_now: AtomicF64,
+    refusals: RefusalLog,
 }
 
 impl PortBus {
@@ -137,10 +142,9 @@ impl PortBus {
     /// shares of a keyed channel, make one slot holding every instance they
     /// declare; a single-value channel's slot keeps the mounts they declare.
     ///
-    /// Which channels get a slot is the caller's choice: the pipeline build
-    /// passes the descriptions of channels some node reads or writes, so a
-    /// host write to a channel the body offers but no node uses is
-    /// [`ChannelError::UnknownChannel`].
+    /// The pipeline build passes every channel a writer declares, so a write
+    /// is [`ChannelError::UnknownChannel`] only when no writer declares the
+    /// channel.
     pub(crate) fn new<'a>(descriptions: impl IntoIterator<Item = &'a ChannelDescription>) -> Self {
         let mut slots: HashMap<ChannelKey, Slot> = HashMap::new();
         for description in descriptions {
@@ -154,6 +158,7 @@ impl PortBus {
         Self {
             slots,
             tick_now: AtomicF64::new(0.0),
+            refusals: RefusalLog::default(),
         }
     }
 
@@ -190,20 +195,9 @@ impl PortBus {
         channel: ChannelKey,
         stamped: Stamped<T>,
     ) -> Result<(), ChannelError> {
-        let slot = self
-            .slots
-            .get(&channel)
-            .ok_or(ChannelError::UnknownChannel)?;
-        let Slot::Single { entry, mounts } = slot else {
-            return Err(ChannelError::KeyedChannel);
-        };
-        if !mounts.is_empty() {
-            return Err(ChannelError::MountedChannel);
-        }
-        check_payload_type::<T>(&channel)?;
-        store(entry, stamped);
-
-        Ok(())
+        let result = self.store_single(&channel, stamped);
+        self.refusals.note(&channel, &result);
+        result
     }
 
     /// Writes `stamped`, whose values each name the frame they were measured
@@ -215,18 +209,9 @@ impl PortBus {
         channel: ChannelKey,
         stamped: Stamped<T>,
     ) -> Result<(), ChannelError> {
-        let slot = self
-            .slots
-            .get(&channel)
-            .ok_or(ChannelError::UnknownChannel)?;
-        let Slot::Single { entry, mounts } = slot else {
-            return Err(ChannelError::KeyedChannel);
-        };
-        check_payload_type::<T>(&channel)?;
-        check_mounts(mounts, &stamped.value)?;
-        store(entry, stamped);
-
-        Ok(())
+        let result = self.store_mounted(&channel, stamped);
+        self.refusals.note(&channel, &result);
+        result
     }
 
     /// Writes `stamped` to the instance of keyed `channel` its value names.
@@ -237,21 +222,9 @@ impl PortBus {
         channel: ChannelKey,
         stamped: Stamped<T>,
     ) -> Result<(), ChannelError> {
-        let slot = self
-            .slots
-            .get(&channel)
-            .ok_or(ChannelError::UnknownChannel)?;
-        let Slot::Keyed { instances, .. } = slot else {
-            return Err(ChannelError::NotKeyed);
-        };
-        check_payload_type::<T>(&channel)?;
-        let instance = InstanceKey::of::<T>(stamped.value.instance());
-        let Some(entry) = instances.get(&instance) else {
-            return Err(ChannelError::UndeclaredInstance { instance });
-        };
-        store(entry, stamped);
-
-        Ok(())
+        let result = self.store_keyed(&channel, stamped);
+        self.refusals.note(&channel, &result);
+        result
     }
 
     pub fn read<T: Any + Send + Sync>(&self, channel: ChannelKey) -> Option<Arc<Stamped<T>>> {
@@ -362,6 +335,12 @@ impl PortBus {
         load(instances.get(instance)?)
     }
 
+    /// Every channel the bus refused a write to since it was built, how many
+    /// times, and why the first time, ordered by channel.
+    pub fn refused_writes(&self) -> Vec<RefusedWrites> {
+        self.refusals.refused_writes()
+    }
+
     pub(crate) fn set_tick_time(&self, now: f64) {
         self.tick_now.store(now, Ordering::Relaxed);
     }
@@ -383,6 +362,73 @@ impl PortBus {
                 (key.clone(), present)
             })
             .collect()
+    }
+
+    /// Stores `stamped` in single-value `channel`, unless the channel takes
+    /// mounted values only.
+    fn store_single<T: Any + Send + Sync>(
+        &self,
+        channel: &ChannelKey,
+        stamped: Stamped<T>,
+    ) -> Result<(), ChannelError> {
+        let slot = self
+            .slots
+            .get(channel)
+            .ok_or(ChannelError::UnknownChannel)?;
+        let Slot::Single { entry, mounts } = slot else {
+            return Err(ChannelError::KeyedChannel);
+        };
+        if !mounts.is_empty() {
+            return Err(ChannelError::MountedChannel);
+        }
+        check_payload_type::<T>(channel)?;
+        store(entry, stamped);
+
+        Ok(())
+    }
+
+    /// Stores `stamped` in single-value `channel` if every value names a frame
+    /// the channel's writers declare.
+    fn store_mounted<T: Mounted>(
+        &self,
+        channel: &ChannelKey,
+        stamped: Stamped<T>,
+    ) -> Result<(), ChannelError> {
+        let slot = self
+            .slots
+            .get(channel)
+            .ok_or(ChannelError::UnknownChannel)?;
+        let Slot::Single { entry, mounts } = slot else {
+            return Err(ChannelError::KeyedChannel);
+        };
+        check_payload_type::<T>(channel)?;
+        check_mounts(mounts, &stamped.value)?;
+        store(entry, stamped);
+
+        Ok(())
+    }
+
+    /// Stores `stamped` in the instance of keyed `channel` its value names.
+    fn store_keyed<T: Keyed>(
+        &self,
+        channel: &ChannelKey,
+        stamped: Stamped<T>,
+    ) -> Result<(), ChannelError> {
+        let slot = self
+            .slots
+            .get(channel)
+            .ok_or(ChannelError::UnknownChannel)?;
+        let Slot::Keyed { instances, .. } = slot else {
+            return Err(ChannelError::NotKeyed);
+        };
+        check_payload_type::<T>(channel)?;
+        let instance = InstanceKey::of::<T>(stamped.value.instance());
+        let Some(entry) = instances.get(&instance) else {
+            return Err(ChannelError::UndeclaredInstance { instance });
+        };
+        store(entry, stamped);
+
+        Ok(())
     }
 }
 
@@ -1131,5 +1177,43 @@ mod tests {
     fn an_empty_batch_passes_the_mount_check() {
         let bus = bus_mounted_at(Some("lidar"));
         bus.write_mounted(scans(), batch(&[])).unwrap();
+    }
+
+    // --- refused writes ---
+
+    /// Each write path counts its refusals against the channel, and an
+    /// accepted write counts nothing.
+    #[test]
+    fn every_write_path_records_its_refusals() {
+        let mut descriptions =
+            vec![ChannelDescription::node(scans(), "deproject").with_mount(Some(frame("lidar")))];
+        descriptions.push(
+            ChannelDescription::node(edges(), "relay").with_instances(vec![instance("base")]),
+        );
+        let bus = PortBus::new(&descriptions);
+
+        bus.write_mounted(scans(), batch(&["lidar"])).unwrap();
+        let _ = bus.write_mounted(scans(), batch(&["radar"]));
+        let _ = bus.write(scans(), batch(&["lidar"]));
+        let _ = bus.write_keyed(edges(), edge("odom", 1.0));
+        let _ = bus.write(ikey::<u32>(), make_stamped(1u32, 0.0));
+
+        let refused = bus.refused_writes();
+        let counted: Vec<(ChannelKey, u64)> = refused
+            .iter()
+            .map(|refused| (refused.channel().clone(), refused.count()))
+            .collect();
+        assert_eq!(counted.len(), 3, "{counted:?}");
+        assert!(counted.contains(&(scans(), 2)));
+        assert!(counted.contains(&(edges(), 1)));
+        assert!(counted.contains(&(ikey::<u32>(), 1)));
+        let scans_first = refused
+            .iter()
+            .find(|refused| refused.channel() == &scans())
+            .map(RefusedWrites::first);
+        assert!(matches!(
+            scans_first,
+            Some(ChannelError::UndeclaredMount { .. })
+        ));
     }
 }

@@ -59,6 +59,7 @@ mod tests {
             Some(42),
             ReportStatus::Failed,
             Vec::new(),
+            Vec::new(),
             12.5,
             0.3,
             TerminatedBy::TimeBudget,
@@ -148,6 +149,26 @@ mod tests {
         assert_eq!(failed["reason"].as_str(), Some("no_samples"));
         assert!(failed.get("actual").is_none());
         assert!(failed.get("failed_at_secs").is_none());
+    }
+
+    #[test]
+    fn refused_writes_are_listed_only_when_there_are_some() {
+        let clean = sample_report();
+        let path = write_to_temp(&clean);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let value: toml::Value = toml::from_str(&text).unwrap();
+        assert!(value.get("refused_writes").is_none());
+
+        let mut refused = sample_report();
+        refused.refused_writes = vec!["agent 'car': truth.tf refused 3 write(s)".to_string()];
+        let path = write_to_temp(&refused);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let value: toml::Value = toml::from_str(&text).unwrap();
+        let lines = value["refused_writes"].as_array().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].as_str(), Some("agent 'car': truth.tf refused 3 write(s)"));
     }
 
     #[test]

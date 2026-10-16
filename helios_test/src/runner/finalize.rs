@@ -11,7 +11,8 @@ use crate::{
     },
     run::termination::TerminationReason,
 };
-use helios_core::prelude::MonotonicTime;
+use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_runtime::port::RefusedWrites;
 
 impl Runner {
     /// Build the run's [`Report`] once the host stops ticking. Continuous
@@ -30,24 +31,26 @@ impl Runner {
     /// run stopped. In a run that covered its windows, an assertion that never
     /// saw a sample fails, since that is how a dropped signal looks.
     ///
-    /// The run is `Passed` only if every assertion passed and setup didn't
-    /// fail. An early stop is always a failure or an abort, so an `Unjudged`
-    /// assertion only ever sits in a run that failed for another reason.
+    /// The run is `Passed` only if every assertion passed, setup didn't fail
+    /// and no agent's bus refused a write ([`HostFacts::refused_writes`]):
+    /// values the wiring dropped leave the assertions judging another run than
+    /// the one configured. An early stop is always a failure or an abort, so an
+    /// `Unjudged` assertion only ever sits in a run that failed for another
+    /// reason.
     ///
     /// Takes `&self`, not `&mut`: the latches are only read, nothing is
-    /// recorded. `run_name`, `wall_duration_secs`, the stop `reason`, and
-    /// `master_seed` are supplied by the host — the runner reads no wall clock,
-    /// stores no name, and does not own the seed. `master_seed` is `None` for an
-    /// unseeded run, whose real seed is chosen inside the sim and unknown here.
-    pub fn finalize(
-        &self,
-        sim_now: MonotonicTime,
-        wall_duration_secs: f64,
-        run_name: String,
-        terminated_by_reason: TerminationReason,
-        collector: &ObservationCollector,
-        master_seed: Option<u64>,
-    ) -> Report {
+    /// recorded. Everything else the report needs comes from the host as
+    /// [`HostFacts`].
+    pub fn finalize(&self, host: HostFacts, collector: &ObservationCollector) -> Report {
+        let HostFacts {
+            sim_now,
+            wall_duration_secs,
+            run_name,
+            terminated_by_reason,
+            master_seed,
+            refused_writes,
+        } = host;
+
         // A host that finalizes without having set the run up, or with
         // another run's collector, fails it here as `tick` would have.
         let mut setup_failures = self.setup_failures.clone();
@@ -96,10 +99,15 @@ impl Runner {
             ));
         }
 
-        // A setup failure outranks the assertion tally: a run whose scene never
-        // became fit to test cannot pass, however few assertions were left to
-        // judge it.
-        let run_status = if all_passed && setup_failures.is_empty() {
+        let refused_writes: Vec<String> = refused_writes
+            .into_iter()
+            .map(|(agent, refused)| format!("agent '{agent}': {refused}"))
+            .collect();
+
+        // A setup failure or a refused write outranks the assertion tally: a
+        // run whose scene never became fit to test, or whose wiring dropped
+        // values, cannot pass however its assertions came out.
+        let run_status = if all_passed && setup_failures.is_empty() && refused_writes.is_empty() {
             ReportStatus::Passed
         } else {
             ReportStatus::Failed
@@ -119,12 +127,31 @@ impl Runner {
             master_seed,
             run_status,
             setup_failures,
+            refused_writes,
             simulated_duration_secs,
             wall_duration_secs,
             TerminatedBy::from(&terminated_by_reason),
             entries,
         )
     }
+}
+
+/// What a finished run's report needs that only the host knows: the runner
+/// reads no clock, stores no name, does not own the seed and holds no
+/// pipeline.
+pub struct HostFacts {
+    /// The tick that ended the run, not the clock as it stands at finalize.
+    pub sim_now: MonotonicTime,
+    pub wall_duration_secs: f64,
+    pub run_name: String,
+    /// Why the host stopped ticking. It only labels the report; whether the
+    /// run covered its windows is read from the runner's own clock.
+    pub terminated_by_reason: TerminationReason,
+    /// `None` for an unseeded run, whose real seed is chosen inside the sim
+    /// and unknown here.
+    pub master_seed: Option<u64>,
+    /// Every write each agent's bus refused, read from its pipeline.
+    pub refused_writes: Vec<(AgentId, RefusedWrites)>,
 }
 
 /// One assertion's report verdict. `covered` is whether the run reached the
@@ -194,7 +221,9 @@ mod tests {
     use crate::{
         assertion::AssertionValue,
         runner::{
-            fixtures::{at, cont, ready, report, report_unreadable, run, term, CAR, TRUCK},
+            fixtures::{
+                at, cont, ready, refused_write, report, report_unreadable, run, term, CAR, TRUCK,
+            },
             TickAction,
         },
     };
@@ -224,7 +253,23 @@ mod tests {
         collector: &ObservationCollector,
         reason: TerminationReason,
     ) -> Report {
-        r.finalize(at(0.0), 0.0, "run".to_string(), reason, collector, None)
+        r.finalize(host_facts(reason, Vec::new()), collector)
+    }
+
+    // What the host hands finalize: a run named "run", stopped by `reason`,
+    // whose buses refused `refused_writes`.
+    fn host_facts(
+        reason: TerminationReason,
+        refused_writes: Vec<(AgentId, RefusedWrites)>,
+    ) -> HostFacts {
+        HostFacts {
+            sim_now: at(0.0),
+            wall_duration_secs: 0.0,
+            run_name: "run".to_string(),
+            terminated_by_reason: reason,
+            master_seed: None,
+            refused_writes,
+        }
     }
 
     const FAILED_FIRST: TerminationReason = TerminationReason::AssertionFailed { number: 1 };
@@ -492,5 +537,31 @@ mod tests {
 
         assert_eq!(report.status(), &ReportStatus::Passed);
         assert!(report.setup_failures().is_empty());
+    }
+
+    #[test]
+    fn a_refused_write_fails_a_run_whose_assertions_passed() {
+        let (mut r, mut collector) = ready(run(&budget(), &[&cont(CAR, 5.0)]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 5.0);
+        run_out(&mut r, &collector);
+
+        let report = r.finalize(
+            host_facts(
+                TerminationReason::MaxSimulatedSeconds,
+                vec![refused_write(CAR)],
+            ),
+            &collector,
+        );
+
+        assert_eq!(statuses(&report), [AssertionStatus::Passed]);
+        assert_eq!(report.status(), &ReportStatus::Failed);
+        let [line] = report.refused_writes() else {
+            panic!(
+                "one refused channel, one line: {:?}",
+                report.refused_writes()
+            );
+        };
+        assert!(line.starts_with("agent 'car': "), "{line}");
+        assert!(line.contains("\"undeclared\""), "{line}");
     }
 }

@@ -32,6 +32,14 @@ pub struct Report {
     /// struct's field order matching that.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     setup_failures: Vec<String>,
+    /// The writes an agent's bus refused, one line per channel: a host or
+    /// node wrote a channel no writer declared, a value of another type, or
+    /// a frame or instance its writers never stated. Any one fails the run,
+    /// since values the wiring dropped leave the assertions judging a run
+    /// other than the one configured. Omitted from the TOML when empty, and
+    /// ahead of `terminated_by` for the same reason as `setup_failures`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    refused_writes: Vec<String>,
     simulated_duration_secs: f64,
     wall_duration_secs: f64,
     terminated_by: TerminatedBy,
@@ -50,6 +58,7 @@ impl Report {
         master_seed: Option<u64>,
         status: ReportStatus,
         setup_failures: Vec<String>,
+        refused_writes: Vec<String>,
         simulated_duration_secs: f64,
         wall_duration_secs: f64,
         terminated_by: TerminatedBy,
@@ -61,6 +70,7 @@ impl Report {
             master_seed,
             status,
             setup_failures,
+            refused_writes,
             simulated_duration_secs,
             wall_duration_secs,
             terminated_by,
@@ -82,6 +92,12 @@ impl Report {
     /// enough for its assertions to mean something.
     pub fn setup_failures(&self) -> &[String] {
         &self.setup_failures
+    }
+
+    /// The writes an agent's bus refused, one line per channel. Empty on a
+    /// run whose wiring dropped nothing.
+    pub fn refused_writes(&self) -> &[String] {
+        &self.refused_writes
     }
 
     /// Why the run stopped.

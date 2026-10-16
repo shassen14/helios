@@ -48,6 +48,12 @@ fn render(report: &Report) -> String {
         lines.push(format!("[setup] {reason}"));
     }
 
+    // Refused writes too: values the wiring dropped make the assertion lines
+    // judge another run than the one configured.
+    for refused in &report.refused_writes {
+        lines.push(format!("[wiring] {refused}"));
+    }
+
     // One line per assertion, in run-file order.
     for entry in report.assertions() {
         // The left half: "[assert] <target> <op> <expected>".
@@ -203,6 +209,7 @@ mod tests {
             Some(42),
             ReportStatus::Failed,
             Vec::new(),
+            Vec::new(),
             47.3,
             4.1,
             TerminatedBy::TimeBudget,
@@ -288,6 +295,7 @@ mod tests {
             None,
             ReportStatus::Failed,
             Vec::new(),
+            Vec::new(),
             1.0,
             0.1,
             TerminatedBy::TimeBudget,
@@ -307,5 +315,12 @@ mod tests {
         let mut report = sample_report();
         report.terminated_by = TerminatedBy::AssertionFailed { number: 2 };
         assert!(render(&report).contains("[run] terminated: assertion 2 FAILED at t=47.3s"));
+    }
+
+    #[test]
+    fn a_refused_write_is_shown_as_a_wiring_line() {
+        let mut report = sample_report();
+        report.refused_writes = vec!["agent 'car': truth.tf refused 3 write(s)".to_string()];
+        assert!(render(&report).contains("[wiring] agent 'car': truth.tf refused 3 write(s)"));
     }
 }

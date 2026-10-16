@@ -11,7 +11,9 @@ use helios_runtime::{
         path::node_path,
         sink::ObservationSink,
     },
-    port::{Determinism, PortBus, PortDescriptor, PortDescriptorBuilder},
+    port::{
+        ChannelKey, Determinism, PortBus, PortDescriptor, PortDescriptorBuilder, RefusedWrites,
+    },
     prelude::{Health, PipelineNode, Stamped, TickContext},
     AutonomyPipeline, PipelineBuilder,
 };
@@ -96,6 +98,26 @@ pub(super) fn pipeline() -> AutonomyPipeline {
         .add_node(Box::new(Estimator(descriptor)))
         .build()
         .expect("one node with no inputs builds")
+}
+
+/// `agent`'s bus refusing one write, to a channel no writer declares.
+pub(super) fn refused_write(agent: &str) -> (AgentId, RefusedWrites) {
+    let pipeline = pipeline();
+    let undeclared = ChannelKey::internal::<f64>("undeclared");
+    let stamped = Stamped {
+        value: 0.0_f64,
+        timestamp: at(0.0),
+        health: Health::Ok,
+        producer: 0,
+    };
+    let _ = pipeline.bus().write(undeclared, stamped);
+    let refused = pipeline
+        .bus()
+        .refused_writes()
+        .into_iter()
+        .next()
+        .expect("the write to an undeclared channel is refused");
+    (AgentId::new(agent), refused)
 }
 
 /// A runner for `run`, set up against `agents` (each with [`pipeline`]),

@@ -55,9 +55,10 @@ impl HostInputPublisher<'_, '_> {
     /// - The value rides an internal channel named `channel`, the same slot
     ///   a DAG node declares as an input — so the consumer (a planner reading
     ///   its goal, say) and the host agree by this one name.
-    /// - A write to an unwired channel warns exactly once per channel name,
-    ///   naming it: the node's configured input channel and the host's declared
-    ///   channel disagree, and the input is being dropped.
+    /// - A refused write warns exactly once per channel name, naming it and
+    ///   why, since the input is being dropped: no node declared the channel
+    ///   as an outside input, so the node's configured input channel and the
+    ///   host's disagree, or the value is not of the channel's type.
     pub fn publish<T: Send + Sync + 'static>(
         &mut self,
         agent: Entity,
@@ -78,12 +79,14 @@ impl HostInputPublisher<'_, '_> {
 
         let write_result = pipeline.0.bus().write(channel.clone(), stamped_message);
 
-        if write_result.is_err() && self.warned_channels.insert(channel.name().to_string()) {
-            warn!(
-                "Channel '{}' has no slot in the autonomy DAG; the host input is being \
-                 dropped.",
-                channel.name()
-            );
+        if let Err(error) = write_result {
+            if self.warned_channels.insert(channel.name().to_string()) {
+                warn!(
+                    "Channel '{}' refused a host input ({}); the input is being dropped.",
+                    channel.name(),
+                    error
+                );
+            }
         }
     }
 }

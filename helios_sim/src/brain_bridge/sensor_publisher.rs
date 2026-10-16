@@ -13,7 +13,6 @@ use crate::brain_bridge::components::SensorPublishChannel;
 use crate::prelude::AutonomyPipelineComponent;
 
 use helios_core::prelude::SensorReading;
-use helios_runtime::port::ChannelError;
 use helios_runtime::{Health, Stamped, HOST_PRODUCER_ID};
 
 use bevy::ecs::system::SystemParam;
@@ -46,14 +45,10 @@ impl SensorPublisher<'_, '_> {
     ///   brainless prop) is a silent no-op — legal, not an error.
     /// - The envelope timestamp is taken from the last reading, so an
     ///   accumulated batch carries its freshest time.
-    /// - A write to a channel no node reads is traced once per channel name.
-    ///   The body lists every installed sensor, read or not, and the key
-    ///   written is the one the body declared, so no slot means only that
-    ///   this stack does not read the sensor.
-    /// - Any other refused write warns exactly once per channel name, naming
-    ///   it and why, since readings are being dropped: the readings are not
-    ///   of the type the channel was described with, or a reading names
-    ///   another frame than the channel's mount.
+    /// - A refused write warns exactly once per channel name, naming it and
+    ///   why, since readings are being dropped: the body did not declare the
+    ///   channel, the readings are not of the type it was described with, or
+    ///   a reading names another frame than the channel's mount.
     pub fn publish<T: Send + Sync + 'static>(
         &mut self,
         agent: Entity,
@@ -92,22 +87,10 @@ impl SensorPublisher<'_, '_> {
         if !self.warned_channels.insert(name.to_string()) {
             return;
         }
-        match error {
-            // The fit installs a sensor no node reads; the build accepts
-            // that, since a body lists what is installed. Not a wiring bug:
-            // the key is the one the body declared, so it cannot be misspelt.
-            ChannelError::UnknownChannel => tracing::trace!(
-                channel = %name,
-                "sensor channel has no reader in the autonomy DAG; readings are dropped"
-            ),
-            // The spawner described the channel with another payload or shape
-            // than the sensor publishes: a host bug every reader would see as
-            // silence.
-            error => warn!(
-                "Channel '{}' refused a write ({}); readings are being dropped.",
-                name, error
-            ),
-        }
+        warn!(
+            "Channel '{}' refused a write ({}); readings are being dropped.",
+            name, error
+        );
     }
 }
 
