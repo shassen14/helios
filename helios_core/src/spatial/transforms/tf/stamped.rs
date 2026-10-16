@@ -59,10 +59,9 @@ pub struct FrameEdge {
 
 impl Display for FrameEdge {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // ASCII `->`, not a Unicode arrow: this rendering is embedded verbatim
-        // in the bus channel key for the edge (`tf_edge`), so it is grepped in
-        // DAG dumps and may be reconstructed by hand at a hardware `/tf` bridge.
-        // A plain-ASCII, tf2-style `parent`-ward arrow avoids encoding surprises.
+        // ASCII `->`, not a Unicode arrow: this rendering names an edge in logs
+        // and errors, where it is grepped and typed by hand. A plain-ASCII,
+        // tf2-style `parent`-ward arrow avoids encoding surprises.
         write!(f, "{}->{}", self.child, self.parent)
     }
 }

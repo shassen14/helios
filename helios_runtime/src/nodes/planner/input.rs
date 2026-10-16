@@ -124,7 +124,7 @@ mod tests {
         );
 
         assert_eq!(builder.optional_channels().len(), 1);
-        assert_eq!(&**builder.optional_channels()[0].instance(), "mission");
+        assert_eq!(&**builder.optional_channels()[0].name(), "mission");
         assert_eq!(builder.required_channels().len(), 2);
     }
 }

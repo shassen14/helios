@@ -1,170 +1,105 @@
-//! Transform-edge channel vocabulary: one bus slot per tree edge.
+//! The estimated transform tree's channel: one keyed channel, `tf`, holding
+//! the latest [`StampedTransform`] of each edge, keyed by the edge's child
+//! frame.
 //!
-//! A producer that owns a transform edge (an estimator emitting `odom→base_link`,
-//! a localizer correcting `map→odom`, a static loader mounting a sensor under
-//! `base_link`) dual-publishes it: alongside its rich output it writes a bare
-//! [`StampedTransform`] onto the edge's channel here. The runtime `TfService`
-//! later drains those channels and folds them into its buffer. This module is
-//! the single source of truth for the `(kind, type, name)` tuple each edge
-//! occupies, so a producer and the drainer can't drift on a typo.
+//! A producer that owns an edge of the estimated tree (the estimate relay
+//! emitting `odom → base_link`, a localizer correcting `map → odom`)
+//! dual-publishes it: alongside its rich output it writes the bare transform
+//! onto [`tf`], declaring the child frames it writes. The runtime `TfService`
+//! drains the channel's changed instances into its buffer.
 //!
-//! **Every edge is its own channel.** All edges carry the same payload type
-//! ([`StampedTransform`]), and the bus keeps one last-known-good slot per
-//! [`ChannelKey`] — so if two edges shared a slot the second producer's write
-//! would clobber the first. Each edge is therefore disambiguated by an instance
-//! string built from its `(child, parent)` identity via [`tf_edge`]. Because the
-//! set of live edges is data (which agents, which sensors), there is no single
-//! `const` for it and no "read every `StampedTransform`" bus primitive; the
-//! service drains an *explicit* list of edge keys, and [`is_tf_edge`] lets the
-//! assembler assert that list covers every declared edge.
-//!
-//! The [`TF_EDGE_PREFIX`] marks these instances (`tf/…`), the discriminator
-//! [`is_tf_edge`] keys off. An edge name joins two frame spellings with `->`
-//! under the `/` prefix (`tf/agent.car.base_link->agent.car.odom`), so it is
-//! the one channel name outside the `.`-joined level grammar, and the pipeline
-//! build skips its form check. Edges are internal channels (node-produced); a
-//! hardware `/tf` bridge or a Zenoh peer publishes onto the same channel by
-//! projecting its foreign stream through [`tf_edge`].
+//! **The child names the edge.** A strict tree gives each frame one parent at
+//! a time, so the child frame identifies an edge, as tf2 keys its buffer; a
+//! re-parented frame stays on one instance. The instance is read off the
+//! message's own `child`, so a producer cannot route a transform onto another
+//! edge's instance, and the pipeline build refuses two producers of one
+//! child. Edges are internal channels (node-produced); a hardware `/tf`
+//! bridge or a Zenoh peer maps each foreign transform onto its child's
+//! instance.
 
 use crate::{
-    port::{ChannelError, ChannelKey, ChannelKind, PortBus},
+    port::{ChannelKey, ChannelKind, Keyed, PortBus},
     Stamped,
 };
 
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
+use helios_core::spatial::FrameId;
 
-use std::any::TypeId;
+const TF: &str = "tf";
 
-const TF_EDGE_PREFIX: &str = "tf/";
+/// A transform belongs to the instance of its child frame.
+impl Keyed for StampedTransform {
+    type Instance = FrameId;
 
-pub fn tf_edge(edge: &FrameEdge) -> ChannelKey {
-    ChannelKey::internal::<StampedTransform>(format!("{}{}", TF_EDGE_PREFIX, edge))
+    fn instance(&self) -> &FrameId {
+        &self.child
+    }
 }
 
-/// Dual-publish one transform edge: writes `stamped` onto the [`tf_edge`] slot
-/// its own `(child, parent)` names, so the `TfService` drain can fold it into
+/// The estimated tree's edges, one instance per child frame.
+pub fn tf() -> ChannelKey {
+    ChannelKey::keyed::<StampedTransform>(ChannelKind::Internal, TF)
+}
+
+/// Dual-publish one transform edge: writes `stamped` onto [`tf`], under the
+/// instance its own `child` names, so the `TfService` drain can fold it into
 /// the buffer.
 ///
-/// The edge is derived from the message's own `child`/`parent`, not passed
-/// separately — a producer physically cannot route its transform onto the wrong
-/// slot. A dropped write here is a genuine wiring bug (the drain list never
-/// carried this edge), unlike the oracle channel's *expected* no-consumer miss,
-/// so it warns loudly and names the edge rather than going out on `.ok()`.
+/// A dropped write here is a wiring bug (the producer did not declare the
+/// edge's child, or nothing wired `tf`), unlike the oracle channel's
+/// *expected* no-consumer miss, so it warns loudly and names the edge rather
+/// than going out on `.ok()`.
 pub fn publish_edge(bus: &PortBus, stamped: Stamped<StampedTransform>) {
     let edge = FrameEdge {
         child: stamped.value.child.clone(),
         parent: stamped.value.parent.clone(),
     };
 
-    if let Err(e) = bus.write(tf_edge(&edge), stamped) {
-        match e {
-            // No node drains this edge — its tf-edge channel was never wired
-            // into the graph. A silently unfed edge only surfaces far away, as a
-            // missing lookup at some consumer, so name the edge here at the
-            // source where the fix (add it to the drain list) actually lives.
-            ChannelError::UnknownChannel => tracing::warn!(
-                edge = %edge,
-                "tf edge dropped: no channel wired for this edge; \
-                 the TfService drain list is missing it",
-            ),
-            // The edge key is built from the transform type, so this means
-            // the bus itself is broken; name the edge all the same.
-            ChannelError::TypeMismatch { .. } => tracing::warn!(
-                edge = %edge,
-                error = %e,
-                "tf edge dropped",
-            ),
-        }
+    if let Err(error) = bus.write_keyed(tf(), stamped) {
+        // A silently unfed edge only surfaces far away, as a missing lookup
+        // at some consumer, so name the edge here at the source.
+        tracing::warn!(edge = %edge, error = %error, "tf edge dropped");
     }
-}
-
-pub fn is_tf_edge(key: &ChannelKey) -> bool {
-    key.kind() == ChannelKind::Internal
-        && key.type_id() == TypeId::of::<StampedTransform>()
-        && key.instance().starts_with(TF_EDGE_PREFIX)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::port::PortDescriptor;
+    use crate::port::{InstanceKey, PortDescriptorBuilder};
     use crate::stamped::Health;
 
     use helios_core::prelude::{AgentId, MonotonicTime};
-    use helios_core::spatial::id::FrameId;
     use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
     use nalgebra::Isometry3;
 
-    /// A payload type that is not [`StampedTransform`], for checking the type
-    /// clause of [`is_tf_edge`] in isolation.
-    struct NotATransform;
+    fn agent() -> AgentId {
+        AgentId::new("bot")
+    }
 
     /// `child→parent`, the two spine edges a single agent's tree carries.
     fn base_to_odom() -> FrameEdge {
-        let agent = AgentId::new("bot");
         FrameEdge {
-            child: FrameId::base_link(agent.clone()),
-            parent: FrameId::odom(agent),
+            child: FrameId::base_link(agent()),
+            parent: FrameId::odom(agent()),
         }
     }
 
     fn odom_to_map() -> FrameEdge {
-        let agent = AgentId::new("bot");
         FrameEdge {
-            child: FrameId::odom(agent.clone()),
-            parent: FrameId::map(agent),
+            child: FrameId::odom(agent()),
+            parent: FrameId::map(agent()),
         }
     }
 
     #[test]
-    fn same_edge_yields_equal_keys() {
-        // The single-source guarantee: a producer and the drainer that both name
-        // the same edge land on the same slot.
-        assert_eq!(tf_edge(&base_to_odom()), tf_edge(&base_to_odom()));
-    }
-
-    #[test]
-    fn distinct_edges_yield_distinct_keys() {
-        // The whole reason edges are per-edge channels: two edges of the same
-        // payload type must not collide on one last-known-good slot.
-        assert_ne!(tf_edge(&base_to_odom()), tf_edge(&odom_to_map()));
-    }
-
-    #[test]
-    fn tf_edge_is_internal_kind() {
-        let key = tf_edge(&base_to_odom());
+    fn tf_is_one_keyed_internal_channel_of_transforms() {
+        let key = tf();
+        assert!(key.is_keyed());
         assert_eq!(key.kind(), ChannelKind::Internal);
-    }
-
-    #[test]
-    fn tf_edge_binds_the_stamped_transform_type() {
-        let key = tf_edge(&base_to_odom());
-        assert_eq!(key.type_id(), TypeId::of::<StampedTransform>());
-    }
-
-    #[test]
-    fn is_tf_edge_accepts_a_constructed_edge() {
-        let key = tf_edge(&base_to_odom());
-        assert!(is_tf_edge(&key));
-    }
-
-    #[test]
-    fn is_tf_edge_rejects_an_unprefixed_transform_channel() {
-        // A `StampedTransform` channel that did not go through `tf_edge` (no
-        // `tf/` prefix) is not an edge — this is the clause that keeps the drain
-        // list from swallowing unrelated transform slots.
-        let key = ChannelKey::internal::<StampedTransform>("some.other");
-        assert!(!is_tf_edge(&key));
-    }
-
-    #[test]
-    fn is_tf_edge_rejects_a_prefixed_channel_of_another_type() {
-        // The prefix alone is not enough: a `tf/`-named slot carrying a different
-        // payload is not a transform edge.
-        let key = ChannelKey::internal::<NotATransform>("tf/agent.bot.base_link->agent.bot.odom");
-        assert!(!is_tf_edge(&key));
+        assert_eq!(key.type_id(), std::any::TypeId::of::<StampedTransform>());
+        assert_eq!(key, tf());
     }
 
     /// A sample edge message: an identity `Flu → Enu` transform on `edge`,
@@ -187,38 +122,52 @@ mod tests {
         }
     }
 
-    /// A bus with exactly the given edges' slots allocated as outputs.
+    /// A bus whose one producer declares the children of `edges`.
     fn bus_wired_for(edges: &[FrameEdge]) -> PortBus {
-        let descriptor =
-            PortDescriptor::new(vec![], vec![], edges.iter().map(tf_edge).collect(), None);
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .output_keyed::<StampedTransform>(tf(), edges.iter().map(|edge| edge.child.clone()))
+            .build();
         PortBus::new(&[descriptor])
     }
 
-    #[test]
-    fn publish_edge_lands_the_transform_on_its_slot() {
-        let edge = base_to_odom();
-        let bus = bus_wired_for(std::slice::from_ref(&edge));
-
-        publish_edge(&bus, sample_message(&edge));
-
-        let read = bus
-            .read::<StampedTransform>(tf_edge(&edge))
-            .expect("the published edge must be readable on its slot");
-        // Routed to the slot its own (child, parent) names.
-        assert_eq!(read.value.parent, edge.parent);
-        assert_eq!(read.value.child, edge.child);
+    fn child_key(edge: &FrameEdge) -> InstanceKey {
+        InstanceKey::of::<StampedTransform>(&edge.child)
     }
 
     #[test]
-    fn publish_edge_on_an_unwired_edge_drops_without_panicking() {
-        // The bus allocates a *different* edge's slot, so the target edge's
-        // channel is unknown. The helper must warn and return (the loud-drop
-        // path), never panic, and nothing lands on the target slot.
+    fn a_transform_is_keyed_by_its_child_frame_spelled() {
+        let message = sample_message(&base_to_odom());
+        assert_eq!(
+            InstanceKey::of::<StampedTransform>(message.value.instance()).as_str(),
+            "agent.bot.base_link"
+        );
+    }
+
+    #[test]
+    fn publish_edge_lands_each_transform_on_its_childs_instance() {
+        let bus = bus_wired_for(&[base_to_odom(), odom_to_map()]);
+
+        publish_edge(&bus, sample_message(&base_to_odom()));
+        publish_edge(&bus, sample_message(&odom_to_map()));
+
+        for edge in [base_to_odom(), odom_to_map()] {
+            let read = bus
+                .read_instance::<StampedTransform>(tf(), &child_key(&edge))
+                .expect("the published edge must be readable on its instance");
+            assert_eq!(read.value.parent, edge.parent);
+            assert_eq!(read.value.child, edge.child);
+        }
+    }
+
+    #[test]
+    fn publish_edge_of_an_undeclared_child_drops_without_panicking() {
+        // The producer declares only `odom`, so `base_link` has no instance.
+        // The helper must warn and return (the loud-drop path), never panic,
+        // and nothing lands.
         let bus = bus_wired_for(&[odom_to_map()]);
 
-        let target = base_to_odom();
-        publish_edge(&bus, sample_message(&target));
+        publish_edge(&bus, sample_message(&base_to_odom()));
 
-        assert!(bus.read::<StampedTransform>(tf_edge(&target)).is_none());
+        assert!(bus.read_instances::<StampedTransform>(tf()).is_empty());
     }
 }

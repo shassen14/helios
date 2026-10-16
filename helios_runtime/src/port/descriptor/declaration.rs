@@ -13,7 +13,7 @@
 
 use crate::{
     observe::observation::ObservedValueKind,
-    port::{channel::ChannelKey, kind::NodeClass},
+    port::{channel::ChannelKey, keyed::InstanceKey, kind::NodeClass},
 };
 
 use helios_core::control::actuators::ActuatorDrive;
@@ -311,16 +311,18 @@ impl MountReading {
 }
 
 /// One declared output of a node: which channel it writes, the actuators its
-/// commands drive when the channel carries `ActuatorCommand`, and the rule
-/// that gives the channel's mount.
+/// commands drive when the channel carries `ActuatorCommand`, the rule that
+/// gives the channel's mount, and the instances it writes when the channel is
+/// keyed.
 ///
 /// Only the descriptor builder creates records, so only an `ActuatorCommand`
-/// output carries drives.
+/// output carries drives and only a keyed output carries instances.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputPort {
     channel: ChannelKey,
     drives: Vec<ActuatorDrive>,
     mount: MountRule,
+    instances: Vec<InstanceKey>,
 }
 
 impl OutputPort {
@@ -330,6 +332,7 @@ impl OutputPort {
             channel,
             drives,
             mount: MountRule::None,
+            instances: Vec::new(),
         }
     }
 
@@ -350,6 +353,12 @@ impl OutputPort {
         self
     }
 
+    /// The output writing `instances` of its keyed channel.
+    pub(crate) fn with_instances(mut self, instances: Vec<InstanceKey>) -> Self {
+        self.instances = instances;
+        self
+    }
+
     /// The actuators this output's commands drive. Empty unless the channel
     /// carries `ActuatorCommand`.
     pub fn drives(&self) -> &[ActuatorDrive] {
@@ -359,6 +368,12 @@ impl OutputPort {
     /// The rule that gives this output's mount.
     pub fn mount(&self) -> &MountRule {
         &self.mount
+    }
+
+    /// The instances of its keyed channel this output writes, in declaration
+    /// order. Empty for a channel that holds one value.
+    pub fn instances(&self) -> &[InstanceKey] {
+        &self.instances
     }
 }
 
@@ -503,8 +518,8 @@ mod tests {
         ChannelKey::internal_of::<T>()
     }
 
-    fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
-        ChannelKey::internal::<T>(instance)
+    fn ikey_named<T: 'static>(name: &'static str) -> ChannelKey {
+        ChannelKey::internal::<T>(name)
     }
 
     #[test]

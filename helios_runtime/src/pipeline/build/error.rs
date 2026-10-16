@@ -5,7 +5,7 @@
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
-    port::{ChannelKey, ChannelKind, InputNeed, NodeClass, Writer},
+    port::{ChannelKey, ChannelKind, InputNeed, InstanceKey, NodeClass, Writer},
 };
 
 use helios_core::spatial::FrameId;
@@ -57,6 +57,17 @@ pub enum PipelineBuildError {
     /// supplier, so every read has one writer.
     MultipleSuppliers {
         channel: ChannelKey,
+        first: Writer,
+        second: Writer,
+    },
+    /// A writer of a keyed channel declares no instances, so every write it
+    /// makes would be refused. Reported once per writer.
+    KeyedWithoutInstances { channel: ChannelKey, writer: Writer },
+    /// Two writers declare one instance of a keyed channel. Each instance has
+    /// exactly one writer, as each single-value channel does.
+    InstanceWrittenTwice {
+        channel: ChannelKey,
+        instance: InstanceKey,
         first: Writer,
         second: Writer,
     },
@@ -250,6 +261,25 @@ impl std::fmt::Display for PipelineBuildError {
                     f,
                     "channel {channel} is supplied by both {first} and {second} — each channel \
                      has exactly one supplier"
+                )
+            }
+            PipelineBuildError::KeyedWithoutInstances { channel, writer } => {
+                write!(
+                    f,
+                    "{writer} writes keyed channel {channel} but declares no instances of it — \
+                     a keyed output names the instances it writes"
+                )
+            }
+            PipelineBuildError::InstanceWrittenTwice {
+                channel,
+                instance,
+                first,
+                second,
+            } => {
+                write!(
+                    f,
+                    "instance \"{instance}\" of channel {channel} is written by both {first} and \
+                     {second} — each instance has exactly one writer"
                 )
             }
             PipelineBuildError::DuplicateNodeName { name } => {

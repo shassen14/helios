@@ -78,11 +78,11 @@ impl HostInputPublisher<'_, '_> {
 
         let write_result = pipeline.0.bus().write(channel.clone(), stamped_message);
 
-        if write_result.is_err() && self.warned_channels.insert(channel.instance().to_string()) {
+        if write_result.is_err() && self.warned_channels.insert(channel.name().to_string()) {
             warn!(
                 "Channel '{}' has no slot in the autonomy DAG; the host input is being \
                  dropped.",
-                channel.instance()
+                channel.name()
             );
         }
     }

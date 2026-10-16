@@ -83,7 +83,7 @@ impl SensorPublisher<'_, '_> {
         let Err(error) = write_result else {
             return;
         };
-        let name = channel_key.instance();
+        let name = channel_key.name();
         if !self.warned_channels.insert(name.to_string()) {
             return;
         }
@@ -95,9 +95,10 @@ impl SensorPublisher<'_, '_> {
                  dropped.",
                 name
             ),
-            // The spawner described the channel with another payload than the
-            // sensor publishes: a host bug every reader would see as silence.
-            ChannelError::TypeMismatch { .. } => warn!(
+            // The spawner described the channel with another payload or shape
+            // than the sensor publishes: a host bug every reader would see as
+            // silence.
+            error => warn!(
                 "Channel '{}' refused a write ({}); readings are being dropped.",
                 name, error
             ),

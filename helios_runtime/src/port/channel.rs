@@ -14,15 +14,25 @@
 //! names exactly one channel per agent; the pipeline build refuses a
 //! malformed name and a name shared by two keys. The kind lives in the key,
 //! never in the name, so an oracle channel needs no `oracle` prefix.
+//!
+//! # Keyed channels
+//!
+//! A channel of a [`Keyed`] payload may be declared
+//! [`keyed`](ChannelKey::keyed): the bus then keeps one value per instance
+//! the payload names, and writers use
+//! [`write_keyed`](crate::port::PortBus::write_keyed). Whether a channel is
+//! keyed is part of its key, so a reader and a writer that disagree name two
+//! keys under one name, which the build refuses.
 
+use crate::port::keyed::{InstanceKey, Keyed};
 use crate::port::kind::ChannelKind;
 
 use std::{any::TypeId, sync::Arc};
 
 /// Identifier for a single bus slot: the channel's kind, payload type and
-/// name.
+/// name, and whether it keeps one value per instance.
 ///
-/// Two keys are equal when all three match. The pipeline build still refuses
+/// Two keys are equal when all four match. The pipeline build still refuses
 /// one name used for two keys, so a name differing only in kind or type
 /// never reaches the bus.
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
@@ -33,39 +43,50 @@ pub struct ChannelKey {
     /// Stored as `Arc<str>` so the name can come from a `&'static str`
     /// literal or a `String` read from config without leaking. Clones are
     /// refcount bumps; equality and hashing compare contents.
-    instance: Arc<str>,
+    name: Arc<str>,
+    keyed: bool,
 }
 
 impl ChannelKey {
-    /// A `kind` channel carrying `T`, named `instance`.
-    pub fn new<T: 'static>(kind: ChannelKind, instance: impl Into<Arc<str>>) -> Self {
+    /// A `kind` channel carrying `T`, named `name`.
+    pub fn new<T: 'static>(kind: ChannelKind, name: impl Into<Arc<str>>) -> Self {
         Self {
             kind,
             type_id: TypeId::of::<T>(),
             type_name: std::any::type_name::<T>(),
-            instance: instance.into(),
+            name: name.into(),
+            keyed: false,
         }
     }
 
-    /// A measurement channel carrying `T`, named `instance`. A host
+    /// A `kind` channel carrying `T`, named `name`, that keeps the last
+    /// value of each instance `T` names.
+    pub fn keyed<T: Keyed>(kind: ChannelKind, name: impl Into<Arc<str>>) -> Self {
+        Self {
+            keyed: true,
+            ..Self::new::<T>(kind, name)
+        }
+    }
+
+    /// A measurement channel carrying `T`, named `name`. A host
     /// publishing a device's readings takes the name from the agent profile.
-    pub fn measurement<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        Self::new::<T>(ChannelKind::Measurement, instance)
+    pub fn measurement<T: 'static>(name: impl Into<Arc<str>>) -> Self {
+        Self::new::<T>(ChannelKind::Measurement, name)
     }
 
-    /// An internal channel carrying `T`, named `instance`.
-    pub fn internal<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        Self::new::<T>(ChannelKind::Internal, instance)
+    /// An internal channel carrying `T`, named `name`.
+    pub fn internal<T: 'static>(name: impl Into<Arc<str>>) -> Self {
+        Self::new::<T>(ChannelKind::Internal, name)
     }
 
-    /// A reference-truth channel carrying `T`, named `instance`.
-    pub fn oracle<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        Self::new::<T>(ChannelKind::Oracle, instance)
+    /// A reference-truth channel carrying `T`, named `name`.
+    pub fn oracle<T: 'static>(name: impl Into<Arc<str>>) -> Self {
+        Self::new::<T>(ChannelKind::Oracle, name)
     }
 
-    /// A device-health channel carrying `T`, named `instance`.
-    pub fn health<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        Self::new::<T>(ChannelKind::Health, instance)
+    /// A device-health channel carrying `T`, named `name`.
+    pub fn health<T: 'static>(name: impl Into<Arc<str>>) -> Self {
+        Self::new::<T>(ChannelKind::Health, name)
     }
 
     /// The unnamed internal channel carrying `T`, for wiring inside the
@@ -86,8 +107,14 @@ impl ChannelKey {
         self.type_name
     }
 
-    pub fn instance(&self) -> &Arc<str> {
-        &self.instance
+    pub fn name(&self) -> &Arc<str> {
+        &self.name
+    }
+
+    /// Whether the channel keeps one value per instance rather than one
+    /// value.
+    pub fn is_keyed(&self) -> bool {
+        self.keyed
     }
 }
 
@@ -95,12 +122,16 @@ impl std::fmt::Display for ChannelKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = self.kind.as_str();
         let type_name = self.type_name;
-        let instance = &self.instance;
-        if instance.trim().is_empty() {
-            write!(f, "[{kind}] {type_name}")
+        let name = &self.name;
+        if name.trim().is_empty() {
+            write!(f, "[{kind}] {type_name}")?;
         } else {
-            write!(f, "[{kind}] {type_name} @ \"{instance}\"")
+            write!(f, "[{kind}] {type_name} @ \"{name}\"")?;
         }
+        if self.keyed {
+            write!(f, " (keyed)")?;
+        }
+        Ok(())
     }
 }
 
@@ -117,6 +148,15 @@ pub enum ChannelError {
         key_type: &'static str,
         written_type: &'static str,
     },
+    /// A single value was written to a keyed channel, which holds one value
+    /// per instance; write it with
+    /// [`write_keyed`](crate::port::PortBus::write_keyed).
+    KeyedChannel,
+    /// A keyed write was made to a channel that holds one value.
+    NotKeyed,
+    /// The value belongs to an instance no writer of the channel declared.
+    /// Stored, it would have a writer the build never checked.
+    UndeclaredInstance { instance: InstanceKey },
 }
 
 impl std::fmt::Display for ChannelError {
@@ -130,6 +170,21 @@ impl std::fmt::Display for ChannelError {
                 f,
                 "the channel carries {key_type} but the value written is {written_type}"
             ),
+            ChannelError::KeyedChannel => {
+                write!(f, "the channel is keyed, so it takes keyed writes only")
+            }
+            ChannelError::NotKeyed => {
+                write!(
+                    f,
+                    "the channel holds one value, so it takes no keyed writes"
+                )
+            }
+            ChannelError::UndeclaredInstance { instance } => {
+                write!(
+                    f,
+                    "no writer of the channel declares instance \"{instance}\""
+                )
+            }
         }
     }
 }
@@ -142,6 +197,18 @@ mod tests {
 
     struct Foo;
     struct Bar;
+
+    struct Edge {
+        child: u32,
+    }
+
+    impl Keyed for Edge {
+        type Instance = u32;
+
+        fn instance(&self) -> &u32 {
+            &self.child
+        }
+    }
 
     #[test]
     fn of_same_type_produces_equal_keys() {
@@ -160,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn named_differs_from_default_instance() {
+    fn named_differs_from_unnamed() {
         assert_ne!(
             ChannelKey::internal_of::<Foo>(),
             ChannelKey::internal::<Foo>("role")
@@ -168,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn named_same_instance_equal() {
+    fn named_same_name_equal() {
         assert_eq!(
             ChannelKey::internal::<Foo>("a"),
             ChannelKey::internal::<Foo>("a")
@@ -176,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn named_different_instances_not_equal() {
+    fn named_different_names_not_equal() {
         assert_ne!(
             ChannelKey::internal::<Foo>("a"),
             ChannelKey::internal::<Foo>("b")
@@ -186,7 +253,7 @@ mod tests {
     /// Two channels with one payload type and name but different kinds
     /// are distinct keys: the kind is part of identity.
     #[test]
-    fn distinct_kinds_with_same_type_and_instance_are_distinct() {
+    fn distinct_kinds_with_same_type_and_name_are_distinct() {
         assert_ne!(
             ChannelKey::internal::<Foo>("pose"),
             ChannelKey::oracle::<Foo>("pose")
@@ -233,6 +300,29 @@ mod tests {
         assert_eq!(
             key.to_string(),
             format!("[measurement] {} @ \"gps\"", key.type_name())
+        );
+    }
+
+    /// A keyed channel and a single-value channel of one type and name are
+    /// distinct keys, which the build then refuses as one name for two keys.
+    #[test]
+    fn keyed_and_single_value_keys_are_distinct() {
+        let keyed = ChannelKey::keyed::<Edge>(ChannelKind::Internal, "tf");
+        assert!(keyed.is_keyed());
+        assert!(!ChannelKey::internal::<Edge>("tf").is_keyed());
+        assert_ne!(keyed, ChannelKey::internal::<Edge>("tf"));
+        assert_eq!(
+            keyed,
+            ChannelKey::keyed::<Edge>(ChannelKind::Internal, "tf")
+        );
+    }
+
+    #[test]
+    fn display_marks_a_keyed_channel() {
+        let key = ChannelKey::keyed::<Edge>(ChannelKind::Internal, "tf");
+        assert_eq!(
+            key.to_string(),
+            format!("[internal] {} @ \"tf\" (keyed)", key.type_name())
         );
     }
 }

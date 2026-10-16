@@ -57,6 +57,10 @@ pub enum WatchError {
     UnknownNode { node: String, leaf: String },
     /// The node exists but declares no leaf with this name.
     UndeclaredLeaf { node: String, leaf: String },
+    /// The leaf names an output on a keyed channel that the node writes
+    /// several instances of. A leaf names one series, so it can't hold them
+    /// all.
+    SeveralInstances { node: String, leaf: String },
 }
 
 impl Display for WatchError {
@@ -68,6 +72,11 @@ impl Display for WatchError {
             Self::UndeclaredLeaf { node, leaf } => {
                 write!(f, "node \"{node}\" declares no watchable leaf \"{leaf}\"")
             }
+            Self::SeveralInstances { node, leaf } => write!(
+                f,
+                "node \"{node}\" writes several instances of keyed channel \"{leaf}\", and a \
+                 leaf names one series, so the channel can't be watched as a node leaf"
+            ),
         }
     }
 }

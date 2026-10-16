@@ -10,15 +10,15 @@ use std::sync::{
 
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::spatial::id::FrameId;
-use helios_core::spatial::transforms::tf::stamped::FrameEdge;
+use helios_core::spatial::transforms::tf::stamped::StampedTransform;
 use helios_core::spatial::transforms::Convention;
 use helios_runtime::{
-    channels::tf::tf_edge,
+    channels::tf::tf,
     pipeline::{
         ChannelUses, CycleEdge, MountLookupError, NodePlan, PipelineBuildError, PipelineBuilder,
         ReadMount,
     },
-    port::{ChannelKey, InputNeed, PortBus, PortDescriptor, PortDescriptorBuilder},
+    port::{ChannelKey, InputNeed, InstanceKey, PortBus, PortDescriptor, PortDescriptorBuilder},
     prelude::{Health, PipelineNode, Stamped, TickContext},
     BodyCapabilities, BodyChannel, MountRefusal, Provenance, Writer,
 };
@@ -32,13 +32,13 @@ const BODY_UNIT: &str = "test_unit";
 
 /// Test-only sugar: every channel in this file is internal (algorithm-to-
 /// algorithm wiring).
-fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
-    ChannelKey::internal::<T>(instance)
+fn ikey_named<T: 'static>(name: &'static str) -> ChannelKey {
+    ChannelKey::internal::<T>(name)
 }
 
 /// Oracle-channel sugar — only mocks/viz/tests may mint these.
-fn okey_named<T: 'static>(instance: &'static str) -> ChannelKey {
-    ChannelKey::oracle::<T>(instance)
+fn okey_named<T: 'static>(name: &'static str) -> ChannelKey {
+    ChannelKey::oracle::<T>(name)
 }
 
 // =========================================================================
@@ -1392,51 +1392,158 @@ fn tick_preserves_externally_written_values() {
 }
 
 // =========================================================================
-// == tf-edge drain-key derivation ==
+// == Keyed channels ==
 // =========================================================================
 
-/// `tf_edge_channels` returns exactly the outputs that are tf edges, filtering
-/// out ordinary outputs — this is the drain list a host feeds a `TfService`,
-/// derived from the graph's own declarations so it cannot drift from them.
-#[test]
-fn tf_edge_channels_returns_only_declared_tf_edges() {
-    let agent = AgentId::new("bot");
-    let edge = FrameEdge {
-        child: FrameId::base_link(agent.clone()),
-        parent: FrameId::odom(agent),
-    };
-    let edge_key = tf_edge(&edge);
-    // A plain (non-tf) output on a second, independent producer: it must be
-    // filtered out, proving the accessor keys off `is_tf_edge`, not "every output".
-    let plain_key = ikey_named::<u32>("plain");
-
-    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
-        .add_node(Box::new(ProducerNode::new(
-            "edge_producer",
-            edge_key.clone(),
-            0,
-        )))
-        .add_node(Box::new(ProducerNode::new("state_producer", plain_key, 0)))
-        .build()
-        .expect("two independent producers on distinct channels build");
-
-    assert_eq!(pipeline.tf_edge_channels(), vec![edge_key]);
+/// Declares its ports and writes nothing: these tests only build.
+struct DeclaringNode {
+    name: String,
+    descriptor: PortDescriptor,
 }
 
-/// A graph with no edge producer yields an empty drain list — the service then
-/// drains nothing, which is correct for a stack whose only tf need is statics.
-#[test]
-fn tf_edge_channels_is_empty_without_an_edge_producer() {
-    let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
-        .add_node(Box::new(ProducerNode::new(
-            "plain",
-            ikey_named::<u32>("plain"),
-            0,
-        )))
-        .build()
-        .expect("single plain producer builds");
+impl PipelineNode for DeclaringNode {
+    fn name(&self) -> &str {
+        &self.name
+    }
 
-    assert!(pipeline.tf_edge_channels().is_empty());
+    fn port_descriptor(&self) -> &PortDescriptor {
+        &self.descriptor
+    }
+
+    fn execute(&self, _bus: &PortBus, _tf: &dyn helios_core::prelude::TfProvider, _: TickContext) {}
+}
+
+/// A node writing the edges of `children` on the transform tree's channel.
+fn edge_writer(name: &str, children: &[FrameId]) -> Box<dyn PipelineNode> {
+    Box::new(DeclaringNode {
+        name: name.to_string(),
+        descriptor: PortDescriptorBuilder::algorithm()
+            .output_keyed::<StampedTransform>(tf(), children.to_vec())
+            .build(),
+    })
+}
+
+fn bot_frame(leaf: &str) -> FrameId {
+    FrameId::agent(AgentId::new(AGENT), leaf)
+}
+
+/// A relay owning `base_link`'s edge and a localizer owning `odom`'s share
+/// the one `tf` channel: a keyed channel has a writer per instance, not one
+/// supplier.
+#[test]
+fn writers_of_distinct_tf_instances_share_the_channel() {
+    let agent = AgentId::new(AGENT);
+    PipelineBuilder::new(agent.clone())
+        .add_node(edge_writer("relay", &[FrameId::base_link(agent.clone())]))
+        .add_node(edge_writer("localizer", &[FrameId::odom(agent)]))
+        .build()
+        .expect("each instance has one writer");
+}
+
+#[test]
+fn two_writers_of_one_tf_instance_are_refused() {
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(edge_writer(
+            "arm",
+            &[bot_frame("wrist"), bot_frame("elbow")],
+        ))
+        .add_node(edge_writer("gripper", &[bot_frame("wrist")]))
+        .build();
+    let Err(errors) = result else {
+        panic!("wrist has two writers");
+    };
+
+    let wrist = InstanceKey::of::<StampedTransform>(&bot_frame("wrist"));
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::InstanceWrittenTwice { channel, instance, first, second }]
+                if *channel == tf()
+                    && *instance == wrist
+                    && *first == Writer::Node { node: "arm".to_string() }
+                    && *second == Writer::Node { node: "gripper".to_string() }
+        ),
+        "{errors:?}"
+    );
+}
+
+/// A keyed channel declared as a plain output names no instances, so every
+/// write would be refused; the build says so instead.
+#[test]
+fn a_keyed_output_without_instances_is_refused() {
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(Box::new(DeclaringNode {
+            name: "relay".to_string(),
+            descriptor: PortDescriptorBuilder::algorithm().output(tf()).build(),
+        }))
+        .build();
+    let Err(errors) = result else {
+        panic!("the relay names no instances");
+    };
+
+    assert!(
+        matches!(
+            errors.as_slice(),
+            [PipelineBuildError::KeyedWithoutInstances { channel, .. }] if *channel == tf()
+        ),
+        "{errors:?}"
+    );
+}
+
+/// A loop through each of two writers of one keyed channel reports both
+/// writers' reads, not only one of them: the fuser reads `tf`, which the
+/// localizer and the relay each write from a channel the fuser writes.
+#[test]
+fn a_loop_through_each_writer_of_a_keyed_channel_names_both() {
+    let b = ikey_named::<u32>("b");
+    let c = ikey_named::<u32>("c");
+    let declaring = |name: &str, descriptor: PortDescriptor| -> Box<dyn PipelineNode> {
+        Box::new(DeclaringNode {
+            name: name.to_string(),
+            descriptor,
+        })
+    };
+
+    let result = PipelineBuilder::new(AgentId::new(AGENT))
+        .add_node(declaring(
+            "fuser",
+            PortDescriptorBuilder::algorithm()
+                .input(tf())
+                .output(b.clone())
+                .output(c.clone())
+                .build(),
+        ))
+        .add_node(declaring(
+            "localizer",
+            PortDescriptorBuilder::algorithm()
+                .input(b.clone())
+                .output_keyed::<StampedTransform>(tf(), [bot_frame("odom")])
+                .build(),
+        ))
+        .add_node(declaring(
+            "relay",
+            PortDescriptorBuilder::algorithm()
+                .input(c.clone())
+                .output_keyed::<StampedTransform>(tf(), [bot_frame("base_link")])
+                .build(),
+        ))
+        .build();
+    let Err(errors) = result else {
+        panic!("the fuser reads what it feeds");
+    };
+
+    assert_eq!(
+        cycles(&errors),
+        [(
+            vec!["fuser", "localizer", "relay"],
+            vec![
+                edge("fuser", "localizer", &b),
+                edge("fuser", "relay", &c),
+                edge("localizer", "fuser", &tf()),
+                edge("relay", "fuser", &tf()),
+            ]
+        )]
+    );
 }
 
 // =========================================================================

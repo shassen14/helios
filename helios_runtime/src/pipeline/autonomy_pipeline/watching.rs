@@ -2,7 +2,7 @@
 //! each node can report, the watch set that picks what it does report, and
 //! the drain that collects what was reported.
 
-use super::{observable_catalog, ScheduledNode};
+use super::{observable_catalog, writes_several_instances, ScheduledNode};
 
 use crate::{
     observe::{
@@ -78,10 +78,17 @@ impl AutonomyPipeline {
                     leaf: entry.leaf.clone(),
                 }),
                 Some(scheduled) if !scheduled.observations.declares(&entry.leaf) => {
-                    Some(WatchError::UndeclaredLeaf {
-                        node: entry.node.clone(),
-                        leaf: entry.leaf.clone(),
-                    })
+                    if writes_several_instances(scheduled.node.as_ref(), &entry.leaf) {
+                        Some(WatchError::SeveralInstances {
+                            node: entry.node.clone(),
+                            leaf: entry.leaf.clone(),
+                        })
+                    } else {
+                        Some(WatchError::UndeclaredLeaf {
+                            node: entry.node.clone(),
+                            leaf: entry.leaf.clone(),
+                        })
+                    }
                 }
                 Some(_) => None,
             })
@@ -127,7 +134,10 @@ mod tests {
             watch::WatchedLeaf,
         },
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
-        port::{ChannelKey, Determinism, PortBus, PortDescriptor, PortDescriptorBuilder},
+        port::{
+            ChannelKey, ChannelKind, Determinism, InstanceKey, Keyed, PortBus, PortDescriptor,
+            PortDescriptorBuilder,
+        },
         prelude::{Health, PipelineNode, Stamped, TickContext},
         ErasedStamped, PipelineBuilder,
     };
@@ -564,6 +574,113 @@ mod tests {
                 (WRITER, TICK_DURATION_LEAF),
             ])
         );
+    }
+
+    // --- keyed outputs ---
+
+    /// The keyed output's name, and its tap leaf.
+    const EDGES: &str = "edges";
+
+    /// A value about one frame, keyed by the frame.
+    struct FrameSample {
+        frame: &'static str,
+    }
+
+    impl Keyed for FrameSample {
+        type Instance = &'static str;
+
+        fn instance(&self) -> &&'static str {
+            &self.frame
+        }
+    }
+
+    fn edges() -> ChannelKey {
+        ChannelKey::keyed::<FrameSample>(ChannelKind::Internal, EDGES)
+    }
+
+    /// A node writing each of `frames` on [`edges`] every run.
+    struct KeyedWriting {
+        descriptor: PortDescriptor,
+        frames: Vec<&'static str>,
+    }
+
+    impl PipelineNode for KeyedWriting {
+        fn name(&self) -> &str {
+            WRITER
+        }
+
+        fn port_descriptor(&self) -> &PortDescriptor {
+            &self.descriptor
+        }
+
+        fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
+            for &frame in &self.frames {
+                let stamped = Stamped {
+                    value: FrameSample { frame },
+                    timestamp: tick.now,
+                    health: Health::Ok,
+                    producer: tick.node_id,
+                };
+                bus.write_keyed(edges(), stamped)
+                    .expect("every written frame is declared");
+            }
+        }
+    }
+
+    fn keyed_pipeline(frames: &[&'static str]) -> AutonomyPipeline {
+        built(Box::new(KeyedWriting {
+            descriptor: PortDescriptorBuilder::algorithm()
+                .output_keyed::<FrameSample>(edges(), frames.iter().copied())
+                .build(),
+            frames: frames.to_vec(),
+        }))
+    }
+
+    /// A node writing one instance of a keyed channel is watched at the
+    /// channel's name, and the tap records that instance's value itself.
+    #[test]
+    fn watched_keyed_tap_records_the_one_instance_the_node_writes() {
+        let mut pipeline = keyed_pipeline(&["base"]);
+        pipeline
+            .watch(&leaves(&[(WRITER, EDGES)]))
+            .expect("the writer writes one instance");
+
+        run(&pipeline, &[1.0]);
+        let observations = drained(&pipeline);
+
+        let (written, _) = pipeline
+            .bus()
+            .read_erased_instance_versioned(&edges(), &InstanceKey::of::<FrameSample>(&"base"))
+            .expect("the instance was written");
+        assert_eq!(
+            observations,
+            vec![Observation {
+                node: WRITER.into(),
+                leaf: EDGES.into(),
+                timestamp: MonotonicTime(1.0),
+                value: ObservedValue::Typed(written),
+            }]
+        );
+    }
+
+    /// A leaf names one series, so an output written in several instances has
+    /// no tap: watching it is refused saying why, and watching everything
+    /// leaves it out.
+    #[test]
+    fn watching_a_keyed_output_of_several_instances_is_refused() {
+        let mut pipeline = keyed_pipeline(&["base", "wheel"]);
+
+        let errors = pipeline
+            .watch(&leaves(&[(WRITER, EDGES)]))
+            .expect_err("a leaf can't hold two instances");
+        assert_eq!(
+            errors,
+            vec![WatchError::SeveralInstances {
+                node: WRITER.to_string(),
+                leaf: EDGES.to_string(),
+            }]
+        );
+        assert!(!catalog(&pipeline).contains(&(WRITER.to_string(), EDGES.to_string())));
     }
 
     #[test]

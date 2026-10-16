@@ -10,4 +10,4 @@ pub use pipeline::{AutonomyPipeline, ReadMount};
 pub use scheduled::{PIPELINE_LEAF_GROUP, TICK_DURATION_LEAF};
 
 pub(crate) use scheduled::observable_catalog;
-pub(in crate::pipeline) use scheduled::ScheduledNode;
+pub(in crate::pipeline) use scheduled::{writes_several_instances, ScheduledNode};

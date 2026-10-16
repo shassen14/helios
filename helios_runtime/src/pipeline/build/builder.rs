@@ -235,7 +235,8 @@ impl PipelineBuilder {
     /// Every channel some writer declares, described with the writer whose
     /// declaration it came in: the body's, then the outside inputs, then each
     /// node's outputs in the order nodes were added. A channel two writers
-    /// declare appears twice; the wiring check refuses it.
+    /// declare appears twice; the wiring check refuses it unless it is keyed
+    /// and their instances differ.
     fn describe_channels(&self) -> Vec<ChannelDescription> {
         let body = self
             .capabilities
@@ -247,9 +248,10 @@ impl PipelineBuilder {
             .iter()
             .map(|key| ChannelDescription::outside(key.clone()));
         let nodes = self.nodes.iter().flat_map(|node| {
-            node.port_descriptor()
-                .outputs()
-                .map(|channel| ChannelDescription::node(channel.clone(), node.name()))
+            node.port_descriptor().output_ports().iter().map(|port| {
+                ChannelDescription::node(port.channel().clone(), node.name())
+                    .with_instances(port.instances().to_vec())
+            })
         });
         body.chain(outside).chain(nodes).collect()
     }

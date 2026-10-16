@@ -1,7 +1,11 @@
 //! [`TfService`]: drains the tick's edge samples into the buffer and serves
 //! it to consumers.
 
-use crate::{pipeline::ReadMount, port::PortBus, ChannelKey};
+use crate::{
+    channels::tf::tf,
+    pipeline::ReadMount,
+    port::{InstanceKey, PortBus},
+};
 
 use helios_core::{
     prelude::{MonotonicTime, TfProvider},
@@ -15,9 +19,13 @@ use helios_core::{
     },
 };
 
-use std::fmt::{self, Display, Formatter};
+use std::{
+    collections::BTreeMap,
+    fmt::{self, Display, Formatter},
+};
 
-/// Owns the transform buffer and the set of edges it drains into it.
+/// Owns the transform buffer and drains the estimated tree's `tf` channel
+/// into it.
 ///
 /// Lifecycle over a tick is two-phase and borrow-enforced: `fold(&mut self)`
 /// ingests the tick's fresh samples, then `as_provider(&self)` yields a shared
@@ -27,12 +35,14 @@ pub struct TfService {
     /// The composed tree. The service is its sole writer; callers only ever see
     /// it through [`TfService::as_provider`], never the concrete type.
     buffer: TfBuffer,
-    /// The edges to drain, one per bus slot, each carrying its own dedup cursor.
-    edges: Vec<DrainedEdge>,
+    /// The envelope time last folded from each instance of `tf`, so an
+    /// instance not rewritten since is skipped.
+    last_seen: BTreeMap<InstanceKey, MonotonicTime>,
 }
 
 impl TfService {
-    /// A service draining `drain_keys`, its tree seeded with the static edges.
+    /// A service draining the `tf` channel, its tree seeded with the static
+    /// edges.
     ///
     /// Fails with every seed the tree rejects (a cycle, a second parent, a
     /// convention conflict), each judged against the seeds folded before it:
@@ -40,7 +50,6 @@ impl TfService {
     /// the pipeline's build errors rather than panic on.
     pub fn new(
         window: TfWindow,
-        drain_keys: Vec<ChannelKey>,
         static_seeds: Vec<StampedTransform>,
     ) -> Result<Self, Vec<SeedRejected>> {
         let mut buffer = TfBuffer::new(window);
@@ -57,15 +66,11 @@ impl TfService {
         if !rejected.is_empty() {
             return Err(rejected);
         }
-        let edges = drain_keys
-            .into_iter()
-            .map(|channel| DrainedEdge {
-                channel,
-                last_seen: MonotonicTime(0.0),
-            })
-            .collect();
 
-        Ok(Self { buffer, edges })
+        Ok(Self {
+            buffer,
+            last_seen: BTreeMap::new(),
+        })
     }
 
     /// The tree as a read-only [`TfProvider`], for consumers to query this tick.
@@ -140,46 +145,34 @@ impl TfService {
         }
     }
 
-    /// Drain every edge's freshest sample into the buffer, once.
+    /// Drain every edge's freshest sample into the buffer, once, in instance
+    /// order.
     pub fn fold(&mut self, bus: &PortBus) {
-        // Split the mutable borrow of `self` into its two fields up front:
-        // the loop needs `edges` mutably (to advance each cursor) *and* `buffer`
-        // mutably (to ingest) at the same time. Going through `self.edges` and
-        // `self.buffer` inside the loop would be two overlapping borrows of one
-        // `&mut self`; destructuring hands out an independent borrow of each.
-        let Self { buffer, edges } = self;
-
-        for edge in edges.iter_mut() {
-            let Some(stamped) = bus.read::<StampedTransform>(edge.channel.clone()) else {
-                continue;
-            };
-
+        for (instance, stamped) in bus.read_instances::<StampedTransform>(tf()) {
             // Two clocks live on one sample and must not be collapsed. The
             // envelope `timestamp` (published-at) is the dedup key: it advances
             // once per producer write, so it tells us whether this is a sample we
             // have already folded. The inner `value.stamp` (pose-held time) is
             // the buffer's business, not ours. Gate on the envelope alone.
-            if stamped.timestamp <= edge.last_seen {
+            let last_seen = self.last_seen.entry(instance).or_insert(MonotonicTime(0.0));
+            if stamped.timestamp <= *last_seen {
                 continue;
             }
-            edge.last_seen = stamped.timestamp;
+            *last_seen = stamped.timestamp;
 
             // A dynamic sample rejected mid-run is a runtime fault, not an
             // assembly one, so warn and keep draining the rest — never panic and
-            // never abort the loop (contrast the startup panic in `new`). The
-            // channel names the culprit; the Debug carries the broken invariant.
-            if let Err(e) = buffer.insert_dynamic(stamped.value.clone()) {
-                tracing::warn!(channel = %edge.channel, "tf edge sample rejected on ingest: {e:?}");
+            // never abort the loop (contrast the startup refusal in `new`). The
+            // edge names the culprit; the Debug carries the broken invariant.
+            let edge = FrameEdge {
+                child: stamped.value.child.clone(),
+                parent: stamped.value.parent.clone(),
+            };
+            if let Err(e) = self.buffer.insert_dynamic(stamped.value.clone()) {
+                tracing::warn!(edge = %edge, "tf edge sample rejected on ingest: {e:?}");
             }
         }
     }
-}
-
-/// One drained edge: the bus slot to read, plus the envelope time last folded
-/// from it, so a slot that has not been rewritten since is skipped.
-pub struct DrainedEdge {
-    channel: ChannelKey,
-    last_seen: MonotonicTime,
 }
 
 /// A static seed the tree refused at [`TfService::new`].
@@ -250,8 +243,7 @@ impl Display for MisreadMount {
 mod tests {
     use super::*;
 
-    use crate::channels::tf::tf_edge;
-    use crate::port::PortDescriptor;
+    use crate::port::PortDescriptorBuilder;
     use crate::stamped::{Health, Stamped};
 
     use helios_core::prelude::{AgentId, MonotonicDuration};
@@ -289,10 +281,6 @@ mod tests {
         }
     }
 
-    fn edge_key(child: FrameId, parent: FrameId) -> ChannelKey {
-        tf_edge(&FrameEdge { child, parent })
-    }
-
     // One edge message: `child` expressed in `parent` at inner time `stamp`, a
     // pure +x translation so samples are told apart by one number.
     fn message(
@@ -325,19 +313,22 @@ mod tests {
         message(odom(), map(), Convention::Enu, Convention::Enu, stamp, x)
     }
 
-    // A bus with a slot for each edge channel — the minimum a producer needs to
-    // publish onto, standing in for the pipeline's descriptor-driven allocation.
-    fn edge_bus(keys: Vec<ChannelKey>) -> PortBus {
-        let descriptor = PortDescriptor::new(vec![], vec![], keys, None);
+    // A bus whose one producer writes the edges of `children` on `tf` — the
+    // minimum a producer needs to publish onto, standing in for the pipeline's
+    // descriptor-driven allocation.
+    fn edge_bus(children: Vec<FrameId>) -> PortBus {
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .output_keyed::<StampedTransform>(tf(), children)
+            .build();
         PortBus::new(&[descriptor])
     }
 
-    // Dual-publish one edge message onto its channel, stamping the *envelope*
-    // (published-at) clock separately from the message's own inner `stamp`.
+    // Dual-publish one edge message onto its child's instance, stamping the
+    // *envelope* (published-at) clock separately from the message's own inner
+    // `stamp`.
     fn publish(bus: &PortBus, tf: StampedTransform, envelope: f64) {
-        let key = edge_key(tf.child.clone(), tf.parent.clone());
-        bus.write(
-            key,
+        bus.write_keyed(
+            super::tf(),
             Stamped {
                 value: tf,
                 timestamp: MonotonicTime(envelope),
@@ -345,15 +336,13 @@ mod tests {
                 producer: 0,
             },
         )
-        .expect("edge slot exists");
+        .expect("the edge's instance is declared");
     }
 
     #[test]
     fn folded_edge_is_queryable() {
-        let key = edge_key(base_link(), odom());
-        let mut service = TfService::new(window(), vec![key.clone()], vec![])
-            .expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![key]);
+        let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![base_link()]);
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
 
         service.fold(&bus);
@@ -367,10 +356,8 @@ mod tests {
 
     #[test]
     fn fold_skips_when_envelope_has_not_advanced() {
-        let key = edge_key(base_link(), odom());
-        let mut service = TfService::new(window(), vec![key.clone()], vec![])
-            .expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![key]);
+        let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![base_link()]);
 
         // A sample stamped (inner) at t=1, envelope 1.
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
@@ -397,19 +384,17 @@ mod tests {
     #[test]
     fn fold_survives_a_rejected_edge_and_keeps_going() {
         // A self-edge (child == parent) is a cycle the buffer rejects on ingest.
-        let bad = edge_key(base_link(), base_link());
-        let good = edge_key(base_link(), odom());
-        // `bad` is drained first, so the error precedes the good edge — the loop
-        // must warn-and-continue, not panic or abort.
-        let mut service = TfService::new(window(), vec![bad.clone(), good.clone()], vec![])
-            .expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![bad, good]);
+        // Its child `agent.bot.a` spells before `agent.bot.base_link`, so it is
+        // drained first and the error precedes the good edge — the loop must
+        // warn-and-continue, not panic or abort.
+        let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![sensor("a"), base_link()]);
 
         publish(
             &bus,
             message(
-                base_link(),
-                base_link(),
+                sensor("a"),
+                sensor("a"),
                 Convention::Flu,
                 Convention::Flu,
                 1.0,
@@ -439,8 +424,7 @@ mod tests {
             0.0,
             0.1,
         );
-        let service =
-            TfService::new(window(), vec![], vec![mount]).expect("the seeds form a valid tree");
+        let service = TfService::new(window(), vec![mount]).expect("the seeds form a valid tree");
 
         // No fold: a static edge answers every time straight from the seed.
         let tf =
@@ -452,11 +436,8 @@ mod tests {
 
     #[test]
     fn fold_composes_a_two_edge_chain() {
-        let e1 = edge_key(base_link(), odom());
-        let e2 = edge_key(odom(), map());
-        let mut service = TfService::new(window(), vec![e1.clone(), e2.clone()], vec![])
-            .expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![e1, e2]);
+        let mut service = TfService::new(window(), vec![]).expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![base_link(), odom()]);
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
         publish(&bus, odom_map(1.0, 3.0), 1.0);
 
@@ -484,10 +465,9 @@ mod tests {
             0.0,
             0.1,
         );
-        let key = edge_key(base_link(), odom());
-        let mut service = TfService::new(window(), vec![key.clone()], vec![mount])
-            .expect("the seeds form a valid tree");
-        let bus = edge_bus(vec![key]);
+        let mut service =
+            TfService::new(window(), vec![mount]).expect("the seeds form a valid tree");
+        let bus = edge_bus(vec![base_link()]);
         publish(&bus, bl_odom(1.0, 2.0), 1.0);
 
         service.fold(&bus);
@@ -539,7 +519,7 @@ mod tests {
     }
 
     fn seeded(seeds: Vec<StampedTransform>) -> TfService {
-        TfService::new(window(), vec![], seeds).expect("the seeds form a valid tree")
+        TfService::new(window(), seeds).expect("the seeds form a valid tree")
     }
 
     #[test]
@@ -659,7 +639,6 @@ mod tests {
         // around them do not hide either.
         let result = TfService::new(
             window(),
-            vec![],
             vec![
                 seed("gps", base_link()),
                 seed("gps", sensor("rig")),

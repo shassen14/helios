@@ -10,6 +10,10 @@
 //! [`kind`](crate::port::kind) and refuses an algorithm reading truth, naming
 //! the node and the channel.
 //!
+//! An output on a keyed channel is declared with
+//! [`output_keyed`](PortDescriptorBuilder::output_keyed), which also takes
+//! the instances the node writes.
+//!
 //! An `ActuatorCommand` output is declared with
 //! [`output_actuator_command`](PortDescriptorBuilder::output_actuator_command),
 //! which also takes the actuators it drives: the actuator seam reads them off
@@ -26,8 +30,8 @@
 //! pipeline can actually hand a reader the start-of-tick value.
 
 use crate::port::{
-    ChannelKey, ChannelKind, Determinism, MountRule, NodeClass, Observable, OutputPort,
-    PortDescriptor,
+    ChannelKey, ChannelKind, Determinism, InstanceKey, Keyed, MountRule, NodeClass, Observable,
+    OutputPort, PortDescriptor,
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
@@ -141,6 +145,34 @@ impl PortDescriptorBuilder {
         self
     }
 
+    /// Declares the `instances` of keyed channel `channel` this node writes,
+    /// each spelled as `T` spells its instances. The build refuses an
+    /// instance two writers declare, and the bus refuses a write of one no
+    /// writer declared. A keyed channel declared through
+    /// [`output`](Self::output) has no instances, which the build refuses.
+    ///
+    /// # Panics
+    ///
+    /// If `channel` is not keyed or does not carry `T`.
+    pub fn output_keyed<T: Keyed>(
+        mut self,
+        channel: ChannelKey,
+        instances: impl IntoIterator<Item = T::Instance>,
+    ) -> Self {
+        assert!(
+            channel.is_keyed() && channel.type_id() == TypeId::of::<T>(),
+            "a keyed output must be a keyed channel of {}, got {channel}",
+            std::any::type_name::<T>()
+        );
+        let instances = instances
+            .into_iter()
+            .map(|instance| InstanceKey::of::<T>(&instance))
+            .collect();
+        self.outputs
+            .push(OutputPort::undriven(channel).with_instances(instances));
+        self
+    }
+
     /// Declares an `ActuatorCommand` channel this node writes, and the
     /// actuators its commands drive, each with the setpoint kind written
     /// there. The actuator seam checks them against the body and against its
@@ -158,7 +190,7 @@ impl PortDescriptorBuilder {
             channel.type_id() == TypeId::of::<ActuatorCommand>(),
             "actuator command output must carry ActuatorCommand, got {} for {}",
             channel.type_name(),
-            channel.instance()
+            channel.name()
         );
         self.outputs.push(OutputPort::new(channel, drives));
         self
@@ -220,6 +252,22 @@ mod tests {
     struct State;
     struct Reading;
     struct Pose;
+
+    struct Edge {
+        child: String,
+    }
+
+    impl Keyed for Edge {
+        type Instance = String;
+
+        fn instance(&self) -> &String {
+            &self.child
+        }
+    }
+
+    fn edges() -> ChannelKey {
+        ChannelKey::keyed::<Edge>(ChannelKind::Internal, "edges")
+    }
 
     #[test]
     fn builder_assembles_descriptor() {
@@ -338,6 +386,28 @@ mod tests {
 
     /// Each stated mount reading is kept, in order, one channel as often as
     /// it is stated: two parts of one node may read the same mount.
+    #[test]
+    fn a_keyed_output_carries_its_instances_in_order() {
+        let d = PortDescriptorBuilder::algorithm()
+            .output_keyed::<Edge>(edges(), ["wheel".to_string(), "base".to_string()])
+            .output(ChannelKey::internal::<State>("state"))
+            .build();
+        let spelled: Vec<&str> = d.output_ports()[0]
+            .instances()
+            .iter()
+            .map(InstanceKey::as_str)
+            .collect();
+        assert_eq!(spelled, ["wheel", "base"]);
+        assert!(d.output_ports()[1].instances().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "a keyed output must be a keyed channel")]
+    fn a_keyed_output_on_a_single_value_channel_panics() {
+        let _ = PortDescriptorBuilder::algorithm()
+            .output_keyed::<Edge>(ChannelKey::internal::<Edge>("edges"), ["base".to_string()]);
+    }
+
     #[test]
     fn mount_readings_are_kept_for_the_inputs_they_name() {
         let imu = ChannelKey::measurement::<Reading>("imu");

@@ -290,7 +290,7 @@ mod tests {
 
     /// Input `key` as the body publishes it, at its [`mount`].
     fn mounted_input(key: ChannelKey) -> ChannelDescription {
-        let mount = mount(key.instance());
+        let mount = mount(key.name());
         ChannelDescription::body(
             &BodyChannel::new(key, UNIT, Provenance::Simulated).with_mount(mount),
         )
@@ -504,12 +504,12 @@ mod tests {
         assert_eq!(node.name(), NODE);
         let required: Vec<String> = descriptor
             .required_inputs()
-            .map(|key| key.instance().to_string())
+            .map(|key| key.name().to_string())
             .collect();
         assert_eq!(required, ["imu.accel", "imu.gyro"]);
         let optional: Vec<String> = descriptor
             .optional_inputs()
-            .map(|key| key.instance().to_string())
+            .map(|key| key.name().to_string())
             .collect();
         assert_eq!(optional, ["gps"]);
         assert!(descriptor
@@ -528,12 +528,7 @@ mod tests {
             .port_descriptor()
             .mount_readings()
             .iter()
-            .map(|reading| {
-                (
-                    reading.channel().instance().to_string(),
-                    reading.convention(),
-                )
-            })
+            .map(|reading| (reading.channel().name().to_string(), reading.convention()))
             .collect();
 
         assert_eq!(

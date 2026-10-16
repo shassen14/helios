@@ -34,24 +34,28 @@ pub(super) fn find_cycles(stuck: &[NodeDeclaration]) -> Vec<PipelineBuildError> 
 
     let n = nodes.len();
 
-    // The stuck node that writes each channel. Wiring allows one writer per
-    // channel, so no entry is overwritten.
-    let mut writer: HashMap<&ChannelKey, usize> = HashMap::new();
+    // The stuck nodes that write each channel, in position order, each once.
+    // Wiring allows one writer of a single-value channel, but a keyed
+    // channel may have several.
+    let mut writers: HashMap<&ChannelKey, Vec<usize>> = HashMap::new();
 
     for (i, node) in nodes.iter().enumerate() {
         for channel in node.port_descriptor().outputs() {
-            writer.insert(channel, i);
+            let of_channel = writers.entry(channel).or_default();
+            if of_channel.last() != Some(&i) {
+                of_channel.push(i);
+            }
         }
     }
 
     // `adjacency[p]` lists each (consumer, channel) that reads a channel node
-    // `p` writes, in consumer order. An input with no entry in `writer` comes
+    // `p` writes, in consumer order. An input with no entry in `writers` comes
     // from outside the stuck set and is already satisfied, so it is no edge.
     let mut adjacency: Vec<Vec<(usize, &ChannelKey)>> = vec![Vec::new(); n];
 
     for (consumer, node) in nodes.iter().enumerate() {
         for channel in node.port_descriptor().same_tick_inputs() {
-            if let Some(&producer) = writer.get(channel) {
+            for &producer in writers.get(channel).into_iter().flatten() {
                 adjacency[producer].push((consumer, channel));
             }
         }

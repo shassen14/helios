@@ -79,11 +79,11 @@ mod tests {
 
     use crate::assembly::test_stub::stub;
     use crate::channels::estimate::{estimate, estimator_output};
-    use crate::channels::tf::{is_tf_edge, tf_edge};
+    use crate::channels::tf::tf;
     use crate::pipeline::node::PipelineNode;
-    use crate::port::ChannelKey;
+    use crate::port::{ChannelKey, InstanceKey};
 
-    use helios_core::spatial::transforms::tf::stamped::FrameEdge;
+    use helios_core::spatial::transforms::tf::stamped::StampedTransform;
 
     fn agent() -> AgentId {
         AgentId::new("car")
@@ -136,13 +136,19 @@ mod tests {
         assert_eq!(required, vec![&estimator_output("shadow")]);
         let outputs: Vec<ChannelKey> = descriptor.outputs().cloned().collect();
         assert!(outputs.contains(&estimate()));
-        assert_eq!(outputs.iter().filter(|key| is_tf_edge(key)).count(), 1);
-        // The source's root is odom, so the relay's edge runs from odom.
-        let edge = FrameEdge {
-            child: FrameId::base_link(agent()),
-            parent: FrameId::odom(agent()),
-        };
-        assert!(outputs.contains(&tf_edge(&edge)));
+        assert!(outputs.contains(&tf()));
+        // The relay writes base_link's edge, from the source's root, odom.
+        let instances: Vec<&InstanceKey> = descriptor
+            .output_ports()
+            .iter()
+            .flat_map(|port| port.instances())
+            .collect();
+        assert_eq!(
+            instances,
+            [&InstanceKey::of::<StampedTransform>(&FrameId::base_link(
+                agent()
+            ))]
+        );
         assert_eq!(relay.root(), &FrameId::odom(agent()));
     }
 

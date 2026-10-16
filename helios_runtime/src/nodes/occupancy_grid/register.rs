@@ -94,7 +94,7 @@ mod tests {
             node.port_descriptor()
                 .outputs()
                 .find(|key| key.type_id() == map_type)
-                .map(|key| key.instance().to_string())
+                .map(|key| key.name().to_string())
                 .expect("occupancy node must declare a MapData output")
         };
 

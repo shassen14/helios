@@ -12,6 +12,7 @@
 //! - `owners` checks every frame the body or a node owns has one owner;
 //! - `kinds` checks every node reads and writes only the channel kinds its
 //!   class may;
+//! - `instances` checks every instance of a keyed channel has one writer;
 //! - `builder` allocates bus slots from the declared ports, builds each plan
 //!   with the mounts of its inputs, adds rate timers, and hands back the
 //!   pipeline.
@@ -22,6 +23,7 @@ mod builder;
 mod cycle;
 mod declaration;
 mod error;
+mod instances;
 mod kinds;
 mod mounts;
 mod ordering;

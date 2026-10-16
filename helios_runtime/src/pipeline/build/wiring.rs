@@ -3,17 +3,18 @@
 //! output mount rules name inputs, each node reads and writes only the channel
 //! kinds its class may, channel names are well formed and each names one
 //! channel, each node's watchable leaves are well formed, and leaves and
-//! output channels sit outside the pipeline's own group and apart, and every
-//! input has exactly one supplier. These need only the declarations, not an
-//! order, so they run before the sort.
+//! output channels sit outside the pipeline's own group and apart, every
+//! input has exactly one supplier, and every instance of a keyed channel has
+//! one writer. These need only the declarations, not an order, so they run
+//! before the sort.
 
 use super::declaration::NodeDeclaration;
+use super::instances::check_instances;
 use super::kinds::check_kind_access;
 use super::mounts::{check_body_mounts, check_mount_rules};
 use super::owners::check_frame_owners;
 
 use crate::{
-    channels::tf::is_tf_edge,
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
     port::{ChannelDescription, ChannelKind, Writer},
     ChannelKey, ChannelUses, PipelineBuildError,
@@ -38,8 +39,9 @@ use std::{
 /// leaf or output channel sits in the pipeline's own group, no node names a
 /// leaf twice or gives a leaf the name of one of its outputs, and every input,
 /// required or optional, has exactly one supplier: a node output, a body
-/// channel, or a declared outside input. `descriptions` holds every channel
-/// some writer declares.
+/// channel, or a declared outside input, and every writer of a keyed channel
+/// declares instances no other writer does. `descriptions` holds every
+/// channel some writer declares.
 pub(super) fn check_wiring(
     agent: &AgentId,
     nodes: &[NodeDeclaration],
@@ -55,6 +57,7 @@ pub(super) fn check_wiring(
     let refused_names = check_channel_names(nodes, descriptions, &mut errors);
     check_observables(nodes, &refused_names, &mut errors);
     let supplier_of = map_suppliers(descriptions, &mut errors);
+    check_instances(descriptions, &mut errors);
     check_inputs_supplied(nodes, &supplier_of, &refused_names, &mut errors);
     errors
 }
@@ -102,9 +105,6 @@ fn check_unit_names(descriptions: &[ChannelDescription], errors: &mut Vec<Pipeli
 /// under it and who writes and reads each, so a reader and a writer that
 /// disagree on the type are shown side by side. Returns the refused names,
 /// so the supplier check doesn't report their inputs again.
-///
-/// Transform-edge channels keep their own spelling until the transform tree
-/// gets a channel of its own, so their names are not checked for form.
 fn check_channel_names(
     nodes: &[NodeDeclaration],
     descriptions: &[ChannelDescription],
@@ -113,7 +113,7 @@ fn check_channel_names(
     let uses_by_name = map_channel_uses(nodes, descriptions);
     let mut refused_names: HashSet<Arc<str>> = HashSet::new();
     for (name, uses) in uses_by_name {
-        let error = if !is_dotted_name(&name) && !uses.iter().all(|used| is_tf_edge(&used.key)) {
+        let error = if !is_dotted_name(&name) {
             PipelineBuildError::MalformedChannelName {
                 name: name.to_string(),
                 uses,
@@ -164,7 +164,7 @@ fn uses_of<'a>(
     uses_by_name: &'a mut BTreeMap<Arc<str>, Vec<ChannelUses>>,
     key: &ChannelKey,
 ) -> &'a mut ChannelUses {
-    let uses = uses_by_name.entry(key.instance().clone()).or_default();
+    let uses = uses_by_name.entry(key.name().clone()).or_default();
     let index = match uses.iter().position(|used| used.key == *key) {
         Some(index) => index,
         None => {
@@ -259,7 +259,7 @@ fn check_output_paths<'a>(
     let mut seen_channels: HashSet<&ChannelKey> = HashSet::new();
     let mut accepted: Vec<(&Arc<str>, &ChannelKey)> = vec![];
     for channel in node.port_descriptor().outputs() {
-        let name = channel.instance();
+        let name = channel.name();
         if !seen_channels.insert(channel) || refused_names.contains(name) {
             continue;
         }
@@ -326,7 +326,8 @@ fn is_in_pipeline_group(leaf: &str) -> bool {
 /// Records who writes each channel, in description order: the body and the
 /// outside inputs come before the nodes, so a conflict names the
 /// outside-world writer before the node. Any second writer of a key is an
-/// error.
+/// error, except of a keyed channel, whose writers share it instance by
+/// instance; the instance check judges those.
 fn map_suppliers<'a>(
     descriptions: &'a [ChannelDescription],
     errors: &mut Vec<PipelineBuildError>,
@@ -335,6 +336,9 @@ fn map_suppliers<'a>(
     for description in descriptions {
         let channel = description.key();
         if let Some(first) = supplier_of.get(channel) {
+            if channel.is_keyed() {
+                continue;
+            }
             errors.push(PipelineBuildError::MultipleSuppliers {
                 channel: channel.clone(),
                 first: (*first).clone(),
@@ -359,7 +363,7 @@ fn check_inputs_supplied(
     for node in nodes {
         for input in node.port_descriptor().inputs() {
             let channel = input.channel();
-            if supplier_of.contains_key(channel) || refused_names.contains(channel.instance()) {
+            if supplier_of.contains_key(channel) || refused_names.contains(channel.name()) {
                 continue;
             }
             let error = match channel.kind() {

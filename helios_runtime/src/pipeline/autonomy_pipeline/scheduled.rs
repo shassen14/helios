@@ -4,7 +4,7 @@
 use crate::{
     observe::{buffer::NodeObservations, observation::ObservedValue},
     pipeline::rate_gate::RateTimer,
-    port::{ChannelKey, Determinism, Observable, PortBus, SlotVersion},
+    port::{ChannelKey, Determinism, ErasedStamped, InstanceKey, Observable, PortBus, SlotVersion},
     prelude::PipelineNode,
     NodeId,
 };
@@ -75,10 +75,8 @@ impl ScheduledNode {
                 let leaf = self.observations.watched_leaf(&tap.leaf)?;
                 Some(PendingTap {
                     leaf,
-                    channel: &tap.channel,
-                    before: bus
-                        .read_erased_versioned(&tap.channel)
-                        .map(|(_, version)| version),
+                    tap,
+                    before: tap.read(bus).map(|(_, version)| version),
                 })
             })
             .collect()
@@ -93,7 +91,7 @@ impl ScheduledNode {
         pending: Vec<PendingTap<'_>>,
     ) {
         for tap in pending {
-            let Some((value, version)) = bus.read_erased_versioned(tap.channel) else {
+            let Some((value, version)) = tap.tap.read(bus) else {
                 continue;
             };
             if Some(version) == tap.before {
@@ -106,34 +104,73 @@ impl ScheduledNode {
 }
 
 /// A leaf that reports what a node writes to one of its output channels: the
-/// value itself, shared with the bus, once per run that wrote it.
+/// value itself, shared with the bus, once per run that wrote it. On a keyed
+/// channel it reports the one instance the node writes.
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::pipeline) struct Tap {
     /// The channel's name.
     pub(in crate::pipeline) leaf: Arc<str>,
     pub(in crate::pipeline) channel: ChannelKey,
+    /// The instance reported, on a keyed channel.
+    pub(in crate::pipeline) instance: Option<InstanceKey>,
+}
+
+impl Tap {
+    /// The tapped value and its version, `None` while unwritten.
+    fn read(&self, bus: &PortBus) -> Option<(Arc<dyn ErasedStamped>, SlotVersion)> {
+        match &self.instance {
+            Some(instance) => bus.read_erased_instance_versioned(&self.channel, instance),
+            None => bus.read_erased_versioned(&self.channel),
+        }
+    }
 }
 
 /// A tap for each of `node`'s outputs, in output order. The catalog and the
 /// scheduled node both build their taps here, so a tap leaf a watcher can ask
 /// for always has a channel behind it.
+///
+/// A keyed output gets a tap only when the node writes one instance of it: a
+/// leaf names one series, and the leaf grammar has no place for an instance.
+/// Watching an output the node writes several instances of is refused (see
+/// [`writes_several_instances`]).
 fn output_taps(node: &dyn PipelineNode) -> impl Iterator<Item = Tap> + '_ {
-    node.port_descriptor().outputs().map(|channel| Tap {
-        leaf: channel.instance().clone(),
-        channel: channel.clone(),
-    })
+    node.port_descriptor()
+        .output_ports()
+        .iter()
+        .filter_map(|port| {
+            let channel = port.channel();
+            let instance = match port.instances() {
+                [] => None,
+                [instance] => Some(instance.clone()),
+                _ => return None,
+            };
+            Some(Tap {
+                leaf: channel.name().clone(),
+                channel: channel.clone(),
+                instance,
+            })
+        })
+}
+
+/// Whether `leaf` names an output of `node` on a keyed channel the node
+/// writes several instances of, which has no tap.
+pub(in crate::pipeline) fn writes_several_instances(node: &dyn PipelineNode, leaf: &str) -> bool {
+    node.port_descriptor()
+        .output_ports()
+        .iter()
+        .any(|port| port.instances().len() > 1 && port.channel().name().as_ref() == leaf)
 }
 
 /// A watched tap during one run of its node: the channel's version before the
 /// run, `None` while the channel has never been written.
 ///
-/// Borrows the channel from the node's [`Tap`], so it lives only as long as
-/// the run it belongs to.
+/// Borrows the node's [`Tap`], so it lives only as long as the run it belongs
+/// to.
 pub(in crate::pipeline) struct PendingTap<'a> {
     /// The buffer's own name for the leaf, from
     /// [`watched_leaf`](NodeObservations::watched_leaf).
     leaf: Arc<str>,
-    channel: &'a ChannelKey,
+    tap: &'a Tap,
     before: Option<SlotVersion>,
 }
 
@@ -285,10 +322,12 @@ mod tests {
                 Tap {
                     leaf: COVARIANCE.into(),
                     channel: outputs[0].clone(),
+                    instance: None,
                 },
                 Tap {
                     leaf: MEAN.into(),
                     channel: outputs[1].clone(),
+                    instance: None,
                 },
             ]
         );

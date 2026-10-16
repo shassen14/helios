@@ -208,7 +208,7 @@ fn a_nodes_entry_reading_an_unpublished_channel_fails_the_build() {
         build_errors(&errors).iter().any(|e| matches!(
             e,
             PipelineBuildError::UnsatisfiedInput { node_name, channel, .. }
-                if node_name == "relay" && channel.instance().as_ref() == "lidar.typo"
+                if node_name == "relay" && channel.name().as_ref() == "lidar.typo"
         )),
         "expected UnsatisfiedInput for `relay` / `lidar.typo`, got {errors:?}"
     );
@@ -293,7 +293,7 @@ fn a_nodes_output_reusing_a_body_channel_name_fails_the_build() {
         build_errors(&errors).iter().any(|e| matches!(
             e,
             PipelineBuildError::MultipleSuppliers { channel, first, second }
-                if channel.instance().as_ref() == "lidar"
+                if channel.name().as_ref() == "lidar"
                     && matches!(first, Writer::Body { unit, .. } if unit == LIDAR_UNIT)
                     && *second == Writer::Node { node: "front_source".to_string() }
         )),

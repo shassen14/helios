@@ -102,14 +102,14 @@ pub fn oracle_body_channels() -> [BodyChannel; 2] {
 /// of the crate-wide "warn loudly" rule for a dropped write, this system traces
 /// the miss once (naming the channel), then stays quiet — a real wiring bug
 /// elsewhere still screams; this known no-consumer case says its piece once and
-/// does not spam the fixed-rate tick. A write of the wrong type is a bug, so it
-/// warns, once.
+/// does not spam the fixed-rate tick. Any other refusal (a wrong type or
+/// shape) is a bug, so it warns, once.
 pub fn publish_oracle_channels_system(
     query: Query<(&GroundTruthState, &AutonomyPipelineComponent)>,
     time: Res<Time>,
     mut has_logged_first_tick: Local<bool>,
     mut has_warned_no_consumer: Local<bool>,
-    mut has_warned_type_mismatch: Local<bool>,
+    mut has_warned_refused: Local<bool>,
 ) {
     let now = MonotonicTime(time.elapsed_secs_f64());
 
@@ -171,10 +171,10 @@ pub fn publish_oracle_channels_system(
                         *has_warned_no_consumer = true;
                     }
                 }
-                Err(error @ ChannelError::TypeMismatch { .. }) => {
-                    if !*has_warned_type_mismatch {
+                Err(error) => {
+                    if !*has_warned_refused {
                         warn!("Oracle channel {key} refused a write ({error}); truth is being dropped.");
-                        *has_warned_type_mismatch = true;
+                        *has_warned_refused = true;
                     }
                 }
             }

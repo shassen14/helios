@@ -6,7 +6,7 @@
 //!
 //! - `node.<node>.<leaf>`: what a pipeline node said about itself, under a
 //!   leaf it declared, or a value it wrote to one of its output channels.
-//! - `channel.<instance>`: a value on one of the agent's channels, whoever
+//! - `channel.<channel>`: a value on one of the agent's channels, whoever
 //!   wrote it.
 //!
 //! Who wrote a value is not part of its path; the path names only what the
@@ -44,7 +44,7 @@ pub struct AgentPathParts<'a> {
 impl<'a> AgentPathParts<'a> {
     /// Splits `path`, the inverse of [`join`](Self::join). The agent, the
     /// subject word and a node hold no separator, so the separators after
-    /// each end them, and everything after is the leaf or the instance. On
+    /// each end them, and everything after is the leaf or the channel. On
     /// failure, names the first part that is wrong: a root other than
     /// [`AGENT_SCOPE`], a subject word that isn't one of [`SUBJECT_WORDS`],
     /// or a part that is missing or empty.
@@ -64,7 +64,7 @@ impl<'a> AgentPathParts<'a> {
                 PathSubject::Node { node, leaf }
             }
             CHANNEL_SUBJECT => PathSubject::Channel {
-                instance: non_empty(after).ok_or(PathPart::Instance)?,
+                channel: non_empty(after).ok_or(PathPart::Channel)?,
             },
             _ => return Err(PathPart::Subject),
         };
@@ -74,14 +74,14 @@ impl<'a> AgentPathParts<'a> {
 
     /// The watcher path these parts spell. The agent and a node must each be
     /// one [level](helios_core::kernel::identifier::is_level); the build
-    /// refuses names that aren't. A leaf and an instance may hold dots: a
+    /// refuses names that aren't. A leaf and a channel may hold dots: a
     /// leaf a node declared (`aiding.gps.nis`) or a channel's name
     /// (`oracle.pose`).
     pub fn join(&self) -> String {
         let mut parts = vec![AGENT_SCOPE, self.agent, self.subject.word()];
         match self.subject {
             PathSubject::Node { node, leaf } => parts.extend([node, leaf]),
-            PathSubject::Channel { instance } => parts.push(instance),
+            PathSubject::Channel { channel } => parts.push(channel),
         }
         parts.join(LEVEL_SEPARATOR)
     }
@@ -97,8 +97,8 @@ pub enum PathSubject<'a> {
         /// The leaf or output channel name, dots included.
         leaf: &'a str,
     },
-    /// A value on one of the agent's channels, spelled by its name.
-    Channel { instance: &'a str },
+    /// A value on one of the agent's channels, by the channel's name.
+    Channel { channel: &'a str },
 }
 
 impl PathSubject<'_> {
@@ -124,7 +124,7 @@ pub enum PathPart {
     /// The node's leaf or output channel name.
     Leaf,
     /// The channel's name, under the `channel` subject.
-    Instance,
+    Channel,
 }
 
 /// The watcher path of what `node` of `agent` said or wrote,
@@ -139,13 +139,13 @@ pub fn node_path(agent: &str, node: &str, leaf: &str) -> String {
 }
 
 /// The watcher path of the value on `channel` of `agent`,
-/// `agent.<agent>.channel.<instance>`. [`AgentPathParts::split`] takes it
+/// `agent.<agent>.channel.<channel>`. [`AgentPathParts::split`] takes it
 /// apart again.
 pub fn channel_path(agent: &str, channel: &ChannelKey) -> String {
     AgentPathParts {
         agent,
         subject: PathSubject::Channel {
-            instance: channel.instance(),
+            channel: channel.name(),
         },
     }
     .join()
@@ -162,8 +162,8 @@ mod tests {
 
     use crate::port::ChannelKey;
 
-    fn channel_named<T: 'static>(instance: &'static str) -> ChannelKey {
-        ChannelKey::internal::<T>(instance)
+    fn channel_named<T: 'static>(name: &'static str) -> ChannelKey {
+        ChannelKey::internal::<T>(name)
     }
 
     #[test]
@@ -215,7 +215,7 @@ mod tests {
             Ok(AgentPathParts {
                 agent: "car",
                 subject: PathSubject::Channel {
-                    instance: "oracle.pose",
+                    channel: "oracle.pose",
                 },
             })
         );
@@ -284,11 +284,11 @@ mod tests {
         );
         assert_eq!(
             AgentPathParts::split("agent.car.channel"),
-            Err(PathPart::Instance)
+            Err(PathPart::Channel)
         );
         assert_eq!(
             AgentPathParts::split("agent.car.channel."),
-            Err(PathPart::Instance)
+            Err(PathPart::Channel)
         );
     }
 }

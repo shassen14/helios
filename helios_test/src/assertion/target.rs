@@ -6,7 +6,7 @@ use std::{fmt, sync::Arc};
 
 /// _Shared (pre + per)._ The watcher path an assertion watches, held whole
 /// and in its parts: `agent.<agent>.node.<node>.<leaf>` or
-/// `agent.<agent>.channel.<instance>`.
+/// `agent.<agent>.channel.<channel>`.
 ///
 /// Only a path that splits into its parts becomes a target, so a run file
 /// naming anything else is refused when it is read, before a sim starts.
@@ -76,7 +76,7 @@ pub enum TargetSubject {
         leaf: Arc<str>,
     },
     /// A value on one of the agent's channels, by its segment.
-    Channel { instance: Arc<str> },
+    Channel { channel: Arc<str> },
 }
 
 impl From<PathSubject<'_>> for TargetSubject {
@@ -86,8 +86,8 @@ impl From<PathSubject<'_>> for TargetSubject {
                 node: node.into(),
                 leaf: leaf.into(),
             },
-            PathSubject::Channel { instance } => TargetSubject::Channel {
-                instance: instance.into(),
+            PathSubject::Channel { channel } => TargetSubject::Channel {
+                channel: channel.into(),
             },
         }
     }
@@ -98,7 +98,7 @@ impl From<PathSubject<'_>> for TargetSubject {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
     "target '{path}' is not a watcher path agent.<agent>.node.<node>.<leaf> \
-     or agent.<agent>.channel.<instance>: {}",
+     or agent.<agent>.channel.<channel>: {}",
     what_is_wrong(*part)
 )]
 pub struct MalformedTarget {
@@ -117,7 +117,7 @@ fn what_is_wrong(part: PathPart) -> String {
         ),
         PathPart::Node => "the node is missing".to_owned(),
         PathPart::Leaf => "the leaf is missing".to_owned(),
-        PathPart::Instance => "the channel is missing".to_owned(),
+        PathPart::Channel => "the channel is missing".to_owned(),
     }
 }
 
@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(
             target.subject(),
             &TargetSubject::Channel {
-                instance: "oracle.pose".into(),
+                channel: "oracle.pose".into(),
             }
         );
     }

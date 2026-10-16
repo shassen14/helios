@@ -16,7 +16,7 @@
 //! selector in front of the relay.
 
 use crate::channels::estimate;
-use crate::channels::tf::{publish_edge, tf_edge};
+use crate::channels::tf::{publish_edge, tf};
 use crate::pipeline::node::{PipelineNode, TickContext};
 use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::Stamped;
@@ -64,7 +64,7 @@ impl EstimateRelay {
         let descriptor = PortDescriptorBuilder::algorithm()
             .input(source.clone())
             .output(output.clone())
-            .output(tf_edge(&edge))
+            .output_keyed::<StampedTransform>(tf(), [edge.child.clone()])
             .build();
 
         Self {
@@ -140,6 +140,7 @@ mod tests {
     use super::*;
 
     use crate::channels::estimate::estimator_output;
+    use crate::port::InstanceKey;
     use crate::stamped::Health;
 
     use helios_core::estimation::carrier::kinematic_carrier_schema;
@@ -180,6 +181,11 @@ mod tests {
             child: FrameId::base_link(agent()),
             parent: FrameId::odom(agent()),
         }
+    }
+
+    /// The edge `bus` holds for `child`, if any.
+    fn published(bus: &PortBus, child: &FrameId) -> Option<Arc<Stamped<StampedTransform>>> {
+        bus.read_instance::<StampedTransform>(tf(), &InstanceKey::of::<StampedTransform>(child))
     }
 
     /// A bus with slots for the source (as its estimator would declare it)
@@ -238,7 +244,14 @@ mod tests {
         let outputs: Vec<ChannelKey> = descriptor.outputs().cloned().collect();
         assert_eq!(outputs.len(), 2);
         assert!(outputs.contains(&estimate::estimate()));
-        assert!(outputs.contains(&tf_edge(&edge())));
+        assert!(outputs.contains(&tf()));
+        let instances: Vec<&str> = descriptor
+            .output_ports()
+            .iter()
+            .flat_map(|port| port.instances())
+            .map(InstanceKey::as_str)
+            .collect();
+        assert_eq!(instances, ["agent.test_agent.base_link"]);
     }
 
     #[test]
@@ -249,7 +262,7 @@ mod tests {
         relay.execute(&bus, &NoTf, tick());
 
         assert!(bus.read::<FrameAwareState>(estimate::estimate()).is_none());
-        assert!(bus.read::<StampedTransform>(tf_edge(&edge())).is_none());
+        assert!(published(&bus, &edge().child).is_none());
     }
 
     #[test]
@@ -268,9 +281,7 @@ mod tests {
         assert_eq!(estimate.producer, 3);
         assert_eq!(estimate.value.timestamp, MonotonicTime(1.5));
 
-        let published = bus
-            .read::<StampedTransform>(tf_edge(&edge()))
-            .expect("the edge is published");
+        let published = published(&bus, &edge().child).expect("the edge is published");
         assert_eq!(published.value.parent, edge().parent);
         assert_eq!(published.value.child, edge().child);
         assert_eq!(published.value.stamp, MonotonicTime(1.5));
@@ -300,13 +311,8 @@ mod tests {
 
         relay.execute(&bus, &NoTf, tick());
 
-        let edge = FrameEdge {
-            child: frames.body.clone(),
-            parent: frames.root.clone(),
-        };
-        let published = bus
-            .read::<StampedTransform>(tf_edge(&edge))
-            .expect("the edge from the estimate's root is published");
+        let published =
+            published(&bus, &frames.body).expect("the edge from the estimate's root is published");
         assert_eq!(published.value.parent, frames.root);
         assert_eq!(relay.root(), &frames.root);
     }
@@ -329,8 +335,7 @@ mod tests {
         for health in [
             bus.read::<FrameAwareState>(estimate::estimate())
                 .map(|s| s.health.clone()),
-            bus.read::<StampedTransform>(tf_edge(&edge()))
-                .map(|s| s.health.clone()),
+            published(&bus, &edge().child).map(|s| s.health.clone()),
         ] {
             assert!(
                 matches!(&health, Some(Health::Degraded { reason: r }) if r == reason),
@@ -348,6 +353,6 @@ mod tests {
         relay.execute(&bus, &NoTf, tick());
 
         assert!(bus.read::<FrameAwareState>(estimate::estimate()).is_some());
-        assert!(bus.read::<StampedTransform>(tf_edge(&edge())).is_none());
+        assert!(published(&bus, &edge().child).is_none());
     }
 }

@@ -142,7 +142,7 @@ fn reports_unsupplied(errors: &[PipelineAssemblyError], node: &str, channel: &st
                 if build_errors.iter().any(|b| matches!(
                     b,
                     PipelineBuildError::UnsatisfiedInput { node_name, channel: key, .. }
-                        if node_name == node && key.instance().as_ref() == channel
+                        if node_name == node && key.name().as_ref() == channel
                 ))
         )
     })

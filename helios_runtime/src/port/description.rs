@@ -14,9 +14,14 @@
 //! writer: the body states it with the channel, a node by its output's
 //! [`MountRule`](crate::port::MountRule), which the builder resolves once the
 //! graph is ordered. An outside input has none.
+//!
+//! A writer of a keyed channel also states the instances it writes: a node on
+//! its output port. Several writers may share a keyed channel, each
+//! described with its own instances.
 
 use crate::body::BodyChannel;
 use crate::port::channel::ChannelKey;
+use crate::port::keyed::InstanceKey;
 
 use helios_core::spatial::FrameId;
 
@@ -29,6 +34,7 @@ pub struct ChannelDescription {
     key: ChannelKey,
     writer: Writer,
     mount: Option<FrameId>,
+    instances: Vec<InstanceKey>,
 }
 
 impl ChannelDescription {
@@ -41,6 +47,7 @@ impl ChannelDescription {
                 provenance: channel.provenance(),
             },
             mount: channel.mount().cloned(),
+            instances: Vec::new(),
         }
     }
 
@@ -51,6 +58,7 @@ impl ChannelDescription {
             key,
             writer: Writer::Outside,
             mount: None,
+            instances: Vec::new(),
         }
     }
 
@@ -61,6 +69,7 @@ impl ChannelDescription {
             key,
             writer: Writer::Node { node: node.into() },
             mount: None,
+            instances: Vec::new(),
         }
     }
 
@@ -68,6 +77,13 @@ impl ChannelDescription {
     /// from a node output's rule.
     pub(crate) fn with_mount(mut self, mount: Option<FrameId>) -> Self {
         self.mount = mount;
+        self
+    }
+
+    /// The description with `instances` as the instances of its keyed channel
+    /// the writer writes, as a node's output port declares them.
+    pub(crate) fn with_instances(mut self, instances: Vec<InstanceKey>) -> Self {
+        self.instances = instances;
         self
     }
 
@@ -83,6 +99,12 @@ impl ChannelDescription {
     /// its writer states one.
     pub fn mount(&self) -> Option<&FrameId> {
         self.mount.as_ref()
+    }
+
+    /// The instances of its keyed channel this writer writes. Empty for a
+    /// channel that holds one value.
+    pub fn instances(&self) -> &[InstanceKey] {
+        &self.instances
     }
 }
 

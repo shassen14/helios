@@ -8,7 +8,7 @@
 
 use crate::port::{ChannelKey, ChannelKind};
 
-/// `[kind] Type @ "instance"`, every part always shown. The bus snapshot
+/// `[kind] Type @ "name"`, every part always shown. The bus snapshot
 /// uses it, where rows of every kind sit side by side.
 pub(crate) fn format_key_short(key: &ChannelKey) -> String {
     let out = format!(
@@ -16,24 +16,24 @@ pub(crate) fn format_key_short(key: &ChannelKey) -> String {
         key.kind().as_str(),
         short_type_name(key.type_name())
     );
-    let instance = key.instance();
-    if instance.trim().is_empty() {
+    let name = key.name();
+    if name.trim().is_empty() {
         out
     } else {
-        format!("{out} @ \"{instance}\"")
+        format!("{out} @ \"{name}\"")
     }
 }
 
-/// `instance: Type`, or `Type` for an unnamed channel, with `(kind)` after it
+/// `name: Type`, or `Type` for an unnamed channel, with `(kind)` after it
 /// only when the kind is not internal. Inside the DAG almost every channel is
 /// internal, so the tag is shown only where it says something.
 pub(crate) fn format_key_compact(key: &ChannelKey) -> String {
     let type_name = short_type_name(key.type_name());
-    let instance = key.instance();
-    let named = if instance.trim().is_empty() {
+    let name = key.name();
+    let named = if name.trim().is_empty() {
         type_name
     } else {
-        format!("{instance}: {type_name}")
+        format!("{name}: {type_name}")
     };
     match key.kind() {
         ChannelKind::Internal => named,
@@ -78,13 +78,13 @@ mod tests {
     }
 
     #[test]
-    fn short_keeps_kind_type_and_instance() {
+    fn short_keeps_kind_type_and_name() {
         let key = ChannelKey::internal::<f64>("drive");
         assert_eq!(format_key_short(&key), "[internal] f64 @ \"drive\"");
     }
 
     #[test]
-    fn compact_named_internal_is_instance_and_type() {
+    fn compact_named_internal_is_name_and_type() {
         let key = ChannelKey::internal::<f64>("drive");
         assert_eq!(format_key_compact(&key), "drive: f64");
     }

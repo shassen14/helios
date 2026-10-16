@@ -113,20 +113,20 @@ pub fn spawn_autonomy_pipeline(
 
 /// The agent's estimated tf service, checked against `pipeline`.
 ///
-/// Seeded with the static sensor mounts and draining exactly the tf-edge
-/// channels the pipeline declares, so its tree is fed only by the graph's own
-/// producers, never the sim's truth tree. Fails with every rejected seed, or
-/// with the mounts the pipeline reads that are not below `base_link` or that
-/// a node reads in other axes than the tree holds. The pipeline's tf edges do
-/// not yet say which frames they join, so none is declared; the one today,
-/// `odom → base_link`, lies above `base_link`, on no mount's way to it.
+/// Seeded with the static sensor mounts and draining the pipeline's `tf`
+/// channel, so its tree is fed only by the graph's own producers, never the
+/// sim's truth tree. Fails with every rejected seed, or with the mounts the
+/// pipeline reads that are not below `base_link` or that a node reads in other
+/// axes than the tree holds. A producer declares each edge's child but not its
+/// parent, so no edge is declared yet; the one today, `odom → base_link`, lies
+/// above `base_link`, on no mount's way to it.
 fn estimated_tf_service(
     pipeline: &AutonomyPipeline,
     window: TfWindow,
     static_seeds: Vec<StampedTransform>,
     agent: &AgentId,
 ) -> Result<TfService, Vec<String>> {
-    let service = TfService::new(window, pipeline.tf_edge_channels(), static_seeds)
+    let service = TfService::new(window, static_seeds)
         .map_err(|rejected| rejected.iter().map(ToString::to_string).collect::<Vec<_>>())?;
     service
         .check_read_mounts(
@@ -226,7 +226,7 @@ fn mission_goal_channels<'a>(
     outside_inputs
         .into_iter()
         .filter(|key| key.type_id() == TypeId::of::<PlannerGoal>())
-        .map(|key| key.instance().to_string())
+        .map(|key| key.name().to_string())
         .collect()
 }
 
