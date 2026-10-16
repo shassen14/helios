@@ -5,14 +5,14 @@ use super::scheduled::{ScheduledNode, TICK_DURATION_LEAF};
 
 use crate::{
     channels::{control, estimate::estimate, tf::is_tf_edge},
-    port::{ChannelDescription, ChannelKey, InputPort, PortBus, Writer},
+    port::{ChannelDescription, ChannelKey, InputPort, MountReading, PortBus, Writer},
     prelude::{Stamped, TickContext},
 };
 
 use helios_core::{
     control::actuators::ActuatorCommand,
     prelude::{MonotonicTime, TfProvider},
-    spatial::{FrameAwareState, FrameId},
+    spatial::{transforms::Convention, FrameAwareState, FrameId},
 };
 
 use std::{sync::Arc, time::Instant};
@@ -68,27 +68,44 @@ impl AutonomyPipeline {
             .map(ChannelDescription::key)
     }
 
-    /// The mounts of the channels some node reads, each once, in execution
-    /// order. A host checks each sits below `base_link` in the tree it serves the
-    /// pipeline, once its static feed is complete. A channel no node reads is
-    /// left out: an unused sensor's frame is not the pipeline's concern.
-    pub fn read_mounts(&self) -> Vec<FrameId> {
-        let mut mounts: Vec<FrameId> = Vec::new();
-        let read = self
-            .levels
-            .iter()
-            .flatten()
-            .flat_map(|scheduled| scheduled.node.port_descriptor().inputs())
-            .map(InputPort::channel);
-        for channel in read {
-            let mount = self
-                .descriptions
-                .iter()
-                .find(|description| description.key() == channel)
-                .and_then(ChannelDescription::mount);
-            if let Some(mount) = mount {
-                if !mounts.contains(mount) {
-                    mounts.push(mount.clone());
+    /// The mounts of the channels some node reads, each frame once, in
+    /// execution order, with every axis convention a node reads it in through
+    /// the tf tree. A host checks each sits below `base_link` in the tree it
+    /// serves the pipeline, held there in those axes, once its static feed is
+    /// complete. A channel no node reads is left out: an unused sensor's frame
+    /// is not the pipeline's concern.
+    pub fn read_mounts(&self) -> Vec<ReadMount> {
+        let mut mounts: Vec<ReadMount> = Vec::new();
+        for scheduled in self.levels.iter().flatten() {
+            let descriptor = scheduled.node.port_descriptor();
+            for channel in descriptor.inputs().map(InputPort::channel) {
+                let mount = self
+                    .descriptions
+                    .iter()
+                    .find(|description| description.key() == channel)
+                    .and_then(ChannelDescription::mount);
+                let Some(mount) = mount else {
+                    continue;
+                };
+                let index = match mounts.iter().position(|read| &read.frame == mount) {
+                    Some(index) => index,
+                    None => {
+                        mounts.push(ReadMount {
+                            frame: mount.clone(),
+                            read_in: Vec::new(),
+                        });
+                        mounts.len() - 1
+                    }
+                };
+                let read_in = descriptor
+                    .mount_readings()
+                    .iter()
+                    .filter(|reading| reading.channel() == channel)
+                    .map(MountReading::convention);
+                for convention in read_in {
+                    if !mounts[index].read_in.contains(&convention) {
+                        mounts[index].read_in.push(convention);
+                    }
                 }
             }
         }
@@ -222,4 +239,17 @@ impl AutonomyPipeline {
     pub fn read_actuators(&self) -> Option<Arc<Stamped<ActuatorCommand>>> {
         self.bus.read(control::actuators().into())
     }
+}
+
+/// A frame some node reads a channel at, from
+/// [`AutonomyPipeline::read_mounts`]. A plain report with no invariant to
+/// guard, so its fields are open, unlike the [`MountReading`] it is gathered
+/// from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadMount {
+    /// The mount, a frame some read channel names as its writer's.
+    pub frame: FrameId,
+    /// Every axis convention a node reads the frame in through the tf tree,
+    /// each once; empty when no node resolves it.
+    pub read_in: Vec<Convention>,
 }

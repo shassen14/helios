@@ -21,6 +21,7 @@ use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::schema::MeasurementAgreementError;
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::measurement::sensor::SensorPayload;
+use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 
 use nalgebra::DMatrix;
@@ -121,6 +122,15 @@ impl<P: SensorPayload> MeasurementSource for TypedMeasurementSource<P> {
 /// names. Registered with the kind, so a node knows the typed channel before
 /// the model is built.
 pub(crate) type ReadingChannel = fn(&str) -> ChannelKey;
+
+/// What a measurement kind declares before its model is built: the channel
+/// it reads, and the axes its model reads that channel's mount in through
+/// the tf tree (`None` for a model that never resolves the mount).
+#[derive(Clone, Copy)]
+pub(crate) struct MeasurementDeclaration {
+    pub(crate) channel: ReadingChannel,
+    pub(crate) mount_convention: Option<Convention>,
+}
 
 /// The typed channel readings of payload `P` arrive on, named `input`.
 fn readings_channel<P: SensorPayload>(input: &str) -> SensorChannel {
@@ -225,7 +235,7 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         registry
             .extension_mut::<EstimatorComponents>()
-            .register_measurement::<GpsPosition, _, _, _>(DUMMY_KIND, no_check, build_mocap)
+            .register_measurement::<GpsPosition, _, _, _>(DUMMY_KIND, None, no_check, build_mocap)
             .expect("not a built-in kind");
         registry
     }
@@ -272,7 +282,8 @@ mod tests {
                 &BuildContext::new(agent(), NODE, NODE_KIND),
             )
             .expect("the dummy model parses");
-        assert_eq!((parsed.declared)(INPUT), expected);
+        assert_eq!((parsed.declared.channel)(INPUT), expected);
+        assert_eq!(parsed.declared.mount_convention, None);
         assert_eq!(source.noise().nrows(), 3);
 
         // The source reads that channel end to end.
@@ -346,7 +357,12 @@ mod tests {
         let mut registry = registry();
         registry
             .extension_mut::<EstimatorComponents>()
-            .register_measurement::<MagneticField, _, _, _>("mocap_as_field", no_check, build_mocap)
+            .register_measurement::<MagneticField, _, _, _>(
+                "mocap_as_field",
+                None,
+                no_check,
+                build_mocap,
+            )
             .expect("distinct name");
 
         let field = build(&registry, "kind = \"mocap_as_field\"", 3).expect("builds");
@@ -360,7 +376,12 @@ mod tests {
         let mut registry = AutonomyRegistry::default();
         let err = registry
             .extension_mut::<EstimatorComponents>()
-            .register_measurement::<GpsPosition, _, _, _>(GPS_POSITION_KIND, no_check, build_mocap)
+            .register_measurement::<GpsPosition, _, _, _>(
+                GPS_POSITION_KIND,
+                None,
+                no_check,
+                build_mocap,
+            )
             .expect_err("gps_position is a built-in");
         assert_eq!(
             err.to_string(),

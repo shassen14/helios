@@ -15,6 +15,7 @@ use crate::prelude::{
 use crate::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel, SensorRay};
 use crate::spatial::conventions::Flu;
 use crate::spatial::primitives::NANOS_PER_SECOND;
+use crate::spatial::transforms::{Convention, ConventionOf};
 
 use rand::RngCore;
 use rand_distr::{Distribution, Normal};
@@ -53,6 +54,10 @@ pub struct LidarModel {
 }
 
 impl LidarModel {
+    /// The axis convention of the sensor frame this model reports in, the
+    /// frame its installation names.
+    pub const FRAME_CONVENTION: Convention = Flu::CONVENTION;
+
     /// Builds the model around a beam `geometry`, or returns `None` for a
     /// negative or non-finite `sweep_period`, or range limits that are
     /// negative, non-finite, or leave no span (`range_min >= range_max`).

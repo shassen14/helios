@@ -26,10 +26,18 @@ use helios_core::prelude::AgentId;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::tf::TfProvider;
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
-use helios_core::spatial::transforms::ErasedTransform;
+use helios_core::spatial::transforms::{Convention, ConventionOf, ErasedTransform};
 use helios_core::spatial::{FrameAwareState, FrameId};
 
 use tracing::warn;
+
+/// The axes the relay reads the estimate's `odom` frame in.
+type OdomAxes = Enu;
+
+/// The axis convention of the agent's `odom` frame in the estimated tree, as
+/// the relay publishes its `odom → base_link` edge. A host that tracks its
+/// own `odom` frame names it in these axes.
+pub const ODOM_CONVENTION: Convention = OdomAxes::CONVENTION;
 
 /// Forwards one estimator's state onto [`estimate::estimate`] and publishes the
 /// agent's `odom → base_link` edge from it.
@@ -90,7 +98,7 @@ impl PipelineNode for EstimateRelay {
 
         if let Some(pose) = stamped
             .value
-            .pose::<Flu, Enu>(self.edge.child.clone(), self.edge.parent.clone())
+            .pose::<Flu, OdomAxes>(self.edge.child.clone(), self.edge.parent.clone())
         {
             let transform = StampedTransform {
                 parent: self.edge.parent.clone(),
@@ -99,7 +107,7 @@ impl PipelineNode for EstimateRelay {
                 // but means a different thing (pose-held vs published-at), so
                 // they are kept as two fields, not merged.
                 stamp: stamped.timestamp,
-                transform: ErasedTransform::erase::<Flu, Enu>(pose),
+                transform: ErasedTransform::erase::<Flu, OdomAxes>(pose),
             };
             publish_edge(
                 bus,

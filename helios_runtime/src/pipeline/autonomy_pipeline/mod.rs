@@ -6,7 +6,7 @@ mod pipeline;
 mod scheduled;
 mod watching;
 
-pub use pipeline::AutonomyPipeline;
+pub use pipeline::{AutonomyPipeline, ReadMount};
 pub use scheduled::{PIPELINE_LEAF_GROUP, TICK_DURATION_LEAF};
 
 pub(crate) use scheduled::observable_catalog;

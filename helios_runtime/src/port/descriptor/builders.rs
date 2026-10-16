@@ -60,6 +60,7 @@ use crate::port::{
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
+use helios_core::spatial::transforms::Convention;
 
 use std::sync::Arc;
 
@@ -88,6 +89,7 @@ use std::any::TypeId;
 pub struct AlgorithmNodePortDescriptor {
     required_inputs: Vec<ChannelKey>,
     optional_inputs: Vec<ChannelKey>,
+    mount_readings: Vec<(ChannelKey, Convention)>,
     outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
     rate: Option<f64>,
@@ -122,6 +124,16 @@ impl AlgorithmNodePortDescriptor {
     /// Reads an internal channel when it holds a value; the node runs without it.
     pub fn optional_internal(mut self, c: InternalChannel) -> Self {
         self.optional_inputs.push(c.into());
+        self
+    }
+
+    /// Declares that the node resolves the mount of input `channel` through
+    /// the tf tree, reading the frame in the axes `convention` names. The host
+    /// refuses a mount the tree holds in other axes before the first tick.
+    /// Checked at [`build`](Self::build): `channel` must be declared as an
+    /// input by then.
+    pub fn reads_mount_in(mut self, channel: &ChannelKey, convention: Convention) -> Self {
+        self.mount_readings.push((channel.clone(), convention));
         self
     }
 
@@ -241,6 +253,11 @@ impl AlgorithmNodePortDescriptor {
     }
 
     /// Finishes the descriptor.
+    ///
+    /// # Panics
+    ///
+    /// If [`reads_mount_in`](Self::reads_mount_in) named a channel that is
+    /// not a declared input.
     pub fn build(self) -> PortDescriptor {
         PortDescriptor::new(
             self.required_inputs,
@@ -248,6 +265,7 @@ impl AlgorithmNodePortDescriptor {
             Vec::new(),
             self.rate,
         )
+        .with_mount_readings(self.mount_readings)
         .with_outputs(self.outputs)
         .with_observables(self.observables)
     }
@@ -519,6 +537,37 @@ mod tests {
             rules,
             [&MountRule::FromInput(range.into()), &MountRule::None]
         );
+    }
+
+    /// Each stated mount reading is kept, in order, one channel as often as
+    /// it is stated: two parts of one node may read the same mount.
+    #[test]
+    fn mount_readings_are_kept_for_the_inputs_they_name() {
+        let imu: ChannelKey = SensorChannel::named::<Reading>("imu").into();
+        let gps: ChannelKey = SensorChannel::named::<Reading>("gps").into();
+        let d = AlgorithmNodePortDescriptor::new()
+            .inputs_from_slices(std::slice::from_ref(&imu), std::slice::from_ref(&gps))
+            .reads_mount_in(&imu, Convention::Flu)
+            .reads_mount_in(&imu, Convention::Enu)
+            .build();
+
+        let readings: Vec<(&ChannelKey, Convention)> = d
+            .mount_readings()
+            .iter()
+            .map(|reading| (reading.channel(), reading.convention()))
+            .collect();
+        assert_eq!(readings, [(&imu, Convention::Flu), (&imu, Convention::Enu)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "which the node does not read")]
+    fn a_mount_reading_for_a_channel_not_read_panics() {
+        let _ = AlgorithmNodePortDescriptor::new()
+            .reads_mount_in(
+                &SensorChannel::named::<Reading>("gps").into(),
+                Convention::Flu,
+            )
+            .build();
     }
 
     #[test]

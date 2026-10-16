@@ -15,7 +15,7 @@ use std::sync::LazyLock;
 /// ([`ErasedTransform`](super::ErasedTransform)) that type is gone, and this enum
 /// records the convention instead so the crossing back to static land can be
 /// checked.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Convention {
     Enu,
     Flu,

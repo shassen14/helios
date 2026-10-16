@@ -9,8 +9,11 @@ use crate::spatial::conventions::Flu;
 use crate::spatial::quantities::FreeVector;
 use crate::spatial::state::Quantity;
 use crate::spatial::tf::TfProvider;
-use crate::spatial::transforms::Convention;
+use crate::spatial::transforms::{Convention, ConventionOf};
 use crate::spatial::{FrameAwareState, FrameId};
+
+/// The axes the model reads its sensor's mount in.
+type MountAxes = Flu;
 
 /// What the filter believes a rate gyroscope reports: the body's angular
 /// velocity, rotated into the sensor frame.
@@ -27,6 +30,13 @@ pub struct AngularRateModel {
     pub sensor: FrameId,
 }
 
+impl AngularRateModel {
+    /// The axis convention this model reads its sensor's mount in. A host
+    /// checks it against the convention the tf tree holds for the mount
+    /// before the first tick.
+    pub const MOUNT_CONVENTION: Convention = MountAxes::CONVENTION;
+}
+
 impl MeasurementModel for AngularRateModel {
     /// One block: the body's angular velocity resolved in the sensor frame
     /// (FLU) — exactly what `predict_measurement` returns.
@@ -34,7 +44,7 @@ impl MeasurementModel for AngularRateModel {
         let frame = self.sensor.clone();
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::AngularVelocity(frame),
-            Convention::Flu,
+            Self::MOUNT_CONVENTION,
         )];
 
         MeasurementSchema::compose(blocks)
@@ -68,7 +78,7 @@ impl MeasurementModel for AngularRateModel {
             });
         };
 
-        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<MountAxes, Flu>() else {
             return Prediction::Unavailable(Unavailable::ConventionMismatch {
                 from: self.sensor.clone(),
                 to: FrameId::base_link(self.agent.clone()),

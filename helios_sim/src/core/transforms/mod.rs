@@ -38,11 +38,18 @@ use std::collections::HashMap;
 /// coordinate identity and axis convention as one value.
 ///
 /// The [`FrameId`] is the tree's key. Every spawner stamps the same
-/// `(agent, leaf)` the runtime uses to build that frame's `MeasurementModel` —
-/// the leaf is the sensor's channel name for a sensor, `base_link`/`odom` for
-/// the spine — so a reading, its tf edge, and the filter's model all name one
-/// identity. The convention rides along to the [`ErasedTransform`] boundary so a
-/// convention mismatch fails loudly at the typed crossing.
+/// `(agent, leaf)` the runtime builds that frame's `MeasurementModel` for —
+/// the leaf is the installation's fit key for a sensor, the mount's name for
+/// a topology mount, `base_link`/`odom` for the spine — so a reading, its tf
+/// edge, and the filter's model all name one identity.
+///
+/// The convention comes from the frame's owner (the device kind, the
+/// topology, the estimate relay) and only names the frame's axes. The pose
+/// already carries them: an installation's rotation is the device's actual
+/// axes in the body, and the tree reads every pose back through the same FLU
+/// basis its spawner placed it with, so a non-FLU device needs no other
+/// conversion. The tag rides along to the [`ErasedTransform`] boundary so a
+/// reader expecting other axes fails loudly at the typed crossing.
 #[derive(Component)]
 pub struct TrackedFrame {
     pub id: FrameId,

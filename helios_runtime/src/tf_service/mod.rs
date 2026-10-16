@@ -12,7 +12,8 @@
 //! - `config` — [`TfBufferConfig`], the stack's `[tf]` section: how much
 //!   history the buffer keeps.
 //! - `service` — [`TfService`] and [`DrainedEdge`]; [`SeedRejected`] and
-//!   [`UnreachedMounts`], the two ways a host's static feed fails a pipeline.
+//!   [`RefusedMounts`] ([`MisreadMount`]), the two ways a host's static feed
+//!   fails a pipeline.
 //!
 //! [`TfBuffer`]: helios_core::spatial::transforms::tf::buffer::TfBuffer
 //! [`TfProvider`]: helios_core::prelude::TfProvider
@@ -21,4 +22,4 @@ mod config;
 mod service;
 
 pub use self::config::TfBufferConfig;
-pub use self::service::{DrainedEdge, SeedRejected, TfService, UnreachedMounts};
+pub use self::service::{DrainedEdge, MisreadMount, RefusedMounts, SeedRejected, TfService};

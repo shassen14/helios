@@ -1,7 +1,7 @@
 //! [`TfService`]: drains the tick's edge samples into the buffer and serves
 //! it to consumers.
 
-use crate::{port::PortBus, ChannelKey};
+use crate::{pipeline::ReadMount, port::PortBus, ChannelKey};
 
 use helios_core::{
     prelude::{MonotonicTime, TfProvider},
@@ -10,6 +10,7 @@ use helios_core::{
             buffer::{TfBuffer, TfIngestError, TfWindow},
             stamped::{FrameEdge, StampedTransform},
         },
+        transforms::Convention,
         FrameId,
     },
 };
@@ -91,30 +92,50 @@ impl TfService {
 
     /// Checks that every frame in `mounts` sits below `base_link`, through the
     /// tree or the `declared` edges, the ones whose samples have not arrived
-    /// yet. Below, not merely in the same tree: a mount that meets `base_link`
-    /// only through `odom` would move with the estimate.
+    /// yet, and that the tree holds it in every convention a node reads it in.
+    /// Below, not merely in the same tree: a mount that meets `base_link` only
+    /// through `odom` would move with the estimate. A mount reached only
+    /// through a declared edge has no convention in the tree before its first
+    /// sample, so only its reach is checked.
     ///
     /// Run once the host's static feed is complete, before the first tick: a
-    /// mount that does not join would otherwise surface only as a lookup
-    /// failure on every tick of every node reading it. Wiring only: whether a
-    /// frame is in the tree, never whether its edge's value is right.
-    pub fn check_mounts_reach(
+    /// mount that does not join, or is read in other axes than the tree holds,
+    /// would otherwise surface only as a skip on every tick of every node
+    /// reading it. Wiring only: whether a frame is in the tree and how its
+    /// axes are named, never whether its edge's value is right.
+    pub fn check_read_mounts(
         &self,
-        mounts: &[FrameId],
+        mounts: &[ReadMount],
         base_link: &FrameId,
         declared: &[FrameEdge],
-    ) -> Result<(), UnreachedMounts> {
-        let unreached: Vec<FrameId> = mounts
-            .iter()
-            .filter(|mount| !self.buffer.reaches(mount, base_link, declared))
-            .cloned()
-            .collect();
-        if unreached.is_empty() {
+    ) -> Result<(), RefusedMounts> {
+        let mut unreached = Vec::new();
+        let mut misread = Vec::new();
+        for mount in mounts {
+            if !self.buffer.reaches(&mount.frame, base_link, declared) {
+                unreached.push(mount.frame.clone());
+                continue;
+            }
+            let Some(held_in) = self.buffer.convention_of(&mount.frame) else {
+                continue;
+            };
+            for &read_in in &mount.read_in {
+                if read_in != held_in {
+                    misread.push(MisreadMount {
+                        frame: mount.frame.clone(),
+                        read_in,
+                        held_in,
+                    });
+                }
+            }
+        }
+        if unreached.is_empty() && misread.is_empty() {
             Ok(())
         } else {
-            Err(UnreachedMounts {
+            Err(RefusedMounts {
                 base_link: base_link.clone(),
-                mounts: unreached,
+                unreached,
+                misread,
             })
         }
     }
@@ -174,22 +195,53 @@ impl Display for SeedRejected {
     }
 }
 
-/// Mounts a pipeline reads that are not below `base_link` in the tree, found by
-/// [`TfService::check_mounts_reach`].
+/// Mounts a pipeline reads that the tree refuses, found by
+/// [`TfService::check_read_mounts`]: those not below `base_link`, and those a
+/// node reads in other axes than the tree holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UnreachedMounts {
+pub struct RefusedMounts {
     pub base_link: FrameId,
-    pub mounts: Vec<FrameId>,
+    pub unreached: Vec<FrameId>,
+    pub misread: Vec<MisreadMount>,
 }
 
-impl Display for UnreachedMounts {
+impl Display for RefusedMounts {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mounts: Vec<String> = self.mounts.iter().map(ToString::to_string).collect();
+        let mut parts = Vec::new();
+        if !self.unreached.is_empty() {
+            let mounts: Vec<String> = self.unreached.iter().map(ToString::to_string).collect();
+            parts.push(format!(
+                "mounts not below {} in the estimated tf tree: {}",
+                self.base_link,
+                mounts.join(", ")
+            ));
+        }
+        if !self.misread.is_empty() {
+            let mounts: Vec<String> = self.misread.iter().map(ToString::to_string).collect();
+            parts.push(format!(
+                "mounts read in other axes than the estimated tf tree holds: {}",
+                mounts.join(", ")
+            ));
+        }
+        f.write_str(&parts.join("; "))
+    }
+}
+
+/// A mount some node reads in `read_in` axes while the tree holds it in
+/// `held_in`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MisreadMount {
+    pub frame: FrameId,
+    pub read_in: Convention,
+    pub held_in: Convention,
+}
+
+impl Display for MisreadMount {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "mounts not below {} in the estimated tf tree: {}",
-            self.base_link,
-            mounts.join(", ")
+            "{} (read as {}, held as {})",
+            self.frame, self.read_in, self.held_in
         )
     }
 }
@@ -467,6 +519,25 @@ mod tests {
         )
     }
 
+    // The mounts `names`, read by nodes that never resolve them.
+    fn read(names: &[&str]) -> Vec<ReadMount> {
+        names
+            .iter()
+            .map(|name| ReadMount {
+                frame: sensor(name),
+                read_in: vec![],
+            })
+            .collect()
+    }
+
+    // The mount `name`, read in `read_in`.
+    fn read_as(name: &str, read_in: Convention) -> ReadMount {
+        ReadMount {
+            frame: sensor(name),
+            read_in: vec![read_in],
+        }
+    }
+
     fn seeded(seeds: Vec<StampedTransform>) -> TfService {
         TfService::new(window(), vec![], seeds).expect("the seeds form a valid tree")
     }
@@ -475,9 +546,8 @@ mod tests {
     fn seeded_mounts_reach_base_link() {
         let service = seeded(vec![seed("gps", base_link()), seed("imu", base_link())]);
 
-        let mounts = [sensor("gps"), sensor("imu")];
         assert_eq!(
-            service.check_mounts_reach(&mounts, &base_link(), &[]),
+            service.check_read_mounts(&read(&["gps", "imu"]), &base_link(), &[]),
             Ok(())
         );
     }
@@ -486,14 +556,14 @@ mod tests {
     fn every_unseeded_mount_is_named() {
         let service = seeded(vec![seed("gps", base_link())]);
 
-        let mounts = [sensor("gps"), sensor("imu"), sensor("mag")];
-        let refused = service.check_mounts_reach(&mounts, &base_link(), &[]);
+        let refused = service.check_read_mounts(&read(&["gps", "imu", "mag"]), &base_link(), &[]);
 
         assert_eq!(
             refused,
-            Err(UnreachedMounts {
+            Err(RefusedMounts {
                 base_link: base_link(),
-                mounts: vec![sensor("imu"), sensor("mag")],
+                unreached: vec![sensor("imu"), sensor("mag")],
+                misread: vec![],
             })
         );
     }
@@ -505,7 +575,7 @@ mod tests {
         let service = seeded(vec![seed("gps", sensor("rig"))]);
 
         assert!(service
-            .check_mounts_reach(&[sensor("gps")], &base_link(), &[])
+            .check_read_mounts(&read(&["gps"]), &base_link(), &[])
             .is_err());
     }
 
@@ -520,10 +590,65 @@ mod tests {
         };
 
         assert!(service
-            .check_mounts_reach(&[sensor("lidar")], &base_link(), &[])
+            .check_read_mounts(&read(&["lidar"]), &base_link(), &[])
             .is_err());
         assert_eq!(
-            service.check_mounts_reach(&[sensor("lidar")], &base_link(), &[motor]),
+            service.check_read_mounts(&read(&["lidar"]), &base_link(), &[motor]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_mount_read_in_the_axes_the_tree_holds_passes() {
+        let service = seeded(vec![seed("imu", base_link())]);
+
+        assert_eq!(
+            service.check_read_mounts(&[read_as("imu", Convention::Flu)], &base_link(), &[]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_mount_read_in_other_axes_than_the_tree_holds_is_named() {
+        // Two mounts, each reached; the one read as ENU is held as FLU.
+        let service = seeded(vec![seed("gps", base_link()), seed("imu", base_link())]);
+        let mounts = [
+            read_as("gps", Convention::Flu),
+            read_as("imu", Convention::Enu),
+        ];
+
+        let refused = service.check_read_mounts(&mounts, &base_link(), &[]);
+
+        assert_eq!(
+            refused,
+            Err(RefusedMounts {
+                base_link: base_link(),
+                unreached: vec![],
+                misread: vec![MisreadMount {
+                    frame: sensor("imu"),
+                    read_in: Convention::Enu,
+                    held_in: Convention::Flu,
+                }],
+            })
+        );
+    }
+
+    #[test]
+    fn a_mount_reached_only_through_a_declared_edge_is_checked_for_reach_alone() {
+        // A camera on a gimbal whose joint edge is declared but unsampled:
+        // the tree holds no convention for the gimbal frame until then.
+        let service = seeded(vec![seed("gps", base_link())]);
+        let joint = FrameEdge {
+            child: sensor("gimbal"),
+            parent: base_link(),
+        };
+
+        assert_eq!(
+            service.check_read_mounts(
+                &[read_as("gimbal", Convention::Enu)],
+                &base_link(),
+                &[joint]
+            ),
             Ok(())
         );
     }
@@ -581,7 +706,7 @@ mod tests {
         };
 
         assert!(service
-            .check_mounts_reach(&[sensor("gps")], &base_link(), &[estimate])
+            .check_read_mounts(&read(&["gps"]), &base_link(), &[estimate])
             .is_err());
     }
 }

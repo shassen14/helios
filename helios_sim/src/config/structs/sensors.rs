@@ -8,6 +8,10 @@
 use super::pose::Pose;
 
 use helios_core::prelude::AgentId;
+use helios_core::sensors::{
+    accelerometer::AccelerometerModel, gps::GpsModel, lidar::LidarModel,
+    magnetometer::MagnetometerModel,
+};
 use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 
@@ -178,14 +182,15 @@ impl SensorDeviceConfig {
         }
     }
 
-    /// The axis convention of this kind's sensor frame. Every kind today
-    /// reports in its body frame, FLU.
+    /// The axis convention of this kind's sensor frame, as its forward model
+    /// declares it. An IMU's accelerometer and gyroscope share one frame,
+    /// so they must declare one convention.
     pub fn convention(&self) -> Convention {
         match self {
-            SensorDeviceConfig::Imu(_)
-            | SensorDeviceConfig::Gps(_)
-            | SensorDeviceConfig::Lidar(_)
-            | SensorDeviceConfig::Magnetometer(_) => Convention::Flu,
+            SensorDeviceConfig::Imu(_) => AccelerometerModel::FRAME_CONVENTION,
+            SensorDeviceConfig::Gps(_) => GpsModel::FRAME_CONVENTION,
+            SensorDeviceConfig::Lidar(_) => LidarModel::FRAME_CONVENTION,
+            SensorDeviceConfig::Magnetometer(_) => MagnetometerModel::FRAME_CONVENTION,
         }
     }
 }
@@ -331,6 +336,8 @@ mod tests {
 
     use super::*;
 
+    use helios_core::sensors::gyroscope::GyroscopeModel;
+
     use figment::providers::{Format, Toml};
     use figment::Figment;
     use nalgebra::{UnitQuaternion, Vector3};
@@ -391,7 +398,17 @@ mod tests {
         let frame = imu.frame(&agent(), "imu");
 
         assert_eq!(frame.id, FrameId::agent(agent(), "imu"));
-        assert_eq!(frame.convention, Convention::Flu);
+        assert_eq!(frame.convention, AccelerometerModel::FRAME_CONVENTION);
+    }
+
+    /// The IMU's one frame is named by the accelerometer's forward model, so
+    /// the gyroscope's must name its axes alike.
+    #[test]
+    fn an_imus_two_forward_models_declare_one_frame_convention() {
+        assert_eq!(
+            AccelerometerModel::FRAME_CONVENTION,
+            GyroscopeModel::FRAME_CONVENTION
+        );
     }
 
     /// The frame carries the installation's pose.

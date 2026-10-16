@@ -25,7 +25,7 @@ use helios_core::estimation::GaussianStateEstimator;
 use helios_core::prelude::AgentId;
 use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
-use helios_core::spatial::transforms::Transform;
+use helios_core::spatial::transforms::{Convention, Transform};
 use helios_core::spatial::{FrameAwareState, FrameId};
 
 use nalgebra::{DMatrix, Isometry3, Quaternion, Translation3, UnitQuaternion};
@@ -104,11 +104,13 @@ impl EstimatorPlan {
 }
 
 /// One aiding entry as declared: the channel its model's kind reads, named
-/// `input` in config, its NIS window, its R, and the source still to build.
+/// `input` in config, the axes the model reads that channel's mount in, its
+/// NIS window, its R, and the source still to build.
 pub(super) struct AidingPlan {
     pub(super) name: String,
     pub(super) input: String,
     pub(super) channel: ChannelKey,
+    pub(super) mount_convention: Option<Convention>,
     pub(super) nis_window: Option<NisWindow>,
     pub(super) noise: DMatrix<f64>,
     pub(super) model: DeferredComponent<MeasurementWiring, Box<dyn MeasurementSource>>,

@@ -54,6 +54,7 @@ use crate::stamped::{Health, Stamped};
 use helios_core::estimation::{GaussianStateEstimator, PredictOutcome, PredictSkipReason};
 use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::tf::TfProvider;
+use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameAwareState;
 
 use atomic_float::AtomicF64;
@@ -87,18 +88,24 @@ impl RecursiveEstimatorNode {
     /// builder's channels as it declares them, each aiding channel optional,
     /// since the filter still predicts and publishes without it, each entry's
     /// leaves, its NIS and its drop count, and the state output on the
-    /// channel named after the node.
+    /// channel named after the node. `mount_readings` are the channels whose
+    /// mounts the builder and the aiding models resolve, each with the axes
+    /// it is read in.
     pub(crate) fn declare_ports<'a>(
         name: &str,
         input_required: &[ChannelKey],
         input_optional: &[ChannelKey],
         aiding: impl IntoIterator<Item = (&'a str, &'a ChannelKey)>,
+        mount_readings: impl IntoIterator<Item = (ChannelKey, Convention)>,
     ) -> PortDescriptor {
         let mut builder = AlgorithmNodePortDescriptor::new()
             .inputs_from_slices(input_required, input_optional)
             .output_internal(estimator_output(name));
         for (entry, channel) in aiding {
             builder = aiding_ports(builder, entry, channel);
+        }
+        for (channel, convention) in mount_readings {
+            builder = builder.reads_mount_in(&channel, convention);
         }
         builder.build()
     }

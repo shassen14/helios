@@ -85,6 +85,15 @@ fn build(
         aiding
             .iter()
             .map(|entry| (entry.name.as_str(), &entry.channel)),
+        input
+            .mount_readings()
+            .iter()
+            .cloned()
+            .chain(aiding.iter().filter_map(|entry| {
+                entry
+                    .mount_convention
+                    .map(|convention| (entry.channel.clone(), convention))
+            })),
     );
     let plan = EstimatorPlan {
         agent: ctx.agent().clone(),
@@ -109,8 +118,8 @@ fn build(
 }
 
 /// Declares aiding entry `name`: its NIS window, its R, the channel its
-/// model's kind reads, and the source still to build. Returns it with its
-/// model's resolved sub-table.
+/// model's kind reads and the axes it reads that channel's mount in, and the
+/// source still to build. Returns it with its model's resolved sub-table.
 fn declare_aiding(
     components: &EstimatorComponents,
     name: String,
@@ -121,11 +130,12 @@ fn declare_aiding(
     check_r_diag(&name, &entry.r_diag)?;
     let path = format!("{AIDING_KEY}.{name}.{MODEL_KEY}");
     let parsed = components.parse_measurement(&path, entry.model, ctx)?;
-    let channel = (parsed.declared)(&entry.input);
+    let channel = (parsed.declared.channel)(&entry.input);
     let plan = AidingPlan {
         name,
         input: entry.input,
         channel,
+        mount_convention: parsed.declared.mount_convention,
         nis_window,
         noise: DMatrix::from_diagonal(&DVector::from_vec(entry.r_diag)),
         model: parsed.deferred,
@@ -203,6 +213,7 @@ mod tests {
     use crate::BodyChannel;
 
     use helios_core::estimation::augmentation::MAGNETOMETER_BIAS;
+    use helios_core::estimation::measurement::gps::GpsPositionModel;
     use helios_core::estimation::measurement::{MeasurementModel, Prediction};
     use helios_core::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
     use helios_core::interchange::measurement::sensor::GpsPosition;
@@ -445,6 +456,7 @@ mod tests {
         components
             .register_measurement::<GpsPosition, _, _, _>(
                 "test_odom_position",
+                None,
                 no_check,
                 |_: NoParams, _: &BuildContext<'_>, _: &FrameId| {
                     Ok(Box::new(OdomPositionModel) as Box<dyn MeasurementModel>)
@@ -454,6 +466,7 @@ mod tests {
         components
             .register_measurement::<GpsPosition, _, _, _>(
                 "test_world_position",
+                None,
                 no_check,
                 |_: NoParams, _: &BuildContext<'_>, _: &FrameId| {
                     Ok(Box::new(WorldPositionModel) as Box<dyn MeasurementModel>)
@@ -484,6 +497,35 @@ mod tests {
         assert!(descriptor
             .outputs()
             .any(|key| *key == estimator_output(NODE).into()));
+    }
+
+    /// The node states the axes it reads each mount in: the IMU input
+    /// builder's two channels and each aiding model that resolves its mount,
+    /// so the host can check them against the tree before the first tick.
+    #[test]
+    fn the_node_states_the_axes_it_reads_each_mount_in() {
+        let (node, _) = build_section(&format!("{BASE}{GPS}"));
+
+        let readings: Vec<(String, Convention)> = node
+            .port_descriptor()
+            .mount_readings()
+            .iter()
+            .map(|reading| {
+                (
+                    reading.channel().instance().to_string(),
+                    reading.convention(),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            readings,
+            [
+                ("imu.accel".to_string(), Convention::Flu),
+                ("imu.gyro".to_string(), Convention::Flu),
+                ("gps".to_string(), GpsPositionModel::MOUNT_CONVENTION),
+            ]
+        );
     }
 
     /// The resolved section carries each component's resolved sub-table, so

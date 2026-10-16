@@ -13,9 +13,10 @@ use helios_core::control::commands::TwistIntent;
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::spatial::transforms::tf::buffer::TfWindow;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
-use helios_core::spatial::transforms::{Convention, ErasedTransform};
+use helios_core::spatial::transforms::ErasedTransform;
 use helios_core::spatial::FrameId;
 use helios_runtime::channels::control;
+use helios_runtime::nodes::estimate_relay::ODOM_CONVENTION;
 use helios_runtime::tf_service::TfService;
 use helios_runtime::{build_pipeline, AutonomyPipeline, BodyCapabilities, BodyChannel, ChannelKey};
 
@@ -116,10 +117,10 @@ pub fn spawn_autonomy_pipeline(
 /// Seeded with the static sensor mounts and draining exactly the tf-edge
 /// channels the pipeline declares, so its tree is fed only by the graph's own
 /// producers, never the sim's truth tree. Fails with every rejected seed, or
-/// with the mounts the pipeline reads that are not below `base_link`. The
-/// pipeline's tf edges do not yet say which frames they join, so none is
-/// declared; the one today, `odom → base_link`, lies above `base_link`, on no
-/// mount's way to it.
+/// with the mounts the pipeline reads that are not below `base_link` or that
+/// a node reads in other axes than the tree holds. The pipeline's tf edges do
+/// not yet say which frames they join, so none is declared; the one today,
+/// `odom → base_link`, lies above `base_link`, on no mount's way to it.
 fn estimated_tf_service(
     pipeline: &AutonomyPipeline,
     window: TfWindow,
@@ -129,12 +130,12 @@ fn estimated_tf_service(
     let service = TfService::new(window, pipeline.tf_edge_channels(), static_seeds)
         .map_err(|rejected| rejected.iter().map(ToString::to_string).collect::<Vec<_>>())?;
     service
-        .check_mounts_reach(
+        .check_read_mounts(
             &pipeline.read_mounts(),
             &FrameId::base_link(agent.clone()),
             &[],
         )
-        .map_err(|unreached| vec![unreached.to_string()])?;
+        .map_err(|refused| vec![refused.to_string()])?;
     Ok(service)
 }
 
@@ -148,10 +149,11 @@ fn estimated_tf_service(
 /// while leaving the estimated buffer structurally unable to reach the truth
 /// tree. Each mount is time-invariant, so it is stamped at `t = 0` and folded
 /// once when the [`TfService`] is constructed. `from_parts` takes the
-/// installation's own convention first, the `base_link` convention (FLU)
-/// second.
+/// installation's own convention first, then `base_link`'s, the body
+/// convention its topology declares.
 fn build_static_seeds(agent_config: &AgentConfig, agent: &AgentId) -> Vec<StampedTransform> {
     let base_link = FrameId::base_link(agent.clone());
+    let body_convention = agent_config.vehicle.topology.convention();
 
     agent_config
         .sensors
@@ -161,7 +163,7 @@ fn build_static_seeds(agent_config: &AgentConfig, agent: &AgentId) -> Vec<Stampe
             transform: ErasedTransform::from_parts(
                 frame.pose.to_isometry(),
                 frame.convention,
-                Convention::Flu,
+                body_convention,
             ),
             child: frame.id,
             parent: base_link.clone(),
@@ -179,11 +181,9 @@ pub fn spawn_odom_frames(
         let agent = &agent_id.0;
         commands.spawn((
             Name::new(format!("{}/odom", agent)),
-            // ENU because the estimator's world frame is ENU. This is a property
-            // of the estimation stack, not the vehicle — every agent's odom shares
-            // it regardless of body convention. A future NED-world estimator would
-            // make this configurable at the estimator layer, not per vehicle.
-            TrackedFrame::new(FrameId::odom(agent.clone()), Convention::Enu),
+            // The convention the estimate relay publishes `odom` in: a property
+            // of the estimation stack, not the vehicle.
+            TrackedFrame::new(FrameId::odom(agent.clone()), ODOM_CONVENTION),
             Transform::IDENTITY,
             GlobalTransform::IDENTITY,
             OdomFrameOf(agent_entity),

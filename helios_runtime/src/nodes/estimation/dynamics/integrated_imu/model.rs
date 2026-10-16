@@ -20,7 +20,7 @@ use helios_core::prelude::{Acceleration, AgentId, AngularRate, MonotonicTime, Se
 use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::state::{Component, Quantity};
 use helios_core::spatial::tf::TfProvider;
-use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::transforms::{Convention, ConventionOf};
 use helios_core::spatial::{FrameId, StateVariable};
 
 use nalgebra::{DVector, Isometry3, Vector3};
@@ -28,6 +28,9 @@ use std::sync::Arc;
 
 /// The `kind` a `dynamics` sub-table writes for the IMU-driven INS.
 pub(crate) const INTEGRATED_IMU_KIND: &str = "IntegratedImu";
+
+/// The axes the builder reads each IMU channel's mount in.
+type MountAxes = Flu;
 
 /// Assembles a 6-element IMU control vector `[fx, fy, fz, wx, wy, wz]`, body
 /// (`base_link`) specific force and angular velocity in FLU, from the most
@@ -89,7 +92,7 @@ impl IntegratedImuInputBuilder {
                 to: self.body.clone(),
             })?;
         erased
-            .typed::<Flu, Flu>()
+            .typed::<MountAxes, Flu>()
             .map(|transform| transform.into_inner())
             .map_err(|_| InputUnavailable::ConventionMismatch {
                 from: channel.mount.clone(),
@@ -223,15 +226,20 @@ fn build(config: IntegratedImuConfig, ctx: &BuildContext<'_>) -> Result<Dynamics
         imu_input_schema(&FrameId::base_link(agent.clone())),
         vec![accel.clone(), gyro.clone()],
         vec![],
-        move |mounts: &InputMounts| {
-            let accel = MountedChannel::new(accel, mounts)?;
-            let gyro = MountedChannel::new(gyro, mounts)?;
-            Ok(
-                Box::new(IntegratedImuInputBuilder::new(agent, accel, gyro)?)
-                    as Box<dyn EstimatorInputBuilder>,
-            )
+        {
+            let (accel, gyro) = (accel.clone(), gyro.clone());
+            move |mounts: &InputMounts| {
+                let accel = MountedChannel::new(accel, mounts)?;
+                let gyro = MountedChannel::new(gyro, mounts)?;
+                Ok(
+                    Box::new(IntegratedImuInputBuilder::new(agent, accel, gyro)?)
+                        as Box<dyn EstimatorInputBuilder>,
+                )
+            }
         },
-    );
+    )
+    .reads_mount_in(&accel, MountAxes::CONVENTION)
+    .reads_mount_in(&gyro, MountAxes::CONVENTION);
 
     DynamicsComponent::new(Box::new(dynamics), input).map_err(|e| e.to_string())
 }

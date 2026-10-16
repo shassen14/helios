@@ -9,6 +9,7 @@ use crate::prelude::TickContext;
 use helios_core::estimation::schema::InputSchema;
 use helios_core::estimation::EstimatorInputs;
 use helios_core::spatial::tf::TfProvider;
+use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 
 use std::sync::Arc;
@@ -88,6 +89,7 @@ pub struct DeclaredInput {
     schema: Arc<InputSchema>,
     required: Vec<ChannelKey>,
     optional: Vec<ChannelKey>,
+    mount_readings: Vec<(ChannelKey, Convention)>,
     build: BuildInput,
 }
 
@@ -107,8 +109,19 @@ impl DeclaredInput {
             schema,
             required,
             optional,
+            mount_readings: Vec::new(),
             build: Box::new(build),
         }
+    }
+
+    /// Declares that the builder resolves `channel`'s mount through the tf
+    /// tree, reading the frame in the axes `convention` names. The host
+    /// refuses a mount the tree holds in other axes before the first tick.
+    /// `channel` must be one of the declared channels, or declaring the node's
+    /// ports panics.
+    pub fn reads_mount_in(mut self, channel: &ChannelKey, convention: Convention) -> Self {
+        self.mount_readings.push((channel.clone(), convention));
+        self
     }
 
     /// The input the builder will assemble.
@@ -124,6 +137,12 @@ impl DeclaredInput {
     /// Channels the builder will read when present.
     pub(crate) fn optional_channels(&self) -> &[ChannelKey] {
         &self.optional
+    }
+
+    /// The channels whose mounts the builder resolves, each with the axes it
+    /// reads the mount in.
+    pub(crate) fn mount_readings(&self) -> &[(ChannelKey, Convention)] {
+        &self.mount_readings
     }
 
     /// Builds the builder from `mounts`.

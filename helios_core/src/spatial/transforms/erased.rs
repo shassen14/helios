@@ -32,10 +32,11 @@ impl ErasedTransform {
     /// `to`).
     ///
     /// The entry point for a provider that works in raw isometries — e.g. the sim
-    /// `TfTree`, which derives each endpoint's convention from its
-    /// [`FrameId`](crate::spatial::FrameId) when it stamps the tags. The tag order
-    /// must match the lookup's `(from, to)` order, or [`typed`](Self::typed) will
-    /// reject a correct edge.
+    /// `TfTree`, which stores each frame's convention as the frame's owner
+    /// declared it. The isometry already carries the frames' actual axes; the
+    /// tags only name them and never re-orient it. The tag order must match the
+    /// lookup's `(from, to)` order, or [`typed`](Self::typed) will reject a
+    /// correct edge.
     pub fn from_parts(isometry: Isometry3<f64>, from: Convention, to: Convention) -> Self {
         Self { isometry, from, to }
     }

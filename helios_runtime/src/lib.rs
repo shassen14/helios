@@ -20,11 +20,11 @@ pub use crate::body::{BodyCapabilities, BodyChannel};
 pub use crate::pipeline::node::{NodeId, PipelineNode, TickContext, HOST_PRODUCER_ID};
 pub use crate::pipeline::{
     AutonomyPipeline, ChannelUses, CycleEdge, InputMounts, MountLookupError, MountRefusal,
-    NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder,
+    NodeConstructor, NodePlan, PipelineBuildError, PipelineBuilder, ReadMount,
 };
 pub use crate::port::{
-    ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, MountRule,
-    PortDescriptor, Provenance, SlotVersion, Writer,
+    ChannelDescription, ChannelKey, ErasedStamped, InputNeed, InputPort, InputTiming, MountReading,
+    MountRule, PortDescriptor, Provenance, SlotVersion, Writer,
 };
 pub use crate::stamped::{Health, Stamped};
 

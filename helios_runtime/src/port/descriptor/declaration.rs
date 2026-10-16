@@ -14,6 +14,7 @@
 use crate::{observe::observation::ObservedValueKind, port::channel::ChannelKey};
 
 use helios_core::control::actuators::ActuatorDrive;
+use helios_core::spatial::transforms::Convention;
 
 use std::sync::Arc;
 
@@ -44,6 +45,11 @@ use std::sync::Arc;
 /// [`output_ports`](Self::output_ports) yields the records;
 /// [`outputs`](Self::outputs) yields just the channel keys.
 ///
+/// Each input whose mount the node resolves through the tf tree is declared
+/// as a [`MountReading`], read with [`mount_readings`](Self::mount_readings),
+/// so a host can check the tree holds that frame in the axes the node reads
+/// it in before the first tick.
+///
 /// Each value the node can emit for watchers is declared as an [`Observable`],
 /// read with [`observables`](Self::observables). These never touch the bus:
 /// they are the node's catalog of watchable values, and an emit of a leaf the
@@ -60,6 +66,7 @@ use std::sync::Arc;
 pub struct PortDescriptor {
     required_inputs: Vec<InputPort>,
     optional_inputs: Vec<InputPort>,
+    mount_readings: Vec<MountReading>,
     outputs: Vec<OutputPort>,
     observables: Vec<Observable>,
     rate: Option<f64>,
@@ -92,6 +99,7 @@ impl PortDescriptor {
         Self {
             required_inputs: required,
             optional_inputs: optional,
+            mount_readings: Vec::new(),
             outputs: outputs.into_iter().map(OutputPort::undriven).collect(),
             observables: Vec::new(),
             rate,
@@ -109,6 +117,27 @@ impl PortDescriptor {
     /// order. For the builders.
     pub(crate) fn with_observables(mut self, observables: Vec<Observable>) -> Self {
         self.observables = observables;
+        self
+    }
+
+    /// Records the axes the node reads each listed input's mount in. For the
+    /// builders.
+    ///
+    /// # Panics
+    ///
+    /// If a listed channel is not a declared input: a node stating how it
+    /// reads the mount of a channel it never reads is a bug in the node.
+    pub(crate) fn with_mount_readings(mut self, readings: Vec<(ChannelKey, Convention)>) -> Self {
+        for (channel, convention) in readings {
+            assert!(
+                self.inputs().any(|input| input.channel == channel),
+                "a mount reading is declared for {channel}, which the node does not read"
+            );
+            self.mount_readings.push(MountReading {
+                channel,
+                convention,
+            });
+        }
         self
     }
 
@@ -144,6 +173,13 @@ impl PortDescriptor {
                 None
             }
         })
+    }
+
+    /// The inputs whose mounts the node resolves through the tf tree, each
+    /// with the axes it reads the mount in, in declaration order. One channel
+    /// may appear more than once, read by two parts of the node.
+    pub fn mount_readings(&self) -> &[MountReading] {
+        &self.mount_readings
     }
 
     /// Every output record, in declaration order.
@@ -213,6 +249,27 @@ impl InputPort {
     /// Which tick's value this input expects.
     pub fn timing(&self) -> InputTiming {
         self.timing
+    }
+}
+
+/// A node's statement that it resolves an input channel's mount through the
+/// tf tree, reading the frame in the axes `convention` names. Only the
+/// descriptor builders create records, for channels the node reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MountReading {
+    channel: ChannelKey,
+    convention: Convention,
+}
+
+impl MountReading {
+    /// The input channel whose mount is read.
+    pub fn channel(&self) -> &ChannelKey {
+        &self.channel
+    }
+
+    /// The axes the node reads the mount in.
+    pub fn convention(&self) -> Convention {
+        self.convention
     }
 }
 
@@ -482,6 +539,7 @@ mod tests {
                 InputNeed::Optional,
                 InputTiming::PreviousTick,
             )],
+            mount_readings: vec![],
             outputs: vec![],
             observables: vec![],
             rate: None,

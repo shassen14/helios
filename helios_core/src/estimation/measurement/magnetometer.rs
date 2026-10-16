@@ -8,11 +8,14 @@ use crate::{
     spatial::{
         conventions::{Enu, Flu},
         quantities::FreeVector,
-        transforms::{Convention, Rotation},
+        transforms::{Convention, ConventionOf, Rotation},
         FrameAwareState, FrameId,
     },
 };
 use nalgebra::{DVector, Vector3};
+
+/// The axes the model reads its sensor's mount in.
+type MountAxes = Flu;
 
 /// A measurement model for a 3-axis magnetometer.
 ///
@@ -26,13 +29,20 @@ pub struct MagneticFieldModel {
     pub world_magnetic_field: Vector3<f64>,
 }
 
+impl MagneticFieldModel {
+    /// The axis convention this model reads its sensor's mount in. A host
+    /// checks it against the convention the tf tree holds for the mount
+    /// before the first tick.
+    pub const MOUNT_CONVENTION: Convention = MountAxes::CONVENTION;
+}
+
 impl MeasurementModel for MagneticFieldModel {
     /// One block: the magnetic field resolved in the sensor frame (FLU).
     fn schema(&self) -> MeasurementSchema {
         let frame = self.sensor.clone();
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::Mag(frame),
-            Convention::Flu,
+            Self::MOUNT_CONVENTION,
         )];
 
         MeasurementSchema::compose(blocks)
@@ -75,7 +85,7 @@ impl MeasurementModel for MagneticFieldModel {
             });
         };
 
-        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<MountAxes, Flu>() else {
             return Prediction::Unavailable(Unavailable::ConventionMismatch {
                 from: self.sensor.clone(),
                 to: FrameId::base_link(self.agent.clone()),

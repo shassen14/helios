@@ -261,6 +261,7 @@ pub(super) fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Prob
         input.required_channels(),
         input.optional_channels(),
         [(ACCEL_ENTRY, &accel_channel())],
+        [],
     );
     let node = RecursiveEstimatorNode::new(
         "primary",

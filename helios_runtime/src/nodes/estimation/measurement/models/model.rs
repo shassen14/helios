@@ -30,6 +30,7 @@ pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponent
     components
         .register_measurement::<GpsPosition, _, _, _>(
             GPS_POSITION_KIND,
+            Some(GpsPositionModel::MOUNT_CONVENTION),
             no_check,
             build_gps_position,
         )
@@ -37,16 +38,23 @@ pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponent
     components
         .register_measurement::<Acceleration, _, _, _>(
             ACCELEROMETER_KIND,
+            Some(SpecificForceModel::MOUNT_CONVENTION),
             no_check,
             build_accelerometer,
         )
         .expect(ONCE);
     components
-        .register_measurement::<AngularRate, _, _, _>(GYROSCOPE_KIND, no_check, build_gyroscope)
+        .register_measurement::<AngularRate, _, _, _>(
+            GYROSCOPE_KIND,
+            Some(AngularRateModel::MOUNT_CONVENTION),
+            no_check,
+            build_gyroscope,
+        )
         .expect(ONCE);
     components
         .register_measurement::<MagneticField, _, _, _>(
             MAGNETOMETER_KIND,
+            Some(MagneticFieldModel::MOUNT_CONVENTION),
             no_check,
             build_magnetometer,
         )

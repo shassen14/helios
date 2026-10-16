@@ -363,6 +363,12 @@ impl TfBuffer {
         false
     }
 
+    /// The axis convention `frame` was established with by the first edge
+    /// that touched it, or `None` for a frame no edge has touched.
+    pub fn convention_of(&self, frame: &FrameId) -> Option<Convention> {
+        self.conventions.get(frame).copied()
+    }
+
     /// The shared structural validation both inserts run before storing anything —
     /// every invariant the tree relies on is checked here, once, so the lookup walk
     /// can assume a single-parent, acyclic, convention-consistent tree.
@@ -1146,6 +1152,20 @@ mod tests {
         ];
 
         assert!(!buf.reaches(&a, &base_link(), &loop_edges));
+    }
+
+    // --- convention_of ---
+
+    #[test]
+    fn convention_of_reports_each_end_of_an_edge_and_nothing_for_an_unknown_frame() {
+        let mut buf = TfBuffer::new(window());
+        let imu = mount(&mut buf, "imu", 0.5);
+        assert!(buf.insert_dynamic(bl_odom(1.0, 0.0)).is_ok());
+
+        assert_eq!(buf.convention_of(&imu), Some(Convention::Flu));
+        assert_eq!(buf.convention_of(&base_link()), Some(Convention::Flu));
+        assert_eq!(buf.convention_of(&odom()), Some(Convention::Enu));
+        assert_eq!(buf.convention_of(&sensor("gps")), None);
     }
 
     // --- accumulate ---

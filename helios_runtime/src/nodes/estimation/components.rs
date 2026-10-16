@@ -4,7 +4,7 @@
 use super::dynamics::DynamicsComponent;
 use super::filter::FilterParts;
 use super::measurement::{
-    reading_channel, source_factory, MeasurementSource, MeasurementWiring, ReadingChannel,
+    reading_channel, source_factory, MeasurementDeclaration, MeasurementSource, MeasurementWiring,
 };
 
 use crate::assembly::{
@@ -15,6 +15,7 @@ use crate::assembly::{
 use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::GaussianStateEstimator;
 use helios_core::interchange::measurement::sensor::SensorPayload;
+use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -29,7 +30,8 @@ use serde::Serialize;
 pub struct EstimatorComponents {
     filters: ComponentTable<FilterParts, Box<dyn GaussianStateEstimator>, ()>,
     dynamics: ComponentTable<(), DynamicsComponent, ()>,
-    measurements: ComponentTable<MeasurementWiring, Box<dyn MeasurementSource>, ReadingChannel>,
+    measurements:
+        ComponentTable<MeasurementWiring, Box<dyn MeasurementSource>, MeasurementDeclaration>,
 }
 
 impl Default for EstimatorComponents {
@@ -71,7 +73,8 @@ impl EstimatorComponents {
 
     /// Parses the measurement model described by `section`, the sub-table at
     /// `path` in node `ctx.node_name()`'s section, and runs its kind's check.
-    /// Its kind declares the channel it reads; the source is built later, from
+    /// Its kind declares the channel it reads and the axes it reads that
+    /// channel's mount in; the source is built later, from
     /// the [`MeasurementWiring`] naming that channel and R.
     pub(crate) fn parse_measurement(
         &self,
@@ -79,7 +82,7 @@ impl EstimatorComponents {
         section: toml::Table,
         ctx: &BuildContext<'_>,
     ) -> Result<
-        ParsedComponent<MeasurementWiring, Box<dyn MeasurementSource>, ReadingChannel>,
+        ParsedComponent<MeasurementWiring, Box<dyn MeasurementSource>, MeasurementDeclaration>,
         ComponentError,
     > {
         self.measurements.parse(path, section, ctx)
@@ -159,13 +162,15 @@ impl EstimatorComponents {
 
     /// Registers a measurement kind under `kind`, reading payload type `P`.
     ///
-    /// `check` refuses a config that is unusable on its own, when the node is
-    /// declared; pass [`no_check`] when parsing is check enough. The kind
-    /// declares the channel it reads from `P`, so `check` states nothing
+    /// `mount_convention` is the axes the model reads its sensor's mount in
+    /// through the tf tree, `None` for a model that never resolves the mount;
+    /// the host refuses a mount the tree holds in other axes before the first
+    /// tick. `check` refuses a config that is unusable on its own, when the
+    /// node is declared; pass [`no_check`] when parsing is check enough. The
+    /// kind declares the channel it reads from `P`, so `check` states nothing
     /// else. `build` takes the kind's own typed config, which `check`
-    /// accepted, the node's build context and
-    /// the frame of the sensor whose readings it predicts, and returns the
-    /// model. Registering the payload with the model is what lets one entry
+    /// accepted, the node's build context and the frame of the sensor whose
+    /// readings it predicts, and returns the model. Registering the payload with the model is what lets one entry
     /// yield the model, the typed reader and the typed channel: config names
     /// only the kind, so a model can't be paired with a channel carrying a
     /// different payload. The same model may be registered again under another
@@ -178,6 +183,7 @@ impl EstimatorComponents {
     pub fn register_measurement<P, C, K, F>(
         &mut self,
         kind: impl Into<String>,
+        mount_convention: Option<Convention>,
         check: K,
         build: F,
     ) -> Result<(), DuplicateComponentKind>
@@ -194,7 +200,10 @@ impl EstimatorComponents {
             kind,
             move |config: &C| {
                 check(config)?;
-                Ok(reading_channel::<P>())
+                Ok(MeasurementDeclaration {
+                    channel: reading_channel::<P>(),
+                    mount_convention,
+                })
             },
             source_factory::<P, C, F>(build),
         )

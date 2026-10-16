@@ -11,10 +11,12 @@ use std::sync::{
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::FrameEdge;
+use helios_core::spatial::transforms::Convention;
 use helios_runtime::{
     channels::tf::tf_edge,
     pipeline::{
         ChannelUses, CycleEdge, MountLookupError, NodePlan, PipelineBuildError, PipelineBuilder,
+        ReadMount,
     },
     port::{
         AlgorithmNodePortDescriptor, ChannelKey, InputNeed, InternalChannel,
@@ -287,6 +289,18 @@ impl SinkNode {
             name: name.to_string(),
             descriptor: MockNodePortDescriptor::new()
                 .inputs_from_slices(&[], &[input])
+                .build(),
+        }
+    }
+
+    /// A sink that resolves its input's mount through the tf tree, in the
+    /// axes `convention` names.
+    fn reading_mount_in(name: &str, input: ChannelKey, convention: Convention) -> Self {
+        Self {
+            name: name.to_string(),
+            descriptor: AlgorithmNodePortDescriptor::new()
+                .inputs_from_slices(std::slice::from_ref(&input), &[])
+                .reads_mount_in(&input, convention)
                 .build(),
         }
     }
@@ -1554,11 +1568,12 @@ fn a_plan_is_built_with_the_mounts_its_inputs_resolve_to() {
     assert_eq!(cloud_description.mount(), Some(&lidar_mount));
 }
 
-/// The pipeline lists the mounts of the channels its nodes read, each once:
-/// two readers of one channel and two channels on one mount give one entry,
-/// and a mounted channel no node reads gives none.
+/// The pipeline lists the mounts of the channels its nodes read, each once,
+/// with every convention a node reads it in: two readers of one channel and
+/// two channels on one mount give one entry, a reader that never resolves the
+/// mount adds no convention, and a mounted channel no node reads gives none.
 #[test]
-fn read_mounts_lists_each_read_mount_once() {
+fn read_mounts_lists_each_read_mount_once_with_the_axes_it_is_read_in() {
     let agent = AgentId::new(AGENT);
     let imu_mount = FrameId::agent(agent.clone(), "imu");
     let accel = SensorChannel::named::<Sensor>("imu.accel");
@@ -1577,14 +1592,33 @@ fn read_mounts_lists_each_read_mount_once() {
     };
 
     let pipeline = PipelineBuilder::new(agent)
-        .add_node(Box::new(SinkNode::new("first", accel.clone().into())))
+        .add_node(Box::new(SinkNode::reading_mount_in(
+            "first",
+            accel.clone().into(),
+            Convention::Flu,
+        )))
         .add_node(Box::new(SinkNode::new("second", accel.into())))
-        .add_node(Box::new(SinkNode::optional("third", gyro.into())))
+        .add_node(Box::new(SinkNode::reading_mount_in(
+            "third",
+            gyro.clone().into(),
+            Convention::Enu,
+        )))
+        .add_node(Box::new(SinkNode::reading_mount_in(
+            "fourth",
+            gyro.into(),
+            Convention::Flu,
+        )))
         .with_body_capabilities(body)
         .build()
         .expect("build should succeed");
 
-    assert_eq!(pipeline.read_mounts(), vec![imu_mount]);
+    assert_eq!(
+        pipeline.read_mounts(),
+        vec![ReadMount {
+            frame: imu_mount,
+            read_in: vec![Convention::Flu, Convention::Enu],
+        }]
+    );
 }
 
 /// A body channel mounted on another agent's frame is refused at build.

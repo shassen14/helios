@@ -21,7 +21,7 @@ pub(crate) mod key_format;
 pub mod node;
 pub mod rate_gate;
 
-pub use autonomy_pipeline::AutonomyPipeline;
+pub use autonomy_pipeline::{AutonomyPipeline, ReadMount};
 pub(crate) use build::NodeDeclaration;
 pub use build::{
     ChannelUses, CycleEdge, InputMounts, MountLookupError, MountRefusal, NodeConstructor, NodePlan,
