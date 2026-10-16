@@ -8,7 +8,7 @@
 //! A reader never names an estimator: swapping the source, or running a second
 //! estimator in shadow, changes no reader.
 
-use crate::port::InternalChannel;
+use crate::port::ChannelKey;
 
 use helios_core::spatial::FrameAwareState;
 
@@ -21,26 +21,24 @@ const ROLE_ESTIMATE: &str = "estimate";
 /// follower, the planners, the mapper and [`AutonomyPipeline::read_state`].
 ///
 /// [`AutonomyPipeline::read_state`]: crate::pipeline::AutonomyPipeline::read_state
-pub fn estimate() -> InternalChannel {
-    InternalChannel::named::<FrameAwareState>(ROLE_ESTIMATE)
+pub fn estimate() -> ChannelKey {
+    ChannelKey::internal::<FrameAwareState>(ROLE_ESTIMATE)
 }
 
 /// The channel the estimator node `node` writes its state on.
-pub fn estimator_output(node: &str) -> InternalChannel {
-    InternalChannel::named::<FrameAwareState>(node)
+pub fn estimator_output(node: &str) -> ChannelKey {
+    ChannelKey::internal::<FrameAwareState>(node)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::port::ChannelKey;
-
     #[test]
     fn two_estimators_and_the_estimate_occupy_distinct_slots() {
-        let primary: ChannelKey = estimator_output("primary").into();
-        let shadow: ChannelKey = estimator_output("shadow").into();
-        let estimate: ChannelKey = estimate().into();
+        let primary = estimator_output("primary");
+        let shadow = estimator_output("shadow");
+        let estimate = estimate();
 
         assert_ne!(primary, shadow);
         assert_ne!(primary, estimate);

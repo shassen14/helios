@@ -6,7 +6,7 @@ use super::node::{TwistScale, TwistTeleopNode};
 
 use crate::assembly::{AutonomyRegistry, BuildContext, FactoryOutput};
 use crate::channels::control;
-use crate::port::InternalChannel;
+use crate::port::ChannelKey;
 
 use helios_core::control::commands::TwistIntent;
 use helios_core::control::BodyTwistRef;
@@ -32,7 +32,7 @@ fn build_twist_teleop(
     let node = TwistTeleopNode::new(
         ctx.node_name(),
         intent.clone(),
-        InternalChannel::named::<BodyTwistRef>(ctx.node_name()),
+        ChannelKey::internal::<BodyTwistRef>(ctx.node_name()),
         TwistScale {
             surge: config.surge,
             sway: config.sway,
@@ -66,8 +66,8 @@ mod tests {
         let node = build("operator").into_node();
         let descriptor = node.port_descriptor();
 
-        let intent: ChannelKey = control::intent::<TwistIntent>().into();
-        let reference: ChannelKey = InternalChannel::named::<BodyTwistRef>("operator").into();
+        let intent = control::intent::<TwistIntent>();
+        let reference = ChannelKey::internal::<BodyTwistRef>("operator");
         assert_eq!(node.name(), "operator");
         assert_eq!(
             descriptor.required_inputs().cloned().collect::<Vec<_>>(),
@@ -83,7 +83,7 @@ mod tests {
     fn intent_is_declared_as_the_outside_input_the_node_reads() {
         let output = build("operator");
 
-        let intent: ChannelKey = control::intent::<TwistIntent>().into();
+        let intent = control::intent::<TwistIntent>();
         assert_eq!(output.outside_inputs(), std::slice::from_ref(&intent));
     }
 }

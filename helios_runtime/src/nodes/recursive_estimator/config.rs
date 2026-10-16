@@ -37,7 +37,7 @@ pub(crate) struct RecursiveEstimatorConfig {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AidingConfig {
-    /// The host sensor channel the readings arrive on. Also the leaf of the
+    /// The host measurement channel the readings arrive on. Also the leaf of the
     /// sensor's frame.
     pub(crate) input: String,
     /// Diagonal of the measurement noise covariance R; its length must equal

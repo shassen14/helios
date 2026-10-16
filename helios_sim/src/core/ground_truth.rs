@@ -10,7 +10,7 @@ use helios_core::spatial::quantities::FreeVector;
 use helios_core::spatial::transforms::Transform as CoreTransform;
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
 use helios_runtime::port::ChannelError;
-use helios_runtime::{BodyChannel, ChannelKey, Health, Provenance, Stamped, HOST_PRODUCER_ID};
+use helios_runtime::{BodyChannel, Health, Provenance, Stamped, HOST_PRODUCER_ID};
 
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
@@ -153,8 +153,8 @@ pub fn publish_oracle_channels_system(
         };
 
         let bus = autonomy_pipeline.0.bus();
-        let pose_key: ChannelKey = oracle_pose_channel().into();
-        let twist_key: ChannelKey = oracle_twist_channel().into();
+        let pose_key = oracle_pose_channel();
+        let twist_key = oracle_twist_channel();
         let pose_result = bus.write(pose_key.clone(), stamped_pose);
         let twist_result = bus.write(twist_key.clone(), stamped_twist);
 

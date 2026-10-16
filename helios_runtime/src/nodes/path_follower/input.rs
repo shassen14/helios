@@ -27,7 +27,7 @@ impl Default for DefaultPathFollowerInputBuilder {
 
 impl DefaultPathFollowerInputBuilder {
     pub(crate) fn new() -> Self {
-        let state_channel: ChannelKey = estimate().into();
+        let state_channel = estimate();
         Self {
             state_channel: state_channel.clone(),
             required: vec![state_channel],

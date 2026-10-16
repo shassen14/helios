@@ -237,7 +237,7 @@ impl AutonomyPipeline {
     /// Returns `None` during cold-start (before the estimator has produced
     /// its first state) and when no estimator node is present in the graph.
     pub fn read_state(&self) -> Option<Arc<Stamped<FrameAwareState>>> {
-        self.bus.read(estimate().into())
+        self.bus.read(estimate())
     }
 
     /// Reads the pipeline's actuator terminal — the per-actuator command the
@@ -248,7 +248,7 @@ impl AutonomyPipeline {
     /// whatever the vehicle. Returns `None` during cold-start (before the
     /// allocator's first output) and when no allocator node is in the graph.
     pub fn read_actuators(&self) -> Option<Arc<Stamped<ActuatorCommand>>> {
-        self.bus.read(control::actuators().into())
+        self.bus.read(control::actuators())
     }
 }
 

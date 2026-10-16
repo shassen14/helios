@@ -104,7 +104,7 @@ mod tests {
 
     use crate::assembly::factory::FactoryOutput;
     use crate::pipeline::node::{PipelineNode, TickContext};
-    use crate::port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus, PortDescriptor};
+    use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 
     use helios_core::prelude::TfProvider;
 
@@ -140,7 +140,7 @@ mod tests {
     fn stub(name: &str) -> Result<FactoryOutput, String> {
         Ok(FactoryOutput::new(Box::new(StubNode {
             name: name.to_string(),
-            descriptor: AlgorithmNodePortDescriptor::new().build(),
+            descriptor: PortDescriptorBuilder::algorithm().build(),
         })))
     }
 
@@ -166,7 +166,7 @@ mod tests {
     }
 
     fn outside_key(name: &str) -> ChannelKey {
-        InternalChannel::named::<f64>(name).into()
+        ChannelKey::internal::<f64>(name)
     }
 
     fn registry() -> AutonomyRegistry {

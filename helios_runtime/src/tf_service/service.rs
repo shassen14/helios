@@ -290,7 +290,7 @@ mod tests {
     }
 
     fn edge_key(child: FrameId, parent: FrameId) -> ChannelKey {
-        tf_edge(&FrameEdge { child, parent }).into()
+        tf_edge(&FrameEdge { child, parent })
     }
 
     // One edge message: `child` expressed in `parent` at inner time `stamp`, a

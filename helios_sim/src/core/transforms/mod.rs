@@ -83,8 +83,8 @@ pub struct FrameNode {
 ///
 /// Keying by `FrameId` means **one entity per `(agent, leaf)`** — two entities
 /// stamped with the same `FrameId` collide and the second overwrites the first.
-/// This already holds: one `base_link` per agent, and sensor channel names are
-/// unique per agent (the invariant the `SensorChannel` collision rule enforces).
+/// This already holds: one `base_link` per agent, and channel names are unique
+/// per agent (the pipeline build refuses a name naming two channels).
 #[derive(Resource, Default, Debug)]
 pub struct TfTree {
     frame_to_node: HashMap<FrameId, FrameNode>,

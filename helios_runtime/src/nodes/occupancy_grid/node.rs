@@ -56,10 +56,7 @@ use std::sync::Mutex;
 
 use crate::channels::estimate::estimate;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
-    SensorChannel,
-};
+use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::{Health, Stamped};
 use atomic_float::AtomicF64;
 use helios_core::interchange::measurement::envelope::SensorReading;
@@ -107,14 +104,14 @@ impl OccupancyGridNode {
         name: impl Into<String>,
         mapper: Box<dyn Mapper>,
         body: FrameId,
-        scan_channel: SensorChannel,
-        map_channel: InternalChannel,
+        scan_channel: ChannelKey,
+        map_channel: ChannelKey,
         rate_hz: Option<f64>,
     ) -> Self {
-        let mut builder = AlgorithmNodePortDescriptor::new()
-            .input_internal(estimate())
-            .input_sensor(scan_channel.clone())
-            .output_internal(map_channel.clone());
+        let mut builder = PortDescriptorBuilder::algorithm()
+            .input(estimate())
+            .input(scan_channel.clone())
+            .output(map_channel.clone());
         if let Some(hz) = rate_hz {
             builder = builder.rate_hz(hz);
         }
@@ -123,8 +120,8 @@ impl OccupancyGridNode {
             name: name.into(),
             mapper: Mutex::new(mapper),
             body,
-            scan_channel: scan_channel.into(),
-            map_channel: map_channel.into(),
+            scan_channel,
+            map_channel,
             descriptor,
             last_integrated_ts: AtomicF64::new(f64::NEG_INFINITY),
         }
@@ -142,7 +139,7 @@ impl PipelineNode for OccupancyGridNode {
 
     fn execute(&self, bus: &PortBus, tf: &dyn TfProvider, tick: TickContext) {
         // 1. Robot pose from the upstream estimator (real or ground-truth).
-        let Some(stamped_state) = bus.read::<FrameAwareState>(estimate().into()) else {
+        let Some(stamped_state) = bus.read::<FrameAwareState>(estimate()) else {
             return;
         };
         let state = &stamped_state.value;
@@ -340,8 +337,8 @@ mod tests {
 
     // --- Helpers ---
 
-    fn scan_sensor_channel() -> SensorChannel {
-        SensorChannel::of::<Vec<SensorReading<PointCloud<Flu>>>>()
+    fn scan_channel() -> ChannelKey {
+        ChannelKey::measurement::<Vec<SensorReading<PointCloud<Flu>>>>("scan")
     }
 
     /// A sensor-frame (FLU) scan from planar `(x, y)` returns at `z = 0`.
@@ -352,17 +349,11 @@ mod tests {
         }
         builder.finalize().expect("equal-length cloud")
     }
-    fn scan_channel() -> ChannelKey {
-        scan_sensor_channel().into()
-    }
-    fn map_internal_channel() -> InternalChannel {
-        InternalChannel::named::<MapData>("local")
-    }
     fn map_channel() -> ChannelKey {
-        map_internal_channel().into()
+        ChannelKey::internal::<MapData>("local")
     }
     fn state_channel() -> ChannelKey {
-        estimate().into()
+        estimate()
     }
 
     fn make_bus() -> PortBus {
@@ -421,8 +412,8 @@ mod tests {
             "occ",
             Box::new(EmptyMapper),
             FrameId::base_link(agent()),
-            scan_sensor_channel(),
-            map_internal_channel(),
+            scan_channel(),
+            map_channel(),
             Some(5.0),
         );
         let d = node.port_descriptor();
@@ -443,8 +434,8 @@ mod tests {
             "occ",
             Box::new(RecordingMapper::new()),
             FrameId::base_link(agent()),
-            scan_sensor_channel(),
-            map_internal_channel(),
+            scan_channel(),
+            map_channel(),
             None,
         );
         let bus = make_bus();
@@ -463,8 +454,8 @@ mod tests {
             "occ",
             Box::new(EmptyMapper),
             FrameId::base_link(agent()),
-            scan_sensor_channel(),
-            map_internal_channel(),
+            scan_channel(),
+            map_channel(),
             None,
         );
         let bus = make_bus();
@@ -490,8 +481,8 @@ mod tests {
             "occ",
             Box::new(mapper),
             FrameId::base_link(agent()),
-            scan_sensor_channel(),
-            map_internal_channel(),
+            scan_channel(),
+            map_channel(),
             None,
         );
         let bus = make_bus();
@@ -534,8 +525,8 @@ mod tests {
             "occ",
             Box::new(mapper),
             FrameId::base_link(agent()),
-            scan_sensor_channel(),
-            map_internal_channel(),
+            scan_channel(),
+            map_channel(),
             None,
         );
         let bus = make_bus();

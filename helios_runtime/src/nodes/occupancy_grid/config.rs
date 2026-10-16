@@ -13,7 +13,7 @@ pub(crate) struct OccupancyGridConfig {
     pub(crate) rate: f32,
     /// Cell size in meters.
     pub(crate) resolution: f32,
-    /// Sensor channel the grid integrates `Vec<SensorReading<PointCloud<Flu>>>`
+    /// Measurement channel the grid integrates `Vec<SensorReading<PointCloud<Flu>>>`
     /// from: a host channel, or a channel another node derives.
     pub(crate) scan_channel: String,
     /// Width of the rolling window in meters (East axis).

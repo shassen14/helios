@@ -30,7 +30,7 @@ use std::collections::{HashMap, HashSet};
 /// 1. Register every node with [`add_node`](Self::add_node), or declare it
 ///    with [`add_plan`](Self::add_plan) to have it built once the graph
 ///    checks out.
-/// 2. Declare the channels the body publishes — sensor channels, oracle
+/// 2. Declare the channels the body publishes — measurement channels, oracle
 ///    reference channels, health status — via
 ///    [`with_body_capabilities`](Self::with_body_capabilities). These count
 ///    as supplied, so consumers don't trip

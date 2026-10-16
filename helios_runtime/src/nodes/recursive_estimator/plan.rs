@@ -153,7 +153,7 @@ fn mount_of(mounts: &InputMounts, channel: &ChannelKey) -> Result<FrameId, Strin
 }
 
 /// Turns every declared augmentation into a state block tagged with its
-/// sensor channel's mount. The aiding source reading that channel is built
+/// measurement channel's mount. The aiding source reading that channel is built
 /// for the same mount, so the block's frame is the one its model reads back.
 fn augmentation_blocks(
     plans: &[AugmentationPlan],
@@ -253,7 +253,7 @@ fn body_pose(pose: &InitialPoseConfig) -> Transform<Flu, Enu> {
 mod tests {
     use super::*;
 
-    use crate::port::SensorChannel;
+    use crate::port::ChannelKey;
 
     use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::interchange::measurement::sensor::{GpsPosition, MagneticField};
@@ -262,10 +262,8 @@ mod tests {
     /// refused, since the node's ports carry only the declared one.
     #[test]
     fn a_source_reading_an_undeclared_channel_is_refused() {
-        let declared: ChannelKey =
-            SensorChannel::named::<Vec<SensorReading<GpsPosition>>>("gps").into();
-        let built: ChannelKey =
-            SensorChannel::named::<Vec<SensorReading<MagneticField>>>("gps").into();
+        let declared = ChannelKey::measurement::<Vec<SensorReading<GpsPosition>>>("gps");
+        let built = ChannelKey::measurement::<Vec<SensorReading<MagneticField>>>("gps");
 
         assert!(check_source_channel("gps", &declared, &declared).is_ok());
         let err = check_source_channel("gps", &declared, &built).expect_err("channels differ");

@@ -37,7 +37,7 @@
 use crate::channels::estimate::estimator_output;
 use crate::channels::{oracle_pose_channel, oracle_twist_channel};
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, MockNodePortDescriptor, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::carrier::kinematic_carrier_schema;
@@ -71,15 +71,15 @@ impl MockOracleEstimatorNode {
     pub(crate) fn new(name: impl Into<String>, frames: EstimationFrames) -> Self {
         let name = name.into();
         let output = estimator_output(&name);
-        let descriptor = MockNodePortDescriptor::new()
-            .input_oracle(oracle_pose_channel())
-            .optional_oracle(oracle_twist_channel())
-            .output_internal(output.clone())
+        let descriptor = PortDescriptorBuilder::mock()
+            .input(oracle_pose_channel())
+            .optional(oracle_twist_channel())
+            .output(output.clone())
             .defines_frame(frames.root.clone())
             .build();
         Self {
             name,
-            output: output.into(),
+            output,
             schema: Arc::new(kinematic_carrier_schema(&frames)),
             frames,
             descriptor,
@@ -100,12 +100,12 @@ impl PipelineNode for MockOracleEstimatorNode {
         // Cold-start: no oracle.pose yet → skip. The output slot keeps its
         // previous value under last-known-good semantics, or stays empty
         // if this is the first tick.
-        let Some(pose_stamped) = bus.read::<Isometry3<f64>>(oracle_pose_channel().into()) else {
+        let Some(pose_stamped) = bus.read::<Isometry3<f64>>(oracle_pose_channel()) else {
             return;
         };
 
         let twist = bus
-            .read::<Twist>(oracle_twist_channel().into())
+            .read::<Twist>(oracle_twist_channel())
             .map(|s| s.value.clone());
 
         let mut state = FrameAwareState::from_schema(self.schema.clone(), pose_stamped.timestamp);
@@ -225,7 +225,7 @@ mod tests {
     }
 
     fn state_channel() -> ChannelKey {
-        estimator_output("mock").into()
+        estimator_output("mock")
     }
 
     /// A descriptor that "produces" the oracle channels, so the bus has
@@ -236,7 +236,7 @@ mod tests {
         PortDescriptor::new(
             vec![],
             vec![],
-            vec![oracle_pose_channel().into(), oracle_twist_channel().into()],
+            vec![oracle_pose_channel(), oracle_twist_channel()],
             None,
         )
     }
@@ -249,10 +249,7 @@ mod tests {
     fn body_with_oracle() -> BodyCapabilities {
         let truth = |key: ChannelKey| BodyChannel::new(key, "truth", Provenance::Exact);
         BodyCapabilities {
-            publishes: vec![
-                truth(oracle_pose_channel().into()),
-                truth(oracle_twist_channel().into()),
-            ],
+            publishes: vec![truth(oracle_pose_channel()), truth(oracle_twist_channel())],
             ..Default::default()
         }
     }
@@ -268,7 +265,7 @@ mod tests {
         assert!(
             node.port_descriptor()
                 .required_inputs()
-                .any(|k| *k == ChannelKey::from(oracle_pose_channel())),
+                .any(|k| *k == oracle_pose_channel()),
             "oracle.pose must be a required input"
         );
     }
@@ -282,7 +279,7 @@ mod tests {
         assert!(
             node.port_descriptor()
                 .optional_inputs()
-                .any(|k| *k == ChannelKey::from(oracle_twist_channel())),
+                .any(|k| *k == oracle_twist_channel()),
             "oracle.twist must be optional, not required"
         );
     }
@@ -316,7 +313,7 @@ mod tests {
             UnitQuaternion::identity(),
         );
         bus.write(
-            oracle_pose_channel().into(),
+            oracle_pose_channel(),
             Stamped {
                 value: pose,
                 timestamp: MonotonicTime(0.0),
@@ -355,7 +352,7 @@ mod tests {
         let bus = make_bus_with_oracle_producer(&node);
 
         bus.write(
-            oracle_pose_channel().into(),
+            oracle_pose_channel(),
             Stamped {
                 value: Isometry3::<f64>::identity(),
                 timestamp: MonotonicTime(0.0),
@@ -370,7 +367,7 @@ mod tests {
             angular: Vector3::new(0.0, 0.0, 0.3),
         };
         bus.write(
-            oracle_twist_channel().into(),
+            oracle_twist_channel(),
             Stamped {
                 value: twist.clone(),
                 timestamp: MonotonicTime(0.0),
@@ -427,7 +424,7 @@ mod tests {
         );
         let bus = make_bus_with_oracle_producer(&node);
         bus.write(
-            oracle_pose_channel().into(),
+            oracle_pose_channel(),
             Stamped {
                 value: Isometry3::<f64>::identity(),
                 timestamp: MonotonicTime(0.0),
@@ -471,7 +468,7 @@ mod tests {
             matches!(
                 e,
                 PipelineBuildError::UnsatisfiedBodyCapabilities { channel_key, .. }
-                    if *channel_key == ChannelKey::from(oracle_pose_channel())
+                    if *channel_key == oracle_pose_channel()
             )
         });
         assert!(

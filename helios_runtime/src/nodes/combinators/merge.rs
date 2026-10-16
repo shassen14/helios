@@ -29,17 +29,17 @@
 //!
 //! ## A combinator, like `Sum` and `Selector`
 //!
-//! Runtime-native (wraps no `helios_core` trait), no input builder. All channels
-//! are `InternalChannel`: the partial contributions and the merged command are
-//! brain-internal by construction.
+//! Runtime-native (wraps no `helios_core` trait), no input builder. The partial
+//! contributions and the merged command are brain-internal: the command seam
+//! hands it internal channels.
 
 use std::{collections::HashSet, sync::Arc};
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId};
 
 use crate::{
-    port::{AlgorithmNodePortDescriptor, InternalChannel},
-    ChannelKey, Health, PipelineNode, PortDescriptor, Stamped,
+    port::{ChannelKey, PortDescriptorBuilder},
+    Health, PipelineNode, PortDescriptor, Stamped,
 };
 
 pub(crate) struct Merge {
@@ -52,22 +52,22 @@ pub(crate) struct Merge {
 impl Merge {
     pub(crate) fn new(
         name: impl Into<Arc<str>>,
-        inputs: Vec<InternalChannel>,
-        output: InternalChannel,
+        inputs: Vec<ChannelKey>,
+        output: ChannelKey,
     ) -> Self {
-        let mut base_descriptor = AlgorithmNodePortDescriptor::new();
+        let mut base_descriptor = PortDescriptorBuilder::algorithm();
 
         for input in &inputs {
-            base_descriptor = base_descriptor.input_internal(input.clone());
+            base_descriptor = base_descriptor.input(input.clone());
         }
 
-        let descriptor = base_descriptor.output_internal(output.clone()).build();
+        let descriptor = base_descriptor.output(output.clone()).build();
 
         Self {
             name: name.into(),
             descriptor,
-            inputs: inputs.into_iter().map(Into::into).collect(),
-            output: output.into(),
+            inputs: inputs.into_iter().collect(),
+            output,
         }
     }
 }
@@ -222,15 +222,15 @@ mod tests {
     /// The canonical decoupled wiring: a drive leg and a steer leg merged into one
     /// terminal command. Returns the node plus the drive / steer / output keys.
     fn drive_steer_merge() -> (Merge, ChannelKey, ChannelKey, ChannelKey) {
-        let drive = InternalChannel::named::<ActuatorCommand>("drive_leg");
-        let steer = InternalChannel::named::<ActuatorCommand>("steer_leg");
-        let out = InternalChannel::named::<ActuatorCommand>("actuators");
+        let drive = ChannelKey::internal::<ActuatorCommand>("drive_leg");
+        let steer = ChannelKey::internal::<ActuatorCommand>("steer_leg");
+        let out = ChannelKey::internal::<ActuatorCommand>("actuators");
         let node = Merge::new(
             "actuator_merge",
             vec![drive.clone(), steer.clone()],
             out.clone(),
         );
-        (node, drive.into(), steer.into(), out.into())
+        (node, drive, steer, out)
     }
 
     #[test]

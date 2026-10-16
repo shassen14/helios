@@ -5,7 +5,7 @@ use super::config::OccupancyGridConfig;
 use super::node::OccupancyGridNode;
 
 use crate::assembly::{AutonomyRegistry, BuildContext, FactoryOutput};
-use crate::port::{InternalChannel, SensorChannel};
+use crate::port::ChannelKey;
 
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::perception::map::MapData;
@@ -35,12 +35,13 @@ fn build_occupancy_grid_2d(
         config.height_m as f64,
     ));
 
-    let scan_channel =
-        SensorChannel::named::<Vec<SensorReading<PointCloud<Flu>>>>(config.scan_channel.as_str());
+    let scan_channel = ChannelKey::measurement::<Vec<SensorReading<PointCloud<Flu>>>>(
+        config.scan_channel.as_str(),
+    );
     // The map is published on a channel named after the node, so two grids
     // don't collide on a single producer slot and a planner selects the grid
     // it consumes by that same name.
-    let map_channel = InternalChannel::named::<MapData>(ctx.node_name());
+    let map_channel = ChannelKey::internal::<MapData>(ctx.node_name());
 
     Ok(FactoryOutput::new(Box::new(OccupancyGridNode::new(
         ctx.node_name(),

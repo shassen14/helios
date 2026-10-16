@@ -415,7 +415,7 @@ mod tests {
             TickContext::detached(MonotonicTime(0.0), 0.1, 0),
         );
 
-        bus.read::<FrameAwareState>(estimator_output(NODE).into())
+        bus.read::<FrameAwareState>(estimator_output(NODE))
             .expect("the node publishes its state")
             .value
             .clone()
@@ -514,7 +514,7 @@ mod tests {
         assert_eq!(optional, ["gps"]);
         assert!(descriptor
             .outputs()
-            .any(|key| *key == estimator_output(NODE).into()));
+            .any(|key| *key == estimator_output(NODE)));
     }
 
     /// The node states the axes it reads each mount in: the IMU input
@@ -676,7 +676,7 @@ mod tests {
     }
 
     /// An augmentation grows the filter's state by its block, under the
-    /// mount of the sensor channel it calibrates.
+    /// mount of the measurement channel it calibrates.
     #[test]
     fn an_augmentation_extends_the_published_state() {
         let (node, _) = build_section(&format!(

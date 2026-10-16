@@ -288,7 +288,7 @@ impl SlotVersion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::channel::InternalChannel;
+    use crate::port::channel::ChannelKey;
     use crate::prelude::Health;
 
     fn make_stamped<T>(value: T, timestamp_secs: f64) -> Stamped<T> {
@@ -306,11 +306,11 @@ mod tests {
     }
 
     fn ikey<T: 'static>() -> ChannelKey {
-        InternalChannel::of::<T>().into()
+        ChannelKey::internal_of::<T>()
     }
 
     fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
-        InternalChannel::named::<T>(instance).into()
+        ChannelKey::internal::<T>(instance)
     }
 
     // --- PortBus::new tests ---

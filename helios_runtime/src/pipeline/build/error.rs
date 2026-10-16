@@ -5,7 +5,7 @@
 
 use crate::{
     pipeline::autonomy_pipeline::PIPELINE_LEAF_GROUP,
-    port::{ChannelKey, ChannelKind, InputNeed, Writer},
+    port::{ChannelKey, ChannelKind, InputNeed, NodeClass, Writer},
 };
 
 use helios_core::spatial::FrameId;
@@ -34,12 +34,12 @@ pub enum PipelineBuildError {
         participants: Vec<String>,
         edges: Vec<CycleEdge>,
     },
-    /// A node reads a sensor or internal channel that has no supplier: no
-    /// node writes it, the body does not publish it, and it is not declared
-    /// as an outside input. Raised for optional inputs too, since optional
-    /// means the node runs without a value, not that the wiring is unchecked.
-    /// For a sensor channel, often a misspelled name or a sensor missing from
-    /// the body's fit.
+    /// A node reads a measurement or internal channel that has no supplier:
+    /// no node writes it, the body does not publish it, and it is not
+    /// declared as an outside input. Raised for optional inputs too, since
+    /// optional means the node runs without a value, not that the wiring is
+    /// unchecked. For a measurement, often a misspelled name or a sensor
+    /// missing from the body's fit.
     UnsatisfiedInput {
         node_name: String,
         channel: ChannelKey,
@@ -85,6 +85,23 @@ pub enum PipelineBuildError {
         frame: FrameId,
         first: FrameOwner,
         second: FrameOwner,
+    },
+    /// A node reads a channel whose kind its class may not read, such as an
+    /// algorithm reading truth. Isolating an algorithm under perfect upstream
+    /// swaps the node upstream of it for a mock instead. Reported once per
+    /// input.
+    KindNotReadable {
+        node_name: String,
+        class: NodeClass,
+        channel: ChannelKey,
+    },
+    /// A node writes a channel whose kind its class may not write: a node
+    /// writing truth or health, which only a body knows, or a mock writing a
+    /// measurement. Reported once per output.
+    KindNotWritable {
+        node_name: String,
+        class: NodeClass,
+        channel: ChannelKey,
     },
     /// A node mounts an output at the mount of a channel it does not read in
     /// the same tick, so no mount could be resolved for it before the node is
@@ -199,7 +216,7 @@ impl std::fmt::Display for PipelineBuildError {
             } => {
                 let need = need_label(*need);
                 match channel.kind() {
-                    ChannelKind::Sensor => write!(
+                    ChannelKind::Measurement => write!(
                         f,
                         "node \"{node_name}\" reads channel {channel} ({need}) but nothing \
                          supplies it: the body does not publish it and no node writes it"
@@ -267,6 +284,30 @@ impl std::fmt::Display for PipelineBuildError {
                 write!(
                     f,
                     "frame {frame} is defined by {first} and by {second}; a frame has one owner"
+                )
+            }
+            PipelineBuildError::KindNotReadable {
+                node_name,
+                class,
+                channel,
+            } => {
+                write!(
+                    f,
+                    "{class} node \"{node_name}\" reads channel {channel}, but a {class} node \
+                     may not read {kind} channels",
+                    kind = channel.kind()
+                )
+            }
+            PipelineBuildError::KindNotWritable {
+                node_name,
+                class,
+                channel,
+            } => {
+                write!(
+                    f,
+                    "{class} node \"{node_name}\" writes channel {channel}, but a {class} node \
+                     may not write {kind} channels",
+                    kind = channel.kind()
                 )
             }
             PipelineBuildError::MountFromUnreadInput {

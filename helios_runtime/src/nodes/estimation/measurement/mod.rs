@@ -15,7 +15,7 @@ pub(crate) use reader::{Measurement, PayloadReader};
 
 use crate::assembly::BuildContext;
 use crate::nodes::estimation::EstimatorComponents;
-use crate::port::{ChannelKey, PortBus, SensorChannel};
+use crate::port::{ChannelKey, PortBus};
 
 use helios_core::estimation::measurement::MeasurementModel;
 use helios_core::estimation::schema::MeasurementAgreementError;
@@ -32,7 +32,7 @@ use nalgebra::DMatrix;
 /// its payload type, so the model can't be paired with a channel carrying a
 /// different payload.
 pub(crate) trait MeasurementSource: Send + Sync {
-    /// The sensor channel the readings arrive on.
+    /// The measurement channel the readings arrive on.
     fn channel(&self) -> &ChannelKey;
 
     /// The sensor frame the model was built for: the channel's mount.
@@ -54,7 +54,7 @@ pub(crate) trait MeasurementSource: Send + Sync {
 /// are. These come from the estimator's aiding entry and the channel's
 /// writer, not from the model.
 pub(crate) struct MeasurementWiring {
-    /// The sensor channel name.
+    /// The measurement channel name.
     pub(crate) input: String,
     /// The channel's mount, as its writer states it: the sensor frame the
     /// model predicts readings in.
@@ -143,13 +143,13 @@ pub(crate) struct MeasurementDeclaration {
 }
 
 /// The typed channel readings of payload `P` arrive on, named `input`.
-fn readings_channel<P: SensorPayload>(input: &str) -> SensorChannel {
-    SensorChannel::named::<Vec<SensorReading<P>>>(input)
+fn readings_channel<P: SensorPayload>(input: &str) -> ChannelKey {
+    ChannelKey::measurement::<Vec<SensorReading<P>>>(input)
 }
 
 /// The [`ReadingChannel`] of payload `P`.
 pub(crate) fn reading_channel<P: SensorPayload>() -> ReadingChannel {
-    |input| readings_channel::<P>(input).into()
+    |input| readings_channel::<P>(input)
 }
 
 /// Turns a model factory into the measurement table's factory: builds the
@@ -281,8 +281,7 @@ mod tests {
             panic!("the dummy model builds");
         };
 
-        let expected: ChannelKey =
-            SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(INPUT).into();
+        let expected = ChannelKey::measurement::<Vec<SensorReading<GpsPosition>>>(INPUT);
         assert_eq!(source.channel(), &expected);
         assert_eq!(source.sensor(), &FrameId::agent(agent(), MOUNT));
         let parsed = registry
@@ -383,8 +382,7 @@ mod tests {
             .expect("distinct name");
 
         let field = build(&registry, "kind = \"mocap_as_field\"", 3).expect("builds");
-        let expected: ChannelKey =
-            SensorChannel::named::<Vec<SensorReading<MagneticField>>>(INPUT).into();
+        let expected = ChannelKey::measurement::<Vec<SensorReading<MagneticField>>>(INPUT);
         assert_eq!(field.channel(), &expected);
     }
 

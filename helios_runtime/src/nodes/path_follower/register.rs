@@ -6,7 +6,7 @@ use super::input::DefaultPathFollowerInputBuilder;
 use super::node::PathFollowerNode;
 
 use crate::assembly::{AutonomyRegistry, BuildContext, FactoryOutput};
-use crate::port::InternalChannel;
+use crate::port::ChannelKey;
 
 use helios_core::control::BodyTwistRef;
 use helios_core::following::{
@@ -79,8 +79,8 @@ fn follower_output(
         ctx.node_name(),
         follower,
         Box::new(DefaultPathFollowerInputBuilder::new()),
-        InternalChannel::named::<Path>(path),
-        InternalChannel::named::<BodyTwistRef>(ctx.node_name()),
+        ChannelKey::internal::<Path>(path),
+        ChannelKey::internal::<BodyTwistRef>(ctx.node_name()),
     );
 
     FactoryOutput::new(Box::new(node))
@@ -139,8 +139,8 @@ mod tests {
         .into_node();
         let descriptor = node.port_descriptor();
 
-        let path: ChannelKey = InternalChannel::named::<Path>("global_path").into();
-        let reference: ChannelKey = InternalChannel::named::<BodyTwistRef>("pp").into();
+        let path = ChannelKey::internal::<Path>("global_path");
+        let reference = ChannelKey::internal::<BodyTwistRef>("pp");
         assert!(descriptor.required_inputs().any(|key| *key == path));
         assert_eq!(
             descriptor.outputs().cloned().collect::<Vec<_>>(),

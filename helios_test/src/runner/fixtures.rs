@@ -11,7 +11,7 @@ use helios_runtime::{
         path::node_path,
         sink::ObservationSink,
     },
-    port::{AlgorithmNodePortDescriptor, Determinism, PortBus, PortDescriptor},
+    port::{Determinism, PortBus, PortDescriptor, PortDescriptorBuilder},
     prelude::{Health, PipelineNode, Stamped, TickContext},
     AutonomyPipeline, PipelineBuilder,
 };
@@ -89,7 +89,7 @@ fn assertion(when: &str, agent: &str, value: f64) -> String {
 
 /// An estimator declaring [`LEAF`].
 pub(super) fn pipeline() -> AutonomyPipeline {
-    let descriptor = AlgorithmNodePortDescriptor::new()
+    let descriptor = PortDescriptorBuilder::algorithm()
         .observable(LEAF, Determinism::Deterministic)
         .build();
     PipelineBuilder::new(AgentId::new(CAR))

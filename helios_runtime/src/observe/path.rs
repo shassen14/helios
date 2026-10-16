@@ -160,10 +160,10 @@ fn non_empty(part: Option<&str>) -> Option<&str> {
 mod tests {
     use super::*;
 
-    use crate::port::InternalChannel;
+    use crate::port::ChannelKey;
 
     fn channel_named<T: 'static>(instance: &'static str) -> ChannelKey {
-        InternalChannel::named::<T>(instance).into()
+        ChannelKey::internal::<T>(instance)
     }
 
     #[test]

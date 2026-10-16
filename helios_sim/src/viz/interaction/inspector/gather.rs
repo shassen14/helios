@@ -235,7 +235,7 @@ pub fn gather_reference(
     let Some(stamped) = pipeline
         .0
         .bus()
-        .read::<BodyTwistRef>(control::reference::<BodyTwistRef>().into())
+        .read::<BodyTwistRef>(control::reference::<BodyTwistRef>())
     else {
         return;
     };
@@ -316,7 +316,7 @@ mod tests {
     use helios_runtime::{
         channels::{control, estimate},
         pipeline::node::HOST_PRODUCER_ID,
-        port::{AlgorithmNodePortDescriptor, PortBus},
+        port::{PortBus, PortDescriptorBuilder},
         prelude::{Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext},
     };
     use nalgebra::{DMatrix, DVector};
@@ -524,8 +524,8 @@ mod tests {
     impl FakeEstimatorNode {
         fn new() -> Self {
             Self {
-                descriptor: AlgorithmNodePortDescriptor::new()
-                    .output_internal(estimate::estimate())
+                descriptor: PortDescriptorBuilder::algorithm()
+                    .output(estimate::estimate())
                     .build(),
             }
         }
@@ -556,7 +556,7 @@ mod tests {
             pipeline
                 .bus()
                 .write(
-                    estimate::estimate().into(),
+                    estimate::estimate(),
                     Stamped {
                         value: state,
                         timestamp: MonotonicTime(0.0),
@@ -730,8 +730,8 @@ mod tests {
     impl FakeReferenceNode {
         fn new() -> Self {
             Self {
-                descriptor: AlgorithmNodePortDescriptor::new()
-                    .output_internal(control::reference::<BodyTwistRef>())
+                descriptor: PortDescriptorBuilder::algorithm()
+                    .output(control::reference::<BodyTwistRef>())
                     .build(),
             }
         }
@@ -762,7 +762,7 @@ mod tests {
             pipeline
                 .bus()
                 .write(
-                    control::reference::<BodyTwistRef>().into(),
+                    control::reference::<BodyTwistRef>(),
                     Stamped {
                         value: reference,
                         timestamp: MonotonicTime(0.0),
@@ -835,8 +835,8 @@ mod tests {
     impl FakeActuatorNode {
         fn new() -> Self {
             Self {
-                descriptor: AlgorithmNodePortDescriptor::new()
-                    .output_internal(control::actuators())
+                descriptor: PortDescriptorBuilder::algorithm()
+                    .output(control::actuators())
                     .build(),
             }
         }
@@ -867,7 +867,7 @@ mod tests {
             pipeline
                 .bus()
                 .write(
-                    control::actuators().into(),
+                    control::actuators(),
                     Stamped {
                         value: command,
                         timestamp: MonotonicTime(0.0),

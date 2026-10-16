@@ -1,12 +1,14 @@
 //! Wiring checks: node names are unique levels, the body's unit names are
 //! levels, the body's mounts are its own frames, every frame has one owner,
-//! output mount rules name
-//! inputs, channel names are well formed and each names one channel, each node's watchable leaves are well
-//! formed, and leaves and output channels sit outside the pipeline's own
-//! group and apart, and every input has exactly one supplier. These need only
-//! the declarations, not an order, so they run before the sort.
+//! output mount rules name inputs, each node reads and writes only the channel
+//! kinds its class may, channel names are well formed and each names one
+//! channel, each node's watchable leaves are well formed, and leaves and
+//! output channels sit outside the pipeline's own group and apart, and every
+//! input has exactly one supplier. These need only the declarations, not an
+//! order, so they run before the sort.
 
 use super::declaration::NodeDeclaration;
+use super::kinds::check_kind_access;
 use super::mounts::{check_body_mounts, check_mount_rules};
 use super::owners::check_frame_owners;
 
@@ -29,13 +31,15 @@ use std::{
 /// means each node name is unique and fits one part of a watcher path, every
 /// unit the body declares is one level, every mount the body states is a frame
 /// on `agent`'s body other than `base_link`, every frame the body or a node
-/// owns has one owner, every output mounted at an input's mount
-/// names a channel its node reads in the same tick, every channel name is well formed and names one channel, every watchable leaf a
-/// node declares is well formed, no leaf or output channel sits in the
-/// pipeline's own group, no node names a leaf twice or gives a leaf the name
-/// of one of its outputs, and every input, required or optional, has exactly
-/// one supplier: a node output, a body channel, or a declared outside input.
-/// `descriptions` holds every channel some writer declares.
+/// owns has one owner, every output mounted at an input's mount names a
+/// channel its node reads in the same tick, every node reads and writes only
+/// the channel kinds its class may, every channel name is well formed and
+/// names one channel, every watchable leaf a node declares is well formed, no
+/// leaf or output channel sits in the pipeline's own group, no node names a
+/// leaf twice or gives a leaf the name of one of its outputs, and every input,
+/// required or optional, has exactly one supplier: a node output, a body
+/// channel, or a declared outside input. `descriptions` holds every channel
+/// some writer declares.
 pub(super) fn check_wiring(
     agent: &AgentId,
     nodes: &[NodeDeclaration],
@@ -47,6 +51,7 @@ pub(super) fn check_wiring(
     check_body_mounts(agent, descriptions, &mut errors);
     check_frame_owners(agent, nodes, descriptions, &mut errors);
     check_mount_rules(nodes, &mut errors);
+    check_kind_access(nodes, &mut errors);
     let refused_names = check_channel_names(nodes, descriptions, &mut errors);
     check_observables(nodes, &refused_names, &mut errors);
     let supplier_of = map_suppliers(descriptions, &mut errors);
@@ -358,7 +363,7 @@ fn check_inputs_supplied(
                 continue;
             }
             let error = match channel.kind() {
-                ChannelKind::Sensor | ChannelKind::Internal => {
+                ChannelKind::Measurement | ChannelKind::Internal => {
                     PipelineBuildError::UnsatisfiedInput {
                         node_name: node.name().to_string(),
                         channel: channel.clone(),

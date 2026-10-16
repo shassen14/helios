@@ -158,7 +158,7 @@ mod tests {
     };
     use helios_runtime::{
         observe::{observation::AgentObservation, path::node_path},
-        port::{Determinism, MockNodePortDescriptor, PortBus, PortDescriptor},
+        port::{Determinism, PortBus, PortDescriptor, PortDescriptorBuilder},
         PipelineBuilder, PipelineNode, TickContext,
     };
 
@@ -238,7 +238,7 @@ mod tests {
         app.init_resource::<HostWatchRequest>()
             .init_resource::<ObservationBatch>();
 
-        let descriptor = MockNodePortDescriptor::new()
+        let descriptor = PortDescriptorBuilder::mock()
             .observable(NIS, Determinism::Deterministic)
             .observable(DROPPED, Determinism::Deterministic)
             .build();

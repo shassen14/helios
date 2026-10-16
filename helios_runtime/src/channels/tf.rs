@@ -22,14 +22,13 @@
 //! [`is_tf_edge`] keys off. An edge name joins two frame spellings with `->`
 //! under the `/` prefix (`tf/agent.car.base_link->agent.car.odom`), so it is
 //! the one channel name outside the `.`-joined level grammar, and the pipeline
-//! build skips its form check. Edges are [`InternalChannel`]s (node-produced), so
-//! the value drops straight into the `output_internal` descriptor builder; a
+//! build skips its form check. Edges are internal channels (node-produced); a
 //! hardware `/tf` bridge or a Zenoh peer publishes onto the same channel by
 //! projecting its foreign stream through [`tf_edge`].
 
 use crate::{
-    port::{ChannelError, ChannelKind, InternalChannel, PortBus},
-    ChannelKey, Stamped,
+    port::{ChannelError, ChannelKey, ChannelKind, PortBus},
+    Stamped,
 };
 
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
@@ -38,8 +37,8 @@ use std::any::TypeId;
 
 const TF_EDGE_PREFIX: &str = "tf/";
 
-pub fn tf_edge(edge: &FrameEdge) -> InternalChannel {
-    InternalChannel::named::<StampedTransform>(format!("{}{}", TF_EDGE_PREFIX, edge))
+pub fn tf_edge(edge: &FrameEdge) -> ChannelKey {
+    ChannelKey::internal::<StampedTransform>(format!("{}{}", TF_EDGE_PREFIX, edge))
 }
 
 /// Dual-publish one transform edge: writes `stamped` onto the [`tf_edge`] slot
@@ -57,7 +56,7 @@ pub fn publish_edge(bus: &PortBus, stamped: Stamped<StampedTransform>) {
         parent: stamped.value.parent.clone(),
     };
 
-    if let Err(e) = bus.write(tf_edge(&edge).into(), stamped) {
+    if let Err(e) = bus.write(tf_edge(&edge), stamped) {
         match e {
             // No node drains this edge — its tf-edge channel was never wired
             // into the graph. A silently unfed edge only surfaces far away, as a
@@ -135,19 +134,19 @@ mod tests {
 
     #[test]
     fn tf_edge_is_internal_kind() {
-        let key: ChannelKey = tf_edge(&base_to_odom()).into();
+        let key = tf_edge(&base_to_odom());
         assert_eq!(key.kind(), ChannelKind::Internal);
     }
 
     #[test]
     fn tf_edge_binds_the_stamped_transform_type() {
-        let key: ChannelKey = tf_edge(&base_to_odom()).into();
+        let key = tf_edge(&base_to_odom());
         assert_eq!(key.type_id(), TypeId::of::<StampedTransform>());
     }
 
     #[test]
     fn is_tf_edge_accepts_a_constructed_edge() {
-        let key: ChannelKey = tf_edge(&base_to_odom()).into();
+        let key = tf_edge(&base_to_odom());
         assert!(is_tf_edge(&key));
     }
 
@@ -156,7 +155,7 @@ mod tests {
         // A `StampedTransform` channel that did not go through `tf_edge` (no
         // `tf/` prefix) is not an edge — this is the clause that keeps the drain
         // list from swallowing unrelated transform slots.
-        let key: ChannelKey = InternalChannel::named::<StampedTransform>("some.other").into();
+        let key = ChannelKey::internal::<StampedTransform>("some.other");
         assert!(!is_tf_edge(&key));
     }
 
@@ -164,9 +163,7 @@ mod tests {
     fn is_tf_edge_rejects_a_prefixed_channel_of_another_type() {
         // The prefix alone is not enough: a `tf/`-named slot carrying a different
         // payload is not a transform edge.
-        let key: ChannelKey =
-            InternalChannel::named::<NotATransform>("tf/agent.bot.base_link->agent.bot.odom")
-                .into();
+        let key = ChannelKey::internal::<NotATransform>("tf/agent.bot.base_link->agent.bot.odom");
         assert!(!is_tf_edge(&key));
     }
 
@@ -192,12 +189,8 @@ mod tests {
 
     /// A bus with exactly the given edges' slots allocated as outputs.
     fn bus_wired_for(edges: &[FrameEdge]) -> PortBus {
-        let descriptor = PortDescriptor::new(
-            vec![],
-            vec![],
-            edges.iter().map(|e| tf_edge(e).into()).collect(),
-            None,
-        );
+        let descriptor =
+            PortDescriptor::new(vec![], vec![], edges.iter().map(tf_edge).collect(), None);
         PortBus::new(&[descriptor])
     }
 
@@ -209,7 +202,7 @@ mod tests {
         publish_edge(&bus, sample_message(&edge));
 
         let read = bus
-            .read::<StampedTransform>(tf_edge(&edge).into())
+            .read::<StampedTransform>(tf_edge(&edge))
             .expect("the published edge must be readable on its slot");
         // Routed to the slot its own (child, parent) names.
         assert_eq!(read.value.parent, edge.parent);
@@ -226,8 +219,6 @@ mod tests {
         let target = base_to_odom();
         publish_edge(&bus, sample_message(&target));
 
-        assert!(bus
-            .read::<StampedTransform>(tf_edge(&target).into())
-            .is_none());
+        assert!(bus.read::<StampedTransform>(tf_edge(&target)).is_none());
     }
 }

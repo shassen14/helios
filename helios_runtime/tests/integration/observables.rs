@@ -9,10 +9,7 @@ use helios_runtime::{
         autonomy_pipeline::{PIPELINE_LEAF_GROUP, TICK_DURATION_LEAF},
         PipelineBuildError, PipelineBuilder,
     },
-    port::{
-        AlgorithmNodePortDescriptor, ChannelKey, Determinism, InternalChannel, PortBus,
-        PortDescriptor,
-    },
+    port::{ChannelKey, Determinism, PortBus, PortDescriptor, PortDescriptorBuilder},
     prelude::{PipelineNode, TickContext},
 };
 
@@ -37,7 +34,7 @@ impl DeclaringNode {
         let descriptor = leaves
             .iter()
             .fold(
-                AlgorithmNodePortDescriptor::new().outputs_from_slice(outputs),
+                PortDescriptorBuilder::algorithm().outputs_from_slice(outputs),
                 |builder, leaf| builder.observable(*leaf, Determinism::Deterministic),
             )
             .build();
@@ -61,7 +58,7 @@ impl PipelineNode for DeclaringNode {
 }
 
 fn named<T: 'static>(instance: impl Into<Arc<str>>) -> ChannelKey {
-    InternalChannel::named::<T>(instance).into()
+    ChannelKey::internal::<T>(instance)
 }
 
 fn build_errors(nodes: Vec<DeclaringNode>) -> Vec<PipelineBuildError> {

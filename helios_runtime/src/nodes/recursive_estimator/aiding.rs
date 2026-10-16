@@ -8,7 +8,7 @@ use super::throttle::passes_warn_throttle;
 
 use crate::nodes::estimation::{Measurement, MeasurementSource};
 use crate::pipeline::node::TickContext;
-use crate::port::{AlgorithmNodePortDescriptor, ChannelKey, PortBus};
+use crate::port::{ChannelKey, PortBus, PortDescriptorBuilder};
 use crate::stamped::Health;
 
 use helios_core::estimation::measurement::Unavailable;
@@ -133,10 +133,10 @@ impl Aiding {
 /// since the filter still predicts and publishes without it, and the entry's
 /// leaves, named as [`Aiding`] reports them.
 pub(super) fn aiding_ports(
-    mut builder: AlgorithmNodePortDescriptor,
+    mut builder: PortDescriptorBuilder,
     entry: &str,
     channel: &ChannelKey,
-) -> AlgorithmNodePortDescriptor {
+) -> PortDescriptorBuilder {
     // The channel is an erased key, so it goes through the slice path, which
     // asserts the key is a sensor or internal channel.
     builder = builder.inputs_from_slices(&[], std::slice::from_ref(channel));

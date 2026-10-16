@@ -14,14 +14,14 @@
 //!
 //! This is the host-input twin of `SensorPublisher`, with three deliberate
 //! differences: the value is a single item, not a batch; it rides an
-//! `InternalChannel` (a DAG-node input), not a `SensorChannel`; and its
+//! internal channel (a DAG-node input), not a measurement channel; and its
 //! timestamp is supplied by the caller rather than read off the payload, since
 //! a host input has no intrinsic reading time.
 
 use crate::prelude::AutonomyPipelineComponent;
 
 use helios_core::prelude::MonotonicTime;
-use helios_runtime::{port::InternalChannel, Health, Stamped, HOST_PRODUCER_ID};
+use helios_runtime::{port::ChannelKey, Health, Stamped, HOST_PRODUCER_ID};
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -52,7 +52,7 @@ impl HostInputPublisher<'_, '_> {
     /// - `timestamp` comes from the caller, not the value: a host input has no
     ///   intrinsic reading time, so the system that emits it decides "when"
     ///   (typically the current tick clock).
-    /// - The value rides an `InternalChannel` keyed by `channel`, the same slot
+    /// - The value rides an internal channel named `channel`, the same slot
     ///   a DAG node declares as an input — so the consumer (a planner reading
     ///   its goal, say) and the host agree by this one name.
     /// - A write to an unwired channel warns exactly once per channel name,
@@ -61,7 +61,7 @@ impl HostInputPublisher<'_, '_> {
     pub fn publish<T: Send + Sync + 'static>(
         &mut self,
         agent: Entity,
-        channel: InternalChannel,
+        channel: ChannelKey,
         value: T,
         timestamp: MonotonicTime,
     ) {
@@ -76,10 +76,7 @@ impl HostInputPublisher<'_, '_> {
             producer: HOST_PRODUCER_ID,
         };
 
-        let write_result = pipeline
-            .0
-            .bus()
-            .write(channel.clone().into(), stamped_message);
+        let write_result = pipeline.0.bus().write(channel.clone(), stamped_message);
 
         if write_result.is_err() && self.warned_channels.insert(channel.instance().to_string()) {
             warn!(
@@ -115,7 +112,7 @@ mod tests {
 
         publisher.publish(
             agent,
-            InternalChannel::named::<PlannerGoal>("mission"),
+            ChannelKey::internal::<PlannerGoal>("mission"),
             PlannerGoal::WorldPosition2D(Vector2::new(1.0, 2.0)),
             MonotonicTime(0.0),
         );

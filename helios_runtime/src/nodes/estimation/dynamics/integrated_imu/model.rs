@@ -7,7 +7,7 @@ use super::config::IntegratedImuConfig;
 use crate::assembly::BuildContext;
 use crate::nodes::estimation::EstimatorComponents;
 use crate::pipeline::InputMounts;
-use crate::port::{ChannelKey, PortBus, SensorChannel};
+use crate::port::{ChannelKey, PortBus};
 use crate::prelude::TickContext;
 
 use helios_core::estimation::dynamics::integrated_imu::{
@@ -217,10 +217,8 @@ fn build(config: IntegratedImuConfig, ctx: &BuildContext<'_>) -> Result<Dynamics
             gyro_bias_var: prior.gyro_bias_radps.powi(2),
         },
     );
-    let accel: ChannelKey =
-        SensorChannel::named::<Vec<SensorReading<Acceleration>>>(config.accel_channel).into();
-    let gyro: ChannelKey =
-        SensorChannel::named::<Vec<SensorReading<AngularRate>>>(config.gyro_channel).into();
+    let accel = ChannelKey::measurement::<Vec<SensorReading<Acceleration>>>(config.accel_channel);
+    let gyro = ChannelKey::measurement::<Vec<SensorReading<AngularRate>>>(config.gyro_channel);
     let body = ctx.frames().body.clone();
     let input = DeclaredInput::new(
         imu_input_schema(&body),
@@ -248,9 +246,7 @@ mod tests {
     use super::*;
 
     use crate::assembly::{AutonomyRegistry, ComponentError};
-    use crate::port::{
-        AlgorithmNodePortDescriptor, ChannelDescription, PortDescriptor, Provenance,
-    };
+    use crate::port::{ChannelDescription, PortDescriptor, PortDescriptorBuilder, Provenance};
     use crate::stamped::{Health, Stamped};
     use crate::BodyChannel;
 
@@ -449,7 +445,7 @@ mod tests {
 
     /// The node's ports for `input`'s channels.
     fn ports(input: &DeclaredInput) -> PortDescriptor {
-        AlgorithmNodePortDescriptor::new()
+        PortDescriptorBuilder::algorithm()
             .inputs_from_slices(input.required_channels(), input.optional_channels())
             .build()
     }

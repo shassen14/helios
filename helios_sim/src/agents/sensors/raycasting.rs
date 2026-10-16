@@ -274,11 +274,10 @@ mod tests {
     use helios_core::prelude::{AgentId, TfProvider};
     use helios_core::spatial::transforms::Convention;
     use helios_core::spatial::FrameId;
-    use helios_runtime::port::AlgorithmNodePortDescriptor;
-    use helios_runtime::port::{PortBus, SensorChannel};
+    use helios_runtime::port::PortDescriptorBuilder;
+    use helios_runtime::port::{ChannelKey, PortBus};
     use helios_runtime::{
-        BodyCapabilities, ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor, Stamped,
-        TickContext,
+        BodyCapabilities, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext,
     };
 
     use avian3d::collider_tree::ColliderTrees;
@@ -312,7 +311,7 @@ mod tests {
     impl FakeScanConsumer {
         fn new() -> Self {
             Self {
-                descriptor: AlgorithmNodePortDescriptor::new()
+                descriptor: PortDescriptorBuilder::algorithm()
                     .inputs_from_slices(&[], &[field_channel()])
                     .build(),
             }
@@ -332,7 +331,7 @@ mod tests {
     }
 
     fn field_channel() -> ChannelKey {
-        SensorChannel::named::<FieldBatch>(CHANNEL).into()
+        ChannelKey::measurement::<FieldBatch>(CHANNEL)
     }
 
     fn period() -> Duration {

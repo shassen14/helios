@@ -113,7 +113,7 @@ mod tests {
 
     use crate::assembly::{AutonomyRegistry, ComponentError};
     use crate::nodes::estimation::measurement::{MeasurementSource, MeasurementWiring};
-    use crate::port::{ChannelKey, SensorChannel};
+    use crate::port::ChannelKey;
 
     use helios_core::interchange::measurement::envelope::SensorReading;
     use helios_core::interchange::measurement::sensor::SensorPayload;
@@ -143,7 +143,7 @@ mod tests {
     }
 
     fn reads<P: SensorPayload>(source: &dyn MeasurementSource) -> bool {
-        let key: ChannelKey = SensorChannel::named::<Vec<SensorReading<P>>>(INPUT).into();
+        let key = ChannelKey::measurement::<Vec<SensorReading<P>>>(INPUT);
         source.channel() == &key
     }
 

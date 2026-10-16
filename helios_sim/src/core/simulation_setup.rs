@@ -87,7 +87,7 @@ impl Plugin for SimulationSetupPlugin {
 // Chain the scene-building sets so each pass runs after the previous one's
 // spawns are visible. Every set boundary is a Commands sync point, so a pass
 // that queries the prior pass's inserts (e.g. `SpawnPipeline` reading the
-// sensor channels from `ProcessSensors`) must sit in a later set, not just a
+// measurement channels from `ProcessSensors`) must sit in a later set, not just a
 // later system.
 fn configure_scene_build_sets(app: &mut App) {
     app.configure_sets(

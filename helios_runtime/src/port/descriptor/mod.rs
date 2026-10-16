@@ -6,14 +6,13 @@
 //!   [`OutputPort`] records, and the
 //!   [`Observable`] records of what a node can emit for watchers
 //!   ([`Determinism`]).
-//! - [`builders`] — [`AlgorithmNodePortDescriptor`] and
-//!   [`MockNodePortDescriptor`], the kind-fenced constructors that are the only
-//!   way to build a descriptor from outside this crate.
+//! - [`builder`] — [`PortDescriptorBuilder`], the only way to build a
+//!   descriptor from outside this crate.
 
-pub mod builders;
+pub mod builder;
 pub mod declaration;
 
-pub use builders::{AlgorithmNodePortDescriptor, MockNodePortDescriptor};
+pub use builder::PortDescriptorBuilder;
 pub use declaration::{
     Determinism, InputNeed, InputPort, InputTiming, MountReading, MountRule, Observable,
     OutputPort, PortDescriptor,

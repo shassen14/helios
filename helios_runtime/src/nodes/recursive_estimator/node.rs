@@ -48,7 +48,7 @@ use super::throttle::passes_warn_throttle;
 use crate::channels::estimate::estimator_output;
 use crate::nodes::estimation::{AssembledInput, EstimatorInputBuilder};
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{AlgorithmNodePortDescriptor, ChannelKey, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::{GaussianStateEstimator, PredictOutcome, PredictSkipReason};
@@ -100,9 +100,9 @@ impl RecursiveEstimatorNode {
         aiding: impl IntoIterator<Item = (&'a str, &'a ChannelKey)>,
         mount_readings: impl IntoIterator<Item = (ChannelKey, Convention)>,
     ) -> PortDescriptor {
-        let mut builder = AlgorithmNodePortDescriptor::new()
+        let mut builder = PortDescriptorBuilder::algorithm()
             .inputs_from_slices(input_required, input_optional)
-            .output_internal(estimator_output(name))
+            .output(estimator_output(name))
             .defines_frame(root.clone());
         for (entry, channel) in aiding {
             builder = aiding_ports(builder, entry, channel);
@@ -129,7 +129,7 @@ impl RecursiveEstimatorNode {
 
         Self {
             name,
-            output: output.into(),
+            output,
             filter: Mutex::new(Running {
                 filter,
                 predict_fault: None,

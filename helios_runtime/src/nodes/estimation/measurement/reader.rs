@@ -1,7 +1,7 @@
-//! [`PayloadReader`]: takes each reading on a typed sensor channel once, in
+//! [`PayloadReader`]: takes each reading on a typed measurement channel once, in
 //! time order.
 
-use crate::port::{ChannelKey, PortBus, SensorChannel};
+use crate::port::{ChannelKey, PortBus};
 
 use helios_core::interchange::measurement::envelope::SensorReading;
 use helios_core::interchange::measurement::sensor::SensorPayload;
@@ -35,9 +35,9 @@ pub(crate) struct PayloadReader<P: SensorPayload> {
 }
 
 impl<P: SensorPayload> PayloadReader<P> {
-    pub(crate) fn new(channel: SensorChannel) -> Self {
+    pub(crate) fn new(channel: ChannelKey) -> Self {
         Self {
-            channel: channel.into(),
+            channel,
             last_taken: AtomicF64::new(f64::NEG_INFINITY),
             _payload: PhantomData,
         }
@@ -91,12 +91,12 @@ mod tests {
 
     const CHANNEL: &str = "gps";
 
-    fn channel() -> SensorChannel {
-        SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(CHANNEL)
+    fn channel() -> ChannelKey {
+        ChannelKey::measurement::<Vec<SensorReading<GpsPosition>>>(CHANNEL)
     }
 
     fn bus() -> PortBus {
-        let key: ChannelKey = channel().into();
+        let key = channel();
         PortBus::new(&[PortDescriptor::new(vec![], vec![], vec![key], None)])
     }
 
@@ -113,7 +113,7 @@ mod tests {
 
     fn publish(bus: &PortBus, times: &[f64]) {
         bus.write(
-            channel().into(),
+            channel(),
             Stamped {
                 value: times.iter().map(|&t| reading(t)).collect::<Vec<_>>(),
                 timestamp: MonotonicTime(times.iter().copied().fold(f64::MIN, f64::max)),

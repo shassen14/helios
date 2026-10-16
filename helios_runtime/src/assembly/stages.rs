@@ -20,7 +20,7 @@
 //!   it publishes, each typed and with the unit that produces it: sensor
 //!   channels, oracle reference channels, later health channels. It goes to
 //!   [`PipelineBuilder::with_body_capabilities`] as given, so a node reading a
-//!   sensor channel the body does not publish, and no node writes, fails the
+//!   measurement channel the body does not publish, and no node writes, fails the
 //!   build rather than silently never running.
 //!
 //! Inputs an operator or mission system sends — each planner's goal, and the

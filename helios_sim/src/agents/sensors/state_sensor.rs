@@ -170,9 +170,9 @@ mod tests {
     use helios_core::interchange::measurement::sensor::GpsPosition;
     use helios_core::prelude::{AgentId, TfProvider};
     use helios_core::spatial::FrameId;
-    use helios_runtime::port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel};
+    use helios_runtime::port::{ChannelKey, PortBus, PortDescriptorBuilder};
     use helios_runtime::{
-        BodyCapabilities, ChannelKey, PipelineBuilder, PipelineNode, PortDescriptor, TickContext,
+        BodyCapabilities, PipelineBuilder, PipelineNode, PortDescriptor, TickContext,
     };
 
     use bevy::ecs::schedule::Schedule;
@@ -358,7 +358,7 @@ mod tests {
     }
 
     fn test_channel() -> ChannelKey {
-        SensorChannel::named::<Vec<SensorReading<GpsPosition>>>(TEST_CHANNEL).into()
+        ChannelKey::measurement::<Vec<SensorReading<GpsPosition>>>(TEST_CHANNEL)
     }
 
     /// Nothing downstream of the estimator reads a state sensor's header, so
@@ -370,7 +370,7 @@ mod tests {
         let agent = world.get::<ChildOf>(sensor).unwrap().parent();
         let channel = world.get::<SensorPublishChannel>(sensor).unwrap().clone();
         let consumer = FakeGpsConsumer {
-            descriptor: AlgorithmNodePortDescriptor::new()
+            descriptor: PortDescriptorBuilder::algorithm()
                 .inputs_from_slices(&[], &[test_channel()])
                 .build(),
         };

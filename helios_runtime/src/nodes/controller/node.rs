@@ -29,9 +29,7 @@
 
 use super::input::ControlInputBuilder;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
-};
+use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::control::Controller;
@@ -63,14 +61,14 @@ where
         name: impl Into<String>,
         controller: C,
         input_builder: Box<dyn ControlInputBuilder<Output = C::Inputs>>,
-        output: InternalChannel,
+        output: ChannelKey,
     ) -> Self {
-        let descriptor = AlgorithmNodePortDescriptor::new()
+        let descriptor = PortDescriptorBuilder::algorithm()
             .inputs_from_slices(
                 input_builder.required_channels(),
                 input_builder.optional_channels(),
             )
-            .output_internal(output.clone())
+            .output(output.clone())
             .build();
 
         Self {
@@ -78,7 +76,7 @@ where
             controller: Mutex::new(controller),
             input_builder,
             descriptor,
-            output_key: output.into(),
+            output_key: output,
         }
     }
 }
@@ -238,7 +236,7 @@ mod tests {
     impl AlwaysReadyBuilder {
         fn new() -> Self {
             Self {
-                required: vec![estimate().into()],
+                required: vec![estimate()],
                 optional: vec![],
             }
         }
@@ -295,7 +293,7 @@ mod tests {
     // --- Helpers ---
 
     fn twist_channel() -> ChannelKey {
-        InternalChannel::of::<BodyTwist>().into()
+        ChannelKey::internal_of::<BodyTwist>()
     }
 
     fn make_bus(output: ChannelKey) -> PortBus {
@@ -316,7 +314,7 @@ mod tests {
             "direct_twist",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
         assert_eq!(
             node.port_descriptor()
@@ -339,7 +337,7 @@ mod tests {
             "direct_twist",
             controller,
             Box::new(builder),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
         assert_eq!(
             node.port_descriptor()
@@ -364,7 +362,7 @@ mod tests {
             "direct_twist",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
         let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
@@ -382,12 +380,12 @@ mod tests {
         // The same node type, monomorphized over a controller whose `Out` is
         // `BodyWrench`, publishes on a `BodyWrench`-typed channel — the output
         // slot is caller-supplied but its payload type must match `C::Out`.
-        let wrench_channel: ChannelKey = InternalChannel::of::<BodyWrench>().into();
+        let wrench_channel = ChannelKey::internal_of::<BodyWrench>();
         let node = ControllerNode::new(
             "wrench",
             WrenchController,
             Box::new(AlwaysReadyBuilder::new()),
-            InternalChannel::of::<BodyWrench>(),
+            ChannelKey::internal_of::<BodyWrench>(),
         );
         assert_eq!(
             node.port_descriptor()
@@ -414,7 +412,7 @@ mod tests {
                 required: vec![],
                 optional: vec![],
             }),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
         let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
@@ -429,7 +427,7 @@ mod tests {
             "direct_twist",
             controller,
             Box::new(AlwaysReadyBuilder::new()),
-            InternalChannel::of::<BodyTwist>(),
+            ChannelKey::internal_of::<BodyTwist>(),
         );
         let bus = make_bus(twist_channel());
         node.execute(&bus, &MockRuntime, tick_at(0.0, 0.02));

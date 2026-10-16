@@ -18,9 +18,7 @@
 use crate::channels::estimate;
 use crate::channels::tf::{publish_edge, tf_edge};
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{
-    AlgorithmNodePortDescriptor, ChannelKey, InternalChannel, PortBus, PortDescriptor,
-};
+use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::Stamped;
 
 use helios_core::estimation::frames::EstimationFrames;
@@ -55,7 +53,7 @@ impl EstimateRelay {
     /// `frames`, for the `frames.root → frames.body` edge.
     pub(crate) fn new(
         name: impl Into<String>,
-        source: InternalChannel,
+        source: ChannelKey,
         frames: EstimationFrames,
     ) -> Self {
         let edge = FrameEdge {
@@ -63,16 +61,16 @@ impl EstimateRelay {
             parent: frames.root,
         };
         let output = estimate::estimate();
-        let descriptor = AlgorithmNodePortDescriptor::new()
-            .input_internal(source.clone())
-            .output_internal(output.clone())
-            .output_internal(tf_edge(&edge))
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .input(source.clone())
+            .output(output.clone())
+            .output(tf_edge(&edge))
             .build();
 
         Self {
             name: name.into(),
-            source: source.into(),
-            output: output.into(),
+            source,
+            output,
             edge,
             descriptor,
         }
@@ -173,7 +171,7 @@ mod tests {
         AgentId::new("test_agent")
     }
 
-    fn source() -> InternalChannel {
+    fn source() -> ChannelKey {
         estimator_output("primary")
     }
 
@@ -187,7 +185,7 @@ mod tests {
     /// A bus with slots for the source (as its estimator would declare it)
     /// and every output of `relay`.
     fn bus_for(relay: &EstimateRelay) -> PortBus {
-        let estimator = PortDescriptor::new(vec![], vec![], vec![source().into()], None);
+        let estimator = PortDescriptor::new(vec![], vec![], vec![source()], None);
         PortBus::new([relay.port_descriptor(), &estimator])
     }
 
@@ -219,7 +217,7 @@ mod tests {
 
     fn write_source(bus: &PortBus, state: FrameAwareState, health: Health) {
         bus.write(
-            source().into(),
+            source(),
             Stamped {
                 value: state,
                 timestamp: MonotonicTime(1.5),
@@ -236,11 +234,11 @@ mod tests {
         let descriptor = relay.port_descriptor();
 
         let required: Vec<&ChannelKey> = descriptor.required_inputs().collect();
-        assert_eq!(required, vec![&ChannelKey::from(source())]);
+        assert_eq!(required, vec![&source()]);
         let outputs: Vec<ChannelKey> = descriptor.outputs().cloned().collect();
         assert_eq!(outputs.len(), 2);
-        assert!(outputs.contains(&estimate::estimate().into()));
-        assert!(outputs.contains(&tf_edge(&edge()).into()));
+        assert!(outputs.contains(&estimate::estimate()));
+        assert!(outputs.contains(&tf_edge(&edge())));
     }
 
     #[test]
@@ -250,12 +248,8 @@ mod tests {
 
         relay.execute(&bus, &NoTf, tick());
 
-        assert!(bus
-            .read::<FrameAwareState>(estimate::estimate().into())
-            .is_none());
-        assert!(bus
-            .read::<StampedTransform>(tf_edge(&edge()).into())
-            .is_none());
+        assert!(bus.read::<FrameAwareState>(estimate::estimate()).is_none());
+        assert!(bus.read::<StampedTransform>(tf_edge(&edge())).is_none());
     }
 
     #[test]
@@ -267,7 +261,7 @@ mod tests {
         relay.execute(&bus, &NoTf, tick());
 
         let estimate = bus
-            .read::<FrameAwareState>(estimate::estimate().into())
+            .read::<FrameAwareState>(estimate::estimate())
             .expect("the estimate is forwarded");
         // The source's envelope, not the relay's tick.
         assert_eq!(estimate.timestamp, MonotonicTime(1.5));
@@ -275,7 +269,7 @@ mod tests {
         assert_eq!(estimate.value.timestamp, MonotonicTime(1.5));
 
         let published = bus
-            .read::<StampedTransform>(tf_edge(&edge()).into())
+            .read::<StampedTransform>(tf_edge(&edge()))
             .expect("the edge is published");
         assert_eq!(published.value.parent, edge().parent);
         assert_eq!(published.value.child, edge().child);
@@ -311,7 +305,7 @@ mod tests {
             parent: frames.root.clone(),
         };
         let published = bus
-            .read::<StampedTransform>(tf_edge(&edge).into())
+            .read::<StampedTransform>(tf_edge(&edge))
             .expect("the edge from the estimate's root is published");
         assert_eq!(published.value.parent, frames.root);
         assert_eq!(relay.root(), &frames.root);
@@ -333,9 +327,9 @@ mod tests {
         relay.execute(&bus, &NoTf, tick());
 
         for health in [
-            bus.read::<FrameAwareState>(estimate::estimate().into())
+            bus.read::<FrameAwareState>(estimate::estimate())
                 .map(|s| s.health.clone()),
-            bus.read::<StampedTransform>(tf_edge(&edge()).into())
+            bus.read::<StampedTransform>(tf_edge(&edge()))
                 .map(|s| s.health.clone()),
         ] {
             assert!(
@@ -353,11 +347,7 @@ mod tests {
 
         relay.execute(&bus, &NoTf, tick());
 
-        assert!(bus
-            .read::<FrameAwareState>(estimate::estimate().into())
-            .is_some());
-        assert!(bus
-            .read::<StampedTransform>(tf_edge(&edge()).into())
-            .is_none());
+        assert!(bus.read::<FrameAwareState>(estimate::estimate()).is_some());
+        assert!(bus.read::<StampedTransform>(tf_edge(&edge())).is_none());
     }
 }

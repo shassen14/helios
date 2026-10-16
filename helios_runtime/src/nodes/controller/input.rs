@@ -36,8 +36,8 @@ impl<R: ControlReference> Default for DefaultControlInputBuilder<R> {
 
 impl<R: ControlReference> DefaultControlInputBuilder<R> {
     pub(crate) fn new() -> Self {
-        let state_channel: ChannelKey = estimate().into();
-        let reference_channel: ChannelKey = control::reference::<R>().into();
+        let state_channel = estimate();
+        let reference_channel = control::reference::<R>();
 
         Self {
             state_channel: state_channel.clone(),

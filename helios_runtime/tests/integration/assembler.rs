@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use helios_runtime::channels::{control, estimate, oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::port::{ChannelKey, InternalChannel, SensorChannel};
+use helios_runtime::port::ChannelKey;
 use helios_runtime::prelude::{Health, Stamped};
 use helios_runtime::{
     build_pipeline, ActuatorSeamConfig, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
@@ -92,9 +92,9 @@ const TRUTH_UNIT: &str = "truth";
 
 /// A channel `unit` publishes, carrying batches of `P` readings, as a sensor
 /// publishes them.
-fn sensor_channel<P: Send + Sync + 'static>(name: &str, unit: &str) -> BodyChannel {
+fn measurement_channel<P: Send + Sync + 'static>(name: &str, unit: &str) -> BodyChannel {
     BodyChannel::new(
-        SensorChannel::named::<Vec<SensorReading<P>>>(name),
+        ChannelKey::measurement::<Vec<SensorReading<P>>>(name),
         unit,
         Provenance::Simulated,
     )
@@ -102,12 +102,12 @@ fn sensor_channel<P: Send + Sync + 'static>(name: &str, unit: &str) -> BodyChann
 
 /// A lidar's point-cloud channel, the kind a mapper reads.
 fn cloud(name: &str) -> BodyChannel {
-    sensor_channel::<PointCloud<Flu>>(name, LIDAR_UNIT)
+    measurement_channel::<PointCloud<Flu>>(name, LIDAR_UNIT)
 }
 
 /// A lidar's range-field channel, the kind a deproject node reads.
 fn range_field(name: &str) -> BodyChannel {
-    sensor_channel::<RangeField<Flu>>(name, LIDAR_UNIT)
+    measurement_channel::<RangeField<Flu>>(name, LIDAR_UNIT)
 }
 
 /// The IMU channels the IMU-EKF fixtures in this file predict from, mounted on
@@ -117,8 +117,8 @@ fn range_field(name: &str) -> BodyChannel {
 fn channels_with_imu(agent: &AgentId, others: Vec<BodyChannel>) -> Vec<BodyChannel> {
     let mount = FrameId::agent(agent.clone(), IMU_MOUNT);
     let mut channels = vec![
-        sensor_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
-        sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
+        measurement_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
+        measurement_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
     ];
     channels.extend(others);
     channels
@@ -226,7 +226,7 @@ fn teleop_reference_is_intent_driven_not_free_running() {
     )
     .expect("teleop-only stack must build");
 
-    let reference_key: ChannelKey = control::reference::<BodyTwistRef>().into();
+    let reference_key = control::reference::<BodyTwistRef>();
 
     pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
     assert!(
@@ -252,7 +252,7 @@ fn teleop_intent_is_mapped_into_the_reference() {
     )
     .expect("teleop stack with a mapper config must build");
 
-    let intent_key: ChannelKey = control::intent::<TwistIntent>().into();
+    let intent_key = control::intent::<TwistIntent>();
     pipeline
         .bus()
         .write(
@@ -271,7 +271,7 @@ fn teleop_intent_is_mapped_into_the_reference() {
 
     pipeline.tick(MonotonicTime(0.0), 0.1, &MockRuntime);
 
-    let reference_key: ChannelKey = control::reference::<BodyTwistRef>().into();
+    let reference_key = control::reference::<BodyTwistRef>();
     let reference = pipeline
         .bus()
         .read::<BodyTwistRef>(reference_key)
@@ -546,8 +546,8 @@ fn feedback_and_feedforward_fold_into_the_wheel_torque_terminal() {
 
     // Each controller writes an instance-named DriveForce contribution; those are
     // exactly the channels the synthesized fold reads.
-    let feedback: ChannelKey = InternalChannel::named::<DriveForce>("speed_ctrl").into();
-    let feedforward: ChannelKey = InternalChannel::named::<DriveForce>("road_load").into();
+    let feedback = ChannelKey::internal::<DriveForce>("speed_ctrl");
+    let feedforward = ChannelKey::internal::<DriveForce>("road_load");
     pipeline
         .bus()
         .write(
@@ -685,8 +685,8 @@ fn decoupled_legs_merge_into_one_actuator_terminal() {
 
     // Each leg's instance-named contribution — exactly the channels its space's
     // fold reads.
-    let drive_leg: ChannelKey = InternalChannel::named::<DriveForce>("speed_ctrl").into();
-    let steer_leg: ChannelKey = InternalChannel::named::<SteerAngle>("steer_ff").into();
+    let drive_leg = ChannelKey::internal::<DriveForce>("speed_ctrl");
+    let steer_leg = ChannelKey::internal::<SteerAngle>("steer_ff");
     pipeline
         .bus()
         .write(
@@ -807,7 +807,7 @@ fn two_folds_of_one_type_drive_two_allocators() {
         pipeline
             .bus()
             .write(
-                InternalChannel::named::<DriveForce>(format!("{side}_speed").as_str()).into(),
+                ChannelKey::internal::<DriveForce>(format!("{side}_speed").as_str()),
                 Stamped {
                     value: DriveForce::new(force),
                     timestamp: MonotonicTime(0.0),
@@ -849,7 +849,7 @@ fn an_allocator_with_no_command_fold_fails_the_build_naming_its_input() {
         panic!("an allocator with no command source must not build");
     };
 
-    let steer_command: ChannelKey = InternalChannel::named::<SteerAngle>("steer_cmd").into();
+    let steer_command = ChannelKey::internal::<SteerAngle>("steer_cmd");
     assert!(
         errors.iter().any(|e| matches!(
             e,
@@ -965,7 +965,7 @@ fn an_allocator_outside_the_actuator_seam_does_not_reach_the_body() {
     pipeline
         .bus()
         .write(
-            InternalChannel::named::<DriveForce>("speed_ctrl").into(),
+            ChannelKey::internal::<DriveForce>("speed_ctrl"),
             Stamped {
                 value: DriveForce::new(100.0),
                 timestamp: MonotonicTime(0.0),
@@ -977,7 +977,7 @@ fn an_allocator_outside_the_actuator_seam_does_not_reach_the_body() {
     pipeline
         .bus()
         .write(
-            InternalChannel::named::<SteerAngle>("steer_ff").into(),
+            ChannelKey::internal::<SteerAngle>("steer_ff"),
             Stamped {
                 value: SteerAngle::new(0.2),
                 timestamp: MonotonicTime(0.0),
@@ -1018,7 +1018,7 @@ fn planner_without_a_map_fails_the_build_naming_it() {
         panic!("a planner with no map must not build");
     };
 
-    let map_key: ChannelKey = InternalChannel::named::<MapData>("local").into();
+    let map_key = ChannelKey::internal::<MapData>("local");
     assert!(
         errors.iter().any(|e| matches!(
             e,
@@ -1085,7 +1085,7 @@ fn follower_naming_no_planner_fails_the_build_naming_it() {
         panic!("a follower naming no planner must not build");
     };
 
-    let path_key: ChannelKey = InternalChannel::named::<Path>("global_path").into();
+    let path_key = ChannelKey::internal::<Path>("global_path");
     assert!(
         errors.iter().any(|e| matches!(
             e,
@@ -1135,7 +1135,7 @@ fn teleop_preferred_over_a_follower_wins_the_reference_while_fresh() {
     pipeline
         .bus()
         .write(
-            control::intent::<TwistIntent>().into(),
+            control::intent::<TwistIntent>(),
             Stamped {
                 value: TwistIntent {
                     surge: 1.0,
@@ -1151,7 +1151,7 @@ fn teleop_preferred_over_a_follower_wins_the_reference_while_fresh() {
 
     let reference = pipeline
         .bus()
-        .read::<BodyTwistRef>(control::reference::<BodyTwistRef>().into())
+        .read::<BodyTwistRef>(control::reference::<BodyTwistRef>())
         .expect("the fresh teleop reference must be forwarded");
     assert_eq!(
         reference.value.twist().linear(),
@@ -1202,7 +1202,7 @@ fn controllers_without_a_reference_section_fail_naming_the_reference() {
         panic!("controllers with no reference must not build");
     };
 
-    let reference: ChannelKey = control::reference::<BodyTwistRef>().into();
+    let reference = control::reference::<BodyTwistRef>();
     assert!(
         errors.iter().any(|e| matches!(
             e,
@@ -1280,7 +1280,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
         agent.clone(),
         body_publishing(channels_with_imu(
             &agent,
-            vec![sensor_channel::<MagneticField>(MAG_CHANNEL, MAG_UNIT)
+            vec![measurement_channel::<MagneticField>(MAG_CHANNEL, MAG_UNIT)
                 .with_mount(FrameId::agent(agent.clone(), MAG_MOUNT))],
         )),
     )
@@ -1289,8 +1289,7 @@ fn declared_mag_bias_augmentation_is_observed_end_to_end() {
     // Drive: publish the same biased reading each tick with a strictly
     // increasing timestamp. The node dedups by per-reading timestamp, so a
     // repeated stamp would be dropped and nothing would converge.
-    let mag_key: ChannelKey =
-        SensorChannel::named::<Vec<SensorReading<MagneticField>>>(MAG_CHANNEL).into();
+    let mag_key = ChannelKey::measurement::<Vec<SensorReading<MagneticField>>>(MAG_CHANNEL);
     let measured = Vector3::new(world_field[0], world_field[1], world_field[2] + true_bias_z);
     let dt = 0.05;
     for i in 1..=40 {
@@ -1398,7 +1397,7 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
     pipeline
         .bus()
         .write(
-            SensorChannel::named::<Vec<SensorReading<RangeField<Flu>>>>(input).into(),
+            ChannelKey::measurement::<Vec<SensorReading<RangeField<Flu>>>>(input),
             Stamped {
                 value: vec![SensorReading {
                     sensor: sensor.clone(),
@@ -1416,9 +1415,9 @@ fn deproject_node_turns_host_range_fields_into_clouds() {
 
     let clouds = pipeline
         .bus()
-        .read::<Vec<SensorReading<PointCloud<Flu>>>>(
-            SensorChannel::named::<Vec<SensorReading<PointCloud<Flu>>>>(output).into(),
-        )
+        .read::<Vec<SensorReading<PointCloud<Flu>>>>(ChannelKey::measurement::<
+            Vec<SensorReading<PointCloud<Flu>>>,
+        >(output))
         .expect("the deproject node must publish its cloud batch");
     assert_eq!(clouds.timestamp, batch_time);
     assert_eq!(clouds.value.len(), 1);
@@ -1550,7 +1549,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
     // a map on the bus proves the points arrived. The robot state is supplied
     // by the body here so the test needs no estimator.
     let agent = AgentId::new("test_agent");
-    let state_key: ChannelKey = estimate::estimate().into();
+    let state_key = estimate::estimate();
     let stack = AutonomyStackConfig {
         nodes: BTreeMap::from([
             deproject("front_deproject", "lidar", "lidar.points"),
@@ -1587,7 +1586,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
     pipeline
         .bus()
         .write(
-            SensorChannel::named::<Vec<SensorReading<RangeField<Flu>>>>("lidar").into(),
+            ChannelKey::measurement::<Vec<SensorReading<RangeField<Flu>>>>("lidar"),
             Stamped {
                 value: vec![SensorReading {
                     sensor: FrameId::agent(agent, "lidar"),
@@ -1608,7 +1607,7 @@ fn mapper_builds_a_map_from_a_host_range_field() {
     assert!(
         pipeline
             .bus()
-            .read::<MapData>(InternalChannel::named::<MapData>("local").into())
+            .read::<MapData>(ChannelKey::internal::<MapData>("local"))
             .is_some(),
         "the mapper must publish a map once the deprojected scan reaches it"
     );
@@ -1629,7 +1628,9 @@ fn estimator_predicting_from_an_unpublished_imu_fails_the_build() {
         &stack,
         &AutonomyRegistry::default(),
         AgentId::new("test_agent"),
-        body_publishing(vec![sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT)]),
+        body_publishing(vec![measurement_channel::<AngularRate>(
+            "imu.gyro", IMU_UNIT,
+        )]),
     )
     .err()
     .expect("an estimator without its accelerometer channel must not build");
@@ -1672,8 +1673,10 @@ fn estimator_aided_by_a_host_channel_builds() {
         agent.clone(),
         body_publishing(channels_with_imu(
             &agent,
-            vec![sensor_channel::<MagneticField>("mag.primary", MAG_UNIT)
-                .with_mount(FrameId::agent(agent.clone(), "mag.primary"))],
+            vec![
+                measurement_channel::<MagneticField>("mag.primary", MAG_UNIT)
+                    .with_mount(FrameId::agent(agent.clone(), "mag.primary")),
+            ],
         )),
     );
 
@@ -1700,7 +1703,10 @@ fn estimator_aiding_from_an_unpublished_channel_fails_the_build() {
         AgentId::new("test_agent"),
         body_publishing(channels_with_imu(
             &AgentId::new("test_agent"),
-            vec![sensor_channel::<MagneticField>("mag.primary", MAG_UNIT)],
+            vec![measurement_channel::<MagneticField>(
+                "mag.primary",
+                MAG_UNIT,
+            )],
         )),
     )
     .err()
@@ -1761,8 +1767,8 @@ fn planner_goals_are_declared_once_per_goal_channel() {
     .expect("a stack of planners over a declared grid must build");
 
     let declared: Vec<ChannelKey> = pipeline.outside_inputs().cloned().collect();
-    let mission: ChannelKey = InternalChannel::named::<PlannerGoal>("mission").into();
-    let waypoints: ChannelKey = InternalChannel::named::<PlannerGoal>("waypoints").into();
+    let mission = ChannelKey::internal::<PlannerGoal>("mission");
+    let waypoints = ChannelKey::internal::<PlannerGoal>("waypoints");
 
     assert_eq!(
         declared.len(),
@@ -1794,7 +1800,7 @@ fn teleop_intent_is_declared_as_an_outside_input() {
     )
     .expect("teleop-only stack must build");
 
-    let intent: ChannelKey = control::intent::<TwistIntent>().into();
+    let intent = control::intent::<TwistIntent>();
     assert_eq!(pipeline.outside_inputs().collect::<Vec<_>>(), [&intent]);
 }
 
@@ -1845,7 +1851,7 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
     let body = body_publishing(channels_with_imu(
         &agent,
         vec![
-            sensor_channel::<MagneticField>("mag.primary", MAG_UNIT)
+            measurement_channel::<MagneticField>("mag.primary", MAG_UNIT)
                 .with_mount(FrameId::agent(agent.clone(), "mag.primary")),
             BodyChannel::new(oracle_pose_channel(), TRUTH_UNIT, Provenance::Exact),
             BodyChannel::new(oracle_twist_channel(), TRUTH_UNIT, Provenance::Exact),
@@ -1861,7 +1867,7 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
     pipeline
         .bus()
         .write(
-            oracle_pose_channel().into(),
+            oracle_pose_channel(),
             Stamped {
                 value: Isometry3::<f64>::identity(),
                 timestamp: MonotonicTime(0.0),
@@ -1881,7 +1887,7 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
     );
     let shadow = pipeline
         .bus()
-        .read::<FrameAwareState>(estimate::estimator_output("nav_ekf").into())
+        .read::<FrameAwareState>(estimate::estimator_output("nav_ekf"))
         .expect("an estimator publishes its seeded state on its first tick");
     assert_eq!(
         shadow.value.reference_frame(),

@@ -10,6 +10,8 @@
 //! - `mounts` checks the mounts writers state and resolves each node
 //!   output's mount in level order;
 //! - `owners` checks every frame the body or a node owns has one owner;
+//! - `kinds` checks every node reads and writes only the channel kinds its
+//!   class may;
 //! - `builder` allocates bus slots from the declared ports, builds each plan
 //!   with the mounts of its inputs, adds rate timers, and hands back the
 //!   pipeline.
@@ -20,6 +22,7 @@ mod builder;
 mod cycle;
 mod declaration;
 mod error;
+mod kinds;
 mod mounts;
 mod ordering;
 mod owners;

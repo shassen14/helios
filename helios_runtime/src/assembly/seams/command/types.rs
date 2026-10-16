@@ -6,7 +6,7 @@ use super::super::members::SeamType;
 use crate::assembly::registry::AutonomyRegistry;
 use crate::nodes::combinators::Sum;
 use crate::pipeline::node::PipelineNode;
-use crate::port::InternalChannel;
+use crate::port::ChannelKey;
 
 use helios_core::control::commands::{BodyTwist, DriveForce, SteerAngle};
 
@@ -25,7 +25,7 @@ pub(crate) const DRIVE_FORCE_TYPE: &str = "DriveForce";
 pub(crate) const STEER_ANGLE_TYPE: &str = "SteerAngle";
 
 /// Builds a fold's `Sum` from its name and its required and optional inputs.
-type BuildSum = fn(&str, Vec<InternalChannel>, Vec<InternalChannel>) -> Box<dyn PipelineNode>;
+type BuildSum = fn(&str, Vec<ChannelKey>, Vec<ChannelKey>) -> Box<dyn PipelineNode>;
 
 /// The command types a `[command.<fold>]` table may name in its `type` key:
 /// type name → what the seam needs to fold it.
@@ -110,8 +110,8 @@ impl CommandType {
 /// A `Sum` named `fold` over `required` and `optional`, writing `T @ <fold>`.
 fn build_sum<T>(
     fold: &str,
-    required: Vec<InternalChannel>,
-    optional: Vec<InternalChannel>,
+    required: Vec<ChannelKey>,
+    optional: Vec<ChannelKey>,
 ) -> Box<dyn PipelineNode>
 where
     T: Send + Sync + Clone + Add<Output = T> + 'static,
@@ -120,7 +120,7 @@ where
         fold,
         required,
         optional,
-        InternalChannel::named::<T>(fold),
+        ChannelKey::internal::<T>(fold),
     ))
 }
 

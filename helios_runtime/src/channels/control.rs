@@ -22,17 +22,15 @@
 //! generic — the role and the type are both fixed.
 //!
 //! All roles are `Internal` kind: brain-produced, or host-injected intent the
-//! brain then arbitrates — never sensor or oracle data. Each returns the kinded
-//! [`InternalChannel`] so it drops straight into the descriptor builders
-//! (`input_internal` / `output_internal`); call `.into()` for a
-//! [`ChannelKey`](crate::ChannelKey) when reading the bus.
+//! brain then arbitrates — never measurement or oracle data. Each returns the
+//! [`ChannelKey`](crate::ChannelKey) a descriptor declares and the bus reads.
 //!
 //! The role strings live as consts so a producer and a consumer can't drift on
 //! a typo.
 
 use helios_core::control::actuators::ActuatorCommand;
 
-use crate::port::InternalChannel;
+use crate::port::ChannelKey;
 
 const ROLE_ACTUATORS: &str = "actuators";
 const ROLE_INTENT: &str = "intent";
@@ -44,11 +42,11 @@ const ROLE_REFERENCE: &str = "reference";
 /// every controller's input builder.
 /// This is the single-signal seam: one instantaneous setpoint below all
 /// planning, the same slot whether autonomy or teleop currently owns it.
-pub fn reference<T>() -> InternalChannel
+pub fn reference<T>() -> ChannelKey
 where
     T: 'static,
 {
-    InternalChannel::named::<T>(ROLE_REFERENCE)
+    ChannelKey::internal::<T>(ROLE_REFERENCE)
 }
 
 /// The per-actuator terminal: the pipeline's final control output.
@@ -59,8 +57,8 @@ where
 /// so every host consumes one universal command type.
 ///
 /// [`AutonomyPipeline::read_actuators`]: crate::pipeline::AutonomyPipeline::read_actuators
-pub fn actuators() -> InternalChannel {
-    InternalChannel::named::<ActuatorCommand>(ROLE_ACTUATORS)
+pub fn actuators() -> ChannelKey {
+    ChannelKey::internal::<ActuatorCommand>(ROLE_ACTUATORS)
 }
 
 /// The operator's raw motion intent, before scaling or framing.
@@ -71,23 +69,23 @@ pub fn actuators() -> InternalChannel {
 /// the name, the payload follows the morphology — `TwistIntent` for a velocity
 /// body, a future `SurfaceIntent` for a plane — never the reference type
 /// itself, so it stays distinct from [`reference`] on the same payload.
-pub fn intent<T: 'static>() -> InternalChannel {
-    InternalChannel::named::<T>(ROLE_INTENT)
+pub fn intent<T: 'static>() -> ChannelKey {
+    ChannelKey::internal::<T>(ROLE_INTENT)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::{ChannelKey, ChannelKind};
+    use crate::port::ChannelKind;
 
     struct BodyTwistRef;
     struct AttitudeThrustRef;
 
     #[test]
     fn roles_are_internal_kind() {
-        let key: ChannelKey = reference::<BodyTwistRef>().into();
+        let key = reference::<BodyTwistRef>();
         assert_eq!(key.kind(), ChannelKind::Internal);
-        let terminal: ChannelKey = actuators().into();
+        let terminal = actuators();
         assert_eq!(terminal.kind(), ChannelKind::Internal);
     }
 

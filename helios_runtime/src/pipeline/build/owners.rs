@@ -61,7 +61,7 @@ pub(super) fn check_frame_owners(
 mod tests {
     use super::*;
 
-    use crate::port::{AlgorithmNodePortDescriptor, Provenance, SensorChannel};
+    use crate::port::{ChannelKey, PortDescriptorBuilder, Provenance};
     use crate::BodyChannel;
 
     struct Reading;
@@ -71,7 +71,7 @@ mod tests {
     }
 
     fn estimator(name: &str, root: FrameId) -> NodeDeclaration {
-        let descriptor = AlgorithmNodePortDescriptor::new()
+        let descriptor = PortDescriptorBuilder::algorithm()
             .defines_frame(root)
             .build();
         super::super::NodePlan::new(name, descriptor, Box::new(|_, _| Err("never built".into())))
@@ -79,7 +79,7 @@ mod tests {
     }
 
     fn mounted(unit: &str, mount: FrameId) -> ChannelDescription {
-        let key = SensorChannel::named::<Reading>(unit);
+        let key = ChannelKey::measurement::<Reading>(unit);
         ChannelDescription::body(
             &BodyChannel::new(key, unit, Provenance::Simulated).with_mount(mount),
         )

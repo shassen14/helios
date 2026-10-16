@@ -6,7 +6,7 @@ use super::input::DefaultSearchPlannerInputBuilder;
 use super::node::SearchPlannerNode;
 
 use crate::assembly::{AutonomyRegistry, BuildContext, FactoryOutput};
-use crate::port::InternalChannel;
+use crate::port::ChannelKey;
 
 use helios_core::interchange::path::Path;
 use helios_core::interchange::perception::map::MapData;
@@ -37,7 +37,7 @@ fn build_astar(config: AStarPlannerConfig, ctx: &BuildContext) -> Result<Factory
         level_key: config.map_channel.clone(),
     }));
 
-    let map_channel = InternalChannel::named::<MapData>(config.map_channel.as_str());
+    let map_channel = ChannelKey::internal::<MapData>(config.map_channel.as_str());
     let input_builder = Box::new(DefaultSearchPlannerInputBuilder::new(
         map_channel,
         &config.goal_channel,
@@ -45,7 +45,7 @@ fn build_astar(config: AStarPlannerConfig, ctx: &BuildContext) -> Result<Factory
     // The path is published on a channel named after the node, so two planners
     // don't collide on one producer slot and a follower selects the planner it
     // tracks by that same name.
-    let path_channel = InternalChannel::named::<Path>(ctx.node_name());
+    let path_channel = ChannelKey::internal::<Path>(ctx.node_name());
 
     let node = SearchPlannerNode::new(ctx.node_name(), planner, input_builder, path_channel);
 
@@ -95,8 +95,8 @@ mod tests {
         let node = build("local_path", "mission").into_node();
         let descriptor = node.port_descriptor();
 
-        let path: ChannelKey = InternalChannel::named::<Path>("local_path").into();
-        let map: ChannelKey = InternalChannel::named::<MapData>("local").into();
+        let path = ChannelKey::internal::<Path>("local_path");
+        let map = ChannelKey::internal::<MapData>("local");
         assert_eq!(descriptor.outputs().cloned().collect::<Vec<_>>(), [path]);
         assert!(descriptor.required_inputs().any(|key| *key == map));
     }
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn goal_is_declared_as_the_outside_input_the_node_reads() {
         let output = build("local_path", "waypoints");
-        let goal: ChannelKey = InternalChannel::named::<PlannerGoal>("waypoints").into();
+        let goal = ChannelKey::internal::<PlannerGoal>("waypoints");
 
         assert_eq!(output.outside_inputs(), std::slice::from_ref(&goal));
         assert!(output

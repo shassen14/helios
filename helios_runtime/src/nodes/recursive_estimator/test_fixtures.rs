@@ -14,7 +14,7 @@ use crate::nodes::estimation::{
 use crate::observe::buffer::NodeObservations;
 use crate::observe::observation::{Observation, ObservedValue};
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InputPort, PortBus, PortDescriptor, SensorChannel};
+use crate::port::{ChannelKey, InputPort, PortBus, PortDescriptor};
 use crate::stamped::{Health, Stamped};
 
 use helios_core::estimation::carrier::kinematic_carrier_schema;
@@ -51,11 +51,11 @@ fn agent() -> AgentId {
 }
 
 pub(super) fn accel_channel() -> ChannelKey {
-    SensorChannel::named::<Vec<SensorReading<Acceleration>>>("accel").into()
+    ChannelKey::measurement::<Vec<SensorReading<Acceleration>>>("accel")
 }
 
 pub(super) fn state_channel() -> ChannelKey {
-    estimator_output("primary").into()
+    estimator_output("primary")
 }
 
 /// What the filter was asked to do, readable after the filter is boxed,
@@ -252,7 +252,7 @@ pub(super) fn node_with(nis: Option<NisWindow>) -> (RecursiveEstimatorNode, Prob
     };
     let input_ready = Arc::new(AtomicBool::new(true));
     let source = AccelSource {
-        reader: PayloadReader::new(SensorChannel::named::<Vec<SensorReading<Acceleration>>>(
+        reader: PayloadReader::new(ChannelKey::measurement::<Vec<SensorReading<Acceleration>>>(
             "accel",
         )),
         sensor: FrameId::agent(agent(), ACCEL_ENTRY),

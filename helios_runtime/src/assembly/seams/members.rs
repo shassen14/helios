@@ -2,7 +2,7 @@
 
 use crate::assembly::error::PipelineAssemblyError;
 use crate::pipeline::NodeDeclaration;
-use crate::port::{ChannelKey, InternalChannel};
+use crate::port::{ChannelKey, ChannelKind};
 
 use std::any::{type_name, TypeId};
 use std::collections::HashSet;
@@ -51,7 +51,7 @@ pub(super) fn member_output(
     ty: SeamType,
     member: &str,
     nodes: &[NodeDeclaration],
-) -> Result<InternalChannel, PipelineAssemblyError> {
+) -> Result<ChannelKey, PipelineAssemblyError> {
     let Some(node) = nodes.iter().find(|node| node.name() == member) else {
         return Err(PipelineAssemblyError::UnknownSeamMember {
             seam: seam.to_string(),
@@ -60,11 +60,8 @@ pub(super) fn member_output(
     };
 
     let outputs = node.port_descriptor().outputs();
-    let matching: Vec<&InternalChannel> = outputs
-        .filter_map(|key| match key {
-            ChannelKey::Internal(channel) if channel.type_id() == ty.id => Some(channel),
-            _ => None,
-        })
+    let matching: Vec<&ChannelKey> = outputs
+        .filter(|key| key.kind() == ChannelKind::Internal && key.type_id() == ty.id)
         .collect();
 
     match matching.as_slice() {
@@ -86,7 +83,7 @@ pub(super) fn member_outputs(
     members: &[String],
     nodes: &[NodeDeclaration],
     errors: &mut Vec<PipelineAssemblyError>,
-) -> Vec<InternalChannel> {
+) -> Vec<ChannelKey> {
     members
         .iter()
         .filter_map(|member| {

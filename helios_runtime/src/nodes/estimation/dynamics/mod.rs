@@ -120,7 +120,7 @@ mod tests {
 
     use crate::assembly::{no_check, AutonomyRegistry, BuildContext, ComponentError, NoParams};
     use crate::pipeline::InputMounts;
-    use crate::port::{AlgorithmNodePortDescriptor, ChannelKey, PortBus};
+    use crate::port::{ChannelKey, PortBus, PortDescriptorBuilder};
     use crate::prelude::TickContext;
 
     use helios_core::estimation::dynamics::integrated_imu::{
@@ -334,7 +334,7 @@ mod tests {
         });
         let mounts = InputMounts::new(
             NODE,
-            &AlgorithmNodePortDescriptor::new().build(),
+            &PortDescriptorBuilder::algorithm().build(),
             &HashMap::new(),
         );
 

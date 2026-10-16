@@ -8,8 +8,8 @@
 //! dropped by the conversion.
 
 use crate::{
-    port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel},
-    ChannelKey, PipelineNode, PortDescriptor, Stamped, TickContext,
+    port::{ChannelKey, PortBus, PortDescriptorBuilder},
+    PipelineNode, PortDescriptor, Stamped, TickContext,
 };
 
 use helios_core::{
@@ -31,8 +31,8 @@ type FieldBatch<F> = Vec<SensorReading<RangeField<F>>>;
 /// order.
 type CloudBatch<F> = Vec<SensorReading<PointCloud<F>>>;
 
-/// Reads [`RangeField`]s from a host sensor channel and publishes the matching
-/// [`PointCloud`]s on another sensor channel: a flattened scan is still a
+/// Reads [`RangeField`]s from a host measurement channel and publishes the matching
+/// [`PointCloud`]s on another measurement channel: a flattened scan is still a
 /// measurement, so consumers read it exactly as they would a host channel.
 ///
 /// Generic over the frame so any organized sensor can use it, whatever
@@ -51,21 +51,21 @@ pub(crate) struct DeprojectNode<F: Frame> {
 }
 
 impl<F: Frame> DeprojectNode<F> {
-    /// Builds a node reading the host sensor channel `input` and writing the
-    /// derived sensor channel `output`, both named by the agent profile.
+    /// Builds a node reading the host measurement channel `input` and writing the
+    /// derived measurement channel `output`, both named by the agent profile.
     pub(crate) fn new(name: impl Into<Arc<str>>, input: &str, output: &str) -> Self {
-        let input = SensorChannel::named::<FieldBatch<F>>(input);
-        let output = SensorChannel::named::<CloudBatch<F>>(output);
-        let descriptor = AlgorithmNodePortDescriptor::new()
-            .input_sensor(input.clone())
-            .output_sensor_at_mount_of(output.clone(), input.clone())
+        let input = ChannelKey::measurement::<FieldBatch<F>>(input);
+        let output = ChannelKey::measurement::<CloudBatch<F>>(output);
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .input(input.clone())
+            .output_at_mount_of(output.clone(), input.clone())
             .build();
 
         Self {
             name: name.into(),
             descriptor,
-            input: input.into(),
-            output: output.into(),
+            input,
+            output,
             last_processed: AtomicF64::new(f64::NEG_INFINITY),
             _data: PhantomData,
         }
@@ -131,7 +131,7 @@ impl<F: Frame> PipelineNode for DeprojectNode<F> {
 mod tests {
     //! Wiring and bookkeeping tests for [`DeprojectNode`]. The conversion
     //! itself (`RangeField::to_point_cloud`) is tested in `helios_core`; here
-    //! we check the node reads the sensor channel, keeps the input's stamp,
+    //! we check the node reads the measurement channel, keeps the input's stamp,
     //! converts each reading, and publishes each batch exactly once.
 
     use super::*;
@@ -175,11 +175,11 @@ mod tests {
     }
 
     fn input_key() -> ChannelKey {
-        SensorChannel::named::<FieldBatch<Flu>>(INPUT).into()
+        ChannelKey::measurement::<FieldBatch<Flu>>(INPUT)
     }
 
     fn output_key() -> ChannelKey {
-        SensorChannel::named::<CloudBatch<Flu>>(OUTPUT).into()
+        ChannelKey::measurement::<CloudBatch<Flu>>(OUTPUT)
     }
 
     fn bus_for(node: &Node) -> PortBus {

@@ -64,7 +64,7 @@ pub(in crate::assembly) fn actuator_merge(
             }
         };
 
-        let member_drives = declared_drives(member, &partial.clone().into(), nodes);
+        let member_drives = declared_drives(member, &partial.clone(), nodes);
         partials.push(partial);
         if member_drives.is_empty() {
             errors.push(PipelineAssemblyError::UndeclaredDrives {
@@ -151,7 +151,7 @@ mod tests {
     use super::*;
 
     use crate::assembly::test_stub::{stub, stub_driving};
-    use crate::port::InternalChannel;
+    use crate::port::ChannelKey;
 
     use helios_core::control::actuation_model::{ActuationModel, ActuatorSpec, SignConvention};
     use helios_core::control::actuators::{ActuatorId, SetpointKind};
@@ -171,7 +171,7 @@ mod tests {
     }
 
     fn partial_key(name: &str) -> ChannelKey {
-        InternalChannel::named::<ActuatorCommand>(name).into()
+        ChannelKey::internal::<ActuatorCommand>(name)
     }
 
     fn section(members: &[&str]) -> ActuatorSeamConfig {
@@ -251,7 +251,7 @@ mod tests {
                 .outputs()
                 .cloned()
                 .collect::<Vec<_>>(),
-            [ChannelKey::from(control::actuators())]
+            [control::actuators()]
         );
     }
 
@@ -269,7 +269,7 @@ mod tests {
     fn unknown_duplicate_and_wrong_type_members_are_rejected() {
         let nodes = vec![
             car_drive(),
-            stub("speed", vec![InternalChannel::named::<DriveForce>("speed")]).into(),
+            stub("speed", vec![ChannelKey::internal::<DriveForce>("speed")]).into(),
         ];
 
         let errors = errors_of(actuator_merge(
@@ -299,7 +299,7 @@ mod tests {
             car_drive(),
             stub(
                 "direct",
-                vec![InternalChannel::named::<ActuatorCommand>("direct")],
+                vec![ChannelKey::internal::<ActuatorCommand>("direct")],
             )
             .into(),
         ];

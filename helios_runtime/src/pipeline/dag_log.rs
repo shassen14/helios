@@ -172,7 +172,7 @@ fn format_observables(observables: &[Observable]) -> Vec<String> {
 mod tests {
     use super::*;
 
-    use crate::port::InternalChannel;
+    use crate::port::ChannelKey;
 
     #[test]
     fn section_puts_one_item_per_line_aligned_under_the_label() {
@@ -206,8 +206,8 @@ mod tests {
     #[test]
     fn keys_are_compact() {
         let keys: Vec<ChannelKey> = vec![
-            InternalChannel::named::<f64>("drive").into(),
-            InternalChannel::of::<f64>().into(),
+            ChannelKey::internal::<f64>("drive"),
+            ChannelKey::internal_of::<f64>(),
         ];
         assert_eq!(format_keys(&keys), ["drive: f64", "f64"]);
     }

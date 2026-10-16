@@ -6,7 +6,7 @@ use helios_core::{
 
 use crate::{
     channels::estimate::estimate,
-    port::{ChannelKey, InternalChannel, PortBus},
+    port::{ChannelKey, PortBus},
     prelude::TickContext,
 };
 
@@ -45,16 +45,15 @@ impl DefaultSearchPlannerInputBuilder {
     /// input is keyed on, from the section's `goal_channel`. The host writes
     /// the mission goal to this same name, so the planner and the host input
     /// agree by construction.
-    pub(crate) fn new(map_channel: InternalChannel, goal_channel: &str) -> Self {
-        let state_channel: ChannelKey = estimate().into();
-        let map_channel_key: ChannelKey = map_channel.into();
-        let goal_channel: ChannelKey = Self::goal_key(goal_channel);
+    pub(crate) fn new(map_channel: ChannelKey, goal_channel: &str) -> Self {
+        let state_channel = estimate();
+        let goal_channel = Self::goal_key(goal_channel);
 
         Self {
             state_channel: state_channel.clone(),
-            map_channel: map_channel_key.clone(),
+            map_channel: map_channel.clone(),
             goal_channel: goal_channel.clone(),
-            required: vec![state_channel, map_channel_key],
+            required: vec![state_channel, map_channel],
             optional: vec![goal_channel],
         }
     }
@@ -63,7 +62,7 @@ impl DefaultSearchPlannerInputBuilder {
     /// `goal_channel` name. The factory declares this same key as an outside
     /// input, so the declaration and the planner's read cannot drift apart.
     pub(crate) fn goal_key(goal_channel: &str) -> ChannelKey {
-        InternalChannel::named::<PlannerGoal>(goal_channel).into()
+        ChannelKey::internal::<PlannerGoal>(goal_channel)
     }
 }
 
@@ -102,11 +101,11 @@ mod tests {
     #[test]
     fn custom_goal_channel_reaches_optional_inputs() {
         let builder = DefaultSearchPlannerInputBuilder::new(
-            InternalChannel::named::<MapData>("occupancy"),
+            ChannelKey::internal::<MapData>("occupancy"),
             "waypoints",
         );
 
-        let goal: ChannelKey = InternalChannel::named::<PlannerGoal>("waypoints").into();
+        let goal = ChannelKey::internal::<PlannerGoal>("waypoints");
 
         // The goal is an optional input on the configured channel, never required.
         assert!(builder.optional_channels().contains(&goal));
@@ -120,7 +119,7 @@ mod tests {
     #[test]
     fn goal_is_the_only_optional_input() {
         let builder = DefaultSearchPlannerInputBuilder::new(
-            InternalChannel::named::<MapData>("occupancy"),
+            ChannelKey::internal::<MapData>("occupancy"),
             "mission",
         );
 

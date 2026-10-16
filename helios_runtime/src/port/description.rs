@@ -134,12 +134,12 @@ pub enum Provenance {
 mod tests {
     use super::*;
 
-    use crate::port::InternalChannel;
+    use crate::port::ChannelKey;
 
     use helios_core::prelude::AgentId;
 
     fn key() -> ChannelKey {
-        InternalChannel::named::<f64>("drive").into()
+        ChannelKey::internal::<f64>("drive")
     }
 
     #[test]

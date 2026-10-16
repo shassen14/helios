@@ -5,7 +5,7 @@ use super::config::{SteerPositionConfig, WheelTorqueConfig};
 use super::node::AllocatorNode;
 
 use crate::assembly::{AutonomyRegistry, BuildContext, FactoryOutput};
-use crate::port::InternalChannel;
+use crate::port::ChannelKey;
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorId};
 use helios_core::control::allocation::wheeled::drive_torque::WheelTorqueAllocator;
@@ -35,8 +35,8 @@ fn build_wheel_torque(
     let node = AllocatorNode::new(
         ctx.node_name(),
         WheelTorqueAllocator::new(config.wheel_radius, ActuatorId::new(config.drive)),
-        InternalChannel::named::<DriveForce>(config.input),
-        InternalChannel::named::<ActuatorCommand>(ctx.node_name()),
+        ChannelKey::internal::<DriveForce>(config.input),
+        ChannelKey::internal::<ActuatorCommand>(ctx.node_name()),
     );
 
     Ok(FactoryOutput::new(Box::new(node)))
@@ -49,8 +49,8 @@ fn build_steer_position(
     let node = AllocatorNode::new(
         ctx.node_name(),
         SteerPositionAllocator::new(ActuatorId::new(config.steer)),
-        InternalChannel::named::<SteerAngle>(config.input),
-        InternalChannel::named::<ActuatorCommand>(ctx.node_name()),
+        ChannelKey::internal::<SteerAngle>(config.input),
+        ChannelKey::internal::<ActuatorCommand>(ctx.node_name()),
     );
 
     Ok(FactoryOutput::new(Box::new(node)))
@@ -92,7 +92,7 @@ mod tests {
                     wheel_torque("drive_cmd", "rear"),
                     &context("drive", WHEEL_TORQUE_KIND),
                 ),
-                ChannelKey::from(InternalChannel::named::<DriveForce>("drive_cmd")),
+                ChannelKey::internal::<DriveForce>("drive_cmd"),
                 "drive",
             ),
             (
@@ -100,7 +100,7 @@ mod tests {
                     steer_position("steer_cmd", "front"),
                     &context("steer", STEER_POSITION_KIND),
                 ),
-                InternalChannel::named::<SteerAngle>("steer_cmd").into(),
+                ChannelKey::internal::<SteerAngle>("steer_cmd"),
                 "steer",
             ),
         ];
@@ -120,9 +120,7 @@ mod tests {
                     .outputs()
                     .cloned()
                     .collect::<Vec<_>>(),
-                vec![ChannelKey::from(InternalChannel::named::<ActuatorCommand>(
-                    name
-                ))]
+                vec![ChannelKey::internal::<ActuatorCommand>(name)]
             );
         }
     }
@@ -150,7 +148,7 @@ mod tests {
 
         for (output, name, drive) in cases {
             let node = output.expect("allocator builds").into_node();
-            let partial = InternalChannel::named::<ActuatorCommand>(name).into();
+            let partial = ChannelKey::internal::<ActuatorCommand>(name);
             assert_eq!(node.port_descriptor().drives(&partial), [drive]);
         }
     }

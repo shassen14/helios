@@ -23,8 +23,8 @@ use helios_core::{
 };
 
 use crate::{
-    port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus},
-    ChannelKey, PipelineNode, PortDescriptor, Stamped, TickContext,
+    port::{ChannelKey, PortBus, PortDescriptorBuilder},
+    PipelineNode, PortDescriptor, Stamped, TickContext,
 };
 
 /// Per-DOF scale from dimensionless intent to a body twist: translation in m/s,
@@ -53,20 +53,20 @@ pub(crate) struct TwistTeleopNode {
 impl TwistTeleopNode {
     pub(crate) fn new(
         name: impl Into<Arc<str>>,
-        intent: InternalChannel,
-        output: InternalChannel,
+        intent: ChannelKey,
+        output: ChannelKey,
         scale: TwistScale,
     ) -> Self {
-        let descriptor = AlgorithmNodePortDescriptor::new()
-            .input_internal(intent.clone())
-            .output_internal(output.clone())
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .input(intent.clone())
+            .output(output.clone())
             .build();
 
         Self {
             name: name.into(),
             descriptor,
-            intent_key: intent.into(),
-            output: output.into(),
+            intent_key: intent,
+            output,
             scale,
         }
     }
@@ -168,18 +168,18 @@ mod tests {
     fn make_node(scale: TwistScale) -> TwistTeleopNode {
         TwistTeleopNode::new(
             "teleop_mapper",
-            InternalChannel::of::<TwistIntent>(),
-            InternalChannel::of::<BodyTwistRef>(),
+            ChannelKey::internal_of::<TwistIntent>(),
+            ChannelKey::internal_of::<BodyTwistRef>(),
             scale,
         )
     }
 
     fn intent_key() -> ChannelKey {
-        InternalChannel::of::<TwistIntent>().into()
+        ChannelKey::internal_of::<TwistIntent>()
     }
 
     fn output_key() -> ChannelKey {
-        InternalChannel::of::<BodyTwistRef>().into()
+        ChannelKey::internal_of::<BodyTwistRef>()
     }
 
     fn bus_for(node: &TwistTeleopNode) -> PortBus {

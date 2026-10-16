@@ -218,7 +218,7 @@ impl SccSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::channel::InternalChannel;
+    use crate::port::channel::ChannelKey;
 
     /// Builds an adjacency list over `n` nodes from (producer, consumer)
     /// pairs. The search reads only the target of each edge, so every edge
@@ -249,7 +249,7 @@ mod tests {
     fn loop_closes_after_its_downstream_node() {
         // 0 → 1 → 2 → 0 is a loop; 3 only reads from 2. 3 closes first, on
         // its own, then 0 closes the loop, popping 2 and 1 above it.
-        let ch: ChannelKey = InternalChannel::of::<u32>().into();
+        let ch = ChannelKey::internal_of::<u32>();
         let adj = adjacency(4, &[(0, 1), (1, 2), (2, 0), (2, 3)], &ch);
 
         assert_eq!(SccSearch::components(&adj), vec![vec![3], vec![2, 1, 0]]);
@@ -260,7 +260,7 @@ mod tests {
         // 2 is reached second (index 1) and 1 third (index 2). 1's edge back
         // to 2 must lower 1's low to 2's index, 1. Reading low at position 1
         // instead would leave it at 2 and split the loop {1, 2}.
-        let ch: ChannelKey = InternalChannel::of::<u32>().into();
+        let ch = ChannelKey::internal_of::<u32>();
         let adj = adjacency(3, &[(0, 2), (2, 1), (1, 2)], &ch);
 
         assert_eq!(sorted_components(&adj), vec![vec![1, 2], vec![0]]);
@@ -270,7 +270,7 @@ mod tests {
     fn closed_component_is_not_joined_by_a_later_edge_into_it() {
         // 0 is visited first and closes alone. 1 and 2 form a loop and 2 also
         // feeds 0, which is off the stack by then and stays out of the loop.
-        let ch: ChannelKey = InternalChannel::of::<u32>().into();
+        let ch = ChannelKey::internal_of::<u32>();
         let adj = adjacency(3, &[(1, 2), (2, 1), (2, 0)], &ch);
 
         assert_eq!(sorted_components(&adj), vec![vec![0], vec![1, 2]]);
@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn graph_without_edges_gives_one_component_per_node() {
-        let ch: ChannelKey = InternalChannel::of::<u32>().into();
+        let ch = ChannelKey::internal_of::<u32>();
         let adj = adjacency(3, &[], &ch);
 
         assert_eq!(SccSearch::components(&adj), vec![vec![0], vec![1], vec![2]]);
@@ -288,7 +288,7 @@ mod tests {
     fn self_edge_is_a_component_of_its_own() {
         // The search alone cannot tell a self-loop from a lone node; the
         // self-edge check in `find_cycles` does that.
-        let ch: ChannelKey = InternalChannel::of::<u32>().into();
+        let ch = ChannelKey::internal_of::<u32>();
         let adj = adjacency(2, &[(0, 0), (0, 1)], &ch);
 
         assert_eq!(SccSearch::components(&adj), vec![vec![1], vec![0]]);

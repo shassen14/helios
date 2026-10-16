@@ -133,19 +133,16 @@ mod tests {
         assert_eq!(relay.name(), ESTIMATE_RELAY_NODE);
         let descriptor = relay.port_descriptor();
         let required: Vec<&ChannelKey> = descriptor.required_inputs().collect();
-        assert_eq!(
-            required,
-            vec![&ChannelKey::from(estimator_output("shadow"))]
-        );
+        assert_eq!(required, vec![&estimator_output("shadow")]);
         let outputs: Vec<ChannelKey> = descriptor.outputs().cloned().collect();
-        assert!(outputs.contains(&estimate().into()));
+        assert!(outputs.contains(&estimate()));
         assert_eq!(outputs.iter().filter(|key| is_tf_edge(key)).count(), 1);
         // The source's root is odom, so the relay's edge runs from odom.
         let edge = FrameEdge {
             child: FrameId::base_link(agent()),
             parent: FrameId::odom(agent()),
         };
-        assert!(outputs.contains(&tf_edge(&edge).into()));
+        assert!(outputs.contains(&tf_edge(&edge)));
         assert_eq!(relay.root(), &FrameId::odom(agent()));
     }
 

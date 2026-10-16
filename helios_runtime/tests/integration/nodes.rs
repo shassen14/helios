@@ -2,12 +2,11 @@
 // build_pipeline, using only the public API.
 
 use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::port::{AlgorithmNodePortDescriptor, PortBus, SensorChannel};
+use helios_runtime::port::{ChannelKey, PortBus, PortDescriptorBuilder};
 use helios_runtime::{
     build_pipeline, AutonomyPipeline, AutonomyRegistry, AutonomyStackConfig, BodyCapabilities,
-    BodyChannel, BuildContext, ChannelKey, EstimateSeamConfig, FactoryOutput,
-    PipelineAssemblyError, PipelineBuildError, PipelineNode, PortDescriptor, Provenance,
-    TickContext, Writer,
+    BodyChannel, BuildContext, EstimateSeamConfig, FactoryOutput, PipelineAssemblyError,
+    PipelineBuildError, PipelineNode, PortDescriptor, Provenance, TickContext, Writer,
 };
 
 use helios_core::interchange::measurement::envelope::SensorReading;
@@ -24,7 +23,7 @@ const TEST_KIND: &str = "TestCloudSource";
 /// channel carries, so a mapper can consume its output.
 type CloudBatch = Vec<SensorReading<PointCloud<Flu>>>;
 
-/// A node that writes one point-cloud sensor channel and optionally reads
+/// A node that writes one point-cloud measurement channel and optionally reads
 /// another. It never runs; these tests only build pipelines.
 struct CloudSourceNode {
     name: String,
@@ -56,10 +55,11 @@ fn build_cloud_source(
     config: CloudSourceConfig,
     ctx: &BuildContext<'_>,
 ) -> Result<FactoryOutput, String> {
-    let mut ports = AlgorithmNodePortDescriptor::new()
-        .output_sensor(SensorChannel::named::<CloudBatch>(config.output.as_str()));
+    let mut ports = PortDescriptorBuilder::algorithm().output(
+        ChannelKey::measurement::<CloudBatch>(config.output.as_str()),
+    );
     if let Some(input) = &config.input {
-        ports = ports.input_sensor(SensorChannel::named::<CloudBatch>(input.as_str()));
+        ports = ports.input(ChannelKey::measurement::<CloudBatch>(input.as_str()));
     }
     Ok(FactoryOutput::new(Box::new(CloudSourceNode {
         name: ctx.node_name().to_string(),
@@ -93,9 +93,9 @@ const IMU_MOUNT: &str = "imu_link";
 const TRUTH_UNIT: &str = "truth";
 
 /// A channel `unit` publishes, carrying batches of `P` readings.
-fn sensor_channel<P: Send + Sync + 'static>(name: &str, unit: &str) -> BodyChannel {
+fn measurement_channel<P: Send + Sync + 'static>(name: &str, unit: &str) -> BodyChannel {
     BodyChannel::new(
-        SensorChannel::named::<Vec<SensorReading<P>>>(name),
+        ChannelKey::measurement::<Vec<SensorReading<P>>>(name),
         unit,
         Provenance::Simulated,
     )
@@ -106,7 +106,7 @@ fn body_with_clouds(clouds: &[&str]) -> BodyCapabilities {
     BodyCapabilities {
         publishes: clouds
             .iter()
-            .map(|name| sensor_channel::<PointCloud<Flu>>(name, LIDAR_UNIT))
+            .map(|name| measurement_channel::<PointCloud<Flu>>(name, LIDAR_UNIT))
             .collect(),
         ..Default::default()
     }
@@ -255,8 +255,8 @@ fn a_nodes_entry_reads_a_channel_another_derives() {
     let mount = FrameId::agent(AgentId::new("test_agent"), IMU_MOUNT);
     let imu = BodyCapabilities {
         publishes: vec![
-            sensor_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
-            sensor_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
+            measurement_channel::<Acceleration>("imu.accel", IMU_UNIT).with_mount(mount.clone()),
+            measurement_channel::<AngularRate>("imu.gyro", IMU_UNIT).with_mount(mount),
         ],
         ..Default::default()
     };
@@ -368,7 +368,7 @@ fn build_on(body: BodyCapabilities) -> Result<AutonomyPipeline, Vec<PipelineAsse
 #[test]
 fn a_mock_oracle_entry_builds_on_a_body_with_truth() {
     let truth = BodyCapabilities {
-        publishes: [oracle_pose_channel().into(), oracle_twist_channel().into()]
+        publishes: [oracle_pose_channel(), oracle_twist_channel()]
             .into_iter()
             .map(|key: ChannelKey| BodyChannel::new(key, TRUTH_UNIT, Provenance::Exact))
             .collect(),

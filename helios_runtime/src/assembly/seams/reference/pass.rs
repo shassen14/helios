@@ -67,16 +67,16 @@ mod tests {
     use super::*;
 
     use crate::assembly::test_stub::stub;
-    use crate::port::{ChannelKey, InternalChannel};
+    use crate::port::ChannelKey;
 
     /// A node writing its reference on a channel named after itself, as every
     /// follower and teleop mapper does.
     fn contender(name: &str) -> NodeDeclaration {
-        stub(name, vec![InternalChannel::named::<BodyTwistRef>(name)]).into()
+        stub(name, vec![ChannelKey::internal::<BodyTwistRef>(name)]).into()
     }
 
     fn reference_key(name: &str) -> ChannelKey {
-        InternalChannel::named::<BodyTwistRef>(name).into()
+        ChannelKey::internal::<BodyTwistRef>(name)
     }
 
     fn section(base: &str, preferred: &[&str]) -> ReferenceSeamConfig {
@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(descriptor.optional_inputs().count(), 0);
         assert_eq!(
             descriptor.outputs().cloned().collect::<Vec<_>>(),
-            [ChannelKey::from(control::reference::<BodyTwistRef>())].as_slice()
+            [control::reference::<BodyTwistRef>()].as_slice()
         );
     }
 
@@ -196,7 +196,7 @@ mod tests {
         // is a mistake the seam reports rather than wiring nothing.
         let nodes = vec![stub(
             "local_path",
-            vec![InternalChannel::named::<f64>("local_path")],
+            vec![ChannelKey::internal::<f64>("local_path")],
         )
         .into()];
 

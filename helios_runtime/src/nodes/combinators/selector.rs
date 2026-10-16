@@ -25,20 +25,17 @@
 //! Every input, preferred or base, is read in the same tick, so the selector
 //! runs after all of its sources.
 //!
-//! ## Why every channel is `InternalChannel`
+//! ## Which channels it selects among
 //!
-//! The output is brain-produced by definition, and the inputs it selects among
-//! are brain-internal (a controller output, a host-injected intent). Reference
-//! truth (`OracleChannel`) is deliberately not accepted: the kind fence in
-//! `AlgorithmNodePortDescriptor` has no oracle-input method, so a selector
-//! choosing between an estimate and ground truth would be a mock-licensed node
-//! built on `MockNodePortDescriptor`, not this one. Selecting among redundant
-//! `SensorChannel` streams likewise needs a different constructor — this node's
-//! inputs are `Internal` by construction.
+//! The output is brain-produced by definition, and the seams that build a
+//! selector hand it internal channels (a controller output, a host-injected
+//! intent). It is an algorithm node, so the pipeline build refuses it an
+//! oracle input: a selector choosing between an estimate and ground truth
+//! would be a mock, not this node.
 
 use crate::{
-    port::{AlgorithmNodePortDescriptor, InternalChannel},
-    ChannelKey, PipelineNode, PortDescriptor,
+    port::{ChannelKey, PortDescriptorBuilder},
+    PipelineNode, PortDescriptor,
 };
 
 use std::{marker::PhantomData, sync::Arc};
@@ -63,30 +60,30 @@ impl<T: Send + Sync + Clone + 'static> Selector<T> {
     ///
     /// `preferred` are the freshness-gated inputs in priority order; `base` is
     /// the unconditional fallback and the sole required input; `output` is the
-    /// channel the winner is republished on. All are `InternalChannel`; they are
-    /// stored as `ChannelKey` for bus access and mirrored into the descriptor —
-    /// `base` as the required input, `preferred` as optional inputs.
+    /// channel the winner is republished on. Each is stored for bus access and
+    /// mirrored into the descriptor: `base` as the required input, `preferred`
+    /// as optional inputs.
     pub(crate) fn new(
         name: impl Into<Arc<str>>,
-        preferred: Vec<InternalChannel>,
-        base: InternalChannel,
-        output: InternalChannel,
+        preferred: Vec<ChannelKey>,
+        base: ChannelKey,
+        output: ChannelKey,
         policy: SelectorPolicy,
     ) -> Self {
-        let mut base_descriptor = AlgorithmNodePortDescriptor::new().input_internal(base.clone());
+        let mut base_descriptor = PortDescriptorBuilder::algorithm().input(base.clone());
 
         for pref in &preferred {
-            base_descriptor = base_descriptor.optional_internal(pref.clone());
+            base_descriptor = base_descriptor.optional(pref.clone());
         }
 
-        let descriptor = base_descriptor.output_internal(output.clone()).build();
+        let descriptor = base_descriptor.output(output.clone()).build();
 
         Self {
             name: name.into(),
             descriptor,
-            preferred: preferred.into_iter().map(Into::into).collect(),
-            base: base.into(),
-            output: output.into(),
+            preferred: preferred.into_iter().collect(),
+            base,
+            output,
             policy,
             _marker: PhantomData,
         }
@@ -207,9 +204,9 @@ mod tests {
     /// A `Cmd` selector with one preferred channel, plus the three channel keys
     /// for writing inputs and reading the output.
     fn make_selector(max_age: f64) -> (Selector<Cmd>, ChannelKey, ChannelKey, ChannelKey) {
-        let preferred = InternalChannel::named::<Cmd>("preferred");
-        let base = InternalChannel::named::<Cmd>("base");
-        let output = InternalChannel::named::<Cmd>("command");
+        let preferred = ChannelKey::internal::<Cmd>("preferred");
+        let base = ChannelKey::internal::<Cmd>("base");
+        let output = ChannelKey::internal::<Cmd>("command");
         let node = Selector::new(
             "sel",
             vec![preferred.clone()],
@@ -217,7 +214,7 @@ mod tests {
             output.clone(),
             SelectorPolicy::FreshnessOverride { max_age },
         );
-        (node, preferred.into(), base.into(), output.into())
+        (node, preferred, base, output)
     }
 
     fn bus_for(node: &Selector<Cmd>) -> PortBus {
@@ -308,11 +305,11 @@ mod tests {
         // The same node type, monomorphized over `OtherCmd`, routes on that
         // type's channels — proving the DAG channel follows `T`, not a fixed
         // payload.
-        let base = InternalChannel::named::<OtherCmd>("base");
-        let output = InternalChannel::named::<OtherCmd>("command");
+        let base = ChannelKey::internal::<OtherCmd>("base");
+        let output = ChannelKey::internal::<OtherCmd>("command");
         let node = Selector::<OtherCmd>::new(
             "sel_other",
-            vec![InternalChannel::named::<OtherCmd>("preferred")],
+            vec![ChannelKey::internal::<OtherCmd>("preferred")],
             base.clone(),
             output.clone(),
             SelectorPolicy::FreshnessOverride { max_age: 3.0 },
@@ -320,7 +317,7 @@ mod tests {
         let bus = PortBus::new(std::slice::from_ref(node.port_descriptor()));
         bus.set_tick_time(10.0);
         bus.write(
-            base.into(),
+            base,
             Stamped {
                 value: OtherCmd(5),
                 timestamp: MonotonicTime(9.9),
@@ -332,7 +329,6 @@ mod tests {
 
         node.execute(&bus, &MockRuntime, tick_at(10.0));
 
-        let out_key: ChannelKey = output.into();
-        assert_eq!(bus.read::<OtherCmd>(out_key).unwrap().value, OtherCmd(5));
+        assert_eq!(bus.read::<OtherCmd>(output).unwrap().value, OtherCmd(5));
     }
 }

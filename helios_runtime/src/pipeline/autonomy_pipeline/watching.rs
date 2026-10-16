@@ -127,10 +127,7 @@ mod tests {
             watch::WatchedLeaf,
         },
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
-        port::{
-            ChannelKey, Determinism, InternalChannel, MockNodePortDescriptor, PortBus,
-            PortDescriptor,
-        },
+        port::{ChannelKey, Determinism, PortBus, PortDescriptor, PortDescriptorBuilder},
         prelude::{Health, PipelineNode, Stamped, TickContext},
         ErasedStamped, PipelineBuilder,
     };
@@ -218,27 +215,24 @@ mod tests {
         writing_with(declaring(&[]).rate_hz(hz), writes_at)
     }
 
-    fn writing_with(
-        descriptor: MockNodePortDescriptor,
-        writes_at: &[f64],
-    ) -> Box<dyn PipelineNode> {
+    fn writing_with(descriptor: PortDescriptorBuilder, writes_at: &[f64]) -> Box<dyn PipelineNode> {
         Box::new(Emitting {
             name: WRITER.to_string(),
-            descriptor: descriptor.output_internal(estimate()).build(),
+            descriptor: descriptor.output(estimate()).build(),
             writes_at: writes_at.to_vec(),
         })
     }
 
-    fn declaring(leaves: &[&str]) -> MockNodePortDescriptor {
+    fn declaring(leaves: &[&str]) -> PortDescriptorBuilder {
         leaves
             .iter()
-            .fold(MockNodePortDescriptor::new(), |builder, leaf| {
+            .fold(PortDescriptorBuilder::algorithm(), |builder, leaf| {
                 builder.observable(*leaf, Determinism::Deterministic)
             })
     }
 
-    fn estimate() -> InternalChannel {
-        InternalChannel::named::<f64>(ESTIMATE)
+    fn estimate() -> ChannelKey {
+        ChannelKey::internal::<f64>(ESTIMATE)
     }
 
     /// `first` declares NIS and the drop count; `second` declares NIS only.
@@ -355,7 +349,7 @@ mod tests {
     fn written(pipeline: &AutonomyPipeline) -> Arc<dyn ErasedStamped> {
         pipeline
             .bus()
-            .read_erased_versioned(&ChannelKey::from(estimate()))
+            .read_erased_versioned(&estimate())
             .map(|(written, _)| written)
             .expect("the writer has written its output")
     }

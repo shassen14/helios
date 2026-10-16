@@ -172,7 +172,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        port::{InternalChannel, MockNodePortDescriptor, PortBus, PortDescriptor},
+        port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder},
         prelude::TickContext,
     };
 
@@ -206,28 +206,23 @@ mod tests {
         declaring_with_outputs(leaves, &[])
     }
 
-    fn declaring_with_outputs(
-        leaves: &[&str],
-        outputs: &[InternalChannel],
-    ) -> Box<dyn PipelineNode> {
+    fn declaring_with_outputs(leaves: &[&str], outputs: &[ChannelKey]) -> Box<dyn PipelineNode> {
         let builder = leaves
             .iter()
-            .fold(MockNodePortDescriptor::new(), |builder, leaf| {
+            .fold(PortDescriptorBuilder::algorithm(), |builder, leaf| {
                 builder.observable(*leaf, Determinism::Deterministic)
             });
         let descriptor = outputs
             .iter()
-            .fold(builder, |builder, output| {
-                builder.output_internal(output.clone())
-            })
+            .fold(builder, |builder, output| builder.output(output.clone()))
             .build();
         Box::new(Declaring { descriptor })
     }
 
-    fn two_outputs() -> [InternalChannel; 2] {
+    fn two_outputs() -> [ChannelKey; 2] {
         [
-            InternalChannel::named::<f64>(COVARIANCE),
-            InternalChannel::named::<f64>(MEAN),
+            ChannelKey::internal::<f64>(COVARIANCE),
+            ChannelKey::internal::<f64>(MEAN),
         ]
     }
 
@@ -289,11 +284,11 @@ mod tests {
             vec![
                 Tap {
                     leaf: COVARIANCE.into(),
-                    channel: outputs[0].clone().into(),
+                    channel: outputs[0].clone(),
                 },
                 Tap {
                     leaf: MEAN.into(),
-                    channel: outputs[1].clone().into(),
+                    channel: outputs[1].clone(),
                 },
             ]
         );

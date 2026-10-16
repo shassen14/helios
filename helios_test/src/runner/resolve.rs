@@ -246,7 +246,7 @@ mod tests {
     use helios_runtime::{
         observe::path::node_path,
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
-        port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus, PortDescriptor},
+        port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder},
         prelude::{PipelineNode, TickContext},
         PipelineBuilder,
     };
@@ -286,16 +286,16 @@ mod tests {
     /// An estimator declaring [`NIS`] and [`SHARED`] and writing [`SPEED`]
     /// and [`LABEL`], and a planner writing [`SHARED`].
     fn pipeline() -> AutonomyPipeline {
-        let estimator = AlgorithmNodePortDescriptor::new()
+        let estimator = PortDescriptorBuilder::algorithm()
             .outputs_from_slice(&[
-                InternalChannel::named::<f64>(SPEED).into(),
-                InternalChannel::named::<String>(LABEL).into(),
+                ChannelKey::internal::<f64>(SPEED),
+                ChannelKey::internal::<String>(LABEL),
             ])
             .observable(NIS, Determinism::Deterministic)
             .observable(SHARED, Determinism::Deterministic)
             .build();
-        let planner = AlgorithmNodePortDescriptor::new()
-            .outputs_from_slice(&[InternalChannel::named::<String>(SHARED).into()])
+        let planner = PortDescriptorBuilder::algorithm()
+            .outputs_from_slice(&[ChannelKey::internal::<String>(SHARED)])
             .build();
         PipelineBuilder::new(AgentId::new(CAR))
             .add_node(Box::new(DeclaringNode {

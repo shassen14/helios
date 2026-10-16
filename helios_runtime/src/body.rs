@@ -32,7 +32,7 @@ use helios_core::spatial::FrameId;
 #[derive(Clone, Debug, Default)]
 pub struct BodyCapabilities {
     /// Every channel the body measures onto the bus, read by the stack or
-    /// not: sensor channels, oracle reference channels, and health
+    /// not: measurement channels, oracle reference channels, and health
     /// driver/sensor status. The host writes them on the body's behalf; each
     /// counts as already written when the pipeline is built.
     ///

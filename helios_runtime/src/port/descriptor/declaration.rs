@@ -4,15 +4,17 @@
 //! drives and the [`MountRule`] that gives its mount. It also
 //! declares what the node can emit for watchers, each value an [`Observable`]
 //! record of leaf name, [`Determinism`] and [`ObservedValueKind`], and the
-//! frames the node defines.
+//! frames the node defines, and the [`NodeClass`] the node runs under.
 //!
 //! The build reads these declarations to allocate bus slots, order nodes, and
-//! check that every channel has exactly one producer. Outside this crate a
-//! descriptor is built only through
-//! [`AlgorithmNodePortDescriptor`](crate::port::AlgorithmNodePortDescriptor) or
-//! [`MockNodePortDescriptor`](crate::port::MockNodePortDescriptor).
+//! check that every channel has exactly one producer and that the node's class
+//! may read and write each channel's kind. Outside this crate a descriptor is
+//! built only through [`PortDescriptorBuilder`](crate::port::PortDescriptorBuilder).
 
-use crate::{observe::observation::ObservedValueKind, port::channel::ChannelKey};
+use crate::{
+    observe::observation::ObservedValueKind,
+    port::{channel::ChannelKey, kind::NodeClass},
+};
 
 use helios_core::control::actuators::ActuatorDrive;
 use helios_core::spatial::transforms::Convention;
@@ -62,15 +64,16 @@ use std::sync::Arc;
 /// they are the node's catalog of watchable values, and an emit of a leaf the
 /// node didn't declare is dropped.
 ///
+/// The node's [`NodeClass`], read with [`class`](Self::class), decides which
+/// channel kinds it may read and write; the build refuses any other.
+///
 /// Fields are private and read through accessors, so the shape of a declared
 /// input can change without touching every node. Outside this crate the only
 /// way to construct one is
-/// [`AlgorithmNodePortDescriptor`](crate::port::AlgorithmNodePortDescriptor)
-/// or [`MockNodePortDescriptor`](crate::port::MockNodePortDescriptor):
-/// those builders are the kind fence that keeps oracle truth out of algorithm
-/// nodes.
+/// [`PortDescriptorBuilder`](crate::port::PortDescriptorBuilder).
 #[derive(Debug)]
 pub struct PortDescriptor {
+    class: NodeClass,
     required_inputs: Vec<InputPort>,
     optional_inputs: Vec<InputPort>,
     mount_readings: Vec<MountReading>,
@@ -81,9 +84,9 @@ pub struct PortDescriptor {
 }
 
 impl PortDescriptor {
-    /// Raw constructor with no kind checks. Node descriptors go through the
-    /// builders; this is for the builders themselves and for in-crate tests
-    /// that only need a bus with slots for a given set of channels.
+    /// Raw constructor for an algorithm node. Node descriptors go through the
+    /// builder; this is for the builder itself and for in-crate tests that
+    /// only need a bus with slots for a given set of channels.
     ///
     /// Every input is recorded as [`InputTiming::SameTick`]; the need comes
     /// from which list the key arrives in. Every output is recorded as driving
@@ -105,6 +108,7 @@ impl PortDescriptor {
             .collect();
 
         Self {
+            class: NodeClass::Algorithm,
             required_inputs: required,
             optional_inputs: optional,
             mount_readings: Vec::new(),
@@ -115,28 +119,34 @@ impl PortDescriptor {
         }
     }
 
+    /// Records the class the node runs under. For the builder.
+    pub(crate) fn with_class(mut self, class: NodeClass) -> Self {
+        self.class = class;
+        self
+    }
+
     /// Replaces the outputs with full records, drives included. For the
-    /// builders, which check each channel's type before recording it.
+    /// builder, which checks each command channel's type before recording it.
     pub(crate) fn with_outputs(mut self, outputs: Vec<OutputPort>) -> Self {
         self.outputs = outputs;
         self
     }
 
     /// Records the values the node can emit for watchers, in declaration
-    /// order. For the builders.
+    /// order. For the builder.
     pub(crate) fn with_observables(mut self, observables: Vec<Observable>) -> Self {
         self.observables = observables;
         self
     }
 
-    /// Records the frames the node defines. For the builders.
+    /// Records the frames the node defines. For the builder.
     pub(crate) fn with_defined_frames(mut self, frames: Vec<FrameId>) -> Self {
         self.defined_frames = frames;
         self
     }
 
     /// Records the axes the node reads each listed input's mount in. For the
-    /// builders.
+    /// builder.
     ///
     /// # Panics
     ///
@@ -154,6 +164,12 @@ impl PortDescriptor {
             });
         }
         self
+    }
+
+    /// The class the node runs under, which decides the channel kinds it may
+    /// read and write.
+    pub fn class(&self) -> NodeClass {
+        self.class
     }
 
     /// Every declared input as a full record, required inputs first, then
@@ -240,7 +256,7 @@ impl PortDescriptor {
 ///
 /// Need and timing are independent — an optional input is not implicitly
 /// delayed, and a delayed input is not implicitly optional. Only the
-/// descriptor builders create records, so the kind fence on channels holds.
+/// descriptor builder creates records.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct InputPort {
     channel: ChannelKey,
@@ -275,7 +291,7 @@ impl InputPort {
 
 /// A node's statement that it resolves an input channel's mount through the
 /// tf tree, reading the frame in the axes `convention` names. Only the
-/// descriptor builders create records, for channels the node reads.
+/// descriptor builder creates records, for channels the node reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountReading {
     channel: ChannelKey,
@@ -298,8 +314,8 @@ impl MountReading {
 /// commands drive when the channel carries `ActuatorCommand`, and the rule
 /// that gives the channel's mount.
 ///
-/// Only the descriptor builders create records, so the kind fence on
-/// channels holds and only an `ActuatorCommand` output carries drives.
+/// Only the descriptor builder creates records, so only an `ActuatorCommand`
+/// output carries drives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutputPort {
     channel: ChannelKey,
@@ -392,8 +408,8 @@ pub enum InputTiming {
 /// it arrives as.
 ///
 /// The leaf name is relative to the node (`aiding.gps.nis`); the pipeline adds
-/// the node's name and the host adds the agent. Only the descriptor builders
-/// create records, so every declaration goes through one place.
+/// the node's name and the host adds the agent. Only the descriptor builder
+/// creates records, so every declaration goes through one place.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Observable {
     leaf_name: Arc<str>,
@@ -479,16 +495,16 @@ pub enum Determinism {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port::channel::InternalChannel;
+    use crate::port::channel::ChannelKey;
 
     use std::any::TypeId;
 
     fn ikey<T: 'static>() -> ChannelKey {
-        InternalChannel::of::<T>().into()
+        ChannelKey::internal_of::<T>()
     }
 
     fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
-        InternalChannel::named::<T>(instance).into()
+        ChannelKey::internal::<T>(instance)
     }
 
     #[test]
@@ -551,6 +567,7 @@ mod tests {
         let delayed_req = ikey_named::<u32>("delayed_req");
         let delayed_opt = ikey_named::<u32>("delayed_opt");
         let d = PortDescriptor {
+            class: NodeClass::Algorithm,
             required_inputs: vec![
                 InputPort::new(now.clone(), InputNeed::Required, InputTiming::SameTick),
                 InputPort::new(delayed_req, InputNeed::Required, InputTiming::PreviousTick),

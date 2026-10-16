@@ -1,5 +1,5 @@
 use helios_core::prelude::{AgentId, FrameId, SensorReading};
-use helios_runtime::port::SensorChannel;
+use helios_runtime::port::ChannelKey;
 use helios_runtime::{pipeline::AutonomyPipeline, tf_service::TfService, BodyChannel, Provenance};
 
 use bevy::prelude::Component;
@@ -79,7 +79,7 @@ pub struct PipelineBuildFailed {
 #[derive(Component, Clone)]
 pub struct SensorPublishChannel {
     description: BodyChannel,
-    /// The description's mount, held unwrapped: every sensor channel has one,
+    /// The description's mount, held unwrapped: every measurement channel has one,
     /// and each reading's header names it.
     mount: FrameId,
 }
@@ -91,7 +91,7 @@ impl SensorPublishChannel {
     pub fn new<P: Send + Sync + 'static>(name: &str, unit: &str, mount: FrameId) -> Self {
         Self {
             description: BodyChannel::new(
-                SensorChannel::named::<Vec<SensorReading<P>>>(name),
+                ChannelKey::measurement::<Vec<SensorReading<P>>>(name),
                 unit,
                 Provenance::Simulated,
             )

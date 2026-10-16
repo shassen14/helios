@@ -235,7 +235,7 @@ fn mission_goal_channels<'a>(
 /// say what it reads from outside the robot, whatever its config calls the
 /// node that reads it.
 fn reads_teleop_intent<'a>(outside_inputs: impl IntoIterator<Item = &'a ChannelKey>) -> bool {
-    let intent: ChannelKey = control::intent::<TwistIntent>().into();
+    let intent = control::intent::<TwistIntent>();
     outside_inputs.into_iter().any(|key| *key == intent)
 }
 
@@ -248,12 +248,12 @@ mod tests {
     use helios_core::interchange::measurement::sensor::{GpsPosition, MagneticField};
     use helios_core::prelude::{AgentId, FrameId};
     use helios_runtime::channels::control::intent;
-    use helios_runtime::port::InternalChannel;
+    use helios_runtime::port::ChannelKey;
 
     /// A goal input keyed the way a planner declares it: a `PlannerGoal` on the
     /// named channel.
     fn goal_key(goal_channel: &str) -> ChannelKey {
-        InternalChannel::named::<PlannerGoal>(goal_channel).into()
+        ChannelKey::internal::<PlannerGoal>(goal_channel)
     }
 
     /// Every goal input's channel is collected — the mission goal fans out to
@@ -293,7 +293,7 @@ mod tests {
     /// channels; only `PlannerGoal` keys are collected.
     #[test]
     fn other_outside_inputs_are_ignored() {
-        let outside_inputs = [intent::<TwistIntent>().into(), goal_key("mission")];
+        let outside_inputs = [intent::<TwistIntent>(), goal_key("mission")];
 
         assert_eq!(
             mission_goal_channels(&outside_inputs),
@@ -305,7 +305,7 @@ mod tests {
     /// goal it also reads doesn't matter.
     #[test]
     fn declared_intent_marks_the_agent_teleop_controlled() {
-        let outside_inputs = [goal_key("mission"), intent::<TwistIntent>().into()];
+        let outside_inputs = [goal_key("mission"), intent::<TwistIntent>()];
 
         assert!(reads_teleop_intent(&outside_inputs));
     }

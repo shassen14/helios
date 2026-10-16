@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DeprojectConfig {
-    /// Host sensor channel carrying `Vec<SensorReading<RangeField<Flu>>>`.
+    /// Host measurement channel carrying `Vec<SensorReading<RangeField<Flu>>>`.
     pub(crate) input: String,
-    /// Sensor channel this node writes `Vec<SensorReading<PointCloud<Flu>>>`
+    /// Measurement channel this node writes `Vec<SensorReading<PointCloud<Flu>>>`
     /// to. Consumers such as a mapper's `scan_channel` name it; it must not
     /// reuse a host channel's name.
     pub(crate) output: String,

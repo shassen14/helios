@@ -76,7 +76,7 @@ mod tests {
     use super::*;
 
     use crate::assembly::test_stub::stub;
-    use crate::port::{ChannelKey, InternalChannel};
+    use crate::port::ChannelKey;
 
     use helios_core::control::commands::{DriveForce, SteerAngle};
 
@@ -85,11 +85,11 @@ mod tests {
     /// A node writing a command of type `T` on a channel named after itself, as
     /// every controller does.
     fn controller<T: 'static>(name: &str) -> NodeDeclaration {
-        stub(name, vec![InternalChannel::named::<T>(name)]).into()
+        stub(name, vec![ChannelKey::internal::<T>(name)]).into()
     }
 
     fn key<T: 'static>(name: &str) -> ChannelKey {
-        InternalChannel::named::<T>(name).into()
+        ChannelKey::internal::<T>(name)
     }
 
     fn fold(type_name: &str, required: &[&str], optional: &[&str]) -> CommandFoldConfig {

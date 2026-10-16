@@ -205,7 +205,7 @@ pub(super) fn resolve_mounts(
 mod tests {
     use super::*;
 
-    use crate::port::{AlgorithmNodePortDescriptor, InternalChannel, Provenance, SensorChannel};
+    use crate::port::{ChannelKey, PortDescriptorBuilder, Provenance};
     use crate::BodyChannel;
 
     const AGENT: &str = "car";
@@ -219,7 +219,7 @@ mod tests {
     }
 
     fn sensor(name: &str) -> ChannelKey {
-        SensorChannel::named::<Reading>(name).into()
+        ChannelKey::measurement::<Reading>(name)
     }
 
     fn body(name: &str, mount: Option<FrameId>) -> ChannelDescription {
@@ -290,11 +290,11 @@ mod tests {
     }
 
     fn deproject(input: &str, output: &str, rule_input: &str) -> NodeDeclaration {
-        let descriptor = AlgorithmNodePortDescriptor::new()
-            .input_sensor(SensorChannel::named::<Reading>(input))
-            .output_sensor_at_mount_of(
-                SensorChannel::named::<Reading>(output),
-                SensorChannel::named::<Reading>(rule_input),
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .input(ChannelKey::measurement::<Reading>(input))
+            .output_at_mount_of(
+                ChannelKey::measurement::<Reading>(output),
+                ChannelKey::measurement::<Reading>(rule_input),
             )
             .build();
         planned(output, descriptor)
@@ -339,7 +339,7 @@ mod tests {
         let descriptions = vec![
             body("lidar", Some(lidar.clone())),
             body("radar", None),
-            ChannelDescription::outside(InternalChannel::named::<Reading>("goal").into()),
+            ChannelDescription::outside(ChannelKey::internal::<Reading>("goal")),
             ChannelDescription::node(sensor("lidar.crop"), "lidar_crop"),
             ChannelDescription::node(sensor("lidar.cloud"), "lidar_cloud"),
             ChannelDescription::node(sensor("radar.cloud"), "radar_cloud"),
@@ -354,9 +354,9 @@ mod tests {
     }
 
     fn input_mounts(descriptions: &[ChannelDescription]) -> InputMounts {
-        let descriptor = AlgorithmNodePortDescriptor::new()
-            .input_sensor(SensorChannel::named::<Reading>("gps"))
-            .optional_sensor(SensorChannel::named::<Reading>("battery"))
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .input(ChannelKey::measurement::<Reading>("gps"))
+            .optional(ChannelKey::measurement::<Reading>("battery"))
             .build();
         let by_key = descriptions.iter().map(|d| (d.key(), d)).collect();
         InputMounts::new(READER, &descriptor, &by_key)

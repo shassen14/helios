@@ -18,10 +18,7 @@ use helios_runtime::{
         ChannelUses, CycleEdge, MountLookupError, NodePlan, PipelineBuildError, PipelineBuilder,
         ReadMount,
     },
-    port::{
-        AlgorithmNodePortDescriptor, ChannelKey, InputNeed, InternalChannel,
-        MockNodePortDescriptor, OracleChannel, PortBus, PortDescriptor, SensorChannel,
-    },
+    port::{ChannelKey, InputNeed, PortBus, PortDescriptor, PortDescriptorBuilder},
     prelude::{Health, PipelineNode, Stamped, TickContext},
     BodyCapabilities, BodyChannel, MountRefusal, Provenance, Writer,
 };
@@ -34,15 +31,14 @@ const AGENT: &str = "bot";
 const BODY_UNIT: &str = "test_unit";
 
 /// Test-only sugar: every channel in this file is internal (algorithm-to-
-/// algorithm wiring), so go through the `InternalChannel` constructor and
-/// convert into the enum key once.
+/// algorithm wiring).
 fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
-    InternalChannel::named::<T>(instance).into()
+    ChannelKey::internal::<T>(instance)
 }
 
 /// Oracle-channel sugar — only mocks/viz/tests may mint these.
 fn okey_named<T: 'static>(instance: &'static str) -> ChannelKey {
-    OracleChannel::named::<T>(instance).into()
+    ChannelKey::oracle::<T>(instance)
 }
 
 // =========================================================================
@@ -61,7 +57,7 @@ impl ProducerNode {
     fn new(name: &str, output: ChannelKey, value: u32) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: AlgorithmNodePortDescriptor::new()
+            descriptor: PortDescriptorBuilder::algorithm()
                 .outputs_from_slice(&[output.clone()])
                 .build(),
             output,
@@ -111,7 +107,7 @@ impl TransformNode {
     fn new(name: &str, input: ChannelKey, output: ChannelKey, transform: fn(u32) -> u32) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: AlgorithmNodePortDescriptor::new()
+            descriptor: PortDescriptorBuilder::algorithm()
                 .inputs_from_slices(&[input.clone()], &[])
                 .outputs_from_slice(&[output.clone()])
                 .build(),
@@ -131,7 +127,7 @@ impl TransformNode {
     ) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: AlgorithmNodePortDescriptor::new()
+            descriptor: PortDescriptorBuilder::algorithm()
                 .inputs_from_slices(&[], &[input.clone()])
                 .outputs_from_slice(&[output.clone()])
                 .build(),
@@ -184,7 +180,7 @@ impl JoinNode {
     fn new(name: &str, input_a: ChannelKey, input_b: ChannelKey, output: ChannelKey) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: AlgorithmNodePortDescriptor::new()
+            descriptor: PortDescriptorBuilder::algorithm()
                 .inputs_from_slices(&[input_a.clone(), input_b.clone()], &[])
                 .outputs_from_slice(&[output.clone()])
                 .build(),
@@ -238,8 +234,8 @@ impl CountingNode {
         Self {
             name: name.to_string(),
             descriptor: match rate_hz {
-                Some(hz) => AlgorithmNodePortDescriptor::new().rate_hz(hz),
-                None => AlgorithmNodePortDescriptor::new(),
+                Some(hz) => PortDescriptorBuilder::algorithm().rate_hz(hz),
+                None => PortDescriptorBuilder::algorithm(),
             }
             .build(),
             counter,
@@ -278,7 +274,7 @@ impl SinkNode {
         Self {
             name: name.to_string(),
             descriptor: // Mock builder: some tests sink an oracle channel.
-            MockNodePortDescriptor::new()
+            PortDescriptorBuilder::mock()
                 .inputs_from_slices(&[input], &[])
                 .build(),
         }
@@ -287,7 +283,7 @@ impl SinkNode {
     fn optional(name: &str, input: ChannelKey) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: MockNodePortDescriptor::new()
+            descriptor: PortDescriptorBuilder::mock()
                 .inputs_from_slices(&[], &[input])
                 .build(),
         }
@@ -298,7 +294,7 @@ impl SinkNode {
     fn reading_mount_in(name: &str, input: ChannelKey, convention: Convention) -> Self {
         Self {
             name: name.to_string(),
-            descriptor: AlgorithmNodePortDescriptor::new()
+            descriptor: PortDescriptorBuilder::algorithm()
                 .inputs_from_slices(std::slice::from_ref(&input), &[])
                 .reads_mount_in(&input, convention)
                 .build(),
@@ -976,7 +972,7 @@ fn malformed_channel_names_are_refused_once_each() {
         )))
         .add_node(Box::new(ProducerNode::new(
             "unnamed",
-            InternalChannel::of::<ChC>().into(),
+            ChannelKey::internal_of::<ChC>(),
             0,
         )))
         .build();
@@ -1077,9 +1073,9 @@ fn reader_and_writer_disagreeing_on_type_are_reported_together() {
 
 #[test]
 fn one_name_across_kinds_is_refused() {
-    // The body's sensor channel and a node's internal channel share a name
+    // The body's measurement channel and a node's internal channel share a name
     // and a type; the kind still makes them two channels.
-    let sensor: ChannelKey = SensorChannel::named::<ChA>("imu").into();
+    let sensor = ChannelKey::measurement::<ChA>("imu");
     let internal = ikey_named::<ChA>("imu");
     let result = PipelineBuilder::new(AgentId::new(AGENT))
         .add_node(Box::new(ProducerNode::new("relay", internal, 0)))
@@ -1409,7 +1405,7 @@ fn tf_edge_channels_returns_only_declared_tf_edges() {
         child: FrameId::base_link(agent.clone()),
         parent: FrameId::odom(agent),
     };
-    let edge_key: ChannelKey = tf_edge(&edge).into();
+    let edge_key = tf_edge(&edge);
     // A plain (non-tf) output on a second, independent producer: it must be
     // filtered out, proving the accessor keys off `is_tf_edge`, not "every output".
     let plain_key = ikey_named::<u32>("plain");
@@ -1506,24 +1502,23 @@ fn a_plan_is_built_with_the_mounts_its_inputs_resolve_to() {
     struct Scan;
     let agent = AgentId::new(AGENT);
     let lidar_mount = FrameId::agent(agent.clone(), "lidar");
-    let range = SensorChannel::named::<Scan>("lidar");
-    let cloud = SensorChannel::named::<Scan>("lidar.cloud");
-    let cloud_key: ChannelKey = cloud.clone().into();
+    let range = ChannelKey::measurement::<Scan>("lidar");
+    let cloud = ChannelKey::measurement::<Scan>("lidar.cloud");
 
     let flatten = idle_plan(
         "flatten",
-        AlgorithmNodePortDescriptor::new()
-            .input_sensor(range.clone())
-            .output_sensor_at_mount_of(cloud.clone(), range.clone())
+        PortDescriptorBuilder::algorithm()
+            .input(range.clone())
+            .output_at_mount_of(cloud.clone(), range.clone())
             .build(),
     );
     let seen: Arc<Mutex<Vec<Result<FrameId, MountLookupError>>>> = Arc::default();
     let record = Arc::clone(&seen);
-    let (range_key, lookup) = (ChannelKey::from(range.clone()), cloud_key.clone());
+    let (range_key, lookup) = (range.clone(), cloud.clone());
     let reader = NodePlan::new(
         "reader",
-        AlgorithmNodePortDescriptor::new()
-            .input_sensor(cloud)
+        PortDescriptorBuilder::algorithm()
+            .input(cloud.clone())
             .build(),
         Box::new(move |descriptor, mounts| {
             let mut record = record.lock().expect("not poisoned");
@@ -1556,14 +1551,14 @@ fn a_plan_is_built_with_the_mounts_its_inputs_resolve_to() {
             Ok(lidar_mount.clone()),
             Err(MountLookupError::NotRead {
                 reader: "reader".to_string(),
-                channel: range.into(),
+                channel: range,
             }),
         ]
     );
     let cloud_description = pipeline
         .descriptions()
         .iter()
-        .find(|description| description.key() == &cloud_key)
+        .find(|description| description.key() == &cloud)
         .expect("the cloud is described");
     assert_eq!(cloud_description.mount(), Some(&lidar_mount));
 }
@@ -1576,9 +1571,9 @@ fn a_plan_is_built_with_the_mounts_its_inputs_resolve_to() {
 fn read_mounts_lists_each_read_mount_once_with_the_axes_it_is_read_in() {
     let agent = AgentId::new(AGENT);
     let imu_mount = FrameId::agent(agent.clone(), "imu");
-    let accel = SensorChannel::named::<Sensor>("imu.accel");
-    let gyro = SensorChannel::named::<Truth>("imu.gyro");
-    let unread = SensorChannel::named::<ChA>("mag");
+    let accel = ChannelKey::measurement::<Sensor>("imu.accel");
+    let gyro = ChannelKey::measurement::<Truth>("imu.gyro");
+    let unread = ChannelKey::measurement::<ChA>("mag");
     let body = BodyCapabilities {
         publishes: vec![
             BodyChannel::new(accel.clone(), BODY_UNIT, Provenance::Simulated)
@@ -1594,18 +1589,18 @@ fn read_mounts_lists_each_read_mount_once_with_the_axes_it_is_read_in() {
     let pipeline = PipelineBuilder::new(agent)
         .add_node(Box::new(SinkNode::reading_mount_in(
             "first",
-            accel.clone().into(),
+            accel.clone(),
             Convention::Flu,
         )))
-        .add_node(Box::new(SinkNode::new("second", accel.into())))
+        .add_node(Box::new(SinkNode::new("second", accel)))
         .add_node(Box::new(SinkNode::reading_mount_in(
             "third",
-            gyro.clone().into(),
+            gyro.clone(),
             Convention::Enu,
         )))
         .add_node(Box::new(SinkNode::reading_mount_in(
             "fourth",
-            gyro.into(),
+            gyro,
             Convention::Flu,
         )))
         .with_body_capabilities(body)
@@ -1626,7 +1621,7 @@ fn read_mounts_lists_each_read_mount_once_with_the_axes_it_is_read_in() {
 fn a_body_mount_on_another_agent_is_refused() {
     let body = BodyCapabilities {
         publishes: vec![BodyChannel::new(
-            SensorChannel::named::<u32>("gps"),
+            ChannelKey::measurement::<u32>("gps"),
             BODY_UNIT,
             Provenance::Simulated,
         )

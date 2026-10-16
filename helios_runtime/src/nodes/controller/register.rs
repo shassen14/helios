@@ -8,7 +8,7 @@ use super::input::DefaultControlInputBuilder;
 use super::node::ControllerNode;
 
 use crate::assembly::{AutonomyRegistry, BuildContext, FactoryOutput};
-use crate::port::InternalChannel;
+use crate::port::ChannelKey;
 
 use helios_core::control::controllers::direct_twist::DirectTwistController;
 use helios_core::control::controllers::feedback::longitudinal_velocity::LongitudinalVelocityController;
@@ -109,7 +109,7 @@ where
         ctx.node_name(),
         controller,
         Box::new(DefaultControlInputBuilder::<BodyTwistRef>::new()),
-        InternalChannel::named::<C::Out>(ctx.node_name()),
+        ChannelKey::internal::<C::Out>(ctx.node_name()),
     );
 
     FactoryOutput::new(Box::new(node))
@@ -175,7 +175,7 @@ mod tests {
                     build_direct_twist(DirectTwistConfig {}, &context("twist", DIRECT_TWIST_KIND))
                         .unwrap(),
                 ),
-                ChannelKey::from(InternalChannel::named::<BodyTwist>("twist")),
+                ChannelKey::internal::<BodyTwist>("twist"),
             ),
             (
                 output_of(
@@ -185,11 +185,11 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                InternalChannel::named::<DriveForce>("speed").into(),
+                ChannelKey::internal::<DriveForce>("speed"),
             ),
             (
                 output_of(build_road_load(road_load, &context("ff", ROAD_LOAD_KIND)).unwrap()),
-                InternalChannel::named::<DriveForce>("ff").into(),
+                ChannelKey::internal::<DriveForce>("ff"),
             ),
             (
                 output_of(
@@ -199,7 +199,7 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-                InternalChannel::named::<SteerAngle>("steer").into(),
+                ChannelKey::internal::<SteerAngle>("steer"),
             ),
         ];
 

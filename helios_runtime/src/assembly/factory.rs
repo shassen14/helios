@@ -447,7 +447,7 @@ mod tests {
 
     use crate::assembly::Site;
     use crate::pipeline::node::TickContext;
-    use crate::port::{AlgorithmNodePortDescriptor, InternalChannel, PortBus, PortDescriptor};
+    use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 
     use helios_core::prelude::TfProvider;
 
@@ -503,7 +503,7 @@ mod tests {
             return Err(format!("output '{REJECTED_OUTPUT}' is not allowed"));
         }
         Ok(FactoryOutput::new(Box::new(StubNode {
-            descriptor: AlgorithmNodePortDescriptor::new().build(),
+            descriptor: PortDescriptorBuilder::algorithm().build(),
         })))
     }
 
@@ -681,7 +681,7 @@ mod tests {
     ) -> Result<FactoryOutput, String> {
         Ok(FactoryOutput::plan(
             ctx,
-            AlgorithmNodePortDescriptor::new().build(),
+            PortDescriptorBuilder::algorithm().build(),
             |_, _| -> Result<Box<dyn PipelineNode>, String> {
                 Err(format!("output '{REJECTED_OUTPUT}' is not allowed"))
             },
@@ -762,19 +762,16 @@ mod tests {
     fn outside_inputs_are_kept_in_declaration_order() {
         let stub = || -> Box<dyn PipelineNode> {
             Box::new(StubNode {
-                descriptor: AlgorithmNodePortDescriptor::new().build(),
+                descriptor: PortDescriptorBuilder::algorithm().build(),
             })
         };
         assert!(FactoryOutput::new(stub()).outside_inputs().is_empty());
 
-        let mission = InternalChannel::named::<f64>("mission");
-        let waypoints = InternalChannel::named::<f64>("waypoints");
+        let mission = ChannelKey::internal::<f64>("mission");
+        let waypoints = ChannelKey::internal::<f64>("waypoints");
         let output = FactoryOutput::new(stub())
             .with_outside_input(mission.clone())
             .with_outside_input(waypoints.clone());
-        assert_eq!(
-            output.outside_inputs(),
-            [ChannelKey::from(mission), ChannelKey::from(waypoints)]
-        );
+        assert_eq!(output.outside_inputs(), [mission, waypoints]);
     }
 }
