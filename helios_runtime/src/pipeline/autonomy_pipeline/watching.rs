@@ -18,26 +18,32 @@ impl AutonomyPipeline {
     /// Iterates over every subject a watcher can ask for, with what it
     /// records.
     ///
-    /// Nodes come in [`NodeId`](crate::NodeId) order. For each node: the
-    /// leaves it declares, in declaration order, then the leaves the pipeline
-    /// adds to every node, as [`Subject::Emission`]s; then each channel it
-    /// writes, in output order, once per instance it declares on a keyed
-    /// channel, as [`Subject::Channel`]s. A channel no node writes is not
-    /// listed: nothing records it yet.
+    /// First the channels the body and the outside world write, in the order
+    /// [`descriptions`](Self::descriptions) lists them, once per instance
+    /// the writer declares on a keyed channel. Then the nodes, in
+    /// [`NodeId`](crate::NodeId) order. For each node: the leaves it
+    /// declares, in declaration order, then the leaves the pipeline adds to
+    /// every node, as [`Subject::Emission`]s; then each channel it writes, in
+    /// output order, once per instance it declares on a keyed channel. Every
+    /// channel the pipeline holds is listed, read or not.
     ///
     /// A host spells its own paths from these subjects and looks its
     /// requests up in them, rather than parsing paths apart. A comparison
     /// across runs reads each [`Observable`]'s determinism to skip
-    /// nondeterministic ones.
+    /// nondeterministic ones; a channel's is its writer's.
     pub fn observables(&self) -> impl Iterator<Item = (Subject, Observable)> + '_ {
-        self.levels.iter().flatten().flat_map(|scheduled| {
+        let host_written = self
+            .host_writes
+            .taps()
+            .map(|tap| (tap.subject().clone(), tap.observable()));
+        let nodes = self.levels.iter().flatten().flat_map(|scheduled| {
             let name = scheduled.node.name();
             let emissions =
                 observable_catalog(scheduled.node.as_ref())
                     .into_iter()
                     .map(move |observable| {
                         (
-                            Subject::emission(name, observable.leaf_name().clone()),
+                            Subject::emission(name, observable.name().clone()),
                             observable,
                         )
                     });
@@ -46,21 +52,25 @@ impl AutonomyPipeline {
                 .iter()
                 .map(|tap| (tap.subject().clone(), tap.observable()));
             emissions.chain(channels)
-        })
+        });
+        host_written.chain(nodes)
     }
 
     /// Moves everything recorded since the last drain onto the end of `out`,
-    /// leaving every node's buffer empty. Each observation's key names this
+    /// leaving every buffer empty. Each observation's key names this
     /// pipeline's agent.
     ///
-    /// Observations come grouped by the node whose run recorded them, in
-    /// [`NodeId`](crate::NodeId) order, and in record order within a node; a
-    /// caller wanting one timeline sorts by timestamp. Appending lets a host
-    /// reuse one list every tick, and drain several pipelines into it.
+    /// What the body and the outside world wrote comes first, as it was
+    /// recorded before any node ran. Then observations come grouped by the
+    /// node whose run recorded them, in [`NodeId`](crate::NodeId) order, and
+    /// in record order within a node; a caller wanting one timeline sorts by
+    /// timestamp. Appending lets a host reuse one list every tick, and drain
+    /// several pipelines into it.
     ///
-    /// The host must drain after every tick: a node with anything watched
-    /// records on every run, and nothing else empties its buffer.
+    /// The host must drain after every tick: a pipeline with anything
+    /// watched records on every tick, and nothing else empties its buffers.
     pub fn drain_into(&self, out: &mut Vec<Observation>) {
+        self.host_writes.drain_into(out);
         for scheduled in self.levels.iter().flatten() {
             scheduled.observations.drain_into(out);
         }
@@ -70,15 +80,19 @@ impl AutonomyPipeline {
     /// names are recorded. A built pipeline watches nothing.
     ///
     /// All or nothing: if any entry names a node that doesn't exist, a leaf
-    /// its node doesn't declare, or a channel instance no node writes, every
-    /// such entry is reported and the previous watch set stays in place.
+    /// its node doesn't declare, or a channel instance no writer declares,
+    /// every such entry is reported and the previous watch set stays in
+    /// place.
     ///
     /// Observations already recorded are kept until the next drain, including
     /// those of subjects this call stops watching, so drain before changing
-    /// the watch set.
+    /// the watch set. A channel the body or the outside world writes that
+    /// starts being watched records the value it holds at the next tick, even
+    /// one written before this call.
     pub fn watch(&mut self, set: &WatchSet) -> Result<(), Vec<WatchError>> {
         let subjects = match set {
             WatchSet::Everything => {
+                self.host_writes.set_watched(|_| true);
                 for scheduled in self.levels.iter_mut().flatten() {
                     scheduled.observations.set_all_watched(true);
                     for tap in &mut scheduled.taps {
@@ -98,6 +112,8 @@ impl AutonomyPipeline {
             return Err(errors);
         }
 
+        self.host_writes
+            .set_watched(|tap| subjects.contains(tap.subject()));
         // Walk the nodes rather than the entries: each node is visited once,
         // and no node has to be looked up by name while `levels` is borrowed
         // mutably.
@@ -138,13 +154,14 @@ impl AutonomyPipeline {
                 Some(_) => None,
             },
             Subject::Channel { channel, instance } => {
-                let tapped = self
+                let declared = self
                     .levels
                     .iter()
                     .flatten()
                     .flat_map(|scheduled| &scheduled.taps)
+                    .chain(self.host_writes.taps())
                     .any(|tap| tap.subject() == subject);
-                (!tapped).then(|| WatchError::UnrecordedChannel {
+                (!declared).then(|| WatchError::UndeclaredChannel {
                     channel: channel.clone(),
                     instance: instance.clone(),
                 })
@@ -226,7 +243,7 @@ mod tests {
 
         fn execute(&self, bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
             for observable in self.descriptor.observables() {
-                tick.emit(observable.leaf_name(), tick.now, tick.now.0);
+                tick.emit(observable.name(), tick.now, tick.now.0);
             }
             if !self.writes_at.contains(&tick.now.0) {
                 return;
@@ -340,6 +357,7 @@ mod tests {
                     .iter()
                     .flatten()
                     .flat_map(|scheduled| &scheduled.taps)
+                    .chain(pipeline.host_writes.taps())
                     .any(|tap| tap.subject() == subject && tap.watched),
             })
             .collect()
@@ -485,19 +503,19 @@ mod tests {
     }
 
     #[test]
-    fn unknown_node_undeclared_leaf_and_unwritten_channel_are_refused_together() {
+    fn unknown_node_undeclared_leaf_and_undeclared_channel_are_refused_together() {
         let mut pipeline = pipeline();
         pipeline
             .watch(&subjects([emission(FIRST, NIS)]))
             .expect("declared");
-        let unwritten = ChannelKey::internal::<f64>("truth.tf");
+        let undeclared = ChannelKey::internal::<f64>("truth.tf");
 
         let errors = pipeline
             .watch(&subjects([
                 emission(SECOND, NIS),
                 emission(FIRST, UNDECLARED),
                 emission(MISSING_NODE, NIS),
-                Subject::channel(unwritten.clone(), None),
+                Subject::channel(undeclared.clone(), None),
             ]))
             .expect_err("three entries are unknown");
 
@@ -512,8 +530,8 @@ mod tests {
                     node: MISSING_NODE.to_string(),
                     leaf: NIS.to_string(),
                 },
-                WatchError::UnrecordedChannel {
-                    channel: unwritten,
+                WatchError::UndeclaredChannel {
+                    channel: undeclared,
                     instance: None,
                 },
             ]
@@ -810,16 +828,16 @@ mod tests {
     }
 
     #[test]
-    fn watching_an_instance_no_node_writes_is_refused() {
+    fn watching_an_instance_no_writer_declares_is_refused() {
         let mut pipeline = keyed_pipeline(&["base"]);
 
         let errors = pipeline
             .watch(&subjects([edge("wheel")]))
-            .expect_err("no node writes the wheel's edge");
+            .expect_err("no writer declares the wheel's edge");
 
         assert_eq!(
             errors,
-            vec![WatchError::UnrecordedChannel {
+            vec![WatchError::UndeclaredChannel {
                 channel: edges(),
                 instance: Some(InstanceKey::of::<FrameSample>(&"wheel")),
             }]

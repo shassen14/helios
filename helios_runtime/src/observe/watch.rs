@@ -18,7 +18,8 @@ use std::{collections::BTreeSet, error::Error, fmt::Display};
 #[derive(Debug, Clone, PartialEq)]
 pub enum WatchSet {
     /// Every emission of every node, including nondeterministic ones such as
-    /// each node's run duration, and every channel instance a node writes.
+    /// each node's run duration, and every channel instance the pipeline
+    /// holds, whoever writes it.
     Everything,
     /// Exactly these subjects. Held in order, so the same subject named twice
     /// is kept once.
@@ -42,9 +43,9 @@ pub enum WatchError {
     UnknownNode { node: String, leaf: String },
     /// The node exists but declares no watchable leaf with this name.
     UndeclaredLeaf { node: String, leaf: String },
-    /// No node writes this channel, or this instance of it. A channel only
-    /// the body or the outside world writes is not recorded yet.
-    UnrecordedChannel {
+    /// No writer declares this channel, or this instance of it: neither a
+    /// node, the body, nor an outside input.
+    UndeclaredChannel {
         channel: ChannelKey,
         instance: Option<InstanceKey>,
     },
@@ -59,17 +60,14 @@ impl Display for WatchError {
             Self::UndeclaredLeaf { node, leaf } => {
                 write!(f, "node \"{node}\" declares no watchable leaf \"{leaf}\"")
             }
-            Self::UnrecordedChannel {
+            Self::UndeclaredChannel {
                 channel,
                 instance: Some(instance),
-            } => write!(
-                f,
-                "no node writes instance \"{instance}\" of {channel}, so nothing records it"
-            ),
-            Self::UnrecordedChannel {
+            } => write!(f, "no writer declares instance \"{instance}\" of {channel}"),
+            Self::UndeclaredChannel {
                 channel,
                 instance: None,
-            } => write!(f, "no node writes {channel}, so nothing records it"),
+            } => write!(f, "no writer declares {channel}"),
         }
     }
 }

@@ -115,10 +115,6 @@ pub enum TargetProblem {
     /// watch it is the one held here.
     #[error("a channel is not a node's leaf; to watch what the node writes there, use '{0}'")]
     ChannelUnderNode(String),
-    /// A channel only the body or the outside world writes. Nothing records
-    /// those yet, so no value would arrive.
-    #[error("no node writes it, and only channels a node writes are recorded")]
-    NotNodeWritten,
     /// A keyed channel written in several instances. The path names every
     /// instance, and an assertion judges one series.
     #[error("it names {0} instances of a keyed channel, and an assertion judges one series")]
@@ -142,8 +138,6 @@ struct Catalog<'a> {
     agent: &'a AgentId,
     /// Each subject the agent's pipeline records, with what it records.
     observables: Vec<(Subject, Observable)>,
-    /// The names of the channels only the body or the outside world write.
-    host_written: Vec<&'a str>,
     /// Each channel a node writes, with the node's name.
     node_written: Vec<(&'a str, &'a ChannelKey)>,
 }
@@ -184,12 +178,6 @@ pub(super) fn resolve(
         .map(|(agent, pipeline)| Catalog {
             agent,
             observables: pipeline.observables().collect(),
-            host_written: pipeline
-                .descriptions()
-                .iter()
-                .filter(|description| !matches!(description.writer(), Writer::Node { .. }))
-                .map(|description| description.key().name().as_ref())
-                .collect(),
             node_written: pipeline
                 .descriptions()
                 .iter()
@@ -272,14 +260,10 @@ fn check(
     }
 }
 
-/// Why `subject` matched nothing `catalog` records: a channel only the body
-/// or the outside world writes, a channel spelled as a leaf of the node
-/// that writes it, or nothing by that name.
+/// Why `subject` matched nothing `catalog` records: a channel spelled as a
+/// leaf of the node that writes it, or nothing by that name.
 fn unreported(catalog: &Catalog, subject: &TargetSubject) -> TargetProblem {
     match subject {
-        TargetSubject::Channel { channel } if catalog.host_written.contains(&channel.as_ref()) => {
-            TargetProblem::NotNodeWritten
-        }
         TargetSubject::Node { node, leaf } => catalog
             .node_written
             .iter()
@@ -313,9 +297,12 @@ mod tests {
     use helios_runtime::{
         observe::path::{channel_path, node_path},
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
-        port::{ChannelKey, ChannelKind, Keyed, PortBus, PortDescriptor, PortDescriptorBuilder},
+        port::{
+            ChannelKey, ChannelKind, Keyed, PortBus, PortDescriptor, PortDescriptorBuilder,
+            Provenance,
+        },
         prelude::{PipelineNode, TickContext},
-        PipelineBuilder,
+        BodyCapabilities, BodyChannel, PipelineBuilder,
     };
 
     const CAR: &str = "car";
@@ -336,6 +323,8 @@ mod tests {
     const ROOT: &str = "root";
     /// A channel sent from outside the robot, which no node writes.
     const GOAL: &str = "goal";
+    /// A channel the body publishes, which no node writes.
+    const ODOMETRY: &str = "odometry";
 
     /// A value about one frame, keyed by the frame. No extractor reads it.
     struct FrameSample(&'static str);
@@ -373,7 +362,8 @@ mod tests {
 
     /// An estimator declaring [`NIS`] and [`SHARED`] and writing [`SPEED`]
     /// and [`LABEL`]; a planner writing [`SHARED`], two instances of
-    /// [`EDGES`] and one of [`ROOT`]; and [`GOAL`] sent from outside.
+    /// [`EDGES`] and one of [`ROOT`]; [`ODOMETRY`] from the body; and
+    /// [`GOAL`] sent from outside.
     fn pipeline() -> AutonomyPipeline {
         let estimator = PortDescriptorBuilder::algorithm()
             .outputs_from_slice(&[
@@ -389,6 +379,14 @@ mod tests {
             .output_keyed::<FrameSample>(keyed(ROOT), ["base"])
             .build();
         PipelineBuilder::new(AgentId::new(CAR))
+            .with_body_capabilities(BodyCapabilities {
+                publishes: vec![BodyChannel::new(
+                    ChannelKey::internal::<f64>(ODOMETRY),
+                    "wheel_encoder",
+                    Provenance::Simulated,
+                )],
+                ..Default::default()
+            })
             .with_outside_inputs(vec![ChannelKey::internal::<f64>(GOAL)])
             .add_node(Box::new(DeclaringNode {
                 name: ESTIMATOR,
@@ -564,12 +562,20 @@ mod tests {
     }
 
     #[test]
-    fn a_channel_no_node_writes_is_refused_as_not_node_written() {
+    fn a_body_channel_resolves_as_a_node_written_one_does() {
+        assert_eq!(errors(&[assertion(channel(ODOMETRY), false)]), vec![]);
+    }
+
+    #[test]
+    fn an_outside_channel_is_nondeterministic_and_resolves_with_permission() {
         let goal = channel(GOAL);
 
         assert_eq!(
-            errors(&[assertion(goal.clone(), false)]),
-            vec![unusable(1, goal, vec![TargetProblem::NotNodeWritten])]
+            errors(&[
+                assertion(goal.clone(), false),
+                assertion(goal.clone(), true),
+            ]),
+            vec![unusable(1, goal, vec![TargetProblem::Nondeterministic])]
         );
     }
 

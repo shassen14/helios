@@ -1,7 +1,10 @@
 //! [`AutonomyPipeline`]: a built graph of nodes over a bus, run one tick at a
 //! time. Only the builder in [`build`](crate::pipeline::build) constructs one.
 
-use super::scheduled::{ScheduledNode, TICK_DURATION_LEAF};
+use super::{
+    host_writes::HostWrites,
+    scheduled::{ScheduledNode, TICK_DURATION_LEAF},
+};
 
 use crate::{
     channels::{control, estimate::estimate},
@@ -22,8 +25,8 @@ use tracing::{debug_span, trace_span};
 ///
 /// Constructed only via [`PipelineBuilder::build`](crate::PipelineBuilder::build). After construction
 /// the topology is fixed; the only mutable state is the bus contents, the
-/// per-node timer counters, and the per-node observation buffers, all of
-/// which use interior mutability so [`tick`](Self::tick) can take `&self`.
+/// per-node timer counters, and the observation buffers, all of which use
+/// interior mutability so [`tick`](Self::tick) can take `&self`.
 pub struct AutonomyPipeline {
     /// The agent whose brain this is, by its config name. Every frame the
     /// pipeline reads is scoped by it, and every recorded key names it. The
@@ -37,6 +40,9 @@ pub struct AutonomyPipeline {
     /// the only way values from outside the graph enter it: the host writes
     /// body measurements and operator or mission inputs here.
     pub(in crate::pipeline) bus: PortBus,
+    /// A tap on each channel instance the body or the outside world writes,
+    /// recorded at the start of a tick while watched.
+    pub(in crate::pipeline) host_writes: HostWrites,
     /// Every channel some writer declared, kept from the build: the body's,
     /// then the outside inputs, then the nodes' outputs.
     pub(in crate::pipeline) descriptions: Vec<ChannelDescription>,
@@ -141,14 +147,18 @@ impl AutonomyPipeline {
     /// `read_fresh` consumers always see the same clock. `tf` is the transform
     /// provider nodes query for the tick.
     ///
-    /// When a node's [`TICK_DURATION_LEAF`] is watched, its run is timed on a
-    /// wall clock and recorded in seconds, stamped with `now`. When a channel
-    /// instance it writes is watched, the value the node wrote there is
-    /// recorded under the channel's key once per run that wrote it, stamped
-    /// with the value's own time. A node's run records its channels before
-    /// its duration, and both after what it emitted itself.
+    /// Before any node runs, each watched channel instance the body or the
+    /// outside world writes is recorded if it was written since its last
+    /// record, stamped with the value's own time. When a node's
+    /// [`TICK_DURATION_LEAF`] is watched, its run is timed on a wall clock
+    /// and recorded in seconds, stamped with `now`. When a channel instance
+    /// it writes is watched, the value the node wrote there is recorded
+    /// under the channel's key once per run that wrote it, stamped with the
+    /// value's own time. A node's run records its channels before its
+    /// duration, and both after what it emitted itself.
     pub fn tick(&self, now: MonotonicTime, dt: f64, tf: &dyn TfProvider) {
         self.bus.set_tick_time(now.0);
+        self.host_writes.record_changed(&self.bus);
 
         // Span only — no event emitted inside. At a default 200 Hz host
         // tick rate, an `info!`/`debug!` per tick would flood the terminal.

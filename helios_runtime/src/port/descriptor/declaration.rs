@@ -418,18 +418,18 @@ pub enum InputTiming {
     PreviousTick,
 }
 
-/// One value a node can emit for watchers: its leaf name, whether it is
+/// One value a watcher can ask for: its name, whether it is
 /// [deterministic](Determinism), and the [kind of value](ObservedValueKind)
 /// it arrives as.
 ///
-/// The leaf name is relative to the node (`aiding.gps.nis`), or, for the
-/// values on a channel, the channel's name. It is a label: the pipeline's
-/// catalog pairs each record with the [`Subject`](crate::observe::key::Subject)
-/// that identifies it. Only the descriptor builder and the pipeline's
-/// catalog create records.
+/// A node declares its leaves as observables, named relative to the node
+/// (`aiding.gps.nis`). The pipeline's catalog also lists each channel as
+/// one, named by the channel. The name is a label: the catalog pairs each
+/// record with the [`Subject`](crate::observe::key::Subject) that identifies
+/// it. Only the descriptor builder and the pipeline's catalog create records.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Observable {
-    leaf_name: Arc<str>,
+    name: Arc<str>,
     determinism: Determinism,
     kind: ObservedValueKind,
 }
@@ -437,9 +437,9 @@ pub struct Observable {
 impl Observable {
     /// A value that arrives as a number: every leaf a node declares, and the
     /// pipeline's own measurements.
-    pub(crate) fn scalar(leaf_name: impl Into<Arc<str>>, determinism: Determinism) -> Self {
+    pub(crate) fn scalar(name: impl Into<Arc<str>>, determinism: Determinism) -> Self {
         Self {
-            leaf_name: leaf_name.into(),
+            name: name.into(),
             determinism,
             kind: ObservedValueKind::Scalar,
         }
@@ -447,12 +447,12 @@ impl Observable {
 
     /// A value that arrives as what was written to `channel`.
     pub(crate) fn typed(
-        leaf_name: impl Into<Arc<str>>,
+        name: impl Into<Arc<str>>,
         determinism: Determinism,
         channel: &ChannelKey,
     ) -> Self {
         Self {
-            leaf_name: leaf_name.into(),
+            name: name.into(),
             determinism,
             kind: ObservedValueKind::Typed {
                 type_id: channel.type_id(),
@@ -461,9 +461,10 @@ impl Observable {
         }
     }
 
-    /// The name the node emits this value under, relative to the node.
-    pub fn leaf_name(&self) -> &Arc<str> {
-        &self.leaf_name
+    /// The leaf a node emits this value under, relative to the node, or the
+    /// channel's name for a channel.
+    pub fn name(&self) -> &Arc<str> {
+        &self.name
     }
 
     /// Whether the value depends only on the node's inputs, the tick's time
@@ -486,6 +487,10 @@ impl Observable {
 /// node given the same inputs reports the same value, bit for bit. Whether a
 /// host feeds it the same inputs twice is the host's own property. Only the
 /// node knows which kind a value is, since both arrive as plain numbers.
+///
+/// A channel's values carry their writer's label: a node's outputs are
+/// deterministic, the body's are deterministic while its provenance is exact
+/// or simulated, and an outside input, which an operator may send, is not.
 ///
 /// A sink comparing two runs (a regression check, a seeded Monte Carlo batch,
 /// the everything-watched vs nothing-watched gate) expects every deterministic
@@ -623,7 +628,7 @@ mod tests {
     #[test]
     fn observable_reads_back_its_name_and_determinism() {
         let o = Observable::scalar("aiding.gps.nis", Determinism::Deterministic);
-        assert_eq!(o.leaf_name().as_ref(), "aiding.gps.nis");
+        assert_eq!(o.name().as_ref(), "aiding.gps.nis");
         assert_eq!(o.determinism(), Determinism::Deterministic);
         assert_eq!(o.kind(), ObservedValueKind::Scalar);
     }

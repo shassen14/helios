@@ -250,7 +250,7 @@ mod tests {
             .port_descriptor()
             .observables()
             .iter()
-            .map(|observable| (observable.leaf_name().as_ref(), observable.determinism()))
+            .map(|observable| (observable.name().as_ref(), observable.determinism()))
             .collect();
 
         assert_eq!(

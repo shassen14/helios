@@ -11,7 +11,7 @@ use super::{
 };
 
 use crate::{
-    pipeline::autonomy_pipeline::ScheduledNode,
+    pipeline::autonomy_pipeline::{HostWrites, ScheduledNode},
     port::{ChannelDescription, PortBus, Writer},
     AutonomyPipeline, BodyCapabilities, ChannelKey, NodeId, PipelineBuildError, PipelineNode,
 };
@@ -219,11 +219,13 @@ impl PipelineBuilder {
         let bus = PortBus::new(&descriptions);
 
         let levels = construct_levels(levels, &descriptions, &self.agent)?;
+        let host_writes = HostWrites::new(&self.agent, &descriptions);
 
         Ok(AutonomyPipeline {
             agent: self.agent,
             levels,
             bus,
+            host_writes,
             descriptions,
             estimate_root: self.estimate_root,
         })

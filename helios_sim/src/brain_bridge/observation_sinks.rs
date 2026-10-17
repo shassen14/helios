@@ -187,7 +187,7 @@ mod tests {
 
         fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, tick: TickContext) {
             for observable in self.descriptor.observables() {
-                tick.emit(observable.leaf_name(), tick.now, tick.now.0);
+                tick.emit(observable.name(), tick.now, tick.now.0);
             }
         }
     }

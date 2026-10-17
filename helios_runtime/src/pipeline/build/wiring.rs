@@ -211,7 +211,7 @@ fn check_declared_leaves(
     let node_name = node.name();
     let mut refused_leaves: HashSet<Arc<str>> = HashSet::new();
     for observable in node.port_descriptor().observables() {
-        let leaf = observable.leaf_name();
+        let leaf = observable.name();
         let error = if !is_dotted_name(leaf) {
             PipelineBuildError::MalformedObservable {
                 node_name: node_name.to_string(),
@@ -243,7 +243,7 @@ fn check_leaves_distinct(
     let mut seen_leaves: HashSet<Arc<str>> = HashSet::new();
     let mut reported_leaves: HashSet<Arc<str>> = HashSet::new();
     for observable in node.port_descriptor().observables() {
-        let leaf = observable.leaf_name();
+        let leaf = observable.name();
         if refused_leaves.contains(leaf) || seen_leaves.insert(leaf.clone()) {
             continue;
         }

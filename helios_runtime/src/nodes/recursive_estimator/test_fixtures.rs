@@ -337,7 +337,7 @@ pub(super) fn watching(node: &RecursiveEstimatorNode) -> NodeObservations {
         .port_descriptor()
         .observables()
         .iter()
-        .map(|observable| observable.leaf_name().clone());
+        .map(|observable| observable.name().clone());
     let mut buffer = NodeObservations::new(&agent(), node.name(), leaves);
     buffer.set_all_watched(true);
     buffer

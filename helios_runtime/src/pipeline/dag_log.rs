@@ -160,9 +160,9 @@ fn format_observables(observables: &[Observable]) -> Vec<String> {
     observables
         .iter()
         .map(|observable| match observable.determinism() {
-            Determinism::Deterministic => observable.leaf_name().to_string(),
+            Determinism::Deterministic => observable.name().to_string(),
             Determinism::Nondeterministic => {
-                format!("{} (nondeterministic)", observable.leaf_name())
+                format!("{} (nondeterministic)", observable.name())
             }
         })
         .collect()

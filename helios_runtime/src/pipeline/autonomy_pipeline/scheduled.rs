@@ -1,21 +1,17 @@
 //! What the running pipeline keeps for each node, and the leaves it adds to
 //! every node's catalog.
 
+use super::tap::{tapped_instances, Tap};
+
 use crate::{
-    observe::{
-        buffer::NodeObservations,
-        key::{RecordedKey, Subject},
-        observation::ObservedValue,
-    },
+    observe::{buffer::NodeObservations, observation::ObservedValue},
     pipeline::rate_gate::RateTimer,
-    port::{ChannelKey, Determinism, ErasedStamped, InstanceKey, Observable, PortBus, SlotVersion},
+    port::{Determinism, Observable, PortBus, SlotVersion},
     prelude::PipelineNode,
     NodeId,
 };
 
 use helios_core::prelude::AgentId;
-
-use std::sync::Arc;
 
 /// The group the pipeline's own leaves sit under. The pipeline adds these to
 /// every node, so a node may not declare this leaf or any leaf under it; the
@@ -64,7 +60,7 @@ impl ScheduledNode {
             node.name(),
             observable_catalog(node.as_ref())
                 .into_iter()
-                .map(|o| o.leaf_name().clone()),
+                .map(|o| o.name().clone()),
         );
         let taps = output_taps(node.as_ref(), agent).collect();
 
@@ -115,54 +111,6 @@ impl ScheduledNode {
     }
 }
 
-/// What a node writes to one of its output channels, or to one instance of
-/// a keyed one: the value itself, shared with the bus, recorded once per run
-/// that wrote it while the tap is watched.
-///
-/// The tap sits with its writing node because only around that node's run
-/// can the pipeline tell, from the slot's version, that the node wrote it.
-/// Its key names the channel, never the node, so a value is recorded under
-/// the same key whichever node writes it.
-#[derive(Debug, Clone, PartialEq)]
-pub(in crate::pipeline) struct Tap {
-    /// The key the tap records under: a
-    /// [`Subject::Channel`] of the pipeline's agent.
-    pub(in crate::pipeline) key: RecordedKey,
-    pub(in crate::pipeline) channel: ChannelKey,
-    /// The instance recorded, on a keyed channel.
-    pub(in crate::pipeline) instance: Option<InstanceKey>,
-    pub(in crate::pipeline) watched: bool,
-}
-
-impl Tap {
-    /// The subject this tap records.
-    pub(in crate::pipeline) fn subject(&self) -> &Subject {
-        &self.key.subject
-    }
-
-    /// The catalog entry for this tap: a value of the channel's payload.
-    ///
-    /// Marked deterministic, because every node today writes outputs that
-    /// depend only on its inputs, the tick's time and its seed. A node whose
-    /// outputs depend on wall time (an anytime planner) would make its taps
-    /// nondeterministic, and the catalog can't tell yet.
-    pub(in crate::pipeline) fn observable(&self) -> Observable {
-        Observable::typed(
-            self.channel.name().clone(),
-            Determinism::Deterministic,
-            &self.channel,
-        )
-    }
-
-    /// The tapped value and its version, `None` while unwritten.
-    fn read(&self, bus: &PortBus) -> Option<(Arc<dyn ErasedStamped>, SlotVersion)> {
-        match &self.instance {
-            Some(instance) => bus.read_erased_instance_versioned(&self.channel, instance),
-            None => bus.read_erased_versioned(&self.channel),
-        }
-    }
-}
-
 /// An unwatched tap for each channel instance `node` writes, in output order:
 /// one per output, or on a keyed output one per instance it declares, in
 /// declaration order. The build refuses a keyed output with no instances.
@@ -175,20 +123,13 @@ fn output_taps<'a>(
         .iter()
         .flat_map(move |port| {
             let channel = port.channel();
-            let instances: Vec<Option<InstanceKey>> = if channel.is_keyed() {
-                port.instances().iter().cloned().map(Some).collect()
-            } else {
-                vec![None]
-            };
-            instances.into_iter().map(move |instance| Tap {
-                key: RecordedKey {
-                    agent: agent.clone(),
-                    subject: Subject::channel(channel.clone(), instance.clone()),
-                },
-                channel: channel.clone(),
-                instance,
-                watched: false,
-            })
+            tapped_instances(channel, port.instances())
+                .into_iter()
+                // Every node today writes outputs that depend only on its
+                // inputs, the tick's time and its seed. A node whose outputs
+                // depend on wall time (an anytime planner) would make its taps
+                // nondeterministic, and its descriptor can't say so yet.
+                .map(move |instance| Tap::new(agent, channel, instance, Determinism::Deterministic))
         })
 }
 
@@ -227,7 +168,10 @@ mod tests {
     use super::*;
 
     use crate::{
-        port::{ChannelKey, ChannelKind, Keyed, PortBus, PortDescriptor, PortDescriptorBuilder},
+        port::{
+            ChannelKey, ChannelKind, InstanceKey, Keyed, PortBus, PortDescriptor,
+            PortDescriptorBuilder,
+        },
         prelude::TickContext,
     };
 
@@ -306,15 +250,7 @@ mod tests {
     }
 
     fn tap(channel: ChannelKey, instance: Option<InstanceKey>) -> Tap {
-        Tap {
-            key: RecordedKey {
-                agent: agent(),
-                subject: Subject::channel(channel.clone(), instance.clone()),
-            },
-            channel,
-            instance,
-            watched: false,
-        }
+        Tap::new(&agent(), &channel, instance, Determinism::Deterministic)
     }
 
     #[test]
@@ -351,9 +287,9 @@ mod tests {
 
         for observable in observable_catalog(node.as_ref()) {
             assert!(
-                observable.leaf_name().starts_with(&group),
+                observable.name().starts_with(&group),
                 "{} is outside the pipeline's group",
-                observable.leaf_name()
+                observable.name()
             );
         }
     }
