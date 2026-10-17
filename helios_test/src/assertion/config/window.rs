@@ -213,7 +213,7 @@ impl Serialize for Bound {
             }
             Bound::After { after, plus } => {
                 let mut map = serializer.serialize_map(Some(2))?;
-                map.serialize_entry(AFTER_KEY, after.as_str())?;
+                map.serialize_entry(AFTER_KEY, after)?;
                 map.serialize_entry(PLUS_KEY, plus)?;
                 map.end()
             }

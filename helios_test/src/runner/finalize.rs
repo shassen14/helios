@@ -9,7 +9,7 @@ use crate::{
         evaluator::{earliest_failure, evaluate_reduced},
         Assertion, AssertionResult, Measure, Window,
     },
-    collector::{ObservationCollector, Sample},
+    collector::{instance_of, ObservationCollector, Sample},
     report::{
         AssertionReportEntry, FailureReason, MeasureReportEntry, Report, SeriesSummary,
         TerminatedBy, Verdict,
@@ -18,7 +18,7 @@ use crate::{
     statistics::within_run::{latest, max_gap, Reducer},
 };
 use helios_core::prelude::{AgentId, MonotonicTime};
-use helios_runtime::port::RefusedWrites;
+use helios_runtime::{observe::key::RecordedKey, port::RefusedWrites};
 
 impl Runner {
     /// Build the run's [`Report`] once the host stops ticking. Every entry is
@@ -88,8 +88,11 @@ impl Runner {
             Phase::Aborted => None,
         };
         let judged = judged.unwrap_or_default();
-        // The entry `owner` names; `None` when the run isn't ready to judge.
-        let entry_of = |owner: EntryOwner| judged.iter().find(|entry| entry.owner == owner);
+        // The entries `owner` owns, one per series it reads; none when the
+        // run isn't ready to judge.
+        let entries_of = |owner: EntryOwner| -> Vec<&EntryView<'_, '_, &AssertionState>> {
+            judged.iter().filter(|entry| entry.owner == owner).collect()
+        };
         let ran_out = self
             .ticks
             .is_some_and(|span| self.run.termination().budget_spent(span.first, span.latest));
@@ -101,38 +104,52 @@ impl Runner {
                 first_stamp(series.samples(), span.latest)
             })
         };
+        // An entry the run never read still gets its line.
+        let each_or_unread = |owner| {
+            let entries = entries_of(owner);
+            if entries.is_empty() {
+                vec![None]
+            } else {
+                entries.into_iter().map(Some).collect()
+            }
+        };
 
         let assertions: Vec<AssertionReportEntry> = self
             .run
             .assertions()
             .iter()
             .enumerate()
-            .map(|(index, assertion)| {
-                let judged = entry_of(EntryOwner::Assertion(index)).zip(self.ticks);
-                let (series, verdict) = match judged {
-                    Some((entry, span)) => {
-                        let windowed = Windowed::new(
-                            entry,
-                            &assertion.window,
-                            place_in(&assertion.window, span),
-                            span,
-                        );
-                        (
-                            windowed.summary(&assertion.reduce),
-                            judge(assertion, entry.state, &windowed),
+            .flat_map(|(index, assertion)| {
+                each_or_unread(EntryOwner::Assertion(index))
+                    .into_iter()
+                    .map(|entry| {
+                        let (series, verdict) = match entry.zip(self.ticks) {
+                            Some((entry, span)) => {
+                                let windowed = Windowed::new(
+                                    entry,
+                                    &assertion.window,
+                                    place_in(&assertion.window, span),
+                                    span,
+                                );
+                                (
+                                    windowed.summary(&assertion.reduce),
+                                    judge(assertion, entry.state, &windowed),
+                                )
+                            }
+                            None => (unread(), Verdict::Unjudged { actual: None }),
+                        };
+                        AssertionReportEntry::new(
+                            assertion.name.to_string(),
+                            assertion.target.clone(),
+                            entry.and_then(|entry| instance(entry.key)),
+                            assertion.window.clone(),
+                            assertion.reduce.clone(),
+                            assertion.condition.clone(),
+                            series,
+                            verdict,
                         )
-                    }
-                    None => (unread(), Verdict::Unjudged { actual: None }),
-                };
-                AssertionReportEntry::new(
-                    assertion.name.to_string(),
-                    assertion.target.as_str().to_string(),
-                    assertion.window.clone(),
-                    assertion.reduce.clone(),
-                    assertion.condition.clone(),
-                    series,
-                    verdict,
-                )
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
 
@@ -151,23 +168,30 @@ impl Runner {
             .measures()
             .iter()
             .enumerate()
-            .map(|(index, measure)| {
-                let judged = entry_of(EntryOwner::Measure(index));
-                if let Some(rejection) = judged.and_then(|entry| entry.state.rejection()) {
-                    recording.push(format!(
-                        "measure '{}' on '{}': value rejected: {rejection}",
-                        measure.name, measure.target
-                    ));
-                }
-                let windowed = judged.zip(self.ticks).map(|(entry, span)| {
-                    Windowed::new(
-                        entry,
-                        &measure.window,
-                        place_in(&measure.window, span),
-                        span,
-                    )
-                });
-                report_measure(measure, judged, windowed.as_ref())
+            .flat_map(|(index, measure)| {
+                each_or_unread(EntryOwner::Measure(index))
+                    .into_iter()
+                    .map(|judged| {
+                        if let Some(entry) = judged {
+                            if let Some(rejection) = entry.state.rejection() {
+                                recording.push(format!(
+                                    "measure '{}' on '{}': value rejected: {rejection}",
+                                    measure.name,
+                                    spelled(entry.key)
+                                ));
+                            }
+                        }
+                        let windowed = judged.zip(self.ticks).map(|(entry, span)| {
+                            Windowed::new(
+                                entry,
+                                &measure.window,
+                                place_in(&measure.window, span),
+                                span,
+                            )
+                        });
+                        report_measure(measure, judged, windowed.as_ref())
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect();
 
@@ -235,7 +259,7 @@ struct Windowed {
 
 impl Windowed {
     fn new(
-        entry: &EntryView<'_, &AssertionState>,
+        entry: &EntryView<'_, '_, &AssertionState>,
         window: &Window,
         placement: Placement,
         span: TickSpan,
@@ -374,7 +398,7 @@ fn judge(assertion: &Assertion, state: &AssertionState, windowed: &Windowed) -> 
 /// window.
 fn report_measure(
     measure: &Measure,
-    judged: Option<&EntryView<'_, &AssertionState>>,
+    judged: Option<&EntryView<'_, '_, &AssertionState>>,
     windowed: Option<&Windowed>,
 ) -> MeasureReportEntry {
     let rejected = judged.and_then(|entry| entry.state.rejection()).is_some();
@@ -397,7 +421,8 @@ fn report_measure(
     };
     MeasureReportEntry::new(
         measure.name.to_string(),
-        measure.target.as_str().to_string(),
+        measure.target.clone(),
+        judged.and_then(|entry| instance(entry.key)),
         measure.window.clone(),
         measure.reduce.clone(),
         windowed.is_some_and(Windowed::covered),
@@ -406,6 +431,20 @@ fn report_measure(
             windowed.summary(&Some(measure.reduce.clone()))
         }),
     )
+}
+
+/// The instance `key` records, spelled for the report; `None` on a series
+/// that isn't one instance of a keyed channel.
+fn instance(key: &RecordedKey) -> Option<String> {
+    instance_of(&key.subject).map(str::to_owned)
+}
+
+/// `key`'s path, with its instance where it has one.
+fn spelled(key: &RecordedKey) -> String {
+    match instance(key) {
+        Some(instance) => format!("{}[instance={instance}]", key.path()),
+        None => key.path(),
+    }
 }
 
 /// The summary of an entry the run never read: not set up, set up against
@@ -437,9 +476,10 @@ mod tests {
         report::{AssertionStatus, ReportStatus},
         runner::{
             fixtures::{
-                at, cont, measure, pipeline, ready, reduced_below, refused_write, report,
-                report_speed, report_unbound, report_unreadable, run, run_measuring, speed_target,
-                speed_term, target, term, windowed, CAR, TRUCK,
+                at, cont, each_wheel, leaf_key, measure, pipeline, ready, reduced_below,
+                refused_write, report, report_speed, report_unbound, report_unreadable,
+                report_wheel, run, run_measuring, speed_target, speed_term, target, term, windowed,
+                CAR, TRUCK,
             },
             TickAction,
         },
@@ -489,10 +529,11 @@ mod tests {
         }
     }
 
-    /// The stop for the assertion named `first` failing.
+    /// The stop for the assertion named `first` failing on the car's leaf.
     fn failed_first() -> TerminationReason {
         TerminationReason::AssertionFailed {
             name: EntryName::parse("first").expect("valid name"),
+            key: leaf_key(CAR),
         }
     }
 
@@ -1257,5 +1298,77 @@ mod tests {
         let report = finalize(&r, &collector);
 
         assert_eq!(report.assertions()[0].series().final_age_secs, Some(2.0));
+    }
+
+    /// The instance each entry of `entries` judged, with its status.
+    fn by_instance(report: &Report) -> Vec<(Option<&str>, AssertionStatus)> {
+        report
+            .assertions()
+            .iter()
+            .map(|entry| (entry.instance(), entry.status()))
+            .collect()
+    }
+
+    #[test]
+    fn each_instance_is_judged_and_reported_apart() {
+        let each = format!(
+            "name = \"slow\"\ntarget = {}\ncondition = {{ less_than = 5.0 }}",
+            each_wheel(CAR)
+        );
+        let count = format!(
+            "name = \"updates\"\ntarget = {}\nreduce = \"count\"",
+            each_wheel(CAR)
+        );
+        let (mut r, mut collector) = ready(
+            run_measuring(&budget(), &[&each, &cont("first", CAR, 5.0)], &[&count]),
+            &[CAR],
+        );
+        report(&mut collector, CAR, 0.5, 5.0);
+        report_wheel(&mut collector, CAR, "front", 0.5, 1.0);
+        report_wheel(&mut collector, CAR, "front", 1.0, 2.0);
+        report_wheel(&mut collector, CAR, "rear", 0.5, 9.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        // In run-file order, each instance in the catalog's order.
+        assert_eq!(
+            by_instance(&report),
+            [
+                (Some("front"), AssertionStatus::Passed),
+                (Some("rear"), AssertionStatus::Failed),
+                (None, AssertionStatus::Passed),
+            ]
+        );
+        assert!(report.assertions()[..2]
+            .iter()
+            .all(|entry| entry.name() == "slow"));
+        let counts: Vec<(Option<&str>, Option<&AssertionValue>)> = report
+            .measures()
+            .iter()
+            .map(|entry| (entry.instance(), entry.value()))
+            .collect();
+        assert_eq!(
+            counts,
+            [
+                (Some("front"), Some(&AssertionValue::Int(2))),
+                (Some("rear"), Some(&AssertionValue::Int(1))),
+            ]
+        );
+        assert_eq!(report.status(), &ReportStatus::Failed);
+    }
+
+    #[test]
+    fn an_assertion_on_each_instance_in_a_run_never_set_up_has_one_line() {
+        let each = format!(
+            "name = \"slow\"\ntarget = {}\ncondition = {{ less_than = 5.0 }}",
+            each_wheel(CAR)
+        );
+        let r = Runner::new(run(&budget(), &[&each])).expect("valid run");
+        let collector = r.collector();
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(by_instance(&report), [(None, AssertionStatus::Unjudged)]);
     }
 }

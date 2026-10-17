@@ -8,7 +8,7 @@
 
 use crate::assertion::{
     extract::{ExtractError, ExtractorTable},
-    AssertionTarget, AssertionValue,
+    AssertionTarget, AssertionValue, ValueKind,
 };
 
 use helios_core::prelude::MonotonicTime;
@@ -37,11 +37,13 @@ static NEXT_COLLECTOR: AtomicU64 = AtomicU64::new(0);
 /// on its whole key (agent, channel, payload type and instance). Every
 /// instance of a keyed channel has a series of its own.
 ///
-/// An arrival under a requested path but no bound key is dropped and
-/// counted. Setup binds every key a judged assertion names, so in a run that
-/// can judge, one means the pipeline recorded under a key its catalog never
-/// declared, or delivered before setup bound it; the run fails on it rather
-/// than judging a series that silently missed values.
+/// An arrival a requested selector covers but no bound key matches is
+/// dropped and counted. Setup binds every key a judged assertion names, so
+/// in a run that can judge, one means the pipeline recorded under a key its
+/// catalog never declared, or delivered before setup bound it; the run fails
+/// on it rather than judging a series that silently missed values. A
+/// selector naming one instance covers only that one: a sibling instance on
+/// the same path is no value its series missed.
 ///
 /// A value is extracted the moment it arrives and the observation is then
 /// dropped, so a channel carrying a large payload costs what a scalar does:
@@ -50,17 +52,17 @@ pub struct ObservationCollector {
     /// Stamped into every [`SeriesId`] this collector hands out, so an id is
     /// never read against another run's collector.
     id: CollectorId,
-    /// The paths the host is asked to record, one per target.
-    requested: HashSet<String>,
+    /// The selectors it was built for. The host is asked for their paths.
+    requested: HashSet<AssertionTarget>,
     /// Each bound key's index into `series`.
     by_key: HashMap<RecordedKey, usize>,
     series: Vec<Series>,
-    /// How many values arrived under each key no series is bound to whose
-    /// path is requested.
+    /// How many values arrived under each key no series is bound to that a
+    /// requested selector covers.
     unbound: HashMap<RecordedKey, u64>,
-    /// Keys under a path no target requests: what another sink asked for,
-    /// which every sink is handed. Held so each key's path is spelled once,
-    /// not on every arrival.
+    /// Keys no requested selector covers: what another sink asked for,
+    /// which every sink is handed, or a sibling of a selected instance.
+    /// Held so each key's path is spelled once, not on every arrival.
     unrequested: HashSet<RecordedKey>,
     extractors: ExtractorTable,
 }
@@ -74,10 +76,7 @@ impl ObservationCollector {
     ) -> Self {
         Self {
             id: CollectorId(NEXT_COLLECTOR.fetch_add(1, Ordering::Relaxed)),
-            requested: targets
-                .into_iter()
-                .map(|target| target.as_str().to_owned())
-                .collect(),
+            requested: targets.into_iter().cloned().collect(),
             by_key: HashMap::new(),
             series: Vec::new(),
             unbound: HashMap::new(),
@@ -86,9 +85,9 @@ impl ObservationCollector {
         }
     }
 
-    /// Whether the host is asked to record `target`'s path.
+    /// Whether the collector was built for `target`.
     pub fn requests(&self, target: &AssertionTarget) -> bool {
-        self.requested.contains(target.as_str())
+        self.requested.contains(target)
     }
 
     /// The series bound to `key`. `None` when `key` was never bound.
@@ -107,8 +106,8 @@ impl ObservationCollector {
         self.series.get(id.index)
     }
 
-    /// Each key a value arrived under with its path requested but no series
-    /// bound to it, with how many arrived, in path order. Empty when every
+    /// Each key a value arrived under that a requested selector covers but
+    /// no series is bound to, with how many arrived, in path order. Empty when every
     /// requested value landed in a series.
     pub fn unbound_arrivals(&self) -> Vec<UnboundArrivals> {
         let mut unbound: Vec<UnboundArrivals> = self
@@ -123,10 +122,10 @@ impl ObservationCollector {
         unbound
     }
 
-    /// Whether a channel value whose payload is of type `payload` can be
-    /// turned into an [`AssertionValue`].
-    pub fn can_extract(&self, payload: TypeId) -> bool {
-        self.extractors.handles(payload)
+    /// The kind of [`AssertionValue`] a channel value whose payload is of
+    /// type `payload` turns into, or `None` when it can't be turned into one.
+    pub fn extracted_kind(&self, payload: TypeId) -> Option<ValueKind> {
+        self.extractors.kind_of(payload)
     }
 
     /// The series values recorded under `key` arrive in, given an empty one
@@ -143,8 +142,8 @@ impl ObservationCollector {
         self.id_at(index)
     }
 
-    /// Counts a value that arrived under `key`, bound to no series, when
-    /// its path is requested.
+    /// Counts a value that arrived under `key`, bound to no series, when a
+    /// requested selector covers it.
     fn count_unbound(&mut self, key: &RecordedKey) {
         if let Some(count) = self.unbound.get_mut(key) {
             *count += 1;
@@ -153,7 +152,13 @@ impl ObservationCollector {
         if self.unrequested.contains(key) {
             return;
         }
-        if self.requested.contains(&key.path()) {
+        let path = key.path();
+        let instance = instance_of(&key.subject);
+        let covered = self
+            .requested
+            .iter()
+            .any(|target| target.path() == path && target.covers(instance));
+        if covered {
             self.unbound.insert(key.clone(), 1);
         } else {
             self.unrequested.insert(key.clone());
@@ -172,7 +177,12 @@ impl ObservationSink for ObservationCollector {
     /// Paths, so a channel path watches every instance; [`bind`]
     /// (Self::bind) decides which of them are kept.
     fn request(&self) -> WatchRequest {
-        WatchRequest::Paths(self.requested.iter().cloned().collect())
+        WatchRequest::Paths(
+            self.requested
+                .iter()
+                .map(|target| target.path().to_owned())
+                .collect(),
+        )
     }
 
     fn receive(&mut self, batch: &[Observation]) {
@@ -195,6 +205,18 @@ impl ObservationSink for ObservationCollector {
                 }
             }
         }
+    }
+}
+
+/// The spelling of the instance `subject` records: `None` for an emission or
+/// a channel that isn't keyed.
+pub fn instance_of(subject: &Subject) -> Option<&str> {
+    match subject {
+        Subject::Channel {
+            instance: Some(instance),
+            ..
+        } => Some(instance.as_str()),
+        Subject::Channel { instance: None, .. } | Subject::Emission { .. } => None,
     }
 }
 
@@ -295,7 +317,7 @@ pub enum Rejection {
 mod tests {
     use super::*;
 
-    use crate::assertion::extract::standard_extractors;
+    use crate::assertion::{extract::standard_extractors, InstanceSelector};
 
     use helios_core::prelude::AgentId;
     use helios_runtime::{
@@ -416,7 +438,7 @@ mod tests {
         assert_eq!(
             collector.request(),
             WatchRequest::Paths(
-                [nis.as_str().to_owned(), speed.as_str().to_owned()]
+                [nis.path().to_owned(), speed.path().to_owned()]
                     .into_iter()
                     .collect()
             )
@@ -565,6 +587,31 @@ mod tests {
             vec![UnboundArrivals {
                 key: rear,
                 count: 2
+            }]
+        );
+    }
+
+    #[test]
+    fn a_selector_naming_one_instance_does_not_count_its_siblings() {
+        // Front is selected and bound; rear is a sibling no selector covers.
+        // Another selector with no instance would cover it.
+        let front = key(CAR, wheel("front"));
+        let rear = key(CAR, wheel("rear"));
+        let front_only =
+            channel_target(CAR, &wheels()).with_instance(InstanceSelector::One("front".into()));
+        let mut selected = collector(std::slice::from_ref(&front_only));
+        selected.bind(front.clone());
+        selected.receive(&[arrival(&rear, 1.0, ObservedValue::Scalar(2.0))]);
+        assert_eq!(selected.unbound_arrivals(), vec![]);
+
+        let mut with_whole = collector(&[front_only, channel_target(CAR, &wheels())]);
+        with_whole.bind(front);
+        with_whole.receive(&[arrival(&rear, 1.0, ObservedValue::Scalar(2.0))]);
+        assert_eq!(
+            with_whole.unbound_arrivals(),
+            vec![UnboundArrivals {
+                key: rear,
+                count: 1
             }]
         );
     }

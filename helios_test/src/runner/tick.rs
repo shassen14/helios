@@ -12,6 +12,7 @@ use crate::{
 use super::{termination_check, Phase, Runner, TickSpan, FOREIGN_COLLECTOR, NEVER_SET_UP};
 
 use helios_core::prelude::MonotonicTime;
+use helios_runtime::observe::key::RecordedKey;
 
 impl Runner {
     /// Advance the run by one observation at simulated time `t`, judging each
@@ -62,9 +63,10 @@ impl Runner {
         // two borrows coexist. Every entry is visited rather than stopping at
         // the first failure, so each reaches this tick's samples.
         let assertions = self.run.assertions();
-        let mut first_failed: Option<&EntryName> = None;
+        let mut first_failed: Option<(&EntryName, &RecordedKey)> = None;
         for EntryView {
             owner,
+            key,
             held,
             series,
             state,
@@ -87,7 +89,7 @@ impl Runner {
             check_new(&assertion.condition, &window, held, state, series, t);
             if first_failed.is_none() && matches!(state.status(), ContinuousStatus::FailedAt { .. })
             {
-                first_failed = Some(&assertion.name);
+                first_failed = Some((&assertion.name, key));
             }
         }
 
@@ -160,8 +162,9 @@ mod tests {
     use crate::{
         assertion::AssertionValue,
         runner::fixtures::{
-            at, cont, measure, ready, report, report_speed, run, run_measuring, speed_target,
-            states, target, term, windowed, CAR, TRUCK,
+            at, cont, each_wheel, leaf_key, measure, ready, report, report_speed, report_wheel,
+            run, run_measuring, speed_key, speed_target, states, target, term, wheel_key, windowed,
+            CAR, TRUCK,
         },
     };
 
@@ -169,10 +172,11 @@ mod tests {
 
     const FAIL_FAST: &str = "max_simulated_seconds = 10.0, fail_fast = true";
 
-    /// The stop for the assertion named `name` failing.
-    fn failed(name: &str) -> TerminationReason {
+    /// The stop for the assertion named `name` failing on its series `key`.
+    fn failed(name: &str, key: RecordedKey) -> TerminationReason {
         TerminationReason::AssertionFailed {
             name: EntryName::parse(name).expect("valid name"),
+            key,
         }
     }
 
@@ -255,7 +259,7 @@ mod tests {
         assert_eq!(
             r.tick(at(2.0), &collector),
             TickAction::Terminate {
-                reason: failed("a"),
+                reason: failed("a", leaf_key(CAR)),
             }
         );
         assert_eq!(
@@ -280,7 +284,7 @@ mod tests {
         assert_eq!(
             r.tick(at(1.0), &collector),
             TickAction::Terminate {
-                reason: failed("a"),
+                reason: failed("a", leaf_key(CAR)),
             }
         );
         assert!(matches!(
@@ -301,7 +305,7 @@ mod tests {
         assert_eq!(
             r.tick(at(1.0), &collector),
             TickAction::Terminate {
-                reason: failed("b"),
+                reason: failed("b", leaf_key(CAR)),
             }
         );
     }
@@ -439,7 +443,7 @@ mod tests {
         assert_eq!(
             r.tick(at(2.0), &collector),
             TickAction::Terminate {
-                reason: failed("a"),
+                reason: failed("a", leaf_key(CAR)),
             }
         );
     }
@@ -456,7 +460,7 @@ mod tests {
         assert_eq!(
             r.tick(at(2.0), &collector),
             TickAction::Terminate {
-                reason: failed("a"),
+                reason: failed("a", speed_key(CAR)),
             }
         );
         assert_eq!(
@@ -497,5 +501,25 @@ mod tests {
                 .samples(),
             Phase::AwaitingPipelines | Phase::Aborted => &[],
         }
+    }
+
+    #[test]
+    fn a_fail_fast_stop_names_the_instance_that_failed() {
+        let each = format!(
+            "name = \"slow\"\ntarget = {}\ncondition = {{ less_than = 5.0 }}",
+            each_wheel(CAR)
+        );
+        let (mut r, mut collector) = ready(run(FAIL_FAST, &[&each]), &[CAR]);
+        assert_eq!(r.tick(at(0.0), &collector), TickAction::Continue);
+        report_wheel(&mut collector, CAR, "front", 0.5, 1.0);
+        assert_eq!(r.tick(at(1.0), &collector), TickAction::Continue);
+
+        report_wheel(&mut collector, CAR, "rear", 1.5, 9.0);
+        assert_eq!(
+            r.tick(at(2.0), &collector),
+            TickAction::Terminate {
+                reason: failed("slow", wheel_key(CAR, "rear")),
+            }
+        );
     }
 }

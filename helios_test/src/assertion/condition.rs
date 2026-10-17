@@ -19,12 +19,12 @@ impl AssertionValue {
     // The type gate for equality: `equals` / `not_equals` compare `kind()`
     // before comparing values, so `Int(5)` vs `Float(5.0)` is a `TypeMismatch`
     // error, never a silent coercion.
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> ValueKind {
         match self {
-            AssertionValue::Bool(_) => "bool",
-            AssertionValue::Int(_) => "int",
-            AssertionValue::Float(_) => "float",
-            AssertionValue::String(_) => "string",
+            AssertionValue::Bool(_) => ValueKind::Bool,
+            AssertionValue::Int(_) => ValueKind::Int,
+            AssertionValue::Float(_) => ValueKind::Float,
+            AssertionValue::String(_) => ValueKind::String,
         }
     }
 
@@ -37,6 +37,36 @@ impl AssertionValue {
             AssertionValue::Float(x) => Some(*x),
             AssertionValue::Bool(_) | AssertionValue::String(_) => None,
         }
+    }
+}
+
+/// _Shared (pre + per)._ Which variant of [`AssertionValue`] a series holds.
+/// Known at setup for every series (an extractor's from its return type, an
+/// emission's as a float), so a condition or reducer that can't apply to it
+/// is refused before the first tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueKind {
+    Bool,
+    Int,
+    Float,
+    String,
+}
+
+impl ValueKind {
+    /// Whether an ordering, a range or a number reducer reads it.
+    pub fn is_number(self) -> bool {
+        matches!(self, ValueKind::Int | ValueKind::Float)
+    }
+}
+
+impl std::fmt::Display for ValueKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ValueKind::Bool => "bool",
+            ValueKind::Int => "int",
+            ValueKind::Float => "float",
+            ValueKind::String => "string",
+        })
     }
 }
 
@@ -96,6 +126,39 @@ impl Condition {
         }
     }
 
+    /// Why the condition can never judge a value of kind `judged`, the
+    /// series' kind or its reducer's, if it can't: checked at setup, so
+    /// what `apply` would fail on every sample stops the run before it
+    /// starts. Equality needs an operand of the judged kind and refuses a
+    /// float, which is exact float equality; an ordering or a range needs a
+    /// number.
+    pub fn check_kind(&self, judged: ValueKind) -> Result<(), KindProblem> {
+        let condition = self.verb();
+        match self {
+            Condition::Equals(_) | Condition::NotEquals(_) if judged == ValueKind::Float => {
+                Err(KindProblem::FloatEquality { condition })
+            }
+            Condition::Equals(operand) | Condition::NotEquals(operand)
+                if operand.kind() != judged =>
+            {
+                Err(KindProblem::Mismatch {
+                    condition,
+                    judged,
+                    operand: operand.kind(),
+                })
+            }
+            Condition::Equals(_) | Condition::NotEquals(_) => Ok(()),
+            Condition::LessThan(_) | Condition::GreaterThan(_) | Condition::WithinRange(_)
+                if !judged.is_number() =>
+            {
+                Err(KindProblem::NotANumber { condition, judged })
+            }
+            Condition::LessThan(_) | Condition::GreaterThan(_) | Condition::WithinRange(_) => {
+                Ok(())
+            }
+        }
+    }
+
     /// Whether `actual` meets the condition. `Err` when the comparison can't
     /// be made: values of different kinds under equality, or a value that
     /// isn't a number under an ordering. A NaN reading fails every ordering
@@ -147,6 +210,25 @@ pub enum OperandProblem {
     FloatEquality,
 }
 
+/// _Pre-step._ Why a condition can never judge a series' values, found at
+/// setup from the kind they have.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum KindProblem {
+    #[error("{condition} compares values of kind {judged} with an operand of kind {operand}")]
+    Mismatch {
+        condition: &'static str,
+        judged: ValueKind,
+        operand: ValueKind,
+    },
+    #[error("{condition} needs a number, not a value of kind {judged}")]
+    NotANumber {
+        condition: &'static str,
+        judged: ValueKind,
+    },
+    #[error("{condition} on a float compares for exact equality (use within_range)")]
+    FloatEquality { condition: &'static str },
+}
+
 /// _Per-step._ A comparison that couldn't be carried out, produced during evaluation.
 // Two distinct author errors: comparing different types (`TypeMismatch`) vs
 // applying a condition a type can't support, e.g. `LessThan` on a bool
@@ -155,13 +237,13 @@ pub enum OperandProblem {
 pub enum ConditionError {
     #[error("type mismatch: expected {expected_kind}, got {actual_kind}")]
     TypeMismatch {
-        expected_kind: &'static str,
-        actual_kind: &'static str,
+        expected_kind: ValueKind,
+        actual_kind: ValueKind,
     },
     #[error("condition {condition} not applicable to {value_kind}")]
     NotComparable {
         condition: &'static str,
-        value_kind: &'static str,
+        value_kind: ValueKind,
     },
 }
 
@@ -283,6 +365,51 @@ mod tests {
         ] {
             assert_eq!(condition.check_operand(), Ok(()), "{condition:?}");
         }
+    }
+
+    #[test]
+    fn a_condition_that_fits_the_judged_kind_passes_the_kind_check() {
+        for (condition, judged) in [
+            (Condition::Equals(AssertionValue::Int(0)), ValueKind::Int),
+            (
+                Condition::NotEquals(AssertionValue::Bool(true)),
+                ValueKind::Bool,
+            ),
+            (
+                Condition::Equals(AssertionValue::String("idle".into())),
+                ValueKind::String,
+            ),
+            (Condition::LessThan(1.0), ValueKind::Float),
+            (Condition::GreaterThan(1.0), ValueKind::Int),
+            (Condition::WithinRange([0.0, 1.0]), ValueKind::Float),
+        ] {
+            assert_eq!(condition.check_kind(judged), Ok(()), "{condition:?}");
+        }
+    }
+
+    #[test]
+    fn a_condition_that_can_never_judge_the_kind_is_found() {
+        assert_eq!(
+            Condition::Equals(AssertionValue::Int(1)).check_kind(ValueKind::Float),
+            Err(KindProblem::FloatEquality {
+                condition: "equals"
+            })
+        );
+        assert_eq!(
+            Condition::NotEquals(AssertionValue::String("x".into())).check_kind(ValueKind::Int),
+            Err(KindProblem::Mismatch {
+                condition: "not_equals",
+                judged: ValueKind::Int,
+                operand: ValueKind::String,
+            })
+        );
+        assert_eq!(
+            Condition::WithinRange([0.0, 1.0]).check_kind(ValueKind::Bool),
+            Err(KindProblem::NotANumber {
+                condition: "within_range",
+                judged: ValueKind::Bool,
+            })
+        );
     }
 
     #[test]

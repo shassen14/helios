@@ -70,7 +70,7 @@ fn render(report: &Report) -> String {
         // The left half: "[assert] <name>: [<reducer> of ]<target> <condition>".
         let head = format!(
             "[assert] {}: {}{} {}",
-            entry.name,
+            entry_name(&entry.name, entry.instance()),
             reduced_of(entry.reduce.as_ref()),
             entry.target,
             condition_phrase(&entry.condition),
@@ -110,7 +110,7 @@ fn render(report: &Report) -> String {
         };
         let mut line = format!(
             "[measure] {}: {} of {} = {value} [{}]",
-            entry.name,
+            entry_name(&entry.name, entry.instance()),
             reducer_phrase(&entry.reduce),
             entry.target,
             series_phrase(entry.series()),
@@ -146,10 +146,20 @@ fn termination_line(report: &Report) -> String {
     match &report.terminated_by {
         TerminatedBy::Aborted => "aborted during setup, before the first tick".to_string(),
         TerminatedBy::TimeBudget => format!("time budget reached at {at}"),
-        TerminatedBy::AssertionFailed { name } => format!(
-            "assertion '{name}' {} at {at}",
+        TerminatedBy::AssertionFailed { name, instance, .. } => format!(
+            "assertion '{}' {} at {at}",
+            entry_name(name, instance.as_deref()),
             status_label(&AssertionStatus::Failed)
         ),
+    }
+}
+
+/// An entry's name, with the instance it judged where it judged one:
+/// `edges[instance=base_link]`.
+fn entry_name(name: &str, instance: Option<&str>) -> String {
+    match instance {
+        Some(instance) => format!("{name}[instance={instance}]"),
+        None => name.to_string(),
     }
 }
 
@@ -266,7 +276,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        assertion::Window,
+        assertion::{AssertionTarget, Window},
         report::{AssertionReportEntry, MeasureReportEntry},
     };
 
@@ -283,7 +293,8 @@ mod tests {
     fn passing_state() -> AssertionReportEntry {
         AssertionReportEntry::new(
             "mission_succeeded".to_string(),
-            "agent.car.node.mission.state".to_string(),
+            AssertionTarget::parse("agent.car.node.mission.state").expect("valid target"),
+            None,
             Window::default(),
             Some(Reducer::Final),
             Condition::Equals(AssertionValue::String("Succeeded".to_string())),
@@ -300,7 +311,8 @@ mod tests {
     fn failing_speed(verdict: Verdict) -> AssertionReportEntry {
         AssertionReportEntry::new(
             "speed_capped".to_string(),
-            "agent.car.node.estimator.speed".to_string(),
+            AssertionTarget::parse("agent.car.node.estimator.speed").expect("valid target"),
+            None,
             Window::default(),
             None,
             Condition::LessThan(5.0),
@@ -399,9 +411,33 @@ mod tests {
         let mut report = sample_report();
         report.terminated_by = TerminatedBy::AssertionFailed {
             name: "speed_capped".to_string(),
+            path: "agent.car.node.estimator.speed".to_string(),
+            instance: None,
         };
         assert!(render(&report)
             .contains("[run] terminated: assertion 'speed_capped' FAILED at t=47.3s"));
+    }
+
+    #[test]
+    fn an_entry_on_one_instance_is_named_with_it() {
+        let mut report = sample_report();
+        report.assertions[1].instance = Some("rear".to_string());
+        report.terminated_by = TerminatedBy::AssertionFailed {
+            name: "speed_capped".to_string(),
+            path: "agent.car.channel.wheels".to_string(),
+            instance: Some("rear".to_string()),
+        };
+
+        let text = render(&report);
+
+        assert!(
+            text.contains("[assert] speed_capped[instance=rear]: "),
+            "{text}"
+        );
+        assert!(
+            text.contains("assertion 'speed_capped[instance=rear]' FAILED"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -424,7 +460,8 @@ mod tests {
         report.measures = vec![
             MeasureReportEntry::new(
                 "goal_distance".to_string(),
-                "agent.car.node.eval.goal_distance".to_string(),
+                AssertionTarget::parse("agent.car.node.eval.goal_distance").expect("valid target"),
+                None,
                 Window::default(),
                 Reducer::Final,
                 true,
@@ -433,7 +470,8 @@ mod tests {
             ),
             MeasureReportEntry::new(
                 "peak_speed".to_string(),
-                "agent.car.node.estimator.speed".to_string(),
+                AssertionTarget::parse("agent.car.node.estimator.speed").expect("valid target"),
+                None,
                 Window::default(),
                 Reducer::Max,
                 false,

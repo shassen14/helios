@@ -3,7 +3,8 @@ pub mod console;
 pub mod toml_writer;
 
 use crate::{
-    assertion::{AssertionResult, AssertionValue, Condition, FailureKind, Window},
+    assertion::{AssertionResult, AssertionTarget, AssertionValue, Condition, FailureKind, Window},
+    collector::instance_of,
     run::termination::TerminationReason,
     statistics::within_run::Reducer,
 };
@@ -179,8 +180,13 @@ pub enum TerminatedBy {
     /// The simulated-time budget elapsed.
     TimeBudget,
     /// An every-sample assertion failed in a `fail_fast` run; `name` is
-    /// the assertion's.
-    AssertionFailed { name: String },
+    /// the assertion's, `path` and `instance` the series that failed it.
+    AssertionFailed {
+        name: String,
+        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        instance: Option<String>,
+    },
 }
 
 /// Project the per-step stop reason into the report's stable vocabulary.
@@ -190,8 +196,10 @@ impl From<&TerminationReason> for TerminatedBy {
         match value {
             TerminationReason::Aborted => TerminatedBy::Aborted,
             TerminationReason::MaxSimulatedSeconds => TerminatedBy::TimeBudget,
-            TerminationReason::AssertionFailed { name } => TerminatedBy::AssertionFailed {
+            TerminationReason::AssertionFailed { name, key } => TerminatedBy::AssertionFailed {
                 name: name.to_string(),
+                path: key.path(),
+                instance: instance_of(&key.subject).map(str::to_owned),
             },
         }
     }
@@ -204,7 +212,13 @@ impl From<&TerminationReason> for TerminatedBy {
 #[derive(Debug, Clone, Serialize)]
 pub struct AssertionReportEntry {
     name: String,
-    target: String,
+    /// The selector as the run file wrote it.
+    target: AssertionTarget,
+    /// The instance this entry judged, on a keyed channel; one entry per
+    /// instance under `instance = "*"`. So an entry is identified by its
+    /// name and instance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance: Option<String>,
     /// As the run file wrote it; absent on one over the whole run. Where it
     /// fell in this run is the series summary's `window_secs`.
     #[serde(skip_serializing_if = "Window::is_whole_run")]
@@ -225,9 +239,11 @@ pub struct AssertionReportEntry {
 impl AssertionReportEntry {
     /// Build one report line. The caller supplies an already-projected
     /// verdict; this type never sees the live evaluator types.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
-        target: String,
+        target: AssertionTarget,
+        instance: Option<String>,
         window: Window,
         reduce: Option<Reducer>,
         condition: Condition,
@@ -237,6 +253,7 @@ impl AssertionReportEntry {
         Self {
             name,
             target,
+            instance,
             window,
             reduce,
             condition,
@@ -247,6 +264,11 @@ impl AssertionReportEntry {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The instance judged, on a keyed channel.
+    pub fn instance(&self) -> Option<&str> {
+        self.instance.as_deref()
     }
 
     /// What the judged series held.
@@ -270,7 +292,11 @@ impl AssertionReportEntry {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MeasureReportEntry {
     name: String,
-    target: String,
+    /// As on [`AssertionReportEntry`].
+    target: AssertionTarget,
+    /// As on [`AssertionReportEntry`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance: Option<String>,
     /// As on [`AssertionReportEntry`].
     #[serde(skip_serializing_if = "Window::is_whole_run")]
     window: Window,
@@ -293,9 +319,11 @@ impl MeasureReportEntry {
     /// Build one measure line. A `value` and a `reason` are exclusive: a
     /// measure has a value, a reason it has none, or, as `None`, neither,
     /// when the run never read it or never placed its window.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
-        target: String,
+        target: AssertionTarget,
+        instance: Option<String>,
         window: Window,
         reduce: Reducer,
         covered: bool,
@@ -310,6 +338,7 @@ impl MeasureReportEntry {
         Self {
             name,
             target,
+            instance,
             window,
             reduce,
             covered,
@@ -325,6 +354,11 @@ impl MeasureReportEntry {
 
     pub fn covered(&self) -> bool {
         self.covered
+    }
+
+    /// As [`AssertionReportEntry::instance`].
+    pub fn instance(&self) -> Option<&str> {
+        self.instance.as_deref()
     }
 
     /// The measured value, if the reducer had one.

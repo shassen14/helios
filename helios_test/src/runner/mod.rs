@@ -13,7 +13,7 @@ pub use finalize::HostFacts;
 pub use tick::TickAction;
 
 use crate::{
-    assertion::extract::standard_extractors,
+    assertion::extract::{standard_extractors, ExtractorTable},
     collector::ObservationCollector,
     run::{
         validation::{self, ValidationError},
@@ -72,6 +72,12 @@ impl Runner {
     /// `after`. A host builds it here, beside the runner, so the two always
     /// describe the same run.
     pub fn collector(&self) -> ObservationCollector {
+        self.collector_reading(standard_extractors())
+    }
+
+    /// As [`collector`](Self::collector), reading channel values through
+    /// `extractors`.
+    fn collector_reading(&self, extractors: ExtractorTable) -> ObservationCollector {
         let assertions = self
             .run
             .assertions()
@@ -85,7 +91,7 @@ impl Runner {
         let requested = assertions
             .chain(measures)
             .flat_map(|(target, window)| iter::once(target).chain(window.anchors()));
-        ObservationCollector::new(requested, standard_extractors())
+        ObservationCollector::new(requested, extractors)
     }
 
     /// Record that the run is unfit to produce a meaningful result, and why.

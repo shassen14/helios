@@ -1,27 +1,44 @@
 use helios_core::prelude::AgentId;
 use helios_runtime::observe::path::{AgentPathParts, PathPart, PathSubject, SUBJECT_WORDS};
 
-use serde::Deserialize;
+use serde::{
+    de::{self, value::MapAccessDeserializer, MapAccess, Visitor},
+    ser::SerializeMap,
+    Deserialize, Deserializer, Serialize, Serializer,
+};
 use std::{fmt, sync::Arc};
 
-/// _Shared (pre + per)._ The watcher path an assertion watches, held whole
-/// and in its parts: `agent.<agent>.node.<node>.<leaf>` or
-/// `agent.<agent>.channel.<channel>`.
+/// The keys of a selector's table form.
+const PATH_KEY: &str = "path";
+const INSTANCE_KEY: &str = "instance";
+
+/// How a selector asks for every instance of a keyed channel.
+const EACH_INSTANCE: &str = "*";
+
+/// _Shared (pre + per + post)._ A selector: the watcher path a series is
+/// recorded under, held whole and in its parts
+/// (`agent.<agent>.node.<node>.<leaf>` or `agent.<agent>.channel.<channel>`),
+/// and, on a keyed channel, which of its instances.
 ///
-/// Only a path that splits into its parts becomes a target, so a run file
+/// Written as the path alone, or as `{ path = "…", instance = "…" }`: an
+/// instance gets its own field because its spelling holds dots (a frame,
+/// `agent.car.base_link`) the path grammar can't. `instance = "*"` asks for
+/// every instance, each its own series.
+///
+/// Only a path that splits into its parts becomes a selector, so a run file
 /// naming anything else is refused when it is read, before a sim starts.
-/// Whether the agent reports what the path names is checked later, against
-/// the built pipelines.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
-#[serde(try_from = "String")]
+/// Whether the agent reports what the path names, and has the instance, is
+/// checked later, against the built pipelines.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AssertionTarget {
     path: String,
     agent: AgentId,
     subject: TargetSubject,
+    instance: Option<InstanceSelector>,
 }
 
 impl AssertionTarget {
-    /// The target `path` names, or why it names none.
+    /// The target `path` names, with no instance, or why it names none.
     pub fn parse(path: impl Into<String>) -> Result<Self, MalformedTarget> {
         let path = path.into();
         let parts = match AgentPathParts::split(&path) {
@@ -35,10 +52,21 @@ impl AssertionTarget {
             path,
             agent,
             subject,
+            instance: None,
         })
     }
 
-    pub fn as_str(&self) -> &str {
+    /// This selector narrowed to `instance`.
+    pub fn with_instance(self, instance: InstanceSelector) -> Self {
+        Self {
+            instance: Some(instance),
+            ..self
+        }
+    }
+
+    /// The watcher path, without the instance: what the host is asked to
+    /// record, since a channel path watches every instance.
+    pub fn path(&self) -> &str {
         &self.path
     }
 
@@ -48,6 +76,21 @@ impl AssertionTarget {
 
     pub fn subject(&self) -> &TargetSubject {
         &self.subject
+    }
+
+    /// Which instances of a keyed channel it selects. `None` when it names
+    /// none, which only a series with no instance or one alone satisfies.
+    pub fn instance(&self) -> Option<&InstanceSelector> {
+        self.instance.as_ref()
+    }
+
+    /// Whether a value recorded at `instance` under this selector's path is
+    /// one it selects.
+    pub fn covers(&self, instance: Option<&str>) -> bool {
+        match &self.instance {
+            None | Some(InstanceSelector::Each) => true,
+            Some(InstanceSelector::One(one)) => instance == Some(one.as_ref()),
+        }
     }
 }
 
@@ -59,9 +102,106 @@ impl TryFrom<String> for AssertionTarget {
     }
 }
 
+/// The path, then `[instance=…]` when it names one, so every message about
+/// it says which instance.
 impl fmt::Display for AssertionTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.path)
+        f.write_str(&self.path)?;
+        if let Some(instance) = &self.instance {
+            write!(f, "[{INSTANCE_KEY}={instance}]")?;
+        }
+        Ok(())
+    }
+}
+
+/// The path, or a table with `path` and an optional `instance`. By hand
+/// rather than `untagged`, so a malformed selector is refused with what a
+/// selector may be.
+impl<'de> Deserialize<'de> for AssertionTarget {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(TargetVisitor)
+    }
+}
+
+/// As it was written: the path alone, or the table when it names an
+/// instance.
+impl Serialize for AssertionTarget {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.instance {
+            None => serializer.serialize_str(&self.path),
+            Some(instance) => {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry(PATH_KEY, &self.path)?;
+                map.serialize_entry(INSTANCE_KEY, &instance.to_string())?;
+                map.end()
+            }
+        }
+    }
+}
+
+struct TargetVisitor;
+
+impl<'de> Visitor<'de> for TargetVisitor {
+    type Value = AssertionTarget;
+
+    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "a watcher path, or {{ {PATH_KEY} = \"<path>\", {INSTANCE_KEY} = \"<instance>\" \
+             or \"{EACH_INSTANCE}\" }}"
+        )
+    }
+
+    fn visit_str<E: de::Error>(self, path: &str) -> Result<AssertionTarget, E> {
+        AssertionTarget::parse(path).map_err(de::Error::custom)
+    }
+
+    fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<AssertionTarget, M::Error> {
+        let table = TargetTable::deserialize(MapAccessDeserializer::new(map))?;
+        let target = AssertionTarget::parse(table.path).map_err(de::Error::custom)?;
+        Ok(match table.instance {
+            Some(instance) => target.with_instance(instance),
+            None => target,
+        })
+    }
+}
+
+/// A selector's table form as written.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TargetTable {
+    path: String,
+    #[serde(default)]
+    instance: Option<InstanceSelector>,
+}
+
+/// _Shared (pre + per + post)._ Which instances of a keyed channel a selector
+/// names: one, by its spelling, or each (`"*"`), every one its own series.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "String")]
+pub enum InstanceSelector {
+    One(Arc<str>),
+    Each,
+}
+
+impl TryFrom<String> for InstanceSelector {
+    type Error = &'static str;
+
+    fn try_from(instance: String) -> Result<Self, Self::Error> {
+        match instance.as_str() {
+            "" => Err("an instance is never empty; leave `instance` out to name none"),
+            EACH_INSTANCE => Ok(InstanceSelector::Each),
+            _ => Ok(InstanceSelector::One(instance.into())),
+        }
+    }
+}
+
+impl fmt::Display for InstanceSelector {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstanceSelector::One(one) => f.write_str(one),
+            InstanceSelector::Each => f.write_str(EACH_INSTANCE),
+        }
     }
 }
 
@@ -131,7 +271,7 @@ mod tests {
         let target = AssertionTarget::parse("agent.car.node.estimator.aiding.gps.nis")
             .expect("valid target");
 
-        assert_eq!(target.as_str(), "agent.car.node.estimator.aiding.gps.nis");
+        assert_eq!(target.path(), "agent.car.node.estimator.aiding.gps.nis");
         assert_eq!(target.agent(), &AgentId::new("car"));
         assert_eq!(
             target.subject(),
@@ -189,5 +329,80 @@ mod tests {
     #[test]
     fn parse_refuses_a_path_outside_the_agent_root() {
         assert!(AssertionTarget::parse("car.estimator.speed.x").is_err());
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    struct Wrap {
+        target: AssertionTarget,
+    }
+
+    fn read(text: &str) -> Result<AssertionTarget, toml::de::Error> {
+        toml::from_str::<Wrap>(&format!("target = {text}")).map(|wrap| wrap.target)
+    }
+
+    const TF: &str = "agent.car.channel.truth.tf";
+
+    #[test]
+    fn a_selector_is_a_path_or_a_table_naming_an_instance() {
+        let path = AssertionTarget::parse(TF).expect("valid target");
+        assert_eq!(read(&format!("\"{TF}\"")).unwrap(), path);
+        assert_eq!(read(&format!("{{ path = \"{TF}\" }}")).unwrap(), path);
+
+        let base = read(&format!(
+            "{{ path = \"{TF}\", instance = \"agent.car.base_link\" }}"
+        ))
+        .unwrap();
+        assert_eq!(
+            base.instance(),
+            Some(&InstanceSelector::One("agent.car.base_link".into()))
+        );
+        assert_eq!(base.path(), TF);
+
+        let each = read(&format!("{{ path = \"{TF}\", instance = \"*\" }}")).unwrap();
+        assert_eq!(each.instance(), Some(&InstanceSelector::Each));
+        assert_eq!(each.to_string(), format!("{TF}[instance=*]"));
+    }
+
+    #[test]
+    fn a_malformed_selector_is_refused_at_parse() {
+        for text in [
+            "\"agent.car\"".to_string(),
+            format!("{{ path = \"{TF}\", instance = \"\" }}"),
+            format!("{{ path = \"{TF}\", frame = \"base\" }}"),
+            "{ instance = \"base\" }".to_string(),
+            "3".to_string(),
+        ] {
+            assert!(read(&text).is_err(), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_selector_serializes_as_it_was_written() {
+        for text in [
+            format!("\"{TF}\""),
+            format!("{{ path = \"{TF}\", instance = \"agent.car.base_link\" }}"),
+            format!("{{ path = \"{TF}\", instance = \"*\" }}"),
+        ] {
+            let target = read(&text).unwrap();
+            let written = toml::to_string(&Wrap {
+                target: target.clone(),
+            })
+            .unwrap();
+            assert_eq!(toml::from_str::<Wrap>(&written).unwrap().target, target);
+        }
+    }
+
+    #[test]
+    fn a_selector_covers_the_instances_it_names() {
+        let path = AssertionTarget::parse(TF).expect("valid target");
+        let base = path
+            .clone()
+            .with_instance(InstanceSelector::One("base".into()));
+        let each = path.clone().with_instance(InstanceSelector::Each);
+
+        assert!(path.covers(Some("imu")) && path.covers(None));
+        assert!(each.covers(Some("imu")));
+        assert!(base.covers(Some("base")));
+        assert!(!base.covers(Some("imu")) && !base.covers(None));
     }
 }

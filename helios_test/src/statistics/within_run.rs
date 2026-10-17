@@ -10,7 +10,10 @@
 //! holding a NaN fails a bound just as judging each sample would, where the
 //! cross-run `min` and `max` skip it.
 
-use crate::{assertion::AssertionValue, collector::Sample};
+use crate::{
+    assertion::{AssertionValue, ValueKind},
+    collector::Sample,
+};
 
 use helios_core::prelude::MonotonicTime;
 
@@ -62,6 +65,32 @@ impl Reducer {
             Reducer::Rms => "rms",
             Reducer::TimeAbove(_) => "time_above",
             Reducer::MaxGap => "max_gap",
+        }
+    }
+
+    /// The kind of the value this reducer gives over a series of kind
+    /// `series`, or why it gives none: a number reducer on a bool or a
+    /// string. Known at setup, so the condition is checked against the value
+    /// it will judge.
+    pub fn value_kind(&self, series: ValueKind) -> Result<ValueKind, ReduceError> {
+        let numbers = || {
+            if series.is_number() {
+                Ok(())
+            } else {
+                Err(ReduceError::NotANumber {
+                    reducer: self.name(),
+                    value_kind: series,
+                })
+            }
+        };
+        match self {
+            Reducer::Final => Ok(series),
+            Reducer::Count => Ok(ValueKind::Int),
+            Reducer::MaxGap => Ok(ValueKind::Float),
+            Reducer::Min | Reducer::Max => numbers().map(|()| series),
+            Reducer::Mean | Reducer::Std | Reducer::Rms | Reducer::TimeAbove(_) => {
+                numbers().map(|()| ValueKind::Float)
+            }
         }
     }
 
@@ -149,10 +178,10 @@ enum Extreme {
 /// _Per-step._ Why a series couldn't be reduced.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ReduceError {
-    #[error("{reducer} needs numbers, and a sample is a {value_kind}")]
+    #[error("{reducer} needs numbers, not values of kind {value_kind}")]
     NotANumber {
         reducer: &'static str,
-        value_kind: &'static str,
+        value_kind: ValueKind,
     },
 }
 
@@ -393,10 +422,42 @@ mod tests {
             Reducer::Max.reduce(&flags, at(0.0), at(10.0)),
             Err(ReduceError::NotANumber {
                 reducer: "max",
-                value_kind: "bool"
+                value_kind: ValueKind::Bool
             })
         );
         assert_eq!(reduce(Reducer::Count, &flags), Some(AssertionValue::Int(1)));
+    }
+
+    #[test]
+    fn each_reducer_declares_the_kind_of_its_value() {
+        use ValueKind::{Bool, Float, Int, String};
+        assert_eq!(Reducer::Final.value_kind(String), Ok(String));
+        assert_eq!(Reducer::Count.value_kind(Bool), Ok(Int));
+        assert_eq!(Reducer::MaxGap.value_kind(Bool), Ok(Float));
+        assert_eq!(Reducer::Max.value_kind(Int), Ok(Int));
+        assert_eq!(Reducer::Min.value_kind(Float), Ok(Float));
+        for reducer in [
+            Reducer::Mean,
+            Reducer::Std,
+            Reducer::Rms,
+            Reducer::TimeAbove(1.0),
+        ] {
+            assert_eq!(reducer.value_kind(Int), Ok(Float), "{reducer:?}");
+        }
+        assert_eq!(
+            Reducer::Max.value_kind(Bool),
+            Err(ReduceError::NotANumber {
+                reducer: "max",
+                value_kind: Bool
+            })
+        );
+        assert_eq!(
+            Reducer::TimeAbove(1.0).value_kind(String),
+            Err(ReduceError::NotANumber {
+                reducer: "time_above",
+                value_kind: String
+            })
+        );
     }
 
     #[test]

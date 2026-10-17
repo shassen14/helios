@@ -6,10 +6,10 @@ pub mod name;
 pub mod target;
 
 use crate::collector::Rejection;
-pub use condition::{AssertionValue, Condition};
+pub use condition::{AssertionValue, Condition, ValueKind};
 pub use config::{Assertion, Bound, Measure, RunInstant, Window};
 pub use name::EntryName;
-pub use target::{AssertionTarget, TargetSubject};
+pub use target::{AssertionTarget, InstanceSelector, TargetSubject};
 
 /// _Per-step._ The evaluator's verdict for one assertion, produced each tick.
 // Three outcomes, not two: `Pending` is distinct from `Failed` because a target

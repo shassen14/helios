@@ -13,13 +13,13 @@
 //!   assertion the run could never judge. `Run`, `RunLoadError`,
 //!   `ScenarioRef`, `ObservationRef`, `Termination`, `ValidationError`,
 //!   `SchemaVersion`, `UnsupportedVersion`, `Assertion`, `Measure`,
-//!   `MalformedName`, `MalformedTarget`, `OperandProblem`, `WindowProblem`,
-//!   `Side`, `UnusableEntry`, `TargetProblem`.
+//!   `MalformedName`, `MalformedTarget`, `OperandProblem`, `KindProblem`,
+//!   `WindowProblem`, `Side`, `UnusableEntry`, `TargetProblem`.
 //! - **`_Per-step._`** — live state and verdicts produced *while* ticking; no
 //!   serde, never serialized. `Runner`, `ResolvedPlan`, `AssertionState`,
 //!   `ContinuousStatus`, `TickAction`, `TickSpan`, `EntryOwner`, `EntryView`,
 //!   `Placement`, `PlacedWindow`,
-//!   `AssertionResult`, `FailureKind`, `ConditionError`, `ReduceError`, `TerminationReason`, `ExtractorTable`, `Extractor`,
+//!   `AssertionResult`, `FailureKind`, `ConditionError`, `ReduceError`, `TerminationReason`, `ExtractorTable`, `Extractor`, `ExtractedValue`,
 //!   `ObservationCollector`, `SeriesId`, `Series`, `Sample`, `Rejection`.
 //! - **`_Per/Post-step._`** — measurement data filled *during* a run, then
 //!   read back *after* it to build the serialized aggregate. `RunMetrics`.
@@ -30,8 +30,8 @@
 //!   `AggregateReport`, `MetricRow`.
 //! - **`_Shared._`** — leaf values that cross phases, so they carry both serde
 //!   directions. `AssertionValue`, `Condition`, `Reducer` (pre + post);
-//!   `AssertionTarget`, `RunInstant` (pre + per); `EntryName`, `Window`,
-//!   `Bound` (pre + per + post).
+//!   `RunInstant`, `ValueKind` (pre + per); `AssertionTarget`,
+//!   `InstanceSelector`, `EntryName`, `Window`, `Bound` (pre + per + post).
 //!
 //! The leaves are shared; only the *containers* are phase-specific. An input
 //! container's goal (strict) and an output container's goal (stable) pull in

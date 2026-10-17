@@ -43,7 +43,9 @@ pub fn write(report: &Report, path: &Path) -> Result<(), ReportWriteError> {
 mod tests {
     use super::*;
 
-    use crate::assertion::{AssertionValue, Bound, Condition, RunInstant, Window};
+    use crate::assertion::{
+        AssertionTarget, AssertionValue, Bound, Condition, InstanceSelector, RunInstant, Window,
+    };
     use crate::report::{
         AssertionReportEntry, FailureReason, MeasureReportEntry, SeriesSummary, TerminatedBy,
         Verdict,
@@ -85,7 +87,8 @@ mod tests {
     fn time_above_failing(verdict: Verdict) -> AssertionReportEntry {
         AssertionReportEntry::new(
             "rarely_fast".to_string(),
-            "agent.car.channel.speed".to_string(),
+            AssertionTarget::parse("agent.car.channel.speed").expect("valid target"),
+            None,
             window(),
             Some(Reducer::TimeAbove(5.0)),
             Condition::LessThan(2.0),
@@ -113,7 +116,9 @@ mod tests {
             vec![
                 AssertionReportEntry::new(
                     "parked".to_string(),
-                    "agent.car.node.estimator.position".to_string(),
+                    AssertionTarget::parse("agent.car.node.estimator.position")
+                        .expect("valid target"),
+                    None,
                     Window::default(),
                     Some(Reducer::Final),
                     Condition::WithinRange([-0.5, 0.5]),
@@ -133,7 +138,8 @@ mod tests {
             ],
             vec![MeasureReportEntry::new(
                 "goal_distance".to_string(),
-                "agent.car.node.eval.goal_distance".to_string(),
+                AssertionTarget::parse("agent.car.node.eval.goal_distance").expect("valid target"),
+                None,
                 Window::default(),
                 Reducer::Final,
                 true,
@@ -216,6 +222,49 @@ mod tests {
         assert_eq!(measures[0]["value"].as_float(), Some(0.5));
         assert_eq!(measures[0]["covered"].as_bool(), Some(true));
         assert!(measures[0].get("reason").is_none());
+    }
+
+    #[test]
+    fn an_entry_on_one_instance_carries_its_selector_and_instance() {
+        let mut report = sample_report();
+        let each = AssertionTarget::parse("agent.car.channel.truth.tf")
+            .expect("valid target")
+            .with_instance(InstanceSelector::Each);
+        report.assertions[0] = AssertionReportEntry::new(
+            "level".to_string(),
+            each,
+            Some("agent.car.base_link".to_string()),
+            Window::default(),
+            None,
+            Condition::LessThan(1.0),
+            series(3),
+            Verdict::Passed {
+                actual: AssertionValue::Float(0.0),
+            },
+        );
+        report.terminated_by = TerminatedBy::AssertionFailed {
+            name: "level".to_string(),
+            path: "agent.car.channel.truth.tf".to_string(),
+            instance: Some("agent.car.base_link".to_string()),
+        };
+
+        let value = written(&report);
+
+        let level = &value["assertions"].as_array().unwrap()[0];
+        assert_eq!(
+            level["target"]["path"].as_str(),
+            Some("agent.car.channel.truth.tf")
+        );
+        assert_eq!(level["target"]["instance"].as_str(), Some("*"));
+        assert_eq!(level["instance"].as_str(), Some("agent.car.base_link"));
+        let stop = &value["terminated_by"];
+        assert_eq!(stop["kind"].as_str(), Some("assertion_failed"));
+        assert_eq!(stop["path"].as_str(), Some("agent.car.channel.truth.tf"));
+        assert_eq!(stop["instance"].as_str(), Some("agent.car.base_link"));
+        // An unkeyed entry has no instance.
+        assert!(value["assertions"].as_array().unwrap()[1]
+            .get("instance")
+            .is_none());
     }
 
     #[test]

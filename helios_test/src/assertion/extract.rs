@@ -1,4 +1,4 @@
-use crate::assertion::condition::AssertionValue;
+use crate::assertion::condition::{AssertionValue, ValueKind};
 
 use helios_runtime::ErasedStamped;
 
@@ -7,20 +7,69 @@ use std::{
     collections::HashMap,
 };
 
-/// _Per-step._ Projects one payload type into an `AssertionValue`. Total:
-/// every value of the type has one, so an extractor never declines.
-pub type Extractor<T> = fn(&T) -> AssertionValue;
+/// _Per-step._ Projects one payload type into a comparable value of type
+/// `V`. Total: every value of the type has one, so an extractor never
+/// declines.
+pub type Extractor<T, V> = fn(&T) -> V;
+
+/// _Per-step._ A type an extractor may return: one variant of
+/// [`AssertionValue`], whose kind it declares. The kind comes from the
+/// return type, so an extractor can't declare one kind and return another.
+pub trait ExtractedValue: 'static {
+    const KIND: ValueKind;
+
+    fn into_value(self) -> AssertionValue;
+}
+
+impl ExtractedValue for f64 {
+    const KIND: ValueKind = ValueKind::Float;
+
+    fn into_value(self) -> AssertionValue {
+        AssertionValue::Float(self)
+    }
+}
+
+impl ExtractedValue for i64 {
+    const KIND: ValueKind = ValueKind::Int;
+
+    fn into_value(self) -> AssertionValue {
+        AssertionValue::Int(self)
+    }
+}
+
+impl ExtractedValue for bool {
+    const KIND: ValueKind = ValueKind::Bool;
+
+    fn into_value(self) -> AssertionValue {
+        AssertionValue::Bool(self)
+    }
+}
+
+impl ExtractedValue for String {
+    const KIND: ValueKind = ValueKind::String;
+
+    fn into_value(self) -> AssertionValue {
+        AssertionValue::String(self)
+    }
+}
 
 /// An [`Extractor`] behind the downcast to its payload type. `None` only when
 /// handed a payload of another type.
 type ErasedExtractor = Box<dyn Fn(&dyn Any) -> Option<AssertionValue> + Send + Sync>;
 
-/// _Per-step._ The `TypeId`-keyed table of payload extractors.
+/// An erased extractor with the kind of every value it returns.
+struct Registered {
+    kind: ValueKind,
+    extract: ErasedExtractor,
+}
+
+/// _Per-step._ The `TypeId`-keyed table of payload extractors, each with the
+/// kind of value it gives.
 // Bridges typed channel values to the untyped `AssertionValue` space assertions
 // compare against TOML. Keyed by the *payload* type, never `Stamped<T>`: the
 // table reads the payload out of the stamped value itself.
 pub struct ExtractorTable {
-    by_type: HashMap<TypeId, ErasedExtractor>,
+    by_type: HashMap<TypeId, Registered>,
 }
 
 impl ExtractorTable {
@@ -33,16 +82,24 @@ impl ExtractorTable {
     // Last-writer-wins: registering twice for the same `T` silently overwrites.
     // Intentional — lets tests install fixture extractors over the standard set
     // without a separate "override" entry point.
-    pub fn register<T: 'static>(&mut self, extractor: Extractor<T>) {
+    pub fn register<T: 'static, V: ExtractedValue>(&mut self, extractor: Extractor<T, V>) {
         self.by_type.insert(
             TypeId::of::<T>(),
-            Box::new(move |payload| payload.downcast_ref::<T>().map(extractor)),
+            Registered {
+                kind: V::KIND,
+                extract: Box::new(move |payload| {
+                    payload
+                        .downcast_ref::<T>()
+                        .map(|payload| extractor(payload).into_value())
+                }),
+            },
         );
     }
 
-    /// Whether a payload of type `payload` has an extractor.
-    pub fn handles(&self, payload: TypeId) -> bool {
-        self.by_type.contains_key(&payload)
+    /// The kind of value a payload of type `payload` gives, or `None` when
+    /// it has no extractor.
+    pub fn kind_of(&self, payload: TypeId) -> Option<ValueKind> {
+        self.by_type.get(&payload).map(|registered| registered.kind)
     }
 
     /// The comparable value of `stamped`'s payload.
@@ -54,7 +111,7 @@ impl ExtractorTable {
                     payload: stamped.payload_type_name(),
                 })?;
 
-        extractor(stamped.payload()).ok_or(ExtractError::PayloadMismatch {
+        (extractor.extract)(stamped.payload()).ok_or(ExtractError::PayloadMismatch {
             payload: stamped.payload_type_name(),
         })
     }
@@ -80,9 +137,9 @@ pub enum ExtractError {
 
 pub fn standard_extractors() -> ExtractorTable {
     let mut table = ExtractorTable::new();
-    table.register::<f64>(|x| AssertionValue::Float(*x));
-    table.register::<i64>(|x| AssertionValue::Int(*x));
-    table.register::<bool>(|x| AssertionValue::Bool(*x));
+    table.register::<f64, f64>(|x| *x);
+    table.register::<i64, i64>(|x| *x);
+    table.register::<bool, bool>(|x| *x);
     table
 }
 
@@ -175,17 +232,20 @@ mod tests {
     }
 
     #[test]
-    fn handles_only_registered_payload_types() {
-        let table = standard_extractors();
+    fn each_payload_type_has_the_kind_its_extractor_returns() {
+        let mut table = standard_extractors();
+        table.register::<u32, i64>(|x| i64::from(*x));
 
-        assert!(table.handles(TypeId::of::<f64>()));
-        assert!(!table.handles(TypeId::of::<String>()));
+        assert_eq!(table.kind_of(TypeId::of::<f64>()), Some(ValueKind::Float));
+        assert_eq!(table.kind_of(TypeId::of::<bool>()), Some(ValueKind::Bool));
+        assert_eq!(table.kind_of(TypeId::of::<u32>()), Some(ValueKind::Int));
+        assert_eq!(table.kind_of(TypeId::of::<String>()), None);
     }
 
     #[test]
     fn register_overrides_previous_entry() {
         let mut table = standard_extractors();
-        table.register::<f64>(|_| AssertionValue::Float(99.0));
+        table.register::<f64, f64>(|_| 99.0);
 
         assert_eq!(
             table.extract(&stamped(1.0_f64)),

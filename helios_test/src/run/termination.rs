@@ -1,6 +1,7 @@
 use crate::assertion::EntryName;
 
 use helios_core::prelude::MonotonicTime;
+use helios_runtime::observe::key::RecordedKey;
 
 use serde::Deserialize;
 
@@ -52,8 +53,9 @@ pub enum TerminationReason {
     /// The simulated-time budget elapsed.
     MaxSimulatedSeconds,
     /// An every-sample assertion failed and the run is `fail_fast`. `name`
-    /// is the assertion's.
-    AssertionFailed { name: EntryName },
+    /// is the assertion's, and `key` the series that failed it: one of
+    /// several, for an assertion on each instance of a keyed channel.
+    AssertionFailed { name: EntryName, key: RecordedKey },
 }
 
 #[cfg(test)]

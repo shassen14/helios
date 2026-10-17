@@ -1,9 +1,9 @@
 //! What the runner's tests build a run from: a run file, a pipeline whose
-//! estimator declares one scalar leaf and writes one float channel, and a
-//! collector that leaf is reported to.
+//! estimator declares one scalar leaf and writes one float channel and one
+//! keyed channel of two instances, and a collector they are reported to.
 
 use super::{state::AssertionState, Phase, Runner};
-use crate::{collector::ObservationCollector, run::Run};
+use crate::{assertion::extract::standard_extractors, collector::ObservationCollector, run::Run};
 use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
 use helios_runtime::{
     observe::{
@@ -13,7 +13,8 @@ use helios_runtime::{
         sink::ObservationSink,
     },
     port::{
-        ChannelKey, Determinism, PortBus, PortDescriptor, PortDescriptorBuilder, RefusedWrites,
+        ChannelKey, ChannelKind, Determinism, InstanceKey, Keyed, PortBus, PortDescriptor,
+        PortDescriptorBuilder, RefusedWrites,
     },
     prelude::{Health, PipelineNode, Stamped, TickContext},
     AutonomyPipeline, PipelineBuilder,
@@ -28,6 +29,25 @@ const ESTIMATOR: &str = "estimator";
 const LEAF: &str = "x";
 /// The one channel [`pipeline`]'s estimator writes, carrying `f64`.
 const SPEED: &str = "speed";
+/// The keyed channel [`pipeline`]'s estimator writes, one instance per
+/// wheel in [`WHEEL_NAMES`].
+const WHEELS: &str = "wheels";
+/// The instances of [`WHEELS`].
+pub(super) const WHEEL_NAMES: [&str; 2] = ["front", "rear"];
+
+/// One wheel's speed, keyed by the wheel. Read as its speed.
+struct Wheel {
+    wheel: &'static str,
+    speed: f64,
+}
+
+impl Keyed for Wheel {
+    type Instance = &'static str;
+
+    fn instance(&self) -> &&'static str {
+        &self.wheel
+    }
+}
 
 /// Declares the scalar leaf [`LEAF`]; executes nothing.
 struct Estimator(PortDescriptor);
@@ -56,6 +76,46 @@ pub(super) fn target(agent: &str) -> String {
 /// The target on `agent`'s [`SPEED`] channel.
 pub(super) fn speed_target(agent: &str) -> String {
     channel_path(agent, &speed::<f64>())
+}
+
+/// The selector of every instance of `agent`'s [`WHEELS`], as TOML.
+pub(super) fn each_wheel(agent: &str) -> String {
+    format!(
+        "{{ path = \"{}\", instance = \"*\" }}",
+        channel_path(agent, &wheels())
+    )
+}
+
+/// The key of `agent`'s `wheel`.
+pub(super) fn wheel_key(agent: &str, wheel: &'static str) -> RecordedKey {
+    RecordedKey {
+        agent: AgentId::new(agent),
+        subject: wheel_subject(wheel),
+    }
+}
+
+/// The key of `agent`'s [`LEAF`].
+pub(super) fn leaf_key(agent: &str) -> RecordedKey {
+    RecordedKey {
+        agent: AgentId::new(agent),
+        subject: Subject::emission(ESTIMATOR, LEAF),
+    }
+}
+
+/// The key of `agent`'s [`SPEED`].
+pub(super) fn speed_key(agent: &str) -> RecordedKey {
+    RecordedKey {
+        agent: AgentId::new(agent),
+        subject: Subject::channel(speed::<f64>(), None),
+    }
+}
+
+fn wheels() -> ChannelKey {
+    ChannelKey::keyed::<Wheel>(ChannelKind::Internal, WHEELS)
+}
+
+fn wheel_subject(wheel: &'static str) -> Subject {
+    Subject::channel(wheels(), Some(InstanceKey::of::<Wheel>(&wheel)))
 }
 
 /// [`SPEED`] carrying `T`. The pipeline declares it carrying `f64`.
@@ -157,10 +217,11 @@ fn assertion_on(name: &str, target: &str, reduce: Option<&str>, value: f64) -> S
     )
 }
 
-/// An estimator declaring [`LEAF`] and writing [`SPEED`].
+/// An estimator declaring [`LEAF`] and writing [`SPEED`] and [`WHEELS`].
 pub(super) fn pipeline() -> AutonomyPipeline {
     let descriptor = PortDescriptorBuilder::algorithm()
         .outputs_from_slice(&[speed::<f64>()])
+        .output_keyed::<Wheel>(wheels(), WHEEL_NAMES)
         .observable(LEAF, Determinism::Deterministic)
         .build();
     PipelineBuilder::new(AgentId::new(CAR))
@@ -193,7 +254,9 @@ pub(super) fn refused_write(agent: &str) -> (AgentId, RefusedWrites) {
 /// with the collector it reads.
 pub(super) fn ready(run: Run, agents: &[&str]) -> (Runner, ObservationCollector) {
     let mut runner = Runner::new(run).expect("valid run");
-    let mut collector = runner.collector();
+    let mut extractors = standard_extractors();
+    extractors.register::<Wheel, f64>(|wheel| wheel.speed);
+    let mut collector = runner.collector_reading(extractors);
     let pipelines: Vec<(AgentId, AutonomyPipeline)> = agents
         .iter()
         .map(|agent| (AgentId::new(*agent), pipeline()))
@@ -242,6 +305,23 @@ pub(super) fn report_speed(
         collector,
         agent,
         Subject::channel(speed::<f64>(), None),
+        secs,
+        ObservedValue::Scalar(value),
+    );
+}
+
+/// `agent`'s `wheel` reports `value` at `secs`.
+pub(super) fn report_wheel(
+    collector: &mut ObservationCollector,
+    agent: &str,
+    wheel: &'static str,
+    secs: f64,
+    value: f64,
+) {
+    observe_under(
+        collector,
+        agent,
+        wheel_subject(wheel),
         secs,
         ObservedValue::Scalar(value),
     );

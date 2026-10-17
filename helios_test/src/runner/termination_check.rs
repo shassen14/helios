@@ -4,10 +4,12 @@ use crate::{
 };
 
 use helios_core::prelude::MonotonicTime;
+use helios_runtime::observe::key::RecordedKey;
 
 /// Decide whether the run should stop this tick, and if so why. Pure and
 /// read-only: it judges nothing itself. `first_failed` is the name of the
-/// first every-sample assertion, in run-file order, whose latch has failed.
+/// first every-sample assertion, in run-file order, whose latch has failed,
+/// with the key of its series that failed.
 /// `Some(reason)` means stop; `None` means keep going. The caller acts on the
 /// decision — this never terminates anything.
 ///
@@ -18,11 +20,14 @@ pub fn check(
     now: MonotonicTime,
     start: MonotonicTime,
     termination: &Termination,
-    first_failed: Option<&EntryName>,
+    first_failed: Option<(&EntryName, &RecordedKey)>,
 ) -> Option<TerminationReason> {
     if termination.fail_fast() {
-        if let Some(name) = first_failed {
-            return Some(TerminationReason::AssertionFailed { name: name.clone() });
+        if let Some((name, key)) = first_failed {
+            return Some(TerminationReason::AssertionFailed {
+                name: name.clone(),
+                key: key.clone(),
+            });
         }
     }
 
@@ -50,9 +55,18 @@ mod tests {
         EntryName::parse(name).expect("valid name")
     }
 
+    /// The series an assertion failed on.
+    fn key() -> RecordedKey {
+        RecordedKey {
+            agent: helios_core::prelude::AgentId::new("car"),
+            subject: helios_runtime::observe::key::Subject::emission("estimator", "nis"),
+        }
+    }
+
     fn failed(name: &str) -> TerminationReason {
         TerminationReason::AssertionFailed {
             name: self::name(name),
+            key: key(),
         }
     }
 
@@ -94,7 +108,12 @@ mod tests {
     #[test]
     fn fail_fast_stops_on_a_failure_and_names_it() {
         assert_eq!(
-            check(at(0.0), at(0.0), &term(FAIL_FAST), Some(&name("second"))),
+            check(
+                at(0.0),
+                at(0.0),
+                &term(FAIL_FAST),
+                Some((&name("second"), &key()))
+            ),
             Some(failed("second"))
         );
     }
@@ -102,7 +121,12 @@ mod tests {
     #[test]
     fn a_failure_without_fail_fast_runs_on() {
         assert_eq!(
-            check(at(0.0), at(0.0), &term(BUDGET), Some(&name("second"))),
+            check(
+                at(0.0),
+                at(0.0),
+                &term(BUDGET),
+                Some((&name("second"), &key()))
+            ),
             None
         );
     }
@@ -111,7 +135,12 @@ mod tests {
     fn a_failure_wins_over_an_elapsed_time_budget() {
         // Both would stop this tick; the failure is the more informative result.
         assert_eq!(
-            check(at(10.0), at(0.0), &term(FAIL_FAST), Some(&name("first"))),
+            check(
+                at(10.0),
+                at(0.0),
+                &term(FAIL_FAST),
+                Some((&name("first"), &key()))
+            ),
             Some(failed("first"))
         );
     }

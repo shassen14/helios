@@ -1,11 +1,13 @@
 //! Checks, once the pipelines exist, that the run can evaluate every
-//! assertion and measure: its target, and each series its window is
-//! anchored `after`, names one series its agent records, a channel value
-//! there can be extracted, a nondeterministic value is read only with
-//! permission, and the collector requests it; and a reducer that holds
-//! values between samples isn't given an emission's events. Each entry that
-//! can be evaluated binds its series, and its anchors', to the exact keys
-//! they name.
+//! assertion and measure: its target names one series its agent records, or
+//! each instance of a keyed channel it asks for, and each series its window
+//! is anchored `after` names one; a channel value there can be extracted, a
+//! nondeterministic value is read only with permission, and the collector
+//! requests it; a reducer that holds values between samples isn't given an
+//! emission's events; and the reducer and the condition can apply to the
+//! kind of value the series holds. Each entry that can be evaluated binds
+//! its series, one per instance, and its anchors', to the exact keys they
+//! name.
 //!
 //! Done against what each agent declares it reports, before the first tick,
 //! so a run that could never pass stops before it starts and names every
@@ -14,10 +16,13 @@
 //! state, so only a run that can judge has any.
 
 use crate::{
-    assertion::{Assertion, AssertionTarget, EntryName, Measure, TargetSubject, Window},
-    collector::{ObservationCollector, Series, SeriesId},
+    assertion::{
+        condition::KindProblem, Assertion, AssertionTarget, Condition, EntryName, InstanceSelector,
+        Measure, TargetSubject, ValueKind, Window,
+    },
+    collector::{instance_of, ObservationCollector, Series, SeriesId},
     runner::state::AssertionState,
-    statistics::within_run::Reducer,
+    statistics::within_run::{ReduceError, Reducer},
 };
 
 use helios_core::prelude::AgentId;
@@ -37,12 +42,16 @@ use thiserror::Error;
 /// Between the problems of one assertion. No problem's message holds it.
 const PROBLEM_SEPARATOR: &str = " and ";
 
+/// Between the instances a problem lists.
+const INSTANCE_SEPARATOR: &str = ", ";
+
 /// _Per-step._ What setup found for each assertion and measure, and the
 /// state each tick folds into it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedPlan {
-    /// One per assertion, then one per measure, each in run-file order.
-    /// Read by each entry's owner, never by position.
+    /// One per series each assertion, then each measure, reads, in run-file
+    /// order, an entry's instances in the catalog's order. Read by each
+    /// entry's owner, never by position.
     entries: Vec<PlanEntry>,
     /// The series each window anchor names. One per selector, so entries
     /// anchored on one event share its series.
@@ -55,7 +64,7 @@ impl ResolvedPlan {
     pub(super) fn with_series<'p, 'c>(
         &'p self,
         collector: &'c ObservationCollector,
-    ) -> Option<Vec<EntryView<'c, &'p AssertionState>>> {
+    ) -> Option<Vec<EntryView<'p, 'c, &'p AssertionState>>> {
         self.entries
             .iter()
             .map(|entry| entry.view(collector, &entry.state))
@@ -67,18 +76,20 @@ impl ResolvedPlan {
     pub(super) fn with_series_mut<'p, 'c>(
         &'p mut self,
         collector: &'c ObservationCollector,
-    ) -> Option<Vec<EntryView<'c, &'p mut AssertionState>>> {
+    ) -> Option<Vec<EntryView<'p, 'c, &'p mut AssertionState>>> {
         self.entries
             .iter_mut()
             .map(|entry| {
                 let PlanEntry {
                     owner,
+                    key,
                     series,
                     held,
                     state,
                 } = entry;
                 Some(EntryView {
                     owner: *owner,
+                    key: &*key,
                     held: *held,
                     series: collector.series(*series)?,
                     state,
@@ -114,10 +125,13 @@ pub enum EntryOwner {
 }
 
 /// One entry in the plan: whose it is, the series it is evaluated from, and
-/// its state so far.
+/// its state so far. An assertion on each instance of a keyed channel owns
+/// one per instance.
 #[derive(Debug, Clone, PartialEq)]
 struct PlanEntry {
     owner: EntryOwner,
+    /// The key its series is bound to.
+    key: RecordedKey,
     series: SeriesId,
     /// As [`EntryView::held`].
     held: bool,
@@ -125,13 +139,14 @@ struct PlanEntry {
 }
 
 impl PlanEntry {
-    fn view<'c, S>(
-        &self,
+    fn view<'p, 'c, S>(
+        &'p self,
         collector: &'c ObservationCollector,
         state: S,
-    ) -> Option<EntryView<'c, S>> {
+    ) -> Option<EntryView<'p, 'c, S>> {
         Some(EntryView {
             owner: self.owner,
+            key: &self.key,
             held: self.held,
             series: collector.series(self.series)?,
             state,
@@ -140,10 +155,13 @@ impl PlanEntry {
 }
 
 /// _Per-step._ One plan entry as a tick or finalize reads it: whose it is,
-/// its series and its state (`S`, borrowed shared or open to update).
+/// the key and series it reads, and its state (`S`, borrowed shared or open
+/// to update).
 #[derive(Debug)]
-pub(super) struct EntryView<'c, S> {
+pub(super) struct EntryView<'p, 'c, S> {
     pub owner: EntryOwner,
+    /// Which series: the instance, where the target names several.
+    pub key: &'p RecordedKey,
     /// Whether each value holds until the next: true for a channel, whose
     /// value is what the brain could read until it was written again; false
     /// for an emission, whose values are events. A held series carries its
@@ -177,12 +195,36 @@ pub enum TargetProblem {
     /// A node path whose leaf is a channel that node writes. A channel is
     /// recorded under its own name, never its writer's, so the path to
     /// watch it is the one held here.
-    #[error("a channel is not a node's leaf; to watch what the node writes there, use '{0}'")]
+    #[error("a channel is not a node's leaf: to watch what the node writes there, use '{0}'")]
     ChannelUnderNode(String),
-    /// A keyed channel written in several instances. The path names every
-    /// instance, and an assertion judges one series.
-    #[error("it names {0} instances of a keyed channel, and an assertion judges one series")]
-    SeveralInstances(usize),
+    /// A keyed channel written in several instances, named with no
+    /// instance. The path names every one, listed, and one series is wanted.
+    #[error(
+        "it names several instances of a keyed channel ({}): name one with \
+         instance = \"…\", or judge each with instance = \"*\"",
+        .0.join(INSTANCE_SEPARATOR)
+    )]
+    SeveralInstances(Vec<String>),
+    /// An instance the channel's writers never declared, with those they
+    /// did.
+    #[error(
+        "its channel declares no instance '{instance}' (it declares {})",
+        .declared.join(INSTANCE_SEPARATOR)
+    )]
+    UndeclaredInstance {
+        instance: String,
+        declared: Vec<String>,
+    },
+    /// An instance named on an emission or a channel that isn't keyed.
+    #[error("it names an instance, which only a keyed channel has")]
+    InstanceOnUnkeyed,
+    /// A window anchored on each instance of a keyed channel: an anchor is
+    /// the first stamp of one series.
+    #[error(
+        "it names several series ({}), where a window is anchored on one",
+        .0.join(INSTANCE_SEPARATOR)
+    )]
+    AnchorOnSeveral(Vec<String>),
     /// A channel whose payload type has no extractor, so no value from it
     /// could be compared.
     #[error("it carries {0}, which has no extractor")]
@@ -198,8 +240,15 @@ pub enum TargetProblem {
     /// `time_above` on an emission. It holds each sample until the next,
     /// which is right for a channel's state and wrong for an emission's
     /// events: a NIS doesn't stay at its value between updates.
-    #[error("time_above holds each value until the next, and an emission's values are events")]
+    #[error("time_above holds each value until the next, which is wrong for an emission's events")]
     TimeAboveOnEmission,
+    /// A reducer that can't reduce the kind of value the series holds.
+    #[error(transparent)]
+    Reduce(ReduceError),
+    /// A condition that can't judge the kind of value it is given: the
+    /// series', or its reducer's.
+    #[error(transparent)]
+    Condition(KindProblem),
     /// A series the window is anchored `after` that the run can't read, for
     /// the reason held.
     #[error("its window's anchor '{anchor}': {problem}")]
@@ -251,6 +300,8 @@ struct Wanted<'r> {
     target: &'r AssertionTarget,
     window: &'r Window,
     reduce: Option<&'r Reducer>,
+    /// `None` on a measure.
+    condition: Option<&'r Condition>,
     allow_nondeterministic: bool,
 }
 
@@ -288,6 +339,7 @@ pub(super) fn resolve(
             target: &assertion.target,
             window: &assertion.window,
             reduce: assertion.reduce.as_ref(),
+            condition: Some(&assertion.condition),
             allow_nondeterministic: assertion.allow_nondeterministic,
         });
     let wanted_measures = measures.iter().enumerate().map(|(index, measure)| Wanted {
@@ -296,6 +348,7 @@ pub(super) fn resolve(
         target: &measure.target,
         window: &measure.window,
         reduce: Some(&measure.reduce),
+        condition: None,
         allow_nondeterministic: measure.allow_nondeterministic,
     });
 
@@ -305,12 +358,15 @@ pub(super) fn resolve(
     for wanted in wanted_assertions.chain(wanted_measures) {
         match check(&wanted, &catalogs, collector) {
             Ok(found) => {
-                entries.push(PlanEntry {
-                    owner: wanted.owner,
-                    series: collector.bind(found.target),
-                    held: found.held,
-                    state: AssertionState::new(),
-                });
+                for key in found.targets {
+                    entries.push(PlanEntry {
+                        owner: wanted.owner,
+                        series: collector.bind(key.clone()),
+                        key,
+                        held: found.held,
+                        state: AssertionState::new(),
+                    });
+                }
                 for (anchor, key) in found.anchors {
                     let series = collector.bind(key);
                     anchors.insert(anchor.clone(), series);
@@ -333,7 +389,8 @@ pub(super) fn resolve(
 
 /// The keys an entry the run can evaluate reads.
 struct Found<'r> {
-    target: RecordedKey,
+    /// One, or one per instance under `instance = "*"`.
+    targets: Vec<RecordedKey>,
     /// As [`EntryView::held`].
     held: bool,
     /// Each window anchor's selector with the key it names.
@@ -354,23 +411,28 @@ fn check<'r>(
         catalogs,
         collector,
     ) {
-        Ok(key) => Some(key),
+        Ok(located) => Some(located),
         Err(mut found) => {
             problems.append(&mut found);
             None
         }
     };
-    if let Some(key) = &target {
-        if matches!(wanted.reduce, Some(Reducer::TimeAbove(_)))
-            && matches!(key.subject, Subject::Emission { .. })
-        {
+    if let Some(located) = &target {
+        if matches!(wanted.reduce, Some(Reducer::TimeAbove(_))) && !located.held {
             problems.push(TargetProblem::TimeAboveOnEmission);
         }
+        problems.extend(kind_problem(wanted, located.kind));
     }
 
     let mut anchors = Vec::new();
     for anchor in wanted.window.anchors() {
-        match locate(anchor, wanted.allow_nondeterministic, catalogs, collector) {
+        let located = locate(anchor, wanted.allow_nondeterministic, catalogs, collector).and_then(
+            |located| match <[RecordedKey; 1]>::try_from(located.keys) {
+                Ok([key]) => Ok(key),
+                Err(keys) => Err(vec![TargetProblem::AnchorOnSeveral(instances(&keys))]),
+            },
+        );
+        match located {
             Ok(key) => anchors.push((anchor, key)),
             Err(found) => problems.extend(found.into_iter().map(|problem| TargetProblem::Anchor {
                 anchor: anchor.clone(),
@@ -380,61 +442,157 @@ fn check<'r>(
     }
 
     match target {
-        Some(target) if problems.is_empty() => Ok(Found {
-            held: matches!(target.subject, Subject::Channel { .. }),
-            target,
+        Some(located) if problems.is_empty() => Ok(Found {
+            targets: located.keys,
+            held: located.held,
             anchors,
         }),
         _ => Err(problems),
     }
 }
 
-/// The one key `target` names, or every reason the run can't read it,
-/// checked against the one agent the target names. A target that doesn't
-/// name exactly one series its agent records has no other properties to
-/// check, so that problem is reported alone.
+/// Why `wanted`'s reducer can't reduce a series of kind `series`, or its
+/// condition can't judge what it is given, if either can't: refused here
+/// rather than failing on every sample once the run is under way.
+fn kind_problem(wanted: &Wanted, series: ValueKind) -> Option<TargetProblem> {
+    let judged = match wanted.reduce {
+        Some(reducer) => match reducer.value_kind(series) {
+            Ok(kind) => kind,
+            Err(problem) => return Some(TargetProblem::Reduce(problem)),
+        },
+        None => series,
+    };
+    wanted
+        .condition?
+        .check_kind(judged)
+        .err()
+        .map(TargetProblem::Condition)
+}
+
+/// What `target` names in the run: its keys, every one an instance of one
+/// channel or the one series, the kind of value they hold, and whether each
+/// value holds until the next.
+struct Located {
+    keys: Vec<RecordedKey>,
+    kind: ValueKind,
+    /// As [`EntryView::held`].
+    held: bool,
+}
+
+/// What `target` names, or every reason the run can't read it, checked
+/// against the one agent the target names. A target that doesn't name a
+/// series its agent records, or names the wrong instances, has no other
+/// properties to check, so that problem is reported alone. Each instance
+/// selected is checked, since one keyed channel's instances can have
+/// different writers, and one nondeterministic writer moves the series.
 fn locate(
     target: &AssertionTarget,
     allow_nondeterministic: bool,
     catalogs: &[Catalog],
     collector: &ObservationCollector,
-) -> Result<RecordedKey, Vec<TargetProblem>> {
+) -> Result<Located, Vec<TargetProblem>> {
     let Some(catalog) = catalogs
         .iter()
         .find(|catalog| catalog.agent == target.agent())
     else {
         return Err(vec![TargetProblem::UnknownAgent]);
     };
-    let (subject, observable) = match catalog.matching(target.subject()).as_slice() {
-        [(subject, observable)] => (*subject, *observable),
-        [] => return Err(vec![unreported(catalog, target.subject())]),
-        several => return Err(vec![TargetProblem::SeveralInstances(several.len())]),
-    };
+    let matching = catalog.matching(target.subject());
+    if matching.is_empty() {
+        return Err(vec![unreported(catalog, target.subject())]);
+    }
+    let selected = select(target.instance(), &matching).map_err(|problem| vec![problem])?;
 
     let mut problems = Vec::new();
-    match observable.determinism() {
-        Determinism::Deterministic => {}
-        Determinism::Nondeterministic if allow_nondeterministic => {}
-        Determinism::Nondeterministic => problems.push(TargetProblem::Nondeterministic),
+    let nondeterministic = selected
+        .iter()
+        .any(|(_, observable)| observable.determinism() == Determinism::Nondeterministic);
+    if nondeterministic && !allow_nondeterministic {
+        problems.push(TargetProblem::Nondeterministic);
     }
-    match observable.kind() {
-        ObservedValueKind::Scalar => {}
-        ObservedValueKind::Typed { type_id, .. } if collector.can_extract(type_id) => {}
-        ObservedValueKind::Typed { type_name, .. } => {
-            problems.push(TargetProblem::NoExtractor(type_name))
-        }
-    }
+    // Every instance of one channel carries its key's payload type, so the
+    // first selected stands for them all. A node's emission is a number.
+    let kind = selected
+        .first()
+        .and_then(|(_, observable)| match observable.kind() {
+            ObservedValueKind::Scalar => Some(ValueKind::Float),
+            ObservedValueKind::Typed { type_id, type_name } => {
+                let kind = collector.extracted_kind(type_id);
+                if kind.is_none() {
+                    problems.push(TargetProblem::NoExtractor(type_name));
+                }
+                kind
+            }
+        });
     if !collector.requests(target) {
         problems.push(TargetProblem::Unrequested);
     }
 
-    if !problems.is_empty() {
-        return Err(problems);
+    match kind {
+        Some(kind) if problems.is_empty() => Ok(Located {
+            held: selected
+                .iter()
+                .all(|(subject, _)| matches!(subject, Subject::Channel { .. })),
+            keys: selected
+                .into_iter()
+                .map(|(subject, _)| RecordedKey {
+                    agent: catalog.agent.clone(),
+                    subject: subject.clone(),
+                })
+                .collect(),
+            kind,
+        }),
+        _ => Err(problems),
     }
-    Ok(RecordedKey {
-        agent: catalog.agent.clone(),
-        subject: subject.clone(),
-    })
+}
+
+/// Which of `matching`, everything a target's path names, its `instance`
+/// selects: with none, the one series there is; one, by its spelling; each,
+/// every one. Only a keyed channel has instances to select.
+fn select<'m>(
+    instance: Option<&InstanceSelector>,
+    matching: &[(&'m Subject, &'m Observable)],
+) -> Result<Vec<(&'m Subject, &'m Observable)>, TargetProblem> {
+    let subjects: Vec<&Subject> = matching.iter().map(|(subject, _)| *subject).collect();
+    let keyed = subjects
+        .iter()
+        .all(|subject| instance_of(subject).is_some());
+    match instance {
+        None if matching.len() == 1 => Ok(matching.to_vec()),
+        None => Err(TargetProblem::SeveralInstances(spellings(&subjects))),
+        Some(_) if !keyed => Err(TargetProblem::InstanceOnUnkeyed),
+        Some(InstanceSelector::Each) => Ok(matching.to_vec()),
+        Some(InstanceSelector::One(one)) => {
+            let selected: Vec<(&Subject, &Observable)> = matching
+                .iter()
+                .copied()
+                .filter(|(subject, _)| instance_of(subject) == Some(one.as_ref()))
+                .collect();
+            if selected.is_empty() {
+                Err(TargetProblem::UndeclaredInstance {
+                    instance: one.to_string(),
+                    declared: spellings(&subjects),
+                })
+            } else {
+                Ok(selected)
+            }
+        }
+    }
+}
+
+/// The instance each of `subjects` records, spelled.
+fn spellings(subjects: &[&Subject]) -> Vec<String> {
+    subjects
+        .iter()
+        .filter_map(|subject| instance_of(subject))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The instance each of `keys` records, spelled.
+fn instances(keys: &[RecordedKey]) -> Vec<String> {
+    let subjects: Vec<&Subject> = keys.iter().map(|key| &key.subject).collect();
+    spellings(&subjects)
 }
 
 /// Why `subject` matched nothing `catalog` records: a channel spelled as a
@@ -466,15 +624,15 @@ pub(super) fn join(items: &[impl Display], separator: &str) -> String {
 mod tests {
     use super::*;
 
-    use crate::assertion::{extract::standard_extractors, Bound, Condition};
+    use crate::assertion::{extract::standard_extractors, AssertionValue, Bound, Condition};
 
     use helios_core::prelude::TfProvider;
     use helios_runtime::{
         observe::path::{channel_path, node_path},
         pipeline::autonomy_pipeline::TICK_DURATION_LEAF,
         port::{
-            ChannelKey, ChannelKind, Keyed, PortBus, PortDescriptor, PortDescriptorBuilder,
-            Provenance,
+            ChannelKey, ChannelKind, InstanceKey, Keyed, PortBus, PortDescriptor,
+            PortDescriptorBuilder, Provenance,
         },
         prelude::{PipelineNode, TickContext},
         BodyCapabilities, BodyChannel, PipelineBuilder,
@@ -501,7 +659,8 @@ mod tests {
     /// A channel the body publishes, which no node writes.
     const ODOMETRY: &str = "odometry";
 
-    /// A value about one frame, keyed by the frame. No extractor reads it.
+    /// A value about one frame, keyed by the frame. The tests' extractor
+    /// reads it as the frame's name, a string.
     struct FrameSample(&'static str);
 
     impl Keyed for FrameSample {
@@ -694,7 +853,9 @@ mod tests {
             })
             .collect();
         let pipeline = pipeline();
-        let mut collector = ObservationCollector::new(requested, standard_extractors());
+        let mut extractors = standard_extractors();
+        extractors.register::<FrameSample, String>(|sample| sample.0.to_string());
+        let mut collector = ObservationCollector::new(requested, extractors);
         let resolved = resolve(
             &assertions,
             &measures,
@@ -733,6 +894,7 @@ mod tests {
 
         let entry = |owner, subject: Subject| PlanEntry {
             owner,
+            key: key(subject.clone()),
             series: collector
                 .series_id(&key(subject.clone()))
                 .expect("the entry's key is bound"),
@@ -929,24 +1091,263 @@ mod tests {
 
         assert_eq!(
             errors(&[assertion(edges.clone(), false)]),
-            vec![unusable(1, edges, vec![TargetProblem::SeveralInstances(2)])]
+            vec![unusable(
+                1,
+                edges,
+                vec![TargetProblem::SeveralInstances(vec![
+                    "base".to_string(),
+                    "wheel".to_string()
+                ])]
+            )]
         );
     }
 
     #[test]
-    fn a_keyed_channel_of_one_instance_is_checked_as_that_series() {
-        // It names one series, so it gets as far as the extractor check.
+    fn a_keyed_channel_of_one_instance_is_that_series() {
         let root = channel(ROOT);
+        let (collector, resolved) = resolve_with(&[assertion_of_kind(root.clone())], &[root]);
+
+        assert!(resolved.is_ok());
+        assert!(collector.series_id(&key(frame(ROOT, "base"))).is_some());
+    }
+
+    /// The car's `channel`, at instance `instance`.
+    fn frame(channel: &'static str, instance: &'static str) -> Subject {
+        Subject::channel(
+            keyed(channel),
+            Some(InstanceKey::of::<FrameSample>(&instance)),
+        )
+    }
+
+    /// The car's channel `name`, narrowed by `instance`.
+    fn instance(name: &str, instance: InstanceSelector) -> AssertionTarget {
+        channel(name).with_instance(instance)
+    }
+
+    fn one(instance: &str) -> InstanceSelector {
+        InstanceSelector::One(instance.into())
+    }
+
+    /// An every-sample assertion on `target` whose condition fits a string
+    /// series, so only the selection is under test.
+    fn assertion_of_kind(target: AssertionTarget) -> Assertion {
+        judging(
+            target,
+            None,
+            Condition::NotEquals(AssertionValue::String("none".into())),
+        )
+    }
+
+    /// An assertion on `target`, reduced by `reduce`, judged by `condition`.
+    fn judging(
+        target: AssertionTarget,
+        reduce: Option<Reducer>,
+        condition: Condition,
+    ) -> Assertion {
+        Assertion {
+            condition,
+            ..reduced(target, reduce)
+        }
+    }
+
+    /// The key each entry of `plan` reads, in plan order.
+    fn plan_keys(plan: &ResolvedPlan) -> Vec<(EntryOwner, RecordedKey)> {
+        plan.entries
+            .iter()
+            .map(|entry| (entry.owner, entry.key.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn an_instance_selects_one_series_of_a_keyed_channel() {
+        let wheel = instance(EDGES, one("wheel"));
+        let (_, resolved) = resolve_with(&[assertion_of_kind(wheel.clone())], &[wheel]);
 
         assert_eq!(
-            errors(&[assertion(root.clone(), false)]),
+            plan_keys(&resolved.expect("the instance is declared")),
+            [(EntryOwner::Assertion(0), key(frame(EDGES, "wheel")))]
+        );
+    }
+
+    #[test]
+    fn each_instance_is_an_entry_of_its_own() {
+        let each = instance(EDGES, InstanceSelector::Each);
+        let (collector, resolved) = resolve_all(
+            &[assertion_of_kind(each.clone())],
+            &[measure(each.clone(), Reducer::Count)],
+            &[each],
+        );
+
+        let plan = resolved.expect("every instance resolves");
+        assert_eq!(
+            plan_keys(&plan),
+            [
+                (EntryOwner::Assertion(0), key(frame(EDGES, "base"))),
+                (EntryOwner::Assertion(0), key(frame(EDGES, "wheel"))),
+                (EntryOwner::Measure(0), key(frame(EDGES, "base"))),
+                (EntryOwner::Measure(0), key(frame(EDGES, "wheel"))),
+            ]
+        );
+        assert_ne!(
+            collector.series_id(&key(frame(EDGES, "base"))),
+            collector.series_id(&key(frame(EDGES, "wheel")))
+        );
+    }
+
+    #[test]
+    fn an_undeclared_instance_is_refused_listing_the_declared_ones() {
+        let spare = instance(EDGES, one("spare"));
+
+        assert_eq!(
+            errors(&[assertion_of_kind(spare.clone())]),
             vec![unusable(
                 1,
-                root,
-                vec![TargetProblem::NoExtractor(
-                    std::any::type_name::<FrameSample>()
-                )]
+                spare,
+                vec![TargetProblem::UndeclaredInstance {
+                    instance: "spare".to_string(),
+                    declared: vec!["base".to_string(), "wheel".to_string()],
+                }]
             )]
+        );
+    }
+
+    #[test]
+    fn an_instance_is_refused_where_there_are_none() {
+        let on_leaf = estimator(NIS).with_instance(InstanceSelector::Each);
+        let on_unkeyed = instance(SPEED, one("front"));
+
+        assert_eq!(
+            errors(&[
+                assertion(on_leaf.clone(), false),
+                assertion(on_unkeyed.clone(), false),
+            ]),
+            vec![
+                unusable(1, on_leaf, vec![TargetProblem::InstanceOnUnkeyed]),
+                unusable(2, on_unkeyed, vec![TargetProblem::InstanceOnUnkeyed]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_window_is_anchored_on_one_instance_never_each() {
+        let speed = channel(SPEED);
+        let each = instance(EDGES, InstanceSelector::Each);
+        let wheel = instance(EDGES, one("wheel"));
+        let (_, resolved) = resolve_with(
+            &[
+                anchored(speed.clone(), &wheel),
+                anchored(speed.clone(), &each),
+            ],
+            &[speed.clone(), wheel, each.clone()],
+        );
+
+        assert_eq!(
+            resolved,
+            Err(vec![unusable(
+                2,
+                speed,
+                vec![TargetProblem::Anchor {
+                    anchor: each,
+                    problem: Box::new(TargetProblem::AnchorOnSeveral(vec![
+                        "base".to_string(),
+                        "wheel".to_string()
+                    ])),
+                }]
+            )])
+        );
+    }
+
+    #[test]
+    fn a_reducer_or_condition_that_cannot_apply_to_the_series_kind_is_refused() {
+        // EDGES holds strings, NIS floats.
+        let base = instance(EDGES, one("base"));
+        let nis = estimator(NIS);
+        let (_, resolved) = resolve_all(
+            &[
+                judging(base.clone(), Some(Reducer::Max), Condition::LessThan(1.0)),
+                judging(base.clone(), None, Condition::LessThan(1.0)),
+                judging(
+                    base.clone(),
+                    Some(Reducer::Count),
+                    Condition::Equals(AssertionValue::String("two".into())),
+                ),
+                judging(nis.clone(), None, Condition::Equals(AssertionValue::Int(1))),
+                judging(
+                    nis.clone(),
+                    Some(Reducer::Count),
+                    Condition::Equals(AssertionValue::Int(0)),
+                ),
+            ],
+            &[
+                measure(base.clone(), Reducer::Mean),
+                measure(base.clone(), Reducer::Final),
+            ],
+            &[base.clone(), nis.clone()],
+        );
+
+        let kind = |problem| vec![TargetProblem::Condition(problem)];
+        assert_eq!(
+            resolved,
+            Err(vec![
+                unusable(
+                    1,
+                    base.clone(),
+                    vec![TargetProblem::Reduce(ReduceError::NotANumber {
+                        reducer: "max",
+                        value_kind: ValueKind::String,
+                    })]
+                ),
+                unusable(
+                    2,
+                    base.clone(),
+                    kind(KindProblem::NotANumber {
+                        condition: "less_than",
+                        judged: ValueKind::String,
+                    })
+                ),
+                unusable(
+                    3,
+                    base.clone(),
+                    kind(KindProblem::Mismatch {
+                        condition: "equals",
+                        judged: ValueKind::Int,
+                        operand: ValueKind::String,
+                    })
+                ),
+                unusable(
+                    4,
+                    nis,
+                    kind(KindProblem::FloatEquality {
+                        condition: "equals"
+                    })
+                ),
+                unusable(
+                    6,
+                    base,
+                    vec![TargetProblem::Reduce(ReduceError::NotANumber {
+                        reducer: "mean",
+                        value_kind: ValueKind::String,
+                    })]
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn several_instances_are_listed_in_the_message() {
+        assert_eq!(
+            unusable(
+                1,
+                channel(EDGES),
+                vec![TargetProblem::SeveralInstances(vec![
+                    "base".to_string(),
+                    "wheel".to_string()
+                ])]
+            )
+            .to_string(),
+            "'e1' on 'agent.car.channel.edges': it names several instances of a keyed \
+             channel (base, wheel): name one with instance = \"…\", or judge each with \
+             instance = \"*\""
         );
     }
 
