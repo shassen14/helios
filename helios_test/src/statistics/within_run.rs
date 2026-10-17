@@ -15,6 +15,7 @@ use crate::{
     collector::Sample,
 };
 
+use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::MonotonicTime;
 
 use serde::{Deserialize, Serialize};
@@ -91,6 +92,23 @@ impl Reducer {
             Reducer::Mean | Reducer::Std | Reducer::Rms | Reducer::TimeAbove(_) => {
                 numbers().map(|()| ValueKind::Float)
             }
+        }
+    }
+
+    /// The unit of the value this reducer gives over a series measured in
+    /// `series`, `None` where it is undeclared. A count is a number of
+    /// samples and a span is in seconds, whatever the series holds; every
+    /// other reducer keeps the series' unit.
+    pub fn si_unit(&self, series: Option<SiUnit>) -> Option<SiUnit> {
+        match self {
+            Reducer::Count => Some(SiUnit::Dimensionless),
+            Reducer::TimeAbove(_) | Reducer::MaxGap => Some(SiUnit::Seconds),
+            Reducer::Final
+            | Reducer::Min
+            | Reducer::Max
+            | Reducer::Mean
+            | Reducer::Std
+            | Reducer::Rms => series,
         }
     }
 
@@ -426,6 +444,29 @@ mod tests {
             })
         );
         assert_eq!(reduce(Reducer::Count, &flags), Some(AssertionValue::Int(1)));
+    }
+
+    #[test]
+    fn each_reducer_declares_the_unit_of_its_value() {
+        let speed = Some(SiUnit::MetersPerSecond);
+        assert_eq!(Reducer::Count.si_unit(speed), Some(SiUnit::Dimensionless));
+        assert_eq!(Reducer::Count.si_unit(None), Some(SiUnit::Dimensionless));
+        assert_eq!(Reducer::MaxGap.si_unit(None), Some(SiUnit::Seconds));
+        assert_eq!(
+            Reducer::TimeAbove(1.0).si_unit(speed),
+            Some(SiUnit::Seconds)
+        );
+        for reducer in [
+            Reducer::Final,
+            Reducer::Min,
+            Reducer::Max,
+            Reducer::Mean,
+            Reducer::Std,
+            Reducer::Rms,
+        ] {
+            assert_eq!(reducer.si_unit(speed), speed, "{reducer:?}");
+            assert_eq!(reducer.si_unit(None), None, "{reducer:?}");
+        }
     }
 
     #[test]

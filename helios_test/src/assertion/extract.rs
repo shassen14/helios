@@ -1,5 +1,6 @@
 use crate::assertion::condition::{AssertionValue, ValueKind};
 
+use helios_core::kernel::si_unit::SiUnit;
 use helios_runtime::ErasedStamped;
 
 use std::{
@@ -57,14 +58,23 @@ impl ExtractedValue for String {
 /// handed a payload of another type.
 type ErasedExtractor = Box<dyn Fn(&dyn Any) -> Option<AssertionValue> + Send + Sync>;
 
-/// An erased extractor with the kind of every value it returns.
+/// _Pre-step._ What every value an extractor returns is: its kind, and its
+/// unit where the payload type fixes one (a wheel's speed is in m/s; a bare
+/// `f64` could be anything).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Extracted {
+    pub kind: ValueKind,
+    pub si_unit: Option<SiUnit>,
+}
+
+/// An erased extractor with what its values are.
 struct Registered {
-    kind: ValueKind,
+    gives: Extracted,
     extract: ErasedExtractor,
 }
 
 /// _Per-step._ The `TypeId`-keyed table of payload extractors, each with the
-/// kind of value it gives.
+/// kind and unit of value it gives.
 // Bridges typed channel values to the untyped `AssertionValue` space assertions
 // compare against TOML. Keyed by the *payload* type, never `Stamped<T>`: the
 // table reads the payload out of the stamped value itself.
@@ -79,14 +89,30 @@ impl ExtractorTable {
         }
     }
 
+    /// Registers `extractor` for payloads of type `T`, its values measured
+    /// in `si_unit`: `None` when the payload type doesn't fix a unit, and
+    /// always for a bool or a string, which has none (a debug build panics,
+    /// since the unit would be dropped unseen).
     // Last-writer-wins: registering twice for the same `T` silently overwrites.
     // Intentional — lets tests install fixture extractors over the standard set
     // without a separate "override" entry point.
-    pub fn register<T: 'static, V: ExtractedValue>(&mut self, extractor: Extractor<T, V>) {
+    pub fn register<T: 'static, V: ExtractedValue>(
+        &mut self,
+        extractor: Extractor<T, V>,
+        si_unit: Option<SiUnit>,
+    ) {
+        debug_assert!(
+            V::KIND.is_number() || si_unit.is_none(),
+            "an extractor of {} values can't have a unit",
+            V::KIND
+        );
         self.by_type.insert(
             TypeId::of::<T>(),
             Registered {
-                kind: V::KIND,
+                gives: Extracted {
+                    kind: V::KIND,
+                    si_unit,
+                },
                 extract: Box::new(move |payload| {
                     payload
                         .downcast_ref::<T>()
@@ -96,10 +122,12 @@ impl ExtractorTable {
         );
     }
 
-    /// The kind of value a payload of type `payload` gives, or `None` when
-    /// it has no extractor.
-    pub fn kind_of(&self, payload: TypeId) -> Option<ValueKind> {
-        self.by_type.get(&payload).map(|registered| registered.kind)
+    /// What a payload of type `payload` gives, or `None` when it has no
+    /// extractor.
+    pub fn extracted(&self, payload: TypeId) -> Option<Extracted> {
+        self.by_type
+            .get(&payload)
+            .map(|registered| registered.gives)
     }
 
     /// The comparable value of `stamped`'s payload.
@@ -135,11 +163,12 @@ pub enum ExtractError {
     PayloadMismatch { payload: &'static str },
 }
 
+/// Extractors for the bare payload types. A bare number fixes no unit.
 pub fn standard_extractors() -> ExtractorTable {
     let mut table = ExtractorTable::new();
-    table.register::<f64, f64>(|x| *x);
-    table.register::<i64, i64>(|x| *x);
-    table.register::<bool, bool>(|x| *x);
+    table.register::<f64, f64>(|x| *x, None);
+    table.register::<i64, i64>(|x| *x, None);
+    table.register::<bool, bool>(|x| *x, None);
     table
 }
 
@@ -232,20 +261,32 @@ mod tests {
     }
 
     #[test]
-    fn each_payload_type_has_the_kind_its_extractor_returns() {
+    fn each_payload_type_gives_the_kind_its_extractor_returns_in_its_unit() {
         let mut table = standard_extractors();
-        table.register::<u32, i64>(|x| i64::from(*x));
+        table.register::<u32, i64>(|x| i64::from(*x), Some(SiUnit::Dimensionless));
+        let kind = |payload| table.extracted(payload).map(|gives| gives.kind);
 
-        assert_eq!(table.kind_of(TypeId::of::<f64>()), Some(ValueKind::Float));
-        assert_eq!(table.kind_of(TypeId::of::<bool>()), Some(ValueKind::Bool));
-        assert_eq!(table.kind_of(TypeId::of::<u32>()), Some(ValueKind::Int));
-        assert_eq!(table.kind_of(TypeId::of::<String>()), None);
+        assert_eq!(kind(TypeId::of::<f64>()), Some(ValueKind::Float));
+        assert_eq!(kind(TypeId::of::<bool>()), Some(ValueKind::Bool));
+        assert_eq!(kind(TypeId::of::<u32>()), Some(ValueKind::Int));
+        assert_eq!(kind(TypeId::of::<String>()), None);
+
+        let unit = |payload| table.extracted(payload).and_then(|gives| gives.si_unit);
+        assert_eq!(unit(TypeId::of::<f64>()), None);
+        assert_eq!(unit(TypeId::of::<u32>()), Some(SiUnit::Dimensionless));
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "an extractor of bool values can't have a unit")]
+    fn a_bool_extractor_with_a_unit_is_refused() {
+        standard_extractors().register::<u32, bool>(|x| *x > 0, Some(SiUnit::Meters));
     }
 
     #[test]
     fn register_overrides_previous_entry() {
         let mut table = standard_extractors();
-        table.register::<f64, f64>(|_| 99.0);
+        table.register::<f64, f64>(|_| 99.0, None);
 
         assert_eq!(
             table.extract(&stamped(1.0_f64)),

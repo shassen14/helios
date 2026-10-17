@@ -7,7 +7,8 @@
 //! emission's events; and the reducer and the condition can apply to the
 //! kind of value the series holds. Each entry that can be evaluated binds
 //! its series, one per instance, and its anchors', to the exact keys they
-//! name.
+//! name, and carries the unit its value is read in: the leaf's or the
+//! extractor's, through the reducer.
 //!
 //! Done against what each agent declares it reports, before the first tick,
 //! so a run that could never pass stops before it starts and names every
@@ -17,22 +18,23 @@
 
 use crate::{
     assertion::{
-        condition::KindProblem, Assertion, AssertionTarget, Condition, EntryName, InstanceSelector,
-        Measure, TargetSubject, ValueKind, Window,
+        condition::KindProblem, extract::Extracted, Assertion, AssertionTarget, Condition,
+        EntryName, InstanceSelector, Measure, TargetSubject, ValueKind, Window,
     },
     collector::{instance_of, ObservationCollector, Series, SeriesId},
+    report::ReportedUnit,
     runner::state::AssertionState,
     statistics::within_run::{ReduceError, Reducer},
 };
 
+use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::AgentId;
 use helios_runtime::{
     observe::{
         key::{RecordedKey, Subject},
-        observation::ObservedValueKind,
         path::channel_path,
     },
-    port::{ChannelKey, Determinism, Observable, Writer},
+    port::{ChannelKey, Determinism, Observable, ObservableValue, Writer},
     AutonomyPipeline,
 };
 
@@ -85,12 +87,14 @@ impl ResolvedPlan {
                     key,
                     series,
                     held,
+                    unit,
                     state,
                 } = entry;
                 Some(EntryView {
                     owner: *owner,
                     key: &*key,
                     held: *held,
+                    unit: *unit,
                     series: collector.series(*series)?,
                     state,
                 })
@@ -135,6 +139,8 @@ struct PlanEntry {
     series: SeriesId,
     /// As [`EntryView::held`].
     held: bool,
+    /// As [`EntryView::unit`].
+    unit: Option<ReportedUnit>,
     state: AssertionState,
 }
 
@@ -148,6 +154,7 @@ impl PlanEntry {
             owner: self.owner,
             key: &self.key,
             held: self.held,
+            unit: self.unit,
             series: collector.series(self.series)?,
             state,
         })
@@ -167,6 +174,8 @@ pub(super) struct EntryView<'p, 'c, S> {
     /// for an emission, whose values are events. A held series carries its
     /// last value into a window that starts after it.
     pub held: bool,
+    /// The unit the entry's value is read in, `None` for a bool or string.
+    pub unit: Option<ReportedUnit>,
     pub series: &'c Series,
     pub state: S,
 }
@@ -364,6 +373,7 @@ pub(super) fn resolve(
                         series: collector.bind(key.clone()),
                         key,
                         held: found.held,
+                        unit: found.unit,
                         state: AssertionState::new(),
                     });
                 }
@@ -393,6 +403,8 @@ struct Found<'r> {
     targets: Vec<RecordedKey>,
     /// As [`EntryView::held`].
     held: bool,
+    /// As [`EntryView::unit`].
+    unit: Option<ReportedUnit>,
     /// Each window anchor's selector with the key it names.
     anchors: Vec<(&'r AssertionTarget, RecordedKey)>,
 }
@@ -417,11 +429,15 @@ fn check<'r>(
             None
         }
     };
+    let mut unit = None;
     if let Some(located) = &target {
         if matches!(wanted.reduce, Some(Reducer::TimeAbove(_))) && !located.held {
             problems.push(TargetProblem::TimeAboveOnEmission);
         }
-        problems.extend(kind_problem(wanted, located.kind));
+        match judged_unit(wanted, located) {
+            Ok(judged) => unit = judged,
+            Err(problem) => problems.push(problem),
+        }
     }
 
     let mut anchors = Vec::new();
@@ -445,36 +461,43 @@ fn check<'r>(
         Some(located) if problems.is_empty() => Ok(Found {
             targets: located.keys,
             held: located.held,
+            unit,
             anchors,
         }),
         _ => Err(problems),
     }
 }
 
-/// Why `wanted`'s reducer can't reduce a series of kind `series`, or its
-/// condition can't judge what it is given, if either can't: refused here
-/// rather than failing on every sample once the run is under way.
-fn kind_problem(wanted: &Wanted, series: ValueKind) -> Option<TargetProblem> {
-    let judged = match wanted.reduce {
-        Some(reducer) => match reducer.value_kind(series) {
-            Ok(kind) => kind,
-            Err(problem) => return Some(TargetProblem::Reduce(problem)),
-        },
-        None => series,
+/// The unit of the value `wanted` judges or measures in the series
+/// `located`, or why its reducer can't reduce that series' kind or its
+/// condition can't judge what it is given: refused here rather than failing
+/// on every sample once the run is under way.
+fn judged_unit(wanted: &Wanted, located: &Located) -> Result<Option<ReportedUnit>, TargetProblem> {
+    let (kind, si_unit) = match wanted.reduce {
+        Some(reducer) => (
+            reducer
+                .value_kind(located.kind)
+                .map_err(TargetProblem::Reduce)?,
+            reducer.si_unit(located.si_unit),
+        ),
+        None => (located.kind, located.si_unit),
     };
-    wanted
-        .condition?
-        .check_kind(judged)
-        .err()
-        .map(TargetProblem::Condition)
+    if let Some(condition) = wanted.condition {
+        condition
+            .check_kind(kind)
+            .map_err(TargetProblem::Condition)?;
+    }
+    Ok(ReportedUnit::of(kind, si_unit))
 }
 
 /// What `target` names in the run: its keys, every one an instance of one
-/// channel or the one series, the kind of value they hold, and whether each
-/// value holds until the next.
+/// channel or the one series, the kind of value they hold and its unit, and
+/// whether each value holds until the next.
 struct Located {
     keys: Vec<RecordedKey>,
     kind: ValueKind,
+    /// The leaf's, or the extractor's; `None` where undeclared.
+    si_unit: Option<SiUnit>,
     /// As [`EntryView::held`].
     held: bool,
 }
@@ -511,25 +534,29 @@ fn locate(
         problems.push(TargetProblem::Nondeterministic);
     }
     // Every instance of one channel carries its key's payload type, so the
-    // first selected stands for them all. A node's emission is a number.
-    let kind = selected
+    // first selected stands for them all. A node's emission is a number in
+    // the unit its leaf declares.
+    let extracted = selected
         .first()
-        .and_then(|(_, observable)| match observable.kind() {
-            ObservedValueKind::Scalar => Some(ValueKind::Float),
-            ObservedValueKind::Typed { type_id, type_name } => {
-                let kind = collector.extracted_kind(type_id);
-                if kind.is_none() {
+        .and_then(|(_, observable)| match observable.value() {
+            ObservableValue::Scalar { si_unit } => Some(Extracted {
+                kind: ValueKind::Float,
+                si_unit: Some(si_unit),
+            }),
+            ObservableValue::Typed { type_id, type_name } => {
+                let extracted = collector.extracted(type_id);
+                if extracted.is_none() {
                     problems.push(TargetProblem::NoExtractor(type_name));
                 }
-                kind
+                extracted
             }
         });
     if !collector.requests(target) {
         problems.push(TargetProblem::Unrequested);
     }
 
-    match kind {
-        Some(kind) if problems.is_empty() => Ok(Located {
+    match extracted {
+        Some(Extracted { kind, si_unit }) if problems.is_empty() => Ok(Located {
             held: selected
                 .iter()
                 .all(|(subject, _)| matches!(subject, Subject::Channel { .. })),
@@ -541,6 +568,7 @@ fn locate(
                 })
                 .collect(),
             kind,
+            si_unit,
         }),
         _ => Err(problems),
     }
@@ -704,8 +732,8 @@ mod tests {
                 ChannelKey::internal::<f64>(SPEED),
                 ChannelKey::internal::<String>(LABEL),
             ])
-            .observable(NIS, Determinism::Deterministic)
-            .observable(SHARED, Determinism::Deterministic)
+            .observable(NIS, Determinism::Deterministic, SiUnit::Dimensionless)
+            .observable(SHARED, Determinism::Deterministic, SiUnit::Dimensionless)
             .build();
         let planner = PortDescriptorBuilder::algorithm()
             .outputs_from_slice(&[ChannelKey::internal::<String>(SHARED)])
@@ -854,7 +882,7 @@ mod tests {
             .collect();
         let pipeline = pipeline();
         let mut extractors = standard_extractors();
-        extractors.register::<FrameSample, String>(|sample| sample.0.to_string());
+        extractors.register::<FrameSample, String>(|sample| sample.0.to_string(), None);
         let mut collector = ObservationCollector::new(requested, extractors);
         let resolved = resolve(
             &assertions,
@@ -899,6 +927,12 @@ mod tests {
                 .series_id(&key(subject.clone()))
                 .expect("the entry's key is bound"),
             held: matches!(subject, Subject::Channel { .. }),
+            // NIS declares itself dimensionless; a bare f64 channel declares
+            // nothing.
+            unit: Some(match subject {
+                Subject::Channel { .. } => ReportedUnit::Undeclared,
+                _ => ReportedUnit::Declared(SiUnit::Dimensionless),
+            }),
             state: AssertionState::new(),
         };
         assert_eq!(

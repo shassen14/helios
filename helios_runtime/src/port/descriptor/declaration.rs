@@ -3,7 +3,8 @@
 //! and each output as an [`OutputPort`] record of channel, the actuators it
 //! drives and the [`MountRule`] that gives its mount. It also
 //! declares what the node can emit for watchers, each value an [`Observable`]
-//! record of leaf name, [`Determinism`] and [`ObservedValueKind`], and the
+//! record of leaf name, [`Determinism`] and [`ObservableValue`] (a number
+//! in its [`SiUnit`], or a channel's payload type), and the
 //! frames the node defines, and the [`NodeClass`] the node runs under.
 //!
 //! The build reads these declarations to allocate bus slots, order nodes, and
@@ -17,10 +18,11 @@ use crate::{
 };
 
 use helios_core::control::actuators::ActuatorDrive;
+use helios_core::kernel::si_unit::SiUnit;
 use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 
-use std::sync::Arc;
+use std::{any::TypeId, sync::Arc};
 
 /// Declares what a pipeline node reads from and writes to the bus.
 ///
@@ -419,8 +421,7 @@ pub enum InputTiming {
 }
 
 /// One value a watcher can ask for: its name, whether it is
-/// [deterministic](Determinism), and the [kind of value](ObservedValueKind)
-/// it arrives as.
+/// [deterministic](Determinism), and [what it arrives as](ObservableValue).
 ///
 /// A node declares its leaves as observables, named relative to the node
 /// (`aiding.gps.nis`). The pipeline's catalog also lists each channel as
@@ -431,17 +432,21 @@ pub enum InputTiming {
 pub struct Observable {
     name: Arc<str>,
     determinism: Determinism,
-    kind: ObservedValueKind,
+    value: ObservableValue,
 }
 
 impl Observable {
-    /// A value that arrives as a number: every leaf a node declares, and the
-    /// pipeline's own measurements.
-    pub(crate) fn scalar(name: impl Into<Arc<str>>, determinism: Determinism) -> Self {
+    /// A value that arrives as a number in `si_unit`: every leaf a node
+    /// declares, and the pipeline's own measurements.
+    pub(crate) fn scalar(
+        name: impl Into<Arc<str>>,
+        determinism: Determinism,
+        si_unit: SiUnit,
+    ) -> Self {
         Self {
             name: name.into(),
             determinism,
-            kind: ObservedValueKind::Scalar,
+            value: ObservableValue::Scalar { si_unit },
         }
     }
 
@@ -454,7 +459,7 @@ impl Observable {
         Self {
             name: name.into(),
             determinism,
-            kind: ObservedValueKind::Typed {
+            value: ObservableValue::Typed {
                 type_id: channel.type_id(),
                 type_name: channel.type_name(),
             },
@@ -473,10 +478,41 @@ impl Observable {
         self.determinism
     }
 
+    /// What the value arrives as: a number in its unit, or a payload.
+    pub fn value(&self) -> ObservableValue {
+        self.value
+    }
+
     /// The kind of [`ObservedValue`](crate::observe::observation::ObservedValue)
     /// this leaf arrives as.
     pub fn kind(&self) -> ObservedValueKind {
-        self.kind
+        self.value.kind()
+    }
+}
+
+/// What an [`Observable`]'s values arrive as. A number has one unit; a
+/// channel's payload has none of its own, since it may hold no number or
+/// several in different units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ObservableValue {
+    /// A number measured in `si_unit`: every leaf a node declares, and the
+    /// pipeline's own measurements.
+    Scalar { si_unit: SiUnit },
+    /// What was written to a channel, a payload of this type.
+    Typed {
+        type_id: TypeId,
+        type_name: &'static str,
+    },
+}
+
+impl ObservableValue {
+    /// The [`ObservedValueKind`] values of this arrive as: the same
+    /// variants without the unit.
+    pub fn kind(self) -> ObservedValueKind {
+        match self {
+            Self::Scalar { .. } => ObservedValueKind::Scalar,
+            Self::Typed { type_id, type_name } => ObservedValueKind::Typed { type_id, type_name },
+        }
     }
 }
 
@@ -518,8 +554,6 @@ pub enum Determinism {
 mod tests {
     use super::*;
     use crate::port::channel::ChannelKey;
-
-    use std::any::TypeId;
 
     fn ikey<T: 'static>() -> ChannelKey {
         ChannelKey::internal_of::<T>()
@@ -617,8 +651,13 @@ mod tests {
 
     #[test]
     fn with_observables_keeps_declaration_order() {
-        let nis = Observable::scalar("aiding.gps.nis", Determinism::Deterministic);
-        let duration = Observable::scalar("duration", Determinism::Nondeterministic);
+        let nis = Observable::scalar(
+            "aiding.gps.nis",
+            Determinism::Deterministic,
+            SiUnit::Dimensionless,
+        );
+        let duration =
+            Observable::scalar("duration", Determinism::Nondeterministic, SiUnit::Seconds);
         let d = PortDescriptor::new(vec![], vec![], vec![], None)
             .with_observables(vec![nis.clone(), duration.clone()]);
 
@@ -626,15 +665,25 @@ mod tests {
     }
 
     #[test]
-    fn observable_reads_back_its_name_and_determinism() {
-        let o = Observable::scalar("aiding.gps.nis", Determinism::Deterministic);
+    fn observable_reads_back_its_name_determinism_and_unit() {
+        let o = Observable::scalar(
+            "aiding.gps.nis",
+            Determinism::Deterministic,
+            SiUnit::Dimensionless,
+        );
         assert_eq!(o.name().as_ref(), "aiding.gps.nis");
         assert_eq!(o.determinism(), Determinism::Deterministic);
+        assert_eq!(
+            o.value(),
+            ObservableValue::Scalar {
+                si_unit: SiUnit::Dimensionless
+            }
+        );
         assert_eq!(o.kind(), ObservedValueKind::Scalar);
     }
 
     #[test]
-    fn a_typed_observable_carries_its_channels_payload_type() {
+    fn a_typed_observable_carries_its_channels_payload_type_and_no_unit() {
         let o = Observable::typed("est.cov", Determinism::Deterministic, &ikey::<u32>());
         assert_eq!(
             o.kind(),

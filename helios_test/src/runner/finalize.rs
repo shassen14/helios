@@ -144,6 +144,7 @@ impl Runner {
                             entry.and_then(|entry| instance(entry.key)),
                             assertion.window.clone(),
                             assertion.reduce.clone(),
+                            entry.and_then(|entry| entry.unit),
                             assertion.condition.clone(),
                             series,
                             verdict,
@@ -427,6 +428,7 @@ fn report_measure(
         measure.reduce.clone(),
         windowed.is_some_and(Windowed::covered),
         value,
+        judged.and_then(|entry| entry.unit),
         windowed.map_or_else(unread, |windowed| {
             windowed.summary(&Some(measure.reduce.clone()))
         }),
@@ -473,7 +475,7 @@ mod tests {
 
     use crate::{
         assertion::{AssertionValue, EntryName},
-        report::{AssertionStatus, ReportStatus},
+        report::{AssertionStatus, ReportStatus, ReportedUnit},
         runner::{
             fixtures::{
                 at, cont, each_wheel, leaf_key, measure, pipeline, ready, reduced_below,
@@ -484,6 +486,8 @@ mod tests {
             TickAction,
         },
     };
+
+    use helios_core::kernel::si_unit::SiUnit;
 
     const BUDGET_SECS: f64 = 5.0;
 
@@ -1356,6 +1360,55 @@ mod tests {
             ]
         );
         assert_eq!(report.status(), &ReportStatus::Failed);
+    }
+
+    #[test]
+    fn each_entry_reports_the_unit_its_value_is_read_in() {
+        // The leaf's meters, the reducer's seconds, an f64 channel's none;
+        // a count of the leaf, and each wheel's speed in the extractor's m/s.
+        let fastest = format!(
+            "name = \"fastest\"\ntarget = {}\nreduce = \"max\"",
+            each_wheel(CAR)
+        );
+        let (mut r, collector) = ready(
+            run_measuring(
+                &budget(),
+                &[
+                    &cont("at_one", CAR, 1.0),
+                    &reduced_below("gaps", CAR, "\"max_gap\"", 10.0),
+                    &speed_term("speed", CAR, 1.0),
+                ],
+                &[&measure("updates", CAR, "\"count\""), &fastest],
+            ),
+            &[CAR],
+        );
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        let declared = |si_unit| Some(ReportedUnit::Declared(si_unit));
+        let assertions: Vec<_> = report
+            .assertions()
+            .iter()
+            .map(|entry| entry.unit())
+            .collect();
+        assert_eq!(
+            assertions,
+            [
+                declared(SiUnit::Meters),
+                declared(SiUnit::Seconds),
+                Some(ReportedUnit::Undeclared),
+            ]
+        );
+        let measures: Vec<_> = report.measures().iter().map(|entry| entry.unit()).collect();
+        assert_eq!(
+            measures,
+            [
+                declared(SiUnit::Dimensionless),
+                declared(SiUnit::MetersPerSecond),
+                declared(SiUnit::MetersPerSecond),
+            ]
+        );
     }
 
     #[test]

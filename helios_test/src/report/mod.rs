@@ -1,6 +1,9 @@
 pub mod aggregate;
 pub mod console;
 pub mod toml_writer;
+pub mod unit;
+
+pub use unit::ReportedUnit;
 
 use crate::{
     assertion::{AssertionResult, AssertionTarget, AssertionValue, Condition, FailureKind, Window},
@@ -226,6 +229,10 @@ pub struct AssertionReportEntry {
     /// Absent on an assertion that judged every sample.
     #[serde(skip_serializing_if = "Option::is_none")]
     reduce: Option<Reducer>,
+    /// The unit the judged value and the condition's operand are read in.
+    /// Absent on a bool or string, and on an entry the run never set up.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unit: Option<ReportedUnit>,
     /// With its operand, as the run file wrote it.
     condition: Condition,
     #[serde(flatten)]
@@ -246,6 +253,7 @@ impl AssertionReportEntry {
         instance: Option<String>,
         window: Window,
         reduce: Option<Reducer>,
+        unit: Option<ReportedUnit>,
         condition: Condition,
         series: SeriesSummary,
         verdict: Verdict,
@@ -256,6 +264,7 @@ impl AssertionReportEntry {
             instance,
             window,
             reduce,
+            unit,
             condition,
             series,
             verdict,
@@ -269,6 +278,11 @@ impl AssertionReportEntry {
     /// The instance judged, on a keyed channel.
     pub fn instance(&self) -> Option<&str> {
         self.instance.as_deref()
+    }
+
+    /// The unit the judged value is read in.
+    pub fn unit(&self) -> Option<ReportedUnit> {
+        self.unit
     }
 
     /// What the judged series held.
@@ -309,6 +323,9 @@ pub struct MeasureReportEntry {
     /// `reason` says; or a window the run never placed, with no `reason`.
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<AssertionValue>,
+    /// As on [`AssertionReportEntry`]: the measured value's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unit: Option<ReportedUnit>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<FailureReason>,
     #[serde(flatten)]
@@ -328,6 +345,7 @@ impl MeasureReportEntry {
         reduce: Reducer,
         covered: bool,
         value: Option<Result<AssertionValue, FailureReason>>,
+        unit: Option<ReportedUnit>,
         series: SeriesSummary,
     ) -> Self {
         let (value, reason) = match value {
@@ -343,6 +361,7 @@ impl MeasureReportEntry {
             reduce,
             covered,
             value,
+            unit,
             reason,
             series,
         }
@@ -364,6 +383,11 @@ impl MeasureReportEntry {
     /// The measured value, if the reducer had one.
     pub fn value(&self) -> Option<&AssertionValue> {
         self.value.as_ref()
+    }
+
+    /// As [`AssertionReportEntry::unit`].
+    pub fn unit(&self) -> Option<ReportedUnit> {
+        self.unit
     }
 
     /// Why there is no value, if there is none.

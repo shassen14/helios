@@ -4,6 +4,7 @@
 
 use super::{state::AssertionState, Phase, Runner};
 use crate::{assertion::extract::standard_extractors, collector::ObservationCollector, run::Run};
+use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
 use helios_runtime::{
     observe::{
@@ -25,7 +26,7 @@ use std::sync::Arc;
 pub(super) const CAR: &str = "car";
 pub(super) const TRUCK: &str = "truck";
 const ESTIMATOR: &str = "estimator";
-/// The one leaf [`pipeline`] declares.
+/// The one leaf [`pipeline`] declares, in meters.
 const LEAF: &str = "x";
 /// The one channel [`pipeline`]'s estimator writes, carrying `f64`.
 const SPEED: &str = "speed";
@@ -222,7 +223,7 @@ pub(super) fn pipeline() -> AutonomyPipeline {
     let descriptor = PortDescriptorBuilder::algorithm()
         .outputs_from_slice(&[speed::<f64>()])
         .output_keyed::<Wheel>(wheels(), WHEEL_NAMES)
-        .observable(LEAF, Determinism::Deterministic)
+        .observable(LEAF, Determinism::Deterministic, SiUnit::Meters)
         .build();
     PipelineBuilder::new(AgentId::new(CAR))
         .add_node(Box::new(Estimator(descriptor)))
@@ -255,7 +256,7 @@ pub(super) fn refused_write(agent: &str) -> (AgentId, RefusedWrites) {
 pub(super) fn ready(run: Run, agents: &[&str]) -> (Runner, ObservationCollector) {
     let mut runner = Runner::new(run).expect("valid run");
     let mut extractors = standard_extractors();
-    extractors.register::<Wheel, f64>(|wheel| wheel.speed);
+    extractors.register::<Wheel, f64>(|wheel| wheel.speed, Some(SiUnit::MetersPerSecond));
     let mut collector = runner.collector_reading(extractors);
     let pipelines: Vec<(AgentId, AutonomyPipeline)> = agents
         .iter()

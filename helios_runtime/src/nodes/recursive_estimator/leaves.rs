@@ -4,6 +4,7 @@
 use crate::port::Determinism;
 
 use helios_core::kernel::identifier::LEVEL_SEPARATOR;
+use helios_core::kernel::si_unit::SiUnit;
 
 use std::sync::Arc;
 
@@ -44,6 +45,13 @@ impl AidingLeaf {
     pub(crate) fn determinism(self) -> Determinism {
         match self {
             Self::Nis | Self::Dropped => Determinism::Deterministic,
+        }
+    }
+
+    /// The unit the leaf's values are measured in.
+    pub(crate) fn si_unit(self) -> SiUnit {
+        match self {
+            Self::Nis | Self::Dropped => SiUnit::Dimensionless,
         }
     }
 }

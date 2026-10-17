@@ -83,6 +83,8 @@ mod tests {
         port::{ChannelKey, ChannelKind, Determinism, InstanceKey, Keyed},
     };
 
+    use helios_core::kernel::si_unit::SiUnit;
+
     const CAR: &str = "car";
     const TRUCK: &str = "truck";
     const ESTIMATOR: &str = "estimator";
@@ -114,7 +116,7 @@ mod tests {
         let emissions = [NIS, DROPPED].into_iter().map(|leaf| {
             (
                 Subject::emission(ESTIMATOR, leaf),
-                Observable::scalar(leaf, Determinism::Deterministic),
+                Observable::scalar(leaf, Determinism::Deterministic, SiUnit::Dimensionless),
             )
         });
         let edges = ["base_link", "imu"].into_iter().map(|frame| {

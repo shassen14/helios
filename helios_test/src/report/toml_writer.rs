@@ -47,10 +47,12 @@ mod tests {
         AssertionTarget, AssertionValue, Bound, Condition, InstanceSelector, RunInstant, Window,
     };
     use crate::report::{
-        AssertionReportEntry, FailureReason, MeasureReportEntry, SeriesSummary, TerminatedBy,
-        Verdict,
+        AssertionReportEntry, FailureReason, MeasureReportEntry, ReportedUnit, SeriesSummary,
+        TerminatedBy, Verdict,
     };
     use crate::statistics::within_run::Reducer;
+
+    use helios_core::kernel::si_unit::SiUnit;
 
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -91,6 +93,7 @@ mod tests {
             None,
             window(),
             Some(Reducer::TimeAbove(5.0)),
+            Some(ReportedUnit::Declared(SiUnit::Seconds)),
             Condition::LessThan(2.0),
             windowed_series(40),
             verdict,
@@ -121,6 +124,7 @@ mod tests {
                     None,
                     Window::default(),
                     Some(Reducer::Final),
+                    Some(ReportedUnit::Declared(SiUnit::Meters)),
                     Condition::WithinRange([-0.5, 0.5]),
                     SeriesSummary {
                         final_age_secs: Some(0.25),
@@ -144,6 +148,7 @@ mod tests {
                 Reducer::Final,
                 true,
                 Some(Ok(AssertionValue::Float(0.5))),
+                Some(ReportedUnit::Declared(SiUnit::Meters)),
                 series(1),
             )],
         )
@@ -196,11 +201,14 @@ mod tests {
         assert_eq!(parked["status"].as_str(), Some("passed"));
         assert_eq!(parked["actual"].as_float(), Some(0.0));
         assert!(parked.get("reason").is_none());
+        // The unit its value and bound are read in.
+        assert_eq!(parked["unit"].as_str(), Some("m"));
 
         // The time_above line: its reducer is a table with its threshold.
         let fast = &assertions[1];
         assert_eq!(fast["target"].as_str(), Some("agent.car.channel.speed"));
         assert_eq!(fast["reduce"]["time_above"].as_float(), Some(5.0));
+        assert_eq!(fast["unit"].as_str(), Some("s"));
         assert_eq!(fast["condition"]["less_than"].as_float(), Some(2.0));
         assert_eq!(fast["status"].as_str(), Some("failed"));
         assert_eq!(fast["actual"].as_float(), Some(7.0));
@@ -220,6 +228,7 @@ mod tests {
         assert_eq!(measures.len(), 1);
         assert_eq!(measures[0]["name"].as_str(), Some("goal_distance"));
         assert_eq!(measures[0]["value"].as_float(), Some(0.5));
+        assert_eq!(measures[0]["unit"].as_str(), Some("m"));
         assert_eq!(measures[0]["covered"].as_bool(), Some(true));
         assert!(measures[0].get("reason").is_none());
     }
@@ -236,6 +245,7 @@ mod tests {
             Some("agent.car.base_link".to_string()),
             Window::default(),
             None,
+            Some(ReportedUnit::Undeclared),
             Condition::LessThan(1.0),
             series(3),
             Verdict::Passed {
@@ -257,6 +267,7 @@ mod tests {
         );
         assert_eq!(level["target"]["instance"].as_str(), Some("*"));
         assert_eq!(level["instance"].as_str(), Some("agent.car.base_link"));
+        assert_eq!(level["unit"].as_str(), Some("undeclared"));
         let stop = &value["terminated_by"];
         assert_eq!(stop["kind"].as_str(), Some("assertion_failed"));
         assert_eq!(stop["path"].as_str(), Some("agent.car.channel.truth.tf"));

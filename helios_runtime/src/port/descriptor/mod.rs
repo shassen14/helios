@@ -5,7 +5,7 @@
 //!   [`MountReading`] records of the inputs whose mounts it resolves, per-output
 //!   [`OutputPort`] records, and the
 //!   [`Observable`] records of what a node can emit for watchers
-//!   ([`Determinism`]).
+//!   ([`Determinism`], [`ObservableValue`]).
 //! - [`builder`] — [`PortDescriptorBuilder`], the only way to build a
 //!   descriptor from outside this crate.
 
@@ -15,5 +15,5 @@ pub mod declaration;
 pub use builder::PortDescriptorBuilder;
 pub use declaration::{
     Determinism, InputNeed, InputPort, InputTiming, MountReading, MountRule, Observable,
-    OutputPort, PortDescriptor,
+    ObservableValue, OutputPort, PortDescriptor,
 };

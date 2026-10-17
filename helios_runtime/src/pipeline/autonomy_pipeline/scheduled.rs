@@ -11,6 +11,7 @@ use crate::{
     NodeId,
 };
 
+use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::AgentId;
 
 /// The group the pipeline's own leaves sit under. The pipeline adds these to
@@ -159,6 +160,7 @@ pub(crate) fn observable_catalog(node: &dyn PipelineNode) -> Vec<Observable> {
     observables.push(Observable::scalar(
         TICK_DURATION_LEAF,
         Determinism::Nondeterministic,
+        SiUnit::Seconds,
     ));
     observables
 }
@@ -223,7 +225,7 @@ mod tests {
         leaves
             .iter()
             .fold(PortDescriptorBuilder::algorithm(), |builder, leaf| {
-                builder.observable(*leaf, Determinism::Deterministic)
+                builder.observable(*leaf, Determinism::Deterministic, SiUnit::Dimensionless)
             })
     }
 
@@ -260,9 +262,13 @@ mod tests {
         assert_eq!(
             observable_catalog(node.as_ref()),
             vec![
-                Observable::scalar(NIS, Determinism::Deterministic),
-                Observable::scalar(DROPPED, Determinism::Deterministic),
-                Observable::scalar(TICK_DURATION_LEAF, Determinism::Nondeterministic),
+                Observable::scalar(NIS, Determinism::Deterministic, SiUnit::Dimensionless),
+                Observable::scalar(DROPPED, Determinism::Deterministic, SiUnit::Dimensionless),
+                Observable::scalar(
+                    TICK_DURATION_LEAF,
+                    Determinism::Nondeterministic,
+                    SiUnit::Seconds
+                ),
             ]
         );
     }
@@ -275,7 +281,8 @@ mod tests {
             observable_catalog(node.as_ref()),
             vec![Observable::scalar(
                 TICK_DURATION_LEAF,
-                Determinism::Nondeterministic
+                Determinism::Nondeterministic,
+                SiUnit::Seconds
             )]
         );
     }

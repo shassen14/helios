@@ -10,8 +10,11 @@
 //!   retraction pairs and tangent-space noise.
 //! - [`identifier`] — the rules config-written names follow: `snake_case`, and
 //!   levels joined by `.` for names that address something.
+//! - [`si_unit`] — [`SiUnit`](si_unit::SiUnit), the SI unit a number is
+//!   measured in.
 
 pub mod determinism;
 pub mod identifier;
 pub mod integrators;
 pub mod manifold;
+pub mod si_unit;

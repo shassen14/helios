@@ -20,7 +20,8 @@
 //! the descriptor.
 //!
 //! The builder also declares what the node can emit for watchers, one leaf
-//! per [`observable`](PortDescriptorBuilder::observable) call. Leaves with a
+//! per [`observable`](PortDescriptorBuilder::observable) call, each with
+//! its determinism and the SI unit it is measured in. Leaves with a
 //! config-derived part (`aiding.<entry>.nis`) are formatted by the node as it
 //! builds its descriptor.
 //!
@@ -35,6 +36,7 @@ use crate::port::{
 };
 
 use helios_core::control::actuators::{ActuatorCommand, ActuatorDrive};
+use helios_core::kernel::si_unit::SiUnit;
 use helios_core::spatial::transforms::Convention;
 use helios_core::spatial::FrameId;
 
@@ -197,12 +199,18 @@ impl PortDescriptorBuilder {
     }
 
     /// Declares a number the node can emit for watchers, under `leaf`
-    /// (relative to the node, e.g. `aiding.gps.nis`). Declaring makes a leaf
-    /// watchable; an emit of a leaf the node didn't declare is dropped. A
-    /// leaf declared twice, or one that collides with an output channel,
-    /// fails the build.
-    pub fn observable(mut self, leaf: impl Into<Arc<str>>, determinism: Determinism) -> Self {
-        self.observables.push(Observable::scalar(leaf, determinism));
+    /// (relative to the node, e.g. `aiding.gps.nis`), measured in `si_unit`.
+    /// Declaring makes a leaf watchable; an emit of a leaf the node didn't
+    /// declare is dropped. A leaf declared twice, or one that collides with
+    /// an output channel, fails the build.
+    pub fn observable(
+        mut self,
+        leaf: impl Into<Arc<str>>,
+        determinism: Determinism,
+        si_unit: SiUnit,
+    ) -> Self {
+        self.observables
+            .push(Observable::scalar(leaf, determinism, si_unit));
         self
     }
 
@@ -308,18 +316,31 @@ mod tests {
     #[test]
     fn builder_keeps_observables_in_declaration_order() {
         let d = PortDescriptorBuilder::algorithm()
-            .observable("aiding.gps.nis", Determinism::Deterministic)
+            .observable(
+                "aiding.gps.nis",
+                Determinism::Deterministic,
+                SiUnit::Dimensionless,
+            )
             .observable(
                 format!("aiding.{}.dropped", "gps"),
                 Determinism::Nondeterministic,
+                SiUnit::Dimensionless,
             )
             .build();
 
         assert_eq!(
             d.observables(),
             [
-                Observable::scalar("aiding.gps.nis", Determinism::Deterministic),
-                Observable::scalar("aiding.gps.dropped", Determinism::Nondeterministic),
+                Observable::scalar(
+                    "aiding.gps.nis",
+                    Determinism::Deterministic,
+                    SiUnit::Dimensionless
+                ),
+                Observable::scalar(
+                    "aiding.gps.dropped",
+                    Determinism::Nondeterministic,
+                    SiUnit::Dimensionless
+                ),
             ]
         );
     }

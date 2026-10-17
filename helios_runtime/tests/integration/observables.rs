@@ -3,6 +3,7 @@
 // distinct. Output channels are recorded under their own names, not their
 // node's, so no leaf check involves them.
 
+use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::AgentId;
 use helios_runtime::{
     pipeline::{
@@ -35,7 +36,9 @@ impl DeclaringNode {
             .iter()
             .fold(
                 PortDescriptorBuilder::algorithm().outputs_from_slice(outputs),
-                |builder, leaf| builder.observable(*leaf, Determinism::Deterministic),
+                |builder, leaf| {
+                    builder.observable(*leaf, Determinism::Deterministic, SiUnit::Dimensionless)
+                },
             )
             .build();
         Self {

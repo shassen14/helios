@@ -174,6 +174,8 @@ mod tests {
 
     use crate::port::ChannelKey;
 
+    use helios_core::kernel::si_unit::SiUnit;
+
     #[test]
     fn section_puts_one_item_per_line_aligned_under_the_label() {
         let mut out = String::new();
@@ -215,8 +217,16 @@ mod tests {
     #[test]
     fn only_nondeterministic_leaves_are_marked() {
         let observables = [
-            Observable::scalar("aiding.gps.nis", Determinism::Deterministic),
-            Observable::scalar("tick.duration", Determinism::Nondeterministic),
+            Observable::scalar(
+                "aiding.gps.nis",
+                Determinism::Deterministic,
+                SiUnit::Dimensionless,
+            ),
+            Observable::scalar(
+                "tick.duration",
+                Determinism::Nondeterministic,
+                SiUnit::Seconds,
+            ),
         ];
         assert_eq!(
             format_observables(&observables),

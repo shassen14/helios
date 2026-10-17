@@ -151,6 +151,7 @@ mod tests {
 
     use crate::brain_bridge::drain_observations;
 
+    use helios_core::kernel::si_unit::SiUnit;
     use helios_core::{
         prelude::{AgentId, FrameId, MonotonicTime, TfProvider},
         spatial::transforms::ErasedTransform,
@@ -238,8 +239,8 @@ mod tests {
             .init_resource::<ObservationBatch>();
 
         let descriptor = PortDescriptorBuilder::mock()
-            .observable(NIS, Determinism::Deterministic)
-            .observable(DROPPED, Determinism::Deterministic)
+            .observable(NIS, Determinism::Deterministic, SiUnit::Dimensionless)
+            .observable(DROPPED, Determinism::Deterministic, SiUnit::Dimensionless)
             .build();
         let pipeline = PipelineBuilder::new(AgentId::new(CAR))
             .add_node(Box::new(Emitting { descriptor }))

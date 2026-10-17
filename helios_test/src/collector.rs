@@ -7,8 +7,8 @@
 //! robot, a recording.
 
 use crate::assertion::{
-    extract::{ExtractError, ExtractorTable},
-    AssertionTarget, AssertionValue, ValueKind,
+    extract::{ExtractError, Extracted, ExtractorTable},
+    AssertionTarget, AssertionValue,
 };
 
 use helios_core::prelude::MonotonicTime;
@@ -122,10 +122,11 @@ impl ObservationCollector {
         unbound
     }
 
-    /// The kind of [`AssertionValue`] a channel value whose payload is of
-    /// type `payload` turns into, or `None` when it can't be turned into one.
-    pub fn extracted_kind(&self, payload: TypeId) -> Option<ValueKind> {
-        self.extractors.kind_of(payload)
+    /// What a channel value whose payload is of type `payload` turns into:
+    /// the kind of [`AssertionValue`] and its unit, or `None` when it can't
+    /// be turned into one.
+    pub fn extracted(&self, payload: TypeId) -> Option<Extracted> {
+        self.extractors.extracted(payload)
     }
 
     /// The series values recorded under `key` arrive in, given an empty one

@@ -197,6 +197,7 @@ mod tests {
         ErasedStamped, PipelineBuilder,
     };
 
+    use helios_core::kernel::si_unit::SiUnit;
     use helios_core::{
         prelude::{AgentId, FrameId, MonotonicTime, TfProvider},
         spatial::transforms::ErasedTransform,
@@ -292,7 +293,7 @@ mod tests {
         leaves
             .iter()
             .fold(PortDescriptorBuilder::algorithm(), |builder, leaf| {
-                builder.observable(*leaf, Determinism::Deterministic)
+                builder.observable(*leaf, Determinism::Deterministic, SiUnit::Dimensionless)
             })
     }
 

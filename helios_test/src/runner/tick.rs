@@ -70,6 +70,7 @@ impl Runner {
             held,
             series,
             state,
+            ..
         } in entries
         {
             let on_arrival = match owner {

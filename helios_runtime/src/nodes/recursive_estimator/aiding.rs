@@ -141,7 +141,7 @@ pub(super) fn aiding_ports(
     // asserts the key is a sensor or internal channel.
     builder = builder.inputs_from_slices(&[], std::slice::from_ref(channel));
     for (leaf, path) in AidingLeaves::new(entry).iter() {
-        builder = builder.observable(path.clone(), leaf.determinism());
+        builder = builder.observable(path.clone(), leaf.determinism(), leaf.si_unit());
     }
     builder
 }

@@ -12,13 +12,16 @@
 //! public accessor set for what is purely presentation glue.
 
 use super::{
-    AssertionStatus, FailureReason, Report, ReportStatus, SeriesSummary, TerminatedBy, Verdict,
+    AssertionStatus, FailureReason, Report, ReportStatus, ReportedUnit, SeriesSummary,
+    TerminatedBy, Verdict,
 };
 
 use crate::{
     assertion::{AssertionValue, Condition},
     statistics::within_run::Reducer,
 };
+
+use helios_core::kernel::si_unit::SiUnit;
 
 /// Width the `[assert] …` text is padded to before the status label, so the
 /// `PASSED` / `FAILED` column lines up regardless of target length.
@@ -73,7 +76,7 @@ fn render(report: &Report) -> String {
             entry_name(&entry.name, entry.instance()),
             reduced_of(entry.reduce.as_ref()),
             entry.target,
-            condition_phrase(&entry.condition),
+            condition_phrase(&entry.condition, entry.unit()),
         );
 
         // Pad the left half to a fixed column, then append the status label so
@@ -91,12 +94,15 @@ fn render(report: &Report) -> String {
             failed_at_secs,
         } = entry.verdict()
         {
-            let detail = failure_detail(actual.as_ref(), *reason, *failed_at_secs);
+            let detail = failure_detail(actual.as_ref(), entry.unit(), *reason, *failed_at_secs);
             line.push_str(&format!(" ({detail})"));
         }
 
         // What the series held, so a silent signal shows beside a pass.
-        line.push_str(&format!(" [{}]", series_phrase(&entry.series)));
+        line.push_str(&format!(
+            " [{}]",
+            series_phrase(&entry.series, entry.unit())
+        ));
 
         lines.push(line);
     }
@@ -104,7 +110,7 @@ fn render(report: &Report) -> String {
     // One line per measure, after the verdicts: a value, never a verdict.
     for entry in report.measures() {
         let value = match (entry.value(), entry.reason()) {
-            (Some(value), _) => value_string(value),
+            (Some(value), _) => with_unit(value_string(value), entry.unit()),
             (None, Some(reason)) => format!("none ({})", reason_phrase(reason)),
             (None, None) => "none".to_string(),
         };
@@ -113,7 +119,7 @@ fn render(report: &Report) -> String {
             entry_name(&entry.name, entry.instance()),
             reducer_phrase(&entry.reduce),
             entry.target,
-            series_phrase(entry.series()),
+            series_phrase(entry.series(), entry.unit()),
         );
         if !entry.covered() {
             line.push_str(" (not covered: the run stopped before its end)");
@@ -167,12 +173,13 @@ fn entry_name(name: &str, instance: Option<&str>) -> String {
 /// value and the time when the failure has none.
 fn failure_detail(
     actual: Option<&AssertionValue>,
+    unit: Option<ReportedUnit>,
     reason: FailureReason,
     failed_at_secs: Option<f64>,
 ) -> String {
     let mut observed = Vec::new();
     if let Some(actual) = actual {
-        observed.push(format!("got {}", value_string(actual)));
+        observed.push(format!("got {}", with_unit(value_string(actual), unit)));
     }
     if let Some(at) = failed_at_secs {
         observed.push(format!("at t={at:.2}s"));
@@ -197,15 +204,28 @@ fn reason_phrase(reason: FailureReason) -> &'static str {
     }
 }
 
-/// The human phrase for a condition with its operand — a phrasebook, not
-/// logic: `< 25`, `== 0`, `in [0.3, 0.7]`.
-fn condition_phrase(condition: &Condition) -> String {
-    match condition {
+/// The human phrase for a condition with its operand in the unit it is
+/// read in — a phrasebook, not logic: `< 25`, `== 0`, `in [0.3, 0.7] m/s`.
+fn condition_phrase(condition: &Condition, unit: Option<ReportedUnit>) -> String {
+    let phrase = match condition {
         Condition::Equals(value) => format!("== {}", value_string(value)),
         Condition::NotEquals(value) => format!("!= {}", value_string(value)),
         Condition::LessThan(bound) => format!("< {bound}"),
         Condition::GreaterThan(bound) => format!("> {bound}"),
         Condition::WithinRange([low, high]) => format!("in [{low}, {high}]"),
+    };
+    with_unit(phrase, unit)
+}
+
+/// `text` followed by the unit it is read in. A dimensionless number, an
+/// undeclared unit and a bool or string print bare: the series bracket
+/// says when a unit is undeclared.
+fn with_unit(text: String, unit: Option<ReportedUnit>) -> String {
+    match unit {
+        Some(ReportedUnit::Declared(si_unit)) if si_unit != SiUnit::Dimensionless => {
+            format!("{text} {si_unit}")
+        }
+        _ => text,
     }
 }
 
@@ -227,9 +247,13 @@ fn reducer_phrase(reducer: &Reducer) -> String {
 }
 
 /// What a series held: `12 samples, max gap 1.00s`, for `final` the judged
-/// sample's age, and where a bounded window fell.
-fn series_phrase(series: &SeriesSummary) -> String {
+/// sample's age, where a bounded window fell, and whether the number judged
+/// has no declared unit.
+fn series_phrase(series: &SeriesSummary, unit: Option<ReportedUnit>) -> String {
     let mut parts = vec![format!("{} samples", series.samples)];
+    if unit == Some(ReportedUnit::Undeclared) {
+        parts.push(format!("unit {}", ReportedUnit::Undeclared));
+    }
     if let Some([start, end]) = series.window_secs {
         parts.push(format!("window {start:.2}s to {end:.2}s"));
     }
@@ -297,6 +321,7 @@ mod tests {
             None,
             Window::default(),
             Some(Reducer::Final),
+            None,
             Condition::Equals(AssertionValue::String("Succeeded".to_string())),
             SeriesSummary {
                 final_age_secs: Some(0.5),
@@ -315,6 +340,7 @@ mod tests {
             None,
             Window::default(),
             None,
+            Some(ReportedUnit::Declared(SiUnit::MetersPerSecond)),
             Condition::LessThan(5.0),
             series(40),
             verdict,
@@ -364,14 +390,41 @@ mod tests {
         ));
         assert!(text.contains("PASSED [3 samples, max gap 1.00s, final 0.50s before the end]"));
         // Failing line: no reducer, the `<` glyph, FAILED, and the observed value.
-        assert!(text.contains("[assert] speed_capped: agent.car.node.estimator.speed < 5"));
-        assert!(text.contains("FAILED (got 7: condition failed) [40 samples, max gap 1.00s]"));
+        // Its bound and value in the unit they are read in.
+        assert!(text.contains("[assert] speed_capped: agent.car.node.estimator.speed < 5 m/s"));
+        assert!(text.contains("FAILED (got 7 m/s: condition failed) [40 samples, max gap 1.00s]"));
+    }
+
+    #[test]
+    fn a_dimensionless_or_undeclared_number_prints_bare() {
+        let bound = Condition::WithinRange([0.3, 0.7]);
+        assert_eq!(
+            condition_phrase(&bound, Some(ReportedUnit::Declared(SiUnit::Radians))),
+            "in [0.3, 0.7] rad"
+        );
+        for bare in [
+            Some(ReportedUnit::Declared(SiUnit::Dimensionless)),
+            Some(ReportedUnit::Undeclared),
+        ] {
+            assert_eq!(condition_phrase(&bound, bare), "in [0.3, 0.7]");
+        }
+        assert_eq!(
+            series_phrase(&series(2), Some(ReportedUnit::Undeclared)),
+            "2 samples, unit undeclared, max gap 1.00s"
+        );
+        assert_eq!(
+            series_phrase(
+                &series(2),
+                Some(ReportedUnit::Declared(SiUnit::Dimensionless))
+            ),
+            "2 samples, max gap 1.00s"
+        );
     }
 
     #[test]
     fn a_range_prints_its_bounds() {
         assert_eq!(
-            condition_phrase(&Condition::WithinRange([0.3, 0.7])),
+            condition_phrase(&Condition::WithinRange([0.3, 0.7]), None),
             "in [0.3, 0.7]"
         );
         assert_eq!(reducer_phrase(&Reducer::TimeAbove(1.5)), "time_above(1.5)");
@@ -385,7 +438,7 @@ mod tests {
             reason: FailureReason::ConditionFailed,
             failed_at_secs: Some(1.25),
         });
-        assert!(render(&report).contains("FAILED (got 7 at t=1.25s: condition failed)"));
+        assert!(render(&report).contains("FAILED (got 7 m/s at t=1.25s: condition failed)"));
     }
 
     #[test]
@@ -466,6 +519,7 @@ mod tests {
                 Reducer::Final,
                 true,
                 Some(Ok(AssertionValue::Float(0.25))),
+                Some(ReportedUnit::Declared(SiUnit::Meters)),
                 series(1),
             ),
             MeasureReportEntry::new(
@@ -476,17 +530,18 @@ mod tests {
                 Reducer::Max,
                 false,
                 Some(Err(FailureReason::NoSamples)),
+                Some(ReportedUnit::Undeclared),
                 series(0),
             ),
         ];
         let text = render(&report);
         assert!(text.contains(
-            "[measure] goal_distance: final of agent.car.node.eval.goal_distance = 0.25 \
+            "[measure] goal_distance: final of agent.car.node.eval.goal_distance = 0.25 m \
              [1 samples, max gap 1.00s]"
         ));
         assert!(text.contains(
             "[measure] peak_speed: max of agent.car.node.estimator.speed = none (no samples) \
-             [0 samples, max gap 1.00s] (not covered: the run stopped before its end)"
+             [0 samples, unit undeclared, max gap 1.00s] (not covered: the run stopped before its end)"
         ));
     }
 
