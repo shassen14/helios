@@ -1,3 +1,4 @@
+use super::window::Window;
 use crate::{
     assertion::{condition::Condition, name::EntryName, target::AssertionTarget},
     statistics::within_run::Reducer,
@@ -5,13 +6,15 @@ use crate::{
 
 use serde::Deserialize;
 
-/// _Pre-step._ One `[[assert]]` entry: a series, optionally reduced to one
-/// value, and the condition it must meet.
+/// _Pre-step._ One `[[assert]]` entry: a series cut to a window, optionally
+/// reduced to one value, and the condition it must meet.
 ///
-/// Without `reduce`, every sample must meet the condition: each is judged as
-/// it arrives, a failure latches at its sample's stamp, and `fail_fast` can
-/// stop the run on it. With `reduce`, the series' one reduced value is
-/// judged, once, at the end (`reduce = "final"` judges the latest sample).
+/// Without `reduce`, every sample in the window must meet the condition, and
+/// a failure is placed at the earliest failing sample's stamp. On a window
+/// known from the first tick, each sample is also judged as it arrives, so
+/// `fail_fast` can stop the run on it. With `reduce`, the window's one
+/// reduced value is judged, once, at the end (`reduce = "final"` judges the
+/// latest sample).
 ///
 /// `deny_unknown_fields` is the typo-catcher: a misspelled key in a run file
 /// is a parse error rather than a silently defaulted field. A test harness
@@ -21,13 +24,17 @@ use serde::Deserialize;
 pub struct Assertion {
     pub name: EntryName,
     pub target: AssertionTarget,
+    /// The whole run when absent.
+    #[serde(default)]
+    pub window: Window,
     #[serde(default)]
     pub reduce: Option<Reducer>,
     pub condition: Condition,
-    /// Lets the target be a nondeterministic leaf, one whose value varies
-    /// between runs on the same inputs (a tick's duration). Off by default, so
-    /// a run file that asserts on one says so where it's read. Unused on a
-    /// deterministic leaf.
+    /// Lets the target, or a window's anchor, be a nondeterministic leaf,
+    /// one whose value varies between runs on the same inputs (a tick's
+    /// duration): an anchor on one moves the window between runs. Off by
+    /// default, so a run file that reads one says so where it's read. Unused
+    /// on a deterministic leaf.
     #[serde(default)]
     pub allow_nondeterministic: bool,
 }
@@ -52,6 +59,9 @@ impl Assertion {
 pub struct Measure {
     pub name: EntryName,
     pub target: AssertionTarget,
+    /// As on [`Assertion`].
+    #[serde(default)]
+    pub window: Window,
     pub reduce: Reducer,
     /// As on [`Assertion`].
     #[serde(default)]
@@ -130,6 +140,35 @@ mod tests {
             condition = { less_than = 1.0 }
         "#;
         assert!(toml::from_str::<Assertion>(toml).is_err());
+    }
+
+    #[test]
+    fn a_window_is_read_beside_the_target() {
+        let parsed: Assertion = toml::from_str(
+            r#"
+            name = "gps_nis_settled"
+            target = "agent.car.node.estimator.aiding.gps.nis"
+            window = { start = 40.0 }
+            reduce = "mean"
+            condition = { less_than = 3.0 }
+            "#,
+        )
+        .unwrap();
+        assert!(!parsed.window.is_whole_run());
+        assert!(parsed.window.fixed());
+    }
+
+    #[test]
+    fn an_entry_without_a_window_reads_the_whole_run() {
+        let parsed: Measure = toml::from_str(
+            r#"
+            name = "goal_distance"
+            target = "agent.car.node.estimator.goal_distance"
+            reduce = "final"
+            "#,
+        )
+        .unwrap();
+        assert!(parsed.window.is_whole_run());
     }
 
     #[test]

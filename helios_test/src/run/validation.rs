@@ -1,5 +1,5 @@
 use crate::{
-    assertion::{condition::OperandProblem, EntryName},
+    assertion::{condition::OperandProblem, config::WindowProblem, EntryName},
     run::Run,
     statistics::within_run::Reducer,
 };
@@ -20,7 +20,8 @@ pub enum ValidationError {
     UnreachableBudget(f64),
     #[error(
         "`fail_fast` is set but the run declares no assertion judging every sample (one \
-         without `reduce`) that could fail early"
+         without `reduce`) on a window known from the first tick (bounds in seconds after \
+         run.start) that could fail early"
     )]
     FailFastWithoutEverySample,
     /// Names identify verdicts in the report and across runs, so two
@@ -34,6 +35,11 @@ pub enum ValidationError {
     },
     #[error("'{0}': the time_above threshold is not a finite number")]
     NonFiniteThreshold(EntryName),
+    #[error("'{name}': {problem}")]
+    UnusableWindow {
+        name: EntryName,
+        problem: WindowProblem,
+    },
 }
 
 /// Check a parsed [`Run`] for coherence. A flat checklist of guard clauses:
@@ -54,13 +60,14 @@ pub fn validate(run: &Run) -> Result<(), ValidationError> {
         return Err(ValidationError::UnreachableBudget(budget));
     }
 
-    // `fail_fast` stops on an every-sample failure; a reduced assertion is
-    // only judged at the end, so without an every-sample one it watches
-    // nothing.
+    // `fail_fast` stops on an every-sample failure judged as it arrives. A
+    // reduced assertion is only judged at the end, and so is one whose
+    // window isn't known until the run stops or an anchor occurs, so
+    // without an every-sample one on a fixed window it watches nothing.
     let has_every_sample = run
         .assertions()
         .iter()
-        .any(|assertion| assertion.judges_every_sample());
+        .any(|assertion| assertion.judges_every_sample() && assertion.window.fixed());
     if termination.fail_fast() && !has_every_sample {
         return Err(ValidationError::FailFastWithoutEverySample);
     }
@@ -100,6 +107,24 @@ pub fn validate(run: &Run) -> Result<(), ValidationError> {
             if !threshold.is_finite() {
                 return Err(ValidationError::NonFiniteThreshold(name.clone()));
             }
+        }
+    }
+
+    let windows = run
+        .assertions()
+        .iter()
+        .map(|assertion| (&assertion.name, &assertion.window))
+        .chain(
+            run.measures()
+                .iter()
+                .map(|measure| (&measure.name, &measure.window)),
+        );
+    for (name, window) in windows {
+        if let Err(problem) = window.check(budget) {
+            return Err(ValidationError::UnusableWindow {
+                name: name.clone(),
+                problem,
+            });
         }
     }
 
@@ -286,5 +311,57 @@ mod tests {
             validate(&run_with(&format!("{BUDGET}{measure}"))),
             Err(ValidationError::NonFiniteThreshold(_))
         ));
+    }
+
+    #[test]
+    fn fail_fast_over_only_windows_not_fixed_errors() {
+        // Judged at finalize, so it can't stop the run.
+        let body = r#"
+            termination = { max_simulated_seconds = 5.0, fail_fast = true }
+            [[assert]]
+            name = "late"
+            target = "agent.car.node.estimator.x"
+            window = { start = { at = "run.end", plus = -1.0 } }
+            condition = { less_than = 1.0 }
+        "#;
+        assert_eq!(
+            validate(&run_with(body)),
+            Err(ValidationError::FailFastWithoutEverySample)
+        );
+    }
+
+    #[test]
+    fn fail_fast_over_a_fixed_window_passes() {
+        let body = r#"
+            termination = { max_simulated_seconds = 5.0, fail_fast = true }
+            [[assert]]
+            name = "settled"
+            target = "agent.car.node.estimator.x"
+            window = { start = 1.0, end = 4.0 }
+            condition = { less_than = 1.0 }
+        "#;
+        assert_eq!(validate(&run_with(body)), Ok(()));
+    }
+
+    #[test]
+    fn an_unusable_window_is_refused_naming_its_entry() {
+        // Past the 5 s budget, on a measure.
+        let measure = r#"
+            [[measure]]
+            name = "late"
+            target = "agent.car.node.estimator.x"
+            window = { end = 7.0 }
+            reduce = "mean"
+        "#;
+        assert_eq!(
+            validate(&run_with(&format!("{BUDGET}{measure}"))),
+            Err(ValidationError::UnusableWindow {
+                name: EntryName::parse("late").unwrap(),
+                problem: WindowProblem::PastBudget {
+                    end: 7.0,
+                    budget: 5.0,
+                },
+            })
+        );
     }
 }

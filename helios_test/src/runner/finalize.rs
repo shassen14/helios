@@ -1,11 +1,15 @@
 use super::{
-    resolve::EntryOwner,
-    state::{AssertionState, ContinuousStatus},
+    resolve::{EntryOwner, EntryView},
+    state::AssertionState,
+    window::{first_stamp, place, PlacedWindow, Placement},
     Phase, Runner, TickSpan, FOREIGN_COLLECTOR, NEVER_SET_UP,
 };
 use crate::{
-    assertion::{evaluator::evaluate_reduced, Assertion, AssertionResult, Measure},
-    collector::{ObservationCollector, Sample, Series},
+    assertion::{
+        evaluator::{earliest_failure, evaluate_reduced},
+        Assertion, AssertionResult, Measure, Window,
+    },
+    collector::{ObservationCollector, Sample},
     report::{
         AssertionReportEntry, FailureReason, MeasureReportEntry, Report, SeriesSummary,
         TerminatedBy, Verdict,
@@ -17,22 +21,27 @@ use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::port::RefusedWrites;
 
 impl Runner {
-    /// Build the run's [`Report`] once the host stops ticking. Every-sample
-    /// assertions are read from their latches (already folded across every
-    /// tick by `tick`); reduced assertions and measures are evaluated here,
-    /// once, on the samples the run reached, over the span its ticks covered.
+    /// Build the run's [`Report`] once the host stops ticking. Every entry is
+    /// evaluated here, once, on the samples the run reached that are stamped
+    /// in its window: an every-sample assertion on each of them, placing a
+    /// failure at the earliest failing stamp (the latch `tick` folded only
+    /// decides `fail_fast`); a reduced assertion and a measure on their one
+    /// reduced value.
     ///
-    /// Only a run whose ticks reached its time budget covered every entry's
-    /// window, which today is the whole run. The runner reads that from its
-    /// own clock, not from the stop reason the host passes, which only labels
-    /// the report: a `fail_fast` failure on the tick the budget runs out
-    /// still covered it. In one that stopped early (a `fail_fast` stop or an
-    /// aborted setup), an assertion that hadn't failed by then is
-    /// `Unjudged`: neither its pass nor its silence says anything about a
-    /// window the run never finished, and a measure is marked not covered. A
-    /// failure is final however the run stopped. In a run that covered its
-    /// windows, an assertion with no samples to judge fails, since that is
-    /// how a dropped signal looks.
+    /// Each window is placed on the run's clock and covered once the run's
+    /// latest tick reached its end. A window bounded from `run.end`, and the
+    /// whole run, are covered only by a run that reached its time budget.
+    /// The runner reads that from its own clock, not from the stop reason
+    /// the host passes, which only labels the report: a `fail_fast` failure
+    /// on the tick the budget runs out still covered it. An assertion whose
+    /// window wasn't covered, or can't be placed (a `run.end` bound after an
+    /// early stop, or an anchor that hadn't occurred yet), and that hadn't
+    /// failed in it, is `Unjudged`: neither its pass nor its silence says
+    /// anything about a window the run never finished, and a measure is
+    /// marked not covered. A failure is final however the run stopped. In a
+    /// covered window, an assertion with no samples to judge fails, since
+    /// that is how a dropped signal looks; in a run that ran out, one whose
+    /// anchor never occurred fails too.
     ///
     /// The run is `Passed` only if every assertion passed, setup didn't fail,
     /// no agent's bus refused a write ([`HostFacts::refused_writes`]) and the
@@ -42,9 +51,7 @@ impl Runner {
     /// recording dropped leave the entries describing another run than the
     /// one configured. Only a run that was set up reports the recording's
     /// drops; in one aborted at setup, a refused entry's key is unbound by
-    /// design. An early stop is always a failure or an abort, so an
-    /// `Unjudged` assertion only ever sits in a run that failed for another
-    /// reason.
+    /// design.
     ///
     /// Takes `&self`, not `&mut`: the latches are only read, nothing is
     /// recorded. Everything else the report needs comes from the host as
@@ -62,6 +69,10 @@ impl Runner {
         // A host that finalizes without having set the run up, or with
         // another run's collector, fails it here as `tick` would have.
         let mut setup_failures = self.setup_failures.clone();
+        let plan = match &self.phase {
+            Phase::Ready(plan) => Some(plan),
+            Phase::AwaitingPipelines | Phase::Aborted => None,
+        };
         let judged = match &self.phase {
             Phase::Ready(plan) => {
                 let judged = plan.with_series(collector);
@@ -77,17 +88,19 @@ impl Runner {
             Phase::Aborted => None,
         };
         let judged = judged.unwrap_or_default();
-        // The series and state of the entry `owner` names; `None` when the
-        // run isn't ready to judge.
-        let entry_of = |owner: EntryOwner| {
-            judged
-                .iter()
-                .find(|(entry_owner, _, _)| *entry_owner == owner)
-                .map(|(_, series, state)| (*series, *state))
-        };
-        let covered = self
+        // The entry `owner` names; `None` when the run isn't ready to judge.
+        let entry_of = |owner: EntryOwner| judged.iter().find(|entry| entry.owner == owner);
+        let ran_out = self
             .ticks
             .is_some_and(|span| self.run.termination().budget_spent(span.first, span.latest));
+        // Where `window` falls in the run, each anchor at its series' first
+        // stamp in the run.
+        let place_in = |window: &Window, span: TickSpan| {
+            place(window, span, ran_out, |after| {
+                let series = plan?.anchor(after, collector)?;
+                first_stamp(series.samples(), span.latest)
+            })
+        };
 
         let assertions: Vec<AssertionReportEntry> = self
             .run
@@ -95,21 +108,26 @@ impl Runner {
             .iter()
             .enumerate()
             .map(|(index, assertion)| {
-                let judged = entry_of(EntryOwner::Assertion(index));
+                let judged = entry_of(EntryOwner::Assertion(index)).zip(self.ticks);
                 let (series, verdict) = match judged {
-                    Some((series, state)) => (
-                        summarize(
-                            state.reached(series.samples()),
-                            &assertion.reduce,
-                            self.ticks,
-                        ),
-                        judge(assertion, series, state, covered, self.ticks),
-                    ),
+                    Some((entry, span)) => {
+                        let windowed = Windowed::new(
+                            entry,
+                            &assertion.window,
+                            place_in(&assertion.window, span),
+                            span,
+                        );
+                        (
+                            windowed.summary(&assertion.reduce),
+                            judge(assertion, entry.state, &windowed),
+                        )
+                    }
                     None => (unread(), Verdict::Unjudged { actual: None }),
                 };
                 AssertionReportEntry::new(
                     assertion.name.to_string(),
                     assertion.target.as_str().to_string(),
+                    assertion.window.clone(),
                     assertion.reduce.clone(),
                     assertion.condition.clone(),
                     series,
@@ -135,13 +153,21 @@ impl Runner {
             .enumerate()
             .map(|(index, measure)| {
                 let judged = entry_of(EntryOwner::Measure(index));
-                if let Some(rejection) = judged.and_then(|(_, state)| state.rejection()) {
+                if let Some(rejection) = judged.and_then(|entry| entry.state.rejection()) {
                     recording.push(format!(
                         "measure '{}' on '{}': value rejected: {rejection}",
                         measure.name, measure.target
                     ));
                 }
-                report_measure(measure, judged, covered, self.ticks)
+                let windowed = judged.zip(self.ticks).map(|(entry, span)| {
+                    Windowed::new(
+                        entry,
+                        &measure.window,
+                        place_in(&measure.window, span),
+                        span,
+                    )
+                });
+                report_measure(measure, judged, windowed.as_ref())
             })
             .collect();
 
@@ -192,54 +218,140 @@ pub struct HostFacts {
     pub refused_writes: Vec<(AgentId, RefusedWrites)>,
 }
 
-/// One assertion's report verdict. `covered` is whether the run reached the
-/// end of the assertion's window: a pass, or a failure for silence, needs it;
-/// a failure the assertion already met is final either way. `ticks` is the
-/// span the run covered: an every-sample failure's time is measured from its
-/// first tick, and a reduced assertion is reduced over it.
-fn judge(
-    assertion: &Assertion,
-    series: &Series,
-    state: &AssertionState,
-    covered: bool,
-    ticks: Option<TickSpan>,
-) -> Verdict {
+/// One entry's series cut to its window: where the window fell, and the
+/// samples the run reached stamped in it, a held series' carried-in value
+/// first.
+struct Windowed {
+    placement: Placement,
+    /// In the window when it was placed; every sample the run reached when
+    /// it wasn't.
+    samples: Vec<Sample>,
+    /// The run's ticks: what times are reported from, and the edges of an
+    /// unplaced window's summary.
+    span: TickSpan,
+    /// Whether the run file bounded the window, so the report shows it.
+    bounded: bool,
+}
+
+impl Windowed {
+    fn new(
+        entry: &EntryView<'_, &AssertionState>,
+        window: &Window,
+        placement: Placement,
+        span: TickSpan,
+    ) -> Self {
+        let reached = entry.state.reached(entry.series.samples());
+        let samples = match placement {
+            Placement::Placed { window, .. } => window.samples(reached, entry.held),
+            Placement::Unplaced | Placement::AnchorNeverOccurred => reached.to_vec(),
+        };
+        Self {
+            placement,
+            samples,
+            span,
+            bounded: !window.is_whole_run(),
+        }
+    }
+
+    /// The placed window, if it was placed.
+    fn window(&self) -> Option<PlacedWindow> {
+        match self.placement {
+            Placement::Placed { window, .. } => Some(window),
+            Placement::Unplaced | Placement::AnchorNeverOccurred => None,
+        }
+    }
+
+    /// Whether the run's latest tick reached the window's end.
+    fn covered(&self) -> bool {
+        matches!(self.placement, Placement::Placed { covered: true, .. })
+    }
+
+    /// Seconds from the run's first tick to `t`.
+    fn secs(&self, t: MonotonicTime) -> f64 {
+        t.0 - self.span.first.0
+    }
+
+    /// What the samples held over the window: how many, the largest gap, and,
+    /// for `final`, how long before the window's end the judged sample was
+    /// stamped. An unplaced window's summary is over the run's span.
+    fn summary(&self, reduce: &Option<Reducer>) -> SeriesSummary {
+        let (start, end) = match self.window() {
+            Some(window) => (window.start, window.end),
+            None => (self.span.first, self.span.latest),
+        };
+        let final_age_secs = match reduce {
+            Some(Reducer::Final) => {
+                latest(&self.samples).map(|sample| (end.0 - sample.timestamp.0).max(0.0))
+            }
+            _ => None,
+        };
+        let window_secs = self
+            .window()
+            .filter(|_| self.bounded)
+            .map(|window| [self.secs(window.start), self.secs(window.end)]);
+        SeriesSummary {
+            samples: self.samples.len(),
+            max_gap_secs: Some(max_gap(&self.samples, start, end)),
+            final_age_secs,
+            window_secs,
+        }
+    }
+}
+
+/// One assertion's report verdict. A value its series turned away fails it
+/// whatever its window. Otherwise the window decides: unplaced is
+/// `Unjudged`, an anchor that never occurred fails, and a placed window is
+/// judged on its samples, a failure final either way and a pass or silence
+/// only when the run covered it.
+fn judge(assertion: &Assertion, state: &AssertionState, windowed: &Windowed) -> Verdict {
+    if state.rejection().is_some() {
+        return Verdict::Failed {
+            actual: None,
+            reason: FailureReason::Rejected,
+            failed_at_secs: None,
+        };
+    }
+    let window = match windowed.placement {
+        Placement::Placed { window, .. } => window,
+        Placement::Unplaced => return Verdict::Unjudged { actual: None },
+        Placement::AnchorNeverOccurred => {
+            return Verdict::Failed {
+                actual: None,
+                reason: FailureReason::AnchorNeverOccurred,
+                failed_at_secs: None,
+            }
+        }
+    };
+    let samples = &windowed.samples;
+
     let Some(reducer) = &assertion.reduce else {
-        return match state.status() {
-            // The value that broke it, not whatever arrived after: a run that
-            // recovered would otherwise show a healthy number beside FAILED.
-            ContinuousStatus::FailedAt { t, value, kind } => Verdict::Failed {
-                actual: value.clone(),
-                reason: FailureReason::from(kind),
-                failed_at_secs: ticks.map(|span| t.0 - span.first.0),
-            },
-            _ if !covered => Verdict::Unjudged {
-                actual: state.last_value().clone(),
-            },
-            // Holding means at least one value held, so there is one to show.
-            ContinuousStatus::Holding => match state.last_value() {
-                Some(actual) => Verdict::Passed {
-                    actual: actual.clone(),
-                },
-                None => no_samples(),
-            },
-            // Silent over its whole window: a drop.
-            ContinuousStatus::Pending => no_samples(),
+        // The value that broke it, at its own stamp, not whatever arrived
+        // after: a run that recovered would otherwise show a healthy number
+        // beside FAILED.
+        if let Some((failing, kind)) = earliest_failure(&assertion.condition, samples) {
+            return Verdict::Failed {
+                actual: Some(failing.value.clone()),
+                reason: FailureReason::from(&kind),
+                failed_at_secs: Some(windowed.secs(failing.timestamp)),
+            };
+        }
+        let last = latest(samples).map(|sample| sample.value.clone());
+        if !windowed.covered() {
+            return Verdict::Unjudged { actual: last };
+        }
+        // Silent over its whole window: a drop.
+        return match last {
+            Some(actual) => Verdict::Passed { actual },
+            None => no_samples(),
         };
     };
 
-    // A run that never ticked reached nothing and covered nothing.
-    let Some(span) = ticks else {
-        return Verdict::Unjudged { actual: None };
-    };
-    let reached = state.reached(series.samples());
-    // A value turned away before the run stopped is a fault however it
-    // stopped; any other verdict belongs to an end the run never reached.
-    // The value reduced so far is still shown.
-    if !covered && state.rejection().is_none() {
+    // Any other verdict belongs to an end the run never reached. The value
+    // reduced so far is still shown.
+    if !windowed.covered() {
         return Verdict::Unjudged {
             actual: reducer
-                .reduce(reached, span.first, span.latest)
+                .reduce(samples, window.start, window.end)
                 .ok()
                 .flatten(),
         };
@@ -247,80 +359,63 @@ fn judge(
     match evaluate_reduced(
         &assertion.condition,
         reducer,
-        state.rejection(),
-        reached,
-        span.first,
-        span.latest,
+        None,
+        samples,
+        window.start,
+        window.end,
     ) {
         AssertionResult::Pending => no_samples(),
         judged => Verdict::from(judged),
     }
 }
 
-/// One measure's report line: its value reduced over the samples the run
-/// reached, or why it has none.
+/// One measure's report line: its value reduced over its window, or why it
+/// has none. `None` for both when the run never read it, or never placed its
+/// window.
 fn report_measure(
     measure: &Measure,
-    judged: Option<(&Series, &AssertionState)>,
-    covered: bool,
-    ticks: Option<TickSpan>,
+    judged: Option<&EntryView<'_, &AssertionState>>,
+    windowed: Option<&Windowed>,
 ) -> MeasureReportEntry {
-    let (series, value) = match (judged, ticks) {
-        (Some((series, state)), Some(span)) => {
-            let reached = state.reached(series.samples());
-            let value = match state.rejection() {
-                Some(_) => Err(FailureReason::Rejected),
-                None => match measure.reduce.reduce(reached, span.first, span.latest) {
+    let rejected = judged.and_then(|entry| entry.state.rejection()).is_some();
+    let value = match (rejected, windowed.map(|windowed| windowed.placement)) {
+        (true, _) => Some(Err(FailureReason::Rejected)),
+        (false, None | Some(Placement::Unplaced)) => None,
+        (false, Some(Placement::AnchorNeverOccurred)) => {
+            Some(Err(FailureReason::AnchorNeverOccurred))
+        }
+        (false, Some(Placement::Placed { window, .. })) => {
+            let samples = windowed.map_or(&[][..], |windowed| &windowed.samples);
+            Some(
+                match measure.reduce.reduce(samples, window.start, window.end) {
                     Ok(Some(value)) => Ok(value),
                     Ok(None) => Err(FailureReason::NoSamples),
                     Err(_) => Err(FailureReason::TypeMismatch),
                 },
-            };
-            (
-                summarize(reached, &Some(measure.reduce.clone()), ticks),
-                value,
             )
         }
-        _ => (unread(), Err(FailureReason::NoSamples)),
     };
     MeasureReportEntry::new(
         measure.name.to_string(),
         measure.target.as_str().to_string(),
+        measure.window.clone(),
         measure.reduce.clone(),
-        covered,
+        windowed.is_some_and(Windowed::covered),
         value,
-        series,
+        windowed.map_or_else(unread, |windowed| {
+            windowed.summary(&Some(measure.reduce.clone()))
+        }),
     )
 }
 
-/// What `reached` holds over the span the run's ticks covered: how many
-/// samples, the largest gap, and, for `final`, how long before the latest
-/// tick the judged sample was stamped.
-fn summarize(
-    reached: &[Sample],
-    reduce: &Option<Reducer>,
-    ticks: Option<TickSpan>,
-) -> SeriesSummary {
-    let final_age_secs = match (reduce, ticks) {
-        (Some(Reducer::Final), Some(span)) => {
-            latest(reached).map(|sample| (span.latest.0 - sample.timestamp.0).max(0.0))
-        }
-        _ => None,
-    };
-    SeriesSummary {
-        samples: reached.len(),
-        max_gap_secs: ticks.map(|span| max_gap(reached, span.first, span.latest)),
-        final_age_secs,
-    }
-}
-
-/// The summary of an entry the run never read: not set up, or set up
-/// against another collector.
+/// The summary of an entry the run never read: not set up, set up against
+/// another collector, or never ticked.
 fn unread() -> SeriesSummary {
     SeriesSummary {
         samples: 0,
         max_gap_secs: None,
         final_age_secs: None,
+        window_secs: None,
     }
 }
 
@@ -343,8 +438,8 @@ mod tests {
         runner::{
             fixtures::{
                 at, cont, measure, pipeline, ready, reduced_below, refused_write, report,
-                report_speed, report_unbound, report_unreadable, run, run_measuring, speed_term,
-                term, CAR, TRUCK,
+                report_speed, report_unbound, report_unreadable, run, run_measuring, speed_target,
+                speed_term, target, term, windowed, CAR, TRUCK,
             },
             TickAction,
         },
@@ -842,6 +937,7 @@ mod tests {
                 samples: 2,
                 max_gap_secs: Some(4.0),
                 final_age_secs: Some(4.0),
+                window_secs: None,
             }
         );
         assert_eq!(
@@ -850,6 +946,7 @@ mod tests {
                 samples: 2,
                 max_gap_secs: Some(4.0),
                 final_age_secs: None,
+                window_secs: None,
             }
         );
     }
@@ -929,5 +1026,236 @@ mod tests {
             line.starts_with("measure 'peak' on 'agent.car.node.estimator.x': value rejected"),
             "{line}"
         );
+    }
+
+    /// Every sample, or the reduced value, is 5.
+    const IS_FIVE: &str = "condition = { within_range = [5.0, 5.0] }";
+
+    /// A window starting `plus` seconds after the car's speed is first
+    /// written.
+    fn after_speed(plus: f64) -> String {
+        format!(
+            "{{ start = {{ after = \"{}\", plus = {plus:?} }} }}",
+            speed_target(CAR)
+        )
+    }
+
+    #[test]
+    fn an_every_sample_failure_is_placed_at_the_earliest_failing_stamp() {
+        // The failure at 3 s arrives first; the one at 2 s is earlier.
+        let (mut r, mut collector) = ready(run(&budget(), &[&cont("x30", CAR, 5.0)]), &[CAR]);
+        report(&mut collector, CAR, 3.0, 9.0);
+        report(&mut collector, CAR, 2.0, 8.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(
+            report.assertions()[0].verdict(),
+            &Verdict::Failed {
+                actual: Some(AssertionValue::Float(8.0)),
+                reason: FailureReason::ConditionFailed,
+                failed_at_secs: Some(2.0),
+            }
+        );
+    }
+
+    #[test]
+    fn a_window_an_early_stop_passed_is_judged() {
+        // `first` stops the run at 2 s; `early` ended at 1 s, so the run
+        // covered it, and the failing sample at 1.5 s is outside it.
+        let termination = format!("{}, fail_fast = true", budget());
+        let early = windowed("early", &target(CAR), "{ end = 1.0 }", IS_FIVE);
+        let (mut r, mut collector) = ready(
+            run(&termination, &[&cont("first", CAR, 5.0), &early]),
+            &[CAR],
+        );
+        report(&mut collector, CAR, 0.5, 5.0);
+        report(&mut collector, CAR, 1.5, 9.0);
+        r.tick(at(0.0), &collector);
+        r.tick(at(2.0), &collector);
+
+        let report = finalize_stopped_by(&r, &collector, failed_first());
+
+        assert_eq!(
+            statuses(&report),
+            [AssertionStatus::Failed, AssertionStatus::Passed]
+        );
+        assert_eq!(
+            report.assertions()[1].series().window_secs,
+            Some([0.0, 1.0])
+        );
+    }
+
+    #[test]
+    fn a_window_from_run_end_is_judged_only_when_the_run_ran_out() {
+        let last = windowed(
+            "last",
+            &target(CAR),
+            "{ start = { at = \"run.end\", plus = -1.0 } }",
+            IS_FIVE,
+        );
+        let termination = format!("{}, fail_fast = true", budget());
+        let blocks = [cont("first", TRUCK, 5.0), last];
+        let blocks: Vec<&str> = blocks.iter().map(String::as_str).collect();
+
+        // Ran out: the last second holds only the 5.0.
+        let (mut r, mut collector) = ready(run(&termination, &blocks), &[CAR, TRUCK]);
+        report(&mut collector, TRUCK, 0.5, 5.0);
+        report(&mut collector, CAR, 1.0, 9.0);
+        report(&mut collector, CAR, 4.5, 5.0);
+        run_out(&mut r, &collector);
+        let ran_out = finalize(&r, &collector);
+        assert_eq!(
+            statuses(&ran_out),
+            [AssertionStatus::Passed, AssertionStatus::Passed]
+        );
+        assert_eq!(
+            ran_out.assertions()[1].series().window_secs,
+            Some([4.0, 5.0])
+        );
+
+        // Stopped at 2 s: run.end isn't the run's end, so it isn't judged
+        // over 1 s to 2 s.
+        let (mut r, mut collector) = ready(run(&termination, &blocks), &[CAR, TRUCK]);
+        report(&mut collector, TRUCK, 0.5, 9.0);
+        r.tick(at(0.0), &collector);
+        r.tick(at(2.0), &collector);
+        let stopped = finalize_stopped_by(&r, &collector, failed_first());
+        assert_eq!(
+            statuses(&stopped),
+            [AssertionStatus::Failed, AssertionStatus::Unjudged]
+        );
+    }
+
+    #[test]
+    fn an_anchored_window_judges_only_what_follows_the_event() {
+        // Speed is first written at 2 s; the 9.0 at 1 s comes before the
+        // window opens at 2.5 s.
+        let settled = windowed("settled", &target(CAR), &after_speed(0.5), IS_FIVE);
+        let (mut r, mut collector) = ready(run(&budget(), &[&settled]), &[CAR]);
+        report_speed(&mut collector, CAR, 3.0, 1.0);
+        report_speed(&mut collector, CAR, 2.0, 1.0);
+        report(&mut collector, CAR, 1.0, 9.0);
+        report(&mut collector, CAR, 3.0, 5.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(statuses(&report), [AssertionStatus::Passed]);
+        assert_eq!(
+            report.assertions()[0].series().window_secs,
+            Some([2.5, 5.0])
+        );
+        assert_eq!(report.assertions()[0].series().samples, 1);
+    }
+
+    #[test]
+    fn an_anchor_that_never_occurred_fails_only_a_run_that_ran_out() {
+        let settled = windowed("settled", &target(CAR), &after_speed(0.0), IS_FIVE);
+        let (mut r, mut collector) = ready(run(&budget(), &[&settled]), &[CAR]);
+        report(&mut collector, CAR, 1.0, 5.0);
+        run_out(&mut r, &collector);
+        assert_eq!(
+            finalize(&r, &collector).assertions()[0].verdict(),
+            &Verdict::Failed {
+                actual: None,
+                reason: FailureReason::AnchorNeverOccurred,
+                failed_at_secs: None,
+            }
+        );
+
+        let (mut r, collector) = ready(run(&budget(), &[&settled]), &[CAR]);
+        r.tick(at(1.0), &collector);
+        assert_eq!(
+            statuses(&finalize_stopped_by(
+                &r,
+                &collector,
+                TerminationReason::Aborted
+            )),
+            [AssertionStatus::Unjudged]
+        );
+    }
+
+    #[test]
+    fn a_window_ending_past_the_last_tick_is_unjudged_and_fails_the_run() {
+        // The event at 4.5 s opens a window to 6.5 s; the run ran out at 5 s.
+        let window = format!(
+            "{{ end = {{ after = \"{}\", plus = 2.0 }} }}",
+            speed_target(CAR)
+        );
+        let late = windowed("late", &target(CAR), &window, IS_FIVE);
+        let (mut r, mut collector) = ready(run(&budget(), &[&late]), &[CAR]);
+        report_speed(&mut collector, CAR, 4.5, 1.0);
+        report(&mut collector, CAR, 1.0, 5.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(statuses(&report), [AssertionStatus::Unjudged]);
+        assert_eq!(report.status(), &ReportStatus::Failed);
+    }
+
+    #[test]
+    fn a_channel_carries_its_value_into_a_window_and_an_emission_does_not() {
+        let from_two = "{ start = 2.0 }";
+        let speed_count = windowed(
+            "speed_count",
+            &speed_target(CAR),
+            from_two,
+            "reduce = \"count\"",
+        );
+        let leaf_count = windowed("leaf_count", &target(CAR), from_two, "reduce = \"count\"");
+        let (mut r, mut collector) = ready(
+            run_measuring(&budget(), &[], &[&speed_count, &leaf_count]),
+            &[CAR],
+        );
+        report_speed(&mut collector, CAR, 0.5, 3.0);
+        report(&mut collector, CAR, 0.5, 3.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        let counts: Vec<Option<&AssertionValue>> = report
+            .measures()
+            .iter()
+            .map(|entry| entry.value())
+            .collect();
+        assert_eq!(
+            counts,
+            [Some(&AssertionValue::Int(1)), Some(&AssertionValue::Int(0))]
+        );
+    }
+
+    #[test]
+    fn a_measure_on_an_anchor_that_never_occurred_says_so() {
+        let peak = windowed("peak", &target(CAR), &after_speed(0.0), "reduce = \"max\"");
+        let (mut r, mut collector) = ready(run_measuring(&budget(), &[], &[&peak]), &[CAR]);
+        report(&mut collector, CAR, 1.0, 5.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        let entry = &report.measures()[0];
+        assert_eq!(entry.value(), None);
+        assert_eq!(entry.reason(), Some(FailureReason::AnchorNeverOccurred));
+        assert_eq!(report.status(), &ReportStatus::Passed);
+    }
+
+    #[test]
+    fn final_age_is_measured_to_the_windows_end() {
+        let to_three = windowed(
+            "to_three",
+            &target(CAR),
+            "{ end = 3.0 }",
+            &format!("reduce = \"final\"\n{IS_FIVE}"),
+        );
+        let (mut r, mut collector) = ready(run(&budget(), &[&to_three]), &[CAR]);
+        report(&mut collector, CAR, 1.0, 5.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(report.assertions()[0].series().final_age_secs, Some(2.0));
     }
 }

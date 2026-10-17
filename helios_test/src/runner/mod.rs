@@ -4,6 +4,7 @@ pub mod setup;
 pub mod state;
 pub mod termination_check;
 pub mod tick;
+pub mod window;
 
 #[cfg(test)]
 mod fixtures;
@@ -22,6 +23,8 @@ use crate::{
 };
 
 use helios_core::prelude::MonotonicTime;
+
+use std::iter;
 
 /// Why a run aborts when the host ticks or finishes it without having set
 /// it up.
@@ -65,19 +68,24 @@ impl Runner {
     }
 
     /// The collector this run reads: one requesting every target its
-    /// assertions and measures name. A host builds it here, beside the
-    /// runner, so the two always describe the same run.
+    /// assertions and measures name, and every series a window is anchored
+    /// `after`. A host builds it here, beside the runner, so the two always
+    /// describe the same run.
     pub fn collector(&self) -> ObservationCollector {
-        let assertion_targets = self
+        let assertions = self
             .run
             .assertions()
             .iter()
-            .map(|assertion| &assertion.target);
-        let measure_targets = self.run.measures().iter().map(|measure| &measure.target);
-        ObservationCollector::new(
-            assertion_targets.chain(measure_targets),
-            standard_extractors(),
-        )
+            .map(|assertion| (&assertion.target, &assertion.window));
+        let measures = self
+            .run
+            .measures()
+            .iter()
+            .map(|measure| (&measure.target, &measure.window));
+        let requested = assertions
+            .chain(measures)
+            .flat_map(|(target, window)| iter::once(target).chain(window.anchors()));
+        ObservationCollector::new(requested, standard_extractors())
     }
 
     /// Record that the run is unfit to produce a meaningful result, and why.
@@ -109,9 +117,8 @@ enum Phase {
 }
 
 /// _Per-step._ The simulated time a run's ticks have covered: its first
-/// tick, where the run's clock starts, and its latest. The window every
-/// assertion and measure is reduced over, which is the whole run until
-/// windows land.
+/// tick, where the run's clock starts (`run.start`), and its latest
+/// (`run.end`, once the run stops).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TickSpan {
     pub first: MonotonicTime,

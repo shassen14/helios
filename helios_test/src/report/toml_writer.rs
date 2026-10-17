@@ -43,7 +43,7 @@ pub fn write(report: &Report, path: &Path) -> Result<(), ReportWriteError> {
 mod tests {
     use super::*;
 
-    use crate::assertion::{AssertionValue, Condition};
+    use crate::assertion::{AssertionValue, Bound, Condition, RunInstant, Window};
     use crate::report::{
         AssertionReportEntry, FailureReason, MeasureReportEntry, SeriesSummary, TerminatedBy,
         Verdict,
@@ -57,17 +57,39 @@ mod tests {
             samples,
             max_gap_secs: Some(1.5),
             final_age_secs: None,
+            window_secs: None,
         }
     }
 
-    /// A failing `time_above` assertion on the speed channel.
+    /// As [`series`], over a window placed at 7.5 s to 12.5 s.
+    fn windowed_series(samples: usize) -> SeriesSummary {
+        SeriesSummary {
+            window_secs: Some([7.5, 12.5]),
+            ..series(samples)
+        }
+    }
+
+    /// The last 5 s of the run.
+    fn window() -> Window {
+        Window {
+            start: Some(Bound::At {
+                at: RunInstant::End,
+                plus: -5.0,
+            }),
+            end: None,
+        }
+    }
+
+    /// A failing `time_above` assertion on the speed channel over the last
+    /// 5 s.
     fn time_above_failing(verdict: Verdict) -> AssertionReportEntry {
         AssertionReportEntry::new(
             "rarely_fast".to_string(),
             "agent.car.channel.speed".to_string(),
+            window(),
             Some(Reducer::TimeAbove(5.0)),
             Condition::LessThan(2.0),
-            series(40),
+            windowed_series(40),
             verdict,
         )
     }
@@ -92,6 +114,7 @@ mod tests {
                 AssertionReportEntry::new(
                     "parked".to_string(),
                     "agent.car.node.estimator.position".to_string(),
+                    Window::default(),
                     Some(Reducer::Final),
                     Condition::WithinRange([-0.5, 0.5]),
                     SeriesSummary {
@@ -111,9 +134,10 @@ mod tests {
             vec![MeasureReportEntry::new(
                 "goal_distance".to_string(),
                 "agent.car.node.eval.goal_distance".to_string(),
+                Window::default(),
                 Reducer::Final,
                 true,
-                Ok(AssertionValue::Float(0.5)),
+                Some(Ok(AssertionValue::Float(0.5))),
                 series(1),
             )],
         )
@@ -176,6 +200,15 @@ mod tests {
         assert_eq!(fast["actual"].as_float(), Some(7.0));
         assert_eq!(fast["reason"].as_str(), Some("condition_failed"));
         assert!(fast.get("final_age_secs").is_none());
+        // Its window as written, and where it fell.
+        assert_eq!(fast["window"]["start"]["at"].as_str(), Some("run.end"));
+        assert_eq!(fast["window"]["start"]["plus"].as_float(), Some(-5.0));
+        let placed = fast["window_secs"].as_array().unwrap();
+        assert_eq!(placed[0].as_float(), Some(7.5));
+        assert_eq!(placed[1].as_float(), Some(12.5));
+        // A whole-run entry carries neither.
+        assert!(parked.get("window").is_none());
+        assert!(parked.get("window_secs").is_none());
 
         let measures = value["measures"].as_array().unwrap();
         assert_eq!(measures.len(), 1);

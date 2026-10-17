@@ -30,6 +30,29 @@ pub fn evaluate(condition: &Condition, actual: AssertionValue) -> AssertionResul
     }
 }
 
+/// The sample of `samples` with the smallest stamp that fails `condition`,
+/// and why; of several with that stamp, the first to arrive. Arrival order
+/// isn't stamp order, so an every-sample assertion's failure is placed here
+/// rather than at the first failure to arrive.
+pub fn earliest_failure<'s>(
+    condition: &Condition,
+    samples: &'s [Sample],
+) -> Option<(&'s Sample, FailureKind)> {
+    samples
+        .iter()
+        .filter_map(|sample| match evaluate(condition, sample.value.clone()) {
+            AssertionResult::Failed { kind, .. } => Some((sample, kind)),
+            AssertionResult::Passed { .. } | AssertionResult::Pending => None,
+        })
+        .reduce(|earliest, failing| {
+            if failing.0.timestamp.0 < earliest.0.timestamp.0 {
+                failing
+            } else {
+                earliest
+            }
+        })
+}
+
 /// Judge `samples` reduced by `reducer` over the window from `start` to
 /// `end`. A series that turned a value away fails for that reason, whatever
 /// else it holds; one the reducer has no value for (an empty window) is
@@ -224,5 +247,15 @@ mod tests {
                 actual: None,
             }
         );
+    }
+
+    #[test]
+    fn the_earliest_failure_is_by_stamp_not_arrival() {
+        let samples = [sample(3.0, 9.0), sample(1.0, 1.0), sample(2.0, 8.0)];
+        let (failing, kind) =
+            earliest_failure(&Condition::LessThan(5.0), &samples).expect("two samples fail");
+        assert_eq!(failing, &sample(2.0, 8.0));
+        assert_eq!(kind, FailureKind::ConditionFailed);
+        assert_eq!(earliest_failure(&Condition::LessThan(10.0), &samples), None);
     }
 }

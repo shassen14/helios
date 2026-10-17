@@ -49,8 +49,13 @@ pub(super) fn at(secs: f64) -> MonotonicTime {
 }
 
 /// The target on `agent`'s [`LEAF`].
-fn target(agent: &str) -> String {
+pub(super) fn target(agent: &str) -> String {
     node_path(agent, ESTIMATOR, LEAF)
+}
+
+/// The target on `agent`'s [`SPEED`] channel.
+pub(super) fn speed_target(agent: &str) -> String {
+    channel_path(agent, &speed::<f64>())
 }
 
 /// [`SPEED`] carrying `T`. The pipeline declares it carrying `f64`.
@@ -101,12 +106,7 @@ pub(super) fn term(name: &str, agent: &str, value: f64) -> String {
 /// An assertion named `name` that the final sample of `agent`'s [`SPEED`]
 /// channel is `value`.
 pub(super) fn speed_term(name: &str, agent: &str, value: f64) -> String {
-    assertion_on(
-        name,
-        &channel_path(agent, &speed::<f64>()),
-        Some("\"final\""),
-        value,
-    )
+    assertion_on(name, &speed_target(agent), Some("\"final\""), value)
 }
 
 /// An assertion named `name` that `agent`'s [`LEAF`], reduced by `reduce`
@@ -118,6 +118,17 @@ pub(super) fn reduced_below(name: &str, agent: &str, reduce: &str, bound: f64) -
          reduce = {reduce}\n\
          condition = {{ less_than = {bound:?} }}",
         target(agent)
+    )
+}
+
+/// An entry named `name` on `target` over `window`, both as written in
+/// TOML, with `rest` (more key lines: a condition, a reducer).
+pub(super) fn windowed(name: &str, target: &str, window: &str, rest: &str) -> String {
+    format!(
+        "name = \"{name}\"\n\
+         target = \"{target}\"\n\
+         window = {window}\n\
+         {rest}"
     )
 }
 

@@ -1,10 +1,11 @@
 use crate::{
     assertion::{evaluator::evaluate, AssertionResult, Condition, EntryName, FailureKind},
-    collector::{ObservationCollector, Series},
+    collector::{ObservationCollector, Sample, Series},
     run::termination::TerminationReason,
     runner::{
-        resolve::EntryOwner,
+        resolve::{EntryOwner, EntryView},
         state::{AssertionState, ContinuousStatus},
+        window::{place, PlacedWindow, Placement},
     },
 };
 
@@ -13,9 +14,9 @@ use super::{termination_check, Phase, Runner, TickSpan, FOREIGN_COLLECTOR, NEVER
 use helios_core::prelude::MonotonicTime;
 
 impl Runner {
-    /// Advance the run by one observation at simulated time `t`, judging every
-    /// every-sample assertion on what arrived in `collector` and reporting
-    /// whether to stop. It only reads the collector, so the host stays the
+    /// Advance the run by one observation at simulated time `t`, judging each
+    /// every-sample assertion on a fixed window on what arrived in
+    /// `collector`, and reporting whether to stop. It only reads the collector, so the host stays the
     /// sole source of what was observed.
     ///
     /// Only a run whose setup succeeded judges. One whose setup failed stops
@@ -51,27 +52,39 @@ impl Runner {
             None => *self.ticks.insert(TickSpan::starting_at(t)),
         };
 
-        // Latch every every-sample assertion on the samples that arrived
-        // since the last tick. A reduced assertion or a measure is evaluated
-        // only at the end, so here it just reaches its new samples. The
-        // states are borrowed mutably out of `self.phase` and the assertions
-        // immutably out of `self.run`: disjoint fields, so the two borrows
-        // coexist. Every entry is visited rather than stopping at the first
-        // failure, so each reaches this tick's samples.
+        // Latch every every-sample assertion on a fixed window on the samples
+        // that arrived since the last tick. Any other entry is evaluated only
+        // at the end, a reduced one or a measure because it has one value,
+        // and an every-sample one on a window from `run.end` or an anchor
+        // because its window isn't known yet; here it just reaches its new
+        // samples. The states are borrowed mutably out of `self.phase` and
+        // the assertions immutably out of `self.run`: disjoint fields, so the
+        // two borrows coexist. Every entry is visited rather than stopping at
+        // the first failure, so each reaches this tick's samples.
         let assertions = self.run.assertions();
         let mut first_failed: Option<&EntryName> = None;
-        for (owner, series, state) in entries {
-            let every_sample = match owner {
-                EntryOwner::Assertion(index) => assertions
-                    .get(index)
-                    .filter(|assertion| assertion.judges_every_sample()),
+        for EntryView {
+            owner,
+            held,
+            series,
+            state,
+        } in entries
+        {
+            let on_arrival = match owner {
+                EntryOwner::Assertion(index) => assertions.get(index).filter(|assertion| {
+                    assertion.judges_every_sample() && assertion.window.fixed()
+                }),
                 EntryOwner::Measure(_) => None,
             };
-            let Some(assertion) = every_sample else {
+            // A fixed window is placed from the first tick alone.
+            let placed =
+                on_arrival.map(|assertion| place(&assertion.window, span, false, |_| None));
+            let (Some(assertion), Some(Placement::Placed { window, .. })) = (on_arrival, placed)
+            else {
                 state.reach_new(series.samples(), series.rejection());
                 continue;
             };
-            check_new(&assertion.condition, state, series, t);
+            check_new(&assertion.condition, &window, held, state, series, t);
             if first_failed.is_none() && matches!(state.status(), ContinuousStatus::FailedAt { .. })
             {
                 first_failed = Some(&assertion.name);
@@ -95,10 +108,19 @@ pub enum TickAction {
 }
 
 /// Judge an every-sample assertion's `condition` on each sample that arrived
-/// since the last tick, once each, latching a failure at the sample's own
-/// time. A series that turned a value away fails, latched at `t` since the
-/// value it rejected isn't kept.
-fn check_new(condition: &Condition, state: &mut AssertionState, series: &Series, t: MonotonicTime) {
+/// since the last tick stamped in `window`, once each, latching a failure at
+/// the sample's own time. A `held` series' value carried into the window is
+/// judged once, as of the window's start, when the tick reaches it. A series
+/// that turned a value away fails, latched at `t` since the value it
+/// rejected isn't kept.
+fn check_new(
+    condition: &Condition,
+    window: &PlacedWindow,
+    held: bool,
+    state: &mut AssertionState,
+    series: &Series,
+    t: MonotonicTime,
+) {
     let new = state.reach_new(series.samples(), series.rejection());
     if let Some(rejection) = state.rejection() {
         let kind = FailureKind::Rejected(rejection);
@@ -106,16 +128,28 @@ fn check_new(condition: &Condition, state: &mut AssertionState, series: &Series,
         return;
     }
 
-    for sample in new {
-        match evaluate(condition, sample.value.clone()) {
-            AssertionResult::Passed { actual } => {
-                state.record(Some(actual), Ok(()), sample.timestamp);
-            }
-            AssertionResult::Failed { kind, actual } => {
-                state.record(actual, Err(kind), sample.timestamp);
-            }
-            AssertionResult::Pending => {}
+    for sample in new
+        .iter()
+        .filter(|sample| window.contains(sample.timestamp))
+    {
+        judge(condition, state, sample);
+    }
+    let started = window.start_cut().is_some_and(|from| t.0 >= from.0);
+    if held && started && state.carry_in_once() {
+        if let Some(carried) = window.carried_in(state.reached(series.samples())) {
+            judge(condition, state, &carried);
         }
+    }
+}
+
+/// Fold `condition` judged on `sample` into `state`'s latch.
+fn judge(condition: &Condition, state: &mut AssertionState, sample: &Sample) {
+    match evaluate(condition, sample.value.clone()) {
+        AssertionResult::Passed { .. } => state.record(None, Ok(()), sample.timestamp),
+        AssertionResult::Failed { kind, actual } => {
+            state.record(actual, Err(kind), sample.timestamp)
+        }
+        AssertionResult::Pending => {}
     }
 }
 
@@ -126,7 +160,8 @@ mod tests {
     use crate::{
         assertion::AssertionValue,
         runner::fixtures::{
-            at, cont, measure, ready, report, run, run_measuring, states, term, CAR, TRUCK,
+            at, cont, measure, ready, report, report_speed, run, run_measuring, speed_target,
+            states, target, term, windowed, CAR, TRUCK,
         },
     };
 
@@ -387,6 +422,70 @@ mod tests {
         );
     }
 
+    /// Every sample is 5.
+    const IS_FIVE: &str = "condition = { within_range = [5.0, 5.0] }";
+
+    #[test]
+    fn a_fixed_window_judges_only_samples_stamped_in_it() {
+        let a = windowed("a", &target(CAR), "{ start = 1.0, end = 2.0 }", IS_FIVE);
+        let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a]), &[CAR]);
+        // The first tick is run.start.
+        assert_eq!(r.tick(at(0.0), &collector), TickAction::Continue);
+        report(&mut collector, CAR, 0.5, 9.0);
+
+        assert_eq!(r.tick(at(1.0), &collector), TickAction::Continue);
+
+        report(&mut collector, CAR, 1.5, 9.0);
+        assert_eq!(
+            r.tick(at(2.0), &collector),
+            TickAction::Terminate {
+                reason: failed("a"),
+            }
+        );
+    }
+
+    #[test]
+    fn a_held_value_is_judged_when_the_tick_reaches_the_window() {
+        // Written at 0.5 s and in force at 2 s, when the window opens.
+        let a = windowed("a", &speed_target(CAR), "{ start = 2.0 }", IS_FIVE);
+        let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a]), &[CAR]);
+        assert_eq!(r.tick(at(0.0), &collector), TickAction::Continue);
+        report_speed(&mut collector, CAR, 0.5, 9.0);
+
+        assert_eq!(r.tick(at(1.0), &collector), TickAction::Continue);
+        assert_eq!(
+            r.tick(at(2.0), &collector),
+            TickAction::Terminate {
+                reason: failed("a"),
+            }
+        );
+        assert_eq!(
+            states(&r)[0].status(),
+            &ContinuousStatus::FailedAt {
+                t: at(2.0),
+                value: Some(AssertionValue::Float(9.0)),
+                kind: FailureKind::ConditionFailed,
+            }
+        );
+    }
+
+    #[test]
+    fn an_anchored_window_is_never_judged_on_arrival() {
+        // Its window isn't known until the event arrives, so the failing
+        // sample waits for finalize and never stops the run.
+        let window = format!("{{ start = {{ after = \"{}\" }} }}", speed_target(CAR));
+        let anchored = windowed("anchored", &target(CAR), &window, IS_FIVE);
+        let (mut r, mut collector) = ready(
+            run(FAIL_FAST, &[&cont("truck", TRUCK, 5.0), &anchored]),
+            &[CAR, TRUCK],
+        );
+        report_speed(&mut collector, CAR, 0.5, 1.0);
+        report(&mut collector, CAR, 1.0, 9.0);
+
+        assert_eq!(r.tick(at(2.0), &collector), TickAction::Continue);
+        assert_eq!(states(&r)[1].status(), &ContinuousStatus::Pending);
+    }
+
     /// The samples of the series `r`'s first entry reads.
     fn collector_samples<'c>(
         r: &Runner,
@@ -394,7 +493,7 @@ mod tests {
     ) -> &'c [crate::collector::Sample] {
         match &r.phase {
             Phase::Ready(plan) => plan.with_series(collector).expect("its own collector")[0]
-                .1
+                .series
                 .samples(),
             Phase::AwaitingPipelines | Phase::Aborted => &[],
         }

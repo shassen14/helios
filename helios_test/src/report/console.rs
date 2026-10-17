@@ -183,6 +183,7 @@ fn reason_phrase(reason: FailureReason) -> &'static str {
         FailureReason::NoSamples => "no samples",
         FailureReason::TypeMismatch => "type mismatch",
         FailureReason::ConditionFailed => "condition failed",
+        FailureReason::AnchorNeverOccurred => "anchor never occurred",
     }
 }
 
@@ -215,10 +216,13 @@ fn reducer_phrase(reducer: &Reducer) -> String {
     }
 }
 
-/// What a series held: `12 samples, max gap 1.00s`, and for `final` the
-/// judged sample's age.
+/// What a series held: `12 samples, max gap 1.00s`, for `final` the judged
+/// sample's age, and where a bounded window fell.
 fn series_phrase(series: &SeriesSummary) -> String {
     let mut parts = vec![format!("{} samples", series.samples)];
+    if let Some([start, end]) = series.window_secs {
+        parts.push(format!("window {start:.2}s to {end:.2}s"));
+    }
     if let Some(gap) = series.max_gap_secs {
         parts.push(format!("max gap {gap:.2}s"));
     }
@@ -261,7 +265,10 @@ fn run_status_label(status: &ReportStatus) -> &'static str {
 mod tests {
     use super::*;
 
-    use crate::report::{AssertionReportEntry, MeasureReportEntry};
+    use crate::{
+        assertion::Window,
+        report::{AssertionReportEntry, MeasureReportEntry},
+    };
 
     /// A series of `samples` samples with a 1 s largest gap.
     fn series(samples: usize) -> SeriesSummary {
@@ -269,6 +276,7 @@ mod tests {
             samples,
             max_gap_secs: Some(1.0),
             final_age_secs: None,
+            window_secs: None,
         }
     }
 
@@ -276,6 +284,7 @@ mod tests {
         AssertionReportEntry::new(
             "mission_succeeded".to_string(),
             "agent.car.node.mission.state".to_string(),
+            Window::default(),
             Some(Reducer::Final),
             Condition::Equals(AssertionValue::String("Succeeded".to_string())),
             SeriesSummary {
@@ -292,6 +301,7 @@ mod tests {
         AssertionReportEntry::new(
             "speed_capped".to_string(),
             "agent.car.node.estimator.speed".to_string(),
+            Window::default(),
             None,
             Condition::LessThan(5.0),
             series(40),
@@ -415,17 +425,19 @@ mod tests {
             MeasureReportEntry::new(
                 "goal_distance".to_string(),
                 "agent.car.node.eval.goal_distance".to_string(),
+                Window::default(),
                 Reducer::Final,
                 true,
-                Ok(AssertionValue::Float(0.25)),
+                Some(Ok(AssertionValue::Float(0.25))),
                 series(1),
             ),
             MeasureReportEntry::new(
                 "peak_speed".to_string(),
                 "agent.car.node.estimator.speed".to_string(),
+                Window::default(),
                 Reducer::Max,
                 false,
-                Err(FailureReason::NoSamples),
+                Some(Err(FailureReason::NoSamples)),
                 series(0),
             ),
         ];
@@ -438,5 +450,23 @@ mod tests {
             "[measure] peak_speed: max of agent.car.node.estimator.speed = none (no samples) \
              [0 samples, max gap 1.00s] (not covered: the run stopped before its end)"
         ));
+    }
+
+    #[test]
+    fn a_windowed_entry_shows_where_its_window_fell() {
+        let mut report = sample_report();
+        report.assertions = vec![failing_speed(Verdict::Failed {
+            actual: None,
+            reason: FailureReason::AnchorNeverOccurred,
+            failed_at_secs: None,
+        })];
+        report.assertions[0].series.window_secs = Some([2.5, 7.0]);
+        let text = render(&report);
+        assert!(
+            text.contains(
+                "FAILED (anchor never occurred) [40 samples, window 2.50s to 7.00s, max gap 1.00s]"
+            ),
+            "{text}"
+        );
     }
 }

@@ -7,7 +7,7 @@ pub mod target;
 
 use crate::collector::Rejection;
 pub use condition::{AssertionValue, Condition};
-pub use config::{Assertion, Measure};
+pub use config::{Assertion, Bound, Measure, RunInstant, Window};
 pub use name::EntryName;
 pub use target::{AssertionTarget, TargetSubject};
 
@@ -38,10 +38,13 @@ pub enum AssertionResult {
 pub enum FailureKind {
     /// A value arrived for the target but couldn't be read.
     Rejected(Rejection),
-    /// No value arrived for the target in the whole run.
+    /// No value arrived for the target in its window.
     NoSamples,
     TypeMismatch,
     ConditionFailed,
+    /// The run ran out without the event a window bound is anchored
+    /// `after`, so the window never existed. An empty window never passes.
+    AnchorNeverOccurred,
 }
 
 impl std::fmt::Display for FailureKind {
@@ -51,6 +54,7 @@ impl std::fmt::Display for FailureKind {
             FailureKind::NoSamples => write!(f, "no samples"),
             FailureKind::TypeMismatch => write!(f, "type mismatch"),
             FailureKind::ConditionFailed => write!(f, "condition failed"),
+            FailureKind::AnchorNeverOccurred => write!(f, "anchor never occurred"),
         }
     }
 }

@@ -3,7 +3,7 @@ pub mod console;
 pub mod toml_writer;
 
 use crate::{
-    assertion::{AssertionResult, AssertionValue, Condition, FailureKind},
+    assertion::{AssertionResult, AssertionValue, Condition, FailureKind, Window},
     run::termination::TerminationReason,
     statistics::within_run::Reducer,
 };
@@ -205,6 +205,10 @@ impl From<&TerminationReason> for TerminatedBy {
 pub struct AssertionReportEntry {
     name: String,
     target: String,
+    /// As the run file wrote it; absent on one over the whole run. Where it
+    /// fell in this run is the series summary's `window_secs`.
+    #[serde(skip_serializing_if = "Window::is_whole_run")]
+    window: Window,
     /// Absent on an assertion that judged every sample.
     #[serde(skip_serializing_if = "Option::is_none")]
     reduce: Option<Reducer>,
@@ -224,6 +228,7 @@ impl AssertionReportEntry {
     pub fn new(
         name: String,
         target: String,
+        window: Window,
         reduce: Option<Reducer>,
         condition: Condition,
         series: SeriesSummary,
@@ -232,6 +237,7 @@ impl AssertionReportEntry {
         Self {
             name,
             target,
+            window,
             reduce,
             condition,
             series,
@@ -265,12 +271,16 @@ impl AssertionReportEntry {
 pub struct MeasureReportEntry {
     name: String,
     target: String,
+    /// As on [`AssertionReportEntry`].
+    #[serde(skip_serializing_if = "Window::is_whole_run")]
+    window: Window,
     reduce: Reducer,
     /// Whether the run reached the end of the measure's window. A value from
     /// one it didn't is the value it stopped at.
     covered: bool,
     /// `None` when the reducer had none: no samples, a sample it couldn't
-    /// read, or a value turned away. `reason` says which.
+    /// read, a value turned away, or an anchor that never occurred, which
+    /// `reason` says; or a window the run never placed, with no `reason`.
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<AssertionValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -281,22 +291,26 @@ pub struct MeasureReportEntry {
 
 impl MeasureReportEntry {
     /// Build one measure line. A `value` and a `reason` are exclusive: a
-    /// measure has a value, or a reason it has none.
+    /// measure has a value, a reason it has none, or, as `None`, neither,
+    /// when the run never read it or never placed its window.
     pub fn new(
         name: String,
         target: String,
+        window: Window,
         reduce: Reducer,
         covered: bool,
-        value: Result<AssertionValue, FailureReason>,
+        value: Option<Result<AssertionValue, FailureReason>>,
         series: SeriesSummary,
     ) -> Self {
         let (value, reason) = match value {
-            Ok(value) => (Some(value), None),
-            Err(reason) => (None, Some(reason)),
+            Some(Ok(value)) => (Some(value), None),
+            Some(Err(reason)) => (None, Some(reason)),
+            None => (None, None),
         };
         Self {
             name,
             target,
+            window,
             reduce,
             covered,
             value,
@@ -329,22 +343,28 @@ impl MeasureReportEntry {
     }
 }
 
-/// _Post-step._ What a judged or measured series held over the run, printed
-/// beside every verdict so a silent signal shows even where nothing bounds
-/// it.
+/// _Post-step._ What a judged or measured series held over its window,
+/// printed beside every verdict so a silent signal shows even where nothing
+/// bounds it. Over the run's span instead when the window was never placed.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SeriesSummary {
-    /// How many samples the run reached.
+    /// How many samples the run reached in the window, a channel's
+    /// carried-in value included.
     pub samples: usize,
-    /// The longest span with no sample, the run's first and latest ticks
-    /// included. `None` when the run never ticked.
+    /// The longest span with no sample, the window's edges included. `None`
+    /// when the run never read the series.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_gap_secs: Option<f64>,
-    /// For `reduce = "final"`: how long before the run's latest tick the
-    /// judged sample was stamped. `final` passes on a signal that died long
-    /// before the end, and this shows it.
+    /// For `reduce = "final"`: how long before the window's end the judged
+    /// sample was stamped. `final` passes on a signal that died long before
+    /// the end, and this shows it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub final_age_secs: Option<f64>,
+    /// Where a bounded window fell in this run: its edges, in seconds from
+    /// the run's first tick, the end never past the latest tick. `None` for
+    /// a whole-run entry and a window never placed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_secs: Option<[f64; 2]>,
 }
 
 /// _Post-step._ One assertion's verdict and what it rests on. The variant
@@ -369,10 +389,14 @@ pub enum Verdict {
         #[serde(skip_serializing_if = "Option::is_none")]
         failed_at_secs: Option<f64>,
     },
-    /// No verdict: the run stopped before the assertion's window ended (a
-    /// `fail_fast` stop or an aborted setup) and it hadn't failed by then.
-    /// Neither passes nor fails a run on its own; a run with one has already
-    /// failed for another reason. `actual` is the value it stopped at.
+    /// No verdict: the run's latest tick never reached the end of the
+    /// assertion's window, or never placed it (a `run.end` bound after an
+    /// early stop, an anchor that hadn't occurred yet), and it hadn't failed
+    /// by then. Usually the run stopped early, by a `fail_fast` stop or an
+    /// aborted setup; a window anchored late enough to end past a run that
+    /// ran out is the other case. Either way the run didn't test what was
+    /// asked, so a run with one is never `Passed`. `actual` is the value it
+    /// stopped at.
     Unjudged {
         #[serde(skip_serializing_if = "Option::is_none")]
         actual: Option<AssertionValue>,
@@ -433,13 +457,15 @@ pub enum AssertionStatus {
 pub enum FailureReason {
     /// A value arrived for the target but couldn't be read.
     Rejected,
-    /// No value arrived for the target in the whole run.
+    /// No value arrived for the target in its window.
     NoSamples,
     /// The observed value and the expected one are types the condition
     /// can't compare.
     TypeMismatch,
     /// The comparison ran and didn't hold.
     ConditionFailed,
+    /// The run ran out without the event the window is anchored `after`.
+    AnchorNeverOccurred,
 }
 
 impl From<&FailureKind> for FailureReason {
@@ -449,6 +475,7 @@ impl From<&FailureKind> for FailureReason {
             FailureKind::NoSamples => FailureReason::NoSamples,
             FailureKind::TypeMismatch => FailureReason::TypeMismatch,
             FailureKind::ConditionFailed => FailureReason::ConditionFailed,
+            FailureKind::AnchorNeverOccurred => FailureReason::AnchorNeverOccurred,
         }
     }
 }

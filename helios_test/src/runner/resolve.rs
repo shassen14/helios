@@ -1,9 +1,11 @@
 //! Checks, once the pipelines exist, that the run can evaluate every
-//! assertion and measure: its target names one series its agent records, a
-//! channel value there can be extracted, a nondeterministic value is read
-//! only with permission, a reducer that holds values between samples isn't
-//! given an emission's events, and the collector requests it. Each entry
-//! that can be evaluated binds its series to the exact key it names.
+//! assertion and measure: its target, and each series its window is
+//! anchored `after`, names one series its agent records, a channel value
+//! there can be extracted, a nondeterministic value is read only with
+//! permission, and the collector requests it; and a reducer that holds
+//! values between samples isn't given an emission's events. Each entry that
+//! can be evaluated binds its series, and its anchors', to the exact keys
+//! they name.
 //!
 //! Done against what each agent declares it reports, before the first tick,
 //! so a run that could never pass stops before it starts and names every
@@ -12,7 +14,7 @@
 //! state, so only a run that can judge has any.
 
 use crate::{
-    assertion::{Assertion, AssertionTarget, EntryName, Measure, TargetSubject},
+    assertion::{Assertion, AssertionTarget, EntryName, Measure, TargetSubject, Window},
     collector::{ObservationCollector, Series, SeriesId},
     runner::state::AssertionState,
     statistics::within_run::Reducer,
@@ -29,7 +31,7 @@ use helios_runtime::{
     AutonomyPipeline,
 };
 
-use std::fmt::Display;
+use std::{collections::HashMap, fmt::Display};
 use thiserror::Error;
 
 /// Between the problems of one assertion. No problem's message holds it.
@@ -42,18 +44,21 @@ pub struct ResolvedPlan {
     /// One per assertion, then one per measure, each in run-file order.
     /// Read by each entry's owner, never by position.
     entries: Vec<PlanEntry>,
+    /// The series each window anchor names. One per selector, so entries
+    /// anchored on one event share its series.
+    anchors: HashMap<AssertionTarget, SeriesId>,
 }
 
 impl ResolvedPlan {
-    /// Each entry's owner and its series in `collector` beside its state.
-    /// `None` when `collector` isn't the one the plan was resolved against.
+    /// Each entry with its series in `collector` and its state. `None` when
+    /// `collector` isn't the one the plan was resolved against.
     pub(super) fn with_series<'p, 'c>(
         &'p self,
         collector: &'c ObservationCollector,
-    ) -> Option<Vec<(EntryOwner, &'c Series, &'p AssertionState)>> {
+    ) -> Option<Vec<EntryView<'c, &'p AssertionState>>> {
         self.entries
             .iter()
-            .map(|entry| Some((entry.owner, collector.series(entry.series)?, &entry.state)))
+            .map(|entry| entry.view(collector, &entry.state))
             .collect()
     }
 
@@ -62,17 +67,34 @@ impl ResolvedPlan {
     pub(super) fn with_series_mut<'p, 'c>(
         &'p mut self,
         collector: &'c ObservationCollector,
-    ) -> Option<Vec<(EntryOwner, &'c Series, &'p mut AssertionState)>> {
+    ) -> Option<Vec<EntryView<'c, &'p mut AssertionState>>> {
         self.entries
             .iter_mut()
             .map(|entry| {
-                Some((
-                    entry.owner,
-                    collector.series(entry.series)?,
-                    &mut entry.state,
-                ))
+                let PlanEntry {
+                    owner,
+                    series,
+                    held,
+                    state,
+                } = entry;
+                Some(EntryView {
+                    owner: *owner,
+                    held: *held,
+                    series: collector.series(*series)?,
+                    state,
+                })
             })
             .collect()
+    }
+
+    /// The series in `collector` the window anchor `after` names. `None`
+    /// when no window is anchored on it, or `collector` isn't the plan's.
+    pub(super) fn anchor<'c>(
+        &self,
+        after: &AssertionTarget,
+        collector: &'c ObservationCollector,
+    ) -> Option<&'c Series> {
+        collector.series(*self.anchors.get(after)?)
     }
 
     /// Each entry's state, assertions then measures, in run-file order.
@@ -97,7 +119,38 @@ pub enum EntryOwner {
 struct PlanEntry {
     owner: EntryOwner,
     series: SeriesId,
+    /// As [`EntryView::held`].
+    held: bool,
     state: AssertionState,
+}
+
+impl PlanEntry {
+    fn view<'c, S>(
+        &self,
+        collector: &'c ObservationCollector,
+        state: S,
+    ) -> Option<EntryView<'c, S>> {
+        Some(EntryView {
+            owner: self.owner,
+            held: self.held,
+            series: collector.series(self.series)?,
+            state,
+        })
+    }
+}
+
+/// _Per-step._ One plan entry as a tick or finalize reads it: whose it is,
+/// its series and its state (`S`, borrowed shared or open to update).
+#[derive(Debug)]
+pub(super) struct EntryView<'c, S> {
+    pub owner: EntryOwner,
+    /// Whether each value holds until the next: true for a channel, whose
+    /// value is what the brain could read until it was written again; false
+    /// for an emission, whose values are events. A held series carries its
+    /// last value into a window that starts after it.
+    pub held: bool,
+    pub series: &'c Series,
+    pub state: S,
 }
 
 /// _Pre-step._ An assertion or measure the run can't evaluate, and every
@@ -147,6 +200,13 @@ pub enum TargetProblem {
     /// events: a NIS doesn't stay at its value between updates.
     #[error("time_above holds each value until the next, and an emission's values are events")]
     TimeAboveOnEmission,
+    /// A series the window is anchored `after` that the run can't read, for
+    /// the reason held.
+    #[error("its window's anchor '{anchor}': {problem}")]
+    Anchor {
+        anchor: AssertionTarget,
+        problem: Box<TargetProblem>,
+    },
 }
 
 /// What one agent reports, listed once for every assertion to search.
@@ -189,6 +249,7 @@ struct Wanted<'r> {
     owner: EntryOwner,
     name: &'r EntryName,
     target: &'r AssertionTarget,
+    window: &'r Window,
     reduce: Option<&'r Reducer>,
     allow_nondeterministic: bool,
 }
@@ -225,6 +286,7 @@ pub(super) fn resolve(
             owner: EntryOwner::Assertion(index),
             name: &assertion.name,
             target: &assertion.target,
+            window: &assertion.window,
             reduce: assertion.reduce.as_ref(),
             allow_nondeterministic: assertion.allow_nondeterministic,
         });
@@ -232,19 +294,28 @@ pub(super) fn resolve(
         owner: EntryOwner::Measure(index),
         name: &measure.name,
         target: &measure.target,
+        window: &measure.window,
         reduce: Some(&measure.reduce),
         allow_nondeterministic: measure.allow_nondeterministic,
     });
 
     let mut entries = Vec::with_capacity(assertions.len() + measures.len());
+    let mut anchors = HashMap::new();
     let mut unusable = Vec::new();
     for wanted in wanted_assertions.chain(wanted_measures) {
         match check(&wanted, &catalogs, collector) {
-            Ok(series) => entries.push(PlanEntry {
-                owner: wanted.owner,
-                series,
-                state: AssertionState::new(),
-            }),
+            Ok(found) => {
+                entries.push(PlanEntry {
+                    owner: wanted.owner,
+                    series: collector.bind(found.target),
+                    held: found.held,
+                    state: AssertionState::new(),
+                });
+                for (anchor, key) in found.anchors {
+                    let series = collector.bind(key);
+                    anchors.insert(anchor.clone(), series);
+                }
+            }
             Err(problems) => unusable.push(UnusableEntry {
                 name: wanted.name.clone(),
                 target: wanted.target.clone(),
@@ -254,23 +325,80 @@ pub(super) fn resolve(
     }
 
     if unusable.is_empty() {
-        Ok(ResolvedPlan { entries })
+        Ok(ResolvedPlan { entries, anchors })
     } else {
         Err(unusable)
     }
 }
 
-/// The series `wanted` is evaluated from, bound in `collector`, or every
-/// reason the run can't evaluate it, checked against the one agent its
-/// target names. A target that doesn't name exactly one series its agent
-/// records has no other properties to check, so that problem is reported
-/// alone.
-fn check(
-    wanted: &Wanted,
+/// The keys an entry the run can evaluate reads.
+struct Found<'r> {
+    target: RecordedKey,
+    /// As [`EntryView::held`].
+    held: bool,
+    /// Each window anchor's selector with the key it names.
+    anchors: Vec<(&'r AssertionTarget, RecordedKey)>,
+}
+
+/// The keys `wanted` reads, or every reason the run can't evaluate it:
+/// its target's problems, then each anchor's.
+fn check<'r>(
+    wanted: &Wanted<'r>,
     catalogs: &[Catalog],
-    collector: &mut ObservationCollector,
-) -> Result<SeriesId, Vec<TargetProblem>> {
-    let target = wanted.target;
+    collector: &ObservationCollector,
+) -> Result<Found<'r>, Vec<TargetProblem>> {
+    let mut problems = Vec::new();
+    let target = match locate(
+        wanted.target,
+        wanted.allow_nondeterministic,
+        catalogs,
+        collector,
+    ) {
+        Ok(key) => Some(key),
+        Err(mut found) => {
+            problems.append(&mut found);
+            None
+        }
+    };
+    if let Some(key) = &target {
+        if matches!(wanted.reduce, Some(Reducer::TimeAbove(_)))
+            && matches!(key.subject, Subject::Emission { .. })
+        {
+            problems.push(TargetProblem::TimeAboveOnEmission);
+        }
+    }
+
+    let mut anchors = Vec::new();
+    for anchor in wanted.window.anchors() {
+        match locate(anchor, wanted.allow_nondeterministic, catalogs, collector) {
+            Ok(key) => anchors.push((anchor, key)),
+            Err(found) => problems.extend(found.into_iter().map(|problem| TargetProblem::Anchor {
+                anchor: anchor.clone(),
+                problem: Box::new(problem),
+            })),
+        }
+    }
+
+    match target {
+        Some(target) if problems.is_empty() => Ok(Found {
+            held: matches!(target.subject, Subject::Channel { .. }),
+            target,
+            anchors,
+        }),
+        _ => Err(problems),
+    }
+}
+
+/// The one key `target` names, or every reason the run can't read it,
+/// checked against the one agent the target names. A target that doesn't
+/// name exactly one series its agent records has no other properties to
+/// check, so that problem is reported alone.
+fn locate(
+    target: &AssertionTarget,
+    allow_nondeterministic: bool,
+    catalogs: &[Catalog],
+    collector: &ObservationCollector,
+) -> Result<RecordedKey, Vec<TargetProblem>> {
     let Some(catalog) = catalogs
         .iter()
         .find(|catalog| catalog.agent == target.agent())
@@ -286,7 +414,7 @@ fn check(
     let mut problems = Vec::new();
     match observable.determinism() {
         Determinism::Deterministic => {}
-        Determinism::Nondeterministic if wanted.allow_nondeterministic => {}
+        Determinism::Nondeterministic if allow_nondeterministic => {}
         Determinism::Nondeterministic => problems.push(TargetProblem::Nondeterministic),
     }
     match observable.kind() {
@@ -296,11 +424,6 @@ fn check(
             problems.push(TargetProblem::NoExtractor(type_name))
         }
     }
-    if matches!(wanted.reduce, Some(Reducer::TimeAbove(_)))
-        && matches!(subject, Subject::Emission { .. })
-    {
-        problems.push(TargetProblem::TimeAboveOnEmission);
-    }
     if !collector.requests(target) {
         problems.push(TargetProblem::Unrequested);
     }
@@ -308,10 +431,10 @@ fn check(
     if !problems.is_empty() {
         return Err(problems);
     }
-    Ok(collector.bind(RecordedKey {
+    Ok(RecordedKey {
         agent: catalog.agent.clone(),
         subject: subject.clone(),
-    }))
+    })
 }
 
 /// Why `subject` matched nothing `catalog` records: a channel spelled as a
@@ -343,7 +466,7 @@ pub(super) fn join(items: &[impl Display], separator: &str) -> String {
 mod tests {
     use super::*;
 
-    use crate::assertion::{extract::standard_extractors, Condition};
+    use crate::assertion::{extract::standard_extractors, Bound, Condition};
 
     use helios_core::prelude::TfProvider;
     use helios_runtime::{
@@ -501,6 +624,7 @@ mod tests {
         Assertion {
             name: name_at(1),
             target,
+            window: Window::default(),
             reduce,
             condition: Condition::LessThan(1.0),
             allow_nondeterministic: false,
@@ -512,6 +636,7 @@ mod tests {
         Measure {
             name: name_at(1),
             target,
+            window: Window::default(),
             reduce,
             allow_nondeterministic: false,
         }
@@ -609,8 +734,9 @@ mod tests {
         let entry = |owner, subject: Subject| PlanEntry {
             owner,
             series: collector
-                .series_id(&key(subject))
+                .series_id(&key(subject.clone()))
                 .expect("the entry's key is bound"),
+            held: matches!(subject, Subject::Channel { .. }),
             state: AssertionState::new(),
         };
         assert_eq!(
@@ -622,6 +748,7 @@ mod tests {
                     entry(EntryOwner::Assertion(2), Subject::emission(ESTIMATOR, NIS)),
                     entry(EntryOwner::Measure(0), speed_subject()),
                 ],
+                anchors: HashMap::new(),
             })
         );
     }
@@ -949,5 +1076,94 @@ mod tests {
              (set allow_nondeterministic = true to assert on it) and it carries String, \
              which has no extractor"
         );
+    }
+
+    /// `target` over a window starting `after` the series `anchor` names.
+    fn anchored(target: AssertionTarget, anchor: &AssertionTarget) -> Assertion {
+        Assertion {
+            window: Window {
+                start: Some(Bound::After {
+                    after: anchor.clone(),
+                    plus: 0.0,
+                }),
+                end: None,
+            },
+            ..assertion(target, false)
+        }
+    }
+
+    #[test]
+    fn an_anchor_is_bound_beside_its_entrys_series() {
+        let nis = estimator(NIS);
+        let speed = channel(SPEED);
+        let (collector, resolved) =
+            resolve_with(&[anchored(speed.clone(), &nis)], &[speed, nis.clone()]);
+
+        let plan = resolved.expect("the target and its anchor resolve");
+        let bound = collector
+            .series_id(&key(Subject::emission(ESTIMATOR, NIS)))
+            .expect("the anchor's key is bound");
+        assert_eq!(plan.anchors, HashMap::from([(nis, bound)]));
+    }
+
+    #[test]
+    fn an_anchor_is_checked_as_a_target_is() {
+        // Unreported, nondeterministic without the entry's permission, and
+        // not requested: each named as the window's anchor.
+        let speed = channel(SPEED);
+        let missing = estimator("missing");
+        let duration = estimator(TICK_DURATION_LEAF);
+        let (_, resolved) = resolve_with(
+            &[
+                anchored(speed.clone(), &missing),
+                anchored(speed.clone(), &duration),
+                anchored(speed.clone(), &estimator(NIS)),
+            ],
+            &[speed.clone(), missing.clone(), duration.clone()],
+        );
+
+        let anchor = |anchor: &AssertionTarget, problem| TargetProblem::Anchor {
+            anchor: anchor.clone(),
+            problem: Box::new(problem),
+        };
+        assert_eq!(
+            resolved,
+            Err(vec![
+                unusable(
+                    1,
+                    speed.clone(),
+                    vec![anchor(&missing, TargetProblem::Unreported)]
+                ),
+                unusable(
+                    2,
+                    speed.clone(),
+                    vec![anchor(&duration, TargetProblem::Nondeterministic)]
+                ),
+                unusable(
+                    3,
+                    speed,
+                    vec![anchor(&estimator(NIS), TargetProblem::Unrequested)]
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_channel_holds_its_values_and_an_emission_does_not() {
+        let (collector, resolved) = resolve_with(
+            &[
+                assertion(channel(SPEED), false),
+                assertion(estimator(NIS), false),
+            ],
+            &[channel(SPEED), estimator(NIS)],
+        );
+        let plan = resolved.expect("both resolve");
+        let held: Vec<bool> = plan
+            .with_series(&collector)
+            .expect("its own collector")
+            .iter()
+            .map(|entry| entry.held)
+            .collect();
+        assert_eq!(held, [true, false]);
     }
 }
