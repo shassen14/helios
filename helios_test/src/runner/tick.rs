@@ -88,9 +88,11 @@ impl Runner {
                 continue;
             };
             check_new(&assertion.condition, &window, held, state, series, t);
-            if first_failed.is_none() && matches!(state.status(), ContinuousStatus::FailedAt { .. })
-            {
-                first_failed = Some((&assertion.name, key));
+            // Every entry a tick sees is recorded, so it has a key.
+            if let (None, Some(key)) = (first_failed, key) {
+                if matches!(state.status(), ContinuousStatus::FailedAt { .. }) {
+                    first_failed = Some((&assertion.name, key));
+                }
             }
         }
 
@@ -497,7 +499,7 @@ mod tests {
         collector: &'c ObservationCollector,
     ) -> &'c [crate::collector::Sample] {
         match &r.phase {
-            Phase::Ready(plan) => plan.with_series(collector).expect("its own collector")[0]
+            Phase::Ready(plan) => plan.with_series(collector, &[]).expect("its own collector")[0]
                 .series
                 .samples(),
             Phase::AwaitingPipelines | Phase::Aborted => &[],

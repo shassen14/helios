@@ -1,7 +1,8 @@
 //! Checks, once the pipelines exist, that the run can evaluate every
 //! assertion and measure: its target names one series its agent records, or
-//! each instance of a keyed channel it asks for, and each series its window
-//! is anchored `after` names one; a channel value there can be extracted, a
+//! each instance of a keyed channel it asks for, or a metric of an
+//! evaluation the run could build, and each series its window is anchored
+//! `after` names one; a channel value there can be extracted, a
 //! nondeterministic value is read only with permission, and the collector
 //! requests it; a reducer that holds values between samples isn't given an
 //! emission's events; and the reducer and the condition can apply to the
@@ -19,33 +20,44 @@
 use crate::{
     assertion::{
         condition::KindProblem, extract::Extracted, Assertion, AssertionTarget, Condition,
-        EntryName, InstanceSelector, Measure, TargetSubject, ValueKind, Window,
+        EntryName, InstanceSelector, Measure, TargetRoot, TargetSubject, ValueKind, Window,
     },
-    collector::{instance_of, ObservationCollector, Series, SeriesId},
+    collector::{instance_of, ObservationCollector, Rejection, Series, SeriesId},
+    evaluation::{derived::Derived, path::DerivedName, Evaluation, EvaluatorRegistry},
     report::ReportedUnit,
-    runner::state::AssertionState,
+    runner::{
+        evaluations::{resolve_evaluations, PlannedEvaluation, UnusableEvaluation},
+        state::AssertionState,
+    },
     statistics::within_run::{ReduceError, Reducer},
 };
 
 use helios_core::kernel::si_unit::SiUnit;
-use helios_core::prelude::AgentId;
+use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::{
     observe::{
         key::{RecordedKey, Subject},
         path::channel_path,
     },
-    port::{ChannelKey, Determinism, Observable, ObservableValue, Writer},
+    port::{ChannelDescription, ChannelKey, Determinism, Observable, ObservableValue, Writer},
     AutonomyPipeline,
 };
 
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::{self, Display},
+};
 use thiserror::Error;
 
 /// Between the problems of one assertion. No problem's message holds it.
 const PROBLEM_SEPARATOR: &str = " and ";
 
 /// Between the instances a problem lists.
-const INSTANCE_SEPARATOR: &str = ", ";
+pub(super) const INSTANCE_SEPARATOR: &str = ", ";
+
+/// Between the unusable evaluations and entries in one message. An entry's
+/// own message holds a `,` but never this.
+const UNUSABLE_SEPARATOR: &str = "; ";
 
 /// _Per-step._ What setup found for each assertion and measure, and the
 /// state each tick folds into it.
@@ -58,46 +70,82 @@ pub struct ResolvedPlan {
     /// The series each window anchor names. One per selector, so entries
     /// anchored on one event share its series.
     anchors: HashMap<AssertionTarget, SeriesId>,
+    /// Each evaluation, in run-file order.
+    evaluations: Vec<PlannedEvaluation>,
 }
 
 impl ResolvedPlan {
-    /// Each entry with its series in `collector` and its state. `None` when
-    /// `collector` isn't the one the plan was resolved against.
-    pub(super) fn with_series<'p, 'c>(
-        &'p self,
-        collector: &'c ObservationCollector,
-    ) -> Option<Vec<EntryView<'p, 'c, &'p AssertionState>>> {
-        self.entries
+    /// Each evaluation, in run-file order.
+    pub(super) fn evaluations(&self) -> &[PlannedEvaluation] {
+        &self.evaluations
+    }
+
+    /// What each evaluation derived from the values stamped at or before
+    /// `until`, in run-file order. `None` when `collector` isn't the one the
+    /// plan was resolved against.
+    pub(super) fn derive(
+        &self,
+        collector: &ObservationCollector,
+        until: MonotonicTime,
+    ) -> Option<Vec<Derived>> {
+        self.evaluations
             .iter()
-            .map(|entry| entry.view(collector, &entry.state))
+            .map(|evaluation| collector.derive(evaluation.id, until))
             .collect()
     }
 
-    /// As [`with_series`](Self::with_series), with each state open to
-    /// update.
+    /// Each entry with its series and its state: a recorded series from
+    /// `collector`, a derived one from `derived`, what
+    /// [`derive`](Self::derive) gave. `None` when `collector` isn't the one
+    /// the plan was resolved against, or `derived` misses an evaluation.
+    pub(super) fn with_series<'p, 'c>(
+        &'p self,
+        collector: &'c ObservationCollector,
+        derived: &'c [Derived],
+    ) -> Option<Vec<EntryView<'p, 'c, &'p AssertionState>>> {
+        self.entries
+            .iter()
+            .map(|entry| {
+                let series = match &entry.source {
+                    SeriesSource::Recorded { series, .. } => collector.series(*series)?,
+                    SeriesSource::Derived { evaluation, metric } => {
+                        derived.get(*evaluation)?.metrics.get(*metric)?
+                    }
+                };
+                Some(entry.view(series, &entry.state))
+            })
+            .collect()
+    }
+
+    /// Each entry on a recorded series, with its series in `collector` and
+    /// its state open to update: what a tick judges. A derived series
+    /// doesn't exist until finalize. `None` when `collector` isn't the one
+    /// the plan was resolved against.
     pub(super) fn with_series_mut<'p, 'c>(
         &'p mut self,
         collector: &'c ObservationCollector,
     ) -> Option<Vec<EntryView<'p, 'c, &'p mut AssertionState>>> {
         self.entries
             .iter_mut()
-            .map(|entry| {
+            .filter_map(|entry| {
                 let PlanEntry {
                     owner,
-                    key,
-                    series,
+                    source,
                     held,
                     unit,
                     state,
                 } = entry;
-                Some(EntryView {
+                let SeriesSource::Recorded { key, series } = source else {
+                    return None;
+                };
+                Some(collector.series(*series).map(|series| EntryView {
                     owner: *owner,
-                    key: &*key,
+                    key: Some(&*key),
                     held: *held,
                     unit: *unit,
-                    series: collector.series(*series)?,
+                    series,
                     state,
-                })
+                }))
             })
             .collect()
     }
@@ -134,9 +182,7 @@ pub enum EntryOwner {
 #[derive(Debug, Clone, PartialEq)]
 struct PlanEntry {
     owner: EntryOwner,
-    /// The key its series is bound to.
-    key: RecordedKey,
-    series: SeriesId,
+    source: SeriesSource,
     /// As [`EntryView::held`].
     held: bool,
     /// As [`EntryView::unit`].
@@ -145,20 +191,39 @@ struct PlanEntry {
 }
 
 impl PlanEntry {
-    fn view<'p, 'c, S>(
-        &'p self,
-        collector: &'c ObservationCollector,
-        state: S,
-    ) -> Option<EntryView<'p, 'c, S>> {
-        Some(EntryView {
+    fn view<'p, 'c, S>(&'p self, series: &'c Series, state: S) -> EntryView<'p, 'c, S> {
+        EntryView {
             owner: self.owner,
-            key: &self.key,
+            key: match &self.source {
+                SeriesSource::Recorded { key, .. } => Some(key),
+                SeriesSource::Derived { .. } => None,
+            },
             held: self.held,
             unit: self.unit,
-            series: collector.series(self.series)?,
+            series,
             state,
-        })
+        }
     }
+}
+
+/// Where an entry's series comes from.
+#[derive(Debug, Clone, PartialEq)]
+enum SeriesSource {
+    /// Recorded under `key`, bound in the collector as `series`.
+    Recorded { key: RecordedKey, series: SeriesId },
+    /// Metric `metric` of the plan's evaluation `evaluation`, both indices.
+    Derived { evaluation: usize, metric: usize },
+}
+
+/// One series an entry reads, as setup found it.
+#[derive(Debug, Clone, PartialEq)]
+enum SeriesTarget {
+    Recorded(RecordedKey),
+    /// As [`SeriesSource::Derived`].
+    Derived {
+        evaluation: usize,
+        metric: usize,
+    },
 }
 
 /// _Per-step._ One plan entry as a tick or finalize reads it: whose it is,
@@ -167,8 +232,9 @@ impl PlanEntry {
 #[derive(Debug)]
 pub(super) struct EntryView<'p, 'c, S> {
     pub owner: EntryOwner,
-    /// Which series: the instance, where the target names several.
-    pub key: &'p RecordedKey,
+    /// Which recorded series: the instance, where the target names
+    /// several. `None` for a derived series, which its target names whole.
+    pub key: Option<&'p RecordedKey>,
     /// Whether each value holds until the next: true for a channel, whose
     /// value is what the brain could read until it was written again; false
     /// for an emission, whose values are events. A held series carries its
@@ -180,6 +246,25 @@ pub(super) struct EntryView<'p, 'c, S> {
     pub state: S,
 }
 
+impl<S: std::ops::Deref<Target = AssertionState>> EntryView<'_, '_, S> {
+    /// Whether its series is derived, so computed whole at finalize rather
+    /// than reached tick by tick.
+    pub fn is_derived(&self) -> bool {
+        self.key.is_none()
+    }
+
+    /// Why a value of its series was turned away, if one was: a recorded
+    /// series' once the run reached it, a derived series' as it was
+    /// computed.
+    pub fn rejection(&self) -> Option<Rejection> {
+        if self.is_derived() {
+            self.series.rejection()
+        } else {
+            self.state.rejection()
+        }
+    }
+}
+
 /// _Pre-step._ An assertion or measure the run can't evaluate, and every
 /// reason why.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -189,6 +274,29 @@ pub struct UnusableEntry {
     pub(super) name: EntryName,
     pub(super) target: AssertionTarget,
     pub(super) problems: Vec<TargetProblem>,
+}
+
+/// _Pre-step._ Every evaluation, assertion and measure the run can't
+/// evaluate, so the operator sees every one to fix at once.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Unusable {
+    pub evaluations: Vec<UnusableEvaluation>,
+    pub entries: Vec<UnusableEntry>,
+}
+
+impl Unusable {
+    fn is_empty(&self) -> bool {
+        self.evaluations.is_empty() && self.entries.is_empty()
+    }
+}
+
+impl fmt::Display for Unusable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let evaluations = self.evaluations.iter().map(ToString::to_string);
+        let entries = self.entries.iter().map(ToString::to_string);
+        let all: Vec<String> = evaluations.chain(entries).collect();
+        f.write_str(&all.join(UNUSABLE_SEPARATOR))
+    }
 }
 
 /// _Pre-step._ One reason the run can't judge an assertion.
@@ -265,15 +373,37 @@ pub enum TargetProblem {
         anchor: AssertionTarget,
         problem: Box<TargetProblem>,
     },
+    /// A derived series of an evaluation the run can't build, refused for
+    /// its own reasons.
+    #[error("its evaluation can't run")]
+    EvaluationUnusable,
+    /// An instance named on a derived series, which has none.
+    #[error("it names an instance, which a derived series doesn't have")]
+    InstanceOnDerived,
+    /// An evaluation input naming several series, where a role reads one.
+    #[error(
+        "it names several series ({}), where an input reads one: name one with instance = \"…\"",
+        .0.join(INSTANCE_SEPARATOR)
+    )]
+    InputOnSeveral(Vec<String>),
+    /// An evaluation input whose series carries another payload than its
+    /// role reads.
+    #[error("it carries {carries}, and the role reads {wants}")]
+    WrongPayload {
+        carries: &'static str,
+        wants: &'static str,
+    },
 }
 
 /// What one agent reports, listed once for every assertion to search.
-struct Catalog<'a> {
-    agent: &'a AgentId,
+pub(super) struct Catalog<'a> {
+    pub agent: &'a AgentId,
     /// Each subject the agent's pipeline records, with what it records.
-    observables: Vec<(Subject, Observable)>,
+    pub observables: Vec<(Subject, Observable)>,
     /// Each channel a node writes, with the node's name.
     node_written: Vec<(&'a str, &'a ChannelKey)>,
+    /// Each channel's description, one per writer.
+    pub descriptions: &'a [ChannelDescription],
 }
 
 impl Catalog<'_> {
@@ -281,7 +411,7 @@ impl Catalog<'_> {
     /// emission, or every instance of a channel. A target spells a channel
     /// by name alone, which is enough: the build refuses one name for two
     /// channels of an agent.
-    fn matching(&self, subject: &TargetSubject) -> Vec<(&Subject, &Observable)> {
+    pub fn matching(&self, subject: &TargetSubject) -> Vec<(&Subject, &Observable)> {
         self.observables
             .iter()
             .filter(|(entry, _)| match (subject, entry) {
@@ -314,15 +444,18 @@ struct Wanted<'r> {
     allow_nondeterministic: bool,
 }
 
-/// The plan for evaluating `assertions` and `measures`, with each one's
-/// series bound in `collector`, or every one the run can't evaluate,
-/// assertions first, each in run-file order.
+/// The plan for evaluating `evaluations`, `assertions` and `measures`, with
+/// each one's series and inputs bound in `collector`, or every one the run
+/// can't evaluate, each list in run-file order. Evaluations are resolved
+/// first, since an entry may read one's metric.
 pub(super) fn resolve(
+    evaluations: &[Evaluation],
     assertions: &[Assertion],
     measures: &[Measure],
+    registry: &EvaluatorRegistry,
     pipelines: &[(AgentId, &AutonomyPipeline)],
     collector: &mut ObservationCollector,
-) -> Result<ResolvedPlan, Vec<UnusableEntry>> {
+) -> Result<ResolvedPlan, Unusable> {
     let catalogs: Vec<Catalog> = pipelines
         .iter()
         .map(|(agent, pipeline)| Catalog {
@@ -336,8 +469,22 @@ pub(super) fn resolve(
                     _ => None,
                 })
                 .collect(),
+            descriptions: pipeline.descriptions(),
         })
         .collect();
+
+    let mut unusable = Unusable::default();
+    let (planned, refused) = resolve_evaluations(evaluations, registry, &catalogs, collector);
+    unusable.evaluations = refused;
+    let refused: HashSet<&EntryName> = unusable
+        .evaluations
+        .iter()
+        .map(|evaluation| &evaluation.name)
+        .collect();
+    let derived = Derivable {
+        planned: &planned,
+        refused: &refused,
+    };
 
     let wanted_assertions = assertions
         .iter()
@@ -363,15 +510,22 @@ pub(super) fn resolve(
 
     let mut entries = Vec::with_capacity(assertions.len() + measures.len());
     let mut anchors = HashMap::new();
-    let mut unusable = Vec::new();
     for wanted in wanted_assertions.chain(wanted_measures) {
-        match check(&wanted, &catalogs, collector) {
+        match check(&wanted, &catalogs, &derived, collector) {
             Ok(found) => {
-                for key in found.targets {
+                for target in found.targets {
+                    let source = match target {
+                        SeriesTarget::Recorded(key) => SeriesSource::Recorded {
+                            series: collector.bind(key.clone()),
+                            key,
+                        },
+                        SeriesTarget::Derived { evaluation, metric } => {
+                            SeriesSource::Derived { evaluation, metric }
+                        }
+                    };
                     entries.push(PlanEntry {
                         owner: wanted.owner,
-                        series: collector.bind(key.clone()),
-                        key,
+                        source,
                         held: found.held,
                         unit: found.unit,
                         state: AssertionState::new(),
@@ -382,7 +536,7 @@ pub(super) fn resolve(
                     anchors.insert(anchor.clone(), series);
                 }
             }
-            Err(problems) => unusable.push(UnusableEntry {
+            Err(problems) => unusable.entries.push(UnusableEntry {
                 name: wanted.name.clone(),
                 target: wanted.target.clone(),
                 problems,
@@ -391,16 +545,27 @@ pub(super) fn resolve(
     }
 
     if unusable.is_empty() {
-        Ok(ResolvedPlan { entries, anchors })
+        Ok(ResolvedPlan {
+            entries,
+            anchors,
+            evaluations: planned,
+        })
     } else {
         Err(unusable)
     }
 }
 
-/// The keys an entry the run can evaluate reads.
+/// The evaluations an entry's derived target can name: those setup built,
+/// and the names of those it refused.
+struct Derivable<'a> {
+    planned: &'a [PlannedEvaluation],
+    refused: &'a HashSet<&'a EntryName>,
+}
+
+/// The series an entry the run can evaluate reads.
 struct Found<'r> {
     /// One, or one per instance under `instance = "*"`.
-    targets: Vec<RecordedKey>,
+    targets: Vec<SeriesTarget>,
     /// As [`EntryView::held`].
     held: bool,
     /// As [`EntryView::unit`].
@@ -414,15 +579,22 @@ struct Found<'r> {
 fn check<'r>(
     wanted: &Wanted<'r>,
     catalogs: &[Catalog],
+    derived: &Derivable,
     collector: &ObservationCollector,
 ) -> Result<Found<'r>, Vec<TargetProblem>> {
     let mut problems = Vec::new();
-    let target = match locate(
-        wanted.target,
-        wanted.allow_nondeterministic,
-        catalogs,
-        collector,
-    ) {
+    let located = match wanted.target.root() {
+        TargetRoot::Derived(name) => {
+            locate_derived(wanted.target, name, wanted.allow_nondeterministic, derived)
+        }
+        TargetRoot::Agent { .. } => locate(
+            wanted.target,
+            wanted.allow_nondeterministic,
+            catalogs,
+            collector,
+        ),
+    };
+    let target = match located {
         Ok(located) => Some(located),
         Err(mut found) => {
             problems.append(&mut found);
@@ -442,10 +614,12 @@ fn check<'r>(
 
     let mut anchors = Vec::new();
     for anchor in wanted.window.anchors() {
+        // Load refuses an anchor on a derived series, so each is recorded.
         let located = locate(anchor, wanted.allow_nondeterministic, catalogs, collector).and_then(
-            |located| match <[RecordedKey; 1]>::try_from(located.keys) {
-                Ok([key]) => Ok(key),
-                Err(keys) => Err(vec![TargetProblem::AnchorOnSeveral(instances(&keys))]),
+            |located| match <[SeriesTarget; 1]>::try_from(located.series) {
+                Ok([SeriesTarget::Recorded(key)]) => Ok(key),
+                Ok([SeriesTarget::Derived { .. }]) => Err(vec![TargetProblem::Unreported]),
+                Err(series) => Err(vec![TargetProblem::AnchorOnSeveral(instances(&series))]),
             },
         );
         match located {
@@ -459,7 +633,7 @@ fn check<'r>(
 
     match target {
         Some(located) if problems.is_empty() => Ok(Found {
-            targets: located.keys,
+            targets: located.series,
             held: located.held,
             unit,
             anchors,
@@ -490,11 +664,11 @@ fn judged_unit(wanted: &Wanted, located: &Located) -> Result<Option<ReportedUnit
     Ok(ReportedUnit::of(kind, si_unit))
 }
 
-/// What `target` names in the run: its keys, every one an instance of one
+/// What `target` names in the run: its series, every one an instance of one
 /// channel or the one series, the kind of value they hold and its unit, and
 /// whether each value holds until the next.
 struct Located {
-    keys: Vec<RecordedKey>,
+    series: Vec<SeriesTarget>,
     kind: ValueKind,
     /// The leaf's, or the extractor's; `None` where undeclared.
     si_unit: Option<SiUnit>,
@@ -514,17 +688,7 @@ fn locate(
     catalogs: &[Catalog],
     collector: &ObservationCollector,
 ) -> Result<Located, Vec<TargetProblem>> {
-    let Some(catalog) = catalogs
-        .iter()
-        .find(|catalog| catalog.agent == target.agent())
-    else {
-        return Err(vec![TargetProblem::UnknownAgent]);
-    };
-    let matching = catalog.matching(target.subject());
-    if matching.is_empty() {
-        return Err(vec![unreported(catalog, target.subject())]);
-    }
-    let selected = select(target.instance(), &matching).map_err(|problem| vec![problem])?;
+    let (catalog, selected) = find(target, catalogs)?;
 
     let mut problems = Vec::new();
     let nondeterministic = selected
@@ -560,11 +724,13 @@ fn locate(
             held: selected
                 .iter()
                 .all(|(subject, _)| matches!(subject, Subject::Channel { .. })),
-            keys: selected
+            series: selected
                 .into_iter()
-                .map(|(subject, _)| RecordedKey {
-                    agent: catalog.agent.clone(),
-                    subject: subject.clone(),
+                .map(|(subject, _)| {
+                    SeriesTarget::Recorded(RecordedKey {
+                        agent: catalog.agent.clone(),
+                        subject: subject.clone(),
+                    })
                 })
                 .collect(),
             kind,
@@ -572,6 +738,80 @@ fn locate(
         }),
         _ => Err(problems),
     }
+}
+
+/// An agent's catalog, and the series a target selects in it, each with
+/// what it records.
+pub(super) type Selected<'c, 'a> = (&'c Catalog<'a>, Vec<(&'c Subject, &'c Observable)>);
+
+/// The catalog of the agent `target` names and the series it selects
+/// there, or why it names none. A target that doesn't name a series its
+/// agent records, or names the wrong instances, has no other properties to
+/// check, so that problem is reported alone.
+pub(super) fn find<'c, 'a>(
+    target: &AssertionTarget,
+    catalogs: &'c [Catalog<'a>],
+) -> Result<Selected<'c, 'a>, Vec<TargetProblem>> {
+    let TargetRoot::Agent { agent, subject } = target.root() else {
+        return Err(vec![TargetProblem::Unreported]);
+    };
+    let Some(catalog) = catalogs.iter().find(|catalog| catalog.agent == agent) else {
+        return Err(vec![TargetProblem::UnknownAgent]);
+    };
+    let matching = catalog.matching(subject);
+    if matching.is_empty() {
+        return Err(vec![unreported(catalog, subject)]);
+    }
+    let selected = select(target.instance(), &matching).map_err(|problem| vec![problem])?;
+    Ok((catalog, selected))
+}
+
+/// What the derived `target`, metric `name` of an evaluation, names: one
+/// series of floats in the metric's unit, held when the evaluation's base
+/// is, or why the run can't read it. A refused evaluation's metric is
+/// refused for that alone; its own reasons are reported with it.
+fn locate_derived(
+    target: &AssertionTarget,
+    name: &DerivedName,
+    allow_nondeterministic: bool,
+    derivable: &Derivable,
+) -> Result<Located, Vec<TargetProblem>> {
+    if derivable.refused.contains(name.evaluation()) {
+        return Err(vec![TargetProblem::EvaluationUnusable]);
+    }
+    // Load checked the evaluation and the metric exist.
+    let found = derivable
+        .planned
+        .iter()
+        .enumerate()
+        .find(|(_, planned)| &planned.name == name.evaluation())
+        .and_then(|(evaluation, planned)| {
+            let metric = planned
+                .metrics
+                .iter()
+                .position(|metric| metric.name == name.metric())?;
+            Some((evaluation, metric, planned))
+        });
+    let Some((evaluation, metric, planned)) = found else {
+        return Err(vec![TargetProblem::Unreported]);
+    };
+
+    let mut problems = Vec::new();
+    if target.instance().is_some() {
+        problems.push(TargetProblem::InstanceOnDerived);
+    }
+    if planned.nondeterministic && !allow_nondeterministic {
+        problems.push(TargetProblem::Nondeterministic);
+    }
+    if !problems.is_empty() {
+        return Err(problems);
+    }
+    Ok(Located {
+        series: vec![SeriesTarget::Derived { evaluation, metric }],
+        kind: ValueKind::Float,
+        si_unit: Some(planned.metrics[metric].si_unit),
+        held: planned.held,
+    })
 }
 
 /// Which of `matching`, everything a target's path names, its `instance`
@@ -609,7 +849,7 @@ fn select<'m>(
 }
 
 /// The instance each of `subjects` records, spelled.
-fn spellings(subjects: &[&Subject]) -> Vec<String> {
+pub(super) fn spellings(subjects: &[&Subject]) -> Vec<String> {
     subjects
         .iter()
         .filter_map(|subject| instance_of(subject))
@@ -617,9 +857,15 @@ fn spellings(subjects: &[&Subject]) -> Vec<String> {
         .collect()
 }
 
-/// The instance each of `keys` records, spelled.
-fn instances(keys: &[RecordedKey]) -> Vec<String> {
-    let subjects: Vec<&Subject> = keys.iter().map(|key| &key.subject).collect();
+/// The instance each of `series` records, spelled.
+fn instances(series: &[SeriesTarget]) -> Vec<String> {
+    let subjects: Vec<&Subject> = series
+        .iter()
+        .filter_map(|series| match series {
+            SeriesTarget::Recorded(key) => Some(&key.subject),
+            SeriesTarget::Derived { .. } => None,
+        })
+        .collect();
     spellings(&subjects)
 }
 
@@ -652,7 +898,10 @@ pub(super) fn join(items: &[impl Display], separator: &str) -> String {
 mod tests {
     use super::*;
 
-    use crate::assertion::{extract::standard_extractors, AssertionValue, Bound, Condition};
+    use crate::{
+        assertion::{extract::standard_extractors, AssertionValue, Bound, Condition},
+        evaluation::standard_evaluators,
+    };
 
     use helios_core::prelude::TfProvider;
     use helios_runtime::{
@@ -885,11 +1134,14 @@ mod tests {
         extractors.register::<FrameSample, String>(|sample| sample.0.to_string(), None);
         let mut collector = ObservationCollector::new(requested, extractors);
         let resolved = resolve(
+            &[],
             &assertions,
             &measures,
+            &standard_evaluators(),
             &[(AgentId::new(CAR), &pipeline)],
             &mut collector,
-        );
+        )
+        .map_err(|unusable| unusable.entries);
         (collector, resolved)
     }
 
@@ -922,10 +1174,12 @@ mod tests {
 
         let entry = |owner, subject: Subject| PlanEntry {
             owner,
-            key: key(subject.clone()),
-            series: collector
-                .series_id(&key(subject.clone()))
-                .expect("the entry's key is bound"),
+            source: SeriesSource::Recorded {
+                key: key(subject.clone()),
+                series: collector
+                    .series_id(&key(subject.clone()))
+                    .expect("the entry's key is bound"),
+            },
             held: matches!(subject, Subject::Channel { .. }),
             // NIS declares itself dimensionless; a bare f64 channel declares
             // nothing.
@@ -945,6 +1199,7 @@ mod tests {
                     entry(EntryOwner::Measure(0), speed_subject()),
                 ],
                 anchors: HashMap::new(),
+                evaluations: vec![],
             })
         );
     }
@@ -1188,7 +1443,10 @@ mod tests {
     fn plan_keys(plan: &ResolvedPlan) -> Vec<(EntryOwner, RecordedKey)> {
         plan.entries
             .iter()
-            .map(|entry| (entry.owner, entry.key.clone()))
+            .filter_map(|entry| match &entry.source {
+                SeriesSource::Recorded { key, .. } => Some((entry.owner, key.clone())),
+                SeriesSource::Derived { .. } => None,
+            })
             .collect()
     }
 
@@ -1594,7 +1852,7 @@ mod tests {
         );
         let plan = resolved.expect("both resolve");
         let held: Vec<bool> = plan
-            .with_series(&collector)
+            .with_series(&collector, &[])
             .expect("its own collector")
             .iter()
             .map(|entry| entry.held)

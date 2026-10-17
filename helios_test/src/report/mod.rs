@@ -1,8 +1,10 @@
 pub mod aggregate;
 pub mod console;
+pub mod evaluation;
 pub mod toml_writer;
 pub mod unit;
 
+pub use evaluation::{EvaluationReportEntry, InputReport, MetricReport};
 pub use unit::ReportedUnit;
 
 use crate::{
@@ -60,6 +62,8 @@ pub struct Report {
     assertions: Vec<AssertionReportEntry>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     measures: Vec<MeasureReportEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    evaluations: Vec<EvaluationReportEntry>,
 }
 
 impl Report {
@@ -88,6 +92,7 @@ impl Report {
         terminated_by: TerminatedBy,
         assertions: Vec<AssertionReportEntry>,
         measures: Vec<MeasureReportEntry>,
+        evaluations: Vec<EvaluationReportEntry>,
     ) -> Self {
         let all_passed = assertions
             .iter()
@@ -115,6 +120,7 @@ impl Report {
             terminated_by,
             assertions,
             measures,
+            evaluations,
         }
     }
 
@@ -131,6 +137,11 @@ impl Report {
     /// The per-measure lines, in run-file order.
     pub fn measures(&self) -> &[MeasureReportEntry] {
         &self.measures
+    }
+
+    /// The per-evaluation lines, in run-file order.
+    pub fn evaluations(&self) -> &[EvaluationReportEntry] {
+        &self.evaluations
     }
 
     /// Why the run was unfit to test, if it was. Empty on a run that got far

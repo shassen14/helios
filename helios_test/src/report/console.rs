@@ -12,8 +12,8 @@
 //! public accessor set for what is purely presentation glue.
 
 use super::{
-    AssertionStatus, FailureReason, Report, ReportStatus, ReportedUnit, SeriesSummary,
-    TerminatedBy, Verdict,
+    AssertionStatus, EvaluationReportEntry, FailureReason, Report, ReportStatus, ReportedUnit,
+    SeriesSummary, TerminatedBy, Verdict,
 };
 
 use crate::{
@@ -66,6 +66,11 @@ fn render(report: &Report) -> String {
     // less than the run recorded.
     for dropped in &report.recording {
         lines.push(format!("[recording] {dropped}"));
+    }
+
+    // One line per evaluation, before the entries judging its metrics.
+    for evaluation in report.evaluations() {
+        lines.push(evaluation_line(evaluation));
     }
 
     // One line per assertion, in run-file order.
@@ -142,6 +147,53 @@ fn render(report: &Report) -> String {
     ));
 
     lines.join("\n")
+}
+
+/// "[evaluate] <name>: <kind> of <role> (<target>, <writer>[, <provenance>]),
+/// … — <samples> samples[, <uncovered> uncovered]", then each metric's path
+/// and unit.
+fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
+    let inputs: Vec<String> = evaluation
+        .inputs
+        .iter()
+        .map(|input| {
+            let instance = input
+                .instance
+                .as_ref()
+                .map(|instance| format!("[{instance}]"))
+                .unwrap_or_default();
+            let provenance = input
+                .provenance
+                .map(|provenance| format!(", {provenance}"))
+                .unwrap_or_default();
+            format!(
+                "{} ({}{instance}, {}{provenance})",
+                input.role,
+                input.target.path(),
+                input.writer
+            )
+        })
+        .collect();
+    let metrics: Vec<String> = evaluation
+        .metrics
+        .iter()
+        .map(|metric| format!("{} in {}", metric.path, metric.unit))
+        .collect();
+    let mut line = format!(
+        "[evaluate] {}: {} of {} - {} samples",
+        evaluation.name,
+        evaluation.kind,
+        inputs.join(", "),
+        evaluation.samples,
+    );
+    if evaluation.uncovered > 0 {
+        line.push_str(&format!(
+            ", {} before every input had a value",
+            evaluation.uncovered
+        ));
+    }
+    line.push_str(&format!(" -> {}", metrics.join(", ")));
+    line
 }
 
 /// Phrase the termination reason as "<cause> at t=<sim-seconds>s". The sim time
@@ -301,7 +353,8 @@ mod tests {
 
     use crate::{
         assertion::{AssertionTarget, Window},
-        report::{AssertionReportEntry, MeasureReportEntry},
+        evaluation::Align,
+        report::{AssertionReportEntry, InputReport, MeasureReportEntry, MetricReport},
     };
 
     /// A series of `samples` samples with a 1 s largest gap.
@@ -368,6 +421,7 @@ mod tests {
                     failed_at_secs: None,
                 }),
             ],
+            Vec::new(),
             Vec::new(),
         )
     }
@@ -560,6 +614,38 @@ mod tests {
                 "FAILED (anchor never occurred) [40 samples, window 2.50s to 7.00s, max gap 1.00s]"
             ),
             "{text}"
+        );
+    }
+
+    #[test]
+    fn an_evaluation_shows_its_inputs_coverage_and_metrics() {
+        let twist = EvaluationReportEntry {
+            name: "twist".to_string(),
+            kind: "twist_tracking".to_string(),
+            align: Align::Declared,
+            samples: 100,
+            uncovered: 1,
+            inputs: vec![InputReport {
+                role: "truth".to_string(),
+                target: AssertionTarget::parse("agent.car.channel.truth.twist")
+                    .expect("valid target"),
+                instance: Some("agent.car.base_link".to_string()),
+                writer: "body unit truth".to_string(),
+                provenance: Some("exact"),
+                refused: 0,
+            }],
+            metrics: vec![MetricReport {
+                path: "eval.inline.twist.surge_error".to_string(),
+                unit: ReportedUnit::Declared(SiUnit::MetersPerSecond),
+                samples: 99,
+            }],
+        };
+
+        assert_eq!(
+            evaluation_line(&twist),
+            "[evaluate] twist: twist_tracking of truth (agent.car.channel.truth.twist\
+             [agent.car.base_link], body unit truth, exact) - 100 samples, 1 before every \
+             input had a value -> eval.inline.twist.surge_error in m/s"
         );
     }
 }

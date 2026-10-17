@@ -9,7 +9,10 @@ use observation_ref::ObservationRef;
 use scenario_ref::ScenarioRef;
 use termination::Termination;
 
-use crate::assertion::{Assertion, Measure};
+use crate::{
+    assertion::{Assertion, Measure},
+    evaluation::Evaluation,
+};
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -21,13 +24,14 @@ const CURRENT_VERSION: &str = "2.0";
 const VERSION_KEY: &str = "schema_version";
 
 /// _Pre-step._ The run-file vocabulary: the single top-level deserialize target
-/// that ties scenario + observation + assertions + measures + termination into
-/// one file.
+/// that ties scenario + observation + assertions + measures + evaluations +
+/// termination into one file.
 ///
 /// `deny_unknown_fields` rejects stray or misspelled top-level keys.
-/// `assert` and `measure` are the author-facing keys for the two lists
-/// (`[[assert]]`, `[[measure]]`); `default` lets a run declare neither — a
-/// pure smoke run that only exercises the scenario is valid.
+/// `assert`, `measure` and `evaluate` are the author-facing keys for the
+/// three lists (`[[assert]]`, `[[measure]]`, `[[evaluate]]`); `default` lets
+/// a run declare none — a pure smoke run that only exercises the scenario is
+/// valid.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Run {
@@ -38,6 +42,8 @@ pub struct Run {
     assertions: Vec<Assertion>,
     #[serde(default, rename = "measure")]
     measures: Vec<Measure>,
+    #[serde(default, rename = "evaluate")]
+    evaluations: Vec<Evaluation>,
     termination: Termination,
 }
 
@@ -62,6 +68,10 @@ impl Run {
 
     pub fn measures(&self) -> &[Measure] {
         &self.measures
+    }
+
+    pub fn evaluations(&self) -> &[Evaluation] {
+        &self.evaluations
     }
 
     pub fn termination(&self) -> &Termination {

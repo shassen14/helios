@@ -1,3 +1,4 @@
+pub mod evaluations;
 pub mod finalize;
 pub mod resolve;
 pub mod setup;
@@ -15,6 +16,7 @@ pub use tick::TickAction;
 use crate::{
     assertion::extract::{standard_extractors, ExtractorTable},
     collector::ObservationCollector,
+    evaluation::{standard_evaluators, EvaluatorRegistry},
     run::{
         validation::{self, ValidationError},
         Run,
@@ -39,6 +41,8 @@ const FOREIGN_COLLECTOR: &str = "the collector is not the one the run was set up
 /// its clock: the span its ticks have covered.
 pub struct Runner {
     run: Run,
+    /// The kinds its evaluations name, built from at setup.
+    evaluators: EvaluatorRegistry,
     phase: Phase,
     /// `None` until the first tick.
     ticks: Option<TickSpan>,
@@ -51,12 +55,22 @@ impl Runner {
     /// through a simulation. It can't tick until `on_pipeline_built`, the one
     /// moment the pipelines exist to check its assertions against.
     pub fn new(run: Run) -> Result<Self, ValidationError> {
+        Self::with_evaluators(run, standard_evaluators())
+    }
+
+    /// As [`new`](Self::new), its evaluations built from the kinds in
+    /// `evaluators` rather than the standard ones.
+    pub fn with_evaluators(
+        run: Run,
+        evaluators: EvaluatorRegistry,
+    ) -> Result<Self, ValidationError> {
         // Coherence check first: `?` bails with the validation error, so an
         // invalid run never gets a half-built runner.
-        validation::validate(&run)?;
+        validation::validate(&run, &evaluators)?;
 
         Ok(Self {
             run,
+            evaluators,
             phase: Phase::AwaitingPipelines,
             ticks: None,
             // Filled only if the run is doomed before it ticks. Assertions
@@ -67,10 +81,11 @@ impl Runner {
         })
     }
 
-    /// The collector this run reads: one requesting every target its
-    /// assertions and measures name, and every series a window is anchored
-    /// `after`. A host builds it here, beside the runner, so the two always
-    /// describe the same run.
+    /// The collector this run reads: one requesting every recorded series
+    /// its assertions and measures name, every series a window is anchored
+    /// `after`, and every input of its evaluations. A derived series is
+    /// never requested: the host doesn't record it. A host builds it here,
+    /// beside the runner, so the two always describe the same run.
     pub fn collector(&self) -> ObservationCollector {
         self.collector_reading(standard_extractors())
     }
@@ -88,9 +103,16 @@ impl Runner {
             .measures()
             .iter()
             .map(|measure| (&measure.target, &measure.window));
+        let inputs = self
+            .run
+            .evaluations()
+            .iter()
+            .flat_map(|evaluation| evaluation.inputs.values());
         let requested = assertions
             .chain(measures)
-            .flat_map(|(target, window)| iter::once(target).chain(window.anchors()));
+            .flat_map(|(target, window)| iter::once(target).chain(window.anchors()))
+            .chain(inputs)
+            .filter(|target| target.is_recorded());
         ObservationCollector::new(requested, extractors)
     }
 

@@ -1,9 +1,21 @@
 //! What the runner's tests build a run from: a run file, a pipeline whose
 //! estimator declares one scalar leaf and writes one float channel and one
-//! keyed channel of two instances, and a collector they are reported to.
+//! keyed channel of two instances, an evaluator kind comparing the two
+//! channels, and a collector they are reported to.
 
 use super::{state::AssertionState, Phase, Runner};
-use crate::{assertion::extract::standard_extractors, collector::ObservationCollector, run::Run};
+use crate::{
+    assertion::extract::standard_extractors,
+    collector::ObservationCollector,
+    evaluation::{
+        kind::{
+            Alignment, BoundInput, Evaluator, EvaluatorKind, InputRejection, Metric, Projection,
+            Role,
+        },
+        standard_evaluators, EvaluatorRegistry,
+    },
+    run::Run,
+};
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::{AgentId, MonotonicTime, TfProvider};
 use helios_runtime::{
@@ -21,7 +33,7 @@ use helios_runtime::{
     AutonomyPipeline, PipelineBuilder,
 };
 
-use std::sync::Arc;
+use std::{any::Any, sync::Arc};
 
 pub(super) const CAR: &str = "car";
 pub(super) const TRUCK: &str = "truck";
@@ -48,6 +60,107 @@ impl Keyed for Wheel {
     fn instance(&self) -> &&'static str {
         &self.wheel
     }
+}
+
+/// The fixtures' evaluator kind, `lag`: how far [`SPEED`] (`actual`, the
+/// base) falls short of one wheel's speed (`wanted`, held), in m/s. Refuses
+/// a speed that isn't finite, and inputs from two agents.
+struct Lag;
+
+/// The name `lag` is registered under.
+pub(super) const LAG: &str = "lag";
+
+/// Its one metric, `wanted - actual`.
+pub(super) const LAG_METRIC: &str = "shortfall";
+
+impl EvaluatorKind for Lag {
+    fn name(&self) -> &'static str {
+        LAG
+    }
+
+    fn roles(&self) -> Vec<Role> {
+        vec![
+            Role::of::<f64>("actual", Alignment::Base),
+            Role::of::<Wheel>("wanted", Alignment::Hold),
+        ]
+    }
+
+    fn metrics(&self) -> &'static [Metric] {
+        &[Metric {
+            name: LAG_METRIC,
+            si_unit: SiUnit::MetersPerSecond,
+        }]
+    }
+
+    fn check_params(&self, params: &toml::Table) -> Result<(), String> {
+        if params.is_empty() {
+            Ok(())
+        } else {
+            Err("lag reads no parameters".to_owned())
+        }
+    }
+
+    fn build(
+        &self,
+        _: &toml::Table,
+        inputs: &[BoundInput],
+    ) -> Result<Box<dyn Evaluator>, Vec<String>> {
+        match inputs {
+            [actual, wanted] if actual.agent == wanted.agent => Ok(Box::new(LagEvaluator)),
+            _ => Err(vec!["lag compares one agent's speeds".to_owned()]),
+        }
+    }
+}
+
+struct LagEvaluator;
+
+impl Evaluator for LagEvaluator {
+    fn project(&self, role: usize, payload: &dyn Any) -> Result<Projection, InputRejection> {
+        let speed = match role {
+            0 => payload.downcast_ref::<f64>().copied(),
+            _ => payload.downcast_ref::<Wheel>().map(|wheel| wheel.speed),
+        };
+        match speed {
+            Some(speed) if speed.is_finite() => Ok(Box::new(speed)),
+            _ => Err(InputRejection("a speed that isn't finite")),
+        }
+    }
+
+    fn compute(&self, aligned: &[&Projection]) -> Vec<f64> {
+        let speed = |role: usize| {
+            aligned[role]
+                .downcast_ref::<f64>()
+                .copied()
+                .unwrap_or(f64::NAN)
+        };
+        vec![speed(1) - speed(0)]
+    }
+}
+
+/// The standard evaluator kinds and [`Lag`].
+pub(super) fn evaluators() -> EvaluatorRegistry {
+    let mut registry = standard_evaluators();
+    registry.register(Lag);
+    registry
+}
+
+/// A `lag` evaluation named `name` of `agent`'s speed against its front
+/// wheel's, as an `[[evaluate]]` block.
+pub(super) fn lag(name: &str, agent: &str) -> String {
+    format!(
+        "name = \"{name}\"\n\
+         kind = \"{LAG}\"\n\
+         [evaluate.inputs]\n\
+         actual = \"{}\"\n\
+         wanted = {{ path = \"{}\", instance = \"front\" }}",
+        speed_target(agent),
+        channel_path(agent, &wheels())
+    )
+}
+
+/// The derived series of `lag` evaluation `name`.
+pub(super) fn lag_target(name: &str) -> String {
+    format!("eval.inline.{name}.{LAG_METRIC}")
 }
 
 /// Declares the scalar leaf [`LEAF`]; executes nothing.
@@ -133,6 +246,16 @@ pub(super) fn run(termination: &str, assertions: &[&str]) -> Run {
 
 /// As [`run`], with measure blocks too.
 pub(super) fn run_measuring(termination: &str, assertions: &[&str], measures: &[&str]) -> Run {
+    run_evaluating(termination, assertions, measures, &[])
+}
+
+/// As [`run_measuring`], with evaluation blocks too.
+pub(super) fn run_evaluating(
+    termination: &str,
+    assertions: &[&str],
+    measures: &[&str],
+    evaluations: &[&str],
+) -> Run {
     let mut text = format!(
         "schema_version = \"2.0\"\n\
          scenario = {{ from = \"s\" }}\n\
@@ -146,6 +269,11 @@ pub(super) fn run_measuring(termination: &str, assertions: &[&str], measures: &[
     }
     for block in measures {
         text.push_str("\n[[measure]]\n");
+        text.push_str(block);
+        text.push('\n');
+    }
+    for block in evaluations {
+        text.push_str("\n[[evaluate]]\n");
         text.push_str(block);
         text.push('\n');
     }
@@ -254,7 +382,21 @@ pub(super) fn refused_write(agent: &str) -> (AgentId, RefusedWrites) {
 /// A runner for `run`, set up against `agents` (each with [`pipeline`]),
 /// with the collector it reads.
 pub(super) fn ready(run: Run, agents: &[&str]) -> (Runner, ObservationCollector) {
-    let mut runner = Runner::new(run).expect("valid run");
+    let (runner, collector, setup) = set_up(run, agents);
+    setup.expect("every target is a declared leaf");
+    (runner, collector)
+}
+
+/// As [`ready`], with what setup found, which may refuse the run.
+pub(super) fn set_up(
+    run: Run,
+    agents: &[&str],
+) -> (
+    Runner,
+    ObservationCollector,
+    Result<(), super::setup::SetupError>,
+) {
+    let mut runner = Runner::with_evaluators(run, evaluators()).expect("valid run");
     let mut extractors = standard_extractors();
     extractors.register::<Wheel, f64>(|wheel| wheel.speed, Some(SiUnit::MetersPerSecond));
     let mut collector = runner.collector_reading(extractors);
@@ -266,10 +408,8 @@ pub(super) fn ready(run: Run, agents: &[&str]) -> (Runner, ObservationCollector)
         .iter()
         .map(|(agent, pipeline)| (agent.clone(), pipeline))
         .collect();
-    runner
-        .on_pipeline_built(&pairs, &mut collector)
-        .expect("every target is a declared leaf");
-    (runner, collector)
+    let setup = runner.on_pipeline_built(&pairs, &mut collector);
+    (runner, collector, setup)
 }
 
 /// `agent`'s estimator reports `value` for [`LEAF`] at `secs`.
@@ -295,7 +435,7 @@ pub(super) fn report_unreadable(collector: &mut ObservationCollector, agent: &st
 }
 
 /// `agent`'s [`SPEED`] reports `value` at `secs`, recorded under the key
-/// the pipeline declares.
+/// the pipeline declares, as a tap carries it.
 pub(super) fn report_speed(
     collector: &mut ObservationCollector,
     agent: &str,
@@ -307,7 +447,7 @@ pub(super) fn report_speed(
         agent,
         Subject::channel(speed::<f64>(), None),
         secs,
-        ObservedValue::Scalar(value),
+        tapped(value, secs),
     );
 }
 
@@ -324,8 +464,24 @@ pub(super) fn report_wheel(
         agent,
         wheel_subject(wheel),
         secs,
-        ObservedValue::Scalar(value),
+        tapped(
+            Wheel {
+                wheel,
+                speed: value,
+            },
+            secs,
+        ),
     );
+}
+
+/// `value` as a tap carries it: the bus's own stamped value.
+fn tapped<T: Send + Sync + 'static>(value: T, secs: f64) -> ObservedValue {
+    ObservedValue::Typed(Arc::new(Stamped {
+        value,
+        timestamp: at(secs),
+        health: Health::Ok,
+        producer: 0,
+    }))
 }
 
 /// A value at `secs` under `agent`'s [`SPEED`] path but a key no series is

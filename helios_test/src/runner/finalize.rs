@@ -1,4 +1,5 @@
 use super::{
+    evaluations::PlannedEvaluation,
     resolve::{EntryOwner, EntryView},
     state::AssertionState,
     window::{first_stamp, place, PlacedWindow, Placement},
@@ -9,10 +10,15 @@ use crate::{
         evaluator::{earliest_failure, evaluate_reduced},
         Assertion, AssertionResult, Measure, Window,
     },
-    collector::{instance_of, ObservationCollector, Sample},
+    collector::{instance_of, ObservationCollector, Rejection, Sample},
+    evaluation::{
+        derived::{Derived, Refused},
+        path::DerivedName,
+    },
     report::{
-        AssertionReportEntry, FailureReason, MeasureReportEntry, Report, SeriesSummary,
-        TerminatedBy, Verdict,
+        AssertionReportEntry, EvaluationReportEntry, FailureReason, InputReport,
+        MeasureReportEntry, MetricReport, Report, ReportedUnit, SeriesSummary, TerminatedBy,
+        Verdict,
     },
     run::termination::TerminationReason,
     statistics::within_run::{latest, max_gap, Reducer},
@@ -21,9 +27,10 @@ use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::{observe::key::RecordedKey, port::RefusedWrites};
 
 impl Runner {
-    /// Build the run's [`Report`] once the host stops ticking. Every entry is
-    /// evaluated here, once, on the samples the run reached that are stamped
-    /// in its window: an every-sample assertion on each of them, placing a
+    /// Build the run's [`Report`] once the host stops ticking. Each
+    /// evaluation derives its series here, from the values stamped up to the
+    /// run's last tick. Every entry is evaluated here, once, on the samples
+    /// the run reached that are stamped in its window: an every-sample assertion on each of them, placing a
     /// failure at the earliest failing stamp (the latch `tick` folded only
     /// decides `fail_fast`); a reduced assertion and a measure on their one
     /// reduced value.
@@ -46,8 +53,9 @@ impl Runner {
     /// The run is `Passed` only if every assertion passed, setup didn't fail,
     /// no agent's bus refused a write ([`HostFacts::refused_writes`]) and the
     /// recording dropped nothing: no requested value arrived under an
-    /// unbound key ([`ObservationCollector::unbound_arrivals`]) and no
-    /// measure's series turned a value away. Values the wiring or the
+    /// unbound key ([`ObservationCollector::unbound_arrivals`]), no measure's
+    /// series turned a value away and no evaluation refused an input's
+    /// value. Values the wiring or the
     /// recording dropped leave the entries describing another run than the
     /// one configured. Only a run that was set up reports the recording's
     /// drops; in one aborted at setup, a refused entry's key is unbound by
@@ -73,9 +81,17 @@ impl Runner {
             Phase::Ready(plan) => Some(plan),
             Phase::AwaitingPipelines | Phase::Aborted => None,
         };
+        // Each evaluation's series, from the values stamped up to the last
+        // tick; with no tick, from none.
+        let until = self
+            .ticks
+            .map_or(MonotonicTime(f64::NEG_INFINITY), |span| span.latest);
+        let derived: Option<Vec<Derived>> = plan.and_then(|plan| plan.derive(collector, until));
         let judged = match &self.phase {
             Phase::Ready(plan) => {
-                let judged = plan.with_series(collector);
+                let judged = derived
+                    .as_deref()
+                    .and_then(|derived| plan.with_series(collector, derived));
                 if judged.is_none() {
                     setup_failures.push(FOREIGN_COLLECTOR.to_string());
                 }
@@ -133,7 +149,7 @@ impl Runner {
                                 );
                                 (
                                     windowed.summary(&assertion.reduce),
-                                    judge(assertion, entry.state, &windowed),
+                                    judge(assertion, entry.rejection(), &windowed),
                                 )
                             }
                             None => (unread(), Verdict::Unjudged { actual: None }),
@@ -141,7 +157,7 @@ impl Runner {
                         AssertionReportEntry::new(
                             assertion.name.to_string(),
                             assertion.target.clone(),
-                            entry.and_then(|entry| instance(entry.key)),
+                            entry.and_then(|entry| entry.key.and_then(instance)),
                             assertion.window.clone(),
                             assertion.reduce.clone(),
                             entry.and_then(|entry| entry.unit),
@@ -162,6 +178,20 @@ impl Runner {
                 .collect(),
             Phase::AwaitingPipelines | Phase::Aborted => Vec::new(),
         };
+        // An input value an evaluation refused leaves its metrics graded on
+        // fewer values than the run recorded.
+        let planned = plan.map_or(&[][..], |plan| plan.evaluations());
+        for evaluation in planned {
+            let refused = collector.refused(evaluation.id).unwrap_or_default();
+            for (input, refused) in evaluation.inputs.iter().zip(refused) {
+                if let Some(first) = refused.first {
+                    recording.push(format!(
+                        "evaluation '{}' input '{}': {} value(s) refused, the first {first}",
+                        evaluation.name, input.role, refused.count
+                    ));
+                }
+            }
+        }
         // A measure's value never fails the run, but a value its series
         // turned away is a fault in the recording, like an unbound arrival.
         let measures: Vec<MeasureReportEntry> = self
@@ -173,12 +203,14 @@ impl Runner {
                 each_or_unread(EntryOwner::Measure(index))
                     .into_iter()
                     .map(|judged| {
-                        if let Some(entry) = judged {
-                            if let Some(rejection) = entry.state.rejection() {
+                        // A derived series' rejection is its evaluation's,
+                        // reported above.
+                        if let Some(entry) = judged.filter(|entry| !entry.is_derived()) {
+                            if let (Some(rejection), Some(key)) = (entry.rejection(), entry.key) {
                                 recording.push(format!(
                                     "measure '{}' on '{}': value rejected: {rejection}",
                                     measure.name,
-                                    spelled(entry.key)
+                                    spelled(key)
                                 ));
                             }
                         }
@@ -193,6 +225,18 @@ impl Runner {
                         report_measure(measure, judged, windowed.as_ref())
                     })
                     .collect::<Vec<_>>()
+            })
+            .collect();
+
+        let evaluations = planned
+            .iter()
+            .zip(derived.iter().flatten())
+            .map(|(evaluation, derived)| {
+                report_evaluation(
+                    evaluation,
+                    derived,
+                    collector.refused(evaluation.id).unwrap_or_default(),
+                )
             })
             .collect();
 
@@ -221,6 +265,7 @@ impl Runner {
             TerminatedBy::from(&terminated_by_reason),
             assertions,
             measures,
+            evaluations,
         )
     }
 }
@@ -265,7 +310,12 @@ impl Windowed {
         placement: Placement,
         span: TickSpan,
     ) -> Self {
-        let reached = entry.state.reached(entry.series.samples());
+        // A derived series was computed from what the run reached, whole.
+        let reached = if entry.is_derived() {
+            entry.series.samples()
+        } else {
+            entry.state.reached(entry.series.samples())
+        };
         let samples = match placement {
             Placement::Placed { window, .. } => window.samples(reached, entry.held),
             Placement::Unplaced | Placement::AnchorNeverOccurred => reached.to_vec(),
@@ -328,8 +378,8 @@ impl Windowed {
 /// `Unjudged`, an anchor that never occurred fails, and a placed window is
 /// judged on its samples, a failure final either way and a pass or silence
 /// only when the run covered it.
-fn judge(assertion: &Assertion, state: &AssertionState, windowed: &Windowed) -> Verdict {
-    if state.rejection().is_some() {
+fn judge(assertion: &Assertion, rejection: Option<Rejection>, windowed: &Windowed) -> Verdict {
+    if rejection.is_some() {
         return Verdict::Failed {
             actual: None,
             reason: FailureReason::Rejected,
@@ -402,7 +452,7 @@ fn report_measure(
     judged: Option<&EntryView<'_, '_, &AssertionState>>,
     windowed: Option<&Windowed>,
 ) -> MeasureReportEntry {
-    let rejected = judged.and_then(|entry| entry.state.rejection()).is_some();
+    let rejected = judged.and_then(|entry| entry.rejection()).is_some();
     let value = match (rejected, windowed.map(|windowed| windowed.placement)) {
         (true, _) => Some(Err(FailureReason::Rejected)),
         (false, None | Some(Placement::Unplaced)) => None,
@@ -423,7 +473,7 @@ fn report_measure(
     MeasureReportEntry::new(
         measure.name.to_string(),
         measure.target.clone(),
-        judged.and_then(|entry| instance(entry.key)),
+        judged.and_then(|entry| entry.key.and_then(instance)),
         measure.window.clone(),
         measure.reduce.clone(),
         windowed.is_some_and(Windowed::covered),
@@ -433,6 +483,50 @@ fn report_measure(
             windowed.summary(&Some(measure.reduce.clone()))
         }),
     )
+}
+
+/// One evaluation's report line: what it read, from whom, and how much it
+/// derived.
+fn report_evaluation(
+    evaluation: &PlannedEvaluation,
+    derived: &Derived,
+    refused: &[Refused],
+) -> EvaluationReportEntry {
+    let inputs = evaluation
+        .inputs
+        .iter()
+        .enumerate()
+        .map(|(role, input)| {
+            let (writer, provenance) = InputReport::writer_of(input.writer.as_ref());
+            InputReport {
+                role: input.role.to_owned(),
+                target: input.target.clone(),
+                instance: instance(&input.key),
+                writer,
+                provenance,
+                refused: refused.get(role).map_or(0, |refused| refused.count),
+            }
+        })
+        .collect();
+    let metrics = evaluation
+        .metrics
+        .iter()
+        .zip(&derived.metrics)
+        .map(|(metric, series)| MetricReport {
+            path: DerivedName::new(evaluation.name.clone(), metric.name).to_string(),
+            unit: ReportedUnit::Declared(metric.si_unit),
+            samples: series.samples().len(),
+        })
+        .collect();
+    EvaluationReportEntry {
+        name: evaluation.name.to_string(),
+        kind: evaluation.kind.to_owned(),
+        align: evaluation.align,
+        samples: derived.base_samples,
+        uncovered: derived.uncovered,
+        inputs,
+        metrics,
+    }
 }
 
 /// The instance `key` records, spelled for the report; `None` on a series
@@ -476,12 +570,13 @@ mod tests {
     use crate::{
         assertion::{AssertionValue, EntryName},
         report::{AssertionStatus, ReportStatus, ReportedUnit},
+        run::Run,
         runner::{
             fixtures::{
-                at, cont, each_wheel, leaf_key, measure, pipeline, ready, reduced_below,
-                refused_write, report, report_speed, report_unbound, report_unreadable,
-                report_wheel, run, run_measuring, speed_target, speed_term, target, term, windowed,
-                CAR, TRUCK,
+                at, cont, each_wheel, lag, lag_target, leaf_key, measure, pipeline, ready,
+                reduced_below, refused_write, report, report_speed, report_unbound,
+                report_unreadable, report_wheel, run, run_evaluating, run_measuring, speed_target,
+                speed_term, target, term, windowed, CAR, TRUCK,
             },
             TickAction,
         },
@@ -1423,5 +1518,115 @@ mod tests {
         let report = finalize(&r, &collector);
 
         assert_eq!(by_instance(&report), [(None, AssertionStatus::Unjudged)]);
+    }
+
+    /// A run evaluating `lag` as "slow" on the car, asserting its max
+    /// shortfall is below 1 m/s and measuring its mean.
+    fn lagging() -> Run {
+        let keeps_up = format!(
+            "name = \"keeps_up\"\ntarget = \"{}\"\nreduce = \"max\"\n\
+             condition = {{ less_than = 1.0 }}",
+            lag_target("slow")
+        );
+        let mean = format!(
+            "name = \"mean_shortfall\"\ntarget = \"{}\"\nreduce = \"mean\"",
+            lag_target("slow")
+        );
+        run_evaluating(&budget(), &[&keeps_up], &[&mean], &[&lag("slow", CAR)])
+    }
+
+    #[test]
+    fn a_derived_series_is_judged_at_finalize_in_its_metrics_unit() {
+        let (mut r, mut collector) = ready(lagging(), &[CAR]);
+        // A speed before the first wheel value is uncovered; the rear
+        // wheel is a sibling the evaluation never selected.
+        report_speed(&mut collector, CAR, 0.5, 3.0);
+        report_wheel(&mut collector, CAR, "front", 1.0, 5.0);
+        report_wheel(&mut collector, CAR, "rear", 1.0, 9.0);
+        report_speed(&mut collector, CAR, 1.0, 4.5);
+        report_speed(&mut collector, CAR, 2.0, 4.75);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(report.status(), &ReportStatus::Passed, "{report:?}");
+        let keeps_up = &report.assertions()[0];
+        assert_eq!(
+            keeps_up.verdict().actual(),
+            Some(&AssertionValue::Float(0.5))
+        );
+        assert_eq!(
+            keeps_up.unit(),
+            Some(ReportedUnit::Declared(SiUnit::MetersPerSecond))
+        );
+        assert_eq!(keeps_up.series().samples, 2);
+        assert_eq!(
+            report.measures()[0].value(),
+            Some(&AssertionValue::Float(0.375))
+        );
+        let [slow] = report.evaluations() else {
+            panic!("one evaluation: {report:?}");
+        };
+        assert_eq!((slow.samples, slow.uncovered), (3, 1));
+        assert_eq!(slow.metrics[0].path, "eval.inline.slow.shortfall");
+        assert_eq!(slow.metrics[0].samples, 2);
+        assert_eq!(slow.inputs[1].instance.as_deref(), Some("front"));
+        assert_eq!(slow.inputs[0].writer, "node estimator");
+        assert!(report.recording().is_empty(), "{:?}", report.recording());
+    }
+
+    #[test]
+    fn a_value_after_the_last_tick_is_not_evaluated() {
+        let (mut r, mut collector) = ready(lagging(), &[CAR]);
+        report_wheel(&mut collector, CAR, "front", 1.0, 5.0);
+        report_speed(&mut collector, CAR, 1.0, 4.5);
+        report_speed(&mut collector, CAR, BUDGET_SECS + 1.0, 0.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(report.assertions()[0].series().samples, 1);
+        assert_eq!(report.status(), &ReportStatus::Passed);
+    }
+
+    #[test]
+    fn a_refused_input_value_fails_the_run_and_every_entry_on_its_metrics() {
+        let (mut r, mut collector) = ready(lagging(), &[CAR]);
+        report_wheel(&mut collector, CAR, "front", 1.0, 5.0);
+        report_speed(&mut collector, CAR, 1.0, 4.5);
+        report_speed(&mut collector, CAR, 2.0, f64::NAN);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(report.status(), &ReportStatus::Failed);
+        assert_eq!(
+            report.recording(),
+            [
+                "evaluation 'slow' input 'actual': 1 value(s) refused, the first a speed that \
+              isn't finite"
+            ]
+        );
+        assert!(matches!(
+            report.assertions()[0].verdict(),
+            Verdict::Failed {
+                reason: FailureReason::Rejected,
+                ..
+            }
+        ));
+        assert_eq!(report.measures()[0].reason(), Some(FailureReason::Rejected));
+        assert_eq!(report.evaluations()[0].inputs[0].refused, 1);
+    }
+
+    #[test]
+    fn a_derived_series_never_ticked_is_unjudged() {
+        let (r, mut collector) = ready(lagging(), &[CAR]);
+        report_wheel(&mut collector, CAR, "front", 1.0, 5.0);
+        report_speed(&mut collector, CAR, 1.0, 4.5);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(statuses(&report), [AssertionStatus::Unjudged]);
+        assert_eq!(report.evaluations()[0].samples, 0);
     }
 }

@@ -1,3 +1,5 @@
+use crate::evaluation::path::{DerivedName, DerivedProblem};
+
 use helios_core::prelude::AgentId;
 use helios_runtime::observe::path::{AgentPathParts, PathPart, PathSubject, SUBJECT_WORDS};
 
@@ -15,10 +17,11 @@ const INSTANCE_KEY: &str = "instance";
 /// How a selector asks for every instance of a keyed channel.
 const EACH_INSTANCE: &str = "*";
 
-/// _Shared (pre + per + post)._ A selector: the watcher path a series is
-/// recorded under, held whole and in its parts
-/// (`agent.<agent>.node.<node>.<leaf>` or `agent.<agent>.channel.<channel>`),
-/// and, on a keyed channel, which of its instances.
+/// _Shared (pre + per + post)._ A selector: the path of a series, held whole
+/// and in its parts, and, on a keyed channel, which of its instances. A
+/// recorded series' path is the watcher path it is recorded under
+/// (`agent.<agent>.node.<node>.<leaf>` or `agent.<agent>.channel.<channel>`);
+/// a derived one's is `eval.inline.<evaluation>.<metric>`.
 ///
 /// Written as the path alone, or as `{ path = "…", instance = "…" }`: an
 /// instance gets its own field because its spelling holds dots (a frame,
@@ -32,8 +35,7 @@ const EACH_INSTANCE: &str = "*";
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AssertionTarget {
     path: String,
-    agent: AgentId,
-    subject: TargetSubject,
+    root: TargetRoot,
     instance: Option<InstanceSelector>,
 }
 
@@ -41,19 +43,26 @@ impl AssertionTarget {
     /// The target `path` names, with no instance, or why it names none.
     pub fn parse(path: impl Into<String>) -> Result<Self, MalformedTarget> {
         let path = path.into();
-        let parts = match AgentPathParts::split(&path) {
-            Ok(parts) => parts,
-            Err(part) => return Err(MalformedTarget { path, part }),
+        let root = if DerivedName::is_derived(&path) {
+            DerivedName::parse(&path)
+                .map(TargetRoot::Derived)
+                .map_err(TargetFault::Derived)
+        } else {
+            AgentPathParts::split(&path)
+                .map(|parts| TargetRoot::Agent {
+                    agent: AgentId::new(parts.agent),
+                    subject: TargetSubject::from(parts.subject),
+                })
+                .map_err(TargetFault::Recorded)
         };
-        let agent = AgentId::new(parts.agent);
-        let subject = TargetSubject::from(parts.subject);
-
-        Ok(Self {
-            path,
-            agent,
-            subject,
-            instance: None,
-        })
+        match root {
+            Ok(root) => Ok(Self {
+                path,
+                root,
+                instance: None,
+            }),
+            Err(fault) => Err(MalformedTarget { path, fault }),
+        }
     }
 
     /// This selector narrowed to `instance`.
@@ -70,12 +79,15 @@ impl AssertionTarget {
         &self.path
     }
 
-    pub fn agent(&self) -> &AgentId {
-        &self.agent
+    /// Whether it names a recorded series, and whose, or a derived one.
+    pub fn root(&self) -> &TargetRoot {
+        &self.root
     }
 
-    pub fn subject(&self) -> &TargetSubject {
-        &self.subject
+    /// Whether it names a series a host records, which the host is asked
+    /// for. A derived series is computed from recorded ones instead.
+    pub fn is_recorded(&self) -> bool {
+        matches!(self.root, TargetRoot::Agent { .. })
     }
 
     /// Which instances of a keyed channel it selects. `None` when it names
@@ -205,6 +217,17 @@ impl fmt::Display for InstanceSelector {
     }
 }
 
+/// _Shared (pre + per)._ What a target names: a series an agent records, or
+/// one an evaluation derives.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TargetRoot {
+    Agent {
+        agent: AgentId,
+        subject: TargetSubject,
+    },
+    Derived(DerivedName),
+}
+
 /// _Shared (pre + per)._ What kind of value a target names, with its parts
 /// after the subject word.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -235,16 +258,29 @@ impl From<PathSubject<'_>> for TargetSubject {
 }
 
 /// _Pre-step._ A run-file target that doesn't split into the parts of a
-/// watcher path, and the first part that is wrong.
+/// watcher path or a derived key, and what is wrong with it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "target '{path}' is not a watcher path agent.<agent>.node.<node>.<leaf> \
-     or agent.<agent>.channel.<channel>: {}",
-    what_is_wrong(*part)
-)]
+#[error("target '{path}' {fault}")]
 pub struct MalformedTarget {
     path: String,
-    part: PathPart,
+    fault: TargetFault,
+}
+
+/// _Pre-step._ What is wrong with a malformed target, by the root it was
+/// read under.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TargetFault {
+    /// Not under the derived root, and the first part of a watcher path
+    /// that is wrong.
+    #[error(
+        "is not a watcher path agent.<agent>.node.<node>.<leaf> or \
+         agent.<agent>.channel.<channel>, nor a derived series \
+         eval.inline.<evaluation>.<metric>: {}",
+        what_is_wrong(*.0)
+    )]
+    Recorded(PathPart),
+    #[error("is not a derived series eval.inline.<evaluation>.<metric>: {0}")]
+    Derived(DerivedProblem),
 }
 
 /// What is wrong with a target whose `part` is the first that is.
@@ -266,18 +302,23 @@ fn what_is_wrong(part: PathPart) -> String {
 mod tests {
     use super::*;
 
+    use crate::assertion::EntryName;
+
     #[test]
     fn parse_keeps_the_path_and_its_parts() {
         let target = AssertionTarget::parse("agent.car.node.estimator.aiding.gps.nis")
             .expect("valid target");
 
         assert_eq!(target.path(), "agent.car.node.estimator.aiding.gps.nis");
-        assert_eq!(target.agent(), &AgentId::new("car"));
+        assert!(target.is_recorded());
         assert_eq!(
-            target.subject(),
-            &TargetSubject::Node {
-                node: "estimator".into(),
-                leaf: "aiding.gps.nis".into(),
+            target.root(),
+            &TargetRoot::Agent {
+                agent: AgentId::new("car"),
+                subject: TargetSubject::Node {
+                    node: "estimator".into(),
+                    leaf: "aiding.gps.nis".into(),
+                },
             }
         );
     }
@@ -287,10 +328,38 @@ mod tests {
         let target = AssertionTarget::parse("agent.car.channel.truth.tf").expect("valid target");
 
         assert_eq!(
-            target.subject(),
-            &TargetSubject::Channel {
-                channel: "truth.tf".into(),
+            target.root(),
+            &TargetRoot::Agent {
+                agent: AgentId::new("car"),
+                subject: TargetSubject::Channel {
+                    channel: "truth.tf".into(),
+                },
             }
+        );
+    }
+
+    #[test]
+    fn parse_keeps_a_derived_target() {
+        let target = AssertionTarget::parse("eval.inline.twist.surge_error").expect("valid target");
+
+        assert!(!target.is_recorded());
+        assert_eq!(
+            target.root(),
+            &TargetRoot::Derived(DerivedName::new(
+                EntryName::parse("twist").expect("valid name"),
+                "surge_error"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_malformed_derived_target_says_what_is_wrong() {
+        let error = AssertionTarget::parse("eval.inline.twist").expect_err("no metric");
+
+        assert_eq!(
+            error.to_string(),
+            "target 'eval.inline.twist' is not a derived series \
+             eval.inline.<evaluation>.<metric>: the metric is missing or not one level"
         );
     }
 
@@ -300,7 +369,7 @@ mod tests {
             AssertionTarget::parse("agent.car.node.estimator"),
             Err(MalformedTarget {
                 path: "agent.car.node.estimator".to_owned(),
-                part: PathPart::Leaf,
+                fault: TargetFault::Recorded(PathPart::Leaf),
             })
         );
     }
@@ -327,8 +396,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_refuses_a_path_outside_the_agent_root() {
-        assert!(AssertionTarget::parse("car.estimator.speed.x").is_err());
+    fn parse_refuses_a_path_outside_both_roots_naming_both() {
+        let error = AssertionTarget::parse("car.estimator.speed.x").expect_err("no root");
+
+        assert!(error.to_string().contains("eval.inline."), "{error}");
     }
 
     #[derive(Debug, Deserialize, Serialize)]

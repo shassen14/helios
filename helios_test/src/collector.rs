@@ -6,9 +6,15 @@
 //! the same runner works wherever observations can be delivered: a sim, a
 //! robot, a recording.
 
-use crate::assertion::{
-    extract::{ExtractError, Extracted, ExtractorTable},
-    AssertionTarget, AssertionValue,
+use crate::{
+    assertion::{
+        extract::{ExtractError, Extracted, ExtractorTable},
+        AssertionTarget, AssertionValue,
+    },
+    evaluation::{
+        derived::{Derived, Refused, RunningEvaluation},
+        kind::InputRejection,
+    },
 };
 
 use helios_core::prelude::MonotonicTime;
@@ -48,6 +54,10 @@ static NEXT_COLLECTOR: AtomicU64 = AtomicU64::new(0);
 /// A value is extracted the moment it arrives and the observation is then
 /// dropped, so a channel carrying a large payload costs what a scalar does:
 /// the series holds the extracted value, never the payload.
+///
+/// It also feeds each evaluation bound to it: a value under one of an
+/// evaluation's input keys is handed to it, typed, and the evaluation keeps
+/// only its projection. One key may feed a series and evaluations both.
 pub struct ObservationCollector {
     /// Stamped into every [`SeriesId`] this collector hands out, so an id is
     /// never read against another run's collector.
@@ -65,6 +75,9 @@ pub struct ObservationCollector {
     /// Held so each key's path is spelled once, not on every arrival.
     unrequested: HashSet<RecordedKey>,
     extractors: ExtractorTable,
+    evaluations: Vec<RunningEvaluation>,
+    /// Each input key's evaluations, by index, with the role it fills.
+    inputs: HashMap<RecordedKey, Vec<(usize, usize)>>,
 }
 
 impl ObservationCollector {
@@ -82,6 +95,8 @@ impl ObservationCollector {
             unbound: HashMap::new(),
             unrequested: HashSet::new(),
             extractors,
+            evaluations: Vec::new(),
+            inputs: HashMap::new(),
         }
     }
 
@@ -166,6 +181,45 @@ impl ObservationCollector {
         }
     }
 
+    /// Feeds `evaluation` the values recorded under each of `inputs`, one
+    /// key per role in role order. Bound before the first tick, as a series
+    /// is.
+    pub fn bind_evaluation(
+        &mut self,
+        evaluation: RunningEvaluation,
+        inputs: Vec<RecordedKey>,
+    ) -> EvaluationId {
+        let index = self.evaluations.len();
+        self.evaluations.push(evaluation);
+        for (role, key) in inputs.into_iter().enumerate() {
+            self.inputs.entry(key).or_default().push((index, role));
+        }
+        EvaluationId {
+            collector: self.id,
+            index,
+        }
+    }
+
+    /// Each role's refusals so far in the evaluation `id` names. `None` when
+    /// `id` came from another collector.
+    pub fn refused(&self, id: EvaluationId) -> Option<&[Refused]> {
+        self.evaluation(id).map(RunningEvaluation::refused)
+    }
+
+    /// What the evaluation `id` names derived from the values stamped at or
+    /// before `until`. `None` when `id` came from another collector.
+    pub fn derive(&self, id: EvaluationId, until: MonotonicTime) -> Option<Derived> {
+        self.evaluation(id)
+            .map(|evaluation| evaluation.derive(until))
+    }
+
+    fn evaluation(&self, id: EvaluationId) -> Option<&RunningEvaluation> {
+        if id.collector != self.id {
+            return None;
+        }
+        self.evaluations.get(id.index)
+    }
+
     fn id_at(&self, index: usize) -> SeriesId {
         SeriesId {
             collector: self.id,
@@ -188,21 +242,33 @@ impl ObservationSink for ObservationCollector {
 
     fn receive(&mut self, batch: &[Observation]) {
         for observation in batch {
-            let Some(series) = self
+            let series = self
                 .by_key
                 .get(&observation.key)
-                .and_then(|index| self.series.get_mut(*index))
-            else {
+                .and_then(|index| self.series.get_mut(*index));
+            let inputs = self.inputs.get(&observation.key);
+            if series.is_none() && inputs.is_none() {
                 self.count_unbound(&observation.key);
                 continue;
-            };
-            match extract(&self.extractors, &observation.value) {
-                Ok(value) => series.samples.push(Sample {
-                    timestamp: observation.timestamp,
-                    value,
-                }),
-                Err(rejection) => {
-                    series.rejection.get_or_insert(rejection);
+            }
+            if let Some(series) = series {
+                match extract(&self.extractors, &observation.value) {
+                    Ok(value) => series.samples.push(Sample {
+                        timestamp: observation.timestamp,
+                        value,
+                    }),
+                    Err(rejection) => {
+                        series.rejection.get_or_insert(rejection);
+                    }
+                }
+            }
+            // Setup binds an input only to a channel of the role's payload
+            // type, so a value there is always typed.
+            if let (Some(inputs), ObservedValue::Typed(stamped)) = (inputs, &observation.value) {
+                for (evaluation, role) in inputs {
+                    if let Some(evaluation) = self.evaluations.get_mut(*evaluation) {
+                        evaluation.receive(*role, observation.timestamp, stamped.payload());
+                    }
                 }
             }
         }
@@ -272,6 +338,14 @@ pub struct SeriesId {
     index: usize,
 }
 
+/// _Per-step._ Names one evaluation in one collector, handed out by
+/// [`ObservationCollector::bind_evaluation`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EvaluationId {
+    collector: CollectorId,
+    index: usize,
+}
+
 /// _Per-step._ Everything that arrived under one key.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Series {
@@ -287,6 +361,12 @@ pub struct Series {
 }
 
 impl Series {
+    /// A series an evaluation derived, whole, with the first value its
+    /// inputs refused.
+    pub(crate) fn derived(samples: Vec<Sample>, rejection: Option<Rejection>) -> Self {
+        Self { samples, rejection }
+    }
+
     pub fn samples(&self) -> &[Sample] {
         &self.samples
     }
@@ -312,6 +392,10 @@ pub enum Rejection {
     /// A kind of observation assertions can't read.
     #[error("a kind of observation assertions can't read")]
     UnsupportedKind,
+    /// A value an evaluation's input refused, kept on each series it
+    /// derives.
+    #[error("an input of its evaluation refused {0}")]
+    Evaluation(InputRejection),
 }
 
 #[cfg(test)]

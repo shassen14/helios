@@ -1,5 +1,5 @@
 use super::{
-    resolve::{join, resolve, UnusableEntry},
+    resolve::{resolve, Unusable},
     Phase, Runner,
 };
 use crate::collector::ObservationCollector;
@@ -9,11 +9,12 @@ use helios_runtime::AutonomyPipeline;
 use thiserror::Error;
 
 impl Runner {
-    /// Check, before the first tick, that the run can evaluate every
-    /// assertion and measure against what `pipelines` report and what
-    /// `collector` requests, bind each one's series in `collector`, and keep
-    /// what the check found for every tick. The run is then ready, or, if
-    /// any entry can't be evaluated, aborted with the reasons.
+    /// Check, before the first tick, that the run can build every
+    /// evaluation and evaluate every assertion and measure against what
+    /// `pipelines` report and what `collector` requests, bind each one's
+    /// series and inputs in `collector`, and keep what the check found for
+    /// every tick. The run is then ready, or, if any can't be, aborted with
+    /// the reasons.
     ///
     /// Called once. A second call, or one after setup failed, is refused and
     /// changes nothing.
@@ -27,8 +28,10 @@ impl Runner {
         }
 
         match resolve(
+            self.run.evaluations(),
             self.run.assertions(),
             self.run.measures(),
+            &self.evaluators,
             pipelines,
             collector,
         ) {
@@ -38,25 +41,18 @@ impl Runner {
             }
             Err(unusable) => {
                 self.phase = Phase::Aborted;
-                Err(SetupError::UnusableEntries(unusable))
+                Err(SetupError::Unusable(unusable))
             }
         }
     }
 }
 
-/// Between the unusable entries in one message. An entry's own message
-/// holds a `,` but never this.
-const ENTRY_SEPARATOR: &str = "; ";
-
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum SetupError {
-    /// Assertions and measures the run can't evaluate, each with its
-    /// reasons, so the operator sees every one to fix at once.
-    #[error(
-        "the run can't evaluate these assertions and measures: {}",
-        join(.0, ENTRY_SEPARATOR)
-    )]
-    UnusableEntries(Vec<UnusableEntry>),
+    /// Evaluations, assertions and measures the run can't evaluate, each
+    /// with its reasons, so the operator sees every one to fix at once.
+    #[error("the run can't use these evaluations, assertions and measures: {0}")]
+    Unusable(Unusable),
     /// `on_pipeline_built` was called after the run's setup was decided.
     #[error("the run's setup is already decided")]
     AlreadySetUp,
@@ -69,8 +65,12 @@ mod tests {
     use crate::{
         assertion::{AssertionTarget, EntryName},
         runner::{
-            fixtures::{pipeline, ready, run, term, CAR},
-            resolve::TargetProblem,
+            evaluations::EvaluationProblem,
+            fixtures::{
+                lag, lag_target, pipeline, ready, run, run_evaluating, set_up, speed_target, term,
+                CAR, TRUCK,
+            },
+            resolve::{TargetProblem, UnusableEntry},
         },
     };
 
@@ -116,18 +116,21 @@ mod tests {
         let mut collector = r.collector();
         assert_eq!(
             r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector),
-            Err(SetupError::UnusableEntries(vec![
-                UnusableEntry {
-                    name: EntryName::parse("a").expect("valid name"),
-                    target: target("agent.car.node.estimator.a"),
-                    problems: vec![TargetProblem::Unreported],
-                },
-                UnusableEntry {
-                    name: EntryName::parse("b").expect("valid name"),
-                    target: target("agent.car.node.estimator.b"),
-                    problems: vec![TargetProblem::Unreported],
-                },
-            ]))
+            Err(SetupError::Unusable(Unusable {
+                evaluations: vec![],
+                entries: vec![
+                    UnusableEntry {
+                        name: EntryName::parse("a").expect("valid name"),
+                        target: target("agent.car.node.estimator.a"),
+                        problems: vec![TargetProblem::Unreported],
+                    },
+                    UnusableEntry {
+                        name: EntryName::parse("b").expect("valid name"),
+                        target: target("agent.car.node.estimator.b"),
+                        problems: vec![TargetProblem::Unreported],
+                    },
+                ],
+            }))
         );
         assert_eq!(r.phase, Phase::Aborted);
     }
@@ -145,5 +148,121 @@ mod tests {
             Err(SetupError::AlreadySetUp)
         );
         assert!(matches!(r.phase, Phase::Ready(_)));
+    }
+
+    /// A `lag` evaluation named `name` with its inputs as written.
+    fn lag_with(name: &str, actual: &str, wanted: &str) -> String {
+        format!(
+            "name = \"{name}\"\nkind = \"lag\"\n[evaluate.inputs]\n\
+             actual = {actual}\nwanted = {wanted}"
+        )
+    }
+
+    /// A measure named `name` of `target`'s mean.
+    fn mean_of(name: &str, target: &str) -> String {
+        format!("name = \"{name}\"\ntarget = {target}\nreduce = \"mean\"")
+    }
+
+    /// What setup refused, for a run of `evaluations` and `measures` on the
+    /// car and the truck.
+    fn refused(evaluations: &[&str], measures: &[&str]) -> Unusable {
+        let run = run_evaluating("max_simulated_seconds = 5.0", &[], measures, evaluations);
+        match set_up(run, &[CAR, TRUCK]).2 {
+            Err(SetupError::Unusable(unusable)) => unusable,
+            other => panic!("expected setup to refuse the run, got {other:?}"),
+        }
+    }
+
+    const WHEELS: &str = "\"agent.car.channel.wheels\"";
+
+    #[test]
+    fn a_run_whose_evaluation_can_be_built_is_ready() {
+        let (r, _) = ready(
+            run_evaluating(
+                "max_simulated_seconds = 5.0",
+                &[],
+                &[&mean_of("m", &format!("\"{}\"", lag_target("slow")))],
+                &[&lag("slow", CAR)],
+            ),
+            &[CAR],
+        );
+        assert!(matches!(r.phase, Phase::Ready(_)));
+    }
+
+    #[test]
+    fn an_input_of_another_payload_type_is_refused_naming_both() {
+        let wheel = format!("{{ path = {WHEELS}, instance = \"front\" }}");
+        let unusable = refused(&[&lag_with("slow", &wheel, &wheel)], &[]);
+
+        let [evaluation] = unusable.evaluations.as_slice() else {
+            panic!("one refused evaluation: {unusable}");
+        };
+        assert!(matches!(
+            &evaluation.problems[..],
+            [EvaluationProblem::Input {
+                role: "actual",
+                problem: TargetProblem::WrongPayload { wants: "f64", .. },
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn an_input_on_every_instance_is_refused() {
+        let speed = format!("\"{}\"", speed_target(CAR));
+        let every = format!("{{ path = {WHEELS}, instance = \"*\" }}");
+        let unusable = refused(&[&lag_with("slow", &speed, &every)], &[]);
+
+        assert!(matches!(
+            &unusable.evaluations[0].problems[..],
+            [EvaluationProblem::Input {
+                problem: TargetProblem::InputOnSeveral(_),
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn an_entry_on_a_refused_evaluation_is_refused_for_that_alone() {
+        // The kind refuses inputs from two agents; the measure on its
+        // metric is refused because its evaluation is.
+        let speed = format!("\"{}\"", speed_target(TRUCK));
+        let front = format!("{{ path = {WHEELS}, instance = \"front\" }}");
+        let derived = format!("\"{}\"", lag_target("slow"));
+        let unusable = refused(
+            &[&lag_with("slow", &speed, &front)],
+            &[&mean_of("m", &derived)],
+        );
+
+        assert_eq!(
+            unusable.evaluations[0].problems,
+            [EvaluationProblem::Refused(
+                "lag compares one agent's speeds".to_string()
+            )]
+        );
+        assert_eq!(
+            unusable.entries[0].problems,
+            [TargetProblem::EvaluationUnusable]
+        );
+        let message = SetupError::Unusable(unusable).to_string();
+        assert!(
+            message.contains("evaluation 'slow': lag compares one agent's speeds; 'm'"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_instance_on_a_derived_series_is_refused() {
+        let derived = format!(
+            "{{ path = \"{}\", instance = \"front\" }}",
+            lag_target("slow")
+        );
+        let unusable = refused(&[&lag("slow", CAR)], &[&mean_of("m", &derived)]);
+
+        assert!(unusable.evaluations.is_empty());
+        assert_eq!(
+            unusable.entries[0].problems,
+            [TargetProblem::InstanceOnDerived]
+        );
     }
 }

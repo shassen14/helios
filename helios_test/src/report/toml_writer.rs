@@ -46,9 +46,10 @@ mod tests {
     use crate::assertion::{
         AssertionTarget, AssertionValue, Bound, Condition, InstanceSelector, RunInstant, Window,
     };
+    use crate::evaluation::Align;
     use crate::report::{
-        AssertionReportEntry, FailureReason, MeasureReportEntry, ReportedUnit, SeriesSummary,
-        TerminatedBy, Verdict,
+        AssertionReportEntry, EvaluationReportEntry, FailureReason, InputReport,
+        MeasureReportEntry, MetricReport, ReportedUnit, SeriesSummary, TerminatedBy, Verdict,
     };
     use crate::statistics::within_run::Reducer;
 
@@ -151,7 +152,45 @@ mod tests {
                 Some(ReportedUnit::Declared(SiUnit::Meters)),
                 series(1),
             )],
+            vec![twist_evaluation()],
         )
+    }
+
+    /// A `twist_tracking` evaluation of the car against its exact truth.
+    fn twist_evaluation() -> EvaluationReportEntry {
+        EvaluationReportEntry {
+            name: "twist".to_string(),
+            kind: "twist_tracking".to_string(),
+            align: Align::Declared,
+            samples: 100,
+            uncovered: 1,
+            inputs: vec![
+                InputReport {
+                    role: "truth".to_string(),
+                    target: AssertionTarget::parse("agent.car.channel.truth.twist")
+                        .expect("valid target")
+                        .with_instance(InstanceSelector::One("agent.car.base_link".into())),
+                    instance: Some("agent.car.base_link".to_string()),
+                    writer: "body unit truth".to_string(),
+                    provenance: Some("exact"),
+                    refused: 0,
+                },
+                InputReport {
+                    role: "reference".to_string(),
+                    target: AssertionTarget::parse("agent.car.channel.reference")
+                        .expect("valid target"),
+                    instance: None,
+                    writer: "node reference_arbiter".to_string(),
+                    provenance: None,
+                    refused: 2,
+                },
+            ],
+            metrics: vec![MetricReport {
+                path: "eval.inline.twist.surge_error".to_string(),
+                unit: ReportedUnit::Declared(SiUnit::MetersPerSecond),
+                samples: 99,
+            }],
+        }
     }
 
     /// `report` written and read back as a plain TOML document.
@@ -231,6 +270,36 @@ mod tests {
         assert_eq!(measures[0]["unit"].as_str(), Some("m"));
         assert_eq!(measures[0]["covered"].as_bool(), Some(true));
         assert!(measures[0].get("reason").is_none());
+
+        // An evaluation: what it read and from whom, how much it covered,
+        // and each metric's series with its unit.
+        let evaluations = value["evaluations"].as_array().unwrap();
+        let twist = &evaluations[0];
+        assert_eq!(twist["kind"].as_str(), Some("twist_tracking"));
+        assert_eq!(twist["align"].as_str(), Some("declared"));
+        assert_eq!(twist["samples"].as_integer(), Some(100));
+        assert_eq!(twist["uncovered"].as_integer(), Some(1));
+        let inputs = twist["inputs"].as_array().unwrap();
+        assert_eq!(inputs[0]["role"].as_str(), Some("truth"));
+        assert_eq!(inputs[0]["instance"].as_str(), Some("agent.car.base_link"));
+        assert_eq!(inputs[0]["provenance"].as_str(), Some("exact"));
+        assert!(inputs[0].get("refused").is_none());
+        assert!(inputs[1].get("provenance").is_none());
+        assert_eq!(inputs[1]["refused"].as_integer(), Some(2));
+        let surge = &twist["metrics"].as_array().unwrap()[0];
+        assert_eq!(
+            surge["path"].as_str(),
+            Some("eval.inline.twist.surge_error")
+        );
+        assert_eq!(surge["unit"].as_str(), Some("m/s"));
+        assert_eq!(surge["samples"].as_integer(), Some(99));
+    }
+
+    #[test]
+    fn a_report_with_no_evaluations_omits_them() {
+        let mut report = sample_report();
+        report.evaluations.clear();
+        assert!(written(&report).get("evaluations").is_none());
     }
 
     #[test]
