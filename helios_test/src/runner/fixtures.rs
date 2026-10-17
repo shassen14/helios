@@ -8,11 +8,12 @@ use crate::{
     assertion::extract::standard_extractors,
     collector::ObservationCollector,
     evaluation::{
-        kind::{
-            Alignment, BoundInput, Evaluator, EvaluatorKind, InputRejection, Metric, Projection,
-            Role,
+        kind::{BoundInput, InputRejection},
+        standard_evaluators,
+        typed::{
+            projections::number, Component, Input, NoParams, Typed, TypedEvaluator, TypedKind,
         },
-        standard_evaluators, EvaluatorRegistry,
+        EvaluatorRegistry,
     },
     run::Run,
 };
@@ -33,7 +34,7 @@ use helios_runtime::{
     AutonomyPipeline, PipelineBuilder,
 };
 
-use std::{any::Any, sync::Arc};
+use std::sync::Arc;
 
 pub(super) const CAR: &str = "car";
 pub(super) const TRUCK: &str = "truck";
@@ -73,40 +74,27 @@ pub(super) const LAG: &str = "lag";
 /// Its one metric, `wanted - actual`.
 pub(super) const LAG_METRIC: &str = "shortfall";
 
-impl EvaluatorKind for Lag {
-    fn name(&self) -> &'static str {
-        LAG
+impl TypedKind for Lag {
+    const NAME: &'static str = LAG;
+    type Params = NoParams;
+    type Evaluator = LagEvaluator;
+
+    fn inputs(&self) -> <LagEvaluator as TypedEvaluator>::Inputs {
+        (
+            Input::base("actual", |_, speed| number(speed)),
+            Input::held("wanted", |_, wheel: &Wheel| number(&wheel.speed)),
+        )
     }
 
-    fn roles(&self) -> Vec<Role> {
-        vec![
-            Role::of::<f64>("actual", Alignment::Base),
-            Role::of::<Wheel>("wanted", Alignment::Hold),
-        ]
+    /// Known only once bound, as a kind's whose metrics come from what it
+    /// reads, so setup, not load, checks the names an entry reads.
+    fn menu(&self) -> Option<Vec<Component<f64>>> {
+        None
     }
 
-    fn metrics(&self) -> &'static [Metric] {
-        &[Metric {
-            name: LAG_METRIC,
-            si_unit: SiUnit::MetersPerSecond,
-        }]
-    }
-
-    fn check_params(&self, params: &toml::Table) -> Result<(), String> {
-        if params.is_empty() {
-            Ok(())
-        } else {
-            Err("lag reads no parameters".to_owned())
-        }
-    }
-
-    fn build(
-        &self,
-        _: &toml::Table,
-        inputs: &[BoundInput],
-    ) -> Result<Box<dyn Evaluator>, Vec<String>> {
+    fn bind(&self, _: NoParams, inputs: &[BoundInput]) -> Result<LagEvaluator, Vec<String>> {
         match inputs {
-            [actual, wanted] if actual.agent == wanted.agent => Ok(Box::new(LagEvaluator)),
+            [actual, wanted] if actual.agent == wanted.agent => Ok(LagEvaluator),
             _ => Err(vec!["lag compares one agent's speeds".to_owned()]),
         }
     }
@@ -114,33 +102,32 @@ impl EvaluatorKind for Lag {
 
 struct LagEvaluator;
 
-impl Evaluator for LagEvaluator {
-    fn project(&self, role: usize, payload: &dyn Any) -> Result<Projection, InputRejection> {
-        let speed = match role {
-            0 => payload.downcast_ref::<f64>().copied(),
-            _ => payload.downcast_ref::<Wheel>().map(|wheel| wheel.speed),
-        };
-        match speed {
-            Some(speed) if speed.is_finite() => Ok(Box::new(speed)),
-            _ => Err(InputRejection("a speed that isn't finite")),
-        }
+impl TypedEvaluator for LagEvaluator {
+    type Inputs = (Input<Self, f64, f64>, Input<Self, Wheel, f64>);
+    type Fit = ();
+    type Error = f64;
+
+    fn components(&self) -> Vec<Component<f64>> {
+        vec![Component::each(
+            LAG_METRIC,
+            SiUnit::MetersPerSecond,
+            |shortfall: &f64| Ok(*shortfall),
+        )]
     }
 
-    fn compute(&self, aligned: &[&Projection]) -> Vec<f64> {
-        let speed = |role: usize| {
-            aligned[role]
-                .downcast_ref::<f64>()
-                .copied()
-                .unwrap_or(f64::NAN)
-        };
-        vec![speed(1) - speed(0)]
+    fn fit(&self, _: &[(&f64, &f64)]) -> Result<(), InputRejection> {
+        Ok(())
+    }
+
+    fn compute(&self, (actual, wanted): (&f64, &f64), _: &()) -> Result<f64, InputRejection> {
+        Ok(wanted - actual)
     }
 }
 
 /// The standard evaluator kinds and [`Lag`].
 pub(super) fn evaluators() -> EvaluatorRegistry {
     let mut registry = standard_evaluators();
-    registry.register(Lag);
+    registry.register(Typed(Lag));
     registry
 }
 

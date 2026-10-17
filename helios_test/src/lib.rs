@@ -17,7 +17,8 @@
 //!   `OperandProblem`, `KindProblem`, `WindowProblem`, `Side`, `UnusableEntry`,
 //!   `TargetProblem`, `Unusable`, `Evaluation`, `EvaluatorRegistry`,
 //!   `EvaluatorKind`, `Role`, `Alignment`, `Metric`, `BoundInput`,
-//!   `UnusableEvaluation`, `EvaluationProblem`.
+//!   `UnusableEvaluation`, `EvaluationProblem`, `TypedKind`, `NoParams`,
+//!   `Input`, `Component`.
 //! - **`_Per-step._`** — live state and verdicts produced *while* ticking; no
 //!   serde, never serialized. `Runner`, `ResolvedPlan`, `AssertionState`,
 //!   `ContinuousStatus`, `TickAction`, `TickSpan`, `EntryOwner`, `EntryView`,
@@ -25,7 +26,8 @@
 //!   `AssertionResult`, `FailureKind`, `ConditionError`, `ReduceError`, `TerminationReason`, `ExtractorTable`, `Extractor`, `ExtractedValue`,
 //!   `ObservationCollector`, `SeriesId`, `Series`, `Sample`, `Rejection`,
 //!   `Evaluator`, `Projection`, `InputRejection`, `RunningEvaluation`,
-//!   `Refused`, `Derived`, `EvaluationId`, `PlannedEvaluation`, `PlannedInput`.
+//!   `Refused`, `Derived`, `EvaluationId`, `PlannedEvaluation`, `PlannedInput`,
+//!   `Row`, `Graded`, `TypedEvaluator`, `RootedPose`.
 //! - **`_Per/Post-step._`** — measurement data filled *during* a run, then
 //!   read back *after* it to build the serialized aggregate. `RunMetrics`.
 //! - **`_Post-step._`** — built *after* the run and serialized out. Its job is
@@ -36,9 +38,9 @@
 //!   `MetricReport`.
 //! - **`_Shared._`** — leaf values that cross phases, so they carry both serde
 //!   directions. `AssertionValue`, `Condition`, `Reducer` (pre + post);
-//!   `RunInstant`, `ValueKind`, `TargetRoot` (pre + per); `Align` (pre +
-//!   post); `AssertionTarget`, `InstanceSelector`, `EntryName`, `DerivedName`,
-//!   `Window`, `Bound` (pre + per + post).
+//!   `RunInstant`, `ValueKind`, `TargetRoot` (pre + per); `AssertionTarget`,
+//!   `InstanceSelector`, `EntryName`, `DerivedName`, `Window`, `Bound` (pre +
+//!   per + post).
 //!
 //! The leaves are shared; only the *containers* are phase-specific. An input
 //! container's goal (strict) and an output container's goal (stable) pull in

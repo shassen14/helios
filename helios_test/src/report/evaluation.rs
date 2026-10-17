@@ -1,26 +1,35 @@
 //! _Post-step._ [`EvaluationReportEntry`]: what one evaluation derived over
 //! a run, and from what.
 
-use crate::{assertion::AssertionTarget, evaluation::Align, report::ReportedUnit};
+use crate::{assertion::AssertionTarget, report::ReportedUnit};
 
 use helios_runtime::port::{Provenance, Writer};
 
 use serde::Serialize;
 
-/// _Post-step._ One evaluation's report: its kind and frame policy, the
-/// series each role read and who wrote it, how many base values the run
-/// gave and how many no held input covered yet, and each metric's series.
+/// _Post-step._ One evaluation's report: its kind and the parameters it was
+/// given, the series each role read and who wrote it, how many base values
+/// the run gave, how many some input didn't cover and how many it couldn't
+/// compute, and every metric it offers, with the series of each one read.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct EvaluationReportEntry {
     pub name: String,
     pub kind: String,
-    pub align: Align,
     /// Base values stamped within the run, one sample of every metric each
     /// unless uncovered.
     pub samples: usize,
-    /// Base values before any held input had one: start-up, until the
-    /// first command or goal. Reported, never failed.
+    /// Base values some input had no value for: before the first command
+    /// or goal held, or outside the values an interpolated input has.
+    /// Reported, never failed.
     pub uncovered: usize,
+    /// Base values the evaluation couldn't compute, such as poses in roots
+    /// nothing relates. Any one fails the run, under `[recording]`.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub refused: u64,
+    /// The entry's `[evaluate.params]`, as the run file gave them: what
+    /// shaped the numbers, such as a frame policy.
+    #[serde(skip_serializing_if = "toml::Table::is_empty")]
+    pub params: toml::Table,
     pub inputs: Vec<InputReport>,
     pub metrics: Vec<MetricReport>,
 }
@@ -57,13 +66,16 @@ impl InputReport {
     }
 }
 
-/// _Post-step._ One metric's derived series: its path, so a reader finds the
-/// entries judging it, its unit and how many samples it holds.
+/// _Post-step._ One metric the evaluation offers: its path, so a reader
+/// finds the entries judging it or names it in the next run, its unit, and
+/// how many samples its series holds.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MetricReport {
     pub path: String,
     pub unit: ReportedUnit,
-    pub samples: usize,
+    /// `None` for a metric nothing read, which was not derived.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub samples: Option<usize>,
 }
 
 fn writer_spelled(writer: Option<&Writer>) -> String {

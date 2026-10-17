@@ -1,6 +1,10 @@
 //! [`EvaluatorRegistry`]: the evaluator kinds a run file's `kind` can name.
 
-use crate::evaluation::{kind::EvaluatorKind, kinds::twist_tracking::TwistTracking};
+use crate::evaluation::{
+    kind::EvaluatorKind,
+    kinds::{pose_error::PoseError, twist_tracking::TwistTracking},
+    typed::Typed,
+};
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -36,7 +40,8 @@ impl EvaluatorRegistry {
 /// The kinds every run can name.
 pub fn standard_evaluators() -> EvaluatorRegistry {
     let mut registry = EvaluatorRegistry::new();
-    registry.register(TwistTracking);
+    registry.register(Typed(PoseError));
+    registry.register(Typed(TwistTracking));
     registry
 }
 
@@ -45,11 +50,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_standard_set_has_twist_tracking() {
+    fn the_standard_set_has_pose_error_and_twist_tracking() {
         let registry = standard_evaluators();
 
+        assert!(registry.get("pose_error").is_some());
         assert!(registry.get("twist_tracking").is_some());
         assert!(registry.get("goal_distance").is_none());
-        assert_eq!(registry.names(), vec!["twist_tracking"]);
+        assert_eq!(registry.names(), vec!["pose_error", "twist_tracking"]);
     }
 }

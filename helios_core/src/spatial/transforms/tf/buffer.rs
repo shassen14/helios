@@ -18,6 +18,7 @@ use crate::{
     prelude::{MonotonicDuration, MonotonicTime, TfProvider},
     spatial::{
         transforms::{
+            interpolate_pose,
             tf::stamped::{
                 DynamicEdgeStats, EdgeKind, EdgeKindTag, FrameEdge, StampedTransform, TimeSpan,
             },
@@ -27,7 +28,7 @@ use crate::{
     },
 };
 
-use nalgebra::{Isometry3, Translation3};
+use nalgebra::Isometry3;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// The transform tree for the whole system, folded from timestamped edge messages.
@@ -522,37 +523,12 @@ impl TfBuffer {
                         }
 
                         // Interior gap: `t` sits strictly between samples[i-1] and
-                        // samples[i]. `alpha` is the fraction of the bracket it has
-                        // crossed; the clamp is a defensive belt (a strict bracket
-                        // already yields a value in (0, 1)).
+                        // samples[i], `alpha` the fraction of the bracket it has
+                        // crossed.
                         let t0 = samples[i - 1].0;
                         let t1 = samples[i].0;
                         let alpha = (t - t0).0 / (t1 - t0).0;
-                        let alpha = alpha.clamp(0.0, 1.0);
-
-                        // Translation is Euclidean: a straight-line lerp between the
-                        // two positions.
-                        let p0 = samples[i - 1].1.translation.vector;
-                        let p1 = samples[i].1.translation.vector;
-                        let lerped_translation = p0.lerp(&p1, alpha);
-
-                        // Rotation is not: a componentwise average of two quaternions
-                        // is not a rotation, so walk the shortest arc with slerp.
-                        let q0 = samples[i - 1].1.rotation;
-                        let q1 = samples[i].1.rotation;
-                        // Below this tolerance on the sine of the angle between the two
-                        // rotations, the shortest slerp arc is ill-defined (the samples
-                        // are ~180° apart); `try_slerp` returns `None` and the blend
-                        // snaps to the nearer endpoint instead.
-                        const SLERP_ANTIPODAL_EPS: f64 = 1e-6;
-                        let slerped_rotation = q0.try_slerp(&q1, alpha, SLERP_ANTIPODAL_EPS);
-                        let rotation =
-                            slerped_rotation.unwrap_or(if alpha < 0.5 { q0 } else { q1 });
-
-                        Ok(Isometry3::from_parts(
-                            Translation3::from(lerped_translation),
-                            rotation,
-                        ))
+                        Ok(interpolate_pose(&samples[i - 1].1, &samples[i].1, alpha))
                     }
                 },
             },
@@ -757,7 +733,7 @@ mod tests {
 
     use crate::prelude::AgentId;
 
-    use nalgebra::{UnitQuaternion, Vector3};
+    use nalgebra::{Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::{FRAC_PI_2, FRAC_PI_4};
 
     // --- builders ---

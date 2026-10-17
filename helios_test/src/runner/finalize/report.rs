@@ -53,7 +53,7 @@ impl Runner {
     /// recording dropped nothing: no requested value arrived under an
     /// unbound key ([`ObservationCollector::unbound_arrivals`]), no measure's
     /// series turned a value away and no evaluation refused an input's
-    /// value. Values the wiring or the
+    /// value or a sample. Values the wiring or the
     /// recording dropped leave the entries describing another run than the
     /// one configured. Only a run that was set up reports the recording's
     /// drops; in one aborted at setup, a refused entry's key is unbound by
@@ -176,10 +176,11 @@ impl Runner {
                 .collect(),
             Phase::AwaitingPipelines | Phase::Aborted => Vec::new(),
         };
-        // An input value an evaluation refused leaves its metrics graded on
-        // fewer values than the run recorded.
+        // An input value an evaluation refused, or a sample it couldn't
+        // compute, leaves its metrics graded on fewer values than the run
+        // recorded.
         let planned = plan.map_or(&[][..], |plan| plan.evaluations());
-        for evaluation in planned {
+        for (index, evaluation) in planned.iter().enumerate() {
             let refused = collector.refused(evaluation.id).unwrap_or_default();
             for (input, refused) in evaluation.inputs.iter().zip(refused) {
                 if let Some(first) = refused.first {
@@ -188,6 +189,15 @@ impl Runner {
                         evaluation.name, input.role, refused.count
                     ));
                 }
+            }
+            let derived = derived.as_ref().and_then(|derived| derived.get(index));
+            if let Some((refused, first)) = derived
+                .and_then(|derived| derived.refused.first.map(|first| (derived.refused, first)))
+            {
+                recording.push(format!(
+                    "evaluation '{}': {} sample(s) not computed, the first {first}",
+                    evaluation.name, refused.count
+                ));
             }
         }
         // A measure's value never fails the run, but a value its series

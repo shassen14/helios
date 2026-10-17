@@ -206,11 +206,17 @@ impl ObservationCollector {
         self.evaluation(id).map(RunningEvaluation::refused)
     }
 
-    /// What the evaluation `id` names derived from the values stamped at or
-    /// before `until`. `None` when `id` came from another collector.
-    pub fn derive(&self, id: EvaluationId, until: MonotonicTime) -> Option<Derived> {
+    /// What the evaluation `id` names derived of its `wanted` metrics from
+    /// the values stamped at or before `until`. `None` when `id` came from
+    /// another collector.
+    pub fn derive(
+        &self,
+        id: EvaluationId,
+        until: MonotonicTime,
+        wanted: &[usize],
+    ) -> Option<Derived> {
         self.evaluation(id)
-            .map(|evaluation| evaluation.derive(until))
+            .map(|evaluation| evaluation.derive(until, wanted))
     }
 
     fn evaluation(&self, id: EvaluationId) -> Option<&RunningEvaluation> {

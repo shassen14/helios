@@ -16,6 +16,9 @@ const PROBLEM_SEPARATOR: &str = " and ";
 /// Between the instances a problem lists.
 pub(super) const INSTANCE_SEPARATOR: &str = ", ";
 
+/// Between the metrics a problem lists.
+const METRIC_SEPARATOR: &str = ", ";
+
 /// Between the unusable evaluations and entries in one message. An entry's
 /// own message holds a `,` but never this.
 const UNUSABLE_SEPARATOR: &str = "; ";
@@ -132,6 +135,10 @@ pub enum TargetProblem {
     /// its own reasons.
     #[error("its evaluation can't run")]
     EvaluationUnusable,
+    /// A metric its evaluation doesn't offer, when the offered ones are
+    /// known only once the evaluation is bound, too late for load to check.
+    #[error("its evaluation offers no such metric (it offers {})", .0.join(METRIC_SEPARATOR))]
+    UnofferedMetric(Vec<&'static str>),
     /// An instance named on a derived series, which has none.
     #[error("it names an instance, which a derived series doesn't have")]
     InstanceOnDerived,

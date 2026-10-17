@@ -265,4 +265,26 @@ mod tests {
             [TargetProblem::InstanceOnDerived]
         );
     }
+
+    #[test]
+    fn a_metric_its_bound_evaluation_doesnt_offer_is_refused_naming_what_it_does() {
+        // lag's menu is known only once bound, so load let the name through.
+        let unusable = refused(
+            &[&lag("slow", CAR)],
+            &[&mean_of("m", "\"eval.inline.slow.excess\"")],
+        );
+
+        assert!(unusable.evaluations.is_empty());
+        assert_eq!(
+            unusable.entries[0].problems,
+            [TargetProblem::UnofferedMetric(vec!["shortfall"])]
+        );
+        assert!(
+            unusable.entries[0].problems[0]
+                .to_string()
+                .ends_with("(it offers shortfall)"),
+            "{:?}",
+            unusable.entries[0].problems
+        );
+    }
 }

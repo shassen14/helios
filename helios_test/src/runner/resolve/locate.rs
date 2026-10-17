@@ -173,21 +173,24 @@ pub(super) fn locate_derived(
     if derivable.refused.contains(name.evaluation()) {
         return Err(vec![TargetProblem::EvaluationUnusable]);
     }
-    // Load checked the evaluation and the metric exist.
-    let found = derivable
+    // Load checked the evaluation exists, and the metric when its kind's
+    // menu is fixed.
+    let Some((evaluation, planned)) = derivable
         .planned
         .iter()
         .enumerate()
         .find(|(_, planned)| &planned.name == name.evaluation())
-        .and_then(|(evaluation, planned)| {
-            let metric = planned
-                .metrics
-                .iter()
-                .position(|metric| metric.name == name.metric())?;
-            Some((evaluation, metric, planned))
-        });
-    let Some((evaluation, metric, planned)) = found else {
+    else {
         return Err(vec![TargetProblem::Unreported]);
+    };
+    let Some(metric) = planned
+        .metrics
+        .iter()
+        .position(|metric| metric.name == name.metric())
+    else {
+        return Err(vec![TargetProblem::UnofferedMetric(
+            planned.metrics.iter().map(|metric| metric.name).collect(),
+        )]);
     };
 
     let mut problems = Vec::new();

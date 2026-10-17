@@ -15,7 +15,7 @@ use crate::{
     evaluation::{
         derived::RunningEvaluation,
         kind::{Alignment, BoundInput, Metric, Role},
-        Align, Evaluation, EvaluatorRegistry,
+        Evaluation, EvaluatorRegistry,
     },
 };
 
@@ -38,10 +38,12 @@ const SCALAR: &str = "a number";
 pub struct PlannedEvaluation {
     pub name: EntryName,
     pub kind: &'static str,
-    pub align: Align,
+    /// The entry's `[evaluate.params]`, as the run file gave them.
+    pub params: toml::Table,
     pub id: EvaluationId,
     /// One per role, in the kind's order.
     pub inputs: Vec<PlannedInput>,
+    /// Every metric the bound evaluator offers, in its order, read or not.
     pub metrics: Vec<Metric>,
     /// Whether each derived value holds until the next: when its base is a
     /// channel's, whose value holds until it is written again.
@@ -162,12 +164,9 @@ fn plan(
                 .map(EvaluationProblem::Refused)
                 .collect::<Vec<_>>()
         })?;
-    let metrics = kind.metrics().to_vec();
-    let running = RunningEvaluation::new(
-        evaluator,
-        roles.iter().map(|role| role.alignment).collect(),
-        metrics.len(),
-    );
+    let metrics = evaluator.metrics();
+    let running =
+        RunningEvaluation::new(evaluator, roles.iter().map(|role| role.alignment).collect());
     let id = collector.bind_evaluation(
         running,
         bound
@@ -179,7 +178,7 @@ fn plan(
     Ok(PlannedEvaluation {
         name: evaluation.name.clone(),
         kind: kind.name(),
-        align: evaluation.align,
+        params: evaluation.params.clone(),
         id,
         held: roles
             .iter()

@@ -1,6 +1,6 @@
 use crate::spatial::transforms::{
     convention::{Convention, ConventionOf},
-    Transform,
+    interpolate_pose, Transform,
 };
 
 use nalgebra::Isometry3;
@@ -125,6 +125,22 @@ impl ErasedTransform {
         }
     }
 
+    /// The transform `fraction` of the way from `self` to `to`, as
+    /// [`interpolate_pose`] blends them, or a [`FrameMismatch`] when the two
+    /// are tagged with different conventions: a blend of an ENU pose and a
+    /// NED one is neither.
+    pub fn interpolate(
+        &self,
+        to: &ErasedTransform,
+        fraction: f64,
+    ) -> Result<ErasedTransform, FrameMismatch> {
+        self.same_conventions(to)?;
+        Ok(ErasedTransform {
+            isometry: interpolate_pose(&self.isometry, &to.isometry, fraction),
+            ..*self
+        })
+    }
+
     pub fn from_convention(&self) -> Convention {
         self.from
     }
@@ -135,6 +151,31 @@ impl ErasedTransform {
 
     pub fn isometry(&self) -> Isometry3<f64> {
         self.isometry
+    }
+
+    /// Whether every component of its translation and rotation is finite.
+    pub fn is_finite(&self) -> bool {
+        self.isometry
+            .translation
+            .vector
+            .iter()
+            .chain(self.isometry.rotation.coords.iter())
+            .all(|value| value.is_finite())
+    }
+
+    /// `Ok` when `other` is tagged with the same two conventions, so their
+    /// isometries are in the same axes and can be compared or blended.
+    /// Otherwise a [`FrameMismatch`] that expected `self`'s tags.
+    pub fn same_conventions(&self, other: &ErasedTransform) -> Result<(), FrameMismatch> {
+        if self.from == other.from && self.to == other.to {
+            return Ok(());
+        }
+        Err(FrameMismatch {
+            expected_from: self.from,
+            expected_to: self.to,
+            actual_from: other.from,
+            actual_to: other.to,
+        })
     }
 }
 
@@ -310,5 +351,37 @@ mod tests {
         assert!(iso_close(round.isometry, Isometry3::identity()));
         assert_eq!(round.from, Convention::Enu);
         assert_eq!(round.to, Convention::Enu);
+    }
+
+    #[test]
+    fn interpolate_blends_alike_tagged_transforms_and_refuses_unlike_ones() {
+        let start =
+            ErasedTransform::from_parts(Isometry3::identity(), Convention::Enu, Convention::Flu);
+        let between = start
+            .interpolate(&sample_edge(), 0.5)
+            .expect("alike tags blend");
+        assert!(iso_close(
+            between.isometry,
+            Isometry3::from_parts(
+                Translation3::new(5.0, 0.0, 0.0),
+                UnitQuaternion::from_axis_angle(&Vector3::z_axis(), FRAC_PI_2 / 2.0),
+            )
+        ));
+        assert_eq!(between.from, Convention::Enu);
+
+        let unlike =
+            ErasedTransform::from_parts(Isometry3::identity(), Convention::Flu, Convention::Flu);
+        assert!(unlike.interpolate(&sample_edge(), 0.5).is_err());
+    }
+
+    #[test]
+    fn a_transform_with_a_non_finite_component_is_not_finite() {
+        let nan = ErasedTransform::from_parts(
+            Isometry3::translation(f64::NAN, 0.0, 0.0),
+            Convention::Enu,
+            Convention::Flu,
+        );
+        assert!(sample_edge().is_finite());
+        assert!(!nan.is_finite());
     }
 }

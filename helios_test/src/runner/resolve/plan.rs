@@ -45,8 +45,8 @@ impl ResolvedPlan {
     }
 
     /// What each evaluation derived from the values stamped at or before
-    /// `until`, in run-file order. `None` when `collector` isn't the one the
-    /// plan was resolved against.
+    /// `until`, in run-file order: only the metrics an entry reads. `None`
+    /// when `collector` isn't the one the plan was resolved against.
     pub(in crate::runner) fn derive(
         &self,
         collector: &ObservationCollector,
@@ -54,7 +54,20 @@ impl ResolvedPlan {
     ) -> Option<Vec<Derived>> {
         self.evaluations
             .iter()
-            .map(|evaluation| collector.derive(evaluation.id, until))
+            .enumerate()
+            .map(|(index, evaluation)| {
+                let wanted: Vec<usize> = self
+                    .entries
+                    .iter()
+                    .filter_map(|entry| match entry.source {
+                        SeriesSource::Derived { evaluation, metric } if evaluation == index => {
+                            Some(metric)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                collector.derive(evaluation.id, until, &wanted)
+            })
             .collect()
     }
 
@@ -73,7 +86,7 @@ impl ResolvedPlan {
                 let series = match &entry.source {
                     SeriesSource::Recorded { series, .. } => collector.series(*series)?,
                     SeriesSource::Derived { evaluation, metric } => {
-                        derived.get(*evaluation)?.metrics.get(*metric)?
+                        derived.get(*evaluation)?.metrics.get(*metric)?.as_ref()?
                     }
                 };
                 Some(entry.view(series, &entry.state))

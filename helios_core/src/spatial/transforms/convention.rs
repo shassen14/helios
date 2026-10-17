@@ -21,6 +21,38 @@ pub enum Convention {
     Flu,
 }
 
+impl Convention {
+    /// The rotation carrying this convention's axes into ENU: the runtime
+    /// form of its [`EnuBasis`].
+    pub fn to_enu(&self) -> UnitQuaternion<f64> {
+        match self {
+            Convention::Enu => Enu::to_enu().into_inner(),
+            Convention::Flu => Flu::to_enu().into_inner(),
+        }
+    }
+
+    /// Up, on this convention's own axes: ENU's +Z carried back through its
+    /// basis, so a convention whose up is not +Z says so by its basis alone.
+    pub fn up(&self) -> Vector3<f64> {
+        self.to_enu().inverse() * Vector3::z()
+    }
+
+    /// Forward, on this convention's own axes, for a body convention: the
+    /// way the body faces. `None` for a world convention, which faces no way.
+    pub fn forward(&self) -> Option<Vector3<f64>> {
+        match self {
+            Convention::Enu => None,
+            Convention::Flu => Some(Vector3::x()),
+        }
+    }
+
+    /// Left, on this convention's own axes, for a body convention: up
+    /// crossed with forward, as both are right-handed.
+    pub fn left(&self) -> Option<Vector3<f64>> {
+        self.forward().map(|forward| self.up().cross(&forward))
+    }
+}
+
 impl std::fmt::Display for Convention {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
@@ -112,6 +144,21 @@ mod tests {
         assert!(close(fwd.into_inner(), Vector3::new(0.0, 1.0, 0.0)));
         assert!(close(left.into_inner(), Vector3::new(-1.0, 0.0, 0.0)));
         assert!(close(up.into_inner(), Vector3::new(0.0, 0.0, 1.0)));
+    }
+
+    #[test]
+    fn a_body_convention_faces_forward_and_a_world_one_does_not() {
+        for convention in [Convention::Enu, Convention::Flu] {
+            assert!(close(convention.up(), Vector3::z()), "{convention}");
+        }
+        assert_eq!(Convention::Enu.forward(), None);
+        assert_eq!(Convention::Enu.left(), None);
+        assert!(Convention::Flu
+            .forward()
+            .is_some_and(|forward| close(forward, Vector3::x())));
+        assert!(Convention::Flu
+            .left()
+            .is_some_and(|left| close(left, Vector3::y())));
     }
 
     #[test]

@@ -46,7 +46,6 @@ mod tests {
     use crate::assertion::{
         AssertionTarget, AssertionValue, Bound, Condition, InstanceSelector, RunInstant, Window,
     };
-    use crate::evaluation::Align;
     use crate::report::{
         AssertionReportEntry, EvaluationReportEntry, FailureReason, InputReport,
         MeasureReportEntry, MetricReport, ReportedUnit, SeriesSummary, TerminatedBy, Verdict,
@@ -161,9 +160,10 @@ mod tests {
         EvaluationReportEntry {
             name: "twist".to_string(),
             kind: "twist_tracking".to_string(),
-            align: Align::Declared,
             samples: 100,
             uncovered: 1,
+            refused: 0,
+            params: toml::Table::new(),
             inputs: vec![
                 InputReport {
                     role: "truth".to_string(),
@@ -185,11 +185,18 @@ mod tests {
                     refused: 2,
                 },
             ],
-            metrics: vec![MetricReport {
-                path: "eval.inline.twist.surge_error".to_string(),
-                unit: ReportedUnit::Declared(SiUnit::MetersPerSecond),
-                samples: 99,
-            }],
+            metrics: vec![
+                MetricReport {
+                    path: "eval.inline.twist.surge".to_string(),
+                    unit: ReportedUnit::Declared(SiUnit::MetersPerSecond),
+                    samples: Some(99),
+                },
+                MetricReport {
+                    path: "eval.inline.twist.sway".to_string(),
+                    unit: ReportedUnit::Declared(SiUnit::MetersPerSecond),
+                    samples: None,
+                },
+            ],
         }
     }
 
@@ -276,7 +283,7 @@ mod tests {
         let evaluations = value["evaluations"].as_array().unwrap();
         let twist = &evaluations[0];
         assert_eq!(twist["kind"].as_str(), Some("twist_tracking"));
-        assert_eq!(twist["align"].as_str(), Some("declared"));
+        assert!(twist.get("params").is_none());
         assert_eq!(twist["samples"].as_integer(), Some(100));
         assert_eq!(twist["uncovered"].as_integer(), Some(1));
         let inputs = twist["inputs"].as_array().unwrap();
@@ -286,13 +293,13 @@ mod tests {
         assert!(inputs[0].get("refused").is_none());
         assert!(inputs[1].get("provenance").is_none());
         assert_eq!(inputs[1]["refused"].as_integer(), Some(2));
-        let surge = &twist["metrics"].as_array().unwrap()[0];
-        assert_eq!(
-            surge["path"].as_str(),
-            Some("eval.inline.twist.surge_error")
-        );
-        assert_eq!(surge["unit"].as_str(), Some("m/s"));
-        assert_eq!(surge["samples"].as_integer(), Some(99));
+        let metrics = twist["metrics"].as_array().unwrap();
+        assert_eq!(metrics[0]["path"].as_str(), Some("eval.inline.twist.surge"));
+        assert_eq!(metrics[0]["unit"].as_str(), Some("m/s"));
+        assert_eq!(metrics[0]["samples"].as_integer(), Some(99));
+        // Offered and not read, so listed without samples.
+        assert_eq!(metrics[1]["path"].as_str(), Some("eval.inline.twist.sway"));
+        assert!(metrics[1].get("samples").is_none());
     }
 
     #[test]

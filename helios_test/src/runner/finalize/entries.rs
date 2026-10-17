@@ -63,8 +63,8 @@ pub(super) fn report_measure(
     )
 }
 
-/// One evaluation's report line: what it read, from whom, and how much it
-/// derived.
+/// One evaluation's report line: what it read, from whom, how much it
+/// derived, and every metric it offers.
 pub(super) fn report_evaluation(
     evaluation: &PlannedEvaluation,
     derived: &Derived,
@@ -93,15 +93,16 @@ pub(super) fn report_evaluation(
         .map(|(metric, series)| MetricReport {
             path: DerivedName::new(evaluation.name.clone(), metric.name).to_string(),
             unit: ReportedUnit::Declared(metric.si_unit),
-            samples: series.samples().len(),
+            samples: series.as_ref().map(|series| series.samples().len()),
         })
         .collect();
     EvaluationReportEntry {
         name: evaluation.name.to_string(),
         kind: evaluation.kind.to_owned(),
-        align: evaluation.align,
         samples: derived.base_samples,
         uncovered: derived.uncovered,
+        refused: derived.refused.count,
+        params: evaluation.params.clone(),
         inputs,
         metrics,
     }
@@ -276,7 +277,7 @@ mod tests {
         };
         assert_eq!((slow.samples, slow.uncovered), (3, 1));
         assert_eq!(slow.metrics[0].path, "eval.inline.slow.shortfall");
-        assert_eq!(slow.metrics[0].samples, 2);
+        assert_eq!(slow.metrics[0].samples, Some(2));
         assert_eq!(slow.inputs[1].instance.as_deref(), Some("front"));
         assert_eq!(slow.inputs[0].writer, "node estimator");
         assert!(report.recording().is_empty(), "{:?}", report.recording());
@@ -310,7 +311,7 @@ mod tests {
         assert_eq!(
             report.recording(),
             [
-                "evaluation 'slow' input 'actual': 1 value(s) refused, the first a speed that \
+                "evaluation 'slow' input 'actual': 1 value(s) refused, the first a number that \
               isn't finite"
             ]
         );

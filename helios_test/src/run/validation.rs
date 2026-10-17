@@ -1,6 +1,6 @@
 use crate::{
     assertion::{condition::OperandProblem, config::WindowProblem, EntryName, TargetRoot},
-    evaluation::{kind::EvaluatorKind, path::DerivedName, Align, EvaluatorRegistry},
+    evaluation::{kind::EvaluatorKind, path::DerivedName, EvaluatorRegistry},
     run::Run,
     statistics::within_run::Reducer,
 };
@@ -71,22 +71,13 @@ pub enum ValidationError {
     DerivedInput { name: EntryName, role: String },
     #[error("evaluation '{name}': {problem}")]
     UnusableParams { name: EntryName, problem: String },
-    #[error(
-        "evaluation '{name}': align = \"{align}\" is not built yet; its first case will be \
-         {first_case}. Only \"declared\" is built"
-    )]
-    AlignNotBuilt {
-        name: EntryName,
-        align: Align,
-        first_case: &'static str,
-    },
     #[error("'{name}': '{target}' names no [[evaluate]] entry")]
     UnknownEvaluation {
         name: EntryName,
         target: DerivedName,
     },
     #[error(
-        "'{name}': '{target}' names a metric its evaluation doesn't derive (it derives {metrics})"
+        "'{name}': '{target}' names a metric its evaluation doesn't offer (it offers {metrics})"
     )]
     UnknownMetric {
         name: EntryName,
@@ -206,7 +197,7 @@ pub fn validate(run: &Run, evaluators: &EvaluatorRegistry) -> Result<(), Validat
 /// Each evaluation's kind, by the evaluation's name, once every evaluation
 /// names a registered kind, a series for each of its roles and no other,
 /// recorded series only, parameters the kind reads and a frame policy that
-/// is built.
+/// is built and that the kind applies.
 fn validate_evaluations<'a, 'r>(
     run: &'a Run,
     evaluators: &'r EvaluatorRegistry,
@@ -256,13 +247,6 @@ fn validate_evaluations<'a, 'r>(
                 problem,
             });
         }
-        if let Some(first_case) = evaluation.align.unbuilt_until() {
-            return Err(ValidationError::AlignNotBuilt {
-                name: name.clone(),
-                align: evaluation.align,
-                first_case,
-            });
-        }
         kinds.insert(name, kind);
     }
     Ok(kinds)
@@ -293,7 +277,10 @@ fn validate_derived_targets(
                 target: derived.clone(),
             });
         };
-        let metrics = kind.metrics();
+        // A menu known only once bound is checked at setup.
+        let Some(metrics) = kind.menu() else {
+            continue;
+        };
         if !metrics.iter().any(|metric| metric.name == derived.metric()) {
             return Err(ValidationError::UnknownMetric {
                 name: name.clone(),
@@ -571,7 +558,7 @@ mod tests {
 
     #[test]
     fn an_evaluation_with_an_assertion_on_its_metric_is_ok() {
-        let run = evaluating(|twist| twist, &max_of("a", "eval.inline.twist.surge_error"));
+        let run = evaluating(|twist| twist, &max_of("a", "eval.inline.twist.surge"));
         assert_eq!(check(&run), Ok(()));
     }
 
@@ -581,7 +568,9 @@ mod tests {
         let error = check(&run).expect_err("no such kind");
         assert!(matches!(error, ValidationError::UnknownKind { .. }));
         assert!(
-            error.to_string().ends_with("(there are: twist_tracking)"),
+            error
+                .to_string()
+                .ends_with("(there are: pose_error, twist_tracking)"),
             "{error}"
         );
     }
@@ -613,7 +602,7 @@ mod tests {
             |twist| {
                 twist.replace(
                     "\"agent.car.channel.reference\"",
-                    "\"eval.inline.other.surge_error\"",
+                    "\"eval.inline.other.surge\"",
                 )
             },
             "",
@@ -634,15 +623,15 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_policy_not_built_names_its_first_case() {
+    fn a_frame_policy_on_a_kind_that_relates_no_frames_is_a_parameter_it_doesnt_read() {
         let run = evaluating(
-            |twist| twist.replace("kind = ", "align = \"best_fit\"\nkind = "),
+            |twist| twist + "[evaluate.params]\nalign = \"first_pose\"\n",
             "",
         );
-        let error = check(&run).expect_err("best_fit is not built");
-        assert!(
-            error.to_string().contains("the first hardware or SLAM run"),
-            "{error}"
+        let error = check(&run).expect_err("twist_tracking reads no parameters");
+        assert_eq!(
+            error.to_string(),
+            "evaluation 'twist': twist_tracking: unknown field `align`, there are no fields"
         );
     }
 
@@ -654,12 +643,11 @@ mod tests {
             Err(ValidationError::UnknownEvaluation { .. })
         ));
 
-        let no_metric = evaluating(|twist| twist, &max_of("a", "eval.inline.twist.speed_error"));
+        let no_metric = evaluating(|twist| twist, &max_of("a", "eval.inline.twist.surge_error"));
         let error = check(&no_metric).expect_err("no such metric");
         assert!(
             error.to_string().ends_with(
-                "(it derives surge_error, sway_error, heave_error, roll_rate_error, \
-                     pitch_rate_error, yaw_rate_error)"
+                "(it offers surge, sway, heave, roll_rate, pitch_rate, yaw_rate, speed, velocity)"
             ),
             "{error}"
         );
@@ -667,10 +655,7 @@ mod tests {
 
     #[test]
     fn an_evaluation_shares_the_name_space_of_assertions_and_measures() {
-        let run = evaluating(
-            |twist| twist,
-            &max_of("twist", "eval.inline.twist.surge_error"),
-        );
+        let run = evaluating(|twist| twist, &max_of("twist", "eval.inline.twist.surge"));
         assert_eq!(
             check(&run),
             Err(ValidationError::DuplicateName(
@@ -682,7 +667,7 @@ mod tests {
     #[test]
     fn a_window_anchored_after_a_derived_series_is_refused() {
         let anchored = "[[assert]]\nname = \"a\"\ntarget = \"agent.car.node.estimator.x\"\n\
-             window = { start = { after = \"eval.inline.twist.surge_error\" } }\n\
+             window = { start = { after = \"eval.inline.twist.surge\" } }\n\
              condition = { less_than = 1.0 }";
         let run = evaluating(|twist| twist, anchored);
         assert!(matches!(
@@ -695,7 +680,7 @@ mod tests {
     fn fail_fast_watches_no_derived_series() {
         // A derived series exists only at finalize, so an every-sample
         // assertion on it can't stop the run early.
-        let every_sample = "[[assert]]\nname = \"a\"\ntarget = \"eval.inline.twist.surge_error\"\n\
+        let every_sample = "[[assert]]\nname = \"a\"\ntarget = \"eval.inline.twist.surge\"\n\
              condition = { less_than = 1.0 }";
         let text = format!(
             "termination = {{ max_simulated_seconds = 5.0, fail_fast = true }}\n{every_sample}\n\

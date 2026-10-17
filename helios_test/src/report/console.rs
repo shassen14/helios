@@ -12,8 +12,8 @@
 //! public accessor set for what is purely presentation glue.
 
 use super::{
-    AssertionStatus, EvaluationReportEntry, FailureReason, Report, ReportStatus, ReportedUnit,
-    SeriesSummary, TerminatedBy, Verdict,
+    AssertionStatus, EvaluationReportEntry, FailureReason, MetricReport, Report, ReportStatus,
+    ReportedUnit, SeriesSummary, TerminatedBy, Verdict,
 };
 
 use crate::{
@@ -21,6 +21,7 @@ use crate::{
     statistics::within_run::Reducer,
 };
 
+use helios_core::kernel::identifier::LEVEL_SEPARATOR;
 use helios_core::kernel::si_unit::SiUnit;
 
 /// Width the `[assert] …` text is padded to before the status label, so the
@@ -149,9 +150,10 @@ fn render(report: &Report) -> String {
     lines.join("\n")
 }
 
-/// "[evaluate] <name>: <kind> of <role> (<target>, <writer>[, <provenance>]),
-/// … — <samples> samples[, <uncovered> uncovered]", then each metric's path
-/// and unit.
+/// "[evaluate] <name>: <kind>[ (<param> = <value>, …)] of <role> (<target>,
+/// <writer>[, <provenance>]), … — <samples> samples[, <uncovered> where an
+/// input had no value][, <refused> not computed]", then each metric's path
+/// and unit. The parameters show only when the entry gave some.
 fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
     let inputs: Vec<String> = evaluation
         .inputs
@@ -174,13 +176,30 @@ fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
             )
         })
         .collect();
-    let metrics: Vec<String> = evaluation
+    let (read, unread): (Vec<&MetricReport>, Vec<&MetricReport>) = evaluation
         .metrics
+        .iter()
+        .partition(|metric| metric.samples.is_some());
+    let metrics: Vec<String> = read
         .iter()
         .map(|metric| format!("{} in {}", metric.path, metric.unit))
         .collect();
+    let offered: Vec<&str> = unread
+        .iter()
+        .filter_map(|metric| metric.path.rsplit(LEVEL_SEPARATOR).next())
+        .collect();
+    let params = if evaluation.params.is_empty() {
+        String::new()
+    } else {
+        let params: Vec<String> = evaluation
+            .params
+            .iter()
+            .map(|(key, value)| format!("{key} = {value}"))
+            .collect();
+        format!(" ({})", params.join(", "))
+    };
     let mut line = format!(
-        "[evaluate] {}: {} of {} - {} samples",
+        "[evaluate] {}: {}{params} of {} - {} samples",
         evaluation.name,
         evaluation.kind,
         inputs.join(", "),
@@ -188,11 +207,17 @@ fn evaluation_line(evaluation: &EvaluationReportEntry) -> String {
     );
     if evaluation.uncovered > 0 {
         line.push_str(&format!(
-            ", {} before every input had a value",
+            ", {} where an input had no value",
             evaluation.uncovered
         ));
     }
+    if evaluation.refused > 0 {
+        line.push_str(&format!(", {} not computed", evaluation.refused));
+    }
     line.push_str(&format!(" -> {}", metrics.join(", ")));
+    if !offered.is_empty() {
+        line.push_str(&format!("; also offers {}", offered.join(", ")));
+    }
     line
 }
 
@@ -353,7 +378,6 @@ mod tests {
 
     use crate::{
         assertion::{AssertionTarget, Window},
-        evaluation::Align,
         report::{AssertionReportEntry, InputReport, MeasureReportEntry, MetricReport},
     };
 
@@ -618,13 +642,14 @@ mod tests {
     }
 
     #[test]
-    fn an_evaluation_shows_its_inputs_coverage_and_metrics() {
+    fn an_evaluation_shows_its_inputs_coverage_and_the_metrics_read_then_offered() {
         let twist = EvaluationReportEntry {
             name: "twist".to_string(),
             kind: "twist_tracking".to_string(),
-            align: Align::Declared,
             samples: 100,
             uncovered: 1,
+            refused: 0,
+            params: toml::Table::new(),
             inputs: vec![InputReport {
                 role: "truth".to_string(),
                 target: AssertionTarget::parse("agent.car.channel.truth.twist")
@@ -634,18 +659,45 @@ mod tests {
                 provenance: Some("exact"),
                 refused: 0,
             }],
-            metrics: vec![MetricReport {
-                path: "eval.inline.twist.surge_error".to_string(),
-                unit: ReportedUnit::Declared(SiUnit::MetersPerSecond),
-                samples: 99,
-            }],
+            metrics: vec![
+                MetricReport {
+                    path: "eval.inline.twist.surge".to_string(),
+                    unit: ReportedUnit::Declared(SiUnit::MetersPerSecond),
+                    samples: Some(99),
+                },
+                MetricReport {
+                    path: "eval.inline.twist.sway".to_string(),
+                    unit: ReportedUnit::Declared(SiUnit::MetersPerSecond),
+                    samples: None,
+                },
+            ],
         };
 
         assert_eq!(
             evaluation_line(&twist),
             "[evaluate] twist: twist_tracking of truth (agent.car.channel.truth.twist\
-             [agent.car.base_link], body unit truth, exact) - 100 samples, 1 before every \
-             input had a value -> eval.inline.twist.surge_error in m/s"
+             [agent.car.base_link], body unit truth, exact) - 100 samples, 1 where an \
+             input had no value -> eval.inline.twist.surge in m/s; also offers sway"
+        );
+    }
+
+    #[test]
+    fn an_evaluation_shows_its_params_and_what_it_didnt_compute() {
+        let pose = EvaluationReportEntry {
+            name: "pose".to_string(),
+            kind: "pose_error".to_string(),
+            samples: 10,
+            uncovered: 0,
+            refused: 2,
+            params: "align = \"first_pose\"".parse().expect("valid TOML"),
+            inputs: vec![],
+            metrics: vec![],
+        };
+
+        assert_eq!(
+            evaluation_line(&pose),
+            "[evaluate] pose: pose_error (align = \"first_pose\") of  - 10 samples, 2 \
+             not computed -> "
         );
     }
 }
