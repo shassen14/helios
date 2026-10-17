@@ -10,16 +10,17 @@ use thiserror::Error;
 
 impl Runner {
     /// Check, before the first tick, that the run can judge every assertion
-    /// against what `pipelines` report and what `collector` records, and keep
-    /// what the check found for every tick. The run is then ready, or, if
-    /// any assertion can't be judged, aborted with the reasons.
+    /// against what `pipelines` report and what `collector` requests, bind
+    /// each assertion's series in `collector`, and keep what the check found
+    /// for every tick. The run is then ready, or, if any assertion can't be
+    /// judged, aborted with the reasons.
     ///
     /// Called once. A second call, or one after setup failed, is refused and
     /// changes nothing.
     pub fn on_pipeline_built(
         &mut self,
         pipelines: &[(AgentId, &AutonomyPipeline)],
-        collector: &ObservationCollector,
+        collector: &mut ObservationCollector,
     ) -> Result<(), SetupError> {
         if self.phase != Phase::AwaitingPipelines {
             return Err(SetupError::AlreadySetUp);
@@ -86,8 +87,8 @@ mod tests {
     fn zero_assertions_is_ok() {
         // A pure smoke run: nothing to resolve, so nothing can fail.
         let mut r = Runner::new(run("max_simulated_seconds = 5.0", &[])).expect("valid run");
-        let collector = r.collector();
-        assert_eq!(r.on_pipeline_built(&[], &collector), Ok(()));
+        let mut collector = r.collector();
+        assert_eq!(r.on_pipeline_built(&[], &mut collector), Ok(()));
     }
 
     #[test]
@@ -107,9 +108,9 @@ mod tests {
         let b = "when = \"at_completion\"\ntarget = \"agent.car.node.estimator.b\"\ncondition = \"equals\"\nvalue = 0.0";
         let pipeline = empty_pipeline();
         let mut r = Runner::new(run("max_simulated_seconds = 5.0", &[a, b])).expect("valid run");
-        let collector = r.collector();
+        let mut collector = r.collector();
         assert_eq!(
-            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &collector),
+            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector),
             Err(SetupError::UnusableAssertions(vec![
                 UnusableAssertion {
                     number: 1,
@@ -128,14 +129,14 @@ mod tests {
 
     #[test]
     fn setup_is_decided_once() {
-        let (mut r, collector) = ready(
+        let (mut r, mut collector) = ready(
             run("max_simulated_seconds = 5.0", &[&term(CAR, 5.0)]),
             &[CAR],
         );
         let pipeline = pipeline();
 
         assert_eq!(
-            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &collector),
+            r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector),
             Err(SetupError::AlreadySetUp)
         );
         assert!(matches!(r.phase, Phase::Ready(_)));

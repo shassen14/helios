@@ -74,7 +74,7 @@ impl Plugin for TestRunnerPlugin {
 fn on_pipeline_built_system(
     query: Query<(&AgentIdComponent, &AutonomyPipelineComponent)>,
     failed_query: Query<(&AgentIdComponent, &PipelineBuildFailed)>,
-    collector: Res<RegisteredSink<ObservationCollector>>,
+    mut collector: ResMut<RegisteredSink<ObservationCollector>>,
     mut runner: ResMut<ActiveRunner>,
     mut next_state: ResMut<NextState<AppState>>,
     mut run_verdict: ResMut<RunVerdict>,
@@ -102,7 +102,7 @@ fn on_pipeline_built_system(
         pairs.push((agent_id_comp.0.clone(), &autonomy_pipeline_comp.0));
     }
 
-    match runner.0.on_pipeline_built(&pairs, &collector.0) {
+    match runner.0.on_pipeline_built(&pairs, &mut collector.0) {
         Ok(()) => (),
         Err(e) => {
             let reason = format!("on_pipeline_built failed: {e}");

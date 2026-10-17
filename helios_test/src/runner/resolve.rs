@@ -1,7 +1,8 @@
 //! Checks, once the pipelines exist, that the run can judge every assertion:
 //! its target names one series its agent records, a channel value there can
 //! be extracted, a nondeterministic value is asserted on only with
-//! permission, and the collector records it.
+//! permission, and the collector requests it. Each assertion that can be
+//! judged binds its series to the exact key it names.
 //!
 //! Done against what each agent declares it reports, before the first tick,
 //! so a run that could never pass stops before it starts and names every
@@ -17,7 +18,11 @@ use crate::{
 
 use helios_core::prelude::AgentId;
 use helios_runtime::{
-    observe::{key::Subject, observation::ObservedValueKind, path::channel_path},
+    observe::{
+        key::{RecordedKey, Subject},
+        observation::ObservedValueKind,
+        path::channel_path,
+    },
     port::{ChannelKey, Determinism, Observable, Writer},
     AutonomyPipeline,
 };
@@ -144,8 +149,10 @@ struct Catalog<'a> {
 
 impl Catalog<'_> {
     /// Every entry `subject`, a target's subject, names: at most one
-    /// emission, or every instance of a channel.
-    fn matching(&self, subject: &TargetSubject) -> Vec<&Observable> {
+    /// emission, or every instance of a channel. A target spells a channel
+    /// by name alone, which is enough: the build refuses one name for two
+    /// channels of an agent.
+    fn matching(&self, subject: &TargetSubject) -> Vec<(&Subject, &Observable)> {
         self.observables
             .iter()
             .filter(|(entry, _)| match (subject, entry) {
@@ -161,17 +168,17 @@ impl Catalog<'_> {
                 }
                 _ => false,
             })
-            .map(|(_, observable)| observable)
+            .map(|(entry, observable)| (entry, observable))
             .collect()
     }
 }
 
-/// The plan for judging `assertions`, or every one the run can't judge, in
-/// run-file order.
+/// The plan for judging `assertions`, with each one's series bound in
+/// `collector`, or every one the run can't judge, in run-file order.
 pub(super) fn resolve(
     assertions: &[Assertion],
     pipelines: &[(AgentId, &AutonomyPipeline)],
-    collector: &ObservationCollector,
+    collector: &mut ObservationCollector,
 ) -> Result<ResolvedPlan, Vec<UnusableAssertion>> {
     let catalogs: Vec<Catalog> = pipelines
         .iter()
@@ -214,14 +221,14 @@ pub(super) fn resolve(
     }
 }
 
-/// The series `assertion` is judged from, or every reason the run can't
-/// judge it, checked against the one agent its target names. A target that
-/// doesn't name exactly one series its agent records has no other
-/// properties to check, so that problem is reported alone.
+/// The series `assertion` is judged from, bound in `collector`, or every
+/// reason the run can't judge it, checked against the one agent its target
+/// names. A target that doesn't name exactly one series its agent records
+/// has no other properties to check, so that problem is reported alone.
 fn check(
     assertion: &Assertion,
     catalogs: &[Catalog],
-    collector: &ObservationCollector,
+    collector: &mut ObservationCollector,
 ) -> Result<SeriesId, Vec<TargetProblem>> {
     let target = assertion.target();
     let Some(catalog) = catalogs
@@ -230,8 +237,8 @@ fn check(
     else {
         return Err(vec![TargetProblem::UnknownAgent]);
     };
-    let observable = match catalog.matching(target.subject()).as_slice() {
-        [observable] => *observable,
+    let (subject, observable) = match catalog.matching(target.subject()).as_slice() {
+        [(subject, observable)] => (*subject, *observable),
         [] => return Err(vec![unreported(catalog, target.subject())]),
         several => return Err(vec![TargetProblem::SeveralInstances(several.len())]),
     };
@@ -249,15 +256,17 @@ fn check(
             problems.push(TargetProblem::NoExtractor(type_name))
         }
     }
-    let series = collector.series_id(target);
-    if series.is_none() {
+    if !collector.requests(target) {
         problems.push(TargetProblem::Unrequested);
     }
 
-    match series {
-        Some(id) if problems.is_empty() => Ok(id),
-        _ => Err(problems),
+    if !problems.is_empty() {
+        return Err(problems);
     }
+    Ok(collector.bind(RecordedKey {
+        agent: catalog.agent.clone(),
+        subject: subject.clone(),
+    }))
 }
 
 /// Why `subject` matched nothing `catalog` records: a channel spelled as a
@@ -400,6 +409,19 @@ mod tests {
             .expect("two nodes with no inputs build")
     }
 
+    /// The car's key for `subject`.
+    fn key(subject: Subject) -> RecordedKey {
+        RecordedKey {
+            agent: AgentId::new(CAR),
+            subject,
+        }
+    }
+
+    /// [`SPEED`] as the estimator declares it.
+    fn speed_subject() -> Subject {
+        Subject::channel(ChannelKey::internal::<f64>(SPEED), None)
+    }
+
     fn target(agent: &str, node: &str, leaf: &str) -> AssertionTarget {
         AssertionTarget::parse(node_path(agent, node, leaf)).expect("valid target")
     }
@@ -449,8 +471,12 @@ mod tests {
         Result<ResolvedPlan, Vec<UnusableAssertion>>,
     ) {
         let pipeline = pipeline();
-        let collector = ObservationCollector::new(requested, standard_extractors());
-        let resolved = resolve(assertions, &[(AgentId::new(CAR), &pipeline)], &collector);
+        let mut collector = ObservationCollector::new(requested, standard_extractors());
+        let resolved = resolve(
+            assertions,
+            &[(AgentId::new(CAR), &pipeline)],
+            &mut collector,
+        );
         (collector, resolved)
     }
 
@@ -479,16 +505,55 @@ mod tests {
             &[nis.clone(), speed.clone()],
         );
 
-        let entry = |number, t: &AssertionTarget| PlanEntry {
+        let entry = |number, subject: Subject| PlanEntry {
             number,
-            series: collector.series_id(t).expect("target is requested"),
+            series: collector
+                .series_id(&key(subject))
+                .expect("the assertion's key is bound"),
             state: AssertionState::new(),
         };
         assert_eq!(
             resolved,
             Ok(ResolvedPlan {
-                entries: vec![entry(1, &nis), entry(2, &speed), entry(3, &nis)],
+                entries: vec![
+                    entry(1, Subject::emission(ESTIMATOR, NIS)),
+                    entry(2, speed_subject()),
+                    entry(3, Subject::emission(ESTIMATOR, NIS)),
+                ],
             })
+        );
+    }
+
+    #[test]
+    fn a_channel_target_binds_the_key_its_agent_declares_payload_type_included() {
+        // The path spells only the name; the bound key is the catalog's, so
+        // a value of another payload type under that name lands nowhere.
+        let (collector, resolved) =
+            resolve_with(&[assertion(channel(SPEED), false)], &[channel(SPEED)]);
+
+        assert!(resolved.is_ok());
+        assert!(collector.series_id(&key(speed_subject())).is_some());
+        assert_eq!(
+            collector.series_id(&key(Subject::channel(
+                ChannelKey::internal::<bool>(SPEED),
+                None
+            ))),
+            None
+        );
+    }
+
+    #[test]
+    fn an_assertion_the_run_cannot_judge_binds_nothing() {
+        let label = channel(LABEL);
+        let (collector, resolved) = resolve_with(&[assertion(label.clone(), false)], &[label]);
+
+        assert!(resolved.is_err());
+        assert_eq!(
+            collector.series_id(&key(Subject::channel(
+                ChannelKey::internal::<String>(LABEL),
+                None
+            ))),
+            None
         );
     }
 

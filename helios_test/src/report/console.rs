@@ -54,6 +54,12 @@ fn render(report: &Report) -> String {
         lines.push(format!("[wiring] {refused}"));
     }
 
+    // And values the collector dropped: a series that missed them judges
+    // less than the run recorded.
+    for unbound in &report.unbound_arrivals {
+        lines.push(format!("[recording] {unbound}"));
+    }
+
     // One line per assertion, in run-file order.
     for entry in report.assertions() {
         // The left half: "[assert] <target> <op> <expected>".
@@ -210,6 +216,7 @@ mod tests {
             ReportStatus::Failed,
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             47.3,
             4.1,
             TerminatedBy::TimeBudget,
@@ -296,6 +303,7 @@ mod tests {
             ReportStatus::Failed,
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             1.0,
             0.1,
             TerminatedBy::TimeBudget,
@@ -322,5 +330,12 @@ mod tests {
         let mut report = sample_report();
         report.refused_writes = vec!["agent 'car': truth.tf refused 3 write(s)".to_string()];
         assert!(render(&report).contains("[wiring] agent 'car': truth.tf refused 3 write(s)"));
+    }
+
+    #[test]
+    fn an_unbound_arrival_is_shown_as_a_recording_line() {
+        let mut report = sample_report();
+        report.unbound_arrivals = vec!["agent.car.node.estimator.x: 1 value(s)".to_string()];
+        assert!(render(&report).contains("[recording] agent.car.node.estimator.x: 1 value(s)"));
     }
 }

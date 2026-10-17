@@ -31,10 +31,14 @@ impl Runner {
     /// run stopped. In a run that covered its windows, an assertion that never
     /// saw a sample fails, since that is how a dropped signal looks.
     ///
-    /// The run is `Passed` only if every assertion passed, setup didn't fail
-    /// and no agent's bus refused a write ([`HostFacts::refused_writes`]):
-    /// values the wiring dropped leave the assertions judging another run than
-    /// the one configured. An early stop is always a failure or an abort, so an
+    /// The run is `Passed` only if every assertion passed, setup didn't fail,
+    /// no agent's bus refused a write ([`HostFacts::refused_writes`]) and the
+    /// collector dropped no requested value
+    /// ([`ObservationCollector::unbound_arrivals`]): values the wiring or the
+    /// recording dropped leave the assertions judging another run than the
+    /// one configured. Only a run that was set up reports the collector's
+    /// drops; in one aborted at setup, a refused assertion's key is unbound
+    /// by design. An early stop is always a failure or an abort, so an
     /// `Unjudged` assertion only ever sits in a run that failed for another
     /// reason.
     ///
@@ -104,10 +108,24 @@ impl Runner {
             .map(|(agent, refused)| format!("agent '{agent}': {refused}"))
             .collect();
 
-        // A setup failure or a refused write outranks the assertion tally: a
-        // run whose scene never became fit to test, or whose wiring dropped
-        // values, cannot pass however its assertions came out.
-        let run_status = if all_passed && setup_failures.is_empty() && refused_writes.is_empty() {
+        let unbound_arrivals: Vec<String> = match &self.phase {
+            Phase::Ready(_) => collector
+                .unbound_arrivals()
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            Phase::AwaitingPipelines | Phase::Aborted => Vec::new(),
+        };
+
+        // A setup failure, a refused write or a dropped value outranks the
+        // assertion tally: a run whose scene never became fit to test, or
+        // whose wiring or recording dropped values, cannot pass however its
+        // assertions came out.
+        let run_status = if all_passed
+            && setup_failures.is_empty()
+            && refused_writes.is_empty()
+            && unbound_arrivals.is_empty()
+        {
             ReportStatus::Passed
         } else {
             ReportStatus::Failed
@@ -128,6 +146,7 @@ impl Runner {
             run_status,
             setup_failures,
             refused_writes,
+            unbound_arrivals,
             simulated_duration_secs,
             wall_duration_secs,
             TerminatedBy::from(&terminated_by_reason),
@@ -222,7 +241,8 @@ mod tests {
         assertion::AssertionValue,
         runner::{
             fixtures::{
-                at, cont, ready, refused_write, report, report_unreadable, run, term, CAR, TRUCK,
+                at, cont, pipeline, ready, refused_write, report, report_speed, report_unbound,
+                report_unreadable, run, speed_term, term, CAR, TRUCK,
             },
             TickAction,
         },
@@ -563,5 +583,48 @@ mod tests {
         };
         assert!(line.starts_with("agent 'car': "), "{line}");
         assert!(line.contains("\"undeclared\""), "{line}");
+    }
+
+    #[test]
+    fn a_value_under_no_bound_series_fails_a_run_whose_assertions_passed() {
+        // The speed channel's path is requested and bound as the pipeline
+        // declares it, carrying a float; a value under it carrying a bool
+        // lands in no series.
+        let (mut r, mut collector) = ready(run(&budget(), &[&speed_term(CAR, 5.0)]), &[CAR]);
+        report_speed(&mut collector, CAR, 0.5, 5.0);
+        report_unbound(&mut collector, CAR, 0.5);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(statuses(&report), [AssertionStatus::Passed]);
+        assert_eq!(report.status(), &ReportStatus::Failed);
+        let [line] = report.unbound_arrivals() else {
+            panic!("one unbound key, one line: {:?}", report.unbound_arrivals());
+        };
+        assert!(line.starts_with("agent.car.channel.speed ("), "{line}");
+        assert!(line.contains("bool"), "{line}");
+        assert!(
+            line.ends_with(": 1 value(s) arrived under no bound series"),
+            "{line}"
+        );
+    }
+
+    #[test]
+    fn a_run_aborted_at_setup_reports_no_unbound_values() {
+        // The truck's assertion is refused, so its key is never bound; values
+        // under its path say nothing beyond the setup failure.
+        let mut r = Runner::new(run(&budget(), &[&term(TRUCK, 5.0)])).expect("valid run");
+        let mut collector = r.collector();
+        let pipeline = pipeline();
+        assert!(r
+            .on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector)
+            .is_err());
+        report(&mut collector, TRUCK, 0.5, 5.0);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(report.status(), &ReportStatus::Failed);
+        assert!(report.unbound_arrivals().is_empty());
     }
 }

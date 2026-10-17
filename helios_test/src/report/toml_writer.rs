@@ -60,6 +60,7 @@ mod tests {
             ReportStatus::Failed,
             Vec::new(),
             Vec::new(),
+            Vec::new(),
             12.5,
             0.3,
             TerminatedBy::TimeBudget,
@@ -120,7 +121,10 @@ mod tests {
         assert_eq!(assertions[0]["actual"].as_float(), Some(0.0));
         // A pass carries no failure fields at all.
         assert!(assertions[0].get("reason").is_none());
-        assert_eq!(assertions[1]["target"].as_str(), Some("agent.car.node.estimator.speed"));
+        assert_eq!(
+            assertions[1]["target"].as_str(),
+            Some("agent.car.node.estimator.speed")
+        );
         assert_eq!(assertions[1]["status"].as_str(), Some("failed"));
         assert_eq!(assertions[1]["actual"].as_float(), Some(7.0));
         assert_eq!(assertions[1]["reason"].as_str(), Some("condition_failed"));
@@ -168,7 +172,33 @@ mod tests {
         let value: toml::Value = toml::from_str(&text).unwrap();
         let lines = value["refused_writes"].as_array().unwrap();
         assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].as_str(), Some("agent 'car': truth.tf refused 3 write(s)"));
+        assert_eq!(
+            lines[0].as_str(),
+            Some("agent 'car': truth.tf refused 3 write(s)")
+        );
+    }
+
+    #[test]
+    fn unbound_arrivals_are_listed_only_when_there_are_some() {
+        let clean = sample_report();
+        let path = write_to_temp(&clean);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let value: toml::Value = toml::from_str(&text).unwrap();
+        assert!(value.get("unbound_arrivals").is_none());
+
+        let mut unbound = sample_report();
+        unbound.unbound_arrivals = vec!["agent.car.node.estimator.x: 1 value(s)".to_string()];
+        let path = write_to_temp(&unbound);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        let value: toml::Value = toml::from_str(&text).unwrap();
+        let lines = value["unbound_arrivals"].as_array().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0].as_str(),
+            Some("agent.car.node.estimator.x: 1 value(s)")
+        );
     }
 
     #[test]

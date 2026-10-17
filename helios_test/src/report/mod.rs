@@ -40,6 +40,13 @@ pub struct Report {
     /// ahead of `terminated_by` for the same reason as `setup_failures`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     refused_writes: Vec<String>,
+    /// The values the collector dropped, one line per key: they arrived
+    /// under a path an assertion requests but a key no series was bound to,
+    /// so a judged series may have missed them. Any one fails the run.
+    /// Omitted from the TOML when empty, and ahead of `terminated_by` for
+    /// the same reason as `setup_failures`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unbound_arrivals: Vec<String>,
     simulated_duration_secs: f64,
     wall_duration_secs: f64,
     terminated_by: TerminatedBy,
@@ -59,6 +66,7 @@ impl Report {
         status: ReportStatus,
         setup_failures: Vec<String>,
         refused_writes: Vec<String>,
+        unbound_arrivals: Vec<String>,
         simulated_duration_secs: f64,
         wall_duration_secs: f64,
         terminated_by: TerminatedBy,
@@ -71,6 +79,7 @@ impl Report {
             status,
             setup_failures,
             refused_writes,
+            unbound_arrivals,
             simulated_duration_secs,
             wall_duration_secs,
             terminated_by,
@@ -98,6 +107,12 @@ impl Report {
     /// run whose wiring dropped nothing.
     pub fn refused_writes(&self) -> &[String] {
         &self.refused_writes
+    }
+
+    /// The values the collector dropped, one line per key. Empty on a run
+    /// whose every requested value landed in a series.
+    pub fn unbound_arrivals(&self) -> &[String] {
+        &self.unbound_arrivals
     }
 
     /// Why the run stopped.

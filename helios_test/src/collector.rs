@@ -8,10 +8,10 @@
 
 use crate::assertion::{
     extract::{ExtractError, ExtractorTable},
-    AssertionTarget, AssertionValue, TargetSubject,
+    AssertionTarget, AssertionValue,
 };
 
-use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::prelude::MonotonicTime;
 use helios_runtime::observe::{
     key::{RecordedKey, Subject},
     observation::{Observation, ObservedValue},
@@ -20,21 +20,28 @@ use helios_runtime::observe::{
 
 use std::{
     any::TypeId,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    fmt::{self, Display},
     sync::atomic::{AtomicU64, Ordering},
 };
-
-/// The parts of an observation's path: its agent and what its path names
-/// there. Every instance of a keyed channel shares one, as they share one
-/// path.
-type PathKey = (AgentId, TargetSubject);
 
 /// The id the next collector built takes. Counts up for the life of the
 /// process, so no two collectors share one.
 static NEXT_COLLECTOR: AtomicU64 = AtomicU64::new(0);
 
-/// _Per-step._ Collects, per run-file target, every value the brain reports
-/// for it, turned into an [`AssertionValue`] on arrival.
+/// _Per-step._ Collects, per recorded key, every value the brain reports
+/// under it, turned into an [`AssertionValue`] on arrival.
+///
+/// Built requesting the targets' paths; each series is bound to one exact
+/// key at setup, from what the pipelines declare, so an arrival is matched
+/// on its whole key (agent, channel, payload type and instance). Every
+/// instance of a keyed channel has a series of its own.
+///
+/// An arrival under a requested path but no bound key is dropped and
+/// counted. Setup binds every key a judged assertion names, so in a run that
+/// can judge, one means the pipeline recorded under a key its catalog never
+/// declared, or delivered before setup bound it; the run fails on it rather
+/// than judging a series that silently missed values.
 ///
 /// A value is extracted the moment it arrives and the observation is then
 /// dropped, so a channel carrying a large payload costs what a scalar does:
@@ -43,45 +50,51 @@ pub struct ObservationCollector {
     /// Stamped into every [`SeriesId`] this collector hands out, so an id is
     /// never read against another run's collector.
     id: CollectorId,
-    /// Each target's index into `series`.
-    by_target: HashMap<AssertionTarget, usize>,
-    /// The same indices by the parts of each target's path, so an arrival
-    /// is matched without building its path.
-    by_path: HashMap<PathKey, usize>,
+    /// The paths the host is asked to record, one per target.
+    requested: HashSet<String>,
+    /// Each bound key's index into `series`.
+    by_key: HashMap<RecordedKey, usize>,
     series: Vec<Series>,
+    /// How many values arrived under each key no series is bound to whose
+    /// path is requested.
+    unbound: HashMap<RecordedKey, u64>,
+    /// Keys under a path no target requests: what another sink asked for,
+    /// which every sink is handed. Held so each key's path is spelled once,
+    /// not on every arrival.
+    unrequested: HashSet<RecordedKey>,
     extractors: ExtractorTable,
 }
 
 impl ObservationCollector {
-    /// A collector requesting each of `targets`, with an empty series for
-    /// each. A target named twice gets one series, shared by every
-    /// assertion on it.
+    /// A collector requesting each of `targets`, with no series until keys
+    /// are bound. A target named twice is requested once.
     pub fn new<'a>(
         targets: impl IntoIterator<Item = &'a AssertionTarget>,
         extractors: ExtractorTable,
     ) -> Self {
-        let mut collector = Self {
+        Self {
             id: CollectorId(NEXT_COLLECTOR.fetch_add(1, Ordering::Relaxed)),
-            by_target: HashMap::new(),
-            by_path: HashMap::new(),
+            requested: targets
+                .into_iter()
+                .map(|target| target.as_str().to_owned())
+                .collect(),
+            by_key: HashMap::new(),
             series: Vec::new(),
+            unbound: HashMap::new(),
+            unrequested: HashSet::new(),
             extractors,
-        };
-        for target in targets {
-            collector.add(target);
         }
-
-        collector
     }
 
-    /// The series `target` is recorded in. `None` when `target` was never
-    /// requested.
-    pub fn series_id(&self, target: &AssertionTarget) -> Option<SeriesId> {
-        let index = self.by_target.get(target)?;
-        Some(SeriesId {
-            collector: self.id,
-            index: *index,
-        })
+    /// Whether the host is asked to record `target`'s path.
+    pub fn requests(&self, target: &AssertionTarget) -> bool {
+        self.requested.contains(target.as_str())
+    }
+
+    /// The series bound to `key`. `None` when `key` was never bound.
+    pub fn series_id(&self, key: &RecordedKey) -> Option<SeriesId> {
+        let index = self.by_key.get(key)?;
+        Some(self.id_at(*index))
     }
 
     /// What arrived so far in the series `id` names. `None` when `id` came
@@ -94,45 +107,82 @@ impl ObservationCollector {
         self.series.get(id.index)
     }
 
+    /// Each key a value arrived under with its path requested but no series
+    /// bound to it, with how many arrived, in path order. Empty when every
+    /// requested value landed in a series.
+    pub fn unbound_arrivals(&self) -> Vec<UnboundArrivals> {
+        let mut unbound: Vec<UnboundArrivals> = self
+            .unbound
+            .iter()
+            .map(|(key, count)| UnboundArrivals {
+                key: key.clone(),
+                count: *count,
+            })
+            .collect();
+        unbound.sort_by_cached_key(|arrivals| (arrivals.key.path(), arrivals.key.subject.clone()));
+        unbound
+    }
+
     /// Whether a channel value whose payload is of type `payload` can be
     /// turned into an [`AssertionValue`].
     pub fn can_extract(&self, payload: TypeId) -> bool {
         self.extractors.handles(payload)
     }
 
-    /// Gives `target` a series, unless it has one already.
-    fn add(&mut self, target: &AssertionTarget) {
-        if self.by_target.contains_key(target) {
-            return;
+    /// The series values recorded under `key` arrive in, given an empty one
+    /// unless `key` has one already, so every reader of one key shares one
+    /// series. Bound before the first tick: a value arriving under a key not
+    /// yet bound is dropped.
+    pub fn bind(&mut self, key: RecordedKey) -> SeriesId {
+        if let Some(index) = self.by_key.get(&key) {
+            return self.id_at(*index);
         }
         let index = self.series.len();
         self.series.push(Series::default());
-        self.by_target.insert(target.clone(), index);
-        self.by_path
-            .insert((target.agent().clone(), target.subject().clone()), index);
+        self.by_key.insert(key, index);
+        self.id_at(index)
+    }
+
+    /// Counts a value that arrived under `key`, bound to no series, when
+    /// its path is requested.
+    fn count_unbound(&mut self, key: &RecordedKey) {
+        if let Some(count) = self.unbound.get_mut(key) {
+            *count += 1;
+            return;
+        }
+        if self.unrequested.contains(key) {
+            return;
+        }
+        if self.requested.contains(&key.path()) {
+            self.unbound.insert(key.clone(), 1);
+        } else {
+            self.unrequested.insert(key.clone());
+        }
+    }
+
+    fn id_at(&self, index: usize) -> SeriesId {
+        SeriesId {
+            collector: self.id,
+            index,
+        }
     }
 }
 
 impl ObservationSink for ObservationCollector {
+    /// Paths, so a channel path watches every instance; [`bind`]
+    /// (Self::bind) decides which of them are kept.
     fn request(&self) -> WatchRequest {
-        WatchRequest::Paths(
-            self.by_target
-                .keys()
-                .map(|target| target.as_str().to_owned())
-                .collect(),
-        )
+        WatchRequest::Paths(self.requested.iter().cloned().collect())
     }
 
-    /// Every instance of a keyed channel lands in the one series its path
-    /// names; setup refuses an assertion whose target has several, so a
-    /// judged series never mixes two.
     fn receive(&mut self, batch: &[Observation]) {
         for observation in batch {
             let Some(series) = self
-                .by_path
-                .get(&path_key(&observation.key))
+                .by_key
+                .get(&observation.key)
                 .and_then(|index| self.series.get_mut(*index))
             else {
+                self.count_unbound(&observation.key);
                 continue;
             };
             match extract(&self.extractors, &observation.value) {
@@ -146,21 +196,6 @@ impl ObservationSink for ObservationCollector {
             }
         }
     }
-}
-
-/// The parts of `key`'s path. Clones `Arc`s only: a reference count each,
-/// no allocation.
-fn path_key(key: &RecordedKey) -> PathKey {
-    let subject = match &key.subject {
-        Subject::Emission { node, leaf } => TargetSubject::Node {
-            node: node.clone(),
-            leaf: leaf.clone(),
-        },
-        Subject::Channel { channel, .. } => TargetSubject::Channel {
-            channel: channel.name().clone(),
-        },
-    };
-    (key.agent.clone(), subject)
 }
 
 /// The comparable value inside `value`: a scalar is a float, a channel value
@@ -178,6 +213,30 @@ fn extract(
     }
 }
 
+/// _Post-step._ Values that arrived under one key whose path a target
+/// requests but to which no series is bound.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnboundArrivals {
+    pub key: RecordedKey,
+    pub count: u64,
+}
+
+/// The path, then the whole key where the path alone doesn't name it: a
+/// channel's kind and payload type, and its instance.
+impl Display for UnboundArrivals {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.key.path())?;
+        if let Subject::Channel { channel, instance } = &self.key.subject {
+            write!(f, " ({channel}")?;
+            if let Some(instance) = instance {
+                write!(f, ", instance \"{instance}\"")?;
+            }
+            write!(f, ")")?;
+        }
+        write!(f, ": {} value(s) arrived under no bound series", self.count)
+    }
+}
+
 /// _Per-step._ Which collector a [`SeriesId`] came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CollectorId(u64);
@@ -190,7 +249,7 @@ pub struct SeriesId {
     index: usize,
 }
 
-/// _Per-step._ Everything that arrived for one target.
+/// _Per-step._ Everything that arrived under one key.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Series {
     /// In arrival order, which is not always time order: a measurement
@@ -199,7 +258,7 @@ pub struct Series {
     samples: Vec<Sample>,
     /// Why the first value that arrived but couldn't be read was turned
     /// away. Kept so an assertion over it fails for that reason rather than
-    /// for having no samples. One path carries one kind of value, so the
+    /// for having no samples. One key carries one kind of value, so the
     /// first reason stands for every one.
     rejection: Option<Rejection>,
 }
@@ -214,7 +273,7 @@ impl Series {
     }
 }
 
-/// _Per-step._ One value for a target, with the time it describes.
+/// _Per-step._ One value under a key, with the time it describes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sample {
     pub timestamp: MonotonicTime,
@@ -238,9 +297,13 @@ mod tests {
 
     use crate::assertion::extract::standard_extractors;
 
+    use helios_core::prelude::AgentId;
     use helios_runtime::{
-        observe::path::{channel_path, node_path},
-        port::ChannelKey,
+        observe::{
+            key::Subject,
+            path::{channel_path, node_path},
+        },
+        port::{ChannelKey, ChannelKind, InstanceKey, Keyed},
         prelude::{Health, Stamped},
         ErasedStamped,
     };
@@ -252,46 +315,67 @@ mod tests {
     const ESTIMATOR: &str = "estimator";
     const NIS: &str = "aiding.gps.nis";
     const SPEED: &str = "speed";
+    const WHEELS: &str = "wheels";
+
+    /// A value about one wheel, keyed by the wheel. Only its key is used:
+    /// the values sent under it are scalars.
+    struct WheelSpeed(&'static str);
+
+    impl Keyed for WheelSpeed {
+        type Instance = &'static str;
+
+        fn instance(&self) -> &&'static str {
+            &self.0
+        }
+    }
 
     fn target(agent: &str, leaf: &str) -> AssertionTarget {
         AssertionTarget::parse(node_path(agent, ESTIMATOR, leaf)).expect("valid target")
     }
 
-    /// The target on `agent`'s channel named `name`.
-    fn channel_target(agent: &str, name: &str) -> AssertionTarget {
-        AssertionTarget::parse(channel_path(agent, &speed_channel(name))).expect("valid target")
+    /// The target on `agent`'s channel `channel`.
+    fn channel_target(agent: &str, channel: &ChannelKey) -> AssertionTarget {
+        AssertionTarget::parse(channel_path(agent, channel)).expect("valid target")
     }
 
-    /// A channel named `name`. The collector matches channels by name, so
-    /// the payload type here is arbitrary.
-    fn speed_channel(name: &str) -> ChannelKey {
-        ChannelKey::internal::<bool>(name)
+    /// The [`SPEED`] channel carrying `T`.
+    fn speed<T: Send + Sync + 'static>() -> ChannelKey {
+        ChannelKey::internal::<T>(SPEED)
+    }
+
+    fn wheels() -> ChannelKey {
+        ChannelKey::keyed::<WheelSpeed>(ChannelKind::Internal, WHEELS)
+    }
+
+    fn wheel(name: &'static str) -> Subject {
+        Subject::channel(wheels(), Some(InstanceKey::of::<WheelSpeed>(&name)))
+    }
+
+    fn emission_key(agent: &str, leaf: &str) -> RecordedKey {
+        key(agent, Subject::emission(ESTIMATOR, leaf))
+    }
+
+    fn key(agent: &str, subject: Subject) -> RecordedKey {
+        RecordedKey {
+            agent: AgentId::new(agent),
+            subject,
+        }
     }
 
     fn collector(targets: &[AssertionTarget]) -> ObservationCollector {
         ObservationCollector::new(targets, standard_extractors())
     }
 
-    fn observed(agent: &str, leaf: &str, at: f64, value: ObservedValue) -> Observation {
-        recorded(agent, Subject::emission(ESTIMATOR, leaf), at, value)
+    /// A collector bound to `key` alone, with the series it binds.
+    fn bound(key: &RecordedKey) -> (ObservationCollector, SeriesId) {
+        let mut collector = collector(&[]);
+        let id = collector.bind(key.clone());
+        (collector, id)
     }
 
-    /// A value written to `agent`'s channel named `name`.
-    fn written(agent: &str, name: &str, at: f64, value: ObservedValue) -> Observation {
-        recorded(
-            agent,
-            Subject::channel(speed_channel(name), None),
-            at,
-            value,
-        )
-    }
-
-    fn recorded(agent: &str, subject: Subject, at: f64, value: ObservedValue) -> Observation {
+    fn arrival(key: &RecordedKey, at: f64, value: ObservedValue) -> Observation {
         Observation {
-            key: RecordedKey {
-                agent: AgentId::new(agent),
-                subject,
-            },
+            key: key.clone(),
             timestamp: MonotonicTime(at),
             value,
         }
@@ -315,18 +399,10 @@ mod tests {
         }
     }
 
-    fn series_of<'c>(
-        collector: &'c ObservationCollector,
-        target: &AssertionTarget,
-    ) -> Option<&'c Series> {
+    fn samples(collector: &ObservationCollector, id: SeriesId) -> Vec<Sample> {
         collector
-            .series_id(target)
-            .and_then(|id| collector.series(id))
-    }
-
-    fn samples_of(collector: &ObservationCollector, target: &AssertionTarget) -> Vec<Sample> {
-        series_of(collector, target)
-            .expect("target is requested")
+            .series(id)
+            .expect("the id is this collector's")
             .samples()
             .to_vec()
     }
@@ -334,7 +410,7 @@ mod tests {
     #[test]
     fn request_names_each_target_once() {
         let nis = target(CAR, NIS);
-        let speed = channel_target(CAR, SPEED);
+        let speed = channel_target(CAR, &speed::<f64>());
         let collector = collector(&[nis.clone(), speed.clone(), nis.clone()]);
 
         assert_eq!(
@@ -348,28 +424,39 @@ mod tests {
     }
 
     #[test]
-    fn a_requested_target_nothing_reported_has_an_empty_series() {
+    fn a_target_is_requested_but_has_no_series_until_its_key_is_bound() {
         let nis = target(CAR, NIS);
         let collector = collector(std::slice::from_ref(&nis));
 
-        assert_eq!(series_of(&collector, &nis), Some(&Series::default()));
+        assert!(collector.requests(&nis));
+        assert!(!collector.requests(&target(CAR, SPEED)));
+        assert_eq!(collector.series_id(&emission_key(CAR, NIS)), None);
     }
 
     #[test]
-    fn an_unrequested_target_has_no_series() {
-        let collector = collector(&[target(CAR, NIS)]);
+    fn a_bound_key_nothing_reported_has_an_empty_series() {
+        let (collector, id) = bound(&emission_key(CAR, NIS));
 
-        assert_eq!(collector.series_id(&channel_target(CAR, SPEED)), None);
+        assert_eq!(collector.series(id), Some(&Series::default()));
+    }
+
+    #[test]
+    fn binding_one_key_twice_shares_one_series() {
+        let mut collector = collector(&[]);
+
+        let first = collector.bind(emission_key(CAR, NIS));
+        let second = collector.bind(emission_key(CAR, NIS));
+
+        assert_eq!(first, second);
     }
 
     #[test]
     fn a_series_id_reads_nothing_from_another_collector() {
-        // Two runs' collectors over the same targets: an id from the first
-        // must not read the second's series, which looks just the same.
-        let nis = target(CAR, NIS);
-        let first = collector(std::slice::from_ref(&nis));
-        let second = collector(std::slice::from_ref(&nis));
-        let id = first.series_id(&nis).expect("target is requested");
+        // Two runs' collectors bound the same way: an id from the first must
+        // not read the second's series, which looks just the same.
+        let nis = emission_key(CAR, NIS);
+        let (first, id) = bound(&nis);
+        let (second, _) = bound(&nis);
 
         assert!(first.series(id).is_some());
         assert_eq!(second.series(id), None);
@@ -377,39 +464,41 @@ mod tests {
 
     #[test]
     fn a_scalar_arrives_as_a_float() {
-        let nis = target(CAR, NIS);
-        let mut collector = collector(std::slice::from_ref(&nis));
+        let nis = emission_key(CAR, NIS);
+        let (mut collector, id) = bound(&nis);
 
-        collector.receive(&[observed(CAR, NIS, 1.0, ObservedValue::Scalar(2.5))]);
+        collector.receive(&[arrival(&nis, 1.0, ObservedValue::Scalar(2.5))]);
 
         assert_eq!(
-            samples_of(&collector, &nis),
+            samples(&collector, id),
             vec![sample(1.0, AssertionValue::Float(2.5))]
         );
     }
 
     #[test]
     fn a_channel_value_arrives_through_its_payload_extractor() {
-        let speed = channel_target(CAR, SPEED);
-        let mut collector = collector(std::slice::from_ref(&speed));
+        let speed = key(CAR, Subject::channel(speed::<bool>(), None));
+        let (mut collector, id) = bound(&speed);
 
-        collector.receive(&[written(CAR, SPEED, 1.0, tapped(true, 1.0))]);
+        collector.receive(&[arrival(&speed, 1.0, tapped(true, 1.0))]);
 
         assert_eq!(
-            samples_of(&collector, &speed),
+            samples(&collector, id),
             vec![sample(1.0, AssertionValue::Bool(true))]
         );
     }
 
     #[test]
-    fn a_channel_value_with_no_extractor_is_rejected_with_its_reason() {
+    fn a_value_under_a_bound_key_with_no_extractor_is_rejected_with_its_reason() {
+        // Setup refuses such a target; a collector bound by hand still says
+        // why it kept nothing.
         struct Unregistered;
-        let speed = channel_target(CAR, SPEED);
-        let mut collector = collector(std::slice::from_ref(&speed));
+        let speed = key(CAR, Subject::channel(speed::<Unregistered>(), None));
+        let (mut collector, id) = bound(&speed);
 
-        collector.receive(&[written(CAR, SPEED, 1.0, tapped(Unregistered, 1.0))]);
+        collector.receive(&[arrival(&speed, 1.0, tapped(Unregistered, 1.0))]);
 
-        let series = series_of(&collector, &speed).expect("target is requested");
+        let series = collector.series(id).expect("the id is this collector's");
         assert!(series.samples().is_empty());
         assert_eq!(
             series.rejection(),
@@ -420,36 +509,158 @@ mod tests {
     }
 
     #[test]
-    fn only_requested_targets_are_kept_and_agents_and_subjects_are_told_apart() {
-        let car_nis = target(CAR, NIS);
-        let mut collector = collector(std::slice::from_ref(&car_nis));
+    fn a_value_under_the_right_name_but_another_payload_type_lands_nowhere() {
+        // The path spells only the name; the bound key carries the type.
+        let as_float = key(CAR, Subject::channel(speed::<f64>(), None));
+        let as_bool = key(CAR, Subject::channel(speed::<bool>(), None));
+        let (mut collector, id) = bound(&as_float);
+
+        collector.receive(&[arrival(&as_bool, 1.0, tapped(true, 1.0))]);
+
+        assert_eq!(collector.series(id), Some(&Series::default()));
+    }
+
+    #[test]
+    fn each_instance_of_a_keyed_channel_has_its_own_series() {
+        let front = key(CAR, wheel("front"));
+        let rear = key(CAR, wheel("rear"));
+        let mut collector = collector(&[channel_target(CAR, &wheels())]);
+        let front_id = collector.bind(front.clone());
+        let rear_id = collector.bind(rear.clone());
 
         collector.receive(&[
-            observed(TRUCK, NIS, 1.0, ObservedValue::Scalar(9.0)),
-            observed(CAR, SPEED, 1.0, ObservedValue::Scalar(9.0)),
-            written(CAR, NIS, 1.0, ObservedValue::Scalar(9.0)),
-            observed(CAR, NIS, 1.0, ObservedValue::Scalar(2.0)),
+            arrival(&front, 1.0, ObservedValue::Scalar(1.0)),
+            arrival(&rear, 1.0, ObservedValue::Scalar(2.0)),
+            arrival(&key(CAR, wheel("spare")), 1.0, ObservedValue::Scalar(3.0)),
+        ]);
+
+        assert_ne!(front_id, rear_id);
+        assert_eq!(
+            samples(&collector, front_id),
+            vec![sample(1.0, AssertionValue::Float(1.0))]
+        );
+        assert_eq!(
+            samples(&collector, rear_id),
+            vec![sample(1.0, AssertionValue::Float(2.0))]
+        );
+    }
+
+    #[test]
+    fn a_value_under_a_requested_path_but_no_bound_key_is_counted() {
+        // `wheels` is requested and only the front wheel bound: the rear's
+        // values are counted, each arrival once, the front's are not.
+        let front = key(CAR, wheel("front"));
+        let rear = key(CAR, wheel("rear"));
+        let mut collector = collector(&[channel_target(CAR, &wheels())]);
+        collector.bind(front.clone());
+
+        collector.receive(&[
+            arrival(&front, 1.0, ObservedValue::Scalar(1.0)),
+            arrival(&rear, 1.0, ObservedValue::Scalar(2.0)),
+        ]);
+        collector.receive(&[arrival(&rear, 2.0, ObservedValue::Scalar(2.0))]);
+
+        assert_eq!(
+            collector.unbound_arrivals(),
+            vec![UnboundArrivals {
+                key: rear,
+                count: 2
+            }]
+        );
+    }
+
+    #[test]
+    fn a_value_under_a_path_no_target_requests_is_not_counted() {
+        // Another sink's request: every sink is handed the whole batch.
+        let mut collector = collector(&[target(CAR, NIS)]);
+        collector.bind(emission_key(CAR, NIS));
+
+        collector.receive(&[
+            arrival(&emission_key(CAR, SPEED), 1.0, ObservedValue::Scalar(1.0)),
+            arrival(&emission_key(CAR, SPEED), 2.0, ObservedValue::Scalar(1.0)),
+        ]);
+
+        assert_eq!(collector.unbound_arrivals(), vec![]);
+    }
+
+    #[test]
+    fn a_value_arriving_before_its_key_is_bound_is_counted() {
+        let nis = emission_key(CAR, NIS);
+        let mut collector = collector(&[target(CAR, NIS)]);
+
+        collector.receive(&[arrival(&nis, 1.0, ObservedValue::Scalar(1.0))]);
+        let id = collector.bind(nis.clone());
+
+        assert_eq!(collector.series(id), Some(&Series::default()));
+        assert_eq!(
+            collector.unbound_arrivals(),
+            vec![UnboundArrivals { key: nis, count: 1 }]
+        );
+    }
+
+    #[test]
+    fn unbound_arrivals_name_the_whole_key_where_the_path_does_not() {
+        let rear = UnboundArrivals {
+            key: key(CAR, wheel("rear")),
+            count: 2,
+        };
+        let nis = UnboundArrivals {
+            key: emission_key(CAR, NIS),
+            count: 1,
+        };
+
+        assert_eq!(
+            rear.to_string(),
+            format!(
+                "agent.car.channel.wheels ({}, instance \"rear\"): 2 value(s) arrived \
+                 under no bound series",
+                wheels()
+            )
+        );
+        assert_eq!(
+            nis.to_string(),
+            "agent.car.node.estimator.aiding.gps.nis: 1 value(s) arrived under no bound series"
+        );
+    }
+
+    #[test]
+    fn only_bound_keys_are_kept_and_agents_and_subjects_are_told_apart() {
+        let car_nis = emission_key(CAR, NIS);
+        let (mut collector, id) = bound(&car_nis);
+
+        collector.receive(&[
+            arrival(&emission_key(TRUCK, NIS), 1.0, ObservedValue::Scalar(9.0)),
+            arrival(&emission_key(CAR, SPEED), 1.0, ObservedValue::Scalar(9.0)),
+            arrival(
+                &key(
+                    CAR,
+                    Subject::channel(ChannelKey::internal::<f64>(NIS), None),
+                ),
+                1.0,
+                ObservedValue::Scalar(9.0),
+            ),
+            arrival(&car_nis, 1.0, ObservedValue::Scalar(2.0)),
         ]);
 
         assert_eq!(
-            samples_of(&collector, &car_nis),
+            samples(&collector, id),
             vec![sample(1.0, AssertionValue::Float(2.0))]
         );
     }
 
     #[test]
     fn samples_keep_arrival_order_across_batches() {
-        let nis = target(CAR, NIS);
-        let mut collector = collector(std::slice::from_ref(&nis));
+        let nis = emission_key(CAR, NIS);
+        let (mut collector, id) = bound(&nis);
 
-        collector.receive(&[observed(CAR, NIS, 2.0, ObservedValue::Scalar(1.0))]);
+        collector.receive(&[arrival(&nis, 2.0, ObservedValue::Scalar(1.0))]);
         collector.receive(&[
-            observed(CAR, NIS, 1.5, ObservedValue::Scalar(2.0)),
-            observed(CAR, NIS, 3.0, ObservedValue::Scalar(3.0)),
+            arrival(&nis, 1.5, ObservedValue::Scalar(2.0)),
+            arrival(&nis, 3.0, ObservedValue::Scalar(3.0)),
         ]);
 
         assert_eq!(
-            samples_of(&collector, &nis),
+            samples(&collector, id),
             vec![
                 sample(2.0, AssertionValue::Float(1.0)),
                 sample(1.5, AssertionValue::Float(2.0)),
