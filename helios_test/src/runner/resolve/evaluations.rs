@@ -5,7 +5,10 @@
 //! can be built is bound in the collector, so its inputs feed it from the
 //! first tick.
 
-use super::resolve::{find, join, spellings, Catalog, TargetProblem};
+use super::{
+    locate::{find, spellings, Catalog},
+    problems::{join, TargetProblem},
+};
 use crate::{
     assertion::{AssertionTarget, EntryName},
     collector::{instance_of, EvaluationId, ObservationCollector},

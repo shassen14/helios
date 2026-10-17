@@ -65,11 +65,11 @@ mod tests {
     use crate::{
         assertion::{AssertionTarget, EntryName},
         runner::{
-            evaluations::EvaluationProblem,
             fixtures::{
                 lag, lag_target, pipeline, ready, run, run_evaluating, set_up, speed_target, term,
                 CAR, TRUCK,
             },
+            resolve::evaluations::EvaluationProblem,
             resolve::{TargetProblem, UnusableEntry},
         },
     };
