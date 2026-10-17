@@ -5,9 +5,14 @@ pub mod toml_writer;
 use crate::{
     assertion::{AssertionResult, AssertionValue, Condition, FailureKind},
     run::termination::TerminationReason,
+    statistics::within_run::Reducer,
 };
 
 use serde::Serialize;
+
+/// The report format's version. A report with none is the shape before
+/// entries were named, so this starts at the second.
+const REPORT_SCHEMA_VERSION: &str = "2.0";
 
 /// _Post-step._ The machine- and human-readable result of one run. Serialized to
 /// TOML for CI and rendered to the console for humans — both from this one
@@ -16,6 +21,9 @@ use serde::Serialize;
 /// this output schema stays stable while those internal types churn.
 #[derive(Debug, Clone, Serialize)]
 pub struct Report {
+    /// So a reader (CI, a run comparison, the Monte Carlo aggregate) can
+    /// tell this shape from another rather than misread it.
+    schema_version: &'static str,
     run_name: String,
     scenario: String,
     master_seed: Option<u64>,
@@ -26,31 +34,28 @@ pub struct Report {
     /// omitted from the TOML entirely otherwise, so a healthy report keeps its
     /// current shape. Without it a CI reader sees `status = "failed"` with an
     /// empty `assertions` list and no way to tell why.
-    ///
-    /// Sits ahead of `terminated_by` deliberately: TOML puts every scalar and
-    /// inline array before the first table, and the writer depends on this
-    /// struct's field order matching that.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     setup_failures: Vec<String>,
     /// The writes an agent's bus refused, one line per channel: a host or
     /// node wrote a channel no writer declared, a value of another type, or
     /// a frame or instance its writers never stated. Any one fails the run,
     /// since values the wiring dropped leave the assertions judging a run
-    /// other than the one configured. Omitted from the TOML when empty, and
-    /// ahead of `terminated_by` for the same reason as `setup_failures`.
+    /// other than the one configured. Omitted from the TOML when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     refused_writes: Vec<String>,
-    /// The values the collector dropped, one line per key: they arrived
-    /// under a path an assertion requests but a key no series was bound to,
-    /// so a judged series may have missed them. Any one fails the run.
-    /// Omitted from the TOML when empty, and ahead of `terminated_by` for
-    /// the same reason as `setup_failures`.
+    /// What the recording dropped, one line each: values that arrived under
+    /// a requested path but a key no series was bound to, and values a
+    /// measure's series turned away. A judged series may have missed the
+    /// first, and a measure aggregated across runs would average around the
+    /// second. Any one fails the run. Omitted from the TOML when empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    unbound_arrivals: Vec<String>,
+    recording: Vec<String>,
     simulated_duration_secs: f64,
     wall_duration_secs: f64,
     terminated_by: TerminatedBy,
     assertions: Vec<AssertionReportEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    measures: Vec<MeasureReportEntry>,
 }
 
 impl Report {
@@ -58,32 +63,54 @@ impl Report {
     /// `finalize`, because these fields are private to the `report` module —
     /// keeping construction of the output schema in one place, next to the
     /// projections that feed it.
+    ///
+    /// The run's status is derived here, not passed in, so it can't disagree
+    /// with the entries: `Passed` only when every assertion passed and
+    /// nothing failed setup, was refused by a bus or was dropped by the
+    /// recording. A setup failure, a refused write or a dropped value
+    /// outranks the assertion tally: a run whose scene never became fit to
+    /// test, or whose wiring or recording dropped values, cannot pass however
+    /// its assertions came out. Measures never decide it.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         run_name: String,
         scenario: String,
         master_seed: Option<u64>,
-        status: ReportStatus,
         setup_failures: Vec<String>,
         refused_writes: Vec<String>,
-        unbound_arrivals: Vec<String>,
+        recording: Vec<String>,
         simulated_duration_secs: f64,
         wall_duration_secs: f64,
         terminated_by: TerminatedBy,
         assertions: Vec<AssertionReportEntry>,
+        measures: Vec<MeasureReportEntry>,
     ) -> Self {
+        let all_passed = assertions
+            .iter()
+            .all(|entry| entry.status() == AssertionStatus::Passed);
+        let status = if all_passed
+            && setup_failures.is_empty()
+            && refused_writes.is_empty()
+            && recording.is_empty()
+        {
+            ReportStatus::Passed
+        } else {
+            ReportStatus::Failed
+        };
         Self {
+            schema_version: REPORT_SCHEMA_VERSION,
             run_name,
             scenario,
             master_seed,
             status,
             setup_failures,
             refused_writes,
-            unbound_arrivals,
+            recording,
             simulated_duration_secs,
             wall_duration_secs,
             terminated_by,
             assertions,
+            measures,
         }
     }
 
@@ -95,6 +122,11 @@ impl Report {
     /// The per-assertion lines, in run-file order.
     pub fn assertions(&self) -> &[AssertionReportEntry] {
         &self.assertions
+    }
+
+    /// The per-measure lines, in run-file order.
+    pub fn measures(&self) -> &[MeasureReportEntry] {
+        &self.measures
     }
 
     /// Why the run was unfit to test, if it was. Empty on a run that got far
@@ -109,10 +141,10 @@ impl Report {
         &self.refused_writes
     }
 
-    /// The values the collector dropped, one line per key. Empty on a run
-    /// whose every requested value landed in a series.
-    pub fn unbound_arrivals(&self) -> &[String] {
-        &self.unbound_arrivals
+    /// What the recording dropped, one line each. Empty on a run whose
+    /// every requested value landed in a series.
+    pub fn recording(&self) -> &[String] {
+        &self.recording
     }
 
     /// Why the run stopped.
@@ -146,9 +178,9 @@ pub enum TerminatedBy {
     Aborted,
     /// The simulated-time budget elapsed.
     TimeBudget,
-    /// A continuous assertion failed in a `fail_fast` run; `number` is its
-    /// position in the run file, counting from 1.
-    AssertionFailed { number: usize },
+    /// An every-sample assertion failed in a `fail_fast` run; `name` is
+    /// the assertion's.
+    AssertionFailed { name: String },
 }
 
 /// Project the per-step stop reason into the report's stable vocabulary.
@@ -158,21 +190,28 @@ impl From<&TerminationReason> for TerminatedBy {
         match value {
             TerminationReason::Aborted => TerminatedBy::Aborted,
             TerminationReason::MaxSimulatedSeconds => TerminatedBy::TimeBudget,
-            TerminationReason::AssertionFailed { number } => {
-                TerminatedBy::AssertionFailed { number: *number }
-            }
+            TerminationReason::AssertionFailed { name } => TerminatedBy::AssertionFailed {
+                name: name.to_string(),
+            },
         }
     }
 }
 
-/// _Post-step._ One assertion's line in the report: what was asserted and
-/// its verdict. Its own type — rather than serializing the per-step
-/// `AssertionResult` — so the output schema is decoupled from the evaluator.
+/// _Post-step._ One assertion's line in the report: what was asserted, the
+/// series it was judged on, and its verdict. Its own type — rather than
+/// serializing the per-step `AssertionResult` — so the output schema is
+/// decoupled from the evaluator.
 #[derive(Debug, Clone, Serialize)]
 pub struct AssertionReportEntry {
+    name: String,
     target: String,
+    /// Absent on an assertion that judged every sample.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reduce: Option<Reducer>,
+    /// With its operand, as the run file wrote it.
     condition: Condition,
-    expected: AssertionValue,
+    #[serde(flatten)]
+    series: SeriesSummary,
     /// Written inline: `status` and the verdict's own fields sit beside
     /// `target` in the entry's table.
     #[serde(flatten)]
@@ -183,17 +222,30 @@ impl AssertionReportEntry {
     /// Build one report line. The caller supplies an already-projected
     /// verdict; this type never sees the live evaluator types.
     pub fn new(
+        name: String,
         target: String,
+        reduce: Option<Reducer>,
         condition: Condition,
-        expected: AssertionValue,
+        series: SeriesSummary,
         verdict: Verdict,
     ) -> Self {
         Self {
+            name,
             target,
+            reduce,
             condition,
-            expected,
+            series,
             verdict,
         }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// What the judged series held.
+    pub fn series(&self) -> &SeriesSummary {
+        &self.series
     }
 
     /// This assertion's verdict, with what it observed.
@@ -207,6 +259,94 @@ impl AssertionReportEntry {
     }
 }
 
+/// _Post-step._ One measure's line in the report: a value reported without
+/// a bound. Never fails the run.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MeasureReportEntry {
+    name: String,
+    target: String,
+    reduce: Reducer,
+    /// Whether the run reached the end of the measure's window. A value from
+    /// one it didn't is the value it stopped at.
+    covered: bool,
+    /// `None` when the reducer had none: no samples, a sample it couldn't
+    /// read, or a value turned away. `reason` says which.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    value: Option<AssertionValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<FailureReason>,
+    #[serde(flatten)]
+    series: SeriesSummary,
+}
+
+impl MeasureReportEntry {
+    /// Build one measure line. A `value` and a `reason` are exclusive: a
+    /// measure has a value, or a reason it has none.
+    pub fn new(
+        name: String,
+        target: String,
+        reduce: Reducer,
+        covered: bool,
+        value: Result<AssertionValue, FailureReason>,
+        series: SeriesSummary,
+    ) -> Self {
+        let (value, reason) = match value {
+            Ok(value) => (Some(value), None),
+            Err(reason) => (None, Some(reason)),
+        };
+        Self {
+            name,
+            target,
+            reduce,
+            covered,
+            value,
+            reason,
+            series,
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn covered(&self) -> bool {
+        self.covered
+    }
+
+    /// The measured value, if the reducer had one.
+    pub fn value(&self) -> Option<&AssertionValue> {
+        self.value.as_ref()
+    }
+
+    /// Why there is no value, if there is none.
+    pub fn reason(&self) -> Option<FailureReason> {
+        self.reason
+    }
+
+    /// What the measured series held.
+    pub fn series(&self) -> &SeriesSummary {
+        &self.series
+    }
+}
+
+/// _Post-step._ What a judged or measured series held over the run, printed
+/// beside every verdict so a silent signal shows even where nothing bounds
+/// it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct SeriesSummary {
+    /// How many samples the run reached.
+    pub samples: usize,
+    /// The longest span with no sample, the run's first and latest ticks
+    /// included. `None` when the run never ticked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_gap_secs: Option<f64>,
+    /// For `reduce = "final"`: how long before the run's latest tick the
+    /// judged sample was stamped. `final` passes on a signal that died long
+    /// before the end, and this shows it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_age_secs: Option<f64>,
+}
+
 /// _Post-step._ One assertion's verdict and what it rests on. The variant
 /// decides which fields exist, so a pass can't carry a failure reason and a
 /// failure can't lack one.
@@ -217,15 +357,15 @@ pub enum Verdict {
         actual: AssertionValue,
     },
     Failed {
-        /// The value that failed it: for a continuous assertion the one that
-        /// broke it, not the last one seen. `None` when no value was observed
+        /// The value that failed it: for an every-sample assertion the one
+        /// that broke it, not the last one seen. `None` when no value was observed
         /// (none arrived, or the ones that did were turned away).
         #[serde(skip_serializing_if = "Option::is_none")]
         actual: Option<AssertionValue>,
         reason: FailureReason,
-        /// When a continuous assertion broke: simulated seconds from the
+        /// When an every-sample assertion broke: simulated seconds from the
         /// run's first tick to the reading that broke it. `None` for a
-        /// terminal assertion and a failure with no reading to place.
+        /// reduced assertion and a failure with no reading to place.
         #[serde(skip_serializing_if = "Option::is_none")]
         failed_at_secs: Option<f64>,
     },
@@ -258,8 +398,8 @@ impl Verdict {
     }
 }
 
-/// A freshly evaluated result as a report verdict, for a terminal assertion
-/// judged at finalize. A terminal failure has no time of breaking: it is
+/// A freshly evaluated result as a report verdict, for a reduced assertion
+/// judged at finalize. A reduced failure has no time of breaking: it is
 /// judged once, at the end.
 impl From<AssertionResult> for Verdict {
     fn from(value: AssertionResult) -> Self {
@@ -300,8 +440,6 @@ pub enum FailureReason {
     TypeMismatch,
     /// The comparison ran and didn't hold.
     ConditionFailed,
-    /// A `within_range` assertion lacked usable bounds.
-    InvalidBounds,
 }
 
 impl From<&FailureKind> for FailureReason {
@@ -311,7 +449,6 @@ impl From<&FailureKind> for FailureReason {
             FailureKind::NoSamples => FailureReason::NoSamples,
             FailureKind::TypeMismatch => FailureReason::TypeMismatch,
             FailureKind::ConditionFailed => FailureReason::ConditionFailed,
-            FailureKind::InvalidBounds => FailureReason::InvalidBounds,
         }
     }
 }

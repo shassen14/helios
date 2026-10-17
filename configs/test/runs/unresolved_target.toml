@@ -4,13 +4,13 @@
 # returns `UnusableAssertions` — a legitimate test FAILURE (exit 1), not a crash.
 # Confirms the failing exit code flows through the same report path as a pass.
 
-schema_version = "1.0"
+schema_version = "2.0"
 scenario = { from = "sim/scenarios/01_proving_ground.toml" }
 observation = { from = "default" }
 termination = { max_simulated_seconds = 2.0 }
 
 [[assert]]
-when = "at_completion"
+name = "unresolvable"
 target = "agent.nobody.node.no_such_node.value"
-condition = "equals"
-value = 0.0
+reduce = "final"
+condition = { less_than = 1.0 }

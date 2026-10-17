@@ -1,19 +1,22 @@
 use crate::{
-    assertion::{evaluator::evaluate, Assertion, AssertionResult, FailureKind},
+    assertion::{evaluator::evaluate, AssertionResult, Condition, EntryName, FailureKind},
     collector::{ObservationCollector, Series},
     run::termination::TerminationReason,
-    runner::state::{AssertionState, ContinuousStatus},
+    runner::{
+        resolve::EntryOwner,
+        state::{AssertionState, ContinuousStatus},
+    },
 };
 
-use super::{termination_check, Phase, Runner, FOREIGN_COLLECTOR, NEVER_SET_UP};
+use super::{termination_check, Phase, Runner, TickSpan, FOREIGN_COLLECTOR, NEVER_SET_UP};
 
 use helios_core::prelude::MonotonicTime;
 
 impl Runner {
     /// Advance the run by one observation at simulated time `t`, judging every
-    /// assertion on what arrived in `collector` and reporting whether to stop.
-    /// It only reads the collector, so the host stays the sole source of what
-    /// was observed.
+    /// every-sample assertion on what arrived in `collector` and reporting
+    /// whether to stop. It only reads the collector, so the host stays the
+    /// sole source of what was observed.
     ///
     /// Only a run whose setup succeeded judges. One whose setup failed stops
     /// at once: a host may tick again before it acts on the failure, and a
@@ -37,39 +40,47 @@ impl Runner {
             return aborted;
         };
 
-        // The run's clock origin: stamped on the first tick and fixed thereafter,
-        // so the time budget is measured from when the run actually began, not
-        // from zero. Copied out so the borrow of `start_time` ends here.
-        let start = *self.start_time.get_or_insert(t);
-        self.latest_tick = Some(t);
+        // The run's clock: its origin stamped on the first tick and fixed
+        // thereafter, so the time budget is measured from when the run
+        // actually began, not from zero.
+        let span = match &mut self.ticks {
+            Some(span) => {
+                span.latest = t;
+                *span
+            }
+            None => *self.ticks.insert(TickSpan::starting_at(t)),
+        };
 
-        // Latch every continuous assertion on the samples that arrived since
-        // the last tick. A terminal assertion is judged only at the end, so
-        // here it just reaches its new samples. The states are borrowed
-        // mutably out of `self.phase` and the assertions immutably out of
-        // `self.run`: disjoint fields, so the two borrows coexist. Collected
-        // in full rather than stopped at the first failure, so every
-        // assertion reaches this tick's samples.
-        let failed: Vec<usize> = self
-            .run
-            .assertions()
-            .iter()
-            .zip(entries)
-            .filter_map(|(assertion, (number, series, state))| match assertion {
-                Assertion::Continuous(_) => {
-                    check_new(assertion, state, series, t);
-                    matches!(state.status(), ContinuousStatus::FailedAt { .. }).then_some(number)
-                }
-                Assertion::Terminal(_) => {
-                    state.reach_new(series.samples(), series.rejection());
-                    None
-                }
-            })
-            .collect();
+        // Latch every every-sample assertion on the samples that arrived
+        // since the last tick. A reduced assertion or a measure is evaluated
+        // only at the end, so here it just reaches its new samples. The
+        // states are borrowed mutably out of `self.phase` and the assertions
+        // immutably out of `self.run`: disjoint fields, so the two borrows
+        // coexist. Every entry is visited rather than stopping at the first
+        // failure, so each reaches this tick's samples.
+        let assertions = self.run.assertions();
+        let mut first_failed: Option<&EntryName> = None;
+        for (owner, series, state) in entries {
+            let every_sample = match owner {
+                EntryOwner::Assertion(index) => assertions
+                    .get(index)
+                    .filter(|assertion| assertion.judges_every_sample()),
+                EntryOwner::Measure(_) => None,
+            };
+            let Some(assertion) = every_sample else {
+                state.reach_new(series.samples(), series.rejection());
+                continue;
+            };
+            check_new(&assertion.condition, state, series, t);
+            if first_failed.is_none() && matches!(state.status(), ContinuousStatus::FailedAt { .. })
+            {
+                first_failed = Some(&assertion.name);
+            }
+        }
 
         // Decide. `check` applies the precedence (failure before time budget)
         // and returns the reason, if any.
-        match termination_check::check(t, start, self.run.termination(), failed.first().copied()) {
+        match termination_check::check(t, span.first, self.run.termination(), first_failed) {
             Some(reason) => TickAction::Terminate { reason },
             None => TickAction::Continue,
         }
@@ -83,11 +94,11 @@ pub enum TickAction {
     Terminate { reason: TerminationReason },
 }
 
-/// Judge a continuous assertion on each sample that arrived since the last
-/// tick, once each, latching a failure at the sample's own time. A series that
-/// turned a value away fails, latched at `t` since the value it rejected isn't
-/// kept.
-fn check_new(assertion: &Assertion, state: &mut AssertionState, series: &Series, t: MonotonicTime) {
+/// Judge an every-sample assertion's `condition` on each sample that arrived
+/// since the last tick, once each, latching a failure at the sample's own
+/// time. A series that turned a value away fails, latched at `t` since the
+/// value it rejected isn't kept.
+fn check_new(condition: &Condition, state: &mut AssertionState, series: &Series, t: MonotonicTime) {
     let new = state.reach_new(series.samples(), series.rejection());
     if let Some(rejection) = state.rejection() {
         let kind = FailureKind::Rejected(rejection);
@@ -96,7 +107,7 @@ fn check_new(assertion: &Assertion, state: &mut AssertionState, series: &Series,
     }
 
     for sample in new {
-        match evaluate(assertion, sample.value.clone()) {
+        match evaluate(condition, sample.value.clone()) {
             AssertionResult::Passed { actual } => {
                 state.record(Some(actual), Ok(()), sample.timestamp);
             }
@@ -114,18 +125,27 @@ mod tests {
 
     use crate::{
         assertion::AssertionValue,
-        runner::fixtures::{at, cont, ready, report, run, states, term, CAR, TRUCK},
+        runner::fixtures::{
+            at, cont, measure, ready, report, run, run_measuring, states, term, CAR, TRUCK,
+        },
     };
 
     const BUDGET: &str = "max_simulated_seconds = 10.0";
 
     const FAIL_FAST: &str = "max_simulated_seconds = 10.0, fail_fast = true";
 
+    /// The stop for the assertion named `name` failing.
+    fn failed(name: &str) -> TerminationReason {
+        TerminationReason::AssertionFailed {
+            name: EntryName::parse(name).expect("valid name"),
+        }
+    }
+
     #[test]
     fn a_failed_setup_stops_the_run_without_judging() {
         // The plan, and with it every state, is gone once setup fails; an
         // unstamped clock shows the tick returned before judging anything.
-        let a = cont(CAR, 5.0);
+        let a = cont("a", CAR, 5.0);
         let (mut r, mut collector) = ready(run("max_simulated_seconds = 10.0", &[&a]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
         r.fail_setup("unusable".to_string());
@@ -137,14 +157,14 @@ mod tests {
             }
         );
         assert!(states(&r).is_empty());
-        assert_eq!(r.start_time, None);
+        assert_eq!(r.ticks, None);
     }
 
     #[test]
     fn a_tick_before_setup_fails_setup_and_stops() {
         // A host that never called `on_pipeline_built`: the report names that
         // instead of every assertion failing for want of a series.
-        let a = cont(CAR, 5.0);
+        let a = cont("a", CAR, 5.0);
         let mut r = Runner::new(run("max_simulated_seconds = 10.0", &[&a])).expect("valid run");
         let collector = r.collector();
 
@@ -162,7 +182,7 @@ mod tests {
     fn another_runs_collector_fails_setup_and_stops() {
         // Built over the same targets, so its series look the same; reading
         // them would judge the wrong run without a word.
-        let a = cont(CAR, 5.0);
+        let a = cont("a", CAR, 5.0);
         let (mut r, _own) = ready(run("max_simulated_seconds = 10.0", &[&a]), &[CAR]);
         let mut other = r.collector();
         report(&mut other, CAR, 0.5, 5.0);
@@ -174,14 +194,14 @@ mod tests {
             }
         );
         assert_eq!(r.setup_failures, [FOREIGN_COLLECTOR]);
-        assert_eq!(r.start_time, None);
+        assert_eq!(r.ticks, None);
     }
 
     #[test]
-    fn continuous_pass_holds_and_continues() {
+    fn an_every_sample_pass_holds_and_continues() {
         // Value matches: no trigger set and time budget unmet, so the run goes on
         // and the latch advances Pending -> Holding.
-        let a = cont(CAR, 5.0);
+        let a = cont("a", CAR, 5.0);
         let (mut r, mut collector) = ready(run("max_simulated_seconds = 10.0", &[&a]), &[CAR]);
         report(&mut collector, CAR, 0.0, 5.0);
 
@@ -190,17 +210,17 @@ mod tests {
     }
 
     #[test]
-    fn continuous_failure_terminates_and_latches_at_the_samples_time() {
+    fn an_every_sample_failure_terminates_and_latches_at_the_samples_time() {
         // The latch records the time the failing value describes, not the
         // tick that judged it.
-        let a = cont(CAR, 5.0);
+        let a = cont("a", CAR, 5.0);
         let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a]), &[CAR]);
         report(&mut collector, CAR, 1.5, 9.0);
 
         assert_eq!(
             r.tick(at(2.0), &collector),
             TickAction::Terminate {
-                reason: TerminationReason::AssertionFailed { number: 1 },
+                reason: failed("a"),
             }
         );
         assert_eq!(
@@ -217,7 +237,7 @@ mod tests {
     fn every_sample_between_ticks_is_checked() {
         // A failing value followed by a passing one before the next tick:
         // reading only the latest would miss the failure.
-        let a = cont(CAR, 5.0);
+        let a = cont("a", CAR, 5.0);
         let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a]), &[CAR]);
         report(&mut collector, CAR, 0.5, 9.0);
         report(&mut collector, CAR, 0.75, 5.0);
@@ -225,7 +245,7 @@ mod tests {
         assert_eq!(
             r.tick(at(1.0), &collector),
             TickAction::Terminate {
-                reason: TerminationReason::AssertionFailed { number: 1 },
+                reason: failed("a"),
             }
         );
         assert!(matches!(
@@ -237,27 +257,27 @@ mod tests {
     #[test]
     fn a_fail_fast_stop_names_the_assertion_that_failed() {
         // Both assertions are on the car; only the second fails, so the stop
-        // must say it was assertion 2, not merely that one failed.
-        let a = cont(CAR, 5.0);
-        let b = cont(CAR, 6.0);
+        // must name it, not merely say that one failed.
+        let a = cont("a", CAR, 5.0);
+        let b = cont("b", CAR, 6.0);
         let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a, &b]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
 
         assert_eq!(
             r.tick(at(1.0), &collector),
             TickAction::Terminate {
-                reason: TerminationReason::AssertionFailed { number: 2 },
+                reason: failed("b"),
             }
         );
     }
 
     #[test]
-    fn a_failing_terminal_value_mid_run_does_not_stop_a_fail_fast_run() {
-        // A terminal assertion is judged at the end: a value that misses it
+    fn a_failing_reduced_value_mid_run_does_not_stop_a_fail_fast_run() {
+        // A reduced assertion is judged at the end: a value that misses it
         // mid-run (the car not at its goal yet) is no failure, and it is
         // never latched.
-        let a = cont(CAR, 5.0);
-        let b = term(CAR, 6.0);
+        let a = cont("a", CAR, 5.0);
+        let b = term("b", CAR, 6.0);
         let (mut r, mut collector) = ready(run(FAIL_FAST, &[&a, &b]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
 
@@ -267,7 +287,7 @@ mod tests {
 
     #[test]
     fn a_failure_without_fail_fast_runs_to_the_budget() {
-        let a = cont(CAR, 5.0);
+        let a = cont("a", CAR, 5.0);
         let (mut r, mut collector) = ready(run(BUDGET, &[&a]), &[CAR]);
         report(&mut collector, CAR, 0.5, 9.0);
 
@@ -282,7 +302,7 @@ mod tests {
     fn no_samples_yet_continues_without_latching() {
         // Nothing has arrived — `Pending`, not a failure mid-run. Even with
         // `fail_fast` set, the run continues and the latch is left alone.
-        let a = cont(CAR, 5.0);
+        let a = cont("a", CAR, 5.0);
         let (mut r, collector) = ready(run(FAIL_FAST, &[&a]), &[CAR]);
 
         assert_eq!(r.tick(at(0.0), &collector), TickAction::Continue);
@@ -307,12 +327,12 @@ mod tests {
     }
 
     #[test]
-    fn states_track_each_continuous_assertion_by_index() {
+    fn states_track_each_every_sample_assertion_by_index() {
         // Two agents, one series each: each assertion must read its own. No
         // trigger and the budget unmet, so the run continues and both latches
         // update independently: index 0 holds, index 1 fails.
-        let a = cont(CAR, 5.0);
-        let b = cont(TRUCK, 5.0);
+        let a = cont("a", CAR, 5.0);
+        let b = cont("b", TRUCK, 5.0);
         let (mut r, mut collector) = ready(
             run("max_simulated_seconds = 100.0", &[&a, &b]),
             &[CAR, TRUCK],
@@ -330,5 +350,53 @@ mod tests {
                 kind: FailureKind::ConditionFailed,
             }
         );
+    }
+
+    #[test]
+    fn a_measure_reaches_its_samples_and_never_stops_the_run() {
+        // The measure reads the car's leaf, which would fail the every-sample
+        // assertion's bound; only the assertion's state latches.
+        let a = cont("a", CAR, 5.0);
+        let m = measure("m", CAR, "\"max\"");
+        let (mut r, mut collector) = ready(run_measuring(FAIL_FAST, &[&a], &[&m]), &[CAR]);
+        report(&mut collector, CAR, 0.5, 5.0);
+
+        assert_eq!(r.tick(at(1.0), &collector), TickAction::Continue);
+        assert_eq!(states(&r)[1].status(), &ContinuousStatus::Pending);
+        assert_eq!(
+            states(&r)[1]
+                .reached(collector_samples(&r, &collector))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_tick_span_runs_from_the_first_tick_to_the_latest() {
+        let (mut r, collector) = ready(run(BUDGET, &[]), &[]);
+
+        r.tick(at(2.0), &collector);
+        r.tick(at(3.5), &collector);
+
+        assert_eq!(
+            r.ticks,
+            Some(TickSpan {
+                first: at(2.0),
+                latest: at(3.5),
+            })
+        );
+    }
+
+    /// The samples of the series `r`'s first entry reads.
+    fn collector_samples<'c>(
+        r: &Runner,
+        collector: &'c ObservationCollector,
+    ) -> &'c [crate::collector::Sample] {
+        match &r.phase {
+            Phase::Ready(plan) => plan.with_series(collector).expect("its own collector")[0]
+                .1
+                .samples(),
+            Phase::AwaitingPipelines | Phase::Aborted => &[],
+        }
     }
 }

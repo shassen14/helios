@@ -1,6 +1,11 @@
-use thiserror::Error;
+use crate::{
+    assertion::{condition::OperandProblem, EntryName},
+    run::Run,
+    statistics::within_run::Reducer,
+};
 
-use crate::{assertion::Assertion, run::Run};
+use std::collections::HashSet;
+use thiserror::Error;
 
 /// _Pre-step._ Coherence problems a structurally-valid run file can still have. Parsing
 /// proves the *shape* is right; these are the cross-field checks serde can't
@@ -14,10 +19,21 @@ pub enum ValidationError {
     )]
     UnreachableBudget(f64),
     #[error(
-        "`fail_fast` is set but the run declares no continuous assertion that could fail early"
+        "`fail_fast` is set but the run declares no assertion judging every sample (one \
+         without `reduce`) that could fail early"
     )]
-    FailFastWithoutContinuous,
-    // todo!() WithinRangeWithoutBounds
+    FailFastWithoutEverySample,
+    /// Names identify verdicts in the report and across runs, so two
+    /// entries can't share one, whether assertions or measures.
+    #[error("two entries are named '{0}'; names are unique across [[assert]] and [[measure]]")]
+    DuplicateName(EntryName),
+    #[error("assertion '{name}': {problem}")]
+    UnusableOperand {
+        name: EntryName,
+        problem: OperandProblem,
+    },
+    #[error("'{0}': the time_above threshold is not a finite number")]
+    NonFiniteThreshold(EntryName),
 }
 
 /// Check a parsed [`Run`] for coherence. A flat checklist of guard clauses:
@@ -38,14 +54,53 @@ pub fn validate(run: &Run) -> Result<(), ValidationError> {
         return Err(ValidationError::UnreachableBudget(budget));
     }
 
-    // `fail_fast` stops on a continuous failure; a terminal assertion is only
-    // judged at the end, so without a continuous one it watches nothing.
-    let has_continuous = run
+    // `fail_fast` stops on an every-sample failure; a reduced assertion is
+    // only judged at the end, so without an every-sample one it watches
+    // nothing.
+    let has_every_sample = run
         .assertions()
         .iter()
-        .any(|assertion| matches!(assertion, Assertion::Continuous(_)));
-    if termination.fail_fast() && !has_continuous {
-        return Err(ValidationError::FailFastWithoutContinuous);
+        .any(|assertion| assertion.judges_every_sample());
+    if termination.fail_fast() && !has_every_sample {
+        return Err(ValidationError::FailFastWithoutEverySample);
+    }
+
+    let names = run
+        .assertions()
+        .iter()
+        .map(|assertion| &assertion.name)
+        .chain(run.measures().iter().map(|measure| &measure.name));
+    let mut seen = HashSet::new();
+    for name in names {
+        if !seen.insert(name) {
+            return Err(ValidationError::DuplicateName(name.clone()));
+        }
+    }
+
+    for assertion in run.assertions() {
+        if let Err(problem) = assertion.condition.check_operand() {
+            return Err(ValidationError::UnusableOperand {
+                name: assertion.name.clone(),
+                problem,
+            });
+        }
+    }
+
+    let reducers = run
+        .assertions()
+        .iter()
+        .filter_map(|assertion| Some((&assertion.name, assertion.reduce.as_ref()?)))
+        .chain(
+            run.measures()
+                .iter()
+                .map(|measure| (&measure.name, &measure.reduce)),
+        );
+    for (name, reducer) in reducers {
+        if let Reducer::TimeAbove(threshold) = reducer {
+            if !threshold.is_finite() {
+                return Err(ValidationError::NonFiniteThreshold(name.clone()));
+            }
+        }
     }
 
     validate_observation_covers_target(run)?;
@@ -66,12 +121,13 @@ mod tests {
     use super::*;
 
     // Build a `Run` by parsing TOML, so tests exercise the real type. Callers
-    // supply the run-specific body (termination + any `[[assert]]` blocks); the
-    // header fields every run needs are filled in here.
+    // supply the run-specific body (termination + any `[[assert]]` or
+    // `[[measure]]` blocks); the header fields every run needs are filled in
+    // here.
     fn run_with(body: &str) -> Run {
         let toml = format!(
             r#"
-            schema_version = "1.0"
+            schema_version = "2.0"
             scenario = {{ from = "s" }}
             observation = {{ from = "o" }}
             {body}
@@ -80,28 +136,36 @@ mod tests {
         toml::from_str(&toml).unwrap()
     }
 
-    const TERMINAL: &str = r#"
+    const BUDGET: &str = "termination = { max_simulated_seconds = 5.0 }";
+
+    const REDUCED: &str = r#"
         [[assert]]
-        when = "at_completion"
+        name = "reduced"
         target = "agent.car.node.estimator.x"
-        condition = "equals"
-        value = 0.0
+        reduce = "final"
+        condition = { less_than = 1.0 }
     "#;
 
-    const CONTINUOUS: &str = r#"
+    const EVERY_SAMPLE: &str = r#"
         [[assert]]
-        when = "continuous"
+        name = "every_sample"
         target = "agent.car.node.estimator.x"
-        condition = "less_than"
-        value = 1.0
+        condition = { less_than = 1.0 }
     "#;
+
+    /// One assertion named `name` on `condition`, under a plain budget.
+    fn asserting(name: &str, reduce: &str, condition: &str) -> Run {
+        run_with(&format!(
+            "{BUDGET}\n[[assert]]\nname = \"{name}\"\n\
+             target = \"agent.car.node.estimator.x\"\n{reduce}\ncondition = {condition}"
+        ))
+    }
 
     #[test]
     fn time_budget_alone_is_ok_without_assertions() {
         // A pure smoke run: the time budget guarantees termination, so zero
         // assertions is fine.
-        let run = run_with("termination = { max_simulated_seconds = 5.0 }");
-        assert_eq!(validate(&run), Ok(()));
+        assert_eq!(validate(&run_with(BUDGET)), Ok(()));
     }
 
     #[test]
@@ -122,27 +186,105 @@ mod tests {
         let run = run_with("termination = { max_simulated_seconds = 5.0, fail_fast = true }");
         assert_eq!(
             validate(&run),
-            Err(ValidationError::FailFastWithoutContinuous)
+            Err(ValidationError::FailFastWithoutEverySample)
         );
     }
 
     #[test]
-    fn fail_fast_over_only_terminal_assertions_errors() {
-        // A terminal assertion can't fail before the end, so fail_fast would
+    fn fail_fast_over_only_reduced_assertions_errors() {
+        // A reduced assertion can't fail before the end, so fail_fast would
         // never fire.
         let body =
-            format!("termination = {{ max_simulated_seconds = 5.0, fail_fast = true }}{TERMINAL}");
+            format!("termination = {{ max_simulated_seconds = 5.0, fail_fast = true }}{REDUCED}");
         assert_eq!(
             validate(&run_with(&body)),
-            Err(ValidationError::FailFastWithoutContinuous)
+            Err(ValidationError::FailFastWithoutEverySample)
         );
     }
 
     #[test]
     fn fully_specified_run_passes() {
         let body = format!(
-            "termination = {{ max_simulated_seconds = 30.0, fail_fast = true }}{TERMINAL}{CONTINUOUS}"
+            "termination = {{ max_simulated_seconds = 30.0, fail_fast = true }}{REDUCED}{EVERY_SAMPLE}"
         );
         assert_eq!(validate(&run_with(&body)), Ok(()));
+    }
+
+    #[test]
+    fn a_name_used_twice_is_refused_across_assertions_and_measures() {
+        let measure = r#"
+            [[measure]]
+            name = "reduced"
+            target = "agent.car.node.estimator.x"
+            reduce = "mean"
+        "#;
+        assert_eq!(
+            validate(&run_with(&format!("{BUDGET}{REDUCED}{measure}"))),
+            Err(ValidationError::DuplicateName(
+                EntryName::parse("reduced").unwrap()
+            ))
+        );
+        assert!(matches!(
+            validate(&run_with(&format!("{BUDGET}{REDUCED}{REDUCED}"))),
+            Err(ValidationError::DuplicateName(_))
+        ));
+    }
+
+    #[test]
+    fn unusable_operands_are_refused_naming_the_assertion() {
+        for condition in [
+            "{ less_than = nan }",
+            "{ greater_than = inf }",
+            "{ within_range = [0.7, 0.3] }",
+            "{ within_range = [0.0, nan] }",
+            "{ equals = 0.0 }",
+            "{ not_equals = 1.5 }",
+        ] {
+            assert!(
+                matches!(
+                    validate(&asserting("bounded", "", condition)),
+                    Err(ValidationError::UnusableOperand { ref name, .. }) if name.as_str() == "bounded"
+                ),
+                "{condition}"
+            );
+        }
+    }
+
+    #[test]
+    fn usable_operands_pass() {
+        for condition in [
+            "{ less_than = 25 }",
+            "{ equals = 0 }",
+            "{ not_equals = \"idle\" }",
+            "{ within_range = [0.3, 0.7] }",
+        ] {
+            assert_eq!(
+                validate(&asserting("bounded", "", condition)),
+                Ok(()),
+                "{condition}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_finite_time_above_threshold_is_refused_on_an_assertion_or_a_measure() {
+        assert!(matches!(
+            validate(&asserting(
+                "above",
+                "reduce = { time_above = nan }",
+                "{ less_than = 1.0 }"
+            )),
+            Err(ValidationError::NonFiniteThreshold(_))
+        ));
+        let measure = r#"
+            [[measure]]
+            name = "above"
+            target = "agent.car.node.estimator.x"
+            reduce = { time_above = inf }
+        "#;
+        assert!(matches!(
+            validate(&run_with(&format!("{BUDGET}{measure}"))),
+            Err(ValidationError::NonFiniteThreshold(_))
+        ));
     }
 }

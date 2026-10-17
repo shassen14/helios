@@ -5,7 +5,7 @@
 # failure here is plainly a wiring bug, not an assertion bug. Add assertions
 # only after this run is green.
 
-schema_version = "1.0"
+schema_version = "2.0"
 
 # Resolved relative to --config-root (default "configs"); see the bin's
 # resolve_scenario_path. The proving ground, the one driving scenario.

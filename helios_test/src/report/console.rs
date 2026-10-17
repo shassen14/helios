@@ -11,9 +11,14 @@
 //! `AssertionReportEntry`'s private fields directly rather than widening their
 //! public accessor set for what is purely presentation glue.
 
-use super::{AssertionStatus, FailureReason, Report, ReportStatus, TerminatedBy, Verdict};
+use super::{
+    AssertionStatus, FailureReason, Report, ReportStatus, SeriesSummary, TerminatedBy, Verdict,
+};
 
-use crate::assertion::{AssertionValue, Condition};
+use crate::{
+    assertion::{AssertionValue, Condition},
+    statistics::within_run::Reducer,
+};
 
 /// Width the `[assert] …` text is padded to before the status label, so the
 /// `PASSED` / `FAILED` column lines up regardless of target length.
@@ -54,20 +59,21 @@ fn render(report: &Report) -> String {
         lines.push(format!("[wiring] {refused}"));
     }
 
-    // And values the collector dropped: a series that missed them judges
+    // And values the recording dropped: a series that missed them judges
     // less than the run recorded.
-    for unbound in &report.unbound_arrivals {
-        lines.push(format!("[recording] {unbound}"));
+    for dropped in &report.recording {
+        lines.push(format!("[recording] {dropped}"));
     }
 
     // One line per assertion, in run-file order.
     for entry in report.assertions() {
-        // The left half: "[assert] <target> <op> <expected>".
+        // The left half: "[assert] <name>: [<reducer> of ]<target> <condition>".
         let head = format!(
-            "[assert] {} {} {}",
+            "[assert] {}: {}{} {}",
+            entry.name,
+            reduced_of(entry.reduce.as_ref()),
             entry.target,
-            condition_glyph(entry.condition),
-            value_string(&entry.expected),
+            condition_phrase(&entry.condition),
         );
 
         // Pad the left half to a fixed column, then append the status label so
@@ -89,6 +95,29 @@ fn render(report: &Report) -> String {
             line.push_str(&format!(" ({detail})"));
         }
 
+        // What the series held, so a silent signal shows beside a pass.
+        line.push_str(&format!(" [{}]", series_phrase(&entry.series)));
+
+        lines.push(line);
+    }
+
+    // One line per measure, after the verdicts: a value, never a verdict.
+    for entry in report.measures() {
+        let value = match (entry.value(), entry.reason()) {
+            (Some(value), _) => value_string(value),
+            (None, Some(reason)) => format!("none ({})", reason_phrase(reason)),
+            (None, None) => "none".to_string(),
+        };
+        let mut line = format!(
+            "[measure] {}: {} of {} = {value} [{}]",
+            entry.name,
+            reducer_phrase(&entry.reduce),
+            entry.target,
+            series_phrase(entry.series()),
+        );
+        if !entry.covered() {
+            line.push_str(" (not covered: the run stopped before its end)");
+        }
         lines.push(line);
     }
 
@@ -117,8 +146,8 @@ fn termination_line(report: &Report) -> String {
     match &report.terminated_by {
         TerminatedBy::Aborted => "aborted during setup, before the first tick".to_string(),
         TerminatedBy::TimeBudget => format!("time budget reached at {at}"),
-        TerminatedBy::AssertionFailed { number } => format!(
-            "assertion {number} {} at {at}",
+        TerminatedBy::AssertionFailed { name } => format!(
+            "assertion '{name}' {} at {at}",
             status_label(&AssertionStatus::Failed)
         ),
     }
@@ -147,28 +176,56 @@ fn failure_detail(
 }
 
 /// The human phrase for why an assertion failed — a phrasebook, like
-/// [`condition_glyph`]; the TOML carries the snake_case name instead.
+/// [`condition_phrase`]; the TOML carries the snake_case name instead.
 fn reason_phrase(reason: FailureReason) -> &'static str {
     match reason {
         FailureReason::Rejected => "value rejected",
         FailureReason::NoSamples => "no samples",
         FailureReason::TypeMismatch => "type mismatch",
         FailureReason::ConditionFailed => "condition failed",
-        FailureReason::InvalidBounds => "invalid bounds",
     }
 }
 
-/// The human glyph for a comparison verb — a phrasebook, not logic. `Condition`
-/// is `Copy`, so it's taken by value. `WithinRange` renders as the word "within"
-/// because the report entry carries only `expected`, not the low/high band.
-fn condition_glyph(condition: Condition) -> &'static str {
+/// The human phrase for a condition with its operand — a phrasebook, not
+/// logic: `< 25`, `== 0`, `in [0.3, 0.7]`.
+fn condition_phrase(condition: &Condition) -> String {
     match condition {
-        Condition::Equals => "==",
-        Condition::NotEquals => "!=",
-        Condition::LessThan => "<",
-        Condition::GreaterThan => ">",
-        Condition::WithinRange => "within",
+        Condition::Equals(value) => format!("== {}", value_string(value)),
+        Condition::NotEquals(value) => format!("!= {}", value_string(value)),
+        Condition::LessThan(bound) => format!("< {bound}"),
+        Condition::GreaterThan(bound) => format!("> {bound}"),
+        Condition::WithinRange([low, high]) => format!("in [{low}, {high}]"),
     }
+}
+
+/// `"<reducer> of "` before a reduced assertion's target; nothing before an
+/// every-sample one's.
+fn reduced_of(reduce: Option<&Reducer>) -> String {
+    reduce
+        .map(|reducer| format!("{} of ", reducer_phrase(reducer)))
+        .unwrap_or_default()
+}
+
+/// A reducer as the run file names it, with its parameter: `mean`,
+/// `time_above(1.5)`.
+fn reducer_phrase(reducer: &Reducer) -> String {
+    match reducer {
+        Reducer::TimeAbove(threshold) => format!("{}({threshold})", reducer.name()),
+        other => other.name().to_string(),
+    }
+}
+
+/// What a series held: `12 samples, max gap 1.00s`, and for `final` the
+/// judged sample's age.
+fn series_phrase(series: &SeriesSummary) -> String {
+    let mut parts = vec![format!("{} samples", series.samples)];
+    if let Some(gap) = series.max_gap_secs {
+        parts.push(format!("max gap {gap:.2}s"));
+    }
+    if let Some(age) = series.final_age_secs {
+        parts.push(format!("final {age:.2}s before the end"));
+    }
+    parts.join(", ")
 }
 
 /// Render a value the way a human expects to read it: strings quoted (matching
@@ -204,7 +261,43 @@ fn run_status_label(status: &ReportStatus) -> &'static str {
 mod tests {
     use super::*;
 
-    use crate::report::AssertionReportEntry;
+    use crate::report::{AssertionReportEntry, MeasureReportEntry};
+
+    /// A series of `samples` samples with a 1 s largest gap.
+    fn series(samples: usize) -> SeriesSummary {
+        SeriesSummary {
+            samples,
+            max_gap_secs: Some(1.0),
+            final_age_secs: None,
+        }
+    }
+
+    fn passing_state() -> AssertionReportEntry {
+        AssertionReportEntry::new(
+            "mission_succeeded".to_string(),
+            "agent.car.node.mission.state".to_string(),
+            Some(Reducer::Final),
+            Condition::Equals(AssertionValue::String("Succeeded".to_string())),
+            SeriesSummary {
+                final_age_secs: Some(0.5),
+                ..series(3)
+            },
+            Verdict::Passed {
+                actual: AssertionValue::String("Succeeded".to_string()),
+            },
+        )
+    }
+
+    fn failing_speed(verdict: Verdict) -> AssertionReportEntry {
+        AssertionReportEntry::new(
+            "speed_capped".to_string(),
+            "agent.car.node.estimator.speed".to_string(),
+            None,
+            Condition::LessThan(5.0),
+            series(40),
+            verdict,
+        )
+    }
 
     // Build a finished report with one passing and one failing assertion, stopped
     // on the time budget — enough to exercise every rendering branch.
@@ -213,7 +306,6 @@ mod tests {
             "smoke".to_string(),
             "sim.scenarios.parking_lot".to_string(),
             Some(42),
-            ReportStatus::Failed,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -221,25 +313,14 @@ mod tests {
             4.1,
             TerminatedBy::TimeBudget,
             vec![
-                AssertionReportEntry::new(
-                    "agent.car.node.mission.state".to_string(),
-                    Condition::Equals,
-                    AssertionValue::String("Succeeded".to_string()),
-                    Verdict::Passed {
-                        actual: AssertionValue::String("Succeeded".to_string()),
-                    },
-                ),
-                AssertionReportEntry::new(
-                    "agent.car.node.estimator.speed".to_string(),
-                    Condition::LessThan,
-                    AssertionValue::Float(5.0),
-                    Verdict::Failed {
-                        actual: Some(AssertionValue::Float(7.0)),
-                        reason: FailureReason::ConditionFailed,
-                        failed_at_secs: None,
-                    },
-                ),
+                passing_state(),
+                failing_speed(Verdict::Failed {
+                    actual: Some(AssertionValue::Float(7.0)),
+                    reason: FailureReason::ConditionFailed,
+                    failed_at_secs: None,
+                }),
             ],
+            Vec::new(),
         )
     }
 
@@ -254,75 +335,63 @@ mod tests {
     #[test]
     fn renders_each_assertion_line() {
         let text = render(&sample_report());
-        // Passing line: quoted string and the `==` glyph, labelled PASSED.
-        assert!(text.contains("[assert] agent.car.node.mission.state == \"Succeeded\""));
-        assert!(text.contains("PASSED"));
-        // Failing line: the `<` glyph, FAILED, and the observed value.
-        assert!(text.contains("[assert] agent.car.node.estimator.speed < 5"));
-        assert!(text.contains("FAILED (got 7: condition failed)"));
+        // Passing line: name, reducer, quoted string and the `==` glyph,
+        // labelled PASSED, with what the series held.
+        assert!(text.contains(
+            "[assert] mission_succeeded: final of agent.car.node.mission.state == \"Succeeded\""
+        ));
+        assert!(text.contains("PASSED [3 samples, max gap 1.00s, final 0.50s before the end]"));
+        // Failing line: no reducer, the `<` glyph, FAILED, and the observed value.
+        assert!(text.contains("[assert] speed_capped: agent.car.node.estimator.speed < 5"));
+        assert!(text.contains("FAILED (got 7: condition failed) [40 samples, max gap 1.00s]"));
+    }
+
+    #[test]
+    fn a_range_prints_its_bounds() {
+        assert_eq!(
+            condition_phrase(&Condition::WithinRange([0.3, 0.7])),
+            "in [0.3, 0.7]"
+        );
+        assert_eq!(reducer_phrase(&Reducer::TimeAbove(1.5)), "time_above(1.5)");
     }
 
     #[test]
     fn a_failure_shows_its_time_and_reason() {
         let mut report = sample_report();
-        report.assertions[1] = AssertionReportEntry::new(
-            "agent.car.node.estimator.speed".to_string(),
-            Condition::LessThan,
-            AssertionValue::Float(5.0),
-            Verdict::Failed {
-                actual: Some(AssertionValue::Float(7.0)),
-                reason: FailureReason::ConditionFailed,
-                failed_at_secs: Some(1.25),
-            },
-        );
+        report.assertions[1] = failing_speed(Verdict::Failed {
+            actual: Some(AssertionValue::Float(7.0)),
+            reason: FailureReason::ConditionFailed,
+            failed_at_secs: Some(1.25),
+        });
         assert!(render(&report).contains("FAILED (got 7 at t=1.25s: condition failed)"));
     }
 
     #[test]
     fn a_failure_with_no_value_shows_only_its_reason() {
         let mut report = sample_report();
-        report.assertions[1] = AssertionReportEntry::new(
-            "agent.car.node.estimator.speed".to_string(),
-            Condition::LessThan,
-            AssertionValue::Float(5.0),
-            Verdict::Failed {
-                actual: None,
-                reason: FailureReason::NoSamples,
-                failed_at_secs: None,
-            },
-        );
+        report.assertions[1] = failing_speed(Verdict::Failed {
+            actual: None,
+            reason: FailureReason::NoSamples,
+            failed_at_secs: None,
+        });
         assert!(render(&report).contains("FAILED (no samples)"));
     }
 
     #[test]
     fn unjudged_entry_without_actual_does_not_panic() {
-        let report = Report::new(
-            "unjudged".to_string(),
-            "s".to_string(),
-            None,
-            ReportStatus::Failed,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            1.0,
-            0.1,
-            TerminatedBy::TimeBudget,
-            vec![AssertionReportEntry::new(
-                "agent.car.node.estimator.position".to_string(),
-                Condition::Equals,
-                AssertionValue::Float(0.0),
-                Verdict::Unjudged { actual: None },
-            )],
-        );
-        let text = render(&report);
-        assert!(text.contains("UNJUDGED"));
+        let mut report = sample_report();
+        report.assertions[1] = failing_speed(Verdict::Unjudged { actual: None });
+        assert!(render(&report).contains("UNJUDGED"));
     }
 
     #[test]
     fn a_fail_fast_stop_names_the_failed_assertion() {
         let mut report = sample_report();
-        report.terminated_by = TerminatedBy::AssertionFailed { number: 2 };
-        assert!(render(&report).contains("[run] terminated: assertion 2 FAILED at t=47.3s"));
+        report.terminated_by = TerminatedBy::AssertionFailed {
+            name: "speed_capped".to_string(),
+        };
+        assert!(render(&report)
+            .contains("[run] terminated: assertion 'speed_capped' FAILED at t=47.3s"));
     }
 
     #[test]
@@ -333,9 +402,41 @@ mod tests {
     }
 
     #[test]
-    fn an_unbound_arrival_is_shown_as_a_recording_line() {
+    fn a_recording_fault_is_shown_as_a_recording_line() {
         let mut report = sample_report();
-        report.unbound_arrivals = vec!["agent.car.node.estimator.x: 1 value(s)".to_string()];
+        report.recording = vec!["agent.car.node.estimator.x: 1 value(s)".to_string()];
         assert!(render(&report).contains("[recording] agent.car.node.estimator.x: 1 value(s)"));
+    }
+
+    #[test]
+    fn a_measure_shows_its_value_or_why_it_has_none() {
+        let mut report = sample_report();
+        report.measures = vec![
+            MeasureReportEntry::new(
+                "goal_distance".to_string(),
+                "agent.car.node.eval.goal_distance".to_string(),
+                Reducer::Final,
+                true,
+                Ok(AssertionValue::Float(0.25)),
+                series(1),
+            ),
+            MeasureReportEntry::new(
+                "peak_speed".to_string(),
+                "agent.car.node.estimator.speed".to_string(),
+                Reducer::Max,
+                false,
+                Err(FailureReason::NoSamples),
+                series(0),
+            ),
+        ];
+        let text = render(&report);
+        assert!(text.contains(
+            "[measure] goal_distance: final of agent.car.node.eval.goal_distance = 0.25 \
+             [1 samples, max gap 1.00s]"
+        ));
+        assert!(text.contains(
+            "[measure] peak_speed: max of agent.car.node.estimator.speed = none (no samples) \
+             [0 samples, max gap 1.00s] (not covered: the run stopped before its end)"
+        ));
     }
 }

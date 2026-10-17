@@ -1,19 +1,21 @@
-//! Checks, once the pipelines exist, that the run can judge every assertion:
-//! its target names one series its agent records, a channel value there can
-//! be extracted, a nondeterministic value is asserted on only with
-//! permission, and the collector requests it. Each assertion that can be
-//! judged binds its series to the exact key it names.
+//! Checks, once the pipelines exist, that the run can evaluate every
+//! assertion and measure: its target names one series its agent records, a
+//! channel value there can be extracted, a nondeterministic value is read
+//! only with permission, a reducer that holds values between samples isn't
+//! given an emission's events, and the collector requests it. Each entry
+//! that can be evaluated binds its series to the exact key it names.
 //!
 //! Done against what each agent declares it reports, before the first tick,
 //! so a run that could never pass stops before it starts and names every
 //! problem at once. What the checks find is kept as the run's plan, so a
-//! tick never looks a target up again, and the plan carries each assertion's
+//! tick never looks a target up again, and the plan carries each entry's
 //! state, so only a run that can judge has any.
 
 use crate::{
-    assertion::{Assertion, AssertionTarget, TargetSubject},
+    assertion::{Assertion, AssertionTarget, EntryName, Measure, TargetSubject},
     collector::{ObservationCollector, Series, SeriesId},
     runner::state::AssertionState,
+    statistics::within_run::Reducer,
 };
 
 use helios_core::prelude::AgentId;
@@ -33,39 +35,39 @@ use thiserror::Error;
 /// Between the problems of one assertion. No problem's message holds it.
 const PROBLEM_SEPARATOR: &str = " and ";
 
-/// _Per-step._ What setup found for each assertion, and the state each
-/// tick folds into it.
+/// _Per-step._ What setup found for each assertion and measure, and the
+/// state each tick folds into it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedPlan {
-    /// One per assertion, in run-file order.
+    /// One per assertion, then one per measure, each in run-file order.
+    /// Read by each entry's owner, never by position.
     entries: Vec<PlanEntry>,
 }
 
 impl ResolvedPlan {
-    /// Each assertion's series in `collector` beside its state, in run-file
-    /// order. `None` when `collector` isn't the one the plan was resolved
-    /// against.
+    /// Each entry's owner and its series in `collector` beside its state.
+    /// `None` when `collector` isn't the one the plan was resolved against.
     pub(super) fn with_series<'p, 'c>(
         &'p self,
         collector: &'c ObservationCollector,
-    ) -> Option<Vec<(&'c Series, &'p AssertionState)>> {
+    ) -> Option<Vec<(EntryOwner, &'c Series, &'p AssertionState)>> {
         self.entries
             .iter()
-            .map(|entry| Some((collector.series(entry.series)?, &entry.state)))
+            .map(|entry| Some((entry.owner, collector.series(entry.series)?, &entry.state)))
             .collect()
     }
 
-    /// As [`with_series`](Self::with_series), with each assertion's number
-    /// and its state open to update.
+    /// As [`with_series`](Self::with_series), with each state open to
+    /// update.
     pub(super) fn with_series_mut<'p, 'c>(
         &'p mut self,
         collector: &'c ObservationCollector,
-    ) -> Option<Vec<(usize, &'c Series, &'p mut AssertionState)>> {
+    ) -> Option<Vec<(EntryOwner, &'c Series, &'p mut AssertionState)>> {
         self.entries
             .iter_mut()
             .map(|entry| {
                 Some((
-                    entry.number,
+                    entry.owner,
                     collector.series(entry.series)?,
                     &mut entry.state,
                 ))
@@ -73,34 +75,38 @@ impl ResolvedPlan {
             .collect()
     }
 
-    /// Each assertion's state, in run-file order.
+    /// Each entry's state, assertions then measures, in run-file order.
     #[cfg(test)]
     pub(super) fn states(&self) -> impl Iterator<Item = &AssertionState> {
         self.entries.iter().map(|entry| &entry.state)
     }
 }
 
-/// One assertion in the plan: its number, the series it is judged from,
-/// and its state so far.
+/// _Per-step._ Which run-file entry a plan entry evaluates: an index into
+/// the run's assertions or into its measures. One enum rather than a bare
+/// index, so one list's index is never read as the other's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntryOwner {
+    Assertion(usize),
+    Measure(usize),
+}
+
+/// One entry in the plan: whose it is, the series it is evaluated from, and
+/// its state so far.
 #[derive(Debug, Clone, PartialEq)]
 struct PlanEntry {
-    /// Its position in the run file, counting from 1, as in
-    /// [`UnusableAssertion`].
-    number: usize,
+    owner: EntryOwner,
     series: SeriesId,
     state: AssertionState,
 }
 
-/// _Pre-step._ An assertion the run can't judge, and every reason why.
+/// _Pre-step._ An assertion or measure the run can't evaluate, and every
+/// reason why.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
-#[error(
-    "assertion {number} on '{target}': {}",
-    join(.problems, PROBLEM_SEPARATOR)
-)]
-pub struct UnusableAssertion {
-    /// Its position in the run file, counting from 1, so two assertions on
-    /// one target can be told apart.
-    pub(super) number: usize,
+#[error("'{name}' on '{target}': {}", join(.problems, PROBLEM_SEPARATOR))]
+pub struct UnusableEntry {
+    /// Unique across assertions and measures, so it says which.
+    pub(super) name: EntryName,
     pub(super) target: AssertionTarget,
     pub(super) problems: Vec<TargetProblem>,
 }
@@ -133,9 +139,14 @@ pub enum TargetProblem {
     #[error("it is nondeterministic (set allow_nondeterministic = true to assert on it)")]
     Nondeterministic,
     /// The collector doesn't record it: the host built the collector from
-    /// another run's assertions.
+    /// another run's entries.
     #[error("the run's collector doesn't record it")]
     Unrequested,
+    /// `time_above` on an emission. It holds each sample until the next,
+    /// which is right for a channel's state and wrong for an emission's
+    /// events: a NIS doesn't stay at its value between updates.
+    #[error("time_above holds each value until the next, and an emission's values are events")]
+    TimeAboveOnEmission,
 }
 
 /// What one agent reports, listed once for every assertion to search.
@@ -173,13 +184,24 @@ impl Catalog<'_> {
     }
 }
 
-/// The plan for judging `assertions`, with each one's series bound in
-/// `collector`, or every one the run can't judge, in run-file order.
+/// One entry to resolve, read off an assertion or a measure.
+struct Wanted<'r> {
+    owner: EntryOwner,
+    name: &'r EntryName,
+    target: &'r AssertionTarget,
+    reduce: Option<&'r Reducer>,
+    allow_nondeterministic: bool,
+}
+
+/// The plan for evaluating `assertions` and `measures`, with each one's
+/// series bound in `collector`, or every one the run can't evaluate,
+/// assertions first, each in run-file order.
 pub(super) fn resolve(
     assertions: &[Assertion],
+    measures: &[Measure],
     pipelines: &[(AgentId, &AutonomyPipeline)],
     collector: &mut ObservationCollector,
-) -> Result<ResolvedPlan, Vec<UnusableAssertion>> {
+) -> Result<ResolvedPlan, Vec<UnusableEntry>> {
     let catalogs: Vec<Catalog> = pipelines
         .iter()
         .map(|(agent, pipeline)| Catalog {
@@ -196,19 +218,36 @@ pub(super) fn resolve(
         })
         .collect();
 
-    let mut entries = Vec::with_capacity(assertions.len());
+    let wanted_assertions = assertions
+        .iter()
+        .enumerate()
+        .map(|(index, assertion)| Wanted {
+            owner: EntryOwner::Assertion(index),
+            name: &assertion.name,
+            target: &assertion.target,
+            reduce: assertion.reduce.as_ref(),
+            allow_nondeterministic: assertion.allow_nondeterministic,
+        });
+    let wanted_measures = measures.iter().enumerate().map(|(index, measure)| Wanted {
+        owner: EntryOwner::Measure(index),
+        name: &measure.name,
+        target: &measure.target,
+        reduce: Some(&measure.reduce),
+        allow_nondeterministic: measure.allow_nondeterministic,
+    });
+
+    let mut entries = Vec::with_capacity(assertions.len() + measures.len());
     let mut unusable = Vec::new();
-    for (index, assertion) in assertions.iter().enumerate() {
-        let number = index + 1;
-        match check(assertion, &catalogs, collector) {
+    for wanted in wanted_assertions.chain(wanted_measures) {
+        match check(&wanted, &catalogs, collector) {
             Ok(series) => entries.push(PlanEntry {
-                number,
+                owner: wanted.owner,
                 series,
                 state: AssertionState::new(),
             }),
-            Err(problems) => unusable.push(UnusableAssertion {
-                number,
-                target: assertion.target().clone(),
+            Err(problems) => unusable.push(UnusableEntry {
+                name: wanted.name.clone(),
+                target: wanted.target.clone(),
                 problems,
             }),
         }
@@ -221,16 +260,17 @@ pub(super) fn resolve(
     }
 }
 
-/// The series `assertion` is judged from, bound in `collector`, or every
-/// reason the run can't judge it, checked against the one agent its target
-/// names. A target that doesn't name exactly one series its agent records
-/// has no other properties to check, so that problem is reported alone.
+/// The series `wanted` is evaluated from, bound in `collector`, or every
+/// reason the run can't evaluate it, checked against the one agent its
+/// target names. A target that doesn't name exactly one series its agent
+/// records has no other properties to check, so that problem is reported
+/// alone.
 fn check(
-    assertion: &Assertion,
+    wanted: &Wanted,
     catalogs: &[Catalog],
     collector: &mut ObservationCollector,
 ) -> Result<SeriesId, Vec<TargetProblem>> {
-    let target = assertion.target();
+    let target = wanted.target;
     let Some(catalog) = catalogs
         .iter()
         .find(|catalog| catalog.agent == target.agent())
@@ -246,7 +286,7 @@ fn check(
     let mut problems = Vec::new();
     match observable.determinism() {
         Determinism::Deterministic => {}
-        Determinism::Nondeterministic if assertion.allow_nondeterministic() => {}
+        Determinism::Nondeterministic if wanted.allow_nondeterministic => {}
         Determinism::Nondeterministic => problems.push(TargetProblem::Nondeterministic),
     }
     match observable.kind() {
@@ -255,6 +295,11 @@ fn check(
         ObservedValueKind::Typed { type_name, .. } => {
             problems.push(TargetProblem::NoExtractor(type_name))
         }
+    }
+    if matches!(wanted.reduce, Some(Reducer::TimeAbove(_)))
+        && matches!(subject, Subject::Emission { .. })
+    {
+        problems.push(TargetProblem::TimeAboveOnEmission);
     }
     if !collector.requests(target) {
         problems.push(TargetProblem::Unrequested);
@@ -298,9 +343,7 @@ pub(super) fn join(items: &[impl Display], separator: &str) -> String {
 mod tests {
     use super::*;
 
-    use crate::assertion::{
-        extract::standard_extractors, terminal::TerminalAssertion, AssertionValue, Condition,
-    };
+    use crate::assertion::{extract::standard_extractors, Condition};
 
     use helios_core::prelude::TfProvider;
     use helios_runtime::{
@@ -438,24 +481,49 @@ mod tests {
             .expect("valid target")
     }
 
+    /// The name of the entry at `position` in the lists a test resolves,
+    /// counting from 1: assertions first, then measures.
+    fn name_at(position: usize) -> EntryName {
+        EntryName::parse(format!("e{position}")).expect("valid name")
+    }
+
+    /// An every-sample assertion on `target`. Its name is set by its
+    /// position when it is resolved.
     fn assertion(target: AssertionTarget, allow_nondeterministic: bool) -> Assertion {
-        Assertion::Terminal(TerminalAssertion {
-            target,
-            condition: Condition::Equals,
-            value: AssertionValue::Float(0.0),
-            low: None,
-            high: None,
+        Assertion {
             allow_nondeterministic,
-        })
+            ..reduced(target, None)
+        }
+    }
+
+    /// An assertion on `target` reduced by `reduce`.
+    fn reduced(target: AssertionTarget, reduce: Option<Reducer>) -> Assertion {
+        Assertion {
+            name: name_at(1),
+            target,
+            reduce,
+            condition: Condition::LessThan(1.0),
+            allow_nondeterministic: false,
+        }
+    }
+
+    /// A measure on `target` reduced by `reduce`.
+    fn measure(target: AssertionTarget, reduce: Reducer) -> Measure {
+        Measure {
+            name: name_at(1),
+            target,
+            reduce,
+            allow_nondeterministic: false,
+        }
     }
 
     fn unusable(
-        number: usize,
+        position: usize,
         target: AssertionTarget,
         problems: Vec<TargetProblem>,
-    ) -> UnusableAssertion {
-        UnusableAssertion {
-            number,
+    ) -> UnusableEntry {
+        UnusableEntry {
+            name: name_at(position),
             target,
             problems,
         }
@@ -468,12 +536,43 @@ mod tests {
         requested: &[AssertionTarget],
     ) -> (
         ObservationCollector,
-        Result<ResolvedPlan, Vec<UnusableAssertion>>,
+        Result<ResolvedPlan, Vec<UnusableEntry>>,
     ) {
+        resolve_all(assertions, &[], requested)
+    }
+
+    /// `assertions` and `measures` resolved against [`pipeline`] and a
+    /// collector built for `requested`, each entry named by its position
+    /// ([`name_at`]).
+    fn resolve_all(
+        assertions: &[Assertion],
+        measures: &[Measure],
+        requested: &[AssertionTarget],
+    ) -> (
+        ObservationCollector,
+        Result<ResolvedPlan, Vec<UnusableEntry>>,
+    ) {
+        let assertions: Vec<Assertion> = assertions
+            .iter()
+            .enumerate()
+            .map(|(index, assertion)| Assertion {
+                name: name_at(index + 1),
+                ..assertion.clone()
+            })
+            .collect();
+        let measures: Vec<Measure> = measures
+            .iter()
+            .enumerate()
+            .map(|(index, measure)| Measure {
+                name: name_at(assertions.len() + index + 1),
+                ..measure.clone()
+            })
+            .collect();
         let pipeline = pipeline();
         let mut collector = ObservationCollector::new(requested, standard_extractors());
         let resolved = resolve(
-            assertions,
+            &assertions,
+            &measures,
             &[(AgentId::new(CAR), &pipeline)],
             &mut collector,
         );
@@ -482,8 +581,8 @@ mod tests {
 
     /// The assertions the run can't judge, against a collector built for
     /// them.
-    fn errors(assertions: &[Assertion]) -> Vec<UnusableAssertion> {
-        let targets: Vec<AssertionTarget> = assertions.iter().map(|a| a.target().clone()).collect();
+    fn errors(assertions: &[Assertion]) -> Vec<UnusableEntry> {
+        let targets: Vec<AssertionTarget> = assertions.iter().map(|a| a.target.clone()).collect();
         resolve_with(assertions, &targets)
             .1
             .err()
@@ -491,36 +590,89 @@ mod tests {
     }
 
     #[test]
-    fn the_plan_numbers_each_assertion_and_names_its_series_in_run_file_order() {
-        // Two assertions on NIS share one series; SPEED has its own. Each
-        // starts with a fresh state of its own.
+    fn the_plan_names_each_entrys_owner_and_series() {
+        // Two assertions on NIS share one series; SPEED has its own, read by
+        // an assertion and a measure. Each starts with a fresh state of its
+        // own, and a measure's index counts measures only.
         let nis = estimator(NIS);
         let speed = channel(SPEED);
-        let (collector, resolved) = resolve_with(
+        let (collector, resolved) = resolve_all(
             &[
                 assertion(nis.clone(), false),
                 assertion(speed.clone(), false),
                 assertion(nis.clone(), true),
             ],
+            &[measure(speed.clone(), Reducer::Mean)],
             &[nis.clone(), speed.clone()],
         );
 
-        let entry = |number, subject: Subject| PlanEntry {
-            number,
+        let entry = |owner, subject: Subject| PlanEntry {
+            owner,
             series: collector
                 .series_id(&key(subject))
-                .expect("the assertion's key is bound"),
+                .expect("the entry's key is bound"),
             state: AssertionState::new(),
         };
         assert_eq!(
             resolved,
             Ok(ResolvedPlan {
                 entries: vec![
-                    entry(1, Subject::emission(ESTIMATOR, NIS)),
-                    entry(2, speed_subject()),
-                    entry(3, Subject::emission(ESTIMATOR, NIS)),
+                    entry(EntryOwner::Assertion(0), Subject::emission(ESTIMATOR, NIS)),
+                    entry(EntryOwner::Assertion(1), speed_subject()),
+                    entry(EntryOwner::Assertion(2), Subject::emission(ESTIMATOR, NIS)),
+                    entry(EntryOwner::Measure(0), speed_subject()),
                 ],
             })
+        );
+    }
+
+    #[test]
+    fn a_measure_is_checked_as_an_assertion_is() {
+        // Unknown leaf, nondeterministic without permission, and a target
+        // the collector doesn't record: each refused, named after the
+        // assertion before it.
+        let missing = estimator("missing");
+        let duration = estimator(TICK_DURATION_LEAF);
+        let (_, resolved) = resolve_all(
+            &[assertion(estimator(NIS), false)],
+            &[
+                measure(missing.clone(), Reducer::Final),
+                measure(duration.clone(), Reducer::Max),
+                measure(channel(SPEED), Reducer::Final),
+            ],
+            &[estimator(NIS), missing.clone(), duration.clone()],
+        );
+
+        assert_eq!(
+            resolved,
+            Err(vec![
+                unusable(2, missing, vec![TargetProblem::Unreported]),
+                unusable(3, duration, vec![TargetProblem::Nondeterministic]),
+                unusable(4, channel(SPEED), vec![TargetProblem::Unrequested]),
+            ])
+        );
+    }
+
+    #[test]
+    fn time_above_is_refused_on_an_emission_and_accepted_on_a_channel() {
+        let nis = estimator(NIS);
+        let speed = channel(SPEED);
+        let above = Some(Reducer::TimeAbove(1.0));
+        let (_, resolved) = resolve_all(
+            &[
+                reduced(nis.clone(), above.clone()),
+                reduced(speed.clone(), above),
+            ],
+            &[measure(nis.clone(), Reducer::TimeAbove(1.0))],
+            &[nis.clone(), speed],
+        );
+
+        assert_eq!(
+            resolved,
+            Err(vec![
+                unusable(1, nis.clone(), vec![TargetProblem::TimeAboveOnEmission]),
+                unusable(3, nis, vec![TargetProblem::TimeAboveOnEmission]),
+            ])
         );
     }
 
@@ -753,7 +905,7 @@ mod tests {
     #[test]
     fn two_assertions_on_one_target_are_judged_apart() {
         // Permission is per assertion, so only the one without it is
-        // refused, and its number says which.
+        // refused, and its name says which.
         let duration = estimator(TICK_DURATION_LEAF);
 
         assert_eq!(
@@ -793,7 +945,7 @@ mod tests {
 
         assert_eq!(
             unusable(4, label, problems).to_string(),
-            "assertion 4 on 'agent.car.channel.label': it is nondeterministic \
+            "'e4' on 'agent.car.channel.label': it is nondeterministic \
              (set allow_nondeterministic = true to assert on it) and it carries String, \
              which has no extractor"
         );

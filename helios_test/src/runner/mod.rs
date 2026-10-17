@@ -12,7 +12,7 @@ pub use finalize::HostFacts;
 pub use tick::TickAction;
 
 use crate::{
-    assertion::{extract::standard_extractors, Assertion},
+    assertion::extract::standard_extractors,
     collector::ObservationCollector,
     run::{
         validation::{self, ValidationError},
@@ -32,13 +32,13 @@ const NEVER_SET_UP: &str = "the host never called on_pipeline_built";
 const FOREIGN_COLLECTOR: &str = "the collector is not the one the run was set up against";
 
 /// _Per-step._ The state machine the host pumps across a run: owns the run,
-/// its phase (which holds the per-assertion state once the run is ready), and
-/// its clock: the first tick's time and the latest's.
+/// its phase (which holds each entry's state once the run is ready), and
+/// its clock: the span its ticks have covered.
 pub struct Runner {
     run: Run,
     phase: Phase,
-    start_time: Option<MonotonicTime>,
-    latest_tick: Option<MonotonicTime>,
+    /// `None` until the first tick.
+    ticks: Option<TickSpan>,
     setup_failures: Vec<String>,
 }
 
@@ -55,8 +55,7 @@ impl Runner {
         Ok(Self {
             run,
             phase: Phase::AwaitingPipelines,
-            start_time: None,
-            latest_tick: None,
+            ticks: None,
             // Filled only if the run is doomed before it ticks. Assertions
             // cannot speak for this class of failure: a scenario whose agent
             // has no pipeline usually has no assertion naming it either, so
@@ -66,11 +65,17 @@ impl Runner {
     }
 
     /// The collector this run reads: one requesting every target its
-    /// assertions name. A host builds it here, beside the runner, so the
-    /// two always describe the same run.
+    /// assertions and measures name. A host builds it here, beside the
+    /// runner, so the two always describe the same run.
     pub fn collector(&self) -> ObservationCollector {
+        let assertion_targets = self
+            .run
+            .assertions()
+            .iter()
+            .map(|assertion| &assertion.target);
+        let measure_targets = self.run.measures().iter().map(|measure| &measure.target);
         ObservationCollector::new(
-            self.run.assertions().iter().map(Assertion::target),
+            assertion_targets.chain(measure_targets),
             standard_extractors(),
         )
     }
@@ -103,6 +108,26 @@ enum Phase {
     Aborted,
 }
 
+/// _Per-step._ The simulated time a run's ticks have covered: its first
+/// tick, where the run's clock starts, and its latest. The window every
+/// assertion and measure is reduced over, which is the whole run until
+/// windows land.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TickSpan {
+    pub first: MonotonicTime,
+    pub latest: MonotonicTime,
+}
+
+impl TickSpan {
+    /// The span of one tick at `t`.
+    fn starting_at(t: MonotonicTime) -> Self {
+        Self {
+            first: t,
+            latest: t,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,7 +137,7 @@ mod tests {
     fn run_with(body: &str) -> Run {
         let toml = format!(
             r#"
-            schema_version = "1.0"
+            schema_version = "2.0"
             scenario = {{ from = "s" }}
             observation = {{ from = "o" }}
             {body}

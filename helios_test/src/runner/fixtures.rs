@@ -62,8 +62,13 @@ fn speed<T: Send + Sync + 'static>() -> ChannelKey {
 /// Fields are private, so it is built through TOML. `termination` is an
 /// inline-table body (comma-separated keys).
 pub(super) fn run(termination: &str, assertions: &[&str]) -> Run {
+    run_measuring(termination, assertions, &[])
+}
+
+/// As [`run`], with measure blocks too.
+pub(super) fn run_measuring(termination: &str, assertions: &[&str], measures: &[&str]) -> Run {
     let mut text = format!(
-        "schema_version = \"1.0\"\n\
+        "schema_version = \"2.0\"\n\
          scenario = {{ from = \"s\" }}\n\
          observation = {{ from = \"o\" }}\n\
          termination = {{ {termination} }}\n"
@@ -73,39 +78,71 @@ pub(super) fn run(termination: &str, assertions: &[&str]) -> Run {
         text.push_str(block);
         text.push('\n');
     }
+    for block in measures {
+        text.push_str("\n[[measure]]\n");
+        text.push_str(block);
+        text.push('\n');
+    }
     toml::from_str(&text).expect("valid run toml")
 }
 
-/// A continuous assertion that `agent`'s [`LEAF`] equals `value`.
-pub(super) fn cont(agent: &str, value: f64) -> String {
-    assertion("continuous", agent, value)
+/// An assertion named `name` that every sample of `agent`'s [`LEAF`] is
+/// `value`.
+pub(super) fn cont(name: &str, agent: &str, value: f64) -> String {
+    assertion_on(name, &target(agent), None, value)
 }
 
-/// A terminal assertion that `agent`'s [`LEAF`] equals `value`.
-pub(super) fn term(agent: &str, value: f64) -> String {
-    assertion("at_completion", agent, value)
+/// An assertion named `name` that the final sample of `agent`'s [`LEAF`] is
+/// `value`.
+pub(super) fn term(name: &str, agent: &str, value: f64) -> String {
+    assertion_on(name, &target(agent), Some("\"final\""), value)
 }
 
-/// A terminal assertion that `agent`'s [`SPEED`] channel equals `value`.
-pub(super) fn speed_term(agent: &str, value: f64) -> String {
+/// An assertion named `name` that the final sample of `agent`'s [`SPEED`]
+/// channel is `value`.
+pub(super) fn speed_term(name: &str, agent: &str, value: f64) -> String {
     assertion_on(
-        "at_completion",
+        name,
         &channel_path(agent, &speed::<f64>()),
+        Some("\"final\""),
         value,
     )
 }
 
-fn assertion(when: &str, agent: &str, value: f64) -> String {
-    assertion_on(when, &target(agent), value)
+/// An assertion named `name` that `agent`'s [`LEAF`], reduced by `reduce`
+/// (as written in TOML), is below `bound`.
+pub(super) fn reduced_below(name: &str, agent: &str, reduce: &str, bound: f64) -> String {
+    format!(
+        "name = \"{name}\"\n\
+         target = \"{}\"\n\
+         reduce = {reduce}\n\
+         condition = {{ less_than = {bound:?} }}",
+        target(agent)
+    )
 }
 
-// `{value:?}` forces a decimal point so TOML reads it as a float, not an int.
-fn assertion_on(when: &str, target: &str, value: f64) -> String {
+/// A measure named `name` of `agent`'s [`LEAF`], reduced by `reduce` (as
+/// written in TOML).
+pub(super) fn measure(name: &str, agent: &str, reduce: &str) -> String {
     format!(
-        "when = \"{when}\"\n\
+        "name = \"{name}\"\n\
+         target = \"{}\"\n\
+         reduce = {reduce}",
+        target(agent)
+    )
+}
+
+// Exact equality on a float is refused at load, so "is `value`" is the
+// one-point range. `{value:?}` forces a decimal point.
+fn assertion_on(name: &str, target: &str, reduce: Option<&str>, value: f64) -> String {
+    let reduce = reduce
+        .map(|reduce| format!("reduce = {reduce}\n"))
+        .unwrap_or_default();
+    format!(
+        "name = \"{name}\"\n\
          target = \"{target}\"\n\
-         condition = \"equals\"\n\
-         value = {value:?}"
+         {reduce}\
+         condition = {{ within_range = [{value:?}, {value:?}] }}"
     )
 }
 
@@ -238,8 +275,8 @@ fn observe_under(
     }]);
 }
 
-/// The state of each of `runner`'s assertions, in run-file order; none
-/// unless the run is ready.
+/// The state of each of `runner`'s assertions, then measures, in run-file
+/// order; none unless the run is ready.
 pub(super) fn states(runner: &Runner) -> Vec<&AssertionState> {
     match &runner.phase {
         Phase::Ready(plan) => plan.states().collect(),

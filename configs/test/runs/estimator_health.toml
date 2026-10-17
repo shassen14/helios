@@ -7,18 +7,18 @@
 # overconfident, its estimate further off than it believes.
 #
 # Two checks per source:
-#   - continuous, < 25: a ceiling a consistent filter essentially never
+#   - every sample, < 25: a ceiling a consistent filter essentially never
 #     reaches (a 3-dof NIS of 75 has odds below 1e-15 per sample). It catches
 #     gross overconfidence anywhere in the run, including start-up, where an
 #     unknown starting attitude once read about 70.
-#   - at completion, < 7.0: the 99.99% point of NIS ÷ dof for 3 dof, judged
+#   - final sample, < 7.0: the 99.99% point of NIS ÷ dof for 3 dof, judged
 #     on the last correction, with the car at rest. One sample is noisy, so
 #     the bound is loose; it means most under --monte-carlo.
 #
 # Both sources measure 3 axes (GPS position, magnetometer field), so one
 # bound serves both.
 
-schema_version = "1.0"
+schema_version = "2.0"
 
 # Resolved relative to --config-root (default "configs").
 scenario = { from = "sim/scenarios/01_proving_ground.toml" }
@@ -31,25 +31,23 @@ observation = { from = "default" }
 termination = { max_simulated_seconds = 60.0 }
 
 [[assert]]
-when = "continuous"
+name = "gps_nis_never_extreme"
 target = "agent.ProvingCar.node.primary.aiding.gps.nis"
-condition = "less_than"
-value = 25.0
+condition = { less_than = 25.0 }
 
 [[assert]]
-when = "continuous"
+name = "mag_nis_never_extreme"
 target = "agent.ProvingCar.node.primary.aiding.mag.nis"
-condition = "less_than"
-value = 25.0
+condition = { less_than = 25.0 }
 
 [[assert]]
-when = "at_completion"
+name = "gps_nis_final"
 target = "agent.ProvingCar.node.primary.aiding.gps.nis"
-condition = "less_than"
-value = 7.0
+reduce = "final"
+condition = { less_than = 7.0 }
 
 [[assert]]
-when = "at_completion"
+name = "mag_nis_final"
 target = "agent.ProvingCar.node.primary.aiding.mag.nis"
-condition = "less_than"
-value = 7.0
+reduce = "final"
+condition = { less_than = 7.0 }

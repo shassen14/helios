@@ -1,5 +1,5 @@
 use super::{
-    resolve::{join, resolve, UnusableAssertion},
+    resolve::{join, resolve, UnusableEntry},
     Phase, Runner,
 };
 use crate::collector::ObservationCollector;
@@ -9,11 +9,11 @@ use helios_runtime::AutonomyPipeline;
 use thiserror::Error;
 
 impl Runner {
-    /// Check, before the first tick, that the run can judge every assertion
-    /// against what `pipelines` report and what `collector` requests, bind
-    /// each assertion's series in `collector`, and keep what the check found
-    /// for every tick. The run is then ready, or, if any assertion can't be
-    /// judged, aborted with the reasons.
+    /// Check, before the first tick, that the run can evaluate every
+    /// assertion and measure against what `pipelines` report and what
+    /// `collector` requests, bind each one's series in `collector`, and keep
+    /// what the check found for every tick. The run is then ready, or, if
+    /// any entry can't be evaluated, aborted with the reasons.
     ///
     /// Called once. A second call, or one after setup failed, is refused and
     /// changes nothing.
@@ -26,32 +26,37 @@ impl Runner {
             return Err(SetupError::AlreadySetUp);
         }
 
-        match resolve(self.run.assertions(), pipelines, collector) {
+        match resolve(
+            self.run.assertions(),
+            self.run.measures(),
+            pipelines,
+            collector,
+        ) {
             Ok(plan) => {
                 self.phase = Phase::Ready(plan);
                 Ok(())
             }
             Err(unusable) => {
                 self.phase = Phase::Aborted;
-                Err(SetupError::UnusableAssertions(unusable))
+                Err(SetupError::UnusableEntries(unusable))
             }
         }
     }
 }
 
-/// Between the unusable assertions in one message. An assertion's own
-/// message holds a `,` but never this.
-const ASSERTION_SEPARATOR: &str = "; ";
+/// Between the unusable entries in one message. An entry's own message
+/// holds a `,` but never this.
+const ENTRY_SEPARATOR: &str = "; ";
 
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum SetupError {
-    /// Assertions the run can't judge, each with its reasons, so the
-    /// operator sees every one to fix at once.
+    /// Assertions and measures the run can't evaluate, each with its
+    /// reasons, so the operator sees every one to fix at once.
     #[error(
-        "the run can't judge these assertions: {}",
-        join(.0, ASSERTION_SEPARATOR)
+        "the run can't evaluate these assertions and measures: {}",
+        join(.0, ENTRY_SEPARATOR)
     )]
-    UnusableAssertions(Vec<UnusableAssertion>),
+    UnusableEntries(Vec<UnusableEntry>),
     /// `on_pipeline_built` was called after the run's setup was decided.
     #[error("the run's setup is already decided")]
     AlreadySetUp,
@@ -62,7 +67,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        assertion::AssertionTarget,
+        assertion::{AssertionTarget, EntryName},
         runner::{
             fixtures::{pipeline, ready, run, term, CAR},
             resolve::TargetProblem,
@@ -94,7 +99,7 @@ mod tests {
     #[test]
     fn a_run_whose_assertions_can_all_be_judged_is_ready() {
         let (r, _) = ready(
-            run("max_simulated_seconds = 5.0", &[&term(CAR, 5.0)]),
+            run("max_simulated_seconds = 5.0", &[&term("a", CAR, 5.0)]),
             &[CAR],
         );
         assert!(matches!(r.phase, Phase::Ready(_)));
@@ -104,21 +109,21 @@ mod tests {
     fn every_unusable_target_is_rejected_at_once() {
         // Caught here, before anything runs, and all reported together:
         // fixing one only to meet the next is a slow loop.
-        let a = "when = \"at_completion\"\ntarget = \"agent.car.node.estimator.a\"\ncondition = \"equals\"\nvalue = 0.0";
-        let b = "when = \"at_completion\"\ntarget = \"agent.car.node.estimator.b\"\ncondition = \"equals\"\nvalue = 0.0";
+        let a = "name = \"a\"\ntarget = \"agent.car.node.estimator.a\"\nreduce = \"final\"\ncondition = { less_than = 1.0 }";
+        let b = "name = \"b\"\ntarget = \"agent.car.node.estimator.b\"\nreduce = \"final\"\ncondition = { less_than = 1.0 }";
         let pipeline = empty_pipeline();
         let mut r = Runner::new(run("max_simulated_seconds = 5.0", &[a, b])).expect("valid run");
         let mut collector = r.collector();
         assert_eq!(
             r.on_pipeline_built(&[(AgentId::new(CAR), &pipeline)], &mut collector),
-            Err(SetupError::UnusableAssertions(vec![
-                UnusableAssertion {
-                    number: 1,
+            Err(SetupError::UnusableEntries(vec![
+                UnusableEntry {
+                    name: EntryName::parse("a").expect("valid name"),
                     target: target("agent.car.node.estimator.a"),
                     problems: vec![TargetProblem::Unreported],
                 },
-                UnusableAssertion {
-                    number: 2,
+                UnusableEntry {
+                    name: EntryName::parse("b").expect("valid name"),
                     target: target("agent.car.node.estimator.b"),
                     problems: vec![TargetProblem::Unreported],
                 },
@@ -130,7 +135,7 @@ mod tests {
     #[test]
     fn setup_is_decided_once() {
         let (mut r, mut collector) = ready(
-            run("max_simulated_seconds = 5.0", &[&term(CAR, 5.0)]),
+            run("max_simulated_seconds = 5.0", &[&term("a", CAR, 5.0)]),
             &[CAR],
         );
         let pipeline = pipeline();

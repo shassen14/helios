@@ -10,7 +10,7 @@
 # should match the proving ground's, since both stacks see the same world
 # and differ only in estimation error.
 
-schema_version = "1.0"
+schema_version = "2.0"
 
 # Resolved relative to --config-root (default "configs").
 scenario = { from = "sim/scenarios/dev_mock_oracle.toml" }

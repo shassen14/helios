@@ -132,7 +132,7 @@ fn tick_system(
     // per frame and cannot be broken out of partway, so the `Flushing` request
     // made below doesn't take effect until the batch drains — leaving trailing
     // steps that advance physics past the run's own stopping point. Observing
-    // them would judge continuous assertions against simulated time the run
+    // them would judge every-sample assertions against simulated time the run
     // file never asked for, so the runner sits them out.
     if outcome.is_terminated() {
         return;
@@ -152,10 +152,10 @@ fn tick_system(
 }
 
 /// System 3 — runs once at `OnEnter(AppState::Flushing)`. Builds the final
-/// `Report` (terminal assertions judged now; continuous ones already folded
-/// across ticks into their latches, every agent's refused writes read from
-/// its pipeline's bus), writes it to disk and the console, records
-/// the verdict, and ends the Bevy loop. Takes the runner as `Res` because
+/// `Report` (reduced assertions and measures evaluated now; every-sample ones
+/// already folded across ticks into their latches, every agent's refused
+/// writes read from its pipeline's bus), writes it to disk and the console,
+/// records the verdict, and ends the Bevy loop. Takes the runner as `Res` because
 /// `finalize` only reads.
 // Bevy systems declare their dependencies as parameters, so the count exceeds
 // clippy's default threshold; that's idiomatic here, not a smell.

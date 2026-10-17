@@ -9,7 +9,7 @@
 # assertion names the broken agent. Nothing here can fail *except* the missing
 # pipeline, so a pass would mean the check is gone.
 
-schema_version = "1.0"
+schema_version = "2.0"
 scenario = { from = "test/scenarios/unbuilt_pipeline.toml" }
 observation = { from = "default" }
 termination = { max_simulated_seconds = 2.0 }

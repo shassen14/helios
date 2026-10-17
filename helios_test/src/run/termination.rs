@@ -1,3 +1,5 @@
+use crate::assertion::EntryName;
+
 use helios_core::prelude::MonotonicTime;
 
 use serde::Deserialize;
@@ -34,7 +36,7 @@ impl Termination {
         now.0 - start.0 >= self.max_simulated_seconds
     }
 
-    /// Whether the run stops on the first continuous assertion that fails.
+    /// Whether the run stops on the first every-sample assertion that fails.
     /// Off unless the run file sets it.
     pub fn fail_fast(&self) -> bool {
         self.fail_fast
@@ -49,9 +51,9 @@ pub enum TerminationReason {
     Aborted,
     /// The simulated-time budget elapsed.
     MaxSimulatedSeconds,
-    /// A continuous assertion failed and the run is `fail_fast`. `number` is
-    /// its position in the run file, counting from 1.
-    AssertionFailed { number: usize },
+    /// An every-sample assertion failed and the run is `fail_fast`. `name`
+    /// is the assertion's.
+    AssertionFailed { name: EntryName },
 }
 
 #[cfg(test)]

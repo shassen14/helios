@@ -11,23 +11,25 @@
 //!   file, or checked against the pipelines once they are built. Its job is
 //!   to be *strict*: reject unknown keys, fail loudly on a bad file or on an
 //!   assertion the run could never judge. `Run`, `RunLoadError`,
-//!   `ScenarioRef`, `ObservationRef`, `Termination`, `ValidationError`, `Assertion`, `TerminalAssertion`,
-//!   `ContinuousAssertion`, `MalformedTarget`, `UnusableAssertion`,
+//!   `ScenarioRef`, `ObservationRef`, `Termination`, `ValidationError`,
+//!   `SchemaVersion`, `UnsupportedVersion`, `Assertion`, `Measure`,
+//!   `MalformedName`, `MalformedTarget`, `OperandProblem`, `UnusableEntry`,
 //!   `TargetProblem`.
 //! - **`_Per-step._`** — live state and verdicts produced *while* ticking; no
 //!   serde, never serialized. `Runner`, `ResolvedPlan`, `AssertionState`,
-//!   `ContinuousStatus`, `TickAction`, `AssertionResult`, `FailureKind`,
-//!   `ConditionError`, `TerminationReason`, `ExtractorTable`, `Extractor`,
+//!   `ContinuousStatus`, `TickAction`, `TickSpan`, `EntryOwner`,
+//!   `AssertionResult`, `FailureKind`, `ConditionError`, `ReduceError`, `TerminationReason`, `ExtractorTable`, `Extractor`,
 //!   `ObservationCollector`, `SeriesId`, `Series`, `Sample`, `Rejection`.
 //! - **`_Per/Post-step._`** — measurement data filled *during* a run, then
 //!   read back *after* it to build the serialized aggregate. `RunMetrics`.
 //! - **`_Post-step._`** — built *after* the run and serialized out. Its job is
 //!   to be *stable*: never break the consumer that parses it. `Report`,
 //!   `ReportStatus`, `TerminatedBy`, `AssertionReportEntry`, `Verdict`,
-//!   `AssertionStatus`, `FailureReason`, `AggregateReport`, `MetricRow`.
+//!   `AssertionStatus`, `FailureReason`, `MeasureReportEntry`, `SeriesSummary`,
+//!   `AggregateReport`, `MetricRow`.
 //! - **`_Shared._`** — leaf values that cross phases, so they carry both serde
-//!   directions. `AssertionValue`, `Condition` (pre + post); `AssertionTarget`
-//!   (pre + per).
+//!   directions. `AssertionValue`, `Condition`, `Reducer` (pre + post);
+//!   `AssertionTarget` (pre + per); `EntryName` (pre + per + post).
 //!
 //! The leaves are shared; only the *containers* are phase-specific. An input
 //! container's goal (strict) and an output container's goal (stable) pull in

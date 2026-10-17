@@ -28,9 +28,9 @@ pub enum ReportWriteError {
 
 /// Serialize `report` to pretty TOML and write it to `path`, overwriting any
 /// existing file. The `?` on each step converts the underlying error into the
-/// matching [`ReportWriteError`] variant via `#[from]`. Correctness of the
-/// serialize step depends on `Report`'s field order keeping scalars ahead of its
-/// `terminated_by` table and `assertions` array-of-tables.
+/// matching [`ReportWriteError`] variant via `#[from]`. The serializer puts
+/// each table's scalars ahead of its sub-tables itself, so `Report`'s field
+/// order is free.
 pub fn write(report: &Report, path: &Path) -> Result<(), ReportWriteError> {
     let text = toml::to_string_pretty(report)?;
 
@@ -44,20 +44,44 @@ mod tests {
     use super::*;
 
     use crate::assertion::{AssertionValue, Condition};
-    use crate::report::{AssertionReportEntry, FailureReason, ReportStatus, TerminatedBy, Verdict};
+    use crate::report::{
+        AssertionReportEntry, FailureReason, MeasureReportEntry, SeriesSummary, TerminatedBy,
+        Verdict,
+    };
+    use crate::statistics::within_run::Reducer;
 
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    fn series(samples: usize) -> SeriesSummary {
+        SeriesSummary {
+            samples,
+            max_gap_secs: Some(1.5),
+            final_age_secs: None,
+        }
+    }
+
+    /// A failing `time_above` assertion on the speed channel.
+    fn time_above_failing(verdict: Verdict) -> AssertionReportEntry {
+        AssertionReportEntry::new(
+            "rarely_fast".to_string(),
+            "agent.car.channel.speed".to_string(),
+            Some(Reducer::TimeAbove(5.0)),
+            Condition::LessThan(2.0),
+            series(40),
+            verdict,
+        )
+    }
+
     // A representative finished report: a failing run that stopped on the time
-    // budget, with one passing and one failing assertion line. Exercises every
-    // serialized shape the writer touches — scalars, the `terminated_by` table,
-    // and the `assertions` array-of-tables.
+    // budget, with a passing `within_range` line, a failing `time_above` line
+    // and one measure. Exercises every serialized shape the writer touches —
+    // scalars, the `terminated_by` table, the condition and reducer tables
+    // inside the `assertions` array-of-tables, and the `measures` one.
     fn sample_report() -> Report {
         Report::new(
             "smoke".to_string(),
             "sim.scenarios.parking_lot".to_string(),
             Some(42),
-            ReportStatus::Failed,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -66,25 +90,41 @@ mod tests {
             TerminatedBy::TimeBudget,
             vec![
                 AssertionReportEntry::new(
+                    "parked".to_string(),
                     "agent.car.node.estimator.position".to_string(),
-                    Condition::Equals,
-                    AssertionValue::Float(0.0),
+                    Some(Reducer::Final),
+                    Condition::WithinRange([-0.5, 0.5]),
+                    SeriesSummary {
+                        final_age_secs: Some(0.25),
+                        ..series(3)
+                    },
                     Verdict::Passed {
                         actual: AssertionValue::Float(0.0),
                     },
                 ),
-                AssertionReportEntry::new(
-                    "agent.car.node.estimator.speed".to_string(),
-                    Condition::LessThan,
-                    AssertionValue::Float(5.0),
-                    Verdict::Failed {
-                        actual: Some(AssertionValue::Float(7.0)),
-                        reason: FailureReason::ConditionFailed,
-                        failed_at_secs: Some(2.5),
-                    },
-                ),
+                time_above_failing(Verdict::Failed {
+                    actual: Some(AssertionValue::Float(7.0)),
+                    reason: FailureReason::ConditionFailed,
+                    failed_at_secs: None,
+                }),
             ],
+            vec![MeasureReportEntry::new(
+                "goal_distance".to_string(),
+                "agent.car.node.eval.goal_distance".to_string(),
+                Reducer::Final,
+                true,
+                Ok(AssertionValue::Float(0.5)),
+                series(1),
+            )],
         )
+    }
+
+    /// `report` written and read back as a plain TOML document.
+    fn written(report: &Report) -> toml::Value {
+        let path = write_to_temp(report);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let _ = std::fs::remove_file(&path);
+        toml::from_str(&text).unwrap()
     }
 
     // Write `report` to a unique temp file, returning the path. The atomic counter
@@ -100,16 +140,10 @@ mod tests {
 
     #[test]
     fn round_trips_through_toml() {
-        let report = sample_report();
-        let path = write_to_temp(&report);
+        let value = written(&sample_report());
 
-        let text = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(&path);
-
-        // Re-parse the file as a generic TOML document and spot-check that the
-        // scalars, the nested `terminated_by` table, and the assertion array all
-        // landed in their expected shapes.
-        let value: toml::Value = toml::from_str(&text).unwrap();
+        // Scalars, the derived status and the nested `terminated_by` table.
+        assert_eq!(value["schema_version"].as_str(), Some("2.0"));
         assert_eq!(value["run_name"].as_str(), Some("smoke"));
         assert_eq!(value["status"].as_str(), Some("failed"));
         assert_eq!(value["master_seed"].as_integer(), Some(42));
@@ -117,38 +151,51 @@ mod tests {
 
         let assertions = value["assertions"].as_array().unwrap();
         assert_eq!(assertions.len(), 2);
-        assert_eq!(assertions[0]["status"].as_str(), Some("passed"));
-        assert_eq!(assertions[0]["actual"].as_float(), Some(0.0));
-        // A pass carries no failure fields at all.
-        assert!(assertions[0].get("reason").is_none());
-        assert_eq!(
-            assertions[1]["target"].as_str(),
-            Some("agent.car.node.estimator.speed")
-        );
-        assert_eq!(assertions[1]["status"].as_str(), Some("failed"));
-        assert_eq!(assertions[1]["actual"].as_float(), Some(7.0));
-        assert_eq!(assertions[1]["reason"].as_str(), Some("condition_failed"));
-        assert_eq!(assertions[1]["failed_at_secs"].as_float(), Some(2.5));
+
+        // The within_range line: its condition as written, its reducer as a
+        // string, what its series held, and no failure fields at all.
+        let parked = &assertions[0];
+        assert_eq!(parked["name"].as_str(), Some("parked"));
+        assert_eq!(parked["reduce"].as_str(), Some("final"));
+        let range = parked["condition"]["within_range"].as_array().unwrap();
+        assert_eq!(range[0].as_float(), Some(-0.5));
+        assert_eq!(range[1].as_float(), Some(0.5));
+        assert_eq!(parked["samples"].as_integer(), Some(3));
+        assert_eq!(parked["max_gap_secs"].as_float(), Some(1.5));
+        assert_eq!(parked["final_age_secs"].as_float(), Some(0.25));
+        assert_eq!(parked["status"].as_str(), Some("passed"));
+        assert_eq!(parked["actual"].as_float(), Some(0.0));
+        assert!(parked.get("reason").is_none());
+
+        // The time_above line: its reducer is a table with its threshold.
+        let fast = &assertions[1];
+        assert_eq!(fast["target"].as_str(), Some("agent.car.channel.speed"));
+        assert_eq!(fast["reduce"]["time_above"].as_float(), Some(5.0));
+        assert_eq!(fast["condition"]["less_than"].as_float(), Some(2.0));
+        assert_eq!(fast["status"].as_str(), Some("failed"));
+        assert_eq!(fast["actual"].as_float(), Some(7.0));
+        assert_eq!(fast["reason"].as_str(), Some("condition_failed"));
+        assert!(fast.get("final_age_secs").is_none());
+
+        let measures = value["measures"].as_array().unwrap();
+        assert_eq!(measures.len(), 1);
+        assert_eq!(measures[0]["name"].as_str(), Some("goal_distance"));
+        assert_eq!(measures[0]["value"].as_float(), Some(0.5));
+        assert_eq!(measures[0]["covered"].as_bool(), Some(true));
+        assert!(measures[0].get("reason").is_none());
     }
 
     #[test]
     fn a_failure_with_nothing_observed_omits_the_absent_fields() {
         let mut report = sample_report();
-        report.assertions[1] = AssertionReportEntry::new(
-            "agent.car.node.estimator.speed".to_string(),
-            Condition::LessThan,
-            AssertionValue::Float(5.0),
-            Verdict::Failed {
-                actual: None,
-                reason: FailureReason::NoSamples,
-                failed_at_secs: None,
-            },
-        );
-        let path = write_to_temp(&report);
-        let text = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(&path);
+        report.assertions[1] = time_above_failing(Verdict::Failed {
+            actual: None,
+            reason: FailureReason::NoSamples,
+            failed_at_secs: None,
+        });
 
-        let value: toml::Value = toml::from_str(&text).unwrap();
+        let value = written(&report);
+
         let failed = &value["assertions"].as_array().unwrap()[1];
         assert_eq!(failed["reason"].as_str(), Some("no_samples"));
         assert!(failed.get("actual").is_none());
@@ -156,20 +203,19 @@ mod tests {
     }
 
     #[test]
+    fn a_report_with_no_measures_omits_them() {
+        let mut report = sample_report();
+        report.measures.clear();
+        assert!(written(&report).get("measures").is_none());
+    }
+
+    #[test]
     fn refused_writes_are_listed_only_when_there_are_some() {
-        let clean = sample_report();
-        let path = write_to_temp(&clean);
-        let text = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(&path);
-        let value: toml::Value = toml::from_str(&text).unwrap();
-        assert!(value.get("refused_writes").is_none());
+        assert!(written(&sample_report()).get("refused_writes").is_none());
 
         let mut refused = sample_report();
         refused.refused_writes = vec!["agent 'car': truth.tf refused 3 write(s)".to_string()];
-        let path = write_to_temp(&refused);
-        let text = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(&path);
-        let value: toml::Value = toml::from_str(&text).unwrap();
+        let value = written(&refused);
         let lines = value["refused_writes"].as_array().unwrap();
         assert_eq!(lines.len(), 1);
         assert_eq!(
@@ -179,21 +225,13 @@ mod tests {
     }
 
     #[test]
-    fn unbound_arrivals_are_listed_only_when_there_are_some() {
-        let clean = sample_report();
-        let path = write_to_temp(&clean);
-        let text = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(&path);
-        let value: toml::Value = toml::from_str(&text).unwrap();
-        assert!(value.get("unbound_arrivals").is_none());
+    fn recording_faults_are_listed_only_when_there_are_some() {
+        assert!(written(&sample_report()).get("recording").is_none());
 
-        let mut unbound = sample_report();
-        unbound.unbound_arrivals = vec!["agent.car.node.estimator.x: 1 value(s)".to_string()];
-        let path = write_to_temp(&unbound);
-        let text = std::fs::read_to_string(&path).unwrap();
-        let _ = std::fs::remove_file(&path);
-        let value: toml::Value = toml::from_str(&text).unwrap();
-        let lines = value["unbound_arrivals"].as_array().unwrap();
+        let mut dropped = sample_report();
+        dropped.recording = vec!["agent.car.node.estimator.x: 1 value(s)".to_string()];
+        let value = written(&dropped);
+        let lines = value["recording"].as_array().unwrap();
         assert_eq!(lines.len(), 1);
         assert_eq!(
             lines[0].as_str(),

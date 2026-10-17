@@ -5,8 +5,8 @@ use crate::{
 
 use helios_core::prelude::MonotonicTime;
 
-/// _Per-step._ The running verdict of a *continuous* assertion — one that must hold every
-/// tick, not just at the end. It's a latch: once `FailedAt`, it stays there,
+/// _Per-step._ The running verdict of an assertion that judges every sample —
+/// one that must hold throughout, not just at the end. It's a latch: once `FailedAt`, it stays there,
 /// because a single violation condemns the whole run even if the value later
 /// recovers.
 #[derive(Debug, Clone, PartialEq)]
@@ -27,11 +27,11 @@ pub enum ContinuousStatus {
 
 /// _Per-step._ Per-assertion runtime state the runner carries across ticks. `last_value`
 /// caches the most recent observation for the report; `continuous` is the latch
-/// above; `reached` counts the samples of the assertion's series the run has
+/// above; `reached` counts the samples of the entry's series the run has
 /// reached, and `rejection` is the series' rejection once the run has reached
-/// it. Terminal assertions reuse this type but leave `continuous` as
-/// `Pending` forever — they're judged once at finalize, not per tick — so the
-/// runner can hold one uniform collection instead of two.
+/// it. Reduced assertions and measures reuse this type but leave `continuous`
+/// as `Pending` forever — they're evaluated once at finalize, not per tick —
+/// so the runner can hold one uniform collection.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssertionState {
     last_value: Option<AssertionValue>,

@@ -1,10 +1,13 @@
+use crate::{
+    assertion::EntryName,
+    run::termination::{Termination, TerminationReason},
+};
+
 use helios_core::prelude::MonotonicTime;
 
-use crate::run::termination::{Termination, TerminationReason};
-
 /// Decide whether the run should stop this tick, and if so why. Pure and
-/// read-only: it judges nothing itself. `first_failed` is the number of the
-/// first continuous assertion, in run-file order, whose latch has failed.
+/// read-only: it judges nothing itself. `first_failed` is the name of the
+/// first every-sample assertion, in run-file order, whose latch has failed.
 /// `Some(reason)` means stop; `None` means keep going. The caller acts on the
 /// decision — this never terminates anything.
 ///
@@ -15,11 +18,11 @@ pub fn check(
     now: MonotonicTime,
     start: MonotonicTime,
     termination: &Termination,
-    first_failed: Option<usize>,
+    first_failed: Option<&EntryName>,
 ) -> Option<TerminationReason> {
     if termination.fail_fast() {
-        if let Some(number) = first_failed {
-            return Some(TerminationReason::AssertionFailed { number });
+        if let Some(name) = first_failed {
+            return Some(TerminationReason::AssertionFailed { name: name.clone() });
         }
     }
 
@@ -41,6 +44,16 @@ mod tests {
 
     fn at(secs: f64) -> MonotonicTime {
         MonotonicTime(secs)
+    }
+
+    fn name(name: &str) -> EntryName {
+        EntryName::parse(name).expect("valid name")
+    }
+
+    fn failed(name: &str) -> TerminationReason {
+        TerminationReason::AssertionFailed {
+            name: self::name(name),
+        }
     }
 
     const BUDGET: &str = "max_simulated_seconds = 5.0";
@@ -81,22 +94,25 @@ mod tests {
     #[test]
     fn fail_fast_stops_on_a_failure_and_names_it() {
         assert_eq!(
-            check(at(0.0), at(0.0), &term(FAIL_FAST), Some(2)),
-            Some(TerminationReason::AssertionFailed { number: 2 })
+            check(at(0.0), at(0.0), &term(FAIL_FAST), Some(&name("second"))),
+            Some(failed("second"))
         );
     }
 
     #[test]
     fn a_failure_without_fail_fast_runs_on() {
-        assert_eq!(check(at(0.0), at(0.0), &term(BUDGET), Some(2)), None);
+        assert_eq!(
+            check(at(0.0), at(0.0), &term(BUDGET), Some(&name("second"))),
+            None
+        );
     }
 
     #[test]
     fn a_failure_wins_over_an_elapsed_time_budget() {
         // Both would stop this tick; the failure is the more informative result.
         assert_eq!(
-            check(at(10.0), at(0.0), &term(FAIL_FAST), Some(1)),
-            Some(TerminationReason::AssertionFailed { number: 1 })
+            check(at(10.0), at(0.0), &term(FAIL_FAST), Some(&name("first"))),
+            Some(failed("first"))
         );
     }
 

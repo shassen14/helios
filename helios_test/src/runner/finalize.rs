@@ -1,44 +1,48 @@
 use super::{
+    resolve::EntryOwner,
     state::{AssertionState, ContinuousStatus},
-    Phase, Runner, FOREIGN_COLLECTOR, NEVER_SET_UP,
+    Phase, Runner, TickSpan, FOREIGN_COLLECTOR, NEVER_SET_UP,
 };
 use crate::{
-    assertion::{evaluator::evaluate_latest, Assertion, AssertionResult},
-    collector::{ObservationCollector, Series},
+    assertion::{evaluator::evaluate_reduced, Assertion, AssertionResult, Measure},
+    collector::{ObservationCollector, Sample, Series},
     report::{
-        AssertionReportEntry, AssertionStatus, FailureReason, Report, ReportStatus, TerminatedBy,
-        Verdict,
+        AssertionReportEntry, FailureReason, MeasureReportEntry, Report, SeriesSummary,
+        TerminatedBy, Verdict,
     },
     run::termination::TerminationReason,
+    statistics::within_run::{latest, max_gap, Reducer},
 };
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_runtime::port::RefusedWrites;
 
 impl Runner {
-    /// Build the run's [`Report`] once the host stops ticking. Continuous
+    /// Build the run's [`Report`] once the host stops ticking. Every-sample
     /// assertions are read from their latches (already folded across every
-    /// tick by `tick`); terminal assertions are judged here, once, on the
-    /// latest sample the run reached.
+    /// tick by `tick`); reduced assertions and measures are evaluated here,
+    /// once, on the samples the run reached, over the span its ticks covered.
     ///
-    /// Only a run whose ticks reached its time budget covered every
-    /// assertion's window, which today is the whole run. The runner reads
-    /// that from its own clock, not from the stop reason the host passes,
-    /// which only labels the report: a `fail_fast` failure on the tick the
-    /// budget runs out still covered it. In one that stopped early (a
-    /// `fail_fast` stop or an aborted setup), an assertion that hadn't failed
-    /// by then is `Unjudged`: neither its pass nor its silence says anything
-    /// about a window the run never finished. A failure is final however the
-    /// run stopped. In a run that covered its windows, an assertion that never
-    /// saw a sample fails, since that is how a dropped signal looks.
+    /// Only a run whose ticks reached its time budget covered every entry's
+    /// window, which today is the whole run. The runner reads that from its
+    /// own clock, not from the stop reason the host passes, which only labels
+    /// the report: a `fail_fast` failure on the tick the budget runs out
+    /// still covered it. In one that stopped early (a `fail_fast` stop or an
+    /// aborted setup), an assertion that hadn't failed by then is
+    /// `Unjudged`: neither its pass nor its silence says anything about a
+    /// window the run never finished, and a measure is marked not covered. A
+    /// failure is final however the run stopped. In a run that covered its
+    /// windows, an assertion with no samples to judge fails, since that is
+    /// how a dropped signal looks.
     ///
     /// The run is `Passed` only if every assertion passed, setup didn't fail,
     /// no agent's bus refused a write ([`HostFacts::refused_writes`]) and the
-    /// collector dropped no requested value
-    /// ([`ObservationCollector::unbound_arrivals`]): values the wiring or the
-    /// recording dropped leave the assertions judging another run than the
-    /// one configured. Only a run that was set up reports the collector's
-    /// drops; in one aborted at setup, a refused assertion's key is unbound
-    /// by design. An early stop is always a failure or an abort, so an
+    /// recording dropped nothing: no requested value arrived under an
+    /// unbound key ([`ObservationCollector::unbound_arrivals`]) and no
+    /// measure's series turned a value away. Values the wiring or the
+    /// recording dropped leave the entries describing another run than the
+    /// one configured. Only a run that was set up reports the recording's
+    /// drops; in one aborted at setup, a refused entry's key is unbound by
+    /// design. An early stop is always a failure or an abort, so an
     /// `Unjudged` assertion only ever sits in a run that failed for another
     /// reason.
     ///
@@ -72,43 +76,49 @@ impl Runner {
             }
             Phase::Aborted => None,
         };
-        let covered = match (self.start_time, self.latest_tick) {
-            (Some(start), Some(latest)) => self.run.termination().budget_spent(start, latest),
-            _ => false,
+        let judged = judged.unwrap_or_default();
+        // The series and state of the entry `owner` names; `None` when the
+        // run isn't ready to judge.
+        let entry_of = |owner: EntryOwner| {
+            judged
+                .iter()
+                .find(|(entry_owner, _, _)| *entry_owner == owner)
+                .map(|(_, series, state)| (*series, *state))
         };
+        let covered = self
+            .ticks
+            .is_some_and(|span| self.run.termination().budget_spent(span.first, span.latest));
 
-        let mut entries = Vec::with_capacity(self.run.assertions().len());
-        // Run-level verdict accumulator: flipped false the moment any assertion
-        // is not Passed, so it survives the loop without a second pass.
-        let mut all_passed = true;
-
-        for (i, assertion) in self.run.assertions().iter().enumerate() {
-            // This assertion's series and state; `None` when the run isn't
-            // ready to judge. A pair of references is `Copy`, so `copied`
-            // lifts it out of the borrowed list.
-            let verdict = match judged.as_ref().and_then(|j| j.get(i)).copied() {
-                Some((series, state)) => judge(assertion, series, state, covered, self.start_time),
-                None => Verdict::Unjudged { actual: None },
-            };
-
-            if verdict.status() != AssertionStatus::Passed {
-                all_passed = false;
-            }
-
-            entries.push(AssertionReportEntry::new(
-                assertion.target().as_str().to_string(),
-                *assertion.condition(),
-                assertion.expected().clone(),
-                verdict,
-            ));
-        }
-
-        let refused_writes: Vec<String> = refused_writes
-            .into_iter()
-            .map(|(agent, refused)| format!("agent '{agent}': {refused}"))
+        let assertions: Vec<AssertionReportEntry> = self
+            .run
+            .assertions()
+            .iter()
+            .enumerate()
+            .map(|(index, assertion)| {
+                let judged = entry_of(EntryOwner::Assertion(index));
+                let (series, verdict) = match judged {
+                    Some((series, state)) => (
+                        summarize(
+                            state.reached(series.samples()),
+                            &assertion.reduce,
+                            self.ticks,
+                        ),
+                        judge(assertion, series, state, covered, self.ticks),
+                    ),
+                    None => (unread(), Verdict::Unjudged { actual: None }),
+                };
+                AssertionReportEntry::new(
+                    assertion.name.to_string(),
+                    assertion.target.as_str().to_string(),
+                    assertion.reduce.clone(),
+                    assertion.condition.clone(),
+                    series,
+                    verdict,
+                )
+            })
             .collect();
 
-        let unbound_arrivals: Vec<String> = match &self.phase {
+        let mut recording: Vec<String> = match &self.phase {
             Phase::Ready(_) => collector
                 .unbound_arrivals()
                 .iter()
@@ -116,26 +126,35 @@ impl Runner {
                 .collect(),
             Phase::AwaitingPipelines | Phase::Aborted => Vec::new(),
         };
+        // A measure's value never fails the run, but a value its series
+        // turned away is a fault in the recording, like an unbound arrival.
+        let measures: Vec<MeasureReportEntry> = self
+            .run
+            .measures()
+            .iter()
+            .enumerate()
+            .map(|(index, measure)| {
+                let judged = entry_of(EntryOwner::Measure(index));
+                if let Some(rejection) = judged.and_then(|(_, state)| state.rejection()) {
+                    recording.push(format!(
+                        "measure '{}' on '{}': value rejected: {rejection}",
+                        measure.name, measure.target
+                    ));
+                }
+                report_measure(measure, judged, covered, self.ticks)
+            })
+            .collect();
 
-        // A setup failure, a refused write or a dropped value outranks the
-        // assertion tally: a run whose scene never became fit to test, or
-        // whose wiring or recording dropped values, cannot pass however its
-        // assertions came out.
-        let run_status = if all_passed
-            && setup_failures.is_empty()
-            && refused_writes.is_empty()
-            && unbound_arrivals.is_empty()
-        {
-            ReportStatus::Passed
-        } else {
-            ReportStatus::Failed
-        };
+        let refused_writes: Vec<String> = refused_writes
+            .into_iter()
+            .map(|(agent, refused)| format!("agent '{agent}': {refused}"))
+            .collect();
 
         // Elapsed simulated time from the origin `tick` stamped on its first
         // call. `None` only if finalize is reached with no tick having run;
         // report zero rather than panic.
-        let simulated_duration_secs = match self.start_time {
-            Some(start) => sim_now.0 - start.0,
+        let simulated_duration_secs = match self.ticks {
+            Some(span) => sim_now.0 - span.first.0,
             None => 0.0f64,
         };
 
@@ -143,14 +162,14 @@ impl Runner {
             run_name,
             self.run.scenario().path().to_string(),
             master_seed,
-            run_status,
             setup_failures,
             refused_writes,
-            unbound_arrivals,
+            recording,
             simulated_duration_secs,
             wall_duration_secs,
             TerminatedBy::from(&terminated_by_reason),
-            entries,
+            assertions,
+            measures,
         )
     }
 }
@@ -175,23 +194,24 @@ pub struct HostFacts {
 
 /// One assertion's report verdict. `covered` is whether the run reached the
 /// end of the assertion's window: a pass, or a failure for silence, needs it;
-/// a failure the assertion already met is final either way. `start` is the
-/// run's first tick, which a continuous failure's time is measured from.
+/// a failure the assertion already met is final either way. `ticks` is the
+/// span the run covered: an every-sample failure's time is measured from its
+/// first tick, and a reduced assertion is reduced over it.
 fn judge(
     assertion: &Assertion,
     series: &Series,
     state: &AssertionState,
     covered: bool,
-    start: Option<MonotonicTime>,
+    ticks: Option<TickSpan>,
 ) -> Verdict {
-    match assertion {
-        Assertion::Continuous(_) => match state.status() {
+    let Some(reducer) = &assertion.reduce else {
+        return match state.status() {
             // The value that broke it, not whatever arrived after: a run that
             // recovered would otherwise show a healthy number beside FAILED.
             ContinuousStatus::FailedAt { t, value, kind } => Verdict::Failed {
                 actual: value.clone(),
                 reason: FailureReason::from(kind),
-                failed_at_secs: start.map(|start| t.0 - start.0),
+                failed_at_secs: ticks.map(|span| t.0 - span.first.0),
             },
             _ if !covered => Verdict::Unjudged {
                 actual: state.last_value().clone(),
@@ -205,22 +225,102 @@ fn judge(
             },
             // Silent over its whole window: a drop.
             ContinuousStatus::Pending => no_samples(),
-        },
-        Assertion::Terminal(_) => {
+        };
+    };
+
+    // A run that never ticked reached nothing and covered nothing.
+    let Some(span) = ticks else {
+        return Verdict::Unjudged { actual: None };
+    };
+    let reached = state.reached(series.samples());
+    // A value turned away before the run stopped is a fault however it
+    // stopped; any other verdict belongs to an end the run never reached.
+    // The value reduced so far is still shown.
+    if !covered && state.rejection().is_none() {
+        return Verdict::Unjudged {
+            actual: reducer
+                .reduce(reached, span.first, span.latest)
+                .ok()
+                .flatten(),
+        };
+    }
+    match evaluate_reduced(
+        &assertion.condition,
+        reducer,
+        state.rejection(),
+        reached,
+        span.first,
+        span.latest,
+    ) {
+        AssertionResult::Pending => no_samples(),
+        judged => Verdict::from(judged),
+    }
+}
+
+/// One measure's report line: its value reduced over the samples the run
+/// reached, or why it has none.
+fn report_measure(
+    measure: &Measure,
+    judged: Option<(&Series, &AssertionState)>,
+    covered: bool,
+    ticks: Option<TickSpan>,
+) -> MeasureReportEntry {
+    let (series, value) = match (judged, ticks) {
+        (Some((series, state)), Some(span)) => {
             let reached = state.reached(series.samples());
-            // A value turned away before the run stopped is a fault however
-            // it stopped; any other verdict belongs to an end the run never
-            // reached. The value it stopped at is still shown.
-            if !covered && state.rejection().is_none() {
-                return Verdict::Unjudged {
-                    actual: reached.last().map(|sample| sample.value.clone()),
-                };
-            }
-            match evaluate_latest(assertion, state.rejection(), reached) {
-                AssertionResult::Pending => no_samples(),
-                judged => Verdict::from(judged),
-            }
+            let value = match state.rejection() {
+                Some(_) => Err(FailureReason::Rejected),
+                None => match measure.reduce.reduce(reached, span.first, span.latest) {
+                    Ok(Some(value)) => Ok(value),
+                    Ok(None) => Err(FailureReason::NoSamples),
+                    Err(_) => Err(FailureReason::TypeMismatch),
+                },
+            };
+            (
+                summarize(reached, &Some(measure.reduce.clone()), ticks),
+                value,
+            )
         }
+        _ => (unread(), Err(FailureReason::NoSamples)),
+    };
+    MeasureReportEntry::new(
+        measure.name.to_string(),
+        measure.target.as_str().to_string(),
+        measure.reduce.clone(),
+        covered,
+        value,
+        series,
+    )
+}
+
+/// What `reached` holds over the span the run's ticks covered: how many
+/// samples, the largest gap, and, for `final`, how long before the latest
+/// tick the judged sample was stamped.
+fn summarize(
+    reached: &[Sample],
+    reduce: &Option<Reducer>,
+    ticks: Option<TickSpan>,
+) -> SeriesSummary {
+    let final_age_secs = match (reduce, ticks) {
+        (Some(Reducer::Final), Some(span)) => {
+            latest(reached).map(|sample| (span.latest.0 - sample.timestamp.0).max(0.0))
+        }
+        _ => None,
+    };
+    SeriesSummary {
+        samples: reached.len(),
+        max_gap_secs: ticks.map(|span| max_gap(reached, span.first, span.latest)),
+        final_age_secs,
+    }
+}
+
+/// The summary of an entry the run never read: not set up, or set up
+/// against another collector.
+fn unread() -> SeriesSummary {
+    SeriesSummary {
+        samples: 0,
+        max_gap_secs: None,
+        final_age_secs: None,
     }
 }
 
@@ -238,11 +338,13 @@ mod tests {
     use super::*;
 
     use crate::{
-        assertion::AssertionValue,
+        assertion::{AssertionValue, EntryName},
+        report::{AssertionStatus, ReportStatus},
         runner::{
             fixtures::{
-                at, cont, pipeline, ready, refused_write, report, report_speed, report_unbound,
-                report_unreadable, run, speed_term, term, CAR, TRUCK,
+                at, cont, measure, pipeline, ready, reduced_below, refused_write, report,
+                report_speed, report_unbound, report_unreadable, run, run_measuring, speed_term,
+                term, CAR, TRUCK,
             },
             TickAction,
         },
@@ -292,7 +394,12 @@ mod tests {
         }
     }
 
-    const FAILED_FIRST: TerminationReason = TerminationReason::AssertionFailed { number: 1 };
+    /// The stop for the assertion named `first` failing.
+    fn failed_first() -> TerminationReason {
+        TerminationReason::AssertionFailed {
+            name: EntryName::parse("first").expect("valid name"),
+        }
+    }
 
     fn statuses(report: &Report) -> Vec<AssertionStatus> {
         report
@@ -303,10 +410,10 @@ mod tests {
     }
 
     #[test]
-    fn a_terminal_assertion_is_judged_on_the_latest_sample_reached() {
+    fn a_final_assertion_is_judged_on_the_latest_sample_reached() {
         // The 9.0 arrives after the run's last tick, past its end, so the
         // verdict rests on the 5.0 the run reached.
-        let (mut r, mut collector) = ready(run(&budget(), &[&term(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut collector) = ready(run(&budget(), &[&term("x1", CAR, 5.0)]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
         run_out(&mut r, &collector);
         report(&mut collector, CAR, 5.5, 9.0);
@@ -325,7 +432,10 @@ mod tests {
     fn an_assertion_that_never_saw_a_sample_fails() {
         // "Never emitted" is how a silent drop looks, so it can't pass, for
         // either kind of assertion.
-        let (mut r, collector) = ready(run(&budget(), &[&term(CAR, 5.0), &cont(CAR, 5.0)]), &[CAR]);
+        let (mut r, collector) = ready(
+            run(&budget(), &[&term("x2", CAR, 5.0), &cont("x3", CAR, 5.0)]),
+            &[CAR],
+        );
         run_out(&mut r, &collector);
 
         let report = finalize(&r, &collector);
@@ -348,10 +458,10 @@ mod tests {
     }
 
     #[test]
-    fn a_continuous_failure_reports_the_value_that_broke_it() {
+    fn an_every_sample_failure_reports_the_value_that_broke_it() {
         // It breaks at 1.0 s and recovers at 1.5 s; the report shows the
         // breaking value and its time, not the healthy value that came last.
-        let (mut r, mut collector) = ready(run(&budget(), &[&cont(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut collector) = ready(run(&budget(), &[&cont("x4", CAR, 5.0)]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
         report(&mut collector, CAR, 1.0, 9.0);
         report(&mut collector, CAR, 1.5, 5.0);
@@ -373,20 +483,20 @@ mod tests {
     #[test]
     fn an_early_stop_leaves_what_had_not_failed_unjudged() {
         // Assertion 1 failed and stopped the run. Assertion 2 held so far,
-        // 3 never saw a sample, and 4 is terminal: none of them saw the end
+        // 3 never saw a sample, and 4 is reduced: none of them saw the end
         // of its window, so none is passed, or failed for silence.
         let assertions = [
-            cont(CAR, 5.0),
-            cont(CAR, 9.0),
-            cont(TRUCK, 5.0),
-            term(CAR, 9.0),
+            cont("first", CAR, 5.0),
+            cont("x6", CAR, 9.0),
+            cont("x7", TRUCK, 5.0),
+            term("x8", CAR, 9.0),
         ];
         let blocks: Vec<&str> = assertions.iter().map(String::as_str).collect();
         let (mut r, mut collector) = ready(run(&budget(), &blocks), &[CAR, TRUCK]);
         report(&mut collector, CAR, 0.5, 9.0);
         r.tick(at(1.0), &collector);
 
-        let report = finalize_stopped_by(&r, &collector, FAILED_FIRST);
+        let report = finalize_stopped_by(&r, &collector, failed_first());
 
         assert_eq!(
             statuses(&report),
@@ -401,13 +511,18 @@ mod tests {
     }
 
     #[test]
-    fn an_unjudged_terminal_assertion_shows_the_value_it_stopped_at() {
-        let (mut r, mut collector) =
-            ready(run(&budget(), &[&cont(CAR, 5.0), &term(CAR, 5.0)]), &[CAR]);
+    fn an_unjudged_reduced_assertion_shows_the_value_it_stopped_at() {
+        let (mut r, mut collector) = ready(
+            run(
+                &budget(),
+                &[&cont("first", CAR, 5.0), &term("x10", CAR, 5.0)],
+            ),
+            &[CAR],
+        );
         report(&mut collector, CAR, 0.5, 7.0);
         r.tick(at(1.0), &collector);
 
-        let report = finalize_stopped_by(&r, &collector, FAILED_FIRST);
+        let report = finalize_stopped_by(&r, &collector, failed_first());
 
         assert_eq!(
             report.assertions()[1].verdict().actual(),
@@ -416,8 +531,8 @@ mod tests {
     }
 
     #[test]
-    fn a_continuous_assertion_reports_its_latch() {
-        let (mut r, mut collector) = ready(run(&budget(), &[&cont(CAR, 5.0)]), &[CAR]);
+    fn an_every_sample_assertion_reports_its_latch() {
+        let (mut r, mut collector) = ready(run(&budget(), &[&cont("x11", CAR, 5.0)]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
         run_out(&mut r, &collector);
 
@@ -433,7 +548,10 @@ mod tests {
         // the truck's assertion passed rather than going unjudged.
         let termination = format!("{}, fail_fast = true", budget());
         let (mut r, mut collector) = ready(
-            run(&termination, &[&cont(CAR, 5.0), &cont(TRUCK, 5.0)]),
+            run(
+                &termination,
+                &[&cont("first", CAR, 5.0), &cont("x13", TRUCK, 5.0)],
+            ),
             &[CAR, TRUCK],
         );
         r.tick(at(0.0), &collector);
@@ -442,11 +560,11 @@ mod tests {
         assert_eq!(
             r.tick(at(BUDGET_SECS), &collector),
             TickAction::Terminate {
-                reason: FAILED_FIRST,
+                reason: failed_first(),
             }
         );
 
-        let report = finalize_stopped_by(&r, &collector, FAILED_FIRST);
+        let report = finalize_stopped_by(&r, &collector, failed_first());
 
         assert_eq!(
             statuses(&report),
@@ -458,7 +576,7 @@ mod tests {
     fn the_stop_reason_the_host_passes_does_not_decide_coverage() {
         // The host says the budget ran out, but the runner's own ticks only
         // reached 1 s of 5: a pass would be claimed for time never run.
-        let (mut r, mut collector) = ready(run(&budget(), &[&cont(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut collector) = ready(run(&budget(), &[&cont("x14", CAR, 5.0)]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
         r.tick(at(1.0), &collector);
 
@@ -469,7 +587,7 @@ mod tests {
 
     #[test]
     fn a_value_turned_away_before_the_end_fails_the_assertion() {
-        let (mut r, mut collector) = ready(run(&budget(), &[&term(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut collector) = ready(run(&budget(), &[&term("x15", CAR, 5.0)]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
         report_unreadable(&mut collector, CAR, 1.0);
         run_out(&mut r, &collector);
@@ -482,7 +600,7 @@ mod tests {
     #[test]
     fn a_value_turned_away_after_the_last_tick_is_past_the_end() {
         // Like a late sample, a late rejection is outside the run.
-        let (mut r, mut collector) = ready(run(&budget(), &[&term(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut collector) = ready(run(&budget(), &[&term("x16", CAR, 5.0)]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
         run_out(&mut r, &collector);
         report_unreadable(&mut collector, CAR, 5.5);
@@ -494,7 +612,7 @@ mod tests {
 
     #[test]
     fn finalizing_with_another_runs_collector_fails_the_run() {
-        let (mut r, mut own) = ready(run(&budget(), &[&term(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut own) = ready(run(&budget(), &[&term("x17", CAR, 5.0)]), &[CAR]);
         report(&mut own, CAR, 0.5, 5.0);
         r.tick(at(1.0), &own);
         let other = r.collector();
@@ -561,7 +679,7 @@ mod tests {
 
     #[test]
     fn a_refused_write_fails_a_run_whose_assertions_passed() {
-        let (mut r, mut collector) = ready(run(&budget(), &[&cont(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut collector) = ready(run(&budget(), &[&cont("x18", CAR, 5.0)]), &[CAR]);
         report(&mut collector, CAR, 0.5, 5.0);
         run_out(&mut r, &collector);
 
@@ -590,7 +708,7 @@ mod tests {
         // The speed channel's path is requested and bound as the pipeline
         // declares it, carrying a float; a value under it carrying a bool
         // lands in no series.
-        let (mut r, mut collector) = ready(run(&budget(), &[&speed_term(CAR, 5.0)]), &[CAR]);
+        let (mut r, mut collector) = ready(run(&budget(), &[&speed_term("x19", CAR, 5.0)]), &[CAR]);
         report_speed(&mut collector, CAR, 0.5, 5.0);
         report_unbound(&mut collector, CAR, 0.5);
         run_out(&mut r, &collector);
@@ -599,8 +717,8 @@ mod tests {
 
         assert_eq!(statuses(&report), [AssertionStatus::Passed]);
         assert_eq!(report.status(), &ReportStatus::Failed);
-        let [line] = report.unbound_arrivals() else {
-            panic!("one unbound key, one line: {:?}", report.unbound_arrivals());
+        let [line] = report.recording() else {
+            panic!("one unbound key, one line: {:?}", report.recording());
         };
         assert!(line.starts_with("agent.car.channel.speed ("), "{line}");
         assert!(line.contains("bool"), "{line}");
@@ -614,7 +732,7 @@ mod tests {
     fn a_run_aborted_at_setup_reports_no_unbound_values() {
         // The truck's assertion is refused, so its key is never bound; values
         // under its path say nothing beyond the setup failure.
-        let mut r = Runner::new(run(&budget(), &[&term(TRUCK, 5.0)])).expect("valid run");
+        let mut r = Runner::new(run(&budget(), &[&term("x20", TRUCK, 5.0)])).expect("valid run");
         let mut collector = r.collector();
         let pipeline = pipeline();
         assert!(r
@@ -625,6 +743,191 @@ mod tests {
         let report = finalize(&r, &collector);
 
         assert_eq!(report.status(), &ReportStatus::Failed);
-        assert!(report.unbound_arrivals().is_empty());
+        assert!(report.recording().is_empty());
+    }
+
+    #[test]
+    fn a_reduced_assertion_is_judged_on_its_reduced_value() {
+        // The mean of 1, 2 and 6 is 3: below 4 though one sample isn't.
+        let (mut r, mut collector) = ready(
+            run(
+                &budget(),
+                &[&reduced_below("mean_low", CAR, "\"mean\"", 4.0)],
+            ),
+            &[CAR],
+        );
+        for (at, value) in [(0.5, 1.0), (1.0, 2.0), (1.5, 6.0)] {
+            report(&mut collector, CAR, at, value);
+        }
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(
+            report.assertions()[0].verdict(),
+            &Verdict::Passed {
+                actual: AssertionValue::Float(3.0)
+            }
+        );
+    }
+
+    #[test]
+    fn max_with_a_nan_sample_fails_as_judging_each_sample_would() {
+        let (mut r, mut collector) = ready(
+            run(
+                &budget(),
+                &[
+                    &reduced_below("max_low", CAR, "\"max\"", 25.0),
+                    &format!(
+                        "name = \"each_low\"\ntarget = \"agent.{CAR}.node.estimator.x\"\n\
+                         condition = {{ less_than = 25.0 }}"
+                    ),
+                ],
+            ),
+            &[CAR],
+        );
+        report(&mut collector, CAR, 0.5, 1.0);
+        report(&mut collector, CAR, 1.0, f64::NAN);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(
+            statuses(&report),
+            [AssertionStatus::Failed, AssertionStatus::Failed]
+        );
+    }
+
+    #[test]
+    fn count_equals_zero_passes_on_a_silent_series() {
+        // "Expect no samples": `count` is defined on an empty window.
+        let none = format!(
+            "name = \"never\"\ntarget = \"agent.{CAR}.node.estimator.x\"\n\
+             reduce = \"count\"\ncondition = {{ equals = 0 }}"
+        );
+        let (mut r, collector) = ready(run(&budget(), &[&none]), &[CAR]);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(
+            report.assertions()[0].verdict(),
+            &Verdict::Passed {
+                actual: AssertionValue::Int(0)
+            }
+        );
+        assert_eq!(report.status(), &ReportStatus::Passed);
+    }
+
+    #[test]
+    fn each_entry_reports_its_sample_count_largest_gap_and_final_age() {
+        // Samples at 0.5 and 1.0 in a run from 0 to 5: the gap after the
+        // last is 4 s, and the final sample is 4 s old at the end.
+        let (mut r, mut collector) = ready(
+            run(
+                &budget(),
+                &[&term("settled", CAR, 5.0), &cont("held", CAR, 5.0)],
+            ),
+            &[CAR],
+        );
+        report(&mut collector, CAR, 0.5, 5.0);
+        report(&mut collector, CAR, 1.0, 5.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(
+            report.assertions()[0].series(),
+            &SeriesSummary {
+                samples: 2,
+                max_gap_secs: Some(4.0),
+                final_age_secs: Some(4.0),
+            }
+        );
+        assert_eq!(
+            report.assertions()[1].series(),
+            &SeriesSummary {
+                samples: 2,
+                max_gap_secs: Some(4.0),
+                final_age_secs: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_measure_reports_its_value_and_never_fails_the_run() {
+        let (mut r, mut collector) = ready(
+            run_measuring(
+                &budget(),
+                &[],
+                &[
+                    &measure("peak", CAR, "\"max\""),
+                    &measure("mean_of_nothing", TRUCK, "\"mean\""),
+                ],
+            ),
+            &[CAR, TRUCK],
+        );
+        report(&mut collector, CAR, 0.5, 2.0);
+        report(&mut collector, CAR, 1.0, 7.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        let [peak, nothing] = report.measures() else {
+            panic!("two measures: {:?}", report.measures());
+        };
+        assert_eq!(peak.value(), Some(&AssertionValue::Float(7.0)));
+        assert!(peak.covered());
+        assert_eq!(nothing.value(), None);
+        assert_eq!(nothing.reason(), Some(FailureReason::NoSamples));
+        assert_eq!(report.status(), &ReportStatus::Passed);
+    }
+
+    #[test]
+    fn a_measure_the_run_did_not_cover_reports_the_value_it_stopped_at() {
+        let (mut r, mut collector) = ready(
+            run_measuring(&budget(), &[], &[&measure("peak", CAR, "\"max\"")]),
+            &[CAR],
+        );
+        report(&mut collector, CAR, 0.5, 2.0);
+        r.tick(at(1.0), &collector);
+
+        let report = finalize(&r, &collector);
+
+        let [peak] = report.measures() else {
+            panic!("one measure: {:?}", report.measures());
+        };
+        assert_eq!(peak.value(), Some(&AssertionValue::Float(2.0)));
+        assert!(!peak.covered());
+    }
+
+    #[test]
+    fn a_value_a_measures_series_turned_away_fails_the_run_under_recording() {
+        // The assertion passes; the measure's value is no fault of the run's,
+        // but the recording dropping one is.
+        let (mut r, mut collector) = ready(
+            run_measuring(
+                &budget(),
+                &[&cont("held", CAR, 5.0)],
+                &[&measure("peak", CAR, "\"max\"")],
+            ),
+            &[CAR],
+        );
+        report(&mut collector, CAR, 0.5, 5.0);
+        report_unreadable(&mut collector, CAR, 1.0);
+        r.tick(at(0.0), &collector);
+        r.tick(at(BUDGET_SECS), &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(report.measures()[0].reason(), Some(FailureReason::Rejected));
+        assert_eq!(report.status(), &ReportStatus::Failed);
+        let [line] = report.recording() else {
+            panic!("one recording line: {:?}", report.recording());
+        };
+        assert!(
+            line.starts_with("measure 'peak' on 'agent.car.node.estimator.x': value rejected"),
+            "{line}"
+        );
     }
 }
