@@ -182,7 +182,7 @@ mod tests {
     //!   - declares `path_channel` in its required inputs
 
     use super::*;
-    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
 
     use helios_core::control::commands::BodyTwist;
     use helios_core::control::BodyTwistRef;
@@ -210,10 +210,12 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
+            Some(ErasedTransform::new(
                 Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
+                EdgeEnds {
+                    child: Convention::Flu,
+                    parent: Convention::Flu,
+                },
             ))
         }
     }

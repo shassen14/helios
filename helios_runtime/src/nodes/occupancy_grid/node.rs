@@ -271,7 +271,7 @@ mod tests {
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::Point;
     use helios_core::spatial::state::{Component, Quantity};
-    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
     use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;
@@ -309,9 +309,15 @@ mod tests {
             if from.is_base_link() {
                 return None;
             }
-            self.agent_to_sensor
-                .get(from.leaf().as_str())
-                .map(|iso| ErasedTransform::from_parts(*iso, Convention::Flu, Convention::Flu))
+            self.agent_to_sensor.get(from.leaf().as_str()).map(|iso| {
+                ErasedTransform::new(
+                    *iso,
+                    EdgeEnds {
+                        child: Convention::Flu,
+                        parent: Convention::Flu,
+                    },
+                )
+            })
         }
     }
 

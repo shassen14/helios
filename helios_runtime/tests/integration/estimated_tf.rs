@@ -36,7 +36,7 @@ use helios_core::prelude::{AgentId, MonotonicDuration, MonotonicTime, TfProvider
 use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::buffer::TfWindow;
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
-use helios_core::spatial::transforms::{Convention, ErasedTransform};
+use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
 
 use nalgebra::Isometry3;
 
@@ -66,12 +66,12 @@ fn imu_mount() -> StampedTransform {
     StampedTransform {
         parent: base_link(),
         child: imu(),
-        // `from_parts` takes the child's convention first (imu, FLU), the
-        // parent's second (base_link, FLU).
-        transform: ErasedTransform::from_parts(
+        transform: ErasedTransform::new(
             Isometry3::translation(0.1, 0.0, 0.0),
-            Convention::Flu,
-            Convention::Flu,
+            EdgeEnds {
+                child: Convention::Flu,
+                parent: Convention::Flu,
+            },
         ),
         stamp: MonotonicTime(0.0),
     }
@@ -191,10 +191,12 @@ impl PipelineNode for EdgeProducerNode {
             parent: self.edge.parent.clone(),
             child: self.edge.child.clone(),
             stamp: tick.now,
-            transform: ErasedTransform::from_parts(
+            transform: ErasedTransform::new(
                 Isometry3::identity(),
-                self.from_conv,
-                self.to_conv,
+                EdgeEnds {
+                    child: self.from_conv,
+                    parent: self.to_conv,
+                },
             ),
         };
         publish_edge(

@@ -22,7 +22,7 @@ use crate::{
             tf::stamped::{
                 DynamicEdgeStats, EdgeKind, EdgeKindTag, FrameEdge, StampedTransform, TimeSpan,
             },
-            Convention, ErasedTransform,
+            Convention, EdgeEnds, ErasedTransform,
         },
         FrameId,
     },
@@ -301,10 +301,12 @@ impl TfBuffer {
         // A frame to itself is identity, tagged with its own convention on both
         // ends. Answered directly so it holds even for a lone frame with no edges.
         if from == to {
-            return Ok(ErasedTransform::from_parts(
+            return Ok(ErasedTransform::new(
                 Isometry3::identity(),
-                *from_conv,
-                *to_conv,
+                EdgeEnds {
+                    child: *from_conv,
+                    parent: *to_conv,
+                },
             ));
         }
 
@@ -608,8 +610,13 @@ impl TfBuffer {
 
         // `start → start` identity seeds the accumulator; if `start == target` it
         // is the answer, and no edge is sampled.
-        let mut running =
-            ErasedTransform::from_parts(Isometry3::identity(), *start_conv, *start_conv);
+        let mut running = ErasedTransform::new(
+            Isometry3::identity(),
+            EdgeEnds {
+                child: *start_conv,
+                parent: *start_conv,
+            },
+        );
         let mut cursor = start;
 
         while cursor != target {
@@ -636,7 +643,13 @@ impl TfBuffer {
             // Extend the accumulator: `start → cursor` then `cursor → parent` gives
             // `start → parent`. The shared `cursor` convention is the seam `then`
             // checks, so a flipped composition would trip its debug assert.
-            running = running.then(ErasedTransform::from_parts(sample, *from, *to));
+            running = running.then(ErasedTransform::new(
+                sample,
+                EdgeEnds {
+                    child: *from,
+                    parent: *to,
+                },
+            ));
             cursor = parent;
         }
 
@@ -785,7 +798,13 @@ mod tests {
             parent,
             child,
             stamp: MonotonicTime(stamp),
-            transform: ErasedTransform::from_parts(iso, from, to),
+            transform: ErasedTransform::new(
+                iso,
+                EdgeEnds {
+                    child: from,
+                    parent: to,
+                },
+            ),
         }
     }
 

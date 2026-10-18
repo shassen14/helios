@@ -249,7 +249,7 @@ mod tests {
     use helios_core::prelude::{AgentId, MonotonicDuration};
     use helios_core::spatial::id::FrameId;
     use helios_core::spatial::transforms::tf::stamped::{EdgeKindTag, FrameEdge};
-    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
 
     use nalgebra::Isometry3;
 
@@ -295,7 +295,13 @@ mod tests {
             parent,
             child,
             stamp: MonotonicTime(stamp),
-            transform: ErasedTransform::from_parts(Isometry3::translation(x, 0.0, 0.0), from, to),
+            transform: ErasedTransform::new(
+                Isometry3::translation(x, 0.0, 0.0),
+                EdgeEnds {
+                    child: from,
+                    parent: to,
+                },
+            ),
         }
     }
 

@@ -126,7 +126,7 @@ mod tests {
     //! silent when no intent is present.
 
     use super::*;
-    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
     use helios_core::spatial::FrameId;
 
     use crate::Health;
@@ -144,10 +144,12 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
+            Some(ErasedTransform::new(
                 Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
+                EdgeEnds {
+                    child: Convention::Flu,
+                    parent: Convention::Flu,
+                },
             ))
         }
     }

@@ -137,7 +137,7 @@ mod tests {
 
     use super::*;
     use crate::channels::estimate::estimate;
-    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
 
     use crate::port::ChannelKey;
 
@@ -164,10 +164,12 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
+            Some(ErasedTransform::new(
                 Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
+                EdgeEnds {
+                    child: Convention::Flu,
+                    parent: Convention::Flu,
+                },
             ))
         }
     }

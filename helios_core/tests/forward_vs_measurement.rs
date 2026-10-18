@@ -34,7 +34,7 @@ use helios_core::sensors::gyroscope::GyroscopeModel;
 use helios_core::sensors::magnetometer::MagnetometerModel;
 use helios_core::spatial::state::{Component, Quantity};
 use helios_core::spatial::tf::TfProvider;
-use helios_core::spatial::transforms::{Convention, ErasedTransform};
+use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 use std::f64::consts::{FRAC_PI_2, PI};
@@ -77,10 +77,12 @@ impl TfProvider for SensorInBody {
         _to: FrameId,
         _at: MonotonicTime,
     ) -> Option<ErasedTransform> {
-        Some(ErasedTransform::from_parts(
+        Some(ErasedTransform::new(
             self.0,
-            Convention::Flu,
-            Convention::Flu,
+            EdgeEnds {
+                child: Convention::Flu,
+                parent: Convention::Flu,
+            },
         ))
     }
 }

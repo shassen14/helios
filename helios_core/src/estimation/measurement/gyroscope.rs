@@ -110,7 +110,7 @@ mod tests {
     use crate::prelude::MonotonicTime;
     use crate::spatial::state::Component;
     use crate::spatial::tf::TfProvider;
-    use crate::spatial::transforms::{Convention, ErasedTransform};
+    use crate::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
     use crate::spatial::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, Isometry3, Translation3, UnitQuaternion};
     use std::f64::consts::FRAC_PI_2;
@@ -149,10 +149,12 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
+            Some(ErasedTransform::new(
                 Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
+                EdgeEnds {
+                    child: Convention::Flu,
+                    parent: Convention::Flu,
+                },
             ))
         }
     }
@@ -176,10 +178,12 @@ mod tests {
             } else {
                 self.0.inverse()
             };
-            Some(ErasedTransform::from_parts(
+            Some(ErasedTransform::new(
                 iso,
-                Convention::Flu,
-                Convention::Flu,
+                EdgeEnds {
+                    child: Convention::Flu,
+                    parent: Convention::Flu,
+                },
             ))
         }
     }

@@ -16,7 +16,7 @@ use helios_core::kernel::integrators::Integrator;
 use helios_core::prelude::EstimationDynamics;
 use helios_core::prelude::MonotonicTime;
 use helios_core::spatial::tf::TfProvider;
-use helios_core::spatial::transforms::{Convention, ErasedTransform};
+use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 // =========================================================================
@@ -36,10 +36,12 @@ impl TfProvider for IdentityTf {
         _to: FrameId,
         _at: MonotonicTime,
     ) -> Option<ErasedTransform> {
-        Some(ErasedTransform::from_parts(
+        Some(ErasedTransform::new(
             Isometry3::identity(),
-            Convention::Flu,
-            Convention::Flu,
+            EdgeEnds {
+                child: Convention::Flu,
+                parent: Convention::Flu,
+            },
         ))
     }
 }

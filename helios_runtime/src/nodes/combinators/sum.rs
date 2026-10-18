@@ -164,7 +164,7 @@ mod tests {
     //! plain single-required and required-plus-optional shapes.
 
     use super::*;
-    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
     use helios_core::spatial::FrameId;
 
     use crate::port::PortBus;
@@ -194,10 +194,12 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
+            Some(ErasedTransform::new(
                 Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
+                EdgeEnds {
+                    child: Convention::Flu,
+                    parent: Convention::Flu,
+                },
             ))
         }
     }

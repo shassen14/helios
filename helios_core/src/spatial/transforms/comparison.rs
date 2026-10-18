@@ -3,7 +3,7 @@
 //! them. Each pose is the frame's pose in its root, tagged with conventions,
 //! and two poses compared must be tagged alike.
 
-use crate::spatial::transforms::{erased::FrameMismatch, Convention, ErasedTransform};
+use crate::spatial::transforms::{erased::FrameMismatch, Convention, EdgeEnds, ErasedTransform};
 
 use nalgebra::{Isometry3, Vector3};
 
@@ -143,10 +143,12 @@ impl RootAlignment {
     /// `pose`, a frame's pose in the source root, as a pose in the target
     /// root, tagged as `pose` is.
     pub fn apply(&self, pose: &ErasedTransform) -> ErasedTransform {
-        ErasedTransform::from_parts(
+        ErasedTransform::new(
             self.source_in_target * pose.isometry(),
-            pose.from_convention(),
-            pose.to_convention(),
+            EdgeEnds {
+                child: pose.from_convention(),
+                parent: pose.to_convention(),
+            },
         )
     }
 }

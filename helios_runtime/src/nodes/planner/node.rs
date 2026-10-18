@@ -134,7 +134,7 @@ mod tests {
     //!   - is a no-op on `PlannerResult::PathStillValid` (and other Hold variants)
 
     use super::*;
-    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
 
     use helios_core::estimation::carrier::kinematic_carrier_schema;
 
@@ -162,10 +162,12 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
+            Some(ErasedTransform::new(
                 Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
+                EdgeEnds {
+                    child: Convention::Flu,
+                    parent: Convention::Flu,
+                },
             ))
         }
     }

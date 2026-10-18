@@ -25,7 +25,9 @@ pub use body_twist::enu_twist_to_body_flu;
 
 use bevy::prelude::{GlobalTransform, *};
 use helios_core::spatial::conventions::{Enu, Flu};
-use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform as CoreTransform};
+use helios_core::spatial::transforms::{
+    Convention, EdgeEnds, ErasedTransform, Transform as CoreTransform,
+};
 use helios_core::spatial::FrameId;
 use nalgebra::Isometry3;
 use std::collections::HashMap;
@@ -114,7 +116,8 @@ impl TfTree {
         self.datum.as_ref()
     }
 
-    /// Resolves the transform between two frames at the tree's *current* state.
+    /// The pose of `from` expressed in `to`, as [`TfProvider`](helios_core::spatial::tf::TfProvider) orders a
+    /// lookup, at the tree's *current* state.
     ///
     /// The tree is latest-only: one pose per frame (the most recent physics
     /// step), no history and no time index, so every query is answered for
@@ -128,9 +131,17 @@ impl TfTree {
 
         let (to_pose, to_conv) = self.resolve(to)?;
 
-        let iso = from_pose.inverse() * to_pose;
+        // Each pose is its frame's in the world, so `to`'s inverse after
+        // `from`'s is the pose of `from` in `to`.
+        let iso = to_pose.inverse() * from_pose;
 
-        Some(ErasedTransform::from_parts(iso, from_conv, to_conv))
+        Some(ErasedTransform::new(
+            iso,
+            EdgeEnds {
+                child: from_conv,
+                parent: to_conv,
+            },
+        ))
     }
 
     /// Resolves one frame to its world pose and convention.
@@ -258,6 +269,33 @@ mod tests {
     fn nothing_is_the_origin_before_the_world_resolves() {
         let datum = FrameId::global(DATUM);
         assert!(TfTree::default().erased(datum.clone(), datum).is_none());
+    }
+
+    #[test]
+    fn a_frame_resolves_as_its_pose_in_the_other_tagged_child_then_parent() {
+        // A lidar 2 m east of the datum: its pose in the datum is +2 m east,
+        // and the datum's in the lidar the inverse.
+        let lidar = FrameId::agent(AgentId::new("car"), "lidar");
+        let mut tree = rooted();
+        tree.frame_to_node.insert(
+            lidar.clone(),
+            FrameNode {
+                world: Isometry3::translation(2.0, 0.0, 0.0),
+                convention: Convention::Flu,
+            },
+        );
+
+        let lidar_in_datum = tree
+            .erased(lidar.clone(), FrameId::global(DATUM))
+            .expect("both resolve");
+        let datum_in_lidar = tree
+            .erased(FrameId::global(DATUM), lidar)
+            .expect("both resolve");
+
+        assert_eq!(lidar_in_datum.isometry().translation.x, 2.0);
+        assert!(lidar_in_datum.typed::<Flu, Enu>().is_ok());
+        assert_eq!(datum_in_lidar.isometry().translation.x, -2.0);
+        assert!(datum_in_lidar.typed::<Enu, Flu>().is_ok());
     }
 
     #[test]

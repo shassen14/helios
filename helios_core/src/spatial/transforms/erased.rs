@@ -27,18 +27,22 @@ pub struct ErasedTransform {
 }
 
 impl ErasedTransform {
-    /// Builds an erased transform from a raw isometry and the [`Convention`] of
-    /// each endpoint, in the same order the frames were looked up (`from`, then
-    /// `to`).
+    /// Builds the pose of `ends.child` expressed in `ends.parent` from a raw
+    /// isometry, each end's [`Convention`] named by its role.
     ///
-    /// The entry point for a provider that works in raw isometries — e.g. the sim
-    /// `TfTree`, which stores each frame's convention as the frame's owner
-    /// declared it. The isometry already carries the frames' actual axes; the
-    /// tags only name them and never re-orient it. The tag order must match the
-    /// lookup's `(from, to)` order, or [`typed`](Self::typed) will reject a
-    /// correct edge.
-    pub fn from_parts(isometry: Isometry3<f64>, from: Convention, to: Convention) -> Self {
-        Self { isometry, from, to }
+    /// The one entry point from a raw isometry, for a value whose conventions
+    /// are data, not types: a mount edge whose sensor convention comes from
+    /// config, a host tree that stores each frame's convention as its owner
+    /// declared it, a calibration file. A typed transform crosses with
+    /// [`erase`](Self::erase) instead. The isometry already carries the frames'
+    /// actual axes; the tags only name them and never re-orient it. Naming each
+    /// end is what keeps the polarity from being inferred from argument order.
+    pub fn new(isometry: Isometry3<f64>, ends: EdgeEnds) -> Self {
+        Self {
+            isometry,
+            from: ends.child,
+            to: ends.parent,
+        }
     }
 
     /// Erases a statically-typed [`Transform<A, B>`](Transform) to its runtime
@@ -49,7 +53,13 @@ impl ErasedTransform {
     /// [`TfProvider`](crate::spatial::tf::TfProvider) boundary that speaks the
     /// erased form.
     pub fn erase<A: ConventionOf, B: ConventionOf>(transform: Transform<A, B>) -> ErasedTransform {
-        ErasedTransform::from_parts(transform.into_inner(), A::CONVENTION, B::CONVENTION)
+        ErasedTransform::new(
+            transform.into_inner(),
+            EdgeEnds {
+                child: A::CONVENTION,
+                parent: B::CONVENTION,
+            },
+        )
     }
 
     /// Crosses back to a statically-typed [`Transform<A, B>`](Transform),
@@ -179,6 +189,16 @@ impl ErasedTransform {
     }
 }
 
+/// The two ends of an [`ErasedTransform`], each by its role, with its frame's
+/// [`Convention`]: `child`, the frame posed, and `parent`, the frame its pose
+/// is expressed in. As tf2 labels a lookup's result, a pose between any two
+/// frames has a child and a parent, edge of the tree or not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdgeEnds {
+    pub child: Convention,
+    pub parent: Convention,
+}
+
 /// The error from [`ErasedTransform::typed`] when the requested frame pair does
 /// not match the edge's stored tags.
 ///
@@ -207,7 +227,7 @@ impl Error for FrameMismatch {}
 
 #[cfg(test)]
 mod tests {
-    use super::ErasedTransform;
+    use super::{EdgeEnds, ErasedTransform};
     use crate::spatial::conventions::{Enu, Flu};
     use crate::spatial::transforms::{Convention, Transform};
 
@@ -226,8 +246,13 @@ mod tests {
 
     #[test]
     fn typed_recovers_the_transform_when_conventions_match() {
-        let erased =
-            ErasedTransform::from_parts(sample_isometry(), Convention::Enu, Convention::Flu);
+        let erased = ErasedTransform::new(
+            sample_isometry(),
+            EdgeEnds {
+                child: Convention::Enu,
+                parent: Convention::Flu,
+            },
+        );
         let typed = erased
             .typed::<Enu, Flu>()
             .expect("matching tags cross cleanly");
@@ -236,10 +261,34 @@ mod tests {
     }
 
     #[test]
+    fn named_ends_tag_the_child_as_the_frame_posed_and_the_parent_as_its_root() {
+        let mount = Isometry3::translation(0.5, 0.0, 0.2);
+
+        let lidar_in_body = ErasedTransform::new(
+            mount,
+            EdgeEnds {
+                child: Convention::Flu,
+                parent: Convention::Enu,
+            },
+        );
+
+        let typed = lidar_in_body
+            .typed::<Flu, Enu>()
+            .expect("the child is the frame posed");
+        assert_eq!(typed.into_inner(), mount);
+        assert!(lidar_in_body.typed::<Enu, Flu>().is_err());
+    }
+
+    #[test]
     fn typed_rejects_a_swapped_frame_pair() {
         // The edge is Enu → Flu; asking for Flu → Enu must not silently succeed.
-        let erased =
-            ErasedTransform::from_parts(sample_isometry(), Convention::Enu, Convention::Flu);
+        let erased = ErasedTransform::new(
+            sample_isometry(),
+            EdgeEnds {
+                child: Convention::Enu,
+                parent: Convention::Flu,
+            },
+        );
         let err = erased
             .typed::<Flu, Enu>()
             .expect_err("a swapped frame pair must be rejected");
@@ -253,8 +302,13 @@ mod tests {
     fn typed_rejects_a_same_role_convention_mismatch() {
         // Both ends are FLU on the edge, but the caller asks for Enu on the `from`
         // side — the cross-convention confusion the tag check exists to catch.
-        let erased =
-            ErasedTransform::from_parts(Isometry3::identity(), Convention::Flu, Convention::Flu);
+        let erased = ErasedTransform::new(
+            Isometry3::identity(),
+            EdgeEnds {
+                child: Convention::Flu,
+                parent: Convention::Flu,
+            },
+        );
         assert!(erased.typed::<Enu, Flu>().is_err());
     }
 
@@ -282,7 +336,13 @@ mod tests {
     /// because `then`/`inverse` consume `self` by value, so a test that uses one
     /// edge twice needs two independent values.
     fn sample_edge() -> ErasedTransform {
-        ErasedTransform::from_parts(sample_isometry(), Convention::Enu, Convention::Flu)
+        ErasedTransform::new(
+            sample_isometry(),
+            EdgeEnds {
+                child: Convention::Enu,
+                parent: Convention::Flu,
+            },
+        )
     }
 
     /// Two isometries are close when translation and rotation agree within float
@@ -318,10 +378,12 @@ mod tests {
         // Enu → Flu then Flu → Enu is tagged Enu → Enu: `from` comes from the
         // first edge, `to` from the second, and the shared Flu seam vanishes. A
         // `to: self.to` bug would leave `to` tagged Flu and fail here.
-        let chained = sample_edge().then(ErasedTransform::from_parts(
+        let chained = sample_edge().then(ErasedTransform::new(
             second_isometry(),
-            Convention::Flu,
-            Convention::Enu,
+            EdgeEnds {
+                child: Convention::Flu,
+                parent: Convention::Enu,
+            },
         ));
         assert_eq!(chained.from, Convention::Enu);
         assert_eq!(chained.to, Convention::Enu);
@@ -332,10 +394,12 @@ mod tests {
         // "self then other" must apply self first, i.e. other.iso * self.iso.
         // The two hops differ, so the reversed product would land elsewhere and
         // this pins the direction, not just that *some* composition happened.
-        let chained = sample_edge().then(ErasedTransform::from_parts(
+        let chained = sample_edge().then(ErasedTransform::new(
             second_isometry(),
-            Convention::Flu,
-            Convention::Enu,
+            EdgeEnds {
+                child: Convention::Flu,
+                parent: Convention::Enu,
+            },
         ));
         assert!(iso_close(
             chained.isometry,
@@ -355,8 +419,13 @@ mod tests {
 
     #[test]
     fn interpolate_blends_alike_tagged_transforms_and_refuses_unlike_ones() {
-        let start =
-            ErasedTransform::from_parts(Isometry3::identity(), Convention::Enu, Convention::Flu);
+        let start = ErasedTransform::new(
+            Isometry3::identity(),
+            EdgeEnds {
+                child: Convention::Enu,
+                parent: Convention::Flu,
+            },
+        );
         let between = start
             .interpolate(&sample_edge(), 0.5)
             .expect("alike tags blend");
@@ -369,17 +438,24 @@ mod tests {
         ));
         assert_eq!(between.from, Convention::Enu);
 
-        let unlike =
-            ErasedTransform::from_parts(Isometry3::identity(), Convention::Flu, Convention::Flu);
+        let unlike = ErasedTransform::new(
+            Isometry3::identity(),
+            EdgeEnds {
+                child: Convention::Flu,
+                parent: Convention::Flu,
+            },
+        );
         assert!(unlike.interpolate(&sample_edge(), 0.5).is_err());
     }
 
     #[test]
     fn a_transform_with_a_non_finite_component_is_not_finite() {
-        let nan = ErasedTransform::from_parts(
+        let nan = ErasedTransform::new(
             Isometry3::translation(f64::NAN, 0.0, 0.0),
-            Convention::Enu,
-            Convention::Flu,
+            EdgeEnds {
+                child: Convention::Enu,
+                parent: Convention::Flu,
+            },
         );
         assert!(sample_edge().is_finite());
         assert!(!nan.is_finite());

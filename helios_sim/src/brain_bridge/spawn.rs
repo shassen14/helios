@@ -13,7 +13,7 @@ use helios_core::control::commands::TwistIntent;
 use helios_core::prelude::{AgentId, MonotonicTime};
 use helios_core::spatial::transforms::tf::buffer::TfWindow;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
-use helios_core::spatial::transforms::ErasedTransform;
+use helios_core::spatial::transforms::{EdgeEnds, ErasedTransform};
 use helios_core::spatial::FrameId;
 use helios_runtime::channels::control;
 use helios_runtime::tf_service::TfService;
@@ -148,9 +148,9 @@ fn estimated_tf_service(
 /// tree) is what keeps the estimated and truth trees from disagreeing on a mount
 /// while leaving the estimated buffer structurally unable to reach the truth
 /// tree. Each mount is time-invariant, so it is stamped at `t = 0` and folded
-/// once when the [`TfService`] is constructed. `from_parts` takes the
-/// installation's own convention first, then `base_link`'s, the body
-/// convention its topology declares.
+/// once when the [`TfService`] is constructed. Each edge's child is the
+/// installation, in its device's convention, and its parent `base_link`, in
+/// the body convention its topology declares.
 fn build_static_seeds(agent_config: &AgentConfig, agent: &AgentId) -> Vec<StampedTransform> {
     let base_link = FrameId::base_link(agent.clone());
     let body_convention = agent_config.vehicle.topology.convention();
@@ -160,10 +160,12 @@ fn build_static_seeds(agent_config: &AgentConfig, agent: &AgentId) -> Vec<Stampe
         .iter()
         .map(|(key, installation)| installation.frame(agent, key))
         .map(|frame| StampedTransform {
-            transform: ErasedTransform::from_parts(
+            transform: ErasedTransform::new(
                 frame.pose.to_isometry(),
-                frame.convention,
-                body_convention,
+                EdgeEnds {
+                    child: frame.convention,
+                    parent: body_convention,
+                },
             ),
             child: frame.id,
             parent: base_link.clone(),

@@ -13,7 +13,7 @@ use nalgebra::Isometry3;
 use helios_core::prelude::{AgentId, MonotonicTime, SensorReading};
 use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
-use helios_core::spatial::transforms::{Convention, ErasedTransform};
+use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
 use helios_runtime::{
     channels::tf::tf,
     channels::truth_tf,
@@ -1481,10 +1481,12 @@ fn an_unread_keyed_body_channel_has_a_slot_per_declared_instance() {
         parent: FrameId::global("datum"),
         child,
         stamp: MonotonicTime(0.0),
-        transform: ErasedTransform::from_parts(
+        transform: ErasedTransform::new(
             Isometry3::identity(),
-            Convention::Flu,
-            Convention::Enu,
+            EdgeEnds {
+                child: Convention::Flu,
+                parent: Convention::Enu,
+            },
         ),
     };
 

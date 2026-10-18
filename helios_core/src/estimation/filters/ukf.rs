@@ -342,7 +342,7 @@ mod tests {
     use crate::prelude::{AgentId, MonotonicDuration, MonotonicTime};
     use crate::spatial::state::Quantity;
     use crate::spatial::tf::TfProvider;
-    use crate::spatial::transforms::{Convention, ErasedTransform};
+    use crate::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
     use crate::spatial::{FrameAwareState, FrameId};
     use nalgebra::{DMatrix, DVector, Isometry3};
 
@@ -360,10 +360,12 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
+            Some(ErasedTransform::new(
                 Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
+                EdgeEnds {
+                    child: Convention::Flu,
+                    parent: Convention::Flu,
+                },
             ))
         }
     }

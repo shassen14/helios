@@ -255,7 +255,7 @@ mod tests {
     use helios_core::prelude::AgentId;
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::FreeVector;
-    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
     use helios_core::spatial::FrameId;
 
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
@@ -272,10 +272,12 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::from_parts(
+            Some(ErasedTransform::new(
                 Isometry3::identity(),
-                Convention::Flu,
-                Convention::Flu,
+                EdgeEnds {
+                    child: Convention::Flu,
+                    parent: Convention::Flu,
+                },
             ))
         }
     }
@@ -346,7 +348,13 @@ mod tests {
             parent: datum(),
             child: body,
             stamp: MonotonicTime(0.0),
-            transform: ErasedTransform::from_parts(pose, from, to),
+            transform: ErasedTransform::new(
+                pose,
+                EdgeEnds {
+                    child: from,
+                    parent: to,
+                },
+            ),
         }
     }
 
