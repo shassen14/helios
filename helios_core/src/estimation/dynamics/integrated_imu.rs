@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use crate::data::primitives::{Control, State};
-use crate::data::AgentId;
-use crate::estimation::dynamics::EstimationDynamics;
-use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-use crate::frames::transforms::Convention;
-use crate::frames::{FrameId, StateVariable};
-use crate::manifold::{StateBlock, TangentNoise};
-use crate::state::{Component, Quantity};
-use crate::utils::integrators::Integrator;
+use crate::estimation::dynamics::{integrate_derivatives, ContinuousDynamics, EstimationDynamics};
+use crate::estimation::frames::EstimationFrames;
+use crate::estimation::schema::{InputSchema, InputSchemaBlock, StateSchema, StateSchemaBlock};
+use crate::kernel::integrators::Integrator;
+use crate::kernel::manifold::{StateBlock, TangentNoise};
+use crate::spatial::primitives::{Control, State};
+use crate::spatial::state::{Component, Quantity};
+use crate::spatial::transforms::Convention;
+use crate::spatial::{FrameId, StateVariable};
 use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 
 /// A dynamics model that integrates raw IMU measurements (as control inputs)
@@ -17,8 +17,6 @@ use nalgebra::{DMatrix, DVector, Quaternion, UnitQuaternion, Vector3};
 /// This model correctly handles 3D rotations and estimates IMU biases.
 #[derive(Debug, Clone)]
 pub struct IntegratedImuModel {
-    /// The agent this model describes.
-    pub agent: AgentId,
     /// The filter's assumed gravity in the world (ENU) frame, m/s², subtracted
     /// from IMU-integrated acceleration during prediction. This is a model
     /// parameter — what the estimator *believes* gravity to be — not ground
@@ -33,12 +31,18 @@ pub struct IntegratedImuModel {
     /// constant with such a function and is deliberately out of scope here.
     pub gravity_world: Vector3<f64>,
 
+    frames: EstimationFrames,
     schema: Arc<StateSchema>,
+    input_schema: Arc<InputSchema>,
     pos_off: usize,
     vel_off: usize,
     quat_off: usize,
     accel_bias_off: usize,
     gyro_bias_off: usize,
+    /// Row of `u` where the specific force starts.
+    specific_force_in: usize,
+    /// Row of `u` where the angular velocity starts.
+    angular_velocity_in: usize,
     orientation_block: Arc<dyn StateBlock>,
 }
 
@@ -79,17 +83,15 @@ pub struct ImuInitialUncertainty {
 }
 
 impl IntegratedImuModel {
+    /// The INS over `frames`: its state holds `frames.body`'s pose and velocity
+    /// in `frames.root`, and its input is read in `frames.body`.
     pub fn new(
-        agent: AgentId,
+        frames: EstimationFrames,
         gravity_world: Vector3<f64>,
         noise: ImuProcessNoise,
         initial_uncertainty: ImuInitialUncertainty,
     ) -> Self {
-        let schema = Arc::new(compose_ins_schema(
-            agent.clone(),
-            noise,
-            initial_uncertainty,
-        ));
+        let schema = Arc::new(compose_ins_schema(&frames, noise, initial_uncertainty));
 
         let off = |v: &StateVariable| {
             schema
@@ -97,22 +99,19 @@ impl IntegratedImuModel {
                 .expect("variable is in the schema we just built")
         };
 
-        let (body, odom) = (
-            FrameId::base_link(agent.clone()),
-            FrameId::odom(agent.clone()),
-        );
+        let (body, root) = (frames.body.clone(), frames.root.clone());
         let pos_off = off(&StateVariable::new(
-            Quantity::Position(odom.clone()),
+            Quantity::Position(root.clone()),
             Component::X,
         ));
         let vel_off = off(&StateVariable::new(
-            Quantity::Velocity(odom.clone()),
+            Quantity::Velocity(root.clone()),
             Component::X,
         ));
         let quat_off = off(&StateVariable::new(
             Quantity::Orientation {
                 from: body.clone(),
-                to: odom.clone(),
+                to: root.clone(),
             },
             Component::X,
         ));
@@ -124,25 +123,42 @@ impl IntegratedImuModel {
             Quantity::GyroBias(body.clone()),
             Component::X,
         ));
+        let input_schema = Arc::new(compose_ins_input_schema(&body));
+        let in_off = |q: Quantity| {
+            input_schema
+                .offset_of(&StateVariable::new(q, Component::X))
+                .expect("quantity is in the input schema we just built")
+        };
+        let specific_force_in = in_off(Quantity::SpecificForce(body.clone()));
+        let angular_velocity_in = in_off(Quantity::AngularVelocity(body.clone()));
+
         let orientation_block = schema
             .block_of(&Quantity::Orientation {
                 from: body.clone(),
-                to: odom.clone(),
+                to: root.clone(),
             })
             .expect("orientation block is in the schema we just built")
             .clone();
 
         Self {
-            agent,
             gravity_world,
+            frames,
             schema,
+            input_schema,
             pos_off,
             vel_off,
             quat_off,
             accel_bias_off,
             gyro_bias_off,
+            specific_force_in,
+            angular_velocity_in,
             orientation_block,
         }
+    }
+
+    /// The body this model's state tracks and the root it holds it in.
+    pub fn frames(&self) -> &EstimationFrames {
+        &self.frames
     }
 }
 
@@ -150,27 +166,26 @@ impl IntegratedImuModel {
 /// inertial navigation system (INS) filters.
 ///
 /// The state is composed of:
-/// - Position (3) in Odom Frame
-/// - Velocity (3) in Odom Frame
-/// - Orientation (4, Quaternion) from Body to Odom Frame
+/// - Position (3) in the Root Frame
+/// - Velocity (3) in the Root Frame
+/// - Orientation (4, Quaternion) from Body to the Root Frame
 /// - Accelerometer Bias (3) in Body Frame
 /// - Gyroscope Bias (3) in Body Frame
 ///
 /// # Arguments
-/// * `agent`: The agent (body) whose state is being defined.
-pub fn ins_state_layout(agent: AgentId) -> Vec<StateVariable> {
-    let body = FrameId::base_link(agent.clone());
-    let odom = FrameId::odom(agent);
+/// * `frames`: The body whose state is being defined, and the root it is held in.
+pub fn ins_state_layout(frames: &EstimationFrames) -> Vec<StateVariable> {
+    let (body, root) = (frames.body.clone(), frames.root.clone());
 
     // Same per-block quantities, in the same order, that `compose_ins_schema`
     // builds; the layout is their concatenated variable names. Single-sourced
     // against `Quantity` so the two can never drift apart.
     [
-        Quantity::Position(odom.clone()),
-        Quantity::Velocity(odom.clone()),
+        Quantity::Position(root.clone()),
+        Quantity::Velocity(root.clone()),
         Quantity::Orientation {
             from: body.clone(),
-            to: odom.clone(),
+            to: root.clone(),
         },
         Quantity::AccelBias(body.clone()),
         Quantity::GyroBias(body.clone()),
@@ -181,12 +196,11 @@ pub fn ins_state_layout(agent: AgentId) -> Vec<StateVariable> {
 }
 
 fn compose_ins_schema(
-    agent: AgentId,
+    frames: &EstimationFrames,
     noise: ImuProcessNoise,
     initial: ImuInitialUncertainty,
 ) -> StateSchema {
-    let body = FrameId::base_link(agent.clone());
-    let odom = FrameId::odom(agent);
+    let (body, root) = (frames.body.clone(), frames.root.clone());
 
     let noise_block = |var: f64, n: usize| {
         TangentNoise::from_variances(DVector::from_element(n, var))
@@ -195,27 +209,27 @@ fn compose_ins_schema(
     let p0 = |var: f64, n: usize| DMatrix::identity(n, n) * var;
 
     let blocks = vec![
-        // 1. Position (Odom) — no process noise; P₀ from config.
+        // 1. Position (Root) — no process noise; P₀ from config.
         StateSchemaBlock::new(
-            Quantity::Position(odom.clone()),
+            Quantity::Position(root.clone()),
             Convention::Enu,
             None,
             DVector::zeros(3),
             p0(initial.pos_var, 3),
         ),
-        // 2. Velocity (Odom) — Q from accel white noise.
+        // 2. Velocity (Root) — Q from accel white noise.
         StateSchemaBlock::new(
-            Quantity::Velocity(odom.clone()),
+            Quantity::Velocity(root.clone()),
             Convention::Enu,
             Some(noise_block(noise.accel_noise_var, 3)),
             DVector::zeros(3),
             p0(initial.vel_var, 3),
         ),
-        // 3. Orientation (Body from Odom) — 4/3 quaternion block.
+        // 3. Orientation (Body from Root) — 4/3 quaternion block.
         //    Identity quaternion is [x, y, z, w] = [0, 0, 0, 1].
         StateSchemaBlock::orientation(
             body.clone(),
-            odom.clone(),
+            root.clone(),
             Convention::Flu,
             Convention::Enu,
             Some(noise_block(noise.gyro_noise_var, 3)),
@@ -246,16 +260,64 @@ fn compose_ins_schema(
     StateSchema::compose(blocks)
 }
 
+/// The INS input: the IMU's specific force then its angular velocity, both in
+/// the body frame, FLU. The order is the order `u` is assembled in.
+fn compose_ins_input_schema(body: &FrameId) -> InputSchema {
+    InputSchema::compose(vec![
+        InputSchemaBlock::new(Quantity::SpecificForce(body.clone()), Convention::Flu),
+        InputSchemaBlock::new(Quantity::AngularVelocity(body.clone()), Convention::Flu),
+    ])
+}
+
 impl EstimationDynamics for IntegratedImuModel {
-    /// The control input `u` is a 6D vector: [ax, ay, az, wx, wy, wz] from the IMU.
-    fn get_control_dim(&self) -> usize {
-        6
+    /// The IMU sample: specific force then angular velocity, both in
+    /// `base_link`, FLU. An accelerometer measures specific force (acceleration
+    /// minus gravity), not acceleration, which is why `derivatives` adds gravity
+    /// back. A sample taken in a mounted sensor frame must be moved into
+    /// `base_link` before it reaches this model.
+    fn input_schema(&self) -> Arc<InputSchema> {
+        Arc::clone(&self.input_schema)
     }
 
     fn schema(&self) -> Arc<StateSchema> {
         Arc::clone(&self.schema)
     }
 
+    fn propagate(
+        &self,
+        x: &State,
+        u: &Control,
+        t: f64,
+        dt: f64,
+        integrator: &dyn Integrator<f64>,
+    ) -> State {
+        // ω_body is constant across the step: the gyro-bias derivative is zero and
+        // u is held constant, so orientation advances by one closed-form retraction
+        // rather than an integrated one — only position and velocity need RK4.
+        let omega_body =
+            u.fixed_rows::<3>(self.angular_velocity_in) - x.fixed_rows::<3>(self.gyro_bias_off);
+
+        // Orientation lives on SO(3), so it cannot be stepped by the componentwise
+        // integrator below — a weighted sum of unit quaternions leaves the sphere.
+        // Advance it by the block's own retraction, q ⊞ (ω·dt). The convention
+        // (scalar-order unpack, right-multiply by exp(ω·dt)) lives once, in
+        // QuaternionBlock::oplus; here we only name the increment and the block it
+        // moves, so the mean advances by the same map the covariance's F linearizes.
+        let delta = DVector::from_column_slice((omega_body * dt).as_slice());
+        let moved = self
+            .orientation_block
+            .oplus(x.rows(self.quat_off, 4), delta.as_view());
+
+        // Translation via RK4. Its own quaternion rows drift off the unit sphere,
+        // but they are overwritten with `moved` below and never read back.
+        let mut x_next = integrate_derivatives(self, x, u, t, dt, integrator);
+
+        x_next.fixed_rows_mut::<4>(self.quat_off).copy_from(&moved);
+        x_next
+    }
+}
+
+impl ContinuousDynamics for IntegratedImuModel {
     fn derivatives(&self, x: &State, u: &Control, _t: f64) -> State {
         let mut x_dot = DVector::zeros(x.nrows());
 
@@ -268,8 +330,8 @@ impl EstimationDynamics for IntegratedImuModel {
         let accel_bias = x.fixed_rows::<3>(self.accel_bias_off);
         let gyro_bias = x.fixed_rows::<3>(self.gyro_bias_off);
 
-        let raw_accel_measurement = u.fixed_rows::<3>(0);
-        let raw_gyro_measurement = u.fixed_rows::<3>(3);
+        let raw_accel_measurement = u.fixed_rows::<3>(self.specific_force_in);
+        let raw_gyro_measurement = u.fixed_rows::<3>(self.angular_velocity_in);
 
         // --- 2. Correct the raw measurements  ---
         let corrected_accel_body = raw_accel_measurement - accel_bias;
@@ -305,39 +367,6 @@ impl EstimationDynamics for IntegratedImuModel {
 
         x_dot
     }
-
-    fn propagate(
-        &self,
-        x: &State,
-        u: &Control,
-        t: f64,
-        dt: f64,
-        integrator: &dyn Integrator<f64>,
-    ) -> State {
-        // ω_body is constant across the step: the gyro-bias derivative is zero and
-        // u is held constant, so orientation advances by one closed-form retraction
-        // rather than an integrated one — only position and velocity need RK4.
-        let omega_body = u.fixed_rows::<3>(3) - x.fixed_rows::<3>(self.gyro_bias_off);
-
-        // Orientation lives on SO(3), so it cannot be stepped by the componentwise
-        // integrator below — a weighted sum of unit quaternions leaves the sphere.
-        // Advance it by the block's own retraction, q ⊞ (ω·dt). The convention
-        // (scalar-order unpack, right-multiply by exp(ω·dt)) lives once, in
-        // QuaternionBlock::oplus; here we only name the increment and the block it
-        // moves, so the mean advances by the same map the covariance's F linearizes.
-        let delta = DVector::from_column_slice((omega_body * dt).as_slice());
-        let moved = self
-            .orientation_block
-            .oplus(x.rows(self.quat_off, 4), delta.as_view());
-
-        // Translation via RK4. Its own quaternion rows drift off the unit sphere,
-        // but they are overwritten with `moved` below and never read back.
-        let func = |x_tau: &State, tau: f64| -> State { self.derivatives(x_tau, u, tau) };
-        let mut x_next = integrator.step(&func, x, t, t + dt);
-
-        x_next.fixed_rows_mut::<4>(self.quat_off).copy_from(&moved);
-        x_next
-    }
 }
 
 #[cfg(test)]
@@ -349,13 +378,12 @@ mod tests {
     //!   Q / P₀ placed per config per block (position carries no process noise).
     //! - Derivatives: position rate = velocity, gravity correctly subtracts from
     //!   IMU acceleration, accel/gyro biases subtract from raw measurements.
-    //! - Jacobian: correct 16×16 / 16×6 shape; velocity-to-position coupling ≈ 1.
     //! - Propagation: RK4 integration with gravity-compensating IMU keeps agent
     //!   stationary (position and velocity remain near zero).
 
     use super::*;
-    use crate::data::AgentId;
-    use crate::utils::integrators::RK4;
+    use crate::kernel::integrators::RK4;
+    use crate::prelude::AgentId;
     use nalgebra::DVector;
 
     fn agent() -> AgentId {
@@ -365,9 +393,9 @@ mod tests {
 
     fn make_model() -> IntegratedImuModel {
         // Noise/uncertainty values are arbitrary here — these tests exercise the
-        // derivatives, Jacobian shape, and propagation, none of which read Q or P₀.
+        // derivatives and propagation, neither of which reads Q or P₀.
         IntegratedImuModel::new(
-            agent(),
+            EstimationFrames::odom(agent()),
             Vector3::new(0.0, 0.0, -G),
             ImuProcessNoise {
                 accel_noise_var: 0.1_f64.powi(2),
@@ -390,9 +418,69 @@ mod tests {
     /// Index layout mirrors [`ins_state_layout`]: 0-2 position, 3-5 velocity,
     /// 6-9 quaternion (Qx, Qy, Qz, Qw), 10-12 accel bias, 13-15 gyro bias.
     fn identity_state() -> DVector<f64> {
-        let mut x = DVector::zeros(ins_state_layout(agent()).len());
+        let mut x = DVector::zeros(ins_state_layout(&EstimationFrames::odom(agent())).len());
         x[9] = 1.0; // Qw = 1 → identity quaternion
         x
+    }
+
+    #[test]
+    fn input_schema_is_body_specific_force_then_angular_velocity_in_flu() {
+        let body = FrameId::base_link(agent());
+        let input = make_model().input_schema();
+
+        assert_eq!(input.dim(), 6);
+        assert_eq!(
+            input.blocks(),
+            &[
+                InputSchemaBlock::new(Quantity::SpecificForce(body.clone()), Convention::Flu),
+                InputSchemaBlock::new(Quantity::AngularVelocity(body), Convention::Flu),
+            ]
+        );
+    }
+
+    #[test]
+    fn input_frames_carry_the_conventions_the_state_gives_them() {
+        // The input is consumed in base_link, which the state anchors through its
+        // orientation block. A model whose input and state disagreed on base_link's
+        // axes would integrate the input in the wrong basis.
+        let model = make_model();
+        let state = model.schema();
+
+        for block in model.input_schema().blocks() {
+            for (frame, convention) in block.conventions() {
+                assert_eq!(
+                    state.convention_of(frame),
+                    Some(*convention),
+                    "{} in {frame}",
+                    block.quantity()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn derivatives_read_the_input_rows_the_schema_names() {
+        // Write a specific force and an angular velocity at the rows the input
+        // schema assigns them; the derivatives must see each as that quantity.
+        let model = make_model();
+        let body = FrameId::base_link(agent());
+        let input = model.input_schema();
+        let row = |q: Quantity| {
+            input
+                .offset_of(&StateVariable::new(q, Component::X))
+                .expect("declared")
+        };
+
+        let mut u = DVector::zeros(input.dim());
+        u[row(Quantity::SpecificForce(body.clone())) + 2] = G; // cancels gravity
+        u[row(Quantity::AngularVelocity(body)) + 2] = 0.4; // yaw rate
+
+        let x_dot = model.derivatives(&identity_state(), &u, 0.0);
+
+        // Specific force +g up exactly cancels gravity: no velocity change.
+        assert!(x_dot.fixed_rows::<3>(3).norm() < 1e-12);
+        // Yaw rate ω about z at identity: q̇ = ½ q ⊗ (0, ω) gives q̇z = ω/2.
+        assert!((x_dot[8] - 0.2).abs() < 1e-12);
     }
 
     /// Returns a 6-element control vector with `az = g` to exactly counteract gravity.
@@ -420,7 +508,10 @@ mod tests {
         // standalone `ins_state_layout` are built from the same per-block groups
         // in the same order, so neither can drift from the other unnoticed.
         let schema = make_model().schema();
-        assert_eq!(schema.layout(), ins_state_layout(agent()).as_slice());
+        assert_eq!(
+            schema.layout(),
+            ins_state_layout(&EstimationFrames::odom(agent())).as_slice()
+        );
     }
 
     #[test]
@@ -527,7 +618,7 @@ mod tests {
         // value. Position carries no process noise; every other block's Q is the
         // variance passed to `new`.
         let model = IntegratedImuModel::new(
-            agent(),
+            EstimationFrames::odom(agent()),
             Vector3::new(0.0, 0.0, -G),
             ImuProcessNoise {
                 accel_noise_var: 2.0, // → velocity block
@@ -568,7 +659,7 @@ mod tests {
         // fallback. Distinct values per block so a misplaced or transposed P₀ can't
         // hide behind a shared number.
         let model = IntegratedImuModel::new(
-            agent(),
+            EstimationFrames::odom(agent()),
             Vector3::new(0.0, 0.0, -G),
             ImuProcessNoise {
                 accel_noise_var: 0.1,
@@ -679,41 +770,6 @@ mod tests {
             "vz_dot with 1.0 z-bias should be -1.0, got {}",
             xdot[5]
         );
-    }
-
-    // ── Jacobian ─────────────────────────────────────────────────────────────
-
-    #[test]
-    fn jacobian_has_correct_dimensions() {
-        // A is the state Jacobian (16×16), B is the control Jacobian (16×6).
-        let model = make_model();
-        let x = identity_state();
-        let u = DVector::zeros(6);
-        let (a_jac, b_jac) = model.jacobian(&x, &u, 0.0);
-
-        let dim = ins_state_layout(agent()).len();
-        assert_eq!(a_jac.nrows(), dim, "A rows");
-        assert_eq!(a_jac.ncols(), dim, "A cols");
-        assert_eq!(b_jac.nrows(), dim, "B rows");
-        assert_eq!(b_jac.ncols(), 6, "B cols = control_dim (ax,ay,az,wx,wy,wz)");
-    }
-
-    #[test]
-    fn jacobian_velocity_to_position_coupling_is_unity() {
-        // A(i, i+3) for i in 0..3 encodes d(pos)/d(vel) = 1.
-        // This is the clearest structural property of the INS dynamics.
-        let model = make_model();
-        let x = identity_state();
-        let u = DVector::zeros(6);
-        let (a_jac, _) = model.jacobian(&x, &u, 0.0);
-
-        for (pos_idx, vel_idx) in [(0, 3), (1, 4), (2, 5)] {
-            assert!(
-                (a_jac[(pos_idx, vel_idx)] - 1.0).abs() < 1e-4,
-                "A({pos_idx},{vel_idx}) = ∂pos_dot/∂vel ≈ 1.0, got {}",
-                a_jac[(pos_idx, vel_idx)]
-            );
-        }
     }
 
     // ── Propagation ──────────────────────────────────────────────────────────

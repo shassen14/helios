@@ -1,19 +1,20 @@
+use crate::agents::sensors::capture_pose::{CapturePose, LastCapturePose};
 use crate::brain_bridge::components::SensorPublishChannel;
-use crate::config::structs::SensorConfig;
+use crate::config::structs::CHANNEL_FIELD;
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
 use crate::prelude::*;
 
-use helios_core::data::envelope::SensorReading;
-use helios_core::data::primitives::MonotonicTime;
-use helios_core::frames::conventions::Flu;
-use helios_core::frames::quantities::FreeVector;
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
-use helios_core::sensors::{lidar::LidarModel, RayHit, RaycastingOutput, RaycastingSensorModel};
+use helios_core::interchange::measurement::envelope::SensorReading;
+use helios_core::prelude::{RangeField, SphericalAngular};
+use helios_core::sensors::lidar::{LidarModel, LidarNoise};
+use helios_core::sensors::{RayHit, RaycastingOutput, RaycastingSensorModel};
+use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::primitives::MonotonicTime;
+use helios_core::spatial::quantities::FreeVector;
 
-use avian3d::prelude::{SpatialQuery, SpatialQueryFilter};
+use avian3d::prelude::{ColliderOf, SpatialQuery, SpatialQueryFilter};
 use std::time::Duration;
 
 // =========================================================================
@@ -51,8 +52,17 @@ fn spawn_raycasting_sensors(
     master_seed: Res<MasterSeed>,
 ) {
     for (agent_entity, agent_name, request, agent_id) in &request_query {
-        for (sensor_name, sensor_config) in &request.0.sensors {
-            if let SensorConfig::Lidar(lidar_config) = sensor_config {
+        for (sensor_name, installation) in &request.0.sensors {
+            if let SensorDeviceConfig::Lidar(lidar_config) = &installation.device {
+                let Some(channel) = installation.channel(CHANNEL_FIELD) else {
+                    error!(
+                        "LiDAR '{}' on agent '{}' has no `{}`. Skipping sensor.",
+                        sensor_name,
+                        agent_name.as_str(),
+                        CHANNEL_FIELD
+                    );
+                    continue;
+                };
                 info!(
                     "  -> Spawning LiDAR '{}' as RaycastingSensor for agent '{}' with rate of {:.1} Hz",
                     sensor_name,
@@ -66,36 +76,66 @@ fn spawn_raycasting_sensors(
                     .map(|deg| deg.to_radians())
                     .collect();
 
-                let Some(model) = LidarModel::new(
+                let Some(geometry) = SphericalAngular::from_field_of_view(
+                    ring_elevations,
                     lidar_config.azimuth_fov.to_radians(),
                     lidar_config.azimuth_beams,
-                    ring_elevations,
-                    lidar_config.sweep_period,
-                    lidar_config.max_range,
-                    lidar_config.range_noise_stddev,
-                    lidar_config.angular_noise_stddev,
                 ) else {
                     error!(
-                        "LiDAR '{}' has an unusable configuration (range_noise_stddev={}, angular_noise_stddev={}, azimuth_beams={}, ring_elevations={}): noise stddevs must be > 0 and there must be at least one azimuth beam and one ring. Skipping sensor.",
+                        "LiDAR '{}' has an unusable beam layout (azimuth_fov={}, azimuth_beams={}, ring_elevations={:?}): the field of view must be finite and non-negative, with at least one azimuth beam and one ring. Skipping sensor.",
+                        sensor_name,
+                        lidar_config.azimuth_fov,
+                        lidar_config.azimuth_beams,
+                        lidar_config.ring_elevations,
+                    );
+                    continue;
+                };
+
+                let Some(noise) = LidarNoise::new(
+                    lidar_config.range_noise_stddev as f64,
+                    (lidar_config.angular_noise_stddev as f64).to_radians(),
+                ) else {
+                    error!(
+                        "LiDAR '{}' has unusable noise (range_noise_stddev={}, angular_noise_stddev={}): both must be finite and > 0. Skipping sensor.",
                         sensor_name,
                         lidar_config.range_noise_stddev,
                         lidar_config.angular_noise_stddev,
-                        lidar_config.azimuth_beams,
-                        lidar_config.ring_elevations.len(),
+                    );
+                    continue;
+                };
+
+                let Some(model) = LidarModel::new(
+                    geometry,
+                    lidar_config.sweep_period,
+                    lidar_config.range_min as f64,
+                    lidar_config.max_range as f64,
+                    noise,
+                ) else {
+                    error!(
+                        "LiDAR '{}' has unusable range limits or sweep (range_min={}, max_range={}, sweep_period={}): limits must be finite with 0 <= range_min < max_range, and the sweep period non-negative. Skipping sensor.",
+                        sensor_name,
+                        lidar_config.range_min,
+                        lidar_config.max_range,
+                        lidar_config.sweep_period,
                     );
                     continue;
                 };
                 let core_model: Box<dyn RaycastingSensorModel> = Box::new(model);
 
+                let frame = installation.frame(&agent_id.0, sensor_name);
                 let mut sensor_entity_commands = commands.spawn_empty();
                 let sensor_entity = sensor_entity_commands.id();
 
-                let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
+                let sensor_label = format!("{}/{}", agent_id.0, sensor_name);
                 let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
 
                 sensor_entity_commands.insert((
                     Name::new(sensor_label),
-                    SensorPublishChannel(lidar_config.get_channel().to_string()),
+                    SensorPublishChannel::new::<RangeField<Flu>>(
+                        channel,
+                        sensor_name,
+                        frame.id.clone(),
+                    ),
                     RaycastingSensor {
                         timer: Timer::new(
                             Duration::from_secs_f64(1.0 / lidar_config.get_rate()),
@@ -104,11 +144,9 @@ fn spawn_raycasting_sensors(
                         model: core_model,
                     },
                     sensor_rng,
-                    TrackedFrame::new(
-                        FrameId::sensor(agent_id.0.clone(), lidar_config.get_channel().to_string()),
-                        Convention::Flu,
-                    ),
-                    lidar_config.get_relative_pose().to_bevy_local_transform(),
+                    TrackedFrame::new(frame.id, frame.convention),
+                    LastCapturePose::default(),
+                    frame.pose.to_bevy_local_transform(),
                 ));
 
                 commands.entity(agent_entity).add_child(sensor_entity);
@@ -124,11 +162,12 @@ fn spawn_raycasting_sensors(
 fn raycasting_sensor_system(
     time: Res<Time>,
     spatial_query: SpatialQuery,
+    collider_bodies: Query<&ColliderOf>,
     mut sensor_query: Query<(
         &mut RaycastingSensor,
         &mut SensorRng,
+        &mut LastCapturePose,
         &SensorPublishChannel,
-        &TrackedFrame,
         &GlobalTransform,
         &ChildOf,
     )>,
@@ -138,7 +177,7 @@ fn raycasting_sensor_system(
     let elapsed = time.elapsed_secs_f64();
     let dt = time.delta();
 
-    for (mut sensor, mut rng, sensor_publish_channel, tracked, sensor_transform, parent) in
+    for (mut sensor, mut rng, mut capture, sensor_publish_channel, sensor_transform, parent) in
         &mut sensor_query
     {
         sensor.timer.tick(dt);
@@ -146,13 +185,33 @@ fn raycasting_sensor_system(
             continue;
         }
 
-        let local_rays = sensor.model.generate_rays();
+        let local_rays = sensor.model.generate_rays(&mut rng.0);
         let mut hits: Vec<RayHit> = Vec::with_capacity(local_rays.len());
         let sensor_origin = sensor_transform.translation();
         let sensor_rotation = sensor_transform.rotation();
         let max_toi = sensor.model.get_max_range();
+        let agent = parent.parent();
 
-        let filter = SpatialQueryFilter::from_excluded_entities([parent.parent()]);
+        // Checked on the first scan, not at spawn: only now has the sensor's
+        // world transform been propagated from its mount.
+        if capture.latest.is_none() {
+            let intersecting =
+                spatial_query.point_intersections(sensor_origin, &SpatialQueryFilter::default());
+            if is_inside_own_body(&intersecting, agent, |collider| {
+                collider_bodies.get(collider).ok().map(|of| of.body)
+            }) {
+                warn!(
+                    "Sensor '{}' is mounted inside its own agent's body (Bevy world position {:?}): \
+                     every ray hits the body at zero range, so it will report almost no \
+                     returns. Check its mount `transform` if this is not intended.",
+                    sensor_publish_channel.mount(), sensor_origin,
+                );
+            }
+        }
+
+        // The agent's own body is not excluded: a real sensor sees the vehicle
+        // it is mounted on, and the brain has to filter those returns itself.
+        let filter = SpatialQueryFilter::default();
 
         for ray in local_rays {
             let bevy_local_dir = FreeVector::<Flu>::from_raw(ray.direction).to_bevy();
@@ -173,18 +232,301 @@ fn raycasting_sensor_system(
 
         let output = sensor.model.process_hits(&hits, &mut rng.0);
 
-        let RaycastingOutput::PointCloud(point_cloud) = output;
+        let capture_time = MonotonicTime(elapsed);
+
+        capture.latest = Some(CapturePose {
+            pose: *sensor_transform,
+            timestamp: capture_time,
+        });
+
+        // Published as measured: flattening to a point cloud is the autonomy
+        // stack's job (a `Deproject` node), so the same field
+        // reaches the brain from sim and from a hardware driver alike.
+        let RaycastingOutput::RangeField(field) = output;
 
         let reading = SensorReading {
-            sensor: tracked.id.clone(),
-            timestamp: MonotonicTime(elapsed),
-            data: point_cloud,
+            sensor: sensor_publish_channel.mount().clone(),
+            timestamp: capture_time,
+            data: field,
         };
 
-        publisher.publish(
-            parent.parent(),
-            sensor_publish_channel.0.as_str(),
-            vec![reading],
-        );
+        publisher.publish(agent, sensor_publish_channel, vec![reading]);
+    }
+}
+
+/// Whether any collider in `intersecting` belongs to `agent`: either the agent
+/// entity carries the collider itself, or `body_of` maps the collider to the
+/// agent as its rigid body.
+fn is_inside_own_body(
+    intersecting: &[Entity],
+    agent: Entity,
+    body_of: impl Fn(Entity) -> Option<Entity>,
+) -> bool {
+    intersecting
+        .iter()
+        .any(|&collider| collider == agent || body_of(collider) == Some(agent))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use helios_core::prelude::{AgentId, TfProvider};
+    use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::FrameId;
+    use helios_runtime::port::PortDescriptorBuilder;
+    use helios_runtime::port::{ChannelKey, PortBus};
+    use helios_runtime::{
+        BodyCapabilities, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext,
+    };
+
+    use avian3d::collider_tree::ColliderTrees;
+    use bevy::ecs::system::RunSystemOnce;
+    use std::f64::consts::TAU;
+    use std::sync::Arc;
+
+    /// The agent the test lidar is mounted on.
+    const AGENT: &str = "agent";
+    const CHANNEL: &str = "sensor.lidar.test";
+    /// The installation the test lidar belongs to.
+    const UNIT: &str = "test_lidar";
+    const RATE_HZ: f64 = 10.0;
+    const AZIMUTH_BEAMS: u32 = 8;
+    const RANGE_MIN: f64 = 0.1;
+    const MAX_RANGE: f64 = 20.0;
+    const RANGE_NOISE_STDDEV: f64 = 0.01;
+    const ANGULAR_NOISE_STDDEV: f64 = 0.001;
+    /// A zero sweep period: every beam shares the reading's instant.
+    const FLASH_SWEEP_PERIOD: f64 = 0.0;
+    const SEED: u64 = 7;
+
+    type FieldBatch = Vec<SensorReading<RangeField<Flu>>>;
+
+    /// Declares the lidar channel as an optional input, which is all it takes
+    /// for the bus to reserve a slot the sensor can publish into.
+    struct FakeScanConsumer {
+        descriptor: PortDescriptor,
+    }
+
+    impl FakeScanConsumer {
+        fn new() -> Self {
+            Self {
+                descriptor: PortDescriptorBuilder::algorithm()
+                    .inputs_from_slices(&[], &[field_channel()])
+                    .build(),
+            }
+        }
+    }
+
+    impl PipelineNode for FakeScanConsumer {
+        fn name(&self) -> &str {
+            "fake_scan_consumer"
+        }
+
+        fn port_descriptor(&self) -> &PortDescriptor {
+            &self.descriptor
+        }
+
+        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
+    }
+
+    fn field_channel() -> ChannelKey {
+        ChannelKey::measurement::<FieldBatch>(CHANNEL)
+    }
+
+    fn period() -> Duration {
+        Duration::from_secs_f64(1.0 / RATE_HZ)
+    }
+
+    /// The test lidar's installation frame, named apart from its channel.
+    fn mount() -> FrameId {
+        FrameId::agent(AgentId::new(AGENT), UNIT)
+    }
+
+    fn lidar_model() -> Box<dyn RaycastingSensorModel> {
+        let geometry = SphericalAngular::from_field_of_view(vec![0.0], TAU, AZIMUTH_BEAMS)
+            .expect("a single full-circle ring is a valid layout");
+        let noise =
+            LidarNoise::new(RANGE_NOISE_STDDEV, ANGULAR_NOISE_STDDEV).expect("positive noise");
+        let model = LidarModel::new(geometry, FLASH_SWEEP_PERIOD, RANGE_MIN, MAX_RANGE, noise)
+            .expect("valid range limits");
+        Box::new(model)
+    }
+
+    /// A world holding one agent with a pipeline that consumes `CHANNEL` (the
+    /// body declares it, so the build finds a supplier), one lidar mounted on
+    /// it at `sensor_pose`, empty collider trees (every ray misses), and a
+    /// clock advanced by `advance`. Returns the world and the sensor entity.
+    fn world_with_lidar(sensor_pose: GlobalTransform, advance: Duration) -> (World, Entity) {
+        let mut world = World::new();
+        let channel = SensorPublishChannel::new::<RangeField<Flu>>(CHANNEL, UNIT, mount());
+
+        let mut time = Time::<()>::default();
+        time.advance_by(advance);
+        world.insert_resource(time);
+        world.insert_resource(ColliderTrees::default());
+
+        let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
+            .add_node(Box::new(FakeScanConsumer::new()))
+            .with_body_capabilities(BodyCapabilities {
+                publishes: vec![channel.description().clone()],
+                ..Default::default()
+            })
+            .build()
+            .expect("a single-node pipeline builds");
+        let agent = world.spawn(AutonomyPipelineComponent(pipeline)).id();
+
+        let sensor = world
+            .spawn((
+                RaycastingSensor {
+                    timer: Timer::new(period(), TimerMode::Repeating),
+                    model: lidar_model(),
+                },
+                SensorRng::from_sensor(SEED, CHANNEL),
+                LastCapturePose::default(),
+                channel,
+                TrackedFrame::new(mount(), Convention::Flu),
+                sensor_pose,
+                ChildOf(agent),
+            ))
+            .id();
+
+        (world, sensor)
+    }
+
+    fn agent_bus_field(world: &mut World) -> Option<Arc<Stamped<FieldBatch>>> {
+        let mut query = world.query::<&AutonomyPipelineComponent>();
+        let pipeline = query.single(world).expect("exactly one agent");
+        pipeline.0.bus().read::<FieldBatch>(field_channel())
+    }
+
+    /// The viz pairs a capture pose with a reading by exact timestamp equality,
+    /// so the two must be written from one value, and the pose must be the one
+    /// the rays were cast from.
+    #[test]
+    fn capture_pose_matches_the_published_reading() {
+        let sensor_pose = GlobalTransform::from_translation(Vec3::new(3.0, 0.5, -2.0));
+        let (mut world, sensor) = world_with_lidar(sensor_pose, period());
+
+        world
+            .run_system_once(raycasting_sensor_system)
+            .expect("the system runs");
+
+        let batch = agent_bus_field(&mut world).expect("the scan was published");
+        let reading = batch.value.last().expect("one reading in the batch");
+        let capture = world
+            .get::<LastCapturePose>(sensor)
+            .and_then(|c| c.latest.clone())
+            .expect("the scan recorded a capture pose");
+
+        assert_eq!(capture.timestamp, reading.timestamp);
+        assert_eq!(capture.pose, sensor_pose);
+    }
+
+    /// The header names the channel's mount, the installation's frame; the
+    /// occupancy grid looks the sensor up in the tf tree by it.
+    #[test]
+    fn a_scan_is_stamped_with_its_channels_mount() {
+        let (mut world, _) = world_with_lidar(GlobalTransform::IDENTITY, period());
+
+        world
+            .run_system_once(raycasting_sensor_system)
+            .expect("the system runs");
+
+        let batch = agent_bus_field(&mut world).expect("the scan was published");
+        let reading = batch.value.last().expect("one reading in the batch");
+        assert_eq!(reading.sensor, mount());
+    }
+
+    /// The component holds the *newest* capture: a second scan replaces the
+    /// first, and still pairs with the reading now on the bus.
+    #[test]
+    fn a_later_scan_replaces_the_capture() {
+        let (mut world, sensor) = world_with_lidar(GlobalTransform::IDENTITY, period());
+        world
+            .run_system_once(raycasting_sensor_system)
+            .expect("the first scan runs");
+        let first = world
+            .get::<LastCapturePose>(sensor)
+            .and_then(|c| c.latest.clone())
+            .expect("the first scan recorded a capture pose");
+
+        let moved_pose = GlobalTransform::from_translation(Vec3::new(1.0, 0.0, 4.0));
+        world.resource_mut::<Time>().advance_by(period());
+        *world
+            .get_mut::<GlobalTransform>(sensor)
+            .expect("the sensor has a transform") = moved_pose;
+        world
+            .run_system_once(raycasting_sensor_system)
+            .expect("the second scan runs");
+
+        let batch = agent_bus_field(&mut world).expect("the second scan was published");
+        let reading = batch.value.last().expect("one reading in the batch");
+        let second = world
+            .get::<LastCapturePose>(sensor)
+            .and_then(|c| c.latest.clone())
+            .expect("the second scan recorded a capture pose");
+
+        assert!(second.timestamp > first.timestamp);
+        assert_eq!(second.timestamp, reading.timestamp);
+        assert_eq!(second.pose, moved_pose);
+    }
+
+    /// Until the sensor first fires there is no capture, and nothing on the bus
+    /// to pair one with.
+    #[test]
+    fn no_capture_before_the_first_scan() {
+        let (mut world, sensor) = world_with_lidar(GlobalTransform::IDENTITY, period() / 2);
+
+        world
+            .run_system_once(raycasting_sensor_system)
+            .expect("the system runs");
+
+        assert!(agent_bus_field(&mut world).is_none());
+        let capture = world
+            .get::<LastCapturePose>(sensor)
+            .expect("inserted at spawn");
+        assert!(capture.latest.is_none());
+    }
+
+    /// Three distinct entities standing in for the agent, a collider attached
+    /// to it, and something else in the scene.
+    fn agent_part_and_other() -> (Entity, Entity, Entity) {
+        let mut world = World::new();
+        (
+            world.spawn_empty().id(),
+            world.spawn_empty().id(),
+            world.spawn_empty().id(),
+        )
+    }
+
+    /// The agent entity carrying its collider directly, as the raycast car's
+    /// cuboid does, encloses the sensor.
+    #[test]
+    fn collider_on_the_agent_itself_is_its_own_body() {
+        let (agent, _, _) = agent_part_and_other();
+
+        assert!(is_inside_own_body(&[agent], agent, |_| None));
+    }
+
+    /// A collider on a child entity is the agent's body when its rigid body is
+    /// the agent.
+    #[test]
+    fn collider_attached_to_the_agent_is_its_own_body() {
+        let (agent, part, _) = agent_part_and_other();
+
+        assert!(is_inside_own_body(&[part], agent, |collider| {
+            (collider == part).then_some(agent)
+        }));
+    }
+
+    /// A sensor inside another body, such as a wall or another agent, is not
+    /// enclosed by its own body; open air is not either.
+    #[test]
+    fn another_body_or_open_air_is_not_its_own_body() {
+        let (agent, _, other) = agent_part_and_other();
+
+        assert!(!is_inside_own_body(&[other], agent, |_| None));
+        assert!(!is_inside_own_body(&[], agent, |_| None));
     }
 }

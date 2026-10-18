@@ -1,116 +1,90 @@
 use crate::brain_bridge::components::{
-    AgentIdComponent, AutonomyPipelineComponent, MissionGoalChannels, OdomFrameOf,
-    PipelineBuildFailed, SensorPublishChannel, TeleopControlled, TfServiceComponent,
+    AgentIdComponent, AutonomyPipelineComponent, MissionGoalChannels, PipelineBuildFailed,
+    SensorPublishChannel, TeleopControlled, TfServiceComponent,
 };
 use crate::core::components::{ActuatorCommandComponent, ControllerStateSource};
+use crate::core::ground_truth::truth_body_channels;
 use crate::prelude::*;
 use crate::registry::plugin::RuntimeAutonomyRegistry;
 
+use helios_core::control::actuation_model::ActuationModel;
 use helios_core::control::actuators::ActuatorCommand;
-use helios_core::data::{AgentId, MonotonicTime};
-use helios_core::frames::transforms::tf::stamped::StampedTransform;
-use helios_core::frames::transforms::{Convention, ErasedTransform};
-use helios_core::frames::FrameId;
-use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::config::ReferenceSource;
+use helios_core::control::commands::TwistIntent;
+use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::spatial::transforms::tf::buffer::TfWindow;
+use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+use helios_core::spatial::transforms::ErasedTransform;
+use helios_core::spatial::FrameId;
+use helios_runtime::channels::control;
 use helios_runtime::tf_service::TfService;
-use helios_runtime::{
-    build_pipeline, check_actuation_agreement, AutonomyStack, BodyCapabilities, Provenance,
-    PublishedChannel,
-};
+use helios_runtime::{build_pipeline, AutonomyPipeline, BodyCapabilities, BodyChannel, ChannelKey};
 
-use std::collections::{BTreeSet, HashSet};
+use std::any::TypeId;
+use std::collections::BTreeSet;
 
 /// Spawns the autonomy pipeline for agents with real estimation.
 ///
-/// Queries each agent's sensor children for `SensorPublishChannel` to build
-/// the set of sensor channel names passed to `build_pipeline()`.
+/// Collects the [`SensorPublishChannel`]s of each agent's descendants into the
+/// body passed to `build_pipeline()`. Descendants, not children: a sensor
+/// entity may hang under its installation's frame entity, as an IMU's two do.
 pub fn spawn_autonomy_pipeline(
     mut commands: Commands,
-    agent_query: Query<(
-        Entity,
-        &SpawnAgentConfigRequest,
-        &AgentIdComponent,
-        &Children,
-    )>,
+    agent_query: Query<(Entity, &SpawnAgentConfigRequest, &AgentIdComponent)>,
+    children: Query<&Children>,
     channel_query: Query<&SensorPublishChannel>,
     registry: Res<RuntimeAutonomyRegistry>,
 ) {
     let _span = tracing::info_span!("sim.scene_build.autonomy").entered();
-    for (agent_entity, request, agent_id, children) in &agent_query {
+    for (agent_entity, request, agent_id) in &agent_query {
         let agent_config = &request.0;
         let stack = agent_config.autonomy_stack();
         // The canonical scope stamped on the shell at `CreateRequests`; the
-        // assembler builds every sensor's `FrameId::sensor(agent, channel)` from
-        // it, matching what the sensor spawners stamped on the tf tree.
+        // static seeds name every installation's frame under it, matching what
+        // the sensor spawners stamped on the tf tree.
         let agent = agent_id.0.clone();
 
-        if let Err(mismatches) = check_actuation_agreement(stack, &agent_config.vehicle.actuation) {
-            for mismatch in &mismatches {
-                error!(
-                    "[spawn_autonomy_pipeline] Agent '{}': {}",
-                    agent_config.name(),
-                    mismatch
-                );
-            }
-            commands.entity(agent_entity).insert(PipelineBuildFailed {
-                errors: mismatches.iter().map(|m| m.to_string()).collect(),
-            });
-            continue;
-        }
-
-        // The set of sensor channel names this agent's host publishes. The
-        // assembler builds each sensor's `FrameId::sensor(agent, channel)` from
-        // these names — the same identity the sensor spawners stamp on the tf
-        // tree — so the map of old is now just the name set.
-        let sensor_channels: HashSet<String> = children
-            .iter()
-            .filter_map(|child| channel_query.get(child).ok().map(|ch| ch.0.clone()))
+        // Every channel this agent's sensors publish, as their spawners
+        // described them.
+        let sensor_channels: Vec<BodyChannel> = children
+            .iter_descendants(agent_entity)
+            .filter_map(|descendant| channel_query.get(descendant).ok())
+            .map(|channel| channel.description().clone())
             .collect();
 
-        let host_capabilities = build_host_body_capabilities(agent_config.name());
+        let body =
+            build_host_body_capabilities(&agent, sensor_channels, &agent_config.vehicle.actuation);
 
-        // The distinct channels this agent's planners read their goal from; a
-        // mission goal fans out to each. Empty when the stack has no planner.
-        let goal_channels = mission_goal_channels(stack);
+        // A pipeline is bound only with a tf service that serves every mount
+        // it reads; either failing leaves the agent without both.
+        let bound = build_pipeline(stack, &registry.0, agent.clone(), body)
+            .map_err(|errors| errors.iter().map(ToString::to_string).collect())
+            .and_then(|pipeline| {
+                let static_seeds = build_static_seeds(agent_config, &agent);
+                estimated_tf_service(&pipeline, stack.tf.to_window(), static_seeds, &agent)
+                    .map(|service| (pipeline, service))
+            });
 
-        match build_pipeline(
-            stack,
-            &registry.0,
-            agent.clone(),
-            &sensor_channels,
-            host_capabilities,
-        ) {
-            Ok(pipeline) => {
+        match bound {
+            Ok((pipeline, service)) => {
                 // `AgentIdComponent` is already on the shell (stamped at
                 // `CreateRequests`), so the test bridge's
                 // `(&AgentIdComponent, &AutonomyPipelineComponent)` query still
                 // never sees a pipeline without its identity.
                 //
-                // The TfService is seeded with the static sensor mounts and
-                // drains exactly the tf-edge channels this pipeline declares, so
-                // its estimated tree is fed only by the graph's own producers —
-                // never the sim's truth tree.
-                let window = stack.tf.to_window();
-                let drain_keys = pipeline.tf_edge_channels();
-                let static_seeds = build_static_seeds(agent_config, &agent);
+                // The distinct channels this agent's planners read their goal
+                // from; a mission goal fans out to each. Empty when no node
+                // declares a goal input.
+                let goal_channels = mission_goal_channels(pipeline.outside_inputs());
+                let teleop_controlled = reads_teleop_intent(pipeline.outside_inputs());
 
                 let mut cmds = commands.entity(agent_entity);
                 cmds.insert(AutonomyPipelineComponent(pipeline));
-                cmds.insert(TfServiceComponent(TfService::new(
-                    window,
-                    drain_keys,
-                    static_seeds,
-                )));
+                cmds.insert(TfServiceComponent(service));
 
                 if !goal_channels.is_empty() {
                     cmds.insert(MissionGoalChannels(goal_channels.into_iter().collect()));
                 }
-                if stack
-                    .reference_arbitration
-                    .sources
-                    .contains(&ReferenceSource::Teleop)
-                {
+                if teleop_controlled {
                     cmds.insert(TeleopControlled);
                 }
 
@@ -130,61 +104,72 @@ pub fn spawn_autonomy_pipeline(
                 // Mark the agent so the failure outlives the log line. The
                 // agent gets no pipeline, so nothing downstream would
                 // otherwise notice it is inert.
-                commands.entity(agent_entity).insert(PipelineBuildFailed {
-                    errors: errors.iter().map(|e| e.to_string()).collect(),
-                });
+                commands
+                    .entity(agent_entity)
+                    .insert(PipelineBuildFailed { errors });
             }
         }
     }
 }
 
+/// The agent's estimated tf service, checked against `pipeline`.
+///
+/// Seeded with the static sensor mounts and draining the pipeline's `tf`
+/// channel, so its tree is fed only by the graph's own producers, never the
+/// sim's truth tree. Fails with every rejected seed, or with the mounts the
+/// pipeline reads that are not below `base_link` or that a node reads in other
+/// axes than the tree holds. A producer declares each edge's child but not its
+/// parent, so no edge is declared yet; the one today, `odom → base_link`, lies
+/// above `base_link`, on no mount's way to it.
+fn estimated_tf_service(
+    pipeline: &AutonomyPipeline,
+    window: TfWindow,
+    static_seeds: Vec<StampedTransform>,
+    agent: &AgentId,
+) -> Result<TfService, Vec<String>> {
+    let service = TfService::new(window, static_seeds)
+        .map_err(|rejected| rejected.iter().map(ToString::to_string).collect::<Vec<_>>())?;
+    service
+        .check_read_mounts(
+            &pipeline.read_mounts(),
+            &FrameId::base_link(agent.clone()),
+            &[],
+        )
+        .map_err(|refused| vec![refused.to_string()])?;
+    Ok(service)
+}
+
 /// The static transform edges seeding this agent's estimated tf buffer: one
-/// `base_link → sensor` mount per sensor frame, built from the same sensor
-/// configs the sensor spawners read.
+/// `base_link → installation` edge per sensor installation, built from the
+/// same [`frame`](crate::config::structs::SensorInstallationConfig::frame) the
+/// sensor spawners stamp on the truth tree.
 ///
 /// Single-sourcing the mount here (rather than reading it back off the truth
 /// tree) is what keeps the estimated and truth trees from disagreeing on a mount
 /// while leaving the estimated buffer structurally unable to reach the truth
 /// tree. Each mount is time-invariant, so it is stamped at `t = 0` and folded
-/// once when the [`TfService`] is constructed. The pose is `sensor` expressed in
-/// `base_link` (FLU); `from_parts` takes the sensor's own convention first, the
-/// `base_link` convention (FLU) second.
+/// once when the [`TfService`] is constructed. `from_parts` takes the
+/// installation's own convention first, then `base_link`'s, the body
+/// convention its topology declares.
 fn build_static_seeds(agent_config: &AgentConfig, agent: &AgentId) -> Vec<StampedTransform> {
     let base_link = FrameId::base_link(agent.clone());
+    let body_convention = agent_config.vehicle.topology.convention();
 
     agent_config
         .sensors
-        .values()
-        .flat_map(|sensor| sensor.frame_mounts())
-        .map(|(channel, pose, convention)| StampedTransform {
-            child: FrameId::sensor(agent.clone(), channel),
+        .iter()
+        .map(|(key, installation)| installation.frame(agent, key))
+        .map(|frame| StampedTransform {
+            transform: ErasedTransform::from_parts(
+                frame.pose.to_isometry(),
+                frame.convention,
+                body_convention,
+            ),
+            child: frame.id,
             parent: base_link.clone(),
             stamp: MonotonicTime(0.0),
-            transform: ErasedTransform::from_parts(pose.to_isometry(), convention, Convention::Flu),
         })
         .collect()
-}
-
-/// Spawns odom frame entities for agents that have an `AutonomyPipelineComponent`.
-pub fn spawn_odom_frames(
-    mut commands: Commands,
-    agent_query: Query<(Entity, &AgentIdComponent), With<AutonomyPipelineComponent>>,
-) {
-    for (agent_entity, agent_id) in &agent_query {
-        let agent = &agent_id.0;
-        commands.spawn((
-            Name::new(format!("{}/odom", agent)),
-            // ENU because the estimator's world frame is ENU. This is a property
-            // of the estimation stack, not the vehicle — every agent's odom shares
-            // it regardless of body convention. A future NED-world estimator would
-            // make this configurable at the estimator layer, not per vehicle.
-            TrackedFrame::new(FrameId::odom(agent.clone()), Convention::Enu),
-            Transform::IDENTITY,
-            GlobalTransform::IDENTITY,
-            OdomFrameOf(agent_entity),
-        ));
-        info!("[OdomFrame] Spawned odom frame for '{}'", agent);
-    }
 }
 
 pub fn spawn_actuator_command(
@@ -202,162 +187,177 @@ pub fn spawn_actuator_command(
     }
 }
 
-/// Builds the sim host's [`BodyCapabilities`] for one agent.
+/// Builds the sim host's [`BodyCapabilities`] for one agent: everything the
+/// body offers the autonomy graph, distinct from anything the autonomy stack
+/// itself declares.
 ///
-/// This is the host's view of what the body advertises to the autonomy
-/// graph — distinct from anything the autonomy stack itself declares.
-/// Two responsibilities split between host and assembler:
-/// - **Host (this fn)** knows the agent's name, whether the body actuates,
-///   and which host-owned channels exist (`oracle/*`, later `health/*`).
-/// - **Assembler** ([`build_pipeline`]) knows the sensor channels derived
-///   from the autonomy config and merges them into `publishes` before
-///   handing the merged `BodyCapabilities` to [`PipelineBuilder`].
-///
-/// # Field rationale
-///
-/// - `name`: cloned from `agent_name`; used by error messages
-///   (`PipelineBuildError::UnsatisfiedBodyCapabilities`) and the DAG dump.
-/// - `consumes_control`: hardcoded `true` — every sim agent has a vehicle
-///   plugin that applies the pipeline's actuator command to physics. Becomes a
-///   parameter (or moves to `AgentConfig`) once passive observer agents,
-///   log-playback agents, or hw-passive Zenoh-bridge nodes exist.
-/// - `publishes`: only the two oracle channels — `oracle/pose` (world ENU)
-///   and `oracle/twist` (body FLU). Both tagged `Provenance::Exact`
-///   because the sim is ground truth. Health channels are intentionally
-///   omitted: no sim publisher exists for them yet, and advertising a
-///   channel the host never writes would let a consumer build and then
-///   read `None` forever.
-///
-/// Construct one of these in [`spawn_autonomy_pipeline`] per agent and
-/// pass it to [`build_pipeline`].
-fn build_host_body_capabilities(agent_name: &str) -> BodyCapabilities {
-    let published_pose = PublishedChannel {
-        key: oracle_pose_channel(),
-        provenance: Provenance::Exact,
-    };
-
-    let published_twist = PublishedChannel {
-        key: oracle_twist_channel(),
-        provenance: Provenance::Exact,
-    };
-
+/// - `publishes`: the truth rig's two channels for `agent`
+///   ([`truth_body_channels`]), then `sensor_channels`, each sensor's
+///   channel as its spawner described it. Every installed sensor is listed,
+///   read by the stack or not. Health channels are intentionally omitted: no
+///   sim publisher exists for them yet, and advertising a channel the host
+///   never writes would let a consumer build and then read `None` forever.
+/// - `actuation`: the vehicle's actuators, from its entity file. The
+///   assembler checks every actuator the pipeline drives against it, so an
+///   allocator naming a missing actuator or writing the wrong setpoint kind
+///   fails the build.
+fn build_host_body_capabilities(
+    agent: &AgentId,
+    sensor_channels: Vec<BodyChannel>,
+    actuation: &ActuationModel,
+) -> BodyCapabilities {
     BodyCapabilities {
-        name: agent_name.to_string(),
-        publishes: vec![published_pose, published_twist],
-        consumes_control: true,
+        publishes: truth_body_channels(agent)
+            .into_iter()
+            .chain(sensor_channels)
+            .collect(),
+        actuation: actuation.clone(),
     }
 }
 
-/// The set of channels the stack's planners read their goals from.
+/// The channels a built pipeline expects a [`PlannerGoal`] on from outside,
+/// read from its declared outside inputs.
 ///
 /// A `BTreeSet` so planners sharing a channel (the common case: all on the
 /// default `"mission"`) fold to one entry, and the order is stable across runs —
 /// which the resolved-config dump and determinism hashing will want. Empty when
-/// the stack declares no planner, so there is nowhere for a goal to go.
-fn mission_goal_channels(stack: &AutonomyStack) -> BTreeSet<String> {
-    stack
-        .search_planners
-        .values()
-        .map(|p| p.get_goal_channel().to_string())
+/// no node declares a goal input, so there is nowhere for a goal to go.
+fn mission_goal_channels<'a>(
+    outside_inputs: impl IntoIterator<Item = &'a ChannelKey>,
+) -> BTreeSet<String> {
+    outside_inputs
+        .into_iter()
+        .filter(|key| key.type_id() == TypeId::of::<PlannerGoal>())
+        .map(|key| key.name().to_string())
         .collect()
+}
+
+/// Whether this agent's pipeline reads the operator's teleop intent. Only then
+/// does the host publish intent to it: the pipeline's declared outside inputs
+/// say what it reads from outside the robot, whatever its config calls the
+/// node that reads it.
+fn reads_teleop_intent<'a>(outside_inputs: impl IntoIterator<Item = &'a ChannelKey>) -> bool {
+    let intent = control::intent::<TwistIntent>();
+    outside_inputs.into_iter().any(|key| *key == intent)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use helios_runtime::config::SearchPlannerConfig;
+    use helios_core::control::actuation_model::{ActuatorSpec, SignConvention};
+    use helios_core::control::actuators::{ActuatorId, SetpointKind};
+    use helios_core::interchange::measurement::sensor::{GpsPosition, MagneticField};
+    use helios_core::prelude::{AgentId, FrameId};
+    use helios_runtime::channels::control::intent;
+    use helios_runtime::port::ChannelKey;
 
-    use std::collections::HashMap;
-
-    /// A minimal `AStar` planner whose only field that matters here is its goal
-    /// channel — the rest are defaults, present only because the variant requires
-    /// them.
-    fn astar_with_goal(goal_channel: &str) -> SearchPlannerConfig {
-        SearchPlannerConfig::AStar {
-            rate: 5.0,
-            arrival_tolerance_m: 1.5,
-            occupancy_threshold: 180,
-            max_search_depth: 50_000,
-            enable_path_smoothing: false,
-            replan_on_path_deviation: false,
-            deviation_tolerance_m: 3.0,
-            level: "local".to_string(),
-            goal_channel: goal_channel.to_string(),
-        }
+    /// A goal input keyed the way a planner declares it: a `PlannerGoal` on the
+    /// named channel.
+    fn goal_key(goal_channel: &str) -> ChannelKey {
+        ChannelKey::internal::<PlannerGoal>(goal_channel)
     }
 
-    /// Every planner's goal channel is collected — the mission goal fans out to
-    /// all of them, not just the first planner found.
+    /// Every goal input's channel is collected — the mission goal fans out to
+    /// all of them, not just the first one found.
     #[test]
-    fn distinct_goal_channels_from_all_planners_are_collected() {
-        let stack = AutonomyStack {
-            search_planners: HashMap::from([
-                ("primary".to_string(), astar_with_goal("mission")),
-                ("secondary".to_string(), astar_with_goal("waypoints")),
-            ]),
-            ..Default::default()
-        };
+    fn distinct_goal_channels_are_collected() {
+        let outside_inputs = [goal_key("mission"), goal_key("waypoints")];
 
         assert_eq!(
-            mission_goal_channels(&stack),
+            mission_goal_channels(&outside_inputs),
             BTreeSet::from(["mission".to_string(), "waypoints".to_string()]),
         );
     }
 
-    /// Planners sharing a channel (the common case: both on the default
-    /// `"mission"`) fold to a single entry, so the host writes the goal once, not
-    /// once per planner.
+    /// Goal inputs sharing a channel (the common case: planners all on the
+    /// default `"mission"`) fold to a single entry, so the host writes the goal
+    /// once, not once per planner.
     #[test]
-    fn planners_sharing_a_goal_channel_are_deduped() {
-        let stack = AutonomyStack {
-            search_planners: HashMap::from([
-                ("primary".to_string(), astar_with_goal("mission")),
-                ("backup".to_string(), astar_with_goal("mission")),
-            ]),
-            ..Default::default()
-        };
+    fn goal_inputs_sharing_a_channel_are_deduped() {
+        let outside_inputs = [goal_key("mission"), goal_key("mission")];
 
-        let channels = mission_goal_channels(&stack);
+        let channels = mission_goal_channels(&outside_inputs);
 
         assert_eq!(channels.len(), 1);
         assert!(channels.contains("mission"));
     }
 
-    /// A stack with no planner has nowhere for a goal to go, so the set is empty —
-    /// which is what lets `spawn_autonomy_pipeline` skip stamping the component.
+    /// With no goal input there is nowhere for a goal to go, so the set is
+    /// empty — which is what lets `spawn_autonomy_pipeline` skip stamping the
+    /// component.
     #[test]
-    fn a_stack_with_no_planner_yields_no_channels() {
-        assert!(mission_goal_channels(&AutonomyStack::default()).is_empty());
+    fn no_goal_inputs_yields_no_channels() {
+        assert!(mission_goal_channels(&[]).is_empty());
+    }
+
+    /// Outside inputs of other types (teleop intent here) are not goal
+    /// channels; only `PlannerGoal` keys are collected.
+    #[test]
+    fn other_outside_inputs_are_ignored() {
+        let outside_inputs = [intent::<TwistIntent>(), goal_key("mission")];
+
+        assert_eq!(
+            mission_goal_channels(&outside_inputs),
+            BTreeSet::from(["mission".to_string()]),
+        );
+    }
+
+    /// A pipeline that declares the intent input is teleop controlled; the
+    /// goal it also reads doesn't matter.
+    #[test]
+    fn declared_intent_marks_the_agent_teleop_controlled() {
+        let outside_inputs = [goal_key("mission"), intent::<TwistIntent>()];
+
+        assert!(reads_teleop_intent(&outside_inputs));
+    }
+
+    /// A pipeline that reads only goals gets no intent from the host.
+    #[test]
+    fn without_the_intent_input_the_agent_is_not_teleop_controlled() {
+        assert!(!reads_teleop_intent(&[goal_key("mission")]));
+        assert!(!reads_teleop_intent(&[]));
     }
 
     #[test]
-    fn name_is_copied_from_argument() {
-        let caps = build_host_body_capabilities("rover_1");
-        assert_eq!(caps.name, "rover_1");
+    fn actuation_is_the_vehicles() {
+        let actuation = ActuationModel::new(vec![ActuatorSpec::new(
+            ActuatorId::new("drive"),
+            SetpointKind::Torque,
+            1.0,
+            SetpointKind::Torque.value(0.0),
+            SignConvention::Normal,
+        )]);
+
+        let caps = build_host_body_capabilities(&AgentId::new("car"), vec![], &actuation);
+
+        assert_eq!(caps.actuation, actuation);
     }
 
+    /// The body publishes the truth rig's channels and every sensor's, each
+    /// as described.
     #[test]
-    fn sim_agents_consume_control() {
-        let caps = build_host_body_capabilities("any");
-        assert!(caps.consumes_control);
-    }
+    fn publishes_the_truth_rig_and_every_sensor_channel() {
+        let agent = AgentId::new("car");
+        let gps = SensorPublishChannel::new::<GpsPosition>(
+            "gps",
+            "gps",
+            FrameId::agent(agent.clone(), "gps"),
+        );
+        let mag = SensorPublishChannel::new::<MagneticField>(
+            "mag",
+            "mag",
+            FrameId::agent(agent.clone(), "mag"),
+        );
+        let sensors = vec![gps.description().clone(), mag.description().clone()];
 
-    #[test]
-    fn publishes_exactly_pose_and_twist() {
-        let caps = build_host_body_capabilities("any");
-        assert_eq!(caps.publishes.len(), 2);
+        let caps =
+            build_host_body_capabilities(&agent, sensors.clone(), &ActuationModel::default());
 
-        let keys: Vec<_> = caps.publishes.iter().map(|p| &p.key).collect();
-        assert!(keys.contains(&&oracle_pose_channel()));
-        assert!(keys.contains(&&oracle_twist_channel()));
-    }
-
-    #[test]
-    fn all_published_channels_are_provenance_exact() {
-        let caps = build_host_body_capabilities("any");
-        for pc in &caps.publishes {
-            assert_eq!(pc.provenance, Provenance::Exact);
-        }
+        let expected: Vec<BodyChannel> = truth_body_channels(&agent)
+            .into_iter()
+            .chain(sensors)
+            .collect();
+        assert_eq!(caps.publishes, expected);
     }
 }

@@ -19,12 +19,12 @@
 //! — the right tradeoff for a diagnostic overlay. The projected position is the
 //! same one `tf.rs` draws the triad at, so label and triad coincide.
 
-use crate::prelude::{AgentIdComponent, TfServiceComponent};
+use crate::prelude::{AutonomyPipelineComponent, TfServiceComponent};
 use crate::viz::interaction::selection::Selected;
 use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 use crate::viz::live::tf::{frame_origin_in_root, TfOverlayVisible};
 
-use helios_core::frames::FrameId;
+use helios_core::spatial::FrameId;
 
 use std::collections::{HashMap, HashSet};
 
@@ -133,7 +133,7 @@ impl TfLabelTuning {
 pub(crate) fn tf_label_system(
     overlay_visible: Res<TfOverlayVisible>,
     tuning: Res<TfLabelTuning>,
-    agents: Query<(&TfServiceComponent, &AgentIdComponent), With<Selected>>,
+    agents: Query<(&TfServiceComponent, &AutonomyPipelineComponent), With<Selected>>,
     camera: Query<(&Camera, &GlobalTransform), With<Camera3d>>,
     mut labels: Query<(Entity, &FrameLabel, &mut Node, &mut Visibility)>,
     mut commands: Commands,
@@ -149,12 +149,14 @@ pub(crate) fn tf_label_system(
     let mut on_screen: Vec<(FrameId, Vec2)> = Vec::new();
     let mut off_screen: Vec<FrameId> = Vec::new();
     if overlay_visible.0 {
-        for (tf_service, agent_id) in &agents {
-            let root = FrameId::odom(agent_id.0.clone());
+        for (tf_service, pipeline) in &agents {
+            let Some(root) = pipeline.0.estimate_root() else {
+                continue;
+            };
             for (edge, _kind) in tf_service.0.buffer().edges() {
-                match frame_origin_in_root(tf_service.0.buffer(), &edge.child, &root).and_then(
-                    |origin| camera.world_to_viewport(camera_transform, origin).ok(),
-                ) {
+                match frame_origin_in_root(tf_service.0.buffer(), &edge.child, root)
+                    .and_then(|origin| camera.world_to_viewport(camera_transform, origin).ok())
+                {
                     Some(viewport) => on_screen.push((edge.child, viewport + tuning.screen_offset)),
                     None => off_screen.push(edge.child),
                 }
@@ -291,7 +293,7 @@ fn reconcile_labels(
 mod tests {
     use super::*;
 
-    use helios_core::data::AgentId;
+    use helios_core::prelude::AgentId;
 
     fn agent() -> AgentId {
         AgentId::new("test_agent")
@@ -325,7 +327,7 @@ mod tests {
     fn declutter_leaves_separated_labels_where_they_are() {
         let a = agent();
         let base = FrameId::base_link(a.clone());
-        let lidar = FrameId::sensor(a.clone(), "lidar");
+        let lidar = FrameId::agent(a.clone(), "lidar");
         let near = Vec2::new(100.0, 100.0);
         let far = Vec2::new(500.0, 400.0);
         let t = TfLabelTuning::default();
@@ -344,7 +346,7 @@ mod tests {
     fn spawns_desired_frames_that_have_no_label_yet() {
         let a = agent();
         let base = FrameId::base_link(a.clone());
-        let lidar = FrameId::sensor(a.clone(), "lidar");
+        let lidar = FrameId::agent(a.clone(), "lidar");
         let desired = HashSet::from([base.clone(), lidar.clone()]);
 
         let (to_spawn, to_despawn) = reconcile_labels(&desired, &[]);
@@ -359,7 +361,7 @@ mod tests {
     fn despawns_labels_whose_frame_is_no_longer_desired() {
         let a = agent();
         let base = FrameId::base_link(a.clone());
-        let lidar = FrameId::sensor(a.clone(), "lidar");
+        let lidar = FrameId::agent(a.clone(), "lidar");
         let desired = HashSet::from([base.clone()]);
         let existing = [(entity(0), base.clone()), (entity(1), lidar.clone())];
 
@@ -373,7 +375,7 @@ mod tests {
     fn steady_state_spawns_and_despawns_nothing() {
         let a = agent();
         let base = FrameId::base_link(a.clone());
-        let lidar = FrameId::sensor(a.clone(), "lidar");
+        let lidar = FrameId::agent(a.clone(), "lidar");
         let desired = HashSet::from([base.clone(), lidar.clone()]);
         let existing = [(entity(0), base), (entity(1), lidar)];
 
@@ -413,7 +415,7 @@ mod tests {
         let a = agent();
         let existing = [
             (entity(0), FrameId::base_link(a.clone())),
-            (entity(1), FrameId::sensor(a.clone(), "lidar")),
+            (entity(1), FrameId::agent(a.clone(), "lidar")),
         ];
 
         let (to_spawn, to_despawn) = reconcile_labels(&HashSet::new(), &existing);

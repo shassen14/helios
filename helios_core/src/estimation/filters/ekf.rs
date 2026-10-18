@@ -1,20 +1,25 @@
-use crate::data::ports::TfProvider;
-use crate::data::MonotonicTime;
 use crate::estimation::dynamics::EstimationDynamics;
-use crate::estimation::filters::linearization::tangent_state_transition;
+use crate::estimation::filters::innovation::measure_innovation;
+use crate::estimation::filters::linearization::discrete_linearization;
+use crate::estimation::filters::predict_guard::check_predict;
+use crate::estimation::filters::update_guard::check_update_finite;
 use crate::estimation::measurement::{MeasurementModel, Prediction};
-use crate::estimation::{EstimatorInputs, GaussianStateEstimator, SkipReason, UpdateOutcome};
-use crate::frames::FrameAwareState;
-use crate::utils::integrators::RK4;
+use crate::estimation::{
+    EstimatorInputs, GaussianStateEstimator, PredictOutcome, SkipReason, UpdateOutcome,
+};
+use crate::kernel::integrators::RK4;
+use crate::prelude::{MonotonicDuration, MonotonicTime};
+use crate::spatial::tf::TfProvider;
+use crate::spatial::FrameAwareState;
 
 use nalgebra::{DMatrix, DVector};
 
 /// A concrete implementation of an Extended Kalman Filter.
 ///
 /// Holds only filter-intrinsic state: the current `(x, P, t)`, the process noise
-/// `Q`, and the dynamics model. Measurement models and their `R` matrices are
-/// supplied per `update` call by the caller — the filter does not maintain a
-/// registry of sensors.
+/// `Q`, the dynamics model and how `P` is conditioned after each step.
+/// Measurement models and their `R` matrices are supplied per `update` call by
+/// the caller — the filter does not maintain a registry of sensors.
 pub struct ExtendedKalmanFilter {
     /// The current state of the filter (x, P, t).
     state: FrameAwareState,
@@ -22,10 +27,13 @@ pub struct ExtendedKalmanFilter {
     process_noise_q: DMatrix<f64>,
     /// The specific dynamics model this filter will use for prediction.
     dynamics_model: Box<dyn EstimationDynamics>,
+    /// What is done to `P` after every predict and update, beyond symmetrising.
+    conditioning: CovarianceConditioning,
 }
 
 impl ExtendedKalmanFilter {
-    /// Creates a new EKF instance.
+    /// Creates a new EKF instance that only symmetrises `P` after each step
+    /// (no variance floor, no jitter).
     pub fn new(
         initial_state: FrameAwareState,
         process_noise_q: DMatrix<f64>,
@@ -38,20 +46,26 @@ impl ExtendedKalmanFilter {
             state: initial_state,
             process_noise_q,
             dynamics_model,
+            conditioning: CovarianceConditioning::default(),
         }
     }
 
-    /// Enforces physical properties on the covariance matrix to prevent divergence.
-    /// Called at the end of every predict and update step.
-    fn ensure_covariance_health(&mut self) {
+    /// The same filter, conditioning `P` with `conditioning` after each step.
+    pub fn with_conditioning(mut self, conditioning: CovarianceConditioning) -> Self {
+        self.conditioning = conditioning;
+        self
+    }
+
+    /// Symmetrises `P`, then applies the configured floor and jitter. Called at
+    /// the end of every predict and update.
+    fn condition_covariance(&mut self) {
         // The covariance lives in tangent space (t × t), so every index here is
         // a tangent dimension, not a stored-vector slot.
         let dim = self.state.tangent_dim();
         let p = &mut self.state.covariance;
-        let min_variance = 1e-9;
 
-        // 1. Enforce symmetry in-place (no allocation): average each off-diagonal pair.
-        // p * p^T * 0.5
+        // 1. Symmetrise in place (no allocation): average each off-diagonal
+        // pair, undoing the round-off asymmetry of F P Fᵀ and the Joseph form.
         for i in 0..dim {
             for j in (i + 1)..dim {
                 let avg = (p[(i, j)] + p[(j, i)]) * 0.5;
@@ -60,69 +74,95 @@ impl ExtendedKalmanFilter {
             }
         }
 
-        // 2. Enforce positive diagonal (prevent negative variance).
-        for i in 0..dim {
-            if p[(i, i)] < min_variance {
-                p[(i, i)] = min_variance;
+        // 2. Raise any variance below the floor to it.
+        if let Some(floor) = self.conditioning.floor {
+            for i in 0..dim {
+                if p[(i, i)] < floor {
+                    p[(i, i)] = floor;
+                }
             }
         }
 
-        // 3. Regularization via diagonal add (no identity matrix allocation).
-        // Adds a tiny uncertainty preventing "close-minded" filters for numerical stability
-        for i in 0..dim {
-            p[(i, i)] += 1e-12;
+        // 3. Add the jitter to every variance.
+        if let Some(jitter) = self.conditioning.jitter {
+            for i in 0..dim {
+                p[(i, i)] += jitter;
+            }
         }
     }
 }
 
+/// What the EKF does to `P` after each step besides symmetrising it, which it
+/// always does.
+///
+/// Both are off by default. Each hides a symptom rather than fixing a cause:
+/// a variance that falls below the floor, or a `P` that needs jitter to stay
+/// factorable, means the filter is diverging or over-confident, and a raised
+/// or padded `P` keeps that from showing (in NEES, or as a
+/// [`SkipReason::CovarianceNotPositiveDefinite`]). Raising only the diagonal
+/// can itself leave `P` indefinite.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CovarianceConditioning {
+    /// The smallest variance a diagonal entry may hold; one below it is
+    /// raised to it. `None`: never raised.
+    pub floor: Option<f64>,
+    /// Added to every variance after each step. `None`: nothing added.
+    pub jitter: Option<f64>,
+}
+
 impl GaussianStateEstimator for ExtendedKalmanFilter {
-    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) {
-        if dt <= 0.0 {
-            return;
+    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) -> PredictOutcome {
+        // --- 0. Check the step and the input before touching the estimate ---
+        let dynamics = &self.dynamics_model;
+        if let Err(reason) = check_predict(dynamics.as_ref(), &self.state, dt, &inputs.control) {
+            return PredictOutcome::Skipped(reason);
         }
 
-        // --- 1. Get current state and dynamics model ---
-        let dynamics = &self.dynamics_model;
+        // --- 1. Get current state and input ---
         let x_old = &self.state.mean;
         let p_old = &self.state.covariance;
-        let t_old = self.state.timestamp;
-
-        let u_sized = if inputs.control.nrows() == dynamics.get_control_dim() {
-            &inputs.control
-        } else {
-            &DVector::zeros(dynamics.get_control_dim())
-        };
+        let t_old = self.state.timestamp.0;
+        let u = &inputs.control;
 
         // --- 2. Predict the next state vector using numerical integration ---
         // x_pred = f(x, u, t). A point in storage space (length s); the dynamics
         // model owns its own retraction, so this is a direct assignment, not ⊞.
-        let x_new = dynamics.propagate(x_old, u_sized, t_old, dt, &RK4);
+        let x_new = dynamics.propagate(x_old, u, t_old, dt, &RK4);
 
-        // --- 3. Linearize the dynamics into the state-transition matrix F ---
+        // --- 3. Linearize the dynamics into the step's (F, Q_d) ---
         // F is the discrete tangent-space transition (t × t) about the current
         // state. It already includes the time step — F ≈ I + A·dt — because it
         // finite-differences `propagate`, which folds in `dt`. So no identity is
         // added here; doing so would double-count the state's contribution to P.
         // Sized by the state's schema (not the dynamics model's), so an augmented
-        // state's F matches its larger P.
-        let f_k =
-            tangent_state_transition(dynamics.as_ref(), &self.state, u_sized, t_old, dt, &RK4);
+        // state's F matches its larger P. Q_d = Q·dt is the process noise
+        // accumulated over the step — the first-order (Euler) discretization of
+        // ∫₀^dt F(τ) Q Fᵀ(τ) dτ.
+        let step = discrete_linearization(
+            dynamics.as_ref(),
+            &self.state,
+            u,
+            t_old,
+            dt,
+            &RK4,
+            &self.process_noise_q,
+        );
 
         // --- 4. Predict the next covariance matrix ---
-        // Standard discrete EKF: P⁺ = F P Fᵀ + Q·dt. F carries the prior covariance
-        // across the step; Q·dt is the process noise accumulated over it — the
-        // first-order (Euler) discretization of ∫₀^dt F(τ) Q Fᵀ(τ) dτ. Q is added
-        // *outside* the F sandwich: wrapping it (F (P + Q·dt) Fᵀ) would inflate the
-        // noise by ≈ F Q Fᵀ·dt and bias the filter conservative, so its reported
+        // Standard discrete EKF: P⁺ = F P Fᵀ + Q_d. Q_d is added *outside* the F
+        // sandwich: wrapping it (F (P + Q_d) Fᵀ) would inflate the noise by
+        // ≈ F Q_d Fᵀ and bias the filter conservative, so its reported
         // covariance would over-state the true error (NEES below the state dim).
-        let p_new = &f_k * p_old * f_k.transpose() + &self.process_noise_q * dt;
+        let p_new = &step.f_d * p_old * step.f_d.transpose() + step.q_d;
 
         // --- 5. Update the filter's internal state ---
         self.state.mean = x_new;
         self.state.covariance = p_new;
-        self.state.timestamp += dt;
+        self.state.timestamp += MonotonicDuration(dt);
 
-        self.ensure_covariance_health();
+        self.condition_covariance();
+
+        PredictOutcome::Applied
     }
 
     fn update(
@@ -140,6 +180,9 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         let m = z.nrows();
         if r.nrows() != m || r.ncols() != m {
             return UpdateOutcome::Skipped(SkipReason::MeasurementShapeMismatch);
+        }
+        if let Err(reason) = check_update_finite(z, r, &self.state) {
+            return UpdateOutcome::Skipped(reason);
         }
 
         let z_pred = match model.predict_measurement(&self.state, tf, at) {
@@ -168,6 +211,11 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
             return UpdateOutcome::Skipped(SkipReason::CovarianceNotPositiveDefinite);
         };
 
+        // How surprising z is against the prediction, measured before the
+        // estimate moves; an innovation gate would read it here to refuse an
+        // outlier.
+        let innovation = measure_innovation(&s_chol, &y);
+
         // Kalman gain K = P Hᵀ S⁻¹ (t × m), obtained without ever forming S⁻¹. S is
         // symmetric, so Kᵀ = S⁻¹(H P): solve S·Kᵀ = H·P for Kᵀ (m × t), then
         // transpose. The correction K·y is a tangent vector (length t); retract it
@@ -187,9 +235,13 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
         let p_post = &i_kh * p_priori * i_kh.transpose() + &k_gain * r * k_gain.transpose();
         self.state.covariance = p_post;
 
-        self.ensure_covariance_health();
+        self.condition_covariance();
 
-        UpdateOutcome::Applied
+        UpdateOutcome::Applied(innovation)
+    }
+
+    fn set_valid_at(&mut self, t: MonotonicTime) {
+        self.state.timestamp = t;
     }
 
     fn state(&self) -> &FrameAwareState {
@@ -200,20 +252,25 @@ impl GaussianStateEstimator for ExtendedKalmanFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::ports::TfProvider;
-    use crate::data::AgentId;
-    use crate::data::MonotonicTime;
+    use crate::estimation::dynamics::{integrate_derivatives, ContinuousDynamics};
     use crate::estimation::measurement::{MeasurementModel, Prediction};
     use crate::estimation::schema::{
-        MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
+        InputSchema, MeasurementSchema, MeasurementSchemaBlock, StateSchema, StateSchemaBlock,
     };
-    use crate::estimation::EstimatorInputs;
-    use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::state::{Component, Quantity};
+    use crate::estimation::{EstimatorInputs, PredictSkipReason};
+    use crate::kernel::integrators::Integrator;
+    use crate::prelude::AgentId;
+    use crate::prelude::{MonotonicDuration, MonotonicTime};
+    use crate::spatial::state::{Component, Quantity};
+    use crate::spatial::tf::TfProvider;
+    use crate::spatial::transforms::{Convention, ErasedTransform};
+    use crate::spatial::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector, Isometry3};
     use rand::rngs::StdRng;
     use rand::Rng;
+
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
 
     // --- Test Fixtures ---
 
@@ -244,21 +301,21 @@ mod tests {
     struct ConstantVelocity3D;
 
     impl EstimationDynamics for ConstantVelocity3D {
-        fn get_control_dim(&self) -> usize {
-            0
+        fn input_schema(&self) -> std::sync::Arc<InputSchema> {
+            std::sync::Arc::new(InputSchema::compose(vec![]))
         }
 
         fn schema(&self) -> std::sync::Arc<StateSchema> {
             std::sync::Arc::new(StateSchema::compose(vec![
                 StateSchemaBlock::new(
-                    Quantity::Position(FrameId::world()),
+                    Quantity::Position(FrameId::global(DATUM)),
                     Convention::Enu,
                     None,
                     DVector::zeros(3),
                     DMatrix::identity(3, 3),
                 ),
                 StateSchemaBlock::new(
-                    Quantity::Velocity(FrameId::world()),
+                    Quantity::Velocity(FrameId::global(DATUM)),
                     Convention::Enu,
                     None,
                     DVector::zeros(3),
@@ -267,25 +324,25 @@ mod tests {
             ]))
         }
 
+        fn propagate(
+            &self,
+            x: &DVector<f64>,
+            u: &DVector<f64>,
+            t: f64,
+            dt: f64,
+            integrator: &dyn Integrator<f64>,
+        ) -> DVector<f64> {
+            integrate_derivatives(self, x, u, t, dt, integrator)
+        }
+    }
+
+    impl ContinuousDynamics for ConstantVelocity3D {
         fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-            let mut xdot = DVector::zeros(6);
+            let mut xdot = DVector::zeros(x.nrows());
             xdot[0] = x[3];
             xdot[1] = x[4];
             xdot[2] = x[5];
             xdot
-        }
-
-        fn jacobian(
-            &self,
-            _x: &DVector<f64>,
-            _u: &DVector<f64>,
-            _t: f64,
-        ) -> (DMatrix<f64>, DMatrix<f64>) {
-            let mut a = DMatrix::zeros(6, 6);
-            a[(0, 3)] = 1.0;
-            a[(1, 4)] = 1.0;
-            a[(2, 5)] = 1.0;
-            (a, DMatrix::zeros(6, 0))
         }
     }
 
@@ -362,7 +419,8 @@ mod tests {
 
     fn make_state_with_velocity(vx: f64) -> FrameAwareState {
         // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
-        let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
+        let mut state =
+            FrameAwareState::from_schema(ConstantVelocity3D.schema(), MonotonicTime(0.0));
         state.mean[3] = vx;
         state
     }
@@ -389,8 +447,9 @@ mod tests {
         let mut ekf = make_ekf(0.0, 1.0);
         let u = DVector::zeros(0);
 
-        ekf.predict(1.0, &EstimatorInputs { control: u });
+        let outcome = ekf.predict(1.0, &EstimatorInputs { control: u });
 
+        assert_eq!(outcome, PredictOutcome::Applied);
         let px = ekf.state().mean[0];
         assert!(
             (px - 1.0).abs() < 0.05,
@@ -400,14 +459,205 @@ mod tests {
     }
 
     #[test]
-    fn predict_zero_dt_is_noop() {
+    fn predict_skips_quietly_on_a_non_positive_dt() {
+        // No interval, nothing to propagate: the estimate is left exactly as it
+        // was, and the reason is the quiet one. A negative step skips the same
+        // way rather than running the dynamics backwards.
+        for dt in [0.0, -0.1] {
+            let mut ekf = make_ekf(5.0, 2.0);
+            let before = ekf.state().clone();
+
+            let outcome = ekf.predict(
+                dt,
+                &EstimatorInputs {
+                    control: DVector::zeros(0),
+                },
+            );
+
+            assert_eq!(
+                outcome,
+                PredictOutcome::Skipped(PredictSkipReason::NonPositiveDt)
+            );
+            assert_eq!(ekf.state().mean, before.mean);
+            assert_eq!(ekf.state().covariance, before.covariance);
+            assert_eq!(ekf.state().timestamp, before.timestamp);
+        }
+    }
+
+    #[test]
+    fn predict_skips_loudly_on_an_input_the_schema_does_not_describe() {
+        // A model with no input handed a 2-row control. Predicting anyway
+        // would integrate rows the model never named; the skip carries both
+        // lengths so the log says what was wired wrong.
         let mut ekf = make_ekf(5.0, 2.0);
-        let u = DVector::zeros(0);
-        let px_before = ekf.state().mean[0];
+        let before = ekf.state().clone();
 
-        ekf.predict(0.0, &EstimatorInputs { control: u });
+        let outcome = ekf.predict(
+            0.1,
+            &EstimatorInputs {
+                control: DVector::zeros(2),
+            },
+        );
 
-        assert_eq!(ekf.state().mean[0], px_before);
+        assert_eq!(
+            outcome,
+            PredictOutcome::Skipped(PredictSkipReason::InputShapeMismatch {
+                expected: 0,
+                supplied: 2,
+            })
+        );
+        assert_eq!(ekf.state().mean, before.mean);
+        assert_eq!(ekf.state().covariance, before.covariance);
+        assert_eq!(ekf.state().timestamp, before.timestamp);
+    }
+
+    #[test]
+    fn ins_predict_without_an_imu_sample_skips_instead_of_free_falling() {
+        // The case the zero-control fallback used to hide: an INS handed no
+        // sample integrated zero specific force, so the estimate fell at g with
+        // nothing in the log. It must now skip and name both lengths.
+        let model = ins_model();
+        let q = model.schema().process_noise().clone();
+        let state = FrameAwareState::from_schema(model.schema(), MonotonicTime(0.0));
+        let mut ekf = ExtendedKalmanFilter::new(state, q, Box::new(model));
+        let before = ekf.state().clone();
+
+        let outcome = ekf.predict(
+            0.02,
+            &EstimatorInputs {
+                control: DVector::zeros(0),
+            },
+        );
+
+        assert_eq!(
+            outcome,
+            PredictOutcome::Skipped(PredictSkipReason::InputShapeMismatch {
+                expected: 6,
+                supplied: 0,
+            })
+        );
+        assert_eq!(ekf.state().mean, before.mean);
+        assert_eq!(ekf.state().covariance, before.covariance);
+    }
+
+    #[test]
+    fn predict_advances_valid_at_time_by_dt() {
+        // The state holds at the instant it was predicted to: the prior's time
+        // plus each step, accumulated exactly as the filter adds them.
+        let mut ekf = make_ekf(0.0, 1.0);
+
+        let inputs = EstimatorInputs {
+            control: DVector::zeros(0),
+        };
+
+        ekf.predict(0.1, &inputs);
+        ekf.predict(0.25, &inputs);
+
+        let expected = MonotonicTime(0.0) + MonotonicDuration(0.1) + MonotonicDuration(0.25);
+        assert_eq!(ekf.state().timestamp, expected);
+    }
+
+    #[test]
+    fn set_valid_at_moves_only_the_time_and_predict_advances_from_it() {
+        let mut ekf = make_ekf(0.0, 1.0);
+        let before = ekf.state().clone();
+
+        ekf.set_valid_at(MonotonicTime(42.0));
+        assert_eq!(ekf.state().timestamp, MonotonicTime(42.0));
+        assert_eq!(ekf.state().mean, before.mean);
+        assert_eq!(ekf.state().covariance, before.covariance);
+
+        let inputs = EstimatorInputs {
+            control: DVector::zeros(0),
+        };
+        ekf.predict(0.5, &inputs);
+        assert_eq!(ekf.state().timestamp, MonotonicTime(42.5));
+    }
+
+    /// A NaN or ∞ step, control entry or estimate is refused loudly and
+    /// leaves the estimate untouched, rather than poisoning it for good.
+    #[test]
+    fn predict_refuses_a_non_finite_input() {
+        let still = DVector::from_row_slice(&[0.0, 0.0, 9.81, 0.0, 0.0, 0.0]);
+        let mut nan_control = still.clone();
+        nan_control[2] = f64::NAN;
+        let ins = || {
+            let model = ins_model();
+            let schema = model.schema();
+            let state = FrameAwareState::from_schema(schema.clone(), MonotonicTime(0.0));
+            ExtendedKalmanFilter::new(state, schema.process_noise().clone(), Box::new(model))
+        };
+
+        let mut nan_mean = ins();
+        nan_mean.state.mean[0] = f64::NAN;
+        let mut inf_variance = ins();
+        inf_variance.state.covariance[(0, 0)] = f64::INFINITY;
+        let cases = [
+            (ins(), f64::NAN, still.clone()),
+            (ins(), f64::INFINITY, still.clone()),
+            (ins(), 0.02, nan_control),
+            (nan_mean, 0.02, still.clone()),
+            (inf_variance, 0.02, still),
+        ];
+        for (mut ekf, dt, control) in cases {
+            let before = ekf.state().clone();
+            let outcome = ekf.predict(dt, &EstimatorInputs { control });
+            assert_eq!(
+                outcome,
+                PredictOutcome::Skipped(PredictSkipReason::NonFiniteInput)
+            );
+            assert_eq!(ekf.state().timestamp, before.timestamp);
+        }
+    }
+
+    /// A NaN measurement or `R` is refused loudly, so it never reaches the
+    /// mean or reports a NaN NIS as applied.
+    #[test]
+    fn update_refuses_a_non_finite_measurement_or_noise() {
+        let mut nan_r = gps_r();
+        nan_r[(1, 1)] = f64::NAN;
+        for (z, r) in [(gps_z(f64::NAN, 0.0), gps_r()), (gps_z(1.0, 0.0), nan_r)] {
+            let mut ekf = make_ekf(0.0, 1.0);
+            let before = ekf.state().clone();
+            let outcome = ekf.update(&z, &Position2DMeasurement, &r, None, AT);
+            assert_eq!(outcome, UpdateOutcome::Skipped(SkipReason::NonFiniteInput));
+            assert_eq!(ekf.state().mean, before.mean);
+            assert_eq!(ekf.state().covariance, before.covariance);
+        }
+    }
+
+    /// With no conditioning configured, a step only symmetrises `P`: a tiny
+    /// variance is left as it is.
+    #[test]
+    fn default_conditioning_leaves_a_small_variance_alone() {
+        let mut ekf = make_ekf(0.0, 1.0);
+        ekf.state.covariance[(5, 5)] = 1e-15;
+        ekf.state.covariance[(0, 1)] = 0.25;
+        ekf.state.covariance[(1, 0)] = 0.75;
+
+        ekf.condition_covariance();
+
+        assert_eq!(ekf.state().covariance[(5, 5)], 1e-15);
+        assert_eq!(ekf.state().covariance[(0, 1)], 0.5);
+        assert_eq!(ekf.state().covariance[(1, 0)], 0.5);
+    }
+
+    /// A configured floor raises a variance below it, and the jitter is then
+    /// added to every variance.
+    #[test]
+    fn configured_floor_and_jitter_act_on_the_diagonal() {
+        const FLOOR: f64 = 1e-6;
+        const JITTER: f64 = 1e-8;
+        let mut ekf = make_ekf(0.0, 1.0).with_conditioning(CovarianceConditioning {
+            floor: Some(FLOOR),
+            jitter: Some(JITTER),
+        });
+        ekf.state.covariance[(5, 5)] = 1e-15;
+
+        ekf.condition_covariance();
+
+        assert_eq!(ekf.state().covariance[(5, 5)], FLOOR + JITTER);
+        assert_eq!(ekf.state().covariance[(0, 0)], 1.0 + JITTER);
     }
 
     #[test]
@@ -433,10 +683,68 @@ mod tests {
 
         let outcome = ekf.update(&gps_z(5.0, 0.0), &model, &r, Some(&tf), AT);
 
-        assert_eq!(outcome, UpdateOutcome::Applied);
+        assert!(matches!(outcome, UpdateOutcome::Applied(_)));
         let px = ekf.state().mean[0];
         assert!(px > 0.0, "state should correct toward measurement (px > 0)");
         assert!(px < 5.0, "state should not overshoot measurement");
+    }
+
+    #[test]
+    fn update_leaves_valid_at_time_unchanged() {
+        // An update conditions the state on a measurement; it does not move the
+        // instant the state holds at.
+        let mut ekf = make_ekf(0.0, 0.0);
+        let inputs = EstimatorInputs {
+            control: DVector::zeros(0),
+        };
+        ekf.predict(0.5, &inputs);
+        let before = ekf.state().timestamp;
+
+        let outcome = ekf.update(
+            &gps_z(5.0, 0.0),
+            &Position2DMeasurement,
+            &gps_r(),
+            Some(&IdentityTf),
+            AT,
+        );
+
+        assert!(matches!(outcome, UpdateOutcome::Applied(_)));
+        assert_eq!(ekf.state().timestamp, before);
+    }
+
+    #[test]
+    fn update_reports_nis_against_the_predicted_spread() {
+        // Position observes px and py directly (H selects them), so S = P_pp + R
+        // and, with P_pp diagonal, NIS is the per-axis y²/(σp² + σr²) summed —
+        // the scalar formula on each axis.
+        let mut ekf = make_ekf(0.0, 0.0);
+        let p = ekf.state().covariance.clone();
+        assert_eq!(
+            p[(0, 1)],
+            0.0,
+            "the per-axis formula needs px, py uncorrelated"
+        );
+        let r = gps_r();
+        let (zx, zy) = (5.0, -2.0);
+
+        let outcome = ekf.update(
+            &gps_z(zx, zy),
+            &Position2DMeasurement,
+            &r,
+            Some(&IdentityTf),
+            AT,
+        );
+
+        let UpdateOutcome::Applied(innovation) = outcome else {
+            panic!("expected an applied update, got {outcome:?}");
+        };
+        let expected = zx * zx / (p[(0, 0)] + r[(0, 0)]) + zy * zy / (p[(1, 1)] + r[(1, 1)]);
+        assert!(
+            (innovation.nis - expected).abs() <= 1e-12 * expected,
+            "nis {} != {expected}",
+            innovation.nis
+        );
+        assert_eq!(innovation.dof, 2);
     }
 
     #[test]
@@ -486,20 +794,26 @@ mod tests {
     // (e.g. the quaternion tangent block dropping 4→3 dims), re-harvest the
     // literals in the same run and commit the new values deliberately.
 
+    /// The covariance floor the golden trajectory was harvested with.
+    const GOLDEN_COVARIANCE_FLOOR: f64 = 1e-9;
+    /// The covariance jitter the golden trajectory was harvested with.
+    const GOLDEN_COVARIANCE_JITTER: f64 = 1e-12;
+
     /// Builds the frozen 16-state INS EKF and runs a fixed control script,
     /// returning the final `(mean, covariance-diagonal)`. Every input here is a
     /// hardcoded constant so the run is fully deterministic.
     fn run_golden_ins_trajectory() -> (DVector<f64>, DVector<f64>) {
-        use crate::data::AgentId;
         use crate::estimation::dynamics::integrated_imu::{
             ImuInitialUncertainty, ImuProcessNoise, IntegratedImuModel,
         };
+        use crate::estimation::frames::EstimationFrames;
+        use crate::prelude::AgentId;
         use nalgebra::Vector3;
 
         // Distinct per-block variances so a transposed Q or P₀ block cannot hide
         // behind a shared value.
         let model = IntegratedImuModel::new(
-            AgentId::new("test_agent"),
+            EstimationFrames::odom(AgentId::new("test_agent")),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
                 accel_noise_var: 0.04,
@@ -518,8 +832,14 @@ mod tests {
 
         let schema = model.schema();
         let q = schema.process_noise().clone();
-        let initial_state = FrameAwareState::from_schema(schema, 0.0);
-        let mut ekf = ExtendedKalmanFilter::new(initial_state, q, Box::new(model));
+        let initial_state = FrameAwareState::from_schema(schema, MonotonicTime(0.0));
+        // The literals were harvested with this floor and jitter, which the
+        // EKF applied unconditionally until they became parameters.
+        let mut ekf = ExtendedKalmanFilter::new(initial_state, q, Box::new(model))
+            .with_conditioning(CovarianceConditioning {
+                floor: Some(GOLDEN_COVARIANCE_FLOOR),
+                jitter: Some(GOLDEN_COVARIANCE_JITTER),
+            });
 
         // Constant IMU: 0.5 m/s² forward, gravity-compensated on Z, 0.15 rad/s yaw.
         let control = DVector::from_row_slice(&[0.5, 0.0, 9.81, 0.0, 0.0, 0.15]);
@@ -716,7 +1036,7 @@ mod tests {
         let mut nees_sum = 0.0;
         for _ in 0..NEES_RUNS {
             let model = ins_model();
-            let mut est_init = FrameAwareState::from_schema(model.schema(), 0.0);
+            let mut est_init = FrameAwareState::from_schema(model.schema(), MonotonicTime(0.0));
             est_init.covariance = p0.clone();
             let mut ekf = ExtendedKalmanFilter::new(est_init, q.clone(), Box::new(model));
 
@@ -771,9 +1091,14 @@ mod tests {
     // filter keeps NEES at the tangent dimension whether or not a direction is seen,
     // and the position update also shrinks the correlated velocity error through the
     // cross-covariance, so both blocks stay consistent, not just the measured one.
+    //
+    // The same runs grade the innovation the update reports. NIS, yᵀS⁻¹y, is the
+    // measurement-space twin of NEES: it needs no truth, only the filter's own S,
+    // and has expectation equal to the measurement's length when S is honest. Its
+    // average over every update of every run must sit in the same band around 3.
 
     #[test]
-    fn ins_ekf_update_nees_is_consistent() {
+    fn ins_ekf_update_nees_and_nis_are_consistent() {
         use rand::SeedableRng;
 
         let n = ins_model().schema().tangent_dim();
@@ -790,9 +1115,11 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(0x5550_4441);
 
         let mut nees_sum = 0.0;
+        let mut nis_sum = 0.0;
+        let mut nis_count = 0usize;
         for _ in 0..NEES_RUNS {
             let model = ins_model();
-            let mut est_init = FrameAwareState::from_schema(model.schema(), 0.0);
+            let mut est_init = FrameAwareState::from_schema(model.schema(), MonotonicTime(0.0));
             est_init.covariance = p0.clone();
             let mut ekf = ExtendedKalmanFilter::new(est_init, q.clone(), Box::new(model));
 
@@ -816,7 +1143,13 @@ mod tests {
                     truth.mean[1] + z_noise[1],
                     truth.mean[2] + z_noise[2],
                 ]);
-                ekf.update(&z, &meas_model, &r, None, AT);
+                let UpdateOutcome::Applied(innovation) = ekf.update(&z, &meas_model, &r, None, AT)
+                else {
+                    panic!("a position update on a healthy INS filter applies");
+                };
+                assert_eq!(innovation.dof, 3);
+                nis_sum += innovation.nis;
+                nis_count += 1;
 
                 t += NEES_DT;
             }
@@ -837,6 +1170,15 @@ mod tests {
             (mean_nees - dof).abs() <= NEES_BAND_FRAC * dof,
             "average NEES {mean_nees} outside {:.0}% of the tangent dimension {dof}: \
              the post-update covariance is inconsistent with the actual error",
+            NEES_BAND_FRAC * 100.0
+        );
+
+        let mean_nis = nis_sum / nis_count as f64;
+        let meas_dof = r.nrows() as f64;
+        assert!(
+            (mean_nis - meas_dof).abs() <= NEES_BAND_FRAC * meas_dof,
+            "average NIS {mean_nis} outside {:.0}% of the measurement dimension {meas_dof}: \
+             the reported innovation is inconsistent with the filter's predicted spread",
             NEES_BAND_FRAC * 100.0
         );
     }
@@ -861,12 +1203,13 @@ mod tests {
     /// The frozen 16-state INS model, same tuning as the golden trajectory so its
     /// base schema is the well-exercised one.
     fn ins_model() -> crate::estimation::dynamics::integrated_imu::IntegratedImuModel {
-        use crate::data::AgentId;
         use crate::estimation::dynamics::integrated_imu::{ImuInitialUncertainty, ImuProcessNoise};
+        use crate::estimation::frames::EstimationFrames;
+        use crate::prelude::AgentId;
         use nalgebra::Vector3;
 
         crate::estimation::dynamics::integrated_imu::IntegratedImuModel::new(
-            AgentId::new("test_agent"),
+            EstimationFrames::odom(AgentId::new("test_agent")),
             Vector3::new(0.0, 0.0, -9.81),
             ImuProcessNoise {
                 accel_noise_var: 0.04,
@@ -904,13 +1247,13 @@ mod tests {
         let base = model.schema();
         let blocks = bias_sensors.iter().cloned().map(mag_bias_block).collect();
         let augmented = Arc::new(base.extended(blocks));
-        let state = FrameAwareState::from_schema(augmented.clone(), 0.0);
+        let state = FrameAwareState::from_schema(augmented.clone(), MonotonicTime(0.0));
         ExtendedKalmanFilter::new(state, augmented.process_noise().clone(), Box::new(model))
     }
 
     #[test]
     fn augmented_ins_ekf_constructs_and_carries_the_bias_block() {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
         use std::sync::Arc;
 
         let model = ins_model();
@@ -921,10 +1264,10 @@ mod tests {
         // off `base_tangent`.
         let base_storage = base.storage_dim();
         let base_tangent = base.tangent_dim();
-        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
+        let sensor = FrameId::agent(AgentId::new("test_agent"), "sensor9");
 
         let augmented = Arc::new(base.extended(vec![mag_bias_block(sensor.clone())]));
-        let state = FrameAwareState::from_schema(augmented.clone(), 0.0);
+        let state = FrameAwareState::from_schema(augmented.clone(), MonotonicTime(0.0));
 
         // The construction seam: `ExtendedKalmanFilter::new`'s only assertion is
         // `tangent_dim == Q dims`, which the composed schema satisfies. Reaching
@@ -999,11 +1342,11 @@ mod tests {
 
     #[test]
     fn augmentation_changes_ekf_dimension_by_block_size() {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
 
         // Distinct sensors so the two bias blocks are independent, not aliased.
-        let s9 = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
-        let s10 = FrameId::sensor(AgentId::new("test_agent"), "sensor10");
+        let s9 = FrameId::agent(AgentId::new("test_agent"), "sensor9");
+        let s10 = FrameId::agent(AgentId::new("test_agent"), "sensor10");
         let base_dim = ins_model().schema().tangent_dim();
 
         // Cardinality is a load-time property (a Vec length): each added block
@@ -1041,9 +1384,9 @@ mod tests {
 
     /// Absolute tolerance on the accumulated bias variance. The block-diagonal
     /// covariance recursion makes `P_bias = P₀ + N·Q·dt` exact in real
-    /// arithmetic; the only slack is `ensure_covariance_health`'s per-step
-    /// 1e-12 diagonal regularization (≈ N·1e-12 total), which this bound clears
-    /// by orders of magnitude while staying far below the growth it checks.
+    /// arithmetic; the only slack is floating-point round-off, which this
+    /// bound clears by orders of magnitude while staying far below the growth
+    /// it checks.
     const BIAS_COV_TOL: f64 = 1e-9;
 
     fn imu_control_script() -> DVector<f64> {
@@ -1055,18 +1398,18 @@ mod tests {
     fn base_ins_ekf() -> ExtendedKalmanFilter {
         let model = ins_model();
         let schema = model.schema();
-        let state = FrameAwareState::from_schema(schema.clone(), 0.0);
+        let state = FrameAwareState::from_schema(schema.clone(), MonotonicTime(0.0));
         ExtendedKalmanFilter::new(state, schema.process_noise().clone(), Box::new(model))
     }
 
     #[test]
     fn augmented_predict_leaves_base_subvector_bit_identical() {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
 
         // The mean is storage-indexed, so the base sub-vector spans `base_storage`
         // (16) slots — the full quaternion included — and the bias appends after it.
         let base_storage = ins_model().schema().storage_dim();
-        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
+        let sensor = FrameId::agent(AgentId::new("test_agent"), "sensor9");
         let mut base = base_ins_ekf();
         let mut aug = augmented_ins_ekf(&[sensor]);
 
@@ -1103,10 +1446,10 @@ mod tests {
 
     #[test]
     fn augmented_predict_grows_bias_covariance_by_process_noise() {
-        use crate::data::AgentId;
+        use crate::prelude::AgentId;
 
         let base_dim = ins_model().schema().tangent_dim();
-        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
+        let sensor = FrameId::agent(AgentId::new("test_agent"), "sensor9");
         let mut aug = augmented_ins_ekf(&[sensor]);
 
         let inputs = EstimatorInputs {
@@ -1155,19 +1498,20 @@ mod tests {
 
     #[test]
     fn augmented_update_drives_bias_toward_truth() {
-        use crate::data::AgentId;
+        use crate::estimation::frames::EstimationFrames;
         use crate::estimation::measurement::magnetometer::MagneticFieldModel;
+        use crate::prelude::AgentId;
         use nalgebra::Vector3;
 
         // Bias mean reads are storage-indexed (offset 16), its variance reads are
         // tangent-indexed (offset 15) — the SO(3) block splits the two.
         let base_storage = ins_model().schema().storage_dim();
         let base_tangent = ins_model().schema().tangent_dim();
-        let sensor = FrameId::sensor(AgentId::new("test_agent"), "sensor9");
+        let sensor = FrameId::agent(AgentId::new("test_agent"), "sensor9");
         let mut ekf = augmented_ins_ekf(std::slice::from_ref(&sensor));
 
         let model = MagneticFieldModel {
-            agent: AgentId::new("test_agent"),
+            frames: EstimationFrames::odom(AgentId::new("test_agent")),
             sensor: sensor.clone(),
             world_magnetic_field: Vector3::new(0.2, 0.4, -0.3),
         };

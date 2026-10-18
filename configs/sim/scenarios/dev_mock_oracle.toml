@@ -1,28 +1,31 @@
 # =========================================================================
 # == Dev Scenario: Mock Oracle Estimator ==
 # =========================================================================
-# E2E acceptance for Phase 3's mock_oracle_estimator. Built by deep-merging
-# the tutorial scenario and replacing only the estimator with the MockOracle
-# passthrough. Everything else (A*, occupancy grid, controller, lidar) is
-# the same real pipeline.
+# E2E acceptance for the MockOracle estimator: the proving-ground scenario
+# with only the estimator replaced by the MockOracle passthrough. Everything
+# else (A*, occupancy grid, controller, lidar) is the same real pipeline, all
+# from the raycast_car prefab.
 #
 # What to verify when running this:
-#   1. DAG dump at startup lists `mock_oracle_estimator` (not `ekf`).
-#   2. F10 oracle-pose gizmo lights up — consumer-side declaration of
-#      oracle/pose is what allocates the bus slot the publisher writes to.
-#   3. `\` bus dump shows `oracle/pose`, `oracle/twist`, and
-#      `FrameAwareState @ ""` all `[set]`.
-#   4. Vehicle tracks the planned path; with the mock estimator there is
+#   1. DAG dump at startup lists `primary` as the mock oracle node.
+#   2. The mock's declaration of `truth.tf` is what allocates the bus slot
+#      the truth rig writes `base_link`'s instance to.
+#   3. `\` bus dump shows `truth.tf`, `truth.twist`,
+#      `FrameAwareState @ primary` (the mock's output) and
+#      `FrameAwareState @ estimate` (the relay's) all `[set]`.
+#   4. The TF tree shows `odom → base_link`, published by the estimate relay.
+#   5. Vehicle tracks the planned path; with the mock estimator there is
 #      no estimation error.
 
 [simulation]
 duration_seconds = 60.0
 seed = 1337
 
-[[world.terrains]]
-mesh     = "maps/starter_world2.glb"
-collider = "maps/starter_world2_col.glb"
-medium   = "air"
+[world.layout]
+from = "sim.catalog.worlds.proving_ground"
+
+[world.semantic_classes]
+from = "runtime.catalog.semantic_classes.default"
 
 [world.atmosphere]
 gravity_enu = [0.0, 0.0, -9.81]  # [east, north, up] m/s²
@@ -33,20 +36,12 @@ ambient_lux = 1500.0
 [[agents]]
 from = "sim.catalog.agents.raycast_car"
 name = "MockOraclePro"
-starting_pose = { translation = [0.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
-goal_pose = { translation = [100.0, 50.0, 0.5] }
+# Inside the proving ground's walls, along the route its own scenario drives.
+starting_pose = { translation = [-20.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { translation = [20.0, 0.0, 0.5] }
 
-# The raycast prefab already mounts a lidar; this re-states it explicitly so the
-# occupancy grid mapper's scan source is visible in the scenario.
-[agents.sensors.lidar]
-from = "entities.sensors.lidar2d"
-
-# Enable the local-layer mapper so A* has a map to plan against.
-[agents.autonomy_stack.map_layers.local]
-from = "runtime.catalog.mappers.occupancy_grid_2d"
-
-# === The only real Phase 3 change: swap the estimator for MockOracle. ===
-# Deep-merge override of the estimator field inherited from raycast_car.
-# Because MockOracle's config is empty, no further keys are needed.
-[agents.autonomy_stack.estimators.primary]
+# The only change from the proving ground: swap the estimator for MockOracle.
+# Deep-merge override of the `primary` node inherited from raycast_car; the
+# prefab sets the kind, and MockOracle takes no other keys.
+[agents.autonomy_stack.nodes.primary]
 from = "runtime.catalog.estimators.mock_oracle"

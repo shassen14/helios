@@ -19,11 +19,10 @@ use crate::{
 use helios_core::{
     control::{
         actuators::{ActuatorCommand, SetpointValue},
-        commands::BodyTwist,
         reference::BodyTwistRef,
     },
-    data::MonotonicTime,
-    frames::{
+    prelude::MonotonicTime,
+    spatial::{
         conventions::{Enu, Flu},
         quantities::{FreeVector, Point},
         transforms::Transform as CoreTransform,
@@ -49,7 +48,7 @@ use std::sync::Arc;
 ///
 /// `SubjectId` is derived from `Name` here rather than stored as a component, so no
 /// Bevy coupling leaks into the pure model layer. `time` is a placeholder — swap it
-/// for the same clock `oracle/pose` is stamped with so the model's `at` lines up
+/// for the same clock `truth.tf` is stamped with so the model's `at` lines up
 /// with bus payload timestamps.
 pub fn begin_inspection(
     selected: Query<&Name, With<Selected>>,
@@ -120,7 +119,7 @@ pub fn gather_pose(
 }
 
 /// Packs the ego state estimate into a Section. Pure — the estimate's kinematics
-/// are already in its reference (odom) ENU frame, so unlike [`pose_section`] there
+/// are already in its root ENU frame, so unlike [`pose_section`] there
 /// is no frame conversion here; the components pass straight through tagged
 /// [`Frame::Enu`]. Position and velocity are each optional: a layout that omits one
 /// simply drops that row.
@@ -182,29 +181,9 @@ pub fn gather_estimator(
     model.sections.push(estimator_section(&stamped.value));
 }
 
-/// Packs the controller's latest command into a Section. Pure. A [`BodyTwist`] is a
-/// pair of body-FLU vectors, so — unlike the ENU estimate — these rows are tagged
-/// [`Frame::Flu`]. A leading `mode` row names the command type, keeping the panel
-/// self-describing as more command types (wrench, rate/thrust) join the read surface.
-pub fn control_section(control: &BodyTwist) -> Section {
-    let rows = vec![
-        Row {
-            label: "mode".into(),
-            value: Value::Label("body twist".into()),
-        },
-        flu_row("linear", control.linear().raw()),
-        flu_row("angular", control.angular().raw()),
-    ];
-
-    Section {
-        id: SubsystemPath(Arc::from("controller")),
-        title: "Controller".into(),
-        rows,
-    }
-}
-
 /// A body-frame 3-vector row, tagged [`Frame::Flu`] — the shape each half of a
-/// [`BodyTwist`] (linear, angular) reduces to.
+/// [`BodyTwist`](helios_core::control::commands::BodyTwist) (linear, angular)
+/// reduces to.
 fn flu_row(label: &'static str, v: &Vector3<f64>) -> Row {
     Row {
         label: label.into(),
@@ -215,36 +194,12 @@ fn flu_row(label: &'static str, v: &Vector3<f64>) -> Row {
     }
 }
 
-/// Appends the controller section for the selected subject, when it has produced a
-/// command. Mirrors [`gather_estimator`]: `With<AutonomyPipelineComponent>` is the
-/// inter-subject predicate, and a by-name read of the `command` channel is the
-/// intra-pipeline one — `None` (no controller node, or one that has not yet fired)
-/// contributes nothing.
-pub fn gather_controller(
-    selected: Query<&AutonomyPipelineComponent, With<Selected>>,
-    mut out: ResMut<CurrentInspection>,
-) {
-    let (Some(model), Ok(pipeline)) = (&mut out.0, selected.single()) else {
-        return;
-    };
-
-    let Some(stamped) = pipeline
-        .0
-        .bus()
-        .read::<BodyTwist>(control::command::<BodyTwist>().into())
-    else {
-        return;
-    };
-
-    model.sections.push(control_section(&stamped.value));
-}
-
 /// Packs the resolved guidance reference into a Section. Pure. A [`BodyTwistRef`]
-/// wraps a body-FLU twist, so — like [`control_section`], unlike the ENU estimate —
-/// its rows are tagged [`Frame::Flu`]. This is the *post-arbitration* reference the
-/// controllers actually track: the teleop twist while the drive keys are held, the
-/// path follower's otherwise. The leading `mode` row keeps it self-describing beside
-/// the command section.
+/// wraps a body-FLU twist, so — unlike the ENU estimate — its rows are tagged
+/// [`Frame::Flu`]. This is the *post-arbitration* reference the controllers actually
+/// track: the teleop twist while the drive keys are held, the path follower's
+/// otherwise. The leading `mode` row keeps it self-describing as other reference
+/// types join the panel.
 pub fn reference_section(reference: &BodyTwistRef) -> Section {
     let twist = reference.twist();
 
@@ -265,7 +220,7 @@ pub fn reference_section(reference: &BodyTwistRef) -> Section {
 }
 
 /// Appends the reference section when the guidance seam has a resolved value. Mirrors
-/// [`gather_controller`]: `With<AutonomyPipelineComponent>` is the inter-subject
+/// [`gather_estimator`]: `With<AutonomyPipelineComponent>` is the inter-subject
 /// predicate, and a by-name read of the resolved `reference` channel is the
 /// intra-pipeline one — a stack with no guidance output, or one that has not yet
 /// produced a reference, contributes nothing.
@@ -280,7 +235,7 @@ pub fn gather_reference(
     let Some(stamped) = pipeline
         .0
         .bus()
-        .read::<BodyTwistRef>(control::reference::<BodyTwistRef>().into())
+        .read::<BodyTwistRef>(control::reference::<BodyTwistRef>())
     else {
         return;
     };
@@ -292,8 +247,7 @@ pub fn gather_reference(
 /// its declared id, with the [`SetpointValue`] variant fixing the row's [`Dimension`]
 /// via [`setpoint_dimension`]. This is the one control section every embodiment shares:
 /// [`ActuatorCommand`] is the pipeline's morphology-neutral terminal, so a decoupled car
-/// (drive torque + steer position) reads here even though it never writes a `BodyTwist`
-/// command — the reason [`control_section`] is silent for it.
+/// (drive torque + steer position) reads here whatever command folds it runs.
 pub fn actuator_section(command: &ActuatorCommand) -> Section {
     let rows = command
         .setpoints()
@@ -352,21 +306,27 @@ mod tests {
     use super::*;
 
     use helios_core::control::actuators::{ActuatorId, ActuatorSetpoint};
-    use helios_core::data::TfProvider;
+    use helios_core::control::commands::BodyTwist;
     use helios_core::estimation::schema::{StateSchema, StateSchemaBlock};
-    use helios_core::frames::quantities::FluVector;
-    use helios_core::frames::transforms::Convention;
-    use helios_core::frames::{FrameId, StateVariable};
-    use helios_core::state::{Component, Quantity};
+    use helios_core::prelude::{AgentId, TfProvider};
+    use helios_core::spatial::quantities::FluVector;
+    use helios_core::spatial::state::{Component, Quantity};
+    use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::{FrameId, StateVariable};
     use helios_runtime::{
-        channels::control,
+        channels::{control, estimate},
         pipeline::node::HOST_PRODUCER_ID,
-        port::{InternalChannel, PortBus},
+        port::{PortBus, PortDescriptorBuilder},
         prelude::{Health, PipelineBuilder, PipelineNode, PortDescriptor, Stamped, TickContext},
     };
     use nalgebra::{DMatrix, DVector};
 
     use nalgebra::Isometry3;
+
+    /// An arbitrary global frame the test expresses quantities in.
+    const DATUM: &str = "test_datum";
+    /// The agent every test pipeline serves.
+    const AGENT: &str = "car";
 
     /// A bare app carrying just the inspector's resources, ready to run one gather
     /// system against a hand-built world.
@@ -522,38 +482,38 @@ mod tests {
             )
         };
         let schema = StateSchema::compose(vec![
-            flat(Quantity::Position(FrameId::world()), Convention::Enu),
-            flat(Quantity::Velocity(FrameId::world()), Convention::Enu),
+            flat(Quantity::Position(FrameId::global(DATUM)), Convention::Enu),
+            flat(Quantity::Velocity(FrameId::global(DATUM)), Convention::Enu),
         ]);
-        let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        let mut state = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::X),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::X),
             position[0],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Y),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::Y),
             position[1],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Position(FrameId::world()), Component::Z),
+            &StateVariable::new(Quantity::Position(FrameId::global(DATUM)), Component::Z),
             position[2],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
+            &StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::X),
             velocity[0],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Y),
+            &StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::Y),
             velocity[1],
         );
         state.set_variable(
-            &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::Z),
+            &StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::Z),
             velocity[2],
         );
         state
     }
 
-    /// A stand-in estimator node: it declares the canonical `FrameAwareState` output so
+    /// A stand-in for the estimate seam: it declares the estimate output so
     /// the bus allocates that slot, but computes nothing. A test writes the state onto
     /// the bus directly — standing in for a real estimator having produced one, which is
     /// exactly what `gather_estimator` reads back through `read_state`.
@@ -564,12 +524,9 @@ mod tests {
     impl FakeEstimatorNode {
         fn new() -> Self {
             Self {
-                descriptor: PortDescriptor {
-                    required_inputs: Vec::new(),
-                    optional_inputs: Vec::new(),
-                    outputs: vec![InternalChannel::of::<FrameAwareState>().into()],
-                    rate: None,
-                },
+                descriptor: PortDescriptorBuilder::algorithm()
+                    .output(estimate::estimate())
+                    .build(),
             }
         }
     }
@@ -590,7 +547,7 @@ mod tests {
     /// optionally with a state already written to it (`Some` = a produced estimate;
     /// `None` = the cold-start / no-value case).
     fn pipeline_with_estimate(state: Option<FrameAwareState>) -> AutonomyPipelineComponent {
-        let pipeline = PipelineBuilder::new()
+        let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(Box::new(FakeEstimatorNode::new()))
             .build()
             .expect("a single-node pipeline builds");
@@ -599,7 +556,7 @@ mod tests {
             pipeline
                 .bus()
                 .write(
-                    InternalChannel::of::<FrameAwareState>().into(),
+                    estimate::estimate(),
                     Stamped {
                         value: state,
                         timestamp: MonotonicTime(0.0),
@@ -692,157 +649,8 @@ mod tests {
         assert!(model.sections.is_empty());
     }
 
-    /// A stand-in controller node: it declares the canonical `BodyTwist` output so
-    /// the bus allocates that slot but computes nothing. A test writes the command onto
-    /// the bus directly, standing in for a real controller having produced one — exactly
-    /// what `gather_controller` reads back by name off the `command` channel.
-    struct FakeControllerNode {
-        descriptor: PortDescriptor,
-    }
-
-    impl FakeControllerNode {
-        fn new() -> Self {
-            Self {
-                descriptor: PortDescriptor {
-                    required_inputs: Vec::new(),
-                    optional_inputs: Vec::new(),
-                    outputs: vec![control::command::<BodyTwist>().into()],
-                    rate: None,
-                },
-            }
-        }
-    }
-
-    impl PipelineNode for FakeControllerNode {
-        fn name(&self) -> &str {
-            "fake_controller"
-        }
-
-        fn port_descriptor(&self) -> &PortDescriptor {
-            &self.descriptor
-        }
-
-        fn execute(&self, _bus: &PortBus, _tf: &dyn TfProvider, _tick: TickContext) {}
-    }
-
-    /// An `AutonomyPipelineComponent` whose pipeline carries the controller slot,
-    /// optionally with a command already written to it (`Some` = a produced command;
-    /// `None` = the no-command case a cold-start or controller-less stack presents).
-    fn pipeline_with_control(control: Option<BodyTwist>) -> AutonomyPipelineComponent {
-        let pipeline = PipelineBuilder::new()
-            .add_node(Box::new(FakeControllerNode::new()))
-            .build()
-            .expect("a single-node pipeline builds");
-
-        if let Some(control) = control {
-            pipeline
-                .bus()
-                .write(
-                    control::command::<BodyTwist>().into(),
-                    Stamped {
-                        value: control,
-                        timestamp: MonotonicTime(0.0),
-                        health: Health::Ok,
-                        producer: HOST_PRODUCER_ID,
-                    },
-                )
-                .expect("the controller slot exists on the bus");
-        }
-
-        AutonomyPipelineComponent(pipeline)
-    }
-
-    /// Tier 1: a body twist packs a `mode` label plus its linear and angular
-    /// vectors, each tagged `Frame::Flu` — the control frame, distinct from the ENU
-    /// estimate. The `mode` row keeps the command self-describing once other command
-    /// types (wrench, rate/thrust) share the panel.
-    #[test]
-    fn control_section_packs_body_twist() {
-        let control = BodyTwist::new(FluVector::new(1.5, 0.0, 0.0), FluVector::new(0.0, 0.0, 0.3));
-
-        let section = control_section(&control);
-
-        assert_eq!(section.id, SubsystemPath(Arc::from("controller")));
-        assert_eq!(
-            section.rows,
-            vec![
-                Row {
-                    label: "mode".into(),
-                    value: Value::Label("body twist".into()),
-                },
-                Row {
-                    label: "linear".into(),
-                    value: Value::Vector(FramedVec3 {
-                        value: [1.5, 0.0, 0.0],
-                        frame: Frame::Flu,
-                    }),
-                },
-                Row {
-                    label: "angular".into(),
-                    value: Value::Vector(FramedVec3 {
-                        value: [0.0, 0.0, 0.3],
-                        frame: Frame::Flu,
-                    }),
-                },
-            ],
-        );
-    }
-
-    /// Tier 2, "with command" direction: a selected subject whose controller has produced
-    /// a command gets exactly the controller section — the intra-pipeline predicate
-    /// resolving positive at runtime.
-    #[test]
-    fn gather_controller_appends_a_section_when_control_is_present() {
-        let mut app = inspector_app();
-        app.world_mut().resource_mut::<CurrentInspection>().0 = Some(sample_shell());
-        app.world_mut().spawn((
-            Selected,
-            pipeline_with_control(Some(BodyTwist::new(
-                FluVector::new(1.0, 0.0, 0.0),
-                FluVector::zeros(),
-            ))),
-        ));
-        app.add_systems(Update, gather_controller);
-
-        app.update();
-
-        let model = app
-            .world()
-            .resource::<CurrentInspection>()
-            .0
-            .clone()
-            .unwrap();
-        assert_eq!(model.sections.len(), 1);
-        assert_eq!(model.sections[0].id, SubsystemPath(Arc::from("controller")));
-    }
-
-    /// Tier 2, "no command" direction: a pipeline whose controller has not produced a
-    /// command (no `command` on the bus) contributes no section. A pipeline with no
-    /// controller node at all hits this same branch, so this covers both absence cases
-    /// Part A treats alike.
-    #[test]
-    fn gather_controller_is_silent_without_control() {
-        let mut app = inspector_app();
-        app.world_mut().resource_mut::<CurrentInspection>().0 = Some(sample_shell());
-        app.world_mut()
-            .spawn((Selected, pipeline_with_control(None)));
-        app.add_systems(Update, gather_controller);
-
-        app.update();
-
-        let model = app
-            .world()
-            .resource::<CurrentInspection>()
-            .0
-            .clone()
-            .unwrap();
-        assert!(model.sections.is_empty());
-    }
-
     /// Tier 1: the resolved reference packs a `mode` label plus its linear and angular
-    /// vectors, each tagged `Frame::Flu` — the body frame the controllers track in,
-    /// mirroring `control_section`. The label distinguishes it from the command once
-    /// both share the panel.
+    /// vectors, each tagged `Frame::Flu` — the body frame the controllers track in.
     #[test]
     fn reference_section_packs_body_twist() {
         let reference = BodyTwistRef::new(BodyTwist::new(
@@ -922,12 +730,9 @@ mod tests {
     impl FakeReferenceNode {
         fn new() -> Self {
             Self {
-                descriptor: PortDescriptor {
-                    required_inputs: Vec::new(),
-                    optional_inputs: Vec::new(),
-                    outputs: vec![control::reference::<BodyTwistRef>().into()],
-                    rate: None,
-                },
+                descriptor: PortDescriptorBuilder::algorithm()
+                    .output(control::reference::<BodyTwistRef>())
+                    .build(),
             }
         }
     }
@@ -948,7 +753,7 @@ mod tests {
     /// optionally with a value already written (`Some` = a resolved reference; `None` =
     /// the cold-start / no-guidance case).
     fn pipeline_with_reference(reference: Option<BodyTwistRef>) -> AutonomyPipelineComponent {
-        let pipeline = PipelineBuilder::new()
+        let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(Box::new(FakeReferenceNode::new()))
             .build()
             .expect("a single-node pipeline builds");
@@ -957,7 +762,7 @@ mod tests {
             pipeline
                 .bus()
                 .write(
-                    control::reference::<BodyTwistRef>().into(),
+                    control::reference::<BodyTwistRef>(),
                     Stamped {
                         value: reference,
                         timestamp: MonotonicTime(0.0),
@@ -1030,12 +835,9 @@ mod tests {
     impl FakeActuatorNode {
         fn new() -> Self {
             Self {
-                descriptor: PortDescriptor {
-                    required_inputs: Vec::new(),
-                    optional_inputs: Vec::new(),
-                    outputs: vec![control::actuators().into()],
-                    rate: None,
-                },
+                descriptor: PortDescriptorBuilder::algorithm()
+                    .output(control::actuators())
+                    .build(),
             }
         }
     }
@@ -1056,7 +858,7 @@ mod tests {
     /// optionally with a command already written (`Some` = a produced terminal command;
     /// `None` = the cold-start / no-allocator case).
     fn pipeline_with_actuators(command: Option<ActuatorCommand>) -> AutonomyPipelineComponent {
-        let pipeline = PipelineBuilder::new()
+        let pipeline = PipelineBuilder::new(AgentId::new(AGENT))
             .add_node(Box::new(FakeActuatorNode::new()))
             .build()
             .expect("a single-node pipeline builds");
@@ -1065,7 +867,7 @@ mod tests {
             pipeline
                 .bus()
                 .write(
-                    control::actuators().into(),
+                    control::actuators(),
                     Stamped {
                         value: command,
                         timestamp: MonotonicTime(0.0),

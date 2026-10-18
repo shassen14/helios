@@ -1,0 +1,43 @@
+# =========================================================================
+# == Helios Simulation: Proving Ground ==
+# =========================================================================
+# Every object, the ground included, is a placed prefab from
+# configs/sim/catalog/worlds/proving_ground.toml.
+#
+# The car drives east toward a goal 40 m away. A barrier wall and a row of
+# cones stand on the route: the car must map the barrier and plan around
+# it, and its planar lidar can't see the cones. The world exposes what the
+# autonomy stack gets wrong, so expect the car to clip the barrier's corner
+# and run through the cones until mapping and planning improve.
+#
+# The default scenario of helios_play and the smoke, acceptance and
+# proving-ground runs.
+#
+# Frames and units: poses are in the world ENU frame (x east, y north, z up),
+# in metres; `rotation` is [roll, pitch, yaw] in degrees, so yaw 90 faces
+# north. Sensor mounts on the agent are in the body FLU frame (x forward,
+# y left, z up).
+# =========================================================================
+
+[simulation]
+duration_seconds = 180.0
+seed = 2024
+
+[world.layout]
+from = "sim.catalog.worlds.proving_ground"
+
+[world.semantic_classes]
+from = "runtime.catalog.semantic_classes.default"
+
+[world.atmosphere]
+gravity_enu = [0.0, 0.0, -9.81]  # [east, north, up] m/s²
+sun_elevation = 45.0
+sun_azimuth = 180.0
+ambient_lux = 1500.0
+
+[[agents]]
+from = "sim.catalog.agents.raycast_car"
+name = "ProvingCar"
+# Facing east, toward the goal.
+starting_pose = { translation = [-20.0, 0.0, 1.0], rotation = [0.0, 0.0, 0.0] }
+goal_pose = { translation = [20.0, 0.0, 0.5] }

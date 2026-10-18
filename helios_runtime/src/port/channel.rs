@@ -1,308 +1,246 @@
-//! Channel identity — kinds, per-kind constructors, and [`ChannelKey`].
+//! Channel identity: [`ChannelKey`], and why the bus refuses a write.
 //!
-//! A channel's identity is `(kind, type, instance name)`. The kind tag says who
-//! may produce a channel and who may declare it as input; the type and instance
-//! name disambiguate slots within a kind. [`PortBus`](crate::port::PortBus)
-//! stores one slot per [`ChannelKey`] regardless of kind — the partition is
-//! enforced at the *declaration surface* (the descriptor builders in
-//! [`crate::pipeline::descriptor`]), not in storage. The compiler refuses to
-//! construct an algorithm node's descriptor that names an [`OracleChannel`] as
-//! input.
+//! A channel's identity is `(kind, type, name)`. The [`ChannelKind`] says
+//! what the data is; the payload type and the name tell channels of one kind
+//! apart. [`PortBus`](crate::port::PortBus) stores one slot per key whatever
+//! its kind. Which nodes may read and write each kind is the table in
+//! [`kind`](crate::port::kind), checked when the pipeline is built.
 //!
-//! # Channel kinds — the partition
+//! # Naming
 //!
-//! | Kind | Producer | Algorithm-node input? | Mock-node input? |
-//! |---|---|:-:|:-:|
-//! | [`SensorChannel`] | Body (driver / sim plugin) | ✅ | ✅ |
-//! | [`InternalChannel`] | Algorithm or mock node | ✅ | ✅ |
-//! | [`OracleChannel`] | Body, when truth is known | ❌ | ✅ |
-//! | [`HealthChannel`] | Body driver layer | ❌ (today) | ❌ (today) |
+//! The name is the channel's one address on the agent, in watcher paths,
+//! recordings and bridges. It is one or more levels joined by `.`
+//! ([`is_dotted_name`](helios_core::kernel::identifier::is_dotted_name)), and
+//! names exactly one channel per agent; the pipeline build refuses a
+//! malformed name and a name shared by two keys. The kind lives in the key,
+//! never in the name, so an oracle channel needs no `oracle` prefix.
 //!
-//! # Naming convention
+//! # Keyed channels
 //!
-//! Within a kind, the `instance` string is just a disambiguator. Across kinds,
-//! prefix conventions help humans read the DAG dump:
-//!
-//! - `OracleChannel` instances start with `oracle/` (enforced by `debug_assert!`).
-//! - `HealthChannel` instances start with `health/` (enforced by `debug_assert!`).
-//! - `SensorChannel` and `InternalChannel` are unconstrained — the type plus
-//!   role disambiguator is enough.
+//! A channel of a [`Keyed`] payload may be declared
+//! [`keyed`](ChannelKey::keyed): the bus then keeps one value per instance
+//! the payload names, and writers use
+//! [`write_keyed`](crate::port::PortBus::write_keyed). Whether a channel is
+//! keyed is part of its key, so a reader and a writer that disagree name two
+//! keys under one name, which the build refuses.
+
+use crate::port::keyed::{InstanceKey, Keyed};
+use crate::port::kind::ChannelKind;
+
+use helios_core::spatial::FrameId;
 
 use std::{any::TypeId, sync::Arc};
 
-/// Error returned when a bus operation references a channel that was not
-/// declared in any node's [`PortDescriptor`](crate::port::PortDescriptor) at
-/// build time.
-#[derive(Debug)]
-pub enum ChannelError {
-    UnknownChannel,
-}
-
-/// Discriminator returned by [`ChannelKey::kind`].
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
-pub(crate) enum ChannelKind {
-    Sensor,
-    Internal,
-    Oracle,
-    Health,
-}
-
-impl ChannelKind {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            ChannelKind::Sensor => "sensor",
-            ChannelKind::Internal => "internal",
-            ChannelKind::Oracle => "oracle",
-            ChannelKind::Health => "health",
-        }
-    }
-}
-
-/// Sensor data published by a body driver (real or simulated). Algorithm
-/// nodes read these; mocks may read them too.
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub struct SensorChannel {
-    type_id: TypeId,
-    type_name: &'static str,
-    instance: Arc<str>,
-}
-
-impl SensorChannel {
-    pub fn of<T: 'static>() -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            type_name: std::any::type_name::<T>(),
-            instance: Arc::from(""),
-        }
-    }
-
-    pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            type_name: std::any::type_name::<T>(),
-            instance: instance.into(),
-        }
-    }
-
-    pub fn type_id(&self) -> TypeId {
-        self.type_id
-    }
-    pub fn type_name(&self) -> &'static str {
-        self.type_name
-    }
-    pub fn instance(&self) -> &Arc<str> {
-        &self.instance
-    }
-}
-
-/// Brain-internal channel: produced by an algorithm or mock node, consumed
-/// by other nodes / viz / tests. The default kind for node-to-node values.
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub struct InternalChannel {
-    type_id: TypeId,
-    type_name: &'static str,
-    /// Disambiguator for multiple channels of the same type. Empty string =
-    /// the unnamed/default channel (see [`ChannelKey::of`]).
-    ///
-    /// Stored as `Arc<str>` so the name can originate from either a `&'static
-    /// str` literal (zero-cost via `From<&str>`) or a runtime-built `String`
-    /// from TOML config without leaking. Clones are cheap refcount bumps;
-    /// equality and hashing compare string contents.
-    instance: Arc<str>,
-}
-
-impl InternalChannel {
-    pub fn of<T: 'static>() -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            type_name: std::any::type_name::<T>(),
-            instance: Arc::from(""),
-        }
-    }
-
-    /// Construct a named channel. Accepts anything `Into<Arc<str>>` —
-    /// `&'static str` literals at the call site, owned `String`s from
-    /// config loading, or pre-built `Arc<str>` from a name registry.
-    pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            type_name: std::any::type_name::<T>(),
-            instance: instance.into(),
-        }
-    }
-
-    pub fn type_id(&self) -> TypeId {
-        self.type_id
-    }
-    pub fn type_name(&self) -> &'static str {
-        self.type_name
-    }
-    pub fn instance(&self) -> &Arc<str> {
-        &self.instance
-    }
-}
-
-/// Reference truth published by a body that happens to know the answer
-/// (e.g. physics ground-truth in sim, RTK on hardware). **Algorithm nodes
-/// must not declare these as inputs** — only mocks, viz, recorders, and
-/// tests may consume them.
+/// Identifier for a single bus slot: the channel's kind, payload type and
+/// name, and whether it keeps one value per instance.
 ///
-/// `instance` must start with `oracle/` (enforced by `debug_assert!`) so
-/// the prefix is visible in the bus inspector and DAG dump.
+/// Two keys are equal when all four match. The pipeline build still refuses
+/// one name used for two keys, so a name differing only in kind or type
+/// never reaches the bus.
+///
+/// Ordered by name first, so a sorted set of keys (a watch set, a report)
+/// reads the same in every build: see the `Ord` impl.
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub struct OracleChannel {
+pub struct ChannelKey {
+    kind: ChannelKind,
     type_id: TypeId,
     type_name: &'static str,
-    instance: Arc<str>,
-}
-
-impl OracleChannel {
-    pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        let instance: Arc<str> = instance.into();
-        debug_assert!(
-            instance.starts_with("oracle/"),
-            "OracleChannel instance must start with \"oracle/\", got \"{instance}\""
-        );
-        Self {
-            type_id: TypeId::of::<T>(),
-            type_name: std::any::type_name::<T>(),
-            instance,
-        }
-    }
-
-    pub fn type_id(&self) -> TypeId {
-        self.type_id
-    }
-    pub fn type_name(&self) -> &'static str {
-        self.type_name
-    }
-    pub fn instance(&self) -> &Arc<str> {
-        &self.instance
-    }
-}
-
-/// Driver / fault status published by a body. Reserved for the future
-/// safety-supervisor consumer; no descriptor
-/// builder accepts `HealthChannel` as input today.
-///
-/// `instance` must start with `health/` (enforced by `debug_assert!`).
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub struct HealthChannel {
-    type_id: TypeId,
-    type_name: &'static str,
-    instance: Arc<str>,
-}
-
-impl HealthChannel {
-    pub fn named<T: 'static>(instance: impl Into<Arc<str>>) -> Self {
-        let instance: Arc<str> = instance.into();
-        debug_assert!(
-            instance.starts_with("health/"),
-            "HealthChannel instance must start with \"health/\", got \"{instance}\""
-        );
-        Self {
-            type_id: TypeId::of::<T>(),
-            type_name: std::any::type_name::<T>(),
-            instance,
-        }
-    }
-
-    pub fn type_id(&self) -> TypeId {
-        self.type_id
-    }
-
-    pub fn type_name(&self) -> &'static str {
-        self.type_name
-    }
-
-    pub fn instance(&self) -> &Arc<str> {
-        &self.instance
-    }
-}
-
-/// Kinded identifier for a single bus slot.
-///
-/// The kind tag is the type-system fence that keeps algorithm nodes from
-/// declaring body-only channels (Oracle, Health) as inputs. Two channel
-/// keys are equal when their kind, `TypeId`, and `instance` all match —
-/// so `oracle/pose` and `pose` are distinct slots even when their Rust
-/// payload type is the same.
-#[derive(Clone, Eq, PartialEq, Hash, Debug)]
-pub enum ChannelKey {
-    Sensor(SensorChannel),
-    Internal(InternalChannel),
-    Oracle(OracleChannel),
-    Health(HealthChannel),
+    /// Stored as `Arc<str>` so the name can come from a `&'static str`
+    /// literal or a `String` read from config without leaking. Clones are
+    /// refcount bumps; equality and hashing compare contents.
+    name: Arc<str>,
+    keyed: bool,
 }
 
 impl ChannelKey {
-    pub(crate) fn kind(&self) -> ChannelKind {
-        match self {
-            ChannelKey::Sensor(_) => ChannelKind::Sensor,
-            ChannelKey::Internal(_) => ChannelKind::Internal,
-            ChannelKey::Oracle(_) => ChannelKind::Oracle,
-            ChannelKey::Health(_) => ChannelKind::Health,
+    /// A `kind` channel carrying `T`, named `name`.
+    pub fn new<T: 'static>(kind: ChannelKind, name: impl Into<Arc<str>>) -> Self {
+        Self {
+            kind,
+            type_id: TypeId::of::<T>(),
+            type_name: std::any::type_name::<T>(),
+            name: name.into(),
+            keyed: false,
         }
+    }
+
+    /// A `kind` channel carrying `T`, named `name`, that keeps the last
+    /// value of each instance `T` names.
+    pub fn keyed<T: Keyed>(kind: ChannelKind, name: impl Into<Arc<str>>) -> Self {
+        Self {
+            keyed: true,
+            ..Self::new::<T>(kind, name)
+        }
+    }
+
+    /// A measurement channel carrying `T`, named `name`. A host
+    /// publishing a device's readings takes the name from the agent profile.
+    pub fn measurement<T: 'static>(name: impl Into<Arc<str>>) -> Self {
+        Self::new::<T>(ChannelKind::Measurement, name)
+    }
+
+    /// An internal channel carrying `T`, named `name`.
+    pub fn internal<T: 'static>(name: impl Into<Arc<str>>) -> Self {
+        Self::new::<T>(ChannelKind::Internal, name)
+    }
+
+    /// A reference-truth channel carrying `T`, named `name`.
+    pub fn oracle<T: 'static>(name: impl Into<Arc<str>>) -> Self {
+        Self::new::<T>(ChannelKind::Oracle, name)
+    }
+
+    /// A device-health channel carrying `T`, named `name`.
+    pub fn health<T: 'static>(name: impl Into<Arc<str>>) -> Self {
+        Self::new::<T>(ChannelKind::Health, name)
+    }
+
+    /// The unnamed internal channel carrying `T`, for wiring inside the
+    /// pipeline where one channel of the type is all there is.
+    pub fn internal_of<T: 'static>() -> Self {
+        Self::internal::<T>("")
+    }
+
+    pub fn kind(&self) -> ChannelKind {
+        self.kind
     }
 
     pub fn type_id(&self) -> TypeId {
-        match self {
-            ChannelKey::Sensor(c) => c.type_id,
-            ChannelKey::Internal(c) => c.type_id,
-            ChannelKey::Oracle(c) => c.type_id,
-            ChannelKey::Health(c) => c.type_id,
-        }
+        self.type_id
     }
 
     pub fn type_name(&self) -> &'static str {
-        match self {
-            ChannelKey::Sensor(c) => c.type_name,
-            ChannelKey::Internal(c) => c.type_name,
-            ChannelKey::Oracle(c) => c.type_name,
-            ChannelKey::Health(c) => c.type_name,
-        }
+        self.type_name
     }
 
-    pub fn instance(&self) -> &Arc<str> {
-        match self {
-            ChannelKey::Sensor(c) => &c.instance,
-            ChannelKey::Internal(c) => &c.instance,
-            ChannelKey::Oracle(c) => &c.instance,
-            ChannelKey::Health(c) => &c.instance,
-        }
+    pub fn name(&self) -> &Arc<str> {
+        &self.name
+    }
+
+    /// Whether the channel keeps one value per instance rather than one
+    /// value.
+    pub fn is_keyed(&self) -> bool {
+        self.keyed
     }
 }
 
-impl From<SensorChannel> for ChannelKey {
-    fn from(c: SensorChannel) -> Self {
-        ChannelKey::Sensor(c)
+impl Ord for ChannelKey {
+    /// By name, then kind, type name and keyedness, with the `TypeId` last.
+    /// A `TypeId`'s order differs between compiles, so ordering by it first,
+    /// as a derive would, could reorder a report from one build to the next.
+    /// Names are unique per agent, so past the name nothing decides in
+    /// practice; the rest keeps the order consistent with `Eq`.
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name
+            .cmp(&other.name)
+            .then(self.kind.cmp(&other.kind))
+            .then(self.type_name.cmp(other.type_name))
+            .then(self.keyed.cmp(&other.keyed))
+            .then(self.type_id.cmp(&other.type_id))
     }
 }
-impl From<InternalChannel> for ChannelKey {
-    fn from(c: InternalChannel) -> Self {
-        ChannelKey::Internal(c)
-    }
-}
-impl From<OracleChannel> for ChannelKey {
-    fn from(c: OracleChannel) -> Self {
-        ChannelKey::Oracle(c)
-    }
-}
-impl From<HealthChannel> for ChannelKey {
-    fn from(c: HealthChannel) -> Self {
-        ChannelKey::Health(c)
+
+impl PartialOrd for ChannelKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
 impl std::fmt::Display for ChannelKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let kind = self.kind().as_str();
-        let type_name = self.type_name();
-        let instance = self.instance();
-        if instance.trim().is_empty() {
-            write!(f, "[{kind}] {type_name}")
+        let kind = self.kind.as_str();
+        let type_name = self.type_name;
+        let name = &self.name;
+        if name.trim().is_empty() {
+            write!(f, "[{kind}] {type_name}")?;
         } else {
-            write!(f, "[{kind}] {type_name} @ \"{instance}\"")
+            write!(f, "[{kind}] {type_name} @ \"{name}\"")?;
+        }
+        if self.keyed {
+            write!(f, " (keyed)")?;
+        }
+        Ok(())
+    }
+}
+
+/// Why the bus refused a write.
+#[derive(Debug, Clone)]
+pub enum ChannelError {
+    /// No writer declares the channel, so it has no slot.
+    UnknownChannel,
+    /// The value written is not of the key's payload type. Stored, it would
+    /// read back as nothing for every reader of the key.
+    TypeMismatch {
+        key_type: &'static str,
+        written_type: &'static str,
+    },
+    /// A single value was written to a keyed channel, which holds one value
+    /// per instance; write it with
+    /// [`write_keyed`](crate::port::PortBus::write_keyed).
+    KeyedChannel,
+    /// A keyed write was made to a channel that holds one value.
+    NotKeyed,
+    /// The value belongs to an instance no writer of the channel declared.
+    /// Stored, it would have a writer the build never checked.
+    UndeclaredInstance { instance: InstanceKey },
+    /// A plain write was made to a channel whose writers declare the frames
+    /// its values are measured in; write it with
+    /// [`write_mounted`](crate::port::PortBus::write_mounted), which checks
+    /// them.
+    MountedChannel,
+    /// A value names a frame no writer of the channel declares. Stored, a
+    /// reader trusting the declared mount and a reader trusting the value's
+    /// header would see different frames for it.
+    UndeclaredMount {
+        declared: Vec<FrameId>,
+        written: FrameId,
+    },
+}
+
+impl std::fmt::Display for ChannelError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChannelError::UnknownChannel => write!(f, "no writer declares the channel"),
+            ChannelError::TypeMismatch {
+                key_type,
+                written_type,
+            } => write!(
+                f,
+                "the channel carries {key_type} but the value written is {written_type}"
+            ),
+            ChannelError::KeyedChannel => {
+                write!(f, "the channel is keyed, so it takes keyed writes only")
+            }
+            ChannelError::NotKeyed => {
+                write!(
+                    f,
+                    "the channel holds one value, so it takes no keyed writes"
+                )
+            }
+            ChannelError::UndeclaredInstance { instance } => {
+                write!(
+                    f,
+                    "no writer of the channel declares instance \"{instance}\""
+                )
+            }
+            ChannelError::MountedChannel => {
+                write!(
+                    f,
+                    "the channel's writers declare its mounts, so it takes mounted writes only"
+                )
+            }
+            ChannelError::UndeclaredMount { declared, written } => {
+                write!(
+                    f,
+                    "a value names frame {written}, but the channel declares "
+                )?;
+                for (index, frame) in declared.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{frame}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -310,77 +248,158 @@ impl std::fmt::Display for ChannelKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::collections::HashMap;
 
     struct Foo;
     struct Bar;
 
-    fn ikey<T: 'static>() -> ChannelKey {
-        InternalChannel::of::<T>().into()
+    struct Edge {
+        child: u32,
     }
 
-    fn ikey_named<T: 'static>(instance: &'static str) -> ChannelKey {
-        InternalChannel::named::<T>(instance).into()
+    impl Keyed for Edge {
+        type Instance = u32;
+
+        fn instance(&self) -> &u32 {
+            &self.child
+        }
+    }
+
+    #[test]
+    fn keys_order_by_name_before_kind_or_type() {
+        let mut keys = vec![
+            ChannelKey::oracle::<Foo>("b"),
+            ChannelKey::internal::<Bar>("c"),
+            ChannelKey::measurement::<Bar>("a"),
+            ChannelKey::internal::<Foo>("b"),
+        ];
+        keys.sort();
+
+        assert_eq!(
+            keys,
+            vec![
+                ChannelKey::measurement::<Bar>("a"),
+                ChannelKey::internal::<Foo>("b"),
+                ChannelKey::oracle::<Foo>("b"),
+                ChannelKey::internal::<Bar>("c"),
+            ]
+        );
     }
 
     #[test]
     fn of_same_type_produces_equal_keys() {
-        assert_eq!(ikey::<Foo>(), ikey::<Foo>());
+        assert_eq!(
+            ChannelKey::internal_of::<Foo>(),
+            ChannelKey::internal_of::<Foo>()
+        );
     }
 
     #[test]
     fn of_different_types_produces_distinct_keys() {
-        assert_ne!(ikey::<Foo>(), ikey::<Bar>());
+        assert_ne!(
+            ChannelKey::internal_of::<Foo>(),
+            ChannelKey::internal_of::<Bar>()
+        );
     }
 
     #[test]
-    fn named_differs_from_default_instance() {
-        assert_ne!(ikey::<Foo>(), ikey_named::<Foo>("role"));
+    fn named_differs_from_unnamed() {
+        assert_ne!(
+            ChannelKey::internal_of::<Foo>(),
+            ChannelKey::internal::<Foo>("role")
+        );
     }
 
     #[test]
-    fn named_same_instance_equal() {
-        assert_eq!(ikey_named::<Foo>("a"), ikey_named::<Foo>("a"));
+    fn named_same_name_equal() {
+        assert_eq!(
+            ChannelKey::internal::<Foo>("a"),
+            ChannelKey::internal::<Foo>("a")
+        );
     }
 
     #[test]
-    fn named_different_instances_not_equal() {
-        assert_ne!(ikey_named::<Foo>("a"), ikey_named::<Foo>("b"));
+    fn named_different_names_not_equal() {
+        assert_ne!(
+            ChannelKey::internal::<Foo>("a"),
+            ChannelKey::internal::<Foo>("b")
+        );
     }
 
+    /// Two channels with one payload type and name but different kinds
+    /// are distinct keys: the kind is part of identity.
     #[test]
-    fn distinct_kinds_with_same_type_and_instance_are_distinct() {
-        // Two channels with identical TypeId and instance string but
-        // different kinds occupy distinct slots — the kind tag is part of
-        // identity.
-        let internal: ChannelKey = InternalChannel::of::<Foo>().into();
-        let sensor: ChannelKey = SensorChannel::of::<Foo>().into();
-        assert_ne!(internal, sensor);
+    fn distinct_kinds_with_same_type_and_name_are_distinct() {
+        assert_ne!(
+            ChannelKey::internal::<Foo>("pose"),
+            ChannelKey::oracle::<Foo>("pose")
+        );
+        assert_ne!(
+            ChannelKey::internal::<Foo>("pose"),
+            ChannelKey::measurement::<Foo>("pose")
+        );
     }
 
     #[test]
     fn usable_as_hashmap_key() {
         let mut map = HashMap::new();
-        map.insert(ikey::<Foo>(), 42u32);
-        assert_eq!(map[&ikey::<Foo>()], 42);
+        map.insert(ChannelKey::internal_of::<Foo>(), 42u32);
+        assert_eq!(map[&ChannelKey::internal_of::<Foo>()], 42);
     }
 
     #[test]
     fn type_name_accessor_contains_type_name() {
-        let key = ikey::<Foo>();
-        assert!(key.type_name().contains("Foo"));
+        assert!(ChannelKey::internal_of::<Foo>().type_name().contains("Foo"));
     }
 
     #[test]
-    fn kind_reports_correct_variant() {
-        assert_eq!(SensorChannel::of::<Foo>().type_id(), TypeId::of::<Foo>());
-        let s: ChannelKey = SensorChannel::of::<Foo>().into();
-        let i: ChannelKey = InternalChannel::of::<Foo>().into();
-        let o: ChannelKey = OracleChannel::named::<Foo>("oracle/x").into();
-        let h: ChannelKey = HealthChannel::named::<Foo>("health/x").into();
-        assert_eq!(s.kind(), ChannelKind::Sensor);
-        assert_eq!(i.kind(), ChannelKind::Internal);
-        assert_eq!(o.kind(), ChannelKind::Oracle);
-        assert_eq!(h.kind(), ChannelKind::Health);
+    fn each_constructor_tags_its_kind() {
+        assert_eq!(
+            ChannelKey::measurement::<Foo>("x").type_id(),
+            TypeId::of::<Foo>()
+        );
+        assert_eq!(
+            ChannelKey::measurement::<Foo>("x").kind(),
+            ChannelKind::Measurement
+        );
+        assert_eq!(
+            ChannelKey::internal::<Foo>("x").kind(),
+            ChannelKind::Internal
+        );
+        assert_eq!(ChannelKey::oracle::<Foo>("x").kind(), ChannelKind::Oracle);
+        assert_eq!(ChannelKey::health::<Foo>("x").kind(), ChannelKind::Health);
+    }
+
+    #[test]
+    fn display_names_the_kind_type_and_name() {
+        let key = ChannelKey::measurement::<Foo>("gps");
+        assert_eq!(
+            key.to_string(),
+            format!("[measurement] {} @ \"gps\"", key.type_name())
+        );
+    }
+
+    /// A keyed channel and a single-value channel of one type and name are
+    /// distinct keys, which the build then refuses as one name for two keys.
+    #[test]
+    fn keyed_and_single_value_keys_are_distinct() {
+        let keyed = ChannelKey::keyed::<Edge>(ChannelKind::Internal, "tf");
+        assert!(keyed.is_keyed());
+        assert!(!ChannelKey::internal::<Edge>("tf").is_keyed());
+        assert_ne!(keyed, ChannelKey::internal::<Edge>("tf"));
+        assert_eq!(
+            keyed,
+            ChannelKey::keyed::<Edge>(ChannelKind::Internal, "tf")
+        );
+    }
+
+    #[test]
+    fn display_marks_a_keyed_channel() {
+        let key = ChannelKey::keyed::<Edge>(ChannelKind::Internal, "tf");
+        assert_eq!(
+            key.to_string(),
+            format!("[internal] {} @ \"tf\" (keyed)", key.type_name())
+        );
     }
 }

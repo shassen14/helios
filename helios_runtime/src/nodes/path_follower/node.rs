@@ -7,9 +7,9 @@
 //!
 //! ## Execution skeleton
 //!
-//! 1. **Detect new path.** Read `Stamped<Path>` from `path_channel`. If the bus
-//!    timestamp differs from the last-seen one, call [`PathFollower::set_path`]
-//!    and remember the new timestamp.
+//! 1. **Detect new path.** Read `Stamped<Path>` from `path_channel` with its
+//!    slot version. If the version differs from the last-seen one, call
+//!    [`PathFollower::set_path`] and remember the new version.
 //! 2. **Assemble inputs.** Ask the [`PathFollowerInputBuilder`] for
 //!    [`PathFollowerInputs`] (state from the bus). `None` ⇒ cold-start, skip.
 //! 3. **Compute.** Run [`PathFollower::compute`] with `dt` and the inputs.
@@ -20,38 +20,38 @@
 //!
 //! ## Path-version tracking
 //!
-//! Detection uses the bus [`Stamped::timestamp`] (set by the upstream planner
-//! node when it called `bus.write`) rather than `Path::timestamp` (set inside
-//! the planner). The bus stamp is monotonic per writer at tick resolution and
-//! is the right "did the bus slot get a new value?" signal.
+//! Detection uses the slot's [`SlotVersion`], which the bus bumps on every
+//! write, rather than any timestamp. A timestamp says when the planner made
+//! the path, not whether a new one landed: two writes can share a stamp (two
+//! replans in one tick, or a paused clock), and a reset clock can make a new
+//! path look older than the last.
 //!
 //! ## State layout
 //!
-//! Both the follower and the last-seen-path timestamp live behind one
+//! Both the follower and the last-seen path version live behind one
 //! [`Mutex`] (`Mutex<FollowerState>`). They are read and written together every
 //! tick — a single lock makes that explicit and avoids two acquisitions.
 
 use std::sync::Mutex;
 
 use helios_core::control::ControlReference;
-use helios_core::data::TfProvider;
-use helios_core::path_following::{PathFollower, PathFollowerResult};
-use helios_core::planning::types::Path;
+use helios_core::following::{PathFollower, PathFollowerResult};
+use helios_core::interchange::path::Path;
+use helios_core::prelude::TfProvider;
 
 use super::input::PathFollowerInputBuilder;
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder, SlotVersion};
 use crate::stamped::{Health, Stamped};
 
-/// Mutable per-tick state: the follower itself and the bus timestamp of the
+/// Mutable per-tick state: the follower itself and the slot version of the
 /// most-recently-applied path. Held behind one [`Mutex`] so the two fields are
 /// always updated together.
 struct FollowerState<R: ControlReference> {
     follower: Box<dyn PathFollower<Reference = R>>,
-    /// Bus [`Stamped::timestamp`] of the last `Path` we called `set_path` on.
+    /// Slot version of the last `Path` we called `set_path` on.
     /// `None` = no path has ever been applied (cold start).
-    last_path_timestamp: Option<f64>,
+    last_path_version: Option<SlotVersion>,
 }
 
 /// Pipeline node wrapping any [`PathFollower`] implementation.
@@ -82,31 +82,26 @@ impl<R: ControlReference> PathFollowerNode<R> {
         name: impl Into<String>,
         follower: Box<dyn PathFollower<Reference = R>>,
         input_builder: Box<dyn PathFollowerInputBuilder>,
-        path_channel: InternalChannel,
-        output_channel: InternalChannel,
+        path_channel: ChannelKey,
+        output_channel: ChannelKey,
     ) -> Self {
-        let path_channel_key: ChannelKey = path_channel.clone().into();
-        let output_channel_key: ChannelKey = output_channel.clone().into();
-
-        // Avoid silently double-declaring if a future builder ever includes
-        // the path channel itself.
-        let builder_required = input_builder.required_channels();
-        let mut builder = AlgorithmNodePortDescriptor::new()
-            .inputs_from_slices(builder_required, input_builder.optional_channels())
-            .output_internal(output_channel);
-        if !builder_required.contains(&path_channel_key) {
-            builder = builder.input_internal(path_channel.clone());
-        }
-        let descriptor = builder.build();
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .inputs_from_slices(
+                input_builder.required_channels(),
+                input_builder.optional_channels(),
+            )
+            .input(path_channel.clone())
+            .output(output_channel.clone())
+            .build();
         Self {
             name: name.into(),
             state: Mutex::new(FollowerState {
                 follower,
-                last_path_timestamp: None,
+                last_path_version: None,
             }),
             input_builder,
-            path_channel: path_channel_key,
-            output_channel: output_channel_key,
+            path_channel,
+            output_channel,
             descriptor,
         }
     }
@@ -127,16 +122,12 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
             return;
         };
 
-        // 1. New path? Compare against the bus Stamped.timestamp.
-        if let Some(stamped_path) = bus.read::<Path>(self.path_channel.clone()) {
-            let bus_ts = stamped_path.timestamp.0;
-            let is_new = match state.last_path_timestamp {
-                None => true,
-                Some(prev) => bus_ts > prev,
-            };
-            if is_new {
+        // 1. New path? A changed slot version means a new write landed.
+        if let Some((stamped_path, version)) = bus.read_versioned::<Path>(self.path_channel.clone())
+        {
+            if state.last_path_version != Some(version) {
                 state.follower.set_path(stamped_path.value.clone());
-                state.last_path_timestamp = Some(bus_ts);
+                state.last_path_version = Some(version);
             }
         }
 
@@ -167,7 +158,13 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(self.output_channel.clone(), stamped);
+        if let Err(error) = bus.write(self.output_channel.clone(), stamped) {
+            tracing::warn!(
+                channel = %self.output_channel,
+                error = %error,
+                "path follower reference output channel write failed"
+            );
+        }
     }
 }
 
@@ -175,7 +172,7 @@ impl<R: ControlReference> PipelineNode for PathFollowerNode<R> {
 mod tests {
     //! Wiring tests for [`PathFollowerNode`] — concrete follower behaviour
     //! (lookahead geometry, PID gains, goal-radius checks) is covered in
-    //! `helios_core/src/path_following/`. Here we verify that `execute()`:
+    //! `helios_core/src/following/`. Here we verify that `execute()`:
     //!   - calls `set_path` exactly once per distinct bus-timestamp on `path_channel`
     //!   - never calls `set_path` when the path timestamp is unchanged
     //!   - publishes a `Stamped<BodyTwistRef>` only on `Active`
@@ -185,18 +182,19 @@ mod tests {
     //!   - declares `path_channel` in its required inputs
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
     use helios_core::control::commands::BodyTwist;
     use helios_core::control::BodyTwistRef;
-    use helios_core::data::primitives::MonotonicTime;
-    use helios_core::data::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
-    use helios_core::frames::conventions::Enu;
-    use helios_core::frames::quantities::Point;
-    use helios_core::frames::{FrameAwareState, FrameId};
-    use helios_core::path_following::{PathFollower, PathFollowerInputs, PathFollowerResult};
-    use helios_core::planning::types::Path;
+    use helios_core::estimation::frames::EstimationFrames;
+    use helios_core::following::{PathFollower, PathFollowerInputs, PathFollowerResult};
+    use helios_core::interchange::path::Path;
+    use helios_core::prelude::AgentId;
+    use helios_core::spatial::conventions::Enu;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::quantities::Point;
+    use helios_core::spatial::{FrameAwareState, FrameId};
 
     use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};
@@ -294,8 +292,10 @@ mod tests {
             Some(PathFollowerInputs {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
-                    std::sync::Arc::new(kinematic_carrier_schema(AgentId::new("test_agent"))),
-                    0.0,
+                    std::sync::Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(
+                        AgentId::new("test_agent"),
+                    ))),
+                    MonotonicTime(0.0),
                 ),
             })
         }
@@ -325,47 +325,25 @@ mod tests {
 
     // --- Helpers ---
 
-    fn path_channel() -> InternalChannel {
-        InternalChannel::named::<Path>("raw")
-    }
-
-    fn path_channel_key() -> ChannelKey {
-        path_channel().into()
-    }
-
-    fn out_channel_internal() -> InternalChannel {
-        InternalChannel::of::<BodyTwistRef>()
+    fn path_channel() -> ChannelKey {
+        ChannelKey::internal::<Path>("raw")
     }
 
     fn out_channel() -> ChannelKey {
-        out_channel_internal().into()
+        ChannelKey::internal_of::<BodyTwistRef>()
     }
 
     fn make_bus() -> PortBus {
         // Two descriptors: one that "produces" the path channel (so the bus
         // allocates a slot for it), and one that outputs the BodyTwistRef
         // the node under test will publish.
-        let path_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![path_channel_key()],
-            rate: None,
-        };
-        let traj_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![out_channel()],
-            rate: None,
-        };
-        PortBus::new(&[path_producer, traj_producer])
+        let path_producer = PortDescriptor::new(vec![], vec![], vec![path_channel()], None);
+        let traj_producer = PortDescriptor::new(vec![], vec![], vec![out_channel()], None);
+        PortBus::of_descriptors(&[path_producer, traj_producer])
     }
 
-    fn tick_at(now: f64, dt: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt,
-            node_id: 13,
-        }
+    fn tick_at(now: f64, dt: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), dt, 13)
     }
 
     /// A single geometric path waypoint (ENU position only).
@@ -396,7 +374,7 @@ mod tests {
             health: Health::Ok,
             producer: 99,
         };
-        bus.write(path_channel_key(), stamped).unwrap();
+        bus.write(path_channel(), stamped).unwrap();
     }
 
     // --- Tests ---
@@ -409,14 +387,20 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![out_channel()]);
-        assert!(node.port_descriptor().rate.is_none());
+        assert_eq!(
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![out_channel()]
+        );
+        assert!(node.port_descriptor().rate().is_none());
         assert!(node
             .port_descriptor()
-            .required_inputs
-            .contains(&path_channel_key()));
+            .required_inputs()
+            .any(|k| k == &path_channel()));
     }
 
     #[test]
@@ -428,7 +412,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -449,8 +433,7 @@ mod tests {
         // A write hardcoded to a different slot is invisible — the bus allocates
         // the declared slot, controllers read it and find it empty, and the
         // vehicle never moves even though every node builds and ticks cleanly.
-        let named_output = InternalChannel::named::<BodyTwistRef>("reference");
-        let named_key: ChannelKey = named_output.clone().into();
+        let named_output = ChannelKey::internal::<BodyTwistRef>("reference");
 
         let (follower, _calls) =
             ScriptedFollower::new(PathFollowerResult::Active(dummy_reference()));
@@ -459,37 +442,22 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            named_output,
+            named_output.clone(),
         );
 
         // A bus carrying both the named slot the node is configured to write and
         // the old unnamed slot, so we can assert the write lands on the former and
         // never the latter.
-        let named_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![named_key.clone()],
-            rate: None,
-        };
-        let unnamed_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![out_channel()],
-            rate: None,
-        };
-        let path_producer = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![path_channel_key()],
-            rate: None,
-        };
-        let bus = PortBus::new(&[named_producer, unnamed_producer, path_producer]);
+        let named_producer = PortDescriptor::new(vec![], vec![], vec![named_output.clone()], None);
+        let unnamed_producer = PortDescriptor::new(vec![], vec![], vec![out_channel()], None);
+        let path_producer = PortDescriptor::new(vec![], vec![], vec![path_channel()], None);
+        let bus = PortBus::of_descriptors(&[named_producer, unnamed_producer, path_producer]);
         publish_path(&bus, 1.0);
 
         node.execute(&bus, &MockRuntime, tick_at(2.5, 0.05));
 
         assert!(
-            bus.read::<BodyTwistRef>(named_key).is_some(),
+            bus.read::<BodyTwistRef>(named_output).is_some(),
             "follower must publish to its configured (named) output channel"
         );
         assert!(
@@ -510,7 +478,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -533,7 +501,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
         let bus = make_bus();
         // No path published — follower still gets called (state was ready)
@@ -551,7 +519,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -572,7 +540,7 @@ mod tests {
                 optional: vec![],
             }),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -589,7 +557,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -598,14 +566,14 @@ mod tests {
     }
 
     #[test]
-    fn set_path_not_called_again_for_same_timestamp() {
+    fn set_path_not_called_again_without_a_new_write() {
         let (follower, calls) = ScriptedFollower::new(PathFollowerResult::NoPath);
         let node = PathFollowerNode::new(
             "pure_pursuit",
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
@@ -624,13 +592,52 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
         publish_path(&bus, 2.0);
         node.execute(&bus, &MockRuntime, tick_at(2.0, 0.1));
+        assert_eq!(calls.lock().unwrap().set_path_calls, 2);
+    }
+
+    #[test]
+    fn set_path_called_again_when_new_path_reuses_the_stamp() {
+        // Two writes in the same tick carry the same timestamp; the second is
+        // still a new path.
+        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::NoPath);
+        let node = PathFollowerNode::new(
+            "pure_pursuit",
+            Box::new(follower),
+            Box::new(AlwaysReadyBuilder::new()),
+            path_channel(),
+            out_channel(),
+        );
+        let bus = make_bus();
+        publish_path(&bus, 1.0);
+        node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
+        publish_path(&bus, 1.0);
+        node.execute(&bus, &MockRuntime, tick_at(1.1, 0.1));
+        assert_eq!(calls.lock().unwrap().set_path_calls, 2);
+    }
+
+    #[test]
+    fn set_path_called_again_when_new_path_carries_an_older_stamp() {
+        // A reset clock makes the new path look older than the last one.
+        let (follower, calls) = ScriptedFollower::new(PathFollowerResult::NoPath);
+        let node = PathFollowerNode::new(
+            "pure_pursuit",
+            Box::new(follower),
+            Box::new(AlwaysReadyBuilder::new()),
+            path_channel(),
+            out_channel(),
+        );
+        let bus = make_bus();
+        publish_path(&bus, 5.0);
+        node.execute(&bus, &MockRuntime, tick_at(5.0, 0.1));
+        publish_path(&bus, 0.5);
+        node.execute(&bus, &MockRuntime, tick_at(0.5, 0.1));
         assert_eq!(calls.lock().unwrap().set_path_calls, 2);
     }
 
@@ -643,7 +650,7 @@ mod tests {
             Box::new(follower),
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
-            out_channel_internal(),
+            out_channel(),
         );
         let bus = make_bus();
         publish_path(&bus, 1.0);

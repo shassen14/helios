@@ -9,6 +9,8 @@ license.workspace = true
 helios_core = { path = "../helios_core" }
 nalgebra = { workspace = true }
 serde = { workspace = true }
+serde_path_to_error = "0.1"
 arc-swap = "1.9.1"
 atomic_float = "1.1.0"
+toml = "1.1.2"
 tracing = { workspace = true }

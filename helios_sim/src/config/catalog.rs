@@ -8,6 +8,7 @@ use figment::{
     Figment,
 };
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::cli::Cli;
@@ -35,7 +36,25 @@ const CATALOG_ROOTS: &[&str] = &[
 /// Populates `PrefabCatalog` by walking all vocabulary-partitioned catalog
 /// sub-directories under `config_root`. Keys are relative to `config_root`.
 pub fn load_catalog_from_disk(mut catalog: ResMut<PrefabCatalog>, cli: Res<Cli>) {
-    let config_root = &cli.config_root;
+    let (loaded, failures) = read_catalog(&cli.config_root);
+    for (path, e) in &failures {
+        error!("Failed to load catalog item from {:?}: {}", path, e);
+    }
+    // Sorted so two runs log the catalog identically.
+    let mut keys: Vec<&String> = loaded.0.keys().collect();
+    keys.sort();
+    for key in keys {
+        info!("Loaded catalog item: '{}'", key);
+    }
+    *catalog = loaded;
+}
+
+/// Reads every catalog file under `config_root`, returning the catalog and
+/// each file that failed to parse with its error. A failed file is left out
+/// of the catalog, so a reference to it reads as missing.
+pub fn read_catalog(config_root: &Path) -> (PrefabCatalog, Vec<(PathBuf, String)>) {
+    let mut catalog = PrefabCatalog::default();
+    let mut failures = Vec::new();
 
     for sub_dir in CATALOG_ROOTS {
         let dir_path = config_root.join(sub_dir);
@@ -66,13 +85,12 @@ pub fn load_catalog_from_disk(mut catalog: ResMut<PrefabCatalog>, cli: Res<Cli>)
 
             match Figment::new().merge(Toml::file(path)).extract::<Value>() {
                 Ok(data) => {
-                    info!("Loaded catalog item: '{}'", key);
                     catalog.0.insert(key, data);
                 }
-                Err(e) => {
-                    error!("Failed to load catalog item from {:?}: {}", path, e);
-                }
+                Err(e) => failures.push((path.to_path_buf(), e.to_string())),
             }
         }
     }
+
+    (catalog, failures)
 }

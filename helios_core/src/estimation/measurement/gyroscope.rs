@@ -1,15 +1,18 @@
 use nalgebra::DVector;
 
-use crate::data::ports::TfProvider;
-use crate::data::AgentId;
-use crate::data::MonotonicTime;
+use crate::estimation::imu_mount::sensor_angular_velocity;
 use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
-use crate::frames::conventions::Flu;
-use crate::frames::quantities::FreeVector;
-use crate::frames::transforms::Convention;
-use crate::frames::{FrameAwareState, FrameId};
-use crate::state::Quantity;
+use crate::prelude::MonotonicTime;
+use crate::spatial::conventions::Flu;
+use crate::spatial::quantities::FreeVector;
+use crate::spatial::state::Quantity;
+use crate::spatial::tf::TfProvider;
+use crate::spatial::transforms::{Convention, ConventionOf};
+use crate::spatial::{FrameAwareState, FrameId};
+
+/// The axes the model reads its sensor's mount in.
+type MountAxes = Flu;
 
 /// What the filter believes a rate gyroscope reports: the body's angular
 /// velocity, rotated into the sensor frame.
@@ -22,8 +25,16 @@ use crate::state::Quantity;
 /// [`SpecificForceModel`]: crate::estimation::measurement::accelerometer::SpecificForceModel
 #[derive(Debug, Clone)]
 pub struct AngularRateModel {
-    pub agent: AgentId,
+    /// The body whose angular velocity the sensor reads.
+    pub body: FrameId,
     pub sensor: FrameId,
+}
+
+impl AngularRateModel {
+    /// The axis convention this model reads its sensor's mount in. A host
+    /// checks it against the convention the tf tree holds for the mount
+    /// before the first tick.
+    pub const MOUNT_CONVENTION: Convention = MountAxes::CONVENTION;
 }
 
 impl MeasurementModel for AngularRateModel {
@@ -33,7 +44,7 @@ impl MeasurementModel for AngularRateModel {
         let frame = self.sensor.clone();
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::AngularVelocity(frame),
-            Convention::Flu,
+            Self::MOUNT_CONVENTION,
         )];
 
         MeasurementSchema::compose(blocks)
@@ -54,23 +65,19 @@ impl MeasurementModel for AngularRateModel {
         let Some(tf) = tf else {
             return Prediction::Unavailable(Unavailable::NoProvider);
         };
-        let body_frame = FrameId::base_link(self.agent.clone());
+        let body_frame = self.body.clone();
 
-        let Some(erased) = tf.get_transform(
-            self.sensor.clone(),
-            FrameId::base_link(self.agent.clone()),
-            at,
-        ) else {
+        let Some(erased) = tf.get_transform(self.sensor.clone(), self.body.clone(), at) else {
             return Prediction::Unavailable(Unavailable::MissingTransform {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.body.clone(),
             });
         };
 
-        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<MountAxes, Flu>() else {
             return Prediction::Unavailable(Unavailable::ConventionMismatch {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.body.clone(),
             });
         };
 
@@ -85,7 +92,7 @@ impl MeasurementModel for AngularRateModel {
             .map(FreeVector::into_inner)
             .unwrap_or_default();
 
-        let predicted_gyro = rot_body_from_sensor.inverse() * angular_vel_body;
+        let predicted_gyro = sensor_angular_velocity(&rot_body_from_sensor, &angular_vel_body);
         let mut z_pred = DVector::zeros(3);
         z_pred.fixed_rows_mut::<3>(0).copy_from(&predicted_gyro);
         Prediction::Ready(z_pred)
@@ -95,15 +102,16 @@ impl MeasurementModel for AngularRateModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::ports::TfProvider;
-    use crate::data::AgentId;
-    use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
+    use crate::estimation::frames::EstimationFrames;
     use crate::estimation::schema::{StateSchema, StateSchemaBlock};
-    use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId, StateVariable};
-    use crate::manifold::TangentNoise;
-    use crate::state::Component;
+    use crate::kernel::manifold::TangentNoise;
+    use crate::prelude::AgentId;
+    use crate::prelude::MonotonicTime;
+    use crate::spatial::state::Component;
+    use crate::spatial::tf::TfProvider;
+    use crate::spatial::transforms::{Convention, ErasedTransform};
+    use crate::spatial::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, Isometry3, Translation3, UnitQuaternion};
     use std::f64::consts::FRAC_PI_2;
     use std::sync::Arc;
@@ -113,7 +121,7 @@ mod tests {
     }
 
     fn sensor() -> FrameId {
-        FrameId::sensor(agent(), "imu")
+        FrameId::agent(agent(), "imu")
     }
 
     const AT: MonotonicTime = MonotonicTime(0.0);
@@ -163,7 +171,7 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            let iso = if from.is_sensor() {
+            let iso = if !from.is_base_link() {
                 self.0
             } else {
                 self.0.inverse()
@@ -178,7 +186,7 @@ mod tests {
 
     fn make_model() -> AngularRateModel {
         AngularRateModel {
-            agent: agent(),
+            body: FrameId::base_link(agent()),
             sensor: sensor(),
         }
     }
@@ -188,7 +196,10 @@ mod tests {
     // hold, so the read falls back to zero — the test pins shape and TF-gating,
     // not the rate value.
     fn make_state() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0)
+        FrameAwareState::from_schema(
+            Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(agent()))),
+            MonotonicTime(0.0),
+        )
     }
 
     #[test]
@@ -263,7 +274,7 @@ mod tests {
             nalgebra::DVector::zeros(3),
             DMatrix::identity(3, 3),
         )]);
-        let mut state = FrameAwareState::from_schema(Arc::new(schema), 0.0);
+        let mut state = FrameAwareState::from_schema(Arc::new(schema), MonotonicTime(0.0));
         for (component, value) in [Component::X, Component::Y, Component::Z]
             .into_iter()
             .zip(omega)

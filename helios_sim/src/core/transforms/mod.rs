@@ -18,16 +18,15 @@ mod body_twist;
 
 pub use bevy_bridge::{
     bevy_transform_to_transform_bevy, frame_triad_to_bevy, freevector_bevy_to_vec3,
-    point_bevy_to_vec3, transform_bevy_to_bevy_transform, vec3_to_freevector_bevy,
-    vec3_to_point_bevy, Bevy, FromBevy, ToBevy,
+    per_axis_to_bevy, point_bevy_to_vec3, transform_bevy_to_bevy_transform,
+    vec3_to_freevector_bevy, vec3_to_point_bevy, Bevy, FromBevy, ToBevy,
 };
 pub use body_twist::enu_twist_to_body_flu;
 
 use bevy::prelude::{GlobalTransform, *};
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::id::FrameScope;
-use helios_core::frames::transforms::{Convention, ErasedTransform, Transform as CoreTransform};
-use helios_core::frames::FrameId;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform as CoreTransform};
+use helios_core::spatial::FrameId;
 use nalgebra::Isometry3;
 use std::collections::HashMap;
 
@@ -39,11 +38,18 @@ use std::collections::HashMap;
 /// coordinate identity and axis convention as one value.
 ///
 /// The [`FrameId`] is the tree's key. Every spawner stamps the same
-/// `(agent, leaf)` the runtime uses to build that frame's `MeasurementModel` —
-/// the leaf is the sensor's channel name for a sensor, `base_link`/`odom` for
-/// the spine — so a reading, its tf edge, and the filter's model all name one
-/// identity. The convention rides along to the [`ErasedTransform`] boundary so a
-/// convention mismatch fails loudly at the typed crossing.
+/// `(agent, leaf)` the runtime builds that frame's `MeasurementModel` for —
+/// the leaf is the installation's fit key for a sensor, the mount's name for
+/// a topology mount, `base_link`/`odom` for the spine — so a reading, its tf
+/// edge, and the filter's model all name one identity.
+///
+/// The convention comes from the frame's owner (the device kind, the
+/// topology, the estimate relay) and only names the frame's axes. The pose
+/// already carries them: an installation's rotation is the device's actual
+/// axes in the body, and the tree reads every pose back through the same FLU
+/// basis its spawner placed it with, so a non-FLU device needs no other
+/// conversion. The tag rides along to the [`ErasedTransform`] boundary so a
+/// reader expecting other axes fails loudly at the typed crossing.
 #[derive(Component)]
 pub struct TrackedFrame {
     pub id: FrameId,
@@ -77,8 +83,8 @@ pub struct FrameNode {
 ///
 /// Keying by `FrameId` means **one entity per `(agent, leaf)`** — two entities
 /// stamped with the same `FrameId` collide and the second overwrites the first.
-/// This already holds: one `base_link` per agent, and sensor channel names are
-/// unique per agent (the invariant the `SensorChannel` collision rule enforces).
+/// This already holds: one `base_link` per agent, and channel names are unique
+/// per agent (the pipeline build refuses a name naming two channels).
 #[derive(Resource, Default, Debug)]
 pub struct TfTree {
     frame_to_node: HashMap<FrameId, FrameNode>,
@@ -88,11 +94,26 @@ pub struct TfTree {
     /// gone.
     entity_to_frame: HashMap<Entity, FrameId>,
 
+    /// The world's datum: the global frame at the scene origin, whose pose is
+    /// the identity. `None` until the world layout resolves.
+    datum: Option<FrameId>,
+
     /// Elapsed simulation time at the last rebuild.
     pub sim_time: f64,
 }
 
 impl TfTree {
+    /// Roots the tree at the world's datum, the frame every tracked pose is
+    /// measured from.
+    pub fn set_datum(&mut self, datum: FrameId) {
+        self.datum = Some(datum);
+    }
+
+    /// The world's datum, once the world layout has resolved.
+    pub fn datum(&self) -> Option<&FrameId> {
+        self.datum.as_ref()
+    }
+
     /// Resolves the transform between two frames at the tree's *current* state.
     ///
     /// The tree is latest-only: one pose per frame (the most recent physics
@@ -114,13 +135,13 @@ impl TfTree {
 
     /// Resolves one frame to its world pose and convention.
     ///
-    /// Predicate dispatch over the frame's identity: the shared `World` and —
+    /// Predicate dispatch over the frame's identity: the world's datum and —
     /// until a localizer publishes a `map -> odom` correction — every agent's
     /// `map`/`odom` root resolve to the identity ENU pose, the world→odom drift
     /// living in the estimate values rather than these edges. Every other frame
     /// (a `base_link`, a sensor) is one lookup into the pose store.
     fn resolve(&self, frame: FrameId) -> Option<(Isometry3<f64>, Convention)> {
-        if matches!(frame.scope(), FrameScope::World) {
+        if self.datum.as_ref() == Some(&frame) {
             return Some((Isometry3::identity(), Convention::Enu));
         }
 
@@ -199,4 +220,54 @@ pub fn tf_tree_incremental_update_system(
     }
 
     tf_tree.sim_time = time.elapsed_secs_f64();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use helios_core::prelude::AgentId;
+
+    const DATUM: &str = "yard";
+
+    fn rooted() -> TfTree {
+        let mut tree = TfTree::default();
+        tree.set_datum(FrameId::global(DATUM));
+        tree
+    }
+
+    #[test]
+    fn the_datum_resolves_to_the_scene_origin() {
+        let datum = FrameId::global(DATUM);
+        let transform = rooted()
+            .erased(datum.clone(), datum)
+            .expect("the datum resolves");
+        assert_eq!(transform.isometry(), Isometry3::identity());
+    }
+
+    #[test]
+    fn a_global_frame_other_than_the_datum_is_not_the_origin() {
+        // A fixture or another site's datum is not this world's origin; until
+        // something tracks it, it does not resolve.
+        let tree = rooted();
+        let elsewhere = FrameId::global("other_site");
+        assert!(tree.erased(FrameId::global(DATUM), elsewhere).is_none());
+    }
+
+    #[test]
+    fn nothing_is_the_origin_before_the_world_resolves() {
+        let datum = FrameId::global(DATUM);
+        assert!(TfTree::default().erased(datum.clone(), datum).is_none());
+    }
+
+    #[test]
+    fn an_agent_root_still_resolves_to_the_origin() {
+        // Until a localizer anchors `odom`, the truth tree places it at the
+        // scene origin, so it relates to the datum by the identity.
+        let odom = FrameId::odom(AgentId::new("car"));
+        let transform = rooted()
+            .erased(FrameId::global(DATUM), odom)
+            .expect("odom resolves");
+        assert_eq!(transform.isometry(), Isometry3::identity());
+    }
 }

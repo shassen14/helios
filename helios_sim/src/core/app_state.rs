@@ -41,7 +41,7 @@ pub enum SceneBuildSet {
     /// Pass 1: Create agent shells and attach the main request component.
     CreateRequests,
 
-    /// Pass 2: Spawn all static world objects (signs, buildings, terrain features).
+    /// Pass 2: Spawn the world layout's objects, the ground included.
     /// Runs before agent processing so sensors can reference world geometry at setup time.
     ProcessWorldObjects,
 
@@ -57,13 +57,14 @@ pub enum SceneBuildSet {
 
     /// Pass 5: Build each agent's `AutonomyPipeline` and attach
     /// `AutonomyPipelineComponent`. Runs after `ProcessSensors` because pipeline
-    /// assembly reads the sensors' `SensorPublishChannel` to wire the DAG's inputs.
+    /// assembly collects the sensors' `SensorPublishChannel` descriptions into
+    /// the body.
     SpawnPipeline,
 
     /// Pass 6: Bind host-side ECS state to the freshly-spawned pipeline — the
-    /// odom-frame entity that tracks its pose estimate and the
-    /// `ActuatorCommandComponent` the vehicle plugin drains. Both consumers only
-    /// require `AutonomyPipelineComponent` to exist (from `SpawnPipeline`) and are
+    /// `ActuatorCommandComponent` the vehicle plugin drains, and the watch set
+    /// the observation sinks asked for. Both only require
+    /// `AutonomyPipelineComponent` to exist (from `SpawnPipeline`) and are
     /// independent of each other, so they share this one pass.
     BindPipeline,
 
@@ -114,6 +115,11 @@ pub enum SimulationSet {
 
     /// Sync ground-truth state back from Avian3D after the physics step.
     StateSync,
+
+    /// Hand the tick's observation batch to every registered sink. After
+    /// `StateSync` and before `Validation`, so a per-tick check reads sinks
+    /// that already hold the tick.
+    Observation,
 
     /// Post-`StateSync` observation slot: runs last, once ground-truth state and
     /// the oracle channels are fresh. External harnesses, data logging, and

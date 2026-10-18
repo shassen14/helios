@@ -2,7 +2,7 @@
 # == Agent Profile: Raycast Car ==
 # =========================================================================
 # Portable autonomy for the L1 raycast car. No vehicle, sensors, or physics.
-# Root-level keys are the fields of AutonomyStack. Safe to load in helios_hw.
+# Root-level keys are the fields of AutonomyStackConfig. Safe to load in helios_hw.
 #
 # Estimator, planner, and path follower are identical to `pro_car`. What
 # differs is the control stanza: the L0 car's single KinematicAckermann
@@ -10,36 +10,82 @@
 # drive leg and steer leg — because the raycast plant applies Torque and
 # Position, not a body velocity.
 
-# ekf_advanced matches the ins_pro sensor suite this profile is flown with.
-[estimators.primary]
+# ekf_advanced matches the raycast_car_ins_pro sensor fit this profile is flown with.
+[nodes.primary]
 from = "runtime.catalog.estimators.ekf_advanced"
 
-[search_planners]
-local_path = { from = "runtime.catalog.planners.a_star" }
+# The estimate the rest of the stack reads, and the source of the
+# odom → base_link edge: this stack's one estimator.
+[estimate]
+source = "primary"
 
-# The A* planner reads the occupancy grid published on the `local` layer; the
-# grid is built by the lidar the sim prefab mounts. Without this layer the
-# planner's map input is unsatisfiable and the pipeline fails validation.
-[map_layers.local]
+# The A* planner publishes its path on a channel named after the node, which
+# the path follower's `path` names.
+[nodes.local_path]
+from = "runtime.catalog.planners.a_star"
+
+# The planner reads the map this grid publishes, on a channel named after the
+# node (`local`), which the planner's `map_channel` names; the grid is built by
+# the lidar the sim prefab mounts. Without this node the planner's map input is
+# unsatisfiable and the pipeline fails to build.
+[nodes.local]
 from = "runtime.catalog.mappers.occupancy_grid_2d"
 
-[path_following]
+# The lidar publishes what it measured: an organized range field. The grid
+# integrates points, so this node flattens each field into a point cloud on a
+# derived channel, which the mapper's `scan_channel` names. `input` must match
+# the lidar entity's `channel`; `output` must not reuse a host channel's name.
+[nodes.front_lidar_deproject]
+kind = "Deproject"
+input = "sensor.lidar.front"
+output = "sensor.lidar.front.points"
+
+# The rear 3D lidar, deprojected for the point-cloud view only: no mapper names
+# this output, because the 2D grid would mark the rings' ground returns as walls.
+# A body without this lidar fails validation here, so remove this node together
+# with the sim agent's `rear_lidar` sensor.
+[nodes.rear_lidar_deproject]
+kind = "Deproject"
+input = "sensor.lidar.rear"
+output = "sensor.lidar.rear.points"
+
+# The path follower reads the planner's path by its node name and publishes its
+# reference on a channel named after itself. `[reference]` below decides where
+# that reference goes.
+[nodes.pure_pursuit]
 kind = "PurePursuit"
+path = "local_path"
 max_speed_m_s = 5.0
 min_speed_m_s = 0.5
 lookahead_distance_m = 4.0
 goal_radius = 3.0
 max_lateral_acceleration = 3.0
-state_source = "ground_truth"
+
+# Teleop mapper: normalized operator intent (per-axis deflection in [-1, 1]) →
+# a BodyTwistRef, scaled per DOF. A car drives only forward speed and turn rate,
+# so it names surge (m/s) and yaw (rad/s); the other four axes default to 0.0 —
+# an honest statement the body cannot drive them, not a dead field. Default keys:
+# ↑/↓ surge, ←/→ yaw.
+[nodes.teleop]
+kind = "TwistTeleop"
+surge = 5.0  # peak forward speed at full deflection, m/s (matches max_speed_m_s)
+yaw = 1.0    # peak turn rate at full deflection, rad/s
+
+# The guidance reference the controllers track. The follower is the base; teleop
+# is preferred while fresh, so driving the keys takes over, and releasing them
+# lets the teleop reference age out and the follower reclaim the seam with no
+# explicit release.
+[reference]
+base = "pure_pursuit"
+preferred = ["teleop"]
 
 # --- Control: decoupled drive + steer legs ---
-# PurePursuit emits one BodyTwistRef reference; both controllers below consume
-# it. The drive leg reads its forward-speed component, the steer leg its
-# curvature — no extra reference plumbing.
+# Every controller tracks the one reference above. The drive leg reads its
+# forward-speed component, the steer leg its curvature — no extra reference
+# plumbing. Each publishes its command on a channel named after itself;
+# `[command]` below decides which fold it joins.
 
-# Drive leg (feedback): closes forward speed to a DriveForce. The assembler
-# folds this (and the road-load feedforward below) into the DriveForce command
-# that the WheelTorque allocator consumes.
+# Drive leg (feedback): closes forward speed to a DriveForce.
 # TUNING: gains map a speed error (m/s) to a body force (N). The proportional
 # gain owns the buildup off the line — raise it for a snappier launch until the
 # tyre slips (friction budget μ·N) or the loop rings. The integral is small and
@@ -47,11 +93,8 @@ state_source = "ground_truth"
 # integrator only trims residuals and must not bank a large reservoir, which is
 # what made reverse lag after a forward run. integral_clamp caps the accumulator;
 # I-force authority = integral_gain · integral_clamp ≈ 300 N here.
-# `state_source = "ground_truth"` isolates control tuning from estimator noise —
-# flip to "estimated" once it drives clean.
-[controllers.drive_speed]
+[nodes.drive_speed]
 kind = "LongitudinalVelocity"
-state_source = "ground_truth"
 proportional_gain = 3000.0
 integral_gain = 30.0
 derivative_gain = 0.0
@@ -59,7 +102,7 @@ integral_clamp = 10.0
 
 # Drive leg (feedforward): the open-loop road-load force that holds the reference
 # speed against the car's own resistances, computed from the reference alone. It
-# folds into the same DriveForce command as the feedback leg (Sum). Its job is
+# folds into the same DriveForce command as the feedback leg. Its job is
 # steady-state, not transient — it carries the constant rolling hold so the
 # feedback integral doesn't have to, which is what lets the integral stay low and
 # clamped without the car sagging below speed. It does NOT speed the buildup off
@@ -68,7 +111,7 @@ integral_clamp = 10.0
 # (rolling_resistance · mass · g = 0.015 · 1500 · 9.81 ≈ 221 N). c_drag is 0
 # because the raycast plant models no aerodynamic drag; give it a value only if a
 # chassis-drag term is added to the plant, so the inverse map stays honest.
-[controllers.drive_ff]
+[nodes.drive_ff]
 kind = "RoadLoad"
 c_roll = 220.0
 c_drag = 0.0
@@ -76,38 +119,44 @@ c_drag = 0.0
 # Steer leg (feedforward): inverts the bicycle model, turning the reference
 # curvature into a SteerAngle. Reference-only — the cross-track/heading feedback
 # lives in the PurePursuit path follower, not here.
-[controllers.steer_ff]
+[nodes.steer_ff]
 kind = "BicycleSteer"
 wheelbase = 2.5
 
-# Drive allocator: DriveForce → wheel Torque (τ = F · wheel_radius). `drive`
-# names the actuator in the vehicle's [actuation] contract. wheel_radius must
-# match the plant's suspension.wheel_radius.
-[allocators.drive]
+# The commands the allocators consume. Each fold sums its members into a
+# channel named after the fold, and an allocator reads it by that name. A
+# required member must publish for the fold to publish: the speed feedback,
+# since a force missing its correction is silently wrong. An optional member is
+# folded in when present: the feedforwards, which hold a steady value.
+[command.drive_cmd]
+type = "DriveForce"
+required = ["drive_speed"]
+optional = ["drive_ff"]
+
+[command.steer_cmd]
+type = "SteerAngle"
+optional = ["steer_ff"]
+
+# Drive allocator: DriveForce → wheel Torque (τ = F · wheel_radius). `input`
+# names the fold it reads; `drive` names the actuator in the vehicle's
+# [actuation] contract. wheel_radius must match the plant's
+# suspension.wheel_radius.
+[nodes.drive]
 kind = "WheelTorque"
+input = "drive_cmd"
 wheel_radius = 0.3
 drive = "drive"
 
-# Steer allocator: SteerAngle → steer Position (pass-through).
-[allocators.steer]
+# Steer allocator: SteerAngle → steer Position (pass-through), reading the
+# steer fold.
+[nodes.steer]
 kind = "SteerPosition"
+input = "steer_cmd"
 steer = "steer"
 
-# Autonomy and teleop both contend for the guidance reference seam. The path
-# follower writes the autonomy contender; the teleop mapper below writes the
-# teleop contender; a freshness selector picks the fresher onto the reference the
-# controllers track. Releasing the drive keys lets the teleop reference age out,
-# so the follower reclaims the seam with no explicit release. Listed highest-
-# authority first.
-[reference_arbitration]
-sources = ["autonomy", "teleop"]
-
-# Teleop mapper: normalized operator intent (per-axis deflection in [-1, 1]) →
-# a BodyTwistRef, scaled per DOF. A car drives only forward speed and turn rate,
-# so it names surge (m/s) and yaw (rad/s); the other four axes default to 0.0 —
-# an honest statement the body cannot drive them, not a dead field. Default keys:
-# ↑/↓ surge, ←/→ yaw.
-[teleop]
-kind = "Twist"
-surge = 5.0  # peak forward speed at full deflection, m/s (matches max_speed_m_s)
-yaw = 1.0    # peak turn rate at full deflection, rad/s
+# The actuator command the body applies: the members' partial commands merged.
+# Each member drives its own actuators; the build checks them against the
+# vehicle's [actuation] contract, so a misnamed actuator or a setpoint of the
+# wrong kind fails at spawn.
+[actuators]
+members = ["drive", "steer"]

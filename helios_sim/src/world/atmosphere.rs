@@ -1,8 +1,8 @@
 use crate::core::transforms::{freevector_bevy_to_vec3, ToBevy};
 use crate::prelude::*;
 
-use helios_core::frames::conventions::Enu;
-use helios_core::frames::quantities::FreeVector;
+use helios_core::spatial::conventions::Enu;
+use helios_core::spatial::quantities::FreeVector;
 
 use avian3d::prelude::Gravity;
 use nalgebra::Vector3;

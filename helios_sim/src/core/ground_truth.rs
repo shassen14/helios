@@ -1,19 +1,27 @@
-use crate::brain_bridge::AutonomyPipelineComponent;
+use crate::brain_bridge::{AgentIdComponent, AutonomyPipelineComponent};
 use crate::core::components::GroundTruthState;
 use crate::core::transforms::{
-    bevy_transform_to_transform_bevy, vec3_to_freevector_bevy, FromBevy,
+    bevy_transform_to_transform_bevy, vec3_to_freevector_bevy, FromBevy, TfTree,
 };
 
-use helios_core::data::{MonotonicTime, Twist};
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::quantities::FreeVector;
-use helios_core::frames::transforms::Transform as CoreTransform;
-use helios_runtime::channels::{oracle_pose_channel, oracle_twist_channel};
-use helios_runtime::{Health, Stamped, HOST_PRODUCER_ID};
+use helios_core::interchange::motion::StampedTwist;
+use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::quantities::FreeVector;
+use helios_core::spatial::transforms::tf::stamped::StampedTransform;
+use helios_core::spatial::transforms::{ErasedTransform, Transform as CoreTransform};
+use helios_core::spatial::FrameId;
+use helios_runtime::channels::{truth_tf, truth_twist};
+use helios_runtime::port::{ChannelError, ChannelKey};
+use helios_runtime::{BodyChannel, Health, Provenance, Stamped, HOST_PRODUCER_ID};
 
 use avian3d::prelude::{AngularVelocity, LinearVelocity};
 use bevy::prelude::*;
-use nalgebra::Isometry3;
+use std::collections::HashSet;
+
+/// The unit that publishes ground truth: the simulator's truth rig, a perfect
+/// sensor every simulated body carries.
+pub const TRUTH_RIG_UNIT: &str = "truth_rig";
 
 /// Mirrors Avian3D physics state into [`GroundTruthState`] each tick:
 /// pose (world ENU), linear/angular velocity (world ENU), and derived
@@ -66,96 +74,192 @@ pub fn ground_truth_sync_system(
     }
 }
 
-/// Publishes ground-truth pose and twist onto each agent's autonomy bus on
-/// the canonical [`oracle_pose_channel`] and [`oracle_twist_channel`]
-/// slots. Runs in [`SimulationSet::StateSync`](crate::core::app_state::SimulationSet::StateSync) after
-/// [`ground_truth_sync_system`].
+/// The channels [`publish_truth_channels_system`] writes for `agent`, as
+/// the body publishes them: `truth.tf` and `truth.twist`, each with one
+/// instance, the agent's `base_link`, and exact because the simulator is
+/// ground truth.
+pub fn truth_body_channels(agent: &AgentId) -> [BodyChannel; 2] {
+    let base_link = FrameId::base_link(agent.clone());
+    [
+        BodyChannel::new(truth_tf(), TRUTH_RIG_UNIT, Provenance::Exact)
+            .with_instances::<StampedTransform>([base_link.clone()]),
+        BodyChannel::new(truth_twist(), TRUTH_RIG_UNIT, Provenance::Exact)
+            .with_instances::<StampedTwist<Flu>>([base_link]),
+    ]
+}
+
+/// Publishes each agent's ground truth onto its autonomy bus. Runs in
+/// [`SimulationSet::StateSync`](crate::core::app_state::SimulationSet::StateSync)
+/// after [`ground_truth_sync_system`].
 ///
-/// Pose and twist are both published in world ENU (matching
-/// [`GroundTruthState`]). Aligns with `STANDARD_INS_LAYOUT`'s velocity
-/// convention so the mock-oracle estimator can passthrough into a
-/// `FrameAwareState` without rotating.
+/// - `truth.tf`: the pose of the agent's `base_link` in the world's datum.
+/// - `truth.twist`: `base_link`'s velocity relative to the datum, expressed
+///   in `base_link`, rotated out of [`GroundTruthState`]'s world axes by the
+///   same pose.
 ///
 /// The bus timestamp source is `Time::elapsed_secs_f64`, identical to
 /// the `now` the host passes into `pipeline.tick` in the autonomy tick — so
 /// `read_fresh(max_age)` comparisons across systems work without skew.
 ///
-/// `bus.write` returns `Err(UnknownChannel)` if no node in the graph
-/// consumes the slot. For the oracle that is expected, not a bug: nothing
-/// reads `oracle/pose` or `oracle/twist` until a consumer — a mock-oracle
-/// estimator or a visualization layer — is wired into the pipeline. So instead
-/// of the crate-wide "warn loudly" rule for a dropped write, this system traces
-/// the miss once (naming the channel), then stays quiet — a real wiring bug
-/// elsewhere still screams; this known no-consumer case says its piece once and
-/// does not spam the fixed-rate tick.
-pub fn publish_oracle_channels_system(
-    query: Query<(&GroundTruthState, &AutonomyPipelineComponent)>,
+/// The body declares both channels, so each write has a slot whether or not
+/// a node reads it. A refused write (an undeclared channel or instance, a
+/// wrong type) is a host bug, so it warns, once per agent and channel.
+pub fn publish_truth_channels_system(
+    query: Query<(
+        &GroundTruthState,
+        &AgentIdComponent,
+        &AutonomyPipelineComponent,
+    )>,
+    tf_tree: Res<TfTree>,
     time: Res<Time>,
     mut has_logged_first_tick: Local<bool>,
-    mut has_warned_no_consumer: Local<bool>,
+    mut has_warned_no_datum: Local<bool>,
+    mut warned_refused: Local<HashSet<(AgentId, ChannelKey)>>,
 ) {
     let now = MonotonicTime(time.elapsed_secs_f64());
 
     // One-shot verification trace: fires exactly once the first time this
     // system actually executes. Used to confirm the schedule wiring is
     // correct (system is in StateSync, run_if(Running) is satisfied) — a
-    // silent run cannot otherwise be observed from outside, because the
-    // bus writes below land on slots that don't exist yet until a
-    // consumer is built. Cheap to leave in; remove if it ever becomes
+    // silent run cannot otherwise be observed from outside unless a node
+    // reads the truth channels. Cheap to leave in; remove if it ever becomes
     // noise. Enable with RUST_LOG=helios_sim::oracle=trace.
     if !*has_logged_first_tick {
         tracing::trace!(
             target: "helios_sim::oracle",
             agent_count = query.iter().len(),
-            "publish_oracle_channels_system: first tick"
+            "publish_truth_channels_system: first tick"
         );
         *has_logged_first_tick = true;
     }
 
-    for (ground_truth, autonomy_pipeline) in query {
-        let pose = ground_truth.pose;
+    // The world layout roots the truth tree at the datum before any agent
+    // ticks, so a missing datum is a scheduling bug, not a startup race.
+    let Some(datum) = tf_tree.datum() else {
+        if !*has_warned_no_datum {
+            warn!("The truth tree has no datum; ground truth is not published.");
+            *has_warned_no_datum = true;
+        }
+        return;
+    };
 
-        let stamped_pose: Stamped<Isometry3<f64>> = Stamped {
-            value: pose,
-            timestamp: now,
-            health: Health::Ok,
-            producer: HOST_PRODUCER_ID,
-        };
+    for (ground_truth, agent, autonomy_pipeline) in query {
+        let (pose, twist) = truth_messages(ground_truth, &agent.0, datum, now);
 
-        // Twist is published in the world frame, matching the velocity
-        // convention a passthrough estimator expects, so a mock oracle can copy
-        // it straight into a FrameAwareState without a frame rotation.
-        let stamped_twist = Stamped {
-            value: Twist {
-                linear: ground_truth.linear_velocity,
-                angular: ground_truth.angular_velocity,
-            },
-            timestamp: now,
-            health: Health::Ok,
-            producer: HOST_PRODUCER_ID,
-        };
-
+        // Each key is named once, so the warning names the key written.
         let bus = autonomy_pipeline.0.bus();
-        let pose_result = bus.write(oracle_pose_channel(), stamped_pose);
-        let twist_result = bus.write(oracle_twist_channel(), stamped_twist);
+        let (pose_key, twist_key) = (truth_tf(), truth_twist());
+        let pose_result = bus.write_keyed(pose_key.clone(), stamped_now(pose, now));
+        let twist_result = bus.write_keyed(twist_key.clone(), stamped_now(twist, now));
 
-        // TODO: should check for actual error if we have more variants
-        if pose_result.is_err() && !*has_warned_no_consumer {
-            tracing::trace!(
-                target: "helios_sim::oracle",
-                channel = oracle_pose_channel().to_string(),
-                "oracle channel has no consumer; write dropped"
-            );
-            *has_warned_no_consumer = true;
+        for (key, result) in [(pose_key, pose_result), (twist_key, twist_result)] {
+            warn_dropped_truth(&agent.0, key, result, &mut warned_refused);
         }
+    }
+}
 
-        if twist_result.is_err() && !*has_warned_no_consumer {
-            tracing::trace!(
-                target: "helios_sim::oracle",
-                channel = oracle_twist_channel().to_string(),
-                "oracle channel has no consumer; write dropped"
-            );
-            *has_warned_no_consumer = true;
-        }
+/// `agent`'s truth at `now` as the two messages the truth channels carry:
+/// `base_link`'s pose in `datum`, and its velocity relative to `datum`
+/// expressed in `base_link`.
+fn truth_messages(
+    ground_truth: &GroundTruthState,
+    agent: &AgentId,
+    datum: &FrameId,
+    now: MonotonicTime,
+) -> (StampedTransform, StampedTwist<Flu>) {
+    let base_link = FrameId::base_link(agent.clone());
+    let body_to_datum = CoreTransform::<Flu, Enu>::from_isometry(ground_truth.pose);
+    let datum_to_body = body_to_datum.inverse();
+
+    let pose = StampedTransform {
+        parent: datum.clone(),
+        child: base_link.clone(),
+        stamp: now,
+        transform: ErasedTransform::erase(body_to_datum),
+    };
+    let twist = StampedTwist {
+        moving: base_link.clone(),
+        relative_to: datum.clone(),
+        expressed_in: base_link,
+        stamp: now,
+        linear: FreeVector::<Enu>::from_raw(ground_truth.linear_velocity).reexpress(&datum_to_body),
+        angular: FreeVector::<Enu>::from_raw(ground_truth.angular_velocity)
+            .reexpress(&datum_to_body),
+    };
+    (pose, twist)
+}
+
+/// `value` stamped at `now` by the host.
+fn stamped_now<T>(value: T, now: MonotonicTime) -> Stamped<T> {
+    Stamped {
+        value,
+        timestamp: now,
+        health: Health::Ok,
+        producer: HOST_PRODUCER_ID,
+    }
+}
+
+/// Warns about a refused truth write, once per agent and channel.
+fn warn_dropped_truth(
+    agent: &AgentId,
+    key: ChannelKey,
+    result: Result<(), ChannelError>,
+    warned_refused: &mut HashSet<(AgentId, ChannelKey)>,
+) {
+    let Err(error) = result else {
+        return;
+    };
+    if !warned_refused.insert((agent.clone(), key.clone())) {
+        return;
+    }
+    warn!(
+        "Truth channel {key} of agent '{agent}' refused a write ({error}); truth is being dropped."
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use helios_core::spatial::transforms::Convention;
+
+    use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
+    use std::f64::consts::FRAC_PI_2;
+
+    /// A body facing north (a quarter turn left of east) and driving north
+    /// while yawing left: forward in its own axes, yaw rate unchanged.
+    #[test]
+    fn the_twist_is_expressed_in_base_link_and_the_pose_in_the_datum() {
+        let agent = AgentId::new("car");
+        let datum = FrameId::global("datum");
+        let ground_truth = GroundTruthState {
+            pose: Isometry3::from_parts(
+                Translation3::new(3.0, 4.0, 0.0),
+                UnitQuaternion::from_euler_angles(0.0, 0.0, FRAC_PI_2),
+            ),
+            linear_velocity: Vector3::new(0.0, 2.0, 0.0),
+            angular_velocity: Vector3::new(0.0, 0.0, 0.5),
+            ..Default::default()
+        };
+
+        let (pose, twist) = truth_messages(&ground_truth, &agent, &datum, MonotonicTime(1.0));
+
+        let base_link = FrameId::base_link(agent);
+        assert_eq!((&pose.parent, &pose.child), (&datum, &base_link));
+        assert_eq!(
+            (
+                pose.transform.from_convention(),
+                pose.transform.to_convention()
+            ),
+            (Convention::Flu, Convention::Enu)
+        );
+        assert_eq!(pose.transform.isometry(), ground_truth.pose);
+
+        assert_eq!(
+            (&twist.moving, &twist.relative_to, &twist.expressed_in),
+            (&base_link, &datum, &base_link)
+        );
+        assert!((twist.linear.into_inner() - Vector3::new(2.0, 0.0, 0.0)).norm() < 1e-9);
+        assert!((twist.angular.into_inner() - Vector3::new(0.0, 0.0, 0.5)).norm() < 1e-9);
     }
 }

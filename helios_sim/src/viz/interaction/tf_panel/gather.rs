@@ -16,8 +16,8 @@ use crate::viz::interaction::tf_panel::model::{
 use crate::viz::interaction::tf_panel::TfPanelModel;
 use crate::viz::interaction::tuning::{require_positive, InteractionTuningError};
 
-use helios_core::data::{AgentId, MonotonicTime};
-use helios_core::frames::transforms::tf::stamped::{DynamicEdgeStats, EdgeKindTag, FrameEdge};
+use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::spatial::transforms::tf::stamped::{DynamicEdgeStats, EdgeKindTag, FrameEdge};
 
 use bevy::prelude::*;
 use serde::Deserialize;
@@ -214,7 +214,7 @@ fn edge_health(
 mod tests {
     use super::*;
 
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::FrameId;
 
     /// A dynamic-style edge `child -> parent`; kind supplied per test.
     fn edge(child: FrameId, parent: FrameId) -> FrameEdge {
@@ -244,7 +244,7 @@ mod tests {
         let agent = AgentId::new("robot_1");
         let base_link = FrameId::base_link(agent.clone());
         let odom = FrameId::odom(agent.clone());
-        let imu = FrameId::sensor(agent.clone(), "imu");
+        let imu = FrameId::agent(agent.clone(), "imu");
 
         let graph = build_agent_graph(
             agent.clone(),

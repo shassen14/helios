@@ -1,0 +1,195 @@
+//! The built-in measurement kinds' factories and registration.
+
+use super::config::{AccelerometerConfig, MagnetometerConfig};
+
+use crate::assembly::{no_check, BuildContext, NoParams};
+use crate::nodes::estimation::EstimatorComponents;
+
+use helios_core::estimation::measurement::{
+    accelerometer::SpecificForceModel, gps::GpsPositionModel, gyroscope::AngularRateModel,
+    magnetometer::MagneticFieldModel, MeasurementModel,
+};
+use helios_core::interchange::measurement::sensor::{
+    Acceleration, AngularRate, GpsPosition, MagneticField,
+};
+use helios_core::spatial::FrameId;
+
+use nalgebra::Vector3;
+
+/// The `kind` of a GNSS position model, reading `GpsPosition`.
+pub(crate) const GPS_POSITION_KIND: &str = "gps_position";
+/// The `kind` of a specific-force model, reading `Acceleration`.
+pub(crate) const ACCELEROMETER_KIND: &str = "accelerometer";
+/// The `kind` of an angular-rate model, reading `AngularRate`.
+pub(crate) const GYROSCOPE_KIND: &str = "gyroscope";
+/// The `kind` of a magnetic-field model, reading `MagneticField`.
+pub(crate) const MAGNETOMETER_KIND: &str = "magnetometer";
+
+pub(in crate::nodes::estimation) fn register(components: &mut EstimatorComponents) {
+    const ONCE: &str = "built-in measurement kinds are registered once, by the default components";
+    components
+        .register_measurement::<GpsPosition, _, _, _>(
+            GPS_POSITION_KIND,
+            Some(GpsPositionModel::MOUNT_CONVENTION),
+            no_check,
+            build_gps_position,
+        )
+        .expect(ONCE);
+    components
+        .register_measurement::<Acceleration, _, _, _>(
+            ACCELEROMETER_KIND,
+            Some(SpecificForceModel::MOUNT_CONVENTION),
+            no_check,
+            build_accelerometer,
+        )
+        .expect(ONCE);
+    components
+        .register_measurement::<AngularRate, _, _, _>(
+            GYROSCOPE_KIND,
+            Some(AngularRateModel::MOUNT_CONVENTION),
+            no_check,
+            build_gyroscope,
+        )
+        .expect(ONCE);
+    components
+        .register_measurement::<MagneticField, _, _, _>(
+            MAGNETOMETER_KIND,
+            Some(MagneticFieldModel::MOUNT_CONVENTION),
+            no_check,
+            build_magnetometer,
+        )
+        .expect(ONCE);
+}
+
+fn build_gps_position(
+    _config: NoParams,
+    ctx: &BuildContext<'_>,
+    sensor: &FrameId,
+) -> Result<Box<dyn MeasurementModel>, String> {
+    Ok(Box::new(GpsPositionModel {
+        frames: ctx.frames().clone(),
+        sensor: sensor.clone(),
+    }))
+}
+
+fn build_accelerometer(
+    config: AccelerometerConfig,
+    ctx: &BuildContext<'_>,
+    sensor: &FrameId,
+) -> Result<Box<dyn MeasurementModel>, String> {
+    Ok(Box::new(SpecificForceModel {
+        frames: ctx.frames().clone(),
+        sensor: sensor.clone(),
+        gravity_world: Vector3::from(config.gravity_enu),
+    }))
+}
+
+fn build_gyroscope(
+    _config: NoParams,
+    ctx: &BuildContext<'_>,
+    sensor: &FrameId,
+) -> Result<Box<dyn MeasurementModel>, String> {
+    Ok(Box::new(AngularRateModel {
+        body: ctx.frames().body.clone(),
+        sensor: sensor.clone(),
+    }))
+}
+
+fn build_magnetometer(
+    config: MagnetometerConfig,
+    ctx: &BuildContext<'_>,
+    sensor: &FrameId,
+) -> Result<Box<dyn MeasurementModel>, String> {
+    Ok(Box::new(MagneticFieldModel {
+        frames: ctx.frames().clone(),
+        sensor: sensor.clone(),
+        world_magnetic_field: Vector3::from(config.magnetic_field_enu),
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::assembly::{AutonomyRegistry, ComponentError};
+    use crate::nodes::estimation::measurement::{MeasurementSource, MeasurementWiring};
+    use crate::port::ChannelKey;
+
+    use helios_core::interchange::measurement::envelope::SensorReading;
+    use helios_core::interchange::measurement::sensor::SensorPayload;
+    use helios_core::prelude::AgentId;
+
+    use nalgebra::DMatrix;
+
+    const NODE: &str = "primary";
+    /// The kind of the node drawing the component; the table never reads it.
+    const NODE_KIND: &str = "TestEstimator";
+    const INPUT: &str = "sensor";
+
+    fn build(section: &str) -> Result<Box<dyn MeasurementSource>, ComponentError> {
+        let registry = AutonomyRegistry::default();
+        let section: toml::Table = toml::from_str(section).expect("test TOML parses");
+        let ctx = BuildContext::in_odom(AgentId::new("car"), NODE, NODE_KIND);
+        let wiring = MeasurementWiring {
+            input: INPUT.to_string(),
+            mount: FrameId::agent(AgentId::new("car"), INPUT),
+            noise: DMatrix::identity(3, 3),
+        };
+        registry
+            .extension::<EstimatorComponents>()
+            .expect("the default registry has estimator components")
+            .parse_measurement("aiding.sensor.model", section, &ctx)
+            .and_then(|parsed| parsed.deferred.build(&ctx, wiring))
+    }
+
+    fn reads<P: SensorPayload>(source: &dyn MeasurementSource) -> bool {
+        let key = ChannelKey::measurement::<Vec<SensorReading<P>>>(INPUT);
+        source.channel() == &key
+    }
+
+    /// Each built-in kind reads the payload it was registered with: the pairing
+    /// the old `sensor_payload` key left to config.
+    #[test]
+    fn each_built_in_kind_reads_its_own_payload() {
+        let gps = build(&format!("kind = \"{GPS_POSITION_KIND}\"")).expect("gps builds");
+        let accel = build(&format!("kind = \"{ACCELEROMETER_KIND}\"")).expect("accel builds");
+        let gyro = build(&format!("kind = \"{GYROSCOPE_KIND}\"")).expect("gyro builds");
+        let mag = build(&format!(
+            "kind = \"{MAGNETOMETER_KIND}\"\nmagnetic_field_enu = [0.0, 22.0, -42.0]"
+        ))
+        .expect("mag builds");
+
+        assert!(reads::<GpsPosition>(&*gps));
+        assert!(reads::<Acceleration>(&*accel));
+        assert!(reads::<AngularRate>(&*gyro));
+        assert!(reads::<MagneticField>(&*mag));
+    }
+
+    /// The magnetometer has no default field; leaving it out is a config error
+    /// at its path, not a model believing in zero field.
+    #[test]
+    fn the_magnetometer_requires_its_field() {
+        let Err(err) = build(&format!("kind = \"{MAGNETOMETER_KIND}\"")) else {
+            panic!("a magnetometer without a field must not build");
+        };
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "nodes.{NODE}.aiding.sensor.model (kind '{MAGNETOMETER_KIND}'): \
+                 missing field `magnetic_field_enu`"
+            )
+        );
+    }
+
+    /// A model taking no parameters rejects one, rather than ignore a key the
+    /// author thought did something (gravity on a GPS model, say).
+    #[test]
+    fn a_parameterless_model_rejects_a_parameter() {
+        let Err(err) = build(&format!(
+            "kind = \"{GPS_POSITION_KIND}\"\ngravity_enu = [0.0, 0.0, -9.81]"
+        )) else {
+            panic!("a stray key must not build");
+        };
+        assert!(matches!(err, ComponentError::InvalidConfig { .. }), "{err}");
+    }
+}

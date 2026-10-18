@@ -4,13 +4,15 @@
 //! The pipeline is a black box with three openings, and every module here
 //! serves exactly one of them:
 //!
-//! - **ingress** — host state and intent flow *in*. [`spawn`] assembles the
-//!   pipeline and its odom/actuator components at scene-build; [`goal_input`]
-//!   feeds the mission goal each tick.
+//! - **ingress** — body measurements and operator inputs flow *in*. [`spawn`]
+//!   assembles the pipeline and its actuator components at scene-build;
+//!   [`goal_input`] feeds the mission goal each tick.
 //! - **tick** — [`tick`] advances every pipeline one step per `FixedUpdate`.
 //! - **egress** — pipeline results flow *out*. [`actuator_output`] copies the
-//!   latest actuator command into the actuation component; [`odom_output`]
-//!   writes the pose estimate onto the odom frame.
+//!   latest actuator command into the actuation component; [`observation_output`]
+//!   collects what every pipeline recorded into one batch for sinks;
+//!   [`observation_sinks`] registers those sinks, tells each pipeline what
+//!   they asked for, and feeds them the batch.
 //!
 //! Each runtime module is named for the `SimulationSet` it runs in, so this
 //! module list mirrors the schedule. [`BrainBridgePlugin`] registers them all.
@@ -19,20 +21,22 @@ pub mod actuator_output;
 pub mod components;
 pub mod goal_input;
 pub mod host_input_publisher;
-pub mod odom_output;
+pub mod observation_output;
+pub mod observation_sinks;
 pub mod sensor_publisher;
 pub mod spawn;
 pub mod tick;
 
 pub use actuator_output::publish_pipeline_actuators;
-pub use components::{
-    AgentIdComponent, AutonomyPipelineComponent, OdomFrameOf, SensorPublishChannel,
-};
+pub use components::{AgentIdComponent, AutonomyPipelineComponent, SensorPublishChannel};
 pub use goal_input::{dispatch_configured_goals, forward_goal_events};
 pub use host_input_publisher::HostInputPublisher;
-pub use odom_output::update_odom_frames;
+pub use observation_output::{drain_observations, ObservationBatch};
+pub use observation_sinks::{
+    watch_requested_observables, HostWatchRequest, ObservationSinkAppExt, RegisteredSink,
+};
 pub use sensor_publisher::SensorPublisher;
-pub use spawn::{spawn_actuator_command, spawn_autonomy_pipeline, spawn_odom_frames};
+pub use spawn::{spawn_actuator_command, spawn_autonomy_pipeline};
 pub use tick::run_pipeline_tick;
 
 use crate::core::events::GoalCommandEvent;
@@ -48,34 +52,47 @@ pub struct BrainBridgePlugin;
 
 impl Plugin for BrainBridgePlugin {
     fn build(&self, app: &mut App) {
+        // The sinks' joined request. It exists from the start, so with no sink
+        // registered the pipelines watch nothing.
+        app.init_resource::<HostWatchRequest>();
+
         // Scene-build spawns. `SpawnPipeline` runs first (assembly reads the
-        // sensors' channels), then odom + actuator-command bind to the fresh
-        // pipeline. Both are independent, so they share the `BindPipeline` pass.
+        // sensors' channels), then the actuator command binds to the fresh
+        // pipeline, and the pipeline is told what the sinks asked to watch.
+        // Both are independent, so they share the `BindPipeline` pass.
         app.add_systems(
             OnEnter(AppState::SceneBuilding),
             (
                 spawn_autonomy_pipeline.in_set(SceneBuildSet::SpawnPipeline),
-                spawn_odom_frames.in_set(SceneBuildSet::BindPipeline),
                 spawn_actuator_command.in_set(SceneBuildSet::BindPipeline),
+                watch_requested_observables.in_set(SceneBuildSet::BindPipeline),
             ),
         );
 
-        // The whole-brain tick, then the odom write. Chained: `update_odom_frames`
-        // must see the pose `run_pipeline_tick` just produced (see odom_output).
+        // The tick's observations. The batch exists from the start, so a
+        // reader never finds it missing.
+        app.init_resource::<ObservationBatch>();
+
+        // The whole-brain tick, then the observation drain. Chained: the drain
+        // reads the observations `run_pipeline_tick` just produced (see
+        // observation_output).
         app.add_systems(
             FixedUpdate,
-            (run_pipeline_tick, update_odom_frames)
+            (run_pipeline_tick, drain_observations)
                 .chain()
                 .in_set(SimulationSet::BrainTick)
                 .run_if(in_state(AppState::Running)),
         );
 
-        // Goal ingress. `add_message` is the *sole* registration of
+        // The goal message. `add_message` is the *sole* registration of
         // `GoalCommandEvent` now that the old PlanningPlugin is gone — dropping
-        // it breaks goal forwarding silently, so a test guards it below. Chained:
-        // dispatch writes an event that forward reads the same tick, and a Bevy
-        // message is only readable this tick if its writer ran first.
-        app.add_message::<GoalCommandEvent>().add_systems(
+        // it breaks goal forwarding silently, so a test guards it below.
+        app.add_message::<GoalCommandEvent>();
+
+        // Goal ingress. Chained: dispatch writes an event that forward reads
+        // the same tick, and a Bevy message is only readable this tick if its
+        // writer ran first.
+        app.add_systems(
             FixedUpdate,
             (dispatch_configured_goals, forward_goal_events)
                 .chain()

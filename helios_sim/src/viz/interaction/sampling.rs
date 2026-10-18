@@ -85,7 +85,7 @@ pub(crate) fn sample_actions(
 mod tests {
     use super::*;
 
-    use crate::viz::interaction::actions::handle::{ActionId, ActionMetadata};
+    use crate::viz::{interaction::actions::handle::ActionMetadata, live::map::TOGGLE_MAP};
 
     fn button(default_key: KeyCode) -> ActionMetadata {
         ActionMetadata {
@@ -100,7 +100,7 @@ mod tests {
     /// binding table. The returned handle is that action's.
     fn single_button(key: KeyCode) -> (ActionRegistry, KeyBindings, ActionHandle) {
         let mut registry = ActionRegistry::default();
-        let handle = registry.register(ActionId("viz.toggle_map"), button(key));
+        let handle = registry.register(TOGGLE_MAP, button(key));
         let bindings = KeyBindings::from_action_keys(vec![key]);
         (registry, bindings, handle)
     }

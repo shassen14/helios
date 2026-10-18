@@ -1,7 +1,8 @@
-use helios_core::data::AgentId;
-use helios_runtime::{pipeline::AutonomyPipeline, tf_service::TfService};
+use helios_core::prelude::{AgentId, FrameId, SensorReading};
+use helios_runtime::port::ChannelKey;
+use helios_runtime::{pipeline::AutonomyPipeline, tf_service::TfService, BodyChannel, Provenance};
 
-use bevy::prelude::{Component, Entity};
+use bevy::prelude::Component;
 
 /// Holds the fully-assembled autonomy pipeline for an agent.
 /// Written at spawn time by `spawn_autonomy_pipeline`. Ticked every frame
@@ -64,11 +65,50 @@ pub struct PipelineBuildFailed {
     pub errors: Vec<String>,
 }
 
-/// Declares the bus channel name this sensor publishes on.
-/// Attached to GPS, magnetometer, and LiDAR sensor child entities at spawn time.
-/// Queried by `spawn_autonomy_pipeline` to build `sensor_frame_handles` for `build_pipeline`.
+/// The channel a sensor publishes on, described as the body publishes it:
+/// typed by the sensor's payload, from the installation the sensor belongs to,
+/// simulated, and mounted at the sensor's frame.
+///
+/// Attached to every sensor entity at spawn, where the payload type, the
+/// installation, the channel name from the fit and the sensor's frame are all
+/// known. Read twice:
+/// `spawn_autonomy_pipeline` collects each agent's into the body it builds the
+/// pipeline against, and [`SensorPublisher`](super::SensorPublisher) writes to
+/// its key. One description serves both, so the channel the build checked is
+/// the channel written.
 #[derive(Component, Clone)]
-pub struct SensorPublishChannel(pub String);
+pub struct SensorPublishChannel {
+    description: BodyChannel,
+    /// The description's mount, held unwrapped: every measurement channel has one,
+    /// and each reading's header names it.
+    mount: FrameId,
+}
+
+impl SensorPublishChannel {
+    /// Channel `name` of installation `unit`, carrying batches of `P` readings
+    /// as [`SensorPublisher`](super::SensorPublisher) writes them, measured in
+    /// `mount`, the installation's frame.
+    pub fn new<P: Send + Sync + 'static>(name: &str, unit: &str, mount: FrameId) -> Self {
+        Self {
+            description: BodyChannel::new(
+                ChannelKey::measurement::<Vec<SensorReading<P>>>(name),
+                unit,
+                Provenance::Simulated,
+            )
+            .with_mount(mount.clone()),
+            mount,
+        }
+    }
+
+    pub fn description(&self) -> &BodyChannel {
+        &self.description
+    }
+
+    /// The frame the channel's readings are measured in.
+    pub fn mount(&self) -> &FrameId {
+        &self.mount
+    }
+}
 
 /// Declares the bus channel names the host writes this agent's mission goal to.
 /// The host-input counterpart to [`SensorPublishChannel`]: that one names where a
@@ -86,11 +126,3 @@ pub struct MissionGoalChannels(pub Vec<String>);
 
 #[derive(Component)]
 pub struct TeleopControlled;
-
-/// Marker on a virtual "odom frame" entity that links it back to its agent.
-///
-/// The odom entity carries `TrackedFrame` + `Transform` + `GlobalTransform`.
-/// Its `Transform` is updated every tick by `update_odom_frames` to match
-/// the pipeline's current pose estimate.
-#[derive(Component)]
-pub struct OdomFrameOf(pub Entity);

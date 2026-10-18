@@ -1,9 +1,39 @@
-run_name = "smoke"
-scenario = "sim/scenarios/00_tutorial_showcase.toml"
-status = "passed"
-simulated_duration_secs = 5.0
-wall_duration_secs = 0.811815333
-assertions = []
+run_name = "zz_stress_channels"
+scenario = "sim/scenarios/01_proving_ground.toml"
+status = "failed"
+setup_failures = ["on_pipeline_built failed: the run can't judge these assertions: assertion 1 on 'agent.ProvingCar.channel.tf': it carries helios_core::spatial::transforms::tf::stamped::StampedTransform, which has no extractor; assertion 2 on 'agent.ProvingCar.channel.estimate': it carries helios_core::spatial::FrameAwareState, which has no extractor; assertion 3 on 'agent.ProvingCar.channel.truth.tf': no node writes it, and only channels a node writes are recorded; assertion 4 on 'agent.ProvingCar.channel.no_such_channel': its agent reports nothing there; assertion 5 on 'agent.ProvingCar.node.estimate_relay.estimate': a channel is not a node's leaf; to watch what the node writes there, use 'agent.ProvingCar.channel.estimate'"]
+simulated_duration_secs = 0.0
+wall_duration_secs = 0.066941
 
 [terminated_by]
-kind = "time_budget"
+kind = "aborted"
+
+[[assertions]]
+target = "agent.ProvingCar.channel.tf"
+condition = "less_than"
+expected = 1.0
+status = "unjudged"
+
+[[assertions]]
+target = "agent.ProvingCar.channel.estimate"
+condition = "less_than"
+expected = 1.0
+status = "unjudged"
+
+[[assertions]]
+target = "agent.ProvingCar.channel.truth.tf"
+condition = "less_than"
+expected = 1.0
+status = "unjudged"
+
+[[assertions]]
+target = "agent.ProvingCar.channel.no_such_channel"
+condition = "less_than"
+expected = 1.0
+status = "unjudged"
+
+[[assertions]]
+target = "agent.ProvingCar.node.estimate_relay.estimate"
+condition = "less_than"
+expected = 1.0
+status = "unjudged"

@@ -7,9 +7,16 @@
 //! N numbers). Both ends are "reduce a slice of `f64` to one `f64`," so the same
 //! `StatisticTable` does both jobs — one `mean`, two levels.
 //!
+//! What a run file's assertions and measures reduce is [`within_run`]'s
+//! closed `Reducer` set instead: it needs the samples' stamps and the window
+//! (`final`, `time_above`, `max_gap`), keeps each value's kind, and lets a
+//! NaN sample through where this table's `min` and `max` skip it.
+//!
 //! Mirrors `assertion::extract`: function-pointer reducers (not `Fn`),
 //! last-writer-wins `register`, a `Default`/`new` empty table, and a
 //! `standard_statistics()` constructor for the built-in set.
+
+pub mod within_run;
 
 use std::collections::HashMap;
 

@@ -68,7 +68,8 @@ mod tests {
     use super::*;
     use crate::control::commands::BodyTwist;
     use crate::estimation::schema::StateSchema;
-    use crate::frames::FrameAwareState;
+    use crate::prelude::MonotonicTime;
+    use crate::spatial::FrameAwareState;
 
     use std::sync::Arc;
 
@@ -81,7 +82,7 @@ mod tests {
     // Feedforward never reads the estimate, so an empty state suffices — the point
     // is precisely that the output depends on the reference alone.
     fn empty_state() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(StateSchema::compose(vec![])), 0.0)
+        FrameAwareState::from_schema(Arc::new(StateSchema::compose(vec![])), MonotonicTime(0.0))
     }
 
     fn reference(vx: f64) -> ControlInputs<BodyTwistRef> {

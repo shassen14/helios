@@ -20,7 +20,7 @@ use helios_sim::prelude::AppState;
 use bevy::prelude::*;
 
 /// Registers the summarizer at `OnEnter(AppState::Flushing)`. Added by the bin
-/// opt-in, alongside `TestRunnerPlugin`.
+/// opt-in, alongside `add_test_run`.
 pub struct MetricsPlugin;
 
 impl Plugin for MetricsPlugin {

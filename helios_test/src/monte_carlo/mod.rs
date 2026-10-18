@@ -6,7 +6,7 @@
 //! [`seed_for_run`] is that pure mapping from `(master seed, run index)` to a
 //! per-run seed.
 
-use helios_core::utils::determinism::derive_seed;
+use helios_core::kernel::determinism::derive_seed;
 
 /// Derive the seed for one run of a Monte Carlo batch from the batch's master
 /// `base_seed` and the run's `run_index`.

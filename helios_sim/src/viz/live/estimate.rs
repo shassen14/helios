@@ -12,9 +12,9 @@
 
 use bevy::prelude::*;
 
-use helios_core::frames::conventions::{Enu, Flu};
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::spatial::conventions::{Enu, Flu};
+use helios_core::spatial::transforms::Convention;
+use helios_core::spatial::FrameId;
 
 use crate::{
     core::transforms::{frame_triad_to_bevy, freevector_bevy_to_vec3, point_bevy_to_vec3},
@@ -31,13 +31,13 @@ pub fn estimate_update_system(
         let agent = agent_id.0.clone();
         let body = FrameId::base_link(agent.clone());
         let Some(pose) = pipeline.0.read_state().and_then(|st| {
-            st.value
-                .pose::<Flu, Enu>(body.clone(), FrameId::odom(agent.clone()))
+            let root = st.value.reference_frame()?;
+            st.value.pose::<Flu, Enu>(body.clone(), root)
         }) else {
             continue;
         };
 
-        // The estimate is base_link (FLU) relative to odom (ENU); its FLU
+        // The estimate is base_link (FLU) relative to its root (ENU); its FLU
         // convention rides in the pose's rotation, so the triad crosses one-sided
         // and points where the brain believes the body points.
         let Some((origin, axes)) = frame_triad_to_bevy(pose.into_inner(), Convention::Enu) else {

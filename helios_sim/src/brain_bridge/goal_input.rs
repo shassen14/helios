@@ -12,9 +12,9 @@ use crate::core::components::GoalDispatched;
 use crate::core::events::GoalCommandEvent;
 use crate::prelude::HostInputPublisher;
 
-use helios_core::data::MonotonicTime;
+use helios_core::prelude::MonotonicTime;
 use helios_core::prelude::PlannerGoal;
-use helios_runtime::port::InternalChannel;
+use helios_runtime::port::ChannelKey;
 
 use bevy::prelude::*;
 
@@ -46,7 +46,7 @@ pub fn forward_goal_events(
         for channel in &channels.0 {
             host_inputs.publish(
                 event.agent,
-                InternalChannel::named::<PlannerGoal>(channel.as_str()),
+                ChannelKey::internal::<PlannerGoal>(channel.as_str()),
                 event.goal.clone(),
                 timestamp,
             );
@@ -84,7 +84,7 @@ pub fn dispatch_configured_goals(
 mod tests {
     use super::*;
 
-    use helios_core::planning::types::PlannerGoal;
+    use helios_core::interchange::path::PlannerGoal;
     use nalgebra::Vector2;
 
     /// Counts `GoalCommandEvent`s seen across ticks. Chained after the system

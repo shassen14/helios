@@ -26,14 +26,13 @@
 
 use std::sync::Mutex;
 
-use helios_core::data::TfProvider;
 use helios_core::planning::types::PlannerResult;
 use helios_core::planning::SearchPlanner;
+use helios_core::prelude::TfProvider;
 
 use super::input::SearchPlannerInputBuilder;
-use crate::pipeline::descriptor::AlgorithmNodePortDescriptor;
 use crate::pipeline::node::{PipelineNode, TickContext};
-use crate::port::{ChannelKey, InternalChannel, PortBus, PortDescriptor};
+use crate::port::{ChannelKey, PortBus, PortDescriptor, PortDescriptorBuilder};
 use crate::stamped::{Health, Stamped};
 
 /// Pipeline node wrapping any search-family planner.
@@ -59,20 +58,20 @@ impl SearchPlannerNode {
         name: impl Into<String>,
         planner: Box<dyn SearchPlanner>,
         input_builder: Box<dyn SearchPlannerInputBuilder>,
-        path_channel: InternalChannel,
+        path_channel: ChannelKey,
     ) -> Self {
-        let descriptor = AlgorithmNodePortDescriptor::new()
+        let descriptor = PortDescriptorBuilder::algorithm()
             .inputs_from_slices(
                 input_builder.required_channels(),
                 input_builder.optional_channels(),
             )
-            .output_internal(path_channel.clone())
+            .output(path_channel.clone())
             .build();
         Self {
             name: name.into(),
             planner: Mutex::new(planner),
             input_builder,
-            path_channel: path_channel.into(),
+            path_channel,
             descriptor,
         }
     }
@@ -114,7 +113,13 @@ impl PipelineNode for SearchPlannerNode {
             health: Health::Ok,
             producer: tick.node_id,
         };
-        let _ = bus.write(self.path_channel.clone(), stamped);
+        if let Err(error) = bus.write(self.path_channel.clone(), stamped) {
+            tracing::warn!(
+                channel = %self.path_channel,
+                error = %error,
+                "planner path output channel write failed"
+            );
+        }
     }
 }
 
@@ -129,17 +134,19 @@ mod tests {
     //!   - is a no-op on `PlannerResult::PathStillValid` (and other Hold variants)
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
 
-    use helios_core::data::primitives::MonotonicTime;
-    use helios_core::data::AgentId;
     use helios_core::estimation::carrier::kinematic_carrier_schema;
-    use helios_core::frames::conventions::Enu;
-    use helios_core::frames::quantities::Point;
-    use helios_core::frames::{FrameAwareState, FrameId};
-    use helios_core::mapping::MapData;
-    use helios_core::planning::types::Path;
+
+    use helios_core::estimation::frames::EstimationFrames;
+    use helios_core::interchange::path::Path;
+    use helios_core::interchange::perception::map::MapData;
     use helios_core::planning::SearchPlannerInputs;
+    use helios_core::prelude::AgentId;
+    use helios_core::spatial::conventions::Enu;
+    use helios_core::spatial::primitives::MonotonicTime;
+    use helios_core::spatial::quantities::Point;
+    use helios_core::spatial::{FrameAwareState, FrameId};
 
     use nalgebra::{DMatrix, Isometry3};
     use std::sync::Mutex as StdMutex;
@@ -213,8 +220,10 @@ mod tests {
             Some(SearchPlannerInputs {
                 // A placeholder kinematic state; this mock never reads its contents.
                 state: FrameAwareState::from_schema(
-                    std::sync::Arc::new(kinematic_carrier_schema(AgentId::new("test_agent"))),
-                    0.0,
+                    std::sync::Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(
+                        AgentId::new("test_agent"),
+                    ))),
+                    MonotonicTime(0.0),
                 ),
                 map: MapData::OccupancyGrid2D {
                     origin: Isometry3::identity(),
@@ -251,30 +260,17 @@ mod tests {
 
     // --- Helpers ---
 
-    fn path_channel() -> InternalChannel {
-        InternalChannel::named::<Path>("raw")
-    }
-
-    fn path_channel_key() -> ChannelKey {
-        path_channel().into()
+    fn path_channel() -> ChannelKey {
+        ChannelKey::internal::<Path>("raw")
     }
 
     fn make_bus() -> PortBus {
-        let descriptor = PortDescriptor {
-            required_inputs: vec![],
-            optional_inputs: vec![],
-            outputs: vec![path_channel_key()],
-            rate: None,
-        };
-        PortBus::new(&[descriptor])
+        let descriptor = PortDescriptor::new(vec![], vec![], vec![path_channel()], None);
+        PortBus::of_descriptors(&[descriptor])
     }
 
-    fn tick_at(now: f64, dt: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt,
-            node_id: 7,
-        }
+    fn tick_at(now: f64, dt: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), dt, 7)
     }
 
     fn dummy_path() -> Path {
@@ -295,8 +291,14 @@ mod tests {
             Box::new(AlwaysReadyBuilder::new()),
             path_channel(),
         );
-        assert_eq!(node.port_descriptor().outputs, vec![path_channel_key()]);
-        assert!(node.port_descriptor().rate.is_none());
+        assert_eq!(
+            node.port_descriptor()
+                .outputs()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![path_channel()]
+        );
+        assert!(node.port_descriptor().rate().is_none());
     }
 
     #[test]
@@ -311,7 +313,7 @@ mod tests {
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
 
         let published = bus
-            .read::<Path>(path_channel_key())
+            .read::<Path>(path_channel())
             .expect("node must publish a Path on PlannerResult::Path");
         assert!((published.timestamp.0 - 1.0).abs() < 1e-9);
         assert_eq!(published.producer, 7);
@@ -329,7 +331,7 @@ mod tests {
         );
         let bus = make_bus();
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<Path>(path_channel_key()).is_some());
+        assert!(bus.read::<Path>(path_channel()).is_some());
     }
 
     #[test]
@@ -342,7 +344,7 @@ mod tests {
         );
         let bus = make_bus();
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<Path>(path_channel_key()).is_none());
+        assert!(bus.read::<Path>(path_channel()).is_none());
     }
 
     #[test]
@@ -361,6 +363,6 @@ mod tests {
         );
         let bus = make_bus();
         node.execute(&bus, &MockRuntime, tick_at(1.0, 0.1));
-        assert!(bus.read::<Path>(path_channel_key()).is_none());
+        assert!(bus.read::<Path>(path_channel()).is_none());
     }
 }

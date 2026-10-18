@@ -18,14 +18,13 @@ use std::sync::Arc;
 use helios_core::{
     control::commands::{BodyTwist, TwistIntent},
     control::reference::BodyTwistRef,
-    data::TfProvider,
-    frames::quantities::FluVector,
+    prelude::TfProvider,
+    spatial::quantities::FluVector,
 };
 
 use crate::{
-    pipeline::descriptor::AlgorithmNodePortDescriptor,
-    port::{ChannelError, InternalChannel, PortBus},
-    ChannelKey, PipelineNode, PortDescriptor, Stamped, TickContext,
+    port::{ChannelKey, PortBus, PortDescriptorBuilder},
+    PipelineNode, PortDescriptor, Stamped, TickContext,
 };
 
 /// Per-DOF scale from dimensionless intent to a body twist: translation in m/s,
@@ -54,20 +53,20 @@ pub(crate) struct TwistTeleopNode {
 impl TwistTeleopNode {
     pub(crate) fn new(
         name: impl Into<Arc<str>>,
-        intent: InternalChannel,
-        output: InternalChannel,
+        intent: ChannelKey,
+        output: ChannelKey,
         scale: TwistScale,
     ) -> Self {
-        let descriptor = AlgorithmNodePortDescriptor::new()
-            .input_internal(intent.clone())
-            .output_internal(output.clone())
+        let descriptor = PortDescriptorBuilder::algorithm()
+            .input(intent.clone())
+            .output(output.clone())
             .build();
 
         Self {
             name: name.into(),
             descriptor,
-            intent_key: intent.into(),
-            output: output.into(),
+            intent_key: intent,
+            output,
             scale,
         }
     }
@@ -113,9 +112,8 @@ impl PipelineNode for TwistTeleopNode {
             producer: tick.node_id,
         };
 
-        if let Err(ChannelError::UnknownChannel) = bus.write(self.output.clone(), stamped) {
-            tracing::warn!(channel = %self.output, "teleop mapper
-  output channel is not wired into the DAG");
+        if let Err(error) = bus.write(self.output.clone(), stamped) {
+            tracing::warn!(channel = %self.output, error = %error, "teleop mapper output channel write failed");
         }
     }
 }
@@ -128,12 +126,12 @@ mod tests {
     //! silent when no intent is present.
 
     use super::*;
-    use helios_core::frames::transforms::{Convention, ErasedTransform};
-    use helios_core::frames::FrameId;
+    use helios_core::spatial::transforms::{Convention, ErasedTransform};
+    use helios_core::spatial::FrameId;
 
     use crate::Health;
 
-    use helios_core::data::primitives::MonotonicTime;
+    use helios_core::spatial::primitives::MonotonicTime;
 
     use nalgebra::Isometry3;
 
@@ -170,22 +168,22 @@ mod tests {
     fn make_node(scale: TwistScale) -> TwistTeleopNode {
         TwistTeleopNode::new(
             "teleop_mapper",
-            InternalChannel::of::<TwistIntent>(),
-            InternalChannel::of::<BodyTwistRef>(),
+            ChannelKey::internal_of::<TwistIntent>(),
+            ChannelKey::internal_of::<BodyTwistRef>(),
             scale,
         )
     }
 
     fn intent_key() -> ChannelKey {
-        InternalChannel::of::<TwistIntent>().into()
+        ChannelKey::internal_of::<TwistIntent>()
     }
 
     fn output_key() -> ChannelKey {
-        InternalChannel::of::<BodyTwistRef>().into()
+        ChannelKey::internal_of::<BodyTwistRef>()
     }
 
     fn bus_for(node: &TwistTeleopNode) -> PortBus {
-        PortBus::new(std::slice::from_ref(node.port_descriptor()))
+        PortBus::of_descriptors(std::slice::from_ref(node.port_descriptor()))
     }
 
     fn write_intent(bus: &PortBus, intent: TwistIntent, timestamp: f64) {
@@ -201,12 +199,8 @@ mod tests {
         .unwrap();
     }
 
-    fn tick_at(now: f64) -> TickContext {
-        TickContext {
-            now: MonotonicTime(now),
-            dt: 0.1,
-            node_id: 7,
-        }
+    fn tick_at(now: f64) -> TickContext<'static> {
+        TickContext::detached(MonotonicTime(now), 0.1, 7)
     }
 
     #[test]
@@ -316,8 +310,11 @@ mod tests {
     fn descriptor_has_intent_input_and_twist_output() {
         let node = make_node(car_scale());
         let d = node.port_descriptor();
-        assert_eq!(d.required_inputs, vec![intent_key()]);
-        assert_eq!(d.outputs, vec![output_key()]);
-        assert!(d.rate.is_none());
+        assert_eq!(
+            d.required_inputs().cloned().collect::<Vec<_>>(),
+            vec![intent_key()]
+        );
+        assert_eq!(d.outputs().cloned().collect::<Vec<_>>(), vec![output_key()]);
+        assert!(d.rate().is_none());
     }
 }

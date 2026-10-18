@@ -1,25 +1,31 @@
 use std::sync::Arc;
 
 use codspeed_criterion_compat::{criterion_group, criterion_main, Criterion};
-use helios_core::state::{Component, Quantity};
+use helios_core::spatial::state::{Component, Quantity};
 use nalgebra::{DMatrix, DVector, Isometry3};
 
-use helios_core::data::ports::TfProvider;
-use helios_core::data::MonotonicTime;
+use helios_core::estimation::dynamics::{integrate_derivatives, ContinuousDynamics};
 use helios_core::estimation::filters::ekf::ExtendedKalmanFilter;
 use helios_core::estimation::filters::ukf::{UkfParams, UnscentedKalmanFilter};
 use helios_core::estimation::measurement::{MeasurementModel, Prediction};
-use helios_core::estimation::schema::{MeasurementSchema, StateSchema, StateSchemaBlock};
+use helios_core::estimation::schema::{
+    InputSchema, MeasurementSchema, StateSchema, StateSchemaBlock,
+};
 use helios_core::estimation::{EstimatorInputs, GaussianStateEstimator};
-use helios_core::frames::transforms::{Convention, ErasedTransform};
-use helios_core::frames::{FrameAwareState, FrameId, StateVariable};
+use helios_core::kernel::integrators::Integrator;
 use helios_core::prelude::EstimationDynamics;
+use helios_core::prelude::MonotonicTime;
+use helios_core::spatial::tf::TfProvider;
+use helios_core::spatial::transforms::{Convention, ErasedTransform};
+use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 // =========================================================================
 // == Fixtures (duplicated from test modules — benches are separate) ==
 // =========================================================================
 
 const AT: MonotonicTime = MonotonicTime(0.0);
+/// An arbitrary global frame the bench expresses quantities in.
+const DATUM: &str = "test_datum";
 
 struct IdentityTf;
 
@@ -42,21 +48,21 @@ impl TfProvider for IdentityTf {
 struct ConstantVelocity3D;
 
 impl EstimationDynamics for ConstantVelocity3D {
-    fn get_control_dim(&self) -> usize {
-        0
+    fn input_schema(&self) -> Arc<InputSchema> {
+        Arc::new(InputSchema::compose(vec![]))
     }
 
     fn schema(&self) -> Arc<StateSchema> {
         Arc::new(StateSchema::compose(vec![
             StateSchemaBlock::new(
-                Quantity::Position(FrameId::world()),
+                Quantity::Position(FrameId::global(DATUM)),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
                 DMatrix::identity(3, 3),
             ),
             StateSchemaBlock::new(
-                Quantity::Velocity(FrameId::world()),
+                Quantity::Velocity(FrameId::global(DATUM)),
                 Convention::Enu,
                 None,
                 DVector::zeros(3),
@@ -65,25 +71,25 @@ impl EstimationDynamics for ConstantVelocity3D {
         ]))
     }
 
+    fn propagate(
+        &self,
+        x: &DVector<f64>,
+        u: &DVector<f64>,
+        t: f64,
+        dt: f64,
+        integrator: &dyn Integrator<f64>,
+    ) -> DVector<f64> {
+        integrate_derivatives(self, x, u, t, dt, integrator)
+    }
+}
+
+impl ContinuousDynamics for ConstantVelocity3D {
     fn derivatives(&self, x: &DVector<f64>, _u: &DVector<f64>, _t: f64) -> DVector<f64> {
-        let mut xdot = DVector::zeros(6);
+        let mut xdot = DVector::zeros(x.nrows());
         xdot[0] = x[3];
         xdot[1] = x[4];
         xdot[2] = x[5];
         xdot
-    }
-
-    fn jacobian(
-        &self,
-        _x: &DVector<f64>,
-        _u: &DVector<f64>,
-        _t: f64,
-    ) -> (DMatrix<f64>, DMatrix<f64>) {
-        let mut a = DMatrix::zeros(6, 6);
-        a[(0, 3)] = 1.0;
-        a[(1, 4)] = 1.0;
-        a[(2, 5)] = 1.0;
-        (a, DMatrix::zeros(6, 0))
     }
 }
 
@@ -125,9 +131,9 @@ impl MeasurementModel for Position2DMeasurement {
 
 fn make_state() -> FrameAwareState {
     // Layout is [px, py, pz, vx, vy, vz]; Vx is index 3.
-    let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), 0.0);
+    let mut state = FrameAwareState::from_schema(ConstantVelocity3D.schema(), MonotonicTime(0.0));
     state.set_variable(
-        &StateVariable::new(Quantity::Velocity(FrameId::world()), Component::X),
+        &StateVariable::new(Quantity::Velocity(FrameId::global(DATUM)), Component::X),
         1.0,
     ); // vx = 1.0 m/s
     state

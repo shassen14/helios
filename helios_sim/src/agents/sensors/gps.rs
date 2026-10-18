@@ -3,6 +3,7 @@
 
 use super::state_sensor::{publish_state_sensor, StateSensor};
 
+use crate::config::structs::CHANNEL_FIELD;
 use crate::core::app_state::SimulationSet;
 use crate::core::prng::{MasterSeed, SensorRng};
 use crate::prelude::*;
@@ -11,9 +12,7 @@ use crate::{
     brain_bridge::components::{AgentIdComponent, SensorPublishChannel},
 };
 
-use helios_core::data::sensor::GpsPosition;
-use helios_core::frames::transforms::Convention;
-use helios_core::frames::FrameId;
+use helios_core::interchange::measurement::sensor::GpsPosition;
 use helios_core::sensors::gps::GpsModel;
 
 use nalgebra::{Isometry3, Vector3};
@@ -76,8 +75,17 @@ fn spawn_gps_sensors(
     master_seed: Res<MasterSeed>,
 ) {
     for (agent_entity, agent_name, request, agent_id) in &request_query {
-        for (sensor_name, sensor_config) in &request.0.sensors {
-            if let SensorConfig::Gps(gps_config) = sensor_config {
+        for (sensor_name, installation) in &request.0.sensors {
+            if let SensorDeviceConfig::Gps(gps_config) = &installation.device {
+                let Some(channel) = installation.channel(CHANNEL_FIELD) else {
+                    error!(
+                        "GPS '{}' on agent '{}' has no `{}`. Skipping sensor.",
+                        sensor_name,
+                        agent_name.as_str(),
+                        CHANNEL_FIELD
+                    );
+                    continue;
+                };
                 info!(
                     "  -> Spawning GPS '{}' as child of agent '{}'",
                     sensor_name,
@@ -98,21 +106,23 @@ fn spawn_gps_sensors(
                     continue;
                 };
 
-                let sensor_label = format!("{}/{}", agent_name.as_str(), sensor_name);
+                let sensor_label = format!("{}/{}", agent_id.0, sensor_name);
                 let sensor_rng = SensorRng::from_sensor(master_seed.0, &sensor_label);
 
+                let frame = installation.frame(&agent_id.0, sensor_name);
                 let sensor_entity = commands
                     .spawn((
                         Name::new(sensor_label),
-                        SensorPublishChannel(gps_config.channel.clone()),
+                        SensorPublishChannel::new::<<Gps as StateSensor>::Payload>(
+                            channel,
+                            sensor_name,
+                            frame.id.clone(),
+                        ),
                         Gps::new(model),
                         SensorTimer::from_rate(gps_config.rate),
                         sensor_rng,
-                        TrackedFrame::new(
-                            FrameId::sensor(agent_id.0.clone(), gps_config.channel.clone()),
-                            Convention::Flu,
-                        ),
-                        gps_config.get_relative_pose().to_bevy_local_transform(),
+                        TrackedFrame::new(frame.id, frame.convention),
+                        frame.pose.to_bevy_local_transform(),
                     ))
                     .id();
 

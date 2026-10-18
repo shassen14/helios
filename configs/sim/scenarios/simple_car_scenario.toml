@@ -2,10 +2,11 @@
 duration_seconds = 10.0
 seed = 1337
 
-[[world.terrains]]
-mesh     = "maps/starter_world.glb"
-collider = "maps/starter_world_col.glb"
-medium   = "air"
+[world.layout]
+from = "sim.catalog.worlds.open_field"
+
+[world.semantic_classes]
+from = "runtime.catalog.semantic_classes.default"
 
 [world.atmosphere]
 gravity_enu = [0.0, 0.0, -9.81]  # [east, north, up] m/s²

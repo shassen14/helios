@@ -1,15 +1,19 @@
-use crate::data::ports::TfProvider;
-use crate::data::AgentId;
-use crate::data::MonotonicTime;
+use crate::estimation::frames::EstimationFrames;
+use crate::estimation::imu_mount::sensor_specific_force;
 use crate::estimation::measurement::{MeasurementModel, Prediction, Unavailable};
 use crate::estimation::schema::{MeasurementSchema, MeasurementSchemaBlock};
-use crate::frames::conventions::{Enu, Flu};
-use crate::frames::quantities::FreeVector;
-use crate::frames::transforms::{Convention, Rotation};
-use crate::frames::{FrameAwareState, FrameId};
-use crate::state::Quantity;
+use crate::prelude::MonotonicTime;
+use crate::spatial::conventions::{Enu, Flu};
+use crate::spatial::quantities::FreeVector;
+use crate::spatial::state::Quantity;
+use crate::spatial::tf::TfProvider;
+use crate::spatial::transforms::{Convention, ConventionOf, Rotation};
+use crate::spatial::{FrameAwareState, FrameId};
 
 use nalgebra::{DVector, Vector3};
+
+/// The axes the model reads its sensor's mount in.
+type MountAxes = Flu;
 
 /// What the filter believes an accelerometer reports: **specific force**, the
 /// quantity an accelerometer physically senses.
@@ -30,9 +34,17 @@ use nalgebra::{DVector, Vector3};
 /// the lever-arm terms a sensor mounted off the body origin also feels.
 #[derive(Debug, Clone)]
 pub struct SpecificForceModel {
-    pub agent: AgentId,
+    /// The body the state tracks and the root it holds the body's pose in.
+    pub frames: EstimationFrames,
     pub sensor: FrameId,
     pub gravity_world: Vector3<f64>,
+}
+
+impl SpecificForceModel {
+    /// The axis convention this model reads its sensor's mount in. A host
+    /// checks it against the convention the tf tree holds for the mount
+    /// before the first tick.
+    pub const MOUNT_CONVENTION: Convention = MountAxes::CONVENTION;
 }
 
 impl MeasurementModel for SpecificForceModel {
@@ -43,7 +55,7 @@ impl MeasurementModel for SpecificForceModel {
         let frame = self.sensor.clone();
         let blocks = vec![MeasurementSchemaBlock::new(
             Quantity::SpecificForce(frame),
-            Convention::Flu,
+            Self::MOUNT_CONVENTION,
         )];
 
         MeasurementSchema::compose(blocks)
@@ -64,23 +76,20 @@ impl MeasurementModel for SpecificForceModel {
         let Some(tf) = tf else {
             return Prediction::Unavailable(Unavailable::NoProvider);
         };
-        let body_frame = FrameId::base_link(self.agent.clone());
+        let body_frame = self.frames.body.clone();
 
-        let Some(erased) = tf.get_transform(
-            self.sensor.clone(),
-            FrameId::base_link(self.agent.clone()),
-            at,
-        ) else {
+        let Some(erased) = tf.get_transform(self.sensor.clone(), self.frames.body.clone(), at)
+        else {
             return Prediction::Unavailable(Unavailable::MissingTransform {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
-        let Ok(sensor_in_body) = erased.typed::<Flu, Flu>() else {
+        let Ok(sensor_in_body) = erased.typed::<MountAxes, Flu>() else {
             return Prediction::Unavailable(Unavailable::ConventionMismatch {
                 from: self.sensor.clone(),
-                to: FrameId::base_link(self.agent.clone()),
+                to: self.frames.body.clone(),
             });
         };
 
@@ -104,21 +113,21 @@ impl MeasurementModel for SpecificForceModel {
             .map(FreeVector::into_inner)
             .unwrap_or_default();
         let orientation_body_to_world = filter_state
-            .orientation::<Flu, Enu>(body_frame.clone(), FrameId::odom(self.agent.clone()))
+            .orientation::<Flu, Enu>(body_frame.clone(), self.frames.root.clone())
             .map(Rotation::into_inner)
             .unwrap_or_default();
 
-        let tangential_accel = angular_accel_body.cross(&lever_arm_body);
-        let centripetal_accel = angular_vel_body.cross(&angular_vel_body.cross(&lever_arm_body));
-        let total_kinematic_accel_at_sensor =
-            linear_accel_body + tangential_accel + centripetal_accel;
-
-        let q_body_from_world = orientation_body_to_world.inverse();
-
-        let gravity_effect_in_body = q_body_from_world * self.gravity_world;
-
-        let proper_accel_in_body_frame = total_kinematic_accel_at_sensor - gravity_effect_in_body;
-        let predicted_accel = rot_body_from_sensor.inverse() * proper_accel_in_body_frame;
+        // Specific force at the body origin: kinematic acceleration minus
+        // gravity, both in body axes. The mount adds its lever-arm terms.
+        let gravity_in_body = orientation_body_to_world.inverse() * self.gravity_world;
+        let specific_force_body = linear_accel_body - gravity_in_body;
+        let predicted_accel = sensor_specific_force(
+            &rot_body_from_sensor,
+            &lever_arm_body,
+            &specific_force_body,
+            &angular_vel_body,
+            Some(&angular_accel_body),
+        );
 
         let mut z_pred = DVector::zeros(3);
         z_pred.fixed_rows_mut::<3>(0).copy_from(&predicted_accel);
@@ -129,13 +138,13 @@ impl MeasurementModel for SpecificForceModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data::ports::TfProvider;
-    use crate::data::AgentId;
-    use crate::data::MonotonicTime;
     use crate::estimation::carrier::kinematic_carrier_schema;
-    use crate::frames::transforms::{Convention, ErasedTransform};
-    use crate::frames::{FrameAwareState, FrameId};
-    use crate::state::Quantity;
+    use crate::prelude::AgentId;
+    use crate::prelude::MonotonicTime;
+    use crate::spatial::state::Quantity;
+    use crate::spatial::tf::TfProvider;
+    use crate::spatial::transforms::{Convention, ErasedTransform};
+    use crate::spatial::{FrameAwareState, FrameId};
 
     use nalgebra::{Isometry3, UnitQuaternion};
     use std::f64::consts::FRAC_PI_2;
@@ -146,7 +155,7 @@ mod tests {
     }
 
     fn sensor() -> FrameId {
-        FrameId::sensor(agent(), "imu")
+        FrameId::agent(agent(), "imu")
     }
 
     const AT: MonotonicTime = MonotonicTime(0.0);
@@ -196,7 +205,7 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            let iso = if from.is_sensor() {
+            let iso = if !from.is_base_link() {
                 self.0
             } else {
                 self.0.inverse()
@@ -211,7 +220,7 @@ mod tests {
 
     fn make_model() -> SpecificForceModel {
         SpecificForceModel {
-            agent: agent(),
+            frames: EstimationFrames::odom(agent()),
             sensor: sensor(),
             gravity_world: Vector3::new(0.0, 0.0, -9.81),
         }
@@ -221,7 +230,10 @@ mod tests {
     // body-frame acceleration and angular-acceleration reads have no block here
     // and fall back to zero, as they do against a real INS estimate.
     fn make_state() -> FrameAwareState {
-        FrameAwareState::from_schema(Arc::new(kinematic_carrier_schema(agent())), 0.0)
+        FrameAwareState::from_schema(
+            Arc::new(kinematic_carrier_schema(&EstimationFrames::odom(agent()))),
+            MonotonicTime(0.0),
+        )
     }
 
     #[test]

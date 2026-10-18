@@ -1,18 +1,18 @@
 use bevy::prelude::Resource;
 use figment::value::Value;
-use helios_runtime::config::{AgentBaseConfig, AutonomyStack};
+use helios_runtime::{AgentBaseConfig, AutonomyStackConfig};
 use serde::Deserialize;
 use std::collections::HashMap;
 
 use crate::config::structs::CameraVantage;
 
 use super::{
+    conditions::{AtmosphereConfig, MagneticFieldConfig},
     pose::Pose,
-    sensors::SensorConfig,
+    sensors::SensorInstallationConfig,
     simulation::MetricsConfig,
-    terrain::{AtmosphereConfig, MagneticFieldConfig, TerrainConfig},
     vehicle::Vehicle,
-    world_object::WorldObjectPlacement,
+    world_layout::CatalogRef,
 };
 
 /// The primary Bevy resource holding all configuration for a simulation run.
@@ -69,6 +69,9 @@ pub struct RawScenarioConfig {
 #[serde(deny_unknown_fields)]
 pub struct Simulation {
     pub seed: Option<u64>,
+    /// Simulated seconds a headless `helios_play` run lasts before it exits.
+    /// A windowed run lasts until its window is closed, and a test run ends by
+    /// its run file's termination rules instead.
     pub duration_seconds: f32,
     #[serde(default = "default_frequency_hz")]
     pub frequency_hz: f64,
@@ -100,15 +103,11 @@ fn default_frequency_hz() -> f64 {
     400.0
 }
 
-/// World-level configuration: terrain tiles, atmosphere, and placed objects.
+/// World-level configuration: the placed objects, their class catalog, the
+/// atmosphere, and the magnetic field.
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct World {
-    /// One or more terrain tiles that compose the physical ground.
-    /// Declared with `[[world.terrains]]` in TOML.
-    #[serde(default)]
-    pub terrains: Vec<TerrainConfig>,
-
     /// Lighting, gravity, and atmospheric parameters.
     /// Declared as `[world.atmosphere]` in TOML.
     #[serde(default)]
@@ -119,10 +118,20 @@ pub struct World {
     #[serde(default)]
     pub magnetic_field: MagneticFieldConfig,
 
-    /// Static world objects (signs, buildings, trees, etc.).
-    /// Declared with `[[world.objects]]` in TOML.
+    /// The scene's objects, the ground included:
+    /// `[world.layout] from = "sim.catalog.worlds.<name>"`. Required; without
+    /// it agents spawn over nothing and fall.
+    ///
+    /// Optional here only so the loader can report it missing together with
+    /// every other broken reference, and say how to fix it.
     #[serde(default)]
-    pub objects: Vec<WorldObjectPlacement>,
+    pub layout: Option<CatalogRef>,
+
+    /// The semantic class catalog every label in the run uses:
+    /// `[world.semantic_classes] from = "runtime.catalog.semantic_classes.<name>"`.
+    /// Required, and optional here for the same reason as `layout`.
+    #[serde(default)]
+    pub semantic_classes: Option<CatalogRef>,
 }
 
 /// Full agent configuration for helios_sim.
@@ -134,7 +143,7 @@ pub struct AgentConfig {
     pub goal_pose: Pose,
     pub vehicle: Vehicle,
     #[serde(default)]
-    pub sensors: HashMap<String, SensorConfig>,
+    pub sensors: HashMap<String, SensorInstallationConfig>,
 }
 
 impl AgentConfig {
@@ -142,7 +151,7 @@ impl AgentConfig {
         &self.base.name
     }
 
-    pub fn autonomy_stack(&self) -> &AutonomyStack {
+    pub fn autonomy_stack(&self) -> &AutonomyStackConfig {
         &self.base.autonomy_stack
     }
 }

@@ -6,15 +6,13 @@
 //! on Bevy or Avian3D. See submodules for details.
 
 pub mod control;
-pub mod data;
 pub mod estimation;
-pub mod frames;
-pub mod manifold;
+pub mod following;
+pub mod interchange;
+pub mod kernel;
 pub mod mapping;
-pub mod path_following;
 pub mod planning;
 pub mod plant;
 pub mod prelude;
 pub mod sensors;
-pub mod state;
-pub mod utils;
+pub mod spatial;

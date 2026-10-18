@@ -9,13 +9,13 @@ use super::components::GroundTruthState;
 use super::transforms::{tf_tree_incremental_update_system, tf_tree_structural_system, TfTree};
 use crate::core::app_state::{AssetLoadSet, SimulationSet};
 use crate::core::components::ConfiguredMissionGoal;
-use crate::core::ground_truth::publish_oracle_channels_system;
+use crate::core::ground_truth::publish_truth_channels_system;
 use crate::core::ground_truth_sync_system;
 use crate::core::host::TimePolicy;
 use crate::core::prng::MasterSeed;
 use crate::prelude::*;
 
-use helios_core::data::AgentId;
+use helios_core::prelude::AgentId;
 
 pub struct SimulationSetupPlugin;
 
@@ -71,7 +71,7 @@ impl Plugin for SimulationSetupPlugin {
                     .in_set(SimulationSet::Precomputation)
                     .run_if(in_state(AppState::Running)),
                 ground_truth_sync_system.in_set(SimulationSet::StateSync),
-                publish_oracle_channels_system
+                publish_truth_channels_system
                     .after(ground_truth_sync_system)
                     .in_set(SimulationSet::StateSync)
                     .run_if(in_state(AppState::Running)),
@@ -87,7 +87,7 @@ impl Plugin for SimulationSetupPlugin {
 // Chain the scene-building sets so each pass runs after the previous one's
 // spawns are visible. Every set boundary is a Commands sync point, so a pass
 // that queries the prior pass's inserts (e.g. `SpawnPipeline` reading the
-// sensor channels from `ProcessSensors`) must sit in a later set, not just a
+// measurement channels from `ProcessSensors`) must sit in a later set, not just a
 // later system.
 fn configure_scene_build_sets(app: &mut App) {
     app.configure_sets(
@@ -132,8 +132,11 @@ fn configure_fixed_update_sets(app: &mut App) {
                 // Our system runs IMMEDIATELY AFTER the simulation.
                 SimulationSet::StateSync,
             ),
+            // Feed the observation sinks the tick's batch.
+            SimulationSet::Observation,
             // Observe the fully-settled tick: ground truth and oracle channels
-            // are fresh, so external consumers read the buses here.
+            // are fresh, and the sinks hold the tick, so external consumers
+            // read them here.
             SimulationSet::Validation,
         )
             .chain(), // .chain() enforces the order of the tuples/sets
@@ -279,9 +282,9 @@ fn spawn_agent_shells(mut commands: Commands, config: Res<ScenarioConfig>) {
         commands.spawn((
             Name::new(format!("{}/base_link", agent_config.name())),
             // The agent's canonical frame-scope identity, built once here and read
-            // by every downstream frame producer (topology, sensors, odom,
-            // pipeline). Stamping it on the shell — before any producer runs — is
-            // what leaves no name string in scope for a producer to re-derive a
+            // by every downstream frame producer (topology, sensors, pipeline).
+            // Stamping it on the shell — before any producer runs — is what
+            // leaves no name string in scope for a producer to re-derive a
             // divergent scope from. See `AgentIdComponent`.
             AgentIdComponent(AgentId::new(agent_config.name())),
             GroundTruthState {
@@ -540,6 +543,8 @@ mod tests {
                     .in_set(SimulationSet::BrainOutput),
                 (|mut o: ResMut<SetOrder>| o.0.push("Actuation")).in_set(SimulationSet::Actuation),
                 (|mut o: ResMut<SetOrder>| o.0.push("StateSync")).in_set(SimulationSet::StateSync),
+                (|mut o: ResMut<SetOrder>| o.0.push("Observation"))
+                    .in_set(SimulationSet::Observation),
                 (|mut o: ResMut<SetOrder>| o.0.push("Validation"))
                     .in_set(SimulationSet::Validation),
             ),
@@ -559,6 +564,7 @@ mod tests {
                 "BrainOutput",
                 "Actuation",
                 "StateSync",
+                "Observation",
                 "Validation",
             ],
         );

@@ -7,13 +7,15 @@ pub mod augmentation;
 pub mod carrier;
 pub mod dynamics;
 pub mod filters;
+pub mod frames;
+pub mod imu_mount;
 pub mod measurement;
 pub mod schema;
 
-use crate::data::MonotonicTime;
 use crate::estimation::measurement::MeasurementModel;
-use crate::frames::FrameAwareState;
-use crate::{data::ports::TfProvider, estimation::measurement::Unavailable};
+use crate::prelude::MonotonicTime;
+use crate::spatial::FrameAwareState;
+use crate::{estimation::measurement::Unavailable, spatial::tf::TfProvider};
 
 use nalgebra::{DMatrix, DVector};
 
@@ -31,6 +33,8 @@ pub struct EstimatorInputs {
 /// estimator exposes:
 ///
 /// 1. **`predict`** — propagates `(x, P)` forward using dynamics + control input.
+///    Returns a [`PredictOutcome`]: it skips rather than propagate on a bad step
+///    or a misshapen input, and says which.
 /// 2. **`update`** — fuses one measurement using a [`MeasurementModel`] (the math)
 ///    and a noise covariance `R` (the per-sensor noise). The model does not hold
 ///    `R`; it is supplied per call so one model can serve sensors of differing
@@ -48,8 +52,13 @@ pub struct EstimatorInputs {
 pub trait GaussianStateEstimator: Send + Sync {
     /// Propagates the state and covariance forward by `dt` seconds.
     ///
-    /// On `dt <= 0` the call must be a no-op.
-    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs);
+    /// Returns [`PredictOutcome::Applied`] when `(x, P, t)` moved, or
+    /// [`PredictOutcome::Skipped`] with the [`PredictSkipReason`] when it did not:
+    /// a `dt <= 0` (nothing to propagate), a control vector whose length
+    /// disagrees with the dynamics' input schema, or (sigma-point filters) a
+    /// `P` that cannot be factored. A skip leaves `(x, P, t)` untouched. A misshapen input is never padded with zeros: integrating the
+    /// wrong quantity, or none, is a silent model error, so it is reported.
+    fn predict(&mut self, dt: f64, inputs: &EstimatorInputs) -> PredictOutcome;
 
     /// Fuses one measurement to correct the current estimate.
     ///
@@ -79,8 +88,56 @@ pub trait GaussianStateEstimator: Send + Sync {
         at: MonotonicTime,
     ) -> UpdateOutcome;
 
+    /// Declares the current mean and covariance valid at `t`, moving neither.
+    ///
+    /// This is not a predict: no time is integrated, so `t` may be earlier or
+    /// later than the current valid-at time. It exists for the caller that
+    /// builds the prior before it can read its clock: the prior is built
+    /// valid at an arbitrary time, and on its first tick the caller stamps it
+    /// with the clock's time, after which every [`predict`](Self::predict)
+    /// advances it by `dt`.
+    fn set_valid_at(&mut self, t: MonotonicTime);
+
     /// Current best state estimate `(x, P, t)`.
     fn state(&self) -> &FrameAwareState;
+}
+
+/// What one [`GaussianStateEstimator::predict`] call did.
+///
+/// The predict-side twin of [`UpdateOutcome`], with its own reasons: a predict
+/// has no measurement, so none of [`SkipReason`]'s variants apply to it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PredictOutcome {
+    /// The state, covariance and valid-at time moved forward by `dt`.
+    Applied,
+    /// The predict was skipped without touching the estimate; the reason says why.
+    Skipped(PredictSkipReason),
+}
+
+/// Why a [`GaussianStateEstimator::predict`] declined to propagate — split so the
+/// caller can log the faults and ignore the expected cases.
+///
+/// Non-exhaustive: a new reason (a non-finite input, say) must not break a
+/// caller's `match`. A caller outside this crate treats an unknown reason as
+/// loud.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub enum PredictSkipReason {
+    /// **Quiet.** `dt <= 0`: there is no interval to propagate over, as on the
+    /// first tick.
+    NonPositiveDt,
+    /// **Loud.** The control vector's length is not the dynamics' input-schema
+    /// length — a wiring bug the build-time input agreement check should have
+    /// caught. Carries both lengths for the log.
+    InputShapeMismatch { expected: usize, supplied: usize },
+    /// **Loud.** `P` failed Cholesky, so a sigma-point filter cannot spread its
+    /// points: the covariance is corrupt. An EKF never factors `P` to predict
+    /// and does not report this.
+    CovarianceNotPositiveDefinite,
+    /// **Loud.** The step, the control vector, or the estimate it would start
+    /// from holds a NaN or ±∞. Stepping on it would make the estimate
+    /// non-finite for good, so the predict is refused instead.
+    NonFiniteInput,
 }
 
 /// What one [`GaussianStateEstimator::update`] call did.
@@ -92,15 +149,52 @@ pub trait GaussianStateEstimator: Send + Sync {
 /// on the expected shortfalls.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateOutcome {
-    /// The measurement was fused; the estimate moved.
-    Applied,
+    /// The measurement was fused; the estimate moved. Carries how surprising the
+    /// measurement was against the filter's prediction.
+    Applied(Innovation),
     /// The update was skipped without touching the estimate; the reason says why.
     Skipped(SkipReason),
 }
 
+/// How surprising one fused measurement was, measured against the filter's own
+/// predicted spread for it.
+///
+/// `nis` is the normalized innovation squared, `yᵀS⁻¹y`, with `y = z − ẑ` the
+/// innovation and `S` its predicted covariance. Unit-free, so sensors of
+/// different kinds compare on one scale. When the filter's `S` is honest, `nis`
+/// is chi-squared with `dof` degrees of freedom: its average over many updates
+/// sits near `dof`. Well above means the filter is overconfident (or the
+/// measurement is an outlier); well below means it is too cautious. One sample
+/// is noisy; judge consistency over a window.
+///
+/// Gaussian-specific: it presumes a single predicted `S`. Non-exhaustive, so the
+/// innovation vector, `S`, or the predictive log-likelihood can be added without
+/// breaking a caller; build one with [`Innovation::new`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct Innovation {
+    /// Normalized innovation squared, `yᵀS⁻¹y`.
+    pub nis: f64,
+    /// Degrees of freedom: the measurement's length.
+    pub dof: usize,
+}
+
+impl Innovation {
+    /// An innovation with normalized squared size `nis` over `dof` degrees of
+    /// freedom.
+    pub fn new(nis: f64, dof: usize) -> Self {
+        Self { nis, dof }
+    }
+}
+
 /// Why a [`GaussianStateEstimator::update`] declined to fuse a measurement —
 /// split so the caller can log the faults and ignore the expected cases.
+///
+/// Non-exhaustive: a new reason (an outlier rejected by an innovation gate, say)
+/// must not break a caller's `match`. A caller outside this crate treats an
+/// unknown reason as loud.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum SkipReason {
     /// The measurement model declined to predict. Carries the model's own
     /// [`Unavailable`] reason, which itself classifies quiet vs. loud — this
@@ -113,4 +207,8 @@ pub enum SkipReason {
     /// positive-definiteness. Not merely a dropped measurement — a sign the
     /// filter's covariance is corrupt.
     CovarianceNotPositiveDefinite,
+    /// **Loud.** The measurement, its `R`, or the estimate it would correct
+    /// holds a NaN or ±∞. Fused, it would make the estimate non-finite for
+    /// good (and its NIS NaN, reported as applied), so it is refused instead.
+    NonFiniteInput,
 }

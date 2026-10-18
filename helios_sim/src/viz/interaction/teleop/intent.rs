@@ -7,10 +7,10 @@ use crate::brain_bridge::components::TeleopControlled;
 use crate::prelude::HostInputPublisher;
 use crate::viz::interaction::{
     sampling::ActionState,
-    teleop::{AxisPair, TeleopActions},
+    teleop::actions::{AxisPair, TeleopActions},
 };
 
-use helios_core::{control::commands::TwistIntent, data::MonotonicTime};
+use helios_core::{control::commands::TwistIntent, prelude::MonotonicTime};
 use helios_runtime::channels::control;
 
 use bevy::prelude::*;
@@ -62,6 +62,7 @@ pub(crate) fn publish_teleop_intent(
 #[cfg(test)]
 mod tests {
     use super::{teleop_intent, AxisPair, TeleopActions};
+    use crate::viz::interaction::teleop::actions::TELEOP_GROUP;
 
     use crate::viz::interaction::actions::{
         handle::{ActionId, ActionMetadata, InputKind},
@@ -74,7 +75,7 @@ mod tests {
     fn axis_meta() -> ActionMetadata {
         ActionMetadata {
             label: "t",
-            group: "teleop",
+            group: TELEOP_GROUP,
             kind: InputKind::Axis,
             default_key: KeyCode::ArrowUp,
         }
