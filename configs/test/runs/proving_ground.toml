@@ -4,9 +4,9 @@
 # barrier and cones stand on the car's route to expose what mapping and
 # planning get wrong, so the drive is not expected to be clean: the car may
 # clip the barrier's corner, push through the cones, or stall short of the
-# goal. It carries no assertions (the harness cannot yet extract a pose); the
-# result is read from the summarizer's metrics against the scenario's
-# goal_pose (20, 0):
+# goal. It carries no assertions (`pose_error_proving_ground` and
+# `twist_tracking_proving_ground` grade this drive); the result is read from
+# the summarizer's metrics against the scenario's goal_pose (20, 0):
 #   - final_pos_e / final_pos_n  → where the car came to rest. The car is
 #     inertial and coasts past the goal, so this measures its stopping
 #     distance, a before/after number for any approach-taper work.

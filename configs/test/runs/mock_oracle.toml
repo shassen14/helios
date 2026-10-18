@@ -1,14 +1,14 @@
 # Mock oracle run: the proving ground with the estimator replaced by the
 # mock oracle, which republishes the body's truth as the estimate.
 #
-# It is the one run that reads the truth channels, so it covers the path the
-# other runs leave unread: the sim's truth rig publishing `truth.tf` and
-# `truth.twist` on the agent's `base_link` instance, and the mock reading
-# them. A refused truth write or a truth the mock cannot use warns, so the
-# run must finish with no warnings. It carries no assertions (the harness
-# cannot yet extract a pose); the summarizer's final_pos_e / final_pos_n
-# should match the proving ground's, since both stacks see the same world
-# and differ only in estimation error.
+# It covers the mock's side of the truth channels: the sim's truth rig
+# publishing `truth.tf` and `truth.twist` on the agent's `base_link`
+# instance, and the mock reading them as its estimate. A refused truth write
+# or a truth the mock cannot use warns, so the run must finish with no
+# warnings. It carries no assertions; `pose_error_mock_oracle` grades this
+# scenario's estimate against its truth. The summarizer's final_pos_e /
+# final_pos_n should match the proving ground's, since both stacks see the
+# same world and differ only in estimation error.
 
 schema_version = "2.0"
 
