@@ -9,8 +9,8 @@ use crate::{
     viz::{
         interaction::inspector::{
             gather::{
-                begin_inspection, gather_actuators, gather_estimator,
-                gather_identity, gather_pose, gather_reference,
+                begin_inspection, gather_actuators, gather_estimator, gather_identity, gather_pose,
+                gather_reference,
             },
             model::InspectorModel,
             render::{load_inspector_font, render_inspection},

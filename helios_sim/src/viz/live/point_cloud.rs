@@ -121,7 +121,7 @@ pub(crate) fn draw_point_clouds(
     for pipeline in &pipelines {
         for batch in declared_outputs::<Vec<SensorReading<PointCloud<Flu>>>>(&pipeline.0) {
             for reading in &batch.value {
-                let Some(pose) = capture_pose_for(&reading.sensor, reading.timestamp, &sensors)
+                let Some(pose) = capture_pose_for(&reading.sensor, reading.timestamp, sensors)
                 else {
                     continue;
                 };
