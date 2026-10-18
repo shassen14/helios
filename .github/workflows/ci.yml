@@ -59,20 +59,28 @@ jobs:
       - run: cargo test --doc --workspace --all-features
 
   # Every committed run file through the headless sim, each report compared
-  # with its golden file under configs/test/golden/.
+  # with this platform's golden file under configs/test/golden/<platform>/.
+  # Each platform rounds floats its own way, so each keeps its own golden
+  # files, and the job runs on every one.
   golden:
-    name: Golden runs
-    runs-on: ubuntu-latest
+    name: Golden runs (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $BEVY_LINUX_DEPS
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $BEVY_LINUX_DEPS
       - run: cargo test -p helios_test --features sim --test golden_runs -- --ignored
-      # The reports this runner produced, to diff against the golden files.
-      - if: failure()
+      # What this runner produced, in golden form: replacing
+      # configs/test/golden/<platform>/ with the folder inside blesses it.
+      - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: golden-run-reports
-          path: target/tmp/golden_runs
+          name: golden-${{ matrix.os }}
+          path: target/tmp/golden_runs/golden
           retention-days: 7

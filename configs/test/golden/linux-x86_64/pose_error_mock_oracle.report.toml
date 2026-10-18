@@ -1,0 +1,214 @@
+schema_version = "2.0"
+run_name = "pose_error_mock_oracle"
+scenario = "sim/scenarios/dev_mock_oracle.toml"
+status = "passed"
+simulated_duration_secs = 60.0
+
+[terminated_by]
+kind = "time_budget"
+
+[[assertions]]
+name = "position_held"
+target = "eval.inline.est.position"
+unit = "m"
+samples = 22001
+max_gap_secs = 0.0025000000000048317
+window_secs = [
+    5.0,
+    60.0,
+]
+status = "passed"
+actual = 0.0
+
+[assertions.window]
+start = 5.0
+
+[assertions.condition]
+less_than = 1.0
+
+[[measures]]
+name = "position_rms"
+target = "eval.inline.est.position"
+reduce = "rms"
+covered = true
+value = 0.0031125874071955472
+unit = "m"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[measures]]
+name = "position_max"
+target = "eval.inline.est.position"
+reduce = "max"
+covered = true
+value = 0.025180423123247263
+unit = "m"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[measures]]
+name = "position_final"
+target = "eval.inline.est.position"
+reduce = "final"
+covered = true
+value = 0.0
+unit = "m"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+final_age_secs = 0.0
+
+[[measures]]
+name = "z_rms"
+target = "eval.inline.est.z"
+reduce = "rms"
+covered = true
+value = 0.000369021179388297
+unit = "m"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[measures]]
+name = "rotation_rms"
+target = "eval.inline.est.rotation"
+reduce = "rms"
+covered = true
+value = 0.000125256136751237
+unit = "rad"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[measures]]
+name = "rotation_max"
+target = "eval.inline.est.rotation"
+reduce = "max"
+covered = true
+value = 0.003130622995788207
+unit = "rad"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[measures]]
+name = "horizontal_rms"
+target = "eval.inline.est.horizontal"
+reduce = "rms"
+covered = true
+value = 0.0030906348436195385
+unit = "m"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[measures]]
+name = "vertical_rms"
+target = "eval.inline.est.vertical"
+reduce = "rms"
+covered = true
+value = 0.000369021179388297
+unit = "m"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[measures]]
+name = "along_rms"
+target = "eval.inline.est.along"
+reduce = "rms"
+covered = true
+value = 0.0030865173196879146
+unit = "m"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[measures]]
+name = "cross_rms"
+target = "eval.inline.est.cross"
+reduce = "rms"
+covered = true
+value = 0.00015964170369245874
+unit = "m"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[measures]]
+name = "heading_rms"
+target = "eval.inline.est.heading"
+reduce = "rms"
+covered = true
+value = 0.0001238889575140337
+unit = "rad"
+samples = 24000
+max_gap_secs = 0.0025000000000048317
+
+[[evaluations]]
+name = "est"
+kind = "pose_error"
+samples = 24000
+uncovered = 0
+
+[evaluations.params]
+align = "first_pose"
+
+[[evaluations.inputs]]
+role = "estimate"
+instance = "agent.MockOraclePro.base_link"
+writer = "node estimate_relay"
+
+[evaluations.inputs.target]
+path = "agent.MockOraclePro.channel.tf"
+instance = "agent.MockOraclePro.base_link"
+
+[[evaluations.inputs]]
+role = "truth"
+instance = "agent.MockOraclePro.base_link"
+writer = "body unit truth_rig"
+provenance = "exact"
+
+[evaluations.inputs.target]
+path = "agent.MockOraclePro.channel.truth.tf"
+instance = "agent.MockOraclePro.base_link"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.position"
+unit = "m"
+samples = 24000
+
+[[evaluations.metrics]]
+path = "eval.inline.est.horizontal"
+unit = "m"
+samples = 24000
+
+[[evaluations.metrics]]
+path = "eval.inline.est.vertical"
+unit = "m"
+samples = 24000
+
+[[evaluations.metrics]]
+path = "eval.inline.est.x"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.y"
+unit = "m"
+
+[[evaluations.metrics]]
+path = "eval.inline.est.z"
+unit = "m"
+samples = 24000
+
+[[evaluations.metrics]]
+path = "eval.inline.est.along"
+unit = "m"
+samples = 24000
+
+[[evaluations.metrics]]
+path = "eval.inline.est.cross"
+unit = "m"
+samples = 24000
+
+[[evaluations.metrics]]
+path = "eval.inline.est.rotation"
+unit = "rad"
+samples = 24000
+
+[[evaluations.metrics]]
+path = "eval.inline.est.heading"
+unit = "rad"
+samples = 24000

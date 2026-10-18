@@ -1,6 +1,12 @@
 //! Golden runs: every run file under `configs/test/runs/` is run through
 //! `helios_test_sim`, and what it produced is compared with the committed
-//! golden file under `configs/test/golden/`, at the same relative path.
+//! golden file under `configs/test/golden/<platform>/`, at the same relative
+//! path.
+//!
+//! Each platform (`macos-aarch64`, `linux-x86_64`, `windows-x86_64`) keeps its
+//! own golden files: each platform's maths library rounds transcendentals its
+//! own way, and the sim carries a last-bit difference into every later
+//! number. On one platform, two runs give the same bytes.
 //!
 //! A run the sim starts leaves a report, compared whole except its wall time
 //! (`<name>.report.toml`); its exit code must be the one its golden status
@@ -17,8 +23,14 @@
 //! cargo test -p helios_test --features sim --test golden_runs -- --ignored
 //! ```
 //!
-//! With `HELIOS_BLESS=1` set, it rewrites the golden files from this run
-//! instead of comparing, and a negative control that passes is still refused.
+//! With `HELIOS_BLESS=1` set, it rewrites this platform's golden files from
+//! this run instead of comparing, and a negative control that passes is
+//! still refused.
+//!
+//! Every run also writes what it produced, in golden form, under
+//! `target/tmp/golden_runs/golden/<platform>/`. For a platform you can't run
+//! locally, CI uploads that folder; replacing `configs/test/golden/<platform>/`
+//! with it blesses that platform.
 
 #![cfg(feature = "sim")]
 
@@ -28,8 +40,14 @@ use std::process::Command;
 
 /// Run files, under the workspace root.
 const RUNS: &str = "configs/test/runs";
-/// Golden files, under the workspace root, mirroring `RUNS`.
+/// Golden files, under the workspace root, one folder per platform, each
+/// mirroring `RUNS`.
 const GOLDEN: &str = "configs/test/golden";
+/// This run's output, under the target's temp folder: each report as written,
+/// and each result in golden form, one folder per platform as under `GOLDEN`.
+const OUTPUT: &str = "golden_runs";
+const REPORTS: &str = "reports";
+const PRODUCED: &str = "golden";
 /// What `helios_test_sim` resolves a run's scenario against.
 const CONFIG_ROOT: &str = "configs";
 /// The folder of negative controls, under `RUNS`.
@@ -102,12 +120,16 @@ impl GoldenKind {
         }
     }
 
-    /// This kind's golden file, under `GOLDEN`, of the run at `run` under
-    /// `RUNS`.
+    /// This kind's golden file, under this platform's folder in `GOLDEN`, of
+    /// the run at `run` under `RUNS`.
     fn path_for(self, run: &Path) -> PathBuf {
-        workspace()
-            .join(GOLDEN)
-            .join(run.with_extension(self.suffix()))
+        golden_root().join(self.relative_to_root(run))
+    }
+
+    /// This kind's golden file of the run at `run`, relative to a platform's
+    /// folder.
+    fn relative_to_root(self, run: &Path) -> PathBuf {
+        run.with_extension(self.suffix())
     }
 }
 
@@ -117,6 +139,11 @@ fn every_run_matches_its_golden_file() {
     let bless = std::env::var_os(BLESS).is_some();
     let runs = run_files();
     assert!(!runs.is_empty(), "no run files under {RUNS}");
+
+    let missing = !bless && !golden_root().exists();
+    let produced = output().join(PRODUCED).join(platform());
+    // Golden form left by an earlier run must not stand in for this one's.
+    let _ = fs::remove_dir_all(&produced);
 
     let mut failures = Vec::new();
     for run in &runs {
@@ -129,21 +156,42 @@ fn every_run_matches_its_golden_file() {
             ));
             continue;
         }
+        write_file(
+            &produced.join(outcome.golden.kind.relative_to_root(run)),
+            &outcome.golden.text,
+        );
+        if missing {
+            continue;
+        }
         if bless {
             write_golden(run, &outcome.golden);
         } else if let Some(failure) = compare(run, &outcome) {
             failures.push(failure);
         }
     }
+    if missing {
+        panic!(
+            "no golden files for {platform} at {root}. This run's results, in \
+             golden form, are in {produced}: check them and copy that folder \
+             to {root}, or rerun with {BLESS}=1.",
+            platform = platform(),
+            root = golden_root().display(),
+            produced = produced.display(),
+        );
+    }
     failures.extend(orphaned_golden_files(&runs, bless));
 
     assert!(
         failures.is_empty(),
         "{} difference(s) between the {} run file(s) and their golden files:\n\n{}\n\n\
-         If a change is intended, rerun with {BLESS}=1 and commit the golden files.",
+         If a change is intended, rerun with {BLESS}=1 and commit the golden files; \
+         for a platform you can't run locally, replace {root} with {produced}, \
+         which CI uploads.",
         failures.len(),
         runs.len(),
-        failures.join("\n\n")
+        failures.join("\n\n"),
+        root = golden_root().display(),
+        produced = produced.display(),
     );
 }
 
@@ -153,6 +201,23 @@ fn workspace() -> PathBuf {
         .parent()
         .expect("the crate sits in the workspace")
         .to_path_buf()
+}
+
+/// The platform the golden files of this run are kept under: the OS and the
+/// CPU architecture, which together choose the maths library and the
+/// instructions a float goes through.
+fn platform() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// This platform's folder of golden files.
+fn golden_root() -> PathBuf {
+    workspace().join(GOLDEN).join(platform())
+}
+
+/// Where this run's output goes, under the target's temp folder.
+fn output() -> PathBuf {
+    Path::new(env!("CARGO_TARGET_TMPDIR")).join(OUTPUT)
 }
 
 /// Every run file, relative to `RUNS`, sorted so failures list in one order.
@@ -181,8 +246,8 @@ fn files_under(root: &Path, dir: &Path, extension: &str) -> Vec<PathBuf> {
 
 /// Runs `run` through `helios_test_sim` from the workspace root, as by hand.
 fn execute(run: &Path) -> Outcome {
-    let report = Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join("golden_runs")
+    let report = output()
+        .join(REPORTS)
         .join(run.with_extension(REPORT_SUFFIX));
     fs::create_dir_all(report.parent().expect("a report has a folder"))
         .expect("create the report folder");
@@ -275,10 +340,7 @@ fn first_difference(golden: &str, actual: &str) -> Option<String> {
 
 /// Writes `golden` for `run`, removing the golden file of the other kind.
 fn write_golden(run: &Path, golden: &Golden) {
-    let path = golden.kind.path_for(run);
-    fs::create_dir_all(path.parent().expect("a golden file has a folder"))
-        .expect("create the golden folder");
-    fs::write(&path, &golden.text).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+    write_file(&golden.kind.path_for(run), &golden.text);
     for kind in GoldenKind::ALL {
         if kind.suffix() != golden.kind.suffix() {
             let _ = fs::remove_file(kind.path_for(run));
@@ -286,9 +348,17 @@ fn write_golden(run: &Path, golden: &Golden) {
     }
 }
 
-/// Golden files whose run file is gone: removed when blessing, else failures.
+/// Writes `text` to `path`, creating its folder.
+fn write_file(path: &Path, text: &str) {
+    fs::create_dir_all(path.parent().expect("a written file has a folder"))
+        .expect("create the folder");
+    fs::write(path, text).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+}
+
+/// This platform's golden files whose run file is gone: removed when
+/// blessing, else failures.
 fn orphaned_golden_files(runs: &[PathBuf], bless: bool) -> Vec<String> {
-    let root = workspace().join(GOLDEN);
+    let root = golden_root();
     if !root.exists() {
         return Vec::new();
     }

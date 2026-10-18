@@ -208,13 +208,17 @@ mod tests {
         toml::from_str(&text).unwrap()
     }
 
-    // Write `report` to a unique temp file, returning the path. The atomic counter
-    // keeps parallel test threads from colliding on a filename — same std-only
-    // pattern as `run::mod`'s tests, to avoid a temp-file dev-dependency.
+    // Write `report` to a unique temp file, returning the path. The process id
+    // and the atomic counter keep parallel tests, as threads or as processes,
+    // from colliding on a filename — same std-only pattern as `run::mod`'s
+    // tests, to avoid a temp-file dev-dependency.
     fn write_to_temp(report: &Report) -> std::path::PathBuf {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("helios_report_test_{n}.toml"));
+        let path = std::env::temp_dir().join(format!(
+            "helios_report_test_{}_{n}.toml",
+            std::process::id()
+        ));
         write(report, &path).unwrap();
         path
     }

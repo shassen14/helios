@@ -202,12 +202,15 @@ mod tests {
 
     // Write `contents` to a unique file under the temp dir, load it through the
     // real `load` path (exercising read + parse together), then clean up. Uses
-    // only `std` to avoid a dev-dependency on a temp-file crate; the atomic
-    // counter keeps parallel test threads from colliding on a filename.
+    // only `std` to avoid a dev-dependency on a temp-file crate. The process
+    // id and the atomic counter together keep parallel tests from colliding
+    // on a filename, whether they run as threads of one process or as one
+    // process each (nextest).
     fn load_str(contents: &str) -> Result<Run, RunLoadError> {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let n = SEQ.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("helios_run_test_{n}.toml"));
+        let path =
+            std::env::temp_dir().join(format!("helios_run_test_{}_{n}.toml", std::process::id()));
         std::fs::write(&path, contents).unwrap();
         let result = load(&path);
         let _ = std::fs::remove_file(&path);
