@@ -11,6 +11,7 @@ use crate::evaluation::{
 };
 
 use helios_core::kernel::si_unit::SiUnit;
+use helios_core::prelude::FrameId;
 use helios_core::spatial::transforms::{NoHeading, PoseDifference};
 
 /// The frame's pose as an estimator believes it: the base.
@@ -77,19 +78,34 @@ impl TypedKind for PoseError {
                 Self::NAME
             )]);
         };
-        match (&estimate.instance, &truth.instance) {
+        let (estimated, true_frame) = match (estimate.frame(ESTIMATE), truth.frame(TRUTH)) {
+            (Ok(estimated), Ok(true_frame)) => (estimated, true_frame),
+            (estimated, true_frame) => {
+                return Err(estimated
+                    .err()
+                    .into_iter()
+                    .chain(true_frame.err())
+                    .collect())
+            }
+        };
+        match (&estimated, &true_frame) {
             (Some(estimated), Some(true_frame)) if estimated == true_frame => {
                 Ok(PoseErrorEvaluator::new(params.align))
             }
             (estimated, true_frame) => Err(vec![format!(
                 "the {ESTIMATE} is the pose of '{}' and the {TRUTH} of '{}': {} grades one \
                  frame, so select the same instance for both",
-                estimated.as_deref().unwrap_or("no instance"),
-                true_frame.as_deref().unwrap_or("no instance"),
+                spelled(estimated.as_ref()),
+                spelled(true_frame.as_ref()),
                 Self::NAME,
             )]),
         }
     }
+}
+
+/// A bound input's frame as a refusal names it.
+fn spelled(frame: Option<&FrameId>) -> String {
+    frame.map_or_else(|| "no instance".to_owned(), FrameId::to_string)
 }
 
 /// The estimate minus the truth, read every way a run file may grade it:
@@ -141,7 +157,7 @@ mod tests {
 
     use crate::evaluation::{derived::Refused, kind::EvaluatorKind, typed::Typed};
 
-    use helios_core::prelude::{AgentId, FrameId, MonotonicTime};
+    use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::transforms::{ErasedTransform, Transform};
 
@@ -179,6 +195,32 @@ mod tests {
         assert!(
             no_instance[0].contains("select the same instance for both"),
             "{no_instance:?}"
+        );
+    }
+
+    #[test]
+    fn instances_that_arent_frames_are_refused_each_by_role_and_spelling() {
+        let ros_frame = |spelling: &str| BoundInput {
+            agent: AgentId::new(CAR),
+            instance: Some(spelling.to_owned()),
+        };
+
+        let problems = Typed(PoseError)
+            .build(
+                &toml::Table::new(),
+                &[ros_frame("base_link"), ros_frame("odom")],
+            )
+            .err()
+            .expect("neither is a frame");
+
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(
+            problems[0].contains("the estimate's instance 'base_link' is not a frame"),
+            "{problems:?}"
+        );
+        assert!(
+            problems[1].contains("the truth's instance 'odom' is not a frame"),
+            "{problems:?}"
         );
     }
 

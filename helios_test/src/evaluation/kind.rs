@@ -11,7 +11,7 @@
 use crate::evaluation::derived::Refused;
 
 use helios_core::kernel::si_unit::SiUnit;
-use helios_core::prelude::{AgentId, MonotonicTime};
+use helios_core::prelude::{AgentId, FrameId, MonotonicTime};
 
 use std::{
     any::{Any, TypeId},
@@ -160,6 +160,23 @@ pub struct Metric {
 pub struct BoundInput {
     pub agent: AgentId,
     pub instance: Option<String>,
+}
+
+impl BoundInput {
+    /// The instance as a frame, for a kind whose instances are frames (a
+    /// transform edge's child, a velocity's moving body). `None` when no
+    /// instance was selected. A spelling that isn't a frame's is refused,
+    /// naming `role` and the spelling.
+    pub fn frame(&self, role: &str) -> Result<Option<FrameId>, String> {
+        self.instance
+            .as_deref()
+            .map(|spelling| {
+                spelling.parse().map_err(|why| {
+                    format!("the {role}'s instance '{spelling}' is not a frame: {why}")
+                })
+            })
+            .transpose()
+    }
 }
 
 /// _Per-step._ Why an evaluator refused a value that arrived, or a base

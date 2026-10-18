@@ -16,16 +16,23 @@
 //! world declares), a surveyed fixture, a celestial frame. Each is named, so two
 //! sites' origins are two frames and nothing joins them unless an edge does.
 //!
+//! A frame's spelling (`agent.<agent>.<leaf>`, `global.<leaf>`) is its
+//! `Display`, and `FromStr` parses it back, so a frame named in a run file, a
+//! recording or a bridge from another stack is parsed once, at that edge, and
+//! refused there when it isn't one.
+//!
 //! The spine leaf names ([`MAP`], [`ODOM`], [`BASE_LINK`]) are single-sourced here
 //! and reused everywhere a producer and consumer must agree on them. A frame's
 //! *role* (whether it is a localization root, an odometry origin, a body, a
 //! sensor) is read back from the leaf via the predicates, never re-encoded in a
 //! separate field.
 
-use crate::kernel::identifier::LEVEL_SEPARATOR;
+use crate::kernel::identifier::{is_dotted_name, is_level, LEVEL_SEPARATOR};
 use crate::spatial::primitives::{AgentId, AGENT_SCOPE};
 
+use std::error::Error;
 use std::fmt::Display;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -141,6 +148,83 @@ impl Display for FrameId {
         }
     }
 }
+
+/// Parses the spelling [`Display`] writes, and only that: the scope word, the
+/// agent when the scope is an agent's, then the leaf, which is everything
+/// after them. Each name is checked against the level grammar, so a parsed
+/// frame always spells back to the text it came from.
+impl FromStr for FrameId {
+    type Err = FrameSpellingError;
+
+    fn from_str(spelling: &str) -> Result<Self, Self::Err> {
+        let (scope_word, rest) = split_first_level(spelling);
+        let (scope, leaf) = match scope_word {
+            GLOBAL_SCOPE => (FrameScope::Global, rest),
+            AGENT_SCOPE => {
+                let (agent, leaf) = split_first_level(rest);
+                if !is_level(agent) {
+                    return Err(FrameSpellingError::MalformedAgent);
+                }
+                (FrameScope::Agent(AgentId::new(agent)), leaf)
+            }
+            _ => return Err(FrameSpellingError::UnknownScope),
+        };
+        if leaf.is_empty() {
+            return Err(FrameSpellingError::NoLeaf);
+        }
+        if !is_dotted_name(leaf) {
+            return Err(FrameSpellingError::MalformedLeaf);
+        }
+        Ok(Self {
+            scope,
+            leaf: FrameName(Arc::from(leaf)),
+        })
+    }
+}
+
+/// The text before the first level separator and the text after it; the
+/// whole text and nothing when there is no separator.
+fn split_first_level(text: &str) -> (&str, &str) {
+    text.split_once(LEVEL_SEPARATOR).unwrap_or((text, ""))
+}
+
+/// Why a spelling is not a [`FrameId`]'s. The caller holds the spelling, so
+/// it names it beside this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameSpellingError {
+    /// The first level is neither scope word: a bare leaf such as another
+    /// stack's `base_link`, or a misspelled scope.
+    UnknownScope,
+    /// The agent after the agent scope word is not one level.
+    MalformedAgent,
+    /// Nothing follows the scope (and agent): no frame is named.
+    NoLeaf,
+    /// The leaf is not levels joined by the level separator.
+    MalformedLeaf,
+}
+
+impl Display for FrameSpellingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let sep = LEVEL_SEPARATOR;
+        match self {
+            Self::UnknownScope => write!(
+                f,
+                "its first level is neither '{AGENT_SCOPE}' nor '{GLOBAL_SCOPE}'"
+            ),
+            Self::MalformedAgent => write!(
+                f,
+                "its agent is not one level of ASCII letters, digits and '_'"
+            ),
+            Self::NoLeaf => write!(f, "it names no frame after its scope"),
+            Self::MalformedLeaf => write!(
+                f,
+                "its leaf is not levels of ASCII letters, digits and '_' joined by '{sep}'"
+            ),
+        }
+    }
+}
+
+impl Error for FrameSpellingError {}
 
 /// Which frame tree a [`FrameId`] belongs to: the global frames no agent owns,
 /// or one agent's own.
@@ -278,6 +362,66 @@ mod tests {
             FrameId::global("lbl.beacon_3").to_string(),
             "global.lbl.beacon_3"
         );
+    }
+
+    #[test]
+    fn parsing_inverts_display_in_every_scope() {
+        for frame in [
+            FrameId::global(DATUM),
+            FrameId::global("lbl.beacon_3"),
+            FrameId::map(agent()),
+            FrameId::odom(agent()),
+            FrameId::base_link(agent()),
+            FrameId::agent(agent(), "imu0"),
+            FrameId::agent(agent(), "front.lidar"),
+        ] {
+            let spelling = frame.to_string();
+            assert_eq!(spelling.parse::<FrameId>(), Ok(frame), "{spelling}");
+        }
+    }
+
+    #[test]
+    fn a_dotted_leaf_is_the_remainder_after_the_scope() {
+        let frame: FrameId = "agent.pickup_1.front.lidar".parse().expect("a frame");
+
+        assert_eq!(frame.scope(), &FrameScope::Agent(agent()));
+        assert_eq!(frame.leaf().as_str(), "front.lidar");
+    }
+
+    #[test]
+    fn a_spelling_that_isnt_a_frames_is_refused_saying_why() {
+        for (spelling, why) in [
+            // Another stack's frames name no scope.
+            ("base_link", FrameSpellingError::UnknownScope),
+            ("odom", FrameSpellingError::UnknownScope),
+            ("/base_link", FrameSpellingError::UnknownScope),
+            (
+                "agents.pickup_1.base_link",
+                FrameSpellingError::UnknownScope,
+            ),
+            ("", FrameSpellingError::UnknownScope),
+            ("agent", FrameSpellingError::MalformedAgent),
+            ("agent..base_link", FrameSpellingError::MalformedAgent),
+            (
+                "agent.pickup-1.base_link",
+                FrameSpellingError::MalformedAgent,
+            ),
+            ("agent.pickup_1", FrameSpellingError::NoLeaf),
+            ("agent.pickup_1.", FrameSpellingError::NoLeaf),
+            ("global", FrameSpellingError::NoLeaf),
+            ("global.", FrameSpellingError::NoLeaf),
+            (
+                "agent.pickup_1.front..lidar",
+                FrameSpellingError::MalformedLeaf,
+            ),
+            (
+                "agent.pickup_1.base_link.",
+                FrameSpellingError::MalformedLeaf,
+            ),
+            ("global.test datum", FrameSpellingError::MalformedLeaf),
+        ] {
+            assert_eq!(spelling.parse::<FrameId>(), Err(why), "'{spelling}'");
+        }
     }
 
     #[test]

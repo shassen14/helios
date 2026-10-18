@@ -67,12 +67,12 @@ impl TypedKind for TwistTracking {
             )]);
         }
         let body = FrameId::base_link(reference.agent.clone());
-        let body_spelled = body.to_string();
-        if truth.instance.as_deref() != Some(body_spelled.as_str()) {
+        let moving = truth.frame(TRUTH).map_err(|problem| vec![problem])?;
+        if moving.as_ref() != Some(&body) {
             return Err(vec![format!(
                 "the {TRUTH} is the velocity of '{}', and the {REFERENCE} is expressed in \
-                 '{body_spelled}': select instance = \"{body_spelled}\"",
-                truth.instance.as_deref().unwrap_or("no instance")
+                 '{body}': select instance = \"{body}\"",
+                moving.map_or_else(|| "no instance".to_owned(), |frame| frame.to_string())
             )]);
         }
         Ok(TwistTrackingEvaluator { body })
@@ -319,6 +319,21 @@ mod tests {
 
         assert!(
             problems[0].contains("select instance = \"agent.car.base_link\""),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_truth_instance_that_isnt_a_frame_is_refused_naming_it() {
+        let ros_frame = input(CAR, Some("base_link".to_owned()));
+
+        let problems = TwistTracking
+            .bind(NoParams {}, &[ros_frame, input(CAR, None)])
+            .err()
+            .expect("not a frame");
+
+        assert!(
+            problems[0].contains("the truth's instance 'base_link' is not a frame"),
             "{problems:?}"
         );
     }
