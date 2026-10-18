@@ -62,6 +62,10 @@ impl NodePlan {
 
     /// Builds the node with the mounts of its inputs, refusing one the
     /// constructor names differently.
+    #[expect(
+        clippy::result_large_err,
+        reason = "runs once per node at build, and build collects its errors in a Vec anyway"
+    )]
     fn construct(self, mounts: InputMounts) -> Result<Box<dyn PipelineNode>, PipelineBuildError> {
         let node = (self.constructor)(self.descriptor, mounts).map_err(|error| {
             PipelineBuildError::ConstructionFailed {
@@ -107,6 +111,10 @@ impl NodeDeclaration {
 
     /// The node, built if it was planned, with the mounts of its inputs from
     /// `descriptions`, every channel's resolved description by key.
+    #[expect(
+        clippy::result_large_err,
+        reason = "runs once per node at build, and build collects its errors in a Vec anyway"
+    )]
     pub(crate) fn construct(
         self,
         descriptions: &HashMap<&ChannelKey, &ChannelDescription>,

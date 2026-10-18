@@ -141,7 +141,7 @@ impl RunVerdict {
 ///   (Bevy 0.16) the world drops *its* clone, but the bin's clone keeps the
 ///   value alive. Reading a `Res` from the world *after* `run()` would instead
 ///   panic on the emptied world — this clone is the documented escape hatch.
-#[derive(Resource, Clone)]
+#[derive(Resource, Clone, Default)]
 pub struct MetricsCollector(Arc<Mutex<Option<RunMetrics>>>);
 
 impl MetricsCollector {

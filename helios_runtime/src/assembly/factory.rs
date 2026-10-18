@@ -323,6 +323,10 @@ impl Error for FactoryError {}
 pub(crate) struct BuiltNode {
     pub(crate) declaration: NodeDeclaration,
     pub(crate) outside_inputs: Vec<ChannelKey>,
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "read by the resolved-config dump, not built yet")
+    )]
     pub(crate) resolved: toml::Table,
 }
 
