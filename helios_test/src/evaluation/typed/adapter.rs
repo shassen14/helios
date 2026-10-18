@@ -74,7 +74,7 @@ impl<K: TypedKind> EvaluatorKind for Typed<K> {
 pub(crate) struct TypedEvaluation<E: TypedEvaluator> {
     evaluator: E,
     inputs: E::Inputs,
-    components: Vec<Component<E::Error>>,
+    components: Vec<Component<E::Output>>,
 }
 
 impl<E: TypedEvaluator> TypedEvaluation<E> {
@@ -128,11 +128,11 @@ impl<E: TypedEvaluator> Evaluator for TypedEvaluation<E> {
         };
 
         let values: Vec<RowOf<'_, E>> = rows.iter().map(|(_, row)| *row).collect();
-        let errors: Vec<(MonotonicTime, E::Error)> = match self.evaluator.fit(&values) {
+        let outputs: Vec<(MonotonicTime, E::Output)> = match self.evaluator.fit(&values) {
             Ok(fit) => rows
                 .iter()
                 .filter_map(|(at, row)| match self.evaluator.compute(*row, &fit) {
-                    Ok(error) => Some((*at, error)),
+                    Ok(output) => Some((*at, output)),
                     Err(rejection) => {
                         refused.add(rejection);
                         None
@@ -155,7 +155,7 @@ impl<E: TypedEvaluator> Evaluator for TypedEvaluation<E> {
             .map(|(index, component)| {
                 wanted
                     .contains(&index)
-                    .then(|| component.values(&errors, until, &mut refused))
+                    .then(|| component.values(&outputs, until, &mut refused))
             })
             .collect();
         Graded { metrics, refused }

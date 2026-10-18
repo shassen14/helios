@@ -253,7 +253,7 @@ mod tests {
     impl TypedEvaluator for Difference {
         type Inputs = (Input<Self, f64, f64>, Input<Self, f64, f64>);
         type Fit = f64;
-        type Error = Values;
+        type Output = Values;
 
         fn components(&self) -> Vec<Component<Values>> {
             vec![

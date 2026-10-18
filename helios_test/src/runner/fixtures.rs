@@ -105,7 +105,7 @@ struct LagEvaluator;
 impl TypedEvaluator for LagEvaluator {
     type Inputs = (Input<Self, f64, f64>, Input<Self, Wheel, f64>);
     type Fit = ();
-    type Error = f64;
+    type Output = f64;
 
     fn components(&self) -> Vec<Component<f64>> {
         vec![Component::each(

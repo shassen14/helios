@@ -1,5 +1,5 @@
-//! [`Component`]: one metric an evaluator offers, read off its typed error
-//! at each sample, or over the whole run.
+//! [`Component`]: one metric an evaluator offers, read off its evaluator's
+//! output at each sample, or over the whole run.
 
 use crate::evaluation::{
     derived::Refused,
@@ -9,7 +9,7 @@ use crate::evaluation::{
 use helios_core::kernel::si_unit::SiUnit;
 use helios_core::prelude::MonotonicTime;
 
-/// _Pre-step._ One metric of an evaluator whose error is `E`: its name and
+/// _Pre-step._ One metric of an evaluator whose output is `E`: its name and
 /// unit, and how its values are read. A run file names it as
 /// `eval.inline.<name>.<metric>`.
 pub struct Component<E> {
@@ -19,7 +19,7 @@ pub struct Component<E> {
 }
 
 impl<E> Component<E> {
-    /// A metric with one value per sample, read off its error, or refused
+    /// A metric with one value per sample, read off its output, or refused
     /// there in the kind's own words: a heading of a frame that faces no way.
     pub fn each(
         name: &'static str,
@@ -33,7 +33,7 @@ impl<E> Component<E> {
         }
     }
 
-    /// A metric with one value for the whole run, from every sample's error
+    /// A metric with one value for the whole run, from every sample's output
     /// in stamp order, stamped at the run's last tick: a path's length, a
     /// ratio of sums. `None` when the run gives it no value.
     pub fn whole_run(
@@ -56,19 +56,19 @@ impl<E> Component<E> {
         }
     }
 
-    /// Its values over `errors`, every computed sample in stamp order, a
+    /// Its values over `outputs`, every computed sample in stamp order, a
     /// whole-run value stamped `until`. A sample it can't give is counted
     /// in `refused`.
     pub(crate) fn values(
         &self,
-        errors: &[(MonotonicTime, E)],
+        outputs: &[(MonotonicTime, E)],
         until: MonotonicTime,
         refused: &mut Refused,
     ) -> Vec<(MonotonicTime, f64)> {
         match &self.reading {
-            Reading::Each(value) => errors
+            Reading::Each(value) => outputs
                 .iter()
-                .filter_map(|(at, error)| match value(error) {
+                .filter_map(|(at, output)| match value(output) {
                     Ok(value) => Some((*at, value)),
                     Err(rejection) => {
                         refused.add(rejection);
@@ -76,7 +76,7 @@ impl<E> Component<E> {
                     }
                 })
                 .collect(),
-            Reading::WholeRun(value) => value(errors)
+            Reading::WholeRun(value) => value(outputs)
                 .map(|value| (until, value))
                 .into_iter()
                 .collect(),
@@ -90,8 +90,8 @@ enum Reading<E> {
     WholeRun(OverRun<E>),
 }
 
-/// A value read off one sample's error, or refused there.
+/// A value read off one sample's output, or refused there.
 type PerSample<E> = Box<dyn Fn(&E) -> Result<f64, InputRejection> + Send + Sync>;
 
-/// A value read off every sample's error in the run, if it gives one.
+/// A value read off every sample's output in the run, if it gives one.
 type OverRun<E> = Box<dyn Fn(&[(MonotonicTime, E)]) -> Option<f64> + Send + Sync>;

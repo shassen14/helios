@@ -87,21 +87,22 @@ mod tests {
     use super::*;
 
     use helios_core::prelude::{AgentId, MonotonicTime};
+    use helios_core::spatial::conventions::Enu;
     use helios_core::spatial::quantities::FreeVector;
-    use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::transforms::{ConventionOf, Transform};
 
     use nalgebra::Isometry3;
 
-    fn edge(parent: FrameId, x: f64, root: Convention) -> StampedTransform {
+    /// The car's base_link `x` m along `parent`'s x axis, the edge erased
+    /// as its producer erases it: a `Transform` from the body to `Root`.
+    fn edge<Root: ConventionOf>(parent: FrameId, x: f64) -> StampedTransform {
         StampedTransform {
             parent,
             child: FrameId::base_link(AgentId::new("car")),
             stamp: MonotonicTime(0.0),
-            transform: ErasedTransform::from_parts(
+            transform: ErasedTransform::erase(Transform::<Flu, Root>::from_isometry(
                 Isometry3::translation(x, 0.0, 0.0),
-                Convention::Flu,
-                root,
-            ),
+            )),
         }
     }
 
@@ -112,10 +113,10 @@ mod tests {
     #[test]
     fn a_pose_is_blended_in_its_root_and_never_across_two() {
         let datum = FrameId::global("datum");
-        let before = kept(&edge(datum.clone(), 0.0, Convention::Enu));
-        let after = kept(&edge(datum.clone(), 4.0, Convention::Enu));
-        let reparented = kept(&edge(FrameId::global("other"), 4.0, Convention::Enu));
-        let retagged = kept(&edge(datum, 4.0, Convention::Flu));
+        let before = kept(&edge::<Enu>(datum.clone(), 0.0));
+        let after = kept(&edge::<Enu>(datum.clone(), 4.0));
+        let reparented = kept(&edge::<Enu>(FrameId::global("other"), 4.0));
+        let retagged = kept(&edge::<Flu>(datum, 4.0));
 
         let between = blend_rooted_poses(&before, &after, 0.25).expect("one root");
 
@@ -126,7 +127,7 @@ mod tests {
 
     #[test]
     fn a_pose_that_isnt_finite_is_refused() {
-        assert!(rooted_pose(&edge(FrameId::global("datum"), f64::NAN, Convention::Enu)).is_err());
+        assert!(rooted_pose(&edge::<Enu>(FrameId::global("datum"), f64::NAN)).is_err());
     }
 
     #[test]

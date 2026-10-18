@@ -1,5 +1,5 @@
 //! Typed evaluator kinds: a kind written with its own types, its roles a
-//! tuple of [`Input`]s, its error read by [`Component`]s, and erased once by
+//! tuple of [`Input`]s, its output read by [`Component`]s, and erased once by
 //! [`Typed`] into the form the machinery stores.
 
 mod adapter;
@@ -13,4 +13,4 @@ pub use adapter::Typed;
 pub(crate) use adapter::TypedEvaluation;
 pub use component::Component;
 pub use input::{Input, Inputs};
-pub use kind::{ErrorOf, NoParams, RowOf, TypedEvaluator, TypedKind};
+pub use kind::{NoParams, OutputOf, RowOf, TypedEvaluator, TypedKind};

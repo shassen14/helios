@@ -27,7 +27,7 @@ pub trait TypedKind: Send + Sync + 'static {
     /// The metrics every evaluator of this kind offers, when they are fixed,
     /// so load checks the names a run file reads. `None` when they are known
     /// only once bound, such as one per block of an estimator's state.
-    fn menu(&self) -> Option<Vec<Component<ErrorOf<Self>>>>;
+    fn menu(&self) -> Option<Vec<Component<OutputOf<Self>>>>;
 
     /// Whether parameters that parsed are ones this kind can evaluate: a
     /// policy not built yet is refused here, naming the case that will need
@@ -47,7 +47,7 @@ pub trait TypedKind: Send + Sync + 'static {
 }
 
 /// _Per-step._ One entry's evaluation, typed: what it fits over the run,
-/// and the error at each sample, which its components read.
+/// and what it computes at each sample, which its components read.
 pub trait TypedEvaluator: Send + Sync + Sized + 'static {
     /// Its inputs, as [`TypedKind::inputs`] declares them.
     type Inputs: Inputs<Self>;
@@ -56,29 +56,33 @@ pub trait TypedEvaluator: Send + Sync + Sized + 'static {
     /// one tree's root sits in another's, say. `()` for none.
     type Fit;
 
-    /// The error at one sample: the subject minus the reference, the
-    /// subject being what is graded and the reference what it is judged
-    /// against.
-    type Error;
+    /// What it computes at one sample: for a comparison, the subject minus
+    /// the reference, the subject being what is graded and the reference
+    /// what it is judged against; for a kind of one input, what it reads of
+    /// that input.
+    type Output;
 
-    /// The metrics it offers, each a component read off the error.
-    fn components(&self) -> Vec<Component<Self::Error>>;
+    /// The metrics it offers, each a component read off the output.
+    fn components(&self) -> Vec<Component<Self::Output>>;
 
     /// What it fits from every covered sample, in stamp order, or why
     /// nothing can be, which refuses every sample.
     fn fit(&self, run: &[RowOf<'_, Self>]) -> Result<Self::Fit, InputRejection>;
 
-    /// The error at one sample, from every role's value lined up there and
+    /// The output at one sample, from every role's value lined up there and
     /// what [`fit`](Self::fit) gave, or why the two can't be compared.
-    fn compute(&self, row: RowOf<'_, Self>, fit: &Self::Fit)
-        -> Result<Self::Error, InputRejection>;
+    fn compute(
+        &self,
+        row: RowOf<'_, Self>,
+        fit: &Self::Fit,
+    ) -> Result<Self::Output, InputRejection>;
 }
 
 /// One sample's values, one reference per role, in role order.
 pub type RowOf<'a, E> = <<E as TypedEvaluator>::Inputs as Inputs<E>>::Row<'a>;
 
-/// The error type of a kind's evaluator.
-pub type ErrorOf<K> = <<K as TypedKind>::Evaluator as TypedEvaluator>::Error;
+/// The output type of a kind's evaluator.
+pub type OutputOf<K> = <<K as TypedKind>::Evaluator as TypedEvaluator>::Output;
 
 /// _Pre-step._ The parameters of a kind that reads none: any key is
 /// refused.

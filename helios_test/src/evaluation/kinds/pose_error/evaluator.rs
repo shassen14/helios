@@ -1,14 +1,11 @@
-//! [`PoseErrorEvaluator`]: one `pose_error` entry's evaluation. Keeps each
-//! edge's root and pose, fits how the estimate's root sits in the truth's,
-//! and gives each estimate's difference from the truth at its stamp.
+//! [`PoseErrorEvaluator`]: one `pose_error` entry's evaluation. Fits how
+//! the estimate's root sits in the truth's, and gives each estimate's
+//! difference from the truth at its stamp.
 
 use super::config::Align;
 use crate::evaluation::{
     kind::InputRejection,
-    typed::{
-        projections::{rooted_pose, RootedPose},
-        Component, Input, TypedEvaluator,
-    },
+    typed::{projections::RootedPose, Component, Input, TypedEvaluator},
 };
 
 use helios_core::prelude::FrameId;
@@ -21,27 +18,16 @@ use helios_core::spatial::transforms::{
 const UNLIKE_CONVENTIONS: InputRejection =
     InputRejection("an estimate and a truth tagged with different axis conventions");
 
-/// _Per-step._ One `pose_error` entry: grades the frame spelled `frame`
-/// under the frame policy `align`.
+/// _Per-step._ One `pose_error` entry: grades one frame's pose under the
+/// frame policy `align`. Which frame is the instance both inputs were bound
+/// to, so every edge it is fed is that frame's.
 pub struct PoseErrorEvaluator {
-    frame: String,
     align: Align,
 }
 
 impl PoseErrorEvaluator {
-    pub(super) fn new(frame: String, align: Align) -> Self {
-        Self { frame, align }
-    }
-
-    /// What an edge of either tree keeps: the graded frame's pose, with its
-    /// root. Refused for another frame's pose.
-    pub(super) fn keep(&self, edge: &StampedTransform) -> Result<RootedPose, InputRejection> {
-        if edge.child.to_string() != self.frame {
-            return Err(InputRejection(
-                "a pose of another frame than the one graded",
-            ));
-        }
-        rooted_pose(edge)
+    pub(super) fn new(align: Align) -> Self {
+        Self { align }
     }
 }
 
@@ -51,7 +37,7 @@ impl TypedEvaluator for PoseErrorEvaluator {
         Input<Self, StampedTransform, RootedPose>,
     );
     type Fit = Roots;
-    type Error = PoseDifference;
+    type Output = PoseDifference;
 
     fn components(&self) -> Vec<Component<PoseDifference>> {
         super::kind::components()
@@ -133,8 +119,11 @@ impl Roots {
 mod tests {
     use super::*;
 
+    use crate::evaluation::typed::projections::rooted_pose;
+
     use helios_core::prelude::{AgentId, MonotonicTime};
-    use helios_core::spatial::transforms::Convention;
+    use helios_core::spatial::conventions::{Enu, Flu};
+    use helios_core::spatial::transforms::{ConventionOf, Transform};
 
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
@@ -155,40 +144,24 @@ mod tests {
     }
 
     fn evaluator(align: Align) -> PoseErrorEvaluator {
-        PoseErrorEvaluator::new(base_link().to_string(), align)
+        PoseErrorEvaluator::new(align)
     }
 
-    /// `child`'s pose in `parent`: at (`x`, `y`, 0), yawed `yaw`.
-    fn edge(parent: FrameId, child: FrameId, x: f64, y: f64, yaw: f64) -> StampedTransform {
-        tagged(parent, child, x, y, yaw, Convention::Enu)
-    }
-
-    /// As [`edge`], its root tagged `root`.
-    fn tagged(
-        parent: FrameId,
-        child: FrameId,
-        x: f64,
-        y: f64,
-        yaw: f64,
-        root: Convention,
-    ) -> StampedTransform {
+    /// base_link's pose in `root`, at (`x`, `y`, 0) yawed `yaw`, kept. The
+    /// edge is erased as its producer erases it: a `Transform` from the body
+    /// to the root, whose convention is `Root`.
+    fn kept<Root: ConventionOf>(root: FrameId, x: f64, y: f64, yaw: f64) -> RootedPose {
         let pose = Isometry3::from_parts(
             Translation3::new(x, y, 0.0),
             UnitQuaternion::from_axis_angle(&Vector3::z_axis(), yaw),
         );
-        StampedTransform {
-            parent,
-            child,
+        let edge = StampedTransform {
+            parent: root,
+            child: base_link(),
             stamp: MonotonicTime(0.0),
-            transform: ErasedTransform::from_parts(pose, Convention::Flu, root),
-        }
-    }
-
-    /// `base_link`'s pose in `root`, kept.
-    fn kept(evaluator: &PoseErrorEvaluator, root: FrameId, x: f64, y: f64, yaw: f64) -> RootedPose {
-        evaluator
-            .keep(&edge(root, base_link(), x, y, yaw))
-            .unwrap_or_else(|rejection| panic!("{rejection}"))
+            transform: ErasedTransform::erase(Transform::<Flu, Root>::from_isometry(pose)),
+        };
+        rooted_pose(&edge).unwrap_or_else(|rejection| panic!("{rejection}"))
     }
 
     /// Each sample's position, x, y, z and rotation, the run fitted first,
@@ -223,8 +196,8 @@ mod tests {
     #[test]
     fn under_declared_poses_in_one_root_are_compared_directly() {
         let evaluator = evaluator(Align::Declared);
-        let estimate = kept(&evaluator, datum(), 3.0, 4.0, 0.2);
-        let truth = kept(&evaluator, datum(), 0.0, 0.0, 0.0);
+        let estimate = kept::<Enu>(datum(), 3.0, 4.0, 0.2);
+        let truth = kept::<Enu>(datum(), 0.0, 0.0, 0.0);
 
         let metrics = grade(&evaluator, &[(&estimate, &truth)]).expect("one root");
 
@@ -237,8 +210,8 @@ mod tests {
     #[test]
     fn under_declared_poses_in_two_roots_are_refused() {
         let evaluator = evaluator(Align::Declared);
-        let estimate = kept(&evaluator, odom(), 0.0, 0.0, 0.0);
-        let truth = kept(&evaluator, datum(), 0.0, 0.0, 0.0);
+        let estimate = kept::<Enu>(odom(), 0.0, 0.0, 0.0);
+        let truth = kept::<Enu>(datum(), 0.0, 0.0, 0.0);
 
         let refused = grade(&evaluator, &[(&estimate, &truth)]).expect_err("two roots");
 
@@ -251,11 +224,11 @@ mod tests {
         // estimate and the truth agree at the first sample and again after
         // the car drives 2 m forward, and differ by 1 m to its left after.
         let evaluator = evaluator(Align::FirstPose);
-        let first_estimate = kept(&evaluator, odom(), 0.0, 0.0, 0.0);
-        let first_truth = kept(&evaluator, datum(), 10.0, 0.0, FRAC_PI_2);
-        let driven = kept(&evaluator, odom(), 2.0, 0.0, 0.0);
-        let driven_truth = kept(&evaluator, datum(), 10.0, 2.0, FRAC_PI_2);
-        let drifted = kept(&evaluator, odom(), 2.0, 1.0, 0.0);
+        let first_estimate = kept::<Enu>(odom(), 0.0, 0.0, 0.0);
+        let first_truth = kept::<Enu>(datum(), 10.0, 0.0, FRAC_PI_2);
+        let driven = kept::<Enu>(odom(), 2.0, 0.0, 0.0);
+        let driven_truth = kept::<Enu>(datum(), 10.0, 2.0, FRAC_PI_2);
+        let drifted = kept::<Enu>(odom(), 2.0, 1.0, 0.0);
 
         let metrics = grade(
             &evaluator,
@@ -279,9 +252,9 @@ mod tests {
     #[test]
     fn under_first_pose_a_root_that_changes_is_refused() {
         let evaluator = evaluator(Align::FirstPose);
-        let first_estimate = kept(&evaluator, odom(), 0.0, 0.0, 0.0);
-        let truth = kept(&evaluator, datum(), 0.0, 0.0, 0.0);
-        let in_map = kept(&evaluator, FrameId::map(AgentId::new(CAR)), 0.0, 0.0, 0.0);
+        let first_estimate = kept::<Enu>(odom(), 0.0, 0.0, 0.0);
+        let truth = kept::<Enu>(datum(), 0.0, 0.0, 0.0);
+        let in_map = kept::<Enu>(FrameId::map(AgentId::new(CAR)), 0.0, 0.0, 0.0);
         let rows = [(&first_estimate, &truth), (&in_map, &truth)];
 
         let fit = evaluator.fit(&rows).expect("a first sample");
@@ -294,31 +267,12 @@ mod tests {
     fn poses_tagged_with_different_conventions_are_refused_under_either_policy() {
         for align in [Align::Declared, Align::FirstPose] {
             let evaluator = evaluator(align);
-            let in_flu_root = evaluator
-                .keep(&tagged(
-                    datum(),
-                    base_link(),
-                    0.0,
-                    0.0,
-                    0.0,
-                    Convention::Flu,
-                ))
-                .expect("kept");
-            let truth = kept(&evaluator, datum(), 0.0, 0.0, 0.0);
+            let in_flu_root = kept::<Flu>(datum(), 0.0, 0.0, 0.0);
+            let truth = kept::<Enu>(datum(), 0.0, 0.0, 0.0);
 
             let refused = grade(&evaluator, &[(&in_flu_root, &truth)]);
 
             assert_eq!(refused, Err(UNLIKE_CONVENTIONS), "{align}");
         }
-    }
-
-    #[test]
-    fn a_pose_of_another_frame_is_refused_on_arrival() {
-        let evaluator = evaluator(Align::Declared);
-        let wheel = FrameId::agent(AgentId::new(CAR), "wheel");
-
-        assert!(evaluator
-            .keep(&edge(datum(), wheel, 0.0, 0.0, 0.0))
-            .is_err());
     }
 }

@@ -7,6 +7,12 @@ use crate::spatial::transforms::{erased::FrameMismatch, Convention, ErasedTransf
 
 use nalgebra::{Isometry3, Vector3};
 
+/// How short a forward axis levelled about up may be and still give a
+/// heading: the sine of its angle from vertical. Only a pose facing up or
+/// down to within rounding falls under it; one a hair off vertical still
+/// has a heading, however sensitive.
+const LEVEL_TOLERANCE: f64 = 1e-9;
+
 /// How far an estimated pose of a frame is from its true pose, both in one
 /// root: the estimate minus the truth. Read in the root's axes (`x`, `y`,
 /// `z`), split about the root's up axis (`horizontal`, `vertical`,
@@ -79,17 +85,20 @@ impl PoseDifference {
 
     /// The estimated heading minus the true one about the root's up axis, in
     /// `(-π, π]`: positive when the estimate is turned left of the truth.
-    /// `None` for a frame with no forward axis. Zero when either faces
-    /// straight up or down, where heading is undefined.
-    pub fn heading(&self) -> Option<f64> {
-        let forward = self.body.forward()?;
+    /// Pitch and roll don't enter it. [`NoHeading`] when either pose has
+    /// none.
+    pub fn heading(&self) -> Result<f64, NoHeading> {
+        let forward = self.body.forward().ok_or(NoHeading::NoForwardAxis)?;
         let up = self.root.up();
         let level = |pose: &Isometry3<f64>| {
             let facing = pose.rotation * forward;
-            facing - facing.dot(&up) * up
+            let levelled = facing - facing.dot(&up) * up;
+            (levelled.norm() >= LEVEL_TOLERANCE)
+                .then_some(levelled)
+                .ok_or(NoHeading::FacingVertical)
         };
-        let (estimate, truth) = (level(&self.estimate), level(&self.truth));
-        Some(truth.cross(&estimate).dot(&up).atan2(truth.dot(&estimate)))
+        let (estimate, truth) = (level(&self.estimate)?, level(&self.truth)?);
+        Ok(truth.cross(&estimate).dot(&up).atan2(truth.dot(&estimate)))
     }
 
     /// The offset along `axis`, a direction on the posed frame's own axes,
@@ -97,6 +106,16 @@ impl PoseDifference {
     fn on_true_body_axis(&self, axis: Vector3<f64>) -> f64 {
         self.translation().dot(&(self.truth.rotation * axis))
     }
+}
+
+/// Why a [`PoseDifference`] has no heading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoHeading {
+    /// The frame posed is a world frame, which faces no way.
+    NoForwardAxis,
+    /// The estimate or the truth faces straight up or down, where no
+    /// direction about up is the way it faces.
+    FacingVertical,
 }
 
 /// Where one root sits in another: what carries a pose in the first (the
@@ -146,35 +165,27 @@ mod tests {
 
     const TOL: f64 = 1e-12;
 
-    /// A body's pose at (`x`, `y`, 0) yawed `yaw` in an ENU root, tagged
-    /// as a child-in-parent edge is: from the body (FLU) to the root (ENU).
+    /// A body's pose at (`x`, `y`, 0) yawed `yaw` in an ENU root, erased
+    /// as its producer erases it: a `Transform` from the body to the root.
     fn pose(x: f64, y: f64, yaw: f64) -> ErasedTransform {
-        tagged(x, y, yaw, Convention::Enu)
-    }
-
-    /// As [`pose`], its root tagged `root`.
-    fn tagged(x: f64, y: f64, yaw: f64, root: Convention) -> ErasedTransform {
-        ErasedTransform::from_parts(
-            Isometry3::from_parts(
-                Translation3::new(x, y, 0.0),
-                UnitQuaternion::from_axis_angle(&Vector3::z_axis(), yaw),
-            ),
-            Convention::Flu,
-            root,
-        )
+        pose_3d(x, y, 0.0, yaw, 0.0)
     }
 
     /// A body's pose at (`x`, `y`, `z`) yawed `yaw` then pitched `pitch`
-    /// about its own left axis, tagged as [`pose`] is.
+    /// about its own left axis, erased as [`pose`] is.
     fn pose_3d(x: f64, y: f64, z: f64, yaw: f64, pitch: f64) -> ErasedTransform {
-        ErasedTransform::from_parts(
-            Isometry3::from_parts(
-                Translation3::new(x, y, z),
-                UnitQuaternion::from_axis_angle(&Vector3::z_axis(), yaw)
-                    * UnitQuaternion::from_axis_angle(&Vector3::y_axis(), pitch),
-            ),
-            Convention::Flu,
-            Convention::Enu,
+        ErasedTransform::erase(Transform::<Flu, Enu>::from_isometry(isometry(
+            x, y, z, yaw, pitch,
+        )))
+    }
+
+    /// At (`x`, `y`, `z`), yawed `yaw` then pitched `pitch` about the
+    /// yawed left axis.
+    fn isometry(x: f64, y: f64, z: f64, yaw: f64, pitch: f64) -> Isometry3<f64> {
+        Isometry3::from_parts(
+            Translation3::new(x, y, z),
+            UnitQuaternion::from_axis_angle(&Vector3::z_axis(), yaw)
+                * UnitQuaternion::from_axis_angle(&Vector3::y_axis(), pitch),
         )
     }
 
@@ -236,39 +247,47 @@ mod tests {
     }
 
     #[test]
-    fn a_body_pose_erased_from_its_typed_transform_faces_forward() {
-        // A producer erases a body's pose in its root as Transform<Flu, Enu>,
-        // so the body's convention is the from tag and the root's the to.
-        let erased = |x: f64| {
-            ErasedTransform::erase(Transform::<Flu, Enu>::from_isometry(
-                Isometry3::translation(x, 0.0, 0.0),
-            ))
+    fn a_pose_facing_straight_up_or_down_has_no_heading() {
+        let level = pose(0.0, 0.0, 0.0);
+        let heading = |estimate: &ErasedTransform, truth: &ErasedTransform| {
+            PoseDifference::between(estimate, truth)
+                .expect("alike")
+                .heading()
         };
 
-        let difference = PoseDifference::between(&erased(1.0), &erased(0.0)).expect("alike");
+        for pitch in [FRAC_PI_2, -FRAC_PI_2] {
+            let vertical = pose_3d(0.0, 0.0, 0.0, 0.0, pitch);
+            assert_eq!(heading(&level, &vertical), Err(NoHeading::FacingVertical));
+            assert_eq!(heading(&vertical, &level), Err(NoHeading::FacingVertical));
+        }
+    }
 
-        assert!(difference
-            .along()
-            .is_some_and(|along| (along - 1.0).abs() < TOL));
-        assert!(difference
+    #[test]
+    fn a_pose_just_short_of_vertical_still_has_a_heading() {
+        // Pitched a microradian short of straight up, a quarter turn left.
+        let truth = pose(0.0, 0.0, 0.0);
+        let nearly_vertical = pose_3d(0.0, 0.0, 0.0, FRAC_PI_2, FRAC_PI_2 - 1e-6);
+
+        let heading = PoseDifference::between(&nearly_vertical, &truth)
+            .expect("alike")
             .heading()
-            .is_some_and(|heading| heading.abs() < TOL));
+            .expect("off vertical");
+
+        assert!((heading - FRAC_PI_2).abs() < 1e-6, "{heading}");
     }
 
     #[test]
     fn a_frame_with_no_forward_axis_has_no_heading_along_or_cross() {
         let world_frame = |x: f64| {
-            ErasedTransform::from_parts(
+            ErasedTransform::erase(Transform::<Enu, Enu>::from_isometry(
                 Isometry3::translation(x, 0.0, 0.0),
-                Convention::Enu,
-                Convention::Enu,
-            )
+            ))
         };
 
         let difference =
             PoseDifference::between(&world_frame(1.0), &world_frame(0.0)).expect("alike");
 
-        assert_eq!(difference.heading(), None);
+        assert_eq!(difference.heading(), Err(NoHeading::NoForwardAxis));
         assert_eq!(difference.along(), None);
         assert_eq!(difference.cross(), None);
         assert!((difference.position() - 1.0).abs() < TOL);
@@ -277,7 +296,7 @@ mod tests {
     #[test]
     fn poses_tagged_with_different_conventions_are_not_compared_or_aligned() {
         let in_enu = pose(0.0, 0.0, 0.0);
-        let in_flu = tagged(0.0, 0.0, 0.0, Convention::Flu);
+        let in_flu = ErasedTransform::erase(Transform::<Flu, Flu>::identity());
 
         assert!(PoseDifference::between(&in_flu, &in_enu).is_err());
         assert!(RootAlignment::from_pair(&in_flu, &in_enu).is_err());

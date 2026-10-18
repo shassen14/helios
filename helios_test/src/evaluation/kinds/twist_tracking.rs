@@ -91,7 +91,7 @@ impl TypedEvaluator for TwistTrackingEvaluator {
         Input<Self, BodyTwistRef, BodyTwist>,
     );
     type Fit = ();
-    type Error = TwistError;
+    type Output = TwistError;
 
     fn components(&self) -> Vec<Component<TwistError>> {
         components()
