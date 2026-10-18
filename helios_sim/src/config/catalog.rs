@@ -76,12 +76,16 @@ pub fn read_catalog(config_root: &Path) -> (PrefabCatalog, Vec<(PathBuf, String)
             })
         {
             let path = entry.path();
+            // Joined from the path's components, not its spelling: on Windows a
+            // root written with `/` keeps that `/` beside the native `\`.
             let key = path
                 .strip_prefix(config_root)
                 .unwrap_or(path)
                 .with_extension("")
-                .to_string_lossy()
-                .replace(std::path::MAIN_SEPARATOR, ".");
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(".");
 
             match Figment::new().merge(Toml::file(path)).extract::<Value>() {
                 Ok(data) => {
