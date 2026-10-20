@@ -87,7 +87,8 @@ mod tests {
     //!   - mirrors its command input and actuator output in its descriptor
 
     use super::*;
-    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use helios_core::spatial::conventions::Flu;
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
     use helios_core::spatial::FrameId;
 
     use helios_core::control::actuators::{
@@ -97,7 +98,6 @@ mod tests {
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::FluVector;
 
-    use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};
 
     // --- Mock TfProvider (the allocator ignores it, but `execute` needs one) ---
@@ -111,13 +111,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::new(
-                Isometry3::identity(),
-                EdgeEnds {
-                    child: Convention::Flu,
-                    parent: Convention::Flu,
-                },
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 

@@ -268,10 +268,11 @@ mod tests {
     use helios_core::mapping::Mapper;
     use helios_core::prelude::AgentId;
     use helios_core::prelude::PointCloudBuilder;
+    use helios_core::spatial::conventions::Flu;
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::Point;
     use helios_core::spatial::state::{Component, Quantity};
-    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform};
     use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{Isometry3, Translation3, UnitQuaternion};
     use std::sync::Arc;
@@ -309,15 +310,9 @@ mod tests {
             if from.is_base_link() {
                 return None;
             }
-            self.agent_to_sensor.get(from.leaf().as_str()).map(|iso| {
-                ErasedTransform::new(
-                    *iso,
-                    EdgeEnds {
-                        child: Convention::Flu,
-                        parent: Convention::Flu,
-                    },
-                )
-            })
+            self.agent_to_sensor
+                .get(from.leaf().as_str())
+                .map(|iso| ErasedTransform::erase(Transform::<Flu, Flu>::from_isometry(*iso)))
         }
     }
 

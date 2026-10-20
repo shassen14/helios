@@ -340,11 +340,12 @@ mod tests {
     use crate::estimation::{EstimatorInputs, PredictSkipReason, SkipReason, UpdateOutcome};
     use crate::kernel::integrators::Integrator;
     use crate::prelude::{AgentId, MonotonicDuration, MonotonicTime};
+    use crate::spatial::conventions::Flu;
     use crate::spatial::state::Quantity;
     use crate::spatial::tf::TfProvider;
-    use crate::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use crate::spatial::transforms::{Convention, ErasedTransform, Transform};
     use crate::spatial::{FrameAwareState, FrameId};
-    use nalgebra::{DMatrix, DVector, Isometry3};
+    use nalgebra::{DMatrix, DVector};
 
     /// An arbitrary global frame the test expresses quantities in.
     const DATUM: &str = "test_datum";
@@ -360,13 +361,7 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::new(
-                Isometry3::identity(),
-                EdgeEnds {
-                    child: Convention::Flu,
-                    parent: Convention::Flu,
-                },
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 

@@ -101,7 +101,7 @@ pub(super) fn report_evaluation(
         kind: evaluation.kind.to_owned(),
         samples: derived.base_samples,
         uncovered: derived.uncovered,
-        refused: derived.refused.count,
+        refused: derived.not_computed.count,
         params: evaluation.params.clone(),
         inputs,
         metrics,
@@ -144,7 +144,7 @@ mod tests {
             },
             fixtures::{
                 at, cont, measure, ready, report, report_speed, report_unreadable, report_wheel,
-                run_measuring, target, windowed, CAR, TRUCK,
+                run_measuring, target, windowed, CAR, OVERSHOOT, TRUCK,
             },
         },
     };
@@ -324,6 +324,27 @@ mod tests {
         ));
         assert_eq!(report.measures()[0].reason(), Some(FailureReason::Rejected));
         assert_eq!(report.evaluations()[0].inputs[0].refused, 1);
+    }
+
+    #[test]
+    fn a_metrics_refused_value_fails_the_run_with_a_line_naming_the_metric() {
+        let (mut r, mut collector) = ready(lagging(), &[CAR]);
+        report_wheel(&mut collector, CAR, "front", 1.0, 5.0);
+        report_speed(&mut collector, CAR, 1.0, 4.5);
+        report_speed(&mut collector, CAR, 2.0, 6.0);
+        run_out(&mut r, &collector);
+
+        let report = finalize(&r, &collector);
+
+        assert_eq!(report.status(), &ReportStatus::Failed);
+        assert_eq!(
+            report.recording(),
+            [format!(
+                "evaluation 'slow' metric 'shortfall': 1 value(s) refused, the first {OVERSHOOT}"
+            )]
+        );
+        assert_eq!(report.evaluations()[0].metrics[0].samples, Some(1));
+        assert_eq!(report.evaluations()[0].refused, 0);
     }
 
     #[test]

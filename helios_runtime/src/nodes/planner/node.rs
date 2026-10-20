@@ -134,7 +134,7 @@ mod tests {
     //!   - is a no-op on `PlannerResult::PathStillValid` (and other Hold variants)
 
     use super::*;
-    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
 
     use helios_core::estimation::carrier::kinematic_carrier_schema;
 
@@ -143,7 +143,7 @@ mod tests {
     use helios_core::interchange::perception::map::MapData;
     use helios_core::planning::SearchPlannerInputs;
     use helios_core::prelude::AgentId;
-    use helios_core::spatial::conventions::Enu;
+    use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::Point;
     use helios_core::spatial::{FrameAwareState, FrameId};
@@ -162,13 +162,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::new(
-                Isometry3::identity(),
-                EdgeEnds {
-                    child: Convention::Flu,
-                    parent: Convention::Flu,
-                },
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 

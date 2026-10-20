@@ -12,8 +12,8 @@ use crate::{
         AssertionTarget, AssertionValue,
     },
     evaluation::{
-        derived::{Derived, Refused, RunningEvaluation},
-        kind::InputRejection,
+        derived::{Derived, Refused},
+        kind::{Evaluator, InputRejection},
     },
 };
 
@@ -56,8 +56,8 @@ static NEXT_COLLECTOR: AtomicU64 = AtomicU64::new(0);
 /// the series holds the extracted value, never the payload.
 ///
 /// It also feeds each evaluation bound to it: a value under one of an
-/// evaluation's input keys is handed to it, typed, and the evaluation keeps
-/// only its projection. One key may feed a series and evaluations both.
+/// evaluation's input keys is handed to it bare, and the evaluation keeps
+/// what it reads of it. One key may feed a series and evaluations both.
 pub struct ObservationCollector {
     /// Stamped into every [`SeriesId`] this collector hands out, so an id is
     /// never read against another run's collector.
@@ -75,7 +75,7 @@ pub struct ObservationCollector {
     /// Held so each key's path is spelled once, not on every arrival.
     unrequested: HashSet<RecordedKey>,
     extractors: ExtractorTable,
-    evaluations: Vec<RunningEvaluation>,
+    evaluations: Vec<Box<dyn Evaluator>>,
     /// Each input key's evaluations, by index, with the role it fills.
     inputs: HashMap<RecordedKey, Vec<(usize, usize)>>,
 }
@@ -186,7 +186,7 @@ impl ObservationCollector {
     /// is.
     pub fn bind_evaluation(
         &mut self,
-        evaluation: RunningEvaluation,
+        evaluation: Box<dyn Evaluator>,
         inputs: Vec<RecordedKey>,
     ) -> EvaluationId {
         let index = self.evaluations.len();
@@ -203,7 +203,7 @@ impl ObservationCollector {
     /// Each role's refusals so far in the evaluation `id` names. `None` when
     /// `id` came from another collector.
     pub fn refused(&self, id: EvaluationId) -> Option<&[Refused]> {
-        self.evaluation(id).map(RunningEvaluation::refused)
+        self.evaluation(id).map(|evaluation| evaluation.refused())
     }
 
     /// What the evaluation `id` names derived of its `wanted` metrics from
@@ -219,11 +219,11 @@ impl ObservationCollector {
             .map(|evaluation| evaluation.derive(until, wanted))
     }
 
-    fn evaluation(&self, id: EvaluationId) -> Option<&RunningEvaluation> {
+    fn evaluation(&self, id: EvaluationId) -> Option<&dyn Evaluator> {
         if id.collector != self.id {
             return None;
         }
-        self.evaluations.get(id.index)
+        self.evaluations.get(id.index).map(Box::as_ref)
     }
 
     fn id_at(&self, index: usize) -> SeriesId {

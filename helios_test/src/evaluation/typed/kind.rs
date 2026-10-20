@@ -20,8 +20,8 @@ pub trait TypedKind: Send + Sync + 'static {
     /// One entry's evaluator.
     type Evaluator: TypedEvaluator;
 
-    /// Its inputs, one to three, in role order, each with what it keeps of
-    /// a value and how it lines up in time; exactly one is the base.
+    /// Its inputs, in role order: the base first, then up to two others,
+    /// each with what it keeps of a value and how it lines up in time.
     fn inputs(&self) -> <Self::Evaluator as TypedEvaluator>::Inputs;
 
     /// The metrics every evaluator of this kind offers, when they are fixed,

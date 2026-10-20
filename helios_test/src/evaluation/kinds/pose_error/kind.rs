@@ -6,7 +6,7 @@ use crate::evaluation::{
     kind::{BoundInput, InputRejection},
     typed::{
         projections::{blend_rooted_poses, rooted_pose},
-        Component, Input, TypedEvaluator, TypedKind,
+        Base, Component, Input, TypedEvaluator, TypedKind,
     },
 };
 
@@ -48,7 +48,7 @@ impl TypedKind for PoseError {
 
     fn inputs(&self) -> <PoseErrorEvaluator as TypedEvaluator>::Inputs {
         (
-            Input::base(ESTIMATE, |_, edge| rooted_pose(edge)),
+            Base::new(ESTIMATE, |_, edge| rooted_pose(edge)),
             Input::interpolated(TRUTH, |_, edge| rooted_pose(edge), blend_rooted_poses),
         )
     }

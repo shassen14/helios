@@ -5,7 +5,7 @@
 use super::config::Align;
 use crate::evaluation::{
     kind::InputRejection,
-    typed::{projections::RootedPose, Component, Input, TypedEvaluator},
+    typed::{projections::RootedPose, Base, Component, Input, TypedEvaluator},
 };
 
 use helios_core::prelude::FrameId;
@@ -33,7 +33,7 @@ impl PoseErrorEvaluator {
 
 impl TypedEvaluator for PoseErrorEvaluator {
     type Inputs = (
-        Input<Self, StampedTransform, RootedPose>,
+        Base<Self, StampedTransform, RootedPose>,
         Input<Self, StampedTransform, RootedPose>,
     );
     type Fit = Roots;

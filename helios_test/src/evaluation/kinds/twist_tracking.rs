@@ -7,7 +7,7 @@ use crate::evaluation::{
     kind::{BoundInput, InputRejection},
     typed::{
         projections::{body_twist, reference_twist},
-        Component, Input, NoParams, TypedEvaluator, TypedKind,
+        Base, Component, Input, NoParams, TypedEvaluator, TypedKind,
     },
 };
 
@@ -37,7 +37,7 @@ impl TypedKind for TwistTracking {
 
     fn inputs(&self) -> <TwistTrackingEvaluator as TypedEvaluator>::Inputs {
         (
-            Input::base(TRUTH, |evaluator: &TwistTrackingEvaluator, truth| {
+            Base::new(TRUTH, |evaluator: &TwistTrackingEvaluator, truth| {
                 body_twist(truth, &evaluator.body)
             }),
             Input::held(REFERENCE, |_, reference| Ok(reference_twist(reference))),
@@ -87,7 +87,7 @@ pub struct TwistTrackingEvaluator {
 
 impl TypedEvaluator for TwistTrackingEvaluator {
     type Inputs = (
-        Input<Self, StampedTwist<Flu>, BodyTwist>,
+        Base<Self, StampedTwist<Flu>, BodyTwist>,
         Input<Self, BodyTwistRef, BodyTwist>,
     );
     type Fit = ();
@@ -177,10 +177,7 @@ fn components() -> Vec<Component<TwistError>> {
 mod tests {
     use super::*;
 
-    use crate::evaluation::{
-        kind::EvaluatorKind,
-        typed::{Inputs, Typed},
-    };
+    use crate::evaluation::{kind::EvaluatorKind, typed::Typed};
 
     use helios_core::prelude::{AgentId, MonotonicTime};
     use helios_core::spatial::quantities::FreeVector;
@@ -284,7 +281,10 @@ mod tests {
 
     #[test]
     fn a_truth_velocity_of_another_frame_is_refused_on_arrival() {
-        let evaluator = evaluator();
+        let truth = input(CAR, Some(base_link(CAR).to_string()));
+        let mut evaluation = Typed(TwistTracking)
+            .build(&toml::Table::new(), &[truth, input(CAR, None)])
+            .unwrap_or_else(|problems| panic!("{problems:?}"));
         let in_datum = StampedTwist::<Flu> {
             moving: base_link(CAR),
             relative_to: FrameId::global("datum"),
@@ -294,9 +294,9 @@ mod tests {
             angular: FreeVector::zeros(),
         };
 
-        let refused = TwistTracking.inputs().project(&evaluator, 0, &in_datum);
+        evaluation.receive(0, MonotonicTime(0.0), &in_datum);
 
-        assert!(refused.is_err());
+        assert_eq!(evaluation.refused()[0].count, 1);
     }
 
     #[test]

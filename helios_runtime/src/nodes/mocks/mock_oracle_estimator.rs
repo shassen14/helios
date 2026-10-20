@@ -253,9 +253,10 @@ mod tests {
     use crate::port::{ChannelKey, PortDescriptor};
 
     use helios_core::prelude::AgentId;
+    use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::FreeVector;
-    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform, Transform};
     use helios_core::spatial::FrameId;
 
     use nalgebra::{Isometry3, Translation3, UnitQuaternion, Vector3};
@@ -272,13 +273,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::new(
-                Isometry3::identity(),
-                EdgeEnds {
-                    child: Convention::Flu,
-                    parent: Convention::Flu,
-                },
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 

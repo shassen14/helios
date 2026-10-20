@@ -11,9 +11,10 @@ use std::sync::{
 use nalgebra::Isometry3;
 
 use helios_core::prelude::{AgentId, MonotonicTime, SensorReading};
+use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
-use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+use helios_core::spatial::transforms::{Convention, ErasedTransform, Transform};
 use helios_runtime::{
     channels::tf::tf,
     channels::truth_tf,
@@ -1481,13 +1482,9 @@ fn an_unread_keyed_body_channel_has_a_slot_per_declared_instance() {
         parent: FrameId::global("datum"),
         child,
         stamp: MonotonicTime(0.0),
-        transform: ErasedTransform::new(
+        transform: ErasedTransform::erase(Transform::<Flu, Enu>::from_isometry(
             Isometry3::identity(),
-            EdgeEnds {
-                child: Convention::Flu,
-                parent: Convention::Enu,
-            },
-        ),
+        )),
     };
 
     assert!(pipeline

@@ -137,7 +137,8 @@ mod tests {
 
     use super::*;
     use crate::channels::estimate::estimate;
-    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use helios_core::spatial::conventions::Flu;
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
 
     use crate::port::ChannelKey;
 
@@ -150,7 +151,6 @@ mod tests {
     use helios_core::spatial::quantities::FluVector;
     use helios_core::spatial::{FrameAwareState, FrameId};
 
-    use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};
 
     // --- Mock TfProvider ---
@@ -164,13 +164,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::new(
-                Isometry3::identity(),
-                EdgeEnds {
-                    child: Convention::Flu,
-                    parent: Convention::Flu,
-                },
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 

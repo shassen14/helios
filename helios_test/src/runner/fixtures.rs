@@ -11,7 +11,7 @@ use crate::{
         kind::{BoundInput, InputRejection},
         standard_evaluators,
         typed::{
-            projections::number, Component, Input, NoParams, Typed, TypedEvaluator, TypedKind,
+            projections::number, Base, Component, Input, NoParams, Typed, TypedEvaluator, TypedKind,
         },
         EvaluatorRegistry,
     },
@@ -65,7 +65,8 @@ impl Keyed for Wheel {
 
 /// The fixtures' evaluator kind, `lag`: how far [`SPEED`] (`actual`, the
 /// base) falls short of one wheel's speed (`wanted`, held), in m/s. Refuses
-/// a speed that isn't finite, and inputs from two agents.
+/// a speed that isn't finite, and inputs from two agents; its metric
+/// refuses an overshoot.
 struct Lag;
 
 /// The name `lag` is registered under.
@@ -74,6 +75,9 @@ pub(super) const LAG: &str = "lag";
 /// Its one metric, `wanted - actual`.
 pub(super) const LAG_METRIC: &str = "shortfall";
 
+/// Why [`LAG_METRIC`] refuses a value: a speed above the one wanted.
+pub(super) const OVERSHOOT: InputRejection = InputRejection("a speed above the one wanted");
+
 impl TypedKind for Lag {
     const NAME: &'static str = LAG;
     type Params = NoParams;
@@ -81,7 +85,7 @@ impl TypedKind for Lag {
 
     fn inputs(&self) -> <LagEvaluator as TypedEvaluator>::Inputs {
         (
-            Input::base("actual", |_, speed| number(speed)),
+            Base::new("actual", |_, speed| number(speed)),
             Input::held("wanted", |_, wheel: &Wheel| number(&wheel.speed)),
         )
     }
@@ -103,7 +107,7 @@ impl TypedKind for Lag {
 struct LagEvaluator;
 
 impl TypedEvaluator for LagEvaluator {
-    type Inputs = (Input<Self, f64, f64>, Input<Self, Wheel, f64>);
+    type Inputs = (Base<Self, f64, f64>, Input<Self, Wheel, f64>);
     type Fit = ();
     type Output = f64;
 
@@ -111,7 +115,10 @@ impl TypedEvaluator for LagEvaluator {
         vec![Component::each(
             LAG_METRIC,
             SiUnit::MetersPerSecond,
-            |shortfall: &f64| Ok(*shortfall),
+            |shortfall: &f64| match *shortfall {
+                shortfall if shortfall < 0.0 => Err(OVERSHOOT),
+                shortfall => Ok(shortfall),
+            },
         )]
     }
 

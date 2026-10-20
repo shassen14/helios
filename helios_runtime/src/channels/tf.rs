@@ -79,7 +79,8 @@ mod tests {
     use crate::stamped::Health;
 
     use helios_core::prelude::{AgentId, MonotonicTime};
-    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use helios_core::spatial::conventions::{Enu, Flu};
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
 
     use nalgebra::Isometry3;
 
@@ -119,13 +120,9 @@ mod tests {
                 parent: edge.parent.clone(),
                 child: edge.child.clone(),
                 stamp: MonotonicTime(1.0),
-                transform: ErasedTransform::new(
+                transform: ErasedTransform::erase(Transform::<Flu, Enu>::from_isometry(
                     Isometry3::identity(),
-                    EdgeEnds {
-                        child: Convention::Flu,
-                        parent: Convention::Enu,
-                    },
-                ),
+                )),
             },
             timestamp: MonotonicTime(1.0),
             health: Health::Ok,

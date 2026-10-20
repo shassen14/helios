@@ -164,7 +164,8 @@ mod tests {
     //! plain single-required and required-plus-optional shapes.
 
     use super::*;
-    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use helios_core::spatial::conventions::Flu;
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
     use helios_core::spatial::FrameId;
 
     use crate::port::PortBus;
@@ -172,8 +173,6 @@ mod tests {
 
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::tf::TfProvider;
-
-    use nalgebra::Isometry3;
 
     #[derive(Clone, Debug, PartialEq)]
     struct Cmd(i32);
@@ -194,13 +193,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::new(
-                Isometry3::identity(),
-                EdgeEnds {
-                    child: Convention::Flu,
-                    parent: Convention::Flu,
-                },
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 

@@ -126,7 +126,7 @@ mod tests {
     use crate::prelude::AgentId;
     use crate::prelude::MonotonicTime;
     use crate::spatial::state::{Component, Quantity};
-    use crate::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use crate::spatial::transforms::{Convention, ErasedTransform, Transform};
     use crate::spatial::{FrameAwareState, FrameId, StateVariable};
     use nalgebra::{DMatrix, DVector, Isometry3, Translation3, UnitQuaternion, Vector3};
     use std::f64::consts::FRAC_PI_2;
@@ -195,12 +195,8 @@ mod tests {
             } else {
                 self.0.inverse()
             };
-            Some(ErasedTransform::new(
-                iso,
-                EdgeEnds {
-                    child: Convention::Flu,
-                    parent: Convention::Flu,
-                },
+            Some(ErasedTransform::erase(
+                Transform::<Flu, Flu>::from_isometry(iso),
             ))
         }
     }

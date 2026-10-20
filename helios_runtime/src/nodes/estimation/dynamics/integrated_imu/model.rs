@@ -251,7 +251,8 @@ mod tests {
     use crate::BodyChannel;
 
     use helios_core::prelude::AgentId;
-    use helios_core::spatial::transforms::{EdgeEnds, ErasedTransform};
+    use helios_core::spatial::conventions::Flu;
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
 
     use nalgebra::{Translation3, UnitQuaternion};
     use std::collections::HashMap;
@@ -430,15 +431,8 @@ mod tests {
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
             let edge = self.0?;
-            (from == mount() && to == FrameId::base_link(agent())).then(|| {
-                ErasedTransform::new(
-                    edge,
-                    EdgeEnds {
-                        child: Convention::Flu,
-                        parent: Convention::Flu,
-                    },
-                )
-            })
+            (from == mount() && to == FrameId::base_link(agent()))
+                .then(|| ErasedTransform::erase(Transform::<Flu, Flu>::from_isometry(edge)))
         }
     }
 

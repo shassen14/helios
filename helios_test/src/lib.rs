@@ -18,16 +18,15 @@
 //!   `TargetProblem`, `Unusable`, `Evaluation`, `EvaluatorRegistry`,
 //!   `EvaluatorKind`, `Role`, `Alignment`, `Metric`, `BoundInput`,
 //!   `UnusableEvaluation`, `EvaluationProblem`, `TypedKind`, `NoParams`,
-//!   `Input`, `Component`.
+//!   `Base`, `Input`, `Component`.
 //! - **`_Per-step._`** — live state and verdicts produced *while* ticking; no
 //!   serde, never serialized. `Runner`, `ResolvedPlan`, `AssertionState`,
 //!   `ContinuousStatus`, `TickAction`, `TickSpan`, `EntryOwner`, `EntryView`,
 //!   `Placement`, `PlacedWindow`,
 //!   `AssertionResult`, `FailureKind`, `ConditionError`, `ReduceError`, `TerminationReason`, `ExtractorTable`, `Extractor`, `ExtractedValue`,
 //!   `ObservationCollector`, `SeriesId`, `Series`, `Sample`, `Rejection`,
-//!   `Evaluator`, `Projection`, `InputRejection`, `RunningEvaluation`,
-//!   `Refused`, `Derived`, `EvaluationId`, `PlannedEvaluation`, `PlannedInput`,
-//!   `Row`, `Graded`, `TypedEvaluator`, `RootedPose`.
+//!   `Evaluator`, `InputRejection`, `Refused`, `Derived`, `EvaluationId`,
+//!   `PlannedEvaluation`, `PlannedInput`, `TypedEvaluator`, `RootedPose`.
 //! - **`_Per/Post-step._`** — measurement data filled *during* a run, then
 //!   read back *after* it to build the serialized aggregate. `RunMetrics`.
 //! - **`_Post-step._`** — built *after* the run and serialized out. Its job is

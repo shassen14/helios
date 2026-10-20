@@ -13,7 +13,6 @@ use crate::{
     assertion::{AssertionTarget, EntryName},
     collector::{instance_of, EvaluationId, ObservationCollector},
     evaluation::{
-        derived::RunningEvaluation,
         kind::{Alignment, BoundInput, Metric, Role},
         Evaluation, EvaluatorRegistry,
     },
@@ -165,10 +164,8 @@ fn plan(
                 .collect::<Vec<_>>()
         })?;
     let metrics = evaluator.metrics();
-    let running =
-        RunningEvaluation::new(evaluator, roles.iter().map(|role| role.alignment).collect());
     let id = collector.bind_evaluation(
-        running,
+        evaluator,
         bound
             .iter()
             .map(|input| input.planned.key.clone())

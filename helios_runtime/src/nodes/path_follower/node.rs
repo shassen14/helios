@@ -182,7 +182,7 @@ mod tests {
     //!   - declares `path_channel` in its required inputs
 
     use super::*;
-    use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use helios_core::spatial::transforms::{ErasedTransform, Transform};
 
     use helios_core::control::commands::BodyTwist;
     use helios_core::control::BodyTwistRef;
@@ -191,12 +191,11 @@ mod tests {
     use helios_core::following::{PathFollower, PathFollowerInputs, PathFollowerResult};
     use helios_core::interchange::path::Path;
     use helios_core::prelude::AgentId;
-    use helios_core::spatial::conventions::Enu;
+    use helios_core::spatial::conventions::{Enu, Flu};
     use helios_core::spatial::primitives::MonotonicTime;
     use helios_core::spatial::quantities::Point;
     use helios_core::spatial::{FrameAwareState, FrameId};
 
-    use nalgebra::Isometry3;
     use std::sync::{Arc, Mutex as StdMutex};
 
     // --- Mock TfProvider ---
@@ -210,13 +209,7 @@ mod tests {
             _: FrameId,
             _: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::new(
-                Isometry3::identity(),
-                EdgeEnds {
-                    child: Convention::Flu,
-                    parent: Convention::Flu,
-                },
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 

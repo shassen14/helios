@@ -176,9 +176,9 @@ impl Runner {
                 .collect(),
             Phase::AwaitingPipelines | Phase::Aborted => Vec::new(),
         };
-        // An input value an evaluation refused, or a sample it couldn't
-        // compute, leaves its metrics graded on fewer values than the run
-        // recorded.
+        // An input value an evaluation refused, a sample it couldn't compute,
+        // or a metric's value it couldn't give leaves its metrics graded on
+        // fewer values than the run recorded.
         let planned = plan.map_or(&[][..], |plan| plan.evaluations());
         for (index, evaluation) in planned.iter().enumerate() {
             let refused = collector.refused(evaluation.id).unwrap_or_default();
@@ -190,14 +190,22 @@ impl Runner {
                     ));
                 }
             }
-            let derived = derived.as_ref().and_then(|derived| derived.get(index));
-            if let Some((refused, first)) = derived
-                .and_then(|derived| derived.refused.first.map(|first| (derived.refused, first)))
-            {
+            let Some(derived) = derived.as_ref().and_then(|derived| derived.get(index)) else {
+                continue;
+            };
+            if let Some(first) = derived.not_computed.first {
                 recording.push(format!(
                     "evaluation '{}': {} sample(s) not computed, the first {first}",
-                    evaluation.name, refused.count
+                    evaluation.name, derived.not_computed.count
                 ));
+            }
+            for (metric, refused) in evaluation.metrics.iter().zip(&derived.values_refused) {
+                if let Some(first) = refused.first {
+                    recording.push(format!(
+                        "evaluation '{}' metric '{}': {} value(s) refused, the first {first}",
+                        evaluation.name, metric.name, refused.count
+                    ));
+                }
             }
         }
         // A measure's value never fails the run, but a value its series

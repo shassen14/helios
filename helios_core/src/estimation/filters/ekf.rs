@@ -261,11 +261,12 @@ mod tests {
     use crate::kernel::integrators::Integrator;
     use crate::prelude::AgentId;
     use crate::prelude::{MonotonicDuration, MonotonicTime};
+    use crate::spatial::conventions::Flu;
     use crate::spatial::state::{Component, Quantity};
     use crate::spatial::tf::TfProvider;
-    use crate::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+    use crate::spatial::transforms::{Convention, ErasedTransform, Transform};
     use crate::spatial::{FrameAwareState, FrameId, StateVariable};
-    use nalgebra::{DMatrix, DVector, Isometry3};
+    use nalgebra::{DMatrix, DVector};
     use rand::rngs::StdRng;
     use rand::Rng;
 
@@ -285,13 +286,7 @@ mod tests {
             _to: FrameId,
             _at: MonotonicTime,
         ) -> Option<ErasedTransform> {
-            Some(ErasedTransform::new(
-                Isometry3::identity(),
-                EdgeEnds {
-                    child: Convention::Flu,
-                    parent: Convention::Flu,
-                },
-            ))
+            Some(ErasedTransform::erase(Transform::<Flu, Flu>::identity()))
         }
     }
 

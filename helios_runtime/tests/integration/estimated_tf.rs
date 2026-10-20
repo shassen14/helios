@@ -33,10 +33,11 @@ use helios_runtime::{
 };
 
 use helios_core::prelude::{AgentId, MonotonicDuration, MonotonicTime, TfProvider};
+use helios_core::spatial::conventions::Flu;
 use helios_core::spatial::id::FrameId;
 use helios_core::spatial::transforms::tf::buffer::TfWindow;
 use helios_core::spatial::transforms::tf::stamped::{FrameEdge, StampedTransform};
-use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform, Transform};
 
 use nalgebra::Isometry3;
 
@@ -66,13 +67,9 @@ fn imu_mount() -> StampedTransform {
     StampedTransform {
         parent: base_link(),
         child: imu(),
-        transform: ErasedTransform::new(
+        transform: ErasedTransform::erase(Transform::<Flu, Flu>::from_isometry(
             Isometry3::translation(0.1, 0.0, 0.0),
-            EdgeEnds {
-                child: Convention::Flu,
-                parent: Convention::Flu,
-            },
-        ),
+        )),
         stamp: MonotonicTime(0.0),
     }
 }

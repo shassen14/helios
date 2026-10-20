@@ -27,12 +27,12 @@ use helios_core::prelude::{
     Acceleration, AgentId, AngularRate, DirectionModel, PointCloud, RangeField, RangeFieldBuilder,
     SphericalAngular,
 };
-use helios_core::spatial::conventions::Flu;
+use helios_core::spatial::conventions::{Enu, Flu};
 use helios_core::spatial::primitives::MonotonicTime;
 use helios_core::spatial::quantities::{FluVector, FreeVector};
 use helios_core::spatial::state::{Component, Quantity};
 use helios_core::spatial::transforms::tf::stamped::StampedTransform;
-use helios_core::spatial::transforms::{Convention, EdgeEnds, ErasedTransform};
+use helios_core::spatial::transforms::{ErasedTransform, Transform};
 use helios_core::spatial::{FrameAwareState, FrameId, StateVariable};
 
 use nalgebra::{Isometry3, Vector3};
@@ -1890,13 +1890,9 @@ fn a_shadow_estimator_holds_its_state_in_a_root_of_its_own() {
                     parent: FrameId::global("datum"),
                     child: FrameId::base_link(agent.clone()),
                     stamp: MonotonicTime(0.0),
-                    transform: ErasedTransform::new(
+                    transform: ErasedTransform::erase(Transform::<Flu, Enu>::from_isometry(
                         Isometry3::identity(),
-                        EdgeEnds {
-                            child: Convention::Flu,
-                            parent: Convention::Enu,
-                        },
-                    ),
+                    )),
                 },
                 timestamp: MonotonicTime(0.0),
                 health: Health::Ok,
