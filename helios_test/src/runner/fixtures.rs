@@ -10,9 +10,7 @@ use crate::{
     evaluation::{
         kind::{BoundInput, InputRejection},
         standard_evaluators,
-        typed::{
-            projections::number, Base, Component, Input, NoParams, Typed, TypedEvaluator, TypedKind,
-        },
+        typed::{projections::number, Component, Lining, NoParams, TwoInputs, TwoInputsKind},
         EvaluatorRegistry,
     },
     run::Run,
@@ -78,38 +76,42 @@ pub(super) const LAG_METRIC: &str = "shortfall";
 /// Why [`LAG_METRIC`] refuses a value: a speed above the one wanted.
 pub(super) const OVERSHOOT: InputRejection = InputRejection("a speed above the one wanted");
 
-impl TypedKind for Lag {
+impl TwoInputs for Lag {
     const NAME: &'static str = LAG;
+    const BASE: &'static str = "actual";
+    const OTHER: &'static str = "wanted";
     type Params = NoParams;
-    type Evaluator = LagEvaluator;
+    type BasePayload = f64;
+    type BaseValue = f64;
+    type OtherPayload = Wheel;
+    type OtherValue = f64;
+    type Fit = ();
+    type Output = f64;
 
-    fn inputs(&self) -> <LagEvaluator as TypedEvaluator>::Inputs {
-        (
-            Base::new("actual", |_, speed| number(speed)),
-            Input::held("wanted", |_, wheel: &Wheel| number(&wheel.speed)),
-        )
+    fn keep_base(&self, speed: &f64) -> Result<f64, InputRejection> {
+        number(speed)
+    }
+
+    fn keep_other(&self, wheel: &Wheel) -> Result<f64, InputRejection> {
+        number(&wheel.speed)
+    }
+
+    fn other_lining(&self) -> Lining<f64> {
+        Lining::Hold
     }
 
     /// Known only once bound, as a kind's whose metrics come from what it
     /// reads, so setup, not load, checks the names an entry reads.
-    fn menu(&self) -> Option<Vec<Component<f64>>> {
+    fn menu() -> Option<Vec<Component<f64>>> {
         None
     }
 
-    fn bind(&self, _: NoParams, inputs: &[BoundInput]) -> Result<LagEvaluator, Vec<String>> {
-        match inputs {
-            [actual, wanted] if actual.agent == wanted.agent => Ok(LagEvaluator),
-            _ => Err(vec!["lag compares one agent's speeds".to_owned()]),
+    fn bind(_: NoParams, actual: &BoundInput, wanted: &BoundInput) -> Result<Self, Vec<String>> {
+        if actual.agent != wanted.agent {
+            return Err(vec!["lag compares one agent's speeds".to_owned()]);
         }
+        Ok(Lag)
     }
-}
-
-struct LagEvaluator;
-
-impl TypedEvaluator for LagEvaluator {
-    type Inputs = (Base<Self, f64, f64>, Input<Self, Wheel, f64>);
-    type Fit = ();
-    type Output = f64;
 
     fn components(&self) -> Vec<Component<f64>> {
         vec![Component::each(
@@ -126,7 +128,7 @@ impl TypedEvaluator for LagEvaluator {
         Ok(())
     }
 
-    fn compute(&self, (actual, wanted): (&f64, &f64), _: &()) -> Result<f64, InputRejection> {
+    fn compute(&self, actual: &f64, wanted: &f64, _: &()) -> Result<f64, InputRejection> {
         Ok(wanted - actual)
     }
 }
@@ -134,7 +136,7 @@ impl TypedEvaluator for LagEvaluator {
 /// The standard evaluator kinds and [`Lag`].
 pub(super) fn evaluators() -> EvaluatorRegistry {
     let mut registry = standard_evaluators();
-    registry.register(Typed(Lag));
+    registry.register(TwoInputsKind::<Lag>::new());
     registry
 }
 

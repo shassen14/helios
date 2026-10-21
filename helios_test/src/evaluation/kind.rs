@@ -1,12 +1,14 @@
 //! What an evaluator kind declares and builds, erased: the form the
 //! machinery stores and feeds. A kind is code someone adds to the registry:
-//! it names its input roles, the first of them the base, and builds one [`Evaluator`] per run-file entry, which names the metrics it
-//! offers. An evaluation is untyped only here, where the collector hands it
-//! each payload of a stream that carries every type. A kind is usually
-//! written typed ([`TypedKind`](super::typed::TypedKind)) and erased once by
-//! [`Typed`](super::typed::Typed), whose evaluation keeps each value typed and
-//! lines the roles up in time the same way for every kind; these traits stay
-//! open to one that pairs its values some other way, such as by association.
+//! it names its input roles, the first of them the base, and builds one
+//! [`Evaluator`] per run-file entry, which names the metrics it offers. An
+//! evaluation is untyped only here, where the collector hands it each
+//! payload of a stream that carries every type. A kind is usually written
+//! typed, one trait per number of inputs
+//! ([`TwoInputs`](super::typed::TwoInputs)), and erased once by that
+//! shape's adapter, whose evaluation keeps each value typed and lines the
+//! inputs up in time the same way for every kind; these traits stay open to
+//! one that pairs its values some other way, such as by association.
 
 use crate::evaluation::derived::{Derived, Refused};
 
@@ -54,8 +56,8 @@ pub trait EvaluatorKind: Send + Sync {
 /// _Per-step._ One entry's evaluation, as the collector feeds it and finalize
 /// reads it: the metrics it offers, each value of its inputs as it arrives,
 /// and its metrics over the run. The one place an evaluation is untyped; a
-/// [`Typed`](super::typed::Typed) kind's keeps every value its own type
-/// behind it.
+/// typed kind's, such as a [`TwoInputs`](super::typed::TwoInputs) kind's,
+/// keeps every value its own type behind it.
 pub trait Evaluator: Send + Sync {
     /// The metrics it offers, each a derived series a run file can name.
     /// Indices into this list are what [`derive`](Self::derive) is asked for.

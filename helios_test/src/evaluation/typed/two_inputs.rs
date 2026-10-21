@@ -6,7 +6,7 @@
 use super::{
     buffer::{Lined, LinedUp, Lining, RoleBuffer},
     component::Component,
-    evaluation::derive,
+    derive::derive,
     params,
 };
 use crate::evaluation::{
